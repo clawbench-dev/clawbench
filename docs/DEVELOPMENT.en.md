@@ -365,12 +365,12 @@ ClawBench is more than just a "chat shell" — it is a complete agent runtime pl
 
 - **Agent Database Storage**: Each agent is stored in the database with dedicated system prompt, model, backend, and thinking effort levels — created via setup wizard or auto-discovery
 - **Auto-Discovery**: On first startup, if no agents exist in the database, the system auto-scans for installed AI CLIs (claude, codebuddy, opencode, gemini, codex, qodercli, vecli, deepseek, pi) and creates agent records in the database for each detected backend. One-time only
-- **Shared Rules**: `config/rules.md` defines common behaviors and mandatory rules for all agents (scheduled task CLI, RAG search, media handling), avoiding duplicate configuration
+- **Shared Rules**: Rules template embedded in Go binary (`commonRulesTemplate` in `agent.go`) defines common behaviors and mandatory rules for all agents (media handling), avoiding duplicate configuration. `@chatsearch`/`@task` commands are injected on demand via `processAtCommand()`, replacing old `SCHEDULED_BEGIN/END` markers and static RAG section
 - **Template Placeholder**: `{{AVAILABLE_AGENTS}}` is auto-replaced with the available agent list, facilitating inter-agent dispatching
 - **Multi-Agent Dispatching**: Different tasks match different agents; the all-round assistant handles conversations while specialized agents execute scheduled tasks
 - **Transparent Tool Calls**: AI tool calls (file read/write, Bash commands, code editing) are visualized in real time
 - **Cron Scheduled Execution**: AI creates scheduled tasks via `clawbench task` CLI subcommands; after confirmation, Cron scheduler executes them automatically. Task cards are embedded in chat messages. `list` and `get` subcommands allow inspecting existing tasks; `--prompt` supports `@path` syntax to read prompt text from a file
-- **Cron Governance**: During scheduled execution, the Scheduled Tasks section in rules.md is automatically stripped (`<!-- SCHEDULED_BEGIN/END -->` markers), preventing AI from recursively creating tasks; CLI layer provides dual-layer protection via `CLAWBENCH_SCHEDULED=1` env var
+- **Cron Governance**: During scheduled execution, the `@task` instructions are never injected (only triggered by explicit user input), preventing AI from recursively creating tasks; CLI layer provides dual-layer protection via `CLAWBENCH_SCHEDULED=1` env var
 - **Multi-Backend Switching**: The same platform simultaneously supports CodeBuddy, Claude Code, OpenCode, Gemini CLI, Codex, Qoder CLI, VeCLI, DeepSeek TUI, and Pi backends with isolated session data
 
 ### Project Structure
@@ -382,7 +382,9 @@ clawbench/
 │   ├── handler/                 # HTTP handlers
 │   │   ├── handler.go           # Route registration
 │   │   ├── auth.go              # Authentication
-│   │   ├── chat.go              # AI chat (SSE streaming)
+│   │   ├── chat.go              # AI chat (SSE streaming + @ command injection + XML ask-question parsing)
+│   │   ├── at_command.go        # @ command detection & template injection (@chatsearch/@task)
+│   │   ├── session_resume.go    # Restore soft-deleted session (POST /api/ai/session/resume)
 │   │   ├── chat_quick_send.go   # Quick send CRUD
 │   │   ├── agent.go             # Agent management
 │   │   ├── scheduler.go         # Scheduled tasks (CRUD + execution list + continue conversation GET/POST /api/tasks/{id}/executions/{execId}/continue)
@@ -401,19 +403,21 @@ clawbench/
 │   │   ├── terminal.go          # Terminal + quick commands CRUD + multi-session
 │   │   └── static.go            # Static files
 │   ├── middleware/              # Middleware (auth/log/recovery/request ID)
-│   ├── platform/                # Platform adaptation (cross-platform paths)
+│   ├── platform/                # Platform adaptation (cross-platform paths + Windows CLI utilities)
 │   │   ├── path.go              # ListRootPaths, IsPathUnderAnyRoot, ManglePath, ExpandTilde
 │   │   ├── path_unix.go         # Unix: root = "/"
 │   │   ├── path_windows.go      # Windows: enumerate available drive roots
 │   │   ├── shell.go             # Shell detection
-│   │   └── path_test.go / shell_test.go
+│   │   ├── npm.go               # Windows .cmd wrapper resolution (ResolveCLIPath, extract JS entry path)
+│   │   ├── strings.go           # Cross-platform binary string extraction (ExtractStrings, replaces POSIX strings)
+│   │   └── path_test.go / shell_test.go / npm_test.go / strings_test.go
 │   ├── service/                 # Business logic
 │   │   ├── database.go          # SQLite initialization
 │   │   ├── chat.go              # Chat history management
 │   │   ├── continue_conversation.go # Continue conversation (from task execution → new session)
 │   │   ├── agent_store.go       # Agent store (DB-backed CRUD + agent_api_keys table)
 │   │   ├── agent_migration.go   # Agent migration (YAML → DB one-time migration, idempotent)
-│   │   ├── crypto.go            # API key encryption (AES-256-GCM + HKDF-SHA256, key rotation on password change)
+│   │   ├── crypto.go            # API key encryption (AES-256-GCM + HKDF-SHA256, key rotation on password change + previousEncryptionKey crash recovery)
 │   │   ├── summary.go           # Chat auto-summary (AsyncSummarize + summaries table)
 │   │   ├── scheduler.go         # Scheduled task scheduling
 │   │   ├── uuid.go              # UUID utility
@@ -464,15 +468,14 @@ clawbench/
 │       ├── task.go              # Task execution summary generation
 ├── web/src/components/common/  # Common components
 │   ├── SummaryToggle.vue        # Summary toggle (button/tab modes)
-├── config/                      # Configuration files
-│   ├── rules.md                 # Agent shared rules and CLI reference
+├── config/                      # Configuration files (optional, config.yaml not required)
+│   └── config.example.yaml      # Config template
 ├── web/                         # Vue 3 frontend source
 │   └── src/
 │       ├── components/          # Vue components
 │       ├── composables/         # Composable functions (useQuickSend, useQuickCommands, useChatStream, etc.)
 │       ├── stores/              # State management
 │       └── utils/               # Utility functions
-├── config/config.example.yaml   # Config template
 ├── build.sh                     # Build script
 ├── dev-server.sh                # Dev debug startup script
 ├── Dockerfile                   # Docker image definition (Ubuntu 24.04 base)

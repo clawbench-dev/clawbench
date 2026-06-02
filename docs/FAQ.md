@@ -12,7 +12,7 @@ A: 支持 CodeBuddy、Claude Code、OpenCode、Gemini CLI、Codex、Qoder CLI、
 
 **Q: 如何添加新的智能体？**
 
-A: 通过 Web UI 的设置向导创建新智能体，选择 LLM 提供商、输入 API Key、验证模型、命名智能体即可。智能体配置存储在数据库中。公共规则放在 `config/rules.md`，会自动注入到所有智能体的系统提示词中。`{{AVAILABLE_AGENTS}}` 占位符会自动替换为可用智能体列表。
+A: 通过 Web UI 的设置向导创建新智能体，选择 LLM 提供商、输入 API Key、验证模型、命名智能体即可。智能体配置存储在数据库中。公共规则内嵌于 Go 二进制（`commonRulesTemplate`），会自动注入到所有智能体的系统提示词中。`{{AVAILABLE_AGENTS}}` 占位符会自动替换为可用智能体列表。`@chatsearch`/`@task` 命令按需注入。
 
 **Q: 是否需要配置 API Key？**
 

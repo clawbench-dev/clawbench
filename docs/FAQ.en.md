@@ -12,7 +12,7 @@ A: Nine CLI backends are supported: CodeBuddy, Claude Code, OpenCode, Gemini CLI
 
 **Q: How do I add a new agent?**
 
-A: Create a new agent via the setup wizard in the Web UI — select an LLM provider, enter your API key, verify model access, and name your agent. Agent configs are stored in the database. Common rules go in `config/rules.md`, which is automatically injected into all agents' system prompts. The `{{AVAILABLE_AGENTS}}` placeholder is automatically replaced with the list of available agents.
+A: Create a new agent via the setup wizard in the Web UI — select an LLM provider, enter your API key, verify model access, and name your agent. Agent configs are stored in the database. Common rules are embedded in the Go binary (`commonRulesTemplate` in `agent.go`), automatically injected into all agents' system prompts. The `{{AVAILABLE_AGENTS}}` placeholder is automatically replaced with the list of available agents. `@chatsearch`/`@task` commands are injected on demand.
 
 **Q: Do I need to configure an API Key?**
 

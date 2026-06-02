@@ -191,6 +191,10 @@ Auto-discovered agent configs use minimal defaults (no model lists or thinking e
 - **Auto Resume**: Automatically sends "continue" after Claude/CodeBuddy/Qoder/DeepSeek/Pi exits Plan Mode
 - **Message Queue**: Messages queue when AI is busy, sent sequentially
 - **Auto Summary**: Automatically generates a summary of the last assistant message on session complete; toggle between summary/original via bottom banner; TTS playback also uses the summary
+- **@ Commands**: Type `@chatsearch` to search conversation history, `@task` to manage scheduled tasks — autocomplete popup menu, purple command badge in user messages
+- **RAG Results Card**: RAG search results in AI responses rendered as purple-themed cards; click to open detail drawer, one-click resume conversation
+- **Inline Thinking Streaming**: Thinking process streams inline during active session; auto-collapses to clickable chip on completion
+- **Session Progress Indicator**: Session drawer shows capsule progress bar with color-coded fill (blue/orange/red) based on usage
 
 ### ⏰ Scheduled Tasks
 - **Cron Scheduling**: AI creates Cron schedules via CLI subcommands, executes automatically

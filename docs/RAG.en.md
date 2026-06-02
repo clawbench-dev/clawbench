@@ -109,7 +109,7 @@ When RAG is enabled, the initialization order at startup:
 
 1. **Initialize DuckDB** — Create/open `rag.duckdb`; check embedding dimension (auto-rebuilds table if dimension mismatch)
 2. **Initialize embedding client** — Connect to Ollama, verify `bge-m3` model availability
-3. **Inject RAG rules** — Add RAG search rules and CLI reference to AI agent system prompts (`rules.md`)
+3. **Inject RAG rules** — RAG search rules injected via `@chatsearch` command on demand (no longer in static `rules.md`)
 4. **Start indexer** — Background polling, gradually indexing historical messages
 5. **Start cleanup worker** — Always runs, periodically purges expired soft-deleted data (regardless of RAG enablement)
 
