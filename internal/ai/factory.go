@@ -12,11 +12,11 @@ func NewBackend(backendType string) (AIBackend, error) {
 	case "codebuddy":
 		return &AutoResumeBackend{inner: codebuddyBackend}, nil
 	case "opencode":
-		return &AutoResumeBackend{inner: opencodeBackend}, nil
+		return opencodeBackend, nil
 	case "gemini":
-		return &AutoResumeBackend{inner: geminiBackend}, nil
+		return geminiBackend, nil
 	case "codex":
-		return &AutoResumeBackend{inner: &CodexBackend{}}, nil
+		return &CodexBackend{}, nil
 	case "qoder":
 		return &AutoResumeBackend{inner: qoderBackend}, nil
 	case "vecli":
