@@ -378,6 +378,13 @@ func (s *Store) SearchFTS(queryText string, limit int, projectPath, backend, rol
 	// Segment the query for Chinese support
 	segmentedQuery := SegmentText(queryText)
 
+	// Wrap in FTS5 phrase syntax (double-quoted) to treat the entire segmented
+	// string as a literal phrase. This prevents FTS5 special operators (AND, OR,
+	// NOT, NEAR, *, "") in user input from causing FTS5 syntax errors (ISS-283).
+	// Any embedded double-quote characters are escaped by doubling them.
+	escapedQuery := strings.ReplaceAll(segmentedQuery, `"`, `""`)
+	ftsQuery := `"` + escapedQuery + `"`
+
 	// Use FTS5 MATCH with BM25 ranking
 	query := `
 		SELECT rag_chunks.id,
@@ -393,7 +400,7 @@ func (s *Store) SearchFTS(queryText string, limit int, projectPath, backend, rol
 		JOIN rag_chunks ON rag_chunks.id = rag_chunks_fts.rowid
 		WHERE rag_chunks_fts MATCH ?
 	`
-	args := []any{segmentedQuery}
+	args := []any{ftsQuery}
 
 	if projectPath != "" {
 		query += " AND rag_chunks.project_path = ?"

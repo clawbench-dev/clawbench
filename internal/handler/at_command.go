@@ -61,9 +61,13 @@ Rules:
 `
 
 // processAtCommand checks if the raw user message starts with an @ command
-// and returns the prompt with the injected template prepended.
-// rawMsg is the original req.Message (before file path prefixes are added).
-// The returned string replaces the prompt passed to buildChatRequest().
+// and returns the injected template (without the original message) to be
+// prepended to the prompt. The caller constructs the final prompt as:
+//
+//	prompt = atInjected + "\n\n" + prompt
+//
+// Since `prompt` already contains the original user message (with file prefixes),
+// processAtCommand returns only the template to avoid duplication.
 // For @chatsearch with empty query, returns the raw message unchanged (caller
 // should handle the error response).
 func processAtCommand(rawMsg, projectPath, sessionID string) string {
@@ -75,12 +79,13 @@ func processAtCommand(rawMsg, projectPath, sessionID string) string {
 		tmpl := strings.ReplaceAll(chatSearchInjectTemplate, "{{CLAWBENCH_BIN}}", model.ClawbenchBin)
 		tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)
 		tmpl = strings.ReplaceAll(tmpl, "{{SESSION_ID}}", sessionID)
-		return tmpl + "\n\n" + rawMsg
+		// Return only the template; the caller appends the original prompt separately
+		return tmpl
 	}
 	if strings.HasPrefix(rawMsg, "@task ") {
 		tmpl := strings.ReplaceAll(taskInjectTemplate, "{{CLAWBENCH_BIN}}", model.ClawbenchBin)
 		tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)
-		return tmpl + "\n\n" + rawMsg
+		return tmpl
 	}
 	return rawMsg
 }

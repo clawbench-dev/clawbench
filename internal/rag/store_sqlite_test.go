@@ -1047,3 +1047,55 @@ func TestSQLiteStore_NewSQLiteStore_SharedCacheInMemory(t *testing.T) {
 	err := <-done
 	assert.NoError(t, err, "in-memory DB with shared cache should work across goroutines")
 }
+
+// ---------- FTS5 query injection protection (ISS-283) ----------
+
+func TestSQLiteStore_SearchFTS_SpecialOperatorsNoCrash(t *testing.T) {
+	// ISS-283: FTS5 special operators (NOT, OR, AND, *, "") should not
+	// cause FTS5 syntax errors when wrapped in phrase syntax.
+	store := setupSQLiteStore(t)
+
+	chunk := Chunk{
+		SessionID: testSession1, MessageID: 1, ChunkText: "database query optimization",
+		ChunkTextSegmented: "database query optimization", ChunkIndex: 0,
+		TokenCount: 3, Embedding: makeTestEmbedding(), HasEmbedding: true,
+		ProjectPath: testProjectPath, Backend: testBackendClaude, Role: testRoleAssistant,
+		CreatedAt: time.Now().Truncate(time.Millisecond),
+	}
+	require.NoError(t, store.InsertChunks([]Chunk{chunk}))
+
+	// These queries previously caused FTS5 syntax errors; with phrase wrapping
+	// they should either return results or empty results without error.
+	malformedQueries := []string{
+		"NOT *",
+		"OR test",
+		"AND database",
+		"test*",
+		"NOT",
+		"OR",
+		"AND",
+	}
+	for _, q := range malformedQueries {
+		_, err := store.SearchFTS(q, 5, "", "", "", "", "", "", "")
+		assert.NoError(t, err, "SearchFTS should not error on FTS5 special operator query: %q", q)
+	}
+}
+
+func TestSQLiteStore_SearchFTS_DoubleQuotesInQuery(t *testing.T) {
+	// Queries containing double quotes should be handled correctly
+	// (double quotes are escaped by doubling in FTS5 phrase syntax).
+	store := setupSQLiteStore(t)
+
+	chunk := Chunk{
+		SessionID: testSession1, MessageID: 1, ChunkText: `find the "quoted" word`,
+		ChunkTextSegmented: `find the "quoted" word`, ChunkIndex: 0,
+		TokenCount: 4, Embedding: makeTestEmbedding(), HasEmbedding: true,
+		ProjectPath: testProjectPath, Backend: testBackendClaude, Role: testRoleAssistant,
+		CreatedAt: time.Now().Truncate(time.Millisecond),
+	}
+	require.NoError(t, store.InsertChunks([]Chunk{chunk}))
+
+	// Should not crash on double quotes in the query
+	_, err := store.SearchFTS(`"quoted"`, 5, "", "", "", "", "", "", "")
+	assert.NoError(t, err, "SearchFTS should handle double quotes in query without error")
+}

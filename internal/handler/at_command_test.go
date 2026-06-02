@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"strings"
 	"testing"
 
 	"clawbench/internal/model"
@@ -22,11 +21,10 @@ func TestProcessAtCommand_ChatSearchInjects(t *testing.T) {
 	assert.Contains(t, result, "/usr/local/bin/clawbench rag search")
 	assert.Contains(t, result, "--project /project")
 	assert.Contains(t, result, "--exclude-session-id session-123")
-	// Must contain original message
-	assert.Contains(t, result, "@chatsearch fix login bug")
-	// Template must be prepended before the original message
-	templateEnd := strings.Index(result, "@chatsearch fix login bug")
-	assert.True(t, templateEnd > 0, "template should be prepended before original message")
+	// processAtCommand returns ONLY the template (no raw message duplication);
+	// the caller prepends the template to the prompt which already contains
+	// the user's original message.
+	assert.NotContains(t, result, "@chatsearch fix login bug")
 }
 
 func TestProcessAtCommand_TaskInjects(t *testing.T) {
@@ -38,9 +36,8 @@ func TestProcessAtCommand_TaskInjects(t *testing.T) {
 	assert.Contains(t, result, "scheduled task management")
 	assert.Contains(t, result, "/usr/local/bin/clawbench task")
 	assert.Contains(t, result, "--project /project")
-	assert.Contains(t, result, "@task daily build")
-	templateEnd := strings.Index(result, "@task daily build")
-	assert.True(t, templateEnd > 0, "template should be prepended before original message")
+	// processAtCommand returns ONLY the template (no raw message duplication)
+	assert.NotContains(t, result, "@task daily build")
 }
 
 func TestProcessAtCommand_NoPrefixPassesThrough(t *testing.T) {
@@ -120,4 +117,70 @@ func TestProcessAtCommand_TaskContainsScheduledTaskTag(t *testing.T) {
 
 	assert.Contains(t, result, "<scheduled-task")
 	assert.Contains(t, result, "--agent-id")
+}
+
+// TestProcessAtCommand_NoMessageDuplication verifies the fix for ISS-287:
+// processAtCommand must return ONLY the template without appending the
+// original message, because the caller already prepends the result to a
+// prompt that contains the user's original message. This prevents the
+// user message from appearing twice in the AI prompt.
+func TestProcessAtCommand_NoMessageDuplication(t *testing.T) {
+	model.ClawbenchBin = "/usr/local/bin/clawbench"
+	defer func() { model.ClawbenchBin = "" }()
+
+	// Simulate the full prompt construction flow:
+	// 1. prompt starts as the user message
+	// 2. processAtCommand returns the template only
+	// 3. caller prepends: prompt = template + "\n\n" + prompt
+	userMsg := "@chatsearch how to fix auth"
+	projectPath := "/project"
+	sessionID := "sess-1"
+
+	prompt := userMsg
+	atInjected := processAtCommand(userMsg, projectPath, sessionID)
+	prompt = atInjected + "\n\n" + prompt
+
+	// Count occurrences of the user message in the final prompt
+	count := 0
+	idx := 0
+	for {
+		pos := indexOf(prompt, "@chatsearch how to fix auth", idx)
+		if pos < 0 {
+			break
+		}
+		count++
+		idx = pos + 1
+	}
+	assert.Equal(t, 1, count, "user message should appear exactly once in the final prompt (ISS-287)")
+
+	// Same check for @task
+	userMsgTask := "@task daily build"
+	prompt = userMsgTask
+	atInjected = processAtCommand(userMsgTask, projectPath, sessionID)
+	prompt = atInjected + "\n\n" + prompt
+
+	count = 0
+	idx = 0
+	for {
+		pos := indexOf(prompt, "@task daily build", idx)
+		if pos < 0 {
+			break
+		}
+		count++
+		idx = pos + 1
+	}
+	assert.Equal(t, 1, count, "user message should appear exactly once in the final prompt for @task (ISS-287)")
+}
+
+// indexOf returns the index of substr in s starting at offset, or -1.
+func indexOf(s, substr string, offset int) int {
+	if offset > len(s) {
+		return -1
+	}
+	for i := offset; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return i
+		}
+	}
+	return -1
 }

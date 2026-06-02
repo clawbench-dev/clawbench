@@ -68,8 +68,10 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		if err == nil && len(saved) > 0 {
 			cfg.Password = string(saved)
 		} else {
-			// Generate new random password (8 hex chars = 4 bytes)
-			b := make([]byte, 4)
+			// Generate new random password (32 hex chars = 16 bytes = 128 bits entropy)
+			// ISS-269: increased from 4 bytes (32-bit) to 16 bytes (128-bit)
+			// to make offline brute-force infeasible
+			b := make([]byte, 16)
 			if _, err := rand.Read(b); err != nil {
 				// Random generation failure is fatal — password would be predictable
 				fmt.Fprintf(os.Stderr, "FATAL: crypto/rand.Read failed: %v\n", err)
