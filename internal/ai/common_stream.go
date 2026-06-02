@@ -110,6 +110,10 @@ func normalizeToolName(toolName string) string {
 // normalizeToolInput remaps camelCase input field names to canonical snake_case.
 // It accepts an optional pathMappings map to rename additional fields (e.g., dirPath->path).
 // If rawInput is not valid JSON, it returns the input unchanged.
+//
+// The defaultMappings provide standard camelCase → snake_case remappings shared by all
+// backends (e.g., filePath → file_path). These are applied first; caller-provided
+// pathMappings can override them if needed (e.g., mapping filePath to a different target).
 func normalizeToolInput(rawInput []byte, pathMappings map[string]string) ([]byte, error) {
 	if len(rawInput) == 0 {
 		return rawInput, nil
@@ -120,18 +124,30 @@ func normalizeToolInput(rawInput []byte, pathMappings map[string]string) ([]byte
 		return rawInput, err
 	}
 
-	// Apply path remappings (e.g., filePath -> file_path, oldString -> old_string)
-	for from, to := range pathMappings {
+	// Default camelCase → snake_case remappings shared by all backends.
+	// Callers can override these via pathMappings by providing a mapping
+	// for the same source key (e.g., filePath → custom_path).
+	defaultMappings := map[string]string{
+		"filePath": "file_path",
+	}
+
+	// Merge: caller pathMappings take precedence over defaults.
+	// If a caller maps the same source key to a different target,
+	// the caller's mapping wins.
+	merged := make(map[string]string, len(defaultMappings)+len(pathMappings))
+	for k, v := range defaultMappings {
+		merged[k] = v
+	}
+	for k, v := range pathMappings {
+		merged[k] = v
+	}
+
+	// Apply all remappings in a single pass (no double-remap risk)
+	for from, to := range merged {
 		if v, ok := input[from]; ok {
 			delete(input, from)
 			input[to] = v
 		}
-	}
-
-	// Standard camelCase -> snake_case remappings shared by all backends
-	if v, ok := input["filePath"]; ok {
-		delete(input, "filePath")
-		input["file_path"] = v
 	}
 
 	normalized, err := json.Marshal(input)
