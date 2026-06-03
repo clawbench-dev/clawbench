@@ -4,6 +4,7 @@ import { useToast } from '@/composables/useToast.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { clearModeState, clearCommandState } from '@/composables/useSessionIdentity.ts'
+import { clearPlanState } from '@/composables/usePlanProgress'
 import { useAgents } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
@@ -284,6 +285,8 @@ export function useChatSession(options: UseChatSessionOptions) {
     clearModeState()
     // Clear slash commands from previous ACP session — will be repopulated by SSE commands_update
     clearCommandState()
+    // Clear plan progress from previous session — will be repopulated by SSE plan_update
+    clearPlanState()
     try {
       // Load agents first so we can resolve agent names
       if (agents.value.length === 0) await loadAgents()

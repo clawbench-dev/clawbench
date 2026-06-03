@@ -61,6 +61,14 @@
       </div>
     </Transition>
 
+    <!-- Plan progress panel -->
+    <PlanPanel
+      :entries="planEntries"
+      :collapsed="planCollapsed"
+      :has-update="planHasUpdate"
+      @toggle-collapse="togglePlanCollapse"
+    />
+
     <!-- Unified input container -->
     <ChatInputBar
       ref="inputBarRef"
@@ -158,6 +166,8 @@ import ChatMetadataModal from './ChatMetadataModal.vue'
 import ToolDetailOverlay from './ToolDetailOverlay.vue'
 import ChatInputBar from './ChatInputBar.vue'
 import ChatMessageList from './ChatMessageList.vue'
+import PlanPanel from './PlanPanel.vue'
+import { usePlanProgress } from '@/composables/usePlanProgress'
 import { useChatRender } from '@/composables/useChatRender.ts'
 import { formatToolOutput } from '@/utils/renderToolDetail.ts'
 import { useChatStream } from '@/composables/useChatStream.ts'
@@ -241,6 +251,8 @@ function handleFileTagClick(filePath) {
         switchTab('viewer')
     }
 }
+
+const { planEntries, planCollapsed, planHasUpdate, hasPlan, togglePlanCollapse, clearPlanState } = usePlanProgress()
 
 const render = useChatRender({ messages, theme, currentSessionId: identity.currentSessionId })
 
