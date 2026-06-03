@@ -162,6 +162,7 @@ Auto-discovered agent configs use minimal defaults (no model lists or thinking e
 
 ### 🎨 Code Preview
 - Syntax highlighting, sticky line numbers, word wrap toggle
+- **Sticky Scroll**: VS Code-style sticky scroll that shows enclosing scope context (functions, classes, structs, etc.) as you scroll
 - Double-click to copy code line content (flash animation feedback)
 - **File Change Flash Highlight**: When files are modified externally, deleted characters flash red and new characters flash blue for quick change identification
 - **Quote & Ask**: Select a code snippet, one-click ask AI, auto-attaches file path and line number
@@ -170,7 +171,7 @@ Auto-discovered agent configs use minimal defaults (no model lists or thinking e
 ### 📝 Markdown
 - Toggle between rendered view / source view
 - **Quote & Ask**: Select text, one-click ask AI
-- Smart table of contents drawer (TOC), LaTeX math, Mermaid diagrams
+- Smart table of contents drawer (TOC) with tree-sitter code symbol extraction (100+ languages, 17 symbol kind icons), LaTeX math, Mermaid diagrams
 - **Image Lightbox**: Images support zoom, swipe browsing
 - **File Path Navigation**: Clickable file paths in Markdown
 
