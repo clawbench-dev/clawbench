@@ -185,7 +185,7 @@ func TestNewBackendForAgent_ACPHttpTransport(t *testing.T) {
 
 	// ACP backends are NOT wrapped in AutoResumeBackend (session/cancel replaces it)
 	_, ok := backend.(*ACPBackend)
-	assert.True(t, ok, "codebuddy ACP should be ACPBackend directly (no AutoResume wrapping)")
+	assert.True(t, ok, "acp-http transport should be ACPBackend directly")
 }
 
 func TestNewBackendForAgent_ACPNoAutoResume(t *testing.T) {

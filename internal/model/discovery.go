@@ -54,7 +54,7 @@ var BackendRegistry = []BackendSpec{
 		ID: "codebuddy", Backend: "codebuddy", DefaultCmd: "codebuddy", Name: "Codebuddy", Icon: "🐛", Specialty: "全栈开发助手",
 		DiscoverModelsFunc:   DiscoverCodebuddyModels,
 		ThinkingEffortLevels: []string{"low", "medium", "high", "xhigh"},
-		AcpMode: "http", // daemon mode, AcpCommand not needed (uses daemon start)
+		AcpCommand: "codebuddy --acp", AcpMode: "stdio",
 	},
 	{
 		ID: "opencode", Backend: "opencode", DefaultCmd: "opencode", Name: "OpenCode", Icon: "📟", Specialty: "终端编码工具",
