@@ -110,6 +110,23 @@ func (p *ACPConnectionPool) GetClient(agentID string) *ClawBenchACPClient {
 	return entry.GetClient()
 }
 
+// GetCachedStateByAgentID returns the cached mode, config, and thinking effort
+// state for the given agent ID. Returns nil for each state that is not available.
+// Used for pre-fetching mode state before the first message (no ClawBench session yet).
+func (p *ACPConnectionPool) GetCachedStateByAgentID(agentID string) (mode *ModeState, config *ConfigOptionState, effort *ThinkingEffortState) {
+	p.mu.Lock()
+	entry, ok := p.entries[agentID]
+	p.mu.Unlock()
+
+	if !ok {
+		return nil, nil, nil
+	}
+
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	return entry.cachedModeState, entry.cachedConfigState, entry.cachedThinkingEffortState
+}
+
 // GetClientByACPSession returns the ClawBenchACPClient for the connection
 // that owns the given ACP session ID. It searches all entries' session maps.
 // Returns nil if no matching session is found.
@@ -145,6 +162,28 @@ func (p *ACPConnectionPool) GetACPSessionID(agentID, clawbenchSID string) string
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
 	return entry.sessions[clawbenchSID]
+}
+
+// GetCachedStateByClawbenchSID returns the cached mode, config, and thinking effort
+// state for the pool entry that owns the given ClawBench session ID.
+// Returns nil for each state that is not available.
+// Used by the SSE handler and REST API to re-emit mode state on reconnect.
+func (p *ACPConnectionPool) GetCachedStateByClawbenchSID(clawbenchSID string) (mode *ModeState, config *ConfigOptionState, effort *ThinkingEffortState) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for _, entry := range p.entries {
+		entry.mu.Lock()
+		if _, ok := entry.sessions[clawbenchSID]; ok {
+			mode = entry.cachedModeState
+			config = entry.cachedConfigState
+			effort = entry.cachedThinkingEffortState
+			entry.mu.Unlock()
+			return
+		}
+		entry.mu.Unlock()
+	}
+	return nil, nil, nil
 }
 
 // idleSweeper periodically kills idle connections.

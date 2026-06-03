@@ -7,8 +7,8 @@ import (
 	"clawbench/internal/model"
 )
 
-// ServeAICommands returns the cached slash commands for an ACP-backed agent.
-// Only ACP agents expose commands via available_commands_update.
+// ServeAICommands returns the cached slash commands and ACP mode/thinking state
+// for an ACP-backed agent. Only ACP agents expose commands via available_commands_update.
 // CLI agents return an empty list.
 //
 // GET /api/ai/commands?agent_id=codebuddy
@@ -40,10 +40,6 @@ func ServeAICommands(w http.ResponseWriter, r *http.Request) {
 
 	pool := ai.GetACPConnectionPool()
 	client := pool.GetClient(agent.ID)
-	if client == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"commands": []any{}})
-		return
-	}
 
 	acpCmds := client.GetCommands()
 	cmds := make([]ai.AvailableCommandInfo, 0, len(acpCmds))
@@ -58,5 +54,14 @@ func ServeAICommands(w http.ResponseWriter, r *http.Request) {
 		cmds = append(cmds, info)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"commands": cmds})
+	resp := map[string]any{"commands": cmds}
+
+	// Also return cached mode/thinking state so the frontend can populate
+	// mode chips before the first message is sent.
+	if modeState, _, effortState := pool.GetCachedStateByAgentID(agent.ID); modeState != nil || effortState != nil {
+		resp["modeState"] = modeState
+		resp["thinkingEffortState"] = effortState
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }

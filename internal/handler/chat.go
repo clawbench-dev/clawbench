@@ -180,11 +180,23 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			sessionBackend = sessionInfoBackend
 		}
 		running := service.IsSessionRunning(sessionID)
+
+		// Look up cached ACP mode/thinking state for this session.
+		// This allows the frontend to populate mode chips immediately
+		// without waiting for SSE events (which may have already been consumed).
+		var modeState, thinkingEffortState any
+		if sessionID != "" {
+			if ms, _, es := ai.GetACPConnectionPool().GetCachedStateByClawbenchSID(sessionID); ms != nil || es != nil {
+				modeState = ms
+				thinkingEffortState = es
+			}
+		}
+
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "thinkingEffort": sessionThinkingEffort, "total": totalCount})
+			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "thinkingEffort": sessionThinkingEffort, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "thinkingEffort": sessionThinkingEffort, "total": totalCount})
+		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "thinkingEffort": sessionThinkingEffort, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState})
 		return
 	}
 

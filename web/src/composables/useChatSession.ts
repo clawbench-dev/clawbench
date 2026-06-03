@@ -3,7 +3,7 @@ import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
-import { clearModeState, clearCommandState, prefetchCommands } from '@/composables/useSessionIdentity.ts'
+import { clearModeState, updateModeState, clearCommandState, prefetchCommands, updateThinkingEffortState } from '@/composables/useSessionIdentity.ts'
 import { clearPlanState } from '@/composables/usePlanProgress'
 import { useAgents } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
@@ -215,6 +215,14 @@ export function useChatSession(options: UseChatSessionOptions) {
       currentAgentId.value = data.agentId || ''
       syncModelFromData(currentAgentId.value, data.modelId)
       syncThinkingEffortFromData(data.thinkingEffort)
+      // Populate ACP mode state from REST response (avoids waiting for SSE events
+      // which may have already been consumed by a previous SSE handler).
+      if (data.modeState && data.modeState.availableModes?.length > 0) {
+        updateModeState(data.modeState.currentModeId || '', data.modeState.availableModes)
+      }
+      if (data.thinkingEffortState && data.thinkingEffortState.availableLevels?.length > 0) {
+        updateThinkingEffortState(data.thinkingEffortState.currentId || '', data.thinkingEffortState.availableLevels)
+      }
       // Pre-fetch ACP slash commands so they appear before the first message is sent
       if (availableCommands.value.length === 0) {
         prefetchCommands(currentAgentId.value)
@@ -314,6 +322,14 @@ export function useChatSession(options: UseChatSessionOptions) {
       currentAgentId.value = data.agentId || ''
       syncModelFromData(currentAgentId.value, data.modelId)
       syncThinkingEffortFromData(data.thinkingEffort)
+      // Populate ACP mode state from REST response (avoids waiting for SSE events
+      // which may have already been consumed by a previous SSE handler).
+      if (data.modeState && data.modeState.availableModes?.length > 0) {
+        updateModeState(data.modeState.currentModeId || '', data.modeState.availableModes)
+      }
+      if (data.thinkingEffortState && data.thinkingEffortState.availableLevels?.length > 0) {
+        updateThinkingEffortState(data.thinkingEffortState.currentId || '', data.thinkingEffortState.availableLevels)
+      }
       // Pre-fetch ACP slash commands so they appear before the first message is sent
       prefetchCommands(currentAgentId.value)
       onExtractScheduledTasks(messages.value)

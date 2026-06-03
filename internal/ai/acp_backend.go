@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	acp "github.com/coder/acp-go-sdk"
 
@@ -21,6 +22,11 @@ import (
 //   - Idle connections are killed after 5 minutes of inactivity
 type ACPBackend struct {
 	agent *model.Agent // resolved agent config
+
+	// CLI fallback: used when the ACP connection fails (e.g., agent binary
+	// doesn't support ACP mode). Lazily initialized on first fallback.
+	cliFallback     AIBackend
+	cliFallbackOnce sync.Once
 }
 
 // NewACPBackend creates a new ACPBackend for the given agent.
@@ -53,7 +59,30 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		pool := GetACPConnectionPool()
 		entry, err := pool.GetOrCreate(ctx, b.agent)
 		if err != nil {
-			forwardACPEvent(ch, StreamEvent{Type: "error", Error: fmt.Sprintf("acp: connection: %v", err), Reason: ReasonBackendExit})
+			// ACP connection failed (e.g., agent binary doesn't support ACP mode).
+			// Fall back to CLI backend so the user can still chat.
+			slog.Warn("acp: connection failed, falling back to CLI backend", "agent_id", b.agent.ID, "error", err)
+			b.cliFallbackOnce.Do(func() {
+				cli, cliErr := NewBackend(b.agent.Backend)
+				if cliErr != nil {
+					slog.Error("acp: CLI fallback creation failed", "backend", b.agent.Backend, "error", cliErr)
+					return
+				}
+				b.cliFallback = cli
+			})
+			if b.cliFallback == nil {
+				forwardACPEvent(ch, StreamEvent{Type: "error", Error: fmt.Sprintf("acp: connection: %v", err), Reason: ReasonBackendExit})
+				return
+			}
+			// Delegate to CLI backend and forward events
+			fallbackCh, fallbackErr := b.cliFallback.ExecuteStream(ctx, req)
+			if fallbackErr != nil {
+				forwardACPEvent(ch, StreamEvent{Type: "error", Error: fmt.Sprintf("acp: connection: %v (CLI fallback also failed: %v)", err, fallbackErr), Reason: ReasonBackendExit})
+				return
+			}
+			for event := range fallbackCh {
+				forwardACPEvent(ch, event)
+			}
 			return
 		}
 

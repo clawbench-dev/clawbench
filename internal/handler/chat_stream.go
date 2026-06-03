@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 )
@@ -81,6 +82,29 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	flusher, canFlush := w.(http.Flusher)
+
+	// Re-emit cached ACP mode/config/thinking state on SSE connect.
+	// When the frontend reconnects (page reload, session switch), the previous
+	// SSE handler already consumed mode_update events. Re-emit from cache so
+	// the new SSE client receives mode state without waiting for a new prompt.
+	if modeState, configState, effortState := ai.GetACPConnectionPool().GetCachedStateByClawbenchSID(sessionID); modeState != nil || configState != nil || effortState != nil {
+		if modeState != nil {
+			data, _ := json.Marshal(modeState)
+			fmt.Fprintf(w, "event: mode_update\ndata: %s\n\n", data)
+		}
+		if configState != nil {
+			data, _ := json.Marshal(configState)
+			fmt.Fprintf(w, "event: config_update\ndata: %s\n\n", data)
+		}
+		if effortState != nil {
+			data, _ := json.Marshal(effortState)
+			fmt.Fprintf(w, "event: thinking_effort_update\ndata: %s\n\n", data)
+		}
+		if canFlush {
+			flusher.Flush()
+		}
+		slog.Debug("sse: re-emitted cached ACP state on connect", "session_id", sessionID)
+	}
 
 	// Heartbeat: send SSE comment lines to keep the connection alive through
 	// reverse proxies and mobile networks during quiet periods (e.g., long-running
