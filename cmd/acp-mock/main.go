@@ -241,6 +241,21 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 		return err
 	}
 
+	// 1b. Send plan update (simulating the agent's execution plan)
+	if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
+		SessionId: acp.SessionId(sid),
+		Update: acp.UpdatePlan(
+			acp.PlanEntry{Content: "Analyze the request", Priority: acp.PlanEntryPriorityHigh, Status: acp.PlanEntryStatusCompleted},
+			acp.PlanEntry{Content: "Generate response", Priority: acp.PlanEntryPriorityHigh, Status: acp.PlanEntryStatusInProgress},
+			acp.PlanEntry{Content: "Verify output", Priority: acp.PlanEntryPriorityMedium, Status: acp.PlanEntryStatusPending},
+		),
+	}); err != nil {
+		return err
+	}
+	if err := pause(ctx, 50*time.Millisecond); err != nil {
+		return err
+	}
+
 	// 2. Send thinking block (simulating the agent thinking)
 	userText := extractUserText(params.Prompt)
 	if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
