@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { apiGet } from '@/utils/api'
 import { gt } from '@/composables/useLocale'
+import { updateModeState, updateThinkingEffortState } from '@/composables/useSessionIdentity.ts'
 
 // Singleton state — shared across the whole app
 const agents = ref<any[]>([])
@@ -20,10 +21,23 @@ async function loadAgents(force = false): Promise<void> {
 
     loadPromise = (async () => {
         try {
-            const data = await apiGet<{ agents: any[]; defaultAgent?: string }>('/api/agents')
+            const data = await apiGet<{ agents: any[]; defaultAgent?: string; acpStates?: Record<string, any> }>('/api/agents')
             agents.value = data.agents || []
             if (data.defaultAgent) {
                 defaultAgentId.value = data.defaultAgent
+            }
+            // Populate ACP mode/thinking state from the agents response.
+            // This is the lightest way to get mode chips before the first message —
+            // no extra HTTP request needed since /api/agents is already called on page load.
+            if (data.acpStates) {
+                for (const [agentId, state] of Object.entries(data.acpStates)) {
+                    if (state.modeState?.availableModes?.length > 0) {
+                        updateModeState(state.modeState.currentModeId || '', state.modeState.availableModes)
+                    }
+                    if (state.thinkingEffortState?.availableLevels?.length > 0) {
+                        updateThinkingEffortState(state.thinkingEffortState.currentId || '', state.thinkingEffortState.availableLevels)
+                    }
+                }
             }
         } catch (err) {
             console.error('Failed to load agents:', err)

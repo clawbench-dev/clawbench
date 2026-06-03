@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 )
@@ -40,9 +41,28 @@ func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 	defaultAgent := model.GetDefaultAgentID()
 	configMutex.RUnlock()
 
+	// Attach cached ACP mode/thinking state to each agent.
+	// This lets the frontend populate mode chips without extra API calls.
+	// Before the first message, the ACP pool is empty so states will be nil.
+	type acpState struct {
+		Mode    *ai.ModeState          `json:"modeState,omitempty"`
+		Effort  *ai.ThinkingEffortState `json:"thinkingEffortState,omitempty"`
+	}
+	states := make(map[string]*acpState, len(agents))
+	pool := ai.GetACPConnectionPool()
+	for _, a := range agents {
+		if a.Transport != "acp-stdio" {
+			continue
+		}
+		if ms, _, es := pool.GetCachedStateByAgentID(a.ID); ms != nil || es != nil {
+			states[a.ID] = &acpState{Mode: ms, Effort: es}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"agents":       agents,
 		"defaultAgent": defaultAgent,
+		"acpStates":    states,
 	})
 }
 

@@ -145,9 +145,12 @@ export function clearCommandState() {
 }
 
 /**
- * Pre-fetch ACP slash commands and mode/thinking state from the REST API so they
- * are available before the first SSE stream is opened (i.e. before the user sends
- * a message). Falls back silently — SSE will populate on stream.
+ * Pre-fetch ACP slash commands from the REST API so they are available
+ * before the first SSE stream is opened (i.e. before the user sends a
+ * message). Falls back silently — SSE will populate commands on stream.
+ *
+ * Note: mode/thinking state is now populated from GET /api/agents (acpStates),
+ * not from this endpoint — zero extra HTTP request needed.
  */
 export async function prefetchCommands(agentId: string) {
   if (!agentId) return
@@ -161,19 +164,8 @@ export async function prefetchCommands(agentId: string) {
         availableCommands.value = data.commands
       }
     }
-    // Also populate mode/thinking state from the same response
-    if (data.modeState && data.modeState.availableModes?.length > 0) {
-      if (availableModes.value.length === 0) {
-        updateModeState(data.modeState.currentModeId || '', data.modeState.availableModes)
-      }
-    }
-    if (data.thinkingEffortState && data.thinkingEffortState.availableLevels?.length > 0) {
-      if (availableThinkingEfforts.value.length === 0) {
-        updateThinkingEffortState(data.thinkingEffortState.currentId || '', data.thinkingEffortState.availableLevels)
-      }
-    }
   } catch {
-    // Silently ignore — SSE commands_update/mode_update will populate on next stream
+    // Silently ignore — SSE commands_update will populate on next stream
   }
 }
 
