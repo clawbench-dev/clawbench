@@ -23,7 +23,7 @@ jobs:
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.12.2
-          args: --timeout=5m --build-tags fts5
+          args: --timeout=5m
           only-new-issues: true
 
   test:
@@ -40,10 +40,10 @@ jobs:
           go-version: '1.25'
 
       - name: Go test
-        run: go test -tags "fts5" ./...
+        run: go test ./...
 
       - name: Go build
-        run: go build -tags "fts5" ./cmd/server
+        run: go build ./cmd/server
 
   coverage-go:
     name: Coverage Gate (Go)
@@ -238,7 +238,10 @@ jobs:
         run: npx playwright install --with-deps
 
       - name: Build Go binary
-        run: go build -tags "fts5" -o clawbench ./cmd/server
+        run: go build -o clawbench ./cmd/server
+
+      - name: Build ACP mock agent
+        run: go build -o acp-mock ./cmd/acp-mock
 
       - name: Build frontend
         run: npm run build
