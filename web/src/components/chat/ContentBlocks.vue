@@ -28,6 +28,9 @@
           <span class="thinking-label">{{ t('chat.message.deepThinking') }}</span>
           <!-- Spinner during streaming -->
           <span v-if="isThinkingStreaming(block)" class="thinking-spinner"></span>
+          <!-- Cancelled marker: show inline in thinking header when this is the last block and message was cancelled.
+               Prevents the cancelled mark from being visually hidden/trapped under the collapsed thinking chip. -->
+          <span v-if="!isThinkingStreaming(block) && isLastBlock(bi) && cancelled" class="chat-cancelled-mark-inline">{{ t('chat.contentBlocks.cancelled') }}</span>
         </div>
         <!-- Inline streaming content: only visible during streaming or collapse animation -->
         <div v-if="isThinkingStreaming(block) || !!collapsingThinking[bi]" class="thinking-inline-content" v-html="getThinkingHtml(bi, block)"></div>
@@ -127,8 +130,8 @@
     </template>
     <!-- Loading dots while AI is still streaming (not when cancelled, and not when showing summary) -->
     <div v-if="streaming && !cancelled && !(showingSummary && summary)" class="placeholder-dots"><span></span><span></span><span></span></div>
-    <!-- Cancelled marker -->
-    <div v-if="cancelled" class="chat-cancelled-mark">{{ t('chat.contentBlocks.cancelled') }}</div>
+    <!-- Cancelled marker: hidden when the last block is thinking (shown inline in thinking-header instead) -->
+    <div v-if="cancelled && !isLastBlockThinking" class="chat-cancelled-mark">{{ t('chat.contentBlocks.cancelled') }}</div>
   </div>
 </template>
 
@@ -248,6 +251,18 @@ function handleThinkingClick(block, bi) {
 function isThinkingStreaming(block) {
   return props.streaming
 }
+
+/** Whether the given block index is the last block in the blocks array. */
+function isLastBlock(bi) {
+  return bi === (props.blocks?.length || 0) - 1
+}
+
+/** Whether the last block is a thinking block (used to avoid duplicate cancelled marker). */
+const isLastBlockThinking = computed(() => {
+  const blocks = props.blocks
+  if (!blocks || blocks.length === 0) return false
+  return blocks[blocks.length - 1].type === 'thinking'
+})
 
 // ── Thinking block collapse animation state ──
 const collapsingThinking = ref({})   // { [blockIndex]: true } for blocks mid-collapse
@@ -456,6 +471,16 @@ onUnmounted(() => {
   padding: 2px 8px;
   border-radius: 4px;
   margin-top: 4px;
+}
+
+/* Inline cancelled marker inside thinking header — always visible even when thinking is collapsed */
+.chat-cancelled-mark-inline {
+  font-size: 11px;
+  color: var(--text-muted, #999);
+  background: var(--bg-tertiary, #f0f0f0);
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: auto;
 }
 
 
