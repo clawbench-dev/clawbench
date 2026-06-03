@@ -778,6 +778,86 @@ func TestAIChatStream_ClaimReleasedAfterDisconnect(t *testing.T) {
 
 // ---------- Session ownership validation (ISS-180) ----------
 
+func TestAIChatStream_PlanUpdateEvent(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "stream-plan-update"
+	ch := setupStreamSession(sessionID)
+	defer cleanupStreamSession(sessionID)
+
+	go func() {
+		ch <- ai.StreamEvent{
+			Type: "plan_update",
+			Plan: &ai.PlanState{
+				Entries: []ai.PlanEntry{
+					{Content: "Read project files", Priority: "high", Status: "completed"},
+					{Content: "Implement feature", Priority: "high", Status: "in_progress"},
+					{Content: "Write tests", Priority: "medium", Status: "pending"},
+				},
+			},
+		}
+		ch <- ai.StreamEvent{Type: "done"}
+	}()
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(AIChatStream, req)
+
+	events := parseSSEEvents(w.Body.String())
+	assert.Equal(t, "plan_update", events[0]["event"])
+
+	var data map[string]any
+	require.NoError(t, json.Unmarshal([]byte(events[0]["data"]), &data))
+
+	entries, ok := data["entries"].([]any)
+	require.True(t, ok, "entries should be a slice")
+	assert.Len(t, entries, 3)
+
+	// First entry: completed/high
+	entry0 := entries[0].(map[string]any)
+	assert.Equal(t, "Read project files", entry0["content"])
+	assert.Equal(t, "high", entry0["priority"])
+	assert.Equal(t, "completed", entry0["status"])
+
+	// Second entry: in_progress/high
+	entry1 := entries[1].(map[string]any)
+	assert.Equal(t, "Implement feature", entry1["content"])
+	assert.Equal(t, "high", entry1["priority"])
+	assert.Equal(t, "in_progress", entry1["status"])
+
+	// Third entry: pending/medium
+	entry2 := entries[2].(map[string]any)
+	assert.Equal(t, "Write tests", entry2["content"])
+	assert.Equal(t, "medium", entry2["priority"])
+	assert.Equal(t, "pending", entry2["status"])
+
+	assert.Equal(t, "done", events[1]["event"])
+}
+
+func TestAIChatStream_PlanUpdateEventNilPlan(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "stream-plan-update-nil"
+	ch := setupStreamSession(sessionID)
+	defer cleanupStreamSession(sessionID)
+
+	go func() {
+		// plan_update with nil Plan should be silently skipped
+		ch <- ai.StreamEvent{Type: "plan_update", Plan: nil}
+		ch <- ai.StreamEvent{Type: "done"}
+	}()
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(AIChatStream, req)
+
+	events := parseSSEEvents(w.Body.String())
+	assert.Len(t, events, 1)
+	assert.Equal(t, "done", events[0]["event"])
+}
+
 func TestAIChatStream_SessionBelongsToDifferentProject(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
