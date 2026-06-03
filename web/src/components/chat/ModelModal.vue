@@ -85,22 +85,22 @@
         </div>
         <div
           v-for="(level, idx) in thinkingLevels"
-          :key="level"
+          :key="level.id"
           class="model-item-wrapper"
         >
           <button
             class="thinking-item"
-            :class="{ current: level === currentThinkingEffort, 'is-default': level === defaultThinkingEffort }"
-            @click="selectThinkingEffort(level)"
-            @contextmenu.prevent="showThinkingDefaultMenu(level)"
-            @touchstart="onTouchStartThinking(level, $event)"
+            :class="{ current: level.id === currentThinkingEffort, 'is-default': level.id === defaultThinkingEffort }"
+            @click="selectThinkingEffort(level.id)"
+            @contextmenu.prevent="showThinkingDefaultMenu(level.id)"
+            @touchstart="onTouchStartThinking(level.id, $event)"
             @touchend="onTouchEnd"
             @touchmove="onTouchMove"
           >
-            <span class="model-item-indicator" :class="{ active: level === currentThinkingEffort }"></span>
-            <span class="model-item-name">{{ level }}</span>
-            <span v-if="level === defaultThinkingEffort" class="default-badge">{{ t('chat.modelModal.defaultBadge') }}</span>
-            <button v-if="level !== defaultThinkingEffort" class="set-default-btn" @click.stop="setDefaultThinkingEffort(level)" :title="t('chat.modelModal.setAsDefault')">
+            <span class="model-item-indicator" :class="{ active: level.id === currentThinkingEffort }"></span>
+            <span class="model-item-name">{{ level.name }}</span>
+            <span v-if="level.id === defaultThinkingEffort" class="default-badge">{{ t('chat.modelModal.defaultBadge') }}</span>
+            <button v-if="level.id !== defaultThinkingEffort" class="set-default-btn" @click.stop="setDefaultThinkingEffort(level.id)" :title="t('chat.modelModal.setAsDefault')">
               <Star :size="12" />
             </button>
           </button>
@@ -140,7 +140,7 @@ const emit = defineEmits(['update:show', 'switch-model', 'switch-thinking-effort
 const { t } = useI18n()
 const toast = useToast()
 const { getAgentModels, getAgentThinkingEffortLevels, getAgent, updateAgentField, getDefaultModelId, canRefreshModels } = useAgents()
-const { currentModelId, currentThinkingEffort } = useSessionIdentity()
+const { currentModelId, currentThinkingEffort, availableThinkingEfforts } = useSessionIdentity()
 
 const activeTab = ref('model')
 const searchQuery = ref('')
@@ -156,7 +156,13 @@ const longPressTriggered = ref(false)
 
 // Computed data
 const models = computed(() => getAgentModels(props.agentId || ''))
-const thinkingLevels = computed(() => getAgentThinkingEffortLevels(props.agentId || ''))
+// Thinking levels: prefer ACP-provided levels (with id+name), fallback to agent config
+const thinkingLevels = computed(() => {
+  const acpLevels = availableThinkingEfforts.value
+  if (acpLevels.length > 0) return acpLevels
+  // Fallback: agent YAML config (string array)
+  return getAgentThinkingEffortLevels(props.agentId || '').map(id => ({ id, name: id }))
+})
 const canRefresh = computed(() => canRefreshModels(props.agentId || ''))
 
 const agentName = computed(() => {

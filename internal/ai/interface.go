@@ -79,6 +79,19 @@ type ModeState struct {
 	AvailableModes []ModeDef `json:"availableModes"`
 }
 
+// ThinkingEffortDef describes a single available thinking effort level (e.g., "low", "medium", "high").
+type ThinkingEffortDef struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+}
+
+// ThinkingEffortState carries the current and available thinking effort levels for an ACP session.
+// Populated from ACP config options with Category "thought_level".
+type ThinkingEffortState struct {
+	CurrentID       string              `json:"currentId"`
+	AvailableLevels []ThinkingEffortDef `json:"availableLevels"`
+}
+
 // ConfigOptionValue represents a selectable value within a config option.
 type ConfigOptionValue struct {
 	ID   string `json:"id"`
@@ -111,7 +124,7 @@ type AvailableCommandInfo struct {
 
 // StreamEvent represents a single event in the streaming output
 type StreamEvent struct {
-	Type       string          // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "raw_output", "resume_split", "queue_consume", "queue_update", "queue_done", "session_capture", "mode_update", "config_update", "commands_update"
+	Type       string          // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "raw_output", "resume_split", "queue_consume", "queue_update", "queue_done", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update"
 	Content    string          // Incremental text (Type=content, Type=thinking) or captured session ID (Type=session_capture)
 	Reason     string          // Structured reason code for i18n (e.g. "disconnect", "timeout", "parse_error")
 	Meta       *Metadata       // Metadata (Type=metadata)
@@ -122,6 +135,7 @@ type StreamEvent struct {
 	Mode       *ModeState      // Mode state (Type=mode_update)
 	Config     *ConfigOptionState // Config option state (Type=config_update)
 	Commands   []AvailableCommandInfo // Slash commands (Type=commands_update)
+	ThinkingEffort *ThinkingEffortState // Thinking effort state (Type=thinking_effort_update)
 }
 
 // ToolCall represents a tool invocation by the AI.

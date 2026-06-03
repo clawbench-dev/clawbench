@@ -169,8 +169,9 @@ type ACPConnEntry struct {
 	// and re-emitted for every ExecuteStream call (not just new sessions).
 	// This ensures the frontend always has up-to-date mode/command state,
 	// even after page refreshes or SSE reconnections.
-	cachedModeState   *ModeState
-	cachedConfigState *ConfigOptionState
+	cachedModeState          *ModeState
+	cachedConfigState        *ConfigOptionState
+	cachedThinkingEffortState *ThinkingEffortState
 
 	// liveness
 	lastUsed time.Time
@@ -387,6 +388,21 @@ func (e *ACPConnEntry) SetCachedConfigState(state *ConfigOptionState) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.cachedConfigState = state
+}
+
+// GetCachedThinkingEffortState returns the cached thinking effort state from the last session/new.
+// Returns nil if no thinking effort state has been cached yet.
+func (e *ACPConnEntry) GetCachedThinkingEffortState() *ThinkingEffortState {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.cachedThinkingEffortState
+}
+
+// SetCachedThinkingEffortState caches the thinking effort state from a NewSessionResponse.
+func (e *ACPConnEntry) SetCachedThinkingEffortState(state *ThinkingEffortState) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.cachedThinkingEffortState = state
 }
 
 // Prompt sends a prompt on the given ACP session and forwards events to streamCh.

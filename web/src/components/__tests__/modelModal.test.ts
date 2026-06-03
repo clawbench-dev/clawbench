@@ -89,6 +89,7 @@ const mockIdentity = {
   currentModelId: ref('claude-sonnet-4-6'),
   currentModelName: ref('Claude Sonnet 4.6'),
   currentThinkingEffort: ref('high'),
+  availableThinkingEfforts: ref([]),
 }
 
 describe('ModelModal', () => {

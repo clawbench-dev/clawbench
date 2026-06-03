@@ -205,7 +205,7 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, FileImage, FileText, Folder, XCircle, Inbox, Send, Square, Cpu, Check, Brain, Zap, Layers } from 'lucide-vue-next'
+import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, FileImage, FileText, Folder, XCircle, Inbox, Send, Square, Cpu, Check, Zap, Layers } from 'lucide-vue-next'
 import { baseName } from '@/utils/path.ts'
 import { computeRecentReferencedFiles, computeHasFileGroups, computeAttachMenuItemCount } from '@/utils/chatInputUtils.ts'
 import PopupMenu from '@/components/common/PopupMenu.vue'
@@ -1269,6 +1269,7 @@ defineExpose({
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
 
 </style>
 

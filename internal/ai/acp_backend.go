@@ -71,13 +71,16 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		if isNew {
 			forwardACPEvent(ch, StreamEvent{Type: "session_capture", Content: acpSessionID})
 
-			// Extract and cache mode/config state from NewSessionResponse
+			// Extract and cache mode/config/thinking effort state from NewSessionResponse
 			if sessResp := entry.GetAndClearSessionResp(); sessResp != nil {
 				if modeState := extractACPModeState(sessResp); modeState != nil {
 					entry.SetCachedModeState(modeState)
 				}
 				if configState := extractACPConfigOptions(sessResp); configState != nil {
 					entry.SetCachedConfigState(configState)
+				}
+				if effortState := extractACPThinkingEffort(sessResp); effortState != nil {
+					entry.SetCachedThinkingEffortState(effortState)
 				}
 			}
 		}
@@ -93,6 +96,10 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		if configState := entry.GetCachedConfigState(); configState != nil {
 			slog.Info("acp: re-emitting cached config_update", "config_id", configState.ConfigID, "current", configState.CurrentID)
 			forwardACPEvent(ch, StreamEvent{Type: "config_update", Config: configState})
+		}
+		if effortState := entry.GetCachedThinkingEffortState(); effortState != nil {
+			slog.Info("acp: re-emitting cached thinking_effort_update", "current", effortState.CurrentID, "available", len(effortState.AvailableLevels))
+			forwardACPEvent(ch, StreamEvent{Type: "thinking_effort_update", ThinkingEffort: effortState})
 		}
 
 		// Emit commands_update if cached from available_commands_update.

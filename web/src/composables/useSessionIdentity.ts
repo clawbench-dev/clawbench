@@ -21,6 +21,7 @@ const currentModeId = ref('')
 const currentModeName = ref('')
 const availableModes = ref<Array<{ id: string; name: string }>>([])
 const availableCommands = ref<Array<{ name: string; description: string; inputHint?: string }>>([])
+const availableThinkingEfforts = ref<Array<{ id: string; name: string }>>([])
 const runningSessions = ref(new Set<string>())
 // Bumped on every mutation to runningSessions so computed properties
 // that depend on the set's contents re-evaluate correctly.
@@ -44,6 +45,7 @@ export function resetIdentity(): void {
   currentModeName.value = ''
   availableModes.value = []
   availableCommands.value = []
+  availableThinkingEfforts.value = []
   runningSessions.value = new Set()
   runningSessionsVersion.value = 0
   sessionDrawerOpen.value = false
@@ -135,6 +137,21 @@ export function updateCommandState(commands: Array<{ name: string; description: 
 /** Clear command state (called on session switch). */
 export function clearCommandState() {
   availableCommands.value = []
+}
+
+/** Update thinking effort state from SSE thinking_effort_update event. */
+export function updateThinkingEffortState(currentId: string, levels: Array<{ id: string; name: string }>) {
+  if (currentId) {
+    currentThinkingEffort.value = currentId
+  }
+  if (levels.length > 0) {
+    availableThinkingEfforts.value = levels
+  }
+}
+
+/** Clear thinking effort state (called on session switch). */
+export function clearThinkingEffortState() {
+  availableThinkingEfforts.value = []
 }
 
 // ───────────────────────────────────────────────────────────
@@ -432,6 +449,7 @@ export function useSessionIdentity() {
     currentModeName,
     availableModes,
     availableCommands,
+    availableThinkingEfforts,
     runningSessions,
     runningSessionsVersion,
     agentHeaderTitle,

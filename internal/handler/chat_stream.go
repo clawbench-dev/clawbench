@@ -222,6 +222,11 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 					})
 					fmt.Fprintf(w, "event: commands_update\ndata: %s\n\n", data)
 				}
+			case "thinking_effort_update":
+				if event.ThinkingEffort != nil {
+					data, _ := json.Marshal(event.ThinkingEffort)
+					fmt.Fprintf(w, "event: thinking_effort_update\ndata: %s\n\n", data)
+				}
 			}
 
 			if canFlush {

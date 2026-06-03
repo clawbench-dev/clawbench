@@ -68,11 +68,28 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		forwardACPEvent(ch, StreamEvent{Type: "mode_update", Mode: modeState})
 
 	case update.ConfigOptionUpdate != nil:
-		// v2 config option update: extract mode-relevant options
+		// v2 config option update: extract mode and thought_level options
 		cu := update.ConfigOptionUpdate
-		configState := mapACPConfigOptionUpdate(cu)
-		if configState != nil {
-			forwardACPEvent(ch, StreamEvent{Type: "config_update", Config: configState})
+		for _, opt := range cu.ConfigOptions {
+			if opt.Select == nil {
+				continue
+			}
+			sel := opt.Select
+			if sel.Category == nil {
+				continue
+			}
+
+			switch *sel.Category {
+			case acp.SessionConfigOptionCategoryMode:
+				configState := buildConfigOptionStateFromSelect(sel, "mode")
+				forwardACPEvent(ch, StreamEvent{Type: "config_update", Config: configState})
+
+			case acp.SessionConfigOptionCategoryThoughtLevel:
+				effortState := buildThinkingEffortStateFromSelect(sel)
+				if effortState != nil {
+					forwardACPEvent(ch, StreamEvent{Type: "thinking_effort_update", ThinkingEffort: effortState})
+				}
+			}
 		}
 
 	case update.SessionInfoUpdate != nil:
@@ -167,8 +184,59 @@ func mapACPError(code int, message string) StreamEvent {
 	}
 }
 
+// buildConfigOptionStateFromSelect builds a ConfigOptionState from an ACP SessionConfigOptionSelect.
+func buildConfigOptionStateFromSelect(sel *acp.SessionConfigOptionSelect, category string) *ConfigOptionState {
+	configState := &ConfigOptionState{
+		ConfigID:  string(sel.Id),
+		CurrentID: string(sel.CurrentValue),
+	}
+
+	optDef := ConfigOptionDef{
+		ID:       string(sel.Id),
+		Name:     sel.Name,
+		Category: category,
+	}
+
+	mapACPSelectOptions(sel.Options, &optDef)
+	configState.Options = append(configState.Options, optDef)
+	return configState
+}
+
+// buildThinkingEffortStateFromSelect builds a ThinkingEffortState from an ACP thought_level config option.
+func buildThinkingEffortStateFromSelect(sel *acp.SessionConfigOptionSelect) *ThinkingEffortState {
+	state := &ThinkingEffortState{
+		CurrentID: string(sel.CurrentValue),
+	}
+
+	if sel.Options.Ungrouped != nil {
+		for _, v := range *sel.Options.Ungrouped {
+			state.AvailableLevels = append(state.AvailableLevels, ThinkingEffortDef{
+				ID:   string(v.Value),
+				Name: v.Name,
+			})
+		}
+	}
+	if sel.Options.Grouped != nil {
+		for _, g := range *sel.Options.Grouped {
+			for _, v := range g.Options {
+				state.AvailableLevels = append(state.AvailableLevels, ThinkingEffortDef{
+					ID:   string(v.Value),
+					Name: v.Name,
+				})
+			}
+		}
+	}
+
+	if len(state.AvailableLevels) == 0 && state.CurrentID == "" {
+		return nil
+	}
+
+	return state
+}
+
 // mapACPConfigOptionUpdate converts an ACP SessionConfigOptionUpdate to a ConfigOptionState.
 // Returns nil if the update doesn't contain mode-relevant information.
+// Deprecated: Use the per-category extraction in mapACPSessionUpdate instead.
 func mapACPConfigOptionUpdate(cu *acp.SessionConfigOptionUpdate) *ConfigOptionState {
 	if cu == nil || len(cu.ConfigOptions) == 0 {
 		return nil
@@ -284,6 +352,27 @@ func extractACPConfigOptions(sessResp *acp.NewSessionResponse) *ConfigOptionStat
 
 			configState.Options = append(configState.Options, optDef)
 			return configState
+		}
+	}
+
+	return nil
+}
+
+// extractACPThinkingEffort extracts ThinkingEffortState from an ACP NewSessionResponse.
+// Looks for config options with Category "thought_level". Returns nil if none found.
+func extractACPThinkingEffort(sessResp *acp.NewSessionResponse) *ThinkingEffortState {
+	if sessResp == nil || len(sessResp.ConfigOptions) == 0 {
+		return nil
+	}
+
+	for _, opt := range sessResp.ConfigOptions {
+		if opt.Select == nil {
+			continue
+		}
+		sel := opt.Select
+
+		if sel.Category != nil && *sel.Category == acp.SessionConfigOptionCategoryThoughtLevel {
+			return buildThinkingEffortStateFromSelect(sel)
 		}
 	}
 

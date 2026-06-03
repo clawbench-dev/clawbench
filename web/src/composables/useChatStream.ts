@@ -2,7 +2,7 @@ import { onMounted, onUnmounted, type Ref } from 'vue'
 import { cancelChat } from '@/utils/api'
 import { useReconnect } from './useReconnect'
 import { gt } from '@/composables/useLocale'
-import { updateModeState, updateCommandState } from './useSessionIdentity'
+import { updateModeState, updateCommandState, updateThinkingEffortState } from './useSessionIdentity'
 import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState } from '@/utils/chatStreamUtils.ts'
 
 export interface UseChatStreamOptions {
@@ -530,15 +530,23 @@ export function useChatStream(options: UseChatStreamOptions) {
       if (!guard()) return
       let data: any
       try { data = JSON.parse(e.data) } catch { console.warn('SSE config_update: invalid JSON, skipping'); return }
-      // Extract mode-relevant config options (category: "mode" or configId: "mode")
-      const configId = data.configId || ''
-      if (configId !== 'mode' && !data.options?.some((o: any) => o.category === 'mode')) return
-      // Find mode config option
-      const modeOption = data.options?.find((o: any) => o.category === 'mode' || o.id === 'mode')
-      if (modeOption) {
-        const modes = (modeOption.values || []).map((v: any) => ({ id: v.id, name: v.name || v.id }))
-        const currentId = data.currentValueId || ''
-        updateModeState(currentId, modes)
+      // Process each config option by category
+      for (const opt of (data.options || [])) {
+        if (opt.category === 'mode' || opt.id === 'mode') {
+          const modes = (opt.values || []).map((v: any) => ({ id: v.id, name: v.name || v.id }))
+          const currentId = data.currentValueId || ''
+          updateModeState(currentId, modes)
+        }
+      }
+    })
+
+    eventSource.addEventListener('thinking_effort_update', (e) => {
+      if (!guard()) return
+      let data: any
+      try { data = JSON.parse(e.data) } catch { console.warn('SSE thinking_effort_update: invalid JSON, skipping'); return }
+      if (data.availableLevels) {
+        const levels = (data.availableLevels || []).map((l: any) => ({ id: l.id, name: l.name || l.id }))
+        updateThinkingEffortState(data.currentId || '', levels)
       }
     })
 

@@ -11,19 +11,17 @@ test.describe('Chat', () => {
   })
 
   test('should send a message and receive SSE stream reply', async ({ page }) => {
-    // default_agent=mock in test config, so new sessions use MockAIBackend automatically
+    // Default agent is acp-mock which uses real ACP stdio protocol
     await chat.sendMessage('Hello, mock assistant!')
 
     // 1. User message appears immediately (synchronous POST)
-    await expect(chat.getLastUserMessage()).toContainText('Hello, mock assistant!')
+    await expect(chat.getLastUserMessage()).toContainText('Hello')
 
-    // 2. Assistant response appears (async SSE stream from MockAIBackend)
-    //    MockAIBackend responds: "Hello! I am a mock assistant. How can I help you today?"
-    //    Firefox/WebKit may have slower SSE delivery, use longer timeout.
+    // 2. Assistant response appears (async SSE stream from ACP mock agent)
     await chat.waitForReply(30000)
 
     // 3. Response contains the mock text
-    await expect(chat.getLastAssistantMessage()).toContainText('mock assistant', { timeout: 15000 })
+    await expect(chat.getLastAssistantMessage()).toContainText('mock ACP agent', { timeout: 15000 })
   })
 
   test('should open quick-send menu on empty send click', async ({ page }) => {
@@ -49,10 +47,12 @@ test.describe('Chat', () => {
     await expect(chat.textarea).toBeVisible()
   })
 
-  // Mock agent has no models configured, so model chip is not rendered.
-  // Skip until a backend with models is available for E2E.
-  test.skip('should show model selector chip', async ({ page }) => {
+  test('should show model selector chip', async ({ page }) => {
+    // acp-mock agent has models configured (mock-pro, mock-fast)
+    // so the model chip should be visible
     await expect(chat.modelChip).toBeVisible()
+    // Should show the default model name
+    await expect(chat.modelChip).toContainText('Mock Pro')
   })
 
   test('should show stop button during AI response', async ({ page }) => {
@@ -60,7 +60,7 @@ test.describe('Chat', () => {
     await chat.sendMessage('Hello')
 
     // The stop button appears while AI is generating.
-    // MockAIBackend responds quickly (~500ms), so we may or may not catch it.
+    // ACP mock responds quickly (~500ms), so we may or may not catch it.
     // The key assertion is that after the response completes, the stop button is gone.
     // Wait for the response to complete — this implicitly verifies the chat flow works.
     await chat.waitForReply(30000)

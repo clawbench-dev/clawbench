@@ -9,7 +9,6 @@ import { type Locator, type Page, expect } from '@playwright/test'
  * - .chat-stop-btn        → stop/cancel button (visible during loading)
  * - .quick-send-title     → quick-send popup title
  * - .model-chip           → model selector chip
- * - .thinking-effort-chip → thinking effort selector chip
  * - .chat-messages        → messages scroll container
  * - .chat-message.user    → user message
  * - .chat-message.assistant → AI assistant message
@@ -90,5 +89,92 @@ export class ChatPage {
   /** Click the sessions list button (the first .chat-action-btn) */
   async openSessionList() {
     await this.page.locator('.chat-action-btn').first().click()
+  }
+
+  /**
+   * Wait for ACP slash commands to be available.
+   * Polls the /api/ai/commands endpoint until commands are returned.
+   */
+  async waitForACPCommands(timeout = 20000): Promise<void> {
+    const baseURL = `http://localhost:${process.env.E2E_PORT || 20100}`
+    const start = Date.now()
+    while (Date.now() - start < timeout) {
+      try {
+        const result = await this.page.evaluate(async (url) => {
+          const resp = await fetch(`${url}/api/ai/commands`)
+          if (!resp.ok) return { ok: false, count: 0 }
+          const data = await resp.json()
+          return { ok: true, count: data.commands?.length || 0 }
+        }, baseURL)
+        if (result.count > 0) return
+      } catch {
+        // Network error — server might not be ready
+      }
+      await this.page.waitForTimeout(500)
+    }
+    throw new Error(`ACP commands not available after ${timeout}ms`)
+  }
+
+  /**
+   * Send a message and wait for the ACP reply.
+   * Uses a longer timeout than waitForReply because ACP requires
+   * spawning a subprocess and establishing a connection.
+   */
+  async sendAndAwaitACPReply(text: string, timeout = 30000): Promise<void> {
+    await this.sendMessage(text)
+    await this.waitForReply(timeout)
+    // Wait a bit more for mode_update/config_update/commands_update
+    // SSE events to propagate to the frontend after the reply starts
+    await this.page.waitForTimeout(500)
+  }
+
+  /**
+   * Create a new session with a specific agent ID and switch the frontend to it.
+   * Uses the window.__clawbench E2E test bridge to call the frontend's own
+   * createSession function, which properly handles session switching, state
+   * updates, and SSE reconnection — all without a page reload.
+   *
+   * Falls back to API + reload if the bridge is not available.
+   */
+  async createSessionWithAgent(agentId: string): Promise<void> {
+    // Try the E2E test bridge first (no page reload needed)
+    const bridgeAvailable = await this.page.evaluate(() => {
+      return !!(window as any).__clawbench?.createSession
+    })
+
+    if (bridgeAvailable) {
+      await this.page.evaluate(async (agentId) => {
+        await (window as any).__clawbench.createSession(agentId)
+      }, agentId)
+      // Wait for the session switch to complete and textarea to be ready
+      await this.page.waitForTimeout(500)
+      await expect(this.textarea).toBeVisible({ timeout: 5000 })
+      return
+    }
+
+    // Fallback: create session via API and reload page
+    const baseURL = `http://localhost:${process.env.E2E_PORT || 20100}`
+    const result = await this.page.evaluate(async ({ url, agentId }) => {
+      const resp = await fetch(`${url}/api/ai/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId }),
+      })
+      if (!resp.ok) return { ok: false, status: resp.status }
+      const data = await resp.json()
+      return { ok: true, sessionId: data.sessionId, backend: data.backend }
+    }, { url: baseURL, agentId })
+
+    if (!result.ok) {
+      throw new Error(`Failed to create session with agent ${agentId}: ${result.status}`)
+    }
+
+    // Reload the page so the frontend picks up the new session
+    await this.page.reload()
+    await this.page.waitForLoadState('networkidle')
+    await this.page.waitForTimeout(500)
+
+    // Wait for the textarea to be ready
+    await expect(this.textarea).toBeVisible({ timeout: 5000 })
   }
 }

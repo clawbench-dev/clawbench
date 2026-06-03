@@ -3,7 +3,7 @@ import { defineConfig, devices } from '@playwright/test'
 /**
  * Playwright E2E test configuration for ClawBench.
  *
- * Architecture: Real Go backend + MockAIBackend (no real AI CLI).
+ * Architecture: Real Go backend + ACP mock agent (no real AI CLI).
  * The server is managed by globalSetup/globalTeardown in helpers/server.ts.
  *
  * Three browser projects:

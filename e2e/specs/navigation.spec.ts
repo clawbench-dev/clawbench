@@ -27,11 +27,7 @@ test.describe('Navigation', () => {
     await expect(page.locator('.chat-textarea')).toBeVisible()
   })
 
-  // NOTE: The chat textarea draft is NOT preserved when switching tabs.
-  // Vue component state is not persisted across tab switches (the chat
-  // panel unmounts when hidden). This is expected app behavior, not a bug.
-  // Skipping this test to avoid false CI failures.
-  test.skip('should maintain state when switching tabs', async ({ page }) => {
+  test('should maintain state when switching tabs', async ({ page }) => {
     // Type something in chat
     const chatInput = page.locator('.chat-textarea')
     await chatInput.fill('test draft')
@@ -41,7 +37,7 @@ test.describe('Navigation', () => {
     await expect(page.locator('.file-list, .file-item, .file-grid, .grid-item').first()).toBeVisible({ timeout: 10000 })
     await nav.switchToChat()
 
-    // Draft should be preserved
+    // Draft should be preserved (TabPanel uses v-show, not v-if, so component state persists)
     await expect(chatInput).toHaveValue('test draft')
   })
 
