@@ -801,6 +801,13 @@ export default {
       supplementary: 'Additional info',
       supplementaryPlaceholder: 'Optional, add extra details…',
     },
+    permission: {
+      title: 'Permission Request',
+      file: 'File',
+      command: 'Command',
+      approved: 'Approved',
+      denied: 'Denied',
+    },
   },
   agents: {
     defaultAssistant: 'Assistant',

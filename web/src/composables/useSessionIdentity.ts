@@ -33,6 +33,11 @@ const runningSessionsVersion = ref(0)
 const sessionDrawerOpen = ref(false)
 
 /** Reset all module-level singleton refs — used by SPA hot project switch. */
+/** Read-only accessor for the current session ID (no composable setup needed). */
+export function getSessionId(): string {
+  return currentSessionId.value
+}
+
 export function resetIdentity(): void {
   currentSessionId.value = ''
   currentSessionTitle.value = ''
@@ -139,6 +144,28 @@ export function clearCommandState() {
   availableCommands.value = []
 }
 
+/**
+ * Pre-fetch ACP slash commands from the REST API so they are available
+ * before the first SSE stream is opened (i.e. before the user sends a
+ * message). Falls back silently — SSE will populate commands on stream.
+ */
+export async function prefetchCommands(agentId: string) {
+  if (!agentId) return
+  try {
+    const resp = await fetch(`/api/ai/commands?agent_id=${encodeURIComponent(agentId)}`)
+    if (!resp.ok) return
+    const data = await resp.json()
+    if (Array.isArray(data.commands) && data.commands.length > 0) {
+      // Only update if still empty (SSE may have already populated via a running stream)
+      if (availableCommands.value.length === 0) {
+        availableCommands.value = data.commands
+      }
+    }
+  } catch {
+    // Silently ignore — SSE commands_update will populate on next stream
+  }
+}
+
 /** Update thinking effort state from SSE thinking_effort_update event. */
 export function updateThinkingEffortState(currentId: string, levels: Array<{ id: string; name: string }>) {
   if (currentId) {
@@ -236,6 +263,8 @@ export async function initSessionFromAPI() {
         currentSessionTitle.value = data.sessionTitle || ''
         currentBackend.value = data.backend || ''
         currentAgentId.value = data.agentId || ''
+        // Pre-fetch ACP slash commands so they appear before the first message
+        prefetchCommands(data.agentId || '')
         // Initialize model: prefer server-persisted modelId, then localStorage pref, then agent default
         if (data.modelId) {
           currentModelId.value = data.modelId

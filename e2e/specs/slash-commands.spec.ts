@@ -16,11 +16,14 @@ import { ChatPage } from '../pages/chat.page'
  * 4. @ command badge still renders
  * 5. Mode chip is visible for ACP sessions
  * 6. GET /api/ai/commands returns discovered commands
+ * 7. Slash commands are pre-fetched via REST API on page load/session switch
+ *    (no need to send a message first if ACP connection already cached commands)
  *
  * IMPORTANT: ACP connections are lazy — established on first message.
- * Each test that needs ACP features must first send a message and wait
- * for the reply to ensure the ACP connection, session, and SSE events
- * (mode_update, config_update, commands_update) have been fully processed.
+ * The first test in each "cold" group must still send a message to warm up
+ * the ACP connection pool. After that, subsequent tests can rely on
+ * prefetchCommands (GET /api/ai/commands) to load slash commands without
+ * requiring an active SSE stream.
  *
  * SERIAL: Tests must run serially because the ACP mock agent is a single
  * subprocess. Concurrent Prompt requests on the same agent process can
@@ -126,6 +129,46 @@ test.describe.serial('ACP Slash Commands', () => {
     expect(text).toMatch(/^\//)
   })
 
+  test('should show slash command autocomplete after page reload via prefetch', async ({ page }) => {
+    // Previous test already established ACP connection and cached commands.
+    // Reload the page — prefetchCommands should load slash commands via
+    // GET /api/ai/commands without needing to send a message first.
+    await page.reload()
+    await page.waitForLoadState('networkidle')
+    await page.waitForTimeout(500)
+
+    // Wait for textarea to be ready
+    await expect(chat.textarea).toBeVisible({ timeout: 5000 })
+
+    // Type / to trigger slash command menu — should work without sending a message
+    await chat.textarea.click()
+    await chat.textarea.fill('/')
+
+    // Slash command menu should appear with ACP commands (loaded via prefetch)
+    const slashItems = page.locator('.at-menu-label.slash-label')
+    await expect(slashItems.first()).toBeVisible({ timeout: 10000 })
+
+    const count = await slashItems.count()
+    expect(count).toBeGreaterThan(0)
+  })
+
+  test('should show slash command autocomplete after session switch via prefetch', async ({ page }) => {
+    // Previous tests warmed the ACP connection pool. Create a new session
+    // and switch to it — prefetchCommands in switchSession should load commands.
+    await chat.createSessionWithAgent('acp-mock')
+
+    // Type / to trigger slash command menu — should work without sending a message
+    await chat.textarea.click()
+    await chat.textarea.fill('/')
+
+    // Slash command menu should appear with ACP commands (loaded via prefetch on session switch)
+    const slashItems = page.locator('.at-menu-label.slash-label')
+    await expect(slashItems.first()).toBeVisible({ timeout: 10000 })
+
+    const count = await slashItems.count()
+    expect(count).toBeGreaterThan(0)
+  })
+
   test('should show slash command badge in user message after sending /commit', async ({ page }) => {
     // Establish ACP connection first (default agent is acp-mock)
     await chat.sendAndAwaitACPReply('hi', 60000)
@@ -228,13 +271,12 @@ test.describe.serial('ACP Slash Commands', () => {
     // Wait for commands to be cached
     await chat.waitForACPCommands()
 
-    const baseURL = `http://localhost:${process.env.E2E_PORT || 20100}`
-    const result = await page.evaluate(async (url) => {
-      const resp = await fetch(`${url}/api/ai/commands`)
+    const result = await page.evaluate(async () => {
+      const resp = await fetch('/api/ai/commands')
       if (!resp.ok) return { ok: false, status: resp.status }
       const data = await resp.json()
       return { ok: true, count: data.commands?.length || 0, firstCommand: data.commands?.[0]?.name }
-    }, baseURL)
+    })
 
     expect(result.ok).toBe(true)
     expect(result.count).toBeGreaterThan(0)

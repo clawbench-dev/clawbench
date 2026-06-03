@@ -801,6 +801,13 @@ export default {
       supplementary: '补充信息',
       supplementaryPlaceholder: '可选，添加额外补充说明…',
     },
+    permission: {
+      title: '权限请求',
+      file: '文件',
+      command: '命令',
+      approved: '已批准',
+      denied: '已拒绝',
+    },
   },
   agents: {
     defaultAssistant: '全能助手',

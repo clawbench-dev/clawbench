@@ -3,7 +3,7 @@ import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
-import { clearModeState, clearCommandState } from '@/composables/useSessionIdentity.ts'
+import { clearModeState, clearCommandState, prefetchCommands } from '@/composables/useSessionIdentity.ts'
 import { clearPlanState } from '@/composables/usePlanProgress'
 import { useAgents } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
@@ -84,7 +84,7 @@ export function useChatSession(options: UseChatSessionOptions) {
 
   // ── Identity refs from singleton ──
   const identity = useSessionIdentity()
-  const { currentSessionTitle, currentBackend, currentAgentId, currentModelId, currentModelName, currentThinkingEffort, runningSessions, runningSessionsVersion } = identity
+  const { currentSessionTitle, currentBackend, currentAgentId, currentModelId, currentModelName, currentThinkingEffort, runningSessions, runningSessionsVersion, availableCommands } = identity
 
   // ── Agents from singleton ──
   const { agents, loadAgents, getAgentIcon, getAgentName, syncModelFromAgent, getAgentModel, agentHeaderTitle: makeAgentTitle } = useAgents()
@@ -215,6 +215,10 @@ export function useChatSession(options: UseChatSessionOptions) {
       currentAgentId.value = data.agentId || ''
       syncModelFromData(currentAgentId.value, data.modelId)
       syncThinkingEffortFromData(data.thinkingEffort)
+      // Pre-fetch ACP slash commands so they appear before the first message is sent
+      if (availableCommands.value.length === 0) {
+        prefetchCommands(currentAgentId.value)
+      }
       onExtractScheduledTasks(messages.value)
       onRenderUpdate(true)
       if (data.running) {
@@ -310,6 +314,8 @@ export function useChatSession(options: UseChatSessionOptions) {
       currentAgentId.value = data.agentId || ''
       syncModelFromData(currentAgentId.value, data.modelId)
       syncThinkingEffortFromData(data.thinkingEffort)
+      // Pre-fetch ACP slash commands so they appear before the first message is sent
+      prefetchCommands(currentAgentId.value)
       onExtractScheduledTasks(messages.value)
       onRenderUpdate(true)
       onScrollBottom(true)
@@ -360,6 +366,9 @@ export function useChatSession(options: UseChatSessionOptions) {
       currentAgentId.value = data.agentId || agentId || ''
       syncModelFromData(currentAgentId.value, '')
       currentThinkingEffort.value = identity.loadThinkingPref(currentAgentId.value) || ''
+      // Clear and pre-fetch ACP slash commands for new session
+      clearCommandState()
+      prefetchCommands(currentAgentId.value)
       messages.value = []
       totalMessages.value = 0
       lastMessageSnapshot = ''  // New session — no messages yet

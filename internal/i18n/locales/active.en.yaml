@@ -85,3 +85,4 @@ PushTaskCompleted: AI Task Completed
 PushSessionEnded: AI session ended
 PushScheduledTaskDone: Scheduled task completed
 NotFound: Not found
+PermissionNotFound: No pending permission request found

@@ -48,8 +48,8 @@
           <!-- Done (success or unknown): green check -->
           <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-check" />
         </div>
-        <!-- Inline detail only for AskUserQuestion (interactive, must stay in message flow; auto-expanded) -->
-        <div v-if="shouldAutoExpand(block)" class="tool-detail" :data-tool-name="block.name" @click="handleToolDetailClick">
+        <!-- Inline detail for auto-expand tools (AskUserQuestion, PermissionApproval) -->
+        <div v-if="shouldAutoExpand(block)" class="tool-detail" :data-tool-name="block.name" :data-session-id="sessionId" :data-tool-call-id="block.id" @click="handleToolDetailClick">
           <div v-html="formatToolInput(block.input, block.name)"></div>
         </div>
       </template>
@@ -199,6 +199,7 @@ const props = defineProps({
   blocks: { type: Array, default: () => [] },
   msgId: { type: [String, Number], default: '' },
   msgIndex: { type: Number, default: 0 },
+  sessionId: { type: String, default: '' },
   expandedTools: { type: Object, default: () => ({}) },
   blockTasks: { type: Object, default: () => ({}) },
   blockAskQuestions: { type: Object, default: () => ({}) },
@@ -702,6 +703,7 @@ onUnmounted(() => {
 .chat-tool-call[data-category="agent"]    { --tool-accent: #ec4899; }
 .chat-tool-call[data-category="skill"]    { --tool-accent: #06b6d4; }
 .chat-tool-call[data-category="ask"]      { --tool-accent: #f97316; }
+.chat-tool-call[data-category="permission"] { --tool-accent: #eab308; }
 .chat-tool-call[data-category="fallback"] { --tool-accent: var(--text-muted); }
 
 .chat-tool-call:hover {
@@ -1387,6 +1389,7 @@ onUnmounted(() => {
 
 /* ── AskUserQuestion card ── */
 :root[data-theme="dark"] .content-blocks .chat-tool-call[data-category="ask"] { --tool-accent: #fb923c; }
+:root[data-theme="dark"] .content-blocks .chat-tool-call[data-category="permission"] { --tool-accent: #fbbf24; }
 
 .content-blocks .tool-detail .ask-question-view {
   display: flex;
@@ -1898,5 +1901,143 @@ onUnmounted(() => {
   border-radius: 4px;
   font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
   line-height: 1.5;
+}
+
+/* ── PermissionApproval card ── */
+.content-blocks .tool-detail .permission-approval-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.content-blocks .tool-detail .permission-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #d97706;
+}
+
+:root[data-theme="dark"] .content-blocks .tool-detail .permission-header {
+  color: #fbbf24;
+}
+
+.content-blocks .tool-detail .permission-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.content-blocks .tool-detail .permission-title {
+  color: #d97706;
+  font-weight: 600;
+}
+
+:root[data-theme="dark"] .content-blocks .tool-detail .permission-title {
+  color: #fbbf24;
+}
+
+.content-blocks .tool-detail .permission-tool-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
+}
+
+.content-blocks .tool-detail .permission-tool-detail {
+  font-size: 11px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.content-blocks .tool-detail .permission-detail-label {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(234, 179, 8, 0.12);
+  color: #b45309;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+:root[data-theme="dark"] .content-blocks .tool-detail .permission-detail-label {
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+}
+
+.content-blocks .tool-detail .permission-tool-detail code {
+  font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
+  font-size: 11px;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.content-blocks .tool-detail .permission-options {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.content-blocks .tool-detail .permission-btn {
+  padding: 5px 14px;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.content-blocks .tool-detail .permission-btn-allow {
+  background: #22c55e;
+  color: white;
+}
+
+.content-blocks .tool-detail .permission-btn-allow:hover:not(:disabled) {
+  background: #16a34a;
+}
+
+.content-blocks .tool-detail .permission-btn-reject {
+  background: #ef4444;
+  color: white;
+}
+
+.content-blocks .tool-detail .permission-btn-reject:hover:not(:disabled) {
+  background: #dc2626;
+}
+
+.content-blocks .tool-detail .permission-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+:root[data-theme="dark"] .content-blocks .tool-detail .permission-btn-allow {
+  background: #4ade80;
+  color: #1a1a1a;
+}
+
+:root[data-theme="dark"] .content-blocks .tool-detail .permission-btn-allow:hover:not(:disabled) {
+  background: #22c55e;
+}
+
+:root[data-theme="dark"] .content-blocks .tool-detail .permission-btn-reject {
+  background: #f87171;
+  color: #1a1a1a;
+}
+
+:root[data-theme="dark"] .content-blocks .tool-detail .permission-btn-reject:hover:not(:disabled) {
+  background: #ef4444;
+}
+
+.content-blocks .tool-detail .permission-approval-view.permission-responded .permission-btn-allow {
+  background: #22c55e;
+  opacity: 1;
+}
+
+.content-blocks .tool-detail .permission-approval-view.permission-responded .permission-btn-reject {
+  background: #ef4444;
+  opacity: 1;
 }
 </style>

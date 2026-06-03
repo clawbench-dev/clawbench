@@ -635,7 +635,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// Execute AI backend (no timeout - let AI run indefinitely)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	backend, err := ai.NewBackend(backendName)
+	backend, err := ai.NewBackendForAgent(backendName, task.AgentID)
 	if err != nil {
 		slog.Error("failed to create backend for task", slog.String("err", err.Error()))
 		cancel() // Release context resources

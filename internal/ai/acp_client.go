@@ -2,7 +2,9 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +16,17 @@ import (
 	"clawbench/internal/platform"
 )
 
+// pendingPermission tracks an in-flight permission request that is
+// waiting for the user's response via the HTTP API.
+type pendingPermission struct {
+	SessionID  string
+	ToolCallID string
+	ToolName   string
+	ToolInput  string // JSON-encoded raw input
+	Options    []acp.PermissionOption
+	Ch         chan acp.RequestPermissionResponse
+}
+
 // ClawBenchACPClient implements the acp.Client interface to handle
 // callbacks from ACP agents. It converts ACP session updates to
 // ClawBench StreamEvents and forwards them via session routing.
@@ -22,15 +35,17 @@ import (
 // all sessions on a connection. It uses sessionRoutes to demultiplex
 // SessionUpdate notifications to the correct StreamEvent channel.
 type ClawBenchACPClient struct {
-	mu            sync.Mutex
-	sessionRoutes map[string]chan<- StreamEvent // acpSessionID → streamCh
-	commands      []acp.AvailableCommand        // cached from available_commands_update
+	mu                sync.Mutex
+	sessionRoutes     map[string]chan<- StreamEvent      // acpSessionID → streamCh
+	commands          []acp.AvailableCommand             // cached from available_commands_update
+	pendingPermission map[string]*pendingPermission      // PermissionKey → pending request
 }
 
 // NewClawBenchACPClient creates a new ACP client with session routing support.
 func NewClawBenchACPClient() *ClawBenchACPClient {
 	return &ClawBenchACPClient{
-		sessionRoutes: make(map[string]chan<- StreamEvent),
+		sessionRoutes:     make(map[string]chan<- StreamEvent),
+		pendingPermission: make(map[string]*pendingPermission),
 	}
 }
 
@@ -45,10 +60,21 @@ func (c *ClawBenchACPClient) RegisterSession(acpSessionID string, ch chan<- Stre
 
 // UnregisterSession removes the StreamEvent channel for an ACP session.
 // Must be called after the Prompt for this session completes.
+// Also cancels any pending permission requests for this session.
 func (c *ClawBenchACPClient) UnregisterSession(acpSessionID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.sessionRoutes, acpSessionID)
+
+	// Cancel any pending permission requests for this session
+	for key, pp := range c.pendingPermission {
+		if pp.SessionID == acpSessionID {
+			pp.Ch <- acp.RequestPermissionResponse{
+				Outcome: acp.NewRequestPermissionOutcomeCancelled(),
+			}
+			delete(c.pendingPermission, key)
+		}
+	}
 }
 
 // GetCommands returns the cached available commands from the last session/new.
@@ -92,16 +118,154 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 	return nil
 }
 
-// RequestPermission auto-approves the first permission option (current CLI behavior).
-func (c *ClawBenchACPClient) RequestPermission(_ context.Context, p acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) {
+// PermissionKey returns the map key for a pending permission request.
+// Exported so the handler layer can construct the key from URL parameters.
+func PermissionKey(sessionID, toolCallID string) string {
+	return sessionID + ":" + toolCallID
+}
+
+// RequestPermission blocks until the user responds to a permission request
+// via the HTTP API, or the context is cancelled (session cancelled/disconnected).
+// The ACP SDK dispatches inbound requests on dedicated goroutines, so blocking
+// here is safe — it won't deadlock the transport.
+func (c *ClawBenchACPClient) RequestPermission(ctx context.Context, p acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) {
 	if len(p.Options) == 0 {
 		return acp.RequestPermissionResponse{
 			Outcome: acp.NewRequestPermissionOutcomeCancelled(),
 		}, nil
 	}
-	return acp.RequestPermissionResponse{
-		Outcome: acp.NewRequestPermissionOutcomeSelected(p.Options[0].OptionId),
-	}, nil
+
+	toolCallID := string(p.ToolCall.ToolCallId)
+	sessionID := string(p.SessionId)
+	key := PermissionKey(sessionID, toolCallID)
+
+	// Extract tool info for the frontend card
+	var title string
+	if p.ToolCall.Title != nil {
+		title = *p.ToolCall.Title
+	}
+	var kind acp.ToolKind
+	if p.ToolCall.Kind != nil {
+		kind = *p.ToolCall.Kind
+	}
+	toolName := extractToolName(title, kind)
+	var toolInput string
+	if p.ToolCall.RawInput != nil {
+		if b, err := json.Marshal(p.ToolCall.RawInput); err == nil {
+			toolInput = string(b)
+		}
+	}
+
+	pp := &pendingPermission{
+		SessionID:  sessionID,
+		ToolCallID: toolCallID,
+		ToolName:   toolName,
+		ToolInput:  toolInput,
+		Options:    p.Options,
+		Ch:         make(chan acp.RequestPermissionResponse, 1),
+	}
+
+	// Register the pending permission
+	c.mu.Lock()
+	c.pendingPermission[key] = pp
+	// Get the stream channel to emit the tool_use event
+	ch, ok := c.sessionRoutes[sessionID]
+	c.mu.Unlock()
+
+	if !ok {
+		// No active stream — auto-cancel
+		c.mu.Lock()
+		delete(c.pendingPermission, key)
+		c.mu.Unlock()
+		return acp.RequestPermissionResponse{
+			Outcome: acp.NewRequestPermissionOutcomeCancelled(),
+		}, nil
+	}
+
+	// Emit a tool_use event for the PermissionApproval card in the AI message
+	approvalInput := map[string]any{
+		"session_id":  sessionID,
+		"toolCallId":  toolCallID,
+		"toolName":    toolName,
+		"toolInput":   toolInput,
+		"options":     p.Options,
+	}
+	inputJSON, _ := json.Marshal(approvalInput)
+
+	forwardACPEvent(ch, StreamEvent{
+		Type: "tool_use",
+		Tool: &ToolCall{
+			Name:  "PermissionApproval",
+			ID:    toolCallID,
+			Input: string(inputJSON),
+			Done:  false,
+		},
+	})
+
+	slog.Info("acp: permission request pending user response",
+		"session_id", sessionID,
+		"tool_call_id", toolCallID,
+		"tool_name", toolName,
+	)
+
+	// Block until user responds or context is cancelled
+	select {
+	case resp := <-pp.Ch:
+		c.mu.Lock()
+		delete(c.pendingPermission, key)
+		c.mu.Unlock()
+
+		// Emit tool_result to mark the PermissionApproval as done
+		resultStatus := "success"
+		resultOutput := "Approved"
+		if resp.Outcome.Cancelled != nil {
+			resultStatus = "error"
+			resultOutput = "Cancelled"
+		}
+		forwardACPEvent(ch, StreamEvent{
+			Type: "tool_result",
+			Tool: &ToolCall{
+				ID:     toolCallID,
+				Done:   true,
+				Status: resultStatus,
+				Output: resultOutput,
+			},
+		})
+
+		return resp, nil
+	case <-ctx.Done():
+		c.mu.Lock()
+		delete(c.pendingPermission, key)
+		c.mu.Unlock()
+		return acp.RequestPermissionResponse{
+			Outcome: acp.NewRequestPermissionOutcomeCancelled(),
+		}, ctx.Err()
+	}
+}
+
+// RespondPermission delivers a user's response to a pending permission request.
+// Called by the HTTP handler when the frontend submits the user's choice.
+// Returns false if no pending request was found for this key.
+func (c *ClawBenchACPClient) RespondPermission(key string, optionID string, cancelled bool) bool {
+	c.mu.Lock()
+	pp, ok := c.pendingPermission[key]
+	if !ok {
+		c.mu.Unlock()
+		return false
+	}
+	delete(c.pendingPermission, key)
+	c.mu.Unlock()
+
+	if cancelled {
+		pp.Ch <- acp.RequestPermissionResponse{
+			Outcome: acp.NewRequestPermissionOutcomeCancelled(),
+		}
+	} else {
+		pp.Ch <- acp.RequestPermissionResponse{
+			Outcome: acp.NewRequestPermissionOutcomeSelected(acp.PermissionOptionId(optionID)),
+		}
+	}
+	return true
 }
 
 // isPathAllowed checks that the given path is absolute and under an allowed root.

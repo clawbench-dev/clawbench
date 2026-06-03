@@ -110,6 +110,43 @@ func (p *ACPConnectionPool) GetClient(agentID string) *ClawBenchACPClient {
 	return entry.GetClient()
 }
 
+// GetClientByACPSession returns the ClawBenchACPClient for the connection
+// that owns the given ACP session ID. It searches all entries' session maps.
+// Returns nil if no matching session is found.
+func (p *ACPConnectionPool) GetClientByACPSession(acpSessionID string) *ClawBenchACPClient {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for _, entry := range p.entries {
+		entry.mu.Lock()
+		for _, sid := range entry.sessions {
+			if sid == acpSessionID {
+				client := entry.client
+				entry.mu.Unlock()
+				return client
+			}
+		}
+		entry.mu.Unlock()
+	}
+	return nil
+}
+
+// GetACPSessionID resolves a ClawBench session ID to the ACP session ID
+// on the given agent's connection. Returns empty string if not found.
+func (p *ACPConnectionPool) GetACPSessionID(agentID, clawbenchSID string) string {
+	p.mu.Lock()
+	entry, ok := p.entries[agentID]
+	p.mu.Unlock()
+
+	if !ok {
+		return ""
+	}
+
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	return entry.sessions[clawbenchSID]
+}
+
 // idleSweeper periodically kills idle connections.
 func (p *ACPConnectionPool) idleSweeper() {
 	ticker := time.NewTicker(idleCheckInterval)

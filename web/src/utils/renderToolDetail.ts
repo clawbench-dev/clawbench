@@ -11,6 +11,7 @@ import { useAppMode } from '@/composables/useAppMode.ts'
 import { gt } from '@/composables/useLocale'
 import { store } from '@/stores/app.ts'
 import { renderMarkdown } from '@/composables/useMarkdownRenderer.ts'
+import { getSessionId } from '@/composables/useSessionIdentity.ts'
 
 // ────────────────────────────────────────────────────────────
 // Tool renderer functions
@@ -435,6 +436,68 @@ function renderSkillCall(input: Record<string, any>): string {
 }
 
 /**
+ * Render PermissionApproval tool input as an interactive permission card.
+ * Shows tool name + description, permission options as buttons.
+ * Clicking an option calls POST /api/ai/permission/respond.
+ */
+function renderPermissionApproval(input: Record<string, any>): string {
+  const options = Array.isArray(input.options) ? input.options : []
+  const toolName = input.toolName || ''
+  const toolInput = input.toolInput || ''
+
+  let html = '<div class="permission-approval-view">'
+
+  // Header
+  html += '<div class="permission-header">'
+  html += `<span class="permission-icon">⚠️</span>`
+  html += `<span class="permission-title">${escapeHtml(gt('tool.permission.title'))}</span>`
+  html += '</div>'
+
+  // Tool description
+  if (toolName) {
+    html += `<div class="permission-tool-name">${escapeHtml(toolName)}</div>`
+  }
+  if (toolInput) {
+    try {
+      const parsed = JSON.parse(toolInput)
+      const filePath = parsed.file_path || parsed.path || ''
+      const command = parsed.command || ''
+      if (filePath) {
+        html += `<div class="permission-tool-detail"><span class="permission-detail-label">${escapeHtml(gt('tool.permission.file'))}</span><code>${escapeHtml(filePath)}</code></div>`
+      }
+      if (command) {
+        html += `<div class="permission-tool-detail"><span class="permission-detail-label">${escapeHtml(gt('tool.permission.command'))}</span><code>${escapeHtml(command)}</code></div>`
+      }
+    } catch {
+      // Not JSON, show as-is
+      html += `<div class="permission-tool-detail"><code>${escapeHtml(toolInput.substring(0, 200))}</code></div>`
+    }
+  }
+
+  // Option buttons
+  if (options.length > 0) {
+    html += '<div class="permission-options">'
+    for (let i = 0; i < options.length; i++) {
+      const opt = options[i]
+      const label = opt.name || ''
+      const kind = opt.kind || ''
+      const optionId = opt.optionId || ''
+      let btnClass = 'permission-btn'
+      if (kind === 'allow_once' || kind === 'allow_always') {
+        btnClass += ' permission-btn-allow'
+      } else {
+        btnClass += ' permission-btn-reject'
+      }
+      html += `<button class="${btnClass}" data-option-id="${escapeHtml(String(optionId))}" data-kind="${escapeHtml(kind)}">${escapeHtml(label)}</button>`
+    }
+    html += '</div>'
+  }
+
+  html += '</div>'
+  return html
+}
+
+/**
  * Render input as JSON (the fallback for unregistered tools).
  */
 function renderJsonFallback(input: any): string {
@@ -587,10 +650,32 @@ registerToolRenderer('WebSearch', renderWebSearch)
 registerToolRenderer('WebFetch', renderWebFetch)
 registerToolRenderer('Agent', renderAgentCall)
 registerToolRenderer('Skill', renderSkillCall)
+registerToolRenderer('PermissionApproval', renderPermissionApproval)
 
 TOOL_AUTO_EXPAND.add('askuserquestion')
+TOOL_AUTO_EXPAND.add('permissionapproval')
 
 // ── AskUserQuestion action handler ──
+
+// Helper: fetch current session ID from the global singleton
+function getCurrentSessionId(): string {
+  return getSessionId()
+}
+
+// Helper: call the permission respond API
+async function respondPermission(sessionId: string, toolCallId: string, optionId: string, cancelled: boolean): Promise<boolean> {
+  try {
+    const resp = await fetch('/api/ai/permission/respond', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, toolCallId, optionId, cancelled }),
+    })
+    return resp.ok
+  } catch (e) {
+    console.error('permission respond failed:', e)
+    return false
+  }
+}
 
 function updateAskSubmitState(view: Element) {
   const items = view.querySelectorAll('.ask-question-item')
@@ -687,5 +772,62 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
   }
 
   // Not an AskUserQuestion-specific click — fall through
+  return false
+})
+
+// ── PermissionApproval action handler ──
+
+registerToolActionHandler('PermissionApproval', (event, emit) => {
+  const target = event.target as HTMLElement
+
+  // Button click
+  const btn = target.closest('.permission-btn') as HTMLElement | null
+  if (btn) {
+    event.stopPropagation()
+    event.preventDefault()
+
+    const view = btn.closest('.permission-approval-view')
+    if (!view || view.classList.contains('permission-responded')) {
+      return true
+    }
+
+    const optionId = btn.dataset.optionId || ''
+    const kind = btn.dataset.kind || ''
+    const cancelled = kind === 'reject_once' || kind === 'reject_always'
+
+    // Extract sessionId and toolCallId from the tool-detail container's data attributes
+    const toolDetail = btn.closest('.tool-detail') as HTMLElement | null
+    const sessionId = toolDetail?.dataset?.sessionId || getCurrentSessionId()
+    const toolCallId = toolDetail?.dataset?.toolCallId || ''
+
+    if (!toolCallId) {
+      console.warn('PermissionApproval: no toolCallId found')
+      return true
+    }
+
+    // Mark as responded
+    view.classList.add('permission-responded')
+    const allBtns = view.querySelectorAll('.permission-btn')
+    for (const b of allBtns) {
+      ;(b as HTMLButtonElement).disabled = true
+      if (b !== btn) {
+        ;(b as HTMLElement).style.opacity = '0.4'
+      }
+    }
+
+    // Show feedback
+    if (cancelled) {
+      btn.textContent = gt('tool.permission.denied')
+    } else {
+      btn.textContent = gt('tool.permission.approved')
+    }
+
+    // Call the API
+    respondPermission(sessionId, toolCallId, optionId, cancelled)
+
+    return true
+  }
+
+  // Not a PermissionApproval-specific click — fall through
   return false
 })

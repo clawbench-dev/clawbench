@@ -9,10 +9,17 @@ import { type Locator, type Page, expect } from '@playwright/test'
  * - .chat-stop-btn        → stop/cancel button (visible during loading)
  * - .quick-send-title     → quick-send popup title
  * - .model-chip           → model selector chip
+ * - .mode-chip            → ACP mode selector chip
  * - .chat-messages        → messages scroll container
  * - .chat-message.user    → user message
  * - .chat-message.assistant → AI assistant message
  * - .chat-action-btn      → session management buttons (sessions, new, delete, speech)
+ * - .chat-attach-btn      → file attachment button
+ * - .chat-file-attachment → attached file tag
+ * - .summary-toggle-btn   → summary toggle button on assistant message
+ * - .chat-thinking        → thinking block in assistant message
+ * - .thinking-collapsed   → collapsed thinking block
+ * - .thinking-header      → thinking block header (clickable to expand)
  */
 export class ChatPage {
   readonly page: Page
@@ -21,6 +28,7 @@ export class ChatPage {
   readonly stopButton: Locator
   readonly messagesContainer: Locator
   readonly modelChip: Locator
+  readonly modeChip: Locator
 
   constructor(page: Page) {
     this.page = page
@@ -29,6 +37,7 @@ export class ChatPage {
     this.stopButton = page.locator('.chat-stop-btn')
     this.messagesContainer = page.locator('.chat-messages')
     this.modelChip = page.locator('.model-chip')
+    this.modeChip = page.locator('.mode-chip')
   }
 
   /** Fill the textarea with text */
@@ -43,11 +52,12 @@ export class ChatPage {
 
   /** Fill the textarea and click send */
   async sendMessage(text: string) {
+    // Clear existing content and fill with new text
+    // Using clear() + fill() ensures the textarea is properly cleared
+    // before setting the new value, avoiding stale content from v-model.
+    await this.textarea.clear()
     await this.textarea.fill(text)
     // Brief pause to let Vue's v-model react to the filled value.
-    // Without this, Firefox/WebKit may fire the click before the
-    // framework has processed the input event, sending an empty message.
-    // 200ms gives more headroom for slower browser engines.
     await this.page.waitForTimeout(200)
     await this.sendButton.click()
   }
@@ -94,18 +104,18 @@ export class ChatPage {
   /**
    * Wait for ACP slash commands to be available.
    * Polls the /api/ai/commands endpoint until commands are returned.
+   * Uses relative URL so the browser's auth cookies are included.
    */
   async waitForACPCommands(timeout = 20000): Promise<void> {
-    const baseURL = `http://localhost:${process.env.E2E_PORT || 20100}`
     const start = Date.now()
     while (Date.now() - start < timeout) {
       try {
-        const result = await this.page.evaluate(async (url) => {
-          const resp = await fetch(`${url}/api/ai/commands`)
+        const result = await this.page.evaluate(async () => {
+          const resp = await fetch('/api/ai/commands')
           if (!resp.ok) return { ok: false, count: 0 }
           const data = await resp.json()
           return { ok: true, count: data.commands?.length || 0 }
-        }, baseURL)
+        })
         if (result.count > 0) return
       } catch {
         // Network error — server might not be ready
@@ -123,9 +133,11 @@ export class ChatPage {
   async sendAndAwaitACPReply(text: string, timeout = 30000): Promise<void> {
     await this.sendMessage(text)
     await this.waitForReply(timeout)
-    // Wait a bit more for mode_update/config_update/commands_update
-    // SSE events to propagate to the frontend after the reply starts
-    await this.page.waitForTimeout(500)
+    // Wait for mode_update/config_update/commands_update SSE events
+    // to propagate to the frontend. These events are sent at the start
+    // of ExecuteStream (before Prompt), but Vue reactivity + DOM update
+    // can take a few render cycles. 2s gives safe headroom.
+    await this.page.waitForTimeout(2000)
   }
 
   /**
@@ -176,5 +188,76 @@ export class ChatPage {
 
     // Wait for the textarea to be ready
     await expect(this.textarea).toBeVisible({ timeout: 5000 })
+  }
+
+  // ───────────────────────────────────────────────────────
+  // ModelModal helpers
+  // ───────────────────────────────────────────────────────
+
+  /** Open ModelModal by clicking the model chip */
+  async openModelModal(): Promise<void> {
+    await this.modelChip.click()
+    // Wait for modal to appear
+    await expect(this.page.locator('.model-tab').first()).toBeVisible({ timeout: 5000 })
+  }
+
+  /** Switch to a model by name in ModelModal */
+  async switchModel(modelName: string): Promise<void> {
+    const item = this.page.locator('.model-item').filter({ hasText: modelName })
+    await expect(item).toBeVisible({ timeout: 5000 })
+    await item.click()
+  }
+
+  /** Search models in ModelModal */
+  async searchModel(query: string): Promise<void> {
+    const input = this.page.locator('.model-search-input')
+    await expect(input).toBeVisible({ timeout: 5000 })
+    await input.fill(query)
+  }
+
+  /** Switch to the thinking effort tab in ModelModal */
+  async openThinkingTab(): Promise<void> {
+    const thinkingTab = this.page.locator('.model-tab').filter({ hasText: /thinking|思考/i })
+    await expect(thinkingTab).toBeVisible({ timeout: 5000 })
+    await thinkingTab.click()
+  }
+
+  /** Select a thinking effort level by name */
+  async selectThinkingEffort(name: string): Promise<void> {
+    const item = this.page.locator('.thinking-item').filter({ hasText: new RegExp(name, 'i') })
+    await expect(item).toBeVisible({ timeout: 5000 })
+    await item.click()
+  }
+
+  /** Click the set-default star button on a thinking item by name */
+  async setDefaultThinkingEffort(name: string): Promise<void> {
+    const item = this.page.locator('.thinking-item').filter({ hasText: new RegExp(name, 'i') })
+    await expect(item).toBeVisible({ timeout: 5000 })
+    await item.locator('.set-default-btn').click()
+  }
+
+  /** Click the set-default star button on a model item by name */
+  async setDefaultModel(modelName: string): Promise<void> {
+    const item = this.page.locator('.model-item').filter({ hasText: modelName })
+    await expect(item).toBeVisible({ timeout: 5000 })
+    await item.locator('.set-default-btn').click()
+  }
+
+  // ───────────────────────────────────────────────────────
+  // ACP Mode helpers
+  // ───────────────────────────────────────────────────────
+
+  /** Open the ACP mode selection menu by clicking the mode chip */
+  async openModeMenu(): Promise<void> {
+    await this.modeChip.click()
+    // Wait for mode menu to appear
+    await expect(this.page.locator('.mode-menu-item').first()).toBeVisible({ timeout: 5000 })
+  }
+
+  /** Select an ACP mode by name */
+  async selectMode(modeName: string): Promise<void> {
+    const item = this.page.locator('.mode-menu-item').filter({ hasText: new RegExp(modeName, 'i') })
+    await expect(item).toBeVisible({ timeout: 5000 })
+    await item.click()
   }
 }

@@ -5,6 +5,7 @@ import {
   CircleDot, ListChecks, ListTodo, Target,
   FileText, Compass, CheckCircle2, FolderSync, Monitor,
   Users, MessageSquare, Send, Save, Camera, Wrench,
+  ShieldAlert,
   // Fallback
   Wrench as WrenchFallback,
   // Thinking
@@ -54,6 +55,7 @@ export const TOOL_ICONS: Record<string, { icon: typeof Wrench; category: string 
   'StructuredOutput':  { icon: FileText,         category: 'file' },
   'SkillManage':       { icon: Sparkles,         category: 'skill' },
   'Monitor':           { icon: Monitor,          category: 'bash' },
+  'PermissionApproval':{ icon: ShieldAlert,      category: 'permission' },
 }
 
 export const FALLBACK_TOOL_ICON = { icon: WrenchFallback, category: 'fallback' }

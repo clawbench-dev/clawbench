@@ -301,6 +301,36 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 		return err
 	}
 
+	// 4b. Request permission for a write operation (simulating agent asking for approval)
+	writeTitle := "Writing to main.go"
+	writeKind := acp.ToolKindEdit
+	permResp, err := a.conn.RequestPermission(ctx, acp.RequestPermissionRequest{
+		SessionId: acp.SessionId(sid),
+		ToolCall: acp.ToolCallUpdate{
+			ToolCallId: acp.ToolCallId("call_write_perm_1"),
+			Title:      &writeTitle,
+			Kind:       &writeKind,
+			RawInput:   map[string]any{"file_path": "/project/main.go", "content": "package main\nfunc main() {}"},
+			Status:     nil,
+		},
+		Options: []acp.PermissionOption{
+			{Kind: acp.PermissionOptionKindAllowOnce, Name: "Allow Once", OptionId: "allow_once"},
+			{Kind: acp.PermissionOptionKindAllowAlways, Name: "Allow Always", OptionId: "allow_always"},
+			{Kind: acp.PermissionOptionKindRejectOnce, Name: "Deny", OptionId: "reject_once"},
+		},
+	})
+	if err != nil {
+		// Non-fatal: permission request may fail if client doesn't support it
+		slog.Warn("acp-mock: request_permission failed (non-fatal)", "error", err)
+	} else if permResp.Outcome.Selected != nil {
+		slog.Info("acp-mock: permission granted", "option_id", permResp.Outcome.Selected.OptionId)
+	} else {
+		slog.Info("acp-mock: permission cancelled")
+	}
+	if err := pause(ctx, 50*time.Millisecond); err != nil {
+		return err
+	}
+
 	// 5. Send the main response text word-by-word
 	response := "Hello! I am a mock ACP agent for E2E testing. I received your message and processed it successfully."
 	words := strings.Fields(response)

@@ -70,3 +70,6 @@ playwright-report/
 .nyc_output/
 coverage/e2e/
 stdout.log
+acp-mock
+clawbench-new
+clawbench-test
