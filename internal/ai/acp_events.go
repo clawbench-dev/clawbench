@@ -37,8 +37,15 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		forwardACPEvent(ch, event)
 
 	case update.Plan != nil:
-		// Plan updates don't map to current StreamEvent types; skip
-		slog.Debug("acp: plan update received", "entries", len(update.Plan.Entries))
+		entries := make([]PlanEntry, 0, len(update.Plan.Entries))
+		for _, e := range update.Plan.Entries {
+			entries = append(entries, PlanEntry{
+				Content:  e.Content,
+				Priority: string(e.Priority),
+				Status:   string(e.Status),
+			})
+		}
+		forwardACPEvent(ch, StreamEvent{Type: "plan_update", Plan: &PlanState{Entries: entries}})
 
 	case update.AvailableCommandsUpdate != nil:
 		cmds := update.AvailableCommandsUpdate.AvailableCommands

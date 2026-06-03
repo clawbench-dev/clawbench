@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -179,6 +180,57 @@ func TestForwardACPEvent_ChannelFull(t *testing.T) {
 }
 
 // --- NewACPBackend validation tests ---
+
+// --- mapACPSessionUpdate plan_update tests ---
+
+func TestMapACPSessionUpdate_PlanUpdate(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	entries := []acp.PlanEntry{
+		{Content: "Read project files", Priority: acp.PlanEntryPriorityHigh, Status: acp.PlanEntryStatusCompleted},
+		{Content: "Implement feature", Priority: acp.PlanEntryPriorityHigh, Status: acp.PlanEntryStatusInProgress},
+		{Content: "Write tests", Priority: acp.PlanEntryPriorityMedium, Status: acp.PlanEntryStatusPending},
+	}
+
+	update := acp.SessionUpdate{
+		Plan: &acp.SessionUpdatePlan{
+			Entries: entries,
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx)
+
+	// Assert exactly 1 event on channel
+	select {
+	case event := <-ch:
+		assert.Equal(t, "plan_update", event.Type)
+		require.NotNil(t, event.Plan)
+		assert.Len(t, event.Plan.Entries, 3)
+
+		// Verify each entry's fields
+		assert.Equal(t, "Read project files", event.Plan.Entries[0].Content)
+		assert.Equal(t, "high", event.Plan.Entries[0].Priority)
+		assert.Equal(t, "completed", event.Plan.Entries[0].Status)
+
+		assert.Equal(t, "Implement feature", event.Plan.Entries[1].Content)
+		assert.Equal(t, "high", event.Plan.Entries[1].Priority)
+		assert.Equal(t, "in_progress", event.Plan.Entries[1].Status)
+
+		assert.Equal(t, "Write tests", event.Plan.Entries[2].Content)
+		assert.Equal(t, "medium", event.Plan.Entries[2].Priority)
+		assert.Equal(t, "pending", event.Plan.Entries[2].Status)
+	default:
+		t.Fatal("expected plan_update event on channel")
+	}
+
+	// Assert no extra events
+	select {
+	case <-ch:
+		t.Fatal("expected only one event")
+	default:
+	}
+}
 
 func TestNewACPBackend_InvalidTransport(t *testing.T) {
 	agent := &model.Agent{
