@@ -123,6 +123,10 @@ export default {
     modeSwitcher: {
       title: 'Session mode',
     },
+    plan: {
+      title: 'Execution Plan',
+      completedCount: '{completed}/{total} done',
+    },
     modelModal: {
       searchPlaceholder: 'Search models...',
       refresh: 'Refresh models',

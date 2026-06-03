@@ -123,6 +123,10 @@ export default {
     modeSwitcher: {
       title: '会话模式',
     },
+    plan: {
+      title: '执行计划',
+      completedCount: '{completed}/{total} 完成',
+    },
     modelModal: {
       searchPlaceholder: '搜索模型...',
       refresh: '刷新模型',
