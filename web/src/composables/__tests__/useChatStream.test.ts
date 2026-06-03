@@ -1579,6 +1579,99 @@ describe('useChatStream', () => {
     })
   })
 
+  describe('plan_update event', () => {
+    it('should handle plan_update event and update plan entries', async () => {
+      const { clearPlanState } = await import('@/composables/usePlanProgress')
+      clearPlanState()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('plan_update', {
+        entries: [
+          { content: 'Analyze code', priority: 'high', status: 'completed' },
+          { content: 'Refactor', priority: 'high', status: 'in_progress' },
+          { content: 'Test', priority: 'medium', status: 'pending' },
+        ]
+      })
+
+      const { usePlanProgress } = await import('@/composables/usePlanProgress')
+      const { planEntries, hasPlan } = usePlanProgress()
+      expect(hasPlan.value).toBe(true)
+      expect(planEntries.value).toHaveLength(3)
+      expect(planEntries.value[1].content).toBe('Refactor')
+    })
+
+    it('should ignore plan_update when guard fails', async () => {
+      const { clearPlanState } = await import('@/composables/usePlanProgress')
+      clearPlanState()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      // Change session to fail guard
+      options.currentSessionId.value = 'different-session'
+
+      es.simulate('plan_update', {
+        entries: [
+          { content: 'Task', priority: 'high', status: 'pending' },
+        ]
+      })
+
+      const { usePlanProgress } = await import('@/composables/usePlanProgress')
+      const { hasPlan } = usePlanProgress()
+      expect(hasPlan.value).toBe(false)
+    })
+
+    it('should skip plan_update with invalid JSON', async () => {
+      const { clearPlanState } = await import('@/composables/usePlanProgress')
+      clearPlanState()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      es.listeners.get('plan_update')?.forEach(listener => {
+        listener({ data: 'not-json' } as any)
+      })
+      consoleSpy.mockRestore()
+
+      const { usePlanProgress } = await import('@/composables/usePlanProgress')
+      const { hasPlan } = usePlanProgress()
+      expect(hasPlan.value).toBe(false)
+    })
+
+    it('should skip plan_update when entries is not an array', async () => {
+      const { clearPlanState } = await import('@/composables/usePlanProgress')
+      clearPlanState()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('plan_update', { entries: 'not-an-array' })
+
+      const { usePlanProgress } = await import('@/composables/usePlanProgress')
+      const { hasPlan } = usePlanProgress()
+      expect(hasPlan.value).toBe(false)
+    })
+  })
+
   describe('resume_split event (AutoResume)', () => {
     it('should finalize Phase 1 message and create new Phase 2 streaming message', () => {
       const options = createOptions()
