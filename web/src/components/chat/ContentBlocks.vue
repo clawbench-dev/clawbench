@@ -124,6 +124,11 @@
         <span class="at-command-badge">{{ extractAtCommand(block.text).command }}</span>
         <span v-if="extractAtCommand(block.text).rest.trim()" class="at-command-rest">{{ extractAtCommand(block.text).rest.trim() }}</span>
       </template>
+      <!-- Text block with slash command badge (user message starting with /command from ACP backend) -->
+      <template v-else-if="block.type === 'text' && extractSlashCommand(block.text || '')">
+        <span class="slash-command-badge">{{ extractSlashCommand(block.text).command }}</span>
+        <span v-if="extractSlashCommand(block.text).rest.trim()" class="at-command-rest">{{ extractSlashCommand(block.text).rest.trim() }}</span>
+      </template>
       <!-- Text block: streaming uses throttled render to avoid UI freeze -->
       <div v-else-if="block.type === 'text'" v-html="getBlockHtml(bi, block)"></div>
     </template>
@@ -156,6 +161,7 @@ import {
   hasScheduledTasks as hasScheduledTasksUtil,
   scheduledTaskKeys as scheduledTaskKeysUtil,
   extractAtCommand,
+  extractSlashCommand,
 } from '@/utils/contentBlocks.ts'
 
 const { t, locale } = useI18n()
@@ -969,6 +975,25 @@ onUnmounted(() => {
 :root[data-theme="dark"] .at-command-badge {
   background: color-mix(in srgb, #a78bfa 15%, transparent);
   color: #a78bfa;
+}
+
+/* Slash command badge in user messages (ACP backend commands) */
+.slash-command-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: color-mix(in srgb, #0ea5e9 15%, transparent);
+  color: #0ea5e9;
+  font-size: 12px;
+  font-weight: 600;
+  margin-right: 4px;
+  vertical-align: baseline;
+  line-height: 1.6;
+}
+
+:root[data-theme="dark"] .slash-command-badge {
+  background: color-mix(in srgb, #38bdf8 15%, transparent);
+  color: #38bdf8;
 }
 
 .at-command-rest {

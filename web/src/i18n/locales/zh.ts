@@ -84,6 +84,7 @@ export default {
       placeholderOptional: '添加描述（可选）...',
       placeholderQuickSend: '点击⚡选指令 →',
       placeholderAtCommand: "输入 {'@'} 执行内置命令",
+      placeholderCommand: "输入 {'@'} 或 {'/'} 执行命令",
       send: '发送',
       enqueue: '加入队列',
       quickMenu: '快捷指令',
@@ -95,6 +96,9 @@ export default {
       title: '命令',
       chatsearchDesc: '搜索聊天历史',
       taskDesc: '管理定时任务',
+    },
+    slashCommand: {
+      title: 'Agent 命令',
     },
     actions: {
       session: '会话',

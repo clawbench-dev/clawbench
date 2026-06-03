@@ -84,6 +84,7 @@ export default {
       placeholderOptional: 'Add description (optional)...',
       placeholderQuickSend: 'Tap ⚡ for quick commands →',
       placeholderAtCommand: "Type {'@'} for built-in commands",
+      placeholderCommand: "Type {'@'} or {'/'} for commands",
       send: 'Send',
       enqueue: 'Enqueue',
       quickMenu: 'Quick commands',
@@ -95,6 +96,9 @@ export default {
       title: 'Commands',
       chatsearchDesc: 'Search chat history',
       taskDesc: 'Manage scheduled tasks',
+    },
+    slashCommand: {
+      title: 'Agent Commands',
     },
     actions: {
       session: 'Chat',

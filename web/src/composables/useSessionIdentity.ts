@@ -20,6 +20,7 @@ const currentThinkingEffort = ref('')
 const currentModeId = ref('')
 const currentModeName = ref('')
 const availableModes = ref<Array<{ id: string; name: string }>>([])
+const availableCommands = ref<Array<{ name: string; description: string; inputHint?: string }>>([])
 const runningSessions = ref(new Set<string>())
 // Bumped on every mutation to runningSessions so computed properties
 // that depend on the set's contents re-evaluate correctly.
@@ -42,6 +43,7 @@ export function resetIdentity(): void {
   currentModeId.value = ''
   currentModeName.value = ''
   availableModes.value = []
+  availableCommands.value = []
   runningSessions.value = new Set()
   runningSessionsVersion.value = 0
   sessionDrawerOpen.value = false
@@ -114,6 +116,16 @@ export function clearModeState() {
   currentModeId.value = ''
   currentModeName.value = ''
   availableModes.value = []
+}
+
+/** Update available slash commands from ACP commands_update event. */
+export function updateCommandState(commands: Array<{ name: string; description: string; inputHint?: string }>) {
+  availableCommands.value = commands
+}
+
+/** Clear command state (called on session switch). */
+export function clearCommandState() {
+  availableCommands.value = []
 }
 
 // ───────────────────────────────────────────────────────────
@@ -395,6 +407,7 @@ export function useSessionIdentity() {
     currentModeId,
     currentModeName,
     availableModes,
+    availableCommands,
     runningSessions,
     runningSessionsVersion,
     agentHeaderTitle,

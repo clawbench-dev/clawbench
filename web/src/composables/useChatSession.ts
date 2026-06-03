@@ -3,7 +3,7 @@ import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
-import { clearModeState } from '@/composables/useSessionIdentity.ts'
+import { clearModeState, clearCommandState } from '@/composables/useSessionIdentity.ts'
 import { useAgents } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
@@ -282,6 +282,8 @@ export function useChatSession(options: UseChatSessionOptions) {
     Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
     // Clear mode state from previous ACP session — will be repopulated by SSE mode_update
     clearModeState()
+    // Clear slash commands from previous ACP session — will be repopulated by SSE commands_update
+    clearCommandState()
     try {
       // Load agents first so we can resolve agent names
       if (agents.value.length === 0) await loadAgents()

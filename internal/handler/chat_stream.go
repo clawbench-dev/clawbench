@@ -215,6 +215,13 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 					data, _ := json.Marshal(event.Config)
 					fmt.Fprintf(w, "event: config_update\ndata: %s\n\n", data)
 				}
+			case "commands_update":
+				if event.Commands != nil {
+					data, _ := json.Marshal(map[string]any{
+						"commands": event.Commands,
+					})
+					fmt.Fprintf(w, "event: commands_update\ndata: %s\n\n", data)
+				}
 			}
 
 			if canFlush {

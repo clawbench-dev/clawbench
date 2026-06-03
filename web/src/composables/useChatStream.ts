@@ -2,7 +2,7 @@ import { onMounted, onUnmounted, type Ref } from 'vue'
 import { cancelChat } from '@/utils/api'
 import { useReconnect } from './useReconnect'
 import { gt } from '@/composables/useLocale'
-import { updateModeState } from './useSessionIdentity'
+import { updateModeState, updateCommandState } from './useSessionIdentity'
 import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState } from '@/utils/chatStreamUtils.ts'
 
 export interface UseChatStreamOptions {
@@ -539,6 +539,15 @@ export function useChatStream(options: UseChatStreamOptions) {
         const modes = (modeOption.values || []).map((v: any) => ({ id: v.id, name: v.name || v.id }))
         const currentId = data.currentValueId || ''
         updateModeState(currentId, modes)
+      }
+    })
+
+    eventSource.addEventListener('commands_update', (e) => {
+      if (!guard()) return
+      let data: any
+      try { data = JSON.parse(e.data) } catch { console.warn('SSE commands_update: invalid JSON, skipping'); return }
+      if (Array.isArray(data.commands)) {
+        updateCommandState(data.commands)
       }
     })
 

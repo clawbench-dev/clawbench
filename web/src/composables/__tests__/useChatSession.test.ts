@@ -104,6 +104,7 @@ vi.mock('@/composables/useSessionIdentity', () => ({
       get value() { return mockIdentity.currentThinkingEffort },
       set value(v) { mockIdentity.currentThinkingEffort = v },
     },
+    availableCommands: { value: [] },
     runningSessions: {
       get value() { return mockState.runningSessions },
     },
@@ -124,6 +125,8 @@ vi.mock('@/composables/useSessionIdentity', () => ({
     loadModelPref: mockIdentityFns.loadModelPref,
     loadThinkingPref: mockIdentityFns.loadThinkingPref,
   }),
+  clearModeState: vi.fn(),
+  clearCommandState: vi.fn(),
 }))
 
 vi.mock('@/composables/useToast', () => ({

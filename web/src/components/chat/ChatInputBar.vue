@@ -182,11 +182,19 @@
         </button>
       </PopupMenu>
       <QuickSendDialog :open="props.active && quickSendStore.showEditDialog.value" @close="quickSendStore.showEditDialog.value = false" />
-      <!-- @ command autocomplete menu -->
+      <!-- @ command autocomplete menu (ClawBench built-in) -->
       <PopupMenu v-model:show="showAtMenu" :target-element="textareaRef" :max-width="260" :max-height="200" :menu-items-count="atMenuItems.length">
         <div class="at-menu-title">{{ t('chat.atCommand.title') }}</div>
         <button v-for="cmd in atMenuItems" :key="cmd.key" class="at-menu-item" @mousedown.prevent="handleAtSelect(cmd)">
           <span class="at-menu-label">{{ cmd.label }}</span>
+          <span class="at-menu-desc">{{ cmd.description }}</span>
+        </button>
+      </PopupMenu>
+      <!-- Slash command autocomplete menu (ACP backend commands) -->
+      <PopupMenu v-if="availableCommands.length > 0" v-model:show="showSlashMenu" :target-element="textareaRef" :max-width="300" :max-height="240" :menu-items-count="slashMenuItems.length">
+        <div class="at-menu-title">{{ t('chat.slashCommand.title') }}</div>
+        <button v-for="cmd in slashMenuItems" :key="cmd.key" class="at-menu-item" @mousedown.prevent="handleSlashSelect(cmd)">
+          <span class="at-menu-label slash-label">{{ cmd.label }}</span>
           <span class="at-menu-desc">{{ cmd.description }}</span>
         </button>
       </PopupMenu>
@@ -207,8 +215,10 @@ import { createStopButtonMachine } from '@/utils/stopButtonMachine.ts'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useQuickSend } from '@/composables/useQuickSend'
 import { useChatKeyboard } from '@/composables/useChatKeyboard'
+import { useSessionIdentity } from '@/composables/useSessionIdentity'
 
 const { t } = useI18n()
+const { availableCommands } = useSessionIdentity()
 const dialog = useDialog()
 const quickSendStore = useQuickSend()
 const { items: quickSendItems, fetchItems } = quickSendStore
@@ -224,7 +234,7 @@ const placeholderHints = computed(() => {
   if (quickSendItems.value.length > 0) {
     hints.push(t('chat.input.placeholderQuickSend'))
   }
-  hints.push(t('chat.input.placeholderAtCommand'))
+  hints.push(t('chat.input.placeholderCommand'))
   return hints
 })
 
@@ -321,6 +331,9 @@ const atCommands = [
   { key: '@task', label: '@task', description: t('chat.atCommand.taskDesc') },
 ]
 
+// ── Slash command autocomplete (ACP backend commands) ──
+const showSlashMenu = ref(false)
+
 const atMenuItems = computed(() => {
   const text = inputText.value
   if (!text.startsWith('@')) return []
@@ -328,18 +341,47 @@ const atMenuItems = computed(() => {
   return atCommands.filter(cmd => cmd.key.startsWith(query))
 })
 
+const slashMenuItems = computed(() => {
+  const text = inputText.value
+  if (!text.startsWith('/')) return []
+  const query = text.toLowerCase()
+  return availableCommands.value
+    .filter(cmd => ('/' + cmd.name).startsWith(query))
+    .map(cmd => ({
+      key: '/' + cmd.name,
+      label: '/' + cmd.name,
+      description: cmd.description,
+      inputHint: cmd.inputHint || '',
+    }))
+})
+
 // Directly control menu visibility from inputText changes
 watch(inputText, () => {
   const text = inputText.value
-  const shouldShow = text.startsWith('@')
+  // @ command menu
+  const shouldShowAt = text.startsWith('@')
     && !text.includes(' ')
     && atMenuItems.value.length > 0
-  showAtMenu.value = shouldShow
+  showAtMenu.value = shouldShowAt
+  // Slash command menu
+  const shouldShowSlash = text.startsWith('/')
+    && !text.includes(' ')
+    && slashMenuItems.value.length > 0
+  showSlashMenu.value = shouldShowSlash
 })
 
 function handleAtSelect(cmd) {
   inputText.value = cmd.key + ' '
   showAtMenu.value = false
+  nextTick(() => {
+    const el = textareaRef.value
+    if (el) el.focus()
+  })
+}
+
+function handleSlashSelect(cmd) {
+  inputText.value = cmd.key + ' '
+  showSlashMenu.value = false
   nextTick(() => {
     const el = textareaRef.value
     if (el) el.focus()
@@ -449,10 +491,11 @@ function onTextareaBlur() {
   if (!inputText.value.trim()) {
     startPlaceholderRotation()
   }
-  // Close @ command menu when textarea loses focus (clicking menu items uses
+  // Close @ and / command menus when textarea loses focus (clicking menu items uses
   // @mousedown.prevent so blur won't fire for those interactions)
   nextTick(() => {
     showAtMenu.value = false
+    showSlashMenu.value = false
   })
 }
 
@@ -633,10 +676,11 @@ function handleModeSelect(mode) {
 }
 
 // Menu mutual exclusion: opening one closes the others
-watch(showAttachMenu, (v) => { if (v) { showQuickMenu.value = false; showModelModal.value = false; showModeMenu.value = false } })
-watch(showQuickMenu, (v) => { if (v) { showAttachMenu.value = false; showModelModal.value = false; showModeMenu.value = false } })
-watch(showModelModal, (v) => { if (v) { showAttachMenu.value = false; showQuickMenu.value = false; showModeMenu.value = false } })
-watch(showModeMenu, (v) => { if (v) { showAttachMenu.value = false; showQuickMenu.value = false; showModelModal.value = false } })
+watch(showAttachMenu, (v) => { if (v) { showQuickMenu.value = false; showModelModal.value = false; showModeMenu.value = false; showSlashMenu.value = false } })
+watch(showQuickMenu, (v) => { if (v) { showAttachMenu.value = false; showModelModal.value = false; showModeMenu.value = false; showSlashMenu.value = false } })
+watch(showModelModal, (v) => { if (v) { showAttachMenu.value = false; showQuickMenu.value = false; showModeMenu.value = false; showSlashMenu.value = false } })
+watch(showModeMenu, (v) => { if (v) { showAttachMenu.value = false; showQuickMenu.value = false; showModelModal.value = false; showSlashMenu.value = false } })
+watch(showSlashMenu, (v) => { if (v) { showAttachMenu.value = false; showQuickMenu.value = false; showModelModal.value = false; showModeMenu.value = false } })
 
 onMounted(() => {
   fetchItems()
@@ -1440,6 +1484,14 @@ defineExpose({
 
 :root[data-theme="dark"] .at-menu-label {
   color: #a78bfa;
+}
+
+.at-menu-label.slash-label {
+  color: #0ea5e9;
+}
+
+:root[data-theme="dark"] .at-menu-label.slash-label {
+  color: #38bdf8;
 }
 
 .at-menu-desc {

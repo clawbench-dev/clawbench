@@ -13,6 +13,7 @@ import {
   hasScheduledTasks,
   scheduledTaskKeys,
   extractAtCommand,
+  extractSlashCommand,
 } from '@/utils/contentBlocks.ts'
 
 // ── isSevereWarning ──
@@ -349,5 +350,45 @@ describe('extractAtCommand', () => {
     expect(result).not.toBeNull()
     expect(result!.command).toBe('@task')
     expect(result!.rest).toBe('')
+  })
+})
+
+// ── extractSlashCommand ──
+describe('extractSlashCommand', () => {
+  it('detects /commit with rest text', () => {
+    const result = extractSlashCommand('/commit fix auth bug')
+    expect(result).not.toBeNull()
+    expect(result!.command).toBe('/commit')
+    expect(result!.rest).toBe(' fix auth bug')
+  })
+
+  it('detects /commit without rest text', () => {
+    const result = extractSlashCommand('/commit')
+    expect(result).not.toBeNull()
+    expect(result!.command).toBe('/commit')
+    expect(result!.rest).toBe('')
+  })
+
+  it('detects /superpowers:brainstorm with colon', () => {
+    const result = extractSlashCommand('/superpowers:brainstorm design')
+    expect(result).not.toBeNull()
+    expect(result!.command).toBe('/superpowers:brainstorm')
+    expect(result!.rest).toBe(' design')
+  })
+
+  it('returns null for plain text', () => {
+    expect(extractSlashCommand('hello world')).toBeNull()
+  })
+
+  it('returns null for @ command', () => {
+    expect(extractSlashCommand('@chatsearch test')).toBeNull()
+  })
+
+  it('returns null for / without command name', () => {
+    expect(extractSlashCommand('/ ')).toBeNull()
+  })
+
+  it('returns null for empty string', () => {
+    expect(extractSlashCommand('')).toBeNull()
   })
 })
