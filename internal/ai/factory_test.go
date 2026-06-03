@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"clawbench/internal/model"
 )
 
 func TestNewBackend_Claude(t *testing.T) {
@@ -118,4 +120,133 @@ func TestNewBackend_CaseSensitive(t *testing.T) {
 
 	_, err = NewBackend("PI")
 	assert.Error(t, err, "backend type should be case-sensitive")
+}
+
+// --- NewBackendForAgent tests ---
+
+func TestNewBackendForAgent_NoAgentID_FallsBackToCLI(t *testing.T) {
+	backend, err := NewBackendForAgent("claude", "")
+	assert.NoError(t, err)
+	assert.NotNil(t, backend)
+	assert.Equal(t, "claude", backend.Name())
+	// Falls back to CLI (AutoResumeBackend wrapping)
+	_, ok := backend.(*AutoResumeBackend)
+	assert.True(t, ok)
+}
+
+func TestNewBackendForAgent_UnknownAgentID_FallsBackToCLI(t *testing.T) {
+	backend, err := NewBackendForAgent("claude", "nonexistent-agent")
+	assert.NoError(t, err)
+	assert.NotNil(t, backend)
+	assert.Equal(t, "claude", backend.Name())
+}
+
+func TestNewBackendForAgent_ACPStdioTransport(t *testing.T) {
+	// Set up a test agent with ACP stdio transport
+	origAgents := model.Agents
+	t.Cleanup(func() { model.Agents = origAgents })
+
+	model.Agents = map[string]*model.Agent{
+		"test-acp": {
+			ID:         "test-acp",
+			Backend:    "claude",
+			Transport:  "acp-stdio",
+			AcpCommand: "claude acp",
+		},
+	}
+
+	backend, err := NewBackendForAgent("claude", "test-acp")
+	assert.NoError(t, err)
+	assert.NotNil(t, backend)
+	assert.Equal(t, "claude", backend.Name())
+
+	// ACP backends are NOT wrapped in AutoResumeBackend (session/cancel replaces it)
+	_, ok := backend.(*ACPBackend)
+	assert.True(t, ok, "claude ACP should be ACPBackend directly (no AutoResume wrapping)")
+}
+
+func TestNewBackendForAgent_ACPHttpTransport(t *testing.T) {
+	origAgents := model.Agents
+	t.Cleanup(func() { model.Agents = origAgents })
+
+	model.Agents = map[string]*model.Agent{
+		"test-http": {
+			ID:        "test-http",
+			Backend:   "codebuddy",
+			Transport: "acp-http",
+			ServePort: 9191,
+		},
+	}
+
+	backend, err := NewBackendForAgent("codebuddy", "test-http")
+	assert.NoError(t, err)
+	assert.NotNil(t, backend)
+	assert.Equal(t, "codebuddy", backend.Name())
+
+	// ACP backends are NOT wrapped in AutoResumeBackend (session/cancel replaces it)
+	_, ok := backend.(*ACPBackend)
+	assert.True(t, ok, "codebuddy ACP should be ACPBackend directly (no AutoResume wrapping)")
+}
+
+func TestNewBackendForAgent_ACPNoAutoResume(t *testing.T) {
+	origAgents := model.Agents
+	t.Cleanup(func() { model.Agents = origAgents })
+
+	model.Agents = map[string]*model.Agent{
+		"test-gemini": {
+			ID:         "test-gemini",
+			Backend:    "gemini",
+			Transport:  "acp-stdio",
+			AcpCommand: "gemini --acp",
+		},
+	}
+
+	backend, err := NewBackendForAgent("gemini", "test-gemini")
+	assert.NoError(t, err)
+	assert.NotNil(t, backend)
+	assert.Equal(t, "gemini", backend.Name())
+
+	// gemini ACP is also NOT wrapped in AutoResumeBackend
+	_, ok := backend.(*ACPBackend)
+	assert.True(t, ok, "gemini ACP should be ACPBackend directly")
+}
+
+func TestNewBackendForAgent_CLITransport_FallsBack(t *testing.T) {
+	origAgents := model.Agents
+	t.Cleanup(func() { model.Agents = origAgents })
+
+	model.Agents = map[string]*model.Agent{
+		"test-cli": {
+			ID:       "test-cli",
+			Backend:  "claude",
+			Transport: "cli",
+		},
+	}
+
+	backend, err := NewBackendForAgent("claude", "test-cli")
+	assert.NoError(t, err)
+	assert.NotNil(t, backend)
+	assert.Equal(t, "claude", backend.Name())
+
+	// Should be the standard CLI AutoResumeBackend (not ACPBackend)
+	ar, ok := backend.(*AutoResumeBackend)
+	assert.True(t, ok)
+	_, ok = ar.inner.(*CLIBackend)
+	assert.True(t, ok, "inner should be CLIBackend for cli transport")
+}
+
+// --- needsAutoResume tests ---
+
+func TestNeedsAutoResume(t *testing.T) {
+	assert.True(t, needsAutoResume("claude"), "claude needs auto-resume")
+	assert.True(t, needsAutoResume("codebuddy"), "codebuddy needs auto-resume")
+	assert.True(t, needsAutoResume("qoder"), "qoder needs auto-resume")
+	assert.True(t, needsAutoResume("deepseek"), "deepseek needs auto-resume")
+	assert.True(t, needsAutoResume("pi"), "pi needs auto-resume")
+
+	assert.False(t, needsAutoResume("opencode"), "opencode does NOT need auto-resume")
+	assert.False(t, needsAutoResume("gemini"), "gemini does NOT need auto-resume")
+	assert.False(t, needsAutoResume("codex"), "codex does NOT need auto-resume")
+	assert.False(t, needsAutoResume("vecli"), "vecli does NOT need auto-resume")
+	assert.False(t, needsAutoResume("mock"), "mock does NOT need auto-resume")
 }

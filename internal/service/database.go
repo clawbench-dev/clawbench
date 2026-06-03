@@ -403,6 +403,27 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: add ACP transport columns to agents table.
+	var hasTransportCol int
+	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='transport'").Scan(&hasTransportCol)
+	if hasTransportCol == 0 {
+		if _, err := DB.Exec("ALTER TABLE agents ADD COLUMN transport TEXT NOT NULL DEFAULT 'cli'"); err != nil {
+			return fmt.Errorf("failed to add transport column: %w", err)
+		}
+		if _, err := DB.Exec("ALTER TABLE agents ADD COLUMN acp_command TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add acp_command column: %w", err)
+		}
+		if _, err := DB.Exec("ALTER TABLE agents ADD COLUMN serve_port INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return fmt.Errorf("failed to add serve_port column: %w", err)
+		}
+		if _, err := DB.Exec("ALTER TABLE agents ADD COLUMN acp_headers TEXT NOT NULL DEFAULT '{}'"); err != nil {
+			return fmt.Errorf("failed to add acp_headers column: %w", err)
+		}
+		if _, err := DB.Exec("ALTER TABLE agents ADD COLUMN skills_api TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add skills_api column: %w", err)
+		}
+	}
+
 	return nil
 }
 

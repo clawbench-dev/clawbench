@@ -67,9 +67,43 @@ const (
 	ReasonPanic         = "panic"          // AI goroutine panicked
 )
 
+// ModeDef describes a single available session mode (e.g., "ask", "architect", "code").
+type ModeDef struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+}
+
+// ModeState carries the current and available session modes for an ACP session.
+type ModeState struct {
+	CurrentModeID  string    `json:"currentModeId"`
+	AvailableModes []ModeDef `json:"availableModes"`
+}
+
+// ConfigOptionValue represents a selectable value within a config option.
+type ConfigOptionValue struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+}
+
+// ConfigOptionDef describes a session config option (v2 style).
+// Only options with Category "mode" are relevant for mode switching.
+type ConfigOptionDef struct {
+	ID       string             `json:"id"`
+	Name     string             `json:"name,omitempty"`
+	Category string             `json:"category,omitempty"` // "mode", etc.
+	Values   []ConfigOptionValue `json:"values,omitempty"`
+}
+
+// ConfigOptionState carries the current value and available options for a config option.
+type ConfigOptionState struct {
+	ConfigID  string             `json:"configId"`
+	CurrentID string             `json:"currentValueId"`
+	Options   []ConfigOptionDef  `json:"options,omitempty"`
+}
+
 // StreamEvent represents a single event in the streaming output
 type StreamEvent struct {
-	Type       string          // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "raw_output", "resume_split", "queue_consume", "queue_update", "queue_done", "session_capture"
+	Type       string          // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "raw_output", "resume_split", "queue_consume", "queue_update", "queue_done", "session_capture", "mode_update", "config_update"
 	Content    string          // Incremental text (Type=content, Type=thinking) or captured session ID (Type=session_capture)
 	Reason     string          // Structured reason code for i18n (e.g. "disconnect", "timeout", "parse_error")
 	Meta       *Metadata       // Metadata (Type=metadata)
@@ -77,6 +111,8 @@ type StreamEvent struct {
 	Tool       *ToolCall       // Tool call info (Type=tool_use, Type=tool_result)
 	RawOutput  string          // Raw stdout lines from AI backend (Type=raw_output)
 	QueueEvent *QueueEventData // Queue data (Type=queue_consume, Type=queue_update)
+	Mode       *ModeState      // Mode state (Type=mode_update)
+	Config     *ConfigOptionState // Config option state (Type=config_update)
 }
 
 // ToolCall represents a tool invocation by the AI.

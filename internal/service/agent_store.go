@@ -30,6 +30,11 @@ CREATE TABLE IF NOT EXISTS agents (
 	models_auto_detected INTEGER NOT NULL DEFAULT 0,
 	source TEXT NOT NULL DEFAULT 'auto',
 	sort_order INTEGER NOT NULL DEFAULT 0,
+	transport TEXT NOT NULL DEFAULT 'cli',
+	acp_command TEXT NOT NULL DEFAULT '',
+	serve_port INTEGER NOT NULL DEFAULT 0,
+	acp_headers TEXT NOT NULL DEFAULT '{}',
+	skills_api TEXT NOT NULL DEFAULT '',
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -59,7 +64,8 @@ func LoadAgentsFromDB(db *sql.DB) ([]*model.Agent, error) {
 			thinking_effort, thinking_effort_levels,
 			preferred_model, preferred_thinking_effort,
 			system_prompt, models, models_auto_detected,
-			source, sort_order
+			source, sort_order,
+			transport, acp_command, serve_port, acp_headers, skills_api
 		FROM agents ORDER BY id
 	`)
 	if err != nil {
@@ -72,6 +78,7 @@ func LoadAgentsFromDB(db *sql.DB) ([]*model.Agent, error) {
 		a := &model.Agent{}
 		var modelsJSON, levelsJSON string
 		var modelsAutoDetected int
+		var acpHeadersJSON string
 
 		err := rows.Scan(
 			&a.ID, &a.Name, &a.Icon, &a.Specialty, &a.Backend, &a.Command,
@@ -79,6 +86,7 @@ func LoadAgentsFromDB(db *sql.DB) ([]*model.Agent, error) {
 			&a.PreferredModel, &a.PreferredThinkingEffort,
 			&a.SystemPrompt, &modelsJSON, &modelsAutoDetected,
 			&a.Source, &a.SortOrder,
+			&a.Transport, &a.AcpCommand, &a.ServePort, &acpHeadersJSON, &a.SkillsAPI,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan agent: %w", err)
@@ -99,6 +107,14 @@ func LoadAgentsFromDB(db *sql.DB) ([]*model.Agent, error) {
 			var levels []string
 			if err := json.Unmarshal([]byte(levelsJSON), &levels); err == nil {
 				a.ThinkingEffortLevels = levels
+			}
+		}
+
+		// Parse ACP headers JSON
+		if acpHeadersJSON != "" && acpHeadersJSON != "{}" {
+			var headers map[string]string
+			if err := json.Unmarshal([]byte(acpHeadersJSON), &headers); err == nil {
+				a.AcpHeaders = headers
 			}
 		}
 
@@ -124,6 +140,10 @@ func SaveAgent(db DBExec, agent *model.Agent) error {
 	if err != nil {
 		return fmt.Errorf("marshal thinking_effort_levels: %w", err)
 	}
+	acpHeadersJSON, err := json.Marshal(agent.AcpHeaders)
+	if err != nil {
+		return fmt.Errorf("marshal acp_headers: %w", err)
+	}
 
 	modelsAutoDetected := 0
 	if agent.ModelsAutoDetected {
@@ -131,14 +151,19 @@ func SaveAgent(db DBExec, agent *model.Agent) error {
 	}
 
 	sortOrder := agent.SortOrder
+	transport := agent.Transport
+	if transport == "" {
+		transport = "cli"
+	}
 
 	_, err = db.Exec(`
 		INSERT INTO agents (id, name, icon, specialty, backend, command,
 			thinking_effort, thinking_effort_levels,
 			preferred_model, preferred_thinking_effort,
 			system_prompt, models, models_auto_detected,
-			source, sort_order)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			source, sort_order,
+			transport, acp_command, serve_port, acp_headers, skills_api)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			icon = excluded.icon,
@@ -154,12 +179,18 @@ func SaveAgent(db DBExec, agent *model.Agent) error {
 			models_auto_detected = excluded.models_auto_detected,
 			source = excluded.source,
 			sort_order = excluded.sort_order,
+			transport = excluded.transport,
+			acp_command = excluded.acp_command,
+			serve_port = excluded.serve_port,
+			acp_headers = excluded.acp_headers,
+			skills_api = excluded.skills_api,
 			updated_at = CURRENT_TIMESTAMP
 	`, agent.ID, agent.Name, agent.Icon, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON),
 		agent.PreferredModel, agent.PreferredThinkingEffort,
 		agent.SystemPrompt, string(modelsJSON), modelsAutoDetected,
-		agent.Source, sortOrder)
+		agent.Source, sortOrder,
+		transport, agent.AcpCommand, agent.ServePort, string(acpHeadersJSON), agent.SkillsAPI)
 	if err != nil {
 		return fmt.Errorf("save agent %s: %w", agent.ID, err)
 	}

@@ -33,6 +33,13 @@ type Agent struct {
 	PreferredThinkingEffort string       `yaml:"preferred_thinking_effort,omitempty" json:"preferredThinkingEffort"` // user's preferred thinking effort; empty = use ThinkingEffort
 	SystemPrompt            string       `yaml:"system_prompt,omitempty" json:"systemPrompt"`
 
+	// ACP configuration (only used when Transport != "cli")
+	Transport        string            `yaml:"transport,omitempty" json:"transport,omitempty"`          // "cli"(default) | "acp-stdio" | "acp-http"
+	AcpCommand       string            `yaml:"acp_command,omitempty" json:"acpCommand,omitempty"`      // stdio: spawn command, e.g. "gemini --acp"
+	ServePort        int               `yaml:"serve_port,omitempty" json:"servePort,omitempty"`        // HTTP: daemon port, e.g. 9191
+	AcpHeaders       map[string]string `yaml:"acp_headers,omitempty" json:"acpHeaders,omitempty"`      // HTTP: custom headers, e.g. {"x-codebuddy-request":"true"}
+	SkillsAPI        string            `yaml:"skills_api,omitempty" json:"skillsApi,omitempty"`        // HTTP: skill query endpoint, e.g. "/api/v1/plugins"
+
 	// ModelsAutoDetected indicates whether Models were filled by auto-discovery
 	// (from cache) rather than user-defined in YAML. Used by AsyncRefreshModelCache
 	// to know which agents should have their models updated.

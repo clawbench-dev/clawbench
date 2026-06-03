@@ -205,6 +205,16 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 				// and will auto-resume. Forward to frontend so it can reset streaming
 				// state (clear blocks, prepare for new content after resume).
 				fmt.Fprintf(w, "event: resume_split\ndata: {}\n\n")
+			case "mode_update":
+				if event.Mode != nil {
+					data, _ := json.Marshal(event.Mode)
+					fmt.Fprintf(w, "event: mode_update\ndata: %s\n\n", data)
+				}
+			case "config_update":
+				if event.Config != nil {
+					data, _ := json.Marshal(event.Config)
+					fmt.Fprintf(w, "event: config_update\ndata: %s\n\n", data)
+				}
 			}
 
 			if canFlush {

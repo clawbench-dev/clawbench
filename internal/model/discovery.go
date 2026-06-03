@@ -35,6 +35,8 @@ type BackendSpec struct {
 	ParseModels          func(string) []AgentModel // optional: parse command stdout into AgentModel list; nil = not supported
 	DiscoverModelsFunc   func() []AgentModel       // optional: custom model discovery function (e.g. binary strings scan); takes priority over ListModelsCmd
 	ThinkingEffortLevels []string                  // supported thinking effort levels, e.g. ["low","medium","high"]; nil = not supported
+	AcpCommand           string                    // ACP spawn command for stdio transport, e.g. "gemini --acp"; empty = no ACP support
+	AcpMode              string                    // "stdio" or "http" — indicates ACP transport type
 }
 
 // BackendRegistry lists all known AI backends for auto-discovery.
@@ -46,29 +48,35 @@ var BackendRegistry = []BackendSpec{
 		ID: "claude", Backend: "claude", DefaultCmd: "claude", Name: "Claude", Icon: "🤖", Specialty: "代码编写与推理",
 		DiscoverModelsFunc:   DiscoverClaudeModels,
 		ThinkingEffortLevels: []string{"low", "medium", "high", "xhigh", "max"},
+		AcpCommand: "claude acp", AcpMode: "stdio",
 	},
 	{
 		ID: "codebuddy", Backend: "codebuddy", DefaultCmd: "codebuddy", Name: "Codebuddy", Icon: "🐛", Specialty: "全栈开发助手",
 		DiscoverModelsFunc:   DiscoverCodebuddyModels,
 		ThinkingEffortLevels: []string{"low", "medium", "high", "xhigh"},
+		AcpMode: "http", // daemon mode, AcpCommand not needed (uses daemon start)
 	},
 	{
 		ID: "opencode", Backend: "opencode", DefaultCmd: "opencode", Name: "OpenCode", Icon: "📟", Specialty: "终端编码工具",
 		ListModelsCmd: []string{"models"}, ParseModels: ParseOpenCodeModels,
 		ThinkingEffortLevels: []string{"minimal", "high", "max"},
+		AcpCommand: "opencode acp", AcpMode: "stdio",
 	},
 	{
 		ID: "gemini", Backend: "gemini", DefaultCmd: "gemini", Name: "Gemini", Icon: "💎", Specialty: "多模态推理",
 		DiscoverModelsFunc: DiscoverGeminiModels,
+		AcpCommand: "gemini --acp", AcpMode: "stdio",
 	},
 	{
 		ID: "codex", Backend: "codex", DefaultCmd: "codex", Name: "Codex", Icon: "🐙", Specialty: "OpenAI 编码代理",
 		DiscoverModelsFunc:   DiscoverCodexModels,
 		ThinkingEffortLevels: []string{"low", "medium", "high"},
+		AcpCommand: "codex acp", AcpMode: "stdio",
 	},
 	{
 		ID: "qoder", Backend: "qoder", DefaultCmd: "qodercli", Name: "Qoder", Icon: "⚡", Specialty: "AI 编码助手",
 		DiscoverModelsFunc: DiscoverQoderModels,
+		AcpCommand: "qodercli --acp", AcpMode: "stdio",
 	},
 	{
 		ID: "vecli", Backend: "vecli", DefaultCmd: "vecli", Name: "VeCLI", Icon: "🌿", Specialty: "字节跳动 AI 助手",
@@ -1583,6 +1591,14 @@ func SyncDiscoverAgentsDB(db *sql.DB) map[string]bool { //nolint:gocognit,gocycl
 			agent.Command = embeddedPath
 		}
 
+		// Set ACP transport info from BackendSpec
+		if r.spec.AcpCommand != "" {
+			agent.Transport = "acp-stdio"
+			agent.AcpCommand = r.spec.AcpCommand
+		} else if r.spec.AcpMode == "http" {
+			agent.Transport = "acp-http"
+		}
+
 		if err := saveAgentToDB(db, agent); err != nil {
 			slog.Warn("failed to insert agent to DB", "backend", r.spec.ID, "error", err)
 			continue
@@ -1617,14 +1633,25 @@ func saveAgentToDB(db *sql.DB, agent *Agent) error {
 	if err != nil {
 		return fmt.Errorf("marshal thinking_effort_levels: %w", err)
 	}
+	acpHeadersJSON, err := json.Marshal(agent.AcpHeaders)
+	if err != nil {
+		return fmt.Errorf("marshal acp_headers: %w", err)
+	}
+
+	transport := agent.Transport
+	if transport == "" {
+		transport = "cli"
+	}
 
 	_, err = db.Exec(`INSERT INTO agents (id, name, icon, specialty, backend, command,
 		thinking_effort, thinking_effort_levels, preferred_model, preferred_thinking_effort,
-		system_prompt, models, models_auto_detected, source, sort_order)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		system_prompt, models, models_auto_detected, source, sort_order,
+		transport, acp_command, serve_port, acp_headers, skills_api)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		agent.ID, agent.Name, agent.Icon, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON), agent.PreferredModel, agent.PreferredThinkingEffort,
-		agent.SystemPrompt, string(modelsJSON), agent.ModelsAutoDetected, agent.Source, agent.SortOrder)
+		agent.SystemPrompt, string(modelsJSON), agent.ModelsAutoDetected, agent.Source, agent.SortOrder,
+		transport, agent.AcpCommand, agent.ServePort, string(acpHeadersJSON), agent.SkillsAPI)
 	return err
 }
 
@@ -1771,7 +1798,8 @@ func MergeDiscoveredDataDB(db *sql.DB, cacheDir string, present map[string]bool)
 func loadAgentsFromDBRows(db *sql.DB) ([]*Agent, error) {
 	rows, err := db.Query(`SELECT id, name, icon, specialty, backend, command,
 		thinking_effort, thinking_effort_levels, preferred_model, preferred_thinking_effort,
-		system_prompt, models, models_auto_detected, source, sort_order
+		system_prompt, models, models_auto_detected, source, sort_order,
+		transport, acp_command, serve_port, acp_headers, skills_api
 		FROM agents ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -1782,13 +1810,15 @@ func loadAgentsFromDBRows(db *sql.DB) ([]*Agent, error) {
 	for rows.Next() {
 		agent := &Agent{}
 		var modelsJSON, levelsJSON string
+		var acpHeadersJSON string
 		var autoDetected int
 
 		err := rows.Scan(&agent.ID, &agent.Name, &agent.Icon, &agent.Specialty,
 			&agent.Backend, &agent.Command, &agent.ThinkingEffort, &levelsJSON,
 			&agent.PreferredModel, &agent.PreferredThinkingEffort,
 			&agent.SystemPrompt, &modelsJSON, &autoDetected,
-			&agent.Source, &agent.SortOrder)
+			&agent.Source, &agent.SortOrder,
+			&agent.Transport, &agent.AcpCommand, &agent.ServePort, &acpHeadersJSON, &agent.SkillsAPI)
 		if err != nil {
 			return nil, err
 		}
@@ -1800,6 +1830,11 @@ func loadAgentsFromDBRows(db *sql.DB) ([]*Agent, error) {
 		}
 		if err := json.Unmarshal([]byte(levelsJSON), &agent.ThinkingEffortLevels); err != nil {
 			agent.ThinkingEffortLevels = nil
+		}
+		if acpHeadersJSON != "" && acpHeadersJSON != "{}" {
+			if err := json.Unmarshal([]byte(acpHeadersJSON), &agent.AcpHeaders); err != nil {
+				agent.AcpHeaders = nil
+			}
 		}
 
 		agents = append(agents, agent)

@@ -17,6 +17,9 @@ const currentAgentId = ref('')
 const currentModelId = ref('')
 const currentModelName = ref('')
 const currentThinkingEffort = ref('')
+const currentModeId = ref('')
+const currentModeName = ref('')
+const availableModes = ref<Array<{ id: string; name: string }>>([])
 const runningSessions = ref(new Set<string>())
 // Bumped on every mutation to runningSessions so computed properties
 // that depend on the set's contents re-evaluate correctly.
@@ -36,6 +39,9 @@ export function resetIdentity(): void {
   currentModelId.value = ''
   currentModelName.value = ''
   currentThinkingEffort.value = ''
+  currentModeId.value = ''
+  currentModeName.value = ''
+  availableModes.value = []
   runningSessions.value = new Set()
   runningSessionsVersion.value = 0
   sessionDrawerOpen.value = false
@@ -83,6 +89,31 @@ function loadThinkingPref(agentId: string): string | null {
   // Read from agent's server-side preference (preferredThinkingEffort > thinkingEffort)
   const { getEffectiveThinkingEffort } = useAgents()
   return getEffectiveThinkingEffort(agentId) || null
+}
+
+// ───────────────────────────────────────────────────────────
+// Mode state — ACP session mode (ask/architect/code)
+// Updated from SSE mode_update/config_update events.
+// Only populated for ACP-backed sessions that support modes.
+// ───────────────────────────────────────────────────────────
+
+/** Update mode state from SSE mode_update or config_update event. */
+export function updateModeState(modeId: string, modes: Array<{ id: string; name: string }>) {
+  if (modeId) {
+    currentModeId.value = modeId
+    const mode = modes.find(m => m.id === modeId)
+    currentModeName.value = mode?.name || modeId
+  }
+  if (modes.length > 0) {
+    availableModes.value = modes
+  }
+}
+
+/** Clear mode state (called on session switch or when leaving ACP session). */
+export function clearModeState() {
+  currentModeId.value = ''
+  currentModeName.value = ''
+  availableModes.value = []
 }
 
 // ───────────────────────────────────────────────────────────
@@ -361,6 +392,9 @@ export function useSessionIdentity() {
     currentModelId,
     currentModelName,
     currentThinkingEffort,
+    currentModeId,
+    currentModeName,
+    availableModes,
     runningSessions,
     runningSessionsVersion,
     agentHeaderTitle,

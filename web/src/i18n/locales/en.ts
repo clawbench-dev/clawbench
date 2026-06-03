@@ -116,6 +116,9 @@ export default {
     modelSwitcher: {
       title: 'Select model',
     },
+    modeSwitcher: {
+      title: 'Session mode',
+    },
     modelModal: {
       searchPlaceholder: 'Search models...',
       refresh: 'Refresh models',

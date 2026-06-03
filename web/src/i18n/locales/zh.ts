@@ -116,6 +116,9 @@ export default {
     modelSwitcher: {
       title: '选择模型',
     },
+    modeSwitcher: {
+      title: '会话模式',
+    },
     modelModal: {
       searchPlaceholder: '搜索模型...',
       refresh: '刷新模型',

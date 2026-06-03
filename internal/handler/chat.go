@@ -517,7 +517,7 @@ func executeStreamRun(
 	chatReq ai.ChatRequest,
 	fileDir string,
 ) streamRunResult {
-	backend, err := ai.NewBackend(backendName)
+	backend, err := ai.NewBackendForAgent(backendName, agentID)
 	if err != nil {
 		slog.Error("failed to create backend", slog.String("backend", backendName), slog.String("err", err.Error()))
 		errMsg := T(r, "BackendCreateFailed", map[string]any{"Error": err.Error()})

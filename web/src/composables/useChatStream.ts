@@ -2,6 +2,7 @@ import { onMounted, onUnmounted, type Ref } from 'vue'
 import { cancelChat } from '@/utils/api'
 import { useReconnect } from './useReconnect'
 import { gt } from '@/composables/useLocale'
+import { updateModeState } from './useSessionIdentity'
 import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState } from '@/utils/chatStreamUtils.ts'
 
 export interface UseChatStreamOptions {
@@ -515,6 +516,29 @@ export function useChatStream(options: UseChatStreamOptions) {
       // Skip render when panel not visible — data is accumulated regardless
       if (isOpen.value) {
         onRenderNeeded()
+      }
+    })
+
+    eventSource.addEventListener('mode_update', (e) => {
+      if (!guard()) return
+      let data: any
+      try { data = JSON.parse(e.data) } catch { console.warn('SSE mode_update: invalid JSON, skipping'); return }
+      updateModeState(data.currentModeId || '', data.availableModes || [])
+    })
+
+    eventSource.addEventListener('config_update', (e) => {
+      if (!guard()) return
+      let data: any
+      try { data = JSON.parse(e.data) } catch { console.warn('SSE config_update: invalid JSON, skipping'); return }
+      // Extract mode-relevant config options (category: "mode" or configId: "mode")
+      const configId = data.configId || ''
+      if (configId !== 'mode' && !data.options?.some((o: any) => o.category === 'mode')) return
+      // Find mode config option
+      const modeOption = data.options?.find((o: any) => o.category === 'mode' || o.id === 'mode')
+      if (modeOption) {
+        const modes = (modeOption.values || []).map((v: any) => ({ id: v.id, name: v.name || v.id }))
+        const currentId = data.currentValueId || ''
+        updateModeState(currentId, modes)
       }
     })
 

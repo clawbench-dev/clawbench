@@ -602,6 +602,9 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	defer scheduler.Stop()
 	service.GlobalScheduler = scheduler
 
+	// Stop ACP connection pool on shutdown (kills long-lived agent processes)
+	defer ai.GetACPConnectionPool().StopAll()
+
 	// Start periodic cleanup of stale WS subscriptions (every 60s)
 	go func() {
 		ticker := time.NewTicker(60 * time.Second)

@@ -79,6 +79,9 @@
       :currentModelName="identity.currentModelName.value"
       :currentThinkingEffort="identity.currentThinkingEffort.value"
       :currentAgentId="identity.currentAgentId.value"
+      :currentModeId="identity.currentModeId.value"
+      :currentModeName="identity.currentModeName.value"
+      :availableModes="identity.availableModes.value"
       :active="props.active"
       @send="sendMessage"
       @cancel="stream.cancelStream"
@@ -95,6 +98,7 @@
       @delete-session="() => manager.deleteCurrentSession((draftId) => inputBarRef.value?.deleteDraft(draftId))"
       @switch-model="handleSwitchModel"
       @switch-thinking-effort="handleSwitchThinkingEffort"
+      @switch-mode="handleSwitchMode"
     />
 
   </div>
@@ -472,6 +476,26 @@ function handleSwitchModel(model) {
 function handleSwitchThinkingEffort(level) {
   identity.currentThinkingEffort.value = level
   identity.saveThinkingPref(identity.currentAgentId.value, level)
+}
+
+async function handleSwitchMode(mode) {
+  if (!mode?.id || mode.id === identity.currentModeId.value) return
+  // Optimistic update — UI updates immediately
+  identity.currentModeId.value = mode.id
+  identity.currentModeName.value = mode.name || mode.id
+  // Send mode switch to backend
+  try {
+    await fetch('/api/ai/session/mode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: identity.currentSessionId.value,
+        modeId: mode.id,
+      }),
+    })
+  } catch (err) {
+    console.error('Failed to switch mode:', err)
+  }
 }
 
 async function sendMessage(text, extraFilePaths) {
