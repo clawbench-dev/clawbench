@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	external_session_id TEXT DEFAULT '',
 	source_session_id TEXT DEFAULT NULL,
 	thinking_effort TEXT DEFAULT '',
+	mode TEXT DEFAULT '',
 	deleted INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -2013,6 +2014,7 @@ func TestGetSessionInfo(t *testing.T) {
 	assert.Equal(t, "claude", info.AgentID)
 	assert.Equal(t, "claude-sonnet-4-6", info.Model)
 	assert.Equal(t, "", info.ThinkingEffort)
+	assert.Equal(t, "", info.Mode)
 }
 
 func TestGetSessionInfo_NotFound(t *testing.T) {

@@ -249,6 +249,15 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: add mode column for per-session ACP mode (e.g., "code", "ask", "architect")
+	var hasMode int
+	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='mode'").Scan(&hasMode)
+	if hasMode == 0 {
+		if _, err := DB.Exec("ALTER TABLE chat_sessions ADD COLUMN mode TEXT DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add mode column: %w", err)
+		}
+	}
+
 	// Migrate: add host column to forwarded_ports for custom target host
 	var hasForwardedPortHost int
 	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forwarded_ports') WHERE name='host'").Scan(&hasForwardedPortHost)

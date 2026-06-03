@@ -167,7 +167,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		if cachedSessionInfo == nil {
 			cachedSessionInfo = service.GetSessionFullInfo(sessionID)
 		}
-		var sessionTitle, sessionAgentID, sessionModelID, sessionThinkingEffort string
+		var sessionTitle, sessionAgentID, sessionModelID, sessionThinkingEffort, sessionMode string
 		var sessionInfoBackend string
 		if cachedSessionInfo != nil {
 			sessionTitle = cachedSessionInfo.Title
@@ -175,6 +175,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			sessionAgentID = cachedSessionInfo.AgentID
 			sessionModelID = cachedSessionInfo.Model
 			sessionThinkingEffort = cachedSessionInfo.ThinkingEffort
+			sessionMode = cachedSessionInfo.Mode
 		}
 		if sessionInfoBackend != "" {
 			sessionBackend = sessionInfoBackend
@@ -195,10 +196,10 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "thinkingEffort": sessionThinkingEffort, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands})
+			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "thinkingEffort": sessionThinkingEffort, "modeId": sessionMode, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "thinkingEffort": sessionThinkingEffort, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands})
+		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "thinkingEffort": sessionThinkingEffort, "modeId": sessionMode, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands})
 		return
 	}
 
@@ -753,6 +754,29 @@ func finalizeStreamRun(
 		responseMetadata = &ai.Metadata{}
 	}
 	responseMetadata.WallMs = wallMs
+
+	// Inject ACP mode and thinking effort into metadata (if available)
+	if ms, _, es, _ := ai.GetACPConnectionPool().GetCachedStateByClawbenchSID(sessionID); ms != nil || es != nil {
+		if ms != nil && ms.CurrentModeID != "" {
+			responseMetadata.Mode = ms.CurrentModeID
+			_ = service.UpdateSessionMode(sessionID, ms.CurrentModeID)
+		}
+		if es != nil && es.CurrentID != "" {
+			responseMetadata.ThinkingEffort = es.CurrentID
+		}
+	}
+	// Also inject thinking effort from session DB if not already set from ACP cache
+	if responseMetadata.ThinkingEffort == "" {
+		if effort := service.GetSessionThinkingEffort(sessionID); effort != "" {
+			responseMetadata.ThinkingEffort = effort
+		}
+	}
+	// Inject transport type (acp vs cli) based on agent configuration
+	if agent, ok := model.Agents[agentID]; ok && agent.Transport == "acp-stdio" {
+		responseMetadata.Transport = "acp"
+	} else {
+		responseMetadata.Transport = "cli"
+	}
 
 	// Determine cancellation reason
 	cancelReason := service.GetAndClearCancelReason(sessionID)

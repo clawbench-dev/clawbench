@@ -61,6 +61,9 @@
     <!-- Bottom bar for assistant messages -->
     <div v-if="msg.role === 'assistant' && !msg.streaming && (msgText || msg.blocks?.length)" class="chat-meta-bar">
       <span class="chat-meta-info">
+        <span v-if="msg.metadata?.transport" class="chat-meta-transport" :class="'chat-meta-transport-' + msg.metadata.transport">{{ msg.metadata.transport === 'acp' ? 'ACP' : 'CLI' }}</span>
+        <span v-if="msg.metadata?.mode" class="chat-meta-mode">{{ msg.metadata.mode }}</span>
+        <span v-if="msg.metadata?.thinkingEffort" class="chat-meta-effort">{{ msg.metadata.thinkingEffort }}</span>
         <span v-if="msg.metadata?.wallMs" class="chat-meta-duration">{{ formatDuration(msg.metadata.wallMs) }}</span>
       </span>
       <div class="chat-meta-actions">
@@ -378,6 +381,41 @@ const { getAgentIcon, getAgentName } = chatSession
 
 .chat-meta-duration {
     font-variant-numeric: tabular-nums;
+}
+
+.chat-meta-mode {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--accent-color, #8b5cf6);
+    background: color-mix(in srgb, var(--accent-color, #8b5cf6) 12%, transparent);
+    padding: 1px 6px;
+    border-radius: 4px;
+}
+
+.chat-meta-effort {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-muted, #9ca3af);
+    background: var(--bg-tertiary, #f5f5f5);
+    padding: 1px 6px;
+    border-radius: 4px;
+}
+
+.chat-meta-transport {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+}
+
+.chat-meta-transport-acp {
+    color: #059669;
+    background: color-mix(in srgb, #059669 12%, transparent);
+}
+
+.chat-meta-transport-cli {
+    color: var(--text-muted, #9ca3af);
+    background: var(--bg-tertiary, #f5f5f5);
 }
 
 /* Chat Info Button */

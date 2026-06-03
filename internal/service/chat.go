@@ -503,6 +503,12 @@ func UpdateSessionThinkingEffort(sessionID, effort string) error {
 	return err
 }
 
+// UpdateSessionMode updates the ACP mode field for a session.
+func UpdateSessionMode(sessionID, mode string) error {
+	_, err := DB.Exec("UPDATE chat_sessions SET mode = ? WHERE id = ?", mode, sessionID)
+	return err
+}
+
 // GetLatestUserModel returns the most recent model and thinking effort the user
 // explicitly chose for the given agent+project. Returns ("", "") if no user
 // preference exists (caller should fall back to agent defaults).
@@ -647,18 +653,19 @@ type SessionInfo struct {
 	AgentID        string
 	Model          string
 	ThinkingEffort string
+	Mode           string
 	ProjectPath    string // populated by GetSessionFullInfo only
 }
 
-// GetSessionInfo fetches session metadata (title, backend, agent_id, model, thinking_effort)
-// in a single query instead of 5 separate queries.
+// GetSessionInfo fetches session metadata (title, backend, agent_id, model, thinking_effort, mode)
+// in a single query instead of separate queries.
 func GetSessionInfo(sessionID string) (*SessionInfo, error) {
 	info := &SessionInfo{}
 	err := DBRead.QueryRow(
-		`SELECT title, backend, agent_id, model, thinking_effort
+		`SELECT title, backend, agent_id, model, thinking_effort, COALESCE(mode, '')
 		 FROM chat_sessions WHERE id = ? AND deleted = 0`,
 		sessionID,
-	).Scan(&info.Title, &info.Backend, &info.AgentID, &info.Model, &info.ThinkingEffort)
+	).Scan(&info.Title, &info.Backend, &info.AgentID, &info.Model, &info.ThinkingEffort, &info.Mode)
 	if err != nil {
 		return nil, err
 	}
@@ -672,10 +679,10 @@ func GetSessionInfo(sessionID string) (*SessionInfo, error) {
 func GetSessionFullInfo(sessionID string) *SessionInfo {
 	info := &SessionInfo{}
 	err := DBRead.QueryRow(
-		`SELECT backend, project_path, title, agent_id, model, thinking_effort
+		`SELECT backend, project_path, title, agent_id, model, thinking_effort, COALESCE(mode, '')
 		 FROM chat_sessions WHERE id = ? AND deleted = 0`,
 		sessionID,
-	).Scan(&info.Backend, &info.ProjectPath, &info.Title, &info.AgentID, &info.Model, &info.ThinkingEffort)
+	).Scan(&info.Backend, &info.ProjectPath, &info.Title, &info.AgentID, &info.Model, &info.ThinkingEffort, &info.Mode)
 	if err != nil {
 		return nil
 	}

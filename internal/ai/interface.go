@@ -42,16 +42,19 @@ func (r ChatRequest) ShouldInjectSystemPrompt() bool {
 
 // Metadata contains additional information about the AI response
 type Metadata struct {
-	Model        string  `json:"model,omitempty"`
-	InputTokens  int     `json:"inputTokens,omitempty"`
-	OutputTokens int     `json:"outputTokens,omitempty"`
-	DurationMs   int     `json:"durationMs,omitempty"` // CLI self-reported duration
-	WallMs       int     `json:"wallMs,omitempty"`     // Backend wall-clock duration (time from ExecuteStream start to finalization)
-	CostUSD      float64 `json:"costUsd,omitempty"`
-	SessionID    string  `json:"sessionId,omitempty"`
-	StopReason   string  `json:"stopReason,omitempty"`
-	IsError      bool    `json:"isError,omitempty"`
-	ErrorMessage string  `json:"errorMessage,omitempty"`
+	Mode           string  `json:"mode,omitempty"`           // ACP mode (e.g., "code", "ask", "architect")
+	ThinkingEffort string  `json:"thinkingEffort,omitempty"` // Thinking effort level (e.g., "low", "medium", "high")
+	Transport      string  `json:"transport,omitempty"`      // Backend transport type: "acp" or "cli"
+	Model          string  `json:"model,omitempty"`
+	InputTokens    int     `json:"inputTokens,omitempty"`
+	OutputTokens   int     `json:"outputTokens,omitempty"`
+	DurationMs     int     `json:"durationMs,omitempty"` // CLI self-reported duration
+	WallMs         int     `json:"wallMs,omitempty"`     // Backend wall-clock duration (time from ExecuteStream start to finalization)
+	CostUSD        float64 `json:"costUsd,omitempty"`
+	SessionID      string  `json:"sessionId,omitempty"`
+	StopReason     string  `json:"stopReason,omitempty"`
+	IsError        bool    `json:"isError,omitempty"`
+	ErrorMessage   string  `json:"errorMessage,omitempty"`
 }
 
 // Warning reason codes — used by frontend for i18n lookup and visual severity

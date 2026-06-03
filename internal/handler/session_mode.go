@@ -72,6 +72,9 @@ func ServeSessionMode(w http.ResponseWriter, r *http.Request) {
 	// Set the mode via SetSessionConfigOption (v2 style, works for both v1 and v2)
 	entry.SetSessionConfigOption(ctx, req.SessionID, "mode", req.ModeID)
 
+	// Persist mode to session DB so it survives restarts
+	_ = service.UpdateSessionMode(req.SessionID, req.ModeID)
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":     true,
 		"modeId": req.ModeID,
