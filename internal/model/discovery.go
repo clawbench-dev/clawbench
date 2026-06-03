@@ -70,7 +70,7 @@ var BackendRegistry = []BackendSpec{
 		ID: "codex", Backend: "codex", DefaultCmd: "codex", Name: "Codex", Icon: "🐙", Specialty: "OpenAI 编码代理",
 		DiscoverModelsFunc:   DiscoverCodexModels,
 		ThinkingEffortLevels: []string{"low", "medium", "high"},
-		AcpCommand: "codex acp",
+		AcpCommand: "npx -y @agentclientprotocol/codex-acp@latest",
 	},
 	{
 		ID: "qoder", Backend: "qoder", DefaultCmd: "qodercli", Name: "Qoder", Icon: "⚡", Specialty: "AI 编码助手",
