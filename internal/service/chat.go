@@ -647,6 +647,7 @@ type SessionInfo struct {
 	AgentID        string
 	Model          string
 	ThinkingEffort string
+	ProjectPath    string // populated by GetSessionFullInfo only
 }
 
 // GetSessionInfo fetches session metadata (title, backend, agent_id, model, thinking_effort)
@@ -662,6 +663,23 @@ func GetSessionInfo(sessionID string) (*SessionInfo, error) {
 		return nil, err
 	}
 	return info, nil
+}
+
+// GetSessionFullInfo fetches all session metadata including project_path in a single query.
+// This replaces the common pattern of calling GetSessionBackend + GetSessionProjectPath +
+// GetSessionInfo (3 separate PK lookups on the same row) with a single query.
+// Returns nil if the session is not found or soft-deleted.
+func GetSessionFullInfo(sessionID string) *SessionInfo {
+	info := &SessionInfo{}
+	err := DBRead.QueryRow(
+		`SELECT backend, project_path, title, agent_id, model, thinking_effort
+		 FROM chat_sessions WHERE id = ? AND deleted = 0`,
+		sessionID,
+	).Scan(&info.Backend, &info.ProjectPath, &info.Title, &info.AgentID, &info.Model, &info.ThinkingEffort)
+	if err != nil {
+		return nil
+	}
+	return info
 }
 
 // GetSessionAgentID returns the agent_id of an active (non-deleted) session.

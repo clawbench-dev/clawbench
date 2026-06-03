@@ -76,18 +76,19 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 
 		var sessionID string
 		var sessionBackend string
+		var cachedSessionInfo *service.SessionInfo // reused to avoid extra DB queries
 
 		if requestedSessionID != "" {
-			// Use the requested session
+			// Use the requested session — single query to get backend + project_path + metadata
 			sessionID = requestedSessionID
-			sessionBackend = service.GetSessionBackend(sessionID)
-			if sessionBackend == "" {
+			cachedSessionInfo = service.GetSessionFullInfo(sessionID)
+			if cachedSessionInfo == nil {
 				writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
 				return
 			}
+			sessionBackend = cachedSessionInfo.Backend
 			// Verify the session belongs to the requesting project (ISS-180)
-			// Skip ownership check if session doesn't exist in DB (session auto-created below)
-			if sessionProject := service.GetSessionProjectPath(sessionID); sessionProject != "" && sessionProject != projectPath {
+			if cachedSessionInfo.ProjectPath != projectPath {
 				writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 				return
 			}
@@ -160,16 +161,20 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 
 		totalCount := service.GetChatMessageCount(sessionID)
 		messages, err := service.GetChatHistoryPaged(projectPath, sessionBackend, sessionID, limit, beforeID)
-		// Get session metadata in a single query
-		sessionInfo, _ := service.GetSessionInfo(sessionID)
+		// Use cached session info from earlier lookup, or fetch if not yet available
+		// (e.g. when session was found via GetLatestSessionID or newly created).
+		// This avoids an extra DB query for the common case of switching to an existing session.
+		if cachedSessionInfo == nil {
+			cachedSessionInfo = service.GetSessionFullInfo(sessionID)
+		}
 		var sessionTitle, sessionAgentID, sessionModelID, sessionThinkingEffort string
 		var sessionInfoBackend string
-		if sessionInfo != nil {
-			sessionTitle = sessionInfo.Title
-			sessionInfoBackend = sessionInfo.Backend
-			sessionAgentID = sessionInfo.AgentID
-			sessionModelID = sessionInfo.Model
-			sessionThinkingEffort = sessionInfo.ThinkingEffort
+		if cachedSessionInfo != nil {
+			sessionTitle = cachedSessionInfo.Title
+			sessionInfoBackend = cachedSessionInfo.Backend
+			sessionAgentID = cachedSessionInfo.AgentID
+			sessionModelID = cachedSessionInfo.Model
+			sessionThinkingEffort = cachedSessionInfo.ThinkingEffort
 		}
 		if sessionInfoBackend != "" {
 			sessionBackend = sessionInfoBackend

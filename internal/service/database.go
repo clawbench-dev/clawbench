@@ -136,6 +136,15 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		CREATE INDEX IF NOT EXISTS idx_history_session_id ON chat_history(session_id, role, streaming, created_at);
 		-- Index for task listing by project
 		CREATE INDEX IF NOT EXISTS idx_tasks_project ON scheduled_tasks(project_path, created_at DESC);
+		-- Covering index for unread count subquery in GetSessions/GetSessionsPaged:
+		-- WHERE project_path = ? AND role = 'assistant' AND streaming = 0 AND created_at > ?
+		-- Without this, the unread subquery can only use the project_path prefix of idx_history_session,
+		-- requiring a full scan of all messages in the project to filter by role and streaming.
+		CREATE INDEX IF NOT EXISTS idx_history_unread ON chat_history(project_path, role, streaming, created_at);
+		-- Covering index for session list ORDER BY + cursor pagination:
+		-- WHERE session_type = 'chat' AND project_path = ? AND deleted = 0 ORDER BY updated_at DESC, id DESC
+		-- Without this, idx_sessions_type covers WHERE but requires a filesort for ORDER BY.
+		CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, deleted, updated_at DESC, id DESC);
 
 		CREATE TABLE IF NOT EXISTS summaries (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
