@@ -36,7 +36,7 @@ func NewBackend(backendType string) (AIBackend, error) {
 }
 
 // NewBackendForAgent creates a backend instance for the given agent.
-// If the agent has ACP transport configured (acp-stdio or acp-http), it creates
+// If the agent has ACP transport configured (acp-stdio), it creates
 // an ACPBackend directly (no AutoResumeBackend wrapping — ACP uses session/cancel
 // instead of process kill for stuck agents). Otherwise, it falls back to the
 // CLI-based NewBackend.
@@ -46,7 +46,7 @@ func NewBackendForAgent(backendType, agentID string) (AIBackend, error) {
 	// Check if the agent has ACP transport configured
 	if agentID != "" {
 		if agent, ok := model.Agents[agentID]; ok {
-			if agent.Transport == "acp-stdio" || agent.Transport == "acp-http" {
+			if agent.Transport == "acp-stdio" {
 				acpBackend, err := NewACPBackend(agent)
 				if err != nil {
 					return nil, fmt.Errorf("acp backend for agent %q: %w", agentID, err)

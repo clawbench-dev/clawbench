@@ -58,12 +58,26 @@ func (c *ClawBenchACPClient) GetCommands() []acp.AvailableCommand {
 	return c.commands
 }
 
+// SetCommands caches available commands from an ACP session update.
+func (c *ClawBenchACPClient) SetCommands(cmds []acp.AvailableCommand) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.commands = cmds
+}
+
 // SessionUpdate converts ACP session update notifications to StreamEvents.
 // Called by the SDK's internal goroutine from Connection.receive().
 // It routes the update to the correct StreamEvent channel based on the
 // ACP session ID. If no route is registered (session unregistered or
 // cancelled), the update is silently dropped.
 func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNotification) error {
+	// Cache available commands from the update (before route lookup)
+	if n.Update.AvailableCommandsUpdate != nil {
+		c.mu.Lock()
+		c.commands = n.Update.AvailableCommandsUpdate.AvailableCommands
+		c.mu.Unlock()
+	}
+
 	c.mu.Lock()
 	ch, ok := c.sessionRoutes[string(n.SessionId)]
 	c.mu.Unlock()

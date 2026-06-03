@@ -25,7 +25,7 @@ const idleCheckInterval = 60 * time.Second
 // ACPConnectionPool — singleton managing long-lived ACP connections
 // ---------------------------------------------------------------------------
 
-// ACPConnectionPool manages a pool of long-lived ACP connections, one per agent.
+// ACPConnectionPool manages a pool of long-lived ACP stdio connections, one per agent.
 // Connections are reused across multiple ExecuteStream calls and multiple sessions.
 // Idle connections are automatically killed after idleTimeout.
 type ACPConnectionPool struct {
@@ -61,7 +61,6 @@ func (p *ACPConnectionPool) StopAll() {
 	// Signal sweeper to stop
 	select {
 	case <-p.done:
-		// Already closed
 	default:
 		close(p.done)
 	}
@@ -96,6 +95,19 @@ func (p *ACPConnectionPool) CloseConnection(agentID string) {
 	if ok {
 		entry.Close()
 	}
+}
+
+// GetClient returns the ClawBenchACPClient for the given agent ID.
+// Returns nil if the agent has no active ACP connection.
+func (p *ACPConnectionPool) GetClient(agentID string) *ClawBenchACPClient {
+	p.mu.Lock()
+	entry, ok := p.entries[agentID]
+	p.mu.Unlock()
+
+	if !ok {
+		return nil
+	}
+	return entry.GetClient()
 }
 
 // idleSweeper periodically kills idle connections.
@@ -133,23 +145,18 @@ func (p *ACPConnectionPool) sweepIdle() {
 }
 
 // ---------------------------------------------------------------------------
-// ACPConnEntry — one long-lived ACP connection to an agent
+// ACPConnEntry — one long-lived ACP stdio connection to an agent
 // ---------------------------------------------------------------------------
 
-// ACPConnEntry represents a long-lived ACP connection to one agent.
+// ACPConnEntry represents a long-lived ACP stdio connection to one agent.
 // It can serve multiple sessions and multiple prompt turns.
 type ACPConnEntry struct {
-	agent     *model.Agent
-	mu        sync.Mutex
-	transport string // "stdio" or "http"
+	agent *model.Agent
+	mu    sync.Mutex
 
-	// stdio fields (nil for http transport)
 	cmd    *exec.Cmd
 	conn   *acp.ClientSideConnection
 	client *ClawBenchACPClient // shared across sessions
-
-	// http fields (nil for stdio transport)
-	httpTransport *ACPHTTPTransport
 
 	// session mapping: clawbench session ID → ACP session ID
 	sessions map[string]string
@@ -158,11 +165,6 @@ type ACPConnEntry struct {
 	// so ExecuteStream can extract mode/config state. Cleared after reading.
 	lastSessionResp *acp.NewSessionResponse
 
-	// lastModeState/lastConfigState store mode info from HTTP transport session/new.
-	// Used when HTTP transport doesn't have an acp.NewSessionResponse.
-	lastModeState   *ModeState
-	lastConfigState *ConfigOptionState
-
 	// liveness
 	lastUsed time.Time
 	alive    bool
@@ -170,13 +172,8 @@ type ACPConnEntry struct {
 
 // newACPConnEntry creates a new (uninitialized) ACPConnEntry.
 func newACPConnEntry(agent *model.Agent) *ACPConnEntry {
-	transport := "stdio"
-	if agent.Transport == "acp-http" {
-		transport = "http"
-	}
 	return &ACPConnEntry{
 		agent:    agent,
-		transport: transport,
 		sessions: make(map[string]string),
 		lastUsed: time.Now(),
 		alive:    false,
@@ -193,35 +190,24 @@ func (e *ACPConnEntry) EnsureAlive(ctx context.Context) error {
 		return nil
 	}
 
-	// Connection is dead or not yet created — respawn
-	if e.transport == "stdio" {
-		return e.spawnStdioLocked(ctx)
-	}
-	return e.connectHTTPLocked(ctx)
+	return e.spawnLocked(ctx)
 }
 
 // isAliveLocked checks if the connection is still alive (must hold e.mu).
 func (e *ACPConnEntry) isAliveLocked() bool {
-	if e.transport == "stdio" {
-		if e.conn == nil {
-			return false
-		}
-		select {
-		case <-e.conn.Done():
-			return false
-		default:
-			return true
-		}
-	}
-	// HTTP: check daemon health
-	if e.httpTransport == nil {
+	if e.conn == nil {
 		return false
 	}
-	return e.httpTransport.HealthCheck(context.Background())
+	select {
+	case <-e.conn.Done():
+		return false
+	default:
+		return true
+	}
 }
 
-// spawnStdioLocked spawns the agent process and initializes the connection (must hold e.mu).
-func (e *ACPConnEntry) spawnStdioLocked(ctx context.Context) error {
+// spawnLocked spawns the agent process and initializes the connection (must hold e.mu).
+func (e *ACPConnEntry) spawnLocked(ctx context.Context) error {
 	// Kill any existing process first
 	if e.cmd != nil && e.cmd.Process != nil {
 		_ = e.cmd.Process.Kill()
@@ -230,7 +216,7 @@ func (e *ACPConnEntry) spawnStdioLocked(ctx context.Context) error {
 
 	cmdParts := strings.Fields(e.agent.AcpCommand)
 	if len(cmdParts) == 0 {
-		return fmt.Errorf("acp stdio: no acp_command configured for agent %q", e.agent.ID)
+		return fmt.Errorf("acp: no acp_command configured for agent %q", e.agent.ID)
 	}
 
 	cmdName := cmdParts[0]
@@ -242,11 +228,11 @@ func (e *ACPConnEntry) spawnStdioLocked(ctx context.Context) error {
 
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
-		return fmt.Errorf("acp stdio: stdin pipe: %w", err)
+		return fmt.Errorf("acp: stdin pipe: %w", err)
 	}
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("acp stdio: stdout pipe: %w", err)
+		return fmt.Errorf("acp: stdout pipe: %w", err)
 	}
 	cmd.Stderr = &strings.Builder{}
 
@@ -257,7 +243,7 @@ func (e *ACPConnEntry) spawnStdioLocked(ctx context.Context) error {
 	)
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("acp stdio: start: %w", err)
+		return fmt.Errorf("acp: start: %w", err)
 	}
 
 	// Create shared ACP client and connection
@@ -282,7 +268,7 @@ func (e *ACPConnEntry) spawnStdioLocked(ctx context.Context) error {
 	})
 	if err != nil {
 		_ = cmd.Process.Kill()
-		return fmt.Errorf("acp stdio: initialize: %w", err)
+		return fmt.Errorf("acp: initialize: %w", err)
 	}
 
 	slog.Info("acp pool: agent initialized",
@@ -320,42 +306,6 @@ func (e *ACPConnEntry) watchProcessDeath() {
 	e.mu.Unlock()
 }
 
-// connectHTTPLocked establishes the HTTP transport connection (must hold e.mu).
-func (e *ACPConnEntry) connectHTTPLocked(ctx context.Context) error {
-	headers := e.agent.AcpHeaders
-	if headers == nil {
-		headers = make(map[string]string)
-	}
-
-	// Use DaemonManager for daemon health check
-	baseURL, err := GetDaemonManager().EnsureDaemon(ctx, e.agent.ID, e.agent.ServePort, headers)
-	if err != nil {
-		return fmt.Errorf("acp http: daemon not available: %w", err)
-	}
-
-	transport := NewACPHTTPTransport(baseURL, headers)
-
-	// Connect (daemon-specific step)
-	if err := transport.Connect(ctx); err != nil {
-		return fmt.Errorf("acp http: connect: %w", err)
-	}
-
-	// Initialize
-	if err := transport.Initialize(ctx); err != nil {
-		_ = transport.Close(ctx)
-		return fmt.Errorf("acp http: initialize: %w", err)
-	}
-
-	slog.Info("acp pool: HTTP transport connected", "agent_id", e.agent.ID, "base_url", baseURL)
-
-	e.httpTransport = transport
-	e.sessions = make(map[string]string) // clear session mapping on reconnect
-	e.alive = true
-	e.lastUsed = time.Now()
-
-	return nil
-}
-
 // GetOrCreateSession returns the ACP session ID for a ClawBench session.
 // If the session already exists in the mapping, it returns the existing ACP session ID.
 // If not, it creates a new ACP session and stores the mapping.
@@ -371,33 +321,16 @@ func (e *ACPConnEntry) GetOrCreateSession(ctx context.Context, clawbenchSID stri
 	}
 
 	// Create new ACP session
-	var acpSID string
-	var err error
-
-	if e.transport == "stdio" {
-		sessResp, err2 := e.conn.NewSession(ctx, acp.NewSessionRequest{
-			Cwd:        cwd,
-			McpServers: []acp.McpServer{},
-		})
-		if err2 != nil {
-			return "", false, fmt.Errorf("acp: session/new: %w", err2)
-		}
-		acpSID = string(sessResp.SessionId)
-		// Store session response for mode/config extraction by ExecuteStream
-		e.lastSessionResp = &sessResp
-	} else {
-		var modeState *ModeState
-		var configState *ConfigOptionState
-		acpSID, modeState, configState, err = e.httpTransport.NewSession(ctx, cwd)
-		if err != nil {
-			return "", false, fmt.Errorf("acp http: session/new: %w", err)
-		}
-		// Store mode/config state for later retrieval by ExecuteStream
-		if modeState != nil || configState != nil {
-			e.lastModeState = modeState
-			e.lastConfigState = configState
-		}
+	sessResp, err := e.conn.NewSession(ctx, acp.NewSessionRequest{
+		Cwd:        cwd,
+		McpServers: []acp.McpServer{},
+	})
+	if err != nil {
+		return "", false, fmt.Errorf("acp: session/new: %w", err)
 	}
+
+	acpSID := string(sessResp.SessionId)
+	e.lastSessionResp = &sessResp
 
 	slog.Info("acp pool: created new session", "clawbench_sid", clawbenchSID, "acp_sid", acpSID)
 	e.sessions[clawbenchSID] = acpSID
@@ -416,18 +349,6 @@ func (e *ACPConnEntry) GetAndClearSessionResp() *acp.NewSessionResponse {
 	return resp
 }
 
-// GetAndClearModeStates returns the last mode/config states and clears them.
-// Used by ExecuteStream for HTTP transport sessions that don't have NewSessionResponse.
-func (e *ACPConnEntry) GetAndClearModeStates() (*ModeState, *ConfigOptionState) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	ms := e.lastModeState
-	cs := e.lastConfigState
-	e.lastModeState = nil
-	e.lastConfigState = nil
-	return ms, cs
-}
-
 // Prompt sends a prompt on the given ACP session and forwards events to streamCh.
 // It registers the streamCh in the client's session routes before sending the prompt,
 // and unregisters after the prompt completes.
@@ -435,8 +356,6 @@ func (e *ACPConnEntry) Prompt(ctx context.Context, acpSessionID string, prompt [
 	e.mu.Lock()
 	client := e.client
 	conn := e.conn
-	transport := e.httpTransport
-	transportType := e.transport
 	e.lastUsed = time.Now()
 	e.mu.Unlock()
 
@@ -458,37 +377,18 @@ func (e *ACPConnEntry) Prompt(ctx context.Context, acpSessionID string, prompt [
 	}
 
 	// Send prompt
-	if transportType == "stdio" {
-		_, err := conn.Prompt(ctx, acp.PromptRequest{
-			SessionId: acp.SessionId(acpSessionID),
-			Prompt:    prompt,
-		})
-		if err != nil {
-			if ctx.Err() != nil {
-				slog.Info("acp pool: prompt cancelled", "acp_sid", acpSessionID)
-				// Cancel the current turn (not the session)
-				_ = conn.Cancel(context.Background(), acp.CancelNotification{SessionId: acp.SessionId(acpSessionID)})
-				return ctx.Err()
-			}
-			return fmt.Errorf("acp: prompt: %w", err)
+	_, err := conn.Prompt(ctx, acp.PromptRequest{
+		SessionId: acp.SessionId(acpSessionID),
+		Prompt:    prompt,
+	})
+	if err != nil {
+		if ctx.Err() != nil {
+			slog.Info("acp pool: prompt cancelled", "acp_sid", acpSessionID)
+			// Cancel the current turn (not the session)
+			_ = conn.Cancel(context.Background(), acp.CancelNotification{SessionId: acp.SessionId(acpSessionID)})
+			return ctx.Err()
 		}
-	} else {
-		stopReason, err := transport.Prompt(ctx, acpSessionID, prompt, streamCh)
-		if err != nil {
-			if ctx.Err() != nil {
-				slog.Info("acp pool: HTTP prompt cancelled", "acp_sid", acpSessionID)
-				_ = transport.Cancel(ctx, acpSessionID)
-				return ctx.Err()
-			}
-			return fmt.Errorf("acp http: prompt: %w", err)
-		}
-		// Emit metadata with stop reason for HTTP transport
-		if stopReason != "" {
-			forwardACPEvent(streamCh, StreamEvent{
-				Type: "metadata",
-				Meta: &Metadata{StopReason: stopReason},
-			})
-		}
+		return fmt.Errorf("acp: prompt: %w", err)
 	}
 
 	return nil
@@ -499,14 +399,10 @@ func (e *ACPConnEntry) Prompt(ctx context.Context, acpSessionID string, prompt [
 func (e *ACPConnEntry) CancelTurn(ctx context.Context, acpSessionID string) {
 	e.mu.Lock()
 	conn := e.conn
-	transport := e.httpTransport
-	transportType := e.transport
 	e.mu.Unlock()
 
-	if transportType == "stdio" && conn != nil {
+	if conn != nil {
 		_ = conn.Cancel(ctx, acp.CancelNotification{SessionId: acp.SessionId(acpSessionID)})
-	} else if transport != nil {
-		_ = transport.Cancel(ctx, acpSessionID)
 	}
 }
 
@@ -532,29 +428,19 @@ func (e *ACPConnEntry) SetSessionConfigOption(ctx context.Context, clawbenchSID,
 func (e *ACPConnEntry) setSessionConfigOption(ctx context.Context, acpSessionID, configID, value string) {
 	e.mu.Lock()
 	conn := e.conn
-	transport := e.httpTransport
-	transportType := e.transport
 	e.mu.Unlock()
 
-	var err error
-	if transportType == "stdio" && conn != nil {
-		_, err = conn.SetSessionConfigOption(ctx, acp.SetSessionConfigOptionRequest{
-			ValueId: &acp.SetSessionConfigOptionValueId{
-				SessionId: acp.SessionId(acpSessionID),
-				ConfigId:  acp.SessionConfigId(configID),
-				Value:     acp.SessionConfigValueId(value),
-			},
-		})
-	} else if transport != nil {
-		err = transport.SetSessionConfigOption(ctx, acpSessionID, acp.SetSessionConfigOptionRequest{
-			ValueId: &acp.SetSessionConfigOptionValueId{
-				SessionId: acp.SessionId(acpSessionID),
-				ConfigId:  acp.SessionConfigId(configID),
-				Value:     acp.SessionConfigValueId(value),
-			},
-		})
+	if conn == nil {
+		return
 	}
 
+	_, err := conn.SetSessionConfigOption(ctx, acp.SetSessionConfigOptionRequest{
+		ValueId: &acp.SetSessionConfigOptionValueId{
+			SessionId: acp.SessionId(acpSessionID),
+			ConfigId:  acp.SessionConfigId(configID),
+			Value:     acp.SessionConfigValueId(value),
+		},
+	})
 	if err != nil {
 		slog.Debug("acp pool: failed to set config option (non-fatal)", "config_id", configID, "value", value, "error", err)
 	}
@@ -567,27 +453,26 @@ func (e *ACPConnEntry) IsAlive() bool {
 	return e.alive && e.isAliveLocked()
 }
 
-// Close kills the agent process (stdio) or closes the transport (http)
-// and marks the entry as dead.
+// GetClient returns the ClawBenchACPClient for this connection.
+// Returns nil if the connection is not alive.
+func (e *ACPConnEntry) GetClient() *ClawBenchACPClient {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.client
+}
+
+// Close kills the agent process and marks the entry as dead.
 func (e *ACPConnEntry) Close() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if e.transport == "stdio" {
-		if e.cmd != nil && e.cmd.Process != nil {
-			_ = e.cmd.Process.Kill()
-			_ = e.cmd.Wait()
-		}
-		e.cmd = nil
-		e.conn = nil
-		e.client = nil
-	} else {
-		if e.httpTransport != nil {
-			_ = e.httpTransport.Close(context.Background())
-		}
-		e.httpTransport = nil
+	if e.cmd != nil && e.cmd.Process != nil {
+		_ = e.cmd.Process.Kill()
+		_ = e.cmd.Wait()
 	}
-
+	e.cmd = nil
+	e.conn = nil
+	e.client = nil
 	e.alive = false
 	e.sessions = make(map[string]string)
 }

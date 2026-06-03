@@ -101,9 +101,17 @@ type ConfigOptionState struct {
 	Options   []ConfigOptionDef  `json:"options,omitempty"`
 }
 
+// AvailableCommandInfo represents a slash command discovered from an ACP agent
+// via the available_commands_update session notification.
+type AvailableCommandInfo struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	InputHint   string `json:"inputHint,omitempty"`
+}
+
 // StreamEvent represents a single event in the streaming output
 type StreamEvent struct {
-	Type       string          // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "raw_output", "resume_split", "queue_consume", "queue_update", "queue_done", "session_capture", "mode_update", "config_update"
+	Type       string          // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "raw_output", "resume_split", "queue_consume", "queue_update", "queue_done", "session_capture", "mode_update", "config_update", "commands_update"
 	Content    string          // Incremental text (Type=content, Type=thinking) or captured session ID (Type=session_capture)
 	Reason     string          // Structured reason code for i18n (e.g. "disconnect", "timeout", "parse_error")
 	Meta       *Metadata       // Metadata (Type=metadata)
@@ -113,6 +121,7 @@ type StreamEvent struct {
 	QueueEvent *QueueEventData // Queue data (Type=queue_consume, Type=queue_update)
 	Mode       *ModeState      // Mode state (Type=mode_update)
 	Config     *ConfigOptionState // Config option state (Type=config_update)
+	Commands   []AvailableCommandInfo // Slash commands (Type=commands_update)
 }
 
 // ToolCall represents a tool invocation by the AI.

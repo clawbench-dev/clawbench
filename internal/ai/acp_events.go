@@ -41,8 +41,23 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		slog.Debug("acp: plan update received", "entries", len(update.Plan.Entries))
 
 	case update.AvailableCommandsUpdate != nil:
-		// Commands are informational; skip StreamEvent emission
-		slog.Debug("acp: available commands update", "count", len(update.AvailableCommandsUpdate.AvailableCommands))
+		cmds := update.AvailableCommandsUpdate.AvailableCommands
+		slog.Info("acp: available commands update", "count", len(cmds))
+		infos := make([]AvailableCommandInfo, 0, len(cmds))
+		for _, c := range cmds {
+			info := AvailableCommandInfo{
+				Name:        c.Name,
+				Description: c.Description,
+			}
+			if c.Input != nil && c.Input.Unstructured != nil {
+				info.InputHint = c.Input.Unstructured.Hint
+			}
+			infos = append(infos, info)
+		}
+		forwardACPEvent(ch, StreamEvent{
+			Type:     "commands_update",
+			Commands: infos,
+		})
 
 	case update.CurrentModeUpdate != nil:
 		// v1 mode update: only currentModeId; available modes were sent in session/new

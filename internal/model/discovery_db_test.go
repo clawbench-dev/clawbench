@@ -35,9 +35,6 @@ func setupTestDBForDiscovery(t *testing.T) *sql.DB {
 			sort_order INTEGER NOT NULL DEFAULT 0,
 			transport TEXT NOT NULL DEFAULT 'cli',
 			acp_command TEXT NOT NULL DEFAULT '',
-			serve_port INTEGER NOT NULL DEFAULT 0,
-			acp_headers TEXT NOT NULL DEFAULT '',
-			skills_api TEXT NOT NULL DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);

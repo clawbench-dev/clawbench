@@ -11,10 +11,10 @@ import (
 )
 
 // ACPBackend implements the AIBackend interface using the Agent Client Protocol.
-// It uses ACPConnectionPool for long-lived connections and session reuse.
+// It uses ACPConnectionPool for long-lived stdio connections and session reuse.
 //
 // With connection pooling:
-//   - Each agent gets one long-lived process (stdio) or HTTP transport
+//   - Each agent gets one long-lived subprocess (stdio)
 //   - Multiple ClawBench sessions share the same connection (different ACP sessions)
 //   - Multiple prompt turns within the same ClawBench session reuse the ACP session
 //   - Cancel uses session/cancel (not process kill), session stays open
@@ -24,10 +24,10 @@ type ACPBackend struct {
 }
 
 // NewACPBackend creates a new ACPBackend for the given agent.
-// The agent must have Transport set to "acp-stdio" or "acp-http".
+// The agent must have Transport set to "acp-stdio".
 func NewACPBackend(agent *model.Agent) (*ACPBackend, error) {
-	if agent.Transport != "acp-stdio" && agent.Transport != "acp-http" {
-		return nil, fmt.Errorf("acp backend: agent %q has transport %q, expected acp-stdio or acp-http", agent.ID, agent.Transport)
+	if agent.Transport != "acp-stdio" {
+		return nil, fmt.Errorf("acp backend: agent %q has transport %q, expected acp-stdio", agent.ID, agent.Transport)
 	}
 	return &ACPBackend{agent: agent}, nil
 }
@@ -72,7 +72,6 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 			forwardACPEvent(ch, StreamEvent{Type: "session_capture", Content: acpSessionID})
 
 			// Emit mode_update and config_update for new sessions
-			// stdio transport: extract from NewSessionResponse
 			if sessResp := entry.GetAndClearSessionResp(); sessResp != nil {
 				if modeState := extractACPModeState(sessResp); modeState != nil {
 					slog.Info("acp: emitting mode_update", "current_mode", modeState.CurrentModeID, "available", len(modeState.AvailableModes))
@@ -83,15 +82,23 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 					forwardACPEvent(ch, StreamEvent{Type: "config_update", Config: configState})
 				}
 			}
-			// HTTP transport: extract from parsed mode/config state
-			if ms, cs := entry.GetAndClearModeStates(); ms != nil || cs != nil {
-				if ms != nil {
-					slog.Info("acp: emitting mode_update (HTTP)", "current_mode", ms.CurrentModeID, "available", len(ms.AvailableModes))
-					forwardACPEvent(ch, StreamEvent{Type: "mode_update", Mode: ms})
-				}
-				if cs != nil {
-					slog.Info("acp: emitting config_update (HTTP)", "config_id", cs.ConfigID, "current", cs.CurrentID)
-					forwardACPEvent(ch, StreamEvent{Type: "config_update", Config: cs})
+
+			// Emit commands_update for new sessions if cached from available_commands_update
+			if client := entry.GetClient(); client != nil {
+				if cmds := client.GetCommands(); len(cmds) > 0 {
+					infos := make([]AvailableCommandInfo, 0, len(cmds))
+					for _, c := range cmds {
+						info := AvailableCommandInfo{
+							Name:        c.Name,
+							Description: c.Description,
+						}
+						if c.Input != nil && c.Input.Unstructured != nil {
+							info.InputHint = c.Input.Unstructured.Hint
+						}
+						infos = append(infos, info)
+					}
+					slog.Info("acp: emitting commands_update", "count", len(infos))
+					forwardACPEvent(ch, StreamEvent{Type: "commands_update", Commands: infos})
 				}
 			}
 		}

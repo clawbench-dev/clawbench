@@ -188,7 +188,7 @@ func TestNewACPBackend_InvalidTransport(t *testing.T) {
 	}
 	_, err := NewACPBackend(agent)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "expected acp-stdio or acp-http")
+	assert.Contains(t, err.Error(), "expected acp-stdio")
 }
 
 func TestNewACPBackend_ValidStdio(t *testing.T) {
@@ -203,14 +203,13 @@ func TestNewACPBackend_ValidStdio(t *testing.T) {
 	assert.Equal(t, "claude", backend.Name())
 }
 
-func TestNewACPBackend_ValidHTTP(t *testing.T) {
+func TestNewACPBackend_InvalidHTTP(t *testing.T) {
 	agent := &model.Agent{
 		ID:        "test",
 		Backend:   "codebuddy",
 		Transport: "acp-http",
-		ServePort: 9191,
 	}
-	backend, err := NewACPBackend(agent)
-	assert.NoError(t, err)
-	assert.Equal(t, "codebuddy", backend.Name())
+	_, err := NewACPBackend(agent)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "expected acp-stdio")
 }

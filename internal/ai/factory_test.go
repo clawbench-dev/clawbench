@@ -165,7 +165,7 @@ func TestNewBackendForAgent_ACPStdioTransport(t *testing.T) {
 	assert.True(t, ok, "claude ACP should be ACPBackend directly (no AutoResume wrapping)")
 }
 
-func TestNewBackendForAgent_ACPHttpTransport(t *testing.T) {
+func TestNewBackendForAgent_ACPHttpTransport_Unsupported(t *testing.T) {
 	origAgents := model.Agents
 	t.Cleanup(func() { model.Agents = origAgents })
 
@@ -174,18 +174,18 @@ func TestNewBackendForAgent_ACPHttpTransport(t *testing.T) {
 			ID:        "test-http",
 			Backend:   "codebuddy",
 			Transport: "acp-http",
-			ServePort: 9191,
 		},
 	}
 
+	// acp-http is no longer supported; should fall back to CLI backend
 	backend, err := NewBackendForAgent("codebuddy", "test-http")
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
 	assert.Equal(t, "codebuddy", backend.Name())
 
-	// ACP backends are NOT wrapped in AutoResumeBackend (session/cancel replaces it)
-	_, ok := backend.(*ACPBackend)
-	assert.True(t, ok, "acp-http transport should be ACPBackend directly")
+	// Should fall back to AutoResumeBackend (CLI mode), not ACPBackend
+	_, ok := backend.(*AutoResumeBackend)
+	assert.True(t, ok, "acp-http should fall back to CLI AutoResumeBackend")
 }
 
 func TestNewBackendForAgent_ACPNoAutoResume(t *testing.T) {
