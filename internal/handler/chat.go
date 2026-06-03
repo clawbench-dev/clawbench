@@ -185,18 +185,20 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		// This allows the frontend to populate mode chips immediately
 		// without waiting for SSE events (which may have already been consumed).
 		var modeState, thinkingEffortState any
+		var commands []ai.AvailableCommandInfo
 		if sessionID != "" {
-			if ms, _, es := ai.GetACPConnectionPool().GetCachedStateByClawbenchSID(sessionID); ms != nil || es != nil {
+			if ms, _, es, cmds := ai.GetACPConnectionPool().GetCachedStateByClawbenchSID(sessionID); ms != nil || es != nil || len(cmds) > 0 {
 				modeState = ms
 				thinkingEffortState = es
+				commands = cmds
 			}
 		}
 
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "thinkingEffort": sessionThinkingEffort, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState})
+			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "thinkingEffort": sessionThinkingEffort, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "thinkingEffort": sessionThinkingEffort, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState})
+		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "thinkingEffort": sessionThinkingEffort, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands})
 		return
 	}
 

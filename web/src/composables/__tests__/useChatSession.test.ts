@@ -127,7 +127,7 @@ vi.mock('@/composables/useSessionIdentity', () => ({
   }),
   clearModeState: vi.fn(),
   clearCommandState: vi.fn(),
-  prefetchCommands: vi.fn().mockResolvedValue(undefined),
+  updateCommandState: vi.fn(),
 }))
 
 vi.mock('@/composables/useToast', () => ({

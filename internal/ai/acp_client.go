@@ -84,6 +84,25 @@ func (c *ClawBenchACPClient) GetCommands() []acp.AvailableCommand {
 	return c.commands
 }
 
+// GetCommandsAsInfo returns cached commands as AvailableCommandInfo slices
+// for JSON serialization to the frontend.
+func (c *ClawBenchACPClient) GetCommandsAsInfo() []AvailableCommandInfo {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cmds := make([]AvailableCommandInfo, 0, len(c.commands))
+	for _, c := range c.commands {
+		info := AvailableCommandInfo{
+			Name:        c.Name,
+			Description: c.Description,
+		}
+		if c.Input != nil && c.Input.Unstructured != nil {
+			info.InputHint = c.Input.Unstructured.Hint
+		}
+		cmds = append(cmds, info)
+	}
+	return cmds
+}
+
 // SetCommands caches available commands from an ACP session update.
 func (c *ClawBenchACPClient) SetCommands(cmds []acp.AvailableCommand) {
 	c.mu.Lock()

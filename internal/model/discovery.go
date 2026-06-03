@@ -47,7 +47,7 @@ var BackendRegistry = []BackendSpec{
 		ID: "claude", Backend: "claude", DefaultCmd: "claude", Name: "Claude", Icon: "🤖", Specialty: "代码编写与推理",
 		DiscoverModelsFunc:   DiscoverClaudeModels,
 		ThinkingEffortLevels: []string{"low", "medium", "high", "xhigh", "max"},
-		AcpCommand: "claude acp",
+		AcpCommand: "npx -y @agentclientprotocol/claude-agent-acp@latest",
 	},
 	{
 		ID: "codebuddy", Backend: "codebuddy", DefaultCmd: "codebuddy", Name: "Codebuddy", Icon: "🐛", Specialty: "全栈开发助手",
@@ -1580,13 +1580,23 @@ func SyncDiscoverAgentsDB(db *sql.DB) map[string]bool { //nolint:gocognit,gocycl
 
 		// Check if DB already has an agent for this backend
 		var count int
-		err := db.QueryRow("SELECT COUNT(*) FROM agents WHERE backend = ?", r.spec.Backend).Scan(&count)
+		var existingAcpCommand string
+		err := db.QueryRow("SELECT COUNT(*), COALESCE(acp_command, '') FROM agents WHERE backend = ?", r.spec.Backend).Scan(&count, &existingAcpCommand)
 		if err != nil {
 			slog.Warn("failed to query agents table", "backend", r.spec.Backend, "error", err)
 			continue
 		}
 		if count > 0 {
-			continue // Don't overwrite existing DB records
+			// Update acp_command if it changed in BackendSpec (e.g., claude moved
+			// from "claude acp" to the npx bridge adapter).
+			if r.spec.AcpCommand != "" && existingAcpCommand != r.spec.AcpCommand {
+				if _, updateErr := db.Exec("UPDATE agents SET acp_command = ?, transport = 'acp-stdio' WHERE backend = ? AND source = 'auto'", r.spec.AcpCommand, r.spec.Backend); updateErr != nil {
+					slog.Warn("failed to update acp_command", "backend", r.spec.Backend, "error", updateErr)
+				} else {
+					slog.Info("updated acp_command for auto-discovered agent", "backend", r.spec.Backend, "old", existingAcpCommand, "new", r.spec.AcpCommand)
+				}
+			}
+			continue // Don't overwrite other existing DB fields
 		}
 
 		if !r.exists {

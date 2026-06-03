@@ -41,12 +41,14 @@ func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 	defaultAgent := model.GetDefaultAgentID()
 	configMutex.RUnlock()
 
-	// Attach cached ACP mode/thinking state to each agent.
-	// This lets the frontend populate mode chips without extra API calls.
-	// Before the first message, the ACP pool is empty so states will be nil.
+	// Attach cached ACP mode/thinking/commands state to each agent.
+	// This lets the frontend populate mode chips and slash commands without
+	// extra API calls. Before the first message, the ACP pool is empty so
+	// states will be nil.
 	type acpState struct {
-		Mode    *ai.ModeState          `json:"modeState,omitempty"`
-		Effort  *ai.ThinkingEffortState `json:"thinkingEffortState,omitempty"`
+		Mode     *ai.ModeState          `json:"modeState,omitempty"`
+		Effort   *ai.ThinkingEffortState `json:"thinkingEffortState,omitempty"`
+		Commands []ai.AvailableCommandInfo `json:"commands,omitempty"`
 	}
 	states := make(map[string]*acpState, len(agents))
 	pool := ai.GetACPConnectionPool()
@@ -56,6 +58,12 @@ func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 		}
 		if ms, _, es := pool.GetCachedStateByAgentID(a.ID); ms != nil || es != nil {
 			states[a.ID] = &acpState{Mode: ms, Effort: es}
+		}
+		if cmds := pool.GetCommandsByAgentID(a.ID); len(cmds) > 0 {
+			if states[a.ID] == nil {
+				states[a.ID] = &acpState{}
+			}
+			states[a.ID].Commands = cmds
 		}
 	}
 

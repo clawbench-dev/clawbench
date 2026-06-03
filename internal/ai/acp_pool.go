@@ -164,11 +164,11 @@ func (p *ACPConnectionPool) GetACPSessionID(agentID, clawbenchSID string) string
 	return entry.sessions[clawbenchSID]
 }
 
-// GetCachedStateByClawbenchSID returns the cached mode, config, and thinking effort
-// state for the pool entry that owns the given ClawBench session ID.
-// Returns nil for each state that is not available.
-// Used by the SSE handler and REST API to re-emit mode state on reconnect.
-func (p *ACPConnectionPool) GetCachedStateByClawbenchSID(clawbenchSID string) (mode *ModeState, config *ConfigOptionState, effort *ThinkingEffortState) {
+// GetCachedStateByClawbenchSID returns the cached mode, config, thinking effort,
+// and slash commands for the pool entry that owns the given ClawBench session ID.
+// Returns nil/empty for each state that is not available.
+// Used by the SSE handler and REST API to re-emit state on reconnect.
+func (p *ACPConnectionPool) GetCachedStateByClawbenchSID(clawbenchSID string) (mode *ModeState, config *ConfigOptionState, effort *ThinkingEffortState, cmds []AvailableCommandInfo) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -178,12 +178,24 @@ func (p *ACPConnectionPool) GetCachedStateByClawbenchSID(clawbenchSID string) (m
 			mode = entry.cachedModeState
 			config = entry.cachedConfigState
 			effort = entry.cachedThinkingEffortState
+			cmds = entry.client.GetCommandsAsInfo()
 			entry.mu.Unlock()
 			return
 		}
 		entry.mu.Unlock()
 	}
-	return nil, nil, nil
+	return nil, nil, nil, nil
+}
+
+// GetCommandsByAgentID returns the cached slash commands for the given agent ID.
+// Returns nil if no connection exists for the agent.
+// Used for pre-fetching commands before the first message (no session yet).
+func (p *ACPConnectionPool) GetCommandsByAgentID(agentID string) []AvailableCommandInfo {
+	client := p.GetClient(agentID)
+	if client == nil {
+		return nil
+	}
+	return client.GetCommandsAsInfo()
 }
 
 // idleSweeper periodically kills idle connections.

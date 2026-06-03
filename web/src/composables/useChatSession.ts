@@ -3,7 +3,7 @@ import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
-import { clearModeState, updateModeState, clearCommandState, prefetchCommands, updateThinkingEffortState } from '@/composables/useSessionIdentity.ts'
+import { clearModeState, updateModeState, clearCommandState, updateCommandState, updateThinkingEffortState } from '@/composables/useSessionIdentity.ts'
 import { clearPlanState } from '@/composables/usePlanProgress'
 import { useAgents } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
@@ -223,9 +223,9 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (data.thinkingEffortState && data.thinkingEffortState.availableLevels?.length > 0) {
         updateThinkingEffortState(data.thinkingEffortState.currentId || '', data.thinkingEffortState.availableLevels)
       }
-      // Pre-fetch ACP slash commands so they appear before the first message is sent
-      if (availableCommands.value.length === 0) {
-        prefetchCommands(currentAgentId.value)
+      // Populate slash commands from REST response (cached ACP state)
+      if (Array.isArray(data.commands) && data.commands.length > 0 && availableCommands.value.length === 0) {
+        updateCommandState(data.commands)
       }
       onExtractScheduledTasks(messages.value)
       onRenderUpdate(true)
@@ -330,8 +330,10 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (data.thinkingEffortState && data.thinkingEffortState.availableLevels?.length > 0) {
         updateThinkingEffortState(data.thinkingEffortState.currentId || '', data.thinkingEffortState.availableLevels)
       }
-      // Pre-fetch ACP slash commands so they appear before the first message is sent
-      prefetchCommands(currentAgentId.value)
+      // Populate slash commands from REST response (cached ACP state)
+      if (Array.isArray(data.commands) && data.commands.length > 0 && availableCommands.value.length === 0) {
+        updateCommandState(data.commands)
+      }
       onExtractScheduledTasks(messages.value)
       onRenderUpdate(true)
       onScrollBottom(true)
@@ -382,9 +384,8 @@ export function useChatSession(options: UseChatSessionOptions) {
       currentAgentId.value = data.agentId || agentId || ''
       syncModelFromData(currentAgentId.value, '')
       currentThinkingEffort.value = identity.loadThinkingPref(currentAgentId.value) || ''
-      // Clear and pre-fetch ACP slash commands for new session
+      // Clear ACP slash commands for new session (will be populated from /api/agents or SSE)
       clearCommandState()
-      prefetchCommands(currentAgentId.value)
       messages.value = []
       totalMessages.value = 0
       lastMessageSnapshot = ''  // New session — no messages yet

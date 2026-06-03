@@ -1,7 +1,7 @@
 import { ref } from 'vue'
 import { apiGet } from '@/utils/api'
 import { gt } from '@/composables/useLocale'
-import { updateModeState, updateThinkingEffortState } from '@/composables/useSessionIdentity.ts'
+import { updateModeState, updateThinkingEffortState, updateCommandState } from '@/composables/useSessionIdentity.ts'
 
 // Singleton state — shared across the whole app
 const agents = ref<any[]>([])
@@ -26,9 +26,10 @@ async function loadAgents(force = false): Promise<void> {
             if (data.defaultAgent) {
                 defaultAgentId.value = data.defaultAgent
             }
-            // Populate ACP mode/thinking state from the agents response.
-            // This is the lightest way to get mode chips before the first message —
-            // no extra HTTP request needed since /api/agents is already called on page load.
+            // Populate ACP mode/thinking/commands state from the agents response.
+            // This is the lightest way to get mode chips and slash commands before
+            // the first message — no extra HTTP request needed since /api/agents
+            // is already called on page load.
             if (data.acpStates) {
                 for (const [agentId, state] of Object.entries(data.acpStates)) {
                     if (state.modeState?.availableModes?.length > 0) {
@@ -36,6 +37,9 @@ async function loadAgents(force = false): Promise<void> {
                     }
                     if (state.thinkingEffortState?.availableLevels?.length > 0) {
                         updateThinkingEffortState(state.thinkingEffortState.currentId || '', state.thinkingEffortState.availableLevels)
+                    }
+                    if (Array.isArray(state.commands) && state.commands.length > 0) {
+                        updateCommandState(state.commands)
                     }
                 }
             }

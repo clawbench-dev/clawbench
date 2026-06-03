@@ -145,28 +145,14 @@ export function clearCommandState() {
 }
 
 /**
- * Pre-fetch ACP slash commands from the REST API so they are available
- * before the first SSE stream is opened (i.e. before the user sends a
- * message). Falls back silently — SSE will populate commands on stream.
- *
- * Note: mode/thinking state is now populated from GET /api/agents (acpStates),
- * not from this endpoint — zero extra HTTP request needed.
+ * Slash commands are now populated from GET /api/agents (acpStates.commands)
+ * and SSE commands_update events — no separate prefetch HTTP request needed.
+ * This function is kept as a no-op for backward compatibility with call sites
+ * that haven't been updated yet.
+ * @deprecated Use acpStates from /api/agents instead.
  */
-export async function prefetchCommands(agentId: string) {
-  if (!agentId) return
-  try {
-    const resp = await fetch(`/api/ai/commands?agent_id=${encodeURIComponent(agentId)}`)
-    if (!resp.ok) return
-    const data = await resp.json()
-    if (Array.isArray(data.commands) && data.commands.length > 0) {
-      // Only update if still empty (SSE may have already populated via a running stream)
-      if (availableCommands.value.length === 0) {
-        availableCommands.value = data.commands
-      }
-    }
-  } catch {
-    // Silently ignore — SSE commands_update will populate on next stream
-  }
+export async function prefetchCommands(_agentId: string) {
+  // No-op: commands are now pre-populated from /api/agents acpStates
 }
 
 /** Update thinking effort state from SSE thinking_effort_update event. */
@@ -266,8 +252,8 @@ export async function initSessionFromAPI() {
         currentSessionTitle.value = data.sessionTitle || ''
         currentBackend.value = data.backend || ''
         currentAgentId.value = data.agentId || ''
-        // Pre-fetch ACP slash commands so they appear before the first message
-        prefetchCommands(data.agentId || '')
+        // Slash commands are now populated from /api/agents acpStates (via loadAgents)
+        // and from the chat response below — no separate prefetch request needed.
         // Initialize model: prefer server-persisted modelId, then localStorage pref, then agent default
         if (data.modelId) {
           currentModelId.value = data.modelId
@@ -297,6 +283,10 @@ export async function initSessionFromAPI() {
           currentThinkingEffort.value = data.thinkingEffort
         } else {
           currentThinkingEffort.value = loadThinkingPref(data.agentId || '') || ''
+        }
+        // Populate slash commands from chat response (cached ACP state)
+        if (Array.isArray(data.commands) && data.commands.length > 0 && availableCommands.value.length === 0) {
+          availableCommands.value = data.commands
         }
       }
     }
