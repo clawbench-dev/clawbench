@@ -14,7 +14,6 @@ import { type Locator, type Page, expect } from '@playwright/test'
  * - .dock-overflow-item   → overflow popup menu items
  * - .settings-index__row  → category row in settings index
  * - .settings-item        → individual setting item in a category
- * - .password-dialog-overlay → password dialog overlay
  * - .password-dialog      → password dialog box
  * - .password-dialog__input → password input fields (3: current, new, confirm)
  * - .password-dialog__btn--submit → submit button
@@ -54,28 +53,20 @@ export class SettingsPage {
   async openPasswordDialog(): Promise<void> {
     // Step 1: Navigate to "安全/Security" category
     const securityRow = this.page.locator('.settings-index__row').filter({ hasText: /security|安全/i })
-    const securityRowVisible = await securityRow.isVisible({ timeout: 3000 }).catch(() => false)
+    await expect(securityRow).toBeVisible({ timeout: 5000 })
+    await securityRow.click()
 
-    if (securityRowVisible) {
-      await securityRow.click()
-      // Wait for category to load
-      await this.page.waitForTimeout(500)
-    }
+    // Wait for the category page to render its items (auto-waiting, no sleep)
+    await expect(this.page.locator('.settings-item').first()).toBeVisible({ timeout: 5000 })
 
     // Step 2: Click the "修改密码/Change Password" action item
-    const passwordItem = this.page.locator('.settings-item').filter({ hasText: /change.*password|修改密码|password|密码/i })
-    const passwordItemVisible = await passwordItem.first().isVisible({ timeout: 3000 }).catch(() => false)
-
-    if (passwordItemVisible) {
-      await passwordItem.first().click()
-    } else {
-      // Fallback: try API approach — just show the dialog directly via page.evaluate
-      await this.page.evaluate(() => {
-        // Find the Vue app and trigger the password dialog
-        const event = new CustomEvent('openPasswordDialog')
-        document.dispatchEvent(event)
-      })
-    }
+    // The item text includes a description, e.g. "Change Password Change the server access password..."
+    // Match specifically on "Change Password" or "修改密码" at the start
+    const passwordItem = this.page.locator('.settings-item').filter({
+      hasText: /change password|修改密码/i,
+    })
+    await expect(passwordItem).toBeVisible({ timeout: 5000 })
+    await passwordItem.click()
 
     // Wait for password dialog to appear
     await expect(this.passwordDialog).toBeVisible({ timeout: 5000 })

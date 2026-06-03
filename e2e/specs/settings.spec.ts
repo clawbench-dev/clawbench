@@ -6,14 +6,41 @@ import { getServerURL } from '../helpers/server'
 test.describe('Password Change Dialog', () => {
   let settings: SettingsPage
 
-  const E2E_PASSWORD = 'e2e-test-password'
+  const E2E_PASSWORD = process.env.E2E_PASSWORD || 'e2e-test-password'
   const NEW_PASSWORD = 'new-e2e-password-123456'
 
+  /**
+   * Reset the server password to the known E2E_PASSWORD before each test.
+   * This ensures test isolation — if a previous test (or a crashed run)
+   * left the password in a different state, we reset it.
+   * Uses Node.js fetch (localhost bypasses auth).
+   */
   test.beforeEach(async ({ page }) => {
     settings = new SettingsPage(page)
     const chat = new ChatPage(page)
+
+    // Ensure password is in the expected state before each test
+    const baseURL = getServerURL()
+    for (const current of [NEW_PASSWORD, E2E_PASSWORD]) {
+      try {
+        const resp = await fetch(`${baseURL}/api/config/password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ current_password: current, new_password: E2E_PASSWORD }),
+        })
+        if (resp.ok) break
+      } catch {
+        // Server may not be ready yet
+      }
+    }
+
     // Ensure we're on the chat page first for stable navigation
-    await chat.textarea.isVisible({ timeout: 10000 }).catch(() => page.goto('/'))
+    const isReady = await chat.textarea.isVisible({ timeout: 10000 }).catch(() => false)
+    if (!isReady) {
+      await page.goto('/')
+      await page.waitForLoadState('networkidle')
+      await expect(chat.textarea).toBeVisible({ timeout: 10000 })
+    }
     await settings.openSettings()
   })
 
@@ -46,6 +73,7 @@ test.describe('Password Change Dialog', () => {
     await expect(settings.passwordDialog).not.toBeVisible({ timeout: 10000 })
 
     // Restore the original password so subsequent tests/specs work
+    // Uses page.evaluate to carry browser auth cookies
     await page.evaluate(async ({ currentPass, originalPass }) => {
       const resp = await fetch('/api/config/password', {
         method: 'POST',
@@ -67,26 +95,5 @@ test.describe('Password Change Dialog', () => {
 
     // Submit button should be disabled for short password
     await expect(settings.passwordSubmitBtn).toBeDisabled()
-  })
-
-  // Safety net: use test.afterAll with Node.js fetch (localhost bypasses auth)
-  // to restore the original password if test 3 failed mid-way
-  test.afterAll(async () => {
-    const baseURL = getServerURL()
-    for (const current of [NEW_PASSWORD, E2E_PASSWORD]) {
-      try {
-        const resp = await fetch(`${baseURL}/api/config/password`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            current_password: current,
-            new_password: E2E_PASSWORD,
-          }),
-        })
-        if (resp.ok) break
-      } catch {
-        // Server may not be available during teardown
-      }
-    }
   })
 })

@@ -14,13 +14,16 @@ test.describe('Chat', () => {
   test('should send a message and receive SSE stream reply', async ({ page }) => {
     // Default agent is acp-mock which uses real ACP stdio protocol
     const uniqueText = 'mocktest_' + Date.now()
-    await chat.sendMessage(uniqueText)
 
-    // 1. User message appears immediately (synchronous POST)
-    await expect(chat.getLastUserMessage()).toContainText(uniqueText)
+    // Count messages before sending to avoid stale matches from parallel tests
+    const userCountBefore = await page.locator('.chat-message.user').count()
+    const countBefore = await chat.sendMessage(uniqueText)
+
+    // 1. User message appears immediately (synchronous POST) — match the new one
+    await expect(page.locator('.chat-message.user').nth(userCountBefore)).toContainText(uniqueText)
 
     // 2. Assistant response appears (async SSE stream from ACP mock agent)
-    await chat.waitForReply(30000)
+    await chat.waitForReply(30000, countBefore)
 
     // 3. Response contains "mock" text (ACP mock agent always mentions it)
     await expect(chat.getLastAssistantMessage()).toContainText('mock', { timeout: 15000 })
@@ -59,13 +62,13 @@ test.describe('Chat', () => {
 
   test('should show stop button during AI response', async ({ page }) => {
     // Send a message
-    await chat.sendMessage('Hello')
+    const countBefore = await chat.sendMessage('Hello')
 
     // The stop button appears while AI is generating.
     // ACP mock responds quickly (~500ms), so we may or may not catch it.
     // The key assertion is that after the response completes, the stop button is gone.
     // Wait for the response to complete — this implicitly verifies the chat flow works.
-    await chat.waitForReply(30000)
+    await chat.waitForReply(30000, countBefore)
 
     // After response completes, stop button should be gone
     await expect(chat.stopButton).not.toBeVisible()

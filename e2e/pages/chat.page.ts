@@ -51,15 +51,16 @@ export class ChatPage {
   }
 
   /** Fill the textarea and click send */
-  async sendMessage(text: string) {
+  async sendMessage(text: string): Promise<number> {
     // Clear existing content and fill with new text
-    // Using clear() + fill() ensures the textarea is properly cleared
-    // before setting the new value, avoiding stale content from v-model.
     await this.textarea.clear()
     await this.textarea.fill(text)
-    // Brief pause to let Vue's v-model react to the filled value.
-    await this.page.waitForTimeout(200)
+    // Wait for Vue's v-model to sync the filled value (auto-retries, no hardcoded sleep)
+    await expect(this.textarea).toHaveValue(text)
+    // Record assistant message count *before* sending to avoid stale matches
+    const countBefore = await this.page.locator('.chat-message.assistant').count()
     await this.sendButton.click()
+    return countBefore
   }
 
   /** Click send with empty input to open quick-send popup */
@@ -67,17 +68,19 @@ export class ChatPage {
     await this.sendButton.click()
   }
 
-  /** Wait for an assistant message to fully load (SSE stream reply with content) */
-  async waitForReply(timeout = 15000) {
-    // Wait for assistant message element to appear AND have non-empty text content.
-    // SSE streams content incrementally, so we must wait until text is actually rendered.
-    // Use polling approach for better reliability on Firefox/WebKit where SSE events
-    // may arrive with variable latency.
-    const assistantMsg = this.page.locator('.chat-message.assistant').last()
-    await expect(assistantMsg).toBeVisible({ timeout })
-    // Wait for actual text content (the mock response contains "mock assistant")
-    // Use toContainText instead of not.toBeEmpty for more reliable cross-browser behavior
-    await expect(assistantMsg).toContainText(/.+/, { timeout })
+  /** Wait for an assistant message to fully load (SSE stream reply with content).
+   *  Tracks message count before the send so it waits for the *new* message,
+   *  avoiding stale matches on pre-existing assistant messages. */
+  async waitForReply(timeout = 15000, countBefore?: number): Promise<void> {
+    // If caller didn't provide a count, determine it now
+    if (countBefore === undefined) {
+      countBefore = await this.page.locator('.chat-message.assistant').count()
+    }
+    // Wait for the new assistant message to appear
+    const newMsg = this.page.locator('.chat-message.assistant').nth(countBefore)
+    await expect(newMsg).toBeVisible({ timeout })
+    // Wait for actual text content (SSE streams content incrementally)
+    await expect(newMsg).toContainText(/.+/, { timeout })
   }
 
   /** Get the last user message element */
@@ -129,15 +132,13 @@ export class ChatPage {
    * Send a message and wait for the ACP reply.
    * Uses a longer timeout than waitForReply because ACP requires
    * spawning a subprocess and establishing a connection.
+   * Also waits for the streaming to complete (send button reappears).
    */
   async sendAndAwaitACPReply(text: string, timeout = 30000): Promise<void> {
-    await this.sendMessage(text)
-    await this.waitForReply(timeout)
-    // Wait for mode_update/config_update/commands_update SSE events
-    // to propagate to the frontend. These events are sent at the start
-    // of ExecuteStream (before Prompt), but Vue reactivity + DOM update
-    // can take a few render cycles. 2s gives safe headroom.
-    await this.page.waitForTimeout(2000)
+    const countBefore = await this.sendMessage(text)
+    await this.waitForReply(timeout, countBefore)
+    // Wait for streaming to complete — send button reappears when done
+    await expect(this.sendButton).toBeVisible({ timeout: 10000 })
   }
 
   /**
@@ -158,8 +159,7 @@ export class ChatPage {
       await this.page.evaluate(async (agentId) => {
         await (window as any).__clawbench.createSession(agentId)
       }, agentId)
-      // Wait for the session switch to complete and textarea to be ready
-      await this.page.waitForTimeout(500)
+      // Wait for the session switch to complete — textarea becomes ready
       await expect(this.textarea).toBeVisible({ timeout: 5000 })
       return
     }
@@ -184,7 +184,6 @@ export class ChatPage {
     // Reload the page so the frontend picks up the new session
     await this.page.reload()
     await this.page.waitForLoadState('networkidle')
-    await this.page.waitForTimeout(500)
 
     // Wait for the textarea to be ready
     await expect(this.textarea).toBeVisible({ timeout: 5000 })
