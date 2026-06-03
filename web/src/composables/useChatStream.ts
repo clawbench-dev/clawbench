@@ -351,10 +351,10 @@ export function useChatStream(options: UseChatStreamOptions) {
     })
 
     eventSource.addEventListener('tool_use', (e) => {
+      if (!guard()) return // Check guard first to prevent stale events corrupting new session (ISS-304)
       resetStreamTimeout()
       let data: any
       try { data = JSON.parse(e.data) } catch { console.warn('SSE tool_use: invalid JSON, skipping'); return }
-      if (!guard()) return
       const blocks = streamingMsg.blocks
       // Always check for existing block with same ID first — the backend may
       // emit multiple tool_use events for the same call (start + stop), and
@@ -412,10 +412,10 @@ export function useChatStream(options: UseChatStreamOptions) {
     })
 
     eventSource.addEventListener('tool_result', (e) => {
+      if (!guard()) return // Check guard first to prevent stale events corrupting new session (ISS-304)
       resetStreamTimeout()
       let data: any
       try { data = JSON.parse(e.data) } catch { console.warn('SSE tool_result: invalid JSON, skipping'); return }
-      if (!guard()) return
       const blocks = streamingMsg.blocks
       // Find the matching tool_use block and update output/status
       const existing = blocks.find(b => b.type === 'tool_use' && b.id === data.id)
@@ -560,6 +560,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     })
 
     eventSource.addEventListener('queue_update', (e) => {
+      if (!guard()) return // Check guard first to prevent stale events corrupting new session (ISS-304)
       resetStreamTimeout()
       let data: any
       try { data = JSON.parse(e.data) } catch { console.warn('SSE queue_update: invalid JSON, skipping'); return }

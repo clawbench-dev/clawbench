@@ -71,7 +71,12 @@ func (s *Scheduler) Stop() {
 func (s *Scheduler) GetRunningExecutions(taskID int64) []model.RunningExecutionView {
 	var result []model.RunningExecutionView
 	s.runningExecutions.Range(func(key, value any) bool {
-		exec, _ := value.(*RunningExecution)
+		exec, ok := value.(*RunningExecution) // ISS-280: check type assertion
+		if !ok || exec == nil {
+			slog.Warn("unexpected type in runningExecutions, deleting entry", slog.Any("key", key), slog.Any("value", value))
+			s.runningExecutions.Delete(key)
+			return true
+		}
 		if exec.TaskID == taskID {
 			result = append(result, model.RunningExecutionView{
 				ID:          exec.ID,
@@ -88,7 +93,12 @@ func (s *Scheduler) GetRunningExecutions(taskID int64) []model.RunningExecutionV
 func (s *Scheduler) GetRunningCounts() map[int64]int {
 	counts := make(map[int64]int)
 	s.runningExecutions.Range(func(key, value any) bool {
-		exec, _ := value.(*RunningExecution)
+		exec, ok := value.(*RunningExecution) // ISS-280: check type assertion
+		if !ok || exec == nil {
+			slog.Warn("unexpected type in runningExecutions, deleting entry", slog.Any("key", key), slog.Any("value", value))
+			s.runningExecutions.Delete(key)
+			return true
+		}
 		counts[exec.TaskID]++
 		return true
 	})
@@ -99,7 +109,12 @@ func (s *Scheduler) GetRunningCounts() map[int64]int {
 func (s *Scheduler) HasRunningExecutions(taskID int64) bool {
 	found := false
 	s.runningExecutions.Range(func(key, value any) bool {
-		v, _ := value.(*RunningExecution)
+		v, ok := value.(*RunningExecution) // ISS-280: check type assertion
+		if !ok || v == nil {
+			slog.Warn("unexpected type in runningExecutions, deleting entry", slog.Any("key", key), slog.Any("value", value))
+			s.runningExecutions.Delete(key)
+			return true
+		}
 		if v.TaskID == taskID {
 			found = true
 			return false
@@ -158,7 +173,11 @@ func (s *Scheduler) CancelExecution(executionID string) error {
 	if !ok {
 		return fmt.Errorf("execution not found: %s", executionID)
 	}
-	exec, _ := val.(*RunningExecution)
+	exec, ok := val.(*RunningExecution) // ISS-280: check type assertion
+	if !ok || exec == nil {
+		s.runningExecutions.Delete(executionID)
+		return fmt.Errorf("invalid execution entry: %s", executionID)
+	}
 	exec.CancelFunc()
 	slog.Info(
 		"cancelled running execution",
@@ -171,7 +190,12 @@ func (s *Scheduler) CancelExecution(executionID string) error {
 // CancelAllExecutions cancels all running executions for a specific task.
 func (s *Scheduler) CancelAllExecutions(taskID int64) {
 	s.runningExecutions.Range(func(key, value any) bool {
-		exec, _ := value.(*RunningExecution)
+		exec, ok := value.(*RunningExecution) // ISS-280: check type assertion
+		if !ok || exec == nil {
+			slog.Warn("unexpected type in runningExecutions, deleting entry", slog.Any("key", key))
+			s.runningExecutions.Delete(key)
+			return true
+		}
 		if exec.TaskID == taskID {
 			exec.CancelFunc()
 			slog.Info(
@@ -519,6 +543,11 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 // executeTask runs a scheduled task by invoking the AI backend and inserting
 // the result as an assistant message in the original session.
 func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, triggerType string) { //nolint:gocognit,gocyclo // task execution with session lifecycle
+	// Ensure taskRunning flag is always cleaned up, even on early-return
+	// paths (agent not found, session creation failure, backend creation failure).
+	// Without this, the task is permanently stuck — no future execution possible (ISS-303).
+	defer s.taskRunning.Delete(task.ID)
+
 	agent, ok := model.Agents[task.AgentID]
 	if !ok {
 		slog.Error(
@@ -627,7 +656,6 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	s.runningExecutions.Store(sessionID, running)
 	defer func() {
 		s.runningExecutions.Delete(sessionID)
-		s.taskRunning.Delete(task.ID) // Allow next cron tick to run (ISS-187)
 		cancel()
 	}()
 

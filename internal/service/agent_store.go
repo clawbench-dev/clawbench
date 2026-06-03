@@ -200,11 +200,13 @@ func LoadAgentsIntoMemory(db *sql.DB) error {
 		return err
 	}
 
-	model.Agents = make(map[string]*model.Agent)
+	// Build new map fully before assigning to avoid a window where
+	// concurrent HTTP handlers see 0 agents (ISS-302).
+	newAgentsMap := make(map[string]*model.Agent, len(agents))
 	model.AgentList = agents
 
 	for _, agent := range agents {
-		model.Agents[agent.ID] = agent
+		newAgentsMap[agent.ID] = agent
 		// Populate runtime-only fields from BackendRegistry
 		// (CanRefreshModels and ThinkingEffortLevels are not persisted in DB)
 		if spec := model.FindSpecByBackend(agent.Backend); spec != nil {
@@ -227,6 +229,9 @@ func LoadAgentsIntoMemory(db *sql.DB) error {
 			populateModelsFromProvider(agent)
 		}
 	}
+
+	// Atomically assign the fully-built map so concurrent readers never see an empty map.
+	model.Agents = newAgentsMap
 
 	// Sort by ID for deterministic ordering
 	sort.Slice(model.AgentList, func(i, j int) bool {
