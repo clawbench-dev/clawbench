@@ -209,7 +209,15 @@ func (a *mockACPAgent) Prompt(_ context.Context, params acp.PromptRequest) (acp.
 	s.cancel = cancel
 	a.mu.Unlock()
 
-	if err := a.simulateTurn(ctx, sid, params); err != nil {
+	mode := ""
+	a.mu.Lock()
+	session, ok := a.sessions[sid]
+	if ok && session != nil {
+		mode = session.mode
+	}
+	a.mu.Unlock()
+
+	if err := a.simulateTurn(ctx, sid, params, mode); err != nil {
 		if ctx.Err() != nil {
 			return acp.PromptResponse{StopReason: acp.StopReasonCancelled}, nil
 		}
@@ -225,7 +233,7 @@ func (a *mockACPAgent) Prompt(_ context.Context, params acp.PromptRequest) (acp.
 
 // simulateTurn sends a realistic sequence of ACP session notifications,
 // including available_commands_update, thinking, tool calls, and message chunks.
-func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.PromptRequest) error {
+func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.PromptRequest, currentMode string) error {
 	// 1. Send available_commands_update at the start of each turn
 	if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
 		SessionId: acp.SessionId(sid),
@@ -302,33 +310,36 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 	}
 
 	// 4b. Request permission for a write operation (simulating agent asking for approval)
-	writeTitle := "Writing to main.go"
-	writeKind := acp.ToolKindEdit
-	permResp, err := a.conn.RequestPermission(ctx, acp.RequestPermissionRequest{
-		SessionId: acp.SessionId(sid),
-		ToolCall: acp.ToolCallUpdate{
-			ToolCallId: acp.ToolCallId("call_write_perm_1"),
-			Title:      &writeTitle,
-			Kind:       &writeKind,
-			RawInput:   map[string]any{"file_path": "/project/main.go", "content": "package main\nfunc main() {}"},
-			Status:     nil,
-		},
-		Options: []acp.PermissionOption{
-			{Kind: acp.PermissionOptionKindAllowOnce, Name: "Allow Once", OptionId: "allow_once"},
-			{Kind: acp.PermissionOptionKindAllowAlways, Name: "Allow Always", OptionId: "allow_always"},
-			{Kind: acp.PermissionOptionKindRejectOnce, Name: "Deny", OptionId: "reject_once"},
-		},
-	})
-	if err != nil {
-		// Non-fatal: permission request may fail if client doesn't support it
-		slog.Warn("acp-mock: request_permission failed (non-fatal)", "error", err)
-	} else if permResp.Outcome.Selected != nil {
-		slog.Info("acp-mock: permission granted", "option_id", permResp.Outcome.Selected.OptionId)
-	} else {
-		slog.Info("acp-mock: permission cancelled")
-	}
-	if err := pause(ctx, 50*time.Millisecond); err != nil {
-		return err
+	// Skip permission request in bypass-permissions mode — the host would auto-approve anyway
+	if currentMode != modeBypass {
+		writeTitle := "Writing to main.go"
+		writeKind := acp.ToolKindEdit
+		permResp, err := a.conn.RequestPermission(ctx, acp.RequestPermissionRequest{
+			SessionId: acp.SessionId(sid),
+			ToolCall: acp.ToolCallUpdate{
+				ToolCallId: acp.ToolCallId("call_write_perm_1"),
+				Title:      &writeTitle,
+				Kind:       &writeKind,
+				RawInput:   map[string]any{"file_path": "/project/main.go", "content": "package main\nfunc main() {}"},
+				Status:     nil,
+			},
+			Options: []acp.PermissionOption{
+				{Kind: acp.PermissionOptionKindAllowOnce, Name: "Allow Once", OptionId: "allow_once"},
+				{Kind: acp.PermissionOptionKindAllowAlways, Name: "Allow Always", OptionId: "allow_always"},
+				{Kind: acp.PermissionOptionKindRejectOnce, Name: "Deny", OptionId: "reject_once"},
+			},
+		})
+		if err != nil {
+			// Non-fatal: permission request may fail if client doesn't support it
+			slog.Warn("acp-mock: request_permission failed (non-fatal)", "error", err)
+		} else if permResp.Outcome.Selected != nil {
+			slog.Info("acp-mock: permission granted", "option_id", permResp.Outcome.Selected.OptionId)
+		} else {
+			slog.Info("acp-mock: permission cancelled")
+		}
+		if err := pause(ctx, 50*time.Millisecond); err != nil {
+			return err
+		}
 	}
 
 	// 5. Send the main response text word-by-word
