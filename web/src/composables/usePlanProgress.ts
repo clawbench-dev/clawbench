@@ -49,6 +49,18 @@ export function setPlanCollapsed(collapsed: boolean) {
 }
 
 // ───────────────────────────────────────────────────────────
+// E2E test bridge — expose plan operations on window.__clawbench
+// so Playwright/browser-automation can inject plan data.
+// ───────────────────────────────────────────────────────────
+if (typeof window !== 'undefined') {
+  const bridge = (window as any).__clawbench || ((window as any).__clawbench = {})
+  bridge.updatePlanEntries = updatePlanEntries
+  bridge.clearPlanState = clearPlanState
+  bridge.setPlanCollapsed = setPlanCollapsed
+  bridge.togglePlanCollapse = togglePlanCollapse
+}
+
+// ───────────────────────────────────────────────────────────
 // Public composable
 // ───────────────────────────────────────────────────────────
 
