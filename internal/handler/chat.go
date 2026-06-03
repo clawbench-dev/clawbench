@@ -885,9 +885,17 @@ func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 	//   - codebuddy/claude/qoder: ClawBench UUID (same as session id)
 	//   - opencode/codex/deepseek/pi: CLI-assigned ID (captured from stream events)
 	// When resuming, we always use external_session_id so the CLI can find its session context.
+	//
+	// EXCEPTION: ACP-backed agents manage their own session mapping internally
+	// via ACPConnectionPool (clawbench UUID → ACP session ID). For ACP agents,
+	// always use the ClawBench UUID as the session ID — the pool handles the rest.
 	effectiveSessionID := sessionID
 	resume := service.SessionHasAssistant(sessionID)
-	if resume {
+	isACP := false
+	if agent, ok := model.Agents[agentID]; ok && agent.Transport == "acp-stdio" {
+		isACP = true
+	}
+	if resume && !isACP {
 		extID := service.GetExternalSessionID(sessionID)
 		if extID != "" {
 			effectiveSessionID = extID

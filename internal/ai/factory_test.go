@@ -88,6 +88,36 @@ func TestNewBackend_DeepSeek(t *testing.T) {
 	assert.True(t, ok, "deepseek should be wrapped in AutoResumeBackend")
 }
 
+func TestNewBackend_Cline(t *testing.T) {
+	backend, err := NewBackend("cline")
+	assert.NoError(t, err)
+	assert.NotNil(t, backend)
+	assert.Equal(t, "cline", backend.Name())
+	// Cline is wrapped in AutoResumeBackend (supports ExitPlanMode)
+	_, ok := backend.(*AutoResumeBackend)
+	assert.True(t, ok, "cline should be wrapped in AutoResumeBackend")
+}
+
+func TestNewBackend_Kimi(t *testing.T) {
+	backend, err := NewBackend("kimi")
+	assert.NoError(t, err)
+	assert.NotNil(t, backend)
+	assert.Equal(t, "kimi", backend.Name())
+	// Kimi is wrapped in AutoResumeBackend (supports plan mode)
+	_, ok := backend.(*AutoResumeBackend)
+	assert.True(t, ok, "kimi should be wrapped in AutoResumeBackend")
+}
+
+func TestNewBackend_Copilot(t *testing.T) {
+	backend, err := NewBackend("copilot")
+	assert.NoError(t, err)
+	assert.NotNil(t, backend)
+	assert.Equal(t, "copilot", backend.Name())
+	// Copilot is wrapped in AutoResumeBackend (supports plan mode)
+	_, ok := backend.(*AutoResumeBackend)
+	assert.True(t, ok, "copilot should be wrapped in AutoResumeBackend")
+}
+
 func TestNewBackend_Codex(t *testing.T) {
 	backend, err := NewBackend("codex")
 	assert.NoError(t, err)
@@ -243,10 +273,12 @@ func TestNeedsAutoResume(t *testing.T) {
 	assert.True(t, needsAutoResume("qoder"), "qoder needs auto-resume")
 	assert.True(t, needsAutoResume("deepseek"), "deepseek needs auto-resume")
 	assert.True(t, needsAutoResume("pi"), "pi needs auto-resume")
+	assert.True(t, needsAutoResume("cline"), "cline needs auto-resume")
+	assert.True(t, needsAutoResume("kimi"), "kimi needs auto-resume")
+	assert.True(t, needsAutoResume("copilot"), "copilot needs auto-resume")
 
 	assert.False(t, needsAutoResume("opencode"), "opencode does NOT need auto-resume")
 	assert.False(t, needsAutoResume("gemini"), "gemini does NOT need auto-resume")
 	assert.False(t, needsAutoResume("codex"), "codex does NOT need auto-resume")
 	assert.False(t, needsAutoResume("vecli"), "vecli does NOT need auto-resume")
-	assert.False(t, needsAutoResume("mock"), "mock does NOT need auto-resume")
 }

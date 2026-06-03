@@ -71,35 +71,47 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		if isNew {
 			forwardACPEvent(ch, StreamEvent{Type: "session_capture", Content: acpSessionID})
 
-			// Emit mode_update and config_update for new sessions
+			// Extract and cache mode/config state from NewSessionResponse
 			if sessResp := entry.GetAndClearSessionResp(); sessResp != nil {
 				if modeState := extractACPModeState(sessResp); modeState != nil {
-					slog.Info("acp: emitting mode_update", "current_mode", modeState.CurrentModeID, "available", len(modeState.AvailableModes))
-					forwardACPEvent(ch, StreamEvent{Type: "mode_update", Mode: modeState})
+					entry.SetCachedModeState(modeState)
 				}
 				if configState := extractACPConfigOptions(sessResp); configState != nil {
-					slog.Info("acp: emitting config_update", "config_id", configState.ConfigID, "current", configState.CurrentID)
-					forwardACPEvent(ch, StreamEvent{Type: "config_update", Config: configState})
+					entry.SetCachedConfigState(configState)
 				}
 			}
+		}
 
-			// Emit commands_update for new sessions if cached from available_commands_update
-			if client := entry.GetClient(); client != nil {
-				if cmds := client.GetCommands(); len(cmds) > 0 {
-					infos := make([]AvailableCommandInfo, 0, len(cmds))
-					for _, c := range cmds {
-						info := AvailableCommandInfo{
-							Name:        c.Name,
-							Description: c.Description,
-						}
-						if c.Input != nil && c.Input.Unstructured != nil {
-							info.InputHint = c.Input.Unstructured.Hint
-						}
-						infos = append(infos, info)
+		// Always re-emit cached mode_update and config_update for every stream.
+		// The frontend resets these states on page load / session switch, so
+		// they need to be repopulated even for resumed ACP sessions.
+		// These events are idempotent — re-emitting them is harmless.
+		if modeState := entry.GetCachedModeState(); modeState != nil {
+			slog.Info("acp: re-emitting cached mode_update", "current_mode", modeState.CurrentModeID, "available", len(modeState.AvailableModes))
+			forwardACPEvent(ch, StreamEvent{Type: "mode_update", Mode: modeState})
+		}
+		if configState := entry.GetCachedConfigState(); configState != nil {
+			slog.Info("acp: re-emitting cached config_update", "config_id", configState.ConfigID, "current", configState.CurrentID)
+			forwardACPEvent(ch, StreamEvent{Type: "config_update", Config: configState})
+		}
+
+		// Emit commands_update if cached from available_commands_update.
+		// Also re-emitted for every stream to repopulate frontend state.
+		if client := entry.GetClient(); client != nil {
+			if cmds := client.GetCommands(); len(cmds) > 0 {
+				infos := make([]AvailableCommandInfo, 0, len(cmds))
+				for _, c := range cmds {
+					info := AvailableCommandInfo{
+						Name:        c.Name,
+						Description: c.Description,
 					}
-					slog.Info("acp: emitting commands_update", "count", len(infos))
-					forwardACPEvent(ch, StreamEvent{Type: "commands_update", Commands: infos})
+					if c.Input != nil && c.Input.Unstructured != nil {
+						info.InputHint = c.Input.Unstructured.Hint
+					}
+					infos = append(infos, info)
 				}
+				slog.Info("acp: re-emitting cached commands_update", "count", len(infos))
+				forwardACPEvent(ch, StreamEvent{Type: "commands_update", Commands: infos})
 			}
 		}
 

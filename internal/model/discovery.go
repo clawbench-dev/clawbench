@@ -90,6 +90,24 @@ var BackendRegistry = []BackendSpec{
 		DiscoverModelsFunc:   DiscoverPiModels,
 		ThinkingEffortLevels: []string{"off", "minimal", "low", "medium", "high", "xhigh"},
 	},
+	{
+		ID: "cline", Backend: "cline", DefaultCmd: "cline", Name: "Cline", Icon: "🔮", Specialty: "自主编码智能体",
+		DiscoverModelsFunc:   DiscoverClineModels,
+		ThinkingEffortLevels: []string{"none", "low", "medium", "high", "xhigh"},
+		AcpCommand:           "cline --acp",
+	},
+	{
+		ID: "kimi", Backend: "kimi", DefaultCmd: "kimi", Name: "Kimi", Icon: "🌙", Specialty: "Kimi AI 编码助手",
+		DiscoverModelsFunc:   DiscoverKimiModels,
+		ThinkingEffortLevels: []string{"off", "on"},
+		AcpCommand:           "kimi acp",
+	},
+	{
+		ID: "copilot", Backend: "copilot", DefaultCmd: "copilot", Name: "Copilot", Icon: "🤝", Specialty: "GitHub Copilot 编码助手",
+		DiscoverModelsFunc:   DiscoverCopilotModels,
+		ThinkingEffortLevels: []string{"none", "low", "medium", "high", "xhigh", "max"},
+		AcpCommand:           "copilot --acp",
+	},
 }
 
 // CheckCLIExists checks whether a CLI command is available on the system.
@@ -1827,4 +1845,79 @@ func loadAgentsFromDBRows(db *sql.DB) ([]*Agent, error) {
 		agents = append(agents, agent)
 	}
 	return agents, nil
+}
+
+// --- Cline model discovery ---
+
+// clineDefaultModels lists known models for Cline CLI.
+// Cline supports multiple providers; these are the most commonly used models.
+var clineDefaultModels = []AgentModel{
+	{ID: "anthropic/claude-sonnet-4-20250514", Name: "Claude Sonnet 4"},
+	{ID: "anthropic/claude-opus-4-20250514", Name: "Claude Opus 4"},
+	{ID: "openai/gpt-4.1", Name: "GPT-4.1"},
+	{ID: "openai/gpt-4o", Name: "GPT-4o"},
+	{ID: "openai/o3", Name: "o3"},
+	{ID: "openai/o4-mini", Name: "o4-mini"},
+	{ID: "google/gemini-2.5-pro", Name: "Gemini 2.5 Pro"},
+	{ID: "google/gemini-2.5-flash", Name: "Gemini 2.5 Flash"},
+	{ID: "minimax/MiniMax-M1", Name: "MiniMax-M1"},
+	{ID: "minimax/MiniMax-M2.7", Name: "MiniMax-M2.7"},
+}
+
+// DiscoverClineModels discovers models for Cline CLI.
+func DiscoverClineModels() []AgentModel {
+	if _, err := exec.LookPath("cline"); err != nil {
+		return nil
+	}
+	models := make([]AgentModel, len(clineDefaultModels))
+	copy(models, clineDefaultModels)
+	slog.Info("cline model discovery: using hardcoded defaults", "models", len(models))
+	return models
+}
+
+// --- Kimi model discovery ---
+
+// kimiDefaultModels lists known models for Kimi CLI.
+var kimiDefaultModels = []AgentModel{
+	{ID: "kimi-k2-0711-chat", Name: "Kimi K2"},
+	{ID: "moonshot-v1-128k", Name: "Moonshot v1 128K"},
+	{ID: "moonshot-v1-32k", Name: "Moonshot v1 32K"},
+	{ID: "moonshot-v1-8k", Name: "Moonshot v1 8K"},
+	{ID: "kimi-latest", Name: "Kimi Latest"},
+}
+
+// DiscoverKimiModels discovers models for Kimi CLI.
+func DiscoverKimiModels() []AgentModel {
+	if _, err := exec.LookPath("kimi"); err != nil {
+		return nil
+	}
+	models := make([]AgentModel, len(kimiDefaultModels))
+	copy(models, kimiDefaultModels)
+	slog.Info("kimi model discovery: using hardcoded defaults", "models", len(models))
+	return models
+}
+
+// --- Copilot model discovery ---
+
+// copilotDefaultModels lists known models for GitHub Copilot CLI.
+var copilotDefaultModels = []AgentModel{
+	{ID: "gpt-4.1", Name: "GPT-4.1"},
+	{ID: "gpt-4o", Name: "GPT-4o"},
+	{ID: "o3", Name: "o3"},
+	{ID: "o4-mini", Name: "o4-mini"},
+	{ID: "claude-sonnet-4-20250514", Name: "Claude Sonnet 4"},
+	{ID: "claude-opus-4-20250514", Name: "Claude Opus 4"},
+	{ID: "gemini-2.5-pro", Name: "Gemini 2.5 Pro"},
+	{ID: "gemini-2.5-flash", Name: "Gemini 2.5 Flash"},
+}
+
+// DiscoverCopilotModels discovers models for GitHub Copilot CLI.
+func DiscoverCopilotModels() []AgentModel {
+	if _, err := exec.LookPath("copilot"); err != nil {
+		return nil
+	}
+	models := make([]AgentModel, len(copilotDefaultModels))
+	copy(models, copilotDefaultModels)
+	slog.Info("copilot model discovery: using hardcoded defaults", "models", len(models))
+	return models
 }

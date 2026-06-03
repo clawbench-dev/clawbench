@@ -165,6 +165,13 @@ type ACPConnEntry struct {
 	// so ExecuteStream can extract mode/config state. Cleared after reading.
 	lastSessionResp *acp.NewSessionResponse
 
+	// cachedModeState and cachedConfigState are populated from NewSessionResponse
+	// and re-emitted for every ExecuteStream call (not just new sessions).
+	// This ensures the frontend always has up-to-date mode/command state,
+	// even after page refreshes or SSE reconnections.
+	cachedModeState   *ModeState
+	cachedConfigState *ConfigOptionState
+
 	// liveness
 	lastUsed time.Time
 	alive    bool
@@ -222,7 +229,10 @@ func (e *ACPConnEntry) spawnLocked(ctx context.Context) error {
 	cmdName := cmdParts[0]
 	cmdArgs := cmdParts[1:]
 
-	cmd := exec.CommandContext(ctx, cmdName, cmdArgs...)
+	// Use context.Background() for the agent process lifecycle — the subprocess
+	// should outlive any single request context. The pool manages the process
+	// lifetime via Close() and idleSweeper, not via request cancellation.
+	cmd := exec.CommandContext(context.Background(), cmdName, cmdArgs...)
 	cmd.Dir = "" // cwd is per-session, set during NewSession
 	cmd.Env = os.Environ()
 
@@ -347,6 +357,36 @@ func (e *ACPConnEntry) GetAndClearSessionResp() *acp.NewSessionResponse {
 	resp := e.lastSessionResp
 	e.lastSessionResp = nil
 	return resp
+}
+
+// GetCachedModeState returns the cached mode state from the last session/new.
+// Returns nil if no mode state has been cached yet.
+func (e *ACPConnEntry) GetCachedModeState() *ModeState {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.cachedModeState
+}
+
+// GetCachedConfigState returns the cached config state from the last session/new.
+// Returns nil if no config state has been cached yet.
+func (e *ACPConnEntry) GetCachedConfigState() *ConfigOptionState {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.cachedConfigState
+}
+
+// SetCachedModeState caches the mode state from a NewSessionResponse.
+func (e *ACPConnEntry) SetCachedModeState(state *ModeState) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.cachedModeState = state
+}
+
+// SetCachedConfigState caches the config state from a NewSessionResponse.
+func (e *ACPConnEntry) SetCachedConfigState(state *ConfigOptionState) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.cachedConfigState = state
 }
 
 // Prompt sends a prompt on the given ACP session and forwards events to streamCh.

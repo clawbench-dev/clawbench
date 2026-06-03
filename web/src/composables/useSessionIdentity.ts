@@ -55,6 +55,15 @@ export function resetIdentity(): void {
   _continueFromExecution = null
   _checkContinueSession = null
   _sessionDrawerRef = null
+  // Clean up E2E test bridge
+  if (typeof window !== 'undefined') {
+    const bridge = (window as any).__clawbench
+    if (bridge) {
+      bridge.createSession = null
+      bridge.switchSession = null
+      bridge.deleteSession = null
+    }
+  }
 }
 
 // ───────────────────────────────────────────────────────────
@@ -160,6 +169,11 @@ export interface SessionActions {
 /**
  * Register session action callbacks. Called by App.vue on mount
  * (for openAgentSelector) and ChatPanel on mount (for the rest).
+ *
+ * Also exposes a minimal E2E test bridge on window.__clawbench
+ * so Playwright can call createSession/switchSession without
+ * page reload — session state is updated in-place by the Vue
+ * reactivity system.
  */
 export function registerSessionActions(actions: SessionActions) {
   _switchSession = actions.switchSession
@@ -169,6 +183,16 @@ export function registerSessionActions(actions: SessionActions) {
   _openChatPanel = actions.openChatPanel
   _continueFromExecution = actions.continueFromExecution
   _checkContinueSession = actions.checkContinueSession
+
+  // Expose E2E test bridge on window for Playwright access.
+  // These allow tests to create/switch sessions without page reload,
+  // which is essential for ACP tests that need to switch agents mid-test.
+  if (typeof window !== 'undefined') {
+    const bridge = (window as any).__clawbench || ((window as any).__clawbench = {})
+    bridge.createSession = actions.createSession
+    bridge.switchSession = actions.switchSession
+    bridge.deleteSession = actions.deleteSession
+  }
 }
 
 /** Register the SessionDrawer component ref so openAgentSelector() works. */

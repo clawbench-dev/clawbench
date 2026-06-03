@@ -19,7 +19,7 @@ import (
 // --- Test 1: BackendRegistry ---
 
 func TestBackendRegistry_ContainsAllBackends(t *testing.T) {
-	expectedIDs := []string{"claude", "codebuddy", "opencode", "gemini", "codex", "qoder", "vecli", "deepseek", "pi"}
+	expectedIDs := []string{"claude", "codebuddy", "opencode", "gemini", "codex", "qoder", "vecli", "deepseek", "pi", "cline", "kimi", "copilot"}
 	assert.Len(t, model.BackendRegistry, len(expectedIDs))
 
 	seen := make(map[string]bool)

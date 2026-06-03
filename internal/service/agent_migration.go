@@ -103,13 +103,19 @@ func saveAgentTx(tx *sql.Tx, agent *model.Agent) error {
 		modelsAutoDetected = 1
 	}
 
+	transport := agent.Transport
+	if transport == "" {
+		transport = "cli"
+	}
+
 	_, err = tx.Exec(`
 		INSERT INTO agents (id, name, icon, specialty, backend, command,
 			thinking_effort, thinking_effort_levels,
 			preferred_model, preferred_thinking_effort,
 			system_prompt, models, models_auto_detected,
-			source, sort_order)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			source, sort_order,
+			transport, acp_command)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			icon = excluded.icon,
@@ -125,12 +131,15 @@ func saveAgentTx(tx *sql.Tx, agent *model.Agent) error {
 			models_auto_detected = excluded.models_auto_detected,
 			source = excluded.source,
 			sort_order = excluded.sort_order,
+			transport = excluded.transport,
+			acp_command = excluded.acp_command,
 			updated_at = CURRENT_TIMESTAMP
 	`, agent.ID, agent.Name, agent.Icon, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON),
 		agent.PreferredModel, agent.PreferredThinkingEffort,
 		agent.SystemPrompt, string(modelsJSON), modelsAutoDetected,
-		agent.Source, agent.SortOrder)
+		agent.Source, agent.SortOrder,
+		transport, agent.AcpCommand)
 	if err != nil {
 		return fmt.Errorf("save agent %s: %w", agent.ID, err)
 	}

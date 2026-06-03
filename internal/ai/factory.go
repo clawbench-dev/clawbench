@@ -28,10 +28,14 @@ func NewBackend(backendType string) (AIBackend, error) {
 		return &AutoResumeBackend{inner: deepseekBackend}, nil
 	case "pi":
 		return &AutoResumeBackend{inner: piBackend}, nil
-	case "mock":
-		return NewMockAIBackend(), nil
+	case "cline":
+		return &AutoResumeBackend{inner: clineBackend()}, nil
+	case "kimi":
+		return &AutoResumeBackend{inner: kimiBackend()}, nil
+	case "copilot":
+		return &AutoResumeBackend{inner: copilotBackend()}, nil
 	default:
-		return nil, fmt.Errorf("unsupported backend type: %s (supported: claude, codebuddy, opencode, gemini, codex, qoder, vecli, deepseek, pi, mock)", backendType)
+		return nil, fmt.Errorf("unsupported backend type: %s (supported: claude, codebuddy, opencode, gemini, codex, qoder, vecli, deepseek, pi, cline, kimi, copilot)", backendType)
 	}
 }
 
@@ -68,7 +72,7 @@ func NewBackendForAgent(backendType, agentID string) (AIBackend, error) {
 // AutoResumeBackend for ExitPlanMode detection (CLI mode only).
 func needsAutoResume(backendType string) bool {
 	switch backendType {
-	case "claude", "codebuddy", "qoder", "deepseek", "pi":
+	case "claude", "codebuddy", "qoder", "deepseek", "pi", "cline", "kimi", "copilot":
 		return true
 	default:
 		return false
