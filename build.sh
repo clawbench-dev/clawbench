@@ -86,6 +86,7 @@ echo "  Version: $FULL_VERSION (code: $VERSION_CODE, release: $IS_RELEASE)"
 
 # 1. Build Go backend
 echo "[2/5] Building Go backend..."
+
 if command -v go >/dev/null 2>&1; then
     if [ -n "$TARGET_OS" ] && [ -n "$TARGET_ARCH" ]; then
         BINARY_NAME="$NAME"

@@ -35,82 +35,17 @@ function extractTocMarkdown(content: string): TocItem[] {
 }
 
 // Patterns for code languages: [regex, lineOffset(0-based), level]
+// Only includes languages NOT supported by the backend tree-sitter API.
+// Languages with tree-sitter tags query (go, python, typescript, rust, java, c, cpp,
+// ruby, swift, kotlin, scala, lua, css, dart, zig, nim, r, etc.) are handled by the
+// backend /api/file/symbols endpoint — these regex patterns serve as fallback only.
 type CodePattern = [RegExp, number, number]
 
 const CODE_TOC_PATTERNS: Record<string, CodePattern[]> = {
-    go: [
-        [/^type\s+(\S+)\s+struct\b/gm, 1, 1],
-        [/^type\s+(\S+)\s+interface\b/gm, 1, 1],
-        [/^type\s+(\S+)\s+(?:=\s+|$)/gm, 1, 1],
-        [/^var\s+(\S+)/gm, 1, 1],
-        [/^const\s+(\S+)/gm, 1, 1],
-        [/^func\s+(?:\(\S+\)\s+)?(\S+)/gm, 1, 2],
-    ],
-    python: [
-        [/^class\s+(\S+)\s*[:\(]/gm, 1, 1],
-        [/^(?:async\s+)?def\s+(\S+)\s*\(/gm, 1, 2],
-    ],
-    javascript: [
-        [/^(?:export\s+)?(?:default\s+)?class\s+(\S+)/gm, 1, 1],
-        [/^(?:export\s+)?(?:async\s+)?function\s+(\S+)\s*\(/gm, 1, 2],
-        [/^(?:export\s+)?(?:default\s+)?const\s+(\S+)\s*=/gm, 1, 2],
-    ],
-    typescript: [
-        [/^(?:export\s+)?(?:default\s+)?class\s+(\S+)/gm, 1, 1],
-        [/^(?:export\s+)?interface\s+(\S+)/gm, 1, 1],
-        [/^(?:export\s+)?type\s+(\S+)\s*=/gm, 1, 1],
-        [/^(?:export\s+)?enum\s+(\S+)/gm, 1, 1],
-        [/^(?:export\s+)?(?:async\s+)?function\s+(\S+)\s*\(/gm, 1, 2],
-        [/^(?:export\s+)?(?:default\s+)?const\s+(\S+)\s*[:=]/gm, 1, 2],
-    ],
-    rust: [
-        [/^(?:pub\s+)?struct\s+(\S+)/gm, 1, 1],
-        [/^(?:pub\s+)?enum\s+(\S+)/gm, 1, 1],
-        [/^(?:pub\s+)?trait\s+(\S+)/gm, 1, 1],
-        [/^(?:pub\s+)?mod\s+(\S+)/gm, 1, 1],
-        [/^(?:pub\s+)?type\s+(\S+)/gm, 1, 1],
-        [/^(?:pub\s+)?impl\s*(?:<[^>]*>)?\s+(\S+)/gm, 1, 1],
-        [/^(?:pub\s+)?(?:async\s+)?fn\s+(\S+)\s*\(/gm, 1, 2],
-    ],
-    java: [
-        [/^(?:public|private|protected)?\s*(?:static\s+)?(?:synchronized\s+)?(?:class|interface|enum)\s+(\S+)/gm, 1, 1],
-        [/^(?:public|private|protected)\s+.*?(?:static\s+)?(?:\S+\s+)?(\S+)\s*\(/gm, 1, 2],
-    ],
-    csharp: [
-        [/^(?:public|private|protected|internal)?\s*(?:static|abstract|virtual|override|sealed|partial)*\s*(class|struct|interface|enum)\s+(\S+)/gm, 2, 1],
-        [/^(?:public|private|protected|internal)?\s*(?:static|abstract|virtual|override|async)*\s+\S+\s+(\S+)\s*\(/gm, 1, 2],
-    ],
-    ruby: [
-        [/^(?:private|protected|public)?\s*(?:class|module)\s+(\S+)/gm, 1, 1],
-        [/^def\s+(?:self\.)?(\S+)/gm, 1, 2],
-    ],
     php: [
         [/^(?:abstract\s+)?(?:class|interface|trait)\s+(\S+)/gm, 1, 1],
         [/^(?:public|private|protected)\s+static\s+function\s+(\S+)\s*\(/gm, 1, 2],
         [/^function\s+(\S+)\s*\(/gm, 1, 2],
-    ],
-    kotlin: [
-        [/^(?:class|object|interface|enum|data\s+class)\s+(\S+)/gm, 1, 1],
-        [/^(?:fun|val|var)\s+(\S+)/gm, 1, 2],
-    ],
-    scala: [
-        [/^(?:class|object|trait|case\s+class|enum)\s+(\S+)/gm, 1, 1],
-        [/^(?:def|val|var|lazy\s+val)\s+(\S+)/gm, 1, 2],
-    ],
-    c: [
-        [/^(?:typedef\s+)?struct\s+(\S+)\s*\{/gm, 1, 1],
-        [/^(?:typedef\s+)?enum\s+(\S+)\s*\{/gm, 1, 1],
-        [/^(?:static\s+)?(?:inline\s+)?(?:\S+\s+)+(\S+)\s*\(/gm, 1, 2],
-    ],
-    cpp: [
-        [/^(?:class|struct)\s+(\S+)/gm, 1, 1],
-        [/^(?:enum|namespace)\s+(\S+)/gm, 1, 1],
-        [/^template\s*<[^>]+>\s*(?:class|struct)\s+(\S+)/gm, 1, 1],
-        [/^(?:static|inline|virtual|explicit)\s+(?:\S+\s+)+(\S+)\s*\(/gm, 1, 2],
-    ],
-    lua: [
-        [/^local\s+function\s+(\S+)\s*\(/gm, 1, 1],
-        [/^function\s+(?:[\w.]+[\.:])(\S+)\s*\(/gm, 1, 2],
     ],
     bash: [
         [/^(?:function\s+)?(\S+)\s*\(\)/gm, 1, 1],
@@ -128,20 +63,12 @@ const CODE_TOC_PATTERNS: Record<string, CodePattern[]> = {
     ini: [
         [/^\[([^\]]+)\]/gm, 1, 1],
     ],
-    css: [
-        [/^(@\S+)/gm, 1, 1],
-        [/^([.#\[:][^{]+)\s*\{/gm, 1, 2],
-    ],
     dockerfile: [
         [/^(FROM)\s+(\S+)/gm, 2, 1],
         [/^(RUN|CMD|ENTRYPOINT|COPY|ADD|EXPOSE|ENV|ARG|WORKDIR|VOLUME|LABEL|HEALTHCHECK)\b/gm, 1, 2],
     ],
     vue: [
         [/^<(template|script|style)/gm, 1, 1],
-    ],
-    swift: [
-        [/^(?:public|private|internal|open)?\s*(?:final\s+)?(?:class|struct|enum|protocol|extension)\s+(\S+)/gm, 1, 1],
-        [/^(?:public|private|internal|open)?\s*(?:static\s+)?(?:func\s+|var\s+|let\s+)(\S+)/gm, 1, 2],
     ],
     graphql: [
         [/^(?:type|interface|enum|input|union|scalar|directive)\s+(\S+)/gm, 1, 1],

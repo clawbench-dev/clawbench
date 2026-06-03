@@ -20,6 +20,13 @@
           :data-level="item.level"
           @click.prevent="scrollTo(item)"
         >
+          <component
+            v-if="item.kind"
+            :is="kindIcon(item.kind).icon"
+            :size="13"
+            class="toc-kind-icon"
+            :class="kindIcon(item.kind).cls"
+          />
           <span v-if="isPdfOutline" class="toc-page-badge">P{{ item.line }}</span>
           {{ item.text }}
         </a>
@@ -30,7 +37,7 @@
 </template>
 
 <script setup>
-import { List } from 'lucide-vue-next'
+import { List, Braces, Box, Boxes, FileCode2, SquareAsterisk, ListOrdered, Variable, Hash, Package, FolderTree, CircleDot, Settings2, Hammer, Layers, Puzzle, Zap, Code2 } from 'lucide-vue-next'
 import { ref, computed, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
@@ -38,8 +45,31 @@ import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import { extractToc } from '@/utils/toc.ts'
 import { getFileType } from '@/utils/fileType.ts'
+import { fetchCodeSymbols } from '@/composables/useCodeSymbols'
 
 const { t } = useI18n()
+
+/** Map symbol kind → { icon component, CSS class } */
+const KIND_ICON_MAP = {
+  function:     { icon: Braces,        cls: 'kind-function' },
+  method:       { icon: Braces,        cls: 'kind-method' },
+  constructor:  { icon: Hammer,        cls: 'kind-constructor' },
+  class:        { icon: Box,           cls: 'kind-class' },
+  struct:       { icon: Boxes,         cls: 'kind-struct' },
+  interface:    { icon: FileCode2,     cls: 'kind-interface' },
+  type:         { icon: SquareAsterisk, cls: 'kind-type' },
+  enum:         { icon: ListOrdered,   cls: 'kind-enum' },
+  variable:     { icon: Variable,      cls: 'kind-variable' },
+  constant:     { icon: Hash,          cls: 'kind-constant' },
+  module:       { icon: Package,       cls: 'kind-module' },
+  namespace:    { icon: FolderTree,    cls: 'kind-namespace' },
+  field:        { icon: CircleDot,     cls: 'kind-field' },
+  property:     { icon: Settings2,     cls: 'kind-property' },
+  trait:        { icon: Layers,        cls: 'kind-trait' },
+  impl:         { icon: Puzzle,        cls: 'kind-impl' },
+  macro:        { icon: Zap,           cls: 'kind-macro' },
+}
+const KIND_FALLBACK = { icon: Code2, cls: 'kind-other' }
 
 const props = defineProps({
     file: Object,
@@ -77,10 +107,39 @@ watch([() => props.file, () => props.pdfOutline], ([file, pdfOut]) => {
     }
     const lang = getFileType(file.name)?.lang || 'plaintext'
     isCode.value = lang !== 'markdown'
-    toc.value = extractToc(file.content, lang)
-    activeId.value = toc.value[0]?.id || ''
-    searchQuery.value = ''
-    filteredToc.value = toc.value
+
+    // For code files, try backend tree-sitter API first, then fallback to regex
+    if (isCode.value && file?.path) {
+        fetchCodeSymbols(file.path).then(result => {
+            if (result && result.symbols.length > 0) {
+                // Convert backend symbols to TocItem format
+                toc.value = result.symbols.map(s => ({
+                    level: s.level,
+                    text: s.name,
+                    kind: s.kind,
+                    id: 'toc-l' + s.line,
+                    line: s.line,
+                }))
+            } else {
+                // Fallback to regex-based extraction
+                toc.value = extractToc(file.content, lang)
+            }
+            activeId.value = toc.value[0]?.id || ''
+            searchQuery.value = ''
+            filteredToc.value = toc.value
+        }).catch(() => {
+            // Fallback to regex-based extraction on error
+            toc.value = extractToc(file.content, lang)
+            activeId.value = toc.value[0]?.id || ''
+            searchQuery.value = ''
+            filteredToc.value = toc.value
+        })
+    } else {
+        toc.value = extractToc(file.content, lang)
+        activeId.value = toc.value[0]?.id || ''
+        searchQuery.value = ''
+        filteredToc.value = toc.value
+    }
 }, { immediate: true })
 
 watch(searchQuery, () => handleSearch())
@@ -99,6 +158,10 @@ function handleSearch() {
 function clearSearch() {
     searchQuery.value = ''
     filteredToc.value = toc.value
+}
+
+function kindIcon(kind) {
+    return KIND_ICON_MAP[kind] || KIND_FALLBACK
 }
 
 function scrollTo(item) {
@@ -240,5 +303,29 @@ watch(() => props.open, (val) => {
     background: rgba(255,255,255,0.15);
     color: var(--accent-color);
 }
+
+.toc-kind-icon {
+    flex-shrink: 0;
+    margin-right: 5px;
+    vertical-align: middle;
+    opacity: 0.75;
+}
+.toc-item.active .toc-kind-icon { opacity: 1; }
+
+.kind-function, .kind-method     { color: #c586c0; }
+.kind-constructor                { color: #dcdcaa; }
+.kind-class                      { color: #e06c75; }
+.kind-struct                     { color: #e5a54a; }
+.kind-interface                  { color: #4ec9b0; }
+.kind-type                       { color: #2ec4b6; }
+.kind-enum                       { color: #d4a017; }
+.kind-variable                   { color: #75aadb; }
+.kind-constant                   { color: #8899aa; }
+.kind-module, .kind-namespace    { color: #569cd6; }
+.kind-field, .kind-property      { color: #9cdcfe; }
+.kind-trait                      { color: #6a9955; }
+.kind-impl                       { color: #4fb3bf; }
+.kind-macro                      { color: #e5c07b; }
+.kind-other                      { color: var(--text-muted); }
 
 </style>

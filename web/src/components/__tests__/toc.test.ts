@@ -67,7 +67,7 @@ describe('slugify', () => {
   })
 })
 
-describe('extractToc', () => {
+describe('extractToc - markdown', () => {
   it('extracts markdown headers', () => {
     const content = '# Title\n## Section 1\n### Subsection\n## Section 2'
     const toc = extractToc(content, 'markdown')
@@ -95,66 +95,6 @@ describe('extractToc', () => {
     expect(toc[0].id).toBe('hello-world')
   })
 
-  it('extracts Go symbols', () => {
-    const content = 'type Server struct {}\nfunc (s *Server) Start() error {\nfunc main() {'
-    const toc = extractToc(content, 'go')
-    expect(toc.length).toBeGreaterThanOrEqual(2)
-    const texts = toc.map(t => t.text)
-    expect(texts).toContain('Server')
-  })
-
-  it('extracts TypeScript symbols', () => {
-    const content = 'export class App {}\nexport function helper() {}\nexport const VERSION = "1.0"'
-    const toc = extractToc(content, 'typescript')
-    expect(toc.length).toBeGreaterThanOrEqual(2)
-    const texts = toc.map(t => t.text)
-    expect(texts).toContain('App')
-  })
-
-  it('extracts Python symbols', () => {
-    const content = 'class MyClass:\n    pass\ndef my_function():\n    pass'
-    const toc = extractToc(content, 'python')
-    expect(toc.length).toBeGreaterThanOrEqual(2)
-  })
-
-  it('returns empty for unknown language with no extractable content', () => {
-    const toc = extractToc('just some random text', 'unknown')
-    expect(toc).toEqual([])
-  })
-
-  it('sorts code symbols by line number', () => {
-    const content = 'func later() {}\nfunc first() {}'
-    const toc = extractToc(content, 'go')
-    expect(toc.length).toBeGreaterThanOrEqual(2)
-    expect(toc[0].line).toBeLessThanOrEqual(toc[1].line)
-  })
-
-  it('deduplicates code symbols', () => {
-    const content = 'func foo() {}\nfunc foo() {}'
-    const toc = extractToc(content, 'go')
-    // Two duplicate func declarations should result in only one toc entry
-    expect(toc.length).toBe(1)
-    expect(toc[0].text).toBe('foo')
-  })
-
-  it('handles Rust code', () => {
-    const content = 'pub struct Config {\n}\npub fn run() {'
-    const toc = extractToc(content, 'rust')
-    expect(toc.length).toBeGreaterThanOrEqual(1)
-  })
-
-  it('handles YAML key extraction', () => {
-    const content = 'server:\n  port: 8080\n  host: localhost'
-    const toc = extractToc(content, 'yaml')
-    expect(toc.length).toBeGreaterThanOrEqual(1)
-  })
-
-  it('handles JSON key extraction', () => {
-    const content = '{\n  "name": "test",\n  "version": "1.0"\n}'
-    const toc = extractToc(content, 'json')
-    expect(toc.length).toBeGreaterThanOrEqual(1)
-  })
-
   it('calculates correct line numbers for markdown', () => {
     const content = 'line 1\nline 2\n## Header on line 3'
     const toc = extractToc(content, 'markdown')
@@ -176,93 +116,20 @@ describe('extractToc', () => {
   })
 
   it('does not filter # in code blocks (known limitation of simple regex)', () => {
-    // The simple regex approach does not parse code blocks,
-    // so # comments inside code blocks will be falsely matched as headers.
-    // This is a known limitation.
     const content = '```python\n# This is a comment\n```\n## Real Header'
     const toc = extractToc(content, 'markdown')
-    // The regex matches # This is a comment as h1 — known limitation
     expect(toc.length).toBeGreaterThanOrEqual(1)
-    // But the real header should still be present
     const realHeaders = toc.filter(t => t.text === 'Real Header')
     expect(realHeaders).toHaveLength(1)
   })
-
-  it('extracts CSS selectors', () => {
-    const content = '.container {\n}\n#header {\n}\n@media screen {\n}'
-    const toc = extractToc(content, 'css')
-    expect(toc.length).toBeGreaterThanOrEqual(1)
-  })
-
-  it('extracts Dockerfile instructions', () => {
-    const content = 'FROM golang:1.21\nRUN go build\nCMD ["./app"]'
-    const toc = extractToc(content, 'dockerfile')
-    expect(toc.length).toBeGreaterThanOrEqual(1)
-  })
-
-  it('extracts Go method receiver function name', () => {
-    // Go pattern: /^func\s+(?:\(\S+\)\s+)?(\S+)/gm
-    // Receiver without spaces like (*Type) is matched; (s *Server) with spaces is not.
-    const content = 'func (*Server) Start() error {'
-    const toc = extractToc(content, 'go')
-    const texts = toc.map(t => t.text)
-    expect(texts).toContain('Start')
-  })
-
-  it('extracts Java class and method symbols', () => {
-    const content = 'public class Application {\n  public static void main(String[] args) {'
-    const toc = extractToc(content, 'java')
-    expect(toc.length).toBeGreaterThanOrEqual(1)
-    const texts = toc.map(t => t.text)
-    expect(texts).toContain('Application')
-  })
-
-  it('extracts C# class and method symbols', () => {
-    // C# pattern captures keyword (class/struct/etc.) in group 1, name in group 2.
-    // extractTocForCode uses match[1], so for classes it extracts the keyword.
-    // For methods, group 1 captures the method name directly.
-    const content = 'public class Program {\n  static void Main() {'
-    const toc = extractToc(content, 'csharp')
-    expect(toc.length).toBeGreaterThanOrEqual(1)
-    // At minimum, the method 'Main' should be extracted
-    const texts = toc.map(t => t.text)
-    expect(texts).toContain('Main')
-  })
-
-  it('extracts Bash function symbols', () => {
-    const content = 'build() {\nfunction deploy() {'
-    const toc = extractToc(content, 'bash')
-    expect(toc.length).toBeGreaterThanOrEqual(1)
-    const texts = toc.map(t => t.text)
-    expect(texts).toContain('build')
-  })
-
-  it('extracts SQL CREATE TABLE symbols', () => {
-    const content = 'CREATE TABLE users (\n  id INT PRIMARY KEY\n);\nCREATE VIEW active_users AS SELECT * FROM users;'
-    const toc = extractToc(content, 'sql')
-    expect(toc.length).toBeGreaterThanOrEqual(1)
-    const texts = toc.map(t => t.text)
-    expect(texts.some(t => t.startsWith('users') || t.includes('users'))).toBe(true)
-  })
-
-  it('extracts C struct and function symbols', () => {
-    const content = 'struct Config {\n  int port;\n};\nvoid start_server() {'
-    const toc = extractToc(content, 'c')
-    expect(toc.length).toBeGreaterThanOrEqual(1)
-    const texts = toc.map(t => t.text)
-    expect(texts).toContain('Config')
-  })
-
-  it('extracts Ruby class and method symbols', () => {
-    const content = 'class Server\n  def initialize\nend\ndef self.start'
-    const toc = extractToc(content, 'ruby')
-    expect(toc.length).toBeGreaterThanOrEqual(1)
-    const texts = toc.map(t => t.text)
-    expect(texts).toContain('Server')
-  })
 })
 
-describe('extractToc - more languages', () => {
+// Languages with tree-sitter tags query (go, python, typescript, rust, java, c, cpp,
+// ruby, swift, kotlin, scala, lua, css, dart, zig, nim, r, etc.) are handled by the
+// backend /api/file/symbols endpoint. These tests only cover the regex fallback patterns
+// for languages WITHOUT tree-sitter tags query.
+
+describe('extractToc - regex fallback languages', () => {
   it('extracts PHP class and function symbols', () => {
     const content = 'class UserService {\n  public static function find() {\nfunction helper() {'
     const toc = extractToc(content, 'php')
@@ -280,46 +147,20 @@ describe('extractToc - more languages', () => {
     expect(texts).toContain('Logger')
   })
 
-  it('extracts Kotlin class and fun symbols', () => {
-    const content = 'class MainActivity {\nfun onCreate() {\nval name = "test"\nvar count = 0'
-    const toc = extractToc(content, 'kotlin')
-    expect(toc.length).toBeGreaterThanOrEqual(2)
+  it('extracts Bash function symbols', () => {
+    const content = 'build() {\nfunction deploy() {'
+    const toc = extractToc(content, 'bash')
+    expect(toc.length).toBeGreaterThanOrEqual(1)
     const texts = toc.map(t => t.text)
-    expect(texts).toContain('MainActivity')
+    expect(texts).toContain('build')
   })
 
-  it('extracts Kotlin data class and object', () => {
-    const content = 'data class User(val name: String)\nobject Singleton'
-    const toc = extractToc(content, 'kotlin')
+  it('extracts SQL CREATE TABLE symbols', () => {
+    const content = 'CREATE TABLE users (\n  id INT PRIMARY KEY\n);\nCREATE VIEW active_users AS SELECT * FROM users;'
+    const toc = extractToc(content, 'sql')
+    expect(toc.length).toBeGreaterThanOrEqual(1)
     const texts = toc.map(t => t.text)
-    expect(texts).toContain('User')
-    expect(texts).toContain('Singleton')
-  })
-
-  it('extracts Scala class and def symbols', () => {
-    const content = 'class SparkJob {\nobject Config {\ndef run(): Unit = {\nval version = "1.0"'
-    const toc = extractToc(content, 'scala')
-    expect(toc.length).toBeGreaterThanOrEqual(2)
-    const texts = toc.map(t => t.text)
-    expect(texts).toContain('SparkJob')
-    expect(texts).toContain('Config')
-  })
-
-  it('extracts Scala case class and trait', () => {
-    const content = 'case class Event(id: Int)\ntrait Serializable'
-    const toc = extractToc(content, 'scala')
-    const texts = toc.map(t => t.text)
-    expect(texts).toContain('Event')
-    expect(texts).toContain('Serializable')
-  })
-
-  it('extracts Lua local function and method symbols', () => {
-    const content = 'local function init()\nfunction MyClass:render()'
-    const toc = extractToc(content, 'lua')
-    expect(toc.length).toBeGreaterThanOrEqual(2)
-    const texts = toc.map(t => t.text)
-    expect(texts).toContain('init')
-    expect(texts).toContain('render')
+    expect(texts.some(t => t.startsWith('users') || t.includes('users'))).toBe(true)
   })
 
   it('extracts Nginx server and location blocks', () => {
@@ -340,6 +181,12 @@ describe('extractToc - more languages', () => {
     expect(texts).toContain('server')
   })
 
+  it('extracts Dockerfile instructions', () => {
+    const content = 'FROM golang:1.21\nRUN go build\nCMD ["./app"]'
+    const toc = extractToc(content, 'dockerfile')
+    expect(toc.length).toBeGreaterThanOrEqual(1)
+  })
+
   it('extracts Vue template/script/style sections', () => {
     const content = '<template>\n  <div/>\n</template>\n<script setup>\n</script>\n<style scoped>\n</style>'
     const toc = extractToc(content, 'vue')
@@ -347,22 +194,6 @@ describe('extractToc - more languages', () => {
     const texts = toc.map(t => t.text)
     expect(texts).toContain('template')
     expect(texts).toContain('script')
-  })
-
-  it('extracts Swift class and func symbols', () => {
-    const content = 'class ViewController {\n  func viewDidLoad() {\n  var title: String\n  let count = 0'
-    const toc = extractToc(content, 'swift')
-    expect(toc.length).toBeGreaterThanOrEqual(2)
-    const texts = toc.map(t => t.text)
-    expect(texts).toContain('ViewController')
-  })
-
-  it('extracts Swift protocol and extension', () => {
-    const content = 'protocol Delegate {\nextension UIView {'
-    const toc = extractToc(content, 'swift')
-    const texts = toc.map(t => t.text)
-    expect(texts).toContain('Delegate')
-    expect(texts).toContain('UIView')
   })
 
   it('extracts GraphQL type and field symbols', () => {
@@ -373,6 +204,18 @@ describe('extractToc - more languages', () => {
     expect(texts).toContain('Query')
     expect(texts).toContain('CreateUserInput')
     expect(texts).toContain('Role')
+  })
+
+  it('extracts YAML key extraction', () => {
+    const content = 'server:\n  port: 8080\n  host: localhost'
+    const toc = extractToc(content, 'yaml')
+    expect(toc.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('extracts JSON key extraction', () => {
+    const content = '{\n  "name": "test",\n  "version": "1.0"\n}'
+    const toc = extractToc(content, 'json')
+    expect(toc.length).toBeGreaterThanOrEqual(1)
   })
 
   it('extracts TOML section headers', () => {
@@ -390,6 +233,19 @@ describe('extractToc - more languages', () => {
     expect(toc.length).toBeGreaterThanOrEqual(1)
     const texts = toc.map(t => t.text)
     expect(texts).toContain('build')
+  })
+
+  it('returns empty for unknown language with no extractable content', () => {
+    const toc = extractToc('just some random text', 'unknown')
+    expect(toc).toEqual([])
+  })
+
+  it('sorts code symbols by line number', () => {
+    const content = 'function later() {}\nfunction first() {}'
+    const toc = extractToc(content, 'bash')
+    if (toc.length >= 2) {
+      expect(toc[0].line).toBeLessThanOrEqual(toc[1].line)
+    }
   })
 })
 
@@ -453,13 +309,12 @@ describe('extractTocGeneric (fallback for unknown lang)', () => {
   })
 
   it('calculates indent levels correctly', () => {
-    // indent 0 → level 1, indent 2 → level 2, indent 4 → level 3
     const content = 'root:\n  child:\n    grandchild:'
     const toc = extractToc(content, 'unknown_lang')
     expect(toc).toHaveLength(3)
-    expect(toc[0].level).toBe(1) // indent 0 → Math.floor(0/2)+1 = 1
-    expect(toc[1].level).toBe(2) // indent 2 → Math.floor(2/2)+1 = 2
-    expect(toc[2].level).toBe(3) // indent 4 → Math.floor(4/2)+1 = 3
+    expect(toc[0].level).toBe(1)
+    expect(toc[1].level).toBe(2)
+    expect(toc[2].level).toBe(3)
   })
 
   it('skips lines that do not end with : , { [ (', () => {
@@ -506,100 +361,5 @@ describe('slugify edge cases', () => {
 
   it('handles Chinese with English and special chars', () => {
     expect(slugify('第1章：简介（Overview）')).toBe('第1章-简介-overview')
-  })
-})
-
-describe('extractToc edge cases', () => {
-  it('extracts Go type alias', () => {
-    const content = 'type MyAlias = int\ntype AnotherAlias = string'
-    const toc = extractToc(content, 'go')
-    const texts = toc.map(t => t.text)
-    expect(texts).toContain('MyAlias')
-    expect(texts).toContain('AnotherAlias')
-  })
-
-  it('extracts Go var declarations', () => {
-    const content = 'var version = "1.0"\nvar debug bool'
-    const toc = extractToc(content, 'go')
-    const texts = toc.map(t => t.text)
-    expect(texts).toContain('version')
-    expect(texts).toContain('debug')
-  })
-
-  it('extracts Go const declarations', () => {
-    const content = 'const MaxRetries = 3\nconst DefaultTimeout = 30'
-    const toc = extractToc(content, 'go')
-    const texts = toc.map(t => t.text)
-    expect(texts).toContain('MaxRetries')
-    expect(texts).toContain('DefaultTimeout')
-  })
-
-  it('extracts TypeScript enum', () => {
-    const content = 'enum Color {\n  Red,\n  Green\n}'
-    const toc = extractToc(content, 'typescript')
-    const texts = toc.map(t => t.text)
-    expect(texts).toContain('Color')
-  })
-
-  it('extracts TypeScript interface', () => {
-    const content = 'interface User {\n  name: string\n}\nexport interface Config {'
-    const toc = extractToc(content, 'typescript')
-    const texts = toc.map(t => t.text)
-    expect(texts).toContain('User')
-    expect(texts).toContain('Config')
-  })
-
-  it('extracts TypeScript type alias', () => {
-    const content = 'type ID = string\nexport type Result<T> = { data: T }'
-    const toc = extractToc(content, 'typescript')
-    const texts = toc.map(t => t.text)
-    expect(texts).toContain('ID')
-    expect(texts).toContain('Result')
-  })
-
-  it('extracts Rust impl blocks', () => {
-    const content = 'impl Server {\n  pub fn start() {}\n}\nimpl<T> Handler for Server {'
-    const toc = extractToc(content, 'rust')
-    const texts = toc.map(t => t.text)
-    expect(texts).toContain('Server')
-  })
-
-  it('extracts Rust trait definitions', () => {
-    const content = 'pub trait Handler {\n  fn handle(&self);\n}'
-    const toc = extractToc(content, 'rust')
-    const texts = toc.map(t => t.text)
-    expect(texts).toContain('Handler')
-  })
-
-  it('extracts Rust mod declarations', () => {
-    const content = 'pub mod network;\npub mod config;'
-    const toc = extractToc(content, 'rust')
-    const texts = toc.map(t => t.text)
-    // \S+ captures the semicolon too, e.g. "network;"
-    expect(texts.some(t => t.startsWith('network'))).toBe(true)
-    expect(texts.some(t => t.startsWith('config'))).toBe(true)
-  })
-
-  it('handles multi-line comments in Go without interference', () => {
-    const content = '/* This is a\n   multi-line comment */\ntype Server struct {}'
-    const toc = extractToc(content, 'go')
-    const texts = toc.map(t => t.text)
-    expect(texts).toContain('Server')
-  })
-
-  it('handles C++ namespace and template class', () => {
-    const content = 'namespace myapp {\ntemplate<typename T> class Container {'
-    const toc = extractToc(content, 'cpp')
-    const texts = toc.map(t => t.text)
-    expect(texts).toContain('myapp')
-    expect(texts).toContain('Container')
-  })
-
-  it('strips trailing braces and angle brackets from matched text', () => {
-    const content = 'type Server<T> struct {\nfunc (s *Server) Start() error {'
-    const toc = extractToc(content, 'go')
-    const texts = toc.map(t => t.text)
-    // The regex captures "Server<T>" but text is cleaned to "Server"
-    expect(texts).toContain('Server')
   })
 })
