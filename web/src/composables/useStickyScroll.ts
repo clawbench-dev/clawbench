@@ -6,9 +6,9 @@ import { fetchCodeSymbols } from '@/composables/useCodeSymbols'
  * When scrolling past a function/class definition, that definition line
  * sticks to the top of the code area so you always know which scope you're in.
  *
- * Usage (inside CodePreview):
- *   const { stickyLines, initSticky, teardownSticky } = useStickyScroll()
- *   initSticky(filePath, preElement)
+ * The overlay has min-width: max-content so sticky lines are always complete.
+ * Line numbers use position:sticky;left:0 so they stay fixed during horizontal scroll.
+ * Code text uses translateX(-scrollLeft) to follow horizontal scroll.
  */
 export function useStickyScroll() {
   /** Reactive array of { lineNum, kind, top } for lines that should be sticky */
@@ -20,7 +20,6 @@ export function useStickyScroll() {
   let rafId = null
   let lineEls = []  // cached .code-line elements
   let lineHeight = 0
-  let overlayEl = null  // reference to sticky-scroll-overlay DOM element
 
   const MAX_STICKY = 5  // max sticky lines to show at once
 
@@ -84,13 +83,18 @@ export function useStickyScroll() {
 
     stickyLines.value = result
 
-    // Sync horizontal scroll position to overlay
+    // Sync horizontal scroll position to code-text elements
     syncHorizontalScroll()
   }
 
   function syncHorizontalScroll() {
-    if (!scrollEl || !overlayEl) return
-    overlayEl.style.transform = `translateX(${-scrollEl.scrollLeft}px)`
+    if (!scrollEl) return
+    // Update each sticky line's code-text element to follow horizontal scroll
+    const codeTextEls = scrollEl.querySelectorAll('.sticky-line .sticky-code-text')
+    const scrollLeft = scrollEl.scrollLeft
+    codeTextEls.forEach(el => {
+      el.style.transform = `translateX(${-scrollLeft}px)`
+    })
   }
 
   function onScroll() {
@@ -126,13 +130,6 @@ export function useStickyScroll() {
   }
 
   /**
-   * Set the overlay DOM element reference for horizontal scroll sync.
-   */
-  function setOverlayEl(el) {
-    overlayEl = el
-  }
-
-  /**
    * Initialize sticky scroll for a file.
    * @param filePath - file path for backend API
    * @param el - the scroll container (<pre class="raw-content-pre">)
@@ -161,7 +158,6 @@ export function useStickyScroll() {
     stickyLines.value = []
     invalidateCache()
     scrollEl = null
-    overlayEl = null
   }
 
   onBeforeUnmount(() => {
@@ -173,6 +169,5 @@ export function useStickyScroll() {
     initSticky,
     teardownSticky,
     invalidateCache,
-    setOverlayEl,
   }
 }

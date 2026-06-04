@@ -79,6 +79,12 @@
     overflow-x: auto;
 }
 
+/* Per-line code block uses --code-bg to match CodePreview */
+.markdown-body pre.code-block-pre,
+.chat-message.assistant pre.code-block-pre {
+    background: var(--code-bg, var(--bg-tertiary));
+}
+
 /* User message code block uses translucent overlay on blue background */
 .chat-message.user pre {
     background: rgba(0, 0, 0, 0.15);

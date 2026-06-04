@@ -4,6 +4,7 @@ import i18n from './i18n'
 import { marked, hljs } from './utils/globals.ts'
 import { slugify } from './utils/toc.ts'
 import { escapeHtml } from './utils/html.ts'
+import { buildCodeLinesFromHighlighted, buildCodeLinesFromEscaped } from './utils/codeRender.ts'
 
 // Configure marked (moved from inline script in index.html)
 marked.use({
@@ -20,17 +21,16 @@ marked.use({
             if (lang === 'mermaid') {
                 return '<pre class="mermaid">' + escapeHtml(code) + '</pre>'
             }
-            // Fast path: known language → direct highlight (cheap)
+            // Per-line structure with line numbers (same as CodePreview)
             if (lang && hljs.getLanguage(lang)) {
                 const highlighted = hljs.highlight(code, { language: lang, ignoreIllegals: true }).value
-                return '<pre><code class="language-' + lang + '">' + highlighted + '</code></pre>'
+                const lines = buildCodeLinesFromHighlighted(highlighted)
+                return '<pre class="code-block-pre" data-language="' + lang + '"><code>' + lines + '</code></pre>'
             }
-            // No language or unknown language: escapeHtml only.
-            // highlightAuto() is extremely expensive (tries all ~190 languages)
-            // and the result is rarely useful for chat messages — it causes
-            // significant jank on pages with many code blocks.
-            const langClass = lang ? ' class="language-' + lang + '"' : ''
-            return '<pre><code' + langClass + '>' + escapeHtml(code) + '</code></pre>'
+            // Unknown language: escape and split into lines
+            const lines = buildCodeLinesFromEscaped(escapeHtml(code))
+            const langAttr = lang ? ' data-language="' + lang + '"' : ''
+            return '<pre class="code-block-pre"' + langAttr + '><code>' + lines + '</code></pre>'
         },
     },
 })

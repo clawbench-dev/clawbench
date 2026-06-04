@@ -37,7 +37,7 @@
 </template>
 
 <script setup>
-import { List, Braces, Box, Boxes, FileCode2, SquareAsterisk, ListOrdered, Variable, Hash, Package, FolderTree, CircleDot, Settings2, Hammer, Layers, Puzzle, Zap, Code2 } from 'lucide-vue-next'
+import { List, Braces, Box, Boxes, FileCode2, SquareAsterisk, ListOrdered, Variable, Hash, Package, FolderTree, CircleDot, Settings2, Hammer, Layers, Puzzle, Zap, Code2, Heading } from 'lucide-vue-next'
 import { ref, computed, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
@@ -68,6 +68,7 @@ const KIND_ICON_MAP = {
   trait:        { icon: Layers,        cls: 'kind-trait' },
   impl:         { icon: Puzzle,        cls: 'kind-impl' },
   macro:        { icon: Zap,           cls: 'kind-macro' },
+  heading:      { icon: Heading,       cls: 'kind-heading' },
 }
 const KIND_FALLBACK = { icon: Code2, cls: 'kind-other' }
 
@@ -108,8 +109,8 @@ watch([() => props.file, () => props.pdfOutline], ([file, pdfOut]) => {
     const lang = getFileType(file.name)?.lang || 'plaintext'
     isCode.value = lang !== 'markdown'
 
-    // For code files, try backend tree-sitter API first, then fallback to regex
-    if (isCode.value && file?.path) {
+    // For code files and markdown, try backend tree-sitter API first, then fallback to regex
+    if (file?.path) {
         fetchCodeSymbols(file.path).then(result => {
             if (result && result.symbols.length > 0) {
                 // Convert backend symbols to TocItem format
@@ -326,6 +327,7 @@ watch(() => props.open, (val) => {
 .kind-trait                      { color: #6a9955; }
 .kind-impl                       { color: #4fb3bf; }
 .kind-macro                      { color: #e5c07b; }
+.kind-heading                    { color: #56b6c2; }
 .kind-other                      { color: var(--text-muted); }
 
 </style>

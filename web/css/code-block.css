@@ -1,0 +1,90 @@
+/* ==========================================================================
+   Code Block Shared Styles
+   Shared by: .raw-content-pre (CodePreview), .markdown-body (markdown), .chat-message (chat)
+   
+   Defines styles for the per-line code block structure:
+   <pre><code>
+     <div class="code-line" data-line="N">
+       <span class="line-num">N</span>
+       <span class="code-text">highlighted content</span>
+     </div>
+   </code></pre>
+   ========================================================================== */
+
+/* ─── Code line layout ─── */
+.code-line {
+    display: flex;
+    align-items: start;
+}
+
+/* ─── Line numbers ─── */
+.line-num {
+    position: sticky;
+    left: 0;
+    display: inline-block;
+    min-width: 48px;
+    padding-right: 12px;
+    color: var(--text-muted);
+    text-align: right;
+    user-select: none;
+    cursor: pointer;
+    border-right: 1px solid var(--border-color);
+    opacity: 0.5;
+    transition: opacity 0.15s, color 0.15s;
+    font-size: inherit;
+    line-height: inherit;
+    background: var(--code-bg);
+    flex-shrink: 0;
+}
+
+.line-num:hover {
+    opacity: 1;
+    color: var(--accent-color);
+}
+
+/* ─── Code text ─── */
+.code-text {
+    white-space: pre;
+    padding-left: 12px;
+    padding-right: 8px;
+}
+
+/* ─── Code block with per-line structure ─── */
+pre.code-block-pre {
+    padding: 0;
+    line-height: 1.6;
+    overflow: auto;
+    background: var(--code-bg);
+}
+
+pre.code-block-pre code {
+    font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace;
+    background: transparent;
+    padding: 0;
+    font-size: inherit;
+    white-space: pre;
+    display: block;
+    min-width: max-content;
+}
+
+/* ─── No-line-numbers mode ─── */
+.no-line-num .code-text {
+    padding-left: 8px;
+    padding-right: 8px;
+}
+
+/* ─── Word-wrap mode ─── */
+.word-wrap .code-line {
+    align-items: stretch;
+}
+
+.word-wrap .line-num {
+    position: static;
+    border-right: 1px solid var(--border-color);
+}
+
+.word-wrap .code-text {
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow-wrap: break-word;
+}

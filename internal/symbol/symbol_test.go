@@ -267,3 +267,184 @@ func TestLevelFromKind(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractMarkdownSymbols_Basic(t *testing.T) {
+	src := []byte(`# Title
+
+Some intro text.
+
+## Section 1
+
+Content under section 1.
+
+### Subsection 1.1
+
+Content under subsection 1.1.
+
+## Section 2
+
+Content under section 2.
+`)
+
+	result := ExtractSymbols("test.md", src)
+	if result.Lang != "markdown" {
+		t.Errorf("expected lang=markdown, got %s", result.Lang)
+	}
+
+	// Should find 4 headings
+	if len(result.Symbols) != 4 {
+		t.Fatalf("expected 4 symbols, got %d", len(result.Symbols))
+	}
+
+	// Check headings
+	// Lines: 1=# Title, 5=## Section 1, 9=### Subsection 1.1, 13=## Section 2
+	// Total lines = 16 (trailing \n creates empty last line)
+	// endLine: next heading of same-or-lower level, -1
+	expected := []struct {
+		name    string
+		level   int
+		line    int
+		endLine int
+	}{
+		{"Title", 1, 1, 16},          // H1 spans entire file (no other H1)
+		{"Section 1", 2, 5, 12},      // H2 ends before ## Section 2 (line 13)
+		{"Subsection 1.1", 3, 9, 12},  // H3 ends before ## Section 2 (line 13, level 2 <= 3)
+		{"Section 2", 2, 13, 16},     // H2 spans to end of file
+	}
+
+	for i, exp := range expected {
+		s := result.Symbols[i]
+		if s.Name != exp.name {
+			t.Errorf("symbol[%d]: expected name=%q, got %q", i, exp.name, s.Name)
+		}
+		if s.Kind != "heading" {
+			t.Errorf("symbol[%d]: expected kind=heading, got %s", i, s.Kind)
+		}
+		if s.Level != exp.level {
+			t.Errorf("symbol[%d]: expected level=%d, got %d", i, exp.level, s.Level)
+		}
+		if s.Line != exp.line {
+			t.Errorf("symbol[%d]: expected line=%d, got %d", i, exp.line, s.Line)
+		}
+		if s.EndLine != exp.endLine {
+			t.Errorf("symbol[%d]: expected endLine=%d, got %d", i, exp.endLine, s.EndLine)
+		}
+	}
+}
+
+func TestExtractMarkdownSymbols_Empty(t *testing.T) {
+	result := ExtractSymbols("test.md", []byte("No headings here.\n\nJust text.\n"))
+	if len(result.Symbols) != 0 {
+		t.Errorf("expected 0 symbols for markdown without headings, got %d", len(result.Symbols))
+	}
+}
+
+func TestExtractMarkdownSymbols_HeadingAtEOF(t *testing.T) {
+	src := []byte("# Title\n\nSome content\n\n## Section\n")
+	result := ExtractSymbols("test.md", src)
+	if len(result.Symbols) != 2 {
+		t.Fatalf("expected 2 symbols, got %d", len(result.Symbols))
+	}
+	// Last heading's endLine should be the last line of the file (6, includes trailing empty line)
+	last := result.Symbols[len(result.Symbols)-1]
+	if last.EndLine != 6 {
+		t.Errorf("expected endLine=6 for last heading, got %d", last.EndLine)
+	}
+}
+
+func TestExtractMarkdownSymbols_SameLevelSiblings(t *testing.T) {
+	src := []byte("## Alpha\n\nContent A\n\n## Beta\n\nContent B\n\n## Gamma\n\nContent C\n")
+	result := ExtractSymbols("test.md", src)
+	if len(result.Symbols) != 3 {
+		t.Fatalf("expected 3 symbols, got %d", len(result.Symbols))
+	}
+	// Each H2 should end at the line before the next H2
+	if result.Symbols[0].EndLine != 4 {
+		t.Errorf("Alpha: expected endLine=4, got %d", result.Symbols[0].EndLine)
+	}
+	if result.Symbols[1].EndLine != 8 {
+		t.Errorf("Beta: expected endLine=8, got %d", result.Symbols[1].EndLine)
+	}
+	// Gamma spans to end of file
+	if result.Symbols[2].EndLine != 12 {
+		t.Errorf("Gamma: expected endLine=12, got %d", result.Symbols[2].EndLine)
+	}
+}
+
+func TestExtractMarkdownSymbols_NestedEndLines(t *testing.T) {
+	src := []byte("# Main\n\n## A\n\n### A1\n\n### A2\n\n## B\n\n### B1\n")
+	result := ExtractSymbols("test.md", src)
+	// 6 headings: Main(H1), A(H2), A1(H3), A2(H3), B(H2), B1(H3)
+	if len(result.Symbols) != 6 {
+		t.Fatalf("expected 6 symbols, got %d", len(result.Symbols))
+	}
+	// "Main" (H1) spans the entire file (no other H1)
+	mainSym := result.Symbols[0]
+	if mainSym.EndLine != 12 {
+		t.Errorf("Main: expected endLine=12, got %d", mainSym.EndLine)
+	}
+	// "A" (H2) ends before "## B" (line 9), so endLine=8
+	aSym := result.Symbols[1]
+	if aSym.EndLine != 8 {
+		t.Errorf("A: expected endLine=8, got %d", aSym.EndLine)
+	}
+	// "A1" (H3) ends before "### A2" (line 7), so endLine=6
+	a1Sym := result.Symbols[2]
+	if a1Sym.EndLine != 6 {
+		t.Errorf("A1: expected endLine=6, got %d", a1Sym.EndLine)
+	}
+	// "A2" (H3) ends before "## B" (line 9, level 2 <= 3), so endLine=8
+	a2Sym := result.Symbols[3]
+	if a2Sym.EndLine != 8 {
+		t.Errorf("A2: expected endLine=8, got %d", a2Sym.EndLine)
+	}
+	// "B" (H2) spans to end
+	bSym := result.Symbols[4]
+	if bSym.EndLine != 12 {
+		t.Errorf("B: expected endLine=12, got %d", bSym.EndLine)
+	}
+	// "B1" (H3) spans to end
+	b1Sym := result.Symbols[5]
+	if b1Sym.EndLine != 12 {
+		t.Errorf("B1: expected endLine=12, got %d", b1Sym.EndLine)
+	}
+}
+
+func TestExtractMarkdownSymbols_InvalidHeadings(t *testing.T) {
+	src := []byte(`####### Not a heading (7 hashes)
+
+#NoSpaceAfterHash
+
+#
+
+##
+
+Some text
+`)
+	result := ExtractSymbols("test.md", src)
+	// Only "##" should NOT be a valid heading (empty text after trim)
+	// "#" is also invalid (empty text after trim)
+	// "#NoSpaceAfterHash" is invalid (no space after hashes)
+	// "####### Not a heading" is invalid (7 hashes, max is 6)
+	if len(result.Symbols) != 0 {
+		t.Errorf("expected 0 symbols for invalid headings, got %d: %+v", len(result.Symbols), result.Symbols)
+	}
+}
+
+func TestExtractSymbols_MarkdownDispatch(t *testing.T) {
+	// Verify that ExtractSymbols dispatches to ExtractMarkdownSymbols for .md files
+	src := []byte(`# Hello
+
+## World
+`)
+	result := ExtractSymbols("test.md", src)
+	if result.Lang != "markdown" {
+		t.Errorf("expected lang=markdown, got %s", result.Lang)
+	}
+	if len(result.Symbols) != 2 {
+		t.Errorf("expected 2 symbols, got %d", len(result.Symbols))
+	}
+	if result.Symbols[0].Kind != "heading" {
+		t.Errorf("expected kind=heading, got %s", result.Symbols[0].Kind)
+	}
+}

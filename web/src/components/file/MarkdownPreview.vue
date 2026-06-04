@@ -13,6 +13,7 @@
       :show-line-numbers="showLineNumbers"
       :flash-ranges="flashRanges"
       :flash-type="flashType"
+      :sticky-scroll="stickyScroll"
     />
   </div>
 </template>
@@ -33,6 +34,7 @@ const props = defineProps({
     viewMode: String,
     wordWrap: Boolean,
     showLineNumbers: { type: Boolean, default: true },
+    stickyScroll: { type: Boolean, default: true },
 })
 
 const renderedHtml = ref('')
@@ -43,8 +45,27 @@ let currentRenderId = 0
 const quoteQuestion = useQuoteQuestion()
 
 const { handleDblClick } = useDoubleClickCopy({
+    lineSelector: '.code-line',
     onCopy(target, text) {
-        // 从 .markdown-body[data-file-path] 读取文件路径
+        // Check if double-click was on a .code-line inside a code block
+        const lineEl = target && 'closest' in target ? target.closest('.code-line') : null
+        if (lineEl) {
+            // Per-line copy with language + line number context
+            const preEl = lineEl.closest('pre')
+            const block = lineEl.closest('.markdown-body')
+            const filePath = block?.getAttribute('data-file-path') || props.file?.path || ''
+            const language = preEl?.getAttribute('data-language') || ''
+            const lineNum = parseInt(lineEl.getAttribute('data-line') || '0')
+            quoteQuestion.showBar({
+                text,
+                filePath,
+                language,
+                startLine: lineNum,
+                endLine: lineNum,
+            })
+            return
+        }
+        // Fallback: general markdown body copy
         const block = target && 'closest' in target ? target.closest('.markdown-body') : null
         const filePath = block?.getAttribute('data-file-path') || props.file?.path || ''
         quoteQuestion.showBar({

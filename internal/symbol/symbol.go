@@ -108,6 +108,12 @@ func ExtractSymbols(filename string, content []byte) SymbolResult {
 		return SymbolResult{}
 	}
 
+	// Markdown has no tree-sitter tags query; use heading-based extraction instead.
+	// Headings (# H1, ## H2, etc.) are treated as scope symbols for sticky scroll.
+	if entry.Name == "markdown" {
+		return ExtractMarkdownSymbols(content)
+	}
+
 	ct, err := getOrCreateTagger(entry)
 	if err != nil || ct == nil {
 		return SymbolResult{Lang: entry.Name}
@@ -145,6 +151,85 @@ func ExtractSymbols(filename string, content []byte) SymbolResult {
 
 	return SymbolResult{
 		Lang:    entry.Name,
+		Symbols: symbols,
+	}
+}
+
+// headingInfo is a temporary struct used during markdown heading extraction.
+type headingInfo struct {
+	level int    // heading depth: 1 for #, 2 for ##, etc.
+	name  string // heading text
+	line  int    // 1-based line number
+}
+
+// ExtractMarkdownSymbols extracts headings from markdown content as symbols.
+// Each heading becomes a Symbol with kind "heading" and level = heading depth.
+// endLine is computed as the line before the next heading of the same or lower level,
+// or the last line of the file if no such heading follows.
+func ExtractMarkdownSymbols(content []byte) SymbolResult {
+	lines := strings.Split(string(content), "\n")
+	totalLines := len(lines)
+
+	// Phase 1: collect all headings
+	var headings []headingInfo
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if len(trimmed) < 2 || trimmed[0] != '#' {
+			continue
+		}
+		// Count leading # characters (max 6)
+		depth := 0
+		for _, ch := range trimmed {
+			if ch == '#' {
+				depth++
+			} else {
+				break
+			}
+		}
+		if depth > 6 || depth >= len(trimmed) {
+			continue
+		}
+		// Must be followed by a space
+		if trimmed[depth] != ' ' {
+			continue
+		}
+		text := strings.TrimSpace(trimmed[depth:])
+		if text == "" {
+			continue
+		}
+		headings = append(headings, headingInfo{
+			level: depth,
+			name:  text,
+			line:  i + 1, // 1-based
+		})
+	}
+
+	if len(headings) == 0 {
+		return SymbolResult{Lang: "markdown", Symbols: nil}
+	}
+
+	// Phase 2: compute endLine for each heading
+	symbols := make([]Symbol, 0, len(headings))
+	for i, h := range headings {
+		endLine := totalLines
+		// Find the next heading with level <= current level
+		for j := i + 1; j < len(headings); j++ {
+			if headings[j].level <= h.level {
+				endLine = headings[j].line - 1
+				break
+			}
+		}
+		symbols = append(symbols, Symbol{
+			Name:    h.name,
+			Kind:    "heading",
+			Line:    h.line,
+			EndLine: endLine,
+			Level:   h.level,
+		})
+	}
+
+	return SymbolResult{
+		Lang:    "markdown",
 		Symbols: symbols,
 	}
 }
