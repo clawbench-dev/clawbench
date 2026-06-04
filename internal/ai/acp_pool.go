@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -781,6 +782,20 @@ func (e *ACPConnEntry) SetSessionMappingForTest(clawbenchSID, acpSID string) {
 		e.sessions = make(map[string]string)
 	}
 	e.sessions[clawbenchSID] = acpSID
+	e.mu.Unlock()
+}
+
+// SetAliveForTest marks the entry as alive without spawning a real process.
+// It creates a minimal ClientSideConnection backed by io.Pipe so that
+// isAliveLocked() returns true (conn != nil && conn.Done() not closed).
+// This allows handler-level tests to bypass EnsureAlive's process spawn.
+// Production code must not use this.
+func (e *ACPConnEntry) SetAliveForTest() {
+	pr, pw := io.Pipe()
+	conn := acp.NewClientSideConnection(e.client, pw, pr)
+	e.mu.Lock()
+	e.alive = true
+	e.conn = conn
 	e.mu.Unlock()
 }
 
