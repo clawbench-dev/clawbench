@@ -46,7 +46,7 @@ vi.mock('@/utils/chatSessionUtils', () => ({
     parseMessages: vi.fn().mockReturnValue([]),
 }))
 
-import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity } from '@/composables/useSessionIdentity'
+import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, updateModeState, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, clearThinkingEffortState } from '@/composables/useSessionIdentity'
 
 describe('useSessionIdentity', () => {
     beforeEach(() => {
@@ -547,6 +547,429 @@ describe('useSessionIdentity', () => {
             const identity = useSessionIdentity()
             identity.openChatPanel()
             expect(mockOpen).not.toHaveBeenCalled()
+        })
+    })
+
+    // ── ACP mode state ──
+
+    describe('updateModeState / clearModeState', () => {
+        beforeEach(() => {
+            clearModeState()
+        })
+
+        it('sets currentModeId and currentModeName from matching mode', () => {
+            const identity = useSessionIdentity()
+            updateModeState('code', [
+                { id: 'ask', name: 'Ask' },
+                { id: 'code', name: 'Code' },
+            ])
+
+            expect(identity.currentModeId.value).toBe('code')
+            expect(identity.currentModeName.value).toBe('Code')
+            expect(identity.availableModes.value).toEqual([
+                { id: 'ask', name: 'Ask' },
+                { id: 'code', name: 'Code' },
+            ])
+        })
+
+        it('uses modeId as fallback name when mode not in list', () => {
+            const identity = useSessionIdentity()
+            updateModeState('architect', [
+                { id: 'ask', name: 'Ask' },
+            ])
+
+            expect(identity.currentModeId.value).toBe('architect')
+            expect(identity.currentModeName.value).toBe('architect')
+        })
+
+        it('updates availableModes even when modeId is empty', () => {
+            const identity = useSessionIdentity()
+            updateModeState('', [
+                { id: 'ask', name: 'Ask' },
+            ])
+
+            expect(identity.currentModeId.value).toBe('')
+            expect(identity.availableModes.value).toEqual([
+                { id: 'ask', name: 'Ask' },
+            ])
+        })
+
+        it('does not update availableModes when modes array is empty', () => {
+            const identity = useSessionIdentity()
+            identity.availableModes.value = [{ id: 'existing', name: 'Existing' }]
+
+            updateModeState('ask', [])
+
+            expect(identity.availableModes.value).toEqual([{ id: 'existing', name: 'Existing' }])
+        })
+
+        it('clearModeState resets all mode refs', () => {
+            const identity = useSessionIdentity()
+            updateModeState('code', [{ id: 'code', name: 'Code' }])
+
+            clearModeState()
+
+            expect(identity.currentModeId.value).toBe('')
+            expect(identity.currentModeName.value).toBe('')
+            expect(identity.availableModes.value).toEqual([])
+        })
+    })
+
+    // ── ACP command state ──
+
+    describe('updateCommandState / clearCommandState', () => {
+        beforeEach(() => {
+            clearCommandState()
+        })
+
+        it('sets availableCommands', () => {
+            const identity = useSessionIdentity()
+            const commands = [
+                { name: '/compact', description: 'Compact conversation' },
+                { name: '/clear', description: 'Clear screen', inputHint: '<confirm>' },
+            ]
+            updateCommandState(commands)
+
+            expect(identity.availableCommands.value).toEqual(commands)
+        })
+
+        it('replaces previous commands on update', () => {
+            const identity = useSessionIdentity()
+            updateCommandState([{ name: '/old', description: 'Old' }])
+            updateCommandState([{ name: '/new', description: 'New' }])
+
+            expect(identity.availableCommands.value).toEqual([{ name: '/new', description: 'New' }])
+        })
+
+        it('clearCommandState resets to empty array', () => {
+            const identity = useSessionIdentity()
+            updateCommandState([{ name: '/compact', description: 'Compact' }])
+
+            clearCommandState()
+
+            expect(identity.availableCommands.value).toEqual([])
+        })
+
+        it('handles empty array update', () => {
+            const identity = useSessionIdentity()
+            updateCommandState([{ name: '/compact', description: 'Compact' }])
+            updateCommandState([])
+
+            expect(identity.availableCommands.value).toEqual([])
+        })
+    })
+
+    // ── ACP thinking effort state ──
+
+    describe('updateThinkingEffortState / clearThinkingEffortState', () => {
+        beforeEach(() => {
+            clearThinkingEffortState()
+        })
+
+        it('sets currentThinkingEffort and availableThinkingEfforts', () => {
+            const identity = useSessionIdentity()
+            updateThinkingEffortState('high', [
+                { id: 'low', name: 'Low' },
+                { id: 'high', name: 'High' },
+            ])
+
+            expect(identity.currentThinkingEffort.value).toBe('high')
+            expect(identity.availableThinkingEfforts.value).toEqual([
+                { id: 'low', name: 'Low' },
+                { id: 'high', name: 'High' },
+            ])
+        })
+
+        it('does not update currentThinkingEffort when currentId is empty', () => {
+            const identity = useSessionIdentity()
+            identity.currentThinkingEffort.value = 'existing'
+
+            updateThinkingEffortState('', [
+                { id: 'low', name: 'Low' },
+            ])
+
+            expect(identity.currentThinkingEffort.value).toBe('existing')
+            expect(identity.availableThinkingEfforts.value).toEqual([{ id: 'low', name: 'Low' }])
+        })
+
+        it('does not update availableThinkingEfforts when levels is empty', () => {
+            const identity = useSessionIdentity()
+            identity.availableThinkingEfforts.value = [{ id: 'existing', name: 'Existing' }]
+
+            updateThinkingEffortState('high', [])
+
+            expect(identity.availableThinkingEfforts.value).toEqual([{ id: 'existing', name: 'Existing' }])
+        })
+
+        it('clearThinkingEffortState resets availableThinkingEfforts only', () => {
+            const identity = useSessionIdentity()
+            updateThinkingEffortState('high', [
+                { id: 'high', name: 'High' },
+            ])
+
+            clearThinkingEffortState()
+
+            // Note: clearThinkingEffortState only clears availableThinkingEfforts,
+            // not currentThinkingEffort (which is also used for CLI backends)
+            expect(identity.availableThinkingEfforts.value).toEqual([])
+        })
+    })
+
+    // ── initSessionFromAPI with ACP fields ──
+
+    describe('initSessionFromAPI with ACP fields', () => {
+        it('populates mode state from data.modeState', async () => {
+            const identity = useSessionIdentity()
+            clearModeState()
+
+            const mockFetch = vi.fn().mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({
+                    sessionId: 'api-session',
+                    agentId: 'agent-1',
+                    modeId: 'code',
+                    modeState: {
+                        currentModeId: 'code',
+                        availableModes: [
+                            { id: 'ask', name: 'Ask' },
+                            { id: 'code', name: 'Code' },
+                        ],
+                    },
+                }),
+            })
+            vi.stubGlobal('fetch', mockFetch)
+            mockGetAgentModel.mockReturnValue({ name: 'Model' })
+
+            await initSessionFromAPI()
+
+            expect(identity.currentModeId.value).toBe('code')
+            expect(identity.currentModeName.value).toBe('Code')
+            expect(identity.availableModes.value).toEqual([
+                { id: 'ask', name: 'Ask' },
+                { id: 'code', name: 'Code' },
+            ])
+
+            vi.unstubAllGlobals()
+        })
+
+        it('falls back to data.modeId when modeState.currentModeId is absent', async () => {
+            const identity = useSessionIdentity()
+            clearModeState()
+
+            const mockFetch = vi.fn().mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({
+                    sessionId: 'api-session',
+                    agentId: 'agent-1',
+                    modeId: 'architect',
+                    modeState: {
+                        availableModes: [
+                            { id: 'ask', name: 'Ask' },
+                            { id: 'architect', name: 'Architect' },
+                        ],
+                    },
+                }),
+            })
+            vi.stubGlobal('fetch', mockFetch)
+            mockGetAgentModel.mockReturnValue({ name: 'Model' })
+
+            await initSessionFromAPI()
+
+            expect(identity.currentModeId.value).toBe('architect')
+            expect(identity.currentModeName.value).toBe('Architect')
+
+            vi.unstubAllGlobals()
+        })
+
+        it('does not populate mode state when availableModes is empty', async () => {
+            const identity = useSessionIdentity()
+            clearModeState()
+
+            const mockFetch = vi.fn().mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({
+                    sessionId: 'api-session',
+                    agentId: 'agent-1',
+                    modeState: {
+                        currentModeId: 'code',
+                        availableModes: [],
+                    },
+                }),
+            })
+            vi.stubGlobal('fetch', mockFetch)
+            mockGetAgentModel.mockReturnValue({ name: 'Model' })
+
+            await initSessionFromAPI()
+
+            expect(identity.currentModeId.value).toBe('')
+            expect(identity.availableModes.value).toEqual([])
+
+            vi.unstubAllGlobals()
+        })
+
+        it('populates thinking effort state from data.thinkingEffortState', async () => {
+            const identity = useSessionIdentity()
+            clearThinkingEffortState()
+
+            const mockFetch = vi.fn().mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({
+                    sessionId: 'api-session',
+                    agentId: 'agent-1',
+                    thinkingEffort: 'high',
+                    thinkingEffortState: {
+                        currentLevelId: 'high',
+                        availableLevels: [
+                            { id: 'low', name: 'Low' },
+                            { id: 'high', name: 'High' },
+                        ],
+                    },
+                }),
+            })
+            vi.stubGlobal('fetch', mockFetch)
+            mockGetAgentModel.mockReturnValue({ name: 'Model' })
+
+            await initSessionFromAPI()
+
+            expect(identity.currentThinkingEffort.value).toBe('high')
+            expect(identity.availableThinkingEfforts.value).toEqual([
+                { id: 'low', name: 'Low' },
+                { id: 'high', name: 'High' },
+            ])
+
+            vi.unstubAllGlobals()
+        })
+
+        it('falls back to data.thinkingEffort when thinkingEffortState.currentLevelId is absent', async () => {
+            const identity = useSessionIdentity()
+            clearThinkingEffortState()
+
+            const mockFetch = vi.fn().mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({
+                    sessionId: 'api-session',
+                    agentId: 'agent-1',
+                    thinkingEffort: 'medium',
+                    thinkingEffortState: {
+                        availableLevels: [
+                            { id: 'low', name: 'Low' },
+                            { id: 'medium', name: 'Medium' },
+                        ],
+                    },
+                }),
+            })
+            vi.stubGlobal('fetch', mockFetch)
+            mockGetAgentModel.mockReturnValue({ name: 'Model' })
+
+            await initSessionFromAPI()
+
+            expect(identity.currentThinkingEffort.value).toBe('medium')
+
+            vi.unstubAllGlobals()
+        })
+
+        it('does not populate thinking effort state when availableLevels is empty', async () => {
+            const identity = useSessionIdentity()
+            clearThinkingEffortState()
+
+            const mockFetch = vi.fn().mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({
+                    sessionId: 'api-session',
+                    agentId: 'agent-1',
+                    thinkingEffortState: {
+                        currentLevelId: 'high',
+                        availableLevels: [],
+                    },
+                }),
+            })
+            vi.stubGlobal('fetch', mockFetch)
+            mockGetAgentModel.mockReturnValue({ name: 'Model' })
+
+            await initSessionFromAPI()
+
+            expect(identity.availableThinkingEfforts.value).toEqual([])
+
+            vi.unstubAllGlobals()
+        })
+
+        it('populates commands from data.commands when not already set', async () => {
+            const identity = useSessionIdentity()
+            clearCommandState()
+
+            const mockFetch = vi.fn().mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({
+                    sessionId: 'api-session',
+                    agentId: 'agent-1',
+                    commands: [
+                        { name: '/compact', description: 'Compact conversation' },
+                        { name: '/clear', description: 'Clear screen' },
+                    ],
+                }),
+            })
+            vi.stubGlobal('fetch', mockFetch)
+            mockGetAgentModel.mockReturnValue({ name: 'Model' })
+
+            await initSessionFromAPI()
+
+            expect(identity.availableCommands.value).toEqual([
+                { name: '/compact', description: 'Compact conversation' },
+                { name: '/clear', description: 'Clear screen' },
+            ])
+
+            vi.unstubAllGlobals()
+        })
+
+        it('does not overwrite commands when already populated', async () => {
+            const identity = useSessionIdentity()
+            const existingCommands = [{ name: '/existing', description: 'Existing command' }]
+            identity.availableCommands.value = existingCommands
+
+            const mockFetch = vi.fn().mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({
+                    sessionId: 'api-session',
+                    agentId: 'agent-1',
+                    commands: [
+                        { name: '/compact', description: 'Compact conversation' },
+                    ],
+                }),
+            })
+            vi.stubGlobal('fetch', mockFetch)
+            mockGetAgentModel.mockReturnValue({ name: 'Model' })
+
+            await initSessionFromAPI()
+
+            expect(identity.availableCommands.value).toEqual(existingCommands)
+
+            vi.unstubAllGlobals()
+        })
+
+        it('handles response without ACP fields gracefully', async () => {
+            const identity = useSessionIdentity()
+            clearModeState()
+            clearCommandState()
+            clearThinkingEffortState()
+
+            const mockFetch = vi.fn().mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({
+                    sessionId: 'api-session',
+                    agentId: 'agent-1',
+                }),
+            })
+            vi.stubGlobal('fetch', mockFetch)
+            mockGetAgentModel.mockReturnValue({ name: 'Model' })
+
+            await initSessionFromAPI()
+
+            expect(identity.currentModeId.value).toBe('')
+            expect(identity.availableModes.value).toEqual([])
+            expect(identity.availableCommands.value).toEqual([])
+            expect(identity.availableThinkingEfforts.value).toEqual([])
+
+            vi.unstubAllGlobals()
         })
     })
 })
