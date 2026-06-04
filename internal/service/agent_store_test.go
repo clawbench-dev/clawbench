@@ -501,6 +501,183 @@ func TestSaveAgent_ModelsWithSpecialChars(t *testing.T) {
 	assert.Contains(t, agents[0].SystemPrompt, "newlines and \"quotes\"")
 }
 
+func TestUpdateAgentACPState(t *testing.T) {
+	db := setupTestDBForAgents(t)
+
+	// Insert an agent
+	err := service.SaveAgent(db, &model.Agent{ID: "claude", Name: "Claude", Backend: "claude", Source: "auto"})
+	require.NoError(t, err)
+
+	// Update ACP state via the global-DB function
+	modeState := `{"current":"code","available":["ask","architect","code"]}`
+	commands := `[{"name":"/compact","description":"Compact context"}]`
+	thinkingState := `{"current":"high","available":["low","medium","high"]}`
+	modelListState := `{"models":[{"id":"claude-sonnet-4-20250514","name":"Sonnet 4"}]}`
+
+	err = service.UpdateAgentACPState("claude", modeState, commands, thinkingState, modelListState)
+	require.NoError(t, err)
+
+	// Verify all 4 ACP fields persisted
+	agents, err := service.LoadAgentsFromDB(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+
+	got := agents[0]
+	assert.Equal(t, modeState, got.AcpModeState)
+	assert.Equal(t, commands, got.AcpCommands)
+	assert.Equal(t, thinkingState, got.AcpThinkingState)
+	assert.Equal(t, modelListState, got.AcpModelListState)
+}
+
+func TestUpdateAgentACPState_NonexistentAgent(t *testing.T) {
+	_ = setupTestDBForAgents(t)
+
+	// UpdateAgentACPState on a nonexistent agent should not error
+	// (UPDATE with 0 rows affected is not a SQL error)
+	err := service.UpdateAgentACPState("nonexistent", "mode", "cmds", "think", "models")
+	assert.NoError(t, err)
+}
+
+func TestUpdateAgentACPState_PartialUpdate(t *testing.T) {
+	db := setupTestDBForAgents(t)
+
+	// Insert agent with initial ACP state
+	err := service.SaveAgent(db, &model.Agent{
+		ID:                "claude",
+		Name:              "Claude",
+		Backend:           "claude",
+		Source:            "auto",
+		AcpModeState:      `{"current":"ask"}`,
+		AcpCommands:       `[{"name":"/help"}]`,
+		AcpThinkingState:  `{"current":"low"}`,
+		AcpModelListState: `{"models":[]}`,
+	})
+	require.NoError(t, err)
+
+	// Update only modeState and thinkingState
+	// Note: UpdateAgentACPState always writes all 4 DB columns (empty strings overwrite),
+	// but only updates non-empty in-memory fields. This tests the DB round-trip.
+	newMode := `{"current":"code","available":["ask","code"]}`
+	newThinking := `{"current":"high"}`
+	err = service.UpdateAgentACPState("claude", newMode, "", newThinking, "")
+	require.NoError(t, err)
+
+	// Verify: DB writes empty strings for unspecified fields (all 4 columns updated)
+	agents, err := service.LoadAgentsFromDB(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+
+	got := agents[0]
+	assert.Equal(t, newMode, got.AcpModeState)
+	assert.Equal(t, "", got.AcpCommands)       // overwritten to empty in DB
+	assert.Equal(t, newThinking, got.AcpThinkingState)
+	assert.Equal(t, "", got.AcpModelListState)  // overwritten to empty in DB
+}
+
+func TestUpdateAgentACPState_InMemoryUpdate(t *testing.T) {
+	_ = setupTestDBForAgents(t)
+
+	// Initialize in-memory agents map
+	origAgents := model.Agents
+	model.Agents = make(map[string]*model.Agent)
+	t.Cleanup(func() { model.Agents = origAgents })
+
+	agent := &model.Agent{
+		ID:      "claude",
+		Name:    "Claude",
+		Backend: "claude",
+		Source:  "auto",
+	}
+	model.Agents["claude"] = agent
+
+	// Update ACP state — should also update the in-memory agent
+	modeState := `{"current":"architect"}`
+	err := service.UpdateAgentACPState("claude", modeState, "", "", "")
+	require.NoError(t, err)
+
+	// Verify in-memory agent was updated (empty strings = skip for in-memory)
+	assert.Equal(t, modeState, model.Agents["claude"].AcpModeState)
+}
+
+func TestSaveAgent_WithACPFields(t *testing.T) {
+	db := setupTestDBForAgents(t)
+
+	modeState := `{"current":"code","available":["ask","architect","code"]}`
+	commands := `[{"name":"/compact","description":"Compact context"},{"name":"/clear","description":"Clear history"}]`
+	thinkingState := `{"current":"high","available":["low","medium","high"]}`
+	modelListState := `{"models":[{"id":"claude-sonnet-4-20250514","name":"Sonnet 4"}]}`
+
+	agent := &model.Agent{
+		ID:                 "claude",
+		Name:               "Claude",
+		Backend:            "claude",
+		Source:             "auto",
+		AcpModeState:       modeState,
+		AcpCommands:        commands,
+		AcpThinkingState:   thinkingState,
+		AcpModelListState:  modelListState,
+	}
+
+	err := service.SaveAgent(db, agent)
+	require.NoError(t, err)
+
+	// Load and verify all ACP fields round-tripped
+	agents, err := service.LoadAgentsFromDB(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+
+	got := agents[0]
+	assert.Equal(t, modeState, got.AcpModeState)
+	assert.Equal(t, commands, got.AcpCommands)
+	assert.Equal(t, thinkingState, got.AcpThinkingState)
+	assert.Equal(t, modelListState, got.AcpModelListState)
+}
+
+func TestSaveAgent_WithTransport(t *testing.T) {
+	db := setupTestDBForAgents(t)
+
+	agent := &model.Agent{
+		ID:         "gemini",
+		Name:       "Gemini",
+		Backend:    "gemini",
+		Source:     "auto",
+		Transport:  "acp-stdio",
+		AcpCommand: "gemini --acp",
+	}
+
+	err := service.SaveAgent(db, agent)
+	require.NoError(t, err)
+
+	// Load and verify transport fields
+	agents, err := service.LoadAgentsFromDB(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+
+	got := agents[0]
+	assert.Equal(t, "acp-stdio", got.Transport)
+	assert.Equal(t, "gemini --acp", got.AcpCommand)
+}
+
+func TestSaveAgent_TransportDefaultsToCLI(t *testing.T) {
+	db := setupTestDBForAgents(t)
+
+	// Save agent without Transport — should default to "cli"
+	agent := &model.Agent{
+		ID:      "pi",
+		Name:    "Pi",
+		Backend: "pi",
+		Source:  "auto",
+	}
+
+	err := service.SaveAgent(db, agent)
+	require.NoError(t, err)
+
+	agents, err := service.LoadAgentsFromDB(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, "cli", agents[0].Transport)
+}
+
 // Helper to verify JSON serialization of models
 func TestAgentModelsJSON_Serialization(t *testing.T) {
 	models := []model.AgentModel{
