@@ -9,7 +9,7 @@ import { getServerURL } from '../helpers/server'
  * authentication cookies (clawbench_session + clawbench_project).
  * Direct Node.js fetch would get 403 because it lacks the project cookie.
  */
-test.describe('Session Management', () => {
+test.describe.serial('Session Management', () => {
   const taskIds: number[] = []
 
   test.afterAll(async () => {

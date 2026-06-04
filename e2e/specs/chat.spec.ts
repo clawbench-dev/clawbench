@@ -174,14 +174,14 @@ test.describe('Chat', () => {
     const thinkingBlock = chat.getLastAssistantMessage().locator('.chat-thinking')
     await expect(thinkingBlock).toHaveClass(/thinking-collapsed/, { timeout: 5000 })
 
-    // Click the collapsed chip to expand — opens the toolDetailOverlay
+    // Click the collapsed chip to expand — opens the ToolDetailOverlay (BottomSheet)
     await thinkingBlock.click()
 
-    // The tool detail overlay should appear showing the thinking content
-    const overlay = page.locator('.tool-detail-overlay')
-    await expect(overlay).toBeVisible({ timeout: 5000 })
-    // Overlay should contain the thinking text
-    await expect(overlay).toContainText('Processing', { timeout: 3000 })
+    // The BottomSheet overlay should appear with tool detail header
+    const overlayHeader = page.locator('.tool-detail-header')
+    await expect(overlayHeader.first()).toBeVisible({ timeout: 5000 })
+    // The header should show "DeepThink" as the tool name for thinking blocks
+    await expect(overlayHeader.locator('.tool-detail-header-name').first()).toContainText('DeepThink', { timeout: 5000 })
   })
 
   // ───────────────────────────────────────────────────────
