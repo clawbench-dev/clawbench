@@ -1662,3 +1662,1056 @@ describe('WorktreeSwitch renderer (EnterWorktree / LeaveWorktree)', () => {
     expect(html).toContain('&lt;b&gt;evil&lt;/b&gt;')
   })
 })
+
+// ────────────────────────────────────────────────────────────
+// SendMessage renderer
+// ────────────────────────────────────────────────────────────
+
+describe('SendMessage renderer', () => {
+  it('renders send-message-view container', () => {
+    const html = formatToolInput({ recipient: 'alice', content: 'Hello' }, 'SendMessage')
+    expect(html).toContain('send-message-view')
+  })
+
+  it('renders send-message-icon', () => {
+    const html = formatToolInput({ recipient: 'alice', content: 'Hello' }, 'SendMessage')
+    expect(html).toContain('send-message-icon')
+  })
+
+  it('renders recipient when present', () => {
+    const html = formatToolInput({ recipient: 'alice', content: 'Hello' }, 'SendMessage')
+    expect(html).toContain('send-message-recipient')
+    expect(html).toContain('alice')
+  })
+
+  it('omits recipient span when absent', () => {
+    const html = formatToolInput({ content: 'Hello' }, 'SendMessage')
+    expect(html).not.toContain('send-message-recipient')
+  })
+
+  it('renders content when present', () => {
+    const html = formatToolInput({ recipient: 'bob', content: 'Hello world' }, 'SendMessage')
+    expect(html).toContain('send-message-content')
+    expect(html).toContain('Hello world')
+  })
+
+  it('omits content div when absent', () => {
+    const html = formatToolInput({ recipient: 'bob' }, 'SendMessage')
+    expect(html).not.toContain('send-message-content')
+  })
+
+  it('truncates content over 300 chars', () => {
+    const longContent = 'A'.repeat(350)
+    const html = formatToolInput({ content: longContent }, 'SendMessage')
+    expect(html).toContain('…')
+    expect(html).not.toContain('A'.repeat(350))
+  })
+
+  it('uses message field as content alias', () => {
+    const html = formatToolInput({ recipient: 'bob', message: 'via message field' }, 'SendMessage')
+    expect(html).toContain('send-message-content')
+    expect(html).toContain('via message field')
+  })
+
+  it('escapes HTML in content and recipient', () => {
+    const html = formatToolInput({ recipient: '<b>evil</b>', content: '<script>x</script>' }, 'SendMessage')
+    expect(html).not.toContain('<script>')
+    expect(html).toContain('&lt;script&gt;')
+    expect(html).toContain('&lt;b&gt;evil&lt;/b&gt;')
+  })
+
+  it('is case-insensitive', () => {
+    const html = formatToolInput({ recipient: 'alice', content: 'Hello' }, 'sendmessage')
+    expect(html).toContain('send-message-view')
+  })
+})
+
+// ────────────────────────────────────────────────────────────
+// ComputerUse renderer
+// ────────────────────────────────────────────────────────────
+
+describe('ComputerUse renderer', () => {
+  it('renders computer-use-view container', () => {
+    const html = formatToolInput({ action: 'click', description: 'Click button' }, 'ComputerUse')
+    expect(html).toContain('computer-use-view')
+  })
+
+  it('renders computer-use-icon', () => {
+    const html = formatToolInput({ action: 'click' }, 'ComputerUse')
+    expect(html).toContain('computer-use-icon')
+  })
+
+  it('renders action when present', () => {
+    const html = formatToolInput({ action: 'click', description: 'Click button' }, 'ComputerUse')
+    expect(html).toContain('computer-use-action')
+    expect(html).toContain('click')
+  })
+
+  it('omits action span when absent', () => {
+    const html = formatToolInput({ description: 'Do something' }, 'ComputerUse')
+    expect(html).not.toContain('computer-use-action')
+  })
+
+  it('renders description when present', () => {
+    const html = formatToolInput({ action: 'click', description: 'Click button' }, 'ComputerUse')
+    expect(html).toContain('computer-use-desc')
+    expect(html).toContain('Click button')
+  })
+
+  it('uses text field as description alias', () => {
+    const html = formatToolInput({ action: 'screenshot', text: 'Screenshot of desktop' }, 'ComputerUse')
+    expect(html).toContain('computer-use-desc')
+    expect(html).toContain('Screenshot of desktop')
+  })
+
+  it('truncates description over 200 chars', () => {
+    const longDesc = 'D'.repeat(250)
+    const html = formatToolInput({ action: 'click', description: longDesc }, 'ComputerUse')
+    expect(html).toContain('…')
+    expect(html).not.toContain('D'.repeat(250))
+  })
+
+  it('omits description when absent', () => {
+    const html = formatToolInput({ action: 'click' }, 'ComputerUse')
+    expect(html).not.toContain('computer-use-desc')
+  })
+
+  it('is case-insensitive', () => {
+    const html = formatToolInput({ action: 'click' }, 'computeruse')
+    expect(html).toContain('computer-use-view')
+  })
+})
+
+// ────────────────────────────────────────────────────────────
+// TeamTool renderer (TeamCreate / TeamDelete)
+// ────────────────────────────────────────────────────────────
+
+describe('TeamTool renderer', () => {
+  it('renders team-tool-view container', () => {
+    const html = formatToolInput({ name: 'backend-team' }, 'TeamCreate')
+    expect(html).toContain('team-tool-view')
+  })
+
+  it('renders team-tool-icon', () => {
+    const html = formatToolInput({ name: 'backend-team' }, 'TeamCreate')
+    expect(html).toContain('team-tool-icon')
+  })
+
+  it('renders name when present', () => {
+    const html = formatToolInput({ name: 'backend-team' }, 'TeamCreate')
+    expect(html).toContain('team-tool-name')
+    expect(html).toContain('backend-team')
+  })
+
+  it('uses team_name as alias for name', () => {
+    const html = formatToolInput({ team_name: 'frontend-team' }, 'TeamCreate')
+    expect(html).toContain('team-tool-name')
+    expect(html).toContain('frontend-team')
+  })
+
+  it('omits name span when absent', () => {
+    const html = formatToolInput({}, 'TeamCreate')
+    expect(html).toContain('team-tool-view')
+    expect(html).not.toContain('team-tool-name')
+  })
+
+  it('TeamCreate is case-insensitive', () => {
+    const html = formatToolInput({ name: 'team' }, 'teamcreate')
+    expect(html).toContain('team-tool-view')
+  })
+
+  it('TeamDelete uses same renderer', () => {
+    const html = formatToolInput({ name: 'old-team' }, 'TeamDelete')
+    expect(html).toContain('team-tool-view')
+    expect(html).toContain('old-team')
+  })
+
+  it('TeamDelete is case-insensitive', () => {
+    const html = formatToolInput({ name: 'team' }, 'teamdelete')
+    expect(html).toContain('team-tool-view')
+  })
+})
+
+// ────────────────────────────────────────────────────────────
+// ChatReply renderer (WeChatReply / WeComReply)
+// ────────────────────────────────────────────────────────────
+
+describe('ChatReply renderer', () => {
+  it('renders chat-reply-view container', () => {
+    const html = formatToolInput({ message: 'Hello', recipient: 'alice' }, 'WeChatReply')
+    expect(html).toContain('chat-reply-view')
+  })
+
+  it('renders chat-reply-icon', () => {
+    const html = formatToolInput({ message: 'Hello' }, 'WeChatReply')
+    expect(html).toContain('chat-reply-icon')
+  })
+
+  it('renders recipient when present', () => {
+    const html = formatToolInput({ message: 'Hello', recipient: 'alice' }, 'WeChatReply')
+    expect(html).toContain('chat-reply-recipient')
+    expect(html).toContain('alice')
+  })
+
+  it('uses user field as recipient alias', () => {
+    const html = formatToolInput({ message: 'Hello', user: 'bob' }, 'WeChatReply')
+    expect(html).toContain('chat-reply-recipient')
+    expect(html).toContain('bob')
+  })
+
+  it('omits recipient span when absent', () => {
+    const html = formatToolInput({ message: 'Hello' }, 'WeChatReply')
+    expect(html).not.toContain('chat-reply-recipient')
+  })
+
+  it('renders message when present', () => {
+    const html = formatToolInput({ message: 'Hello world' }, 'WeChatReply')
+    expect(html).toContain('chat-reply-message')
+    expect(html).toContain('Hello world')
+  })
+
+  it('uses content field as message alias', () => {
+    const html = formatToolInput({ content: 'via content field' }, 'WeChatReply')
+    expect(html).toContain('chat-reply-message')
+    expect(html).toContain('via content field')
+  })
+
+  it('truncates message over 300 chars', () => {
+    const longMessage = 'M'.repeat(350)
+    const html = formatToolInput({ message: longMessage }, 'WeChatReply')
+    expect(html).toContain('…')
+    expect(html).not.toContain('M'.repeat(350))
+  })
+
+  it('escapes HTML in message and recipient', () => {
+    const html = formatToolInput({ recipient: '<b>x</b>', message: '<script>y</script>' }, 'WeChatReply')
+    expect(html).not.toContain('<script>')
+    expect(html).toContain('&lt;script&gt;')
+    expect(html).toContain('&lt;b&gt;x&lt;/b&gt;')
+  })
+
+  it('WeChatReply is case-insensitive', () => {
+    const html = formatToolInput({ message: 'Hi' }, 'wechatreply')
+    expect(html).toContain('chat-reply-view')
+  })
+
+  it('WeComReply uses same renderer', () => {
+    const html = formatToolInput({ message: 'Hi', recipient: 'bob' }, 'WeComReply')
+    expect(html).toContain('chat-reply-view')
+    expect(html).toContain('bob')
+  })
+
+  it('WeComReply is case-insensitive', () => {
+    const html = formatToolInput({ message: 'Hi' }, 'wecomreply')
+    expect(html).toContain('chat-reply-view')
+  })
+})
+
+// ────────────────────────────────────────────────────────────
+// SaveMemory renderer
+// ────────────────────────────────────────────────────────────
+
+describe('SaveMemory renderer', () => {
+  it('renders save-memory-view container', () => {
+    const html = formatToolInput({ key: 'pref', value: 'dark-mode' }, 'save_memory')
+    expect(html).toContain('save-memory-view')
+  })
+
+  it('renders save-memory-icon', () => {
+    const html = formatToolInput({ key: 'pref', value: 'dark-mode' }, 'save_memory')
+    expect(html).toContain('save-memory-icon')
+  })
+
+  it('renders key when present', () => {
+    const html = formatToolInput({ key: 'pref', value: 'dark-mode' }, 'save_memory')
+    expect(html).toContain('save-memory-key')
+    expect(html).toContain('pref')
+  })
+
+  it('uses name field as key alias', () => {
+    const html = formatToolInput({ name: 'setting', value: 'on' }, 'save_memory')
+    expect(html).toContain('save-memory-key')
+    expect(html).toContain('setting')
+  })
+
+  it('omits key span when absent', () => {
+    const html = formatToolInput({ value: 'dark-mode' }, 'save_memory')
+    expect(html).not.toContain('save-memory-key')
+  })
+
+  it('renders value when present', () => {
+    const html = formatToolInput({ key: 'pref', value: 'dark-mode' }, 'save_memory')
+    expect(html).toContain('save-memory-value')
+    expect(html).toContain('dark-mode')
+  })
+
+  it('uses content field as value alias', () => {
+    const html = formatToolInput({ key: 'pref', content: 'via content' }, 'save_memory')
+    expect(html).toContain('save-memory-value')
+    expect(html).toContain('via content')
+  })
+
+  it('truncates value over 200 chars', () => {
+    const longValue = 'V'.repeat(250)
+    const html = formatToolInput({ key: 'pref', value: longValue }, 'save_memory')
+    expect(html).toContain('…')
+    expect(html).not.toContain('V'.repeat(250))
+  })
+
+  it('omits value div when absent', () => {
+    const html = formatToolInput({ key: 'pref' }, 'save_memory')
+    expect(html).not.toContain('save-memory-value')
+  })
+
+  it('escapes HTML in key and value', () => {
+    const html = formatToolInput({ key: '<b>k</b>', value: '<script>v</script>' }, 'save_memory')
+    expect(html).not.toContain('<script>')
+    expect(html).toContain('&lt;script&gt;')
+    expect(html).toContain('&lt;b&gt;k&lt;/b&gt;')
+  })
+
+  it('is case-insensitive', () => {
+    const html = formatToolInput({ key: 'pref', value: 'dark' }, 'SAVE_MEMORY')
+    expect(html).toContain('save-memory-view')
+  })
+})
+
+// ────────────────────────────────────────────────────────────
+// DeepThink renderer
+// ────────────────────────────────────────────────────────────
+
+describe('DeepThink renderer', () => {
+  it('renders deep-think-view container', () => {
+    const html = formatToolInput({ topic: 'quantum computing' }, 'DeepThink')
+    expect(html).toContain('deep-think-view')
+  })
+
+  it('renders deep-think-icon', () => {
+    const html = formatToolInput({ topic: 'quantum computing' }, 'DeepThink')
+    expect(html).toContain('deep-think-icon')
+  })
+
+  it('renders topic when present', () => {
+    const html = formatToolInput({ topic: 'quantum computing' }, 'DeepThink')
+    expect(html).toContain('deep-think-topic')
+    expect(html).toContain('quantum computing')
+  })
+
+  it('uses query as topic alias', () => {
+    const html = formatToolInput({ query: 'search query' }, 'DeepThink')
+    expect(html).toContain('deep-think-topic')
+    expect(html).toContain('search query')
+  })
+
+  it('uses prompt as topic alias', () => {
+    const html = formatToolInput({ prompt: 'think about this' }, 'DeepThink')
+    expect(html).toContain('deep-think-topic')
+    expect(html).toContain('think about this')
+  })
+
+  it('truncates topic over 200 chars', () => {
+    const longTopic = 'T'.repeat(250)
+    const html = formatToolInput({ topic: longTopic }, 'DeepThink')
+    expect(html).toContain('…')
+    expect(html).not.toContain('T'.repeat(250))
+  })
+
+  it('escapes HTML in topic', () => {
+    const html = formatToolInput({ topic: '<script>alert(1)</script>' }, 'DeepThink')
+    expect(html).not.toContain('<script>')
+    expect(html).toContain('&lt;script&gt;')
+  })
+
+  it('renders without topic gracefully', () => {
+    const html = formatToolInput({}, 'DeepThink')
+    expect(html).toContain('deep-think-view')
+    expect(html).not.toContain('deep-think-topic')
+  })
+
+  it('is case-insensitive', () => {
+    const html = formatToolInput({ topic: 'test' }, 'deepthink')
+    expect(html).toContain('deep-think-view')
+  })
+})
+
+// ────────────────────────────────────────────────────────────
+// StructuredOutput renderer
+// ────────────────────────────────────────────────────────────
+
+describe('StructuredOutput renderer', () => {
+  it('renders structured-output-view container', () => {
+    const html = formatToolInput({ prompt: 'Generate a list' }, 'StructuredOutput')
+    expect(html).toContain('structured-output-view')
+  })
+
+  it('renders structured-output-icon', () => {
+    const html = formatToolInput({ prompt: 'Generate a list' }, 'StructuredOutput')
+    expect(html).toContain('structured-output-icon')
+  })
+
+  it('renders prompt when present', () => {
+    const html = formatToolInput({ prompt: 'Generate a list' }, 'StructuredOutput')
+    expect(html).toContain('structured-output-prompt')
+    expect(html).toContain('Generate a list')
+  })
+
+  it('uses instruction as prompt alias', () => {
+    const html = formatToolInput({ instruction: 'Create a schema' }, 'StructuredOutput')
+    expect(html).toContain('structured-output-prompt')
+    expect(html).toContain('Create a schema')
+  })
+
+  it('truncates prompt over 200 chars', () => {
+    const longPrompt = 'P'.repeat(250)
+    const html = formatToolInput({ prompt: longPrompt }, 'StructuredOutput')
+    expect(html).toContain('…')
+    expect(html).not.toContain('P'.repeat(250))
+  })
+
+  it('renders without prompt gracefully', () => {
+    const html = formatToolInput({}, 'StructuredOutput')
+    expect(html).toContain('structured-output-view')
+    expect(html).not.toContain('structured-output-prompt')
+  })
+
+  it('is case-insensitive', () => {
+    const html = formatToolInput({ prompt: 'test' }, 'structuredoutput')
+    expect(html).toContain('structured-output-view')
+  })
+})
+
+// ────────────────────────────────────────────────────────────
+// SkillManage renderer
+// ────────────────────────────────────────────────────────────
+
+describe('SkillManage renderer', () => {
+  it('renders skill-manage-view container', () => {
+    const html = formatToolInput({ action: 'create', skill: 'deploy' }, 'SkillManage')
+    expect(html).toContain('skill-manage-view')
+  })
+
+  it('renders skill-manage-icon', () => {
+    const html = formatToolInput({ action: 'create', skill: 'deploy' }, 'SkillManage')
+    expect(html).toContain('skill-manage-icon')
+  })
+
+  it('renders action when present', () => {
+    const html = formatToolInput({ action: 'create', skill: 'deploy' }, 'SkillManage')
+    expect(html).toContain('skill-manage-action')
+    expect(html).toContain('create')
+  })
+
+  it('uses operation as action alias', () => {
+    const html = formatToolInput({ operation: 'delete', skill: 'deploy' }, 'SkillManage')
+    expect(html).toContain('skill-manage-action')
+    expect(html).toContain('delete')
+  })
+
+  it('renders skill when present', () => {
+    const html = formatToolInput({ action: 'create', skill: 'deploy' }, 'SkillManage')
+    expect(html).toContain('skill-manage-name')
+    expect(html).toContain('deploy')
+  })
+
+  it('uses name as skill alias', () => {
+    const html = formatToolInput({ action: 'create', name: 'my-skill' }, 'SkillManage')
+    expect(html).toContain('skill-manage-name')
+    expect(html).toContain('my-skill')
+  })
+
+  it('omits action span when absent', () => {
+    const html = formatToolInput({ skill: 'deploy' }, 'SkillManage')
+    expect(html).not.toContain('skill-manage-action')
+  })
+
+  it('omits skill span when absent', () => {
+    const html = formatToolInput({ action: 'create' }, 'SkillManage')
+    expect(html).not.toContain('skill-manage-name')
+  })
+
+  it('is case-insensitive', () => {
+    const html = formatToolInput({ action: 'create', skill: 'deploy' }, 'skillmanage')
+    expect(html).toContain('skill-manage-view')
+  })
+})
+
+// ────────────────────────────────────────────────────────────
+// Monitor renderer
+// ────────────────────────────────────────────────────────────
+
+describe('Monitor renderer', () => {
+  it('renders monitor-view container', () => {
+    const html = formatToolInput({ command: 'tail -f log.txt', target: 'server-1' }, 'Monitor')
+    expect(html).toContain('monitor-view')
+  })
+
+  it('renders monitor-icon', () => {
+    const html = formatToolInput({ command: 'tail -f log.txt', target: 'server-1' }, 'Monitor')
+    expect(html).toContain('monitor-icon')
+  })
+
+  it('renders target when present', () => {
+    const html = formatToolInput({ command: 'ls', target: 'server-1' }, 'Monitor')
+    expect(html).toContain('monitor-target')
+    expect(html).toContain('server-1')
+  })
+
+  it('omits target span when absent', () => {
+    const html = formatToolInput({ command: 'ls' }, 'Monitor')
+    expect(html).not.toContain('monitor-target')
+  })
+
+  it('renders command with bash prompt and hljs highlighting', () => {
+    const html = formatToolInput({ command: 'tail -f log.txt', target: 'server-1' }, 'Monitor')
+    expect(html).toContain('monitor-command-body')
+    expect(html).toContain('bash-prompt')
+  })
+
+  it('omits command section when absent', () => {
+    const html = formatToolInput({ target: 'server-1' }, 'Monitor')
+    expect(html).not.toContain('monitor-command-body')
+  })
+
+  it('falls back to escapeHtml when hljs.highlight throws', async () => {
+    const { hljs } = await import('@/utils/globals.ts')
+    const spy = vi.spyOn(hljs, 'highlight').mockImplementation(() => { throw new Error('hljs mock error') })
+    const html = formatToolInput({ command: 'echo hello', target: 'server-1' }, 'Monitor')
+    expect(html).toContain('monitor-command-body')
+    expect(html).toContain('echo hello')
+    spy.mockRestore()
+  })
+
+  it('is case-insensitive', () => {
+    const html = formatToolInput({ command: 'ls', target: 's1' }, 'monitor')
+    expect(html).toContain('monitor-view')
+  })
+})
+
+// ────────────────────────────────────────────────────────────
+// ImageGen renderer
+// ────────────────────────────────────────────────────────────
+
+describe('ImageGen renderer', () => {
+  it('renders image-gen-view container', () => {
+    const html = formatToolInput({ prompt: 'A sunset over mountains', size: '1024x1024' }, 'ImageGen')
+    expect(html).toContain('image-gen-view')
+  })
+
+  it('renders image-gen-icon', () => {
+    const html = formatToolInput({ prompt: 'A sunset', size: '1024x1024' }, 'ImageGen')
+    expect(html).toContain('image-gen-icon')
+  })
+
+  it('renders prompt when present', () => {
+    const html = formatToolInput({ prompt: 'A sunset over mountains', size: '1024x1024' }, 'ImageGen')
+    expect(html).toContain('image-gen-prompt')
+    expect(html).toContain('A sunset over mountains')
+  })
+
+  it('uses description as prompt alias', () => {
+    const html = formatToolInput({ description: 'A beautiful landscape' }, 'ImageGen')
+    expect(html).toContain('image-gen-prompt')
+    expect(html).toContain('A beautiful landscape')
+  })
+
+  it('renders size when present', () => {
+    const html = formatToolInput({ prompt: 'A sunset', size: '1024x1024' }, 'ImageGen')
+    expect(html).toContain('image-gen-size')
+    expect(html).toContain('1024x1024')
+  })
+
+  it('omits size span when absent', () => {
+    const html = formatToolInput({ prompt: 'A sunset' }, 'ImageGen')
+    expect(html).not.toContain('image-gen-size')
+  })
+
+  it('truncates prompt over 200 chars', () => {
+    const longPrompt = 'P'.repeat(250)
+    const html = formatToolInput({ prompt: longPrompt }, 'ImageGen')
+    expect(html).toContain('…')
+    expect(html).not.toContain('P'.repeat(250))
+  })
+
+  it('renders without prompt gracefully', () => {
+    const html = formatToolInput({}, 'ImageGen')
+    expect(html).toContain('image-gen-view')
+    expect(html).not.toContain('image-gen-prompt')
+  })
+
+  it('is case-insensitive', () => {
+    const html = formatToolInput({ prompt: 'sunset' }, 'imagegen')
+    expect(html).toContain('image-gen-view')
+  })
+})
+
+// ────────────────────────────────────────────────────────────
+// LSP renderer
+// ────────────────────────────────────────────────────────────
+
+describe('LSP renderer', () => {
+  it('renders lsp-view container', () => {
+    const html = formatToolInput({ method: 'textDocument/definition', file_path: 'src/main.ts' }, 'LSP')
+    expect(html).toContain('lsp-view')
+  })
+
+  it('renders lsp-icon', () => {
+    const html = formatToolInput({ method: 'textDocument/definition' }, 'LSP')
+    expect(html).toContain('lsp-icon')
+  })
+
+  it('renders method when present', () => {
+    const html = formatToolInput({ method: 'textDocument/definition', file_path: 'src/main.ts' }, 'LSP')
+    expect(html).toContain('lsp-method')
+    expect(html).toContain('textDocument/definition')
+  })
+
+  it('omits method span when absent', () => {
+    const html = formatToolInput({ file_path: 'src/main.ts' }, 'LSP')
+    expect(html).not.toContain('lsp-method')
+  })
+
+  it('renders file_path when present', () => {
+    const html = formatToolInput({ method: 'hover', file_path: 'src/main.ts' }, 'LSP')
+    expect(html).toContain('lsp-file-path')
+    expect(html).toContain('src/main.ts')
+  })
+
+  it('uses path as file_path alias', () => {
+    const html = formatToolInput({ method: 'hover', path: 'lib/util.ts' }, 'LSP')
+    expect(html).toContain('lsp-file-path')
+    expect(html).toContain('lib/util.ts')
+  })
+
+  it('renders resolved path', () => {
+    const html = formatToolInput({ method: 'hover', file_path: './src/main.ts' }, 'LSP')
+    expect(html).toContain('lsp-file-path')
+    // ./ prefix should be stripped
+    expect(html).toContain('src/main.ts')
+  })
+
+  it('omits file_path span when absent', () => {
+    const html = formatToolInput({ method: 'hover' }, 'LSP')
+    expect(html).not.toContain('lsp-file-path')
+  })
+
+  it('is case-insensitive', () => {
+    const html = formatToolInput({ method: 'hover' }, 'lsp')
+    expect(html).toContain('lsp-view')
+  })
+})
+
+// ────────────────────────────────────────────────────────────
+// Git renderer
+// ────────────────────────────────────────────────────────────
+
+describe('Git renderer', () => {
+  it('renders git-tool-view container', () => {
+    const html = formatToolInput({ command: 'commit', args: '-m "fix bug"' }, 'Git')
+    expect(html).toContain('git-tool-view')
+  })
+
+  it('renders git-tool-icon', () => {
+    const html = formatToolInput({ command: 'commit' }, 'Git')
+    expect(html).toContain('git-tool-icon')
+  })
+
+  it('renders command with bash prompt and hljs highlighting', () => {
+    const html = formatToolInput({ command: 'commit', args: '-m "fix"' }, 'Git')
+    expect(html).toContain('git-tool-body')
+    expect(html).toContain('bash-prompt')
+    expect(html).toContain('git commit')
+  })
+
+  it('uses subcommand as command alias', () => {
+    const html = formatToolInput({ subcommand: 'push', args: 'origin main' }, 'Git')
+    expect(html).toContain('git push')
+  })
+
+  it('handles args as string', () => {
+    const html = formatToolInput({ command: 'commit', args: '-m "fix bug"' }, 'Git')
+    expect(html).toContain('git commit -m')
+  })
+
+  it('handles args as array via JSON.stringify', () => {
+    const html = formatToolInput({ command: 'commit', arguments: ['-m', 'fix'] }, 'Git')
+    expect(html).toContain('git commit')
+  })
+
+  it('uses arguments as args alias', () => {
+    const html = formatToolInput({ command: 'push', arguments: 'origin main' }, 'Git')
+    expect(html).toContain('git push origin main')
+  })
+
+  it('falls back to escapeHtml when hljs.highlight throws', async () => {
+    const { hljs } = await import('@/utils/globals.ts')
+    const spy = vi.spyOn(hljs, 'highlight').mockImplementation(() => { throw new Error('hljs mock error') })
+    const html = formatToolInput({ command: 'commit', args: '-m "fix"' }, 'Git')
+    expect(html).toContain('git-tool-view')
+    expect(html).toContain('git commit')
+    spy.mockRestore()
+  })
+
+  it('is case-insensitive', () => {
+    const html = formatToolInput({ command: 'commit' }, 'git')
+    expect(html).toContain('git-tool-view')
+  })
+})
+
+// ────────────────────────────────────────────────────────────
+// NotebookEdit renderer
+// ────────────────────────────────────────────────────────────
+
+describe('NotebookEdit renderer', () => {
+  it('renders edit-diff-view container', () => {
+    const html = formatToolInput({ file_path: 'notebook.ipynb', new_source: 'print("hello")' }, 'NotebookEdit')
+    expect(html).toContain('edit-diff-view')
+  })
+
+  it('renders cell_index when present', () => {
+    const html = formatToolInput({ file_path: 'nb.ipynb', cell_index: 3, new_source: 'x = 1' }, 'NotebookEdit')
+    expect(html).toContain('Cell 3')
+  })
+
+  it('uses cellIndex as cell_index alias', () => {
+    const html = formatToolInput({ file_path: 'nb.ipynb', cellIndex: 5, new_source: 'y = 2' }, 'NotebookEdit')
+    expect(html).toContain('Cell 5')
+  })
+
+  it('omits cell badge when no cell_index', () => {
+    const html = formatToolInput({ file_path: 'nb.ipynb', new_source: 'x = 1' }, 'NotebookEdit')
+    expect(html).not.toContain('Cell')
+  })
+
+  it('uses new_string as new_source alias', () => {
+    const html = formatToolInput({ file_path: 'nb.ipynb', cell_index: 0, new_string: 'z = 3' }, 'NotebookEdit')
+    expect(html).toContain('edit-diff-add')
+    expect(html).toContain('z = 3')
+  })
+
+  it('renders resolved path', () => {
+    const html = formatToolInput({ file_path: './notebooks/test.ipynb', new_source: 'a = 1' }, 'NotebookEdit')
+    // ./ prefix should be stripped
+    expect(html).toContain('notebooks/test.ipynb')
+  })
+
+  it('renders new_source lines as additions', () => {
+    const html = formatToolInput({
+      file_path: 'nb.ipynb',
+      new_source: 'line1\nline2\nline3',
+    }, 'NotebookEdit')
+    const addMatches = html.match(/edit-diff-add/g)
+    expect(addMatches?.length).toBe(3)
+  })
+
+  it('omits diff body when no new_source', () => {
+    const html = formatToolInput({ file_path: 'nb.ipynb', cell_index: 0 }, 'NotebookEdit')
+    expect(html).not.toContain('edit-diff-scroll')
+    expect(html).not.toContain('edit-diff-add')
+  })
+
+  it('is case-insensitive', () => {
+    const html = formatToolInput({ file_path: 'nb.ipynb', new_source: 'x = 1' }, 'notebookedit')
+    expect(html).toContain('edit-diff-view')
+  })
+})
+
+// ────────────────────────────────────────────────────────────
+// formatToolOutput — deep tests
+// ────────────────────────────────────────────────────────────
+
+describe('formatToolOutput (deep)', () => {
+  it('returns empty string for empty output', () => {
+    expect(formatToolOutput('')).toBe('')
+  })
+
+  it('routes to registered output renderer for known tool names', () => {
+    const html = formatToolOutput('ok', 'Write')
+    expect(html).toContain('tool-output-status-msg')
+  })
+
+  it('falls back to smart output for unregistered tool names', () => {
+    const html = formatToolOutput('plain text result', 'UnknownTool')
+    expect(html).toContain('tool-output-default')
+  })
+
+  it('falls back to smart output when no tool name', () => {
+    const html = formatToolOutput('plain text result')
+    expect(html).toContain('tool-output-default')
+  })
+
+  it('Git tool uses terminal output renderer', () => {
+    const html = formatToolOutput('commit abc123', 'Git')
+    expect(html).toContain('bash-output-body')
+  })
+
+  it('PowerShell tool uses terminal output renderer', () => {
+    const html = formatToolOutput('Get-Process', 'PowerShell')
+    expect(html).toContain('bash-output-body')
+  })
+})
+
+// ────────────────────────────────────────────────────────────
+// renderSmartOutput — tests via formatToolOutput
+// ────────────────────────────────────────────────────────────
+
+describe('renderSmartOutput (via formatToolOutput)', () => {
+  it('pretty-prints JSON object', () => {
+    const html = formatToolOutput('{"key": "value"}', 'UnknownTool')
+    expect(html).toContain('tool-output-default')
+    expect(html).toContain('<pre>')
+    // Pretty-printed JSON should have newlines (indented)
+    expect(html).toContain('key')
+  })
+
+  it('pretty-prints JSON array', () => {
+    const html = formatToolOutput('[1, 2, 3]', 'UnknownTool')
+    expect(html).toContain('tool-output-default')
+    expect(html).toContain('<pre>')
+  })
+
+  it('falls back to code output for invalid JSON starting with {', () => {
+    const html = formatToolOutput('{invalid json}', 'UnknownTool')
+    expect(html).toContain('tool-output-default')
+    expect(html).toContain('<pre>')
+    expect(html).toContain('{invalid json}')
+  })
+
+  it('falls back to code output for invalid JSON starting with [', () => {
+    const html = formatToolOutput('[not valid]', 'UnknownTool')
+    expect(html).toContain('tool-output-default')
+    expect(html).toContain('<pre>')
+  })
+
+  it('treats non-JSON plain text as code output', () => {
+    const html = formatToolOutput('Hello world, this is plain text.', 'UnknownTool')
+    expect(html).toContain('tool-output-default')
+    expect(html).toContain('<pre>')
+    expect(html).toContain('Hello world, this is plain text.')
+  })
+})
+
+// ────────────────────────────────────────────────────────────
+// renderStatusOutput — tests via formatToolOutput
+// ────────────────────────────────────────────────────────────
+
+describe('renderStatusOutput (via formatToolOutput)', () => {
+  it('renders short message <= 50 chars as badge', () => {
+    const html = formatToolOutput('ok', 'Write')
+    expect(html).toContain('tool-output-status-msg')
+    expect(html).toContain('tool-output-ok-badge')
+    expect(html).toContain('ok')
+  })
+
+  it('renders long message > 50 chars as preformatted text', () => {
+    const longMsg = 'A'.repeat(60)
+    const html = formatToolOutput(longMsg, 'Write')
+    expect(html).toContain('tool-output-default')
+    expect(html).toContain('<pre>')
+    expect(html).not.toContain('tool-output-ok-badge')
+  })
+
+  it('Edit tool uses status output renderer', () => {
+    const html = formatToolOutput('ok', 'Edit')
+    expect(html).toContain('tool-output-status-msg')
+  })
+
+  it('MultiEdit tool uses status output renderer', () => {
+    const html = formatToolOutput('ok', 'MultiEdit')
+    expect(html).toContain('tool-output-status-msg')
+  })
+
+  it('NotebookEdit tool uses status output renderer', () => {
+    const html = formatToolOutput('ok', 'NotebookEdit')
+    expect(html).toContain('tool-output-status-msg')
+  })
+
+  it('TodoWrite tool uses status output renderer', () => {
+    const html = formatToolOutput('ok', 'TodoWrite')
+    expect(html).toContain('tool-output-status-msg')
+  })
+})
+
+// ────────────────────────────────────────────────────────────
+// annotateLocalhostInEscapedText — tests via formatToolOutput
+// ────────────────────────────────────────────────────────────
+
+describe('annotateLocalhostInEscapedText (via formatToolOutput)', () => {
+  it('annotates localhost URLs when isAppMode is true', () => {
+    mockIsAppMode.value = true
+    const html = formatToolOutput('Visit http://localhost:8080/api', 'Bash')
+    expect(html).toContain('chat-url-open-btn')
+    expect(html).toContain('data-port="8080"')
+    mockIsAppMode.value = false
+  })
+
+  it('returns text as-is when isAppMode is false', () => {
+    mockIsAppMode.value = false
+    const html = formatToolOutput('Visit http://localhost:8080/api', 'Bash')
+    expect(html).not.toContain('chat-url-open-btn')
+    expect(html).toContain('http://localhost:8080/api')
+  })
+})
+
+// ────────────────────────────────────────────────────────────
+// PermissionApproval action handler — uncovered branches
+// ────────────────────────────────────────────────────────────
+
+describe('PermissionApproval action handler (uncovered branches)', () => {
+  function createPermissionDOM(opts?: { noToolCallId?: boolean; noSessionId?: boolean }): { container: HTMLDivElement; emit: ReturnType<typeof vi.fn> } {
+    const emit = vi.fn()
+    const container = document.createElement('div')
+    container.className = 'permission-approval-view'
+    container.innerHTML = `
+      <div class="permission-options">
+        <button class="permission-btn permission-btn-allow" data-option-id="allow-1" data-kind="allow_once">Allow Once</button>
+        <button class="permission-btn permission-btn-reject" data-option-id="reject-1" data-kind="reject_once">Deny</button>
+      </div>
+    `
+    const toolDetail = document.createElement('div')
+    toolDetail.className = 'tool-detail'
+    if (!opts?.noSessionId) toolDetail.dataset.sessionId = 'test-session-123'
+    if (!opts?.noToolCallId) toolDetail.dataset.toolCallId = 'tc-456'
+    toolDetail.appendChild(container)
+    document.body.appendChild(toolDetail)
+    return { container, emit }
+  }
+
+  function cleanup(container: HTMLDivElement) {
+    container.closest('.tool-detail')?.remove()
+  }
+
+  it('click reject button sets denied text', () => {
+    const { container, emit } = createPermissionDOM()
+    const rejectBtn = container.querySelector('.permission-btn-reject') as HTMLElement
+    const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(clickEvent, 'target', { value: rejectBtn, writable: false })
+    handleToolAction('PermissionApproval', clickEvent, emit)
+    expect(rejectBtn.textContent).toContain('Denied')
+    cleanup(container)
+  })
+
+  it('no toolCallId → early return with console.warn', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { container, emit } = createPermissionDOM({ noToolCallId: true })
+    const allowBtn = container.querySelector('.permission-btn-allow') as HTMLElement
+    const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(clickEvent, 'target', { value: allowBtn, writable: false })
+    const result = handleToolAction('PermissionApproval', clickEvent, emit)
+    expect(result).toBe(true)
+    expect(warnSpy).toHaveBeenCalledWith('PermissionApproval: no toolCallId found')
+    // View should NOT be marked as responded (early return before that)
+    expect(container.classList.contains('permission-responded')).toBe(false)
+    warnSpy.mockRestore()
+    cleanup(container)
+  })
+
+  it('falls back to getCurrentSessionId when toolDetail has no sessionId', () => {
+    const { container, emit } = createPermissionDOM({ noSessionId: true })
+    const allowBtn = container.querySelector('.permission-btn-allow') as HTMLElement
+    const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(clickEvent, 'target', { value: allowBtn, writable: false })
+    handleToolAction('PermissionApproval', clickEvent, emit)
+    // Should still work (falls back to getCurrentSessionId)
+    expect(container.classList.contains('permission-responded')).toBe(true)
+    cleanup(container)
+  })
+})
+
+// ────────────────────────────────────────────────────────────
+// AskUserQuestion action handler — uncovered branches
+// ────────────────────────────────────────────────────────────
+
+describe('AskUserQuestion action handler (uncovered branches)', () => {
+  function createAskDOM(multiSelect = false): { container: HTMLDivElement; emit: ReturnType<typeof vi.fn> } {
+    const emit = vi.fn()
+    const container = document.createElement('div')
+    container.className = 'ask-question-view'
+    container.innerHTML = `
+      <div class="ask-question-item" data-multi="${multiSelect}">
+        <div class="ask-question-options">
+          <div class="ask-question-option" data-qi="0" data-oi="0" data-label="Option A">
+            <span class="ask-option-indicator">${multiSelect ? '☐' : '◯'}</span>
+            <div class="ask-option-content">
+              <span class="ask-option-label">Option A</span>
+            </div>
+          </div>
+          <div class="ask-question-option" data-qi="0" data-oi="1" data-label="Option B">
+            <span class="ask-option-indicator">${multiSelect ? '☐' : '◯'}</span>
+            <div class="ask-option-content">
+              <span class="ask-option-label">Option B</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="ask-question-supplementary">
+        <label class="ask-supplementary-label">Additional info</label>
+        <input class="ask-supplementary-input" type="text" placeholder="Optional" />
+      </div>
+      <button class="ask-question-submit" disabled>Submit</button>
+    `
+    document.body.appendChild(container)
+    return { container, emit }
+  }
+
+  function cleanup(container: HTMLDivElement) {
+    container.remove()
+  }
+
+  it('submit with supplementary text input appends to answer', () => {
+    const { container, emit } = createAskDOM(false)
+    const option = container.querySelector('.ask-question-option') as HTMLElement
+    const submitBtn = container.querySelector('.ask-question-submit') as HTMLButtonElement
+    const suppInput = container.querySelector('.ask-supplementary-input') as HTMLInputElement
+
+    // Select option
+    const clickOpt = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(clickOpt, 'target', { value: option, writable: false })
+    handleToolAction('AskUserQuestion', clickOpt, emit)
+
+    // Set supplementary text
+    suppInput.value = 'some extra details'
+
+    // Submit
+    const clickSubmit = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(clickSubmit, 'target', { value: submitBtn, writable: false })
+    handleToolAction('AskUserQuestion', clickSubmit, emit)
+
+    expect(emit).toHaveBeenCalledWith('send-message', 'Option A\nsome extra details')
+    cleanup(container)
+  })
+
+  it('submit with no answers → early return, no emit', () => {
+    const { container, emit } = createAskDOM(false)
+    const submitBtn = container.querySelector('.ask-question-submit') as HTMLButtonElement
+
+    const clickSubmit = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(clickSubmit, 'target', { value: submitBtn, writable: false })
+    const result = handleToolAction('AskUserQuestion', clickSubmit, emit)
+
+    expect(result).toBe(true)
+    expect(emit).not.toHaveBeenCalledWith('send-message', expect.anything())
+    cleanup(container)
+  })
+
+  it('multi-select toggling changes checkbox indicators', () => {
+    const { container, emit } = createAskDOM(true)
+    const option = container.querySelector('.ask-question-option') as HTMLElement
+
+    // First click: select → ☑
+    const click1 = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(click1, 'target', { value: option, writable: false })
+    handleToolAction('AskUserQuestion', click1, emit)
+    const indicator = option.querySelector('.ask-option-indicator')
+    expect(indicator?.textContent).toBe('☑')
+    expect(option.classList.contains('selected')).toBe(true)
+
+    // Second click: deselect → ☐
+    const click2 = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(click2, 'target', { value: option, writable: false })
+    handleToolAction('AskUserQuestion', click2, emit)
+    expect(indicator?.textContent).toBe('☐')
+    expect(option.classList.contains('selected')).toBe(false)
+
+    cleanup(container)
+  })
+})

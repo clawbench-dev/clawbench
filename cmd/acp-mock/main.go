@@ -108,9 +108,9 @@ func (a *mockACPAgent) NewSession(ctx context.Context, params acp.NewSessionRequ
 					CurrentValue: acp.SessionConfigValueId(modeBypass),
 					Options: acp.SessionConfigSelectOptions{
 						Ungrouped: &acp.SessionConfigSelectOptionsUngrouped{
-							{Name: modeCodeName, Value: acp.SessionConfigValueId(modeCode)},
-							{Name: modePlanName, Value: acp.SessionConfigValueId(modePlan)},
-							{Name: modeBypassName, Value: acp.SessionConfigValueId(modeBypass)},
+							acp.SessionConfigSelectOption{Name: modeCodeName, Value: acp.SessionConfigValueId(modeCode)},
+							acp.SessionConfigSelectOption{Name: modePlanName, Value: acp.SessionConfigValueId(modePlan)},
+							acp.SessionConfigSelectOption{Name: modeBypassName, Value: acp.SessionConfigValueId(modeBypass)},
 						},
 					},
 				},
@@ -124,9 +124,9 @@ func (a *mockACPAgent) NewSession(ctx context.Context, params acp.NewSessionRequ
 					CurrentValue: acp.SessionConfigValueId(effortMedium),
 					Options: acp.SessionConfigSelectOptions{
 						Ungrouped: &acp.SessionConfigSelectOptionsUngrouped{
-							{Name: effortLowName, Value: acp.SessionConfigValueId(effortLow)},
-							{Name: effortMediumName, Value: acp.SessionConfigValueId(effortMedium)},
-							{Name: effortHighName, Value: acp.SessionConfigValueId(effortHigh)},
+							acp.SessionConfigSelectOption{Name: effortLowName, Value: acp.SessionConfigValueId(effortLow)},
+							acp.SessionConfigSelectOption{Name: effortMediumName, Value: acp.SessionConfigValueId(effortMedium)},
+							acp.SessionConfigSelectOption{Name: effortHighName, Value: acp.SessionConfigValueId(effortHigh)},
 						},
 					},
 				},
