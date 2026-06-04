@@ -308,7 +308,7 @@ Content under section 2.
 	}{
 		{"Title", 1, 1, 16},          // H1 spans entire file (no other H1)
 		{"Section 1", 2, 5, 12},      // H2 ends before ## Section 2 (line 13)
-		{"Subsection 1.1", 3, 9, 12},  // H3 ends before ## Section 2 (line 13, level 2 <= 3)
+		{"Subsection 1.1", 3, 9, 12}, // H3 ends before ## Section 2 (line 13, level 2 <= 3)
 		{"Section 2", 2, 13, 16},     // H2 spans to end of file
 	}
 

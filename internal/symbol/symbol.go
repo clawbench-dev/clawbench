@@ -13,11 +13,11 @@ import (
 
 // Symbol represents a code symbol (function, class, method, etc.) extracted from source.
 type Symbol struct {
-	Name   string `json:"name"`   // Symbol name (e.g., "main", "Server")
-	Kind   string `json:"kind"`   // Symbol kind (e.g., "function", "class", "method")
-	Line   int    `json:"line"`   // Start line (1-based)
-	EndLine int   `json:"endLine"` // End line (1-based)
-	Level  int    `json:"level"`  // Nesting level (1=top-level, 2=member)
+	Name    string `json:"name"`    // Symbol name (e.g., "main", "Server")
+	Kind    string `json:"kind"`    // Symbol kind (e.g., "function", "class", "method")
+	Line    int    `json:"line"`    // Start line (1-based)
+	EndLine int    `json:"endLine"` // End line (1-based)
+	Level   int    `json:"level"`   // Nesting level (1=top-level, 2=member)
 }
 
 // SymbolResult holds the result of symbol extraction for a file.
@@ -40,23 +40,23 @@ type cachedTagger struct {
 
 // kindMapping maps tree-sitter tag kinds (e.g., "definition.function") to display kinds.
 var kindMapping = map[string]string{
-	"definition.function":  "function",
-	"definition.method":    "method",
-	"definition.class":     "class",
-	"definition.struct":    "struct",
-	"definition.interface": "interface",
-	"definition.type":      "type",
-	"definition.enum":      "enum",
-	"definition.variable":  "variable",
-	"definition.constant":  "constant",
-	"definition.module":    "module",
-	"definition.namespace": "namespace",
-	"definition.field":     "field",
-	"definition.property":  "property",
+	"definition.function":    "function",
+	"definition.method":      "method",
+	"definition.class":       "class",
+	"definition.struct":      "struct",
+	"definition.interface":   "interface",
+	"definition.type":        "type",
+	"definition.enum":        "enum",
+	"definition.variable":    "variable",
+	"definition.constant":    "constant",
+	"definition.module":      "module",
+	"definition.namespace":   "namespace",
+	"definition.field":       "field",
+	"definition.property":    "property",
 	"definition.constructor": "constructor",
-	"definition.trait":     "trait",
-	"definition.impl":      "impl",
-	"definition.macro":     "macro",
+	"definition.trait":       "trait",
+	"definition.impl":        "impl",
+	"definition.macro":       "macro",
 }
 
 // levelFromKind determines the nesting level based on symbol kind.

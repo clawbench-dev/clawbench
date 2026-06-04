@@ -25,11 +25,11 @@ type Server struct {
 
 func main() {}
 `)
-	if err := os.WriteFile(goFile, content, 0644); err != nil {
+	if err := os.WriteFile(goFile, content, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/file/symbols?path="+goFile, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/file/symbols?path="+goFile, http.NoBody)
 	req = withProjectCookie(req, env.ProjectDir)
 	w := httptest.NewRecorder()
 
@@ -55,7 +55,7 @@ func TestServeFileSymbols_MissingPath(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/file/symbols", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/file/symbols", http.NoBody)
 	req = withProjectCookie(req, env.ProjectDir)
 	w := httptest.NewRecorder()
 
@@ -74,7 +74,7 @@ func TestServeFileSymbols_FileNotFound(t *testing.T) {
 	// but the file doesn't exist
 	missingFile := filepath.Join(env.ProjectDir, "nonexistent.go")
 
-	req := httptest.NewRequest(http.MethodGet, "/api/file/symbols?path="+missingFile, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/file/symbols?path="+missingFile, http.NoBody)
 	req = withProjectCookie(req, env.ProjectDir)
 	w := httptest.NewRecorder()
 
@@ -90,11 +90,11 @@ func TestServeFileSymbols_NonTextFile(t *testing.T) {
 	defer teardown()
 
 	imgFile := filepath.Join(env.ProjectDir, "image.png")
-	if err := os.WriteFile(imgFile, []byte("fake png"), 0644); err != nil {
+	if err := os.WriteFile(imgFile, []byte("fake png"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/file/symbols?path="+imgFile, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/file/symbols?path="+imgFile, http.NoBody)
 	req = withProjectCookie(req, env.ProjectDir)
 	w := httptest.NewRecorder()
 
@@ -122,11 +122,11 @@ func TestServeFileSymbols_LargeFile(t *testing.T) {
 	for i := range largeContent {
 		largeContent[i] = 'x'
 	}
-	if err := os.WriteFile(largeFile, largeContent, 0644); err != nil {
+	if err := os.WriteFile(largeFile, largeContent, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/file/symbols?path="+largeFile, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/file/symbols?path="+largeFile, http.NoBody)
 	req = withProjectCookie(req, env.ProjectDir)
 	w := httptest.NewRecorder()
 
@@ -150,11 +150,11 @@ func TestServeFileSymbols_Directory(t *testing.T) {
 	defer teardown()
 
 	subDir := filepath.Join(env.ProjectDir, "subdir")
-	if err := os.MkdirAll(subDir, 0755); err != nil {
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/file/symbols?path="+subDir, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/file/symbols?path="+subDir, http.NoBody)
 	req = withProjectCookie(req, env.ProjectDir)
 	w := httptest.NewRecorder()
 
@@ -166,7 +166,7 @@ func TestServeFileSymbols_Directory(t *testing.T) {
 }
 
 func TestServeFileSymbols_WrongMethod(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/file/symbols?path=test.go", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/file/symbols?path=test.go", http.NoBody)
 	w := httptest.NewRecorder()
 
 	ServeFileSymbols(w, req)
@@ -188,11 +188,11 @@ func TestServeFileSymbols_Python(t *testing.T) {
 def helper():
     pass
 `)
-	if err := os.WriteFile(pyFile, content, 0644); err != nil {
+	if err := os.WriteFile(pyFile, content, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/file/symbols?path="+pyFile, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/file/symbols?path="+pyFile, http.NoBody)
 	req = withProjectCookie(req, env.ProjectDir)
 	w := httptest.NewRecorder()
 
@@ -212,7 +212,7 @@ def helper():
 }
 
 func TestServeFileSymbols_NoProjectCookie(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/file/symbols?path=test.go", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/file/symbols?path=test.go", http.NoBody)
 	w := httptest.NewRecorder()
 
 	ServeFileSymbols(w, req)
@@ -237,11 +237,11 @@ Some text here.
 
 ## Section 2
 `)
-	if err := os.WriteFile(mdFile, content, 0644); err != nil {
+	if err := os.WriteFile(mdFile, content, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/file/symbols?path="+mdFile, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/file/symbols?path="+mdFile, http.NoBody)
 	req = withProjectCookie(req, env.ProjectDir)
 	w := httptest.NewRecorder()
 
