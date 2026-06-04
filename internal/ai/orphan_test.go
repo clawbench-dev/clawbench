@@ -3,6 +3,7 @@ package ai
 import (
 	"os"
 	"os/exec"
+	"runtime"
 	"syscall"
 	"testing"
 
@@ -11,6 +12,9 @@ import (
 )
 
 func TestCleanupOrphans_KillsRunningProcess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("orphan process cleanup uses Unix-specific process signaling")
+	}
 	if testing.Short() {
 		t.Skip("skipping orphan cleanup test in short mode")
 	}
@@ -33,6 +37,9 @@ func TestCleanupOrphans_KillsRunningProcess(t *testing.T) {
 }
 
 func TestCleanupOrphans_SkipsNormalProcess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("orphan process cleanup uses Unix-specific process signaling")
+	}
 	// Start a subprocess WITHOUT the marker
 	cmd := exec.Command("sleep", "300")
 	require.NoError(t, cmd.Start())
