@@ -688,11 +688,12 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  clearTimeout(stopPrimeTimer)
+  stopMachine.destroy()
   if (quickSendPressTimer) {
     clearTimeout(quickSendPressTimer)
     quickSendPressTimer = null
   }
+
   stopPlaceholderRotation()
 })
 
