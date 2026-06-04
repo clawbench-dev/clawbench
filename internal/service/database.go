@@ -444,6 +444,30 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: add ACP cached state columns to agents table.
+	var hasAcpModeStateCol int
+	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='acp_mode_state'").Scan(&hasAcpModeStateCol)
+	if hasAcpModeStateCol == 0 {
+		if _, err := DB.Exec("ALTER TABLE agents ADD COLUMN acp_mode_state TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add acp_mode_state column: %w", err)
+		}
+		if _, err := DB.Exec("ALTER TABLE agents ADD COLUMN acp_commands TEXT NOT NULL DEFAULT '[]'"); err != nil {
+			return fmt.Errorf("failed to add acp_commands column: %w", err)
+		}
+		if _, err := DB.Exec("ALTER TABLE agents ADD COLUMN acp_thinking_state TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add acp_thinking_state column: %w", err)
+		}
+	}
+
+	// Migrate: add ACP model list state column to agents table.
+	var hasAcpModelListStateCol int
+	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='acp_model_list_state'").Scan(&hasAcpModelListStateCol)
+	if hasAcpModelListStateCol == 0 {
+		if _, err := DB.Exec("ALTER TABLE agents ADD COLUMN acp_model_list_state TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add acp_model_list_state column: %w", err)
+		}
+	}
+
 	// Migrate: extract metadata from chat_history.content into chat_metadata table.
 	// This is a one-time migration for existing data; new messages are saved
 	// to chat_metadata automatically via SaveMetadata().

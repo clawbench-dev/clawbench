@@ -88,6 +88,13 @@ type ThinkingEffortDef struct {
 	Name string `json:"name,omitempty"`
 }
 
+// ModelListState carries the current and available models from an ACP agent.
+// Populated from ACP config options with Category "model".
+type ModelListState struct {
+	CurrentModelID string           `json:"currentModelId"`
+	Models         []model.AgentModel `json:"models"`
+}
+
 // ThinkingEffortState carries the current and available thinking effort levels for an ACP session.
 // Populated from ACP config options with Category "thought_level".
 type ThinkingEffortState struct {
@@ -139,7 +146,7 @@ type PlanState struct {
 
 // StreamEvent represents a single event in the streaming output
 type StreamEvent struct {
-	Type       string          // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "raw_output", "resume_split", "queue_consume", "queue_update", "queue_done", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update"
+	Type       string          // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "raw_output", "resume_split", "queue_consume", "queue_update", "queue_done", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update"
 	Content    string          // Incremental text (Type=content, Type=thinking) or captured session ID (Type=session_capture)
 	Reason     string          // Structured reason code for i18n (e.g. "disconnect", "timeout", "parse_error")
 	Meta       *Metadata       // Metadata (Type=metadata)
@@ -152,6 +159,7 @@ type StreamEvent struct {
 	Commands   []AvailableCommandInfo // Slash commands (Type=commands_update)
 	ThinkingEffort *ThinkingEffortState // Thinking effort state (Type=thinking_effort_update)
 	Plan           *PlanState           // Plan state (Type=plan_update)
+	ModelList      *ModelListState      // Model list state (Type=model_list_update)
 }
 
 // ToolCall represents a tool invocation by the AI.

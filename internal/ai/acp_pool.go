@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -110,21 +111,21 @@ func (p *ACPConnectionPool) GetClient(agentID string) *ClawBenchACPClient {
 	return entry.GetClient()
 }
 
-// GetCachedStateByAgentID returns the cached mode, config, and thinking effort
-// state for the given agent ID. Returns nil for each state that is not available.
+// GetCachedStateByAgentID returns the cached mode, config, thinking effort,
+// and model list state for the given agent ID. Returns nil for each state that is not available.
 // Used for pre-fetching mode state before the first message (no ClawBench session yet).
-func (p *ACPConnectionPool) GetCachedStateByAgentID(agentID string) (mode *ModeState, config *ConfigOptionState, effort *ThinkingEffortState) {
+func (p *ACPConnectionPool) GetCachedStateByAgentID(agentID string) (mode *ModeState, config *ConfigOptionState, effort *ThinkingEffortState, modelList *ModelListState) {
 	p.mu.Lock()
 	entry, ok := p.entries[agentID]
 	p.mu.Unlock()
 
 	if !ok {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
 	entry.mu.Lock()
 	defer entry.mu.Unlock()
-	return entry.cachedModeState, entry.cachedConfigState, entry.cachedThinkingEffortState
+	return entry.cachedModeState, entry.cachedConfigState, entry.cachedThinkingEffortState, entry.cachedModelListState
 }
 
 // GetClientByACPSession returns the ClawBenchACPClient for the connection
@@ -165,10 +166,10 @@ func (p *ACPConnectionPool) GetACPSessionID(agentID, clawbenchSID string) string
 }
 
 // GetCachedStateByClawbenchSID returns the cached mode, config, thinking effort,
-// and slash commands for the pool entry that owns the given ClawBench session ID.
+// slash commands, and model list for the pool entry that owns the given ClawBench session ID.
 // Returns nil/empty for each state that is not available.
 // Used by the SSE handler and REST API to re-emit state on reconnect.
-func (p *ACPConnectionPool) GetCachedStateByClawbenchSID(clawbenchSID string) (mode *ModeState, config *ConfigOptionState, effort *ThinkingEffortState, cmds []AvailableCommandInfo) {
+func (p *ACPConnectionPool) GetCachedStateByClawbenchSID(clawbenchSID string) (mode *ModeState, config *ConfigOptionState, effort *ThinkingEffortState, cmds []AvailableCommandInfo, modelList *ModelListState) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -179,12 +180,13 @@ func (p *ACPConnectionPool) GetCachedStateByClawbenchSID(clawbenchSID string) (m
 			config = entry.cachedConfigState
 			effort = entry.cachedThinkingEffortState
 			cmds = entry.client.GetCommandsAsInfo()
+			modelList = entry.cachedModelListState
 			entry.mu.Unlock()
 			return
 		}
 		entry.mu.Unlock()
 	}
-	return nil, nil, nil, nil
+	return nil, nil, nil, nil, nil
 }
 
 // GetCommandsByAgentID returns the cached slash commands for the given agent ID.
@@ -257,13 +259,33 @@ type ACPConnEntry struct {
 	// and re-emitted for every ExecuteStream call (not just new sessions).
 	// This ensures the frontend always has up-to-date mode/command state,
 	// even after page refreshes or SSE reconnections.
-	cachedModeState          *ModeState
-	cachedConfigState        *ConfigOptionState
-	cachedThinkingEffortState *ThinkingEffortState
+	cachedModeState            *ModeState
+	cachedConfigState          *ConfigOptionState
+	cachedThinkingEffortState  *ThinkingEffortState
+	cachedModelListState       *ModelListState
+
+	// persistDebounce timer for batching ACP state DB writes
+	persistTimer *time.Timer
+	persistMu    sync.Mutex // separate mutex to avoid deadlock with e.mu
 
 	// liveness
 	lastUsed time.Time
 	alive    bool
+}
+
+// persistAgentACPStateToDB is the global function for persisting ACP state to the database.
+// Set by the application startup via SetACPStatePersister.
+// Uses a function variable to avoid import cycles between internal/ai and internal/service.
+var persistAgentACPStateToDB = func(agentID, modeState, commands, thinkingState, modelListState string) error {
+	return nil // no-op until SetACPStatePersister is called
+}
+
+// SetACPStatePersister sets the function used to persist ACP cached state
+// (modes, commands, thinking, model list) to the database. Must be called once during
+// application startup, after service.InitDB(). This avoids import cycles
+// between internal/ai and internal/service packages.
+func SetACPStatePersister(fn func(agentID, modeState, commands, thinkingState, modelListState string) error) {
+	persistAgentACPStateToDB = fn
 }
 
 // newACPConnEntry creates a new (uninitialized) ACPConnEntry.
@@ -350,6 +372,7 @@ func (e *ACPConnEntry) spawnLocked(ctx context.Context) error {
 
 	// Create shared ACP client and connection
 	client := NewClawBenchACPClient()
+	client.poolEntry = e // back-reference for cache updates
 	conn := acp.NewClientSideConnection(client, stdinPipe, stdoutPipe)
 	conn.SetLogger(slog.Default())
 
@@ -472,6 +495,7 @@ func (e *ACPConnEntry) SetCachedModeState(state *ModeState) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.cachedModeState = state
+	e.debouncePersistACPState()
 }
 
 // SetCachedConfigState caches the config state from a NewSessionResponse.
@@ -479,6 +503,7 @@ func (e *ACPConnEntry) SetCachedConfigState(state *ConfigOptionState) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.cachedConfigState = state
+	e.debouncePersistACPState()
 }
 
 // GetCachedThinkingEffortState returns the cached thinking effort state from the last session/new.
@@ -494,6 +519,120 @@ func (e *ACPConnEntry) SetCachedThinkingEffortState(state *ThinkingEffortState) 
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.cachedThinkingEffortState = state
+	e.debouncePersistACPState()
+}
+
+// GetCachedModelListState returns the cached model list state from the last session/new.
+// Returns nil if no model list state has been cached yet.
+func (e *ACPConnEntry) GetCachedModelListState() *ModelListState {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.cachedModelListState
+}
+
+// SetCachedModelListState caches the model list state from a NewSessionResponse or ConfigOptionUpdate.
+func (e *ACPConnEntry) SetCachedModelListState(state *ModelListState) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.cachedModelListState = state
+	e.debouncePersistACPState()
+}
+
+// UpdateCachedCurrentModel updates the CurrentModelID in the cached model list state.
+// Called when a ConfigOptionUpdate with model category arrives from the agent.
+func (e *ACPConnEntry) UpdateCachedCurrentModel(modelID string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.cachedModelListState != nil {
+		e.cachedModelListState.CurrentModelID = modelID
+	}
+}
+
+// UpdateCachedCurrentMode updates only the CurrentModeID in the cached mode state.
+// Called when a CurrentModeUpdate or ConfigOptionUpdate arrives from the agent,
+// so that re-emitted mode_update SSE events reflect the latest mode.
+func (e *ACPConnEntry) UpdateCachedCurrentMode(modeID string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.cachedModeState != nil {
+		e.cachedModeState.CurrentModeID = modeID
+	}
+	if e.cachedConfigState != nil {
+		e.cachedConfigState.CurrentID = modeID
+	}
+}
+
+// UpdateCachedCurrentThinkingEffort updates the CurrentID in the cached thinking effort state.
+// Called when a ConfigOptionUpdate with thought_level category arrives from the agent.
+func (e *ACPConnEntry) UpdateCachedCurrentThinkingEffort(effortID string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.cachedThinkingEffortState != nil {
+		e.cachedThinkingEffortState.CurrentID = effortID
+	}
+}
+
+// debouncePersistACPState schedules a delayed DB persist of the current ACP state.
+// Rapid successive calls reset the timer, so only one DB write happens per burst.
+const acpPersistDebounce = 2 * time.Second
+
+func (e *ACPConnEntry) debouncePersistACPState() {
+	e.persistMu.Lock()
+	defer e.persistMu.Unlock()
+
+	if e.persistTimer != nil {
+		e.persistTimer.Stop()
+	}
+	e.persistTimer = time.AfterFunc(acpPersistDebounce, func() {
+		e.persistACPState()
+	})
+}
+
+// persistACPState writes the current cached ACP state (modes, commands, thinking, model list)
+// to the database so it can be loaded before the first message or after idle timeout.
+func (e *ACPConnEntry) persistACPState() {
+	e.mu.Lock()
+	agentID := e.agent.ID
+	var modeJSON, thinkingJSON, modelListJSON string
+	var cmdsJSON []byte
+
+	if e.cachedModeState != nil {
+		if b, err := json.Marshal(e.cachedModeState); err == nil {
+			modeJSON = string(b)
+		}
+	}
+	if e.cachedThinkingEffortState != nil {
+		if b, err := json.Marshal(e.cachedThinkingEffortState); err == nil {
+			thinkingJSON = string(b)
+		}
+	}
+	if e.cachedModelListState != nil {
+		if b, err := json.Marshal(e.cachedModelListState); err == nil {
+			modelListJSON = string(b)
+		}
+	}
+	// Commands are on the client, not the entry
+	if e.client != nil {
+		if cmds := e.client.GetCommandsAsInfo(); len(cmds) > 0 {
+			cmdsJSON, _ = json.Marshal(cmds)
+		}
+	}
+	e.mu.Unlock()
+
+	if modeJSON == "" && thinkingJSON == "" && len(cmdsJSON) == 0 && modelListJSON == "" {
+		return
+	}
+
+	cmdsStr := "[]"
+	if len(cmdsJSON) > 0 {
+		cmdsStr = string(cmdsJSON)
+	}
+
+	// Use a background import to avoid circular dependency — the actual
+	// DB call lives in the service package.
+	if err := persistAgentACPStateToDB(agentID, modeJSON, cmdsStr, thinkingJSON, modelListJSON); err != nil {
+		slog.Debug("acp: failed to persist ACP state to DB", "agent_id", agentID, "error", err)
+	}
 }
 
 // Prompt sends a prompt on the given ACP session and forwards events to streamCh.
@@ -556,7 +695,8 @@ func (e *ACPConnEntry) CancelTurn(ctx context.Context, acpSessionID string) {
 // SetSessionConfigOption sets a config option (e.g., mode, model, thinkingEffort) for a session.
 // This is the exported version used by the handler layer for user-initiated mode switching.
 // It resolves the ClawBench session ID to the ACP session ID internally.
-// Errors are logged but not returned — the agent may not support this option.
+// Also updates the cached mode/config/thinking state so that re-emitted SSE events
+// reflect the new value immediately, rather than reverting the frontend's optimistic update.
 func (e *ACPConnEntry) SetSessionConfigOption(ctx context.Context, clawbenchSID, configID, value string) {
 	e.mu.Lock()
 	acpSID, ok := e.sessions[clawbenchSID]
@@ -568,6 +708,17 @@ func (e *ACPConnEntry) SetSessionConfigOption(ctx context.Context, clawbenchSID,
 	}
 
 	e.setSessionConfigOption(ctx, acpSID, configID, value)
+
+	// Update cached state to match the new value so re-emitted SSE events
+	// don't revert the frontend's optimistic UI update.
+	switch configID {
+	case "mode":
+		e.UpdateCachedCurrentMode(value)
+	case "thinking_effort", "thought_level":
+		e.UpdateCachedCurrentThinkingEffort(value)
+	case "model":
+		e.UpdateCachedCurrentModel(value)
+	}
 }
 
 // setSessionConfigOption sets a config option (e.g., model, thinkingEffort).

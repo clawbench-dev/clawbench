@@ -182,24 +182,25 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		}
 		running := service.IsSessionRunning(sessionID)
 
-		// Look up cached ACP mode/thinking state for this session.
+		// Look up cached ACP mode/thinking/model list state for this session.
 		// This allows the frontend to populate mode chips immediately
 		// without waiting for SSE events (which may have already been consumed).
-		var modeState, thinkingEffortState any
+		var modeState, thinkingEffortState, modelListState any
 		var commands []ai.AvailableCommandInfo
 		if sessionID != "" {
-			if ms, _, es, cmds := ai.GetACPConnectionPool().GetCachedStateByClawbenchSID(sessionID); ms != nil || es != nil || len(cmds) > 0 {
+			if ms, _, es, cmds, ml := ai.GetACPConnectionPool().GetCachedStateByClawbenchSID(sessionID); ms != nil || es != nil || len(cmds) > 0 || ml != nil {
 				modeState = ms
 				thinkingEffortState = es
 				commands = cmds
+				modelListState = ml
 			}
 		}
 
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "thinkingEffort": sessionThinkingEffort, "modeId": sessionMode, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands})
+			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "thinkingEffort": sessionThinkingEffort, "modeId": sessionMode, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "thinkingEffort": sessionThinkingEffort, "modeId": sessionMode, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands})
+		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "thinkingEffort": sessionThinkingEffort, "modeId": sessionMode, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState})
 		return
 	}
 
@@ -763,7 +764,7 @@ func finalizeStreamRun(
 	responseMetadata.WallMs = wallMs
 
 	// Inject ACP mode and thinking effort into metadata (if available)
-	if ms, _, es, _ := ai.GetACPConnectionPool().GetCachedStateByClawbenchSID(sessionID); ms != nil || es != nil {
+	if ms, _, es, _, _ := ai.GetACPConnectionPool().GetCachedStateByClawbenchSID(sessionID); ms != nil || es != nil {
 		if ms != nil && ms.CurrentModeID != "" {
 			responseMetadata.Mode = ms.CurrentModeID
 			_ = service.UpdateSessionMode(sessionID, ms.CurrentModeID)

@@ -3,9 +3,9 @@ import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
-import { clearModeState, updateModeState, clearCommandState, updateCommandState, updateThinkingEffortState, clearThinkingEffortState } from '@/composables/useSessionIdentity.ts'
+import { clearModeState, updateModeState, clearCommandState, updateCommandState, updateThinkingEffortState, clearThinkingEffortState, currentAgentId as _currentAgentId } from '@/composables/useSessionIdentity.ts'
 import { clearPlanState } from '@/composables/usePlanProgress'
-import { useAgents } from '@/composables/useAgents'
+import { useAgents, restoreOriginalModels } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
 import { warmWorktreeCache } from '@/composables/useWorktreeAnnotation.ts'
@@ -298,6 +298,9 @@ export function useChatSession(options: UseChatSessionOptions) {
     clearModeState()
     clearCommandState()
     clearThinkingEffortState()
+    // Restore original CLI model list in case ACP had overridden it
+    const prevAgentId = _currentAgentId.value
+    if (prevAgentId) restoreOriginalModels(prevAgentId)
     // Clear plan progress from previous session — will be repopulated by SSE plan_update
     clearPlanState()
     try {
@@ -390,6 +393,8 @@ export function useChatSession(options: UseChatSessionOptions) {
       clearModeState()
       clearCommandState()
       clearThinkingEffortState()
+      // Restore original CLI model list in case ACP had overridden it
+      restoreOriginalModels(currentAgentId.value)
       messages.value = []
       totalMessages.value = 0
       lastMessageSnapshot = ''  // New session — no messages yet

@@ -2,6 +2,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -43,12 +44,13 @@ func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 
 	// Attach cached ACP mode/thinking/commands state to each agent.
 	// This lets the frontend populate mode chips and slash commands without
-	// extra API calls. Before the first message, the ACP pool is empty so
-	// states will be nil.
+	// extra API calls. If the ACP pool cache is empty (before first message
+	// or after idle timeout), fall back to DB-persisted state.
 	type acpState struct {
-		Mode     *ai.ModeState          `json:"modeState,omitempty"`
-		Effort   *ai.ThinkingEffortState `json:"thinkingEffortState,omitempty"`
-		Commands []ai.AvailableCommandInfo `json:"commands,omitempty"`
+		Mode      *ai.ModeState             `json:"modeState,omitempty"`
+		Effort    *ai.ThinkingEffortState    `json:"thinkingEffortState,omitempty"`
+		Commands  []ai.AvailableCommandInfo  `json:"commands,omitempty"`
+		ModelList *ai.ModelListState         `json:"modelListState,omitempty"`
 	}
 	states := make(map[string]*acpState, len(agents))
 	pool := ai.GetACPConnectionPool()
@@ -56,14 +58,54 @@ func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 		if a.Transport != "acp-stdio" {
 			continue
 		}
-		if ms, _, es := pool.GetCachedStateByAgentID(a.ID); ms != nil || es != nil {
-			states[a.ID] = &acpState{Mode: ms, Effort: es}
+		var ms *ai.ModeState
+		var es *ai.ThinkingEffortState
+		var cmds []ai.AvailableCommandInfo
+		var ml *ai.ModelListState
+
+		// Try pool cache first
+		if pms, _, pes, pml := pool.GetCachedStateByAgentID(a.ID); pms != nil || pes != nil || pml != nil {
+			ms = pms
+			es = pes
+			ml = pml
 		}
-		if cmds := pool.GetCommandsByAgentID(a.ID); len(cmds) > 0 {
-			if states[a.ID] == nil {
-				states[a.ID] = &acpState{}
+		if pcmds := pool.GetCommandsByAgentID(a.ID); len(pcmds) > 0 {
+			cmds = pcmds
+		}
+
+		// Fall back to DB-persisted state when pool is empty
+		if ms == nil && es == nil && len(cmds) == 0 && ml == nil {
+			if a.AcpModeState != "" {
+				var dbMs ai.ModeState
+				if json.Unmarshal([]byte(a.AcpModeState), &dbMs) == nil && len(dbMs.AvailableModes) > 0 {
+					ms = &dbMs
+				}
 			}
-			states[a.ID].Commands = cmds
+			if a.AcpThinkingState != "" {
+				var dbEs ai.ThinkingEffortState
+				if json.Unmarshal([]byte(a.AcpThinkingState), &dbEs) == nil && len(dbEs.AvailableLevels) > 0 {
+					es = &dbEs
+				}
+			}
+			if a.AcpCommands != "" && a.AcpCommands != "[]" {
+				json.Unmarshal([]byte(a.AcpCommands), &cmds)
+			}
+			if a.AcpModelListState != "" {
+				var dbMl ai.ModelListState
+				if json.Unmarshal([]byte(a.AcpModelListState), &dbMl) == nil && len(dbMl.Models) > 0 {
+					ml = &dbMl
+				}
+			}
+		}
+
+		// When ACP provides a model list, override the agent's Models
+		// so the frontend ModelModal shows ACP models instead of CLI-discovered ones.
+		if ml != nil && len(ml.Models) > 0 {
+			a.Models = ml.Models
+		}
+
+		if ms != nil || es != nil || len(cmds) > 0 || ml != nil {
+			states[a.ID] = &acpState{Mode: ms, Effort: es, Commands: cmds, ModelList: ml}
 		}
 	}
 

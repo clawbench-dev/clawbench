@@ -111,6 +111,9 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 				if effortState := extractACPThinkingEffort(sessResp); effortState != nil {
 					entry.SetCachedThinkingEffortState(effortState)
 				}
+				if modelList := extractACPModelList(sessResp); modelList != nil {
+					entry.SetCachedModelListState(modelList)
+				}
 			}
 		}
 
@@ -129,6 +132,10 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		if effortState := entry.GetCachedThinkingEffortState(); effortState != nil {
 			slog.Info("acp: re-emitting cached thinking_effort_update", "current", effortState.CurrentID, "available", len(effortState.AvailableLevels))
 			forwardACPEvent(ch, StreamEvent{Type: "thinking_effort_update", ThinkingEffort: effortState})
+		}
+		if modelListState := entry.GetCachedModelListState(); modelListState != nil {
+			slog.Info("acp: re-emitting cached model_list_update", "current", modelListState.CurrentModelID, "available", len(modelListState.Models))
+			forwardACPEvent(ch, StreamEvent{Type: "model_list_update", ModelList: modelListState})
 		}
 
 		// Emit commands_update if cached from available_commands_update.

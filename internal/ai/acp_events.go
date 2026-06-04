@@ -8,12 +8,16 @@ import (
 	"strings"
 
 	acp "github.com/coder/acp-go-sdk"
+
+	"clawbench/internal/model"
 )
 
 // mapACPSessionUpdate converts an ACP SessionUpdate to StreamEvent(s) and
 // sends them to the stream channel. Called from ClawBenchACPClient.SessionUpdate,
 // which runs on the SDK's internal goroutine.
-func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx context.Context) {
+// If entry is non-nil, mode/config/thinking cache updates are applied to the pool entry
+// so that re-emitted SSE events reflect the latest state.
+func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx context.Context, entry *ACPConnEntry) {
 	switch {
 	case update.AgentMessageChunk != nil:
 		// When the agent transitions from thinking to content output, emit
@@ -91,6 +95,10 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			CurrentModeID: string(mu.CurrentModeId),
 		}
 		forwardACPEvent(ch, StreamEvent{Type: "mode_update", Mode: modeState})
+		// Update cached mode state so re-emitted SSE events reflect the new mode
+		if entry != nil {
+			entry.UpdateCachedCurrentMode(string(mu.CurrentModeId))
+		}
 
 	case update.ConfigOptionUpdate != nil:
 		// v2 config option update: extract mode and thought_level options
@@ -108,11 +116,28 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			case acp.SessionConfigOptionCategoryMode:
 				configState := buildConfigOptionStateFromSelect(sel, "mode")
 				forwardACPEvent(ch, StreamEvent{Type: "config_update", Config: configState})
+				// Update cached mode state so re-emitted SSE events reflect the new mode
+				if entry != nil {
+					entry.UpdateCachedCurrentMode(string(sel.CurrentValue))
+				}
 
 			case acp.SessionConfigOptionCategoryThoughtLevel:
 				effortState := buildThinkingEffortStateFromSelect(sel)
 				if effortState != nil {
 					forwardACPEvent(ch, StreamEvent{Type: "thinking_effort_update", ThinkingEffort: effortState})
+					// Update cached thinking effort so re-emitted SSE events reflect the new level
+					if entry != nil {
+						entry.UpdateCachedCurrentThinkingEffort(string(sel.CurrentValue))
+					}
+				}
+
+			case acp.SessionConfigOptionCategoryModel:
+				modelList := buildModelListStateFromSelect(sel)
+				if modelList != nil {
+					forwardACPEvent(ch, StreamEvent{Type: "model_list_update", ModelList: modelList})
+					if entry != nil {
+						entry.SetCachedModelListState(modelList)
+					}
 				}
 			}
 		}
@@ -622,6 +647,60 @@ func extractACPThinkingEffort(sessResp *acp.NewSessionResponse) *ThinkingEffortS
 
 		if sel.Category != nil && *sel.Category == acp.SessionConfigOptionCategoryThoughtLevel {
 			return buildThinkingEffortStateFromSelect(sel)
+		}
+	}
+
+	return nil
+}
+
+// buildModelListStateFromSelect builds a ModelListState from an ACP SessionConfigOptionSelect
+// with Category "model". Returns nil if no models are available.
+func buildModelListStateFromSelect(sel *acp.SessionConfigOptionSelect) *ModelListState {
+	state := &ModelListState{
+		CurrentModelID: string(sel.CurrentValue),
+	}
+
+	if sel.Options.Ungrouped != nil {
+		for _, v := range *sel.Options.Ungrouped {
+			state.Models = append(state.Models, model.AgentModel{
+				ID:   string(v.Value),
+				Name: v.Name,
+			})
+		}
+	}
+	if sel.Options.Grouped != nil {
+		for _, g := range *sel.Options.Grouped {
+			for _, v := range g.Options {
+				state.Models = append(state.Models, model.AgentModel{
+					ID:   string(v.Value),
+					Name: v.Name,
+				})
+			}
+		}
+	}
+
+	if len(state.Models) == 0 && state.CurrentModelID == "" {
+		return nil
+	}
+
+	return state
+}
+
+// extractACPModelList extracts ModelListState from an ACP NewSessionResponse.
+// Looks for config options with Category "model". Returns nil if none found.
+func extractACPModelList(sessResp *acp.NewSessionResponse) *ModelListState {
+	if sessResp == nil || len(sessResp.ConfigOptions) == 0 {
+		return nil
+	}
+
+	for _, opt := range sessResp.ConfigOptions {
+		if opt.Select == nil {
+			continue
+		}
+		sel := opt.Select
+
+		if sel.Category != nil && *sel.Category == acp.SessionConfigOptionCategoryModel {
+			return buildModelListStateFromSelect(sel)
 		}
 	}
 

@@ -8,6 +8,11 @@ const agents = ref<any[]>([])
 const defaultAgentId = ref('')
 let loadPromise: Promise<void> | null = null
 
+// originalModels stores CLI-discovered model lists for each agent.
+// When ACP provides a model list, we override agent.models but keep
+// the original here so we can restore it when switching away from ACP.
+const originalModels = new Map<string, any[]>()
+
 /** Reset all module-level singleton refs — used by SPA hot project switch. */
 export function resetAgents(): void {
     agents.value = []
@@ -44,6 +49,11 @@ async function loadAgents(force = false): Promise<void> {
                     }
                     if (Array.isArray(activeState.commands) && activeState.commands.length > 0) {
                         updateCommandState(activeState.commands)
+                    }
+                    // When ACP provides a model list, override agent.models
+                    // so the frontend ModelModal shows ACP models.
+                    if (activeState.modelListState?.models?.length > 0) {
+                        updateACPModelList(activeAgentId, activeState.modelListState.models, activeState.modelListState.currentModelId)
                     }
                 }
             }
@@ -156,6 +166,33 @@ function updateAgentField(agentId: string, field: string, value: any): void {
     }
 }
 
+/** Update agent's model list from ACP. Saves original CLI models first so they can be restored. */
+function updateACPModelList(agentId: string, models: Array<{ id: string; name: string }>, currentModelId?: string): void {
+    const agent = agents.value.find(a => a.id === agentId)
+    if (!agent) return
+    // Save original CLI models if not already saved
+    if (!originalModels.has(agentId)) {
+        originalModels.set(agentId, [...agent.models])
+    }
+    const mapped = models.map((m, i) => ({
+        id: m.id,
+        name: m.name,
+        default: currentModelId ? m.id === currentModelId : i === 0,
+    }))
+    agent.models = mapped
+}
+
+/** Restore agent's model list to the original CLI-discovered models (clears ACP override). */
+function restoreOriginalModels(agentId: string): void {
+    const saved = originalModels.get(agentId)
+    if (!saved) return
+    const agent = agents.value.find(a => a.id === agentId)
+    if (agent) {
+        agent.models = [...saved]
+    }
+    originalModels.delete(agentId)
+}
+
 /** Check if an agent supports model refresh (has canRefreshModels from backend). */
 function canRefreshModels(agentId: string): boolean {
     const agent = agents.value.find(a => a.id === agentId)
@@ -183,5 +220,7 @@ export function useAgents() {
         getEffectiveThinkingEffort,
         updateAgentField,
         canRefreshModels,
+        updateACPModelList,
+        restoreOriginalModels,
     }
 }

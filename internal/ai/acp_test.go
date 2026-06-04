@@ -227,7 +227,7 @@ func TestMapACPSessionUpdate_PlanUpdate(t *testing.T) {
 		},
 	}
 
-	mapACPSessionUpdate(update, ch, ctx)
+	mapACPSessionUpdate(update, ch, ctx, nil)
 
 	// Assert exactly 1 event on channel
 	select {

@@ -2,7 +2,8 @@ import { onMounted, onUnmounted, type Ref } from 'vue'
 import { cancelChat } from '@/utils/api'
 import { useReconnect } from './useReconnect'
 import { gt } from '@/composables/useLocale'
-import { updateModeState, updateCommandState, updateThinkingEffortState } from './useSessionIdentity'
+import { updateModeState, updateCommandState, updateThinkingEffortState, currentAgentId } from './useSessionIdentity'
+import { updateACPModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
 import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState } from '@/utils/chatStreamUtils.ts'
 
@@ -578,6 +579,18 @@ export function useChatStream(options: UseChatStreamOptions) {
       try { data = JSON.parse(e.data) } catch { console.warn('SSE commands_update: invalid JSON, skipping'); return }
       if (Array.isArray(data.commands)) {
         updateCommandState(data.commands)
+      }
+    })
+
+    eventSource.addEventListener('model_list_update', (e) => {
+      if (!guard()) return
+      let data: any
+      try { data = JSON.parse(e.data) } catch { console.warn('SSE model_list_update: invalid JSON, skipping'); return }
+      if (Array.isArray(data.models) && data.models.length > 0) {
+        const aid = currentAgentId.value
+        if (aid) {
+          updateACPModelList(aid, data.models, data.currentModelId)
+        }
       }
     })
 
