@@ -210,3 +210,66 @@ def helper():
 		t.Errorf("expected lang=python, got %s", result.Lang)
 	}
 }
+
+func TestServeFileSymbols_NoProjectCookie(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/file/symbols?path=test.go", nil)
+	w := httptest.NewRecorder()
+
+	ServeFileSymbols(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected status 403, got %d", w.Code)
+	}
+}
+
+func TestServeFileSymbols_Markdown(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	mdFile := filepath.Join(env.ProjectDir, "README.md")
+	content := []byte(`# Title
+
+## Section 1
+
+Some text here.
+
+### Subsection
+
+## Section 2
+`)
+	if err := os.WriteFile(mdFile, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/file/symbols?path="+mdFile, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+
+	ServeFileSymbols(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var result symbol.SymbolResult
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if result.Lang != "markdown" {
+		t.Errorf("expected lang=markdown, got %s", result.Lang)
+	}
+	if len(result.Symbols) == 0 {
+		t.Error("expected at least one symbol from markdown headings")
+	}
+	// Verify headings are returned with correct kind
+	foundHeading := false
+	for _, s := range result.Symbols {
+		if s.Kind == "heading" {
+			foundHeading = true
+			break
+		}
+	}
+	if !foundHeading {
+		t.Error("expected at least one heading symbol")
+	}
+}
