@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/model"
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
@@ -873,4 +874,299 @@ func TestAIChatStream_SessionBelongsToDifferentProject(t *testing.T) {
 	w := callHandler(AIChatStream, req)
 
 	assertStatus(t, w, http.StatusForbidden)
+}
+
+// ---------- ACP SSE event types ----------
+
+func TestAIChatStream_ModeUpdateEvent(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "stream-mode-update"
+	ch := setupStreamSession(sessionID)
+	defer cleanupStreamSession(sessionID)
+
+	go func() {
+		ch <- ai.StreamEvent{
+			Type: "mode_update",
+			Mode: &ai.ModeState{
+				CurrentModeID: "code",
+				AvailableModes: []ai.ModeDef{
+					{ID: "ask", Name: "Ask"},
+					{ID: "architect", Name: "Architect"},
+					{ID: "code", Name: "Code"},
+				},
+			},
+		}
+		ch <- ai.StreamEvent{Type: "done"}
+	}()
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(AIChatStream, req)
+
+	events := parseSSEEvents(w.Body.String())
+	assert.Equal(t, "mode_update", events[0]["event"])
+
+	var data map[string]any
+	require.NoError(t, json.Unmarshal([]byte(events[0]["data"]), &data))
+	assert.Equal(t, "code", data["currentModeId"])
+
+	modes, ok := data["availableModes"].([]any)
+	require.True(t, ok, "availableModes should be a slice")
+	assert.Len(t, modes, 3)
+
+	mode0 := modes[0].(map[string]any)
+	assert.Equal(t, "ask", mode0["id"])
+	assert.Equal(t, "Ask", mode0["name"])
+
+	assert.Equal(t, "done", events[1]["event"])
+}
+
+func TestAIChatStream_ThinkingEffortUpdateEvent(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "stream-thinking-effort-update"
+	ch := setupStreamSession(sessionID)
+	defer cleanupStreamSession(sessionID)
+
+	go func() {
+		ch <- ai.StreamEvent{
+			Type: "thinking_effort_update",
+			ThinkingEffort: &ai.ThinkingEffortState{
+				CurrentID: "high",
+				AvailableLevels: []ai.ThinkingEffortDef{
+					{ID: "low", Name: "Low"},
+					{ID: "medium", Name: "Medium"},
+					{ID: "high", Name: "High"},
+				},
+			},
+		}
+		ch <- ai.StreamEvent{Type: "done"}
+	}()
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(AIChatStream, req)
+
+	events := parseSSEEvents(w.Body.String())
+	assert.Equal(t, "thinking_effort_update", events[0]["event"])
+
+	var data map[string]any
+	require.NoError(t, json.Unmarshal([]byte(events[0]["data"]), &data))
+	assert.Equal(t, "high", data["currentId"])
+
+	levels, ok := data["availableLevels"].([]any)
+	require.True(t, ok, "availableLevels should be a slice")
+	assert.Len(t, levels, 3)
+
+	level0 := levels[0].(map[string]any)
+	assert.Equal(t, "low", level0["id"])
+	assert.Equal(t, "Low", level0["name"])
+
+	assert.Equal(t, "done", events[1]["event"])
+}
+
+func TestAIChatStream_CommandsUpdateEvent(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "stream-commands-update"
+	ch := setupStreamSession(sessionID)
+	defer cleanupStreamSession(sessionID)
+
+	go func() {
+		ch <- ai.StreamEvent{
+			Type: "commands_update",
+			Commands: []ai.AvailableCommandInfo{
+				{Name: "compact", Description: "Compact conversation history"},
+				{Name: "clear", Description: "Clear conversation", InputHint: "[args]"},
+			},
+		}
+		ch <- ai.StreamEvent{Type: "done"}
+	}()
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(AIChatStream, req)
+
+	events := parseSSEEvents(w.Body.String())
+	assert.Equal(t, "commands_update", events[0]["event"])
+
+	var data map[string]any
+	require.NoError(t, json.Unmarshal([]byte(events[0]["data"]), &data))
+
+	cmds, ok := data["commands"].([]any)
+	require.True(t, ok, "commands should be a slice")
+	assert.Len(t, cmds, 2)
+
+	cmd0 := cmds[0].(map[string]any)
+	assert.Equal(t, "compact", cmd0["name"])
+	assert.Equal(t, "Compact conversation history", cmd0["description"])
+
+	cmd1 := cmds[1].(map[string]any)
+	assert.Equal(t, "clear", cmd1["name"])
+	assert.Equal(t, "[args]", cmd1["inputHint"])
+
+	assert.Equal(t, "done", events[1]["event"])
+}
+
+func TestAIChatStream_ModelListUpdateEvent(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "stream-model-list-update"
+	ch := setupStreamSession(sessionID)
+	defer cleanupStreamSession(sessionID)
+
+	go func() {
+		ch <- ai.StreamEvent{
+			Type: "model_list_update",
+			ModelList: &ai.ModelListState{
+				CurrentModelID: "claude-sonnet-4-20250514",
+				Models: []model.AgentModel{
+					{ID: "claude-sonnet-4-20250514", Name: "Claude Sonnet 4", Default: true},
+					{ID: "claude-opus-4-20250514", Name: "Claude Opus 4", Default: false},
+				},
+			},
+		}
+		ch <- ai.StreamEvent{Type: "done"}
+	}()
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(AIChatStream, req)
+
+	events := parseSSEEvents(w.Body.String())
+	assert.Equal(t, "model_list_update", events[0]["event"])
+
+	var data map[string]any
+	require.NoError(t, json.Unmarshal([]byte(events[0]["data"]), &data))
+	assert.Equal(t, "claude-sonnet-4-20250514", data["currentModelId"])
+
+	models, ok := data["models"].([]any)
+	require.True(t, ok, "models should be a slice")
+	assert.Len(t, models, 2)
+
+	model0 := models[0].(map[string]any)
+	assert.Equal(t, "claude-sonnet-4-20250514", model0["id"])
+	assert.Equal(t, "Claude Sonnet 4", model0["name"])
+	assert.Equal(t, true, model0["default"])
+
+	assert.Equal(t, "done", events[1]["event"])
+}
+
+func TestAIChatStream_SessionCaptureEvent(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "stream-session-capture"
+	ch := setupStreamSession(sessionID)
+	defer cleanupStreamSession(sessionID)
+
+	go func() {
+		// session_capture is NOT handled by the SSE switch — it is consumed
+		// by the chat handler for external_session_id persistence but not
+		// forwarded to the SSE client. So only "done" should appear.
+		ch <- ai.StreamEvent{
+			Type:    "session_capture",
+			Content: "ext-sid-12345",
+		}
+		ch <- ai.StreamEvent{Type: "done"}
+	}()
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(AIChatStream, req)
+
+	events := parseSSEEvents(w.Body.String())
+	// session_capture has no SSE handler case — only done should be emitted
+	assert.Len(t, events, 1)
+	assert.Equal(t, "done", events[0]["event"])
+}
+
+func TestAIChatStream_ThinkingDoneEvent(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "stream-thinking-done"
+	ch := setupStreamSession(sessionID)
+	defer cleanupStreamSession(sessionID)
+
+	go func() {
+		ch <- ai.StreamEvent{Type: "thinking_done"}
+		ch <- ai.StreamEvent{Type: "done"}
+	}()
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(AIChatStream, req)
+
+	events := parseSSEEvents(w.Body.String())
+	assert.Equal(t, "thinking_done", events[0]["event"])
+	assert.Equal(t, "{}", events[0]["data"])
+	assert.Equal(t, "done", events[1]["event"])
+}
+
+func TestAIChatStream_ConfigUpdateEvent(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "stream-config-update"
+	ch := setupStreamSession(sessionID)
+	defer cleanupStreamSession(sessionID)
+
+	go func() {
+		ch <- ai.StreamEvent{
+			Type: "config_update",
+			Config: &ai.ConfigOptionState{
+				ConfigID:  "mode",
+				CurrentID: "code",
+				Options: []ai.ConfigOptionDef{
+					{
+						ID:       "mode",
+						Name:     "Mode",
+						Category: "mode",
+						Values: []ai.ConfigOptionValue{
+							{ID: "ask", Name: "Ask"},
+							{ID: "code", Name: "Code"},
+						},
+					},
+				},
+			},
+		}
+		ch <- ai.StreamEvent{Type: "done"}
+	}()
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(AIChatStream, req)
+
+	events := parseSSEEvents(w.Body.String())
+	assert.Equal(t, "config_update", events[0]["event"])
+
+	var data map[string]any
+	require.NoError(t, json.Unmarshal([]byte(events[0]["data"]), &data))
+	assert.Equal(t, "mode", data["configId"])
+	assert.Equal(t, "code", data["currentValueId"])
+
+	options, ok := data["options"].([]any)
+	require.True(t, ok, "options should be a slice")
+	assert.Len(t, options, 1)
+
+	opt0 := options[0].(map[string]any)
+	assert.Equal(t, "mode", opt0["id"])
+	assert.Equal(t, "Mode", opt0["name"])
+	assert.Equal(t, "mode", opt0["category"])
+
+	values, ok := opt0["values"].([]any)
+	require.True(t, ok, "values should be a slice")
+	assert.Len(t, values, 2)
+
+	val0 := values[0].(map[string]any)
+	assert.Equal(t, "ask", val0["id"])
+	assert.Equal(t, "Ask", val0["name"])
+
+	assert.Equal(t, "done", events[1]["event"])
 }
