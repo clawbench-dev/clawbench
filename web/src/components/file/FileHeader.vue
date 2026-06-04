@@ -199,7 +199,7 @@ onBeforeUnmount(() => {
     display: flex;
     align-items: center;
     gap: 4px;
-    padding: 2px 6px;
+    padding: 2px 4px 2px 6px;
     background: var(--bg-secondary);
     border: none;
     font-size: 12px;
@@ -241,19 +241,17 @@ onBeforeUnmount(() => {
 .header-actions {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     margin-left: auto;
     flex-shrink: 0;
+    padding-right: 8px;
 }
 
 .file-header-btn {
-    margin-left: auto;
-    padding: 0;
-    width: 26px;
-    height: 26px;
+    padding: 6px;
     border: none;
-    border-radius: 50%;
-    background: var(--bg-tertiary);
+    border-radius: 4px;
+    background: transparent;
     font-size: 11px;
     cursor: pointer;
     color: var(--text-secondary);
@@ -263,7 +261,7 @@ onBeforeUnmount(() => {
     justify-content: center;
 }
 .file-header-btn:hover {
-    background: var(--bg-secondary);
+    background: var(--bg-tertiary);
     color: var(--accent-color);
 }
 .file-header-btn svg {
@@ -280,8 +278,7 @@ onBeforeUnmount(() => {
     color: var(--text-secondary);
 }
 .file-header-btn.active {
-    background: var(--accent-color);
-    color: #fff;
+    color: var(--accent-color);
 }
 
 /* Dropdown */

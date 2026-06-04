@@ -186,6 +186,8 @@ watch(
     display: flex;
     position: absolute;
     left: 0;
+    right: 0;
+    min-width: max-content;
     height: 20.8px;
     background: var(--code-bg);
     border-bottom: 1px solid var(--border-color);
