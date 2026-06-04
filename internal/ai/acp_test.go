@@ -2,6 +2,8 @@ package ai
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -70,7 +72,7 @@ func TestMapACPToolCallUpdate_Completed(t *testing.T) {
 	assert.Equal(t, "tc-123", event.Tool.ID)
 	assert.True(t, event.Tool.Done)
 	assert.Equal(t, "success", event.Tool.Status)
-	assert.Contains(t, event.Tool.Output, "result")
+	assert.Contains(t, event.Tool.Output, "file contents")
 }
 
 func TestMapACPToolCallUpdate_Failed(t *testing.T) {
@@ -292,4 +294,749 @@ func TestNewACPBackend_InvalidHTTP(t *testing.T) {
 	_, err := NewACPBackend(agent)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "expected acp-stdio")
+}
+
+// --- mapACPSessionUpdate AgentMessageChunk tests ---
+
+func TestMapACPSessionUpdate_AgentMessageChunk(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	update := acp.SessionUpdate{
+		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
+			Content: acp.ContentBlock{
+				Text: &acp.ContentBlockText{Text: "hello world"},
+			},
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, nil)
+
+	// Should emit thinking_done + content (2 events)
+	events := drainACPEvents(ch, 2)
+
+	assert.Equal(t, "thinking_done", events[0].Type)
+	assert.Equal(t, "content", events[1].Type)
+	assert.Equal(t, "hello world", events[1].Content)
+
+	assertNoMoreACPEvents(ch, t)
+}
+
+func TestMapACPSessionUpdate_AgentMessageChunk_NilText(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	update := acp.SessionUpdate{
+		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
+			Content: acp.ContentBlock{}, // Text is nil
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, nil)
+
+	// Should emit thinking_done only (no content event when Text is nil)
+	events := drainACPEvents(ch, 1)
+	assert.Equal(t, "thinking_done", events[0].Type)
+
+	assertNoMoreACPEvents(ch, t)
+}
+
+// --- mapACPSessionUpdate AgentThoughtChunk tests ---
+
+func TestMapACPSessionUpdate_AgentThoughtChunk(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	update := acp.SessionUpdate{
+		AgentThoughtChunk: &acp.SessionUpdateAgentThoughtChunk{
+			Content: acp.ContentBlock{
+				Text: &acp.ContentBlockText{Text: "thinking about the problem"},
+			},
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, nil)
+
+	events := drainACPEvents(ch, 1)
+	assert.Equal(t, "thinking", events[0].Type)
+	assert.Equal(t, "thinking about the problem", events[0].Content)
+
+	assertNoMoreACPEvents(ch, t)
+}
+
+func TestMapACPSessionUpdate_AgentThoughtChunk_NilText(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	update := acp.SessionUpdate{
+		AgentThoughtChunk: &acp.SessionUpdateAgentThoughtChunk{
+			Content: acp.ContentBlock{}, // Text is nil
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, nil)
+
+	assertNoMoreACPEvents(ch, t) // no events when Text is nil
+}
+
+// --- mapACPSessionUpdate ToolCall tests ---
+
+func TestMapACPSessionUpdate_ToolCall(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	update := acp.SessionUpdate{
+		ToolCall: &acp.SessionUpdateToolCall{
+			ToolCallId: acp.ToolCallId("tc-1"),
+			Title:      "Read",
+			Kind:       acp.ToolKindRead,
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, nil)
+
+	// thinking_done + tool_use (2 events)
+	events := drainACPEvents(ch, 2)
+	assert.Equal(t, "thinking_done", events[0].Type)
+	assert.Equal(t, "tool_use", events[1].Type)
+	require.NotNil(t, events[1].Tool)
+	assert.Equal(t, "Read", events[1].Tool.Name)
+	assert.Equal(t, "tc-1", events[1].Tool.ID)
+	assert.False(t, events[1].Tool.Done)
+
+	assertNoMoreACPEvents(ch, t)
+}
+
+// --- mapACPSessionUpdate ToolCallUpdate tests ---
+
+func TestMapACPSessionUpdate_ToolCallUpdate_Completed(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	completed := acp.ToolCallStatusCompleted
+	update := acp.SessionUpdate{
+		ToolCallUpdate: &acp.SessionToolCallUpdate{
+			ToolCallId: acp.ToolCallId("tc-1"),
+			Status:     &completed,
+			RawOutput:  map[string]any{"result": "done"},
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, nil)
+
+	events := drainACPEvents(ch, 1)
+	assert.Equal(t, "tool_result", events[0].Type)
+	require.NotNil(t, events[0].Tool)
+	assert.Equal(t, "tc-1", events[0].Tool.ID)
+	assert.True(t, events[0].Tool.Done)
+	assert.Equal(t, "success", events[0].Tool.Status)
+
+	assertNoMoreACPEvents(ch, t)
+}
+
+func TestMapACPSessionUpdate_ToolCallUpdate_ThinkCompleted(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	thinkKind := acp.ToolKindThink
+	completed := acp.ToolCallStatusCompleted
+	update := acp.SessionUpdate{
+		ToolCallUpdate: &acp.SessionToolCallUpdate{
+			ToolCallId: acp.ToolCallId("tc-think"),
+			Kind:       &thinkKind,
+			Status:     &completed,
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, nil)
+
+	// tool_result + thinking_done (think tool completion emits thinking_done)
+	events := drainACPEvents(ch, 2)
+	assert.Equal(t, "tool_result", events[0].Type)
+	assert.Equal(t, "thinking_done", events[1].Type)
+
+	assertNoMoreACPEvents(ch, t)
+}
+
+func TestMapACPSessionUpdate_ToolCallUpdate_ThinkFailed(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	thinkKind := acp.ToolKindThink
+	failed := acp.ToolCallStatusFailed
+	update := acp.SessionUpdate{
+		ToolCallUpdate: &acp.SessionToolCallUpdate{
+			ToolCallId: acp.ToolCallId("tc-think"),
+			Kind:       &thinkKind,
+			Status:     &failed,
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, nil)
+
+	// tool_result + thinking_done (think tool failure also emits thinking_done)
+	events := drainACPEvents(ch, 2)
+	assert.Equal(t, "tool_result", events[0].Type)
+	assert.Equal(t, "thinking_done", events[1].Type)
+
+	assertNoMoreACPEvents(ch, t)
+}
+
+func TestMapACPSessionUpdate_ToolCallUpdate_ThinkInProgress(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	thinkKind := acp.ToolKindThink
+	inProgress := acp.ToolCallStatusInProgress
+	update := acp.SessionUpdate{
+		ToolCallUpdate: &acp.SessionToolCallUpdate{
+			ToolCallId: acp.ToolCallId("tc-think"),
+			Kind:       &thinkKind,
+			Status:     &inProgress,
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, nil)
+
+	// Only tool_use — thinking_done NOT emitted for in-progress think tool
+	events := drainACPEvents(ch, 1)
+	assert.Equal(t, "tool_use", events[0].Type)
+
+	assertNoMoreACPEvents(ch, t)
+}
+
+func TestMapACPSessionUpdate_ToolCallUpdate_NonThinkCompleted(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	readKind := acp.ToolKindRead
+	completed := acp.ToolCallStatusCompleted
+	update := acp.SessionUpdate{
+		ToolCallUpdate: &acp.SessionToolCallUpdate{
+			ToolCallId: acp.ToolCallId("tc-read"),
+			Kind:       &readKind,
+			Status:     &completed,
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, nil)
+
+	// Only tool_result — non-think tool does NOT emit thinking_done
+	events := drainACPEvents(ch, 1)
+	assert.Equal(t, "tool_result", events[0].Type)
+
+	assertNoMoreACPEvents(ch, t)
+}
+
+// --- mapACPSessionUpdate AvailableCommandsUpdate tests ---
+
+func TestMapACPSessionUpdate_AvailableCommandsUpdate(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	update := acp.SessionUpdate{
+		AvailableCommandsUpdate: &acp.SessionAvailableCommandsUpdate{
+			AvailableCommands: []acp.AvailableCommand{
+				{
+					Name:        "/compact",
+					Description: "Compact conversation history",
+				},
+				{
+					Name:        "/ask",
+					Description: "Ask a question",
+					Input: &acp.AvailableCommandInput{
+						Unstructured: &acp.UnstructuredCommandInput{
+							Hint: "your question",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, nil)
+
+	events := drainACPEvents(ch, 1)
+	assert.Equal(t, "commands_update", events[0].Type)
+	require.Len(t, events[0].Commands, 2)
+
+	assert.Equal(t, "/compact", events[0].Commands[0].Name)
+	assert.Equal(t, "Compact conversation history", events[0].Commands[0].Description)
+	assert.Equal(t, "", events[0].Commands[0].InputHint) // no input
+
+	assert.Equal(t, "/ask", events[0].Commands[1].Name)
+	assert.Equal(t, "Ask a question", events[0].Commands[1].Description)
+	assert.Equal(t, "your question", events[0].Commands[1].InputHint) // has input hint
+
+	assertNoMoreACPEvents(ch, t)
+}
+
+// --- mapACPSessionUpdate CurrentModeUpdate tests ---
+
+func TestMapACPSessionUpdate_CurrentModeUpdate(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	update := acp.SessionUpdate{
+		CurrentModeUpdate: &acp.SessionCurrentModeUpdate{
+			CurrentModeId: acp.SessionModeId("code"),
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, nil)
+
+	events := drainACPEvents(ch, 1)
+	assert.Equal(t, "mode_update", events[0].Type)
+	require.NotNil(t, events[0].Mode)
+	assert.Equal(t, "code", events[0].Mode.CurrentModeID)
+
+	assertNoMoreACPEvents(ch, t)
+}
+
+func TestMapACPSessionUpdate_CurrentModeUpdate_WithCacheEntry(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	entry := &ACPConnEntry{}
+	// Pre-populate cached mode state directly so UpdateCachedCurrentMode can update it
+	entry.cachedModeState = &ModeState{CurrentModeID: "architect"}
+
+	update := acp.SessionUpdate{
+		CurrentModeUpdate: &acp.SessionCurrentModeUpdate{
+			CurrentModeId: acp.SessionModeId("code"),
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, entry)
+
+	events := drainACPEvents(ch, 1)
+	assert.Equal(t, "mode_update", events[0].Type)
+	assert.Equal(t, "code", events[0].Mode.CurrentModeID)
+
+	// Cache should be updated
+	assert.Equal(t, "code", entry.cachedModeState.CurrentModeID)
+
+	assertNoMoreACPEvents(ch, t)
+}
+
+// --- mapACPSessionUpdate ConfigOptionUpdate tests ---
+
+func TestMapACPSessionUpdate_ConfigOptionUpdate_Mode(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	modeCategory := acp.SessionConfigOptionCategoryMode
+	ungrouped := acp.SessionConfigSelectOptionsUngrouped(
+		[]acp.SessionConfigSelectOption{
+			{Name: "Ask", Value: acp.SessionConfigValueId("ask")},
+			{Name: "Code", Value: acp.SessionConfigValueId("code")},
+		},
+	)
+
+	update := acp.SessionUpdate{
+		ConfigOptionUpdate: &acp.SessionConfigOptionUpdate{
+			ConfigOptions: []acp.SessionConfigOption{
+				{
+					Select: &acp.SessionConfigOptionSelect{
+						Id:           acp.SessionConfigId("mode"),
+						Name:         "Mode",
+						Category:     &modeCategory,
+						CurrentValue: acp.SessionConfigValueId("code"),
+						Options:      acp.SessionConfigSelectOptions{Ungrouped: &ungrouped},
+					},
+				},
+			},
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, nil)
+
+	events := drainACPEvents(ch, 1)
+	assert.Equal(t, "config_update", events[0].Type)
+	require.NotNil(t, events[0].Config)
+	assert.Equal(t, "mode", events[0].Config.ConfigID)
+	assert.Equal(t, "code", events[0].Config.CurrentID)
+	require.Len(t, events[0].Config.Options, 1)
+	assert.Equal(t, "mode", events[0].Config.Options[0].Category)
+	require.Len(t, events[0].Config.Options[0].Values, 2)
+	assert.Equal(t, "ask", events[0].Config.Options[0].Values[0].ID)
+	assert.Equal(t, "Ask", events[0].Config.Options[0].Values[0].Name)
+	assert.Equal(t, "code", events[0].Config.Options[0].Values[1].ID)
+
+	assertNoMoreACPEvents(ch, t)
+}
+
+func TestMapACPSessionUpdate_ConfigOptionUpdate_ThoughtLevel(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	thoughtCategory := acp.SessionConfigOptionCategoryThoughtLevel
+	ungrouped := acp.SessionConfigSelectOptionsUngrouped(
+		[]acp.SessionConfigSelectOption{
+			{Name: "Low", Value: acp.SessionConfigValueId("low")},
+			{Name: "High", Value: acp.SessionConfigValueId("high")},
+		},
+	)
+
+	update := acp.SessionUpdate{
+		ConfigOptionUpdate: &acp.SessionConfigOptionUpdate{
+			ConfigOptions: []acp.SessionConfigOption{
+				{
+					Select: &acp.SessionConfigOptionSelect{
+						Id:           acp.SessionConfigId("thinking"),
+						Name:         "Thinking",
+						Category:     &thoughtCategory,
+						CurrentValue: acp.SessionConfigValueId("high"),
+						Options:      acp.SessionConfigSelectOptions{Ungrouped: &ungrouped},
+					},
+				},
+			},
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, nil)
+
+	events := drainACPEvents(ch, 1)
+	assert.Equal(t, "thinking_effort_update", events[0].Type)
+	require.NotNil(t, events[0].ThinkingEffort)
+	assert.Equal(t, "high", events[0].ThinkingEffort.CurrentID)
+	require.Len(t, events[0].ThinkingEffort.AvailableLevels, 2)
+	assert.Equal(t, "low", events[0].ThinkingEffort.AvailableLevels[0].ID)
+	assert.Equal(t, "Low", events[0].ThinkingEffort.AvailableLevels[0].Name)
+	assert.Equal(t, "high", events[0].ThinkingEffort.AvailableLevels[1].ID)
+
+	assertNoMoreACPEvents(ch, t)
+}
+
+func TestMapACPSessionUpdate_ConfigOptionUpdate_Model(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	modelCategory := acp.SessionConfigOptionCategoryModel
+	ungrouped := acp.SessionConfigSelectOptionsUngrouped(
+		[]acp.SessionConfigSelectOption{
+			{Name: "Claude 3.5", Value: acp.SessionConfigValueId("claude-3.5")},
+			{Name: "GPT-4o", Value: acp.SessionConfigValueId("gpt-4o")},
+		},
+	)
+
+	update := acp.SessionUpdate{
+		ConfigOptionUpdate: &acp.SessionConfigOptionUpdate{
+			ConfigOptions: []acp.SessionConfigOption{
+				{
+					Select: &acp.SessionConfigOptionSelect{
+						Id:           acp.SessionConfigId("model"),
+						Name:         "Model",
+						Category:     &modelCategory,
+						CurrentValue: acp.SessionConfigValueId("claude-3.5"),
+						Options:      acp.SessionConfigSelectOptions{Ungrouped: &ungrouped},
+					},
+				},
+			},
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, nil)
+
+	events := drainACPEvents(ch, 1)
+	assert.Equal(t, "model_list_update", events[0].Type)
+	require.NotNil(t, events[0].ModelList)
+	assert.Equal(t, "claude-3.5", events[0].ModelList.CurrentModelID)
+	require.Len(t, events[0].ModelList.Models, 2)
+	assert.Equal(t, "claude-3.5", events[0].ModelList.Models[0].ID)
+	assert.Equal(t, "Claude 3.5", events[0].ModelList.Models[0].Name)
+
+	assertNoMoreACPEvents(ch, t)
+}
+
+func TestMapACPSessionUpdate_ConfigOptionUpdate_MultipleCategories(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	modeCategory := acp.SessionConfigOptionCategoryMode
+	thoughtCategory := acp.SessionConfigOptionCategoryThoughtLevel
+	modeUngrouped := acp.SessionConfigSelectOptionsUngrouped(
+		[]acp.SessionConfigSelectOption{
+			{Name: "Code", Value: acp.SessionConfigValueId("code")},
+		},
+	)
+	thoughtUngrouped := acp.SessionConfigSelectOptionsUngrouped(
+		[]acp.SessionConfigSelectOption{
+			{Name: "High", Value: acp.SessionConfigValueId("high")},
+		},
+	)
+
+	update := acp.SessionUpdate{
+		ConfigOptionUpdate: &acp.SessionConfigOptionUpdate{
+			ConfigOptions: []acp.SessionConfigOption{
+				{
+					Select: &acp.SessionConfigOptionSelect{
+						Id:           acp.SessionConfigId("mode"),
+						Name:         "Mode",
+						Category:     &modeCategory,
+						CurrentValue: acp.SessionConfigValueId("code"),
+						Options:      acp.SessionConfigSelectOptions{Ungrouped: &modeUngrouped},
+					},
+				},
+				{
+					Select: &acp.SessionConfigOptionSelect{
+						Id:           acp.SessionConfigId("thinking"),
+						Name:         "Thinking",
+						Category:     &thoughtCategory,
+						CurrentValue: acp.SessionConfigValueId("high"),
+						Options:      acp.SessionConfigSelectOptions{Ungrouped: &thoughtUngrouped},
+					},
+				},
+			},
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, nil)
+
+	// Should emit both config_update and thinking_effort_update
+	events := drainACPEvents(ch, 2)
+	assert.Equal(t, "config_update", events[0].Type)
+	assert.Equal(t, "thinking_effort_update", events[1].Type)
+
+	assertNoMoreACPEvents(ch, t)
+}
+
+func TestMapACPSessionUpdate_ConfigOptionUpdate_SkipNoSelect(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	update := acp.SessionUpdate{
+		ConfigOptionUpdate: &acp.SessionConfigOptionUpdate{
+			ConfigOptions: []acp.SessionConfigOption{
+				{}, // Select is nil — should be skipped
+			},
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, nil)
+
+	assertNoMoreACPEvents(ch, t) // no events when Select is nil
+}
+
+func TestMapACPSessionUpdate_ConfigOptionUpdate_SkipNoCategory(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	update := acp.SessionUpdate{
+		ConfigOptionUpdate: &acp.SessionConfigOptionUpdate{
+			ConfigOptions: []acp.SessionConfigOption{
+				{
+					Select: &acp.SessionConfigOptionSelect{
+						Id:           acp.SessionConfigId("unknown"),
+						Name:         "Unknown",
+						Category:     nil, // no category — should be skipped
+						CurrentValue: acp.SessionConfigValueId("val"),
+					},
+				},
+			},
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, nil)
+
+	assertNoMoreACPEvents(ch, t)
+}
+
+// --- mapACPSessionUpdate Empty/SessionInfoUpdate tests ---
+
+func TestMapACPSessionUpdate_Empty(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	update := acp.SessionUpdate{} // all nil fields
+
+	mapACPSessionUpdate(update, ch, ctx, nil)
+
+	assertNoMoreACPEvents(ch, t) // no events for empty update
+}
+
+func TestMapACPSessionUpdate_SessionInfoUpdate(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	ctx := context.Background()
+
+	update := acp.SessionUpdate{
+		SessionInfoUpdate: &acp.SessionSessionInfoUpdate{},
+	}
+
+	mapACPSessionUpdate(update, ch, ctx, nil)
+
+	assertNoMoreACPEvents(ch, t) // SessionInfoUpdate emits no stream events
+}
+
+// --- extractACPToolOutput tests ---
+
+func TestExtractACPToolOutput_String(t *testing.T) {
+	assert.Equal(t, "hello", extractACPToolOutput("hello"))
+}
+
+func TestExtractACPToolOutput_Bool(t *testing.T) {
+	assert.Equal(t, "true", extractACPToolOutput(true))
+	assert.Equal(t, "false", extractACPToolOutput(false))
+}
+
+func TestExtractACPToolOutput_Number(t *testing.T) {
+	assert.Equal(t, "42", extractACPToolOutput(42))
+	assert.Equal(t, "3.14", extractACPToolOutput(3.14))
+}
+
+func TestExtractACPToolOutput_Map_ResultKey(t *testing.T) {
+	result := extractACPToolOutput(map[string]any{"result": "file contents"})
+	assert.Equal(t, "file contents", result)
+}
+
+func TestExtractACPToolOutput_Map_OutputKey(t *testing.T) {
+	result := extractACPToolOutput(map[string]any{"output": "command output"})
+	assert.Equal(t, "command output", result)
+}
+
+func TestExtractACPToolOutput_Map_ContentKey(t *testing.T) {
+	result := extractACPToolOutput(map[string]any{"content": "file content"})
+	assert.Equal(t, "file content", result)
+}
+
+func TestExtractACPToolOutput_Map_TextKey(t *testing.T) {
+	result := extractACPToolOutput(map[string]any{"text": "plain text"})
+	assert.Equal(t, "plain text", result)
+}
+
+func TestExtractACPToolOutput_Map_MessageKey(t *testing.T) {
+	result := extractACPToolOutput(map[string]any{"message": "success"})
+	assert.Equal(t, "success", result)
+}
+
+func TestExtractACPToolOutput_Map_StdoutWithStderr(t *testing.T) {
+	result := extractACPToolOutput(map[string]any{
+		"stdout": "command output",
+		"stderr": "some warnings",
+	})
+	assert.Equal(t, "command output\nsome warnings", result)
+}
+
+func TestExtractACPToolOutput_Map_StdoutNoStderr(t *testing.T) {
+	result := extractACPToolOutput(map[string]any{"stdout": "output only"})
+	assert.Equal(t, "output only", result)
+}
+
+func TestExtractACPToolOutput_Map_ResultPriorityOverOutput(t *testing.T) {
+	result := extractACPToolOutput(map[string]any{
+		"result": "from result key",
+		"output": "from output key",
+	})
+	assert.Equal(t, "from result key", result)
+}
+
+func TestExtractACPToolOutput_Map_ErrorKey(t *testing.T) {
+	result := extractACPToolOutput(map[string]any{"error": "permission denied"})
+	assert.Equal(t, "permission denied", result)
+}
+
+func TestExtractACPToolOutput_Map_ErrorKeyWithMessage(t *testing.T) {
+	result := extractACPToolOutput(map[string]any{
+		"error": map[string]any{"message": "not found"},
+	})
+	assert.Equal(t, "not found", result)
+}
+
+func TestExtractACPToolOutput_Map_NestedValue(t *testing.T) {
+	result := extractACPToolOutput(map[string]any{
+		"result": map[string]any{"key": "value"},
+	})
+	assert.Contains(t, result, `"key"`)
+	assert.Contains(t, result, `"value"`)
+}
+
+func TestExtractACPToolOutput_Map_EmptyValue(t *testing.T) {
+	// Empty string values in priority keys should be skipped, falling to next key
+	result := extractACPToolOutput(map[string]any{
+		"result":  "",
+		"output":  "fallback",
+	})
+	assert.Equal(t, "fallback", result)
+}
+
+func TestExtractACPToolOutput_Map_NoKnownKey(t *testing.T) {
+	result := extractACPToolOutput(map[string]any{
+		"custom_field": "custom value",
+	})
+	// Falls back to pretty-printed JSON of entire object
+	assert.Contains(t, result, `"custom_field"`)
+}
+
+func TestExtractACPToolOutput_Array_AllStrings(t *testing.T) {
+	result := extractACPToolOutput([]any{"line1", "line2", "line3"})
+	assert.Equal(t, "line1\nline2\nline3", result)
+}
+
+func TestExtractACPToolOutput_Array_MixedTypes(t *testing.T) {
+	result := extractACPToolOutput([]any{"text", 42})
+	// Non-string elements → pretty-print as JSON
+	assert.Contains(t, result, "text")
+}
+
+func TestExtractACPToolOutput_Array_Empty(t *testing.T) {
+	result := extractACPToolOutput([]any{})
+	assert.Equal(t, "[]", result)
+}
+
+func TestExtractACPToolOutput_NilValue(t *testing.T) {
+	// nil interface → json.MarshalIndent produces "null"
+	result := extractACPToolOutput(nil)
+	assert.Equal(t, "null", result)
+}
+
+// --- truncateToolOutput tests ---
+
+func TestTruncateToolOutput_Short(t *testing.T) {
+	assert.Equal(t, "hello", truncateToolOutput("hello"))
+}
+
+func TestTruncateToolOutput_ExactLimit(t *testing.T) {
+	s := strings.Repeat("x", maxToolOutputBytes)
+	assert.Equal(t, s, truncateToolOutput(s))
+}
+
+func TestTruncateToolOutput_OverLimit(t *testing.T) {
+	originalLen := maxToolOutputBytes + 100
+	s := strings.Repeat("x", originalLen)
+	result := truncateToolOutput(s)
+	// First part is exactly maxToolOutputBytes chars, then newline + truncation marker
+	prefix := result[:maxToolOutputBytes]
+	assert.Equal(t, strings.Repeat("x", maxToolOutputBytes), prefix)
+	assert.Contains(t, result, "\n[truncated:")
+	assert.Contains(t, result, fmt.Sprintf("original %d bytes", originalLen))
+}
+
+func TestTruncateToolOutput_Empty(t *testing.T) {
+	assert.Equal(t, "", truncateToolOutput(""))
+}
+
+// --- ACP test helpers ---
+
+// drainACPEvents reads exactly count events from ch, failing the test if fewer are available.
+func drainACPEvents(ch chan StreamEvent, count int) []StreamEvent {
+	events := make([]StreamEvent, 0, count)
+	for i := 0; i < count; i++ {
+		select {
+		case event := <-ch:
+			events = append(events, event)
+		default:
+			// Return what we have; caller will assert length
+		}
+	}
+	return events
+}
+
+// assertNoMoreACPEvents fails the test if there are pending events on ch.
+func assertNoMoreACPEvents(ch chan StreamEvent, t *testing.T) {
+	t.Helper()
+	select {
+	case <-ch:
+		t.Fatal("expected no more events on channel")
+	default:
+	}
 }
