@@ -138,7 +138,7 @@
       </PopupMenu>
       <!-- Teleported quick-send menu -->
       <PopupMenu v-model:show="showQuickMenu" :target-element="sendBtnRef" :max-width="260" :max-height="280" :menu-items-count="quickSendItems.length + 1">
-        <div class="quick-send-title">{{ t('chat.quickSend.tapToFill') }}</div>
+        <div class="quick-send-title">{{ t('chat.quickSend.title') }}</div>
         <button v-for="item in quickSendItems" :key="item.id"
           class="quick-send-item"
           :class="{ 'qs-pressing': quickSendPressingId === item.id }"
@@ -517,14 +517,14 @@ let quickSendTouchStartPos = { x: 0, y: 0 }
 let quickSendCurrentItem = null
 
 function handleQuickSendClick(item) {
-  // Desktop: click directly injects into input box
-  // Mobile: click is suppressed by touchstart.prevent; inject is handled in onQuickSendTouchEnd
+  // Desktop: click directly sends
+  // Mobile: click is suppressed by touchstart.prevent; send is handled in onQuickSendTouchEnd
   if (quickSendJustTriggered) {
     quickSendJustTriggered = false
     return
   }
-  injectToInput(item.command)
   showQuickMenu.value = false
+  emit('send', item.command)
 }
 
 function injectToInput(text) {
@@ -545,12 +545,12 @@ function onQuickSendTouchStart(item, e) {
 
   quickSendPressTimer = setTimeout(() => {
     if (!quickSendMoved && quickSendPressingId.value === item.id) {
-      // Long-press triggered → emit send directly
+      // Long-press triggered → inject into input box
       quickSendJustTriggered = true
       quickSendPressingId.value = null
       quickSendCurrentItem = null
+      injectToInput(item.command)
       showQuickMenu.value = false
-      emit('send', item.command)
     }
   }, QUICK_SEND_LONG_PRESS_MS)
 }
@@ -571,13 +571,13 @@ function onQuickSendTouchEnd() {
     clearTimeout(quickSendPressTimer)
     quickSendPressTimer = null
   }
-  // Short tap (no long-press triggered): inject into input box directly
+  // Short tap (no long-press triggered): send directly
   if (quickSendPressingId.value !== null && !quickSendJustTriggered && quickSendCurrentItem) {
     const item = quickSendCurrentItem
     quickSendCurrentItem = null
     quickSendPressingId.value = null
-    injectToInput(item.command)
     showQuickMenu.value = false
+    emit('send', item.command)
   } else {
     quickSendPressingId.value = null
     quickSendCurrentItem = null
@@ -1278,12 +1278,12 @@ defineExpose({
   color: #fff;
 }
 
-/* Quick-send: pressing state → subtle accent tint hints at long-press */
+/* Quick-send: pressing state → subtle accent tint hints at long-press (fills input) */
 .quick-send-item.qs-pressing {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
 }
 
-/* Quick-send: progressive fill bar → animates from left to right during long-press */
+/* Quick-send: progressive fill bar → long-press fills input box instead of sending */
 .qs-fill-bar {
   position: absolute;
   left: 0;
