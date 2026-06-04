@@ -445,6 +445,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       // Clear timeout if set
       const timer = toolUseTimeouts.get(data.id)
       if (timer) { clearTimeout(timer); toolUseTimeouts.delete(data.id) }
+      onRenderNeeded()
       // Skip scroll when panel not visible
       if (isOpen.value) {
         onScrollBottom()

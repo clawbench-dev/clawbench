@@ -171,11 +171,12 @@ func mapACPToolCallUpdate(tcu acp.SessionToolCallUpdate) StreamEvent {
 		}
 	}
 
-	// Extract raw output
+	// Extract human-readable output from RawOutput.
+	// ACP agents return structured output (map[string]any), but the frontend
+	// expects plain text like CLI mode produces. We extract the text content
+	// from known keys and fall back to pretty-printed JSON.
 	if tcu.RawOutput != nil {
-		if outputBytes, err := json.Marshal(tcu.RawOutput); err == nil {
-			tool.Output = truncateToolOutput(string(outputBytes))
-		}
+		tool.Output = truncateToolOutput(extractACPToolOutput(tcu.RawOutput))
 	}
 
 	// Determine event type: if tool is done, emit tool_result; otherwise update tool_use
@@ -184,12 +185,131 @@ func mapACPToolCallUpdate(tcu acp.SessionToolCallUpdate) StreamEvent {
 		eventType = "tool_result"
 	}
 
+	slog.Debug("acp: tool_call_update", "tool_call_id", tool.ID, "done", tool.Done, "event_type", eventType, "has_output", tool.Output != "")
+
 	return StreamEvent{Type: eventType, Tool: tool}
 }
 
-// extractToolName returns a canonical tool name from an ACP tool call.
-// ACP tool titles are human-readable descriptions (e.g. "Read file contents")
-// but the frontend expects canonical names (e.g. "Read") for icon matching
+// extractACPToolOutput converts ACP RawOutput (any) to a human-readable string.
+// ACP agents return structured output (e.g. map[string]any{"result": "file contents"}),
+// but the frontend expects plain text like CLI mode produces. This function extracts
+// the text content from known keys and falls back to pretty-printed JSON.
+func extractACPToolOutput(rawOutput any) string {
+	// Direct string — already human-readable
+	if s, ok := rawOutput.(string); ok {
+		return s
+	}
+
+	// Boolean or number — convert directly
+	switch v := rawOutput.(type) {
+	case bool:
+		return fmt.Sprintf("%v", v)
+	case float64, float32, int, int64, int32:
+		return fmt.Sprintf("%v", v)
+	}
+
+	// Map — try known content keys to extract text
+	if m, ok := rawOutput.(map[string]any); ok {
+		return extractMapOutput(m)
+	}
+
+	// Array — join string elements or pretty-print
+	if arr, ok := rawOutput.([]any); ok {
+		return extractArrayOutput(arr)
+	}
+
+	// Fallback: pretty-print as JSON
+	if bytes, err := json.MarshalIndent(rawOutput, "", "  "); err == nil {
+		return string(bytes)
+	}
+	return fmt.Sprintf("%v", rawOutput)
+}
+
+// acpOutputKeyPriority defines the order of keys to try when extracting text
+// from a map[string]any tool output. Earlier keys take priority.
+var acpOutputKeyPriority = []string{
+	"result",  // Most common: {"result": "file contents"}
+	"output",  // {"output": "command output"}
+	"content", // {"content": "file content"}
+	"text",    // {"text": "plain text"}
+	"message", // {"message": "success"}
+	"stdout",  // Bash-like: {"stdout": "...", "stderr": "..."}
+}
+
+// extractMapOutput extracts human-readable text from a map output.
+func extractMapOutput(m map[string]any) string {
+	// Try known content keys in priority order
+	for _, key := range acpOutputKeyPriority {
+		if val, ok := m[key]; ok && val != nil {
+			switch v := val.(type) {
+			case string:
+				if v != "" {
+					// For Bash-like stdout, also append stderr if present
+					if key == "stdout" {
+						if stderr, ok2 := m["stderr"]; ok2 {
+							if s, ok3 := stderr.(string); ok3 && s != "" {
+								return v + "\n" + s
+							}
+						}
+					}
+					return v
+				}
+			case map[string]any, []any:
+				// Nested structure — pretty-print it
+				if bytes, err := json.MarshalIndent(v, "", "  "); err == nil {
+					return string(bytes)
+				}
+			default:
+				if fmt.Sprintf("%v", v) != "" {
+					return fmt.Sprintf("%v", v)
+				}
+			}
+		}
+	}
+
+	// Try "error" key for failed tools
+	if errVal, ok := m["error"]; ok && errVal != nil {
+		switch v := errVal.(type) {
+		case string:
+			return v
+		case map[string]any:
+			if msg, ok2 := v["message"]; ok2 {
+				return fmt.Sprintf("%v", msg)
+			}
+		}
+		return fmt.Sprintf("%v", errVal)
+	}
+
+	// No known key — pretty-print entire object
+	if bytes, err := json.MarshalIndent(m, "", "  "); err == nil {
+		return string(bytes)
+	}
+	return fmt.Sprintf("%v", m)
+}
+
+// extractArrayOutput extracts human-readable text from an array output.
+func extractArrayOutput(arr []any) string {
+	// If all elements are strings, join them
+	allStrings := true
+	var parts []string
+	for _, elem := range arr {
+		if s, ok := elem.(string); ok {
+			parts = append(parts, s)
+		} else {
+			allStrings = false
+			break
+		}
+	}
+	if allStrings && len(parts) > 0 {
+		return strings.Join(parts, "\n")
+	}
+
+	// Fallback: pretty-print as JSON
+	if bytes, err := json.MarshalIndent(arr, "", "  "); err == nil {
+		return string(bytes)
+	}
+	return fmt.Sprintf("%v", arr)
+}
 // and input formatting. We try prefix matching first, then kind-to-canonical,
 // then fall back to the title itself.
 func extractToolName(title string, kind acp.ToolKind) string {

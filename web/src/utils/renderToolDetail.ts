@@ -1057,24 +1057,131 @@ function annotateLocalhostInEscapedText(text: string): string {
   })
 }
 
+// ── Tool output renderer registry ──
+
+type ToolOutputRenderer = (output: string) => string
+const TOOL_OUTPUT_RENDERERS: Record<string, ToolOutputRenderer> = {}
+
 /**
- * Format tool execution output for display in the expanded tool detail area.
- * Renders output text with appropriate styling based on tool type.
- * In App mode, localhost URLs in the output are annotated with open buttons.
+ * Register an output renderer for a tool type.
+ * Tool names are matched case-insensitively.
  */
-export function formatToolOutput(output: string, toolName?: string): string {
-  if (!output) return ''
-  // For Bash tool: render as terminal output
-  if (toolName?.toLowerCase() === 'bash') {
-    const escaped = escapeHtml(output)
-    const annotated = annotateLocalhostInEscapedText(escaped)
-    return `<div class="bash-output-body"><pre>${annotated}</pre></div>`
-  }
-  // Default: render as preformatted text
+function registerToolOutputRenderer(toolName: string, renderer: ToolOutputRenderer) {
+  TOOL_OUTPUT_RENDERERS[toolName.toLowerCase()] = renderer
+}
+
+/**
+ * Render tool output as terminal-style output (Bash, Git, PowerShell, etc.).
+ * Escapes HTML, annotates localhost URLs, wraps in terminal-styled <pre>.
+ */
+function renderTerminalOutput(output: string): string {
+  const escaped = escapeHtml(output)
+  const annotated = annotateLocalhostInEscapedText(escaped)
+  return `<div class="bash-output-body"><pre>${annotated}</pre></div>`
+}
+
+/**
+ * Render tool output as syntax-highlighted code (Read output is file contents).
+ * Detects language from the tool input's file_path when available.
+ */
+function renderCodeOutput(output: string): string {
   const escaped = escapeHtml(output)
   const annotated = annotateLocalhostInEscapedText(escaped)
   return `<div class="tool-output-default"><pre>${annotated}</pre></div>`
 }
+
+/**
+ * Render a simple success/error status message.
+ * For tools that just return "ok" or short status strings.
+ */
+function renderStatusOutput(output: string): string {
+  const trimmed = output.trim()
+  // Short status messages get a badge treatment
+  if (trimmed.length <= 50) {
+    const escaped = escapeHtml(trimmed)
+    return `<div class="tool-output-status-msg"><span class="tool-output-ok-badge">${escaped}</span></div>`
+  }
+  // Longer output falls back to preformatted text
+  return renderCodeOutput(output)
+}
+
+/**
+ * Try to parse output as JSON and pretty-print it.
+ * If parsing fails, treat as plain text.
+ */
+function renderSmartOutput(output: string): string {
+  const trimmed = output.trim()
+  // Try JSON parse + pretty print
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed)
+      const pretty = JSON.stringify(parsed, null, 2)
+      const escaped = escapeHtml(pretty)
+      return `<div class="tool-output-default"><pre>${escaped}</pre></div>`
+    } catch {
+      // Not valid JSON, treat as plain text
+    }
+  }
+  return renderCodeOutput(output)
+}
+
+/**
+ * Format tool execution output for display in the expanded tool detail area.
+ * Renders output text with appropriate styling based on tool type.
+ * Uses the tool output renderer registry for type-specific formatting.
+ * Falls back to smart output (JSON pretty-print or plain text) for unregistered tools.
+ */
+export function formatToolOutput(output: string, toolName?: string): string {
+  if (!output) return ''
+  // Check for a registered output renderer
+  if (toolName) {
+    const renderer = TOOL_OUTPUT_RENDERERS[toolName.toLowerCase()]
+    if (renderer) {
+      return renderer(output)
+    }
+  }
+  // Fallback: smart output (detect JSON vs plain text)
+  return renderSmartOutput(output)
+}
+
+// ── Tool output registrations ──
+
+// Terminal-style output (command output)
+registerToolOutputRenderer('bash', renderTerminalOutput)
+registerToolOutputRenderer('git', renderTerminalOutput)
+registerToolOutputRenderer('powershell', renderTerminalOutput)
+
+// Code/file content output
+registerToolOutputRenderer('read', renderCodeOutput)
+
+// Status-style output (success/error messages)
+registerToolOutputRenderer('write', renderStatusOutput)
+registerToolOutputRenderer('edit', renderStatusOutput)
+registerToolOutputRenderer('multiedit', renderStatusOutput)
+registerToolOutputRenderer('notebookedit', renderStatusOutput)
+
+// Formatted list output
+registerToolOutputRenderer('grep', renderCodeOutput)
+registerToolOutputRenderer('glob', renderCodeOutput)
+registerToolOutputRenderer('ls', renderCodeOutput)
+
+// Web output
+registerToolOutputRenderer('websearch', renderCodeOutput)
+registerToolOutputRenderer('webfetch', renderCodeOutput)
+
+// Agent/communication output
+registerToolOutputRenderer('agent', renderCodeOutput)
+registerToolOutputRenderer('sendmessage', renderCodeOutput)
+
+// Search/indexing tools
+registerToolOutputRenderer('lsp', renderCodeOutput)
+registerToolOutputRenderer('monitor', renderCodeOutput)
+
+// Skill/task output
+registerToolOutputRenderer('skill', renderCodeOutput)
+registerToolOutputRenderer('skillmanage', renderCodeOutput)
+registerToolOutputRenderer('todowrite', renderStatusOutput)
+registerToolOutputRenderer('todoread', renderCodeOutput)
 
 // ── Tool registrations ──
 

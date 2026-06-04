@@ -1616,4 +1616,22 @@ function handleBodyClick(event) {
 /* Permission/ask question categories for overlay header */
 .tool-detail-header[data-category="permission"] { --tool-accent: #ef4444; }
 :root[data-theme="dark"] .tool-detail-header[data-category="permission"] { --tool-accent: #f87171; }
+
+/* Tool output status badge (for Write/Edit etc. that return short status) */
+.tool-detail-body .tool-output-status-msg {
+  padding: 6px 0;
+}
+.tool-detail-body .tool-output-ok-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  background: rgba(34, 197, 94, 0.12);
+  color: #16a34a;
+}
+:root[data-theme="dark"] .tool-detail-body .tool-output-ok-badge {
+  background: rgba(74, 222, 128, 0.15);
+  color: #4ade80;
+}
 </style>
