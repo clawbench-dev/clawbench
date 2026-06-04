@@ -38,8 +38,8 @@ func TestCleanupOrphans_SkipsNormalProcess(t *testing.T) {
 	require.NoError(t, cmd.Start())
 	pid := cmd.Process.Pid
 	defer func() {
-		cmd.Process.Kill() //nolint:errcheck
-		cmd.Wait()         //nolint:errcheck
+		cmd.Process.Kill() //nolint:errcheck // intentionally ignoring error in test cleanup
+		cmd.Wait()         //nolint:errcheck // intentionally ignoring error in test cleanup
 	}()
 
 	CleanupOrphans()
@@ -49,8 +49,8 @@ func TestCleanupOrphans_SkipsNormalProcess(t *testing.T) {
 	proc, _ := os.FindProcess(pid)
 	err := proc.Signal(syscall.Signal(0))
 	assert.NoError(t, err, "normal process should NOT be killed")
-	cmd.Process.Kill() //nolint:errcheck
-	cmd.Wait()         //nolint:errcheck
+	cmd.Process.Kill() //nolint:errcheck // intentionally ignoring error in test cleanup
+	cmd.Wait()         //nolint:errcheck // intentionally ignoring error in test cleanup
 }
 
 func TestHasClawBenchChildMarker(t *testing.T) {

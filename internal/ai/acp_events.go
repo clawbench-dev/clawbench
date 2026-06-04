@@ -335,6 +335,7 @@ func extractArrayOutput(arr []any) string {
 	}
 	return fmt.Sprintf("%v", arr)
 }
+
 // and input formatting. We try prefix matching first, then kind-to-canonical,
 // then fall back to the title itself.
 func extractToolName(title string, kind acp.ToolKind) string {
@@ -390,7 +391,7 @@ var acpToolNamePatterns = []struct{ prefix, canonical string }{
 	{"TaskUpdate", "TaskUpdate"},
 	{"TaskList", "TaskList"},
 	{"TaskGet", "TaskGet"},
-	{"Task", "Agent"},      // ACP generic "Task" tool → Agent (sub-agent delegation)
+	{"Task", "Agent"}, // ACP generic "Task" tool → Agent (sub-agent delegation)
 	{"ComputerUse", "ComputerUse"},
 	{"TeamCreate", "TeamCreate"},
 	{"TeamDelete", "TeamDelete"},
@@ -424,14 +425,14 @@ var acpToolNamePatterns = []struct{ prefix, canonical string }{
 var acpKindToCanonical = map[acp.ToolKind]string{
 	acp.ToolKindRead:       "Read",
 	acp.ToolKindEdit:       "Edit",
-	acp.ToolKindDelete:     "Edit",   // delete operations → Edit category
-	acp.ToolKindMove:       "Edit",   // move/rename → Edit category
-	acp.ToolKindSearch:     "Grep",   // search → Grep category
-	acp.ToolKindExecute:    "Bash",   // execute/run → Bash category
+	acp.ToolKindDelete:     "Edit", // delete operations → Edit category
+	acp.ToolKindMove:       "Edit", // move/rename → Edit category
+	acp.ToolKindSearch:     "Grep", // search → Grep category
+	acp.ToolKindExecute:    "Bash", // execute/run → Bash category
 	acp.ToolKindThink:      "DeepThink",
 	acp.ToolKindFetch:      "WebFetch",
 	acp.ToolKindSwitchMode: "EnterPlanMode",
-	acp.ToolKindOther:      "Skill",  // uncategorized tools → Skill category
+	acp.ToolKindOther:      "Skill", // uncategorized tools → Skill category
 }
 
 // mapACPError maps a JSON-RPC error code to a StreamEvent.
@@ -452,9 +453,9 @@ func mapACPError(code int, message string) StreamEvent {
 		reason = ReasonContextCancel // request cancelled
 	}
 	return StreamEvent{
-		Type:    "error",
-		Error:   fmt.Sprintf("ACP error %d: %s", code, message),
-		Reason:  reason,
+		Type:   "error",
+		Error:  fmt.Sprintf("ACP error %d: %s", code, message),
+		Reason: reason,
 	}
 }
 
@@ -510,7 +511,10 @@ func buildThinkingEffortStateFromSelect(sel *acp.SessionConfigOptionSelect) *Thi
 
 // mapACPConfigOptionUpdate converts an ACP SessionConfigOptionUpdate to a ConfigOptionState.
 // Returns nil if the update doesn't contain mode-relevant information.
+//
 // Deprecated: Use the per-category extraction in mapACPSessionUpdate instead.
+//
+//nolint:unused // kept as reference for future config option mapping
 func mapACPConfigOptionUpdate(cu *acp.SessionConfigOptionUpdate) *ConfigOptionState {
 	if cu == nil || len(cu.ConfigOptions) == 0 {
 		return nil

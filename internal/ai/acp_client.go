@@ -36,10 +36,10 @@ type pendingPermission struct {
 // SessionUpdate notifications to the correct StreamEvent channel.
 type ClawBenchACPClient struct {
 	mu                sync.Mutex
-	sessionRoutes     map[string]chan<- StreamEvent      // acpSessionID → streamCh
-	commands          []acp.AvailableCommand             // cached from available_commands_update
-	pendingPermission map[string]*pendingPermission      // PermissionKey → pending request
-	poolEntry         *ACPConnEntry                      // reference to pool entry for cache updates
+	sessionRoutes     map[string]chan<- StreamEvent // acpSessionID → streamCh
+	commands          []acp.AvailableCommand        // cached from available_commands_update
+	pendingPermission map[string]*pendingPermission // PermissionKey → pending request
+	poolEntry         *ACPConnEntry                 // reference to pool entry for cache updates
 }
 
 // NewClawBenchACPClient creates a new ACP client with session routing support.
@@ -208,11 +208,11 @@ func (c *ClawBenchACPClient) RequestPermission(ctx context.Context, p acp.Reques
 
 	// Emit a tool_use event for the PermissionApproval card in the AI message
 	approvalInput := map[string]any{
-		"session_id":  sessionID,
-		"toolCallId":  toolCallID,
-		"toolName":    toolName,
-		"toolInput":   toolInput,
-		"options":     p.Options,
+		"session_id": sessionID,
+		"toolCallId": toolCallID,
+		"toolName":   toolName,
+		"toolInput":  toolInput,
+		"options":    p.Options,
 	}
 	inputJSON, _ := json.Marshal(approvalInput)
 
@@ -226,7 +226,8 @@ func (c *ClawBenchACPClient) RequestPermission(ctx context.Context, p acp.Reques
 		},
 	})
 
-	slog.Info("acp: permission request pending user response",
+	slog.Info(
+		"acp: permission request pending user response",
 		"session_id", sessionID,
 		"tool_call_id", toolCallID,
 		"tool_name", toolName,

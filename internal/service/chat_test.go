@@ -127,7 +127,7 @@ CREATE TABLE IF NOT EXISTS chat_metadata (
 
 // setupDB creates an in-memory SQLite database with the required schema,
 // sets service.DB, and returns a cleanup function.
-func setupDB(t *testing.T) *sql.DB { //nolint:unparam // test helper: DB used implicitly via global state
+func setupDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
 	assert.NoError(t, err)

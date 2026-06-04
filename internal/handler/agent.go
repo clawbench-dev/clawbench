@@ -48,14 +48,14 @@ func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 	// or after idle timeout), fall back to DB-persisted state.
 	type acpState struct {
 		Mode      *ai.ModeState             `json:"modeState,omitempty"`
-		Effort    *ai.ThinkingEffortState    `json:"thinkingEffortState,omitempty"`
-		Commands  []ai.AvailableCommandInfo  `json:"commands,omitempty"`
-		ModelList *ai.ModelListState         `json:"modelListState,omitempty"`
+		Effort    *ai.ThinkingEffortState   `json:"thinkingEffortState,omitempty"`
+		Commands  []ai.AvailableCommandInfo `json:"commands,omitempty"`
+		ModelList *ai.ModelListState        `json:"modelListState,omitempty"`
 	}
 	states := make(map[string]*acpState, len(agents))
 	pool := ai.GetACPConnectionPool()
 	for _, a := range agents {
-		if a.Transport != "acp-stdio" {
+		if a.Transport != transportACP {
 			continue
 		}
 		var ms *ai.ModeState
@@ -88,7 +88,9 @@ func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 				}
 			}
 			if a.AcpCommands != "" && a.AcpCommands != "[]" {
-				json.Unmarshal([]byte(a.AcpCommands), &cmds)
+				if err := json.Unmarshal([]byte(a.AcpCommands), &cmds); err != nil {
+					slog.Warn("failed to unmarshal ACP commands from DB", "agent", a.ID, "error", err)
+				}
 			}
 			if a.AcpModelListState != "" {
 				var dbMl ai.ModelListState

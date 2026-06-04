@@ -7,6 +7,11 @@ import (
 	"clawbench/internal/model"
 )
 
+const (
+	keyCommands  = "commands"
+	transportACP = "acp-stdio"
+)
+
 // ServeAICommands returns the cached slash commands for an ACP-backed agent.
 // Only ACP agents expose commands via available_commands_update.
 // CLI agents return an empty list.
@@ -22,26 +27,26 @@ func ServeAICommands(w http.ResponseWriter, r *http.Request) {
 		agentID = model.GetDefaultAgentID()
 	}
 	if agentID == "" {
-		writeJSON(w, http.StatusOK, map[string]any{"commands": []any{}})
+		writeJSON(w, http.StatusOK, map[string]any{keyCommands: []any{}})
 		return
 	}
 
 	agent, found := model.Agents[agentID]
 	if !found {
-		writeJSON(w, http.StatusOK, map[string]any{"commands": []any{}})
+		writeJSON(w, http.StatusOK, map[string]any{keyCommands: []any{}})
 		return
 	}
 
 	// Only ACP agents have commands
-	if agent.Transport != "acp-stdio" {
-		writeJSON(w, http.StatusOK, map[string]any{"commands": []any{}})
+	if agent.Transport != transportACP {
+		writeJSON(w, http.StatusOK, map[string]any{keyCommands: []any{}})
 		return
 	}
 
 	pool := ai.GetACPConnectionPool()
 	client := pool.GetClient(agent.ID)
 	if client == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"commands": []any{}})
+		writeJSON(w, http.StatusOK, map[string]any{keyCommands: []any{}})
 		return
 	}
 
@@ -58,5 +63,5 @@ func ServeAICommands(w http.ResponseWriter, r *http.Request) {
 		cmds = append(cmds, info)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"commands": cmds})
+	writeJSON(w, http.StatusOK, map[string]any{keyCommands: cmds})
 }

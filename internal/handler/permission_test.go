@@ -233,7 +233,7 @@ func TestServePermissionRespond_InvalidJSON(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/ai/permission/respond", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/ai/permission/respond", http.NoBody)
 	req.Header.Set("Content-Type", "application/json")
 	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandler(ServePermissionRespond, req)

@@ -765,7 +765,7 @@ func FinalizeStreamingMessage(projectPath, backend, sessionID, content string) (
 		projectPath, backend, sessionID,
 	).Scan(&msgID)
 	if err != nil {
-		return 0, nil // message finalized but ID lookup failed — non-fatal
+		return 0, nil //nolint:nilerr // message finalized but ID lookup failed — non-fatal
 	}
 	return msgID, nil
 }

@@ -36,8 +36,10 @@ type ACPConnectionPool struct {
 	done    chan struct{}            // closed on StopAll
 }
 
-var globalPool *ACPConnectionPool
-var globalPoolOnce sync.Once
+var (
+	globalPool     *ACPConnectionPool
+	globalPoolOnce sync.Once
+)
 
 // GetACPConnectionPool returns the singleton connection pool.
 func GetACPConnectionPool() *ACPConnectionPool {
@@ -260,10 +262,10 @@ type ACPConnEntry struct {
 	// and re-emitted for every ExecuteStream call (not just new sessions).
 	// This ensures the frontend always has up-to-date mode/command state,
 	// even after page refreshes or SSE reconnections.
-	cachedModeState            *ModeState
-	cachedConfigState          *ConfigOptionState
-	cachedThinkingEffortState  *ThinkingEffortState
-	cachedModelListState       *ModelListState
+	cachedModeState           *ModeState
+	cachedConfigState         *ConfigOptionState
+	cachedThinkingEffortState *ThinkingEffortState
+	cachedModelListState      *ModelListState
 
 	// persistDebounce timer for batching ACP state DB writes
 	persistTimer *time.Timer
@@ -361,14 +363,15 @@ func (e *ACPConnEntry) spawnLocked(ctx context.Context) error {
 	}
 	cmd.Stderr = &strings.Builder{}
 
-	slog.Info("acp pool: spawning agent process",
+	slog.Info(
+		"acp pool: spawning agent process",
 		"agent_id", e.agent.ID,
 		"command", cmdName,
 		"args", cmdArgs,
 	)
 
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("acp: start: %w", err)
+	if startErr := cmd.Start(); startErr != nil {
+		return fmt.Errorf("acp: start: %w", startErr)
 	}
 
 	// Create shared ACP client and connection
@@ -397,7 +400,8 @@ func (e *ACPConnEntry) spawnLocked(ctx context.Context) error {
 		return fmt.Errorf("acp: initialize: %w", err)
 	}
 
-	slog.Info("acp pool: agent initialized",
+	slog.Info(
+		"acp pool: agent initialized",
 		"agent_id", e.agent.ID,
 		"protocol_version", initResp.ProtocolVersion,
 	)

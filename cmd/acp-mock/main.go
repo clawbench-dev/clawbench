@@ -54,12 +54,12 @@ const (
 
 // Thinking effort constants
 const (
-	effortLow      = "low"
-	effortMedium   = "medium"
-	effortHigh     = "high"
-	effortLowName  = "Low"
+	effortLow        = "low"
+	effortMedium     = "medium"
+	effortHigh       = "high"
+	effortLowName    = "Low"
 	effortMediumName = "Medium"
-	effortHighName = "High"
+	effortHighName   = "High"
 )
 
 func (a *mockACPAgent) Initialize(ctx context.Context, params acp.InitializeRequest) (acp.InitializeResponse, error) {
@@ -219,7 +219,7 @@ func (a *mockACPAgent) Prompt(_ context.Context, params acp.PromptRequest) (acp.
 
 	if err := a.simulateTurn(ctx, sid, params, mode); err != nil {
 		if ctx.Err() != nil {
-			return acp.PromptResponse{StopReason: acp.StopReasonCancelled}, nil
+			return acp.PromptResponse{StopReason: acp.StopReasonCancelled}, nil //nolint:nilerr // context cancellation is not an error, return cancelled response
 		}
 		return acp.PromptResponse{}, err
 	}

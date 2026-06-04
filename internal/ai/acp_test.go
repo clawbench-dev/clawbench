@@ -19,8 +19,8 @@ import (
 func TestMapACPToolCall_BasicFields(t *testing.T) {
 	tc := acp.SessionUpdateToolCall{
 		ToolCallId: acp.ToolCallId("tc-123"),
-		Title:     "Read",
-		Kind:      acp.ToolKindRead,
+		Title:      "Read",
+		Kind:       acp.ToolKindRead,
 	}
 	event := mapACPToolCall(tc)
 
@@ -34,9 +34,9 @@ func TestMapACPToolCall_BasicFields(t *testing.T) {
 func TestMapACPToolCall_WithRawInput(t *testing.T) {
 	tc := acp.SessionUpdateToolCall{
 		ToolCallId: acp.ToolCallId("tc-456"),
-		Title:     "Write",
-		Kind:      acp.ToolKindEdit,
-		RawInput:  map[string]any{"path": "/tmp/test.txt", "content": "hello"},
+		Title:      "Write",
+		Kind:       acp.ToolKindEdit,
+		RawInput:   map[string]any{"path": "/tmp/test.txt", "content": "hello"},
 	}
 	event := mapACPToolCall(tc)
 
@@ -48,8 +48,8 @@ func TestMapACPToolCall_WithRawInput(t *testing.T) {
 func TestMapACPToolCall_NoTitleUsesKind(t *testing.T) {
 	tc := acp.SessionUpdateToolCall{
 		ToolCallId: acp.ToolCallId("tc-789"),
-		Title:     "",
-		Kind:      acp.ToolKindRead,
+		Title:      "",
+		Kind:       acp.ToolKindRead,
 	}
 	event := mapACPToolCall(tc)
 	// Kind fallback now maps to PascalCase canonical name, not lowercase string(kind)
@@ -264,8 +264,8 @@ func TestMapACPSessionUpdate_PlanUpdate(t *testing.T) {
 
 func TestNewACPBackend_InvalidTransport(t *testing.T) {
 	agent := &model.Agent{
-		ID:       "test",
-		Backend:  "claude",
+		ID:        "test",
+		Backend:   "claude",
 		Transport: "cli",
 	}
 	_, err := NewACPBackend(agent)
@@ -953,8 +953,8 @@ func TestExtractACPToolOutput_Map_NestedValue(t *testing.T) {
 func TestExtractACPToolOutput_Map_EmptyValue(t *testing.T) {
 	// Empty string values in priority keys should be skipped, falling to next key
 	result := extractACPToolOutput(map[string]any{
-		"result":  "",
-		"output":  "fallback",
+		"result": "",
+		"output": "fallback",
 	})
 	assert.Equal(t, "fallback", result)
 }
@@ -1020,7 +1020,7 @@ func TestTruncateToolOutput_Empty(t *testing.T) {
 // drainACPEvents reads exactly count events from ch, failing the test if fewer are available.
 func drainACPEvents(ch chan StreamEvent, count int) []StreamEvent {
 	events := make([]StreamEvent, 0, count)
-	for i := 0; i < count; i++ {
+	for range count {
 		select {
 		case event := <-ch:
 			events = append(events, event)

@@ -280,7 +280,7 @@ func TestClawBenchACPClient_RequestPermission_NoRoute_AutoCancel(t *testing.T) {
 		ToolCall: acp.ToolCallUpdate{
 			ToolCallId: acp.ToolCallId("tc-1"),
 			Title:      &title,
-			Kind:       (*acp.ToolKind)(&[]acp.ToolKind{acp.ToolKindRead}[0]),
+			Kind:       &[]acp.ToolKind{acp.ToolKindRead}[0],
 		},
 		Options: []acp.PermissionOption{
 			{Name: "Allow once", Kind: acp.PermissionOptionKindAllowOnce, OptionId: "allow-once"},

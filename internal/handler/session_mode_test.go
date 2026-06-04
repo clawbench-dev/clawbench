@@ -161,7 +161,7 @@ func TestServeSessionMode_InvalidJSON(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := httptest.NewRequest(http.MethodPost, "/api/ai/session/mode", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/ai/session/mode", http.NoBody)
 	req.Header.Set("Content-Type", "application/json")
 	req = withProjectCookie(req, env.ProjectDir)
 	w := callHandler(ServeSessionMode, req)

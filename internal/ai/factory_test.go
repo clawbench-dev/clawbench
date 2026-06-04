@@ -247,8 +247,8 @@ func TestNewBackendForAgent_CLITransport_FallsBack(t *testing.T) {
 
 	model.Agents = map[string]*model.Agent{
 		"test-cli": {
-			ID:       "test-cli",
-			Backend:  "claude",
+			ID:        "test-cli",
+			Backend:   "claude",
 			Transport: "cli",
 		},
 	}
