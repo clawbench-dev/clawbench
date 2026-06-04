@@ -1,7 +1,7 @@
 import { ref } from 'vue'
 import { apiGet } from '@/utils/api'
 import { gt } from '@/composables/useLocale'
-import { updateModeState, updateThinkingEffortState, updateCommandState } from '@/composables/useSessionIdentity.ts'
+import { updateModeState, updateThinkingEffortState, updateCommandState, currentAgentId } from '@/composables/useSessionIdentity.ts'
 
 // Singleton state — shared across the whole app
 const agents = ref<any[]>([])
@@ -27,19 +27,23 @@ async function loadAgents(force = false): Promise<void> {
                 defaultAgentId.value = data.defaultAgent
             }
             // Populate ACP mode/thinking/commands state from the agents response.
-            // This is the lightest way to get mode chips and slash commands before
-            // the first message — no extra HTTP request needed since /api/agents
-            // is already called on page load.
+            // Only populate for the CURRENT session's agent to avoid showing
+            // ACP features (mode chips, slash commands) when the user switches
+            // to a non-ACP backend. Other agents' ACP state will be loaded
+            // when the user switches sessions (via /api/ai/chat REST response
+            // or SSE events).
             if (data.acpStates) {
-                for (const [agentId, state] of Object.entries(data.acpStates)) {
-                    if (state.modeState?.availableModes?.length > 0) {
-                        updateModeState(state.modeState.currentModeId || '', state.modeState.availableModes)
+                const activeAgentId = currentAgentId.value
+                const activeState = activeAgentId ? data.acpStates[activeAgentId] : null
+                if (activeState) {
+                    if (activeState.modeState?.availableModes?.length > 0) {
+                        updateModeState(activeState.modeState.currentModeId || '', activeState.modeState.availableModes)
                     }
-                    if (state.thinkingEffortState?.availableLevels?.length > 0) {
-                        updateThinkingEffortState(state.thinkingEffortState.currentId || '', state.thinkingEffortState.availableLevels)
+                    if (activeState.thinkingEffortState?.availableLevels?.length > 0) {
+                        updateThinkingEffortState(activeState.thinkingEffortState.currentId || '', activeState.thinkingEffortState.availableLevels)
                     }
-                    if (Array.isArray(state.commands) && state.commands.length > 0) {
-                        updateCommandState(state.commands)
+                    if (Array.isArray(activeState.commands) && activeState.commands.length > 0) {
+                        updateCommandState(activeState.commands)
                     }
                 }
             }

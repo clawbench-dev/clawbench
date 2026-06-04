@@ -127,6 +127,7 @@ vi.mock('@/composables/useSessionIdentity', () => ({
   }),
   clearModeState: vi.fn(),
   clearCommandState: vi.fn(),
+  clearThinkingEffortState: vi.fn(),
   updateCommandState: vi.fn(),
 }))
 

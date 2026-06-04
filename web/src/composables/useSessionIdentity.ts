@@ -13,7 +13,7 @@ import { gt } from '@/composables/useLocale'
 const currentSessionId = ref('')
 const currentSessionTitle = ref('')
 const currentBackend = ref('')
-const currentAgentId = ref('')
+export const currentAgentId = ref('')
 const currentModelId = ref('')
 const currentModelName = ref('')
 const currentThinkingEffort = ref('')

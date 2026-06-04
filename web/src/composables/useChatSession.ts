@@ -3,7 +3,7 @@ import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
-import { clearModeState, updateModeState, clearCommandState, updateCommandState, updateThinkingEffortState } from '@/composables/useSessionIdentity.ts'
+import { clearModeState, updateModeState, clearCommandState, updateCommandState, updateThinkingEffortState, clearThinkingEffortState } from '@/composables/useSessionIdentity.ts'
 import { clearPlanState } from '@/composables/usePlanProgress'
 import { useAgents } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
@@ -293,10 +293,11 @@ export function useChatSession(options: UseChatSessionOptions) {
     // Clear stale blockAskQuestions from previous session
     Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
     Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
-    // Clear mode state from previous ACP session — will be repopulated by SSE mode_update
+    // Clear ACP state from previous session — will be repopulated by REST response
+    // or SSE events only if the new session's agent actually supports ACP.
     clearModeState()
-    // Clear slash commands from previous ACP session — will be repopulated by SSE commands_update
     clearCommandState()
+    clearThinkingEffortState()
     // Clear plan progress from previous session — will be repopulated by SSE plan_update
     clearPlanState()
     try {
@@ -384,8 +385,11 @@ export function useChatSession(options: UseChatSessionOptions) {
       currentAgentId.value = data.agentId || agentId || ''
       syncModelFromData(currentAgentId.value, '')
       currentThinkingEffort.value = identity.loadThinkingPref(currentAgentId.value) || ''
-      // Clear ACP slash commands for new session (will be populated from /api/agents or SSE)
+      // Clear ACP state for new session — will be populated from /api/agents or SSE
+      // only if the new session's agent actually supports ACP.
+      clearModeState()
       clearCommandState()
+      clearThinkingEffortState()
       messages.value = []
       totalMessages.value = 0
       lastMessageSnapshot = ''  // New session — no messages yet
