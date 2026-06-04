@@ -75,7 +75,8 @@ func levelFromKind(kind string) int {
 func getOrCreateTagger(entry *grammars.LangEntry) (*cachedTagger, error) {
 	name := entry.Name
 	if cached, ok := taggerCache.Load(name); ok {
-		return cached.(*cachedTagger), nil
+		ct, _ := cached.(*cachedTagger)
+		return ct, nil
 	}
 
 	tagsQuery := grammars.ResolveTagsQuery(*entry)
