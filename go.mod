@@ -3,7 +3,7 @@ module clawbench
 go 1.25.0
 
 require (
-	github.com/coder/acp-go-sdk v0.0.0
+	github.com/coder/acp-go-sdk v0.13.5
 	github.com/coder/websocket v1.8.14
 	github.com/creack/pty v1.1.24
 	github.com/fsnotify/fsnotify v1.10.1
@@ -35,5 +35,3 @@ require (
 	modernc.org/mathutil v1.6.0 // indirect
 	modernc.org/memory v1.8.0 // indirect
 )
-
-replace github.com/coder/acp-go-sdk => ./acp-go-sdk
