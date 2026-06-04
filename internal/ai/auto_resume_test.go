@@ -511,6 +511,96 @@ func TestAutoResume_FirstStreamClosedWithoutDone(t *testing.T) {
 
 // --- forwardEvent tests ---
 
+func TestAutoResume_OuterCancelDuringDrain(t *testing.T) {
+	// ISS-296: After cancelling inner CLI on ExitPlanMode, the drain loop
+	// must respect ctx.Done() instead of blocking indefinitely on innerCh.
+	// Use a slow-draining backend: after ExitPlanMode, the inner channel
+	// blocks (simulating an unresponsive CLI process).
+	slowDrainCh := make(chan StreamEvent)
+	backend := &slowDrainBackend{
+		firstEvents: []StreamEvent{
+			{Type: "content", Content: "planning..."},
+			{Type: "tool_use", Tool: &ToolCall{Name: "ExitPlanMode", ID: "1", Done: true}},
+		},
+		drainCh: slowDrainCh,
+	}
+
+	wrapper := &AutoResumeBackend{inner: backend}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	ch, err := wrapper.ExecuteStream(ctx, ChatRequest{SessionID: "test"})
+	assert.NoError(t, err)
+
+	// Drain Phase 1 events until resume_split
+	gotResumeSplit := false
+	for !gotResumeSplit {
+		event, ok := <-ch
+		if !ok {
+			t.Fatal("channel closed unexpectedly before drain")
+		}
+		if event.Type == "resume_split" {
+			gotResumeSplit = true
+		}
+	}
+
+	// Now the drain loop is running. Cancel the outer context.
+	// Before ISS-296 fix, this would block indefinitely because the drain
+	// loop used `range innerCh` without checking ctx.Done().
+	cancel()
+
+	// The outer channel should close promptly (within 2s)
+	select {
+	case _, ok := <-ch:
+		assert.False(t, ok, "channel should be closed after outer cancel during drain")
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout: outer channel did not close after cancel during drain — drain loop may be blocking on innerCh without ctx.Done() check (ISS-296)")
+	}
+}
+
+// slowDrainBackend returns firstEvents in the first stream, then keeps the channel
+// open with a separate drainCh for simulating slow/unresponsive CLI after ExitPlanMode.
+type slowDrainBackend struct {
+	name        string
+	firstEvents []StreamEvent
+	drainCh     chan StreamEvent
+	callCount   int
+	mu          sync.Mutex
+}
+
+func (b *slowDrainBackend) Name() string { return b.name }
+
+func (b *slowDrainBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) {
+	b.mu.Lock()
+	idx := b.callCount
+	b.callCount++
+	b.mu.Unlock()
+
+	outCh := make(chan StreamEvent)
+
+	if idx == 0 {
+		go func() {
+			defer close(outCh)
+			// Send first events (including ExitPlanMode)
+			for _, e := range b.firstEvents {
+				outCh <- e
+			}
+			// Then block on drainCh (simulates unresponsive CLI)
+			select {
+			case e, ok := <-b.drainCh:
+				if ok {
+					outCh <- e
+				}
+			case <-ctx.Done():
+			}
+		}()
+	} else {
+		// Resume stream: just close immediately
+		close(outCh)
+	}
+
+	return outCh, nil
+}
+
 func TestForwardEvent_ChannelFull(t *testing.T) {
 	// Create a channel with buffer size 1 and fill it
 	ch := make(chan StreamEvent, 1)
