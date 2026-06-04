@@ -759,6 +759,31 @@ func (e *ACPConnEntry) GetClient() *ClawBenchACPClient {
 	return e.client
 }
 
+// SetEntryForTest injects a pool entry for testing. Production code must not use this.
+func (p *ACPConnectionPool) SetEntryForTest(agentID string, entry *ACPConnEntry) {
+	p.mu.Lock()
+	p.entries[agentID] = entry
+	p.mu.Unlock()
+}
+
+// SetClientForTest injects a client into the entry for testing. Production code must not use this.
+func (e *ACPConnEntry) SetClientForTest(client *ClawBenchACPClient) {
+	e.mu.Lock()
+	e.client = client
+	e.mu.Unlock()
+}
+
+// SetSessionMappingForTest injects a ClawBench→ACP session mapping for testing.
+// Production code must not use this.
+func (e *ACPConnEntry) SetSessionMappingForTest(clawbenchSID, acpSID string) {
+	e.mu.Lock()
+	if e.sessions == nil {
+		e.sessions = make(map[string]string)
+	}
+	e.sessions[clawbenchSID] = acpSID
+	e.mu.Unlock()
+}
+
 // Close kills the agent process and marks the entry as dead.
 func (e *ACPConnEntry) Close() {
 	e.mu.Lock()

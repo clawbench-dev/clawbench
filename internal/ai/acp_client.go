@@ -267,6 +267,24 @@ func (c *ClawBenchACPClient) RequestPermission(ctx context.Context, p acp.Reques
 	}
 }
 
+// RegisterPendingPermissionForTest injects a pending permission entry for testing.
+// Production code must not use this.
+func (c *ClawBenchACPClient) RegisterPendingPermissionForTest(key string, pp *PendingPermissionForTest) {
+	c.mu.Lock()
+	c.pendingPermission[key] = &pendingPermission{
+		SessionID:  pp.SessionID,
+		ToolCallID: pp.ToolCallID,
+		Ch:         make(chan acp.RequestPermissionResponse, 1),
+	}
+	c.mu.Unlock()
+}
+
+// PendingPermissionForTest is the test-visible version of pendingPermission.
+type PendingPermissionForTest struct {
+	SessionID  string
+	ToolCallID string
+}
+
 // RespondPermission delivers a user's response to a pending permission request.
 // Called by the HTTP handler when the frontend submits the user's choice.
 // Returns false if no pending request was found for this key.
