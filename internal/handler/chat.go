@@ -750,6 +750,11 @@ func finalizeStreamRun(
 	// tool names like "/commit" (model confuses slash commands with tools).
 	blocks = removeRejectedToolBlocks(blocks)
 
+	// Merge fragmented thinking blocks produced by ACP backends.
+	// ACP agents interleave AgentThoughtChunk and ToolCall events, causing
+	// many tiny thinking blocks separated by tool_use. Consolidate them.
+	blocks = ai.MergeConsecutiveThinkingBlocks(blocks)
+
 	// Compute wall-clock duration and inject into metadata
 	wallMs := int(time.Since(wallStart).Milliseconds())
 	if responseMetadata == nil {

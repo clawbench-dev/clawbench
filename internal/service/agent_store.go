@@ -124,6 +124,10 @@ func SaveAgent(db DBExec, agent *model.Agent) error {
 	if err != nil {
 		return fmt.Errorf("marshal models: %w", err)
 	}
+	// json.Marshal(nil slice) produces "null" instead of "[]" — normalize to "[]"
+	if string(modelsJSON) == "null" {
+		modelsJSON = []byte("[]")
+	}
 	levelsJSON, err := json.Marshal(agent.ThinkingEffortLevels)
 	if err != nil {
 		return fmt.Errorf("marshal thinking_effort_levels: %w", err)

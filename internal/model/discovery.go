@@ -669,7 +669,14 @@ func DiscoverClaudeModels() []AgentModel { //nolint:gocyclo // binary scanning m
 	// Resolve the real path for the claude binary, handling Windows .cmd wrappers
 	path := platform.ResolveCLIPath("claude")
 	if path == "" {
-		return nil
+		// Claude binary not found — fall back to known defaults
+		models := make([]AgentModel, len(claudeDefaultModels))
+		copy(models, claudeDefaultModels)
+		if len(models) > 0 {
+			models[0].Default = true
+		}
+		slog.Info("claude model discovery: binary not found, using defaults", "models", len(models))
+		return models
 	}
 
 	// Extract printable strings from the binary (cross-platform replacement for
@@ -742,10 +749,27 @@ func DiscoverClaudeModels() []AgentModel { //nolint:gocyclo // binary scanning m
 		}
 	}
 
+	// If binary scanning found no models, fall back to known defaults
+	if len(models) == 0 {
+		models = make([]AgentModel, len(claudeDefaultModels))
+		copy(models, claudeDefaultModels)
+		if len(models) > 0 {
+			models[0].Default = true
+		}
+		slog.Info("claude model discovery: binary scan found nothing, using defaults", "models", len(models))
+		return models
+	}
+
 	return models
 }
 
-// deepseekModelLineRe matches lines like "  deepseek-v4-flash (deepseek)" or "* deepseek-v4-pro (deepseek)"
+// claudeDefaultModels lists known Claude models as a fallback when binary
+// scanning fails (e.g. claude CLI not found or ExtractStrings returns nothing).
+var claudeDefaultModels = []AgentModel{
+	{ID: "claude-sonnet-4-20250514", Name: "Claude Sonnet 4"},
+	{ID: "claude-opus-4-20250514", Name: "Claude Opus 4"},
+	{ID: "claude-haiku-3-5-20241022", Name: "Claude 3.5 Haiku"},
+}
 var deepseekModelLineRe = regexp.MustCompile(`^(\*?)\s*(\S+)\s+\((\S+)\)`)
 
 // deepseekDefaultRe extracts the default model from the header line.
@@ -1654,6 +1678,10 @@ func saveAgentToDB(db *sql.DB, agent *Agent) error {
 	if err != nil {
 		return fmt.Errorf("marshal models: %w", err)
 	}
+	// json.Marshal(nil slice) produces "null" instead of "[]" — normalize to "[]"
+	if string(modelsJSON) == "null" {
+		modelsJSON = []byte("[]")
+	}
 	levelsJSON, err := json.Marshal(agent.ThinkingEffortLevels)
 	if err != nil {
 		return fmt.Errorf("marshal thinking_effort_levels: %w", err)
@@ -1755,7 +1783,7 @@ func MergeDiscoveredDataDB(db *sql.DB, cacheDir string, present map[string]bool)
 	}
 
 	// Step 3: Fill Models from cache for agents with empty models
-	rows, err = db.Query("SELECT id, backend, models FROM agents WHERE models = '[]' AND models_auto_detected = 0")
+	rows, err = db.Query("SELECT id, backend, COALESCE(models, '[]') FROM agents WHERE (models IS NULL OR models = '[]' OR models = 'null') AND models_auto_detected = 0")
 	if err != nil {
 		slog.Warn("failed to query agents for model fill", "error", err)
 		return

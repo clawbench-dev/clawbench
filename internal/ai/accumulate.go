@@ -110,3 +110,43 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 		*blocks = append(*blocks, model.ContentBlock{Type: "warning", Text: event.Error, Reason: event.Reason})
 	}
 }
+
+// MergeConsecutiveThinkingBlocks merges adjacent thinking blocks, including
+// across tool_use boundaries. ACP agents interleave AgentThoughtChunk and
+// ToolCall events, causing many small thinking fragments separated by
+// tool_use blocks. This post-processing step consolidates them into fewer
+// blocks: all thinking before the first non-thinking block merges into one,
+// all thinking between non-thinking blocks merges, etc.
+//
+// Call this after streaming completes (before DB serialization) to clean up
+// fragmented thinking blocks produced by ACP backends.
+func MergeConsecutiveThinkingBlocks(blocks []model.ContentBlock) []model.ContentBlock {
+	if len(blocks) <= 1 {
+		return blocks
+	}
+	var result []model.ContentBlock
+	var currentThinking *model.ContentBlock
+
+	flushThinking := func() {
+		if currentThinking != nil && currentThinking.Text != "" {
+			result = append(result, *currentThinking)
+			currentThinking = nil
+		}
+	}
+
+	for _, b := range blocks {
+		if b.Type == "thinking" {
+			if currentThinking != nil {
+				currentThinking.Text += b.Text
+			} else {
+				bCopy := b
+				currentThinking = &bCopy
+			}
+		} else {
+			flushThinking()
+			result = append(result, b)
+		}
+	}
+	flushThinking()
+	return result
+}

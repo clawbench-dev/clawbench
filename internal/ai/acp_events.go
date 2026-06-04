@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	acp "github.com/coder/acp-go-sdk"
 )
@@ -159,12 +160,45 @@ func mapACPToolCallUpdate(tcu acp.SessionToolCallUpdate) StreamEvent {
 }
 
 // extractToolName returns a canonical tool name from an ACP tool call.
-// Uses the title field, falling back to kind string.
+// ACP tool titles are human-readable descriptions (e.g. "Read file contents")
+// but the frontend expects canonical names (e.g. "Read") for icon matching
+// and input formatting. We try prefix matching first, then fall back.
 func extractToolName(title string, kind acp.ToolKind) string {
 	if title != "" {
-		return title
+		// Try matching title against known canonical tool name prefixes
+		for _, p := range acpToolNamePatterns {
+			if strings.HasPrefix(title, p.prefix) {
+				return p.canonical
+			}
+		}
+		// If title is a single word (no spaces), use it directly — it may already be canonical
+		if !strings.Contains(title, " ") {
+			return title
+		}
 	}
 	return string(kind)
+}
+
+// acpToolNamePatterns maps ACP tool title prefixes to canonical tool names.
+// ACP agents send titles like "Read file contents", "Edit file", "Run command"
+// but the frontend expects "Read", "Edit", "Bash" for icon/summary matching.
+var acpToolNamePatterns = []struct{ prefix, canonical string }{
+	{"NotebookEdit", "NotebookEdit"},
+	{"TodoWrite", "TodoWrite"},
+	{"TodoRead", "TodoRead"},
+	{"WebSearch", "WebSearch"},
+	{"WebFetch", "WebFetch"},
+	{"Read", "Read"},
+	{"Write", "Write"},
+	{"Edit", "Edit"},
+	{"Bash", "Bash"},
+	{"Glob", "Glob"},
+	{"Grep", "Grep"},
+	{"LS", "LS"},
+	{"List", "LS"},
+	{"MultiEdit", "MultiEdit"},
+	{"Agent", "Agent"},
+	{"AskUserQuestion", "AskUserQuestion"},
 }
 
 // mapACPError maps a JSON-RPC error code to a StreamEvent.
