@@ -1,15 +1,24 @@
 <template>
   <pre class="raw-content-pre" :class="{ 'word-wrap': wordWrap, 'no-line-num': !showLineNumbers }" ref="codeRef" :data-file-path="filePath" :data-language="language" @click="handleClick">
+    <div v-if="stickyLines.length > 0 && !wordWrap" class="sticky-scroll-overlay" :ref="onOverlayMounted">
+      <div v-for="s in stickyLines" :key="s.lineNum" class="sticky-line"
+        :data-line="s.lineNum" :style="{ top: s.top * stickyLineHeight + 'px' }"
+        @click="handleStickyClick(s.lineNum)">
+        <span v-if="showLineNumbers" class="sticky-line-num">{{ s.lineNum }}</span>
+        <span class="sticky-code-text" v-html="getStickyLineHtml(s.lineNum)" />
+      </div>
+    </div>
     <code v-html="codeHtml" />
   </pre>
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, nextTick } from 'vue'
 import { hljs } from '@/utils/globals.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
+import { useStickyScroll } from '@/composables/useStickyScroll.ts'
 
 const props = defineProps({
     /** Raw file content */
@@ -26,12 +35,46 @@ const props = defineProps({
     flashRanges: { type: Array, default: () => [] },
     /** Flash type: 'delete' (red) or 'add' (blue) */
     flashType: { type: String, default: 'add' },
+    /** Enable VS Code-style sticky scroll */
+    stickyScroll: { type: Boolean, default: true },
 })
 
 const codeHtml = ref('')
 const codeRef = ref(null)
 
 const quoteQuestion = useQuoteQuestion()
+
+// Sticky scroll
+const { stickyLines, initSticky, teardownSticky, invalidateCache, setOverlayEl } = useStickyScroll()
+const stickyLineHeight = 20.8  // matches code line height (13px * 1.6)
+const lineHtmlCache = new Map()
+
+function onOverlayMounted(el) {
+    setOverlayEl(el)
+}
+
+function getStickyLineHtml(lineNum) {
+    if (lineHtmlCache.has(lineNum)) return lineHtmlCache.get(lineNum)
+    const lineEls = codeRef.value?.querySelectorAll(':scope > code > .code-line')
+    if (!lineEls) return ''
+    const el = lineEls[lineNum - 1]
+    if (!el) return ''
+    const codeText = el.querySelector('.code-text')
+    const html = codeText?.innerHTML || ''
+    lineHtmlCache.set(lineNum, html)
+    return html
+}
+
+function handleStickyClick(lineNum) {
+    const lineEls = codeRef.value?.querySelectorAll(':scope > code > .code-line')
+    if (!lineEls) return
+    const el = lineEls[lineNum - 1]
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    // Flash animation
+    el.classList.add('line-flash')
+    setTimeout(() => el.classList.remove('line-flash'), 1200)
+}
 
 const { handleDblClick } = useDoubleClickCopy({
     lineSelector: '.code-line',
@@ -133,10 +176,17 @@ function renderCode(content, lang, showNums) {
 function doRender(content) {
     if (!content) return
     codeHtml.value = renderCode(content, props.language, props.showLineNumbers)
+    lineHtmlCache.clear()
+    invalidateCache()
+    nextTick(() => {
+        if (props.stickyScroll && props.filePath && codeRef.value) {
+            initSticky(props.filePath, codeRef.value)
+        }
+    })
 }
 
 watch(
-    [() => props.content, () => props.showLineNumbers, () => props.flashRanges, () => props.flashType],
+    [() => props.content, () => props.showLineNumbers, () => props.flashRanges, () => props.flashType, () => props.stickyScroll],
     () => doRender(props.content),
     { immediate: true }
 )
@@ -231,6 +281,66 @@ pre :deep(code) {
 .raw-content-pre.word-wrap :deep(code .line-num) {
     position: static;
     border-right: 1px solid var(--border-color);
+}
+
+/* Sticky scroll overlay */
+.raw-content-pre :deep(.sticky-scroll-overlay) {
+    position: sticky;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 0;
+    z-index: 2;
+    pointer-events: none;
+}
+
+.raw-content-pre :deep(.sticky-line) {
+    display: flex;
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 20.8px;
+    background: var(--code-bg);
+    border-bottom: 1px solid var(--border-color);
+    border-left: 2px solid var(--accent-color);
+    opacity: 0.92;
+    cursor: pointer;
+    font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace;
+    pointer-events: auto;
+    font-size: 13px;
+    line-height: 20.8px;
+}
+
+.raw-content-pre :deep(.sticky-line:hover) {
+    opacity: 1;
+    background: var(--bg-tertiary);
+}
+
+.raw-content-pre :deep(.sticky-line-num) {
+    min-width: 48px;
+    padding-right: 12px;
+    text-align: right;
+    user-select: none;
+    color: var(--text-muted);
+    opacity: 0.5;
+    font-size: 13px;
+    line-height: 20.8px;
+    border-right: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+.raw-content-pre :deep(.sticky-code-text) {
+    white-space: pre;
+    padding-left: 12px;
+    font-size: 13px;
+    line-height: 20.8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Disable sticky scroll in word-wrap mode */
+.raw-content-pre.word-wrap :deep(.sticky-scroll-overlay) {
+    display: none;
 }
 
 /* No line numbers mode */

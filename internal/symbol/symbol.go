@@ -137,8 +137,8 @@ func ExtractSymbols(filename string, content []byte) SymbolResult {
 		symbols = append(symbols, Symbol{
 			Name:    tag.Name,
 			Kind:    displayKind,
-			Line:    int(tag.NameRange.StartPoint.Row) + 1,
-			EndLine: int(tag.NameRange.EndPoint.Row) + 1,
+			Line:    int(tag.Range.StartPoint.Row) + 1,
+			EndLine: int(tag.Range.EndPoint.Row) + 1,
 			Level:   levelFromKind(displayKind),
 		})
 	}
