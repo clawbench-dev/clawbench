@@ -37,6 +37,17 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		event := mapACPToolCallUpdate(*tcu)
 		forwardACPEvent(ch, event)
 
+		// When a think tool completes, also emit thinking_done so the frontend
+		// can stop the thinking spinner immediately — without this, the spinner
+		// stays until the entire AI response finishes because thinking blocks
+		// have no per-block "done" signal.
+		if tcu.Kind != nil && *tcu.Kind == acp.ToolKindThink && tcu.Status != nil {
+			switch *tcu.Status {
+			case acp.ToolCallStatusCompleted, acp.ToolCallStatusFailed:
+				forwardACPEvent(ch, StreamEvent{Type: "thinking_done"})
+			}
+		}
+
 	case update.Plan != nil:
 		entries := make([]PlanEntry, 0, len(update.Plan.Entries))
 		for _, e := range update.Plan.Entries {

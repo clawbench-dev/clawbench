@@ -352,6 +352,22 @@ export function useChatStream(options: UseChatStreamOptions) {
       }
     })
 
+    // ACP think tool completed — mark the last thinking block as done
+    // so the spinner disappears immediately instead of waiting for the
+    // entire AI response to finish.
+    eventSource.addEventListener('thinking_done', () => {
+      if (!guard()) return
+      const blocks = streamingMsg.blocks
+      // Mark the last thinking block as done
+      for (let i = blocks.length - 1; i >= 0; i--) {
+        if (blocks[i].type === 'thinking') {
+          blocks[i].done = true
+          break
+        }
+      }
+      onRenderNeeded()
+    })
+
     eventSource.addEventListener('tool_use', (e) => {
       if (!guard()) return // Check guard first to prevent stale events corrupting new session (ISS-304)
       resetStreamTimeout()

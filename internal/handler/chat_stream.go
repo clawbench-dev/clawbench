@@ -138,6 +138,8 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 			case "thinking":
 				data, _ := json.Marshal(map[string]string{"text": event.Content})
 				fmt.Fprintf(w, "event: thinking\ndata: %s\n\n", data)
+			case "thinking_done":
+				fmt.Fprintf(w, "event: thinking_done\ndata: {}\n\n")
 			case "tool_use":
 				if event.Tool != nil {
 					var input any

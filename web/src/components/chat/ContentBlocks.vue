@@ -252,10 +252,12 @@ function handleThinkingClick(block, bi) {
 }
 
 /** Whether a thinking block should show inline streaming content.
- *  Thinking blocks don't have a `done` property (unlike tool_use), so we rely
- *  on the message-level `streaming` prop. All thinking blocks in a streaming
- *  message are considered "streaming" and show inline content. */
+ *  Thinking blocks can be marked as done via the `thinking_done` SSE event
+ *  (ACP backend), which sets `block.done = true`. When explicitly done, the
+ *  spinner and inline content should hide immediately. Otherwise, fall back
+ *  to the message-level `streaming` prop. */
 function isThinkingStreaming(block) {
+  if (block.done) return false
   return props.streaming
 }
 
@@ -431,6 +433,48 @@ watch(() => props.streaming, (streaming, wasStreaming) => {
     blockHtmlCache.value = {}
     // Trigger collapse animation for thinking blocks that were streaming
     nextTick(() => startThinkingCollapse())
+  }
+})
+
+// Watch for thinking blocks that become "done" mid-stream (via thinking_done SSE event).
+// This triggers the collapse animation immediately instead of waiting for streaming to end.
+watch(() => props.blocks.filter(b => b.type === 'thinking' && b.done).map(b => b.done), (newDones, oldDones) => {
+  if (!props.streaming) return // Only relevant during streaming
+  // Find thinking blocks that just became done (newly true)
+  const newCollapsing = {}
+  const newMaxHeights = {}
+  let changed = false
+  for (let i = 0; i < props.blocks.length; i++) {
+    const block = props.blocks[i]
+    if (block.type === 'thinking' && block.done) {
+      const el = _collapseElRefs[i]
+      if (el && el.scrollHeight && !collapsingThinking.value[i]) {
+        newCollapsing[i] = true
+        newMaxHeights[i] = el.scrollHeight
+        changed = true
+      }
+    }
+  }
+  if (changed) {
+    // Remove from refs so they don't get double-collapsed
+    for (const idx of Object.keys(newCollapsing)) {
+      delete _collapseElRefs[idx]
+    }
+    Object.assign(collapsingThinking.value, newCollapsing)
+    Object.assign(collapsingMaxHeight.value, newMaxHeights)
+    requestAnimationFrame(() => {
+      const updatedMaxHeights = {}
+      Object.keys(newCollapsing).forEach(idx => {
+        updatedMaxHeights[idx] = 28
+      })
+      Object.assign(collapsingMaxHeight.value, updatedMaxHeights)
+      setTimeout(() => {
+        for (const idx of Object.keys(newCollapsing)) {
+          delete collapsingThinking.value[idx]
+          delete collapsingMaxHeight.value[idx]
+        }
+      }, 400)
+    })
   }
 })
 
