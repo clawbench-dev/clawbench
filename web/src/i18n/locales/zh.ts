@@ -82,7 +82,7 @@ export default {
       placeholder: '输入消息...',
       placeholderQueue: '输入消息加入队列...',
       placeholderOptional: '添加描述（可选）...',
-      placeholderQuickSend: '点击⚡按钮，发送预设指令 →',
+      placeholderQuickSend: '点击⚡选指令 →',
       placeholderAtCommand: "输入 {'@'} 执行内置命令",
       send: '发送',
       enqueue: '加入队列',
@@ -147,6 +147,7 @@ export default {
     },
     quickSend: {
       title: '快捷发送',
+      tapToFill: '长按发送',
       edit: '编辑',
       addItem: '添加项目',
       editItem: '编辑项目',

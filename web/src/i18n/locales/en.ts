@@ -82,7 +82,7 @@ export default {
       placeholder: 'Type a message...',
       placeholderQueue: 'Type a message to enqueue...',
       placeholderOptional: 'Add description (optional)...',
-      placeholderQuickSend: 'Tap ⚡ to send preset commands →',
+      placeholderQuickSend: 'Tap ⚡ for quick commands →',
       placeholderAtCommand: "Type {'@'} for built-in commands",
       send: 'Send',
       enqueue: 'Enqueue',
@@ -147,6 +147,7 @@ export default {
     },
     quickSend: {
       title: 'Quick send',
+      tapToFill: 'Hold to send',
       edit: 'Edit',
       addItem: 'Add item',
       editItem: 'Edit item',

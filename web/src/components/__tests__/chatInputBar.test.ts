@@ -64,7 +64,7 @@ const i18n = createI18n({
           placeholder: '输入消息…',
           placeholderQueue: '排队消息…',
           placeholderOptional: '添加描述（可选）',
-          placeholderQuickSend: '点击可执行快捷指令 →',
+          placeholderQuickSend: '点击⚡选指令 →',
           send: '发送',
           enqueue: '排队',
           quickMenu: '快捷指令',
@@ -79,7 +79,7 @@ const i18n = createI18n({
           uploadFile: '上传文件',
           openFile: '打开文件',
         },
-        quickSend: { title: '快捷发送', edit: '管理' },
+        quickSend: { title: '快捷发送', tapToFill: '长按发送', edit: '管理' },
         modelSwitcher: { title: '切换模型' },
         thinkingEffortSwitcher: { title: '思考强度', auto: '自动' },
       },
@@ -273,5 +273,38 @@ describe('ChatInputBar — clearInput exposed method', () => {
     await nextTick()
 
     expect(wrapper.find('.chat-textarea').element.value).toBe('')
+  })
+})
+
+describe('ChatInputBar — quick-send inject to input', () => {
+  it('injects text to input via injectToInput', async () => {
+    const wrapper = mountInputBar()
+    wrapper.vm.injectToInput('git status')
+    await nextTick()
+
+    expect(wrapper.find('.chat-textarea').element.value).toBe('git status')
+  })
+
+  it('appends text with newline when input already has content', async () => {
+    const wrapper = mountInputBar()
+    await wrapper.find('.chat-textarea').setValue('hello')
+    await nextTick()
+
+    wrapper.vm.injectToInput('git status')
+    await nextTick()
+
+    expect(wrapper.find('.chat-textarea').element.value).toBe('hello\ngit status')
+  })
+
+  it('replaces input when existing content is only whitespace', async () => {
+    const wrapper = mountInputBar()
+    await wrapper.find('.chat-textarea').setValue('   ')
+    await nextTick()
+
+    wrapper.vm.injectToInput('git status')
+    await nextTick()
+
+    // trim() makes the existing content empty, so no newline prefix
+    expect(wrapper.find('.chat-textarea').element.value).toBe('git status')
   })
 })
