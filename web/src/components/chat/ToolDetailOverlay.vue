@@ -1025,6 +1025,10 @@ function handleBodyClick(event) {
   color: var(--text-secondary);
 }
 .tool-detail-body .todo-read-icon { font-size: 14px; }
+.tool-detail-body .todo-read-label {
+  font-weight: 500;
+  color: var(--text-secondary);
+}
 
 /* Task tool */
 .tool-detail-body .task-tool-view {
@@ -1375,6 +1379,238 @@ function handleBodyClick(event) {
   word-break: break-word;
   flex: 1;
   min-width: 0;
+}
+
+/* AskUserQuestion */
+.tool-detail-body .ask-question-view {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.tool-detail-body .ask-question-empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+.tool-detail-body .ask-question-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+}
+.tool-detail-body .ask-question-header {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.tool-detail-body .ask-question-text {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.tool-detail-body .ask-question-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tool-detail-body .ask-question-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid var(--border-color);
+  transition: background 0.15s, border-color 0.15s;
+}
+.tool-detail-body .ask-question-option:hover {
+  background: color-mix(in srgb, var(--accent-color) 5%, transparent);
+  border-color: color-mix(in srgb, var(--accent-color) 30%, var(--border-color));
+}
+.tool-detail-body .ask-question-option.selected {
+  background: color-mix(in srgb, var(--accent-color) 8%, transparent);
+  border-color: var(--accent-color);
+}
+.tool-detail-body .ask-option-indicator {
+  flex-shrink: 0;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+.tool-detail-body .ask-question-option.selected .ask-option-indicator {
+  color: var(--accent-color);
+}
+.tool-detail-body .ask-option-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.tool-detail-body .ask-option-label {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.tool-detail-body .ask-option-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.tool-detail-body .ask-question-supplementary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 4px;
+}
+.tool-detail-body .ask-supplementary-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.tool-detail-body .ask-supplementary-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+}
+.tool-detail-body .ask-supplementary-input:focus {
+  border-color: var(--accent-color);
+}
+.tool-detail-body .ask-supplementary-input::placeholder {
+  color: var(--text-muted);
+}
+.tool-detail-body .ask-question-submit {
+  align-self: flex-end;
+  padding: 6px 16px;
+  border-radius: 4px;
+  border: none;
+  background: var(--accent-color);
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.tool-detail-body .ask-question-submit:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.tool-detail-body .ask-question-submit:not(:disabled):hover {
+  opacity: 0.9;
+}
+
+/* PermissionApproval */
+.tool-detail-body .permission-approval-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.tool-detail-body .permission-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tool-detail-body .permission-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.tool-detail-body .permission-title {
+  font-weight: 600;
+  color: #dc2626;
+}
+:root[data-theme="dark"] .tool-detail-body .permission-title {
+  color: #fca5a5;
+}
+.tool-detail-body .permission-tool-name {
+  font-weight: 600;
+  font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.tool-detail-body .permission-tool-detail {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+}
+.tool-detail-body .permission-detail-label {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+  line-height: 1.5;
+}
+:root[data-theme="dark"] .tool-detail-body .permission-detail-label {
+  background: rgba(248, 113, 113, 0.12);
+  color: #fca5a5;
+}
+.tool-detail-body .permission-tool-detail code {
+  font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
+  font-size: 12px;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+.tool-detail-body .permission-options {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tool-detail-body .permission-btn {
+  padding: 6px 14px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s, background 0.15s;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+.tool-detail-body .permission-btn:hover {
+  opacity: 0.85;
+}
+.tool-detail-body .permission-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+.tool-detail-body .permission-btn-allow {
+  background: rgba(34, 197, 94, 0.1);
+  border-color: rgba(34, 197, 94, 0.3);
+  color: #16a34a;
+}
+:root[data-theme="dark"] .tool-detail-body .permission-btn-allow {
+  background: rgba(74, 222, 128, 0.12);
+  border-color: rgba(74, 222, 128, 0.25);
+  color: #4ade80;
+}
+.tool-detail-body .permission-btn-reject {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.2);
+  color: #dc2626;
+}
+:root[data-theme="dark"] .tool-detail-body .permission-btn-reject {
+  background: rgba(248, 113, 113, 0.1);
+  border-color: rgba(248, 113, 113, 0.2);
+  color: #fca5a5;
 }
 
 /* Permission/ask question categories for overlay header */
