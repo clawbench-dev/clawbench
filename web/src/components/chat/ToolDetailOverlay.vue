@@ -960,4 +960,424 @@ function handleBodyClick(event) {
 .tool-detail-body pre a[href]:hover {
   text-decoration: underline;
 }
+
+/* ── New tool renderer styles ── */
+
+/* LS directory view */
+.tool-detail-body .ls-dir-view {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.tool-detail-body .ls-dir-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tool-detail-body .ls-dir-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.tool-detail-body .ls-dir-path {
+  font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-color);
+  word-break: break-all;
+}
+
+/* Todo write */
+.tool-detail-body .todo-write-view {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.tool-detail-body .todo-write-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tool-detail-body .todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 2px 0;
+}
+.tool-detail-body .todo-icon {
+  flex-shrink: 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.tool-detail-body .todo-content {
+  word-break: break-word;
+  color: var(--text-primary);
+}
+.tool-detail-body .todo-done .todo-icon { color: #16a34a; }
+.tool-detail-body .todo-active .todo-icon { color: #f59e0b; }
+.tool-detail-body .todo-pending .todo-icon { color: var(--text-muted); }
+.tool-detail-body .todo-done .todo-content { text-decoration: line-through; color: var(--text-muted); }
+.tool-detail-body .todo-active .todo-content { font-weight: 500; }
+
+/* Todo read */
+.tool-detail-body .todo-read-view {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.tool-detail-body .todo-read-icon { font-size: 14px; }
+
+/* Task tool */
+.tool-detail-body .task-tool-view {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.tool-detail-body .task-tool-field {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.tool-detail-body .task-field-label {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(245, 158, 11, 0.12);
+  color: #d97706;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+  line-height: 1.5;
+}
+:root[data-theme="dark"] .tool-detail-body .task-field-label {
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+}
+.tool-detail-body .task-field-value {
+  color: var(--text-primary);
+  word-break: break-word;
+}
+.tool-detail-body .task-tool-empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Mode switch */
+.tool-detail-body .mode-switch-view {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.tool-detail-body .mode-switch-icon { font-size: 14px; }
+.tool-detail-body .mode-switch-mode {
+  font-weight: 600;
+  color: var(--accent-color);
+  font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
+  font-size: 12px;
+}
+
+/* Worktree switch */
+.tool-detail-body .worktree-switch-view {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.tool-detail-body .worktree-switch-icon { font-size: 14px; }
+.tool-detail-body .worktree-switch-path {
+  font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-color);
+  word-break: break-all;
+}
+
+/* Send message */
+.tool-detail-body .send-message-view {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.tool-detail-body .send-message-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tool-detail-body .send-message-icon { font-size: 14px; }
+.tool-detail-body .send-message-recipient {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.tool-detail-body .send-message-content {
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 6px 10px;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+}
+
+/* Computer use */
+.tool-detail-body .computer-use-view {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.tool-detail-body .computer-use-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tool-detail-body .computer-use-icon { font-size: 14px; }
+.tool-detail-body .computer-use-action {
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(236, 72, 153, 0.12);
+  color: #db2777;
+}
+.tool-detail-body .computer-use-desc {
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Team tool */
+.tool-detail-body .team-tool-view {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.tool-detail-body .team-tool-icon { font-size: 14px; }
+.tool-detail-body .team-tool-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Chat reply */
+.tool-detail-body .chat-reply-view {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.tool-detail-body .chat-reply-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tool-detail-body .chat-reply-icon { font-size: 14px; }
+.tool-detail-body .chat-reply-recipient {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.tool-detail-body .chat-reply-message {
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 6px 10px;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+}
+
+/* Save memory */
+.tool-detail-body .save-memory-view {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.tool-detail-body .save-memory-icon { font-size: 14px; }
+.tool-detail-body .save-memory-key {
+  font-weight: 600;
+  font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
+  font-size: 12px;
+  color: #0891b2;
+}
+:root[data-theme="dark"] .tool-detail-body .save-memory-key {
+  color: #22d3ee;
+}
+.tool-detail-body .save-memory-value {
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 6px 10px;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+}
+
+/* Deep think */
+.tool-detail-body .deep-think-view {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.tool-detail-body .deep-think-icon { font-size: 14px; }
+.tool-detail-body .deep-think-topic {
+  font-weight: 500;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+/* Structured output */
+.tool-detail-body .structured-output-view {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.tool-detail-body .structured-output-icon { font-size: 14px; }
+.tool-detail-body .structured-output-prompt {
+  font-weight: 500;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+/* Skill manage */
+.tool-detail-body .skill-manage-view {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.tool-detail-body .skill-manage-icon { font-size: 14px; }
+.tool-detail-body .skill-manage-action {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(6, 182, 212, 0.12);
+  color: #0891b2;
+  font-weight: 600;
+}
+:root[data-theme="dark"] .tool-detail-body .skill-manage-action {
+  background: rgba(34, 211, 238, 0.15);
+  color: #22d3ee;
+}
+.tool-detail-body .skill-manage-name {
+  font-weight: 600;
+  color: #0891b2;
+  font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
+  font-size: 12px;
+}
+:root[data-theme="dark"] .tool-detail-body .skill-manage-name {
+  color: #22d3ee;
+}
+
+/* Monitor */
+.tool-detail-body .monitor-view {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.tool-detail-body .monitor-icon { font-size: 14px; }
+.tool-detail-body .monitor-target {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.tool-detail-body .monitor-command-body {
+  font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Image gen */
+.tool-detail-body .image-gen-view {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.tool-detail-body .image-gen-icon { font-size: 14px; }
+.tool-detail-body .image-gen-prompt {
+  font-weight: 500;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+.tool-detail-body .image-gen-size {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(6, 182, 212, 0.12);
+  color: #0891b2;
+  font-weight: 600;
+}
+:root[data-theme="dark"] .tool-detail-body .image-gen-size {
+  background: rgba(34, 211, 238, 0.15);
+  color: #22d3ee;
+}
+
+/* LSP */
+.tool-detail-body .lsp-view {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.tool-detail-body .lsp-icon { font-size: 14px; }
+.tool-detail-body .lsp-method {
+  font-weight: 600;
+  font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
+  font-size: 12px;
+  color: #0891b2;
+}
+:root[data-theme="dark"] .tool-detail-body .lsp-method {
+  color: #22d3ee;
+}
+.tool-detail-body .lsp-file-path {
+  font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
+  font-size: 12px;
+  color: var(--accent-color);
+  word-break: break-all;
+}
+
+/* Git tool */
+.tool-detail-body .git-tool-view {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.tool-detail-body .git-tool-icon { font-size: 14px; }
+.tool-detail-body .git-tool-body {
+  font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Permission/ask question categories for overlay header */
+.tool-detail-header[data-category="permission"] { --tool-accent: #ef4444; }
+:root[data-theme="dark"] .tool-detail-header[data-category="permission"] { --tool-accent: #f87171; }
 </style>

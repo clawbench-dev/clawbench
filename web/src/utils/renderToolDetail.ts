@@ -1107,6 +1107,7 @@ registerToolRenderer('Skill', renderSkillCall)
 registerToolRenderer('SkillManage', renderSkillManage)
 registerToolRenderer('TodoWrite', renderTodoWrite)
 registerToolRenderer('TodoRead', renderTodoRead)
+registerToolRenderer('Task', renderAgentCall)       // ACP generic Task → same as Agent
 registerToolRenderer('TaskCreate', renderTaskTool)
 registerToolRenderer('TaskUpdate', renderTaskTool)
 registerToolRenderer('TaskList', renderTaskTool)

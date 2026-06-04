@@ -26,6 +26,7 @@ export const TOOL_ICONS: Record<string, { icon: typeof Wrench; category: string 
   'WebSearch':         { icon: Globe,            category: 'search' },
   'WebFetch':          { icon: Globe,            category: 'search' },
   'Agent':             { icon: Bot,              category: 'agent' },
+  'Task':              { icon: Bot,              category: 'agent' },  // ACP generic Task = sub-agent delegation
   'Skill':             { icon: Sparkles,         category: 'skill' },
   'AskUserQuestion':   { icon: MessageSquarePlus, category: 'ask' },
   'TaskCreate':        { icon: Plus,             category: 'task' },

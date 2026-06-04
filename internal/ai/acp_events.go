@@ -224,6 +224,11 @@ var acpToolNamePatterns = []struct{ prefix, canonical string }{
 	{"TaskGet", "TaskGet"},
 	{"TaskStop", "TaskStop"},
 	{"TaskOutput", "TaskOutput"},
+	{"TaskCreate", "TaskCreate"},
+	{"TaskUpdate", "TaskUpdate"},
+	{"TaskList", "TaskList"},
+	{"TaskGet", "TaskGet"},
+	{"Task", "Agent"},      // ACP generic "Task" tool → Agent (sub-agent delegation)
 	{"ComputerUse", "ComputerUse"},
 	{"TeamCreate", "TeamCreate"},
 	{"TeamDelete", "TeamDelete"},
