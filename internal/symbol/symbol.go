@@ -123,6 +123,13 @@ func ExtractSymbols(filename string, content []byte) SymbolResult {
 	tags := ct.tagger.Tag(content)
 	symbols := make([]Symbol, 0, len(tags))
 
+	// Deduplicate by start line: inferred tags queries (e.g., Go) may produce
+	// multiple definition.* tags on the same line with the same range, such as
+	// a function name and its return type both captured as "definition.function".
+	// When multiple definitions land on the same start line, keep only the first
+	// (tree-sitter returns the actual name before overlapping matches like return types).
+	seenLines := make(map[int]bool, len(tags))
+
 	for _, tag := range tags {
 		// Only keep definition.* tags
 		kind := tag.Kind
@@ -141,10 +148,16 @@ func ExtractSymbols(filename string, content []byte) SymbolResult {
 			continue
 		}
 
+		line := int(tag.Range.StartPoint.Row) + 1
+		if seenLines[line] {
+			continue
+		}
+		seenLines[line] = true
+
 		symbols = append(symbols, Symbol{
 			Name:    tag.Name,
 			Kind:    displayKind,
-			Line:    int(tag.Range.StartPoint.Row) + 1,
+			Line:    line,
 			EndLine: int(tag.Range.EndPoint.Row) + 1,
 			Level:   levelFromKind(displayKind),
 		})

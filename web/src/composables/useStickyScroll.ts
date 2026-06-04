@@ -6,6 +6,10 @@ import { fetchCodeSymbols } from '@/composables/useCodeSymbols'
  * When scrolling past a function/class definition, that definition line
  * sticks to the top of the code area so you always know which scope you're in.
  *
+ * Position detection uses getBoundingClientRect() for both the scroll container
+ * and line elements, giving viewport-relative coordinates that are correct
+ * regardless of CSS transforms, position:relative parents, or scroll offsets.
+ *
  * The overlay has min-width: max-content so sticky lines are always complete.
  * Line numbers use position:sticky;left:0 so they stay fixed during horizontal scroll.
  * Code text uses translateX(-scrollLeft) to follow horizontal scroll.
@@ -31,42 +35,60 @@ export function useStickyScroll() {
       return
     }
 
-    const scrollTop = scrollEl.scrollTop
+    // The container's visible top edge in viewport coordinates
+    const containerTop = scrollEl.getBoundingClientRect().top
 
-    // Find the first visible line number
-    let firstVisibleLine = -1
+    // Cache line elements on first call or after invalidation
     if (lineEls.length === 0) {
-      lineEls = Array.from(scrollEl.querySelectorAll(':scope > code > .code-line'))
+      const codeEl = scrollEl.querySelector(':scope > code')
+      if (!codeEl) return
+      lineEls = Array.from(codeEl.querySelectorAll(':scope > .code-line'))
       if (lineEls.length === 0) return
     }
 
+    // Find the first line whose top edge is at or below the container's top edge.
+    // getBoundingClientRect().top gives the viewport-relative position, which
+    // automatically accounts for scroll position, position:relative parents, etc.
+    let firstVisibleLine = -1
     for (let i = 0; i < lineEls.length; i++) {
-      if (lineEls[i].offsetTop >= scrollTop) {
+      const lineTop = lineEls[i].getBoundingClientRect().top
+      if (lineTop >= containerTop - 0.5) {  // 0.5px tolerance for sub-pixel rounding
         firstVisibleLine = i + 1
         break
       }
     }
     if (firstVisibleLine === -1) firstVisibleLine = lineEls.length
 
-    // Find all enclosing scopes that contain the first visible line
+    // Find all enclosing scopes that contain the first visible line.
+    // Deduplicate by line number — tree-sitter may return multiple symbols
+    // on the same line (e.g., Go return types like `func foo() error`
+    // produces both "foo" and "error" as definition.function on the same line).
     const enclosing = []
+    const seenLines = new Set()
     for (const sym of symbols) {
       if (sym.line <= firstVisibleLine && sym.endLine >= firstVisibleLine) {
-        enclosing.push(sym)
+        if (!seenLines.has(sym.line)) {
+          enclosing.push(sym)
+          seenLines.add(sym.line)
+        }
       }
     }
 
-    // Sort by scope width descending (outermost first)
-    enclosing.sort((a, b) => (b.endLine - b.line) - (a.endLine - a.line))
+    // Sort by scope width descending (outermost first), then by line ascending for stability
+    enclosing.sort((a, b) => {
+      const widthDiff = (b.endLine - b.line) - (a.endLine - a.line)
+      if (widthDiff !== 0) return widthDiff
+      return a.line - b.line
+    })
 
-    // Only keep scopes whose definition line is scrolled out of view.
-    // Compute actual pixel offsets and heights from DOM measurements.
+    // Only keep scopes whose definition line is scrolled out of view (above the container top).
     const result = []
     let accTop = 0
     for (let i = 0; i < enclosing.length && result.length < MAX_STICKY; i++) {
       const sym = enclosing[i]
       const defLineEl = lineEls[sym.line - 1]
-      if (defLineEl && defLineEl.offsetTop < scrollTop) {
+      // A line is "scrolled out of view" when its visual top is above the container's top edge
+      if (defLineEl && defLineEl.getBoundingClientRect().top < containerTop - 0.5) {
         const h = defLineEl.getBoundingClientRect().height
         result.push({
           lineNum: sym.line,

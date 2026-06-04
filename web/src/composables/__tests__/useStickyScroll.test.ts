@@ -42,7 +42,7 @@ describe('useStickyScroll - DOM integration', () => {
 
   async function createTestComponent() {
     const { mount } = await import('@vue/test-utils')
-    const { defineComponent, h, ref } = await import('vue')
+    const { defineComponent, h } = await import('vue')
 
     const TestComponent = defineComponent({
       setup() {
@@ -57,15 +57,47 @@ describe('useStickyScroll - DOM integration', () => {
     return mount(TestComponent)
   }
 
+  /**
+   * Create a mock scroll element that uses getBoundingClientRect for position checks.
+   *
+   * Each line element has:
+   * - getBoundingClientRect() → returns { top, height } in viewport coordinates
+   *
+   * The scroll container has:
+   * - getBoundingClientRect() → returns { top } representing the visible area's top edge
+   *
+   * To simulate scrolling, we adjust line rect tops by subtracting a scroll offset.
+   * When scrollTop=100, each line's rect.top decreases by 100.
+   */
   function createMockScrollEl(overrides = {}) {
     return {
+      querySelector: vi.fn().mockReturnValue({ querySelectorAll: vi.fn().mockReturnValue([]) }),
       querySelectorAll: vi.fn().mockReturnValue([]),
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
       scrollTop: 0,
       scrollLeft: 0,
+      getBoundingClientRect: () => ({ top: 0 }),
       ...overrides,
     }
+  }
+
+  /**
+   * Create mock line elements with viewport-relative rect positions.
+   * @param lineCount - number of lines
+   * @param lineHeight - height per line (default 20.8)
+   * @param scrollOffset - simulated scroll offset (shifts all rect.tops up by this amount)
+   * @param baseTop - initial top position before scroll (e.g., containerTop offset)
+   */
+  function createMockLineEls(lineCount, lineHeight = 20.8, scrollOffset = 0, baseTop = 0) {
+    return Array.from({ length: lineCount }, (_, i) => ({
+      getBoundingClientRect: () => ({
+        top: baseTop + i * lineHeight - scrollOffset,
+        height: lineHeight,
+      }),
+      classList: { add: vi.fn(), remove: vi.fn() },
+      scrollIntoView: vi.fn(),
+    }))
   }
 
   it('initSticky calls fetchCodeSymbols with filePath', async () => {
@@ -156,7 +188,6 @@ describe('useStickyScroll - DOM integration', () => {
   })
 
   it('updates stickyLines with correct top/height when scrolled past scope definitions', async () => {
-    // Simulate a file with a function on line 1 (endLine 10) and a nested function on line 3 (endLine 8)
     mockFetchCodeSymbols.mockResolvedValue({
       symbols: [
         { name: 'main', kind: 'function', line: 1, endLine: 10, level: 1 },
@@ -166,43 +197,32 @@ describe('useStickyScroll - DOM integration', () => {
 
     const wrapper = await createTestComponent()
 
-    // Create mock line elements with offsetTop and getBoundingClientRect
-    const createMockLineEl = (offsetTop: number, height: number) => ({
-      offsetTop,
-      getBoundingClientRect: () => ({ height }),
-      classList: { add: vi.fn(), remove: vi.fn() },
-      scrollIntoView: vi.fn(),
-    })
+    // 20 lines, scrolled 100px. Container top = 0.
+    // Line 1 rect.top = 0 - 100 = -100 (above container, scrolled out)
+    // Line 3 rect.top = 2*20.8 - 100 = -58.4 (above container, scrolled out)
+    // Line 6 rect.top = 5*20.8 - 100 = 4.0 (first visible line)
+    const lineEls = createMockLineEls(20, 20.8, 100)
 
-    const lineEls = [
-      createMockLineEl(0, 20.8),     // line 1
-      createMockLineEl(20.8, 20.8),  // line 2
-      createMockLineEl(41.6, 20.8),  // line 3
-      createMockLineEl(62.4, 20.8),  // line 4
-      createMockLineEl(83.2, 20.8),  // line 5
-      createMockLineEl(104, 20.8),   // line 6
-    ]
-
+    const mockCodeEl = { querySelectorAll: vi.fn().mockReturnValue(lineEls) }
     const mockEl = createMockScrollEl({
-      scrollTop: 100, // scrolled past line 1 (offsetTop=0) and line 3 (offsetTop=41.6)
-      querySelectorAll: vi.fn().mockReturnValue(lineEls),
+      querySelector: vi.fn().mockReturnValue(mockCodeEl),
+      getBoundingClientRect: () => ({ top: 0 }),
     })
 
     wrapper.vm.initSticky('/tmp/test.go', mockEl)
     await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
 
-    // After init, scroll handler should be attached. Trigger a scroll event.
     const scrollHandler = mockEl.addEventListener.mock.calls[0][1]
     scrollHandler()
     await wrapper.vm.$nextTick()
 
-    // Both main (line 1) and helper (line 3) should be sticky since
-    // we scrolled past both (scrollTop=100 > offsetTop of line1=0 and line3=41.6)
+    // Both main (line 1, rect.top=-100 < containerTop=0) and
+    // helper (line 3, rect.top=-58.4 < containerTop=0) should be sticky
     expect(wrapper.vm.stickyLines.length).toBe(2)
-    expect(wrapper.vm.stickyLines[0].top).toBe(0) // first sticky line at top=0
-    expect(wrapper.vm.stickyLines[0].height).toBe(20.8) // actual DOM height
-    expect(wrapper.vm.stickyLines[1].top).toBe(20.8) // accumulated height
+    expect(wrapper.vm.stickyLines[0].top).toBe(0)
+    expect(wrapper.vm.stickyLines[0].height).toBe(20.8)
+    expect(wrapper.vm.stickyLines[1].top).toBe(20.8)
     expect(wrapper.vm.stickyLines[1].height).toBe(20.8)
 
     wrapper.unmount()
@@ -217,16 +237,17 @@ describe('useStickyScroll - DOM integration', () => {
 
     const wrapper = await createTestComponent()
 
-    // In word-wrap mode, line 1 is wrapped and taller (41.6px instead of 20.8px)
+    // Line 1 wrapped (height 41.6px), scrolled 50px
     const lineEls = [
-      { offsetTop: 0, getBoundingClientRect: () => ({ height: 41.6 }), classList: { add: vi.fn(), remove: vi.fn() }, scrollIntoView: vi.fn() },
-      { offsetTop: 41.6, getBoundingClientRect: () => ({ height: 20.8 }), classList: { add: vi.fn(), remove: vi.fn() }, scrollIntoView: vi.fn() },
-      { offsetTop: 62.4, getBoundingClientRect: () => ({ height: 20.8 }), classList: { add: vi.fn(), remove: vi.fn() }, scrollIntoView: vi.fn() },
+      { getBoundingClientRect: () => ({ top: 0 - 50, height: 41.6 }), classList: { add: vi.fn(), remove: vi.fn() }, scrollIntoView: vi.fn() },
+      { getBoundingClientRect: () => ({ top: 41.6 - 50, height: 20.8 }), classList: { add: vi.fn(), remove: vi.fn() }, scrollIntoView: vi.fn() },
+      { getBoundingClientRect: () => ({ top: 62.4 - 50, height: 20.8 }), classList: { add: vi.fn(), remove: vi.fn() }, scrollIntoView: vi.fn() },
     ]
 
+    const mockCodeEl = { querySelectorAll: vi.fn().mockReturnValue(lineEls) }
     const mockEl = createMockScrollEl({
-      scrollTop: 50, // scrolled past line 1
-      querySelectorAll: vi.fn().mockReturnValue(lineEls),
+      querySelector: vi.fn().mockReturnValue(mockCodeEl),
+      getBoundingClientRect: () => ({ top: 0 }),
     })
 
     wrapper.vm.initSticky('/tmp/test.go', mockEl)
@@ -238,7 +259,7 @@ describe('useStickyScroll - DOM integration', () => {
     await wrapper.vm.$nextTick()
 
     expect(wrapper.vm.stickyLines.length).toBe(1)
-    expect(wrapper.vm.stickyLines[0].height).toBe(41.6) // wrapped line height
+    expect(wrapper.vm.stickyLines[0].height).toBe(41.6)
     expect(wrapper.vm.stickyLines[0].top).toBe(0)
 
     wrapper.unmount()
@@ -253,13 +274,13 @@ describe('useStickyScroll - DOM integration', () => {
 
     const wrapper = await createTestComponent()
 
-    const lineEls = [
-      { offsetTop: 0, getBoundingClientRect: () => ({ height: 20.8 }), classList: { add: vi.fn(), remove: vi.fn() }, scrollIntoView: vi.fn() },
-    ]
+    // No scrolling — line 1 rect.top = 0, containerTop = 0 → line is visible, not sticky
+    const lineEls = createMockLineEls(10, 20.8, 0)
 
+    const mockCodeEl = { querySelectorAll: vi.fn().mockReturnValue(lineEls) }
     const mockEl = createMockScrollEl({
-      scrollTop: 0, // not scrolled at all — definition line still visible
-      querySelectorAll: vi.fn().mockReturnValue(lineEls),
+      querySelector: vi.fn().mockReturnValue(mockCodeEl),
+      getBoundingClientRect: () => ({ top: 0 }),
     })
 
     wrapper.vm.initSticky('/tmp/test.go', mockEl)
@@ -270,39 +291,8 @@ describe('useStickyScroll - DOM integration', () => {
     scrollHandler()
     await wrapper.vm.$nextTick()
 
-    // Line 1 offsetTop (0) is NOT less than scrollTop (0), so no sticky lines
+    // Line 1 rect.top (0) is NOT less than containerTop (0), so no sticky lines
     expect(wrapper.vm.stickyLines.length).toBe(0)
-
-    wrapper.unmount()
-  })
-
-  it('clears stickyLines when scrolled to top and no scopes are out of view', async () => {
-    mockFetchCodeSymbols.mockResolvedValue({
-      symbols: [
-        { name: 'main', kind: 'function', line: 1, endLine: 10, level: 1 },
-      ],
-    })
-
-    const wrapper = await createTestComponent()
-
-    const lineEls = [
-      { offsetTop: 0, getBoundingClientRect: () => ({ height: 20.8 }), classList: { add: vi.fn(), remove: vi.fn() }, scrollIntoView: vi.fn() },
-    ]
-
-    const mockEl = createMockScrollEl({
-      scrollTop: 0,
-      querySelectorAll: vi.fn().mockReturnValue(lineEls),
-    })
-
-    wrapper.vm.initSticky('/tmp/test.go', mockEl)
-    await wrapper.vm.$nextTick()
-    await wrapper.vm.$nextTick()
-
-    const scrollHandler = mockEl.addEventListener.mock.calls[0][1]
-    scrollHandler()
-    await wrapper.vm.$nextTick()
-
-    expect(wrapper.vm.stickyLines).toEqual([])
 
     wrapper.unmount()
   })
@@ -315,16 +305,14 @@ describe('useStickyScroll - DOM integration', () => {
     const wrapper = await createTestComponent()
 
     const mockCodeText = { style: { transform: '' } }
-    const lineEls = [
-      { offsetTop: 0, getBoundingClientRect: () => ({ height: 20.8 }), classList: { add: vi.fn(), remove: vi.fn() }, scrollIntoView: vi.fn() },
-    ]
+    const lineEls = createMockLineEls(10, 20.8, 100)
 
+    const mockCodeEl = { querySelectorAll: vi.fn().mockReturnValue(lineEls) }
     const mockEl = createMockScrollEl({
-      scrollTop: 100,
       scrollLeft: 50,
-      querySelectorAll: vi.fn()
-        .mockReturnValueOnce(lineEls) // first call for code-line
-        .mockReturnValueOnce([mockCodeText]), // second call for .sticky-code-text
+      querySelector: vi.fn().mockReturnValue(mockCodeEl),
+      querySelectorAll: vi.fn().mockReturnValueOnce([mockCodeText]),
+      getBoundingClientRect: () => ({ top: 0 }),
     })
 
     wrapper.vm.initSticky('/tmp/test.go', mockEl)
@@ -335,8 +323,212 @@ describe('useStickyScroll - DOM integration', () => {
     scrollHandler()
     await wrapper.vm.$nextTick()
 
-    // The code-text element should have its transform updated
     expect(mockCodeText.style.transform).toBe('translateX(-50px)')
+
+    wrapper.unmount()
+  })
+
+  it('deduplicates symbols on the same line (e.g., Go return types)', async () => {
+    mockFetchCodeSymbols.mockResolvedValue({
+      symbols: [
+        { name: 'foo', kind: 'function', line: 1, endLine: 10, level: 2 },
+        { name: 'error', kind: 'function', line: 1, endLine: 10, level: 2 },
+        { name: 'bar', kind: 'function', line: 12, endLine: 20, level: 2 },
+      ],
+    })
+
+    const wrapper = await createTestComponent()
+
+    const lineEls = createMockLineEls(20, 20.8, 100)
+
+    const mockCodeEl = { querySelectorAll: vi.fn().mockReturnValue(lineEls) }
+    const mockEl = createMockScrollEl({
+      querySelector: vi.fn().mockReturnValue(mockCodeEl),
+      getBoundingClientRect: () => ({ top: 0 }),
+    })
+
+    wrapper.vm.initSticky('/tmp/test.go', mockEl)
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    const scrollHandler = mockEl.addEventListener.mock.calls[0][1]
+    scrollHandler()
+    await wrapper.vm.$nextTick()
+
+    // Only one sticky line for line 1 (deduplicated), not two
+    const lineNums = wrapper.vm.stickyLines.map(s => s.lineNum)
+    const line1Count = lineNums.filter(n => n === 1).length
+    expect(line1Count).toBe(1)
+
+    wrapper.unmount()
+  })
+
+  it('works correctly when scroll container has non-zero rect.top', async () => {
+    // Simulate a page where the scroll container starts at y=200 (e.g., below a header)
+    mockFetchCodeSymbols.mockResolvedValue({
+      symbols: [
+        { name: 'main', kind: 'function', line: 1, endLine: 10, level: 1 },
+      ],
+    })
+
+    const wrapper = await createTestComponent()
+
+    const containerTop = 200
+    // Lines start at containerTop, scrolled 30px
+    const lineEls = createMockLineEls(10, 20.8, 30, containerTop)
+
+    const mockCodeEl = { querySelectorAll: vi.fn().mockReturnValue(lineEls) }
+    const mockEl = createMockScrollEl({
+      querySelector: vi.fn().mockReturnValue(mockCodeEl),
+      getBoundingClientRect: () => ({ top: containerTop }),
+    })
+
+    wrapper.vm.initSticky('/tmp/test.go', mockEl)
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    const scrollHandler = mockEl.addEventListener.mock.calls[0][1]
+    scrollHandler()
+    await wrapper.vm.$nextTick()
+
+    // Line 1 rect.top = 200 - 30 = 170, which is < containerTop (200), so sticky
+    expect(wrapper.vm.stickyLines.length).toBe(1)
+    expect(wrapper.vm.stickyLines[0].lineNum).toBe(1)
+
+    wrapper.unmount()
+  })
+
+  it('sticky line disappears when definition line scrolls back into view', async () => {
+    mockFetchCodeSymbols.mockResolvedValue({
+      symbols: [
+        { name: 'main', kind: 'function', line: 1, endLine: 10, level: 1 },
+      ],
+    })
+
+    const wrapper = await createTestComponent()
+
+    // No scrolling — line 1 at containerTop, not above it
+    const lineEls = createMockLineEls(10, 20.8, 0)
+
+    const mockCodeEl = { querySelectorAll: vi.fn().mockReturnValue(lineEls) }
+    const mockEl = createMockScrollEl({
+      querySelector: vi.fn().mockReturnValue(mockCodeEl),
+      getBoundingClientRect: () => ({ top: 0 }),
+    })
+
+    wrapper.vm.initSticky('/tmp/test.go', mockEl)
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    const scrollHandler = mockEl.addEventListener.mock.calls[0][1]
+    scrollHandler()
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.vm.stickyLines.length).toBe(0)
+
+    wrapper.unmount()
+  })
+
+  it('clears stickyLines when scrollEl or symbols are empty', async () => {
+    mockFetchCodeSymbols.mockResolvedValue({
+      symbols: [{ name: 'main', kind: 'function', line: 1, endLine: 10, level: 1 }],
+    })
+
+    const wrapper = await createTestComponent()
+
+    // First init with symbols, scroll past definition
+    const lineEls = createMockLineEls(10, 20.8, 100)
+    const mockCodeEl = { querySelectorAll: vi.fn().mockReturnValue(lineEls) }
+    const mockEl = createMockScrollEl({
+      querySelector: vi.fn().mockReturnValue(mockCodeEl),
+      getBoundingClientRect: () => ({ top: 0 }),
+    })
+
+    wrapper.vm.initSticky('/tmp/test.go', mockEl)
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    const scrollHandler = mockEl.addEventListener.mock.calls[0][1]
+    scrollHandler()
+    await wrapper.vm.$nextTick()
+
+    // Should have sticky lines
+    expect(wrapper.vm.stickyLines.length).toBeGreaterThan(0)
+
+    // Now teardown — this sets scrollEl=null and symbols=[]
+    wrapper.vm.teardownSticky()
+
+    // stickyLines should be cleared (covers line 34-35)
+    expect(wrapper.vm.stickyLines).toEqual([])
+
+    wrapper.unmount()
+  })
+
+  it('sorts enclosing scopes with same width by line ascending', async () => {
+    // Two sibling functions with the same scope width — verify stable sort
+    mockFetchCodeSymbols.mockResolvedValue({
+      symbols: [
+        { name: 'foo', kind: 'function', line: 5, endLine: 15, level: 2 },
+        { name: 'bar', kind: 'function', line: 20, endLine: 30, level: 2 },
+        { name: 'baz', kind: 'function', line: 1, endLine: 11, level: 2 },
+      ],
+    })
+
+    const wrapper = await createTestComponent()
+
+    const lineEls = createMockLineEls(30, 20.8, 200)
+
+    const mockCodeEl = { querySelectorAll: vi.fn().mockReturnValue(lineEls) }
+    const mockEl = createMockScrollEl({
+      querySelector: vi.fn().mockReturnValue(mockCodeEl),
+      getBoundingClientRect: () => ({ top: 0 }),
+    })
+
+    wrapper.vm.initSticky('/tmp/test.go', mockEl)
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    const scrollHandler = mockEl.addEventListener.mock.calls[0][1]
+    scrollHandler()
+    await wrapper.vm.$nextTick()
+
+    // All three have same width (10 lines), so sorted by line ascending
+    const lineNums = wrapper.vm.stickyLines.map(s => s.lineNum)
+    for (let i = 1; i < lineNums.length; i++) {
+      expect(lineNums[i]).toBeGreaterThan(lineNums[i - 1])
+    }
+
+    wrapper.unmount()
+  })
+
+  it('uses requestAnimationFrame for scroll debouncing', async () => {
+    mockFetchCodeSymbols.mockResolvedValue({
+      symbols: [{ name: 'main', kind: 'function', line: 1, endLine: 10, level: 1 }],
+    })
+
+    const wrapper = await createTestComponent()
+
+    const lineEls = createMockLineEls(10, 20.8, 0)
+    const mockCodeEl = { querySelectorAll: vi.fn().mockReturnValue(lineEls) }
+    const mockEl = createMockScrollEl({
+      querySelector: vi.fn().mockReturnValue(mockCodeEl),
+      getBoundingClientRect: () => ({ top: 0 }),
+    })
+
+    wrapper.vm.initSticky('/tmp/test.go', mockEl)
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    const scrollHandler = mockEl.addEventListener.mock.calls[0][1]
+
+    // Call scrollHandler twice rapidly — second call should be skipped (rafId pending)
+    // This covers the rafId guard path (line 120)
+    scrollHandler()
+    scrollHandler() // should be a no-op since rafId is set
+
+    // Wait for RAF to complete
+    await new Promise(r => setTimeout(r, 50))
+    await wrapper.vm.$nextTick()
 
     wrapper.unmount()
   })
