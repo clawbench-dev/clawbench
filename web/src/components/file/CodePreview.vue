@@ -119,6 +119,8 @@ function doRender(content) {
     nextTick(() => {
         if (props.stickyScroll && props.filePath && codeRef.value) {
             initSticky(props.filePath, codeRef.value)
+        } else {
+            teardownSticky()
         }
     })
 }
