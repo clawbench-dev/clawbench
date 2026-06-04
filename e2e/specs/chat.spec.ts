@@ -140,6 +140,51 @@ test.describe('Chat', () => {
   })
 
   // ───────────────────────────────────────────────────────
+  // Thinking block collapse
+  // ───────────────────────────────────────────────────────
+
+  test('should collapse thinking block when thinking_done event fires', async ({ page }) => {
+    // Send a message to acp-mock which sends thinking content then a tool call
+    // (tool call triggers thinking_done → auto-collapse)
+    const countBefore = await chat.sendMessage('Think about this')
+    await chat.waitForReply(30000, countBefore)
+
+    // Wait for streaming to complete — this ensures thinking_done has fired
+    // and the collapse animation has finished
+    await expect(chat.sendButton).toBeVisible({ timeout: 10000 })
+
+    // The thinking block should exist and be collapsed (header-only chip)
+    const thinkingBlock = chat.getLastAssistantMessage().locator('.chat-thinking')
+    await expect(thinkingBlock).toBeVisible({ timeout: 5000 })
+    // Collapsed state means the thinking-collapsed class is applied
+    await expect(thinkingBlock).toHaveClass(/thinking-collapsed/)
+    // Inline thinking content should NOT be visible when collapsed
+    await expect(thinkingBlock.locator('.thinking-inline-content')).not.toBeVisible()
+    // The green check icon should be visible (thinking done indicator)
+    await expect(thinkingBlock.locator('.thinking-check')).toBeVisible()
+  })
+
+  test('should expand thinking block when clicking collapsed chip', async ({ page }) => {
+    // Send a message and wait for full response + collapse
+    const countBefore = await chat.sendMessage('Think about this')
+    await chat.waitForReply(30000, countBefore)
+    await expect(chat.sendButton).toBeVisible({ timeout: 10000 })
+
+    // Verify thinking block is collapsed
+    const thinkingBlock = chat.getLastAssistantMessage().locator('.chat-thinking')
+    await expect(thinkingBlock).toHaveClass(/thinking-collapsed/, { timeout: 5000 })
+
+    // Click the collapsed chip to expand — opens the toolDetailOverlay
+    await thinkingBlock.click()
+
+    // The tool detail overlay should appear showing the thinking content
+    const overlay = page.locator('.tool-detail-overlay')
+    await expect(overlay).toBeVisible({ timeout: 5000 })
+    // Overlay should contain the thinking text
+    await expect(overlay).toContainText('Processing', { timeout: 3000 })
+  })
+
+  // ───────────────────────────────────────────────────────
   // Summary toggle
   // ───────────────────────────────────────────────────────
 
