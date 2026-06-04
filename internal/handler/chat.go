@@ -785,6 +785,12 @@ func finalizeStreamRun(
 		responseMetadata.Transport = "cli"
 	}
 
+	// Always store our own model selection (not the AI backend's reported model).
+	// The backend may report a different model or none at all; we want consistency.
+	if sessionModel := service.GetSessionModel(sessionID); sessionModel != "" {
+		responseMetadata.Model = sessionModel
+	}
+
 	// Determine cancellation reason
 	cancelReason := service.GetAndClearCancelReason(sessionID)
 
