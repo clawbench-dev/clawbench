@@ -19,6 +19,7 @@ const props = defineProps({
   maxHeight: { type: Number, default: 320 },
   edgeMargin: { type: Number, default: 6 },
   menuItemsCount: { type: Number, default: 10 }, // for height estimation
+  anchor: { type: String, default: 'auto', validator: (v) => ['left', 'right', 'auto'].includes(v) }, // force horizontal alignment
 })
 
 const emit = defineEmits(['update:show'])
@@ -36,6 +37,7 @@ function updatePosition() {
     maxHeight: props.maxHeight,
     edgeMargin: props.edgeMargin,
     menuItemsCount: props.menuItemsCount,
+    anchor: props.anchor,
   })
 }
 

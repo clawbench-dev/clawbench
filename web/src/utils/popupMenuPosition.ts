@@ -9,7 +9,8 @@
  * - Flips below only when there isn't enough space above.
  * - Horizontal alignment is **auto-detected** based on the anchor's
  *   position in the viewport: right side → right-aligned, left side → left-aligned.
- *   Callers never need to specify `anchor`.
+ *   Callers can override with `anchor: 'left' | 'right'` to force alignment
+ *   (useful for autocomplete menus that logically start at the left of the input).
  */
 
 /**
@@ -28,6 +29,7 @@ export function computeMenuStyle(
     menuItemsCount?: number
     viewportWidth?: number
     viewportHeight?: number
+    anchor?: 'left' | 'right' | 'auto'
   } = {}
 ): Record<string, string> {
   const {
@@ -37,6 +39,7 @@ export function computeMenuStyle(
     menuItemsCount = 10,
     viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1024,
     viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 768,
+    anchor = 'auto',
   } = opts
 
   const gap = 4
@@ -46,11 +49,20 @@ export function computeMenuStyle(
   const spaceBelow = viewportHeight - rect.bottom - edgeMargin
   const goBelow = spaceAbove < spaceBelow
 
-  // --- Horizontal positioning: auto-detect from anchor position ---
-  // If the anchor's center is in the right half of the viewport → right-align.
-  // Otherwise → left-align. This naturally handles buttons at any position.
-  const anchorCenterX = (rect.left + rect.right) / 2
-  const alignRight = anchorCenterX > viewportWidth / 2
+  // --- Horizontal positioning ---
+  // When anchor is 'left' or 'right', force that alignment regardless of
+  // the anchor element's position in the viewport.  'auto' uses the old
+  // center-based heuristic.
+  let alignRight: boolean
+  if (anchor === 'left') {
+    alignRight = false
+  } else if (anchor === 'right') {
+    alignRight = true
+  } else {
+    // auto: right side → right-aligned, left side → left-aligned
+    const anchorCenterX = (rect.left + rect.right) / 2
+    alignRight = anchorCenterX > viewportWidth / 2
+  }
 
   const horizontal = alignRight
     ? computeRight(rect, maxWidth, edgeMargin, viewportWidth)

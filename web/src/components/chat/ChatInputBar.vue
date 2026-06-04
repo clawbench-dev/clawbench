@@ -183,7 +183,7 @@
       </PopupMenu>
       <QuickSendDialog :open="props.active && quickSendStore.showEditDialog.value" @close="quickSendStore.showEditDialog.value = false" />
       <!-- @ command autocomplete menu (ClawBench built-in) -->
-      <PopupMenu v-model:show="showAtMenu" :target-element="textareaRef" :max-width="260" :max-height="200" :menu-items-count="atMenuItems.length">
+      <PopupMenu v-model:show="showAtMenu" :target-element="textareaRef" anchor="left" :max-width="260" :max-height="200" :menu-items-count="atMenuItems.length">
         <div class="at-menu-title">{{ t('chat.atCommand.title') }}</div>
         <button v-for="cmd in atMenuItems" :key="cmd.key" class="at-menu-item" @mousedown.prevent="handleAtSelect(cmd)">
           <span class="at-menu-label">{{ cmd.label }}</span>
@@ -191,7 +191,7 @@
         </button>
       </PopupMenu>
       <!-- Slash command autocomplete menu (ACP backend commands) -->
-      <PopupMenu v-if="availableCommands.length > 0" v-model:show="showSlashMenu" :target-element="textareaRef" :max-width="300" :max-height="240" :menu-items-count="slashMenuItems.length">
+      <PopupMenu v-if="availableCommands.length > 0" v-model:show="showSlashMenu" :target-element="textareaRef" anchor="left" :max-width="300" :max-height="240" :menu-items-count="slashMenuItems.length">
         <div class="at-menu-title">{{ t('chat.slashCommand.title') }}</div>
         <button v-for="cmd in slashMenuItems" :key="cmd.key" class="at-menu-item" @mousedown.prevent="handleSlashSelect(cmd)">
           <span class="at-menu-label slash-label">{{ cmd.label }}</span>
@@ -337,16 +337,23 @@ const showSlashMenu = ref(false)
 const atMenuItems = computed(() => {
   const text = inputText.value
   if (!text.startsWith('@')) return []
-  const query = text.toLowerCase()
-  return atCommands.filter(cmd => cmd.key.startsWith(query))
+  const query = text.toLowerCase().slice(1) // strip leading '@'
+  if (!query) return atCommands // empty query → show all
+  return atCommands.filter(cmd => cmd.key.toLowerCase().includes(query))
 })
 
 const slashMenuItems = computed(() => {
   const text = inputText.value
   if (!text.startsWith('/')) return []
-  const query = text.toLowerCase()
+  const query = text.toLowerCase().slice(1) // strip leading '/'
+  if (!query) return availableCommands.value.map(cmd => ({
+    key: '/' + cmd.name,
+    label: '/' + cmd.name,
+    description: cmd.description,
+    inputHint: cmd.inputHint || '',
+  }))
   return availableCommands.value
-    .filter(cmd => ('/' + cmd.name).startsWith(query))
+    .filter(cmd => cmd.name.toLowerCase().includes(query))
     .map(cmd => ({
       key: '/' + cmd.name,
       label: '/' + cmd.name,

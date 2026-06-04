@@ -128,16 +128,35 @@ describe('computeMenuStyle', () => {
     })
   })
 
-  describe('deprecated anchor/direction params are ignored', () => {
-    it('ignores anchor="left" when anchor is in right half', () => {
+  describe('anchor option overrides auto-detection', () => {
+    it('anchor="left" forces left-align even when anchor is in right half', () => {
       const rect = mockRect({ top: 400, bottom: 440, left: 800, right: 900 })
       const style = computeMenuStyle(rect, { anchor: 'left', viewportWidth: vw, viewportHeight: vh })
-      // Auto-detected right-align despite anchor='left'
+      expect(style.left).toBeDefined()
+      expect(style.right).toBeUndefined()
+      // left = rect.left = 800, but 800 + 220 + 6 > 1024 → clamped to 1024 - 220 - 6 = 798
+      expect(style.left).toBe('798px')
+    })
+
+    it('anchor="right" forces right-align even when anchor is in left half', () => {
+      // Anchor in left half but with right edge close to center → right-align won't overflow
+      const rect = mockRect({ top: 400, bottom: 440, left: 300, right: 400 })
+      const style = computeMenuStyle(rect, { anchor: 'right', viewportWidth: vw, viewportHeight: vh })
+      expect(style.right).toBeDefined()
+      expect(style.left).toBeUndefined()
+      // right = vw - rect.right = 1024 - 400 = 624
+      expect(style.right).toBe('624px')
+    })
+
+    it('anchor="auto" (default) uses center-based heuristic', () => {
+      const rect = mockRect({ top: 400, bottom: 440, left: 800, right: 900 })
+      const style = computeMenuStyle(rect, { anchor: 'auto', viewportWidth: vw, viewportHeight: vh })
+      // Auto: anchor center = 850 > 512 → right-align
       expect(style.right).toBeDefined()
       expect(style.left).toBeUndefined()
     })
 
-    it('ignores direction="below" — uses space comparison', () => {
+    it('direction param is still ignored — uses space comparison', () => {
       // Anchor near bottom → spaceAbove > spaceBelow → goes above (ignores direction="below")
       const rect = mockRect({ top: 600, bottom: 640, left: 100, right: 140 })
       const style = computeMenuStyle(rect, { direction: 'below', viewportWidth: vw, viewportHeight: vh, menuItemsCount: 2, edgeMargin: 6 })
@@ -185,6 +204,17 @@ describe('computeMenuStyle', () => {
       const style = computeMenuStyle(rect, { viewportWidth: mVw, viewportHeight: mVh, maxWidth: 200, menuItemsCount: 3, edgeMargin: 6 })
       // Auto: anchor center = 25 < 195 → left-align
       expect(style.left).toBeDefined()
+      // Auto: spaceAbove=770 > spaceBelow=30 → above
+      expect(style.bottom).toBeDefined()
+    })
+
+    it('autocomplete menu (full-width textarea) — anchor="left" forces left-align', () => {
+      // Full-width textarea at bottom of screen — center would normally trigger right-align
+      const rect = mockRect({ top: 780, bottom: 808, left: 8, right: 382 })
+      const style = computeMenuStyle(rect, { anchor: 'left', viewportWidth: mVw, viewportHeight: mVh, maxWidth: 260, menuItemsCount: 2, edgeMargin: 6 })
+      // Forced left-align (anchor center = 195, which is exactly half → auto would right-align)
+      expect(style.left).toBeDefined()
+      expect(style.right).toBeUndefined()
       // Auto: spaceAbove=770 > spaceBelow=30 → above
       expect(style.bottom).toBeDefined()
     })
