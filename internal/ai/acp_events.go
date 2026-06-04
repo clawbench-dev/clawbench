@@ -17,7 +17,7 @@ import (
 // which runs on the SDK's internal goroutine.
 // If entry is non-nil, mode/config/thinking cache updates are applied to the pool entry
 // so that re-emitted SSE events reflect the latest state.
-func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx context.Context, entry *ACPConnEntry) { //nolint:gocognit,gocyclo,revive // ACP protocol has many event types, each branch is simple; ctx position follows ACP SDK convention
+func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx context.Context, entry *ACPConnEntry) { //nolint:gocognit,gocyclo,revive,unparam // ACP protocol has many event types, each branch is simple; ctx position follows ACP SDK convention; ctx reserved for future use
 	switch {
 	case update.AgentMessageChunk != nil:
 		// When the agent transitions from thinking to content output, emit

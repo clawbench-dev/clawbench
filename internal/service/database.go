@@ -534,7 +534,8 @@ func MigrateMetadataFromContent() {
 			if m.IsError {
 				isError = 1
 			}
-			_, _ = DB.Exec(`
+			_, _ = DB.Exec(
+				`
 				INSERT OR IGNORE INTO chat_metadata
 					(message_id, mode, thinking_effort, transport, model, input_tokens, output_tokens,
 					 duration_ms, wall_ms, cost_usd, stop_reason, is_error, error_message)
@@ -560,8 +561,10 @@ func MigrateMetadataFromContent() {
 func migrateMetadataBatch(batchSize, offset int) ([]struct {
 	ID      int64
 	Content string
-}, error) {
-	rows, err := DBRead.Query(`
+}, error,
+) {
+	rows, err := DBRead.Query(
+		`
 		SELECT h.id, h.content FROM chat_history h
 		WHERE h.role = 'assistant'
 		  AND h.content LIKE '%"metadata"%'
@@ -573,7 +576,7 @@ func migrateMetadataBatch(batchSize, offset int) ([]struct {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var batch []struct {
 		ID      int64

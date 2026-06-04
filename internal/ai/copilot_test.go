@@ -34,7 +34,8 @@ func TestCopilotBackend_Fields(t *testing.T) {
 	assert.False(t, ok, "empty line should be filtered")
 	assert.Empty(t, line)
 
-	line, _ = b.filterLine("not json")
+	_, ok = b.filterLine("not json")
+	assert.False(t, ok, "non-JSON line should be filtered")
 
 	line, ok = b.filterLine(`{"type":"result"}`)
 	assert.True(t, ok, "JSON line should pass filter")
