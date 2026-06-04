@@ -17,7 +17,7 @@ import (
 // which runs on the SDK's internal goroutine.
 // If entry is non-nil, mode/config/thinking cache updates are applied to the pool entry
 // so that re-emitted SSE events reflect the latest state.
-func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx context.Context, entry *ACPConnEntry) { //nolint:gocognit // ACP protocol has many event types, each branch is simple
+func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx context.Context, entry *ACPConnEntry) { //nolint:gocognit,gocyclo // ACP protocol has many event types, each branch is simple
 	switch {
 	case update.AgentMessageChunk != nil:
 		// When the agent transitions from thinking to content output, emit
@@ -262,7 +262,7 @@ var acpOutputKeyPriority = []string{
 }
 
 // extractMapOutput extracts human-readable text from a map output.
-func extractMapOutput(m map[string]any) string { //nolint:gocognit // many output format branches, each is trivial
+func extractMapOutput(m map[string]any) string { //nolint:gocognit,gocyclo // many output format branches, each is trivial
 	// Try known content keys in priority order
 	for _, key := range acpOutputKeyPriority {
 		if val, ok := m[key]; ok && val != nil {

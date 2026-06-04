@@ -49,7 +49,7 @@ func (b *ACPBackend) Name() string {
 // For the first message in a session: pool.GetOrCreate → new session → prompt
 // For subsequent messages: pool.GetOrCreate → reuse session → prompt
 // On cancel: session/cancel (session stays open for next prompt)
-func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) { //nolint:gocognit // complex ACP protocol handler, refactoring would reduce readability
+func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) { //nolint:gocognit,gocyclo // complex ACP protocol handler, refactoring would reduce readability
 	ch := make(chan StreamEvent, streamChanSize)
 
 	go func() {

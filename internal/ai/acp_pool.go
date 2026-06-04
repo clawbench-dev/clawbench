@@ -597,6 +597,10 @@ func (e *ACPConnEntry) debouncePersistACPState() {
 // to the database so it can be loaded before the first message or after idle timeout.
 func (e *ACPConnEntry) persistACPState() {
 	e.mu.Lock()
+	if e.agent == nil {
+		e.mu.Unlock()
+		return
+	}
 	agentID := e.agent.ID
 	var modeJSON, thinkingJSON, modelListJSON string
 	var cmdsJSON []byte

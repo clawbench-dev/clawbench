@@ -512,7 +512,6 @@ func MigrateMetadataFromContent() {
 			slog.Error("metadata migration: query failed", slog.String("err", err.Error()))
 			return
 		}
-		defer func() { _ = rows.Close() }()
 
 		type row struct {
 			ID      int64
@@ -523,10 +522,10 @@ func MigrateMetadataFromContent() {
 			var r row
 			if err := rows.Scan(&r.ID, &r.Content); err != nil {
 				slog.Error("metadata migration: scan failed", slog.String("err", err.Error()))
-				return
 			}
 			batch = append(batch, r)
 		}
+		_ = rows.Close()
 
 		if len(batch) == 0 {
 			break

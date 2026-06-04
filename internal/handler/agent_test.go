@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 
@@ -796,4 +797,375 @@ func TestServeAgentRefreshModels_KnownModelsFallback(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	models := resp["models"].([]any)
 	assert.NotEmpty(t, models, "should have KnownModels from anthropic provider")
+}
+
+// ---------- serveAgentsGet ACP state tests ----------
+
+func TestServeAgentsGet_ACPStateFromPoolCache(t *testing.T) {
+	_, teardown := setupAgentTestEnv(t)
+	defer teardown()
+
+	// Add an ACP agent
+	acpAgent := &model.Agent{
+		ID:        "acp-agent",
+		Name:      "ACP Agent",
+		Backend:   "acp-test",
+		Transport: "acp-stdio",
+		Models:    []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
+	}
+	model.Agents["acp-agent"] = acpAgent
+	model.AgentList = append(model.AgentList, acpAgent)
+	require.NoError(t, service.SaveAgent(service.DB, acpAgent))
+
+	// Inject a pool entry with cached state
+	pool := ai.GetACPConnectionPool()
+	entry := &ai.ACPConnEntry{}
+	entry.SetCachedModeState(&ai.ModeState{
+		CurrentModeID: "code",
+		AvailableModes: []ai.ModeDef{{ID: "code", Name: "Code"}, {ID: "ask", Name: "Ask"}},
+	})
+	entry.SetCachedThinkingEffortState(&ai.ThinkingEffortState{
+		CurrentID:       "high",
+		AvailableLevels: []ai.ThinkingEffortDef{{ID: "low"}, {ID: "high"}},
+	})
+	entry.SetCachedModelListState(&ai.ModelListState{
+		CurrentModelID: "m1",
+		Models:         []model.AgentModel{{ID: "acp-m1", Name: "ACP Model 1", Default: true}},
+	})
+	// Set a client with commands
+	client := ai.NewClawBenchACPClient()
+	entry.SetClientForTest(client)
+	pool.SetEntryForTest("acp-agent", entry)
+	defer pool.CloseConnection("acp-agent")
+
+	req := newRequest(t, http.MethodGet, "/api/agents", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	acpStates, ok := resp["acpStates"].(map[string]any)
+	require.True(t, ok, "response should contain acpStates")
+
+	state, ok := acpStates["acp-agent"].(map[string]any)
+	require.True(t, ok, "acpStates should contain acp-agent")
+
+	// Verify mode state from pool cache
+	modeState, ok := state["modeState"].(map[string]any)
+	require.True(t, ok, "state should contain modeState")
+	assert.Equal(t, "code", modeState["currentModeId"])
+
+	// Verify thinking effort state from pool cache
+	effortState, ok := state["thinkingEffortState"].(map[string]any)
+	require.True(t, ok, "state should contain thinkingEffortState")
+	assert.Equal(t, "high", effortState["currentId"])
+
+	// Verify model list state from pool cache
+	mlState, ok := state["modelListState"].(map[string]any)
+	require.True(t, ok, "state should contain modelListState")
+	assert.Equal(t, "m1", mlState["currentModelId"])
+
+	// Verify models were overridden by ACP model list
+	agents, ok := resp["agents"].([]any)
+	require.True(t, ok)
+	for _, a := range agents {
+		agent := a.(map[string]any)
+		if agent["id"] == "acp-agent" {
+			models := agent["models"].([]any)
+			m := models[0].(map[string]any)
+			assert.Equal(t, "acp-m1", m["id"], "models should be overridden by ACP model list")
+		}
+	}
+}
+
+func TestServeAgentsGet_ACPStateFromDBFallback(t *testing.T) {
+	_, teardown := setupAgentTestEnv(t)
+	defer teardown()
+
+	// Add an ACP agent with DB-persisted state
+	acpAgent := &model.Agent{
+		ID:               "acp-db-agent",
+		Name:             "ACP DB Agent",
+		Backend:          "acp-test",
+		Transport:        "acp-stdio",
+		Models:           []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
+		AcpModeState:     `{"currentModeId":"ask","availableModes":[{"id":"ask","name":"Ask"},{"id":"code","name":"Code"}]}`,
+		AcpThinkingState: `{"currentId":"low","availableLevels":[{"id":"low"},{"id":"medium"}]}`,
+		AcpCommands:      `[{"name":"/compact","description":"Compact history"}]`,
+		AcpModelListState: `{"currentModelId":"db-m1","models":[{"id":"db-m1","name":"DB Model 1","default":true}]}`,
+	}
+	model.Agents["acp-db-agent"] = acpAgent
+	model.AgentList = append(model.AgentList, acpAgent)
+	require.NoError(t, service.SaveAgent(service.DB, acpAgent))
+
+	// Ensure no pool entry exists
+	pool := ai.GetACPConnectionPool()
+	pool.CloseConnection("acp-db-agent")
+
+	req := newRequest(t, http.MethodGet, "/api/agents", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	acpStates, ok := resp["acpStates"].(map[string]any)
+	require.True(t, ok, "response should contain acpStates")
+
+	state, ok := acpStates["acp-db-agent"].(map[string]any)
+	require.True(t, ok, "acpStates should contain acp-db-agent from DB fallback")
+
+	// Verify mode state from DB
+	modeState, ok := state["modeState"].(map[string]any)
+	require.True(t, ok, "state should contain modeState from DB")
+	assert.Equal(t, "ask", modeState["currentModeId"])
+
+	// Verify thinking effort state from DB
+	effortState, ok := state["thinkingEffortState"].(map[string]any)
+	require.True(t, ok, "state should contain thinkingEffortState from DB")
+	assert.Equal(t, "low", effortState["currentId"])
+
+	// Verify commands from DB
+	commands, ok := state["commands"].([]any)
+	require.True(t, ok, "state should contain commands from DB")
+	assert.Len(t, commands, 1)
+
+	// Verify model list state from DB overrides models
+	mlState, ok := state["modelListState"].(map[string]any)
+	require.True(t, ok, "state should contain modelListState from DB")
+	assert.Equal(t, "db-m1", mlState["currentModelId"])
+}
+
+func TestServeAgentsGet_ACPStateDBFallbackInvalidJSON(t *testing.T) {
+	_, teardown := setupAgentTestEnv(t)
+	defer teardown()
+
+	// Add an ACP agent with invalid DB-persisted state
+	acpAgent := &model.Agent{
+		ID:               "acp-bad-json",
+		Name:             "ACP Bad JSON",
+		Backend:          "acp-test",
+		Transport:        "acp-stdio",
+		Models:           []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
+		AcpModeState:     `{invalid json`,
+		AcpThinkingState: `not json`,
+		AcpCommands:      `also not json`,
+		AcpModelListState: `bad`,
+	}
+	model.Agents["acp-bad-json"] = acpAgent
+	model.AgentList = append(model.AgentList, acpAgent)
+	require.NoError(t, service.SaveAgent(service.DB, acpAgent))
+
+	// Ensure no pool entry exists
+	pool := ai.GetACPConnectionPool()
+	pool.CloseConnection("acp-bad-json")
+
+	req := newRequest(t, http.MethodGet, "/api/agents", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	acpStates, ok := resp["acpStates"].(map[string]any)
+	require.True(t, ok, "response should contain acpStates")
+
+	// Invalid JSON should not produce any state
+	_, exists := acpStates["acp-bad-json"]
+	assert.False(t, exists, "invalid DB state should not produce acpState entry")
+}
+
+func TestServeAgentsGet_ACPStateEmptyDBFields(t *testing.T) {
+	_, teardown := setupAgentTestEnv(t)
+	defer teardown()
+
+	// Add an ACP agent with empty DB state fields
+	acpAgent := &model.Agent{
+		ID:        "acp-empty-db",
+		Name:      "ACP Empty DB",
+		Backend:   "acp-test",
+		Transport: "acp-stdio",
+		Models:    []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
+	}
+	model.Agents["acp-empty-db"] = acpAgent
+	model.AgentList = append(model.AgentList, acpAgent)
+	require.NoError(t, service.SaveAgent(service.DB, acpAgent))
+
+	// Ensure no pool entry exists
+	pool := ai.GetACPConnectionPool()
+	pool.CloseConnection("acp-empty-db")
+
+	req := newRequest(t, http.MethodGet, "/api/agents", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	acpStates, ok := resp["acpStates"].(map[string]any)
+	require.True(t, ok, "response should contain acpStates")
+
+	_, exists := acpStates["acp-empty-db"]
+	assert.False(t, exists, "empty DB state should not produce acpState entry")
+}
+
+func TestServeAgentsGet_ACPStateDBFallbackEmptyAvailableModes(t *testing.T) {
+	_, teardown := setupAgentTestEnv(t)
+	defer teardown()
+
+	// Add an ACP agent with DB state that has empty availableModes
+	acpAgent := &model.Agent{
+		ID:            "acp-empty-modes",
+		Name:          "ACP Empty Modes",
+		Backend:       "acp-test",
+		Transport:     "acp-stdio",
+		Models:        []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
+		AcpModeState:  `{"currentModeId":"code","availableModes":[]}`,
+		AcpThinkingState: `{"currentId":"low","availableLevels":[]}`,
+	}
+	model.Agents["acp-empty-modes"] = acpAgent
+	model.AgentList = append(model.AgentList, acpAgent)
+	require.NoError(t, service.SaveAgent(service.DB, acpAgent))
+
+	pool := ai.GetACPConnectionPool()
+	pool.CloseConnection("acp-empty-modes")
+
+	req := newRequest(t, http.MethodGet, "/api/agents", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	acpStates, ok := resp["acpStates"].(map[string]any)
+	require.True(t, ok, "response should contain acpStates")
+
+	// Empty availableModes/availableLevels should not produce state
+	_, exists := acpStates["acp-empty-modes"]
+	assert.False(t, exists, "empty available arrays should not produce acpState entry")
+}
+
+func TestServeAgentsGet_NonACPAgentNoACPState(t *testing.T) {
+	_, teardown := setupAgentTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/agents", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	acpStates, ok := resp["acpStates"].(map[string]any)
+	require.True(t, ok, "response should contain acpStates")
+
+	// codebuddy and claude are CLI agents — no ACP state
+	_, hasCodebuddy := acpStates["codebuddy"]
+	_, hasClaude := acpStates["claude"]
+	assert.False(t, hasCodebuddy, "CLI agent should not have ACP state")
+	assert.False(t, hasClaude, "CLI agent should not have ACP state")
+}
+
+func TestServeAgentsGet_ACPCommandsEmptyArray(t *testing.T) {
+	_, teardown := setupAgentTestEnv(t)
+	defer teardown()
+
+	// Add an ACP agent with AcpCommands = "[]" (should be treated as no commands)
+	acpAgent := &model.Agent{
+		ID:           "acp-empty-cmds",
+		Name:         "ACP Empty Cmds",
+		Backend:      "acp-test",
+		Transport:    "acp-stdio",
+		Models:       []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
+		AcpCommands:  "[]",
+	}
+	model.Agents["acp-empty-cmds"] = acpAgent
+	model.AgentList = append(model.AgentList, acpAgent)
+	require.NoError(t, service.SaveAgent(service.DB, acpAgent))
+
+	pool := ai.GetACPConnectionPool()
+	pool.CloseConnection("acp-empty-cmds")
+
+	req := newRequest(t, http.MethodGet, "/api/agents", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	acpStates, ok := resp["acpStates"].(map[string]any)
+	require.True(t, ok, "response should contain acpStates")
+
+	// "[]" should not produce state (line 90: a.AcpCommands != "" && a.AcpCommands != "[]")
+	_, exists := acpStates["acp-empty-cmds"]
+	assert.False(t, exists, "empty array commands should not produce acpState entry")
+}
+
+func TestServeAgentsGet_ACPModelListOverridesModels(t *testing.T) {
+	_, teardown := setupAgentTestEnv(t)
+	defer teardown()
+
+	// Add an ACP agent with CLI-discovered models
+	acpAgent := &model.Agent{
+		ID:        "acp-ml-override",
+		Name:      "ACP ML Override",
+		Backend:   "acp-test",
+		Transport: "acp-stdio",
+		Models:    []model.AgentModel{{ID: "cli-model", Name: "CLI Model", Default: true}},
+	}
+	model.Agents["acp-ml-override"] = acpAgent
+	model.AgentList = append(model.AgentList, acpAgent)
+	require.NoError(t, service.SaveAgent(service.DB, acpAgent))
+
+	// Inject pool entry with model list that should override CLI-discovered models
+	pool := ai.GetACPConnectionPool()
+	entry := &ai.ACPConnEntry{}
+	entry.SetCachedModelListState(&ai.ModelListState{
+		CurrentModelID: "acp-model-1",
+		Models: []model.AgentModel{
+			{ID: "acp-model-1", Name: "ACP Model 1", Default: true},
+			{ID: "acp-model-2", Name: "ACP Model 2"},
+		},
+	})
+	pool.SetEntryForTest("acp-ml-override", entry)
+	defer pool.CloseConnection("acp-ml-override")
+
+	req := newRequest(t, http.MethodGet, "/api/agents", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	// Find the agent and verify models were overridden
+	agents, ok := resp["agents"].([]any)
+	require.True(t, ok)
+	for _, a := range agents {
+		agent := a.(map[string]any)
+		if agent["id"] == "acp-ml-override" {
+			models := agent["models"].([]any)
+			assert.Len(t, models, 2)
+			m0 := models[0].(map[string]any)
+			assert.Equal(t, "acp-model-1", m0["id"], "models should be overridden by ACP model list")
+			m1 := models[1].(map[string]any)
+			assert.Equal(t, "acp-model-2", m1["id"])
+		}
+	}
 }
