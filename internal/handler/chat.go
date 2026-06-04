@@ -783,6 +783,12 @@ func finalizeStreamRun(
 	// Determine cancellation reason
 	cancelReason := service.GetAndClearCancelReason(sessionID)
 
+	// Ensure responseMetadata exists — even for cancelled/empty responses,
+	// we want to persist whatever info we have (wallMs, mode, transport, etc.)
+	if responseMetadata == nil {
+		responseMetadata = &ai.Metadata{}
+	}
+
 	// Serialize blocks + metadata as JSON for database storage
 	var content string
 	if len(blocks) == 0 {
@@ -800,17 +806,14 @@ func finalizeStreamRun(
 			errMsg, reason = "AI returned no content", ai.ReasonEmpty
 		}
 		blocks = append(blocks, model.ContentBlock{Type: "warning", Text: errMsg, Reason: reason})
-		contentMap := map[string]any{"blocks": blocks}
+		contentMap := map[string]any{"blocks": blocks, "metadata": responseMetadata}
 		if cancelReason == "user" || ctx.Err() == context.Canceled {
 			contentMap["cancelled"] = true
 		}
 		blocksJSON, _ := json.Marshal(contentMap)
 		content = string(blocksJSON)
 	} else {
-		contentMap := map[string]any{"blocks": blocks}
-		if responseMetadata != nil {
-			contentMap["metadata"] = responseMetadata
-		}
+		contentMap := map[string]any{"blocks": blocks, "metadata": responseMetadata}
 		// When there are blocks but the stream was interrupted, add a warning and mark cancelled
 		if cancelReason == "user" {
 			contentMap["cancelled"] = true
