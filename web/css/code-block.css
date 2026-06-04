@@ -73,6 +73,10 @@ pre.code-block-pre code {
     padding-right: 8px;
 }
 
+.no-line-num .code-line {
+    min-height: 1.6em;
+}
+
 /* ─── Word-wrap mode ─── */
 .word-wrap .code-line {
     align-items: stretch;
