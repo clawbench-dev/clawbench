@@ -185,6 +185,8 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		// Look up cached ACP mode/thinking/model list state for this session.
 		// This allows the frontend to populate mode chips immediately
 		// without waiting for SSE events (which may have already been consumed).
+		// Fallback: for brand-new sessions with no pool session mapping yet,
+		// look up by agent ID so mode chips appear on first load.
 		var modeState, thinkingEffortState, modelListState any
 		var commands []ai.AvailableCommandInfo
 		if sessionID != "" {
@@ -193,6 +195,18 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				thinkingEffortState = es
 				commands = cmds
 				modelListState = ml
+			} else if sessionAgentID != "" {
+				// No session-level mapping yet (new session, never sent a message).
+				// Fall back to agent-level cache so mode/thinking/command chips
+				// appear immediately without requiring the first message.
+				if ms, _, es, ml := ai.GetACPConnectionPool().GetCachedStateByAgentID(sessionAgentID); ms != nil || es != nil || ml != nil {
+					modeState = ms
+					thinkingEffortState = es
+					modelListState = ml
+				}
+				if cmds := ai.GetACPConnectionPool().GetCommandsByAgentID(sessionAgentID); len(cmds) > 0 {
+					commands = cmds
+				}
 			}
 		}
 

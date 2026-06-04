@@ -5,7 +5,7 @@ import { useNotification } from '@/composables/useNotification.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { clearModeState, updateModeState, clearCommandState, updateCommandState, updateThinkingEffortState, clearThinkingEffortState, currentAgentId as _currentAgentId } from '@/composables/useSessionIdentity.ts'
 import { clearPlanState } from '@/composables/usePlanProgress'
-import { useAgents, restoreOriginalModels } from '@/composables/useAgents'
+import { useAgents, restoreOriginalModels, populateACPStateFromCache } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
 import { warmWorktreeCache } from '@/composables/useWorktreeAnnotation.ts'
@@ -388,13 +388,18 @@ export function useChatSession(options: UseChatSessionOptions) {
       currentAgentId.value = data.agentId || agentId || ''
       syncModelFromData(currentAgentId.value, '')
       currentThinkingEffort.value = identity.loadThinkingPref(currentAgentId.value) || ''
-      // Clear ACP state for new session — will be populated from /api/agents or SSE
-      // only if the new session's agent actually supports ACP.
+      // Clear ACP state for new session — then immediately restore from
+      // cached acpStates so mode/thinking/command chips appear without
+      // needing to send the first message first.
       clearModeState()
       clearCommandState()
       clearThinkingEffortState()
       // Restore original CLI model list in case ACP had overridden it
       restoreOriginalModels(currentAgentId.value)
+      // Re-populate ACP state from the agents cache (pool + DB persisted).
+      // This makes mode chips visible immediately on new sessions.
+      // May trigger a force-refresh of /api/agents if the cache is stale.
+      await populateACPStateFromCache(currentAgentId.value)
       messages.value = []
       totalMessages.value = 0
       lastMessageSnapshot = ''  // New session — no messages yet

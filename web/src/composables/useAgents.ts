@@ -8,6 +8,12 @@ const agents = ref<any[]>([])
 const defaultAgentId = ref('')
 let loadPromise: Promise<void> | null = null
 
+// Cached ACP states from /api/agents — used by createSession to restore
+// mode/thinking/command chips after clearing state for a new session.
+// Without this cache, chips only reappear after the first message triggers
+// an SSE mode_update event, even though the data is already in memory.
+let acpStatesCache: Record<string, any> = {}
+
 // originalModels stores CLI-discovered model lists for each agent.
 // When ACP provides a model list, we override agent.models but keep
 // the original here so we can restore it when switching away from ACP.
@@ -17,6 +23,7 @@ const originalModels = new Map<string, any[]>()
 export function resetAgents(): void {
     agents.value = []
     defaultAgentId.value = ''
+    acpStatesCache = {}
     loadPromise = null
 }
 
@@ -30,6 +37,11 @@ async function loadAgents(force = false): Promise<void> {
             agents.value = data.agents || []
             if (data.defaultAgent) {
                 defaultAgentId.value = data.defaultAgent
+            }
+            // Cache acpStates for later use (e.g. createSession needs to
+            // restore mode chips without re-fetching /api/agents).
+            if (data.acpStates) {
+                acpStatesCache = data.acpStates
             }
             // Populate ACP mode/thinking/commands state from the agents response.
             // Only populate for the CURRENT session's agent to avoid showing
@@ -167,7 +179,7 @@ function updateAgentField(agentId: string, field: string, value: any): void {
 }
 
 /** Update agent's model list from ACP. Saves original CLI models first so they can be restored. */
-function updateACPModelList(agentId: string, models: Array<{ id: string; name: string }>, currentModelId?: string): void {
+export function updateACPModelList(agentId: string, models: Array<{ id: string; name: string }>, currentModelId?: string): void {
     const agent = agents.value.find(a => a.id === agentId)
     if (!agent) return
     // Save original CLI models if not already saved
@@ -183,7 +195,7 @@ function updateACPModelList(agentId: string, models: Array<{ id: string; name: s
 }
 
 /** Restore agent's model list to the original CLI-discovered models (clears ACP override). */
-function restoreOriginalModels(agentId: string): void {
+export function restoreOriginalModels(agentId: string): void {
     const saved = originalModels.get(agentId)
     if (!saved) return
     const agent = agents.value.find(a => a.id === agentId)
@@ -197,6 +209,34 @@ function restoreOriginalModels(agentId: string): void {
 function canRefreshModels(agentId: string): boolean {
     const agent = agents.value.find(a => a.id === agentId)
     return !!agent?.canRefreshModels
+}
+
+/**
+ * Populate ACP state (mode, thinking, commands, model list) for the given
+ * agent from the cached acpStates. Used by createSession after clearing
+ * session-level state so that mode chips appear immediately on new sessions.
+ */
+export async function populateACPStateFromCache(agentId: string): Promise<void> {
+    // If the cache doesn't have this agent's ACP state yet (e.g. pool was
+    // empty on first loadAgents, but an ACP session has since been created),
+    // force-refresh from the server before giving up.
+    if (!acpStatesCache[agentId]) {
+        await loadAgents(true)
+    }
+    const state = acpStatesCache[agentId]
+    if (!state) return
+    if (state.modeState?.availableModes?.length > 0) {
+        updateModeState(state.modeState.currentModeId || '', state.modeState.availableModes)
+    }
+    if (state.thinkingEffortState?.availableLevels?.length > 0) {
+        updateThinkingEffortState(state.thinkingEffortState.currentId || '', state.thinkingEffortState.availableLevels)
+    }
+    if (Array.isArray(state.commands) && state.commands.length > 0) {
+        updateCommandState(state.commands)
+    }
+    if (state.modelListState?.models?.length > 0) {
+        updateACPModelList(agentId, state.modelListState.models, state.modelListState.currentModelId)
+    }
 }
 
 export function useAgents() {
@@ -222,5 +262,6 @@ export function useAgents() {
         canRefreshModels,
         updateACPModelList,
         restoreOriginalModels,
+        populateACPStateFromCache,
     }
 }
