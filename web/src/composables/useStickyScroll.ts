@@ -9,9 +9,12 @@ import { fetchCodeSymbols } from '@/composables/useCodeSymbols'
  * The overlay has min-width: max-content so sticky lines are always complete.
  * Line numbers use position:sticky;left:0 so they stay fixed during horizontal scroll.
  * Code text uses translateX(-scrollLeft) to follow horizontal scroll.
+ *
+ * Supports both normal and word-wrap modes — in word-wrap mode, each sticky line
+ * measures its actual rendered height from the DOM (lines may wrap to multiple rows).
  */
 export function useStickyScroll() {
-  /** Reactive array of { lineNum, kind, top } for lines that should be sticky */
+  /** Reactive array of { lineNum, kind, top, height } for lines that should be sticky */
   const stickyLines = ref([])
 
   let symbols = []
@@ -19,18 +22,8 @@ export function useStickyScroll() {
   let scrollHandler = null
   let rafId = null
   let lineEls = []  // cached .code-line elements
-  let lineHeight = 0
 
   const MAX_STICKY = 5  // max sticky lines to show at once
-
-  function computeLineHeight() {
-    if (lineEls.length === 0) return 0
-    const first = lineEls[0]
-    const rect = first.getBoundingClientRect()
-    if (rect.height > 0) return rect.height
-    const style = window.getComputedStyle(first)
-    return parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.6
-  }
 
   function updateSticky() {
     if (!scrollEl || symbols.length === 0) {
@@ -45,7 +38,6 @@ export function useStickyScroll() {
     if (lineEls.length === 0) {
       lineEls = Array.from(scrollEl.querySelectorAll(':scope > code > .code-line'))
       if (lineEls.length === 0) return
-      lineHeight = computeLineHeight()
     }
 
     for (let i = 0; i < lineEls.length; i++) {
@@ -67,17 +59,22 @@ export function useStickyScroll() {
     // Sort by scope width descending (outermost first)
     enclosing.sort((a, b) => (b.endLine - b.line) - (a.endLine - a.line))
 
-    // Only keep scopes whose definition line is scrolled out of view
+    // Only keep scopes whose definition line is scrolled out of view.
+    // Compute actual pixel offsets and heights from DOM measurements.
     const result = []
+    let accTop = 0
     for (let i = 0; i < enclosing.length && result.length < MAX_STICKY; i++) {
       const sym = enclosing[i]
       const defLineEl = lineEls[sym.line - 1]
       if (defLineEl && defLineEl.offsetTop < scrollTop) {
+        const h = defLineEl.getBoundingClientRect().height
         result.push({
           lineNum: sym.line,
           kind: sym.kind,
-          top: result.length,  // stack order: 0 = outermost (top), 1 = next, etc.
+          top: accTop,   // pixel offset from overlay top
+          height: h,     // actual rendered height (supports wrapped lines)
         })
+        accTop += h
       }
     }
 
@@ -126,7 +123,6 @@ export function useStickyScroll() {
 
   function invalidateCache() {
     lineEls = []
-    lineHeight = 0
   }
 
   /**

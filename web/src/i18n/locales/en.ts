@@ -867,6 +867,7 @@ export default {
       lineNumbers: 'Line Numbers',
       stickyScroll: 'Sticky Scroll',
       lineNumbersDesc: 'Show line numbers on the left side in file preview',
+      stickyScrollDesc: 'Pin current scope definition lines to the top while scrolling',
       fileView: 'Default View',
       fileViewDesc: 'Default display mode for the file manager',
       fileViewList: 'List',

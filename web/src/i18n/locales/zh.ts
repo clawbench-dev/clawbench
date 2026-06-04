@@ -867,6 +867,7 @@ export default {
       lineNumbers: '行号',
       stickyScroll: '粘性滚动',
       lineNumbersDesc: '文件预览时在左侧显示行号',
+      stickyScrollDesc: '文件预览时将当前作用域定义行固定在顶部',
       fileView: '默认视图',
       fileViewDesc: '文件管理器的默认展示方式',
       fileViewList: '列表',

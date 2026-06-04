@@ -127,6 +127,9 @@ const legacyKeys: Record<string, {
   swipeSession: {
     // No legacy key — this is a new setting
   },
+  stickyScroll: {
+    // No legacy key — this is a new setting
+  },
   pushPersistentNotification: {
     // No legacy key — this is a new setting
     sideEffect(value: boolean) {
@@ -176,6 +179,7 @@ const localDefaults: Record<string, any> = {
   showHidden: false,
   wordWrap: false,
   lineNumbers: true,
+  stickyScroll: true,
   fileView: 'list',
   terminalFontSize: 12,
   androidLogCapture: false,

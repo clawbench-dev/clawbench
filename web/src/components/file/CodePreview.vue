@@ -1,8 +1,8 @@
 <template>
   <pre class="raw-content-pre" :class="{ 'word-wrap': wordWrap, 'no-line-num': !showLineNumbers }" ref="codeRef" :data-file-path="filePath" :data-language="language" @click="handleClick">
-    <div v-if="stickyLines.length > 0 && !wordWrap" class="sticky-scroll-overlay">
+    <div v-if="stickyLines.length > 0" class="sticky-scroll-overlay">
       <div v-for="s in stickyLines" :key="s.lineNum" class="sticky-line"
-        :data-line="s.lineNum" :style="{ top: s.top * stickyLineHeight + 'px' }"
+        :data-line="s.lineNum" :style="{ top: s.top + 'px', height: s.height + 'px' }"
         @click="handleStickyClick(s.lineNum)">
         <span v-if="showLineNumbers" class="sticky-line-num">{{ s.lineNum }}</span>
         <span class="sticky-code-text" v-html="getStickyLineHtml(s.lineNum)" />
@@ -45,7 +45,6 @@ const quoteQuestion = useQuoteQuestion()
 
 // Sticky scroll
 const { stickyLines, initSticky, teardownSticky, invalidateCache } = useStickyScroll()
-const stickyLineHeight = 20.8  // matches code line height (13px * 1.6)
 const lineHtmlCache = new Map()
 
 function getStickyLineHtml(lineNum) {
@@ -184,11 +183,11 @@ watch(
 
 .raw-content-pre .sticky-line {
     display: flex;
+    align-items: stretch;
     position: absolute;
     left: 0;
     right: 0;
     min-width: max-content;
-    height: 20.8px;
     background: var(--code-bg);
     border-bottom: 1px solid var(--border-color);
     opacity: 0.92;
@@ -196,7 +195,6 @@ watch(
     font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace;
     pointer-events: auto;
     font-size: 13px;
-    line-height: 20.8px;
 }
 
 .raw-content-pre .sticky-line:hover {
@@ -230,9 +228,26 @@ watch(
     z-index: 1;
 }
 
-/* Disable sticky scroll in word-wrap mode */
+/* Word-wrap mode: sticky lines adapt to wrapped content */
 .raw-content-pre.word-wrap .sticky-scroll-overlay {
-    display: none;
+    min-width: 0;
+}
+
+.raw-content-pre.word-wrap .sticky-line {
+    min-width: 0;
+}
+
+.raw-content-pre.word-wrap .sticky-line-num {
+    line-height: normal;
+    display: flex;
+    align-items: center;
+}
+
+.raw-content-pre.word-wrap .sticky-code-text {
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow-wrap: break-word;
+    line-height: normal;
 }
 </style>
 
