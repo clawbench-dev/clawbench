@@ -35,7 +35,7 @@ func ServeAgents(w http.ResponseWriter, r *http.Request) {
 	writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
 }
 
-func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
+func serveAgentsGet(w http.ResponseWriter, _ *http.Request) { //nolint:gocognit // agent state assembly has many branches, each simple
 	configMutex.RLock()
 	agents := make([]*model.Agent, len(model.AgentList))
 	copy(agents, model.AgentList)

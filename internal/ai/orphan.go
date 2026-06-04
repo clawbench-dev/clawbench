@@ -133,7 +133,7 @@ func bytesContainsSep(data, target []byte, sep byte) bool {
 }
 
 // parsePID parses a string as a positive integer PID.
-func parsePID(s string, pid *int) (bool, error) {
+func parsePID(s string, pid *int) (bool, error) { //nolint:unparam // error return kept for API consistency
 	for _, c := range s {
 		if c < '0' || c > '9' {
 			return false, nil

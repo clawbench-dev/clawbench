@@ -512,7 +512,7 @@ func MigrateMetadataFromContent() {
 			slog.Error("metadata migration: query failed", slog.String("err", err.Error()))
 			return
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 
 		type row struct {
 			ID      int64

@@ -569,9 +569,9 @@ func TestUpdateAgentACPState_PartialUpdate(t *testing.T) {
 
 	got := agents[0]
 	assert.Equal(t, newMode, got.AcpModeState)
-	assert.Equal(t, "", got.AcpCommands)       // overwritten to empty in DB
+	assert.Equal(t, "", got.AcpCommands) // overwritten to empty in DB
 	assert.Equal(t, newThinking, got.AcpThinkingState)
-	assert.Equal(t, "", got.AcpModelListState)  // overwritten to empty in DB
+	assert.Equal(t, "", got.AcpModelListState) // overwritten to empty in DB
 }
 
 func TestUpdateAgentACPState_InMemoryUpdate(t *testing.T) {
@@ -608,14 +608,14 @@ func TestSaveAgent_WithACPFields(t *testing.T) {
 	modelListState := `{"models":[{"id":"claude-sonnet-4-20250514","name":"Sonnet 4"}]}`
 
 	agent := &model.Agent{
-		ID:                 "claude",
-		Name:               "Claude",
-		Backend:            "claude",
-		Source:             "auto",
-		AcpModeState:       modeState,
-		AcpCommands:        commands,
-		AcpThinkingState:   thinkingState,
-		AcpModelListState:  modelListState,
+		ID:                "claude",
+		Name:              "Claude",
+		Backend:           "claude",
+		Source:            "auto",
+		AcpModeState:      modeState,
+		AcpCommands:       commands,
+		AcpThinkingState:  thinkingState,
+		AcpModelListState: modelListState,
 	}
 
 	err := service.SaveAgent(db, agent)

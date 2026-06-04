@@ -233,7 +233,7 @@ func (a *mockACPAgent) Prompt(_ context.Context, params acp.PromptRequest) (acp.
 
 // simulateTurn sends a realistic sequence of ACP session notifications,
 // including available_commands_update, thinking, tool calls, and message chunks.
-func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.PromptRequest, currentMode string) error {
+func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.PromptRequest, currentMode string) error { //nolint:gocyclo // mock agent simulates many ACP protocol steps
 	// 1. Send available_commands_update at the start of each turn
 	if err := a.conn.SessionUpdate(ctx, acp.SessionNotification{
 		SessionId: acp.SessionId(sid),

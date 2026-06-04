@@ -665,7 +665,7 @@ func claudeIsDateStamped(modelID string) bool {
 // DiscoverClaudeModels discovers Claude model IDs by scanning the claude binary
 // with `strings`. Claude CLI does not have a --list-models command, so we extract
 // model IDs from the binary which contains hardcoded model name patterns.
-func DiscoverClaudeModels() []AgentModel { //nolint:gocyclo // binary scanning model discovery
+func DiscoverClaudeModels() []AgentModel { //nolint:gocyclo,gocognit // binary scanning model discovery
 	// Resolve the real path for the claude binary, handling Windows .cmd wrappers
 	path := platform.ResolveCLIPath("claude")
 	if path == "" {
