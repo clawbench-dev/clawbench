@@ -18,6 +18,9 @@ func TestCleanupOrphans_KillsRunningProcess(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping orphan cleanup test in short mode")
 	}
+	if runtime.GOOS == "windows" {
+		t.Skip("process group signaling differs on Windows")
+	}
 
 	// Start a subprocess WITH the CLAWBENCH_CHILD=1 env marker
 	cmd := exec.Command("sleep", "300")
