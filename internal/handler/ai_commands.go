@@ -40,6 +40,10 @@ func ServeAICommands(w http.ResponseWriter, r *http.Request) {
 
 	pool := ai.GetACPConnectionPool()
 	client := pool.GetClient(agent.ID)
+	if client == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"commands": []any{}})
+		return
+	}
 
 	acpCmds := client.GetCommands()
 	cmds := make([]ai.AvailableCommandInfo, 0, len(acpCmds))
