@@ -16,6 +16,9 @@ import (
 func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx context.Context) {
 	switch {
 	case update.AgentMessageChunk != nil:
+		// When the agent transitions from thinking to content output, emit
+		// thinking_done so the frontend can stop the thinking spinner immediately.
+		forwardACPEvent(ch, StreamEvent{Type: "thinking_done"})
 		content := update.AgentMessageChunk.Content
 		if content.Text != nil {
 			forwardACPEvent(ch, StreamEvent{Type: "content", Content: content.Text.Text})
@@ -28,6 +31,9 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		}
 
 	case update.ToolCall != nil:
+		// When the agent transitions from thinking to tool use, emit
+		// thinking_done so the frontend can stop the thinking spinner.
+		forwardACPEvent(ch, StreamEvent{Type: "thinking_done"})
 		tc := update.ToolCall
 		event := mapACPToolCall(*tc)
 		forwardACPEvent(ch, event)

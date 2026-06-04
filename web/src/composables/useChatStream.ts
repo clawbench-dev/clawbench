@@ -435,12 +435,16 @@ export function useChatStream(options: UseChatStreamOptions) {
       let data: any
       try { data = JSON.parse(e.data) } catch { console.warn('SSE tool_result: invalid JSON, skipping'); return }
       const blocks = streamingMsg.blocks
-      // Find the matching tool_use block and update output/status
+      // Find the matching tool_use block and update output/status/done
       const existing = blocks.find(b => b.type === 'tool_use' && b.id === data.id)
       if (existing) {
         if (data.output !== undefined) existing.output = data.output
         if (data.status !== undefined) existing.status = data.status
+        existing.done = true
       }
+      // Clear timeout if set
+      const timer = toolUseTimeouts.get(data.id)
+      if (timer) { clearTimeout(timer); toolUseTimeouts.delete(data.id) }
       // Skip scroll when panel not visible
       if (isOpen.value) {
         onScrollBottom()
