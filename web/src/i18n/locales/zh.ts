@@ -793,8 +793,29 @@ export default {
       pattern: '匹配模式',
       path: '路径',
     },
+    ls: {
+      currentDir: '当前目录',
+    },
     webFetch: {
       url: 'URL',
+    },
+    todoRead: {
+      label: '读取待办列表',
+    },
+    task: {
+      subject: '主题',
+      description: '描述',
+      name: '名称',
+      cron: 'Cron',
+      prompt: '提示词',
+      agent: 'Agent',
+      status: '状态',
+      owner: '负责人',
+      activeForm: '进行中',
+      noDetails: '（无详情）',
+    },
+    sendMessage: {
+      to: '发送给',
     },
     askUser: {
       noQuestions: '（无问题）',

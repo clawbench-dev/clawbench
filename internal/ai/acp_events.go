@@ -113,10 +113,21 @@ func mapACPToolCall(tc acp.SessionUpdateToolCall) StreamEvent {
 		Done: false,
 	}
 
-	// Extract raw input as JSON string
+	// Extract raw input as JSON string, normalizing camelCase → snake_case
 	if tc.RawInput != nil {
 		if inputBytes, err := json.Marshal(tc.RawInput); err == nil {
-			tool.Input = string(inputBytes)
+			normalized, normErr := normalizeToolInput(inputBytes, map[string]string{
+				"oldString": "old_string",
+				"newString": "new_string",
+				"dirPath":   "path",
+				"cellIndex": "cell_index",
+				"cellType":  "cell_type",
+			})
+			if normErr == nil {
+				tool.Input = string(normalized)
+			} else {
+				tool.Input = string(inputBytes)
+			}
 		}
 	}
 
@@ -162,10 +173,13 @@ func mapACPToolCallUpdate(tcu acp.SessionToolCallUpdate) StreamEvent {
 // extractToolName returns a canonical tool name from an ACP tool call.
 // ACP tool titles are human-readable descriptions (e.g. "Read file contents")
 // but the frontend expects canonical names (e.g. "Read") for icon matching
-// and input formatting. We try prefix matching first, then fall back.
+// and input formatting. We try prefix matching first, then kind-to-canonical,
+// then fall back to the title itself.
 func extractToolName(title string, kind acp.ToolKind) string {
 	if title != "" {
-		// Try matching title against known canonical tool name prefixes
+		// Try matching title against known canonical tool name prefixes.
+		// Longer/more-specific prefixes must appear before shorter ones
+		// (e.g. "MultiEdit" before "Edit", "WebSearch" before "Web").
 		for _, p := range acpToolNamePatterns {
 			if strings.HasPrefix(title, p.prefix) {
 				return p.canonical
@@ -176,18 +190,52 @@ func extractToolName(title string, kind acp.ToolKind) string {
 			return title
 		}
 	}
+	// Map ACP ToolKind to canonical PascalCase names expected by the frontend.
+	// Without this, string(kind) returns lowercase ("read", "execute", "search")
+	// which won't match TOOL_ICONS in the frontend.
+	if canonical, ok := acpKindToCanonical[kind]; ok {
+		return canonical
+	}
 	return string(kind)
 }
 
 // acpToolNamePatterns maps ACP tool title prefixes to canonical tool names.
 // ACP agents send titles like "Read file contents", "Edit file", "Run command"
 // but the frontend expects "Read", "Edit", "Bash" for icon/summary matching.
+// Longer/more-specific prefixes MUST appear before shorter ones to avoid
+// incorrect prefix matches (e.g. "WebSearch" before "Web", "MultiEdit" before "Edit").
 var acpToolNamePatterns = []struct{ prefix, canonical string }{
+	// Multi-word / compound tools first
 	{"NotebookEdit", "NotebookEdit"},
+	{"MultiEdit", "MultiEdit"},
 	{"TodoWrite", "TodoWrite"},
 	{"TodoRead", "TodoRead"},
 	{"WebSearch", "WebSearch"},
 	{"WebFetch", "WebFetch"},
+	{"AskUserQuestion", "AskUserQuestion"},
+	{"EnterPlanMode", "EnterPlanMode"},
+	{"ExitPlanMode", "ExitPlanMode"},
+	{"EnterWorktree", "EnterWorktree"},
+	{"LeaveWorktree", "LeaveWorktree"},
+	{"SendMessage", "SendMessage"},
+	{"TaskCreate", "TaskCreate"},
+	{"TaskUpdate", "TaskUpdate"},
+	{"TaskList", "TaskList"},
+	{"TaskGet", "TaskGet"},
+	{"TaskStop", "TaskStop"},
+	{"TaskOutput", "TaskOutput"},
+	{"ComputerUse", "ComputerUse"},
+	{"TeamCreate", "TeamCreate"},
+	{"TeamDelete", "TeamDelete"},
+	{"StructuredOutput", "StructuredOutput"},
+	{"SkillManage", "SkillManage"},
+	{"DeepThink", "DeepThink"},
+	{"ImageGen", "ImageGen"},
+	{"PermissionApproval", "PermissionApproval"},
+	{"WeChatReply", "WeChatReply"},
+	{"WeComReply", "WeComReply"},
+	{"save_memory", "save_memory"},
+	// Single-word tools — must come after compound prefixes above
 	{"Read", "Read"},
 	{"Write", "Write"},
 	{"Edit", "Edit"},
@@ -196,9 +244,27 @@ var acpToolNamePatterns = []struct{ prefix, canonical string }{
 	{"Grep", "Grep"},
 	{"LS", "LS"},
 	{"List", "LS"},
-	{"MultiEdit", "MultiEdit"},
 	{"Agent", "Agent"},
-	{"AskUserQuestion", "AskUserQuestion"},
+	{"Skill", "Skill"},
+	{"LSP", "LSP"},
+	{"Monitor", "Monitor"},
+	{"PowerShell", "PowerShell"},
+	{"Git", "Git"},
+}
+
+// acpKindToCanonical maps ACP ToolKind enum values to the PascalCase
+// canonical names expected by the frontend TOOL_ICONS mapping.
+var acpKindToCanonical = map[acp.ToolKind]string{
+	acp.ToolKindRead:       "Read",
+	acp.ToolKindEdit:       "Edit",
+	acp.ToolKindDelete:     "Edit",   // delete operations → Edit category
+	acp.ToolKindMove:       "Edit",   // move/rename → Edit category
+	acp.ToolKindSearch:     "Grep",   // search → Grep category
+	acp.ToolKindExecute:    "Bash",   // execute/run → Bash category
+	acp.ToolKindThink:      "DeepThink",
+	acp.ToolKindFetch:      "WebFetch",
+	acp.ToolKindSwitchMode: "EnterPlanMode",
+	acp.ToolKindOther:      "Skill",  // uncategorized tools → Skill category
 }
 
 // mapACPError maps a JSON-RPC error code to a StreamEvent.

@@ -56,6 +56,8 @@ export const TOOL_ICONS: Record<string, { icon: typeof Wrench; category: string 
   'SkillManage':       { icon: Sparkles,         category: 'skill' },
   'Monitor':           { icon: Monitor,          category: 'bash' },
   'PermissionApproval':{ icon: ShieldAlert,      category: 'permission' },
+  'MultiEdit':         { icon: FilePenLine,      category: 'file' },
+  'TodoRead':          { icon: ListChecks,       category: 'task' },
 }
 
 export const FALLBACK_TOOL_ICON = { icon: WrenchFallback, category: 'fallback' }

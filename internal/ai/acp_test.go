@@ -50,7 +50,8 @@ func TestMapACPToolCall_NoTitleUsesKind(t *testing.T) {
 		Kind:      acp.ToolKindRead,
 	}
 	event := mapACPToolCall(tc)
-	assert.Equal(t, "read", event.Tool.Name)
+	// Kind fallback now maps to PascalCase canonical name, not lowercase string(kind)
+	assert.Equal(t, "Read", event.Tool.Name)
 }
 
 // --- mapACPToolCallUpdate tests ---
@@ -116,11 +117,38 @@ func TestMapACPToolCallUpdate_Pending(t *testing.T) {
 func TestExtractToolName_TitlePreferred(t *testing.T) {
 	assert.Equal(t, "Read", extractToolName("Read", acp.ToolKindRead))
 	assert.Equal(t, "MyCustomTool", extractToolName("MyCustomTool", acp.ToolKindEdit))
+	assert.Equal(t, "MultiEdit", extractToolName("MultiEdit file", acp.ToolKindEdit))
+	assert.Equal(t, "WebSearch", extractToolName("WebSearch query", acp.ToolKindSearch))
+	assert.Equal(t, "Bash", extractToolName("Bash command", acp.ToolKindExecute))
+	assert.Equal(t, "EnterPlanMode", extractToolName("EnterPlanMode", acp.ToolKindSwitchMode))
+	assert.Equal(t, "AskUserQuestion", extractToolName("AskUserQuestion prompt", acp.ToolKindOther))
+	assert.Equal(t, "TaskCreate", extractToolName("TaskCreate new task", acp.ToolKindOther))
+	assert.Equal(t, "ComputerUse", extractToolName("ComputerUse action", acp.ToolKindOther))
+	assert.Equal(t, "save_memory", extractToolName("save_memory", acp.ToolKindOther))
 }
 
-func TestExtractToolName_FallbackToKind(t *testing.T) {
-	assert.Equal(t, "read", extractToolName("", acp.ToolKindRead))
-	assert.Equal(t, "edit", extractToolName("", acp.ToolKindEdit))
+func TestExtractToolName_KindFallback(t *testing.T) {
+	// When title is empty, fall back to ACP ToolKind → canonical mapping
+	assert.Equal(t, "Read", extractToolName("", acp.ToolKindRead))
+	assert.Equal(t, "Edit", extractToolName("", acp.ToolKindEdit))
+	assert.Equal(t, "Bash", extractToolName("", acp.ToolKindExecute))
+	assert.Equal(t, "Grep", extractToolName("", acp.ToolKindSearch))
+	assert.Equal(t, "WebFetch", extractToolName("", acp.ToolKindFetch))
+	assert.Equal(t, "DeepThink", extractToolName("", acp.ToolKindThink))
+	assert.Equal(t, "EnterPlanMode", extractToolName("", acp.ToolKindSwitchMode))
+	assert.Equal(t, "Edit", extractToolName("", acp.ToolKindDelete))
+	assert.Equal(t, "Edit", extractToolName("", acp.ToolKindMove))
+	assert.Equal(t, "Skill", extractToolName("", acp.ToolKindOther))
+}
+
+func TestExtractToolName_PrefixOrdering(t *testing.T) {
+	// Longer prefixes must match before shorter ones
+	assert.Equal(t, "MultiEdit", extractToolName("MultiEdit changes", acp.ToolKindEdit))
+	assert.Equal(t, "WebSearch", extractToolName("WebSearch for golang", acp.ToolKindSearch))
+	assert.Equal(t, "WebFetch", extractToolName("WebFetch url", acp.ToolKindFetch))
+	assert.Equal(t, "NotebookEdit", extractToolName("NotebookEdit cell", acp.ToolKindEdit))
+	assert.Equal(t, "EnterPlanMode", extractToolName("EnterPlanMode", acp.ToolKindSwitchMode))
+	assert.Equal(t, "ExitPlanMode", extractToolName("ExitPlanMode", acp.ToolKindSwitchMode))
 }
 
 // --- mapACPError tests ---

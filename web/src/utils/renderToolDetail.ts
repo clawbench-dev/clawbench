@@ -498,6 +498,445 @@ function renderPermissionApproval(input: Record<string, any>): string {
 }
 
 /**
+ * Render LS tool input as a directory listing view.
+ * Shows the directory path (clickable).
+ */
+function renderLSView(input: Record<string, any>): string {
+  const path = input.path || input.dir_path || ''
+
+  let html = '<div class="ls-dir-view">'
+  html += '<div class="ls-dir-header">'
+  html += `<span class="ls-dir-icon">📂</span>`
+
+  if (path) {
+    const projectRoot = store.state.projectRoot || ''
+    const homeDir = store.state.homeDir || ''
+    const resolvedPath = resolveFilePath(path, projectRoot, homeDir)
+    const displayPath = resolvedPath || path.replace(/^\.\//, '')
+    html += `<span class="ls-dir-path">${escapeHtml(displayPath)}</span>`
+    if (resolvedPath) {
+      html += fileOpenButtonHtml(resolvedPath)
+    }
+  } else {
+    html += `<span class="ls-dir-path">${escapeHtml(gt('tool.ls.currentDir'))}</span>`
+  }
+
+  html += '</div></div>'
+  return html
+}
+
+/**
+ * Render TodoWrite tool input as a structured task list.
+ * Shows todo items with their status.
+ */
+function renderTodoWrite(input: Record<string, any>): string {
+  const todos = Array.isArray(input.todos) ? input.todos : []
+
+  let html = '<div class="todo-write-view">'
+
+  if (todos.length > 0) {
+    html += '<div class="todo-write-list">'
+    for (const todo of todos) {
+      const content = todo.content || ''
+      const status = todo.status || ''
+      const isActive = status === 'in_progress'
+      const isDone = status === 'completed'
+      let icon = '○'
+      let cls = 'todo-pending'
+      if (isDone) { icon = '✓'; cls = 'todo-done' }
+      else if (isActive) { icon = '►'; cls = 'todo-active' }
+      html += `<div class="todo-item ${cls}">`
+      html += `<span class="todo-icon">${icon}</span>`
+      html += `<span class="todo-content">${escapeHtml(content)}</span>`
+      html += '</div>'
+    }
+    html += '</div>'
+  }
+
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render TodoRead tool input as a task read view.
+ */
+function renderTodoRead(_input: Record<string, any>): string {
+  let html = '<div class="todo-read-view">'
+  html += `<span class="todo-read-icon">📋</span>`
+  html += `<span class="todo-read-label">${escapeHtml(gt('tool.todoRead.label'))}</span>`
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render a Task management tool input with a key-value summary.
+ * Used for TaskCreate, TaskUpdate, TaskList, TaskGet, TaskStop, TaskOutput.
+ */
+function renderTaskTool(input: Record<string, any>): string {
+  let html = '<div class="task-tool-view">'
+
+  // Show the most relevant fields based on what's present
+  const fields: { key: string; label: string; format?: 'code' | 'text' }[] = [
+    { key: 'subject', label: gt('tool.task.subject') },
+    { key: 'description', label: gt('tool.task.description') },
+    { key: 'taskId', label: 'ID', format: 'code' },
+    { key: 'task_id', label: 'ID', format: 'code' },
+    { key: 'name', label: gt('tool.task.name') },
+    { key: 'cron', label: gt('tool.task.cron'), format: 'code' },
+    { key: 'prompt', label: gt('tool.task.prompt') },
+    { key: 'agent', label: gt('tool.task.agent') },
+    { key: 'agent_id', label: gt('tool.task.agent') },
+    { key: 'status', label: gt('tool.task.status') },
+    { key: 'owner', label: gt('tool.task.owner') },
+    { key: 'activeForm', label: gt('tool.task.activeForm') },
+  ]
+
+  let hasContent = false
+  for (const f of fields) {
+    const val = input[f.key]
+    if (val !== undefined && val !== null && val !== '') {
+      hasContent = true
+      const display = typeof val === 'string' ? val : JSON.stringify(val)
+      const truncated = display.length > 200 ? display.substring(0, 200) + '…' : display
+      html += '<div class="task-tool-field">'
+      html += `<span class="task-field-label">${escapeHtml(f.label)}</span>`
+      if (f.format === 'code') {
+        html += `<code class="task-field-value">${escapeHtml(truncated)}</code>`
+      } else {
+        html += `<span class="task-field-value">${escapeHtml(truncated)}</span>`
+      }
+      html += '</div>'
+    }
+  }
+
+  if (!hasContent) {
+    html += `<div class="task-tool-empty">${escapeHtml(gt('tool.task.noDetails'))}</div>`
+  }
+
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render mode switch tools (EnterPlanMode/ExitPlanMode) as a simple badge view.
+ */
+function renderModeSwitch(input: Record<string, any>): string {
+  let html = '<div class="mode-switch-view">'
+  html += `<span class="mode-switch-icon">🔄</span>`
+  const mode = input.mode || input.mode_id || ''
+  if (mode) {
+    html += `<span class="mode-switch-mode">${escapeHtml(mode)}</span>`
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render worktree switch tools (EnterWorktree/LeaveWorktree) as a path view.
+ */
+function renderWorktreeSwitch(input: Record<string, any>): string {
+  const path = input.path || input.worktree_path || ''
+  let html = '<div class="worktree-switch-view">'
+  html += `<span class="worktree-switch-icon">🌳</span>`
+  if (path) {
+    const projectRoot = store.state.projectRoot || ''
+    const homeDir = store.state.homeDir || ''
+    const resolvedPath = resolveFilePath(path, projectRoot, homeDir)
+    const displayPath = resolvedPath || path.replace(/^\.\//, '')
+    html += `<span class="worktree-switch-path">${escapeHtml(displayPath)}</span>`
+    if (resolvedPath) {
+      html += fileOpenButtonHtml(resolvedPath)
+    }
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render SendMessage tool input as a message card.
+ */
+function renderSendMessage(input: Record<string, any>): string {
+  const recipient = input.recipient || ''
+  const content = input.content || input.message || ''
+
+  let html = '<div class="send-message-view">'
+  html += '<div class="send-message-header">'
+  html += '<span class="send-message-icon">💬</span>'
+  if (recipient) {
+    html += `<span class="send-message-recipient">${escapeHtml(gt('tool.sendMessage.to'))} ${escapeHtml(recipient)}</span>`
+  }
+  html += '</div>'
+  if (content) {
+    const truncated = content.length > 300 ? content.substring(0, 300) + '…' : content
+    html += `<div class="send-message-content">${escapeHtml(truncated)}</div>`
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render ComputerUse tool input as a computer action view.
+ */
+function renderComputerUse(input: Record<string, any>): string {
+  const action = input.action || ''
+  const description = input.description || input.text || ''
+
+  let html = '<div class="computer-use-view">'
+  html += '<div class="computer-use-header">'
+  html += '<span class="computer-use-icon">🖥️</span>'
+  if (action) {
+    html += `<span class="computer-use-action">${escapeHtml(action)}</span>`
+  }
+  html += '</div>'
+  if (description) {
+    const truncated = description.length > 200 ? description.substring(0, 200) + '…' : description
+    html += `<div class="computer-use-desc">${escapeHtml(truncated)}</div>`
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render team management tools (TeamCreate/TeamDelete) as a simple card.
+ */
+function renderTeamTool(input: Record<string, any>): string {
+  const name = input.name || input.team_name || ''
+
+  let html = '<div class="team-tool-view">'
+  html += '<span class="team-tool-icon">👥</span>'
+  if (name) {
+    html += `<span class="team-tool-name">${escapeHtml(name)}</span>`
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render chat reply tools (WeChatReply/WeComReply) as a message card.
+ */
+function renderChatReply(input: Record<string, any>): string {
+  const message = input.message || input.content || ''
+  const recipient = input.recipient || input.user || ''
+
+  let html = '<div class="chat-reply-view">'
+  html += '<div class="chat-reply-header">'
+  html += '<span class="chat-reply-icon">💬</span>'
+  if (recipient) {
+    html += `<span class="chat-reply-recipient">${escapeHtml(recipient)}</span>`
+  }
+  html += '</div>'
+  if (message) {
+    const truncated = message.length > 300 ? message.substring(0, 300) + '…' : message
+    html += `<div class="chat-reply-message">${escapeHtml(truncated)}</div>`
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render save_memory tool input as a key-value card.
+ */
+function renderSaveMemory(input: Record<string, any>): string {
+  const key = input.key || input.name || ''
+  const value = input.value || input.content || ''
+
+  let html = '<div class="save-memory-view">'
+  html += '<span class="save-memory-icon">💾</span>'
+  if (key) {
+    html += `<span class="save-memory-key">${escapeHtml(key)}</span>`
+  }
+  if (value) {
+    const truncated = value.length > 200 ? value.substring(0, 200) + '…' : value
+    html += `<div class="save-memory-value">${escapeHtml(truncated)}</div>`
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render DeepThink tool input as a thinking indicator.
+ */
+function renderDeepThink(input: Record<string, any>): string {
+  const topic = input.topic || input.query || input.prompt || ''
+
+  let html = '<div class="deep-think-view">'
+  html += '<span class="deep-think-icon">🧠</span>'
+  if (topic) {
+    const truncated = topic.length > 200 ? topic.substring(0, 200) + '…' : topic
+    html += `<span class="deep-think-topic">${escapeHtml(truncated)}</span>`
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render StructuredOutput tool input as a schema preview.
+ */
+function renderStructuredOutput(input: Record<string, any>): string {
+  const prompt = input.prompt || input.instruction || ''
+
+  let html = '<div class="structured-output-view">'
+  html += '<span class="structured-output-icon">📋</span>'
+  if (prompt) {
+    const truncated = prompt.length > 200 ? prompt.substring(0, 200) + '…' : prompt
+    html += `<span class="structured-output-prompt">${escapeHtml(truncated)}</span>`
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render SkillManage tool input as a skill management card.
+ */
+function renderSkillManage(input: Record<string, any>): string {
+  const action = input.action || input.operation || ''
+  const skill = input.skill || input.name || ''
+
+  let html = '<div class="skill-manage-view">'
+  html += '<span class="skill-manage-icon">⚡</span>'
+  if (action) {
+    html += `<span class="skill-manage-action">${escapeHtml(action)}</span>`
+  }
+  if (skill) {
+    html += `<span class="skill-manage-name">${escapeHtml(skill)}</span>`
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render Monitor tool input as a monitor view.
+ */
+function renderMonitor(input: Record<string, any>): string {
+  const command = input.command || ''
+  const target = input.target || ''
+
+  let html = '<div class="monitor-view">'
+  html += '<span class="monitor-icon">📡</span>'
+  if (target) {
+    html += `<span class="monitor-target">${escapeHtml(target)}</span>`
+  }
+  if (command) {
+    html += '<div class="monitor-command-body">'
+    html += '<span class="bash-prompt">$</span>'
+    try {
+      html += hljs.highlight(command, { language: 'bash', ignoreIllegals: true }).value
+    } catch {
+      html += escapeHtml(command)
+    }
+    html += '</div>'
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render ImageGen tool input as an image generation card.
+ */
+function renderImageGen(input: Record<string, any>): string {
+  const prompt = input.prompt || input.description || ''
+  const size = input.size || ''
+
+  let html = '<div class="image-gen-view">'
+  html += '<span class="image-gen-icon">🎨</span>'
+  if (prompt) {
+    const truncated = prompt.length > 200 ? prompt.substring(0, 200) + '…' : prompt
+    html += `<span class="image-gen-prompt">${escapeHtml(truncated)}</span>`
+  }
+  if (size) {
+    html += `<span class="image-gen-size">${escapeHtml(size)}</span>`
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render LSP tool input as a language service card.
+ */
+function renderLSP(input: Record<string, any>): string {
+  const method = input.method || ''
+  const filePath = input.file_path || input.path || ''
+
+  let html = '<div class="lsp-view">'
+  html += '<span class="lsp-icon">🔮</span>'
+  if (method) {
+    html += `<span class="lsp-method">${escapeHtml(method)}</span>`
+  }
+  if (filePath) {
+    const projectRoot = store.state.projectRoot || ''
+    const homeDir = store.state.homeDir || ''
+    const resolvedPath = resolveFilePath(filePath, projectRoot, homeDir)
+    const displayPath = resolvedPath || filePath.replace(/^\.\//, '')
+    html += `<span class="lsp-file-path">${escapeHtml(displayPath)}</span>`
+    if (resolvedPath) {
+      html += fileOpenButtonHtml(resolvedPath)
+    }
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render Git tool input as a git command card.
+ */
+function renderGit(input: Record<string, any>): string {
+  const command = input.command || input.subcommand || ''
+  const args = input.args || input.arguments || ''
+
+  let html = '<div class="git-tool-view">'
+  html += '<span class="git-tool-icon">🔀</span>'
+  html += '<div class="git-tool-body">'
+  html += '<span class="bash-prompt">$</span>'
+  const fullCmd = `git ${command} ${typeof args === 'string' ? args : JSON.stringify(args)}`.trim()
+  try {
+    html += hljs.highlight(fullCmd, { language: 'bash', ignoreIllegals: true }).value
+  } catch {
+    html += escapeHtml(fullCmd)
+  }
+  html += '</div></div>'
+  return html
+}
+
+/**
+ * Render NotebookEdit tool input — same as Edit with cell context.
+ */
+function renderNotebookEdit(input: Record<string, any>): string {
+  // NotebookEdit has same diff structure as Edit plus cell info
+  const filePath = input.file_path || ''
+  const cellIndex = input.cell_index ?? input.cellIndex ?? ''
+  const newStr = input.new_source || input.new_string || ''
+
+  const projectRoot = store.state.projectRoot || ''
+  const homeDir = store.state.homeDir || ''
+  const resolvedPath = resolveFilePath(filePath, projectRoot, homeDir)
+  const displayPath = resolvedPath || filePath.replace(/^\.\//, '')
+  const lang = detectLang(filePath)
+
+  let html = '<div class="edit-diff-view">'
+  html += '<div class="tool-file-header">'
+  html += `<span class="tool-file-path">${escapeHtml(displayPath)}</span>`
+  if (resolvedPath) {
+    html += fileOpenButtonHtml(resolvedPath)
+  }
+  if (cellIndex !== '' && cellIndex !== undefined) {
+    html += `<span class="edit-diff-replace-all">Cell ${escapeHtml(String(cellIndex))}</span>`
+  }
+  html += '</div>'
+
+  if (newStr) {
+    html += '<div class="edit-diff-scroll"><div class="edit-diff-body">'
+    const lines = newStr.split('\n')
+    for (const line of lines) {
+      html += `<div class="edit-diff-add">${highlightLine(line, lang)}</div>`
+    }
+    html += '</div></div>'
+  }
+
+  html += '</div>'
+  return html
+}
+
+/**
  * Render input as JSON (the fallback for unregistered tools).
  */
 function renderJsonFallback(input: any): string {
@@ -639,18 +1078,65 @@ export function formatToolOutput(output: string, toolName?: string): string {
 
 // ── Tool registrations ──
 
+// Core file/code tools
 registerToolRenderer('Edit', renderEditDiff)
 registerToolRenderer('Bash', renderBashTerminal)
 registerToolRenderer('Read', renderReadPreview)
 registerToolRenderer('Write', renderWritePreview)
-registerToolRenderer('AskUserQuestion', renderAskUserQuestion)
+registerToolRenderer('NotebookEdit', renderNotebookEdit)
+registerToolRenderer('MultiEdit', renderEditDiff)       // same diff view as Edit
+
+// Search tools
 registerToolRenderer('Grep', renderGrepSearch)
 registerToolRenderer('Glob', renderGlobPattern)
+registerToolRenderer('LS', renderLSView)
+
+// Web tools
 registerToolRenderer('WebSearch', renderWebSearch)
 registerToolRenderer('WebFetch', renderWebFetch)
+
+// Agent/communication tools
 registerToolRenderer('Agent', renderAgentCall)
+registerToolRenderer('SendMessage', renderSendMessage)
+registerToolRenderer('ComputerUse', renderComputerUse)
+registerToolRenderer('TeamCreate', renderTeamTool)
+registerToolRenderer('TeamDelete', renderTeamTool)
+
+// Skill/task tools
 registerToolRenderer('Skill', renderSkillCall)
+registerToolRenderer('SkillManage', renderSkillManage)
+registerToolRenderer('TodoWrite', renderTodoWrite)
+registerToolRenderer('TodoRead', renderTodoRead)
+registerToolRenderer('TaskCreate', renderTaskTool)
+registerToolRenderer('TaskUpdate', renderTaskTool)
+registerToolRenderer('TaskList', renderTaskTool)
+registerToolRenderer('TaskGet', renderTaskTool)
+registerToolRenderer('TaskStop', renderTaskTool)
+registerToolRenderer('TaskOutput', renderTaskTool)
+
+// Mode/worktree tools
+registerToolRenderer('EnterPlanMode', renderModeSwitch)
+registerToolRenderer('ExitPlanMode', renderModeSwitch)
+registerToolRenderer('EnterWorktree', renderWorktreeSwitch)
+registerToolRenderer('LeaveWorktree', renderWorktreeSwitch)
+
+// Chat reply tools
+registerToolRenderer('WeChatReply', renderChatReply)
+registerToolRenderer('WeComReply', renderChatReply)
+
+// Specialized tools
+registerToolRenderer('AskUserQuestion', renderAskUserQuestion)
 registerToolRenderer('PermissionApproval', renderPermissionApproval)
+registerToolRenderer('save_memory', renderSaveMemory)
+registerToolRenderer('DeepThink', renderDeepThink)
+registerToolRenderer('StructuredOutput', renderStructuredOutput)
+registerToolRenderer('ImageGen', renderImageGen)
+registerToolRenderer('Monitor', renderMonitor)
+registerToolRenderer('LSP', renderLSP)
+registerToolRenderer('Git', renderGit)
+
+// Terminal alias
+registerToolRenderer('PowerShell', renderBashTerminal)
 
 TOOL_AUTO_EXPAND.add('askuserquestion')
 TOOL_AUTO_EXPAND.add('permissionapproval')

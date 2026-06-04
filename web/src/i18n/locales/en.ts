@@ -793,8 +793,29 @@ export default {
       pattern: 'pattern',
       path: 'path',
     },
+    ls: {
+      currentDir: 'Current directory',
+    },
     webFetch: {
       url: 'URL',
+    },
+    todoRead: {
+      label: 'Read todo list',
+    },
+    task: {
+      subject: 'Subject',
+      description: 'Description',
+      name: 'Name',
+      cron: 'Cron',
+      prompt: 'Prompt',
+      agent: 'Agent',
+      status: 'Status',
+      owner: 'Owner',
+      activeForm: 'In progress',
+      noDetails: '(No details)',
+    },
+    sendMessage: {
+      to: 'To',
     },
     askUser: {
       noQuestions: '(No questions)',
