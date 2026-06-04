@@ -21,17 +21,18 @@
               'plan-entry__line--solid': entry.status === 'completed',
               'plan-entry__line--dashed': entry.status !== 'completed',
               'plan-entry__line--pulsing': entry.status === 'in_progress',
-            }"
-            :style="{ borderColor: priorityColor(entry.priority) }">
+            }">
           </div>
           <!-- Status node -->
-          <div class="plan-entry__node" :style="{ borderColor: priorityColor(entry.priority) }">
+          <div class="plan-entry__node">
             <span v-if="entry.status === 'completed'" class="plan-entry__check">✓</span>
             <span v-else-if="entry.status === 'in_progress'" class="plan-entry__dot"></span>
             <span v-else class="plan-entry__circle"></span>
           </div>
-          <!-- Entry text -->
+          <!-- Entry content -->
           <span class="plan-entry__text" :class="{ 'plan-entry__text--done': entry.status === 'completed' }">{{ entry.content }}</span>
+          <!-- Priority tag -->
+          <span class="plan-entry__priority" :class="'plan-entry__priority--' + entry.priority">{{ priorityLabel(entry.priority) }}</span>
         </div>
       </div>
     </div>
@@ -55,14 +56,13 @@ defineEmits<{
 
 const { t } = useI18n()
 
-const priorityColors: Record<string, string> = {
-  high: '#ef4444',
-  medium: '#f97316',
-  low: '#9ca3af',
-}
-
-function priorityColor(priority: string): string {
-  return priorityColors[priority] || priorityColors.low
+function priorityLabel(priority: string): string {
+  switch (priority) {
+    case 'high': return t('chat.plan.priorityHigh')
+    case 'medium': return t('chat.plan.priorityMedium')
+    case 'low': return t('chat.plan.priorityLow')
+    default: return ''
+  }
 }
 
 const chipText = computed(() => {
@@ -76,7 +76,8 @@ const chipText = computed(() => {
 
 <style scoped>
 .plan-panel {
-  width: 100%;
+  width: auto;
+  margin: 0 10px;
 }
 
 /* ── Collapsed chip ── */
@@ -168,6 +169,7 @@ const chipText = computed(() => {
   position: relative;
   padding-left: 20px;
   min-height: 28px;
+  gap: 6px;
 }
 
 /* Vertical line segment */
@@ -177,8 +179,7 @@ const chipText = computed(() => {
   top: 16px;
   bottom: -12px;
   width: 0;
-  border-left-width: 2px;
-  border-left-style: solid;
+  border-left: 2px solid var(--border-color, #dee2e6);
 }
 
 .plan-entry:last-child .plan-entry__line {
@@ -190,10 +191,16 @@ const chipText = computed(() => {
 }
 
 .plan-entry__line--pulsing {
+  border-left-style: solid;
+  border-left-color: var(--color-purple, #8b5cf6);
   animation: pulse-line 1.5s ease-in-out infinite;
 }
 
-/* Status node */
+:root[data-theme="dark"] .plan-entry__line--pulsing {
+  border-left-color: #a78bfa;
+}
+
+/* Status node — neutral, no priority color */
 .plan-entry__node {
   position: absolute;
   left: 0;
@@ -201,8 +208,7 @@ const chipText = computed(() => {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  border-width: 2px;
-  border-style: solid;
+  border: 2px solid var(--border-color, #dee2e6);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -216,6 +222,19 @@ const chipText = computed(() => {
   animation: check-in 0.3s ease-out;
 }
 
+:root[data-theme="dark"] .plan-entry--completed .plan-entry__node {
+  background: var(--color-green, #3fb950);
+  border-color: var(--color-green, #3fb950);
+}
+
+.plan-entry--in_progress .plan-entry__node {
+  border-color: var(--color-purple, #8b5cf6);
+}
+
+:root[data-theme="dark"] .plan-entry--in_progress .plan-entry__node {
+  border-color: #a78bfa;
+}
+
 .plan-entry__check {
   font-size: 10px;
   color: #fff;
@@ -226,27 +245,29 @@ const chipText = computed(() => {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: currentColor;
+  background: var(--color-purple, #8b5cf6);
   animation: pulse 1.5s ease-in-out infinite;
 }
 
-.plan-entry--in_progress .plan-entry__node .plan-entry__dot {
-  color: inherit;
+:root[data-theme="dark"] .plan-entry__dot {
+  background: #a78bfa;
 }
 
 .plan-entry__circle {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  border: 1.5px solid currentColor;
+  border: 1.5px solid var(--text-muted, #6c757d);
 }
 
 /* Entry text */
 .plan-entry__text {
+  flex: 1;
   font-size: 12px;
   color: var(--text-secondary, #495057);
   line-height: 1.4;
   padding-top: 2px;
+  min-width: 0;
 }
 
 .plan-entry__text--done {
@@ -254,31 +275,46 @@ const chipText = computed(() => {
   color: var(--text-muted, #6c757d);
 }
 
-/* ── Priority color overrides (light theme) ── */
-.plan-entry--high > .plan-entry__line { border-color: #ef4444; }
-.plan-entry--medium > .plan-entry__line { border-color: #f97316; }
-.plan-entry--low > .plan-entry__line { border-color: #9ca3af; }
-
-.plan-entry--high > .plan-entry__node { border-color: #ef4444; }
-.plan-entry--medium > .plan-entry__node { border-color: #f97316; }
-.plan-entry--low > .plan-entry__node { border-color: #9ca3af; }
-
-/* ── Priority colors: dark theme adjustments ── */
-:root[data-theme="dark"] .plan-entry--high > .plan-entry__line { border-color: #f87171; }
-:root[data-theme="dark"] .plan-entry--medium > .plan-entry__line { border-color: #fb923c; }
-:root[data-theme="dark"] .plan-entry--low > .plan-entry__line { border-color: #9ca3af; }
-
-:root[data-theme="dark"] .plan-entry--high > .plan-entry__node { border-color: #f87171; }
-:root[data-theme="dark"] .plan-entry--medium > .plan-entry__node { border-color: #fb923c; }
-:root[data-theme="dark"] .plan-entry--low > .plan-entry__node { border-color: #9ca3af; }
-
-:root[data-theme="dark"] .plan-entry--completed > .plan-entry__node {
-  background: var(--color-green, #3fb950);
-  border-color: var(--color-green, #3fb950);
+/* ── Priority tag ── */
+.plan-entry__priority {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 8px;
+  margin-top: 2px;
+  line-height: 1.4;
+  white-space: nowrap;
 }
 
-:root[data-theme="dark"] .plan-entry__check {
-  color: #fff;
+.plan-entry__priority--high {
+  color: #dc2626;
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.plan-entry__priority--medium {
+  color: #d97706;
+  background: rgba(249, 115, 22, 0.12);
+}
+
+.plan-entry__priority--low {
+  color: var(--text-muted, #6c757d);
+  background: var(--bg-tertiary, #e9ecef);
+}
+
+:root[data-theme="dark"] .plan-entry__priority--high {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.18);
+}
+
+:root[data-theme="dark"] .plan-entry__priority--medium {
+  color: #fdba74;
+  background: rgba(249, 115, 22, 0.18);
+}
+
+:root[data-theme="dark"] .plan-entry__priority--low {
+  color: #9ca3af;
+  background: rgba(156, 163, 175, 0.14);
 }
 
 /* ── Animations ── */

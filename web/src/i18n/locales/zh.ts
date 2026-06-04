@@ -126,6 +126,9 @@ export default {
     plan: {
       title: '执行计划',
       completedCount: '{completed}/{total} 完成',
+      priorityHigh: '高',
+      priorityMedium: '中',
+      priorityLow: '低',
     },
     modelModal: {
       searchPlaceholder: '搜索模型...',

@@ -126,6 +126,9 @@ export default {
     plan: {
       title: 'Execution Plan',
       completedCount: '{completed}/{total} done',
+      priorityHigh: 'High',
+      priorityMedium: 'Med',
+      priorityLow: 'Low',
     },
     modelModal: {
       searchPlaceholder: 'Search models...',
