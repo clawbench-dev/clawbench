@@ -82,7 +82,7 @@ export default {
       placeholder: '输入消息...',
       placeholderQueue: '输入消息加入队列...',
       placeholderOptional: '添加描述（可选）...',
-      placeholderQuickSend: '点击⚡选指令 →',
+      placeholderQuickSend: '点击⚡快捷发送消息 →',
       placeholderAtCommand: "输入 {'@'} 执行内置命令",
       placeholderCommand: "输入 {'@'} 或 {'/'} 执行命令",
       send: '发送',
@@ -160,7 +160,7 @@ export default {
       openDirectory: '打开目录',
     },
     quickSend: {
-      title: '快捷发送',
+      title: '快捷发送消息',
       tapToFill: '长按发送',
       edit: '编辑',
       addItem: '添加项目',

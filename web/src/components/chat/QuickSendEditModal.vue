@@ -15,7 +15,7 @@
       </div>
       <div class="form-group">
         <label class="form-label">{{ t('chat.quickSend.itemCommand') }} <span class="required">*</span></label>
-        <textarea class="form-input form-textarea" v-model="form.command" :placeholder="t('chat.quickSend.itemCommand')" rows="4" />
+        <textarea class="form-input form-textarea" v-model="form.command" :placeholder="t('chat.quickSend.itemCommand')" rows="8" />
       </div>
       <div v-if="formError" class="form-error">{{ formError }}</div>
     </div>
@@ -138,7 +138,7 @@ async function saveItem() {
 
 .form-textarea {
   resize: vertical;
-  min-height: 80px;
+  min-height: 160px;
   line-height: 1.5;
   font-family: inherit;
 }

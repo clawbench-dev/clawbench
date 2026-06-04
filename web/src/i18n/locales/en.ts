@@ -82,7 +82,7 @@ export default {
       placeholder: 'Type a message...',
       placeholderQueue: 'Type a message to enqueue...',
       placeholderOptional: 'Add description (optional)...',
-      placeholderQuickSend: 'Tap ⚡ for quick commands →',
+      placeholderQuickSend: 'Tap ⚡ to quick send message →',
       placeholderAtCommand: "Type {'@'} for built-in commands",
       placeholderCommand: "Type {'@'} or {'/'} for commands",
       send: 'Send',
@@ -160,7 +160,7 @@ export default {
       openDirectory: 'Open directory',
     },
     quickSend: {
-      title: 'Quick send',
+      title: 'Quick Send Message',
       tapToFill: 'Hold to send',
       edit: 'Edit',
       addItem: 'Add item',
