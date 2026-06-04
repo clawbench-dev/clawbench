@@ -432,6 +432,10 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	}
 	defer service.CloseDB()
 
+	// Kill orphan AI subprocesses from a previous server crash.
+	// On Linux, scans /proc for CLAWBENCH_CHILD=1 env marker.
+	ai.CleanupOrphans()
+
 	// Resolve summarize API key from agent_api_keys table if not in config.
 	// New setups write the key directly to config.yaml. This fallback resolves
 	// the key from DB for legacy configs that have key="" and agent_id set.

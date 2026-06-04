@@ -47,6 +47,11 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 	// Initialize env vars from current process environment
 	cmd.Env = os.Environ()
 
+	// Mark as ClawBench child process for orphan cleanup on server crash.
+	// On restart, CleanupOrphans scans /proc for this marker and kills
+	// any processes left behind by a crashed server instance.
+	cmd.Env = append(cmd.Env, OrphanChildEnvVar)
+
 	// Inject CLAWBENCH_SCHEDULED=1 for anti-recursion: prevents AI from
 	// creating new scheduled tasks during a scheduled execution.
 	if req.ScheduledExecution {

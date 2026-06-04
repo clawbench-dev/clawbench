@@ -325,6 +325,9 @@ func (e *ACPConnEntry) spawnLocked(ctx context.Context) error {
 	cmd.Dir = "" // cwd is per-session, set during NewSession
 	cmd.Env = os.Environ()
 
+	// Mark as ClawBench child process for orphan cleanup on server crash.
+	cmd.Env = append(cmd.Env, OrphanChildEnvVar)
+
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("acp: stdin pipe: %w", err)
