@@ -565,6 +565,59 @@ func TestAutoResume_OuterCancelDuringDrain(t *testing.T) {
 	}
 }
 
+func TestAutoResume_DrainForwardsRawOutputThenResumes(t *testing.T) {
+	// Verify that the drain loop (after ExitPlanMode cancel) forwards raw_output
+	// events, and that the drain exits cleanly when the inner channel closes,
+	// allowing Phase 2 (resume) to proceed normally.
+	mock := &TestMockBackend{
+		name: "test",
+		streams: []TestMockStream{
+			// First stream: ExitPlanMode + raw_output after it
+			{
+				events: []StreamEvent{
+					{Type: "content", Content: "planning..."},
+					{Type: "tool_use", Tool: &ToolCall{Name: "ExitPlanMode", ID: "1", Done: true}},
+					{Type: "raw_output", RawOutput: "drain-raw-1"},
+					{Type: "raw_output", RawOutput: "drain-raw-2"},
+				},
+			},
+			// Resume stream
+			{
+				events: []StreamEvent{
+					{Type: "content", Content: "resumed..."},
+					{Type: "done"},
+				},
+			},
+		},
+	}
+
+	wrapper := &AutoResumeBackend{inner: mock}
+	ctx := context.Background()
+
+	ch, err := wrapper.ExecuteStream(ctx, ChatRequest{SessionID: "test"})
+	assert.NoError(t, err)
+
+	var events []StreamEvent
+	for e := range ch {
+		events = append(events, e)
+	}
+
+	// Expected: content, tool_use(ExitPlanMode), resume_split,
+	// raw_output(drain-raw-1), raw_output(drain-raw-2),
+	// content(resume), done
+	assert.Equal(t, 7, len(events))
+	assert.Equal(t, "content", events[0].Type)
+	assert.Equal(t, "tool_use", events[1].Type)
+	assert.Equal(t, "resume_split", events[2].Type)
+	assert.Equal(t, "raw_output", events[3].Type)
+	assert.Equal(t, "drain-raw-1", events[3].RawOutput)
+	assert.Equal(t, "raw_output", events[4].Type)
+	assert.Equal(t, "drain-raw-2", events[4].RawOutput)
+	assert.Equal(t, "content", events[5].Type)
+	assert.Equal(t, "resumed...", events[5].Content)
+	assert.Equal(t, "done", events[6].Type)
+}
+
 // slowDrainBackend returns firstEvents in the first stream, then keeps the channel
 // open with a separate drainCh for simulating slow/unresponsive CLI after ExitPlanMode.
 type slowDrainBackend struct {
