@@ -80,12 +80,12 @@ describe('QuickSendEditModal', () => {
       expect(wrapper.find('textarea.form-input.form-textarea').exists()).toBe(true)
     })
 
-    it('renders textarea with rows=4 for command field', () => {
+    it('renders textarea with rows=8 for command field', () => {
       const wrapper = mountModal()
 
       const textarea = wrapper.find('textarea.form-textarea')
       expect(textarea.exists()).toBe(true)
-      expect(textarea.attributes('rows')).toBe('4')
+      expect(textarea.attributes('rows')).toBe('8')
     })
 
     it('shows add title when no editingItem', () => {
