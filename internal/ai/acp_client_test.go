@@ -654,6 +654,9 @@ func TestIsPathAllowed_SymlinkEscapeAttempt(t *testing.T) {
 // --- ReadTextFile / WriteTextFile tests ---
 
 func TestClawBenchACPClient_ReadTextFile_PathValidation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix-style path validation not applicable on Windows")
+	}
 	origRoots := model.RootPaths
 	model.RootPaths = []string{"/tmp/acp-test-readonly"}
 	defer func() { model.RootPaths = origRoots }()
@@ -673,6 +676,9 @@ func TestClawBenchACPClient_ReadTextFile_PathValidation(t *testing.T) {
 }
 
 func TestClawBenchACPClient_WriteTextFile_PathValidation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix-style path validation not applicable on Windows")
+	}
 	origRoots := model.RootPaths
 	model.RootPaths = []string{"/tmp/acp-test-writeonly"}
 	defer func() { model.RootPaths = origRoots }()
