@@ -29,6 +29,22 @@ test.describe.serial('Session Management', () => {
   // ───────────────────────────────────────────────────────
 
   test('should resume a soft-deleted session via API', async ({ page }) => {
+    // First soft-delete an existing session to free up a slot (session limit is 10)
+    const existingSessions = await page.evaluate(async () => {
+      const resp = await fetch('/api/ai/sessions')
+      const data = await resp.json()
+      return data.sessions || []
+    })
+    // If at limit, delete the oldest session that's not the current one
+    if (existingSessions.length >= 10) {
+      const toDelete = existingSessions[0]
+      if (toDelete?.id) {
+        await page.evaluate(async (id) => {
+          await fetch(`/api/ai/session/delete?session_id=${id}&backend=acp-mock`, { method: 'DELETE' })
+        }, toDelete.id)
+      }
+    }
+
     // Create a session via browser fetch (carries cookies)
     const { sessionId } = await page.evaluate(async () => {
       const resp = await fetch('/api/ai/sessions', {
