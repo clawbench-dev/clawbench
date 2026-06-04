@@ -186,6 +186,26 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
+
+		CREATE TABLE IF NOT EXISTS chat_metadata (
+			message_id INTEGER PRIMARY KEY,
+			mode TEXT DEFAULT '',
+			thinking_effort TEXT DEFAULT '',
+			transport TEXT DEFAULT '',
+			model TEXT DEFAULT '',
+			input_tokens INTEGER DEFAULT 0,
+			output_tokens INTEGER DEFAULT 0,
+			duration_ms INTEGER DEFAULT 0,
+			wall_ms INTEGER DEFAULT 0,
+			cost_usd REAL DEFAULT 0,
+			stop_reason TEXT DEFAULT '',
+			is_error INTEGER DEFAULT 0,
+			error_message TEXT DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (message_id) REFERENCES chat_history(id) ON DELETE CASCADE
+		);
+		CREATE INDEX IF NOT EXISTS idx_chat_metadata_model ON chat_metadata(model);
+		CREATE INDEX IF NOT EXISTS idx_chat_metadata_created ON chat_metadata(created_at);
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)
@@ -424,7 +444,115 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: extract metadata from chat_history.content into chat_metadata table.
+	// This is a one-time migration for existing data; new messages are saved
+	// to chat_metadata automatically via SaveMetadata().
+	MigrateMetadataFromContent()
+
 	return nil
+}
+
+// MigrateMetadataFromContent scans chat_history rows with metadata embedded in
+// the content JSON and inserts them into the chat_metadata table.
+// Rows already present in chat_metadata are skipped.
+// Runs in batches of 500 to avoid excessive memory usage on large databases.
+func MigrateMetadataFromContent() {
+	// Count how many rows need migration
+	var needed int
+	_ = DBRead.QueryRow(`
+		SELECT COUNT(*) FROM chat_history h
+		WHERE h.role = 'assistant'
+		  AND h.content LIKE '%"metadata"%'
+		  AND NOT EXISTS (SELECT 1 FROM chat_metadata m WHERE m.message_id = h.id)
+	`).Scan(&needed)
+	if needed == 0 {
+		return
+	}
+	slog.Info("migrating metadata from chat_history to chat_metadata", slog.Int("rows", needed))
+
+	batchSize := 500
+	offset := 0
+	migrated := 0
+
+	for {
+		rows, err := DBRead.Query(`
+			SELECT h.id, h.content FROM chat_history h
+			WHERE h.role = 'assistant'
+			  AND h.content LIKE '%"metadata"%'
+			  AND NOT EXISTS (SELECT 1 FROM chat_metadata m WHERE m.message_id = h.id)
+			ORDER BY h.id
+			LIMIT ? OFFSET ?`,
+			batchSize, offset,
+		)
+		if err != nil {
+			slog.Error("metadata migration: query failed", slog.String("err", err.Error()))
+			return
+		}
+
+		type row struct {
+			ID      int64
+			Content string
+		}
+		var batch []row
+		for rows.Next() {
+			var r row
+			if err := rows.Scan(&r.ID, &r.Content); err != nil {
+				_ = rows.Close()
+				slog.Error("metadata migration: scan failed", slog.String("err", err.Error()))
+				return
+			}
+			batch = append(batch, r)
+		}
+		_ = rows.Close()
+
+		if len(batch) == 0 {
+			break
+		}
+
+		for _, r := range batch {
+			var contentMap struct {
+				Metadata *struct {
+					Mode           string  `json:"mode,omitempty"`
+					ThinkingEffort string  `json:"thinkingEffort,omitempty"`
+					Transport      string  `json:"transport,omitempty"`
+					Model          string  `json:"model,omitempty"`
+					InputTokens    int     `json:"inputTokens,omitempty"`
+					OutputTokens   int     `json:"outputTokens,omitempty"`
+					DurationMs     int     `json:"durationMs,omitempty"`
+					WallMs         int     `json:"wallMs,omitempty"`
+					CostUSD        float64 `json:"costUsd,omitempty"`
+					StopReason     string  `json:"stopReason,omitempty"`
+					IsError        bool    `json:"isError,omitempty"`
+					ErrorMessage   string  `json:"errorMessage,omitempty"`
+				} `json:"metadata"`
+			}
+			if err := json.Unmarshal([]byte(r.Content), &contentMap); err != nil || contentMap.Metadata == nil {
+				continue
+			}
+			m := contentMap.Metadata
+			isError := 0
+			if m.IsError {
+				isError = 1
+			}
+			_, _ = DB.Exec(`
+				INSERT OR IGNORE INTO chat_metadata
+					(message_id, mode, thinking_effort, transport, model, input_tokens, output_tokens,
+					 duration_ms, wall_ms, cost_usd, stop_reason, is_error, error_message)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				r.ID, m.Mode, m.ThinkingEffort, m.Transport, m.Model,
+				m.InputTokens, m.OutputTokens, m.DurationMs, m.WallMs,
+				m.CostUSD, m.StopReason, isError, m.ErrorMessage,
+			)
+			migrated++
+		}
+
+		if len(batch) < batchSize {
+			break
+		}
+		offset += batchSize
+	}
+
+	slog.Info("metadata migration complete", slog.Int("migrated", migrated), slog.Int("needed", needed))
 }
 
 // CloseDB closes both write and read database connections.

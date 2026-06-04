@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/model"
 )
 
@@ -509,6 +510,30 @@ func UpdateSessionMode(sessionID, mode string) error {
 	return err
 }
 
+// SaveMetadata persists message metadata to the chat_metadata table.
+// This enables SQL-based analytical queries (token usage, cost, model stats)
+// while the same metadata remains embedded in chat_history.content JSON for
+// backward compatibility with the frontend.
+func SaveMetadata(messageID int64, meta *ai.Metadata) error {
+	if messageID <= 0 || meta == nil {
+		return nil
+	}
+	isError := 0
+	if meta.IsError {
+		isError = 1
+	}
+	_, err := DB.Exec(`
+		INSERT OR REPLACE INTO chat_metadata
+			(message_id, mode, thinking_effort, transport, model, input_tokens, output_tokens,
+			 duration_ms, wall_ms, cost_usd, stop_reason, is_error, error_message)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		messageID, meta.Mode, meta.ThinkingEffort, meta.Transport, meta.Model,
+		meta.InputTokens, meta.OutputTokens, meta.DurationMs, meta.WallMs,
+		meta.CostUSD, meta.StopReason, isError, meta.ErrorMessage,
+	)
+	return err
+}
+
 // GetLatestUserModel returns the most recent model and thinking effort the user
 // explicitly chose for the given agent+project. Returns ("", "") if no user
 // preference exists (caller should fall back to agent defaults).
@@ -720,12 +745,29 @@ func UpdateStreamingMessage(projectPath, backend, sessionID, content string) err
 
 // FinalizeStreamingMessage marks the streaming assistant message as complete and updates its content.
 // Also marks the message as unindexed (indexed=0) so the RAG indexer picks it up.
-func FinalizeStreamingMessage(projectPath, backend, sessionID, content string) error {
-	_, err := DB.Exec(
+// Returns the message ID of the finalized message (0 if not found).
+func FinalizeStreamingMessage(projectPath, backend, sessionID, content string) (int64, error) {
+	result, err := DB.Exec(
 		"UPDATE chat_history SET content = ?, streaming = 0, indexed = 0 WHERE project_path = ? AND backend = ? AND session_id = ? AND role = 'assistant' AND streaming = 1",
 		content, projectPath, backend, sessionID,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return 0, nil
+	}
+	// Look up the message ID for the just-finalized row
+	var msgID int64
+	err = DBRead.QueryRow(
+		"SELECT id FROM chat_history WHERE project_path = ? AND backend = ? AND session_id = ? AND role = 'assistant' AND streaming = 0 ORDER BY id DESC LIMIT 1",
+		projectPath, backend, sessionID,
+	).Scan(&msgID)
+	if err != nil {
+		return 0, nil // message finalized but ID lookup failed — non-fatal
+	}
+	return msgID, nil
 }
 
 // GetStreamingMessageID returns the ID of the finalized assistant message for a session.

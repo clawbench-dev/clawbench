@@ -633,10 +633,12 @@ func executeStreamRun(
 					slog.String("session", sessionID))
 
 				// Finalize current streaming message
-				if err := service.FinalizeStreamingMessage(projectPath, backendName, sessionID, serializeBlocks()); err != nil {
+				if msgID, err := service.FinalizeStreamingMessage(projectPath, backendName, sessionID, serializeBlocks()); err != nil {
 					slog.Error("failed to finalize pre-resume message",
 						slog.String("session", sessionID),
 						slog.String("err", err.Error()))
+				} else if msgID > 0 && responseMetadata != nil {
+					_ = service.SaveMetadata(msgID, responseMetadata)
 				}
 
 				// Save raw output if captured so far
@@ -821,12 +823,19 @@ func finalizeStreamRun(
 		blocksJSON, _ := json.Marshal(contentMap)
 		content = string(blocksJSON)
 	}
-	if err := service.FinalizeStreamingMessage(projectPath, backendName, sessionID, content); err != nil {
+	msgID, err := service.FinalizeStreamingMessage(projectPath, backendName, sessionID, content)
+	if err != nil {
 		slog.Error(
 			"failed to finalize streaming message",
 			slog.String("session", sessionID),
 			slog.String("err", err.Error()),
 		)
+	}
+	// Save metadata to dedicated table for analytical queries
+	if msgID > 0 && responseMetadata != nil {
+		if saveErr := service.SaveMetadata(msgID, responseMetadata); saveErr != nil {
+			slog.Warn("failed to save message metadata", slog.Int64("msg_id", msgID), slog.String("err", saveErr.Error()))
+		}
 	}
 
 	// Drain any remaining events from channel

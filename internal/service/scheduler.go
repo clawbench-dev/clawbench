@@ -732,8 +732,15 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	contentJSON, _ := json.Marshal(contentMap)
 
 	// Write assistant message to chat_history
-	if _, err := AddChatMessage(projectPath, backendName, sessionID, "assistant", string(contentJSON), nil, false, task.Name); err != nil {
+	msgID, err := AddChatMessage(projectPath, backendName, sessionID, "assistant", string(contentJSON), nil, false, task.Name)
+	if err != nil {
 		slog.Error("failed to write assistant message for task", slog.String("err", err.Error()))
+	}
+	// Save metadata to dedicated table for analytical queries
+	if msgID > 0 && responseMetadata != nil {
+		if saveErr := SaveMetadata(msgID, responseMetadata); saveErr != nil {
+			slog.Warn("failed to save task message metadata", slog.Int64("msg_id", msgID), slog.String("err", saveErr.Error()))
+		}
 	}
 
 	// Mark execution as completed
