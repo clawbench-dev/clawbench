@@ -86,29 +86,38 @@ const chipText = computed(() => {
   gap: 6px;
   padding: 4px 10px;
   border-radius: 16px;
-  background: var(--color-bg-2, #1e1e2e);
-  border: 1px solid var(--color-border, #3a3a4a);
+  background: var(--bg-tertiary, #e9ecef);
+  border: 1px solid var(--border-color, #dee2e6);
   cursor: pointer;
   transition: border-color 0.3s ease;
 }
 
 .plan-chip--updated {
+  border-color: #8b5cf6;
   animation: plan-chip-glow 0.5s ease-out;
+}
+
+:root[data-theme="dark"] .plan-chip--updated {
+  border-color: #a78bfa;
 }
 
 .plan-chip__pulse {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #a78bfa;
+  background: #8b5cf6;
   animation: pulse 1.5s ease-in-out infinite;
   flex-shrink: 0;
+}
+
+:root[data-theme="dark"] .plan-chip__pulse {
+  background: #a78bfa;
 }
 
 .plan-chip__text {
   flex: 1;
   font-size: 12px;
-  color: var(--color-text-2, #a0a0b0);
+  color: var(--text-secondary, #495057);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -116,14 +125,14 @@ const chipText = computed(() => {
 
 .plan-chip__toggle {
   font-size: 10px;
-  color: var(--color-text-3, #666);
+  color: var(--text-muted, #6c757d);
   flex-shrink: 0;
 }
 
 /* ── Expanded timeline ── */
 .plan-expanded {
-  background: var(--color-bg-2, #1e1e2e);
-  border: 1px solid var(--color-border, #3a3a4a);
+  background: var(--bg-secondary, #f8f9fa);
+  border: 1px solid var(--border-color, #dee2e6);
   border-radius: 8px;
   padding: 8px 12px;
 }
@@ -138,12 +147,12 @@ const chipText = computed(() => {
 .plan-expanded__title {
   font-size: 12px;
   font-weight: 600;
-  color: var(--color-text-1, #e0e0e0);
+  color: var(--text-primary, #212529);
 }
 
 .plan-expanded__toggle {
   font-size: 10px;
-  color: var(--color-text-3, #666);
+  color: var(--text-muted, #6c757d);
   cursor: pointer;
 }
 
@@ -197,13 +206,13 @@ const chipText = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-bg-2, #1e1e2e);
+  background: var(--bg-secondary, #f8f9fa);
   box-sizing: border-box;
 }
 
 .plan-entry--completed .plan-entry__node {
-  background: #22c55e;
-  border-color: #22c55e;
+  background: var(--color-green, #16a34a);
+  border-color: var(--color-green, #16a34a);
   animation: check-in 0.3s ease-out;
 }
 
@@ -235,14 +244,41 @@ const chipText = computed(() => {
 /* Entry text */
 .plan-entry__text {
   font-size: 12px;
-  color: var(--color-text-2, #a0a0b0);
+  color: var(--text-secondary, #495057);
   line-height: 1.4;
   padding-top: 2px;
 }
 
 .plan-entry__text--done {
   text-decoration: line-through;
-  color: var(--color-text-3, #666);
+  color: var(--text-muted, #6c757d);
+}
+
+/* ── Priority color overrides (light theme) ── */
+.plan-entry--high > .plan-entry__line { border-color: #ef4444; }
+.plan-entry--medium > .plan-entry__line { border-color: #f97316; }
+.plan-entry--low > .plan-entry__line { border-color: #9ca3af; }
+
+.plan-entry--high > .plan-entry__node { border-color: #ef4444; }
+.plan-entry--medium > .plan-entry__node { border-color: #f97316; }
+.plan-entry--low > .plan-entry__node { border-color: #9ca3af; }
+
+/* ── Priority colors: dark theme adjustments ── */
+:root[data-theme="dark"] .plan-entry--high > .plan-entry__line { border-color: #f87171; }
+:root[data-theme="dark"] .plan-entry--medium > .plan-entry__line { border-color: #fb923c; }
+:root[data-theme="dark"] .plan-entry--low > .plan-entry__line { border-color: #9ca3af; }
+
+:root[data-theme="dark"] .plan-entry--high > .plan-entry__node { border-color: #f87171; }
+:root[data-theme="dark"] .plan-entry--medium > .plan-entry__node { border-color: #fb923c; }
+:root[data-theme="dark"] .plan-entry--low > .plan-entry__node { border-color: #9ca3af; }
+
+:root[data-theme="dark"] .plan-entry--completed > .plan-entry__node {
+  background: var(--color-green, #3fb950);
+  border-color: var(--color-green, #3fb950);
+}
+
+:root[data-theme="dark"] .plan-entry__check {
+  color: #fff;
 }
 
 /* ── Animations ── */
@@ -263,7 +299,12 @@ const chipText = computed(() => {
 }
 
 @keyframes plan-chip-glow {
+  0% { border-color: #8b5cf6; box-shadow: 0 0 6px rgba(139, 92, 246, 0.5); }
+  100% { border-color: var(--border-color, #dee2e6); box-shadow: none; }
+}
+
+:root[data-theme="dark"] .plan-chip-glow {
   0% { border-color: #a78bfa; box-shadow: 0 0 6px rgba(167, 139, 250, 0.5); }
-  100% { border-color: var(--color-border, #3a3a4a); box-shadow: none; }
+  100% { border-color: var(--border-color, #30363d); box-shadow: none; }
 }
 </style>
