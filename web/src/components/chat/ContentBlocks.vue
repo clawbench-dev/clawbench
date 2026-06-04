@@ -24,13 +24,14 @@
         @click.stop="!isThinkingStreaming(block) && handleThinkingClick(block, bi)"
       >
         <div class="thinking-header">
-          <Brain :size="12" />
+          <Brain :size="12" class="thinking-icon" />
           <span class="thinking-label">{{ t('chat.message.deepThinking') }}</span>
-          <!-- Spinner during streaming -->
+          <!-- Status indicators: right-aligned, same pattern as tool_use -->
           <span v-if="isThinkingStreaming(block)" class="thinking-spinner"></span>
           <!-- Cancelled marker: show inline in thinking header when this is the last block and message was cancelled.
                Prevents the cancelled mark from being visually hidden/trapped under the collapsed thinking chip. -->
-          <span v-if="!isThinkingStreaming(block) && isLastBlock(bi) && cancelled" class="chat-cancelled-mark-inline">{{ t('chat.contentBlocks.cancelled') }}</span>
+          <span v-else-if="isLastBlock(bi) && cancelled" class="chat-cancelled-mark-inline">{{ t('chat.contentBlocks.cancelled') }}</span>
+          <CheckCircle2 v-else :size="14" color="#22c55e" class="thinking-check" />
         </div>
         <!-- Inline streaming content: only visible during streaming or collapse animation -->
         <div v-if="isThinkingStreaming(block) || !!collapsingThinking[bi]" class="thinking-inline-content" v-html="getThinkingHtml(bi, block)"></div>
@@ -610,11 +611,17 @@ onUnmounted(() => {
 
 /* Thinking block */
 .chat-thinking {
-  background: color-mix(in srgb, var(--text-secondary, #666) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--text-secondary, #666) 18%, transparent);
-  border-radius: 6px;
+  --thinking-accent: #8b5cf6;
+  background: color-mix(in srgb, var(--thinking-accent) 6%, var(--bg-secondary));
+  border: 1px solid color-mix(in srgb, var(--thinking-accent) 15%, var(--border-color));
+  border-radius: 4px;
   margin: 4px 0;
   overflow: hidden;
+  width: 100%;
+}
+
+:root[data-theme="dark"] .chat-thinking {
+  --thinking-accent: #a78bfa;
 }
 
 /* Collapsed state: clickable chip (header only) */
@@ -625,7 +632,7 @@ onUnmounted(() => {
 }
 
 .chat-thinking.thinking-collapsed:hover {
-  background: color-mix(in srgb, var(--text-secondary, #666) 14%, transparent);
+  background: color-mix(in srgb, var(--thinking-accent) 12%, var(--bg-secondary));
 }
 
 /* Streaming state: inline content visible, no height constraint */
@@ -648,18 +655,31 @@ onUnmounted(() => {
   color: var(--text-secondary);
 }
 
+.thinking-icon {
+  color: color-mix(in srgb, var(--thinking-accent) 80%, transparent);
+  flex-shrink: 0;
+}
+
 .thinking-label {
-  font-weight: 500;
+  font-weight: 600;
+  color: var(--thinking-accent);
+  font-size: 11px;
 }
 
 .thinking-spinner {
-  width: 10px;
-  height: 10px;
-  border: 1.5px solid var(--border-color);
-  border-top-color: var(--text-secondary);
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--thinking-accent);
   border-radius: 50%;
   animation: tool-spin 0.6s linear infinite;
   flex-shrink: 0;
+  margin-left: auto;
+}
+
+.thinking-check {
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .thinking-inline-content {

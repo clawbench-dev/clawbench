@@ -52,6 +52,15 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 		} else {
 			*blocks = append(*blocks, model.ContentBlock{Type: "thinking", Text: event.Content})
 		}
+	case "thinking_done":
+		// Mark the last thinking block as done — the thinking content is complete.
+		// Without this, the frontend spinner stays until the entire response finishes.
+		for i := len(*blocks) - 1; i >= 0; i-- {
+			if (*blocks)[i].Type == "thinking" {
+				(*blocks)[i].Done = true
+				break
+			}
+		}
 	case "tool_use":
 		if event.Tool != nil {
 			// Parse tool input JSON into map
@@ -138,6 +147,10 @@ func MergeConsecutiveThinkingBlocks(blocks []model.ContentBlock) []model.Content
 		if b.Type == "thinking" {
 			if currentThinking != nil {
 				currentThinking.Text += b.Text
+				// If any merged block is done, the combined block is done
+				if b.Done {
+					currentThinking.Done = true
+				}
 			} else {
 				bCopy := b
 				currentThinking = &bCopy
