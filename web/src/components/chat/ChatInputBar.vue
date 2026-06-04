@@ -636,6 +636,13 @@ defineExpose({
   clearInput,
   inputText,
   deleteDraft: (sessionId) => { draftCache.delete(sessionId) },
+  injectToInput,
+  handleQuickSendClick,
+  onQuickSendTouchStart,
+  onQuickSendTouchMove,
+  onQuickSendTouchEnd,
+  cancelQuickSendPress,
+  quickSendPressingId,
 })
 </script>
 
