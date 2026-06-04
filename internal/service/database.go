@@ -499,33 +499,11 @@ func MigrateMetadataFromContent() {
 	migrated := 0
 
 	for {
-		rows, err := DBRead.Query(`
-			SELECT h.id, h.content FROM chat_history h
-			WHERE h.role = 'assistant'
-			  AND h.content LIKE '%"metadata"%'
-			  AND NOT EXISTS (SELECT 1 FROM chat_metadata m WHERE m.message_id = h.id)
-			ORDER BY h.id
-			LIMIT ? OFFSET ?`,
-			batchSize, offset,
-		)
+		batch, err := migrateMetadataBatch(batchSize, offset)
 		if err != nil {
 			slog.Error("metadata migration: query failed", slog.String("err", err.Error()))
 			return
 		}
-
-		type row struct {
-			ID      int64
-			Content string
-		}
-		var batch []row
-		for rows.Next() {
-			var r row
-			if err := rows.Scan(&r.ID, &r.Content); err != nil {
-				slog.Error("metadata migration: scan failed", slog.String("err", err.Error()))
-			}
-			batch = append(batch, r)
-		}
-		_ = rows.Close()
 
 		if len(batch) == 0 {
 			break
@@ -575,6 +553,43 @@ func MigrateMetadataFromContent() {
 	}
 
 	slog.Info("metadata migration complete", slog.Int("migrated", migrated), slog.Int("needed", needed))
+}
+
+// migrateMetadataBatch fetches one batch of assistant messages with metadata
+// that haven't been migrated to chat_metadata yet.
+func migrateMetadataBatch(batchSize, offset int) ([]struct {
+	ID      int64
+	Content string
+}, error) {
+	rows, err := DBRead.Query(`
+		SELECT h.id, h.content FROM chat_history h
+		WHERE h.role = 'assistant'
+		  AND h.content LIKE '%"metadata"%'
+		  AND NOT EXISTS (SELECT 1 FROM chat_metadata m WHERE m.message_id = h.id)
+		ORDER BY h.id
+		LIMIT ? OFFSET ?`,
+		batchSize, offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var batch []struct {
+		ID      int64
+		Content string
+	}
+	for rows.Next() {
+		var r struct {
+			ID      int64
+			Content string
+		}
+		if err := rows.Scan(&r.ID, &r.Content); err != nil {
+			slog.Error("metadata migration: scan failed", slog.String("err", err.Error()))
+		}
+		batch = append(batch, r)
+	}
+	return batch, nil
 }
 
 // CloseDB closes both write and read database connections.

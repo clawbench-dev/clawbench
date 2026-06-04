@@ -821,7 +821,7 @@ func TestServeAgentsGet_ACPStateFromPoolCache(t *testing.T) {
 	pool := ai.GetACPConnectionPool()
 	entry := &ai.ACPConnEntry{}
 	entry.SetCachedModeState(&ai.ModeState{
-		CurrentModeID: "code",
+		CurrentModeID:  "code",
 		AvailableModes: []ai.ModeDef{{ID: "code", Name: "Code"}, {ID: "ask", Name: "Ask"}},
 	})
 	entry.SetCachedThinkingEffortState(&ai.ThinkingEffortState{
@@ -887,14 +887,14 @@ func TestServeAgentsGet_ACPStateFromDBFallback(t *testing.T) {
 
 	// Add an ACP agent with DB-persisted state
 	acpAgent := &model.Agent{
-		ID:               "acp-db-agent",
-		Name:             "ACP DB Agent",
-		Backend:          "acp-test",
-		Transport:        "acp-stdio",
-		Models:           []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
-		AcpModeState:     `{"currentModeId":"ask","availableModes":[{"id":"ask","name":"Ask"},{"id":"code","name":"Code"}]}`,
-		AcpThinkingState: `{"currentId":"low","availableLevels":[{"id":"low"},{"id":"medium"}]}`,
-		AcpCommands:      `[{"name":"/compact","description":"Compact history"}]`,
+		ID:                "acp-db-agent",
+		Name:              "ACP DB Agent",
+		Backend:           "acp-test",
+		Transport:         "acp-stdio",
+		Models:            []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
+		AcpModeState:      `{"currentModeId":"ask","availableModes":[{"id":"ask","name":"Ask"},{"id":"code","name":"Code"}]}`,
+		AcpThinkingState:  `{"currentId":"low","availableLevels":[{"id":"low"},{"id":"medium"}]}`,
+		AcpCommands:       `[{"name":"/compact","description":"Compact history"}]`,
 		AcpModelListState: `{"currentModelId":"db-m1","models":[{"id":"db-m1","name":"DB Model 1","default":true}]}`,
 	}
 	model.Agents["acp-db-agent"] = acpAgent
@@ -947,14 +947,14 @@ func TestServeAgentsGet_ACPStateDBFallbackInvalidJSON(t *testing.T) {
 
 	// Add an ACP agent with invalid DB-persisted state
 	acpAgent := &model.Agent{
-		ID:               "acp-bad-json",
-		Name:             "ACP Bad JSON",
-		Backend:          "acp-test",
-		Transport:        "acp-stdio",
-		Models:           []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
-		AcpModeState:     `{invalid json`,
-		AcpThinkingState: `not json`,
-		AcpCommands:      `also not json`,
+		ID:                "acp-bad-json",
+		Name:              "ACP Bad JSON",
+		Backend:           "acp-test",
+		Transport:         "acp-stdio",
+		Models:            []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
+		AcpModeState:      `{invalid json`,
+		AcpThinkingState:  `not json`,
+		AcpCommands:       `also not json`,
 		AcpModelListState: `bad`,
 	}
 	model.Agents["acp-bad-json"] = acpAgent
@@ -1024,12 +1024,12 @@ func TestServeAgentsGet_ACPStateDBFallbackEmptyAvailableModes(t *testing.T) {
 
 	// Add an ACP agent with DB state that has empty availableModes
 	acpAgent := &model.Agent{
-		ID:            "acp-empty-modes",
-		Name:          "ACP Empty Modes",
-		Backend:       "acp-test",
-		Transport:     "acp-stdio",
-		Models:        []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
-		AcpModeState:  `{"currentModeId":"code","availableModes":[]}`,
+		ID:               "acp-empty-modes",
+		Name:             "ACP Empty Modes",
+		Backend:          "acp-test",
+		Transport:        "acp-stdio",
+		Models:           []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
+		AcpModeState:     `{"currentModeId":"code","availableModes":[]}`,
 		AcpThinkingState: `{"currentId":"low","availableLevels":[]}`,
 	}
 	model.Agents["acp-empty-modes"] = acpAgent
@@ -1085,12 +1085,12 @@ func TestServeAgentsGet_ACPCommandsEmptyArray(t *testing.T) {
 
 	// Add an ACP agent with AcpCommands = "[]" (should be treated as no commands)
 	acpAgent := &model.Agent{
-		ID:           "acp-empty-cmds",
-		Name:         "ACP Empty Cmds",
-		Backend:      "acp-test",
-		Transport:    "acp-stdio",
-		Models:       []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
-		AcpCommands:  "[]",
+		ID:          "acp-empty-cmds",
+		Name:        "ACP Empty Cmds",
+		Backend:     "acp-test",
+		Transport:   "acp-stdio",
+		Models:      []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
+		AcpCommands: "[]",
 	}
 	model.Agents["acp-empty-cmds"] = acpAgent
 	model.AgentList = append(model.AgentList, acpAgent)

@@ -19,9 +19,9 @@ func TestBuildCopilotStreamArgs_BasicPrompt(t *testing.T) {
 
 func TestBuildCopilotStreamArgs_WithResume(t *testing.T) {
 	args := buildCopilotStreamArgs(ChatRequest{
-		Prompt:   "follow-up",
+		Prompt:    "follow-up",
 		SessionID: "sess-123",
-		Resume:   true,
+		Resume:    true,
 	})
 
 	found := false
@@ -35,9 +35,9 @@ func TestBuildCopilotStreamArgs_WithResume(t *testing.T) {
 
 func TestBuildCopilotStreamArgs_SessionIDWithoutResume(t *testing.T) {
 	args := buildCopilotStreamArgs(ChatRequest{
-		Prompt:   "hello",
+		Prompt:    "hello",
 		SessionID: "sess-123",
-		Resume:   false,
+		Resume:    false,
 	})
 
 	for _, a := range args {

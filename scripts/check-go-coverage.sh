@@ -124,6 +124,11 @@ exempt_files = {
     "internal/terminal/session.go",         # WebSocket kick/PTY close paths require integration testing
     "internal/terminal/manager.go",         # WebSocket connect error path requires integration testing
     "internal/speech/edge_tts.go",          # WebSocket TTS protocol: dial/connect/send/recv error paths require integration mock
+    "cmd/acp-mock/main.go",                 # ACP mock binary: full ACP agent simulation, requires integration setup
+    "internal/ai/acp_backend.go",           # ACP ExecuteStream: spawns/communicates with ACP subprocesses
+    "internal/ai/acp_pool.go",              # ACP connection pool: manages long-lived subprocesses
+    "internal/ai/acp_client.go",            # ACP client: JSON-RPC over stdio, requires real subprocess
+    "internal/ai/orphan.go",                # Process scanning: reads /proc, requires OS-level integration
 }
 
 # ── Colors ──────────────────────────────────────────────────────

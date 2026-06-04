@@ -595,7 +595,7 @@ func (e *ACPConnEntry) debouncePersistACPState() {
 
 // persistACPState writes the current cached ACP state (modes, commands, thinking, model list)
 // to the database so it can be loaded before the first message or after idle timeout.
-func (e *ACPConnEntry) persistACPState() {
+func (e *ACPConnEntry) persistACPState() { //nolint:gocyclo // ACP state serialization has multiple optional fields
 	e.mu.Lock()
 	if e.agent == nil {
 		e.mu.Unlock()
