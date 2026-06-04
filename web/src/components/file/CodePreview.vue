@@ -241,8 +241,6 @@ watch(
 
 .raw-content-pre.word-wrap .sticky-line-num {
     line-height: normal;
-    display: flex;
-    align-items: center;
 }
 
 .raw-content-pre.word-wrap .sticky-code-text {
