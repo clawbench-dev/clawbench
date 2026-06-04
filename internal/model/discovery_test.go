@@ -2,6 +2,7 @@ package model_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1090,7 +1091,16 @@ func TestDiscoverVeCLIModels_WithRealCLI(t *testing.T) {
 
 func TestAsyncRefreshModelCache_DoesNotPanic(t *testing.T) {
 	// Calling AsyncRefreshModelCache should not panic, even with no agents.
-	cacheDir := filepath.Join(t.TempDir(), "model-cache")
+	// Use a manual temp dir (not t.TempDir()) because AsyncRefreshModelCache
+	// launches a goroutine that may still be writing to the cache directory
+	// when t.TempDir() tries to clean up, causing "directory not empty" errors.
+	cacheDir := filepath.Join(os.TempDir(), fmt.Sprintf("acp-test-cache-%d", time.Now().UnixNano()))
+	err := os.MkdirAll(cacheDir, 0o755)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		// Best-effort cleanup; ignore errors if goroutine still holds files
+		_ = os.RemoveAll(cacheDir)
+	})
 	assert.NotPanics(t, func() {
 		model.AsyncRefreshModelCache(cacheDir)
 	})
