@@ -549,9 +549,17 @@ func TestAutoResume_OuterCancelDuringDrain(t *testing.T) {
 	cancel()
 
 	// The outer channel should close promptly (within 2s)
+	// May receive a "done" event before closing due to goroutine scheduling
 	select {
-	case _, ok := <-ch:
-		assert.False(t, ok, "channel should be closed after outer cancel during drain")
+	case event, ok := <-ch:
+		if ok {
+			// May receive a "done" event before channel closes
+			assert.Equal(t, "done", event.Type, "only 'done' event expected before close during drain cancel")
+			// Drain until closed
+			for range ch {
+			}
+		}
+		// Channel is closed — this is the expected outcome
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout: outer channel did not close after cancel during drain — drain loop may be blocking on innerCh without ctx.Done() check (ISS-296)")
 	}

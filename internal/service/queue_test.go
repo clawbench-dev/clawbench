@@ -224,8 +224,7 @@ func TestDequeueMessage_ConcurrentEnqueueNoLoss_ISS293(t *testing.T) {
 	msg, ok := DequeueMessage(sessionID)
 	if ok {
 		assert.Equal(t, "concurrent-msg", msg.Text)
-	} else {
-		// Message was already dequeued by goroutine 1 — also fine.
-		// The important thing is it wasn't silently lost.
 	}
+	// If not ok, message was already dequeued by goroutine 1 — also fine.
+	// The important thing is it wasn't silently lost (ISS-293).
 }
