@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -574,6 +575,9 @@ func TestClawBenchACPClient_RegisterPendingPermissionForTest(t *testing.T) {
 // --- isPathAllowed tests ---
 
 func TestIsPathAllowed_AbsolutePathUnderRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix-style absolute paths not valid on Windows")
+	}
 	// Save and restore RootPaths
 	origRoots := model.RootPaths
 	model.RootPaths = []string{"/"}
@@ -590,6 +594,9 @@ func TestIsPathAllowed_RelativePath(t *testing.T) {
 }
 
 func TestIsPathAllowed_NotUnderRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix-style absolute paths not valid on Windows")
+	}
 	// Save and restore RootPaths — use a specific root
 	origRoots := model.RootPaths
 	model.RootPaths = []string{"/home/user/project"}
@@ -601,6 +608,9 @@ func TestIsPathAllowed_NotUnderRoot(t *testing.T) {
 }
 
 func TestIsPathAllowed_UnderSpecificRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix-style absolute paths not valid on Windows")
+	}
 	origRoots := model.RootPaths
 	model.RootPaths = []string{"/home/user/project"}
 	defer func() { model.RootPaths = origRoots }()
@@ -615,6 +625,9 @@ func TestIsPathAllowed_EmptyPath(t *testing.T) {
 }
 
 func TestIsPathAllowed_RootPathItself(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix-style absolute paths not valid on Windows")
+	}
 	origRoots := model.RootPaths
 	model.RootPaths = []string{"/home/user/project"}
 	defer func() { model.RootPaths = origRoots }()
@@ -624,6 +637,9 @@ func TestIsPathAllowed_RootPathItself(t *testing.T) {
 }
 
 func TestIsPathAllowed_SymlinkEscapeAttempt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix-style path traversal not applicable on Windows")
+	}
 	origRoots := model.RootPaths
 	model.RootPaths = []string{"/home/user/project"}
 	defer func() { model.RootPaths = origRoots }()
