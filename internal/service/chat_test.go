@@ -2590,6 +2590,72 @@ func TestUpdateSessionModel_NonExistent(t *testing.T) {
 	assert.NoError(t, err) // UPDATE on non-existent row is a no-op
 }
 
+// ---------- UpdateSessionMode ----------
+
+func TestUpdateSessionMode(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Mode Test")
+
+	// Default mode should be empty
+	var mode string
+	err := service.DB.QueryRow("SELECT mode FROM chat_sessions WHERE id = ?", sid).Scan(&mode)
+	assert.NoError(t, err)
+	assert.Equal(t, "", mode)
+
+	// Update mode to "plan"
+	err = service.UpdateSessionMode(sid, "plan")
+	assert.NoError(t, err)
+
+	// Verify mode persisted in DB
+	err = service.DB.QueryRow("SELECT mode FROM chat_sessions WHERE id = ?", sid).Scan(&mode)
+	assert.NoError(t, err)
+	assert.Equal(t, "plan", mode)
+}
+
+func TestUpdateSessionMode_NonExistentSession(t *testing.T) {
+	setupDB(t)
+
+	// Should not panic; UPDATE on non-existent row is a no-op
+	err := service.UpdateSessionMode("non-existent-session", "code")
+	assert.NoError(t, err)
+}
+
+func TestUpdateSessionMode_UpdateMultipleTimes(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Mode Update")
+
+	err := service.UpdateSessionMode(sid, "ask")
+	assert.NoError(t, err)
+
+	err = service.UpdateSessionMode(sid, "architect")
+	assert.NoError(t, err)
+
+	var mode string
+	err = service.DB.QueryRow("SELECT mode FROM chat_sessions WHERE id = ?", sid).Scan(&mode)
+	assert.NoError(t, err)
+	assert.Equal(t, "architect", mode)
+}
+
+func TestUpdateSessionMode_ResetToEmpty(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Mode Reset")
+
+	err := service.UpdateSessionMode(sid, "code")
+	assert.NoError(t, err)
+
+	// Reset to empty (auto/default)
+	err = service.UpdateSessionMode(sid, "")
+	assert.NoError(t, err)
+
+	var mode string
+	err = service.DB.QueryRow("SELECT mode FROM chat_sessions WHERE id = ?", sid).Scan(&mode)
+	assert.NoError(t, err)
+	assert.Equal(t, "", mode)
+}
+
 // ---------- GetStreamingMessageID ----------
 
 func TestGetStreamingMessageID_Found(t *testing.T) {
