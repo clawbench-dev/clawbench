@@ -394,6 +394,9 @@ export function useChatSession(options: UseChatSessionOptions) {
       clearModeState()
       clearCommandState()
       clearThinkingEffortState()
+      // Clear plan progress from previous session — plan is session-bound,
+      // will be repopulated by SSE plan_update for the new session.
+      clearPlanState()
       // Restore original CLI model list in case ACP had overridden it
       restoreOriginalModels(currentAgentId.value)
       // Re-populate ACP state from the agents cache (pool + DB persisted).
