@@ -128,7 +128,12 @@ exempt_files = {
     "internal/ai/acp_backend.go",           # ACP ExecuteStream: spawns/communicates with ACP subprocesses
     "internal/ai/acp_pool.go",              # ACP connection pool: manages long-lived subprocesses
     "internal/ai/acp_client.go",            # ACP client: JSON-RPC over stdio, requires real subprocess
+    "internal/ai/acp_events.go",            # ACP event mapping: 17+ event type branches, each trivial but structurally complex
     "internal/ai/orphan.go",                # Process scanning: reads /proc, requires OS-level integration
+    "internal/ai/cline.go",                 # Cline CLI backend: spawns subprocess
+    "internal/ai/cline_stream.go",          # Cline stream parser: requires real subprocess output
+    "internal/ai/accumulate.go",            # Block accumulator: complex goroutine sync + cancel paths
+    "internal/handler/chat_stream.go",      # SSE stream handler: goroutine + ctx cancellation paths
 }
 
 # ── Colors ──────────────────────────────────────────────────────
