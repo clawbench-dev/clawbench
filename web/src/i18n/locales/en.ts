@@ -93,7 +93,7 @@ export default {
       confirmStop: 'Confirm stop',
     },
     atCommand: {
-      title: 'Commands',
+      title: 'ClawBench Commands',
       chatsearchDesc: 'Search chat history',
       taskDesc: 'Manage scheduled tasks',
     },

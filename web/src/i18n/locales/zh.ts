@@ -93,7 +93,7 @@ export default {
       confirmStop: '确认停止',
     },
     atCommand: {
-      title: '命令',
+      title: 'ClawBench 命令',
       chatsearchDesc: '搜索聊天历史',
       taskDesc: '管理定时任务',
     },

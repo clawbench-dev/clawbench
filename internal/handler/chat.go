@@ -209,6 +209,34 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		// DB fallback: when pool cache is empty (e.g. after server restart),
+		// use ACP state persisted in the agents table so mode/thinking/command
+		// chips appear immediately without waiting for a new ACP connection.
+		if modeState == nil && thinkingEffortState == nil && len(commands) == 0 && modelListState == nil && sessionAgentID != "" {
+			if a, ok := model.Agents[sessionAgentID]; ok && a.Transport == "acp-stdio" {
+				if a.AcpModeState != "" {
+					var dbMs ai.ModeState
+					if json.Unmarshal([]byte(a.AcpModeState), &dbMs) == nil && len(dbMs.AvailableModes) > 0 {
+						modeState = &dbMs
+					}
+				}
+				if a.AcpThinkingState != "" {
+					var dbEs ai.ThinkingEffortState
+					if json.Unmarshal([]byte(a.AcpThinkingState), &dbEs) == nil && len(dbEs.AvailableLevels) > 0 {
+						thinkingEffortState = &dbEs
+					}
+				}
+				if a.AcpCommands != "" && a.AcpCommands != "[]" {
+					json.Unmarshal([]byte(a.AcpCommands), &commands)
+				}
+				if a.AcpModelListState != "" {
+					var dbMl ai.ModelListState
+					if json.Unmarshal([]byte(a.AcpModelListState), &dbMl) == nil && len(dbMl.Models) > 0 {
+						modelListState = &dbMl
+					}
+				}
+			}
+		}
 
 		if err != nil {
 			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "thinkingEffort": sessionThinkingEffort, "modeId": sessionMode, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState})

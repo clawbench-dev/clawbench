@@ -1848,7 +1848,8 @@ func loadAgentsFromDBRows(db *sql.DB) ([]*Agent, error) {
 	rows, err := db.Query(`SELECT id, name, icon, specialty, backend, command,
 		thinking_effort, thinking_effort_levels, preferred_model, preferred_thinking_effort,
 		system_prompt, models, models_auto_detected, source, sort_order,
-		transport, acp_command
+		transport, acp_command,
+		acp_mode_state, acp_commands, acp_thinking_state, acp_model_list_state
 		FROM agents ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -1866,7 +1867,8 @@ func loadAgentsFromDBRows(db *sql.DB) ([]*Agent, error) {
 			&agent.PreferredModel, &agent.PreferredThinkingEffort,
 			&agent.SystemPrompt, &modelsJSON, &autoDetected,
 			&agent.Source, &agent.SortOrder,
-			&agent.Transport, &agent.AcpCommand)
+			&agent.Transport, &agent.AcpCommand,
+			&agent.AcpModeState, &agent.AcpCommands, &agent.AcpThinkingState, &agent.AcpModelListState)
 		if err != nil {
 			return nil, err
 		}

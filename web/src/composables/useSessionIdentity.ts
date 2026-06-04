@@ -288,6 +288,14 @@ export async function initSessionFromAPI() {
         if (Array.isArray(data.commands) && data.commands.length > 0 && availableCommands.value.length === 0) {
           availableCommands.value = data.commands
         }
+        // Populate mode state from chat response (DB-persisted ACP state)
+        if (data.modeState && data.modeState.availableModes?.length > 0) {
+          updateModeState(data.modeId || data.modeState.currentModeId || '', data.modeState.availableModes)
+        }
+        // Populate thinking effort state from chat response (DB-persisted ACP state)
+        if (data.thinkingEffortState && data.thinkingEffortState.availableLevels?.length > 0) {
+          updateThinkingEffortState(data.thinkingEffort || data.thinkingEffortState.currentLevelId || '', data.thinkingEffortState.availableLevels)
+        }
       }
     }
   } catch (_) {
