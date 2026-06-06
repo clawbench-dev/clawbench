@@ -180,7 +180,7 @@ Auto-discovered agent configs use minimal defaults (no model lists or thinking e
 - **Multi-Agent Support**: General assistant, coding expert, handyman, etc. — YAML config, plug-and-play
 - **AI Backend Switching**: CodeBuddy, Claude Code, OpenCode, Gemini CLI, Codex, Qoder CLI, VeCLI, DeepSeek TUI, Pi — session-level isolation
 - **Thinking Effort Levels**: Per-agent thinking depth selection (Auto / Low / Medium / High), supported by 5 backends (Claude/CodeBuddy/OpenCode/Codex/Pi), selection auto-persisted
-- **Model Selection Modal**: Unified model switching and thinking effort selection in a dual-tab interface, with search filtering, one-click model list refresh (for agents supporting auto-discovery), and long-press to set default model
+- **Model Selection Modal**: Unified model switching, thinking effort, and mode selection in a three-tab interface, with search filtering, one-click model list refresh (for agents supporting auto-discovery), and long-press to set default model
 - **Model Selection Persistence**: Model choice and thinking effort per agent auto-saved to localStorage, restored on reload/session switch
 - **Scheduled Tasks**: AI creates Cron schedules via CLI subcommands, executes automatically; independent tab with 4-level breadcrumb navigation; task cards embedded in chat messages; frequency presets (hourly/daily/weekly/monthly) + custom cron expressions; per-execution read tracking + TTS playback; execution auto-summary + completion notification (sound/haptic/toast)
 - **Continue Conversation**: One-click continue conversation from task execution detail, auto-copies history messages and summaries to a new session, inherits backend/agent/model/thinking effort; sessions originated from scheduled tasks show a purple "Task" badge in session list
@@ -194,7 +194,7 @@ Auto-discovered agent configs use minimal defaults (no model lists or thinking e
 - **Auto Summary**: Automatically generates a summary of the last assistant message on session complete; toggle between summary/original via bottom banner; TTS playback also uses the summary
 - **@ Commands**: Type `@chatsearch` to search conversation history, `@task` to manage scheduled tasks — autocomplete popup menu, purple command badge in user messages
 - **RAG Results Card**: RAG search results in AI responses rendered as purple-themed cards; click to open detail drawer, one-click resume conversation
-- **Inline Thinking Streaming**: Thinking process streams inline during active session; auto-collapses to clickable chip on completion
+- **Inline Thinking Streaming**: Thinking process streams inline during active session; auto-collapses to clickable chip 3 seconds after completion
 - **Session Progress Indicator**: Session drawer shows capsule progress bar with color-coded fill (blue/orange/red) based on usage
 
 ### ⏰ Scheduled Tasks
@@ -211,8 +211,12 @@ Auto-discovered agent configs use minimal defaults (no model lists or thinking e
 - **Lifecycle Management**: Pause / Resume / Delete — flexibly control task state
 
 ### 🤖 AI Conversation
-- **Tool Call Visualization**: Name, parameters, execution results displayed in real time with success/error status
+- **Tool Call Visualization**: Name, parameters, execution results displayed in real time with success/error status; tool detail overlay shows full input/output
 - **Extended Thinking**: Complex tasks auto-trigger extended thinking, reasoning visible in real time
+- **ACP Mode Switching**: ACP agents support session mode switching (e.g., ask/code/architect), mode auto-persisted and re-applied
+- **ACP Permission Approval**: Tool execution permission requests pushed in real time, card-based approval UI
+- **ACP Execution Plan**: Agent execution plan displayed in real time, timeline visualization (pending/in_progress/completed)
+- **ACP Slash Commands**: ACP agent slash commands auto-discovered and shown in input bar
 - **File Path Navigation**: Clickable file paths in AI responses
 - **Localhost URL Navigation**: localhost URLs in AI responses (e.g., http://localhost:3000) are auto-detected with an open button; in App mode, port forwarding is auto-registered and the URL opens via WebView with zero manual config
 - **Quick Send**: Preset common commands (continue, build, commit, etc.) with drag reorder, one-click send, input placeholder hint showing current quick send; long-press fills input box (with progressive fill bar) for editing before sending
