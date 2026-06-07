@@ -82,15 +82,22 @@
 
 **所有代码修改必须通过 PR 流程，不能直接推送到 main。任务在 CI 通过且 PR 合并后才算完成。**
 
-#### 5a. 创建特性分支
+**重要：在独立 worktree 中工作，不要直接在主工作区上切分支。**
+
+#### 5a. 创建独立 Worktree
 
 ```bash
-git checkout -b fix/issues-$(date +%Y-%m-%d) origin/main
+WORKTREE=.worktrees/issues-fix-$(date +%Y-%m-%d)
+git worktree add "$WORKTREE" -b fix/issues-$(date +%Y-%m-%d) origin/main
+cd "$WORKTREE"
 ```
 
-#### 5b. 提交代码修改和 Issue 文件更新
+#### 5b. 在 Worktree 中执行修复和提交
+
+在 worktree 中完成 Step 4 的修复工作，然后提交代码修改和 Issue 文件更新：
 
 ```bash
+cd "$WORKTREE"
 git add -A
 git commit -m "fix: {本次修复的 issue 列表和简要描述}"
 ```
@@ -102,6 +109,7 @@ git commit -m "fix: {本次修复的 issue 列表和简要描述}"
 #### 5c. 推送分支并创建 PR
 
 ```bash
+cd "$WORKTREE"
 BRANCH=fix/issues-$(date +%Y-%m-%d)
 git push origin "$BRANCH"
 PR_URL=$(gh pr create --base main --head "$BRANCH" --title "fix: 修复 Review Issues $(date +%Y-%m-%d)" --body "修复 Critical Issues: {ISS 编号列表}")
@@ -110,7 +118,7 @@ echo "PR #$PR_NUMBER created"
 gh pr edit "$PR_NUMBER" --add-label auto-merge
 ```
 
-如果分支名已存在，加后缀 `-2`。
+如果分支名已存在，加后缀 `-2`（worktree 路径也对应加后缀）。
 
 #### 5d. 轮询 CI 直到通过或失败
 
@@ -141,9 +149,10 @@ done
 #### 5e. CI 失败时修复
 
 1. 查看失败详情：`gh pr view "$PR_NUMBER" --json statusCheckRollup --jq '.statusCheckRollup[] | select(.conclusion == "failure")'`
-2. 分析失败原因并修复
-3. 在同一分支上推送修复：
+2. 分析失败原因并在同一 worktree 中修复
+3. 推送修复：
    ```bash
+   cd "$WORKTREE"
    git add -A && git commit -m "fix: 修复 CI 失败"
    git push origin fix/issues-$(date +%Y-%m-%d)
    ```
@@ -167,11 +176,15 @@ done
 
 如果 auto-merge 未触发，手动合并：`gh pr merge "$PR_NUMBER" --squash --delete-branch`
 
-#### 5g. 清理
+#### 5g. 清理 Worktree
+
+**无论成功还是失败，都必须清理 worktree。**
 
 ```bash
-git checkout main && git pull origin main
+cd {项目根目录}
+git worktree remove .worktrees/issues-fix-$(date +%Y-%m-%d) --force
 git branch -d fix/issues-$(date +%Y-%m-%d) 2>/dev/null || true
+git fetch origin --prune
 ```
 
 **如果只做了验证（Step 2）而没有代码修复，则不需要提交。只有修改了源代码文件或 `.clawbench/issues/` 下的 .md 文件时才需要走 PR 流程。仅修改 `.clawbench/issues/` 下的 .md 文件也需要走 PR 流程。**

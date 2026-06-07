@@ -150,23 +150,33 @@ docs/spec/
 
 **所有文档修改必须通过 PR 流程，不能直接推送到 main。任务在 CI 通过且 PR 合并后才算完成。**
 
-#### 5a. 创建特性分支
+**重要：在独立 worktree 中工作，不要直接在主工作区上切分支。**
+
+#### 5a. 创建独立 Worktree
 
 ```bash
-git checkout -b docs/spec-update-$(date +%Y-%m-%d) origin/main
+WORKTREE=.worktrees/spec-update-$(date +%Y-%m-%d)
+git worktree add "$WORKTREE" -b docs/spec-update-$(date +%Y-%m-%d) origin/main
+cd "$WORKTREE"
 ```
 
-#### 5b. 提交改动
+#### 5b. 更新文档
+
+在 worktree 中完成所有文档修改。
+
+#### 5c. 提交改动
 
 ```bash
+cd "$WORKTREE"
 git add -A
 git status
 git commit -m "docs: 系统设计文档周更新 — $(date +%Y-%m-%d)"
 ```
 
-#### 5c. 推送分支并创建 PR
+#### 5d. 推送分支并创建 PR
 
 ```bash
+cd "$WORKTREE"
 BRANCH=docs/spec-update-$(date +%Y-%m-%d)
 git push origin "$BRANCH"
 PR_URL=$(gh pr create --base main --head "$BRANCH" --title "docs: 系统设计文档周更新 $(date +%Y-%m-%d)" --body "每周系统设计文档更新：对比代码变化，增量更新 spec 文档。")
@@ -175,9 +185,9 @@ echo "PR #$PR_NUMBER created"
 gh pr edit "$PR_NUMBER" --add-label auto-merge
 ```
 
-如果分支名已存在，加后缀 `-2`。
+如果分支名已存在，加后缀 `-2`（worktree 路径也对应加后缀）。
 
-#### 5d. 轮询 CI 直到通过或失败
+#### 5e. 轮询 CI 直到通过或失败
 
 ```bash
 MAX_POLLS=40
@@ -203,19 +213,20 @@ for i in $(seq 1 $MAX_POLLS); do
 done
 ```
 
-#### 5e. CI 失败时修复
+#### 5f. CI 失败时修复
 
 1. 查看失败详情：`gh pr view "$PR_NUMBER" --json statusCheckRollup --jq '.statusCheckRollup[] | select(.conclusion == "failure")'`
-2. 分析失败原因并修复
-3. 在同一分支上推送修复：
+2. 分析失败原因并在同一 worktree 中修复
+3. 推送修复：
    ```bash
+   cd "$WORKTREE"
    git add -A && git commit -m "docs: 修复 CI 失败"
    git push origin docs/spec-update-$(date +%Y-%m-%d)
    ```
-4. 回到步骤 5d 继续轮询
+4. 回到步骤 5e 继续轮询
 5. 最多修复 3 次，超过后记录失败信息并结束
 
-#### 5f. 确认合并
+#### 5g. 确认合并
 
 CI 通过后，auto-merge workflow 会自动合并 PR。轮询确认：
 
@@ -232,11 +243,15 @@ done
 
 如果 auto-merge 未触发，手动合并：`gh pr merge "$PR_NUMBER" --squash --delete-branch`
 
-#### 5g. 清理
+#### 5h. 清理 Worktree
+
+**无论成功还是失败，都必须清理 worktree。**
 
 ```bash
-git checkout main && git pull origin main
+cd {项目根目录}
+git worktree remove .worktrees/spec-update-$(date +%Y-%m-%d) --force
 git branch -d docs/spec-update-$(date +%Y-%m-%d) 2>/dev/null || true
+git fetch origin --prune
 ```
 
 **如果没有文档需要更新，跳过步骤 5，直接输出报告。**
