@@ -186,6 +186,26 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
+
+		CREATE TABLE IF NOT EXISTS chat_metadata (
+			message_id INTEGER PRIMARY KEY,
+			mode TEXT DEFAULT '',
+			thinking_effort TEXT DEFAULT '',
+			transport TEXT DEFAULT '',
+			model TEXT DEFAULT '',
+			input_tokens INTEGER DEFAULT 0,
+			output_tokens INTEGER DEFAULT 0,
+			duration_ms INTEGER DEFAULT 0,
+			wall_ms INTEGER DEFAULT 0,
+			cost_usd REAL DEFAULT 0,
+			stop_reason TEXT DEFAULT '',
+			is_error INTEGER DEFAULT 0,
+			error_message TEXT DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (message_id) REFERENCES chat_history(id) ON DELETE CASCADE
+		);
+		CREATE INDEX IF NOT EXISTS idx_chat_metadata_model ON chat_metadata(model);
+		CREATE INDEX IF NOT EXISTS idx_chat_metadata_created ON chat_metadata(created_at);
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)
@@ -228,24 +248,62 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	}
 
 	// Migrate: backfill external_session_id for sessions where it's empty.
-	// All backends now store their CLI-identifiable session ID in external_session_id.
-	// For codebuddy/claude/qoder, the ClawBench UUID (id column) IS the CLI session ID.
-	// For opencode/codex/deepseek/pi, external_session_id was already set by stream capture.
-	// This migration fills in the missing values for existing sessions.
-	result, err := DB.Exec("UPDATE chat_sessions SET external_session_id = id WHERE (external_session_id = '' OR external_session_id IS NULL) AND id != ''")
-	if err != nil {
-		return fmt.Errorf("failed to backfill external_session_id: %w", err)
-	}
-	if rowsAffected, _ := result.RowsAffected(); rowsAffected > 0 {
-		slog.Info("backfilled external_session_id for existing sessions", slog.Int64("rows", rowsAffected))
+	// NOTE: This must run AFTER the transport column migration below.
+	// We moved it here for schema compatibility; the actual backfill happens
+	// after the transport column is guaranteed to exist.
+	var needBackfillExternalID bool
+	var backfillErr error
+	// Check if external_session_id needs backfilling (any empty rows exist).
+	var emptyExtIDCount int
+	_ = DB.QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE (external_session_id = '' OR external_session_id IS NULL) AND id != ''").Scan(&emptyExtIDCount)
+	if emptyExtIDCount > 0 {
+		needBackfillExternalID = true
 	}
 
-	// Migrate: add thinking_effort column for per-session thinking effort selection
-	var hasThinkingEffort int
-	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='thinking_effort'").Scan(&hasThinkingEffort)
-	if hasThinkingEffort == 0 {
-		if _, err := DB.Exec("ALTER TABLE chat_sessions ADD COLUMN thinking_effort TEXT DEFAULT ''"); err != nil {
-			return fmt.Errorf("failed to add thinking_effort column: %w", err)
+	// Migrate: add source_session_id column for "continue conversation" feature
+	var hasTransport int
+	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='transport'").Scan(&hasTransport)
+	if hasTransport == 0 {
+		if _, err := DB.Exec("ALTER TABLE chat_sessions ADD COLUMN transport TEXT DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add transport column: %w", err)
+		}
+	}
+
+	// Now that transport column exists, run the external_session_id backfill
+	// and cleanup that we deferred from earlier in this function.
+	if needBackfillExternalID {
+		// Only backfill for CLI sessions (transport != 'acp-stdio') — ACP sessions
+		// get their external_session_id from session_capture events, and pre-filling
+		// it with the ClawBench UUID causes ResumeSession to fail.
+		result, err := DB.Exec("UPDATE chat_sessions SET external_session_id = id WHERE (external_session_id = '' OR external_session_id IS NULL) AND id != '' AND COALESCE(transport, '') != 'acp-stdio'")
+		if err != nil {
+			backfillErr = err
+		} else if rowsAffected, _ := result.RowsAffected(); rowsAffected > 0 {
+			slog.Info("backfilled external_session_id for existing CLI sessions", slog.Int64("rows", rowsAffected))
+		}
+	}
+	if backfillErr != nil {
+		return fmt.Errorf("failed to backfill external_session_id: %w", backfillErr)
+	}
+
+	// Clear incorrectly backfilled external_session_id for ACP sessions.
+	// The original migration unconditionally set external_session_id = id for all
+	// sessions, but ACP sessions get their external_session_id from session_capture.
+	// The backfilled ClawBench UUID is not a valid ACP session ID, causing
+	// ResumeSession to fail with "Resource not found".
+	cleanResult, cleanErr := DB.Exec("UPDATE chat_sessions SET external_session_id = '' WHERE transport = 'acp-stdio' AND external_session_id = id")
+	if cleanErr != nil {
+		slog.Warn("failed to clean external_session_id for ACP sessions", "error", cleanErr)
+	} else if rows, _ := cleanResult.RowsAffected(); rows > 0 {
+		slog.Info("cleaned incorrectly backfilled external_session_id for ACP sessions", slog.Int64("rows", rows))
+	}
+
+	// Migrate: add auto_approve column for per-session auto-approve (甩手掌柜) mode
+	var hasAutoApprove int
+	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='auto_approve'").Scan(&hasAutoApprove)
+	if hasAutoApprove == 0 {
+		if _, err := DB.Exec("ALTER TABLE chat_sessions ADD COLUMN auto_approve INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return fmt.Errorf("failed to add auto_approve column: %w", err)
 		}
 	}
 
@@ -403,7 +461,162 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: add ACP transport columns to agents table.
+	var hasTransportCol int
+	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='transport'").Scan(&hasTransportCol)
+	if hasTransportCol == 0 {
+		if _, err := DB.Exec("ALTER TABLE agents ADD COLUMN transport TEXT NOT NULL DEFAULT 'cli'"); err != nil {
+			return fmt.Errorf("failed to add transport column: %w", err)
+		}
+		if _, err := DB.Exec("ALTER TABLE agents ADD COLUMN acp_command TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add acp_command column: %w", err)
+		}
+	}
+
+	// Migrate: add ACP capability columns to agents table for persistent storage
+	// of agent-level mode/thinking/commands/config state.
+	var hasACPMods int
+	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='acp_available_modes'").Scan(&hasACPMods)
+	if hasACPMods == 0 {
+		if _, err := DB.Exec("ALTER TABLE agents ADD COLUMN acp_available_modes TEXT NOT NULL DEFAULT '[]'"); err != nil {
+			return fmt.Errorf("failed to add acp_available_modes column: %w", err)
+		}
+		if _, err := DB.Exec("ALTER TABLE agents ADD COLUMN acp_available_thinking_efforts TEXT NOT NULL DEFAULT '[]'"); err != nil {
+			return fmt.Errorf("failed to add acp_available_thinking_efforts column: %w", err)
+		}
+		if _, err := DB.Exec("ALTER TABLE agents ADD COLUMN acp_available_commands TEXT NOT NULL DEFAULT '[]'"); err != nil {
+			return fmt.Errorf("failed to add acp_available_commands column: %w", err)
+		}
+		if _, err := DB.Exec("ALTER TABLE agents ADD COLUMN acp_config_options TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add acp_config_options column: %w", err)
+		}
+	}
+
+	// Migrate: extract metadata from chat_history.content into chat_metadata table.
+	// This is a one-time migration for existing data; new messages are saved
+	// to chat_metadata automatically via SaveMetadata().
+	MigrateMetadataFromContent()
+
 	return nil
+}
+
+// MigrateMetadataFromContent scans chat_history rows with metadata embedded in
+// the content JSON and inserts them into the chat_metadata table.
+// Rows already present in chat_metadata are skipped.
+// Runs in batches of 500 to avoid excessive memory usage on large databases.
+func MigrateMetadataFromContent() {
+	// Count how many rows need migration
+	var needed int
+	_ = DBRead.QueryRow(`
+		SELECT COUNT(*) FROM chat_history h
+		WHERE h.role = 'assistant'
+		  AND h.content LIKE '%"metadata"%'
+		  AND NOT EXISTS (SELECT 1 FROM chat_metadata m WHERE m.message_id = h.id)
+	`).Scan(&needed)
+	if needed == 0 {
+		return
+	}
+	slog.Info("migrating metadata from chat_history to chat_metadata", slog.Int("rows", needed))
+
+	batchSize := 500
+	offset := 0
+	migrated := 0
+
+	for {
+		batch, err := migrateMetadataBatch(batchSize, offset)
+		if err != nil {
+			slog.Error("metadata migration: query failed", slog.String("err", err.Error()))
+			return
+		}
+
+		if len(batch) == 0 {
+			break
+		}
+
+		for _, r := range batch {
+			var contentMap struct {
+				Metadata *struct {
+					Mode           string  `json:"mode,omitempty"`
+					ThinkingEffort string  `json:"thinkingEffort,omitempty"`
+					Transport      string  `json:"transport,omitempty"`
+					Model          string  `json:"model,omitempty"`
+					InputTokens    int     `json:"inputTokens,omitempty"`
+					OutputTokens   int     `json:"outputTokens,omitempty"`
+					DurationMs     int     `json:"durationMs,omitempty"`
+					WallMs         int     `json:"wallMs,omitempty"`
+					CostUSD        float64 `json:"costUsd,omitempty"`
+					StopReason     string  `json:"stopReason,omitempty"`
+					IsError        bool    `json:"isError,omitempty"`
+					ErrorMessage   string  `json:"errorMessage,omitempty"`
+				} `json:"metadata"`
+			}
+			if err := json.Unmarshal([]byte(r.Content), &contentMap); err != nil || contentMap.Metadata == nil {
+				continue
+			}
+			m := contentMap.Metadata
+			isError := 0
+			if m.IsError {
+				isError = 1
+			}
+			_, _ = DB.Exec(
+				`
+				INSERT OR IGNORE INTO chat_metadata
+					(message_id, mode, thinking_effort, transport, model, input_tokens, output_tokens,
+					 duration_ms, wall_ms, cost_usd, stop_reason, is_error, error_message)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				r.ID, m.Mode, m.ThinkingEffort, m.Transport, m.Model,
+				m.InputTokens, m.OutputTokens, m.DurationMs, m.WallMs,
+				m.CostUSD, m.StopReason, isError, m.ErrorMessage,
+			)
+			migrated++
+		}
+
+		if len(batch) < batchSize {
+			break
+		}
+		offset += batchSize
+	}
+
+	slog.Info("metadata migration complete", slog.Int("migrated", migrated), slog.Int("needed", needed))
+}
+
+// migrateMetadataBatch fetches one batch of assistant messages with metadata
+// that haven't been migrated to chat_metadata yet.
+func migrateMetadataBatch(batchSize, offset int) ([]struct {
+	ID      int64
+	Content string
+}, error,
+) {
+	rows, err := DBRead.Query(
+		`
+		SELECT h.id, h.content FROM chat_history h
+		WHERE h.role = 'assistant'
+		  AND h.content LIKE '%"metadata"%'
+		  AND NOT EXISTS (SELECT 1 FROM chat_metadata m WHERE m.message_id = h.id)
+		ORDER BY h.id
+		LIMIT ? OFFSET ?`,
+		batchSize, offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var batch []struct {
+		ID      int64
+		Content string
+	}
+	for rows.Next() {
+		var r struct {
+			ID      int64
+			Content string
+		}
+		if err := rows.Scan(&r.ID, &r.Content); err != nil {
+			slog.Error("metadata migration: scan failed", slog.String("err", err.Error()))
+		}
+		batch = append(batch, r)
+	}
+	return batch, nil
 }
 
 // CloseDB closes both write and read database connections.

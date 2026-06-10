@@ -42,6 +42,11 @@ vi.mock('@/stores/app.ts', () => ({
   },
 }))
 
+// CSS.escape is not available in jsdom
+if (!globalThis.CSS?.escape) {
+  globalThis.CSS = { escape: (str: string) => str.replace(/([^\w-])/g, '\\$1') } as any
+}
+
 describe('MarkdownPreview', () => {
   function mountPreview(props = {}) {
     return mount(MarkdownPreview, {
@@ -100,6 +105,59 @@ describe('MarkdownPreview', () => {
     if (codePreview.exists()) {
       expect(codePreview.props('stickyScroll')).toBe(true)
     }
+  })
+
+  it('handles in-page anchor link click with smooth scroll and flash', async () => {
+    const wrapper = mountPreview({ viewMode: 'rendered' })
+    await nextTick()
+    await nextTick()
+
+    const body = wrapper.find('.markdown-body')
+    if (!body.exists()) return
+
+    // Inject target heading and anchor link into the rendered DOM
+    const targetEl = document.createElement('h2')
+    targetEl.id = 'my-section'
+    targetEl.scrollIntoView = vi.fn()
+    targetEl.addEventListener = vi.fn()
+
+    const anchor = document.createElement('a')
+    anchor.setAttribute('href', '#my-section')
+    anchor.textContent = 'Link'
+
+    body.element.appendChild(targetEl)
+    body.element.appendChild(anchor)
+
+    // Trigger click on the anchor element — jsdom will bubble it to body
+    // which fires handleClick. event.target will be the anchor.
+    const anchorWrapper = wrapper.find('a[href="#my-section"]')
+    if (!anchorWrapper.exists()) return
+    await anchorWrapper.trigger('click')
+    await nextTick()
+
+    expect(targetEl.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' })
+    expect(targetEl.addEventListener).toHaveBeenCalledWith('animationend', expect.any(Function), { once: true })
+  })
+
+  it('ignores empty anchor href="#" clicks (no scroll)', async () => {
+    const wrapper = mountPreview({ viewMode: 'rendered' })
+    await nextTick()
+    await nextTick()
+
+    const body = wrapper.find('.markdown-body')
+    if (!body.exists()) return
+
+    const anchor = document.createElement('a')
+    anchor.setAttribute('href', '#')
+    anchor.textContent = 'Empty'
+    body.element.appendChild(anchor)
+
+    // Click the empty anchor — should not cause errors
+    const anchorWrapper = wrapper.find('a[href="#"]')
+    if (!anchorWrapper.exists()) return
+    await anchorWrapper.trigger('click')
+    await nextTick()
+    // No assertion needed — just verifying no error thrown
   })
 
   it('passes wordWrap and showLineNumbers props to CodePreview', async () => {

@@ -124,7 +124,7 @@ type StreamMessageStart struct {
 const (
 	scannerInitial = 64 * 1024   // 64KB initial scanner buffer
 	scannerMax     = 1024 * 1024 // 1MB max scanner buffer
-	streamChanSize = 64          // channel buffer size
+	streamChanSize = 512         // channel buffer size
 )
 
 // extractContentText extracts text from a Content field that may be a plain
@@ -201,6 +201,10 @@ type StreamParser struct {
 	// subsequent text_delta events for that index are accumulated into the
 	// tool result output instead of being emitted as content events.
 	activeToolResults map[int]*toolResultAccum
+	// activeThinkingBlocks tracks content block indices that are thinking blocks.
+	// When content_block_stop arrives for a thinking index, we emit thinking_done
+	// so the frontend can stop the thinking spinner immediately.
+	activeThinkingBlocks map[int]bool
 	// emittedToolInputEmpty tracks tool_use IDs that were emitted via stream_event
 	// but had empty Input (partial_json was empty). When the assistant verbose
 	// message arrives with the full Input, we re-emit a tool_use event so that
@@ -510,6 +514,13 @@ func (p *StreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 						accum.Output.WriteString(msg.Event.ContentBlock.Content)
 					}
 					p.activeToolResults[msg.Event.Index] = accum
+				case "thinking":
+					// Track thinking block index so we can emit thinking_done
+					// when content_block_stop arrives for it.
+					if p.activeThinkingBlocks == nil {
+						p.activeThinkingBlocks = make(map[int]bool)
+					}
+					p.activeThinkingBlocks[msg.Event.Index] = true
 				}
 			}
 		case "content_block_stop":
@@ -543,6 +554,12 @@ func (p *StreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 					p.emittedToolInputEmpty[closed.ID] = true
 				}
 				delete(p.activeTools, msg.Event.Index)
+			} else if p.activeThinkingBlocks != nil && p.activeThinkingBlocks[msg.Event.Index] {
+				// Thinking block completed — emit thinking_done so the
+				// frontend spinner disappears immediately instead of
+				// waiting for the entire response to finish.
+				ch <- StreamEvent{Type: "thinking_done"}
+				delete(p.activeThinkingBlocks, msg.Event.Index)
 			} else {
 				slog.Debug("stream: content_block_stop for unknown index", "index", msg.Event.Index)
 			}

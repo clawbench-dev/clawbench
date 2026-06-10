@@ -36,24 +36,40 @@ interface WorktreeInfo {
 /** Cache: projectRoot → worktree list (from GET /api/git/worktrees) */
 const worktreeListCache = new Map<string, WorktreeInfo[]>()
 
+/** In-flight dedup: projectRoot → pending promise (prevents thundering herd) */
+const pendingWorktreeFetches = new Map<string, Promise<WorktreeInfo[]>>()
+
 /**
  * Fetch the worktree list for a project and cache it.
  * Returns the cached list if available, otherwise fetches and caches.
+ * In-flight requests are deduplicated — concurrent callers share the same promise.
  */
 async function fetchWorktreeList(projectRoot: string): Promise<WorktreeInfo[]> {
     const cached = worktreeListCache.get(projectRoot)
     if (cached) return cached
 
-    try {
-        const resp = await fetch('/api/git/worktrees')
-        if (!resp.ok) return []
-        const data = await resp.json()
-        const worktrees: WorktreeInfo[] = data.worktrees || []
-        worktreeListCache.set(projectRoot, worktrees)
-        return worktrees
-    } catch {
-        return []
-    }
+    // Return existing in-flight promise if one exists
+    const pending = pendingWorktreeFetches.get(projectRoot)
+    if (pending) return pending
+
+    // Start a new fetch and store the promise for concurrent callers
+    const fetchPromise = (async () => {
+        try {
+            const resp = await fetch('/api/git/worktrees')
+            if (!resp.ok) return []
+            const data = await resp.json()
+            const worktrees: WorktreeInfo[] = data.worktrees || []
+            worktreeListCache.set(projectRoot, worktrees)
+            return worktrees
+        } catch {
+            return []
+        } finally {
+            pendingWorktreeFetches.delete(projectRoot)
+        }
+    })()
+
+    pendingWorktreeFetches.set(projectRoot, fetchPromise)
+    return fetchPromise
 }
 
 /**

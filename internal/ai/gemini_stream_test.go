@@ -26,6 +26,7 @@ func TestGeminiStream_ParseLine_Init(t *testing.T) {
 	// Init events don't emit stream events, they just capture session/model
 	if len(events) != 0 {
 		t.Fatalf("expected 0 events for init, got %d", len(events))
+		return
 	}
 }
 
@@ -35,6 +36,7 @@ func TestGeminiStream_ParseLine_AssistantMessage(t *testing.T) {
 
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
+		return
 	}
 	if events[0].Type != "content" {
 		t.Errorf("expected content event, got %s", events[0].Type)
@@ -51,6 +53,7 @@ func TestGeminiStream_ParseLine_UserMessage(t *testing.T) {
 	// User messages should be skipped (they echo back the input)
 	if len(events) != 0 {
 		t.Fatalf("expected 0 events for user message, got %d", len(events))
+		return
 	}
 }
 
@@ -60,6 +63,7 @@ func TestGeminiStream_ParseLine_AssistantEmpty(t *testing.T) {
 
 	if len(events) != 0 {
 		t.Fatalf("expected 0 events for empty assistant message, got %d", len(events))
+		return
 	}
 }
 
@@ -69,6 +73,7 @@ func TestGeminiStream_ParseLine_ToolUse(t *testing.T) {
 
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
+		return
 	}
 	if events[0].Type != "tool_use" {
 		t.Errorf("expected tool_use event, got %s", events[0].Type)
@@ -76,6 +81,7 @@ func TestGeminiStream_ParseLine_ToolUse(t *testing.T) {
 	tool := events[0].Tool
 	if tool == nil {
 		t.Fatal("expected tool call, got nil")
+		return
 	}
 	if tool.Name != "Read" {
 		t.Errorf("expected normalized tool name 'Read', got %q", tool.Name)
@@ -90,6 +96,7 @@ func TestGeminiStream_ParseLine_ToolUse(t *testing.T) {
 	var input map[string]any
 	if err := json.Unmarshal([]byte(tool.Input), &input); err != nil {
 		t.Fatalf("failed to parse tool input: %v", err)
+		return
 	}
 	if input["file_path"] != "/tmp/test.go" {
 		t.Errorf("unexpected input: %v", input)
@@ -104,10 +111,12 @@ func TestGeminiStream_ParseLine_ToolUseNonObjectParams(t *testing.T) {
 
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
+		return
 	}
 	tool := events[0].Tool
 	if tool == nil {
 		t.Fatal("expected tool call, got nil")
+		return
 	}
 	// Should fall back to raw parameter string
 	assert.Equal(t, "[1,2,3]", tool.Input)
@@ -119,6 +128,7 @@ func TestGeminiStream_ParseLine_ToolUseEmptyParams(t *testing.T) {
 
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
+		return
 	}
 	tool := events[0].Tool
 	if tool.Input != "{}" {
@@ -133,12 +143,14 @@ func TestGeminiStream_ParseLine_ToolResult(t *testing.T) {
 	// Tool results now emit a tool_result stream event
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event for tool_result, got %d", len(events))
+		return
 	}
 	if events[0].Type != "tool_result" {
 		t.Errorf("expected event type 'tool_result', got %q", events[0].Type)
 	}
 	if events[0].Tool == nil {
 		t.Fatal("expected Tool to be non-nil")
+		return
 	}
 	if events[0].Tool.ID != "call_123" {
 		t.Errorf("expected tool ID 'call_123', got %q", events[0].Tool.ID)
@@ -157,6 +169,7 @@ func TestGeminiStream_ParseLine_ErrorWarning(t *testing.T) {
 
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
+		return
 	}
 	if events[0].Type != "warning" {
 		t.Errorf("expected warning event, got %s", events[0].Type)
@@ -172,6 +185,7 @@ func TestGeminiStream_ParseLine_ErrorError(t *testing.T) {
 
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
+		return
 	}
 	if events[0].Type != "error" {
 		t.Errorf("expected error event, got %s", events[0].Type)
@@ -187,6 +201,7 @@ func TestGeminiStream_ParseLine_ResultSuccess(t *testing.T) {
 
 	if len(events) != 2 {
 		t.Fatalf("expected 2 events (metadata + done), got %d", len(events))
+		return
 	}
 	if events[0].Type != "metadata" {
 		t.Errorf("expected metadata event first, got %s", events[0].Type)
@@ -194,6 +209,7 @@ func TestGeminiStream_ParseLine_ResultSuccess(t *testing.T) {
 	meta := events[0].Meta
 	if meta == nil {
 		t.Fatal("expected metadata, got nil")
+		return
 	}
 	if meta.InputTokens != 400 {
 		t.Errorf("expected input tokens 400, got %d", meta.InputTokens)
@@ -222,6 +238,7 @@ func TestGeminiStream_ParseLine_ResultError(t *testing.T) {
 	// Result with error: warning event + metadata + done
 	if len(events) != 3 {
 		t.Fatalf("expected 3 events (warning + metadata + done), got %d", len(events))
+		return
 	}
 	if events[0].Type != "warning" {
 		t.Errorf("expected warning event first, got %s", events[0].Type)
@@ -241,6 +258,7 @@ func TestGeminiStream_ParseLine_UnparseableLine(t *testing.T) {
 	events := parseGeminiLine("not json at all")
 	if len(events) != 0 {
 		t.Fatalf("expected 0 events for unparseable line, got %d", len(events))
+		return
 	}
 }
 
@@ -249,6 +267,7 @@ func TestGeminiStream_ParseLine_UnknownType(t *testing.T) {
 	events := parseGeminiLine(line)
 	if len(events) != 0 {
 		t.Fatalf("expected 0 events for unknown type, got %d", len(events))
+		return
 	}
 }
 
@@ -272,6 +291,7 @@ func TestGeminiStream_SessionIDCapture(t *testing.T) {
 
 	if len(events) != 2 {
 		t.Fatalf("expected 2 events, got %d", len(events))
+		return
 	}
 	if events[0].Meta.SessionID != "ses_captured123" {
 		t.Errorf("expected sessionID 'ses_captured123', got %q", events[0].Meta.SessionID)
@@ -308,6 +328,7 @@ func TestGeminiStream_FullFlow(t *testing.T) {
 	// Expected: content, content, tool_use, tool_result, content, metadata, done
 	if len(events) != 7 {
 		t.Fatalf("expected 7 events, got %d", len(events))
+		return
 	}
 
 	// Event 0: content
@@ -360,6 +381,7 @@ func TestBuildGeminiStreamArgs_Basic(t *testing.T) {
 	expected := []string{"--prompt", "say hello", "--output-format", "stream-json", "--yolo", "--include-directories", "/home/user/project", "--model", "gemini-3-pro-preview"}
 	if len(args) != len(expected) {
 		t.Fatalf("expected %d args, got %d: %v", len(expected), len(args), args)
+		return
 	}
 	for i, v := range expected {
 		if args[i] != v {
@@ -446,11 +468,13 @@ func TestNormalizeGeminiInput_FieldRemapping(t *testing.T) {
 	norm1, err := normalizeToolInput(input1, map[string]string{"dirPath": "path"})
 	if err != nil {
 		t.Fatalf("normalizeToolInput failed: %v", err)
+		return
 	}
 	result1 := string(norm1)
 	var parsed1 map[string]any
 	if unmarshalErr := json.Unmarshal([]byte(result1), &parsed1); unmarshalErr != nil {
 		t.Fatalf("failed to parse result: %v", unmarshalErr)
+		return
 	}
 	if _, exists := parsed1["filePath"]; exists {
 		t.Error("filePath should be removed")
@@ -464,11 +488,13 @@ func TestNormalizeGeminiInput_FieldRemapping(t *testing.T) {
 	norm2, err := normalizeToolInput(input2, map[string]string{"dirPath": "path"})
 	if err != nil {
 		t.Fatalf("normalizeToolInput failed: %v", err)
+		return
 	}
 	result2 := string(norm2)
 	var parsed2 map[string]any
 	if unmarshalErr := json.Unmarshal([]byte(result2), &parsed2); unmarshalErr != nil {
 		t.Fatalf("failed to parse result: %v", unmarshalErr)
+		return
 	}
 	if _, exists := parsed2["dirPath"]; exists {
 		t.Error("dirPath should be removed")
@@ -482,11 +508,13 @@ func TestNormalizeGeminiInput_FieldRemapping(t *testing.T) {
 	norm3, err := normalizeToolInput(input3, map[string]string{"dirPath": "path"})
 	if err != nil {
 		t.Fatalf("normalizeToolInput failed: %v", err)
+		return
 	}
 	result3 := string(norm3)
 	var parsed3 map[string]any
 	if err := json.Unmarshal([]byte(result3), &parsed3); err != nil {
 		t.Fatalf("failed to parse result: %v", err)
+		return
 	}
 	if parsed3["file_path"] != "main.go" {
 		t.Errorf("expected file_path=main.go, got %v", parsed3["file_path"])
@@ -509,11 +537,13 @@ func TestNormalizeGeminiInput_AlreadyCanonical(t *testing.T) {
 	norm, err := normalizeToolInput(input, map[string]string{"dirPath": "path"})
 	if err != nil {
 		t.Fatalf("normalizeToolInput failed: %v", err)
+		return
 	}
 	result := string(norm)
 	var parsed map[string]any
 	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
 		t.Fatalf("failed to parse result: %v", err)
+		return
 	}
 	if parsed["file_path"] != "/tmp/test.go" {
 		t.Errorf("expected file_path=/tmp/test.go, got %v", parsed["file_path"])
@@ -625,9 +655,11 @@ func TestGeminiStream_ParseLine_ToolUse_NewTools(t *testing.T) {
 			events := parseGeminiLine(tt.line)
 			if len(events) != 1 {
 				t.Fatalf("expected 1 event, got %d", len(events))
+				return
 			}
 			if events[0].Tool == nil {
 				t.Fatal("expected tool call, got nil")
+				return
 			}
 			if events[0].Tool.Name != tt.expectedTool {
 				t.Errorf("expected tool name %q, got %q", tt.expectedTool, events[0].Tool.Name)
@@ -636,6 +668,7 @@ func TestGeminiStream_ParseLine_ToolUse_NewTools(t *testing.T) {
 				var input map[string]any
 				if err := json.Unmarshal([]byte(events[0].Tool.Input), &input); err != nil {
 					t.Fatalf("failed to parse tool input: %v", err)
+					return
 				}
 				tt.checkInput(t, input)
 			}
@@ -652,6 +685,7 @@ func TestBuildGeminiStreamArgs_Minimal(t *testing.T) {
 	expected := []string{"--prompt", "hello", "--output-format", "stream-json", "--yolo"}
 	if len(args) != len(expected) {
 		t.Fatalf("expected %d args, got %d: %v", len(expected), len(args), args)
+		return
 	}
 	for i, v := range expected {
 		if args[i] != v {

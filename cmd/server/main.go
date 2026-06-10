@@ -432,6 +432,15 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	}
 	defer service.CloseDB()
 
+	// Load persisted agent capabilities from DB so mode/thinking/command chips
+	// appear immediately on startup without requiring prefetch.
+	ai.SetRegistryDB(service.DB)
+	ai.GetAgentCapabilityRegistry().LoadFromDB(service.DB)
+
+	// Kill orphan AI subprocesses from a previous server crash.
+	// On Linux, scans /proc for CLAWBENCH_CHILD=1 env marker.
+	ai.CleanupOrphans()
+
 	// Resolve summarize API key from agent_api_keys table if not in config.
 	// New setups write the key directly to config.yaml. This fallback resolves
 	// the key from DB for legacy configs that have key="" and agent_id set.
@@ -451,6 +460,24 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			return "", "", "", false
 		}
 		return p, cu, ak, true
+	})
+
+	// Inject external session ID getter for ResumeSession recovery
+	ai.SetExternalSessionIDGetter(service.GetExternalSessionID)
+
+	// Inject auto-approve getter for ACP permission auto-approval
+	ai.SetAutoApproveGetter(service.GetSessionAutoApprove)
+
+	// Inject session running checker for ACP idle sweep (avoids import cycle)
+	ai.GetACPConnManager().SetSessionRunningChecker(service.IsSessionRunning)
+
+	// Inject permission state change callback (emits WS event on approval state change)
+	ai.SetPermissionStateChangeCallback(func(clawbenchSID string, pending bool) {
+		status := "permission_resolved"
+		if pending {
+			status = "permission_pending"
+		}
+		service.EmitSessionEvent(clawbenchSID, status, false)
 	})
 
 	// Initialize TTS summarizer from config (deferred from earlier — needs DB for API key resolution).
@@ -511,39 +538,20 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Load agent configurations (set ClawbenchBin first for placeholder replacement)
 	model.ClawbenchBin = absBinPath
-	agentsDir := filepath.Join(model.BinDir, "config", "agents")
-	if _, err := os.Stat(agentsDir); os.IsNotExist(err) {
-		agentsDir = filepath.Join("config", "agents")
-	}
 
-	// Model cache directory
-	modelCacheDir := filepath.Join(model.BinDir, ".clawbench", "model-cache")
-	model.ModelCacheDir = modelCacheDir
-
-	// 1. One-time YAML → DB migration (idempotent: skips if agents table already has records)
-	if err := service.MigrateAgentsFromYAML(service.DB, agentsDir); err != nil {
-		slog.Warn("failed to migrate agents from YAML", slog.String("err", err.Error()))
-	}
-
-	// 2. Set ConfigDir for WriteAgentYAML (deprecated, still needed for YAML agent migration)
-	model.ConfigDir = filepath.Dir(agentsDir)
-
-	// 3. Detect installed CLIs and write new agents to DB (replaces SyncDiscoverAgents)
+	// 1. Detect installed CLIs and write new agents to DB
 	present := model.SyncDiscoverAgentsDB(service.DB)
 
-	// 4. Synchronous model discovery on first run (no cache exists)
-	if _, err := os.Stat(modelCacheDir); os.IsNotExist(err) {
-		slog.Info("no model cache found, running synchronous discovery")
-		model.SyncDiscoverModels(modelCacheDir)
-	}
+	// 2. Synchronous model discovery (run when agents may have empty model lists)
+	discoveredModels := model.SyncDiscoverModels()
 
-	// 5. Merge runtime data: fill models/levels from cache/registry, delete missing CLIs, reload memory
-	model.MergeDiscoveredDataDB(service.DB, modelCacheDir, present)
+	// 3. Merge runtime data: fill models/levels from discovery results/registry, delete missing CLIs, reload memory
+	model.MergeDiscoveredDataDB(service.DB, discoveredModels, present)
 
 	slog.Info("agents loaded", slog.Int("count", len(model.AgentList)))
 
-	// 6. Async: refresh model cache in background (non-blocking)
-	model.AsyncRefreshModelCache(modelCacheDir)
+	// 4. Async: refresh model cache in background (non-blocking)
+	model.AsyncRefreshModelCache(service.DB)
 
 	// Set default agent ID from config, or fall back to first agent
 	if cfg.DefaultAgent != "" {
@@ -569,7 +577,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		slog.Warn("no agents available, session creation will fail")
 	}
 
-	// Initialize and start scheduler (MUST be after LoadAgents so model.Agents is populated)
+	// Initialize and start scheduler (MUST be after agents are loaded so model.Agents is populated)
 	scheduler := service.NewScheduler()
 
 	// Initialize task summarizer if summarization backend is configured (MUST be before scheduler.Start())
@@ -601,6 +609,9 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	scheduler.Start()
 	defer scheduler.Stop()
 	service.GlobalScheduler = scheduler
+
+	// Stop ACP connection pool on shutdown (kills long-lived agent processes)
+	defer ai.GetACPConnManager().StopAll()
 
 	// Start periodic cleanup of stale WS subscriptions (every 60s)
 	go func() {

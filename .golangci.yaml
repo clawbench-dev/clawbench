@@ -7,8 +7,6 @@ run:
   timeout: 5m
   tests: true
   go: "1.25"
-  build-tags:
-    - fts5
 
 linters:
   default: none

@@ -61,6 +61,14 @@
       </div>
     </Transition>
 
+    <!-- Plan progress panel -->
+    <PlanPanel
+      :entries="planEntries"
+      :collapsed="planCollapsed"
+      :has-update="planHasUpdate"
+      @toggle-collapse="togglePlanCollapse"
+    />
+
     <!-- Unified input container -->
     <ChatInputBar
       ref="inputBarRef"
@@ -78,6 +86,8 @@
       :currentModelId="identity.currentModelId.value"
       :currentModelName="identity.currentModelName.value"
       :currentThinkingEffort="identity.currentThinkingEffort.value"
+      :currentModeName="identity.currentModeName.value"
+      :currentTransport="identity.currentTransport.value"
       :currentAgentId="identity.currentAgentId.value"
       :active="props.active"
       @send="sendMessage"
@@ -95,6 +105,8 @@
       @delete-session="() => manager.deleteCurrentSession((draftId) => inputBarRef.value?.deleteDraft(draftId))"
       @switch-model="handleSwitchModel"
       @switch-thinking-effort="handleSwitchThinkingEffort"
+      @switch-mode="handleSwitchMode"
+      @switch-transport="handleSwitchTransport"
     />
 
   </div>
@@ -117,6 +129,7 @@
   <ToolDetailOverlay
     :show="toolDetailOverlay.show"
     :toolName="toolDetailOverlay.name"
+    :toolSubagentType="toolDetailOverlay.subagentType"
     :toolSummary="toolDetailOverlay.summary"
     :toolInputHtml="toolDetailOverlay.inputHtml"
     :toolOutputHtml="toolDetailOverlay.outputHtml"
@@ -154,13 +167,15 @@ import ChatMetadataModal from './ChatMetadataModal.vue'
 import ToolDetailOverlay from './ToolDetailOverlay.vue'
 import ChatInputBar from './ChatInputBar.vue'
 import ChatMessageList from './ChatMessageList.vue'
+import PlanPanel from './PlanPanel.vue'
+import { usePlanProgress } from '@/composables/usePlanProgress'
 import { useChatRender } from '@/composables/useChatRender.ts'
 import { formatToolOutput } from '@/utils/renderToolDetail.ts'
 import { useChatStream } from '@/composables/useChatStream.ts'
 import { useChatSession, loadSessionsOnce } from '@/composables/useChatSession.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useSessionManager } from '@/composables/useSessionManager.ts'
-import { useAgents } from '@/composables/useAgents'
+import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useNotification } from '@/composables/useNotification.ts'
@@ -214,6 +229,7 @@ const metadataModal = ref({
 const toolDetailOverlay = ref({
   show: false,
   name: '',
+  subagentType: '',
   summary: '',
   inputHtml: '',
   outputHtml: '',
@@ -222,6 +238,8 @@ const toolDetailOverlay = ref({
 })
 // Active thinking overlay: tracks which block is being shown so we can reactively update
 const activeThinkingOverlay = ref(null) // { msgId, blockIdx } or null
+// Active tool overlay: tracks which tool block is being shown so we can reactively update
+const activeToolOverlay = ref(null) // { msgId, blockIdx } or null
 let thinkingRenderTimer = null
 const toast = useToast()
 const dialog = useDialog()
@@ -237,6 +255,8 @@ function handleFileTagClick(filePath) {
         switchTab('viewer')
     }
 }
+
+const { planEntries, planCollapsed, planHasUpdate, hasPlan, togglePlanCollapse, clearPlanState } = usePlanProgress()
 
 const render = useChatRender({ messages, theme, currentSessionId: identity.currentSessionId })
 
@@ -444,10 +464,33 @@ watch(
   }
 )
 
-// Clean up thinking overlay state when overlay closes
+// Reactively update tool overlay content as block.output/done/status changes during streaming
+watch(
+  () => {
+    if (!activeToolOverlay.value) return null
+    const block = findToolBlock(activeToolOverlay.value)
+    if (!block) return null
+    return { output: block.output, done: block.done, status: block.status, input: block.input, name: block.name }
+  },
+  (data) => {
+    if (data === null || !toolDetailOverlay.value.show) return
+    const { formatToolInput } = render
+    toolDetailOverlay.value = {
+      ...toolDetailOverlay.value,
+      outputHtml: data.output ? formatToolOutput(data.output, data.name) : '',
+      status: data.status || '',
+      done: !!data.done,
+      // Update input in case it was enriched by a later tool_use/tool_result event
+      inputHtml: formatToolInput(data.input, data.name, { done: data.done, status: data.status, output: data.output }),
+    }
+  }
+)
+
+// Clean up overlay state when overlay closes
 watch(() => toolDetailOverlay.value.show, (show) => {
   if (!show) {
     activeThinkingOverlay.value = null
+    activeToolOverlay.value = null
     if (thinkingRenderTimer) { clearTimeout(thinkingRenderTimer); thinkingRenderTimer = null }
   }
 })
@@ -465,13 +508,50 @@ async function handleShowAgentSelector() {
 function handleSwitchModel(model) {
   identity.currentModelId.value = model.id
   identity.currentModelName.value = model.name
-  // Note: model switch is session-scoped only — does NOT update agent's default model.
-  // Agent default model is configured exclusively via the settings panel.
+  // Persist model selection immediately so it survives page reload
+  persistSessionUpdate({ modelId: model.id })
 }
 
 function handleSwitchThinkingEffort(level) {
   identity.currentThinkingEffort.value = level
-  identity.saveThinkingPref(identity.currentAgentId.value, level)
+  // Resolve and set the friendly name for display
+  const levelObj = identity.availableThinkingEfforts.value.find(l => l.id === level)
+  identity.currentThinkingEffortName.value = levelObj?.name || level
+  // Persist thinking effort selection immediately so it survives page reload
+  persistSessionUpdate({ thinkingEffort: level })
+}
+
+function handleSwitchMode(mode) {
+  if (!mode?.id || mode.id === identity.currentModeId.value) return
+  identity.currentModeId.value = mode.id
+  identity.currentModeName.value = mode.name || mode.id
+  // Persist mode selection immediately so it survives page reload
+  persistSessionUpdate({ modeId: mode.id })
+}
+
+function handleSwitchTransport(transport) {
+  identity.currentTransport.value = transport
+  // Persist transport selection immediately so it survives page reload
+  persistSessionUpdate({ transport })
+  // When switching from ACP to CLI for this session, clear ACP-specific state.
+  if (transport === 'cli') {
+    identity.clearModeState()
+    identity.clearCommandState()
+    identity.clearThinkingEffortState()
+  }
+}
+
+/** Persist session-scoped settings (mode, thinkingEffort, model, transport)
+ *  immediately via PATCH so they survive page reload without sending a message. */
+function persistSessionUpdate(fields) {
+  const sid = identity.currentSessionId.value
+  if (!sid) return
+  const url = `/api/ai/session/update?session_id=${encodeURIComponent(sid)}`
+  fetch(url, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(fields),
+  }).catch(() => { /* best effort — next POST /api/ai/chat will also persist */ })
 }
 
 async function sendMessage(text, extraFilePaths) {
@@ -525,13 +605,20 @@ async function sendMessageNow(text, filePaths, files) {
     try {
         const effectiveAgentId = identity.currentAgentId.value
 
-        const url = identity.currentSessionId.value
-            ? `/api/ai/chat?session_id=${encodeURIComponent(identity.currentSessionId.value)}`
-            : '/api/ai/chat'
-        const resp = await fetch(url, {
+        if (!identity.currentSessionId.value) {
+            // No session yet — the user hasn't loaded a session. This shouldn't
+            // happen during normal operation (loadHistory always sets currentSessionId).
+            // Instead of letting the backend auto-create a ghost session, recover first.
+            try { await session.loadHistory(true, false) } catch { /* best effort */ }
+            if (!identity.currentSessionId.value) {
+                throw new Error(gt('chat.session.requestFailed', { status: 'No session' }))
+            }
+        }
+        const safeUrl = `/api/ai/chat?session_id=${encodeURIComponent(identity.currentSessionId.value)}`
+        const resp = await fetch(safeUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: text, filePaths, files: files || [], agentId: effectiveAgentId, modelId: identity.currentModelId.value || undefined, thinkingEffort: identity.currentThinkingEffort.value || undefined }),
+            body: JSON.stringify({ message: text, filePaths, files: files || [], agentId: effectiveAgentId, modelId: identity.currentModelId.value || undefined, thinkingEffort: identity.currentThinkingEffort.value || undefined, modeId: identity.currentModeId.value || undefined, transport: identity.currentTransport.value || undefined }),
         })
         const data = await resp.json()
         if (!resp.ok) {
@@ -545,14 +632,43 @@ async function sendMessageNow(text, filePaths, files) {
         }
         // Session already running — another request is in progress
         if (data.running) {
+            // Remove the optimistically pushed local user message — the backend
+            // has queued it and will emit it via queue_consume SSE event or
+            // it will appear in the next loadHistory refresh. Keeping it causes
+            // a duplicate (the local version has no id, so dedup by id fails).
+            const localIdx = messages.value.findLastIndex(
+                (m) => m.role === 'user' && m.content === (text || '') && !m.id
+            )
+            if (localIdx !== -1) {
+                messages.value.splice(localIdx, 1)
+            }
             if (data.queued && data.queue) {
                 manager.setPendingMessages(data.queue)
             }
             stream.connectStream(identity.currentSessionId.value)
+            // Proactively sync ACP state for the running session
+            if (effectiveAgentId && identity.currentTransport.value === 'acp-stdio') {
+                populateACPStateFromCache(effectiveAgentId)
+            }
             return
         }
         stream.connectStream(identity.currentSessionId.value)
+        // After connecting stream, proactively sync ACP state (mode, thinking, commands)
+        // from the server cache. For ACP agents, the backend caches mode state after
+        // the first prompt, but the frontend's clearModeState() during session switch
+        // may have cleared availableModes before the SSE mode_update event arrives.
+        // This ensures mode/thinking chips appear immediately.
+        if (effectiveAgentId && identity.currentTransport.value === 'acp-stdio') {
+            populateACPStateFromCache(effectiveAgentId)
+        }
     } catch (err) {
+        // Remove the optimistically pushed local user message on failure
+        const localIdx = messages.value.findLastIndex(
+            (m) => m.role === 'user' && m.content === (text || '') && !m.id
+        )
+        if (localIdx !== -1) {
+            messages.value.splice(localIdx, 1)
+        }
         stream.stopPolling()
         stream.disconnectStream()
         loading.value = false
@@ -604,11 +720,15 @@ function showMetadata(msg) {
 
 function handleShowToolDetail(block) {
   const { formatToolInput } = render
+  // Store identifiers for reactive lookup (survives messages array replacement on loadHistory)
+  activeToolOverlay.value = { msgId: String(block.msgId), blockIdx: block.blockIdx }
+
   toolDetailOverlay.value = {
     show: true,
     name: block.name || '',
+    subagentType: block.input?.subagent_type || '',
     summary: render.toolCallSummary(block),
-    inputHtml: formatToolInput(block.input, block.name),
+    inputHtml: formatToolInput(block.input, block.name, { done: block.done, status: block.status, output: block.output }),
     outputHtml: block.output ? formatToolOutput(block.output, block.name) : '',
     status: block.status || '',
     done: !!block.done,
@@ -640,6 +760,14 @@ function findThinkingBlock({ msgId, blockIdx }) {
   if (!msg || !msg.blocks) return null
   const block = msg.blocks[blockIdx]
   return (block && block.type === 'thinking') ? block : null
+}
+
+/** Look up the tool_use block from the live messages array by msgId + blockIdx */
+function findToolBlock({ msgId, blockIdx }) {
+  const msg = messages.value.find(m => String(m.id) === msgId)
+  if (!msg || !msg.blocks) return null
+  const block = msg.blocks[blockIdx]
+  return (block && block.type === 'tool_use') ? block : null
 }
 
 function handleFileOpenInOverlay(filePath) {

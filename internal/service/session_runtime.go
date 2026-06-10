@@ -225,18 +225,30 @@ func CancelSession(sessionID string) bool {
 		if !IsSessionRunning(sessionID) {
 			return true
 		}
-		return false
+		// Session is marked as running but has no cancel function — this is a stuck state.
+		// Can happen if the goroutine hasn't registered its cancel yet (race window),
+		// or if the cancel was already consumed by a previous cancel call.
+		// Force-clear the running state to unstick the session.
+		slog.Warn("CancelSession: session running but no cancel func, force-clearing",
+			slog.String("session_id", sessionID))
+		ClearQueue(sessionID)
+		SetSessionRunning(sessionID, false, true)
+		return true
 	}
 	cancel, ok := val.(context.CancelFunc)
 	if !ok {
 		return false
 	}
 
-	// Cancel the context first (kills CLI subprocess), which causes the goroutine
-	// to stop producing events and drain the channel, making room for the cancelled event.
+	// Cancel the Go context first so the agent process starts shutting down,
+	// freeing its stdin pipe. Then send ACP Cancel (with 3s timeout) so the
+	// agent can stop its turn gracefully on next stdin read.
 	sessionCancelReasons.Store(sessionID, "user")
 	ClearQueue(sessionID)
 	cancel()
+
+	ai.GetACPConnManager().CancelTurn(sessionID)
+
 	EmitSessionEvent(sessionID, "cancelled", false)
 
 	// Send cancelled event to SSE stream after cancelling context (non-blocking)

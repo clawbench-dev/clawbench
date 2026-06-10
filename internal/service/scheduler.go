@@ -228,7 +228,7 @@ func (s *Scheduler) LoadTasksFromDB(projectPath string) error {
 		// Validate agent_id against loaded agents
 		if _, ok := model.Agents[task.AgentID]; !ok {
 			// Skip registration but do NOT pause — the agent may not be loaded yet
-			// (e.g., if LoadAgents hasn't run). The task stays active in DB and
+			// (e.g., if agents haven't been loaded yet). The task stays active in DB and
 			// will be registered on next restart when agents are available.
 			// Runtime validation in executeTask() handles genuinely invalid agents.
 			slog.Warn(
@@ -607,17 +607,14 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		systemPrompt = strings.ReplaceAll(systemPrompt, "{{PROJECT_PATH}}", projectPath)
 	}
 
-	// Respect user's global model/thinking preference (from most recent session).
+	// Respect user's global model preference (from most recent session).
 	// Falls back to agent defaults when no user preference exists.
-	userModel, userThinking := GetLatestUserModel(task.AgentID, projectPath)
+	userModel := GetLatestUserModel(task.AgentID, projectPath)
 	effectiveModel := userModel
 	if effectiveModel == "" {
 		effectiveModel = agent.DefaultModelID()
 	}
-	effectiveThinking := userThinking
-	if effectiveThinking == "" {
-		effectiveThinking = agent.ThinkingEffort
-	}
+	effectiveThinking := agent.ThinkingEffort
 
 	chatReq := ai.ChatRequest{
 		Prompt:             task.Prompt,
@@ -635,7 +632,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// Execute AI backend (no timeout - let AI run indefinitely)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	backend, err := ai.NewBackend(backendName)
+	backend, err := ai.NewBackendForAgent(backendName, task.AgentID)
 	if err != nil {
 		slog.Error("failed to create backend for task", slog.String("err", err.Error()))
 		cancel() // Release context resources
@@ -732,8 +729,15 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	contentJSON, _ := json.Marshal(contentMap)
 
 	// Write assistant message to chat_history
-	if _, err := AddChatMessage(projectPath, backendName, sessionID, "assistant", string(contentJSON), nil, false, task.Name); err != nil {
+	msgID, err := AddChatMessage(projectPath, backendName, sessionID, "assistant", string(contentJSON), nil, false, task.Name)
+	if err != nil {
 		slog.Error("failed to write assistant message for task", slog.String("err", err.Error()))
+	}
+	// Save metadata to dedicated table for analytical queries
+	if msgID > 0 && responseMetadata != nil {
+		if saveErr := SaveMetadata(msgID, responseMetadata); saveErr != nil {
+			slog.Warn("failed to save task message metadata", slog.Int64("msg_id", msgID), slog.String("err", saveErr.Error()))
+		}
 	}
 
 	// Mark execution as completed

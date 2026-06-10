@@ -18,8 +18,6 @@ import (
 	"time"
 
 	"clawbench/internal/platform"
-
-	"gopkg.in/yaml.v3"
 )
 
 // BackendSpec defines a known AI backend for auto-discovery.
@@ -35,40 +33,47 @@ type BackendSpec struct {
 	ParseModels          func(string) []AgentModel // optional: parse command stdout into AgentModel list; nil = not supported
 	DiscoverModelsFunc   func() []AgentModel       // optional: custom model discovery function (e.g. binary strings scan); takes priority over ListModelsCmd
 	ThinkingEffortLevels []string                  // supported thinking effort levels, e.g. ["low","medium","high"]; nil = not supported
+	AcpCommand           string                    // ACP spawn command for acp-stdio transport, e.g. "gemini --acp"; empty = no ACP support
 }
 
 // BackendRegistry lists all known AI backends for auto-discovery.
-// When no agent configs exist, each entry is checked: if DefaultCmd
-// is found on PATH, a YAML config is generated for that backend.
+// When no agent DB records exist, each entry is checked: if DefaultCmd
+// is found on PATH, a minimal agent record is inserted into the DB.
 // For backends with ListModelsCmd+ParseModels, model lists are auto-discovered too.
 var BackendRegistry = []BackendSpec{
 	{
 		ID: "claude", Backend: "claude", DefaultCmd: "claude", Name: "Claude", Icon: "🤖", Specialty: "代码编写与推理",
 		DiscoverModelsFunc:   DiscoverClaudeModels,
 		ThinkingEffortLevels: []string{"low", "medium", "high", "xhigh", "max"},
+		AcpCommand:           "npx -y @agentclientprotocol/claude-agent-acp@latest",
 	},
 	{
 		ID: "codebuddy", Backend: "codebuddy", DefaultCmd: "codebuddy", Name: "Codebuddy", Icon: "🐛", Specialty: "全栈开发助手",
 		DiscoverModelsFunc:   DiscoverCodebuddyModels,
 		ThinkingEffortLevels: []string{"low", "medium", "high", "xhigh"},
+		AcpCommand:           "codebuddy --acp",
 	},
 	{
 		ID: "opencode", Backend: "opencode", DefaultCmd: "opencode", Name: "OpenCode", Icon: "📟", Specialty: "终端编码工具",
 		ListModelsCmd: []string{"models"}, ParseModels: ParseOpenCodeModels,
 		ThinkingEffortLevels: []string{"minimal", "high", "max"},
+		AcpCommand:           "opencode acp",
 	},
 	{
 		ID: "gemini", Backend: "gemini", DefaultCmd: "gemini", Name: "Gemini", Icon: "💎", Specialty: "多模态推理",
 		DiscoverModelsFunc: DiscoverGeminiModels,
+		AcpCommand:         "gemini --acp",
 	},
 	{
 		ID: "codex", Backend: "codex", DefaultCmd: "codex", Name: "Codex", Icon: "🐙", Specialty: "OpenAI 编码代理",
 		DiscoverModelsFunc:   DiscoverCodexModels,
 		ThinkingEffortLevels: []string{"low", "medium", "high"},
+		AcpCommand:           "npx -y @agentclientprotocol/codex-acp@latest",
 	},
 	{
 		ID: "qoder", Backend: "qoder", DefaultCmd: "qodercli", Name: "Qoder", Icon: "⚡", Specialty: "AI 编码助手",
 		DiscoverModelsFunc: DiscoverQoderModels,
+		AcpCommand:         "qodercli --acp",
 	},
 	{
 		ID: "vecli", Backend: "vecli", DefaultCmd: "vecli", Name: "VeCLI", Icon: "🌿", Specialty: "字节跳动 AI 助手",
@@ -82,6 +87,24 @@ var BackendRegistry = []BackendSpec{
 		ID: "pi", Backend: "pi", DefaultCmd: "pi", Name: "Pi", Icon: "🥧", Specialty: "极简编程智能体",
 		DiscoverModelsFunc:   DiscoverPiModels,
 		ThinkingEffortLevels: []string{"off", "minimal", "low", "medium", "high", "xhigh"},
+	},
+	{
+		ID: "cline", Backend: "cline", DefaultCmd: "cline", Name: "Cline", Icon: "🔮", Specialty: "自主编码智能体",
+		DiscoverModelsFunc:   DiscoverClineModels,
+		ThinkingEffortLevels: []string{"none", "low", "medium", "high", "xhigh"},
+		AcpCommand:           "cline --acp",
+	},
+	{
+		ID: "kimi", Backend: "kimi", DefaultCmd: "kimi", Name: "Kimi", Icon: "🌙", Specialty: "Kimi AI 编码助手",
+		DiscoverModelsFunc:   DiscoverKimiModels,
+		ThinkingEffortLevels: []string{"off", "on"},
+		AcpCommand:           "kimi acp",
+	},
+	{
+		ID: "copilot", Backend: "copilot", DefaultCmd: "copilot", Name: "Copilot", Icon: "🤝", Specialty: "GitHub Copilot 编码助手",
+		DiscoverModelsFunc:   DiscoverCopilotModels,
+		ThinkingEffortLevels: []string{"none", "low", "medium", "high", "xhigh", "max"},
+		AcpCommand:           "copilot --acp",
 	},
 }
 
@@ -192,21 +215,6 @@ func discoverModels(spec BackendSpec) []AgentModel {
 	return models
 }
 
-// GenerateAgentYAML creates a minimal YAML config for the given backend spec.
-// Only id, name, icon, specialty, and backend are written.
-// Models, thinking_effort_levels, and system_prompt are NOT written —
-// they are filled at runtime from auto-discovery and BackendRegistry.
-func GenerateAgentYAML(spec BackendSpec) ([]byte, error) {
-	agent := Agent{
-		ID:        spec.ID,
-		Name:      spec.Name,
-		Icon:      spec.Icon,
-		Specialty: spec.Specialty,
-		Backend:   spec.Backend,
-	}
-	return yaml.Marshal(agent)
-}
-
 // FindSpecByBackend returns the BackendSpec for the given backend type, or nil.
 func FindSpecByBackend(backend string) *BackendSpec {
 	for i := range BackendRegistry {
@@ -217,155 +225,6 @@ func FindSpecByBackend(backend string) *BackendSpec {
 	return nil
 }
 
-// DiscoverAgents scans the system for installed AI CLI tools and generates
-// agent YAML configs in the given directory. It only runs when no agent
-// configs exist (one-time generation).
-//
-// For each backend in BackendRegistry, it runs `{DefaultCmd} --version`
-// concurrently. If the command succeeds, it writes a YAML file.
-// Existing files are not overwritten.
-func DiscoverAgents(dir string) error {
-	// Ensure directory exists
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create agents directory: %w", err)
-	}
-
-	// Check all CLIs concurrently
-	type result struct {
-		spec   BackendSpec
-		exists bool
-	}
-	results := make([]result, len(BackendRegistry))
-	var wg sync.WaitGroup
-	for i, spec := range BackendRegistry {
-		wg.Add(1)
-		go func(i int, spec BackendSpec) {
-			defer wg.Done()
-			exists := spec.NoCLI || CheckCLIExists(spec.DefaultCmd)
-			results[i] = result{spec: spec, exists: exists}
-		}(i, spec)
-	}
-	wg.Wait()
-
-	generated := 0
-	skipped := 0
-
-	for _, r := range results {
-		yamlPath := filepath.Join(dir, r.spec.ID+".yaml")
-
-		// Don't overwrite existing files
-		if _, err := os.Stat(yamlPath); err == nil {
-			continue
-		}
-
-		if !r.exists {
-			skipped++
-			continue
-		}
-
-		data, err := GenerateAgentYAML(r.spec)
-		if err != nil {
-			skipped++
-			continue
-		}
-
-		if err := os.WriteFile(yamlPath, data, 0o644); err != nil {
-			skipped++
-			continue
-		}
-
-		generated++
-	}
-
-	return nil
-}
-
-// SyncDiscoverAgents is called on every startup (not just first-run).
-// It does three things:
-// 1. Detects all installed CLIs from BackendRegistry.
-// 2. Generates minimal YAML for newly found backends (no overwrite).
-// 3. Returns a set of backend types whose CLI is currently present.
-func SyncDiscoverAgents(dir string) map[string]bool { //nolint:gocognit,gocyclo // agent discovery with multi-backend detection
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		slog.Warn("failed to create agents directory", "dir", dir, "error", err)
-		return nil
-	}
-
-	type result struct {
-		spec   BackendSpec
-		exists bool
-	}
-	results := make([]result, len(BackendRegistry))
-	var wg sync.WaitGroup
-	for i, spec := range BackendRegistry {
-		wg.Add(1)
-		go func(i int, spec BackendSpec) {
-			defer wg.Done()
-			exists := spec.NoCLI || CheckCLIExists(spec.DefaultCmd)
-			results[i] = result{spec: spec, exists: exists}
-		}(i, spec)
-	}
-	wg.Wait()
-
-	present := make(map[string]bool)
-	for _, r := range results {
-		if r.exists {
-			present[r.spec.Backend] = true
-		}
-
-		yamlPath := filepath.Join(dir, r.spec.ID+".yaml")
-
-		// Don't overwrite existing files
-		if _, err := os.Stat(yamlPath); err == nil {
-			continue
-		}
-
-		if !r.exists {
-			continue
-		}
-
-		// New CLI found + no YAML → generate minimal config
-		data, err := GenerateAgentYAML(r.spec)
-		if err != nil {
-			slog.Warn("failed to generate agent YAML", "backend", r.spec.ID, "error", err)
-			continue
-		}
-		if err := os.WriteFile(yamlPath, data, 0o644); err != nil {
-			slog.Warn("failed to write agent YAML", "path", yamlPath, "error", err)
-			continue
-		}
-		slog.Info("auto-generated agent config", "backend", r.spec.ID, "path", yamlPath)
-	}
-
-	// Include backends that have existing YAML configs but are not in BackendRegistry
-	// (e.g., mock backend configured explicitly for E2E testing).
-	// This ensures MergeDiscoveredData doesn't soft-remove them.
-	// We read the "backend" field from each YAML file (same as LoadAgents),
-	// rather than using the filename, so the key matches what MergeDiscoveredData
-	// checks (agent.Backend) and what BackendRegistry entries produce (r.spec.Backend).
-	entries, err := os.ReadDir(dir)
-	if err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
-				continue
-			}
-			data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
-			if err != nil {
-				continue
-			}
-			var agent Agent
-			if err := yaml.Unmarshal(data, &agent); err != nil || agent.Backend == "" {
-				continue
-			}
-			if !present[agent.Backend] {
-				present[agent.Backend] = true
-			}
-		}
-	}
-
-	return present
-}
-
 // CanDiscoverModels returns true if the spec supports model discovery
 // via either DiscoverModelsFunc or ListModelsCmd+ParseModels.
 func CanDiscoverModels(spec BackendSpec) bool {
@@ -373,9 +232,10 @@ func CanDiscoverModels(spec BackendSpec) bool {
 }
 
 // SyncDiscoverModels runs DiscoverModels for all backends that support it
-// and writes results to the model cache. This is called synchronously
-// on first startup (when cache is empty).
-func SyncDiscoverModels(cacheDir string) {
+// and returns the results as a map keyed by backend type.
+// This is called synchronously on first startup (when no DB models exist yet).
+func SyncDiscoverModels() map[string][]AgentModel {
+	result := make(map[string][]AgentModel)
 	for _, spec := range BackendRegistry {
 		if !CanDiscoverModels(spec) {
 			continue
@@ -384,18 +244,15 @@ func SyncDiscoverModels(cacheDir string) {
 		if len(models) == 0 {
 			continue
 		}
-		if err := WriteModelCache(cacheDir, spec.Backend, models); err != nil {
-			slog.Warn("failed to write model cache", "backend", spec.Backend, "error", err)
-		} else {
-			slog.Info("cached discovered models", "backend", spec.Backend, "count", len(models))
-		}
+		result[spec.Backend] = models
+		slog.Info("discovered models", "backend", spec.Backend, "count", len(models))
 	}
+	return result
 }
 
 // AsyncRefreshModelCache runs DiscoverModels in a goroutine for all backends
-// and updates the model cache + in-memory Agent data. Call this after startup
-// is complete — it does not block.
-func AsyncRefreshModelCache(cacheDir string) {
+// and updates in-memory Agent data + DB. Call this after startup — it does not block.
+func AsyncRefreshModelCache(db *sql.DB) {
 	go func() {
 		for _, spec := range BackendRegistry {
 			if !CanDiscoverModels(spec) {
@@ -405,16 +262,19 @@ func AsyncRefreshModelCache(cacheDir string) {
 			if len(models) == 0 {
 				continue
 			}
-			if err := WriteModelCache(cacheDir, spec.Backend, models); err != nil {
-				slog.Warn("failed to refresh model cache", "backend", spec.Backend, "error", err)
-				continue
-			}
-			slog.Info("refreshed model cache", "backend", spec.Backend, "count", len(models))
+			slog.Info("refreshed discovered models", "backend", spec.Backend, "count", len(models))
 
-			// Update in-memory agents whose models were auto-detected (not user-defined)
+			// Update in-memory and DB for agents whose models were auto-detected (not user-defined)
+			modelsJSON, _ := json.Marshal(models)
 			for _, agent := range AgentList {
 				if agent.Backend == spec.Backend && agent.ModelsAutoDetected {
 					agent.Models = models
+					if db != nil {
+						if _, err := db.Exec("UPDATE agents SET models = ? WHERE id = ?",
+							string(modelsJSON), agent.ID); err != nil {
+							slog.Warn("failed to persist refreshed models to DB", "id", agent.ID, "error", err)
+						}
+					}
 				}
 			}
 		}
@@ -422,52 +282,6 @@ func AsyncRefreshModelCache(cacheDir string) {
 }
 
 // --- Model list parsers ---
-
-// MergeDiscoveredData fills models and thinking_effort_levels for loaded agents.
-//   - Models: uses user-defined models if present; otherwise reads from model cache.
-//   - ThinkingEffortLevels: always from BackendRegistry by backend type (YAML values ignored).
-//   - Present map: if provided, agents whose backend is not in present are soft-removed
-//     (removed from AgentList/Agents map, but YAML file is preserved).
-func MergeDiscoveredData(cacheDir string, present ...map[string]bool) {
-	var presentMap map[string]bool
-	if len(present) > 0 {
-		presentMap = present[0]
-	}
-
-	// Soft-remove agents whose CLI is not present
-	if presentMap != nil {
-		var keep []*Agent
-		for _, agent := range AgentList {
-			if !presentMap[agent.Backend] {
-				slog.Info("soft-removing agent (CLI not found)", "id", agent.ID, "backend", agent.Backend)
-				delete(Agents, agent.ID)
-				continue
-			}
-			keep = append(keep, agent)
-		}
-		AgentList = keep
-	}
-
-	// Fill models, thinking effort levels, and CanRefreshModels
-	for _, agent := range AgentList {
-		spec := FindSpecByBackend(agent.Backend)
-
-		// ThinkingEffortLevels: always from Registry (ignore YAML values)
-		if spec != nil {
-			agent.ThinkingEffortLevels = spec.ThinkingEffortLevels
-			agent.CanRefreshModels = CanDiscoverModels(*spec)
-		}
-
-		// Models: user-defined takes priority; otherwise use cache
-		if len(agent.Models) == 0 {
-			cached := ReadModelCache(cacheDir, agent.Backend)
-			if len(cached) > 0 {
-				agent.Models = cached
-				agent.ModelsAutoDetected = true
-			}
-		}
-	}
-}
 
 // codebuddyProductFile is the JSON file in the codebuddy installation that contains
 // the authoritative model list with names, capabilities, and default status.
@@ -640,11 +454,18 @@ func claudeIsDateStamped(modelID string) bool {
 // DiscoverClaudeModels discovers Claude model IDs by scanning the claude binary
 // with `strings`. Claude CLI does not have a --list-models command, so we extract
 // model IDs from the binary which contains hardcoded model name patterns.
-func DiscoverClaudeModels() []AgentModel { //nolint:gocyclo // binary scanning model discovery
+func DiscoverClaudeModels() []AgentModel { //nolint:gocyclo,gocognit // binary scanning model discovery
 	// Resolve the real path for the claude binary, handling Windows .cmd wrappers
 	path := platform.ResolveCLIPath("claude")
 	if path == "" {
-		return nil
+		// Claude binary not found — fall back to known defaults
+		models := make([]AgentModel, len(claudeDefaultModels))
+		copy(models, claudeDefaultModels)
+		if len(models) > 0 {
+			models[0].Default = true
+		}
+		slog.Info("claude model discovery: binary not found, using defaults", "models", len(models))
+		return models
 	}
 
 	// Extract printable strings from the binary (cross-platform replacement for
@@ -717,10 +538,27 @@ func DiscoverClaudeModels() []AgentModel { //nolint:gocyclo // binary scanning m
 		}
 	}
 
+	// If binary scanning found no models, fall back to known defaults
+	if len(models) == 0 {
+		models = make([]AgentModel, len(claudeDefaultModels))
+		copy(models, claudeDefaultModels)
+		if len(models) > 0 {
+			models[0].Default = true
+		}
+		slog.Info("claude model discovery: binary scan found nothing, using defaults", "models", len(models))
+		return models
+	}
+
 	return models
 }
 
-// deepseekModelLineRe matches lines like "  deepseek-v4-flash (deepseek)" or "* deepseek-v4-pro (deepseek)"
+// claudeDefaultModels lists known Claude models as a fallback when binary
+// scanning fails (e.g. claude CLI not found or ExtractStrings returns nothing).
+var claudeDefaultModels = []AgentModel{
+	{ID: "claude-sonnet-4-20250514", Name: "Claude Sonnet 4"},
+	{ID: "claude-opus-4-20250514", Name: "Claude Opus 4"},
+	{ID: "claude-haiku-3-5-20241022", Name: "Claude 3.5 Haiku"},
+}
 var deepseekModelLineRe = regexp.MustCompile(`^(\*?)\s*(\S+)\s+\((\S+)\)`)
 
 // deepseekDefaultRe extracts the default model from the header line.
@@ -1555,13 +1393,23 @@ func SyncDiscoverAgentsDB(db *sql.DB) map[string]bool { //nolint:gocognit,gocycl
 
 		// Check if DB already has an agent for this backend
 		var count int
-		err := db.QueryRow("SELECT COUNT(*) FROM agents WHERE backend = ?", r.spec.Backend).Scan(&count)
+		var existingAcpCommand string
+		err := db.QueryRow("SELECT COUNT(*), COALESCE(acp_command, '') FROM agents WHERE backend = ?", r.spec.Backend).Scan(&count, &existingAcpCommand)
 		if err != nil {
 			slog.Warn("failed to query agents table", "backend", r.spec.Backend, "error", err)
 			continue
 		}
 		if count > 0 {
-			continue // Don't overwrite existing DB records
+			// Update acp_command if it changed in BackendSpec (e.g., claude moved
+			// from "claude acp" to the npx bridge adapter).
+			if r.spec.AcpCommand != "" && existingAcpCommand != r.spec.AcpCommand {
+				if _, updateErr := db.Exec("UPDATE agents SET acp_command = ?, transport = 'acp-stdio' WHERE backend = ? AND source = 'auto'", r.spec.AcpCommand, r.spec.Backend); updateErr != nil {
+					slog.Warn("failed to update acp_command", "backend", r.spec.Backend, "error", updateErr)
+				} else {
+					slog.Info("updated acp_command for auto-discovered agent", "backend", r.spec.Backend, "old", existingAcpCommand, "new", r.spec.AcpCommand)
+				}
+			}
+			continue // Don't overwrite other existing DB fields
 		}
 
 		if !r.exists {
@@ -1581,6 +1429,12 @@ func SyncDiscoverAgentsDB(db *sql.DB) map[string]bool { //nolint:gocognit,gocycl
 		// Set command to embedded path for pi backend
 		if r.spec.Backend == "pi" && embeddedPath != "" {
 			agent.Command = embeddedPath
+		}
+
+		// Set ACP transport info from BackendSpec
+		if r.spec.AcpCommand != "" {
+			agent.Transport = "acp-stdio"
+			agent.AcpCommand = r.spec.AcpCommand
 		}
 
 		if err := saveAgentToDB(db, agent); err != nil {
@@ -1613,18 +1467,29 @@ func saveAgentToDB(db *sql.DB, agent *Agent) error {
 	if err != nil {
 		return fmt.Errorf("marshal models: %w", err)
 	}
+	// json.Marshal(nil slice) produces "null" instead of "[]" — normalize to "[]"
+	if string(modelsJSON) == "null" {
+		modelsJSON = []byte("[]")
+	}
 	levelsJSON, err := json.Marshal(agent.ThinkingEffortLevels)
 	if err != nil {
 		return fmt.Errorf("marshal thinking_effort_levels: %w", err)
 	}
 
+	transport := agent.Transport
+	if transport == "" {
+		transport = "cli"
+	}
+
 	_, err = db.Exec(`INSERT INTO agents (id, name, icon, specialty, backend, command,
 		thinking_effort, thinking_effort_levels, preferred_model, preferred_thinking_effort,
-		system_prompt, models, models_auto_detected, source, sort_order)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		system_prompt, models, models_auto_detected, source, sort_order,
+		transport, acp_command)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		agent.ID, agent.Name, agent.Icon, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON), agent.PreferredModel, agent.PreferredThinkingEffort,
-		agent.SystemPrompt, string(modelsJSON), agent.ModelsAutoDetected, agent.Source, agent.SortOrder)
+		agent.SystemPrompt, string(modelsJSON), agent.ModelsAutoDetected, agent.Source, agent.SortOrder,
+		transport, agent.AcpCommand)
 	return err
 }
 
@@ -1634,7 +1499,7 @@ func saveAgentToDB(db *sql.DB, agent *Agent) error {
 // 2. Fill ThinkingEffortLevels from BackendRegistry and update DB
 // 3. Fill Models from cache for agents with empty models and update DB
 // 4. Reload in-memory state from DB
-func MergeDiscoveredDataDB(db *sql.DB, cacheDir string, present map[string]bool) { //nolint:gocognit,gocyclo // multi-step data merge
+func MergeDiscoveredDataDB(db *sql.DB, discoveredModels map[string][]AgentModel, present map[string]bool) { //nolint:gocognit,gocyclo // multi-step data merge
 	// Step 1: Soft-delete auto agents whose CLI is not present
 	if present != nil {
 		// Build list of present backends for SQL
@@ -1706,8 +1571,8 @@ func MergeDiscoveredDataDB(db *sql.DB, cacheDir string, present map[string]bool)
 		}
 	}
 
-	// Step 3: Fill Models from cache for agents with empty models
-	rows, err = db.Query("SELECT id, backend, models FROM agents WHERE models = '[]' AND models_auto_detected = 0")
+	// Step 3: Fill Models from discovered results for agents with empty models
+	rows, err = db.Query("SELECT id, backend, COALESCE(models, '[]') FROM agents WHERE (models IS NULL OR models = '[]' OR models = 'null') AND models_auto_detected = 0")
 	if err != nil {
 		slog.Warn("failed to query agents for model fill", "error", err)
 		return
@@ -1728,14 +1593,14 @@ func MergeDiscoveredDataDB(db *sql.DB, cacheDir string, present map[string]bool)
 	_ = rows.Close()
 
 	for _, ref := range modelRefs {
-		cached := ReadModelCache(cacheDir, ref.Backend)
-		if len(cached) == 0 {
+		cached, ok := discoveredModels[ref.Backend]
+		if !ok || len(cached) == 0 {
 			continue
 		}
 		modelsJSON, _ := json.Marshal(cached)
 		if _, err := db.Exec("UPDATE agents SET models = ?, models_auto_detected = 1 WHERE id = ?",
 			string(modelsJSON), ref.ID); err != nil {
-			slog.Warn("failed to update models from cache", "id", ref.ID, "error", err)
+			slog.Warn("failed to update models from discovery", "id", ref.ID, "error", err)
 		}
 	}
 
@@ -1771,7 +1636,8 @@ func MergeDiscoveredDataDB(db *sql.DB, cacheDir string, present map[string]bool)
 func loadAgentsFromDBRows(db *sql.DB) ([]*Agent, error) {
 	rows, err := db.Query(`SELECT id, name, icon, specialty, backend, command,
 		thinking_effort, thinking_effort_levels, preferred_model, preferred_thinking_effort,
-		system_prompt, models, models_auto_detected, source, sort_order
+		system_prompt, models, models_auto_detected, source, sort_order,
+		transport, acp_command
 		FROM agents ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -1788,7 +1654,8 @@ func loadAgentsFromDBRows(db *sql.DB) ([]*Agent, error) {
 			&agent.Backend, &agent.Command, &agent.ThinkingEffort, &levelsJSON,
 			&agent.PreferredModel, &agent.PreferredThinkingEffort,
 			&agent.SystemPrompt, &modelsJSON, &autoDetected,
-			&agent.Source, &agent.SortOrder)
+			&agent.Source, &agent.SortOrder,
+			&agent.Transport, &agent.AcpCommand)
 		if err != nil {
 			return nil, err
 		}
@@ -1805,4 +1672,79 @@ func loadAgentsFromDBRows(db *sql.DB) ([]*Agent, error) {
 		agents = append(agents, agent)
 	}
 	return agents, nil
+}
+
+// --- Cline model discovery ---
+
+// clineDefaultModels lists known models for Cline CLI.
+// Cline supports multiple providers; these are the most commonly used models.
+var clineDefaultModels = []AgentModel{
+	{ID: "anthropic/claude-sonnet-4-20250514", Name: "Claude Sonnet 4"},
+	{ID: "anthropic/claude-opus-4-20250514", Name: "Claude Opus 4"},
+	{ID: "openai/gpt-4.1", Name: "GPT-4.1"},
+	{ID: "openai/gpt-4o", Name: "GPT-4o"},
+	{ID: "openai/o3", Name: "o3"},
+	{ID: "openai/o4-mini", Name: "o4-mini"},
+	{ID: "google/gemini-2.5-pro", Name: "Gemini 2.5 Pro"},
+	{ID: "google/gemini-2.5-flash", Name: "Gemini 2.5 Flash"},
+	{ID: "minimax/MiniMax-M1", Name: "MiniMax-M1"},
+	{ID: "minimax/MiniMax-M2.7", Name: "MiniMax-M2.7"},
+}
+
+// DiscoverClineModels discovers models for Cline CLI.
+func DiscoverClineModels() []AgentModel {
+	if _, err := exec.LookPath("cline"); err != nil {
+		return nil
+	}
+	models := make([]AgentModel, len(clineDefaultModels))
+	copy(models, clineDefaultModels)
+	slog.Info("cline model discovery: using hardcoded defaults", "models", len(models))
+	return models
+}
+
+// --- Kimi model discovery ---
+
+// kimiDefaultModels lists known models for Kimi CLI.
+var kimiDefaultModels = []AgentModel{
+	{ID: "kimi-k2-0711-chat", Name: "Kimi K2"},
+	{ID: "moonshot-v1-128k", Name: "Moonshot v1 128K"},
+	{ID: "moonshot-v1-32k", Name: "Moonshot v1 32K"},
+	{ID: "moonshot-v1-8k", Name: "Moonshot v1 8K"},
+	{ID: "kimi-latest", Name: "Kimi Latest"},
+}
+
+// DiscoverKimiModels discovers models for Kimi CLI.
+func DiscoverKimiModels() []AgentModel {
+	if _, err := exec.LookPath("kimi"); err != nil {
+		return nil
+	}
+	models := make([]AgentModel, len(kimiDefaultModels))
+	copy(models, kimiDefaultModels)
+	slog.Info("kimi model discovery: using hardcoded defaults", "models", len(models))
+	return models
+}
+
+// --- Copilot model discovery ---
+
+// copilotDefaultModels lists known models for GitHub Copilot CLI.
+var copilotDefaultModels = []AgentModel{
+	{ID: "gpt-4.1", Name: "GPT-4.1"},
+	{ID: "gpt-4o", Name: "GPT-4o"},
+	{ID: "o3", Name: "o3"},
+	{ID: "o4-mini", Name: "o4-mini"},
+	{ID: "claude-sonnet-4-20250514", Name: "Claude Sonnet 4"},
+	{ID: "claude-opus-4-20250514", Name: "Claude Opus 4"},
+	{ID: "gemini-2.5-pro", Name: "Gemini 2.5 Pro"},
+	{ID: "gemini-2.5-flash", Name: "Gemini 2.5 Flash"},
+}
+
+// DiscoverCopilotModels discovers models for GitHub Copilot CLI.
+func DiscoverCopilotModels() []AgentModel {
+	if _, err := exec.LookPath("copilot"); err != nil {
+		return nil
+	}
+	models := make([]AgentModel, len(copilotDefaultModels))
+	copy(models, copilotDefaultModels)
+	slog.Info("copilot model discovery: using hardcoded defaults", "models", len(models))
+	return models
 }

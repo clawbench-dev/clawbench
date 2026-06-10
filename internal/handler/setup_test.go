@@ -20,8 +20,7 @@ import (
 // ---------- GET /api/setup/status ----------
 
 func TestSetupStatus_NeedsSetup(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// Clear agents to simulate needs_setup
 	model.Agents = map[string]*model.Agent{}
@@ -39,8 +38,7 @@ func TestSetupStatus_NeedsSetup(t *testing.T) {
 }
 
 func TestSetupStatus_NoNeedSetup(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	req := newRequest(t, http.MethodGet, "/api/setup/status", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -54,8 +52,7 @@ func TestSetupStatus_NoNeedSetup(t *testing.T) {
 }
 
 func TestSetupStatus_EmbeddedAgent(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	model.Agents = map[string]*model.Agent{}
 	model.AgentList = []*model.Agent{}
@@ -76,8 +73,7 @@ func TestSetupStatus_EmbeddedAgent(t *testing.T) {
 // ---------- GET /api/setup/providers ----------
 
 func TestSetupProviders_ReturnsWizardReadyOnly(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	req := newRequest(t, http.MethodGet, "/api/setup/providers", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -106,8 +102,7 @@ func TestSetupProviders_ReturnsWizardReadyOnly(t *testing.T) {
 }
 
 func TestSetupProviders_ContainsExpectedProviders(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	req := newRequest(t, http.MethodGet, "/api/setup/providers", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -133,8 +128,7 @@ func TestSetupProviders_ContainsExpectedProviders(t *testing.T) {
 }
 
 func TestSetupProviders_EachHasRequiredFields(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	req := newRequest(t, http.MethodGet, "/api/setup/providers", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -157,8 +151,7 @@ func TestSetupProviders_EachHasRequiredFields(t *testing.T) {
 // ---------- POST /api/setup/models ----------
 
 func TestSetupModels_KnownModelsProvider(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	body := map[string]any{
 		"provider":   "anthropic",
@@ -185,8 +178,7 @@ func TestSetupModels_KnownModelsProvider(t *testing.T) {
 }
 
 func TestSetupModels_UnknownProvider(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	body := map[string]any{
 		"provider":   "nonexistent",
@@ -201,8 +193,7 @@ func TestSetupModels_UnknownProvider(t *testing.T) {
 }
 
 func TestSetupModels_MissingProvider(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	body := map[string]any{
 		"api_key": "test-key",
@@ -217,8 +208,7 @@ func TestSetupModels_MissingProvider(t *testing.T) {
 // ---------- POST /api/setup/verify ----------
 
 func TestSetupVerify_MissingFields(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	body := map[string]any{
 		"provider": "openai",
@@ -231,8 +221,7 @@ func TestSetupVerify_MissingFields(t *testing.T) {
 }
 
 func TestSetupVerify_UnknownProvider(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	body := map[string]any{
 		"provider": "nonexistent",
@@ -249,8 +238,7 @@ func TestSetupVerify_UnknownProvider(t *testing.T) {
 // ---------- POST /api/setup/complete ----------
 
 func TestSetupComplete_MissingFields(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	body := map[string]any{
 		"provider": "openai",
@@ -263,8 +251,7 @@ func TestSetupComplete_MissingFields(t *testing.T) {
 }
 
 func TestSetupComplete_UnknownProvider(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	body := map[string]any{
 		"provider":        "nonexistent",
@@ -282,8 +269,7 @@ func TestSetupComplete_UnknownProvider(t *testing.T) {
 }
 
 func TestSetupComplete_CreatesAgent(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// Clear existing agents to simulate fresh setup
 	model.Agents = map[string]*model.Agent{}
@@ -331,8 +317,7 @@ func TestSetupComplete_CreatesAgent(t *testing.T) {
 }
 
 func TestSetupComplete_DuplicateAgentID(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	body := map[string]any{
 		"provider":        "openai",
@@ -352,8 +337,7 @@ func TestSetupComplete_DuplicateAgentID(t *testing.T) {
 }
 
 func TestSetupComplete_MethodNotAllowed(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	req := newRequest(t, http.MethodGet, "/api/setup/complete", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -365,8 +349,7 @@ func TestSetupComplete_MethodNotAllowed(t *testing.T) {
 // ---------- Method Not Allowed tests for remaining endpoints ----------
 
 func TestSetupStatus_MethodNotAllowed(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	req := newRequest(t, http.MethodPost, "/api/setup/status", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -376,8 +359,7 @@ func TestSetupStatus_MethodNotAllowed(t *testing.T) {
 }
 
 func TestSetupProviders_MethodNotAllowed(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	req := newRequest(t, http.MethodPost, "/api/setup/providers", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -387,8 +369,7 @@ func TestSetupProviders_MethodNotAllowed(t *testing.T) {
 }
 
 func TestSetupModels_MethodNotAllowed(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	req := newRequest(t, http.MethodGet, "/api/setup/models", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -398,8 +379,7 @@ func TestSetupModels_MethodNotAllowed(t *testing.T) {
 }
 
 func TestSetupVerify_MethodNotAllowed(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	req := newRequest(t, http.MethodGet, "/api/setup/verify", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -414,8 +394,7 @@ func TestSetupVerify_MethodNotAllowed(t *testing.T) {
 // defaults provider to "openai" and uses the custom URL's derived models endpoint.
 // Uses a mock server to avoid hitting real endpoints.
 func TestSetupModels_CustomURLDefaultsToOpenAI(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// Use a mock server that returns an error — simulates HTTP fetch failure
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -444,8 +423,7 @@ func TestSetupModels_CustomURLDefaultsToOpenAI(t *testing.T) {
 // TestSetupModels_EmptyProviderNoCustomURL tests that empty provider + no custom_url
 // returns 400.
 func TestSetupModels_EmptyProviderNoCustomURL(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	body := map[string]any{
 		"provider":   "",
@@ -462,8 +440,7 @@ func TestSetupModels_EmptyProviderNoCustomURL(t *testing.T) {
 // TestSetupModels_OpenAIProviderHTTPFetch tests the HTTP fetch path for OpenAI provider.
 // Uses a mock server to avoid hitting real endpoints.
 func TestSetupModels_OpenAIProviderHTTPFetch(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// Start a mock server that returns models in OpenAI format
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -501,8 +478,7 @@ func TestSetupModels_OpenAIProviderHTTPFetch(t *testing.T) {
 
 // TestSetupModels_KnownModelsFields tests that KnownModels entries have expected fields.
 func TestSetupModels_KnownModelsFields(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	body := map[string]any{
 		"provider": "anthropic",
@@ -536,8 +512,7 @@ func TestSetupModels_KnownModelsFields(t *testing.T) {
 
 // TestSetupModels_InvalidJSON tests the decodeJSON failure path.
 func TestSetupModels_InvalidJSON(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/setup/models", http.NoBody)
 	req.Header.Set("Content-Type", "application/json")
@@ -553,8 +528,7 @@ func TestSetupModels_InvalidJSON(t *testing.T) {
 // custom_url uses HTTP verification (not Pi CLI). With a bad URL, it should
 // return 200 with success=false.
 func TestSetupVerify_EmptyProviderDefaultsToOpenAI(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	body := map[string]any{
 		"provider":   "",
@@ -577,8 +551,7 @@ func TestSetupVerify_EmptyProviderDefaultsToOpenAI(t *testing.T) {
 
 // TestSetupVerify_EmbeddedAgentNotFound tests the path where Pi binary is not found.
 func TestSetupVerify_EmbeddedAgentNotFound(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	body := map[string]any{
 		"provider": "openai",
@@ -595,8 +568,7 @@ func TestSetupVerify_EmbeddedAgentNotFound(t *testing.T) {
 
 // TestSetupVerify_InvalidJSON tests the decodeJSON failure path.
 func TestSetupVerify_InvalidJSON(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/setup/verify", http.NoBody)
 	req.Header.Set("Content-Type", "application/json")
@@ -611,8 +583,7 @@ func TestSetupVerify_InvalidJSON(t *testing.T) {
 // TestSetupComplete_EmptyProviderEmptyCustomURL tests that empty provider + empty custom_url
 // returns 400.
 func TestSetupComplete_EmptyProviderEmptyCustomURL(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	body := map[string]any{
 		"provider":   "",
@@ -632,8 +603,7 @@ func TestSetupComplete_EmptyProviderEmptyCustomURL(t *testing.T) {
 // TestSetupComplete_CustomURLDefaultsToOpenAI tests the path where empty provider
 // with custom_url defaults to "openai".
 func TestSetupComplete_CustomURLDefaultsToOpenAI(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// Clear agents to simulate fresh setup
 	model.Agents = map[string]*model.Agent{}
@@ -668,8 +638,7 @@ func TestSetupComplete_CustomURLDefaultsToOpenAI(t *testing.T) {
 // TestSetupComplete_ConcurrentRequest tests the mutex TryLock path.
 // A second concurrent request should get 409 Conflict.
 func TestSetupComplete_ConcurrentRequest(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	model.Agents = map[string]*model.Agent{}
 	model.AgentList = []*model.Agent{}
@@ -696,8 +665,7 @@ func TestSetupComplete_ConcurrentRequest(t *testing.T) {
 
 // TestSetupComplete_NoSummarizeModel skips summarize auto-config.
 func TestSetupComplete_NoSummarizeModel(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	model.Agents = map[string]*model.Agent{}
 	model.AgentList = []*model.Agent{}
@@ -725,8 +693,7 @@ func TestSetupComplete_NoSummarizeModel(t *testing.T) {
 
 // TestSetupComplete_InvalidJSON tests the decodeJSON failure path.
 func TestSetupComplete_InvalidJSON(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/setup/complete", http.NoBody)
 	req.Header.Set("Content-Type", "application/json")
@@ -954,8 +921,7 @@ func TestAtomicWriteFile_Overwrite(t *testing.T) {
 
 // TestReinitSummarizer_AnthropicFormat tests the anthropic format branch.
 func TestReinitSummarizer_AnthropicFormat(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// Save the original summarizer to restore later
 	origSummarizer := summarizer
@@ -983,8 +949,7 @@ func TestReinitSummarizer_AnthropicFormat(t *testing.T) {
 
 // TestReinitSummarizer_UnknownFormat tests the unknown API format branch.
 func TestReinitSummarizer_UnknownFormat(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	origSummarizer := summarizer
 
@@ -1013,8 +978,7 @@ func TestReinitSummarizer_UnknownFormat(t *testing.T) {
 
 // TestReinitSummarizer_NoAPIKey tests the path where API key is empty.
 func TestReinitSummarizer_NoAPIKey(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	origSummarizer := summarizer
 
@@ -1041,8 +1005,7 @@ func TestReinitSummarizer_NoAPIKey(t *testing.T) {
 // TestConfigureSummarizeBackend_CustomURLOverride tests that custom_url overrides
 // the spec's ChatEndpoint.
 func TestConfigureSummarizeBackend_CustomURLOverride(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	origSummarizer := summarizer
 	defer func() { summarizer = origSummarizer }()
@@ -1073,8 +1036,7 @@ func TestConfigureSummarizeBackend_CustomURLOverride(t *testing.T) {
 // TestSetupModels_CustomURLWithMockServer tests that custom URL mode returns
 // an empty model list (user enters models manually).
 func TestSetupModels_CustomURLWithMockServer(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// Start a mock /v1/models server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1118,8 +1080,7 @@ func TestSetupModels_CustomURLWithMockServer(t *testing.T) {
 // TestSetupVerify_WithCustomURL tests that custom_url triggers HTTP verification
 // instead of Pi CLI. With an unreachable URL, it returns success=false.
 func TestSetupVerify_WithCustomURL(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	body := map[string]any{
 		"provider":   "",
@@ -1144,8 +1105,7 @@ func TestSetupVerify_WithCustomURL(t *testing.T) {
 // TestSetupComplete_AnthropicProvider tests setup with anthropic provider
 // which exercises the anthropic-format summarize backend path.
 func TestSetupComplete_AnthropicProvider(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	model.Agents = map[string]*model.Agent{}
 	model.AgentList = []*model.Agent{}
@@ -1183,8 +1143,7 @@ func TestSetupComplete_AnthropicProvider(t *testing.T) {
 // TestSetupComplete_MutexIsUnlockedAfterRequest verifies that the mutex is
 // properly released after a successful request, allowing subsequent requests.
 func TestSetupComplete_MutexIsUnlockedAfterRequest(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	model.Agents = map[string]*model.Agent{}
 	model.AgentList = []*model.Agent{}
@@ -1223,8 +1182,7 @@ func TestSetupComplete_MutexIsUnlockedAfterRequest(t *testing.T) {
 
 // TestSetupComplete_DefaultAgentID verifies the response includes default_agent_id.
 func TestSetupComplete_DefaultAgentID(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	model.Agents = map[string]*model.Agent{}
 	model.AgentList = []*model.Agent{}
@@ -1305,8 +1263,7 @@ func TestSetupVerify_FakePiSuccess(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake Pi binary path resolution differs on Windows")
 	}
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	piPath := createFakePiBinary(t, 0, `{"type":"result","content":"pong"}`)
 	defer cleanupFakePiBinary(t)
@@ -1335,8 +1292,7 @@ func TestSetupVerify_FakePiSuccess(t *testing.T) {
 // TestSetupVerify_FakePiFailure tests the verify error path with a fake Pi binary
 // that exits with a non-zero code.
 func TestSetupVerify_FakePiFailure(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	piPath := createFakePiBinary(t, 1, "error: invalid API key")
 	defer cleanupFakePiBinary(t)
@@ -1363,8 +1319,7 @@ func TestSetupVerify_FakePiFailure(t *testing.T) {
 // TestSetupVerify_FakePiNoOutput tests the error path where Pi exits with error
 // but produces no output (errMsg falls back to err.Error()).
 func TestSetupVerify_FakePiNoOutput(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	piPath := createFakePiBinary(t, 1, "")
 	defer cleanupFakePiBinary(t)
@@ -1394,8 +1349,7 @@ func TestSetupVerify_FakePiWithCustomURL(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake Pi binary path resolution differs on Windows")
 	}
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	piPath := createFakePiBinary(t, 0, `{"type":"result","content":"pong"}`)
 	defer cleanupFakePiBinary(t)
@@ -1428,8 +1382,7 @@ func TestSetupVerify_FakePiNoEnvVar(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake Pi binary path resolution differs on Windows")
 	}
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	piPath := createFakePiBinary(t, 0, `{"type":"result","content":"pong"}`)
 	defer cleanupFakePiBinary(t)
@@ -1527,8 +1480,7 @@ func TestAtomicWriteFile_WriteToReadOnlyDir(t *testing.T) {
 // TestSetupModels_NoModelsEndpoint tests a provider that has neither KnownModels
 // nor ModelsEndpoint and no custom_url.
 func TestSetupModels_NoModelsEndpoint(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// Register a provider with no ModelsEndpoint and no KnownModels
 	origRegistry := model.ProviderRegistry
@@ -1557,8 +1509,7 @@ func TestSetupModels_NoModelsEndpoint(t *testing.T) {
 // TestSetupComplete_WithFakePiBinary tests the full creation path where an
 // embedded Pi binary exists, triggering the writePiConfigFiles call.
 func TestSetupComplete_WithFakePiBinary(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	piPath := createFakePiBinary(t, 0, "ok")
 	defer cleanupFakePiBinary(t)
@@ -1651,8 +1602,7 @@ func TestWritePiConfigFiles_AuthWriteFailure(t *testing.T) {
 // Since reinitSummarizer now reads directly from req.APIKey, empty key means
 // no summarizer change.
 func TestReinitSummarizer_EmptyAPIKey(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	origSummarizer := summarizer
 	defer func() { summarizer = origSummarizer }()
@@ -1678,8 +1628,7 @@ func TestReinitSummarizer_EmptyAPIKey(t *testing.T) {
 // TestReinitSummarizer_NoKeyAtAll tests that when request key is empty,
 // the summarizer is not changed.
 func TestReinitSummarizer_NoKeyAtAll(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	origSummarizer := summarizer
 	defer func() { summarizer = origSummarizer }()
@@ -1707,8 +1656,7 @@ func TestReinitSummarizer_NoKeyAtAll(t *testing.T) {
 // TestReinitSummarizer_CustomURL tests that reinitSummarizer uses custom_url
 // when provided.
 func TestReinitSummarizer_CustomURL(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	origSummarizer := summarizer
 	defer func() { summarizer = origSummarizer }()
@@ -1764,8 +1712,7 @@ func TestValidateCustomURL_EmptyURL(t *testing.T) {
 // ---------- ServeSetupVerify with anthropic custom URL ----------
 
 func TestSetupVerify_AnthropicCustomURL(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	body := map[string]any{
 		"provider":   "",
@@ -1789,8 +1736,7 @@ func TestSetupVerify_AnthropicCustomURL(t *testing.T) {
 // ---------- ServeSetupComplete with custom URL anthropic ----------
 
 func TestSetupComplete_CustomURLAnthropic(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	model.Agents = map[string]*model.Agent{}
 	model.AgentList = []*model.Agent{}
@@ -1831,8 +1777,7 @@ func TestSetupComplete_CustomURLAnthropic(t *testing.T) {
 // ---------- ServeSetupComplete with invalid custom URL ----------
 
 func TestSetupComplete_InvalidCustomURLOpenAI(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	model.Agents = map[string]*model.Agent{}
 	model.AgentList = []*model.Agent{}
@@ -1854,8 +1799,7 @@ func TestSetupComplete_InvalidCustomURLOpenAI(t *testing.T) {
 }
 
 func TestSetupComplete_InvalidCustomURLAnthropic(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	model.Agents = map[string]*model.Agent{}
 	model.AgentList = []*model.Agent{}
@@ -2107,8 +2051,7 @@ func TestVerifyAnthropicHTTP_NoAPIKey(t *testing.T) {
 // ---------- ServeSetupBackends tests ----------
 
 func TestSetupBackends_ReturnsCLIBackends(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	req := newRequest(t, http.MethodGet, "/api/setup/backends", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -2131,8 +2074,7 @@ func TestSetupBackends_ReturnsCLIBackends(t *testing.T) {
 }
 
 func TestSetupBackends_MethodNotAllowed(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	req := newRequest(t, http.MethodPost, "/api/setup/backends", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -2142,8 +2084,7 @@ func TestSetupBackends_MethodNotAllowed(t *testing.T) {
 }
 
 func TestSetupBackends_SkipsNoCLI(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	req := newRequest(t, http.MethodGet, "/api/setup/backends", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -2412,8 +2353,7 @@ func TestWritePiConfigFiles_CustomURL(t *testing.T) {
 // ---------- ServeSetupVerify with mock HTTP server for custom URL ----------
 
 func TestSetupVerify_CustomURLHTTPSuccess(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -2440,8 +2380,7 @@ func TestSetupVerify_CustomURLHTTPSuccess(t *testing.T) {
 }
 
 func TestSetupVerify_CustomURLAnthropicHTTPSuccess(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "sk-ant-test-key", r.Header.Get("x-api-key"))
@@ -2472,8 +2411,7 @@ func TestSetupVerify_CustomURLAnthropicHTTPSuccess(t *testing.T) {
 }
 
 func TestSetupVerify_CustomURLHTTPUnauthorized(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -2499,8 +2437,7 @@ func TestSetupVerify_CustomURLHTTPUnauthorized(t *testing.T) {
 }
 
 func TestSetupVerify_CustomURLHTTPNotFound(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -2527,8 +2464,7 @@ func TestSetupVerify_CustomURLHTTPNotFound(t *testing.T) {
 // ---------- ServeSetupModels _custom provider normalization ----------
 
 func TestSetupModels_CustomProviderNormalization(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	body := map[string]any{
 		"provider":   "_custom",
@@ -2550,8 +2486,7 @@ func TestSetupModels_CustomProviderNormalization(t *testing.T) {
 // ---------- ServeSetupVerify _custom provider normalization ----------
 
 func TestSetupVerify_CustomProviderNormalization(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

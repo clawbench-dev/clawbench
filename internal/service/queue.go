@@ -44,9 +44,10 @@ func DequeueMessage(sessionID string) (model.QueuedMessage, bool) {
 	}
 	msg := entry.items[0]
 	entry.items = entry.items[1:]
-	if len(entry.items) == 0 {
-		sessionQueues.Delete(sessionID)
-	}
+	// Keep the queue entry alive when empty instead of deleting it.
+	// Deleting causes a TOCTOU race: concurrent EnqueueMessage creates a new entry
+	// via LoadOrStore while drain loop already saw empty — new message is lost (ISS-293).
+	// Only ClearQueue removes the sync.Map entry entirely.
 	return msg, true
 }
 
@@ -84,7 +85,6 @@ func RemoveQueueItem(sessionID string, index int) []model.QueuedMessage {
 	}
 	entry.items = append(entry.items[:index], entry.items[index+1:]...)
 	if len(entry.items) == 0 {
-		sessionQueues.Delete(sessionID)
 		return nil
 	}
 	result := make([]model.QueuedMessage, len(entry.items))

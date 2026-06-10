@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"clawbench/internal/middleware"
@@ -91,6 +92,13 @@ func ServeSessionResume(w http.ResponseWriter, r *http.Request) {
 			model.WriteError(w, model.Internal(fmt.Errorf("failed to restore session %s: %w", req.SessionID, err)))
 			return
 		}
+		slog.Info("session restored from soft-delete",
+			slog.String("session", req.SessionID),
+			slog.String("project", sessionProjectPath))
+	} else {
+		slog.Info("session resume requested (already active)",
+			slog.String("session", req.SessionID),
+			slog.String("project", sessionProjectPath))
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{

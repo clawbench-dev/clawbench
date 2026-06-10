@@ -96,7 +96,8 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			session_type TEXT NOT NULL DEFAULT 'chat',
 			external_session_id TEXT DEFAULT '',
 			source_session_id TEXT DEFAULT NULL,
-			thinking_effort TEXT DEFAULT '',
+			transport TEXT DEFAULT '',
+			auto_approve INTEGER NOT NULL DEFAULT 0,
 			deleted INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -183,6 +184,25 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
+		CREATE TABLE IF NOT EXISTS chat_metadata (
+			message_id INTEGER PRIMARY KEY,
+			mode TEXT DEFAULT '',
+			thinking_effort TEXT DEFAULT '',
+			transport TEXT DEFAULT '',
+			model TEXT DEFAULT '',
+			input_tokens INTEGER DEFAULT 0,
+			output_tokens INTEGER DEFAULT 0,
+			duration_ms INTEGER DEFAULT 0,
+			wall_ms INTEGER DEFAULT 0,
+			cost_usd REAL DEFAULT 0,
+			stop_reason TEXT DEFAULT '',
+			is_error INTEGER DEFAULT 0,
+			error_message TEXT DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (message_id) REFERENCES chat_history(id) ON DELETE CASCADE
+		);
+		CREATE INDEX IF NOT EXISTS idx_chat_metadata_model ON chat_metadata(model);
+		CREATE INDEX IF NOT EXISTS idx_chat_metadata_created ON chat_metadata(created_at);
 	`)
 	if err != nil {
 		t.Fatalf("failed to create tables: %v", err)

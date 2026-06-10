@@ -94,11 +94,22 @@ func (b *AutoResumeBackend) mergeStreams(
 
 				// Drain remaining events from the first stream
 				// (captures raw_output, suppresses "done")
-				for drainEvent := range innerCh {
-					if drainEvent.Type == "raw_output" {
-						forwardEvent(outerCh, drainEvent)
+				// Check ctx.Done() to avoid blocking indefinitely if CLI is unresponsive (ISS-296)
+			drain:
+				for {
+					select {
+					case drainEvent, ok := <-innerCh:
+						if !ok {
+							break drain
+						}
+						if drainEvent.Type == "raw_output" {
+							forwardEvent(outerCh, drainEvent)
+						}
+						// Suppress "done" and other events from the cancelled stream
+					case <-ctx.Done():
+						// Outer context cancelled during drain — stop immediately
+						break drain
 					}
-					// Suppress "done" and other events from the cancelled stream
 				}
 				goto phase1Done
 			}
@@ -138,6 +149,10 @@ phase1Done:
 		Resume:                true,
 		AssistantMessageCount: origReq.AssistantMessageCount,
 	}
+
+	slog.Info("auto-resume: starting phase 2 (resume with 'continue')",
+		slog.String("session", origReq.SessionID),
+		slog.String("agent", origReq.AgentID))
 
 	innerCh2, err := b.inner.ExecuteStream(innerCtx2, resumeReq)
 	if err != nil {

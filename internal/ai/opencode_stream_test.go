@@ -25,6 +25,7 @@ func TestOpenCodeStream_ParseLine_Text(t *testing.T) {
 
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
+		return
 	}
 	if events[0].Type != "content" {
 		t.Errorf("expected content event, got %s", events[0].Type)
@@ -40,6 +41,7 @@ func TestOpenCodeStream_ParseLine_TextNoPrefix(t *testing.T) {
 
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
+		return
 	}
 	if events[0].Content != "No prefix here" {
 		t.Errorf("expected 'No prefix here', got %q", events[0].Content)
@@ -52,6 +54,7 @@ func TestOpenCodeStream_ParseLine_Reasoning(t *testing.T) {
 
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
+		return
 	}
 	if events[0].Type != "thinking" {
 		t.Errorf("expected thinking event, got %s", events[0].Type)
@@ -67,6 +70,7 @@ func TestOpenCodeStream_ParseLine_ToolUse(t *testing.T) {
 
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
+		return
 	}
 	if events[0].Type != "tool_use" {
 		t.Errorf("expected tool_use event, got %s", events[0].Type)
@@ -74,6 +78,7 @@ func TestOpenCodeStream_ParseLine_ToolUse(t *testing.T) {
 	tool := events[0].Tool
 	if tool == nil {
 		t.Fatal("expected tool call, got nil")
+		return
 	}
 	if tool.Name != "Read" {
 		t.Errorf("expected normalized tool name 'Read', got %q", tool.Name)
@@ -88,6 +93,7 @@ func TestOpenCodeStream_ParseLine_ToolUse(t *testing.T) {
 	var input map[string]any
 	if err := json.Unmarshal([]byte(tool.Input), &input); err != nil {
 		t.Fatalf("failed to parse tool input: %v", err)
+		return
 	}
 	if input["file_path"] != "/tmp/test.go" {
 		t.Errorf("unexpected input: %v", input)
@@ -102,10 +108,12 @@ func TestOpenCodeStream_ParseLine_ToolUseNonObjectInput(t *testing.T) {
 
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
+		return
 	}
 	tool := events[0].Tool
 	if tool == nil {
 		t.Fatal("expected tool call, got nil")
+		return
 	}
 	// Should fall back to raw input string
 	assert.Equal(t, "[1,2,3]", tool.Input)
@@ -117,6 +125,7 @@ func TestOpenCodeStream_ParseLine_ToolUseRunning(t *testing.T) {
 
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
+		return
 	}
 	tool := events[0].Tool
 	if tool.Done {
@@ -130,6 +139,7 @@ func TestOpenCodeStream_ParseLine_StepFinishStop(t *testing.T) {
 
 	if len(events) != 2 {
 		t.Fatalf("expected 2 events (metadata + done), got %d", len(events))
+		return
 	}
 	if events[0].Type != "metadata" {
 		t.Errorf("expected metadata event first, got %s", events[0].Type)
@@ -137,6 +147,7 @@ func TestOpenCodeStream_ParseLine_StepFinishStop(t *testing.T) {
 	meta := events[0].Meta
 	if meta == nil {
 		t.Fatal("expected metadata, got nil")
+		return
 	}
 	if meta.SessionID != "ses_abc" {
 		t.Errorf("expected sessionID 'ses_abc', got %q", meta.SessionID)
@@ -161,6 +172,7 @@ func TestOpenCodeStream_ParseLine_StepFinishToolCalls(t *testing.T) {
 
 	if len(events) != 0 {
 		t.Fatalf("expected 0 events for tool-calls step_finish, got %d: %+v", len(events), events)
+		return
 	}
 }
 
@@ -170,6 +182,7 @@ func TestOpenCodeStream_ParseLine_StepStart(t *testing.T) {
 
 	if len(events) != 0 {
 		t.Fatalf("expected 0 events for step_start, got %d", len(events))
+		return
 	}
 }
 
@@ -202,6 +215,7 @@ func TestOpenCodeStream_ParseLine_EmptyText(t *testing.T) {
 	// After stripping \n\n prefix, text is empty → no event
 	if len(events) != 0 {
 		t.Fatalf("expected 0 events for empty text after prefix strip, got %d", len(events))
+		return
 	}
 }
 
@@ -209,6 +223,7 @@ func TestOpenCodeStream_ParseLine_UnparseableLine(t *testing.T) {
 	events := parseOpenCodeLine("not json at all")
 	if len(events) != 0 {
 		t.Fatalf("expected 0 events for unparseable line, got %d", len(events))
+		return
 	}
 }
 
@@ -217,6 +232,7 @@ func TestOpenCodeStream_ParseLine_UnknownType(t *testing.T) {
 	events := parseOpenCodeLine(line)
 	if len(events) != 0 {
 		t.Fatalf("expected 0 events for unknown type, got %d", len(events))
+		return
 	}
 }
 
@@ -240,6 +256,7 @@ func TestOpenCodeStream_SessionIDCapture(t *testing.T) {
 
 	if len(events) != 2 {
 		t.Fatalf("expected 2 events, got %d", len(events))
+		return
 	}
 	if events[0].Meta.SessionID != "ses_captured123" {
 		t.Errorf("expected sessionID 'ses_captured123' in metadata, got %q", events[0].Meta.SessionID)
@@ -271,6 +288,7 @@ func TestOpenCodeStream_MultiStepFlow(t *testing.T) {
 	// Expected: tool_use, content, metadata, done
 	if len(events) != 4 {
 		t.Fatalf("expected 4 events, got %d", len(events))
+		return
 	}
 
 	// Event 1: tool_use
@@ -314,6 +332,7 @@ func TestBuildOpenCodeStreamArgs_NewSession(t *testing.T) {
 	expected := []string{"run", "say hello", "--format", "json", "--dangerously-skip-permissions", "--dir", "/home/user/project", "--model", "minimax-cn-coding-plan/MiniMax-M2.7"}
 	if len(args) != len(expected) {
 		t.Fatalf("expected %d args, got %d: %v", len(expected), len(args), args)
+		return
 	}
 	for i, v := range expected {
 		if args[i] != v {
@@ -405,11 +424,13 @@ func TestNormalizeOpenCodeInput_FieldRemapping(t *testing.T) {
 	norm1, err := normalizeToolInput(input1, map[string]string{"oldString": "old_string", "newString": "new_string"})
 	if err != nil {
 		t.Fatalf("normalizeToolInput failed: %v", err)
+		return
 	}
 	result1 := string(norm1)
 	var parsed1 map[string]any
 	if unmarshalErr := json.Unmarshal([]byte(result1), &parsed1); unmarshalErr != nil {
 		t.Fatalf("failed to parse result: %v", unmarshalErr)
+		return
 	}
 	if _, exists := parsed1["filePath"]; exists {
 		t.Error("filePath should be removed")
@@ -423,11 +444,13 @@ func TestNormalizeOpenCodeInput_FieldRemapping(t *testing.T) {
 	norm2, err := normalizeToolInput(input2, map[string]string{"oldString": "old_string", "newString": "new_string"})
 	if err != nil {
 		t.Fatalf("normalizeToolInput failed: %v", err)
+		return
 	}
 	result2 := string(norm2)
 	var parsed2 map[string]any
 	if unmarshalErr := json.Unmarshal([]byte(result2), &parsed2); unmarshalErr != nil {
 		t.Fatalf("failed to parse result: %v", unmarshalErr)
+		return
 	}
 	if _, exists := parsed2["oldString"]; exists {
 		t.Error("oldString should be removed")
@@ -447,11 +470,13 @@ func TestNormalizeOpenCodeInput_FieldRemapping(t *testing.T) {
 	norm3, err := normalizeToolInput(input3, map[string]string{"oldString": "old_string", "newString": "new_string"})
 	if err != nil {
 		t.Fatalf("normalizeToolInput failed: %v", err)
+		return
 	}
 	result3 := string(norm3)
 	var parsed3 map[string]any
 	if err := json.Unmarshal([]byte(result3), &parsed3); err != nil {
 		t.Fatalf("failed to parse result: %v", err)
+		return
 	}
 	if parsed3["file_path"] != "main.go" {
 		t.Errorf("expected file_path=main.go, got %v", parsed3["file_path"])
@@ -481,11 +506,13 @@ func TestNormalizeOpenCodeInput_AlreadyCanonical(t *testing.T) {
 	norm, err := normalizeToolInput(input, map[string]string{"oldString": "old_string", "newString": "new_string"})
 	if err != nil {
 		t.Fatalf("normalizeToolInput failed: %v", err)
+		return
 	}
 	result := string(norm)
 	var parsed map[string]any
 	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
 		t.Fatalf("failed to parse result: %v", err)
+		return
 	}
 	if parsed["file_path"] != "/tmp/test.go" {
 		t.Errorf("expected file_path=/tmp/test.go, got %v", parsed["file_path"])
@@ -585,9 +612,11 @@ func TestOpenCodeStream_ParseLine_ToolUse_NewTools(t *testing.T) {
 			events := parseOpenCodeLine(tt.line)
 			if len(events) != 1 {
 				t.Fatalf("expected 1 event, got %d", len(events))
+				return
 			}
 			if events[0].Tool == nil {
 				t.Fatal("expected tool call, got nil")
+				return
 			}
 			if events[0].Tool.Name != tt.expectedTool {
 				t.Errorf("expected tool name %q, got %q", tt.expectedTool, events[0].Tool.Name)
@@ -595,6 +624,7 @@ func TestOpenCodeStream_ParseLine_ToolUse_NewTools(t *testing.T) {
 			var input map[string]any
 			if err := json.Unmarshal([]byte(events[0].Tool.Input), &input); err != nil {
 				t.Fatalf("failed to parse tool input: %v", err)
+				return
 			}
 			tt.checkInput(t, input)
 		})
@@ -611,6 +641,7 @@ func TestBuildOpenCodeStreamArgs_Minimal(t *testing.T) {
 	expected := []string{"run", "hello", "--format", "json", "--dangerously-skip-permissions"}
 	if len(args) != len(expected) {
 		t.Fatalf("expected %d args, got %d: %v", len(expected), len(args), args)
+		return
 	}
 	for i, v := range expected {
 		if args[i] != v {

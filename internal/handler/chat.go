@@ -167,24 +167,66 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		if cachedSessionInfo == nil {
 			cachedSessionInfo = service.GetSessionFullInfo(sessionID)
 		}
-		var sessionTitle, sessionAgentID, sessionModelID, sessionThinkingEffort string
+		var sessionTitle, sessionAgentID, sessionModelID, sessionTransport string
+		var sessionAutoApprove bool
 		var sessionInfoBackend string
 		if cachedSessionInfo != nil {
 			sessionTitle = cachedSessionInfo.Title
 			sessionInfoBackend = cachedSessionInfo.Backend
 			sessionAgentID = cachedSessionInfo.AgentID
 			sessionModelID = cachedSessionInfo.Model
-			sessionThinkingEffort = cachedSessionInfo.ThinkingEffort
+			sessionTransport = cachedSessionInfo.Transport
+			sessionAutoApprove = cachedSessionInfo.AutoApprove
 		}
 		if sessionInfoBackend != "" {
 			sessionBackend = sessionInfoBackend
 		}
 		running := service.IsSessionRunning(sessionID)
+
+		// Look up cached ACP mode/thinking/model list state for this session.
+		// This allows the frontend to populate mode chips immediately
+		// without waiting for SSE events (which may have already been consumed).
+		// Fallback: for brand-new sessions with no pool session mapping yet,
+		// look up from AgentCapabilityRegistry so mode chips appear on first load.
+		// For CLI sessions, synthesize a read-only mode from the backend name
+		// so the mode chip is visible but non-switchable.
+		var modeState, thinkingEffortState, modelListState, planState any
+		var commands []ai.AvailableCommandInfo
+		if sessionID != "" && sessionTransport != "cli" {
+			if s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID); s.Mode != nil || s.Effort != nil || len(s.Commands) > 0 || s.ModelList != nil || s.Plan != nil {
+				modeState = s.Mode
+				thinkingEffortState = s.Effort
+				commands = s.Commands
+				modelListState = s.ModelList
+				planState = s.Plan
+			} else if sessionAgentID != "" {
+				// No session-level mapping yet (new session, never sent a message).
+				// Fall back to agent-level registry so mode/thinking/command chips
+				// appear immediately without requiring the first message.
+				reg := ai.GetAgentCapabilityRegistry()
+				agentCap := reg.Get(sessionAgentID)
+				if agentCap != nil && agentCap.HasData() {
+					if ms := reg.GetModeState(sessionAgentID, ""); ms != nil {
+						modeState = ms
+					}
+					if es := reg.GetThinkingEffortState(sessionAgentID, ""); es != nil {
+						thinkingEffortState = es
+					}
+					if cmds := reg.GetCommands(sessionAgentID); len(cmds) > 0 {
+						commands = cmds
+					}
+					if ml := reg.GetModelListState(sessionAgentID, ""); ml != nil {
+						modelListState = ml
+					}
+				}
+			}
+		}
+
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "thinkingEffort": sessionThinkingEffort, "total": totalCount})
+			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "autoApprove": sessionAutoApprove, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "thinkingEffort": sessionThinkingEffort, "total": totalCount})
+		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "autoApprove": sessionAutoApprove, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState})
 		return
 	}
 
@@ -196,29 +238,14 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	// Get backend from session, not from global state
 	sessionID := getSessionID(r)
 	if sessionID == "" {
-		// No session yet — auto-create one (same logic as GET)
-		// Check session count limit before auto-creating (0 = unlimited)
-		if model.SessionMaxCount > 0 {
-			if count, cerr := service.GetSessionCount(projectPath); cerr == nil && count >= model.SessionMaxCount {
-				writeLocalizedErrorf(w, r, http.StatusConflict, "SessionLimitReached", map[string]any{"MaxCount": model.SessionMaxCount})
-				return
-			}
-		}
-		agentID2 := model.GetDefaultAgentID()
-		sessionBackend2, _, _, _, ok := resolveAgentConfig(agentID2)
-		if !ok {
-			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "NoAgentsAvailable")
-			return
-		}
-		var err error
-		// Don't pre-fill agent default model — leave empty so frontend
-		// falls back to global localStorage preference (cross-project).
-		sessionID, err = service.CreateSession(projectPath, sessionBackend2, T(r, "NewSession"), agentID2, "", "default", "chat")
-		if err != nil {
-			model.WriteError(w, model.Internal(fmt.Errorf("failed to create session")))
-			return
-		}
-		setSessionID(w, sessionID)
+		// No session ID in query param or cookie — this should not happen
+		// during normal operation. The frontend always tracks currentSessionId
+		// and sends it explicitly. Auto-creating a new session here is dangerous
+		// because it creates a "ghost" session that the frontend doesn't know about,
+		// causing the user to appear to lose their conversation.
+		// Return an error so the frontend can recover explicitly.
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "SessionIdRequired")
+		return
 	}
 	backendName := service.GetSessionBackend(sessionID)
 	if backendName == "" {
@@ -242,6 +269,8 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		AgentID        string   `json:"agentId"`
 		ModelID        string   `json:"modelId"`
 		ThinkingEffort string   `json:"thinkingEffort"`
+		ModeID         string   `json:"modeId"`
+		Transport      string   `json:"transport"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxChatBodySize)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -348,10 +377,20 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		service.UpdateSessionModel(sessionID, req.ModelID)
 	}
 
-	// Persist thinking effort selection for this session so subsequent loads
-	// restore the user's choice instead of the agent default (auto/empty).
-	if req.ThinkingEffort != "" {
-		service.UpdateSessionThinkingEffort(sessionID, req.ThinkingEffort)
+	// Persist transport selection for this session so subsequent loads
+	// restore the user's choice instead of the agent default.
+	// Per-session cleanup: when switching THIS session to CLI, close only
+	// this session's ACP connection (not all sessions for the agent).
+	if req.Transport != "" {
+		service.UpdateSessionTransport(sessionID, req.Transport)
+		if req.Transport == "cli" {
+			ai.GetACPConnManager().CloseConn(sessionID)
+		}
+	}
+
+	// Sync auto-approve mode from DB to ACPConn on prompt
+	if conn := ai.GetACPConnManager().GetConn(sessionID); conn != nil {
+		conn.SetAutoApprove(service.GetSessionAutoApprove(sessionID))
 	}
 
 	// Prevent concurrent sessions for the same session ID
@@ -393,6 +432,13 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	// Register stream channel BEFORE starting goroutine to avoid race with SSE connection
 	streamCh := service.RegisterSessionStream(sessionID)
 
+	// Create context and cancel AFTER TrySetSessionRunning succeeded, but BEFORE
+	// starting the goroutine. Registering the cancel function here (not inside the
+	// goroutine) prevents a race where CancelSession finds no cancel func but
+	// activeSessions is true, which would leave the session permanently stuck.
+	ctx, cancel := context.WithCancel(context.Background())
+	service.RegisterSessionCancel(sessionID, cancel)
+
 	slog.Info("about to start ai goroutine", slog.String("project", projectPath))
 
 	go func() {
@@ -406,6 +452,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				)
 				service.SetSessionRunning(sessionID, false)
 				service.UnregisterSessionCancel(sessionID)
+				cancel()
 				// Try to send error event to SSE stream
 				service.SendSessionEvent(sessionID, ai.StreamEvent{Type: "error", Error: "AI internal error, please retry", Reason: ai.ReasonPanic})
 				service.UnregisterSessionStream(sessionID)
@@ -418,17 +465,41 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		slog.Info("ai goroutine started", slog.String("project", projectPath))
 		defer service.SetSessionRunning(sessionID, false)
 		defer service.UnregisterSessionStream(sessionID)
-
-		// Use independent context with cancel to prevent goroutine leaks
-		// and support user-initiated cancellation (no timeout - let AI run indefinitely)
-		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-
-		service.RegisterSessionCancel(sessionID, cancel)
 		defer service.UnregisterSessionCancel(sessionID)
+		// Mark session as not-running BEFORE sending terminal SSE event.
+		// Without this, a race exists: the "done" event reaches the client,
+		// which calls loadHistory(), but the deferred SetSessionRunning(false)
+		// hasn't run yet, so the API returns running=true and the frontend
+		// reconnects SSE in a loop — leaving the stop button stuck.
+		// By setting running=false first, loadHistory() always sees the
+		// correct terminal state.
+		markDoneAndSendFinal := func(event ai.StreamEvent) {
+			service.SetSessionRunning(sessionID, false, true) // skip event — we send SSE directly
+			sendFinalEvent(streamCh, event)
+		}
+		// Mark ACP connection as idle when the session goroutine exits.
+		// Previously this used CloseConn, which caused a race: the goroutine
+		// sets session-running=false, then a new request starts and reuses the
+		// connection, but the deferred CloseConn still fires and kills the
+		// process mid-prompt. MarkIdle is safe because idleSweep will close
+		// the connection after the idle timeout only if no new request has
+		// claimed it.
+		defer func() {
+			effectiveTransport := "cli"
+			if t := service.GetSessionTransport(sessionID); t != "" {
+				effectiveTransport = t
+			} else if agent, ok := model.Agents[effectiveAgentID]; ok && agent.Transport == "acp-stdio" {
+				effectiveTransport = "acp-stdio"
+			}
+			if effectiveTransport == "acp-stdio" {
+				slog.Info("acp: marking connection idle for completed session", "session_id", sessionID, "agent_id", effectiveAgentID)
+				ai.GetACPConnManager().MarkIdle(sessionID)
+			}
+		}()
 
 		// Build the first chat request
-		firstChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, fileDir)
+		firstChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir)
 
 		// Execute first message
 		result := executeStreamRun(ctx, r, streamCh, projectPath, sessionID, backendName, effectiveAgentID, firstChatReq, fileDir)
@@ -437,20 +508,20 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		for {
 			if result.cancelReason == "user" {
 				service.ClearQueue(sessionID)
-				sendFinalEvent(streamCh, ai.StreamEvent{Type: "cancelled"})
+				markDoneAndSendFinal(ai.StreamEvent{Type: "cancelled"})
 				return
 			}
 			if result.err != "" {
-				sendFinalEvent(streamCh, ai.StreamEvent{Type: "error", Error: result.err})
+				markDoneAndSendFinal(ai.StreamEvent{Type: "error", Error: result.err})
 				return
 			}
 			if result.empty {
-				sendFinalEvent(streamCh, ai.StreamEvent{Type: "error", Error: "AI returned no content", Reason: ai.ReasonEmpty})
+				markDoneAndSendFinal(ai.StreamEvent{Type: "error", Error: "AI returned no content", Reason: ai.ReasonEmpty})
 				return
 			}
 			if result.cancelReason != "" {
 				// Other cancel reasons
-				sendFinalEvent(streamCh, ai.StreamEvent{Type: "cancelled"})
+				markDoneAndSendFinal(ai.StreamEvent{Type: "cancelled"})
 				return
 			}
 
@@ -463,7 +534,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			}
 			if !ok {
 				// Queue empty — truly done
-				sendFinalEvent(streamCh, ai.StreamEvent{Type: "done"})
+				markDoneAndSendFinal(ai.StreamEvent{Type: "done"})
 				return
 			}
 
@@ -517,7 +588,8 @@ func executeStreamRun(
 	chatReq ai.ChatRequest,
 	fileDir string,
 ) streamRunResult {
-	backend, err := ai.NewBackend(backendName)
+	sessionTransport := service.GetSessionTransport(sessionID)
+	backend, err := ai.NewBackendForAgentWithTransport(backendName, agentID, sessionTransport)
 	if err != nil {
 		slog.Error("failed to create backend", slog.String("backend", backendName), slog.String("err", err.Error()))
 		errMsg := T(r, "BackendCreateFailed", map[string]any{"Error": err.Error()})
@@ -526,6 +598,14 @@ func executeStreamRun(
 		}
 		_, _ = service.AddChatMessage(projectPath, backendName, sessionID, "assistant", errMsg, nil, false, "")
 		return streamRunResult{err: errMsg}
+	}
+
+	// If session transport was acp-stdio but agent fell back to CLI, clear the
+	// stale transport override so subsequent messages don't keep warning.
+	if sessionTransport == "acp-stdio" {
+		if _, ok := backend.(*ai.ACPBackend); !ok {
+			_ = service.UpdateSessionTransport(sessionID, "")
+		}
 	}
 
 	eventCh, err := backend.ExecuteStream(ctx, chatReq)
@@ -556,7 +636,11 @@ func executeStreamRun(
 	eventCount := 0
 
 	serializeBlocks := func() string {
-		contentMap := map[string]any{"blocks": blocks}
+		serializedBlocks := blocks
+		if serializedBlocks == nil {
+			serializedBlocks = []model.ContentBlock{}
+		}
+		contentMap := map[string]any{"blocks": serializedBlocks}
 		if responseMetadata != nil {
 			contentMap["metadata"] = responseMetadata
 		}
@@ -577,7 +661,10 @@ func executeStreamRun(
 			}
 			// Capture raw output for debugging (not forwarded to SSE)
 			if event.Type == "raw_output" {
-				rawOutput = event.RawOutput
+				if rawOutput != "" {
+					rawOutput += "\n"
+				}
+				rawOutput += event.RawOutput
 				continue
 			}
 			// Early capture of external session ID.
@@ -618,10 +705,12 @@ func executeStreamRun(
 					slog.String("session", sessionID))
 
 				// Finalize current streaming message
-				if err := service.FinalizeStreamingMessage(projectPath, backendName, sessionID, serializeBlocks()); err != nil {
+				if msgID, err := service.FinalizeStreamingMessage(projectPath, backendName, sessionID, serializeBlocks()); err != nil {
 					slog.Error("failed to finalize pre-resume message",
 						slog.String("session", sessionID),
 						slog.String("err", err.Error()))
+				} else if msgID > 0 && responseMetadata != nil {
+					_ = service.SaveMetadata(msgID, responseMetadata)
 				}
 
 				// Save raw output if captured so far
@@ -669,7 +758,16 @@ func executeStreamRun(
 								slog.String("external_id", event.Meta.SessionID),
 								slog.String("err", err.Error()),
 							)
+						} else {
+							slog.Info("captured external session ID from metadata",
+								slog.String("session", sessionID),
+								slog.String("external_id", event.Meta.SessionID))
 						}
+					} else {
+						slog.Info("metadata session ID skipped (already captured)",
+							slog.String("session", sessionID),
+							slog.String("existing_external_id", existingExtID),
+							slog.String("new_external_id", event.Meta.SessionID))
 					}
 				}
 			}
@@ -733,6 +831,11 @@ func finalizeStreamRun(
 	// tool names like "/commit" (model confuses slash commands with tools).
 	blocks = removeRejectedToolBlocks(blocks)
 
+	// Merge fragmented thinking blocks produced by ACP backends.
+	// ACP agents interleave AgentThoughtChunk and ToolCall events, causing
+	// many tiny thinking blocks separated by tool_use. Consolidate them.
+	blocks = ai.MergeConsecutiveThinkingBlocks(blocks)
+
 	// Compute wall-clock duration and inject into metadata
 	wallMs := int(time.Since(wallStart).Milliseconds())
 	if responseMetadata == nil {
@@ -740,8 +843,42 @@ func finalizeStreamRun(
 	}
 	responseMetadata.WallMs = wallMs
 
+	// Inject ACP mode and thinking effort into metadata (if available)
+	if s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID); s.Mode != nil || s.Effort != nil {
+		if s.Mode != nil && s.Mode.CurrentModeID != "" {
+			responseMetadata.Mode = s.Mode.CurrentModeID
+			// Do NOT overwrite the user's mode selection in DB with the agent's
+			// runtime mode switch. The agent may auto-switch modes (e.g. code→ask)
+			// during execution, but that should not persist over the user's choice.
+			// User-selected mode is already persisted at POST time (line ~422-423).
+		}
+		if s.Effort != nil && s.Effort.CurrentID != "" {
+			responseMetadata.ThinkingEffort = s.Effort.CurrentID
+		}
+	}
+	// Inject transport type based on session-level override or agent configuration
+	effectiveTransport := "cli"
+	if t := service.GetSessionTransport(sessionID); t != "" {
+		effectiveTransport = t
+	} else if agent, ok := model.Agents[agentID]; ok && agent.Transport == "acp-stdio" {
+		effectiveTransport = "acp-stdio"
+	}
+	responseMetadata.Transport = effectiveTransport
+
+	// Always store our own model selection (not the AI backend's reported model).
+	// The backend may report a different model or none at all; we want consistency.
+	if sessionModel := service.GetSessionModel(sessionID); sessionModel != "" {
+		responseMetadata.Model = sessionModel
+	}
+
 	// Determine cancellation reason
 	cancelReason := service.GetAndClearCancelReason(sessionID)
+
+	// Ensure responseMetadata exists — even for cancelled/empty responses,
+	// we want to persist whatever info we have (wallMs, mode, transport, etc.)
+	if responseMetadata == nil {
+		responseMetadata = &ai.Metadata{}
+	}
 
 	// Serialize blocks + metadata as JSON for database storage
 	var content string
@@ -760,17 +897,14 @@ func finalizeStreamRun(
 			errMsg, reason = "AI returned no content", ai.ReasonEmpty
 		}
 		blocks = append(blocks, model.ContentBlock{Type: "warning", Text: errMsg, Reason: reason})
-		contentMap := map[string]any{"blocks": blocks}
+		contentMap := map[string]any{"blocks": blocks, "metadata": responseMetadata}
 		if cancelReason == "user" || ctx.Err() == context.Canceled {
 			contentMap["cancelled"] = true
 		}
 		blocksJSON, _ := json.Marshal(contentMap)
 		content = string(blocksJSON)
 	} else {
-		contentMap := map[string]any{"blocks": blocks}
-		if responseMetadata != nil {
-			contentMap["metadata"] = responseMetadata
-		}
+		contentMap := map[string]any{"blocks": blocks, "metadata": responseMetadata}
 		// When there are blocks but the stream was interrupted, add a warning and mark cancelled
 		if cancelReason == "user" {
 			contentMap["cancelled"] = true
@@ -783,12 +917,35 @@ func finalizeStreamRun(
 		blocksJSON, _ := json.Marshal(contentMap)
 		content = string(blocksJSON)
 	}
-	if err := service.FinalizeStreamingMessage(projectPath, backendName, sessionID, content); err != nil {
+	msgID, err := service.FinalizeStreamingMessage(projectPath, backendName, sessionID, content)
+	if err != nil {
 		slog.Error(
 			"failed to finalize streaming message",
 			slog.String("session", sessionID),
 			slog.String("err", err.Error()),
 		)
+	}
+
+	// Diagnostic: check if external_session_id was updated during this stream.
+	// For codebuddy/claude/qoder, extID always equals sessionID (ClawBench UUID) — that's normal.
+	// For opencode/codex/deepseek/pi, extID should differ (CLI-assigned ID).
+	// If it still equals sessionID for those backends, the CLI ID was never captured,
+	// which will cause context amnesia on the next resume attempt.
+	if !chatReq.Resume {
+		extID := service.GetExternalSessionID(sessionID)
+		if extID == "" {
+			slog.Warn("session: external_session_id is empty after stream",
+				slog.String("session", sessionID),
+				slog.String("backend", backendName),
+				slog.String("agent", agentID),
+				slog.Bool("cancelled", cancelReason != "" || ctx.Err() != nil))
+		}
+	}
+	// Save metadata to dedicated table for analytical queries
+	if msgID > 0 && responseMetadata != nil {
+		if saveErr := service.SaveMetadata(msgID, responseMetadata); saveErr != nil {
+			slog.Warn("failed to save message metadata", slog.Int64("msg_id", msgID), slog.String("err", saveErr.Error()))
+		}
 	}
 
 	// Drain any remaining events from channel
@@ -798,8 +955,11 @@ func finalizeStreamRun(
 			if !ok {
 				goto saveRaw
 			}
-			if event.Type == "raw_output" && rawOutput == "" {
-				rawOutput = event.RawOutput
+			if event.Type == "raw_output" {
+				if rawOutput != "" {
+					rawOutput += "\n"
+				}
+				rawOutput += event.RawOutput
 			}
 		default:
 			goto saveRaw
@@ -851,11 +1011,13 @@ saveRaw:
 // buildChatRequest constructs an ai.ChatRequest from the given parameters.
 // modelOverride, if non-empty, takes precedence over the agent's default model.
 // thinkingEffortOverride, if non-empty, takes precedence over the agent's YAML default.
-func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, fileDir string) ai.ChatRequest {
+// modeOverride, if non-empty, takes precedence over the current ACP session mode.
+func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir string) ai.ChatRequest {
 	systemPrompt := ""
 	agentModel := ""
 	agentCommand := ""
 	effectiveThinkingEffort := thinkingEffortOverride // Frontend selection takes priority
+	effectiveMode := modeOverride                     // Frontend selection takes priority
 
 	if agentID == "" {
 		agentID = model.GetDefaultAgentID()
@@ -885,17 +1047,44 @@ func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 	//   - codebuddy/claude/qoder: ClawBench UUID (same as session id)
 	//   - opencode/codex/deepseek/pi: CLI-assigned ID (captured from stream events)
 	// When resuming, we always use external_session_id so the CLI can find its session context.
+	//
+	// EXCEPTION: ACP-backed agents manage their own session mapping internally
+	// via ACPConnectionPool (clawbench UUID → ACP session ID). For ACP agents,
+	// always use the ClawBench UUID as the session ID — the pool handles the rest.
 	effectiveSessionID := sessionID
 	resume := service.SessionHasAssistant(sessionID)
-	if resume {
+	isACP := false
+	if transportOverride != "" {
+		isACP = transportOverride == "acp-stdio"
+	} else if agent, ok := model.Agents[agentID]; ok && agent.Transport == "acp-stdio" {
+		isACP = true
+	}
+	if resume && !isACP {
 		extID := service.GetExternalSessionID(sessionID)
 		if extID != "" {
 			effectiveSessionID = extID
+			slog.Info("session resume: resolved external_session_id",
+				slog.String("session", sessionID),
+				slog.String("external_session_id", extID),
+				slog.String("backend", backendName),
+				slog.String("agent", agentID),
+				slog.Bool("ext_id_is_clawbench_uuid", extID == sessionID))
 		} else {
 			// No external session ID available — the CLI cannot resume a session
-			// it has never seen. Start a fresh session instead.
+			// it has never seen. Clear effectiveSessionID so the backend does not
+			// pass an invalid ID to --resume. This results in a fresh CLI session
+			// (context amnesia). Log a warning for diagnosis.
 			effectiveSessionID = ""
+			slog.Warn("session resume: external_session_id is empty, CLI will start a new session (context amnesia)",
+				slog.String("session", sessionID),
+				slog.String("backend", backendName),
+				slog.String("agent", agentID))
 		}
+	} else if !resume {
+		slog.Info("session: new conversation (no resume)",
+			slog.String("session", sessionID),
+			slog.String("backend", backendName),
+			slog.String("agent", agentID))
 	}
 
 	return ai.ChatRequest{
@@ -907,6 +1096,7 @@ func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		Command:               agentCommand,
 		AgentID:               agentID,
 		ThinkingEffort:        effectiveThinkingEffort,
+		Mode:                  effectiveMode,
 		Resume:                resume,
 		AssistantMessageCount: service.GetAssistantMessageCount(sessionID),
 	}
@@ -954,7 +1144,8 @@ func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath,
 	// Use session-persisted model (if user explicitly chose one) as modelOverride
 	// so queued messages respect the user's model choice, not just the agent default.
 	sessionModel := service.GetSessionModel(sessionID)
-	return buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, sessionModel, service.GetSessionThinkingEffort(sessionID), fileDir)
+	sessionTransport := service.GetSessionTransport(sessionID)
+	return buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, sessionModel, "", "", sessionTransport, fileDir)
 }
 
 // CancelChat handles POST to cancel an ongoing AI stream for a session.
@@ -1002,22 +1193,46 @@ func stringsContainsAnyBlock(blocks []model.ContentBlock, substr string) bool {
 }
 
 // extractXMLCandidate checks if the content between <ask-question> tags contains
-// XML with <item> child elements. Returns the raw XML content string if valid,
-// or empty string otherwise.
+// valid XML with <item> child elements or valid JSON with "questions" array.
+// Returns the raw content string if valid, or empty string otherwise.
 func extractXMLCandidate(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return ""
 	}
-	// Must contain <item> element (XML format)
-	if !strings.Contains(trimmed, "<item>") && !strings.Contains(trimmed, "<item ") {
+	// XML format: check for <item> element
+	if strings.Contains(trimmed, "<item>") || strings.Contains(trimmed, "<item ") {
+		// Basic validation: must have <question> and <option>
+		if !strings.Contains(trimmed, "<question>") || !strings.Contains(trimmed, "<option>") {
+			return ""
+		}
+		return trimmed
+	}
+	// JSON format: check for "questions" key
+	if strings.HasPrefix(trimmed, "{") && strings.Contains(trimmed, `"questions"`) {
+		var data map[string]any
+		if err := json.Unmarshal([]byte(trimmed), &data); err != nil {
+			return ""
+		}
+		questions, ok := data["questions"].([]any)
+		if !ok || len(questions) == 0 {
+			return ""
+		}
+		// Validate at least one question has question text and options
+		for _, q := range questions {
+			qm, ok := q.(map[string]any)
+			if !ok {
+				continue
+			}
+			if _, hasQ := qm["question"]; hasQ {
+				if opts, ok := qm["options"].([]any); ok && len(opts) > 0 {
+					return trimmed
+				}
+			}
+		}
 		return ""
 	}
-	// Basic validation: must have <question> and <option>
-	if !strings.Contains(trimmed, "<question>") || !strings.Contains(trimmed, "<option>") {
-		return ""
-	}
-	return trimmed
+	return ""
 }
 
 // parseAskQuestionXML parses XML-format <ask-question> content into the
@@ -1073,6 +1288,76 @@ func parseAskQuestionXML(xmlContent string) map[string]any {
 				opt["description"] = strings.TrimSpace(descMatch[1])
 			}
 			options = append(options, opt)
+		}
+
+		if len(options) == 0 {
+			continue
+		}
+
+		questions = append(questions, map[string]any{
+			"header":      header,
+			"multiSelect": multiSelect,
+			"question":    question,
+			"options":     options,
+		})
+	}
+
+	if len(questions) == 0 {
+		return nil
+	}
+
+	return map[string]any{"questions": questions}
+}
+
+// parseAskQuestionJSON parses JSON-format <ask-question> content into the
+// map[string]any format expected by ContentBlock.Input for "AskUserQuestion" tool.
+// JSON format: { "questions": [{ "question", "header", "multiSelect", "options": [{ "label", "description" }] }] }
+func parseAskQuestionJSON(jsonContent string) map[string]any {
+	var data map[string]any
+	if err := json.Unmarshal([]byte(jsonContent), &data); err != nil {
+		return nil
+	}
+
+	rawQuestions, ok := data["questions"].([]any)
+	if !ok || len(rawQuestions) == 0 {
+		return nil
+	}
+
+	var questions []map[string]any
+	for _, rq := range rawQuestions {
+		item, ok := rq.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		question, _ := item["question"].(string)
+		if question == "" {
+			continue
+		}
+
+		header, _ := item["header"].(string)
+		_, multiSelect := item["multiSelect"].(bool)
+
+		rawOptions, ok := item["options"].([]any)
+		if !ok || len(rawOptions) == 0 {
+			continue
+		}
+
+		var options []map[string]any
+		for _, ro := range rawOptions {
+			opt, ok := ro.(map[string]any)
+			if !ok {
+				continue
+			}
+			label, _ := opt["label"].(string)
+			if label == "" {
+				continue
+			}
+			entry := map[string]any{"label": label}
+			if desc, ok := opt["description"].(string); ok && desc != "" {
+				entry["description"] = desc
+			}
+			options = append(options, entry)
 		}
 
 		if len(options) == 0 {
@@ -1150,7 +1435,11 @@ func convertAskQuestionBlocks(blocks []model.ContentBlock) []model.ContentBlock 
 
 		input := parseAskQuestionXML(xmlContent)
 		if input == nil {
-			slog.Error("failed to parse ask-question XML")
+			// Try JSON format as fallback
+			input = parseAskQuestionJSON(xmlContent)
+		}
+		if input == nil {
+			slog.Error("failed to parse ask-question content (tried XML and JSON)")
 			continue
 		}
 

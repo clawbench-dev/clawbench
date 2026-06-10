@@ -5,6 +5,7 @@ import {
   CircleDot, ListChecks, ListTodo, Target,
   FileText, Compass, CheckCircle2, FolderSync, Monitor,
   Users, MessageSquare, Send, Save, Camera, Wrench,
+  ShieldAlert, GitBranch,
   // Fallback
   Wrench as WrenchFallback,
   // Thinking
@@ -25,6 +26,7 @@ export const TOOL_ICONS: Record<string, { icon: typeof Wrench; category: string 
   'WebSearch':         { icon: Globe,            category: 'search' },
   'WebFetch':          { icon: Globe,            category: 'search' },
   'Agent':             { icon: Bot,              category: 'agent' },
+  'Task':              { icon: Bot,              category: 'agent' },  // ACP generic Task = sub-agent delegation
   'Skill':             { icon: Sparkles,         category: 'skill' },
   'AskUserQuestion':   { icon: MessageSquarePlus, category: 'ask' },
   'TaskCreate':        { icon: Plus,             category: 'task' },
@@ -54,12 +56,49 @@ export const TOOL_ICONS: Record<string, { icon: typeof Wrench; category: string 
   'StructuredOutput':  { icon: FileText,         category: 'file' },
   'SkillManage':       { icon: Sparkles,         category: 'skill' },
   'Monitor':           { icon: Monitor,          category: 'bash' },
+  'PermissionApproval':{ icon: ShieldAlert,      category: 'permission' },
+  'MultiEdit':         { icon: FilePenLine,      category: 'file' },
+  'TodoRead':          { icon: ListChecks,       category: 'task' },
+  'Git':               { icon: GitBranch,        category: 'bash' },
 }
 
 export const FALLBACK_TOOL_ICON = { icon: WrenchFallback, category: 'fallback' }
 
-/** Look up tool icon by name (case-insensitive) */
+/**
+ * Known Agent sub-type names that should use the Agent icon/category.
+ * ACP ToolCallUpdate may set block.name to the sub-type title (e.g. "Explore")
+ * instead of the canonical "Agent". Without this mapping, the frontend falls
+ * back to the wrench icon. These names always render with Bot icon + agent category.
+ */
+const AGENT_SUBTYPE_NAMES = new Set([
+  'explore', 'plan', 'general-purpose', 'general', 'claude',
+  'code-reviewer', 'statusline-setup', 'fork',
+])
+
+/** Look up tool icon by name (case-insensitive), with Agent sub-type fallback */
 export function getToolIcon(name: string) {
-  const entry = Object.entries(TOOL_ICONS).find(([k]) => k.toLowerCase() === name.toLowerCase())
-  return entry ? entry[1] : FALLBACK_TOOL_ICON
+  const safeName = name || ''
+  const entry = Object.entries(TOOL_ICONS).find(([k]) => k.toLowerCase() === safeName.toLowerCase())
+  if (entry) return entry[1]
+  // Unrecognized name that is a known Agent sub-type → use Agent icon/category
+  if (safeName && AGENT_SUBTYPE_NAMES.has(safeName.toLowerCase())) {
+    return TOOL_ICONS['Agent']
+  }
+  return FALLBACK_TOOL_ICON
+}
+
+/**
+ * Return the display name for a tool call block.
+ * For Agent/Task calls with a subagent_type, show the sub-agent name
+ * (PascalCased) instead of the generic "Agent".
+ */
+export function toolDisplayName(name: string, input?: Record<string, any>): string {
+  const safeName = name || ''
+  const lower = safeName.toLowerCase()
+  if ((lower === 'agent' || lower === 'task') && input?.subagent_type) {
+    // PascalCase the subagent_type: "explore" → "Explore", "general-purpose" → "General-purpose"
+    const raw = String(input.subagent_type)
+    return raw.charAt(0).toUpperCase() + raw.slice(1)
+  }
+  return safeName
 }

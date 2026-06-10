@@ -52,7 +52,7 @@ const i18n = createI18n({
           session: '会话',
           attachment: '附件',
           autoSpeech: '自动朗读',
-          switchModel: '切换模型',
+          sessionSettings: '会话设置',
           switchThinkingEffort: '切换思考强度',
           deleteCurrentSession: '删除当前会话',
           noSessionToDelete: '无可删除会话',

@@ -8,7 +8,7 @@
 |------|------|---------|-------------|
 | `show` | `Boolean` | `false` | 菜单显示状态（支持 v-model） |
 | `targetElement` | `Object` | - | 锚点 DOM 元素，菜单相对于此元素定位 |
-| `anchor` | `String` | `'left'` | 锚点方向：`'left'` \| `'right'` |
+| `anchor` | `String` | `'auto'` | 水平对齐：`'left'` \| `'right'` \| `'auto'`（auto 根据锚点位置自动判断） |
 | `maxWidth` | `Number` | `220` | 菜单最大宽度（px） |
 | `maxHeight` | `Number` | `320` | 菜单最大高度（px），超出显示滚动条 |
 | `edgeMargin` | `Number` | `6` | 与屏幕边缘的最小距离（px） |

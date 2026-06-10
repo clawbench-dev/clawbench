@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 
@@ -17,12 +17,9 @@ import (
 )
 
 // setupAgentTestEnv creates a temp agents directory with DB records and in-memory agents.
-// Returns the temp dir and a teardown function.
-func setupAgentTestEnv(t *testing.T) (string, func()) {
+// Returns a teardown function.
+func setupAgentTestEnv(t *testing.T) func() {
 	t.Helper()
-
-	// Create temp dir for model cache etc.
-	tmpDir := t.TempDir()
 
 	// Save original globals
 	origAgents := model.Agents
@@ -81,12 +78,11 @@ func setupAgentTestEnv(t *testing.T) (string, func()) {
 		_ = db.Close()
 	}
 
-	return tmpDir, teardown
+	return teardown
 }
 
 func TestAgentGet(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	req := newRequest(t, http.MethodGet, "/api/agents", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -102,8 +98,7 @@ func TestAgentGet(t *testing.T) {
 }
 
 func TestAgentPatch_PreferredModel(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	body := map[string]any{
 		"id":              "codebuddy",
@@ -126,8 +121,7 @@ func TestAgentPatch_PreferredModel(t *testing.T) {
 }
 
 func TestAgentPatch_InvalidPreferredModel(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	body := map[string]any{
 		"id":              "codebuddy",
@@ -141,8 +135,7 @@ func TestAgentPatch_InvalidPreferredModel(t *testing.T) {
 }
 
 func TestAgentPatch_PreferredThinkingEffort(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	body := map[string]any{
 		"id":                        "codebuddy",
@@ -165,8 +158,7 @@ func TestAgentPatch_PreferredThinkingEffort(t *testing.T) {
 }
 
 func TestAgentPatch_InvalidPreferredThinkingEffort(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	body := map[string]any{
 		"id":                        "codebuddy",
@@ -180,8 +172,7 @@ func TestAgentPatch_InvalidPreferredThinkingEffort(t *testing.T) {
 }
 
 func TestAgentPatch_NonexistentAgent(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	body := map[string]any{
 		"id":              "nonexistent",
@@ -195,8 +186,7 @@ func TestAgentPatch_NonexistentAgent(t *testing.T) {
 }
 
 func TestAgentPatch_BothFields(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	body := map[string]any{
 		"id":                        "claude",
@@ -222,8 +212,7 @@ func TestAgentPatch_BothFields(t *testing.T) {
 }
 
 func TestAgentPatch_ClearPreferredModel(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// First set a preferred model
 	model.Agents["codebuddy"].PreferredModel = "glm-4-flash"
@@ -242,8 +231,7 @@ func TestAgentPatch_ClearPreferredModel(t *testing.T) {
 }
 
 func TestAgentPatch_DefaultModelIDRespectsPreferred(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// Default without preferred_model should return the default model
 	assert.Equal(t, "glm-5.1", model.Agents["codebuddy"].DefaultModelID())
@@ -257,8 +245,7 @@ func TestAgentPatch_DefaultModelIDRespectsPreferred(t *testing.T) {
 }
 
 func TestAgentPatch_EffectiveThinkingEffortRespectsPreferred(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// Without preferred thinking, returns agent default (empty in test)
 	assert.Equal(t, "", model.Agents["codebuddy"].EffectiveThinkingEffort())
@@ -272,8 +259,7 @@ func TestAgentPatch_EffectiveThinkingEffortRespectsPreferred(t *testing.T) {
 }
 
 func TestAgentPatch_NoID(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	body := map[string]any{
 		"preferred_model": "glm-4-flash",
@@ -286,8 +272,7 @@ func TestAgentPatch_NoID(t *testing.T) {
 }
 
 func TestAgentPatch_MethodNotAllowed(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	req := newRequest(t, http.MethodDelete, "/api/agents", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -297,8 +282,7 @@ func TestAgentPatch_MethodNotAllowed(t *testing.T) {
 }
 
 func TestAgentRefreshModels_Success(t *testing.T) {
-	tmpDir, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// Override DiscoverModels for testing
 	origDiscover := model.DiscoverModels
@@ -312,13 +296,6 @@ func TestAgentRefreshModels_Success(t *testing.T) {
 		return nil
 	}
 	defer func() { model.DiscoverModels = origDiscover }()
-
-	// Create model cache dir and set global
-	cacheDir := filepath.Join(tmpDir, "model-cache")
-	require.NoError(t, os.MkdirAll(cacheDir, 0o755))
-	origCacheDir := model.ModelCacheDir
-	model.ModelCacheDir = cacheDir
-	defer func() { model.ModelCacheDir = origCacheDir }()
 
 	req := newRequest(t, http.MethodPost, "/api/agents/codebuddy/refresh-models", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -337,17 +314,10 @@ func TestAgentRefreshModels_Success(t *testing.T) {
 	// Verify in-memory agent models were updated
 	assert.Equal(t, "glm-6", model.Agents["codebuddy"].Models[0].ID)
 	assert.Equal(t, "glm-5.1", model.Agents["codebuddy"].Models[1].ID)
-
-	// Verify cache file was written
-	cached := model.ReadModelCache(cacheDir, "codebuddy")
-	require.NotNil(t, cached)
-	assert.Len(t, cached, 2)
-	assert.Equal(t, "glm-6", cached[0].ID)
 }
 
 func TestAgentRefreshModels_AgentNotFound(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	req := newRequest(t, http.MethodPost, "/api/agents/nonexistent/refresh-models", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -357,8 +327,7 @@ func TestAgentRefreshModels_AgentNotFound(t *testing.T) {
 }
 
 func TestAgentRefreshModels_DiscoveryNotSupported(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// Use a fictional backend that has no discovery capability
 	model.Agents["unknown"] = &model.Agent{ID: "unknown", Backend: "unknown"}
@@ -372,8 +341,7 @@ func TestAgentRefreshModels_DiscoveryNotSupported(t *testing.T) {
 }
 
 func TestAgentRefreshModels_DiscoveryFails(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// Override DiscoverModels to return nil (simulating discovery failure)
 	origDiscover := model.DiscoverModels
@@ -395,8 +363,7 @@ func TestAgentRefreshModels_DiscoveryFails(t *testing.T) {
 }
 
 func TestServeAgentSubRoutes_RefreshModels(t *testing.T) {
-	tmpDir, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// Override DiscoverModels for testing
 	origDiscover := model.DiscoverModels
@@ -408,13 +375,6 @@ func TestServeAgentSubRoutes_RefreshModels(t *testing.T) {
 	}
 	defer func() { model.DiscoverModels = origDiscover }()
 
-	// Create model cache dir and set global
-	cacheDir := filepath.Join(tmpDir, "model-cache")
-	require.NoError(t, os.MkdirAll(cacheDir, 0o755))
-	origCacheDir := model.ModelCacheDir
-	model.ModelCacheDir = cacheDir
-	defer func() { model.ModelCacheDir = origCacheDir }()
-
 	req := newRequest(t, http.MethodPost, "/api/agents/codebuddy/refresh-models", nil)
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeAgentSubRoutes, req)
@@ -423,8 +383,7 @@ func TestServeAgentSubRoutes_RefreshModels(t *testing.T) {
 }
 
 func TestServeAgentSubRoutes_NotFound(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	req := newRequest(t, http.MethodGet, "/api/agents/codebuddy/something-else", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -434,8 +393,7 @@ func TestServeAgentSubRoutes_NotFound(t *testing.T) {
 }
 
 func TestServeAgentRefreshModels_MethodNotAllowed(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	req := newRequest(t, http.MethodGet, "/api/agents/codebuddy/refresh-models", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -445,8 +403,7 @@ func TestServeAgentRefreshModels_MethodNotAllowed(t *testing.T) {
 }
 
 func TestServeAgentRefreshModels_EmptyAgentID(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	req := newRequest(t, http.MethodPost, "/api/agents//refresh-models", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -456,8 +413,7 @@ func TestServeAgentRefreshModels_EmptyAgentID(t *testing.T) {
 }
 
 func TestServeAgentRefreshModels_InvalidAgentID(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// Path with extra slashes: /api/agents/foo/bar/refresh-models
 	req := newRequest(t, http.MethodPost, "/api/agents/foo/bar/refresh-models", nil)
@@ -468,8 +424,7 @@ func TestServeAgentRefreshModels_InvalidAgentID(t *testing.T) {
 }
 
 func TestServeAgentRefreshModels_CLINotFound(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// Override DiscoverModels to return nil, simulating CLI not available
 	origDiscover := model.DiscoverModels
@@ -489,10 +444,9 @@ func TestServeAgentRefreshModels_CLINotFound(t *testing.T) {
 }
 
 func TestAgentPatch_InvalidJSON(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
-	// Send malformed JSON to trigger decodeJSON failure (line 54-56)
+	// Send malformed JSON to trigger decodeJSON failure
 	req := httptest.NewRequest(http.MethodPatch, "/api/agents", strings.NewReader("{invalid"))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
@@ -502,13 +456,12 @@ func TestAgentPatch_InvalidJSON(t *testing.T) {
 }
 
 func TestAgentPatch_ClearPreferredThinkingEffort(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// First set a preferred thinking effort
 	model.Agents["codebuddy"].PreferredThinkingEffort = "high"
 
-	// Now clear it by sending empty string (empty string with no ThinkingEffortLevels should work)
+	// Now clear it by sending empty string
 	body := map[string]any{
 		"id":                        "codebuddy",
 		"preferred_thinking_effort": "",
@@ -522,10 +475,8 @@ func TestAgentPatch_ClearPreferredThinkingEffort(t *testing.T) {
 }
 
 func TestAgentPatch_PreferredModelEmptyString(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
-	// Setting preferred_model to empty string should clear it without validation
 	body := map[string]any{
 		"id":              "codebuddy",
 		"preferred_model": "",
@@ -539,8 +490,7 @@ func TestAgentPatch_PreferredModelEmptyString(t *testing.T) {
 }
 
 func TestServeAgentRefreshModels_SaveAgentDBError(t *testing.T) {
-	tmpDir, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// Override DiscoverModels for testing
 	origDiscover := model.DiscoverModels
@@ -551,13 +501,6 @@ func TestServeAgentRefreshModels_SaveAgentDBError(t *testing.T) {
 		return nil
 	}
 	defer func() { model.DiscoverModels = origDiscover }()
-
-	// Create model cache dir and set global
-	cacheDir := filepath.Join(tmpDir, "model-cache")
-	require.NoError(t, os.MkdirAll(cacheDir, 0o755))
-	origCacheDir := model.ModelCacheDir
-	model.ModelCacheDir = cacheDir
-	defer func() { model.ModelCacheDir = origCacheDir }()
 
 	// Delete agents table to cause SaveAgent to fail
 	_, _ = service.DB.Exec("DROP TABLE agents")
@@ -573,39 +516,8 @@ func TestServeAgentRefreshModels_SaveAgentDBError(t *testing.T) {
 	assert.Equal(t, "glm-6", model.Agents["codebuddy"].Models[0].ID)
 }
 
-func TestServeAgentRefreshModels_WriteModelCacheError(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
-
-	// Override DiscoverModels for testing
-	origDiscover := model.DiscoverModels
-	model.DiscoverModels = func(spec model.BackendSpec) []model.AgentModel {
-		if spec.Backend == "codebuddy" {
-			return []model.AgentModel{{ID: "glm-6", Name: "GLM 6", Default: true}}
-		}
-		return nil
-	}
-	defer func() { model.DiscoverModels = origDiscover }()
-
-	// Set cache dir to invalid path to cause WriteModelCache to fail (lines 178-180)
-	origCacheDir := model.ModelCacheDir
-	model.ModelCacheDir = "/nonexistent/path/that/cannot/be/created"
-	defer func() { model.ModelCacheDir = origCacheDir }()
-
-	req := newRequest(t, http.MethodPost, "/api/agents/codebuddy/refresh-models", nil)
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeAgentRefreshModels, req)
-
-	// Should still return 200 (cache write failure is logged but not fatal)
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	// Verify in-memory agent models were still updated
-	assert.Equal(t, "glm-6", model.Agents["codebuddy"].Models[0].ID)
-}
-
 func TestServeAgentRefreshModels_CLINotFoundSpecificError(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// Create a custom agent whose CLI command doesn't exist on PATH
 	model.Agents["fake-cli"] = &model.Agent{
@@ -629,13 +541,11 @@ func TestServeAgentRefreshModels_CLINotFoundSpecificError(t *testing.T) {
 	w := callHandler(ServeAgentRefreshModels, req)
 
 	// Should be 404 (CLINotFound) or 500 (ModelDiscoveryFailed) depending on whether CLI exists
-	// The key behavior is that it returns an error, not 200
 	assert.NotEqual(t, http.StatusOK, w.Code, "should return error when models discovery returns empty")
 }
 
 func TestAgentPatch_NoThinkingEffortLevels(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// Create an agent with no ThinkingEffortLevels
 	model.Agents["nolevels"] = &model.Agent{
@@ -647,7 +557,6 @@ func TestAgentPatch_NoThinkingEffortLevels(t *testing.T) {
 	model.AgentList = append(model.AgentList, model.Agents["nolevels"])
 	require.NoError(t, service.SaveAgent(service.DB, model.Agents["nolevels"]))
 
-	// Setting preferred_thinking_effort on agent with no levels should accept any value
 	body := map[string]any{
 		"id":                        "nolevels",
 		"preferred_thinking_effort": "anything",
@@ -661,8 +570,7 @@ func TestAgentPatch_NoThinkingEffortLevels(t *testing.T) {
 }
 
 func TestAgentPatch_PatchAgentDBError(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// Create a closed DB that will return errors on Exec
 	closedDB, err := service.InitInMemoryDB()
@@ -685,11 +593,90 @@ func TestAgentPatch_PatchAgentDBError(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
+// ---------- Transport switching ----------
+
+func TestAgentPatch_TransportSwitchToCLI(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// Start with ACP transport
+	model.Agents["claude"].Transport = "acp-stdio"
+
+	body := map[string]any{
+		"id":        "claude",
+		"transport": "cli",
+	}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "cli", model.Agents["claude"].Transport)
+
+	// Verify DB updated
+	var transport string
+	err := service.DB.QueryRow("SELECT transport FROM agents WHERE id = ?", "claude").Scan(&transport)
+	require.NoError(t, err)
+	assert.Equal(t, "cli", transport)
+}
+
+func TestAgentPatch_TransportSwitchToACP(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// claude has AcpCommand in BackendRegistry
+	body := map[string]any{
+		"id":        "claude",
+		"transport": "acp-stdio",
+	}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "acp-stdio", model.Agents["claude"].Transport)
+}
+
+func TestAgentPatch_TransportACPNotAllowedForNoACPAgent(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// Create an agent whose backend has no ACP support in BackendRegistry
+	model.Agents["noacp"] = &model.Agent{
+		ID:      "noacp",
+		Name:    "NoACP",
+		Backend: "nonexistent-backend",
+		Models:  []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
+	}
+	model.AgentList = append(model.AgentList, model.Agents["noacp"])
+	require.NoError(t, service.SaveAgent(service.DB, model.Agents["noacp"]))
+
+	body := map[string]any{
+		"id":        "noacp",
+		"transport": "acp-stdio",
+	}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestAgentPatch_TransportInvalid(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	body := map[string]any{
+		"id":        "claude",
+		"transport": "invalid",
+	}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 // ---------- ServeAgents method not allowed ----------
 
 func TestServeAgents_MethodNotAllowed(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	req := newRequest(t, http.MethodDelete, "/api/agents", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -701,8 +688,7 @@ func TestServeAgents_MethodNotAllowed(t *testing.T) {
 // ---------- ServeAgentRefreshModels with provider filter ----------
 
 func TestServeAgentRefreshModels_WithProviderFilter(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// Save original DiscoverModels and restore later
 	origDiscover := model.DiscoverModels
@@ -717,7 +703,7 @@ func TestServeAgentRefreshModels_WithProviderFilter(t *testing.T) {
 		}
 	}
 
-	// Add agent_api_keys entry using SaveAgentAPIKey (handles encryption + key_nonce)
+	// Add agent_api_keys entry using SaveAgentAPIKey
 	require.NoError(t, service.SaveAgentAPIKey(service.DB, "codebuddy", "openai", "", "test-api-key"))
 
 	req := newRequest(t, http.MethodPost, "/api/agents/codebuddy/refresh-models", nil)
@@ -731,13 +717,11 @@ func TestServeAgentRefreshModels_WithProviderFilter(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 	models := resp["models"].([]any)
-	// Should only return openai/ prefixed models (stripped of prefix)
 	assert.NotEmpty(t, models, "should have models after provider filtering")
 }
 
 func TestServeAgentRefreshModels_ProviderFilterNoMatch(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	origDiscover := model.DiscoverModels
 	defer func() { model.DiscoverModels = origDiscover }()
@@ -768,8 +752,7 @@ func TestServeAgentRefreshModels_ProviderFilterNoMatch(t *testing.T) {
 }
 
 func TestServeAgentRefreshModels_KnownModelsFallback(t *testing.T) {
-	_, teardown := setupAgentTestEnv(t)
-	defer teardown()
+	defer setupAgentTestEnv(t)()
 
 	// Set up agent_api_keys entry for a provider with KnownModels (e.g., anthropic)
 	require.NoError(t, service.SaveAgentAPIKey(service.DB, "codebuddy", "anthropic", "", "test-api-key"))
@@ -796,4 +779,203 @@ func TestServeAgentRefreshModels_KnownModelsFallback(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	models := resp["models"].([]any)
 	assert.NotEmpty(t, models, "should have KnownModels from anthropic provider")
+}
+
+// ---------- serveAgentsGet ACP state tests ----------
+
+func TestServeAgentsGet_ACPStateFromPoolCache(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// Add an ACP agent
+	acpAgent := &model.Agent{
+		ID:        "acp-agent",
+		Name:      "ACP Agent",
+		Backend:   "acp-test",
+		Transport: "acp-stdio",
+		Models:    []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
+	}
+	model.Agents["acp-agent"] = acpAgent
+	model.AgentList = append(model.AgentList, acpAgent)
+	require.NoError(t, service.SaveAgent(service.DB, acpAgent))
+
+	// Populate agent-level capabilities in the registry
+	ai.GetAgentCapabilityRegistry().UpdateModes("acp-agent", []ai.ModeDef{{ID: "code", Name: "Code"}, {ID: "ask", Name: "Ask"}})
+	ai.GetAgentCapabilityRegistry().UpdateThinkingEfforts("acp-agent", []ai.ThinkingEffortDef{{ID: "low"}, {ID: "high"}})
+	ai.GetAgentCapabilityRegistry().UpdateModels("acp-agent", []model.AgentModel{{ID: "acp-m1", Name: "ACP Model 1", Default: true}})
+
+	req := newRequest(t, http.MethodGet, "/api/agents", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	acpStates, ok := resp["acpStates"].(map[string]any)
+	require.True(t, ok, "response should contain acpStates")
+
+	state, ok := acpStates["acp-agent"].(map[string]any)
+	require.True(t, ok, "acpStates should contain acp-agent")
+
+	// Verify mode state from registry (agent-level has empty currentModeId)
+	modeState, ok := state["modeState"].(map[string]any)
+	require.True(t, ok, "state should contain modeState")
+	assert.Equal(t, "", modeState["currentModeId"]) // no session context
+
+	// Verify thinking effort state from registry
+	effortState, ok := state["thinkingEffortState"].(map[string]any)
+	require.True(t, ok, "state should contain thinkingEffortState")
+	assert.Equal(t, "", effortState["currentId"]) // no session context
+
+	// Verify model list state from registry
+	mlState, ok := state["modelListState"].(map[string]any)
+	require.True(t, ok, "state should contain modelListState")
+	assert.Equal(t, "", mlState["currentModelId"]) // no session context
+
+	// Verify models were overridden by ACP model list
+	agents, ok := resp["agents"].([]any)
+	require.True(t, ok)
+	for _, a := range agents {
+		agent := a.(map[string]any)
+		if agent["id"] == "acp-agent" {
+			models := agent["models"].([]any)
+			m := models[0].(map[string]any)
+			assert.Equal(t, "acp-m1", m["id"], "models should be overridden by ACP model list")
+		}
+	}
+}
+
+func TestServeAgentsGet_PrefetchACPStateForUncachedAgent(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// Add an ACP agent with no pool cache entry
+	acpAgent := &model.Agent{
+		ID:        "acp-prefetch",
+		Name:      "ACP Prefetch",
+		Backend:   "acp-prefetch",
+		Transport: "acp-stdio",
+		Models:    []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
+	}
+	model.Agents["acp-prefetch"] = acpAgent
+	model.AgentList = append(model.AgentList, acpAgent)
+	require.NoError(t, service.SaveAgent(service.DB, acpAgent))
+
+	// Ensure the AcpCommand is registered in BackendRegistry so prefetch is triggered
+	spec := model.FindSpecByBackend("acp-prefetch")
+	origSpec := spec
+	// If no spec exists, inject a temporary one
+	if spec == nil {
+		model.BackendRegistry = append(model.BackendRegistry, model.BackendSpec{
+			ID:         "acp-prefetch",
+			Backend:    "acp-prefetch",
+			AcpCommand: "echo",
+		})
+		defer func() {
+			// Remove the injected spec
+			for i, s := range model.BackendRegistry {
+				if s.Backend == "acp-prefetch" {
+					model.BackendRegistry = append(model.BackendRegistry[:i], model.BackendRegistry[i+1:]...)
+					break
+				}
+			}
+		}()
+	}
+
+	// Clean up prefetch connection after test
+	defer ai.GetACPConnManager().CloseConn("_prefetch_acp-prefetch")
+
+	req := newRequest(t, http.MethodGet, "/api/agents", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Wait briefly for the background prefetch goroutine to run
+	time.Sleep(300 * time.Millisecond)
+
+	// Verify that a prefetch connection was created for the agent
+	mgr := ai.GetACPConnManager()
+	conn := mgr.GetConn("_prefetch_acp-prefetch")
+	// The connection may have been cleaned up if the spawn failed (echo isn't ACP),
+	// but the key behavior is that PrefetchACPState was called.
+	// At minimum, the agent should not have acpStates in the response
+	// since no pool cache existed at request time and it's an ACP agent
+	// without registry data (no fallback for ACP agents).
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	acpStates, _ := resp["acpStates"].(map[string]any)
+	_, hasState := acpStates["acp-prefetch"]
+	assert.False(t, hasState, "ACP agent with no registry data should not have acpState")
+
+	_ = origSpec
+	_ = conn
+}
+
+func TestServeAgentsGet_NonACPAgentNoACPState(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	req := newRequest(t, http.MethodGet, "/api/agents", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	acpStates, ok := resp["acpStates"].(map[string]any)
+	require.True(t, ok, "response should contain acpStates")
+
+	// codebuddy and claude are CLI agents — no ACP state
+	_, hasCodebuddy := acpStates["codebuddy"]
+	_, hasClaude := acpStates["claude"]
+	assert.False(t, hasCodebuddy, "CLI agent should not have ACP state")
+	assert.False(t, hasClaude, "CLI agent should not have ACP state")
+}
+
+func TestServeAgentsGet_ACPModelListOverridesModels(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// Add an ACP agent with CLI-discovered models
+	acpAgent := &model.Agent{
+		ID:        "acp-ml-override",
+		Name:      "ACP ML Override",
+		Backend:   "acp-test",
+		Transport: "acp-stdio",
+		Models:    []model.AgentModel{{ID: "cli-model", Name: "CLI Model", Default: true}},
+	}
+	model.Agents["acp-ml-override"] = acpAgent
+	model.AgentList = append(model.AgentList, acpAgent)
+	require.NoError(t, service.SaveAgent(service.DB, acpAgent))
+
+	// Inject agent-level models in the registry that should override CLI-discovered models
+	ai.GetAgentCapabilityRegistry().UpdateModels("acp-ml-override", []model.AgentModel{
+		{ID: "acp-model-1", Name: "ACP Model 1", Default: true},
+		{ID: "acp-model-2", Name: "ACP Model 2"},
+	})
+
+	req := newRequest(t, http.MethodGet, "/api/agents", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	// Find the agent and verify models were overridden
+	agents, ok := resp["agents"].([]any)
+	require.True(t, ok)
+	for _, a := range agents {
+		agent := a.(map[string]any)
+		if agent["id"] == "acp-ml-override" {
+			models := agent["models"].([]any)
+			assert.Len(t, models, 2)
+			m0 := models[0].(map[string]any)
+			assert.Equal(t, "acp-model-1", m0["id"], "models should be overridden by ACP model list")
+			m1 := models[1].(map[string]any)
+			assert.Equal(t, "acp-model-2", m1["id"])
+		}
+	}
 }

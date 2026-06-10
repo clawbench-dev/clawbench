@@ -3,10 +3,13 @@
     <div
       v-if="everOpened"
       v-show="open || leaving"
+      ref="overlayRef"
       class="modal-overlay"
       :class="{ 'modal-leaving': leaving }"
       :style="{ zIndex }"
+      tabindex="-1"
       @click.self="handleClose"
+      @keydown.escape="handleClose"
     >
       <div class="modal-dialog" :class="{ 'modal-leaving': leaving, 'modal-full-height': fullHeight }" @click.stop>
         <div class="modal-header">
@@ -30,7 +33,7 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, nextTick } from 'vue'
 
 const props = defineProps({
   open: Boolean,
@@ -43,6 +46,7 @@ const emit = defineEmits(['close'])
 
 const leaving = ref(false)
 const everOpened = ref(false)
+const overlayRef = ref(null)
 let leaveTimer = null
 
 watch(() => props.open, (val) => {
@@ -50,6 +54,10 @@ watch(() => props.open, (val) => {
   if (val) {
     everOpened.value = true
     leaving.value = false
+    // Auto-focus overlay so Escape key works immediately
+    nextTick(() => {
+      overlayRef.value?.focus()
+    })
   } else if (leaving.value) {
     // Close triggered externally while animating — cancel animation, hide now
     leaving.value = false

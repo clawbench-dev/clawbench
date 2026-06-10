@@ -484,6 +484,7 @@ func TestStreamParser_MessageStartModel(t *testing.T) {
 	}
 	if metaEvent == nil {
 		t.Fatal("expected a metadata event")
+		return
 	}
 	if metaEvent.Meta.Model != "claude-3.5-sonnet" {
 		t.Errorf("expected model 'claude-3.5-sonnet', got %q", metaEvent.Meta.Model)
@@ -508,6 +509,7 @@ func TestStreamParser_MessageStartOverridesProviderData(t *testing.T) {
 	}
 	if metaEvent == nil {
 		t.Fatal("expected a metadata event")
+		return
 	}
 	if metaEvent.Meta.Model != "model-from-start" {
 		t.Errorf("expected model from message_start, got %q", metaEvent.Meta.Model)
@@ -657,7 +659,11 @@ func TestStreamParser_FullCodebuddyFlow(t *testing.T) {
 			break
 		}
 	}
-	if metaEvent == nil || metaEvent.Meta.Model != "glm-4" {
+	if metaEvent == nil {
+		t.Fatal("expected a metadata event")
+		return
+	}
+	if metaEvent.Meta.Model != "glm-4" {
 		t.Errorf("expected model 'glm-4', got %v", metaEvent)
 	}
 }
@@ -745,7 +751,11 @@ func TestStreamParser_FullClaudeFlow(t *testing.T) {
 			break
 		}
 	}
-	if metaEvent == nil || metaEvent.Meta.Model != "claude-3.5-sonnet" {
+	if metaEvent == nil {
+		t.Fatal("expected a metadata event")
+		return
+	}
+	if metaEvent.Meta.Model != "claude-3.5-sonnet" {
 		t.Errorf("expected model 'claude-3.5-sonnet', got %v", metaEvent)
 	}
 }
@@ -889,6 +899,7 @@ func TestStreamParser_ToolUseInputInContentBlockStart(t *testing.T) {
 	}
 	if stopEvent == nil {
 		t.Fatal("expected a tool_use stop event with Done=true")
+		return
 	}
 	expectedInput := `{"command":"ls /workspace/","description":"List workspace"}`
 	if stopEvent.Tool.Input != expectedInput {
@@ -919,6 +930,7 @@ func TestStreamParser_ToolUseInputInContentBlockStartWithDelta(t *testing.T) {
 	}
 	if stopEvent == nil {
 		t.Fatal("expected a tool_use stop event with Done=true")
+		return
 	}
 	// Input should include both the start input and the delta
 	if stopEvent.Tool.Input == "" {
@@ -953,6 +965,7 @@ func TestStreamParser_EmptyInputInStartDoesNotCorruptDelta(t *testing.T) {
 	}
 	if stopEvent == nil {
 		t.Fatal("expected a tool_use stop event with Done=true")
+		return
 	}
 
 	// Input should be valid JSON accumulated from deltas only (NOT "{}{...}")

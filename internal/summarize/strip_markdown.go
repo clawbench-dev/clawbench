@@ -10,11 +10,10 @@ import (
 // Pre-compiled regexes for StripMarkdown.
 var (
 	reCodeBlock = regexp.MustCompile("(?s)```.*?```")
-	// reAskQuestion matches <ask-question>...</ask-question> blocks (including
-	// those wrapped inside markdown code fences like ```json...```).
-	// The inner content is a JSON object with a "questions" array that must be
+	// reAskQuestion matches <ask-question>...</ask-question> blocks.
+	// The inner content is XML with <item>, <question>, <option> etc. that must be
 	// preserved for TTS summarization.
-	reAskQuestion    = regexp.MustCompile("(?s)<ask-question>\\s*(```[a-z]*\\n)?(.*?)(```\\s*)?</ask-question>")
+	reAskQuestion    = regexp.MustCompile(`(?s)<ask-question>\s*(.*?)\s*</ask-question>`)
 	reInlineCode     = regexp.MustCompile("`[^`]+`")
 	reBoldAsterisk   = regexp.MustCompile(`\*\*([^*]+)\*\*`)
 	reBoldUnderscore = regexp.MustCompile(`__([^_]+)__`)
@@ -58,9 +57,9 @@ func StripMarkdown(text string) string {
 	text = reBackslashEscape.ReplaceAllString(text, "$1")
 
 	// Phase 0.5: Preserve <ask-question> structured question content.
-	// These contain JSON with questions/options that should be spoken aloud.
+	// These contain XML with questions/options that should be spoken aloud.
 	// Extract the content before code-block stripping removes it.
-	// Convert <ask-question>{"questions":[...]}</ask-question> into
+	// Convert <ask-question><item>...</item></ask-question> into
 	// a plain-text summary of the questions and options.
 	text = reAskQuestion.ReplaceAllStringFunc(text, preserveAskQuestion)
 
@@ -130,39 +129,100 @@ func stripInlineCode(text string) string {
 	})
 }
 
-// askQuestionJSON is the JSON structure inside <ask-question> tags.
-type askQuestionJSON struct {
-	Questions []askQuestionItem `json:"questions"`
-}
-
-type askQuestionItem struct {
-	Header      string           `json:"header"`
-	Question    string           `json:"question"`
-	Options     []askQuestionOpt `json:"options"`
-	MultiSelect bool             `json:"multiSelect"`
-}
-
-type askQuestionOpt struct {
-	Label       string `json:"label"`
-	Description string `json:"description"`
-}
+// Pre-compiled regexes for XML ask-question parsing.
+var (
+	reItem     = regexp.MustCompile("(?s)<item>(.*?)</item>")
+	reHeader   = regexp.MustCompile("(?s)<header>(.*?)</header>")
+	reQuestion = regexp.MustCompile("(?s)<question>(.*?)</question>")
+	reOption   = regexp.MustCompile("(?s)<option>(.*?)</option>")
+	reLabel    = regexp.MustCompile("(?s)<label>(.*?)</label>")
+	reDesc     = regexp.MustCompile("(?s)<description>(.*?)</description>")
+)
 
 // preserveAskQuestion converts a <ask-question>...</ask-question> block
-// (whose JSON content may be wrapped in markdown code fences) into a
-// plain-text summary suitable for TTS.  If the JSON cannot be parsed,
+// (whose content is XML with <item> child elements, or JSON with "questions" array)
+// into a plain-text summary suitable for TTS. If the content cannot be parsed,
 // the raw content is returned as-is so that the summarizer can still see it.
 func preserveAskQuestion(match string) string {
-	// Extract group(2) = the JSON content (between optional ```lang and optional ```)
 	sub := reAskQuestion.FindStringSubmatch(match)
-	if len(sub) < 3 {
-		return match // no useful capture, return as-is
+	if len(sub) < 2 {
+		return match
 	}
-	jsonText := strings.TrimSpace(sub[2])
+	content := strings.TrimSpace(sub[1])
 
-	var data askQuestionJSON
-	if err := json.Unmarshal([]byte(jsonText), &data); err != nil {
-		// Not valid JSON — return the raw text so the summarizer can still read it
-		return jsonText
+	// Try XML format first
+	items := reItem.FindAllStringSubmatch(content, -1)
+	if len(items) > 0 {
+		return preserveAskQuestionXML(items)
+	}
+
+	// Try JSON format
+	return preserveAskQuestionJSON(content)
+}
+
+// preserveAskQuestionXML converts XML-format ask-question items into plain text for TTS.
+func preserveAskQuestionXML(items [][]string) string {
+	var b strings.Builder
+	for i, item := range items {
+		if i > 0 {
+			b.WriteString(" ")
+		}
+		itemContent := item[1]
+
+		qMatch := reQuestion.FindStringSubmatch(itemContent)
+		if len(qMatch) >= 2 {
+			b.WriteString(strings.TrimSpace(qMatch[1]))
+		}
+
+		hMatch := reHeader.FindStringSubmatch(itemContent)
+		if len(hMatch) >= 2 && strings.TrimSpace(hMatch[1]) != "" {
+			fmt.Fprintf(&b, " (%s)", strings.TrimSpace(hMatch[1]))
+		}
+
+		opts := reOption.FindAllStringSubmatch(itemContent, -1)
+		if len(opts) > 0 {
+			b.WriteString(": ")
+			formatXMLOptions(&b, opts)
+		}
+	}
+	return b.String()
+}
+
+// formatXMLOptions writes XML option labels and descriptions to the builder.
+func formatXMLOptions(b *strings.Builder, opts [][]string) {
+	for j, opt := range opts {
+		if j > 0 {
+			b.WriteString(", ")
+		}
+		labelMatch := reLabel.FindStringSubmatch(opt[1])
+		descMatch := reDesc.FindStringSubmatch(opt[1])
+		if len(labelMatch) >= 2 {
+			b.WriteString(strings.TrimSpace(labelMatch[1]))
+		}
+		if len(descMatch) >= 2 {
+			desc := strings.TrimSpace(descMatch[1])
+			if desc != "" && (len(labelMatch) < 2 || desc != strings.TrimSpace(labelMatch[1])) {
+				fmt.Fprintf(b, " — %s", desc)
+			}
+		}
+	}
+}
+
+// preserveAskQuestionJSON converts JSON-format ask-question content into plain text for TTS.
+func preserveAskQuestionJSON(jsonContent string) string {
+	var data struct {
+		Questions []struct {
+			Header      string `json:"header"`
+			Question    string `json:"question"`
+			MultiSelect bool   `json:"multiSelect"`
+			Options     []struct {
+				Label       string `json:"label"`
+				Description string `json:"description"`
+			} `json:"options"`
+		} `json:"questions"`
+	}
+	if err := json.Unmarshal([]byte(jsonContent), &data); err != nil || len(data.Questions) == 0 {
+		return stripXMLTags(jsonContent)
 	}
 
 	var b strings.Builder
@@ -176,16 +236,21 @@ func preserveAskQuestion(match string) string {
 		}
 		if len(q.Options) > 0 {
 			b.WriteString(": ")
-			for j, o := range q.Options {
+			for j, opt := range q.Options {
 				if j > 0 {
 					b.WriteString(", ")
 				}
-				b.WriteString(o.Label)
-				if o.Description != "" && o.Description != o.Label {
-					fmt.Fprintf(&b, " — %s", o.Description)
+				b.WriteString(opt.Label)
+				if opt.Description != "" && opt.Description != opt.Label {
+					fmt.Fprintf(&b, " — %s", opt.Description)
 				}
 			}
 		}
 	}
 	return b.String()
+}
+
+// stripXMLTags removes all XML/HTML tags from text.
+func stripXMLTags(text string) string {
+	return reXMLTag.ReplaceAllString(text, "")
 }

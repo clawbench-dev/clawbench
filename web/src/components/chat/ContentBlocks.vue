@@ -24,22 +24,23 @@
         @click.stop="!isThinkingStreaming(block) && handleThinkingClick(block, bi)"
       >
         <div class="thinking-header">
-          <Brain :size="12" />
+          <Brain :size="12" class="thinking-icon" />
           <span class="thinking-label">{{ t('chat.message.deepThinking') }}</span>
-          <!-- Spinner during streaming -->
+          <!-- Status indicators: right-aligned, same pattern as tool_use -->
           <span v-if="isThinkingStreaming(block)" class="thinking-spinner"></span>
           <!-- Cancelled marker: show inline in thinking header when this is the last block and message was cancelled.
                Prevents the cancelled mark from being visually hidden/trapped under the collapsed thinking chip. -->
-          <span v-if="!isThinkingStreaming(block) && isLastBlock(bi) && cancelled" class="chat-cancelled-mark-inline">{{ t('chat.contentBlocks.cancelled') }}</span>
+          <span v-else-if="isLastBlock(bi) && cancelled" class="chat-cancelled-mark-inline">{{ t('chat.contentBlocks.cancelled') }}</span>
+          <CheckCircle2 v-else :size="14" color="#22c55e" class="thinking-check" />
         </div>
         <!-- Inline streaming content: only visible during streaming or collapse animation -->
         <div v-if="isThinkingStreaming(block) || !!collapsingThinking[bi]" class="thinking-inline-content" v-html="getThinkingHtml(bi, block)"></div>
       </div>
       <!-- Tool use block -->
       <template v-else-if="block.type === 'tool_use'">
-        <div class="chat-tool-call" :class="{ done: block.done, 'tool-error': block.status === 'error' }" :data-category="getToolIcon(block.name).category" @click.stop="handleToolClick(block, key(bi))">
+        <div class="chat-tool-call" :class="{ done: block.done }" :data-category="getToolIcon(block.name).category" @click.stop="handleToolClick(block, key(bi), bi)">
           <component :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
-          <span class="tool-name">{{ block.name }}</span>
+          <span class="tool-name">{{ toolDisplayName(block.name, block.input) }}</span>
           <span v-if="toolCallSummary(block)" class="tool-summary">{{ toolCallSummary(block) }}</span>
           <!-- Loading: spinner -->
           <span v-if="!block.done" class="tool-spinner"></span>
@@ -48,9 +49,9 @@
           <!-- Done (success or unknown): green check -->
           <CheckCircle2 v-else :size="14" color="#22c55e" class="tool-check" />
         </div>
-        <!-- Inline detail only for AskUserQuestion (interactive, must stay in message flow; auto-expanded) -->
-        <div v-if="shouldAutoExpand(block)" class="tool-detail" :data-tool-name="block.name" @click="handleToolDetailClick">
-          <div v-html="formatToolInput(block.input, block.name)"></div>
+        <!-- Inline detail for auto-expand tools (AskUserQuestion, PermissionApproval) -->
+        <div v-if="shouldAutoExpand(block)" class="tool-detail" :data-tool-name="block.name" :data-session-id="sessionId" :data-tool-call-id="block.id" @click="handleToolDetailClick">
+          <div v-html="formatToolInput(block.input, block.name, { done: block.done, status: block.status, output: block.output })"></div>
         </div>
       </template>
       <!-- Error block -->
@@ -124,6 +125,11 @@
         <span class="at-command-badge">{{ extractAtCommand(block.text).command }}</span>
         <span v-if="extractAtCommand(block.text).rest.trim()" class="at-command-rest">{{ extractAtCommand(block.text).rest.trim() }}</span>
       </template>
+      <!-- Text block with slash command badge (user message starting with /command from ACP backend) -->
+      <template v-else-if="block.type === 'text' && extractSlashCommand(block.text || '')">
+        <span class="slash-command-badge">{{ extractSlashCommand(block.text).command }}</span>
+        <span v-if="extractSlashCommand(block.text).rest.trim()" class="at-command-rest">{{ extractSlashCommand(block.text).rest.trim() }}</span>
+      </template>
       <!-- Text block: streaming uses throttled render to avoid UI freeze -->
       <div v-else-if="block.type === 'text'" v-html="getBlockHtml(bi, block)"></div>
     </template>
@@ -139,7 +145,7 @@
 import { ref, watch, onUnmounted, computed, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { handleToolAction, shouldAutoExpandTool } from '@/utils/renderToolDetail.ts'
-import { getToolIcon } from '@/utils/icons'
+import { getToolIcon, toolDisplayName } from '@/utils/icons'
 import { Brain, ChevronRight, CheckCircle2, AlertCircle, AlertTriangle, XCircle } from 'lucide-vue-next'
 import { renderMarkdown } from '@/composables/useMarkdownRenderer.ts'
 import {
@@ -156,6 +162,7 @@ import {
   hasScheduledTasks as hasScheduledTasksUtil,
   scheduledTaskKeys as scheduledTaskKeysUtil,
   extractAtCommand,
+  extractSlashCommand,
 } from '@/utils/contentBlocks.ts'
 
 const { t, locale } = useI18n()
@@ -173,7 +180,7 @@ function shouldAutoExpand(block) {
 }
 
 /** Handle tool call bar click: open overlay for regular tools, toggle inline for AskUserQuestion. */
-function handleToolClick(block, blockKeyStr) {
+function handleToolClick(block, blockKeyStr, blockIdx) {
   // AskUserQuestion stays inline — toggle expand state
   if (shouldAutoExpand(block)) {
     emit('toggle-tool', blockKeyStr)
@@ -186,6 +193,8 @@ function handleToolClick(block, blockKeyStr) {
     output: block.output,
     status: block.status,
     done: block.done,
+    msgId: props.msgId,
+    blockIdx,
   })
 }
 
@@ -193,6 +202,7 @@ const props = defineProps({
   blocks: { type: Array, default: () => [] },
   msgId: { type: [String, Number], default: '' },
   msgIndex: { type: Number, default: 0 },
+  sessionId: { type: String, default: '' },
   expandedTools: { type: Object, default: () => ({}) },
   blockTasks: { type: Object, default: () => ({}) },
   blockAskQuestions: { type: Object, default: () => ({}) },
@@ -245,10 +255,12 @@ function handleThinkingClick(block, bi) {
 }
 
 /** Whether a thinking block should show inline streaming content.
- *  Thinking blocks don't have a `done` property (unlike tool_use), so we rely
- *  on the message-level `streaming` prop. All thinking blocks in a streaming
- *  message are considered "streaming" and show inline content. */
+ *  Thinking blocks can be marked as done via the `thinking_done` SSE event
+ *  (ACP backend), which sets `block.done = true`. When explicitly done, the
+ *  spinner and inline content should hide immediately. Otherwise, fall back
+ *  to the message-level `streaming` prop. */
 function isThinkingStreaming(block) {
+  if (block.done) return false
   return props.streaming
 }
 
@@ -298,8 +310,8 @@ function startThinkingCollapse() {
     collapsingThinking.value = newCollapsing
     collapsingMaxHeight.value = newMaxHeights
 
-    // Next frame: transition to collapsed height
-    requestAnimationFrame(() => {
+    // Delay before starting collapse animation so user can read the thinking output
+    setTimeout(() => {
       const updatedMaxHeights = {}
       Object.keys(newCollapsing).forEach(idx => {
         updatedMaxHeights[idx] = 28 // header-only height
@@ -311,7 +323,7 @@ function startThinkingCollapse() {
         collapsingThinking.value = {}
         collapsingMaxHeight.value = {}
       }, 400) // match CSS transition duration
-    })
+    }, 3000)
   }
 }
 
@@ -424,6 +436,49 @@ watch(() => props.streaming, (streaming, wasStreaming) => {
     blockHtmlCache.value = {}
     // Trigger collapse animation for thinking blocks that were streaming
     nextTick(() => startThinkingCollapse())
+  }
+})
+
+// Watch for thinking blocks that become "done" mid-stream (via thinking_done SSE event).
+// This triggers the collapse animation immediately instead of waiting for streaming to end.
+watch(() => props.blocks.filter(b => b.type === 'thinking' && b.done).map(b => b.done), (newDones, oldDones) => {
+  if (!props.streaming) return // Only relevant during streaming
+  // Find thinking blocks that just became done (newly true)
+  const newCollapsing = {}
+  const newMaxHeights = {}
+  let changed = false
+  for (let i = 0; i < props.blocks.length; i++) {
+    const block = props.blocks[i]
+    if (block.type === 'thinking' && block.done) {
+      const el = _collapseElRefs[i]
+      if (el && el.scrollHeight && !collapsingThinking.value[i]) {
+        newCollapsing[i] = true
+        newMaxHeights[i] = el.scrollHeight
+        changed = true
+      }
+    }
+  }
+  if (changed) {
+    // Remove from refs so they don't get double-collapsed
+    for (const idx of Object.keys(newCollapsing)) {
+      delete _collapseElRefs[idx]
+    }
+    Object.assign(collapsingThinking.value, newCollapsing)
+    Object.assign(collapsingMaxHeight.value, newMaxHeights)
+    // Delay before starting collapse animation so user can read the thinking output
+    setTimeout(() => {
+      const updatedMaxHeights = {}
+      Object.keys(newCollapsing).forEach(idx => {
+        updatedMaxHeights[idx] = 28
+      })
+      Object.assign(collapsingMaxHeight.value, updatedMaxHeights)
+      setTimeout(() => {
+        for (const idx of Object.keys(newCollapsing)) {
+          delete collapsingThinking.value[idx]
+          delete collapsingMaxHeight.value[idx]
+        }
+      }, 400)
+    }, 3000)
   }
 })
 
@@ -559,11 +614,17 @@ onUnmounted(() => {
 
 /* Thinking block */
 .chat-thinking {
-  background: color-mix(in srgb, var(--text-secondary, #666) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--text-secondary, #666) 18%, transparent);
-  border-radius: 6px;
+  --thinking-accent: #8b5cf6;
+  background: color-mix(in srgb, var(--thinking-accent) 6%, var(--bg-secondary));
+  border: 1px solid color-mix(in srgb, var(--thinking-accent) 15%, var(--border-color));
+  border-radius: 4px;
   margin: 4px 0;
   overflow: hidden;
+  width: 100%;
+}
+
+:root[data-theme="dark"] .chat-thinking {
+  --thinking-accent: #a78bfa;
 }
 
 /* Collapsed state: clickable chip (header only) */
@@ -574,7 +635,7 @@ onUnmounted(() => {
 }
 
 .chat-thinking.thinking-collapsed:hover {
-  background: color-mix(in srgb, var(--text-secondary, #666) 14%, transparent);
+  background: color-mix(in srgb, var(--thinking-accent) 12%, var(--bg-secondary));
 }
 
 /* Streaming state: inline content visible, no height constraint */
@@ -597,18 +658,31 @@ onUnmounted(() => {
   color: var(--text-secondary);
 }
 
+.thinking-icon {
+  color: color-mix(in srgb, var(--thinking-accent) 80%, transparent);
+  flex-shrink: 0;
+}
+
 .thinking-label {
-  font-weight: 500;
+  font-weight: 600;
+  color: var(--thinking-accent);
+  font-size: 11px;
 }
 
 .thinking-spinner {
-  width: 10px;
-  height: 10px;
-  border: 1.5px solid var(--border-color);
-  border-top-color: var(--text-secondary);
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--thinking-accent);
   border-radius: 50%;
   animation: tool-spin 0.6s linear infinite;
   flex-shrink: 0;
+  margin-left: auto;
+}
+
+.thinking-check {
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .thinking-inline-content {
@@ -696,6 +770,7 @@ onUnmounted(() => {
 .chat-tool-call[data-category="agent"]    { --tool-accent: #ec4899; }
 .chat-tool-call[data-category="skill"]    { --tool-accent: #06b6d4; }
 .chat-tool-call[data-category="ask"]      { --tool-accent: #f97316; }
+.chat-tool-call[data-category="permission"] { --tool-accent: #eab308; }
 .chat-tool-call[data-category="fallback"] { --tool-accent: var(--text-muted); }
 
 .chat-tool-call:hover {
@@ -730,10 +805,6 @@ onUnmounted(() => {
 .chat-tool-call .tool-warn {
   flex-shrink: 0;
   margin-left: auto;
-}
-
-.chat-tool-call.tool-error {
-  --tool-accent: #ef4444;
 }
 
 .chat-tool-call .tool-error-icon {
@@ -971,6 +1042,25 @@ onUnmounted(() => {
   color: #a78bfa;
 }
 
+/* Slash command badge in user messages (ACP backend commands) */
+.slash-command-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: color-mix(in srgb, #0ea5e9 15%, transparent);
+  color: #0ea5e9;
+  font-size: 12px;
+  font-weight: 600;
+  margin-right: 4px;
+  vertical-align: baseline;
+  line-height: 1.6;
+}
+
+:root[data-theme="dark"] .slash-command-badge {
+  background: color-mix(in srgb, #38bdf8 15%, transparent);
+  color: #38bdf8;
+}
+
 .at-command-rest {
   /* Rest of the message text after the badge */
 }
@@ -1066,7 +1156,6 @@ onUnmounted(() => {
 :root[data-theme="dark"] .content-blocks .chat-tool-call[data-category="task"]   { --tool-accent: #fbbf24; }
 :root[data-theme="dark"] .content-blocks .chat-tool-call[data-category="agent"]  { --tool-accent: #f472b6; }
 :root[data-theme="dark"] .content-blocks .chat-tool-call[data-category="skill"]  { --tool-accent: #22d3ee; }
-:root[data-theme="dark"] .content-blocks .chat-tool-call.tool-error              { --tool-accent: #f87171; }
 
 /* Tool output section */
 .content-blocks .tool-detail .tool-output-section {
@@ -1362,6 +1451,7 @@ onUnmounted(() => {
 
 /* ── AskUserQuestion card ── */
 :root[data-theme="dark"] .content-blocks .chat-tool-call[data-category="ask"] { --tool-accent: #fb923c; }
+:root[data-theme="dark"] .content-blocks .chat-tool-call[data-category="permission"] { --tool-accent: #fbbf24; }
 
 .content-blocks .tool-detail .ask-question-view {
   display: flex;
@@ -1593,6 +1683,17 @@ onUnmounted(() => {
   color: var(--text-primary);
 }
 
+.content-blocks .tool-detail .grep-tags-row,
+.content-blocks .tool-detail .bash-tags-row,
+.content-blocks .tool-detail .web-search-tags-row,
+.content-blocks .tool-detail .web-fetch-tags-row,
+.content-blocks .tool-detail .glob-tags-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
 .content-blocks .tool-detail .grep-mode-tag {
   font-size: 9px;
   padding: 1px 4px;
@@ -1600,7 +1701,6 @@ onUnmounted(() => {
   background: rgba(139, 92, 246, 0.08);
   color: #8b5cf6;
   font-weight: 500;
-  align-self: flex-start;
 }
 
 :root[data-theme="dark"] .content-blocks .tool-detail .grep-mode-tag {
@@ -1873,5 +1973,193 @@ onUnmounted(() => {
   border-radius: 4px;
   font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
   line-height: 1.5;
+}
+
+/* ── PermissionApproval card ── */
+.content-blocks .tool-detail .permission-approval-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.content-blocks .tool-detail .permission-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #d97706;
+}
+
+:root[data-theme="dark"] .content-blocks .tool-detail .permission-header {
+  color: #fbbf24;
+}
+
+.content-blocks .tool-detail .permission-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.content-blocks .tool-detail .permission-title {
+  color: #d97706;
+  font-weight: 600;
+}
+
+:root[data-theme="dark"] .content-blocks .tool-detail .permission-title {
+  color: #fbbf24;
+}
+
+.content-blocks .tool-detail .permission-tool-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
+  font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
+}
+
+.content-blocks .tool-detail .permission-tool-detail {
+  font-size: 11px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.content-blocks .tool-detail .permission-detail-label {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(234, 179, 8, 0.12);
+  color: #b45309;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+:root[data-theme="dark"] .content-blocks .tool-detail .permission-detail-label {
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+}
+
+.content-blocks .tool-detail .permission-tool-detail code {
+  font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
+  font-size: 11px;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.content-blocks .tool-detail .permission-options {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.content-blocks .tool-detail .permission-btn {
+  padding: 5px 14px;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.content-blocks .tool-detail .permission-btn-allow {
+  background: #22c55e;
+  color: white;
+}
+
+.content-blocks .tool-detail .permission-btn-allow:hover:not(:disabled) {
+  background: #16a34a;
+}
+
+.content-blocks .tool-detail .permission-btn-reject {
+  background: #ef4444;
+  color: white;
+}
+
+.content-blocks .tool-detail .permission-btn-reject:hover:not(:disabled) {
+  background: #dc2626;
+}
+
+.content-blocks .tool-detail .permission-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+:root[data-theme="dark"] .content-blocks .tool-detail .permission-btn-allow {
+  background: #4ade80;
+  color: #1a1a1a;
+}
+
+:root[data-theme="dark"] .content-blocks .tool-detail .permission-btn-allow:hover:not(:disabled) {
+  background: #22c55e;
+}
+
+:root[data-theme="dark"] .content-blocks .tool-detail .permission-btn-reject {
+  background: #f87171;
+  color: #1a1a1a;
+}
+
+:root[data-theme="dark"] .content-blocks .tool-detail .permission-btn-reject:hover:not(:disabled) {
+  background: #ef4444;
+}
+
+.content-blocks .tool-detail .permission-approval-view.permission-responded .permission-btn-allow {
+  background: #22c55e;
+  opacity: 1;
+}
+
+.content-blocks .tool-detail .permission-approval-view.permission-responded .permission-btn-reject {
+  background: #ef4444;
+  opacity: 1;
+}
+
+.content-blocks .tool-detail .permission-result {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-top: 6px;
+}
+
+.content-blocks .tool-detail .permission-result-approved {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.content-blocks .tool-detail .permission-result-denied {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+:root[data-theme="dark"] .content-blocks .tool-detail .permission-result-approved {
+  background: #166534;
+  color: #dcfce7;
+}
+
+:root[data-theme="dark"] .content-blocks .tool-detail .permission-result-denied {
+  background: #991b1b;
+  color: #fee2e2;
+}
+
+.content-blocks .tool-detail .permission-auto-approved .permission-header {
+  opacity: 0.85;
+}
+
+.content-blocks .tool-detail .permission-result-auto-approved {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+}
+
+:root[data-theme="dark"] .content-blocks .tool-detail .permission-result-auto-approved {
+  background: #166534;
+  color: #dcfce7;
+  border-color: #15803d;
 }
 </style>

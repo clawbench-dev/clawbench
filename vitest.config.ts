@@ -17,8 +17,27 @@ function staticAssetResolver(): import('vite').Plugin {
   }
 }
 
+// Vite plugin: patch Vue 3.5 renderSlot null-safety for test environment.
+// Vue 3.5.x accesses currentRenderingInstance.ce without a null check in
+// renderSlot(), which causes TypeError when mocked components render slots
+// outside of a component context (currentRenderingInstance is null).
+function vueRenderSlotNullGuard(): import('vite').Plugin {
+  return {
+    name: 'vue-renderslot-null-guard',
+    enforce: 'pre',
+    transform(code, id) {
+      if (!id.includes('@vue/runtime-core')) return
+      const pattern = 'if (currentRenderingInstance.ce || currentRenderingInstance.parent && isAsyncWrapper(currentRenderingInstance.parent) && currentRenderingInstance.parent.ce) {'
+      const replacement = 'if (currentRenderingInstance && (currentRenderingInstance.ce || currentRenderingInstance.parent && isAsyncWrapper(currentRenderingInstance.parent) && currentRenderingInstance.parent.ce)) {'
+      if (code.includes(pattern) && !code.includes(replacement)) {
+        return code.replace(pattern, replacement)
+      }
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [vue(), staticAssetResolver()],
+  plugins: [vue(), staticAssetResolver(), vueRenderSlotNullGuard()],
   resolve: {
     alias: {
       '@': resolve(__dirname, 'web/src'),
@@ -30,6 +49,7 @@ export default defineConfig({
     css: true,
     exclude: [
       '**/.worktrees/**',
+      '**/.codebuddy/worktrees/**',
       '**/node_modules/**',
       '**/dist/**',
       '**/cypress/**',

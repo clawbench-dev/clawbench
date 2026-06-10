@@ -48,6 +48,7 @@ func TestManager_Subscribe_StoresLocale(t *testing.T) {
 	sub := mgr.Subscribe(nil, &writeMu, "client-locale", "zh")
 	if sub == nil {
 		t.Fatal("expected non-nil subscription")
+		return
 	}
 
 	sub.mu.Lock()
@@ -440,6 +441,7 @@ func TestNewManagerForTest(t *testing.T) {
 	mgr := NewManagerForTest(nil)
 	if mgr == nil {
 		t.Fatal("expected non-nil manager")
+		return
 	}
 	if len(mgr.subscriptions) != 0 {
 		t.Errorf("expected empty subscriptions, got %d", len(mgr.subscriptions))

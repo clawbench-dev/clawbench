@@ -113,6 +113,49 @@ func TestListDir(t *testing.T) {
 	})
 }
 
+func TestGetFile_DoubleSlashPath(t *testing.T) {
+	t.Run("DoubleSlashPath_ReturnsFileContent", func(t *testing.T) {
+		// Regression test: when encodeURIComponent("/path") produces %2Fpath,
+		// Go's ServeMux decodes it back to /, creating a double-slash URL like
+		// /api/file//docs/dev/file.md. This should NOT return InvalidFilePath.
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		createTestFile(t, env.ProjectDir, "docs/dev/test.md", "# Hello")
+
+		// Simulate the double-slash URL that results from encodeURIComponent("/path")
+		req := newRequest(t, http.MethodGet, "/api/file//docs/dev/test.md", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(GetFile, req)
+		assertOK(t, w)
+
+		var result map[string]interface{}
+		err := json.Unmarshal(w.Body.Bytes(), &result)
+		assert.NoError(t, err)
+		assert.Equal(t, "# Hello", result["content"])
+		assert.Equal(t, "test.md", result["name"])
+	})
+
+	t.Run("SingleSlashPath_StillWorks", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		createTestFile(t, env.ProjectDir, "docs/dev/test.md", "# Hello")
+
+		req := newRequest(t, http.MethodGet, "/api/file/docs/dev/test.md", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(GetFile, req)
+		assertOK(t, w)
+
+		var result map[string]interface{}
+		err := json.Unmarshal(w.Body.Bytes(), &result)
+		assert.NoError(t, err)
+		assert.Equal(t, "# Hello", result["content"])
+	})
+}
+
 func TestListFiles(t *testing.T) {
 	t.Run("ListsAllFilesRecursively", func(t *testing.T) {
 		env, teardown := setupTestEnv(t)
@@ -288,6 +331,34 @@ func TestServeLocalFile(t *testing.T) {
 
 		w := callHandler(ServeLocalFile, req)
 		assertStatus(t, w, http.StatusForbidden)
+	})
+
+	t.Run("DoubleSlashPath_ServesFile", func(t *testing.T) {
+		// Regression test: same as TestGetFile_DoubleSlashPath but for local-file endpoint
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		pngData := []byte{
+			0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+			0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+			0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+			0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+			0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
+			0x54, 0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00,
+			0x00, 0x00, 0x02, 0x00, 0x01, 0xE2, 0x21, 0xBC,
+			0x33, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+			0x44, 0xAE, 0x42, 0x60, 0x82,
+		}
+		fullPath := filepath.Join(env.ProjectDir, "assets/img/test.png")
+		_ = os.MkdirAll(filepath.Dir(fullPath), 0o755)
+		_ = os.WriteFile(fullPath, pngData, 0o644)
+
+		req := newRequest(t, http.MethodGet, "/api/local-file//assets/img/test.png", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ServeLocalFile, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "image/png", w.Header().Get("Content-Type"))
 	})
 }
 

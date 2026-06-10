@@ -162,4 +162,25 @@ describe('stop-button-two-click', () => {
     machine.reset()
     expect(machine.getPrimed()).toBe(false)
   })
+
+  // ── Destroy clears timer and primed state ──
+  it('destroy clears timer and primed state', () => {
+    const onPrimeReset = vi.fn()
+    const machine = createStopButtonMachine({ onPrimeReset })
+    machine.click()
+    expect(machine.getPrimed()).toBe(true)
+
+    machine.destroy()
+    expect(machine.getPrimed()).toBe(false)
+
+    // Timer should be cleared — advancing time should NOT trigger onPrimeReset
+    vi.advanceTimersByTime(3000)
+    expect(onPrimeReset).not.toHaveBeenCalled()
+  })
+
+  it('destroy is safe when not primed', () => {
+    const machine = createStopButtonMachine()
+    expect(() => machine.destroy()).not.toThrow()
+    expect(machine.getPrimed()).toBe(false)
+  })
 })

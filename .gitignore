@@ -58,6 +58,11 @@ android/.gradle/
 android/build/
 android/app/build/
 android/local.properties
+
+# ACP submodules (local dev only, not tracked in CI)
+acp-go-sdk/
+acp-go-ironpark/
+acp-spec/
 *.jks
 clawbench-release
 .playwright-cli/
@@ -70,3 +75,13 @@ playwright-report/
 .nyc_output/
 coverage/e2e/
 stdout.log
+/acp-mock
+clawbench-new
+clawbench-test
+
+# Codebuddy runtime
+.codebuddy/worktrees/
+.codebuddy/scheduled_tasks.lock
+
+# Compiled test binaries
+*.test

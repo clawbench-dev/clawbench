@@ -74,6 +74,28 @@ vi.mock('@/composables/useLocale', () => ({
   gt: (key: string) => key,
 }))
 
+vi.mock('@/composables/useSessionIdentity', () => ({
+  updateModeState: vi.fn(),
+  updateAvailableModes: vi.fn(),
+  updateCommandState: vi.fn(),
+  updateThinkingEffortState: vi.fn(),
+  updateAvailableThinkingEfforts: vi.fn(),
+  currentAgentId: { value: 'test-agent-1' },
+}))
+
+vi.mock('@/composables/useAgents', () => ({
+  updateACPModelList: vi.fn(),
+}))
+
+vi.mock('@/composables/usePlanProgress', async (importOriginal) => {
+  const actual = await importOriginal() as any
+  return {
+    updatePlanEntries: vi.fn((entries: any[]) => { actual.updatePlanEntries(entries) }),
+    clearPlanState: vi.fn(() => { actual.clearPlanState() }),
+    usePlanProgress: actual.usePlanProgress,
+  }
+})
+
 // ── Helpers ──
 
 function createOptions(overrides: Record<string, any> = {}) {
@@ -597,6 +619,31 @@ describe('useChatStream', () => {
       expect(options.onQueueConsume).toHaveBeenCalled()
     })
 
+    it('should deduplicate user message when local copy already exists (no id)', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      // Simulate a local user message pushed by sendMessageNow (no id)
+      options.messages.value.push({
+        role: 'user',
+        content: 'Hello AI',
+        blocks: [{ type: 'text', text: 'Hello AI' }],
+        createdAt: new Date().toISOString(),
+      })
+
+      const userCountBefore = options.messages.value.filter((m: any) => m.role === 'user').length
+
+      // queue_consume with the same content should NOT push another user message
+      es.simulate('queue_consume', { text: 'Hello AI' })
+
+      const userCountAfter = options.messages.value.filter((m: any) => m.role === 'user').length
+      expect(userCountAfter).toBe(userCountBefore)
+    })
+
     it('should call onRenderNeeded and onScrollBottom(true)', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
@@ -642,7 +689,7 @@ describe('useChatStream', () => {
       expect(options.onQueueUpdate).toHaveBeenCalledWith([{ id: 'q1' }, { id: 'q2' }])
     })
 
-    it('should NOT call onQueueUpdate when guard fails (ISS-304: guard check first)', () => {
+    it('still calls onQueueUpdate even when guard fails (ISS-304: guard check after queue update)', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
@@ -655,8 +702,9 @@ describe('useChatStream', () => {
 
       es.simulate('queue_update', { queue: [{ id: 'q1' }] })
 
-      // onQueueUpdate is NOT called because guard() now runs first (ISS-304)
-      expect(options.onQueueUpdate).not.toHaveBeenCalled()
+      // onQueueUpdate IS still called because queue update is independent of streaming session (ISS-304)
+      // The guard() check happens after onQueueUpdate to prevent stale events corrupting new session
+      expect(options.onQueueUpdate).toHaveBeenCalledWith([{ id: 'q1' }])
     })
   })
 
@@ -1579,6 +1627,99 @@ describe('useChatStream', () => {
     })
   })
 
+  describe('plan_update event', () => {
+    it('should handle plan_update event and update plan entries', async () => {
+      const { clearPlanState } = await import('@/composables/usePlanProgress')
+      clearPlanState()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('plan_update', {
+        entries: [
+          { content: 'Analyze code', priority: 'high', status: 'completed' },
+          { content: 'Refactor', priority: 'high', status: 'in_progress' },
+          { content: 'Test', priority: 'medium', status: 'pending' },
+        ]
+      })
+
+      const { usePlanProgress } = await import('@/composables/usePlanProgress')
+      const { planEntries, hasPlan } = usePlanProgress()
+      expect(hasPlan.value).toBe(true)
+      expect(planEntries.value).toHaveLength(3)
+      expect(planEntries.value[1].content).toBe('Refactor')
+    })
+
+    it('should ignore plan_update when guard fails', async () => {
+      const { clearPlanState } = await import('@/composables/usePlanProgress')
+      clearPlanState()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      // Change session to fail guard
+      options.currentSessionId.value = 'different-session'
+
+      es.simulate('plan_update', {
+        entries: [
+          { content: 'Task', priority: 'high', status: 'pending' },
+        ]
+      })
+
+      const { usePlanProgress } = await import('@/composables/usePlanProgress')
+      const { hasPlan } = usePlanProgress()
+      expect(hasPlan.value).toBe(false)
+    })
+
+    it('should skip plan_update with invalid JSON', async () => {
+      const { clearPlanState } = await import('@/composables/usePlanProgress')
+      clearPlanState()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      es.listeners.get('plan_update')?.forEach(listener => {
+        listener({ data: 'not-json' } as any)
+      })
+      consoleSpy.mockRestore()
+
+      const { usePlanProgress } = await import('@/composables/usePlanProgress')
+      const { hasPlan } = usePlanProgress()
+      expect(hasPlan.value).toBe(false)
+    })
+
+    it('should skip plan_update when entries is not an array', async () => {
+      const { clearPlanState } = await import('@/composables/usePlanProgress')
+      clearPlanState()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('plan_update', { entries: 'not-an-array' })
+
+      const { usePlanProgress } = await import('@/composables/usePlanProgress')
+      const { hasPlan } = usePlanProgress()
+      expect(hasPlan.value).toBe(false)
+    })
+  })
+
   describe('resume_split event (AutoResume)', () => {
     it('should finalize Phase 1 message and create new Phase 2 streaming message', () => {
       const options = createOptions()
@@ -1727,6 +1868,556 @@ describe('useChatStream', () => {
       es.simulate('resume_split', {})
 
       expect(options.onRenderNeeded).toHaveBeenCalled()
+    })
+  })
+
+  describe('ACP SSE events', () => {
+    it('mode_update → should call updateModeState with currentModeId and availableModes', async () => {
+      const { updateModeState } = await import('@/composables/useSessionIdentity')
+      ;(updateModeState as any).mockClear()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('mode_update', {
+        currentModeId: 'code',
+        availableModes: [
+          { id: 'ask', name: 'Ask' },
+          { id: 'code', name: 'Code' },
+        ],
+      })
+
+      expect(updateModeState).toHaveBeenCalledWith('code', [
+        { id: 'ask', name: 'Ask' },
+        { id: 'code', name: 'Code' },
+      ])
+    })
+
+    it('mode_update → should call updateModeState with only currentModeId', async () => {
+      const { updateModeState } = await import('@/composables/useSessionIdentity')
+      ;(updateModeState as any).mockClear()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('mode_update', {
+        currentModeId: 'ask',
+      })
+
+      expect(updateModeState).toHaveBeenCalledWith('ask', [])
+    })
+
+    it('mode_update → should skip when no currentModeId and no availableModes', async () => {
+      const { updateModeState } = await import('@/composables/useSessionIdentity')
+      ;(updateModeState as any).mockClear()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('mode_update', {
+        currentModeId: '',
+        availableModes: [],
+      })
+
+      expect(updateModeState).not.toHaveBeenCalled()
+    })
+
+    it('mode_update → should skip when guard fails', async () => {
+      const { updateModeState } = await import('@/composables/useSessionIdentity')
+      ;(updateModeState as any).mockClear()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      options.currentSessionId.value = 'different-session'
+
+      es.simulate('mode_update', { currentModeId: 'code', availableModes: [{ id: 'code', name: 'Code' }] })
+
+      expect(updateModeState).not.toHaveBeenCalled()
+    })
+
+    it('mode_update → should skip invalid JSON without crashing', async () => {
+      const { updateModeState } = await import('@/composables/useSessionIdentity')
+      ;(updateModeState as any).mockClear()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      es.listeners.get('mode_update')?.forEach(listener => {
+        listener({ data: 'not-json' } as any)
+      })
+      consoleSpy.mockRestore()
+
+      expect(updateModeState).not.toHaveBeenCalled()
+    })
+
+    it('config_update with category=mode → should call updateModeState with currentValueId', async () => {
+      const { updateModeState } = await import('@/composables/useSessionIdentity')
+      ;(updateModeState as any).mockClear()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('config_update', {
+        currentValueId: 'architect',
+        options: [
+          {
+            category: 'mode',
+            values: [
+              { id: 'ask', name: 'Ask' },
+              { id: 'architect', name: 'Architect' },
+            ],
+          },
+        ],
+      })
+
+      expect(updateModeState).toHaveBeenCalledWith('architect', [
+        { id: 'ask', name: 'Ask' },
+        { id: 'architect', name: 'Architect' },
+      ])
+    })
+
+    it('config_update with id=mode → should call updateModeState with currentValueId', async () => {
+      const { updateModeState } = await import('@/composables/useSessionIdentity')
+      ;(updateModeState as any).mockClear()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('config_update', {
+        currentValueId: 'code',
+        options: [
+          {
+            id: 'mode',
+            values: [
+              { id: 'code', name: 'Code' },
+            ],
+          },
+        ],
+      })
+
+      expect(updateModeState).toHaveBeenCalledWith('code', [
+        { id: 'code', name: 'Code' },
+      ])
+    })
+
+    it('config_update with non-mode category → should not call updateModeState', async () => {
+      const { updateModeState } = await import('@/composables/useSessionIdentity')
+      ;(updateModeState as any).mockClear()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('config_update', {
+        options: [
+          { category: 'other', values: [{ id: 'x', name: 'X' }] },
+        ],
+      })
+
+      expect(updateModeState).not.toHaveBeenCalled()
+    })
+
+    it('config_update → should use value id as name fallback', async () => {
+      const { updateModeState } = await import('@/composables/useSessionIdentity')
+      ;(updateModeState as any).mockClear()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('config_update', {
+        currentValueId: 'ask',
+        options: [
+          {
+            category: 'mode',
+            values: [{ id: 'ask' }], // no name field
+          },
+        ],
+      })
+
+      expect(updateModeState).toHaveBeenCalledWith('ask', [{ id: 'ask', name: 'ask' }])
+    })
+
+    it('thinking_effort_update → should call updateAvailableThinkingEfforts with levels', async () => {
+      const { updateAvailableThinkingEfforts } = await import('@/composables/useSessionIdentity')
+      ;(updateAvailableThinkingEfforts as any).mockClear()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('thinking_effort_update', {
+        currentId: 'medium',
+        availableLevels: [
+          { id: 'low', name: 'Low' },
+          { id: 'medium', name: 'Medium' },
+          { id: 'high', name: 'High' },
+        ],
+      })
+
+      expect(updateAvailableThinkingEfforts).toHaveBeenCalledWith([
+        { id: 'low', name: 'Low' },
+        { id: 'medium', name: 'Medium' },
+        { id: 'high', name: 'High' },
+      ])
+    })
+
+    it('thinking_effort_update → should not call updateAvailableThinkingEfforts when no availableLevels', async () => {
+      const { updateAvailableThinkingEfforts } = await import('@/composables/useSessionIdentity')
+      ;(updateAvailableThinkingEfforts as any).mockClear()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('thinking_effort_update', { currentId: 'low' })
+
+      expect(updateAvailableThinkingEfforts).not.toHaveBeenCalled()
+    })
+
+    it('thinking_effort_update → should use id as name fallback', async () => {
+      const { updateAvailableThinkingEfforts } = await import('@/composables/useSessionIdentity')
+      ;(updateAvailableThinkingEfforts as any).mockClear()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('thinking_effort_update', {
+        currentId: 'high',
+        availableLevels: [{ id: 'high' }], // no name
+      })
+
+      expect(updateAvailableThinkingEfforts).toHaveBeenCalledWith([{ id: 'high', name: 'high' }])
+    })
+
+    it('thinking_effort_update → should skip when guard fails', async () => {
+      const { updateAvailableThinkingEfforts } = await import('@/composables/useSessionIdentity')
+      ;(updateAvailableThinkingEfforts as any).mockClear()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      options.currentSessionId.value = 'different-session'
+
+      es.simulate('thinking_effort_update', {
+        currentId: 'medium',
+        availableLevels: [{ id: 'medium', name: 'Medium' }],
+      })
+
+      expect(updateAvailableThinkingEfforts).not.toHaveBeenCalled()
+    })
+
+    it('commands_update → should call updateCommandState with commands array', async () => {
+      const { updateCommandState } = await import('@/composables/useSessionIdentity')
+      ;(updateCommandState as any).mockClear()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('commands_update', {
+        commands: [
+          { name: '/help', description: 'Show help' },
+          { name: '/compact', description: 'Compact context', inputHint: '[instructions]' },
+        ],
+      })
+
+      expect(updateCommandState).toHaveBeenCalledWith([
+        { name: '/help', description: 'Show help' },
+        { name: '/compact', description: 'Compact context', inputHint: '[instructions]' },
+      ])
+    })
+
+    it('commands_update → should not call updateCommandState when commands is not an array', async () => {
+      const { updateCommandState } = await import('@/composables/useSessionIdentity')
+      ;(updateCommandState as any).mockClear()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('commands_update', { commands: 'not-an-array' })
+
+      expect(updateCommandState).not.toHaveBeenCalled()
+    })
+
+    it('commands_update → should skip when guard fails', async () => {
+      const { updateCommandState } = await import('@/composables/useSessionIdentity')
+      ;(updateCommandState as any).mockClear()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      options.currentSessionId.value = 'different-session'
+
+      es.simulate('commands_update', { commands: [{ name: '/help', description: 'Help' }] })
+
+      expect(updateCommandState).not.toHaveBeenCalled()
+    })
+
+    it('model_list_update → should call updateACPModelList with agent ID and models', async () => {
+      const { updateACPModelList } = await import('@/composables/useAgents')
+      ;(updateACPModelList as any).mockClear()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('model_list_update', {
+        models: [
+          { id: 'gpt-4', name: 'GPT-4' },
+          { id: 'gpt-3.5', name: 'GPT-3.5' },
+        ],
+        currentModelId: 'gpt-4',
+      })
+
+      expect(updateACPModelList).toHaveBeenCalledWith('test-agent-1', [
+        { id: 'gpt-4', name: 'GPT-4' },
+        { id: 'gpt-3.5', name: 'GPT-3.5' },
+      ])
+    })
+
+    it('model_list_update → should not call updateACPModelList when models is empty', async () => {
+      const { updateACPModelList } = await import('@/composables/useAgents')
+      ;(updateACPModelList as any).mockClear()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('model_list_update', { models: [], currentModelId: '' })
+
+      expect(updateACPModelList).not.toHaveBeenCalled()
+    })
+
+    it('model_list_update → should not call updateACPModelList when models is not an array', async () => {
+      const { updateACPModelList } = await import('@/composables/useAgents')
+      ;(updateACPModelList as any).mockClear()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('model_list_update', { models: 'not-array' })
+
+      expect(updateACPModelList).not.toHaveBeenCalled()
+    })
+
+    it('model_list_update → should not call updateACPModelList when agentId is empty', async () => {
+      const { updateACPModelList } = await import('@/composables/useAgents')
+      const { currentAgentId } = await import('@/composables/useSessionIdentity')
+      ;(updateACPModelList as any).mockClear()
+      const origAgentId = currentAgentId.value
+      currentAgentId.value = ''
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('model_list_update', {
+        models: [{ id: 'gpt-4', name: 'GPT-4' }],
+        currentModelId: 'gpt-4',
+      })
+
+      expect(updateACPModelList).not.toHaveBeenCalled()
+      currentAgentId.value = origAgentId
+    })
+
+    it('model_list_update → should skip when guard fails', async () => {
+      const { updateACPModelList } = await import('@/composables/useAgents')
+      ;(updateACPModelList as any).mockClear()
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      options.currentSessionId.value = 'different-session'
+
+      es.simulate('model_list_update', {
+        models: [{ id: 'gpt-4', name: 'GPT-4' }],
+        currentModelId: 'gpt-4',
+      })
+
+      expect(updateACPModelList).not.toHaveBeenCalled()
+    })
+
+    it('thinking_done → should mark last thinking block as done', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      // Add a thinking block first
+      es.simulate('thinking', { text: 'Deep thought' })
+
+      const assistantMsg = options.messages.value.find(
+        (m: any) => m.role === 'assistant' && m.streaming
+      )
+      const thinkingBlock = assistantMsg.blocks.find((b: any) => b.type === 'thinking')
+      expect(thinkingBlock).toBeDefined()
+      expect(thinkingBlock.done).toBeUndefined()
+
+      // Send thinking_done — should mark the thinking block as done
+      es.simulate('thinking_done', {})
+
+      expect(thinkingBlock.done).toBe(true)
+    })
+
+    it('thinking_done → should mark only the LAST thinking block as done', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      // Add two thinking blocks separated by a text block (boundary)
+      // The mock findLastBlockOfType will coalesce, so we need to
+      // manually push blocks to test the reverse iteration
+      const assistantMsg = options.messages.value.find(
+        (m: any) => m.role === 'assistant' && m.streaming
+      )
+      assistantMsg.blocks.push({ type: 'thinking', text: 'First thought' })
+      assistantMsg.blocks.push({ type: 'text', text: 'Some content' })
+      assistantMsg.blocks.push({ type: 'thinking', text: 'Second thought' })
+
+      es.simulate('thinking_done', {})
+
+      // Only the last thinking block should be marked as done
+      expect(assistantMsg.blocks[0].done).toBeUndefined()
+      expect(assistantMsg.blocks[2].done).toBe(true)
+    })
+
+    it('thinking_done → should do nothing when no thinking block exists', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      // No thinking blocks — just a text block
+      es.simulate('content', { content: 'Hello' })
+
+      const assistantMsg = options.messages.value.find(
+        (m: any) => m.role === 'assistant' && m.streaming
+      )
+      const blocksLengthBefore = assistantMsg.blocks.length
+
+      // Should not crash or modify blocks
+      es.simulate('thinking_done', {})
+
+      expect(assistantMsg.blocks.length).toBe(blocksLengthBefore)
+    })
+
+    it('thinking_done → should call onRenderNeeded', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('thinking', { text: 'Thinking...' })
+      options.onRenderNeeded.mockClear()
+
+      es.simulate('thinking_done', {})
+
+      expect(options.onRenderNeeded).toHaveBeenCalled()
+    })
+
+    it('thinking_done → should skip when guard fails', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('thinking', { text: 'Thinking...' })
+      options.currentSessionId.value = 'different-session'
+      options.onRenderNeeded.mockClear()
+
+      es.simulate('thinking_done', {})
+
+      expect(options.onRenderNeeded).not.toHaveBeenCalled()
     })
   })
 })

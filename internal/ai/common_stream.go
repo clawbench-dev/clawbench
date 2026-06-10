@@ -3,6 +3,7 @@ package ai
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 )
 
 // buildBaseStreamArgs builds the shared base arguments for Claude-family CLI backends.
@@ -19,8 +20,18 @@ func buildBaseStreamArgs(req ChatRequest, extraFlags func(ChatRequest) []string)
 
 	if req.Resume {
 		args = append(args, "--resume", req.SessionID)
+		slog.Info("cli: --resume",
+			slog.String("backend", req.AgentID),
+			slog.String("session_id", req.SessionID),
+			slog.Int("assistant_msg_count", req.AssistantMessageCount))
 	} else if req.SessionID != "" {
 		args = append(args, "--session-id", req.SessionID)
+		slog.Info("cli: --session-id (new conversation)",
+			slog.String("backend", req.AgentID),
+			slog.String("session_id", req.SessionID))
+	} else {
+		slog.Warn("cli: no session ID, starting fresh CLI session",
+			slog.String("backend", req.AgentID))
 	}
 
 	if req.WorkDir != "" {
@@ -76,22 +87,24 @@ func normalizeToolName(toolName string) string {
 		return "Write"
 	case "edit_file", "replace", "edit":
 		return "Edit"
-	case "shell", "run_command", "bash", "exec_shell":
+	case "shell", "run_command", "bash", "exec_shell", "terminal", "run_shell_command":
 		return "Bash"
-	case "list_files", "list_directory", "ls", "list_dir":
+	case "list_files", "list_directory", "ls", "list_dir", "list":
 		return "LS"
-	case "search_files", "grep", "grep_files":
+	case "search_files", "grep", "grep_files", "grep_search", "search_file", "search_directory":
 		return "Grep"
-	case "file_search", "glob":
+	case "file_search", "glob", "find":
 		return "Glob"
 	case "web_fetch", "webfetch", "fetch_url":
 		return "WebFetch"
 	case "google_web_search", "websearch", "web_search":
 		return "WebSearch"
-	case "invoke_agent", "task", "agent_spawn", "spawn_agent", "delegate_to_agent":
+	case "invoke_agent", "task", "agent_spawn", "spawn_agent", "delegate_to_agent", "agent":
 		return "Agent"
-	case "enter_plan_mode":
+	case "enter_plan_mode", "enterplanmode":
 		return "EnterPlanMode"
+	case "exit_plan_mode", "exitplanmode":
+		return "ExitPlanMode"
 	case "activate_skill", "skill", "load_skill":
 		return "Skill"
 	case "todowrite", "todo_write", "checklist_write":
@@ -129,6 +142,8 @@ func normalizeToolInput(rawInput []byte, pathMappings map[string]string) ([]byte
 	// for the same source key (e.g., filePath → custom_path).
 	defaultMappings := map[string]string{
 		"filePath": "file_path",
+		"cmd":      "command",
+		"exec":     "command",
 	}
 
 	// Merge: caller pathMappings take precedence over defaults.
@@ -155,6 +170,55 @@ func normalizeToolInput(rawInput []byte, pathMappings map[string]string) ([]byte
 		return rawInput, err
 	}
 	return normalized, nil
+}
+
+// perAgentInputRemaps maps agent key → field remap table for normalizeToolInput.
+// Keys are "agent_mode" format (e.g., "gemini_cli", "claude_acp").
+// Each entry contains only agent-specific overrides; common mappings
+// (filePath→file_path, cmd→command, exec→command) are in defaultMappings.
+var perAgentInputRemaps = map[string]map[string]string{
+	// CLI layer
+	"gemini_cli": {
+		"dirPath":         "path",              // camelCase fallback
+		"dir_path":        "path",              // Gemini CLI outputs snake_case dir_path → canonical path (for Grep/Glob/LS)
+		"allow_multiple":  "replace_all",       // Edit allow_multiple → replace_all
+		"is_background":   "run_in_background", // Bash is_background → run_in_background
+		"include_pattern": "glob",              // Grep include_pattern → canonical glob
+		"name":            "skill",             // activate_skill name → canonical skill
+	},
+	"opencode_cli": {
+		"oldString": "old_string", "newString": "new_string",
+		"replaceAll": "replace_all", // Edit replaceAll → replace_all
+		"include":    "glob",        // Grep include → canonical glob
+		"name":       "skill",       // Skill name → skill
+	},
+	"deepseek_cli": {
+		"path": "file_path", "search": "old_string", "replace": "new_string",
+		"filePaths": "file_paths", "dirPath": "path",
+	},
+	"pi_cli": {"path": "file_path"},
+	"codex_cli": {
+		"cmd":           "command",       // exec_command cmd → command (also in defaultMappings but explicit here)
+		"agent_type":    "subagent_type", // spawn_agent agent_type → subagent_type
+		"message":       "prompt",        // spawn_agent message → prompt
+		"justification": "description",   // exec_command justification → description
+	},
+	// ACP layer
+	"claude_acp":    {}, // Claude ACP rawInput already uses snake_case
+	"opencode_acp":  {"oldString": "old_string", "newString": "new_string", "replaceAll": "replace_all"},
+	"codebuddy_acp": {},
+	"gemini_acp":    {}, // Gemini ACP has no rawInput; normalization done during inference
+	"generic_acp": { // Full remap table for generic fallback path
+		"oldString": "old_string", "newString": "new_string",
+		"dirPath": "path", "filePath": "file_path",
+		"cellIndex": "cell_index", "cellType": "cell_type",
+	},
+}
+
+// getRemaps returns the input remap table for the given agent key.
+// Returns nil if no agent-specific remaps are defined.
+func getRemaps(key string) map[string]string {
+	return perAgentInputRemaps[key]
 }
 
 // execCommandJSON is a shared helper that returns canonical {"command":"..."} JSON

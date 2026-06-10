@@ -215,3 +215,27 @@ export function extractAtCommand(text: string): AtCommandBadge | null {
   if (!match) return null
   return { command: match[1], rest: match[2] || '' }
 }
+
+// ────────────────────────────────────────────────────────────
+// Slash command badge detection (ACP backend commands)
+// ────────────────────────────────────────────────────────────
+
+/** Match slash command prefix at start of text: /command-name (with optional space+rest) */
+const SLASH_COMMAND_RE = /^\/(\w[\w:-]*)(\s[\s\S]*)?$/
+
+export interface SlashCommandBadge {
+  command: string    // e.g. "/commit"
+  rest: string       // e.g. " fix auth bug" (including the leading space) or ""
+}
+
+/**
+ * Extract slash command prefix from a text block.
+ * Returns null if the text doesn't start with a slash command.
+ * Unlike @ commands, slash commands are dynamic (from ACP) — any /word match is valid.
+ */
+export function extractSlashCommand(text: string): SlashCommandBadge | null {
+  if (!text.startsWith('/')) return null
+  const match = text.match(SLASH_COMMAND_RE)
+  if (!match) return null
+  return { command: '/' + match[1], rest: match[2] || '' }
+}

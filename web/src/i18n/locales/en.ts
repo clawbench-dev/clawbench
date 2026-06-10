@@ -82,8 +82,9 @@ export default {
       placeholder: 'Type a message...',
       placeholderQueue: 'Type a message to enqueue...',
       placeholderOptional: 'Add description (optional)...',
-      placeholderQuickSend: 'Tap ⚡ for quick commands →',
+      placeholderQuickSend: 'Tap ⚡ to quick send message →',
       placeholderAtCommand: "Type {'@'} for built-in commands",
+      placeholderCommand: "Type {'@'} or {'/'} for commands",
       send: 'Send',
       enqueue: 'Enqueue',
       quickMenu: 'Quick commands',
@@ -92,9 +93,12 @@ export default {
       confirmStop: 'Confirm stop',
     },
     atCommand: {
-      title: 'Commands',
+      title: 'ClawBench Commands',
       chatsearchDesc: 'Search chat history',
       taskDesc: 'Manage scheduled tasks',
+    },
+    slashCommand: {
+      title: 'Agent Commands',
     },
     actions: {
       session: 'Chat',
@@ -106,17 +110,42 @@ export default {
       scheduled: 'Schedule',
       autoSpeech: 'Auto speech',
       readAloud: 'Read',
-      switchModel: 'Switch model',
+      sessionSettings: 'Session settings',
       switchThinkingEffort: 'Switch thinking effort',
       attachment: 'Attach',
+    },
+    sessionInfo: {
+      default: 'Default',
     },
     create: {
       selectAgentOrLongPress: 'Select agent (long press to create new)',
     },
     modelSwitcher: {
-      title: 'Select model',
+      title: 'Model',
     },
-    modelModal: {
+    modeSwitcher: {
+      title: 'Mode',
+      cliHint: 'CLI mode does not support switching. Switch to ACP mode first.',
+    },
+    transportSwitcher: {
+      title: 'API',
+      acp: 'ACP Mode',
+      acpDesc: 'Structured protocol communication with mode switching and permission management',
+      cli: 'CLI Mode',
+      cliDesc: 'Command-line text interaction with better compatibility',
+    },
+    autoApprove: {
+      title: 'Auto-Approve',
+      description: 'Automatically approve all permission requests from the agent.',
+    },
+    plan: {
+      title: 'Execution Plan',
+      completedCount: '{completed}/{total} done',
+      priorityHigh: 'High',
+      priorityMedium: 'Med',
+      priorityLow: 'Low',
+    },
+    sessionSetting: {
       searchPlaceholder: 'Search models...',
       refresh: 'Refresh models',
       refreshSuccess: 'Models refreshed',
@@ -126,10 +155,11 @@ export default {
       defaultBadge: 'Default',
       setAsDefault: 'Set as default',
       noModels: 'No models available',
+      notAvailable: 'Not available in current mode',
       noSearchResults: 'No matching models',
     },
     thinkingEffortSwitcher: {
-      title: 'Thinking effort',
+      title: 'Thinking',
       auto: 'Auto',
     },
     attach: {
@@ -146,7 +176,7 @@ export default {
       openDirectory: 'Open directory',
     },
     quickSend: {
-      title: 'Quick send',
+      title: 'Quick Send Message',
       tapToFill: 'Hold to send',
       edit: 'Edit',
       addItem: 'Add item',
@@ -213,6 +243,10 @@ export default {
       allMessagesLoaded: 'All messages loaded',
       startConversation: 'Send a message to start',
       startConversationAI: 'Send a message to start chatting with AI',
+      scrollToTop: 'Scroll to top',
+      scrollToPrev: 'Previous message',
+      scrollToNext: 'Next message',
+      scrollToBottom: 'Scroll to bottom',
     },
     pending: {
       uploadedAttachment: 'Upload',
@@ -277,6 +311,9 @@ export default {
       time: 'Time:',
       relatedFile: 'Related file:',
       backend: 'Backend:',
+      transport: 'Transport:',
+      mode: 'Mode:',
+      thinkingEffort: 'Thinking effort:',
       model: 'Model:',
       inputTokens: 'Input tokens:',
       outputTokens: 'Output tokens:',
@@ -306,6 +343,7 @@ export default {
     running: 'Running',
     fromTask: 'Task',
     confirmDelete: 'Delete this session and all chat history?',
+    confirmDeleteRunning: 'This session is running. Deleting will terminate it and clear the history. Continue?',
     unnamed: 'Unnamed session',
     queueFailed: 'Failed to enqueue',
     removeFailed: 'Failed to remove',
@@ -779,8 +817,29 @@ export default {
       pattern: 'pattern',
       path: 'path',
     },
+    ls: {
+      currentDir: 'Current directory',
+    },
     webFetch: {
       url: 'URL',
+    },
+    todoRead: {
+      label: 'Read todo list',
+    },
+    task: {
+      subject: 'Subject',
+      description: 'Description',
+      name: 'Name',
+      cron: 'Cron',
+      prompt: 'Prompt',
+      agent: 'Agent',
+      status: 'Status',
+      owner: 'Owner',
+      activeForm: 'In progress',
+      noDetails: '(No details)',
+    },
+    sendMessage: {
+      to: 'To',
     },
     askUser: {
       noQuestions: '(No questions)',
@@ -789,6 +848,15 @@ export default {
       name: 'Ask Question',
       supplementary: 'Additional info',
       supplementaryPlaceholder: 'Optional, add extra details…',
+    },
+    permission: {
+      title: 'Permission Request',
+      file: 'File',
+      command: 'Command',
+      approved: 'Approved',
+      denied: 'Denied',
+      autoApprovedTitle: 'Auto-Approved',
+      autoApproved: 'Auto-Approved',
     },
   },
   agents: {

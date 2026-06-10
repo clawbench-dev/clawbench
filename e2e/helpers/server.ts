@@ -41,11 +41,11 @@ export function getServerURL(): string {
 }
 
 /**
- * Start the Go backend with MockAIBackend for E2E testing.
+ * Start the Go backend with ACP mock agent for E2E testing.
  *
  * Creates an isolated temp directory with:
  * - config/config.yaml (test configuration with known password)
- * - config/agents/mock.yaml (MockAIBackend agent definition)
+ * - config/agents/acp-mock.yaml (ACP mock agent using real ACP acp-stdio protocol)
  * - .clawbench/ (database directory)
  *
  * The server is started from the temp directory so it picks up our config.
@@ -64,10 +64,12 @@ export async function startServer(): Promise<ServerState> {
   writeFileSync(join(configDir, 'config.yaml'), `port: ${port}
 password: "${password}"
 log_level: warn
-default_agent: mock
+default_agent: acp-mock
 chat:
   initial_messages: 20
   page_size: 20
+session:
+  max_count: 0
 terminal:
   enabled: true
   idle_timeout: 1h
@@ -80,16 +82,28 @@ rag:
   // 3. Create .clawbench dir so DB is created in our temp dir
   mkdirSync(join(tempDir, '.clawbench'), { recursive: true })
 
-  // 4. Write mock agent config
+  // 4. Write agent config
   const agentsDir = join(tempDir, 'config', 'agents')
   mkdirSync(agentsDir, { recursive: true })
-  writeFileSync(join(agentsDir, 'mock.yaml'), `backend: mock
-icon: "\\U0001F9EA"
-id: mock
-name: Mock Agent
-specialty: E2E Testing
+
+  // ACP mock agent (uses real ACP acp-stdio protocol with slash commands, modes)
+  // acp_command points to the acp-mock binary we'll copy to the temp dir
+  writeFileSync(join(agentsDir, 'acp-mock.yaml'), `backend: acp-mock
+icon: "\\U0001F916"
+id: acp-mock
+name: ACP Mock Agent
+specialty: E2E Testing (ACP)
+transport: acp-stdio
+acp_command: ./acp-mock
+preferred_model: mock-pro
+models:
+  - id: mock-pro
+    name: Mock Pro
+    default: true
+  - id: mock-fast
+    name: Mock Fast
 system_prompt: |
-    You are a mock assistant for E2E testing.
+    You are a mock ACP agent for E2E testing.
 `)
 
   // 5. Copy the pre-built Go binary to temp dir
@@ -98,6 +112,16 @@ system_prompt: |
   const tempBinPath = join(tempDir, 'clawbench')
   writeFileSync(tempBinPath, readFileSync(binPath))
   chmodSync(tempBinPath, 0o755) // Make binary executable
+
+  // 5a. Copy the ACP mock agent binary (used by acp-mock agent with acp-stdio transport)
+  const acpMockBinPath = join(projectRoot, 'acp-mock')
+  const tempAcpMockBinPath = join(tempDir, 'acp-mock')
+  try {
+    writeFileSync(tempAcpMockBinPath, readFileSync(acpMockBinPath))
+    chmodSync(tempAcpMockBinPath, 0o755)
+  } catch {
+    console.warn('[E2E] Warning: acp-mock binary not found, ACP agent tests will fail')
+  }
 
   // 5b. Copy frontend build artifacts (public/ directory) to temp dir
   // The Go server serves static files from <BinDir>/public/

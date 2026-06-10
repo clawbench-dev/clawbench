@@ -43,7 +43,7 @@ const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
 
 // Import after mocks
-import { useTaskTab } from '@/composables/useTaskTab.ts'
+import { useTaskTab, onTaskEvent } from '@/composables/useTaskTab.ts'
 import { store } from '@/stores/app'
 
 beforeEach(() => {
@@ -90,7 +90,7 @@ describe('useTaskTab', () => {
 
       await loadTasks()
 
-      expect(mockFetch).toHaveBeenCalledWith('/api/tasks')
+      expect(mockFetch).toHaveBeenCalledWith('/api/tasks', expect.any(Object))
       expect(store.state.tasks.length).toBe(2)
       expect(store.state.taskRunning).toBe(false)
       expect(store.state.taskUnread).toBe(false)
@@ -368,6 +368,72 @@ describe('useTaskTab', () => {
       await refreshExecDetail()
 
       expect(mockFetch).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('loadTasks — abort', () => {
+    it('aborts previous in-flight request when loadTasks is called again', async () => {
+      const { loadTasks } = useTaskTab()
+
+      // First call: return a promise that doesn't resolve immediately
+      let resolveFirst: (v: any) => void
+      mockFetch.mockReturnValue(new Promise(r => { resolveFirst = r }))
+
+      const firstCall = loadTasks()
+
+      // Second call should abort the first
+      mockTasksResponse([])
+      const secondCall = loadTasks()
+
+      // Resolve the first fetch (it should be aborted)
+      resolveFirst!({ ok: true, json: () => Promise.resolve({ tasks: [], hasUnread: false }) })
+
+      await Promise.allSettled([firstCall, secondCall])
+
+      // The second call should pass with signal
+      expect(mockFetch).toHaveBeenLastCalledWith('/api/tasks', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    })
+
+    it('ignores AbortError from superseded requests', async () => {
+      const { loadTasks } = useTaskTab()
+
+      // First call aborts with AbortError
+      mockFetch.mockRejectedValueOnce({ name: 'AbortError' })
+      // Second call succeeds
+      mockTasksResponse([])
+
+      // Should not throw on AbortError
+      const p1 = loadTasks()
+      const p2 = loadTasks()
+      await Promise.allSettled([p1, p2])
+
+      // Store should reflect the second (successful) call
+      expect(store.state.tasks).toEqual([])
+    })
+  })
+
+  describe('onTaskEvent', () => {
+    it('debounces rapid events into a single loadTasks call', async () => {
+      vi.useFakeTimers()
+      useTaskTab() // ensure module state is initialized
+      mockTasksResponse([])
+
+      // Fire 3 rapid events (onTaskEvent is a standalone export)
+      onTaskEvent({ task_id: '1', status: 'completed' })
+      onTaskEvent({ task_id: '2', status: 'completed' })
+      onTaskEvent({ task_id: '3', status: 'completed' })
+
+      // Before debounce fires, loadTasks should not have been called yet
+      // (beyond any previous calls in beforeEach)
+      const callCountBefore = mockFetch.mock.calls.length
+
+      // Advance past 200ms debounce
+      vi.advanceTimersByTime(250)
+
+      // Only one additional loadTasks call should have been made
+      expect(mockFetch.mock.calls.length).toBe(callCountBefore + 1)
+
+      vi.useRealTimers()
     })
   })
 

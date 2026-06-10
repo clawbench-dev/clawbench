@@ -37,6 +37,8 @@ func setupTestDBForAgents(t *testing.T) *sql.DB {
 			models_auto_detected INTEGER NOT NULL DEFAULT 0,
 			source TEXT NOT NULL DEFAULT 'auto',
 			sort_order INTEGER NOT NULL DEFAULT 0,
+			transport TEXT NOT NULL DEFAULT 'cli',
+			acp_command TEXT NOT NULL DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -212,7 +214,7 @@ func TestPatchAgent(t *testing.T) {
 	require.NoError(t, err)
 
 	// Patch preferred model and thinking
-	err = service.PatchAgent(db, "pi", "openai/gpt-5.5", "high")
+	err = service.PatchAgent(db, "pi", "openai/gpt-5.5", "high", "cli")
 	require.NoError(t, err)
 
 	// Verify
@@ -239,7 +241,7 @@ func TestPatchAgent_ClearPreferences(t *testing.T) {
 	require.NoError(t, err)
 
 	// Patch to clear preferences
-	err = service.PatchAgent(db, "pi", "", "")
+	err = service.PatchAgent(db, "pi", "", "", "cli")
 	require.NoError(t, err)
 
 	// Verify preferences are cleared
@@ -254,7 +256,7 @@ func TestPatchAgent_NotFound(t *testing.T) {
 	db := setupTestDBForAgents(t)
 
 	// Patching non-existent agent should not error (no rows affected)
-	err := service.PatchAgent(db, "nonexistent", "model", "high")
+	err := service.PatchAgent(db, "nonexistent", "model", "high", "cli")
 	assert.NoError(t, err)
 }
 
@@ -391,6 +393,7 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		"command": true, "thinking_effort": true, "thinking_effort_levels": true,
 		"preferred_model": true, "preferred_thinking_effort": true, "system_prompt": true,
 		"models": true, "models_auto_detected": true, "source": true, "sort_order": true,
+		"transport": true, "acp_command": true,
 		"created_at": true, "updated_at": true,
 	}
 
@@ -490,6 +493,51 @@ func TestSaveAgent_ModelsWithSpecialChars(t *testing.T) {
 	assert.Equal(t, "anthropic/claude-sonnet-4-6", agents[0].Models[0].ID)
 	assert.Equal(t, "Claude Sonnet 4.6", agents[0].Models[0].Name)
 	assert.Contains(t, agents[0].SystemPrompt, "newlines and \"quotes\"")
+}
+
+func TestSaveAgent_WithTransport(t *testing.T) {
+	db := setupTestDBForAgents(t)
+
+	agent := &model.Agent{
+		ID:         "gemini",
+		Name:       "Gemini",
+		Backend:    "gemini",
+		Source:     "auto",
+		Transport:  "acp-stdio",
+		AcpCommand: "gemini --acp",
+	}
+
+	err := service.SaveAgent(db, agent)
+	require.NoError(t, err)
+
+	// Load and verify transport fields
+	agents, err := service.LoadAgentsFromDB(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+
+	got := agents[0]
+	assert.Equal(t, "acp-stdio", got.Transport)
+	assert.Equal(t, "gemini --acp", got.AcpCommand)
+}
+
+func TestSaveAgent_TransportDefaultsToCLI(t *testing.T) {
+	db := setupTestDBForAgents(t)
+
+	// Save agent without Transport — should default to "cli"
+	agent := &model.Agent{
+		ID:      "pi",
+		Name:    "Pi",
+		Backend: "pi",
+		Source:  "auto",
+	}
+
+	err := service.SaveAgent(db, agent)
+	require.NoError(t, err)
+
+	agents, err := service.LoadAgentsFromDB(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, "cli", agents[0].Transport)
 }
 
 // Helper to verify JSON serialization of models

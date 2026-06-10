@@ -17,6 +17,12 @@ const formMode = ref<'create' | 'edit'>('create')
 // Module-level polling timer
 let pollingTimer: ReturnType<typeof setInterval> | null = null
 
+// AbortController for loadTasks — aborts previous in-flight request
+let loadTasksAbortController: AbortController | null = null
+
+// Debounce timer for onTaskEvent — coalesces rapid WS events into single loadTasks()
+let onTaskEventDebounceTimer: ReturnType<typeof setTimeout> | null = null
+
 // Guard: when markAllTasksRead is in progress, suppress loadTasks
 // from overwriting taskUnread back to true (race condition fix)
 let markingReadInProgress = false
@@ -84,8 +90,15 @@ function onTaskCompleted(task: any) {
 // --- Module-level data methods ---
 
 async function loadTasks() {
+    // Abort previous in-flight request to prevent stale response overwriting fresh data
+    if (loadTasksAbortController) {
+        loadTasksAbortController.abort()
+    }
+    const controller = new AbortController()
+    loadTasksAbortController = controller
+
     try {
-        const resp = await fetch('/api/tasks')
+        const resp = await fetch('/api/tasks', { signal: controller.signal })
         if (!resp.ok) return
         const data = await resp.json()
         // Race condition guard: if markAllTasksRead is in progress,
@@ -143,7 +156,9 @@ async function loadTasks() {
         ) {
             store.state.tasks = newTasks
         }
-    } catch {
+    } catch (e: any) {
+        // AbortError is expected when a newer request supersedes this one
+        if (e?.name === 'AbortError') return
         // Silently ignore fetch errors (network down, server restart, etc.)
     }
 }
@@ -206,8 +221,12 @@ async function markTaskRead(taskId: number) {
 // Called from WS task_update event
 export function onTaskEvent(data: { task_id?: string; status?: string; execution_id?: string } | undefined) {
     if (!data) return
-    // Refresh task list on any task status change
-    loadTasks()
+    // Debounce: coalesce rapid WS events into a single loadTasks() call
+    if (onTaskEventDebounceTimer) clearTimeout(onTaskEventDebounceTimer)
+    onTaskEventDebounceTimer = setTimeout(() => {
+        onTaskEventDebounceTimer = null
+        loadTasks()
+    }, 200)
 }
 
 export function useTaskTab() {

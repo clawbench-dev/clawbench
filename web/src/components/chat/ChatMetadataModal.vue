@@ -22,6 +22,18 @@
         <span class="metadata-label">{{ t('chat.metadata.backend') }}</span>
         <span class="metadata-value">{{ backend }}</span>
       </div>
+      <div v-if="data.transport" class="metadata-item">
+        <span class="metadata-label">{{ t('chat.metadata.transport') }}</span>
+        <span class="metadata-value">{{ data.transport === 'cli' ? 'CLI' : 'ACP' }}</span>
+      </div>
+      <div v-if="data.mode" class="metadata-item">
+        <span class="metadata-label">{{ t('chat.metadata.mode') }}</span>
+        <span class="metadata-value">{{ data.mode }}</span>
+      </div>
+      <div v-if="data.thinkingEffort" class="metadata-item">
+        <span class="metadata-label">{{ t('chat.metadata.thinkingEffort') }}</span>
+        <span class="metadata-value">{{ data.thinkingEffort }}</span>
+      </div>
       <div v-if="data.model" class="metadata-item">
         <span class="metadata-label">{{ t('chat.metadata.model') }}</span>
         <span class="metadata-value">{{ data.model }}</span>

@@ -85,3 +85,4 @@ PushTaskCompleted: AI任务完成
 PushSessionEnded: AI会话已结束
 PushScheduledTaskDone: 计划任务已完成
 NotFound: 未找到
+PermissionNotFound: 未找到待审批的权限请求

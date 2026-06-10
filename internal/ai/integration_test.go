@@ -116,9 +116,9 @@ func requireCodexEnv(t *testing.T) {
 	}
 }
 
-// collectEvents reads all events from the channel until it closes or timeout.
+// collectAllEvents reads all events from the channel until it closes or timeout.
 // Returns the collected events slice.
-func collectEvents(t *testing.T, ch <-chan StreamEvent, timeout time.Duration) []StreamEvent {
+func collectAllEvents(t *testing.T, ch <-chan StreamEvent, timeout time.Duration) []StreamEvent {
 	t.Helper()
 	var events []StreamEvent
 	timer := time.NewTimer(timeout)
@@ -213,7 +213,7 @@ func TestIntegration_Claude_NewSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 90*time.Second)
+	events := collectAllEvents(t, ch, 90*time.Second)
 
 	requireEventSequence(t, events, "content", "metadata")
 	content := concatContent(events)
@@ -246,7 +246,7 @@ func TestIntegration_Codebuddy_NewSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 90*time.Second)
+	events := collectAllEvents(t, ch, 90*time.Second)
 
 	requireEventSequence(t, events, "content", "metadata")
 	content := concatContent(events)
@@ -278,7 +278,7 @@ func TestIntegration_Gemini_NewSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 90*time.Second)
+	events := collectAllEvents(t, ch, 90*time.Second)
 
 	contentEvents := findEvents(events, "content")
 	if len(contentEvents) == 0 {
@@ -314,7 +314,7 @@ func TestIntegration_OpenCode_NewSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 90*time.Second)
+	events := collectAllEvents(t, ch, 90*time.Second)
 
 	requireEventSequence(t, events, "content", "metadata")
 	content := concatContent(events)
@@ -343,7 +343,7 @@ func TestIntegration_Codex_NewSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 90*time.Second)
+	events := collectAllEvents(t, ch, 90*time.Second)
 
 	requireEventSequence(t, events, "content", "metadata")
 	content := concatContent(events)
@@ -374,7 +374,7 @@ func TestIntegration_Claude_StreamEvents(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 90*time.Second)
+	events := collectAllEvents(t, ch, 90*time.Second)
 
 	// Claude with --include-partial-messages should produce incremental content deltas
 	contentEvents := findEvents(events, "content")
@@ -405,7 +405,7 @@ func TestIntegration_Codebuddy_StreamEvents(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 90*time.Second)
+	events := collectAllEvents(t, ch, 90*time.Second)
 
 	contentEvents := findEvents(events, "content")
 	assert.NotEmpty(t, contentEvents, "should have content events")
@@ -434,7 +434,7 @@ func TestIntegration_Gemini_StreamEvents(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 90*time.Second)
+	events := collectAllEvents(t, ch, 90*time.Second)
 
 	contentEvents := findEvents(events, "content")
 	if len(contentEvents) == 0 {
@@ -466,7 +466,7 @@ func TestIntegration_OpenCode_StreamEvents(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 90*time.Second)
+	events := collectAllEvents(t, ch, 90*time.Second)
 
 	// OpenCode may produce thinking or content events (or both)
 	thinkingEvents := findEvents(events, "thinking")
@@ -496,7 +496,7 @@ func TestIntegration_Codex_StreamEvents(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 90*time.Second)
+	events := collectAllEvents(t, ch, 90*time.Second)
 
 	contentEvents := findEvents(events, "content")
 	assert.NotEmpty(t, contentEvents, "should have content events")
@@ -531,7 +531,7 @@ func TestIntegration_Claude_ResumeSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events1 := collectEvents(t, ch1, 90*time.Second)
+	events1 := collectAllEvents(t, ch1, 90*time.Second)
 	// Verify first conversation completed normally
 	doneEvents1 := findEvents(events1, "metadata")
 	require.NotEmpty(t, doneEvents1, "first conversation should complete with metadata event")
@@ -548,7 +548,7 @@ func TestIntegration_Claude_ResumeSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events2 := collectEvents(t, ch2, 90*time.Second)
+	events2 := collectAllEvents(t, ch2, 90*time.Second)
 	requireEventSequence(t, events2, "content", "metadata")
 	content := concatContent(events2)
 	assert.NotEmpty(t, content, "should receive content in resumed session")
@@ -576,7 +576,7 @@ func TestIntegration_Codebuddy_ResumeSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events1 := collectEvents(t, ch1, 90*time.Second)
+	events1 := collectAllEvents(t, ch1, 90*time.Second)
 	doneEvents1 := findEvents(events1, "metadata")
 	require.NotEmpty(t, doneEvents1, "first conversation should complete with metadata event")
 
@@ -592,7 +592,7 @@ func TestIntegration_Codebuddy_ResumeSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events2 := collectEvents(t, ch2, 90*time.Second)
+	events2 := collectAllEvents(t, ch2, 90*time.Second)
 	requireEventSequence(t, events2, "content", "metadata")
 	content := concatContent(events2)
 	assert.NotEmpty(t, content, "should receive content in resumed session")
@@ -617,7 +617,7 @@ func TestIntegration_OpenCode_ResumeSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events1 := collectEvents(t, ch1, 90*time.Second)
+	events1 := collectAllEvents(t, ch1, 90*time.Second)
 	sessionID := extractSessionID(events1)
 	require.NotEmpty(t, sessionID, "should capture OpenCode session ID (ses_xxx)")
 	assert.True(t, strings.HasPrefix(sessionID, "ses_"),
@@ -638,7 +638,7 @@ func TestIntegration_OpenCode_ResumeSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events2 := collectEvents(t, ch2, 90*time.Second)
+	events2 := collectAllEvents(t, ch2, 90*time.Second)
 	requireEventSequence(t, events2, "content", "metadata")
 	content := concatContent(events2)
 	assert.NotEmpty(t, content, "should receive content in resumed session")
@@ -660,7 +660,7 @@ func TestIntegration_Codex_ResumeSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events1 := collectEvents(t, ch1, 90*time.Second)
+	events1 := collectAllEvents(t, ch1, 90*time.Second)
 	sessionID := extractSessionID(events1)
 	require.NotEmpty(t, sessionID, "should capture Codex thread ID")
 	// Codex thread_id is a UUID format, not "thread_xxx" prefix
@@ -681,7 +681,7 @@ func TestIntegration_Codex_ResumeSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events2 := collectEvents(t, ch2, 90*time.Second)
+	events2 := collectAllEvents(t, ch2, 90*time.Second)
 	requireEventSequence(t, events2, "content", "metadata")
 	content := concatContent(events2)
 	assert.NotEmpty(t, content, "should receive content in resumed session")
@@ -860,7 +860,7 @@ func TestIntegration_InvalidWorkDir(t *testing.T) {
 			}
 
 			// If no error from ExecuteStream, the stream should contain warning/error
-			events := collectEvents(t, ch, 30*time.Second)
+			events := collectAllEvents(t, ch, 30*time.Second)
 			hasError := len(findEvents(events, "error")) > 0
 			hasWarning := len(findEvents(events, "warning")) > 0
 			assert.True(t, hasError || hasWarning,
@@ -919,7 +919,7 @@ func TestIntegration_AutoResume_ExitPlanMode(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 200*time.Second)
+	events := collectAllEvents(t, ch, 200*time.Second)
 
 	// Check if ExitPlanMode was triggered
 	resumeSplitEvents := findEvents(events, "resume_split")
@@ -984,7 +984,7 @@ func TestIntegration_Claude_SystemPromptInjection(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 90*time.Second)
+	events := collectAllEvents(t, ch, 90*time.Second)
 	requireEventSequence(t, events, "content", "metadata")
 
 	// Verify the stream completed successfully with metadata (which means CLI args were valid)
@@ -1015,7 +1015,7 @@ func TestIntegration_Codebuddy_SystemPromptInjection(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 90*time.Second)
+	events := collectAllEvents(t, ch, 90*time.Second)
 	requireEventSequence(t, events, "content", "metadata")
 
 	// Verify the stream completed successfully with metadata (which means CLI args were valid)
@@ -1049,7 +1049,7 @@ func TestIntegration_Gemini_SystemPromptInjection(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 90*time.Second)
+	events := collectAllEvents(t, ch, 90*time.Second)
 	requireEventSequence(t, events, "content", "metadata")
 
 	// Check that system instructions were injected into the prompt (raw_output or args)
@@ -1083,7 +1083,7 @@ func TestIntegration_OpenCode_SystemPromptInjection(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 90*time.Second)
+	events := collectAllEvents(t, ch, 90*time.Second)
 	requireEventSequence(t, events, "content", "metadata")
 
 	// Best-effort check
@@ -1113,7 +1113,7 @@ func TestIntegration_Codex_SystemPromptInjection(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 90*time.Second)
+	events := collectAllEvents(t, ch, 90*time.Second)
 	requireEventSequence(t, events, "content", "metadata")
 
 	// Best-effort check
@@ -1140,7 +1140,7 @@ func TestIntegration_Qoder_NewSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 90*time.Second)
+	events := collectAllEvents(t, ch, 90*time.Second)
 
 	requireEventSequence(t, events, "content", "metadata")
 	content := concatContent(events)
@@ -1172,7 +1172,7 @@ func TestIntegration_Qoder_StreamEvents(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 90*time.Second)
+	events := collectAllEvents(t, ch, 90*time.Second)
 
 	contentEvents := findEvents(events, "content")
 	assert.NotEmpty(t, contentEvents, "should have content events")
@@ -1204,7 +1204,7 @@ func TestIntegration_Qoder_ResumeSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events1 := collectEvents(t, ch1, 90*time.Second)
+	events1 := collectAllEvents(t, ch1, 90*time.Second)
 	doneEvents1 := findEvents(events1, "metadata")
 	require.NotEmpty(t, doneEvents1, "first conversation should complete with metadata event")
 
@@ -1220,7 +1220,7 @@ func TestIntegration_Qoder_ResumeSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events2 := collectEvents(t, ch2, 90*time.Second)
+	events2 := collectAllEvents(t, ch2, 90*time.Second)
 	requireEventSequence(t, events2, "content", "metadata")
 	content := concatContent(events2)
 	assert.NotEmpty(t, content, "should receive content in resumed session")
@@ -1249,7 +1249,7 @@ func TestIntegration_Qoder_SystemPromptInjection(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 90*time.Second)
+	events := collectAllEvents(t, ch, 90*time.Second)
 	requireEventSequence(t, events, "content", "metadata")
 
 	// Best-effort check — AI compliance is non-deterministic
@@ -1284,7 +1284,7 @@ func TestIntegration_VeCLI_NewSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 90*time.Second)
+	events := collectAllEvents(t, ch, 90*time.Second)
 
 	// VeCLI may fail due to API auth issues; skip gracefully
 	contentEvents := findEvents(events, "content")
@@ -1325,7 +1325,7 @@ func TestIntegration_VeCLI_StreamEvents(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 90*time.Second)
+	events := collectAllEvents(t, ch, 90*time.Second)
 
 	contentEvents := findEvents(events, "content")
 	if len(contentEvents) == 0 {
@@ -1385,7 +1385,7 @@ func TestIntegration_VeCLI_SystemPromptInjection(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 90*time.Second)
+	events := collectAllEvents(t, ch, 90*time.Second)
 
 	contentEvents := findEvents(events, "content")
 	if len(contentEvents) == 0 {
@@ -1417,7 +1417,7 @@ func TestIntegration_DeepSeek_NewSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 150*time.Second)
+	events := collectAllEvents(t, ch, 150*time.Second)
 
 	requireEventSequence(t, events, "content", "metadata")
 	content := concatContent(events)
@@ -1453,7 +1453,7 @@ func TestIntegration_DeepSeek_StreamEvents(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 150*time.Second)
+	events := collectAllEvents(t, ch, 150*time.Second)
 
 	contentEvents := findEvents(events, "content")
 	assert.NotEmpty(t, contentEvents, "should have content events")
@@ -1483,7 +1483,7 @@ func TestIntegration_DeepSeek_ResumeSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events1 := collectEvents(t, ch1, 150*time.Second)
+	events1 := collectAllEvents(t, ch1, 150*time.Second)
 	sessionID := extractSessionID(events1)
 	require.NotEmpty(t, sessionID, "should capture DeepSeek session ID from session_capture event")
 
@@ -1502,7 +1502,7 @@ func TestIntegration_DeepSeek_ResumeSession(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events2 := collectEvents(t, ch2, 150*time.Second)
+	events2 := collectAllEvents(t, ch2, 150*time.Second)
 	requireEventSequence(t, events2, "content", "metadata")
 	content := concatContent(events2)
 	assert.NotEmpty(t, content, "should receive content in resumed session")
@@ -1547,7 +1547,7 @@ func TestIntegration_DeepSeek_SystemPromptInjection(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	events := collectEvents(t, ch, 150*time.Second)
+	events := collectAllEvents(t, ch, 150*time.Second)
 	requireEventSequence(t, events, "content", "metadata")
 
 	// Verify the stream completed successfully with metadata (which means CLI args were valid)

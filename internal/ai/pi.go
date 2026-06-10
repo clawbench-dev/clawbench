@@ -1,5 +1,7 @@
 package ai
 
+import "log/slog"
+
 // piBackend is the CLIBackend instance for Pi CLI.
 var piBackend = &CLIBackend{
 	name:           "pi",
@@ -34,9 +36,13 @@ func buildPiStreamArgs(req ChatRequest) []string {
 		// Resume a specific session by its Pi-assigned ID (captured via
 		// external_session_id). This allows conversation continuity.
 		args = append(args, "--session", req.SessionID)
+		slog.Info("cli: --session resume (pi)",
+			slog.String("session_id", req.SessionID))
 	case req.Resume:
 		// Resume without a known session ID — continue the most recent session.
 		args = append(args, "--continue")
+		slog.Warn("cli: --continue fallback (pi, session_id missing)",
+			slog.String("backend", "pi"))
 	case req.ScheduledExecution:
 		// Scheduled tasks are independent executions — no need to persist sessions.
 		args = append(args, "--no-session")

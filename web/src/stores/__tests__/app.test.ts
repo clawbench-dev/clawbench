@@ -256,6 +256,50 @@ describe('store', () => {
         })
     })
 
+    // ── selectFile ──
+
+    describe('selectFile', () => {
+        it('strips leading slash from path to avoid double-slash URL', async () => {
+            const mockFetch = vi.fn().mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ name: 'test.ts', path: '/test.ts', content: 'hello' }),
+            })
+            vi.stubGlobal('fetch', mockFetch)
+
+            await store.selectFile('/test.ts')
+
+            // URL should not contain double slash — cleanPath strips leading /
+            expect(mockFetch).toHaveBeenCalledWith('/api/file/test.ts')
+            vi.unstubAllGlobals()
+        })
+
+        it('strips multiple leading slashes from path', async () => {
+            const mockFetch = vi.fn().mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ name: 'test.ts', path: '///test.ts', content: 'hello' }),
+            })
+            vi.stubGlobal('fetch', mockFetch)
+
+            await store.selectFile('///test.ts')
+
+            expect(mockFetch).toHaveBeenCalledWith('/api/file/test.ts')
+            vi.unstubAllGlobals()
+        })
+
+        it('uses forceText=1 query param when forceText is true for non-text file', async () => {
+            const mockFetch = vi.fn().mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ name: 'file.bin', path: '/file.bin', content: 'data' }),
+            })
+            vi.stubGlobal('fetch', mockFetch)
+
+            await store.selectFile('/file.bin', false, false, true, true)
+
+            expect(mockFetch).toHaveBeenCalledWith('/api/file/file.bin?forceText=1')
+            vi.unstubAllGlobals()
+        })
+    })
+
     // ── setProject ──
 
     describe('setProject', () => {

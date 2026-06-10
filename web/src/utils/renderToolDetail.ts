@@ -11,6 +11,7 @@ import { useAppMode } from '@/composables/useAppMode.ts'
 import { gt } from '@/composables/useLocale'
 import { store } from '@/stores/app.ts'
 import { renderMarkdown } from '@/composables/useMarkdownRenderer.ts'
+import { getSessionId } from '@/composables/useSessionIdentity.ts'
 
 // ────────────────────────────────────────────────────────────
 // Tool renderer functions
@@ -79,6 +80,9 @@ function renderEditDiff(input: Record<string, any>): string {
 function renderBashTerminal(input: Record<string, any>): string {
   const command = input.command || ''
   const description = input.description || ''
+  const workdir = input.workdir || input.dir_path || ''
+  const timeout = input.timeout
+  const runInBackground = input.run_in_background || input.is_background
 
   let html = '<div class="bash-terminal-view">'
 
@@ -98,7 +102,22 @@ function renderBashTerminal(input: Record<string, any>): string {
     }
   }
 
-  html += '</div></div>'
+  html += '</div>'
+
+  // Tags row: workdir, timeout, background
+  const tags: string[] = []
+  if (workdir) tags.push(escapeHtml(workdir))
+  if (timeout) tags.push(`timeout ${timeout}ms`)
+  if (runInBackground) tags.push('background')
+  if (tags.length > 0) {
+    html += '<div class="bash-tags-row">'
+    for (const tag of tags) {
+      html += `<span class="grep-mode-tag">${tag}</span>`
+    }
+    html += '</div>'
+  }
+
+  html += '</div>'
 
   return html
 }
@@ -251,6 +270,11 @@ function renderGrepSearch(input: Record<string, any>): string {
   const pattern = input.pattern || ''
   const path = input.path || ''
   const outputMode = input.output_mode || ''
+  const globFilter = input.glob || input.include_pattern || input.include || ''
+  const caseInsensitive = input['-i'] || input.ignoreCase || input.case_sensitive === false
+  const contextLines = input.context || ''
+  const afterLines = input['-A'] || input.after || ''
+  const beforeLines = input['-B'] || input.before || ''
 
   let html = '<div class="grep-search-view">'
 
@@ -279,9 +303,20 @@ function renderGrepSearch(input: Record<string, any>): string {
     html += '</div>'
   }
 
-  // Output mode tag
-  if (outputMode) {
-    html += `<span class="grep-mode-tag">${escapeHtml(outputMode)}</span>`
+  // Tags row: output mode, case-insensitive, glob filter
+  const tags: string[] = []
+  if (outputMode) tags.push(escapeHtml(outputMode))
+  if (caseInsensitive) tags.push('-i')
+  if (globFilter) tags.push(escapeHtml(globFilter))
+  if (contextLines) tags.push(`-C ${contextLines}`)
+  if (afterLines && !contextLines) tags.push(`-A ${afterLines}`)
+  if (beforeLines && !contextLines) tags.push(`-B ${beforeLines}`)
+  if (tags.length > 0) {
+    html += '<div class="grep-tags-row">'
+    for (const tag of tags) {
+      html += `<span class="grep-mode-tag">${tag}</span>`
+    }
+    html += '</div>'
   }
 
   html += '</div>'
@@ -295,6 +330,7 @@ function renderGrepSearch(input: Record<string, any>): string {
 function renderGlobPattern(input: Record<string, any>): string {
   const pattern = input.pattern || ''
   const path = input.path || ''
+  const caseSensitive = input.case_sensitive
 
   let html = '<div class="glob-pattern-view">'
 
@@ -319,6 +355,13 @@ function renderGlobPattern(input: Record<string, any>): string {
     html += '</div>'
   }
 
+  // Case-sensitive tag
+  if (caseSensitive === true || caseSensitive === false) {
+    html += '<div class="glob-tags-row">'
+    html += `<span class="grep-mode-tag">${caseSensitive ? 'case-sensitive' : 'case-insensitive'}</span>`
+    html += '</div>'
+  }
+
   html += '</div>'
   return html
 }
@@ -329,12 +372,29 @@ function renderGlobPattern(input: Record<string, any>): string {
  */
 function renderWebSearch(input: Record<string, any>): string {
   const query = input.query || ''
+  const allowedDomains = input.allowed_domains as string[] | undefined
+  const blockedDomains = input.blocked_domains as string[] | undefined
+  const topic = input.topic || ''
 
   let html = '<div class="web-search-view">'
   html += '<div class="web-search-query">'
   html += '<span class="web-search-icon">🔍</span>'
   html += `<span class="web-search-text">${escapeHtml(query)}</span>`
   html += '</div>'
+
+  // Tags row: topic, allowed/blocked domains
+  const tags: string[] = []
+  if (topic) tags.push(escapeHtml(topic))
+  if (allowedDomains && allowedDomains.length > 0) tags.push(`${allowedDomains.length} allowed`)
+  if (blockedDomains && blockedDomains.length > 0) tags.push(`${blockedDomains.length} blocked`)
+  if (tags.length > 0) {
+    html += '<div class="web-search-tags-row">'
+    for (const tag of tags) {
+      html += `<span class="grep-mode-tag">${tag}</span>`
+    }
+    html += '</div>'
+  }
+
   html += '</div>'
   return html
 }
@@ -345,6 +405,8 @@ function renderWebSearch(input: Record<string, any>): string {
  */
 function renderWebFetch(input: Record<string, any>): string {
   const url = input.url || input.prompt || ''
+  const format = input.format || ''
+  const timeout = input.timeout
 
   let html = '<div class="web-fetch-view">'
 
@@ -366,6 +428,18 @@ function renderWebFetch(input: Record<string, any>): string {
   const prompt = input.prompt && input.url ? input.prompt : ''
   if (prompt) {
     html += `<div class="web-fetch-prompt">${escapeHtml(prompt)}</div>`
+  }
+
+  // Tags: format, timeout
+  const tags: string[] = []
+  if (format) tags.push(escapeHtml(format))
+  if (timeout) tags.push(`timeout ${timeout}ms`)
+  if (tags.length > 0) {
+    html += '<div class="web-fetch-tags-row">'
+    for (const tag of tags) {
+      html += `<span class="grep-mode-tag">${tag}</span>`
+    }
+    html += '</div>'
   }
 
   html += '</div>'
@@ -435,6 +509,539 @@ function renderSkillCall(input: Record<string, any>): string {
 }
 
 /**
+ * Render PermissionApproval tool input as an interactive permission card.
+ * Shows tool name + description, permission options as buttons.
+ * Clicking an option calls POST /api/ai/permission/respond.
+ */
+function renderPermissionApproval(input: Record<string, any>, blockCtx?: ToolBlockCtx): string {
+  const options = Array.isArray(input.options) ? input.options : []
+  const toolName = input.toolName || ''
+  const toolInput = input.toolInput || ''
+  const isAutoApproved = input.autoApproved === true
+  const isDone = blockCtx?.done
+  // Require explicit output to consider this genuinely responded.
+  // done=true without output can happen when cleanup/timeout marks the block done
+  // without a real user response — that's a "pending" state, not "approved".
+  const hasRealResult = isDone && blockCtx?.output
+  const isApproved = hasRealResult && blockCtx?.status !== 'error'
+
+  let html = '<div class="permission-approval-view'
+
+  // Only mark as responded when we have a real result from user action
+  if (hasRealResult) {
+    html += ' permission-responded'
+  }
+  if (isAutoApproved) {
+    html += ' permission-auto-approved'
+  }
+
+  html += '">'
+
+  // Header
+  html += '<div class="permission-header">'
+  if (isAutoApproved) {
+    html += `<span class="permission-icon">✅</span>`
+    html += `<span class="permission-title">${escapeHtml(gt('tool.permission.autoApprovedTitle'))}</span>`
+  } else {
+    html += `<span class="permission-icon">⚠️</span>`
+    html += `<span class="permission-title">${escapeHtml(gt('tool.permission.title'))}</span>`
+  }
+  html += '</div>'
+
+  // Tool description
+  if (toolName) {
+    html += `<div class="permission-tool-name">${escapeHtml(toolName)}</div>`
+  }
+  if (toolInput) {
+    try {
+      const parsed = JSON.parse(toolInput)
+      const filePath = parsed.file_path || parsed.path || ''
+      const command = parsed.command || ''
+      if (filePath) {
+        html += `<div class="permission-tool-detail"><span class="permission-detail-label">${escapeHtml(gt('tool.permission.file'))}</span><code>${escapeHtml(filePath)}</code></div>`
+      }
+      if (command) {
+        html += `<div class="permission-tool-detail"><span class="permission-detail-label">${escapeHtml(gt('tool.permission.command'))}</span><code>${escapeHtml(command)}</code></div>`
+      }
+    } catch {
+      // Not JSON, show as-is
+      html += `<div class="permission-tool-detail"><code>${escapeHtml(toolInput.substring(0, 200))}</code></div>`
+    }
+  }
+
+  // Option buttons / result
+  if (hasRealResult) {
+    // Already responded — show result badge instead of buttons
+    if (isApproved) {
+      html += `<div class="permission-result permission-result-approved">${escapeHtml(gt('tool.permission.approved'))}</div>`
+    } else {
+      html += `<div class="permission-result permission-result-denied">${escapeHtml(gt('tool.permission.denied'))}</div>`
+    }
+  } else if (isAutoApproved) {
+    // Auto-approved but SSE result not yet arrived — show auto-approved badge
+    html += `<div class="permission-result permission-result-auto-approved">${escapeHtml(gt('tool.permission.autoApproved'))}</div>`
+  } else if (options.length > 0) {
+    html += '<div class="permission-options">'
+    for (let i = 0; i < options.length; i++) {
+      const opt = options[i]
+      const label = opt.name || ''
+      const kind = opt.kind || ''
+      const optionId = opt.optionId || ''
+      let btnClass = 'permission-btn'
+      if (kind === 'allow_once' || kind === 'allow_always') {
+        btnClass += ' permission-btn-allow'
+      } else {
+        btnClass += ' permission-btn-reject'
+      }
+      html += `<button class="${btnClass}" data-option-id="${escapeHtml(String(optionId))}" data-kind="${escapeHtml(kind)}">${escapeHtml(label)}</button>`
+    }
+    html += '</div>'
+  }
+
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render LS tool input as a directory listing view.
+ * Shows the directory path (clickable).
+ */
+function renderLSView(input: Record<string, any>): string {
+  const path = input.path || input.dir_path || ''
+
+  let html = '<div class="ls-dir-view">'
+  html += '<div class="ls-dir-header">'
+  html += `<span class="ls-dir-icon">📂</span>`
+
+  if (path) {
+    const projectRoot = store.state.projectRoot || ''
+    const homeDir = store.state.homeDir || ''
+    const resolvedPath = resolveFilePath(path, projectRoot, homeDir)
+    const displayPath = resolvedPath || path.replace(/^\.\//, '')
+    html += `<span class="ls-dir-path">${escapeHtml(displayPath)}</span>`
+    if (resolvedPath) {
+      html += fileOpenButtonHtml(resolvedPath)
+    }
+  } else {
+    html += `<span class="ls-dir-path">${escapeHtml(gt('tool.ls.currentDir'))}</span>`
+  }
+
+  html += '</div></div>'
+  return html
+}
+
+/**
+ * Render TodoWrite tool input as a structured task list.
+ * Shows todo items with their status.
+ */
+function renderTodoWrite(input: Record<string, any>): string {
+  const todos = Array.isArray(input.todos) ? input.todos : []
+
+  let html = '<div class="todo-write-view">'
+
+  if (todos.length > 0) {
+    html += '<div class="todo-write-list">'
+    for (const todo of todos) {
+      const content = todo.content || ''
+      const status = todo.status || ''
+      const isActive = status === 'in_progress'
+      const isDone = status === 'completed'
+      let icon = '○'
+      let cls = 'todo-pending'
+      if (isDone) { icon = '✓'; cls = 'todo-done' }
+      else if (isActive) { icon = '►'; cls = 'todo-active' }
+      html += `<div class="todo-item ${cls}">`
+      html += `<span class="todo-icon">${icon}</span>`
+      html += `<span class="todo-content">${escapeHtml(content)}</span>`
+      html += '</div>'
+    }
+    html += '</div>'
+  }
+
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render TodoRead tool input as a task read view.
+ */
+function renderTodoRead(_input: Record<string, any>): string {
+  let html = '<div class="todo-read-view">'
+  html += `<span class="todo-read-icon">📋</span>`
+  html += `<span class="todo-read-label">${escapeHtml(gt('tool.todoRead.label'))}</span>`
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render a Task management tool input with a key-value summary.
+ * Used for TaskCreate, TaskUpdate, TaskList, TaskGet, TaskStop, TaskOutput.
+ */
+function renderTaskTool(input: Record<string, any>): string {
+  let html = '<div class="task-tool-view">'
+
+  // Show the most relevant fields based on what's present
+  const fields: { key: string; label: string; format?: 'code' | 'text' }[] = [
+    { key: 'subject', label: gt('tool.task.subject') },
+    { key: 'description', label: gt('tool.task.description') },
+    { key: 'taskId', label: 'ID', format: 'code' },
+    { key: 'task_id', label: 'ID', format: 'code' },
+    { key: 'name', label: gt('tool.task.name') },
+    { key: 'cron', label: gt('tool.task.cron'), format: 'code' },
+    { key: 'prompt', label: gt('tool.task.prompt') },
+    { key: 'agent', label: gt('tool.task.agent') },
+    { key: 'agent_id', label: gt('tool.task.agent') },
+    { key: 'status', label: gt('tool.task.status') },
+    { key: 'owner', label: gt('tool.task.owner') },
+    { key: 'activeForm', label: gt('tool.task.activeForm') },
+  ]
+
+  let hasContent = false
+  for (const f of fields) {
+    const val = input[f.key]
+    if (val !== undefined && val !== null && val !== '') {
+      hasContent = true
+      const display = typeof val === 'string' ? val : JSON.stringify(val)
+      const truncated = display.length > 200 ? display.substring(0, 200) + '…' : display
+      html += '<div class="task-tool-field">'
+      html += `<span class="task-field-label">${escapeHtml(f.label)}</span>`
+      if (f.format === 'code') {
+        html += `<code class="task-field-value">${escapeHtml(truncated)}</code>`
+      } else {
+        html += `<span class="task-field-value">${escapeHtml(truncated)}</span>`
+      }
+      html += '</div>'
+    }
+  }
+
+  if (!hasContent) {
+    html += `<div class="task-tool-empty">${escapeHtml(gt('tool.task.noDetails'))}</div>`
+  }
+
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render mode switch tools (EnterPlanMode/ExitPlanMode) as a simple badge view.
+ */
+function renderModeSwitch(input: Record<string, any>): string {
+  let html = '<div class="mode-switch-view">'
+  html += `<span class="mode-switch-icon">🔄</span>`
+  const mode = input.mode || input.mode_id || ''
+  if (mode) {
+    html += `<span class="mode-switch-mode">${escapeHtml(mode)}</span>`
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render worktree switch tools (EnterWorktree/LeaveWorktree) as a path view.
+ */
+function renderWorktreeSwitch(input: Record<string, any>): string {
+  const path = input.path || input.worktree_path || ''
+  let html = '<div class="worktree-switch-view">'
+  html += `<span class="worktree-switch-icon">🌳</span>`
+  if (path) {
+    const projectRoot = store.state.projectRoot || ''
+    const homeDir = store.state.homeDir || ''
+    const resolvedPath = resolveFilePath(path, projectRoot, homeDir)
+    const displayPath = resolvedPath || path.replace(/^\.\//, '')
+    html += `<span class="worktree-switch-path">${escapeHtml(displayPath)}</span>`
+    if (resolvedPath) {
+      html += fileOpenButtonHtml(resolvedPath)
+    }
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render SendMessage tool input as a message card.
+ */
+function renderSendMessage(input: Record<string, any>): string {
+  const recipient = input.recipient || ''
+  const content = input.content || input.message || ''
+
+  let html = '<div class="send-message-view">'
+  html += '<div class="send-message-header">'
+  html += '<span class="send-message-icon">💬</span>'
+  if (recipient) {
+    html += `<span class="send-message-recipient">${escapeHtml(gt('tool.sendMessage.to'))} ${escapeHtml(recipient)}</span>`
+  }
+  html += '</div>'
+  if (content) {
+    const truncated = content.length > 300 ? content.substring(0, 300) + '…' : content
+    html += `<div class="send-message-content">${escapeHtml(truncated)}</div>`
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render ComputerUse tool input as a computer action view.
+ */
+function renderComputerUse(input: Record<string, any>): string {
+  const action = input.action || ''
+  const description = input.description || input.text || ''
+
+  let html = '<div class="computer-use-view">'
+  html += '<div class="computer-use-header">'
+  html += '<span class="computer-use-icon">🖥️</span>'
+  if (action) {
+    html += `<span class="computer-use-action">${escapeHtml(action)}</span>`
+  }
+  html += '</div>'
+  if (description) {
+    const truncated = description.length > 200 ? description.substring(0, 200) + '…' : description
+    html += `<div class="computer-use-desc">${escapeHtml(truncated)}</div>`
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render team management tools (TeamCreate/TeamDelete) as a simple card.
+ */
+function renderTeamTool(input: Record<string, any>): string {
+  const name = input.name || input.team_name || ''
+
+  let html = '<div class="team-tool-view">'
+  html += '<span class="team-tool-icon">👥</span>'
+  if (name) {
+    html += `<span class="team-tool-name">${escapeHtml(name)}</span>`
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render chat reply tools (WeChatReply/WeComReply) as a message card.
+ */
+function renderChatReply(input: Record<string, any>): string {
+  const message = input.message || input.content || ''
+  const recipient = input.recipient || input.user || ''
+
+  let html = '<div class="chat-reply-view">'
+  html += '<div class="chat-reply-header">'
+  html += '<span class="chat-reply-icon">💬</span>'
+  if (recipient) {
+    html += `<span class="chat-reply-recipient">${escapeHtml(recipient)}</span>`
+  }
+  html += '</div>'
+  if (message) {
+    const truncated = message.length > 300 ? message.substring(0, 300) + '…' : message
+    html += `<div class="chat-reply-message">${escapeHtml(truncated)}</div>`
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render save_memory tool input as a key-value card.
+ */
+function renderSaveMemory(input: Record<string, any>): string {
+  const key = input.key || input.name || ''
+  const value = input.value || input.content || ''
+
+  let html = '<div class="save-memory-view">'
+  html += '<span class="save-memory-icon">💾</span>'
+  if (key) {
+    html += `<span class="save-memory-key">${escapeHtml(key)}</span>`
+  }
+  if (value) {
+    const truncated = value.length > 200 ? value.substring(0, 200) + '…' : value
+    html += `<div class="save-memory-value">${escapeHtml(truncated)}</div>`
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render DeepThink tool input as a thinking indicator.
+ */
+function renderDeepThink(input: Record<string, any>): string {
+  const topic = input.topic || input.query || input.prompt || ''
+
+  let html = '<div class="deep-think-view">'
+  html += '<span class="deep-think-icon">🧠</span>'
+  if (topic) {
+    const truncated = topic.length > 200 ? topic.substring(0, 200) + '…' : topic
+    html += `<span class="deep-think-topic">${escapeHtml(truncated)}</span>`
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render StructuredOutput tool input as a schema preview.
+ */
+function renderStructuredOutput(input: Record<string, any>): string {
+  const prompt = input.prompt || input.instruction || ''
+
+  let html = '<div class="structured-output-view">'
+  html += '<span class="structured-output-icon">📋</span>'
+  if (prompt) {
+    const truncated = prompt.length > 200 ? prompt.substring(0, 200) + '…' : prompt
+    html += `<span class="structured-output-prompt">${escapeHtml(truncated)}</span>`
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render SkillManage tool input as a skill management card.
+ */
+function renderSkillManage(input: Record<string, any>): string {
+  const action = input.action || input.operation || ''
+  const skill = input.skill || input.name || ''
+
+  let html = '<div class="skill-manage-view">'
+  html += '<span class="skill-manage-icon">⚡</span>'
+  if (action) {
+    html += `<span class="skill-manage-action">${escapeHtml(action)}</span>`
+  }
+  if (skill) {
+    html += `<span class="skill-manage-name">${escapeHtml(skill)}</span>`
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render Monitor tool input as a monitor view.
+ */
+function renderMonitor(input: Record<string, any>): string {
+  const command = input.command || ''
+  const target = input.target || ''
+
+  let html = '<div class="monitor-view">'
+  html += '<span class="monitor-icon">📡</span>'
+  if (target) {
+    html += `<span class="monitor-target">${escapeHtml(target)}</span>`
+  }
+  if (command) {
+    html += '<div class="monitor-command-body">'
+    html += '<span class="bash-prompt">$</span>'
+    try {
+      html += hljs.highlight(command, { language: 'bash', ignoreIllegals: true }).value
+    } catch {
+      html += escapeHtml(command)
+    }
+    html += '</div>'
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render ImageGen tool input as an image generation card.
+ */
+function renderImageGen(input: Record<string, any>): string {
+  const prompt = input.prompt || input.description || ''
+  const size = input.size || ''
+
+  let html = '<div class="image-gen-view">'
+  html += '<span class="image-gen-icon">🎨</span>'
+  if (prompt) {
+    const truncated = prompt.length > 200 ? prompt.substring(0, 200) + '…' : prompt
+    html += `<span class="image-gen-prompt">${escapeHtml(truncated)}</span>`
+  }
+  if (size) {
+    html += `<span class="image-gen-size">${escapeHtml(size)}</span>`
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render LSP tool input as a language service card.
+ */
+function renderLSP(input: Record<string, any>): string {
+  const method = input.method || ''
+  const filePath = input.file_path || input.path || ''
+
+  let html = '<div class="lsp-view">'
+  html += '<span class="lsp-icon">🔮</span>'
+  if (method) {
+    html += `<span class="lsp-method">${escapeHtml(method)}</span>`
+  }
+  if (filePath) {
+    const projectRoot = store.state.projectRoot || ''
+    const homeDir = store.state.homeDir || ''
+    const resolvedPath = resolveFilePath(filePath, projectRoot, homeDir)
+    const displayPath = resolvedPath || filePath.replace(/^\.\//, '')
+    html += `<span class="lsp-file-path">${escapeHtml(displayPath)}</span>`
+    if (resolvedPath) {
+      html += fileOpenButtonHtml(resolvedPath)
+    }
+  }
+  html += '</div>'
+  return html
+}
+
+/**
+ * Render Git tool input as a git command card.
+ */
+function renderGit(input: Record<string, any>): string {
+  const command = input.command || input.subcommand || ''
+  const args = input.args || input.arguments || ''
+
+  let html = '<div class="git-tool-view">'
+  html += '<span class="git-tool-icon">🔀</span>'
+  html += '<div class="git-tool-body">'
+  html += '<span class="bash-prompt">$</span>'
+  const fullCmd = `git ${command} ${typeof args === 'string' ? args : JSON.stringify(args)}`.trim()
+  try {
+    html += hljs.highlight(fullCmd, { language: 'bash', ignoreIllegals: true }).value
+  } catch {
+    html += escapeHtml(fullCmd)
+  }
+  html += '</div></div>'
+  return html
+}
+
+/**
+ * Render NotebookEdit tool input — same as Edit with cell context.
+ */
+function renderNotebookEdit(input: Record<string, any>): string {
+  // NotebookEdit has same diff structure as Edit plus cell info
+  const filePath = input.file_path || ''
+  const cellIndex = input.cell_index ?? input.cellIndex ?? ''
+  const newStr = input.new_source || input.new_string || ''
+
+  const projectRoot = store.state.projectRoot || ''
+  const homeDir = store.state.homeDir || ''
+  const resolvedPath = resolveFilePath(filePath, projectRoot, homeDir)
+  const displayPath = resolvedPath || filePath.replace(/^\.\//, '')
+  const lang = detectLang(filePath)
+
+  let html = '<div class="edit-diff-view">'
+  html += '<div class="tool-file-header">'
+  html += `<span class="tool-file-path">${escapeHtml(displayPath)}</span>`
+  if (resolvedPath) {
+    html += fileOpenButtonHtml(resolvedPath)
+  }
+  if (cellIndex !== '' && cellIndex !== undefined) {
+    html += `<span class="edit-diff-replace-all">Cell ${escapeHtml(String(cellIndex))}</span>`
+  }
+  html += '</div>'
+
+  if (newStr) {
+    html += '<div class="edit-diff-scroll"><div class="edit-diff-body">'
+    const lines = newStr.split('\n')
+    for (const line of lines) {
+      html += `<div class="edit-diff-add">${highlightLine(line, lang)}</div>`
+    }
+    html += '</div></div>'
+  }
+
+  html += '</div>'
+  return html
+}
+
+/**
  * Render input as JSON (the fallback for unregistered tools).
  */
 function renderJsonFallback(input: any): string {
@@ -466,7 +1073,14 @@ function renderJsonFallback(input: any): string {
 // All lookups are case-insensitive. New tools register once;
 // no changes needed in generic components (ContentBlocks, ChatPanel).
 
-export type ToolRenderer = (input: Record<string, any>) => string
+/** Extra block-level context passed to tool renderers that need it (e.g. PermissionApproval). */
+export interface ToolBlockCtx {
+  done?: boolean
+  status?: string
+  output?: string
+}
+
+export type ToolRenderer = (input: Record<string, any>, blockCtx?: ToolBlockCtx) => string
 
 export type ToolActionHandler = (
   event: Event,
@@ -515,11 +1129,11 @@ export function shouldAutoExpandTool(toolName: string): boolean {
  * Format tool_use input for display in the expanded tool detail area.
  * Looks up the tool name in the renderer registry; falls back to JSON.
  */
-export function formatToolInput(input: any, toolName?: string): string {
+export function formatToolInput(input: any, toolName?: string, blockCtx?: ToolBlockCtx): string {
   if (toolName) {
     const renderer = TOOL_RENDERERS[toolName.toLowerCase()]
     if (renderer && input && typeof input === 'object') {
-      return renderer(input)
+      return renderer(input, blockCtx)
     }
   }
   return renderJsonFallback(input)
@@ -555,42 +1169,219 @@ function annotateLocalhostInEscapedText(text: string): string {
   })
 }
 
+// ── Tool output renderer registry ──
+
+type ToolOutputRenderer = (output: string) => string
+const TOOL_OUTPUT_RENDERERS: Record<string, ToolOutputRenderer> = {}
+
 /**
- * Format tool execution output for display in the expanded tool detail area.
- * Renders output text with appropriate styling based on tool type.
- * In App mode, localhost URLs in the output are annotated with open buttons.
+ * Register an output renderer for a tool type.
+ * Tool names are matched case-insensitively.
  */
-export function formatToolOutput(output: string, toolName?: string): string {
-  if (!output) return ''
-  // For Bash tool: render as terminal output
-  if (toolName?.toLowerCase() === 'bash') {
-    const escaped = escapeHtml(output)
-    const annotated = annotateLocalhostInEscapedText(escaped)
-    return `<div class="bash-output-body"><pre>${annotated}</pre></div>`
-  }
-  // Default: render as preformatted text
+function registerToolOutputRenderer(toolName: string, renderer: ToolOutputRenderer) {
+  TOOL_OUTPUT_RENDERERS[toolName.toLowerCase()] = renderer
+}
+
+/**
+ * Render tool output as terminal-style output (Bash, Git, PowerShell, etc.).
+ * Escapes HTML, annotates localhost URLs, wraps in terminal-styled <pre>.
+ */
+function renderTerminalOutput(output: string): string {
+  const escaped = escapeHtml(output)
+  const annotated = annotateLocalhostInEscapedText(escaped)
+  return `<div class="bash-output-body"><pre>${annotated}</pre></div>`
+}
+
+/**
+ * Render tool output as syntax-highlighted code (Read output is file contents).
+ * Detects language from the tool input's file_path when available.
+ */
+function renderCodeOutput(output: string): string {
   const escaped = escapeHtml(output)
   const annotated = annotateLocalhostInEscapedText(escaped)
   return `<div class="tool-output-default"><pre>${annotated}</pre></div>`
 }
 
+/**
+ * Render a simple success/error status message.
+ * For tools that just return "ok" or short status strings.
+ */
+function renderStatusOutput(output: string): string {
+  const trimmed = output.trim()
+  // Short status messages get a badge treatment
+  if (trimmed.length <= 50) {
+    const escaped = escapeHtml(trimmed)
+    return `<div class="tool-output-status-msg"><span class="tool-output-ok-badge">${escaped}</span></div>`
+  }
+  // Longer output falls back to preformatted text
+  return renderCodeOutput(output)
+}
+
+/**
+ * Try to parse output as JSON and pretty-print it.
+ * If parsing fails, treat as plain text.
+ */
+function renderSmartOutput(output: string): string {
+  const trimmed = output.trim()
+  // Try JSON parse + pretty print
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed)
+      const pretty = JSON.stringify(parsed, null, 2)
+      const escaped = escapeHtml(pretty)
+      return `<div class="tool-output-default"><pre>${escaped}</pre></div>`
+    } catch {
+      // Not valid JSON, treat as plain text
+    }
+  }
+  return renderCodeOutput(output)
+}
+
+/**
+ * Format tool execution output for display in the expanded tool detail area.
+ * Renders output text with appropriate styling based on tool type.
+ * Uses the tool output renderer registry for type-specific formatting.
+ * Falls back to smart output (JSON pretty-print or plain text) for unregistered tools.
+ */
+export function formatToolOutput(output: string, toolName?: string): string {
+  if (!output) return ''
+  // Check for a registered output renderer
+  if (toolName) {
+    const renderer = TOOL_OUTPUT_RENDERERS[toolName.toLowerCase()]
+    if (renderer) {
+      return renderer(output)
+    }
+  }
+  // Fallback: smart output (detect JSON vs plain text)
+  return renderSmartOutput(output)
+}
+
+// ── Tool output registrations ──
+
+// Terminal-style output (command output)
+registerToolOutputRenderer('bash', renderTerminalOutput)
+registerToolOutputRenderer('git', renderTerminalOutput)
+registerToolOutputRenderer('powershell', renderTerminalOutput)
+
+// Code/file content output
+registerToolOutputRenderer('read', renderCodeOutput)
+
+// Status-style output (success/error messages)
+registerToolOutputRenderer('write', renderStatusOutput)
+registerToolOutputRenderer('edit', renderStatusOutput)
+registerToolOutputRenderer('multiedit', renderStatusOutput)
+registerToolOutputRenderer('notebookedit', renderStatusOutput)
+
+// Formatted list output
+registerToolOutputRenderer('grep', renderCodeOutput)
+registerToolOutputRenderer('glob', renderCodeOutput)
+registerToolOutputRenderer('ls', renderCodeOutput)
+
+// Web output
+registerToolOutputRenderer('websearch', renderCodeOutput)
+registerToolOutputRenderer('webfetch', renderCodeOutput)
+
+// Agent/communication output
+registerToolOutputRenderer('agent', renderCodeOutput)
+registerToolOutputRenderer('sendmessage', renderCodeOutput)
+
+// Search/indexing tools
+registerToolOutputRenderer('lsp', renderCodeOutput)
+registerToolOutputRenderer('monitor', renderCodeOutput)
+
+// Skill/task output
+registerToolOutputRenderer('skill', renderCodeOutput)
+registerToolOutputRenderer('skillmanage', renderCodeOutput)
+registerToolOutputRenderer('todowrite', renderStatusOutput)
+registerToolOutputRenderer('todoread', renderCodeOutput)
+
 // ── Tool registrations ──
 
+// Core file/code tools
 registerToolRenderer('Edit', renderEditDiff)
 registerToolRenderer('Bash', renderBashTerminal)
 registerToolRenderer('Read', renderReadPreview)
 registerToolRenderer('Write', renderWritePreview)
-registerToolRenderer('AskUserQuestion', renderAskUserQuestion)
+registerToolRenderer('NotebookEdit', renderNotebookEdit)
+registerToolRenderer('MultiEdit', renderEditDiff)       // same diff view as Edit
+
+// Search tools
 registerToolRenderer('Grep', renderGrepSearch)
 registerToolRenderer('Glob', renderGlobPattern)
+registerToolRenderer('LS', renderLSView)
+
+// Web tools
 registerToolRenderer('WebSearch', renderWebSearch)
 registerToolRenderer('WebFetch', renderWebFetch)
+
+// Agent/communication tools
 registerToolRenderer('Agent', renderAgentCall)
+registerToolRenderer('SendMessage', renderSendMessage)
+registerToolRenderer('ComputerUse', renderComputerUse)
+registerToolRenderer('TeamCreate', renderTeamTool)
+registerToolRenderer('TeamDelete', renderTeamTool)
+
+// Skill/task tools
 registerToolRenderer('Skill', renderSkillCall)
+registerToolRenderer('SkillManage', renderSkillManage)
+registerToolRenderer('TodoWrite', renderTodoWrite)
+registerToolRenderer('TodoRead', renderTodoRead)
+registerToolRenderer('Task', renderAgentCall)       // ACP generic Task → same as Agent
+registerToolRenderer('TaskCreate', renderTaskTool)
+registerToolRenderer('TaskUpdate', renderTaskTool)
+registerToolRenderer('TaskList', renderTaskTool)
+registerToolRenderer('TaskGet', renderTaskTool)
+registerToolRenderer('TaskStop', renderTaskTool)
+registerToolRenderer('TaskOutput', renderTaskTool)
+
+// Mode/worktree tools
+registerToolRenderer('EnterPlanMode', renderModeSwitch)
+registerToolRenderer('ExitPlanMode', renderModeSwitch)
+registerToolRenderer('EnterWorktree', renderWorktreeSwitch)
+registerToolRenderer('LeaveWorktree', renderWorktreeSwitch)
+
+// Chat reply tools
+registerToolRenderer('WeChatReply', renderChatReply)
+registerToolRenderer('WeComReply', renderChatReply)
+
+// Specialized tools
+registerToolRenderer('AskUserQuestion', renderAskUserQuestion)
+registerToolRenderer('PermissionApproval', renderPermissionApproval)
+registerToolRenderer('save_memory', renderSaveMemory)
+registerToolRenderer('DeepThink', renderDeepThink)
+registerToolRenderer('StructuredOutput', renderStructuredOutput)
+registerToolRenderer('ImageGen', renderImageGen)
+registerToolRenderer('Monitor', renderMonitor)
+registerToolRenderer('LSP', renderLSP)
+registerToolRenderer('Git', renderGit)
+
+// Terminal alias
+registerToolRenderer('PowerShell', renderBashTerminal)
 
 TOOL_AUTO_EXPAND.add('askuserquestion')
+TOOL_AUTO_EXPAND.add('permissionapproval')
 
 // ── AskUserQuestion action handler ──
+
+// Helper: fetch current session ID from the global singleton
+function getCurrentSessionId(): string {
+  return getSessionId()
+}
+
+// Helper: call the permission respond API
+async function respondPermission(sessionId: string, toolCallId: string, optionId: string, cancelled: boolean): Promise<boolean> {
+  try {
+    const resp = await fetch('/api/ai/permission/respond', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, toolCallId, optionId, cancelled }),
+    })
+    return resp.ok
+  } catch (e) {
+    console.error('permission respond failed:', e)
+    return false
+  }
+}
 
 function updateAskSubmitState(view: Element) {
   const items = view.querySelectorAll('.ask-question-item')
@@ -687,5 +1478,62 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
   }
 
   // Not an AskUserQuestion-specific click — fall through
+  return false
+})
+
+// ── PermissionApproval action handler ──
+
+registerToolActionHandler('PermissionApproval', (event, emit) => {
+  const target = event.target as HTMLElement
+
+  // Button click
+  const btn = target.closest('.permission-btn') as HTMLElement | null
+  if (btn) {
+    event.stopPropagation()
+    event.preventDefault()
+
+    const view = btn.closest('.permission-approval-view')
+    if (!view || view.classList.contains('permission-responded') || view.classList.contains('permission-auto-approved')) {
+      return true
+    }
+
+    const optionId = btn.dataset.optionId || ''
+    const kind = btn.dataset.kind || ''
+    const cancelled = kind === 'reject_once' || kind === 'reject_always'
+
+    // Extract sessionId and toolCallId from the tool-detail container's data attributes
+    const toolDetail = btn.closest('.tool-detail') as HTMLElement | null
+    const sessionId = toolDetail?.dataset?.sessionId || getCurrentSessionId()
+    const toolCallId = toolDetail?.dataset?.toolCallId || ''
+
+    if (!toolCallId) {
+      console.warn('PermissionApproval: no toolCallId found')
+      return true
+    }
+
+    // Mark as responded
+    view.classList.add('permission-responded')
+    const allBtns = view.querySelectorAll('.permission-btn')
+    for (const b of allBtns) {
+      ;(b as HTMLButtonElement).disabled = true
+      if (b !== btn) {
+        ;(b as HTMLElement).style.opacity = '0.4'
+      }
+    }
+
+    // Show feedback
+    if (cancelled) {
+      btn.textContent = gt('tool.permission.denied')
+    } else {
+      btn.textContent = gt('tool.permission.approved')
+    }
+
+    // Call the API
+    respondPermission(sessionId, toolCallId, optionId, cancelled)
+
+    return true
+  }
+
+  // Not a PermissionApproval-specific click — fall through
   return false
 })

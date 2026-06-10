@@ -52,5 +52,10 @@ export function createStopButtonMachine(options: StopButtonOptions = {}) {
 
   function getPrimed() { return primed }
 
-  return { click, reset, getPrimed }
+  function destroy() {
+    if (timer) { clearTimeout(timer); timer = null }
+    primed = false
+  }
+
+  return { click, reset, getPrimed, destroy }
 }

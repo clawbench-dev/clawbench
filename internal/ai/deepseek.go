@@ -1,6 +1,9 @@
 package ai
 
-import "strings"
+import (
+	"log/slog"
+	"strings"
+)
 
 // deepseekBackend is the CLIBackend instance for DeepSeek TUI CLI.
 var deepseekBackend = &CLIBackend{
@@ -33,10 +36,14 @@ func buildDeepSeekStreamArgs(req ChatRequest) []string {
 	// Resume previous session
 	if req.Resume && req.SessionID != "" {
 		args = append(args, "--resume", req.SessionID)
+		slog.Info("cli: --resume (deepseek)",
+			slog.String("session_id", req.SessionID))
 	} else if req.Resume {
 		// Session capture event was missed — fall back to --continue
 		// which resumes the most recent session without needing an ID.
 		args = append(args, "--continue")
+		slog.Warn("cli: --continue fallback (deepseek, session_id missing)",
+			slog.String("backend", "deepseek"))
 	}
 
 	// System prompt — DeepSeek TUI supports --system-prompt natively

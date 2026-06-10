@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	session_type TEXT NOT NULL DEFAULT 'chat',
 	external_session_id TEXT DEFAULT '',
 	source_session_id TEXT DEFAULT NULL,
-	thinking_effort TEXT DEFAULT '',
+	transport TEXT DEFAULT '',
+	auto_approve INTEGER NOT NULL DEFAULT 0,
 	deleted INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -106,11 +107,27 @@ CREATE TABLE IF NOT EXISTS summaries (
 	UNIQUE(target_type, target_id)
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_source_session ON chat_sessions(source_session_id) WHERE source_session_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS chat_metadata (
+	message_id INTEGER PRIMARY KEY,
+	mode TEXT DEFAULT '',
+	thinking_effort TEXT DEFAULT '',
+	transport TEXT DEFAULT '',
+	model TEXT DEFAULT '',
+	input_tokens INTEGER DEFAULT 0,
+	output_tokens INTEGER DEFAULT 0,
+	duration_ms INTEGER DEFAULT 0,
+	wall_ms INTEGER DEFAULT 0,
+	cost_usd REAL DEFAULT 0,
+	stop_reason TEXT DEFAULT '',
+	is_error INTEGER DEFAULT 0,
+	error_message TEXT DEFAULT '',
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 `
 
 // setupDB creates an in-memory SQLite database with the required schema,
 // sets service.DB, and returns a cleanup function.
-func setupDB(t *testing.T) *sql.DB { //nolint:unparam // test helper: DB used implicitly via global state
+func setupDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
 	assert.NoError(t, err)
@@ -637,7 +654,7 @@ func TestFinalizeStreamingMessage(t *testing.T) {
 	_, err := service.AddChatMessage("/project", "claude", sid, "assistant", "streaming...", nil, true, "")
 	assert.NoError(t, err)
 
-	err = service.FinalizeStreamingMessage("/project", "claude", sid, "final content")
+	_, err = service.FinalizeStreamingMessage("/project", "claude", sid, "final content")
 	assert.NoError(t, err)
 
 	msgs, err := service.GetChatHistory("/project", "claude", sid)
@@ -870,7 +887,7 @@ func TestFinalizeStreamingMessage_NoStreamingRow(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "NoStream")
 
 	// No streaming message; finalize should succeed but affect 0 rows
-	err := service.FinalizeStreamingMessage("/project", "claude", sid, "content")
+	_, err := service.FinalizeStreamingMessage("/project", "claude", sid, "content")
 	assert.NoError(t, err)
 }
 
@@ -1479,81 +1496,6 @@ func TestGetSessions_AllBackendsFiltersBySessionType(t *testing.T) {
 	}
 }
 
-// ---------- GetSessionThinkingEffort / UpdateSessionThinkingEffort ----------
-
-func TestGetSessionThinkingEffort_DefaultEmpty(t *testing.T) {
-	setupDB(t)
-
-	sid := helperCreateSession(t, "/project", "claude", "Thinking Test")
-	// New session should have empty thinking effort (auto)
-	assert.Equal(t, "", service.GetSessionThinkingEffort(sid))
-}
-
-func TestGetSessionThinkingEffort_NonExistent(t *testing.T) {
-	setupDB(t)
-	// Non-existent session should return empty string
-	assert.Equal(t, "", service.GetSessionThinkingEffort("non-existent"))
-}
-
-func TestUpdateSessionThinkingEffort_Set(t *testing.T) {
-	setupDB(t)
-
-	sid := helperCreateSession(t, "/project", "claude", "Thinking Test")
-
-	// Set thinking effort
-	err := service.UpdateSessionThinkingEffort(sid, "high")
-	assert.NoError(t, err)
-
-	// Verify it was persisted
-	assert.Equal(t, "high", service.GetSessionThinkingEffort(sid))
-}
-
-func TestUpdateSessionThinkingEffort_Update(t *testing.T) {
-	setupDB(t)
-
-	sid := helperCreateSession(t, "/project", "claude", "Thinking Test")
-
-	// Set initial value
-	err := service.UpdateSessionThinkingEffort(sid, "low")
-	assert.NoError(t, err)
-	assert.Equal(t, "low", service.GetSessionThinkingEffort(sid))
-
-	// Update to different value
-	err = service.UpdateSessionThinkingEffort(sid, "xhigh")
-	assert.NoError(t, err)
-	assert.Equal(t, "xhigh", service.GetSessionThinkingEffort(sid))
-}
-
-func TestUpdateSessionThinkingEffort_ResetToAuto(t *testing.T) {
-	setupDB(t)
-
-	sid := helperCreateSession(t, "/project", "claude", "Thinking Test")
-
-	// Set thinking effort
-	err := service.UpdateSessionThinkingEffort(sid, "medium")
-	assert.NoError(t, err)
-	assert.Equal(t, "medium", service.GetSessionThinkingEffort(sid))
-
-	// Reset to auto (empty string)
-	err = service.UpdateSessionThinkingEffort(sid, "")
-	assert.NoError(t, err)
-	assert.Equal(t, "", service.GetSessionThinkingEffort(sid))
-}
-
-func TestGetSessionThinkingEffort_DeletedSession(t *testing.T) {
-	setupDB(t)
-
-	sid := helperCreateSession(t, "/project", "claude", "Thinking Delete")
-	err := service.UpdateSessionThinkingEffort(sid, "high")
-	assert.NoError(t, err)
-
-	// Delete session
-	_ = service.DeleteSession("/project", "claude", sid)
-
-	// Deleted session should return empty (query filters deleted=0)
-	assert.Equal(t, "", service.GetSessionThinkingEffort(sid))
-}
-
 // ---------- GetSessionsPaged ----------
 
 func TestGetSessionsPaged_NoLimit_ReturnsAll(t *testing.T) {
@@ -1966,7 +1908,7 @@ func TestGetSessionFullInfo(t *testing.T) {
 	assert.Equal(t, "Full Info Test", info.Title)
 	assert.Equal(t, "my-agent", info.AgentID)
 	assert.Equal(t, "gpt-4o", info.Model)
-	assert.Equal(t, "", info.ThinkingEffort)
+	assert.Equal(t, "", info.Transport)
 }
 
 func TestGetSessionFullInfo_WithThinkingEffort(t *testing.T) {
@@ -1974,12 +1916,10 @@ func TestGetSessionFullInfo_WithThinkingEffort(t *testing.T) {
 
 	sid, err := service.CreateSession("/project", "claude", "Thinking", "claude", "", "default", "chat")
 	assert.NoError(t, err)
-	err = service.UpdateSessionThinkingEffort(sid, "high")
-	assert.NoError(t, err)
-
+	// ThinkingEffort is no longer persisted to DB; it comes from ACP runtime.
+	// This test now only verifies that GetSessionFullInfo returns without error.
 	info := service.GetSessionFullInfo(sid)
 	assert.NotNil(t, info)
-	assert.Equal(t, "high", info.ThinkingEffort)
 }
 
 func TestGetSessionFullInfo_NotFound(t *testing.T) {
@@ -2012,7 +1952,59 @@ func TestGetSessionInfo(t *testing.T) {
 	assert.Equal(t, "claude", info.Backend)
 	assert.Equal(t, "claude", info.AgentID)
 	assert.Equal(t, "claude-sonnet-4-6", info.Model)
-	assert.Equal(t, "", info.ThinkingEffort)
+	assert.Equal(t, "", info.Transport)
+}
+
+// ---------- SaveMetadata ----------
+
+func TestSaveMetadata(t *testing.T) {
+	db := setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Meta")
+	msgID, err := service.AddChatMessage("/project", "claude", sid, "assistant", `{"blocks":[],"metadata":{"model":"gpt-4","inputTokens":100,"outputTokens":50}}`, nil, false, "")
+	assert.NoError(t, err)
+	assert.Greater(t, msgID, int64(0))
+
+	meta := &ai.Metadata{
+		Mode:           "code",
+		ThinkingEffort: "high",
+		Transport:      "acp-stdio",
+		Model:          "gpt-4",
+		InputTokens:    100,
+		OutputTokens:   50,
+		WallMs:         3200,
+		CostUSD:        0.005,
+		StopReason:     "stop",
+	}
+	err = service.SaveMetadata(msgID, meta)
+	assert.NoError(t, err)
+
+	// Verify the row was inserted
+	var mode, model, transport string
+	var inputTokens, outputTokens, wallMs int
+	var costUsd float64
+	err = db.QueryRow("SELECT mode, model, transport, input_tokens, output_tokens, wall_ms, cost_usd FROM chat_metadata WHERE message_id = ?", msgID).
+		Scan(&mode, &model, &transport, &inputTokens, &outputTokens, &wallMs, &costUsd)
+	assert.NoError(t, err)
+	assert.Equal(t, "code", mode)
+	assert.Equal(t, "gpt-4", model)
+	assert.Equal(t, "acp-stdio", transport)
+	assert.Equal(t, 100, inputTokens)
+	assert.Equal(t, 50, outputTokens)
+	assert.Equal(t, 3200, wallMs)
+	assert.InDelta(t, 0.005, costUsd, 0.0001)
+}
+
+func TestSaveMetadata_NilMeta(t *testing.T) {
+	_ = setupDB(t)
+	err := service.SaveMetadata(1, nil)
+	assert.NoError(t, err)
+}
+
+func TestSaveMetadata_ZeroMessageID(t *testing.T) {
+	_ = setupDB(t)
+	err := service.SaveMetadata(0, &ai.Metadata{Model: "test"})
+	assert.NoError(t, err)
 }
 
 func TestGetSessionInfo_NotFound(t *testing.T) {
@@ -2520,6 +2512,30 @@ func TestUpdateSessionModel_NonExistent(t *testing.T) {
 	assert.NoError(t, err) // UPDATE on non-existent row is a no-op
 }
 
+// ---------- GetSessionAutoApprove / UpdateSessionAutoApprove ----------
+
+func TestGetSessionAutoApprove_DefaultOff(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "AutoApprove Test")
+	assert.False(t, service.GetSessionAutoApprove(sid))
+}
+
+func TestUpdateSessionAutoApprove_Enable(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "AutoApprove Enable")
+	err := service.UpdateSessionAutoApprove(sid, true)
+	assert.NoError(t, err)
+	assert.True(t, service.GetSessionAutoApprove(sid))
+}
+
+func TestUpdateSessionAutoApprove_Disable(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "AutoApprove Disable")
+	service.UpdateSessionAutoApprove(sid, true)
+	service.UpdateSessionAutoApprove(sid, false)
+	assert.False(t, service.GetSessionAutoApprove(sid))
+}
+
 // ---------- GetStreamingMessageID ----------
 
 func TestGetStreamingMessageID_Found(t *testing.T) {
@@ -2531,7 +2547,7 @@ func TestGetStreamingMessageID_Found(t *testing.T) {
 	_, err := service.AddChatMessage("/project", "claude", sid, "assistant", "streaming...", nil, true, "")
 	assert.NoError(t, err)
 
-	err = service.FinalizeStreamingMessage("/project", "claude", sid, "final content")
+	_, err = service.FinalizeStreamingMessage("/project", "claude", sid, "final content")
 	assert.NoError(t, err)
 
 	id := service.GetStreamingMessageID(sid)
@@ -2685,31 +2701,26 @@ func TestGetLatestUserModel_Found(t *testing.T) {
 	_, err := service.CreateSession("/project", "claude", "Test", "claude", "gpt-4o", "user", "chat")
 	assert.NoError(t, err)
 
-	modelID, thinkingEffort := service.GetLatestUserModel("claude", "/project")
+	modelID := service.GetLatestUserModel("claude", "/project")
 	assert.Equal(t, "gpt-4o", modelID)
-	assert.Equal(t, "", thinkingEffort)
 }
 
 func TestGetLatestUserModel_WithThinkingEffort(t *testing.T) {
 	setupDB(t)
 
-	sid, err := service.CreateSession("/project", "claude", "Test", "claude", "gpt-4o", "user", "chat")
+	_, err := service.CreateSession("/project", "claude", "Test", "claude", "gpt-4o", "user", "chat")
 	assert.NoError(t, err)
 
-	err = service.UpdateSessionThinkingEffort(sid, "high")
-	assert.NoError(t, err)
-
-	modelID, thinkingEffort := service.GetLatestUserModel("claude", "/project")
+	// ThinkingEffort is no longer persisted to DB; only model is returned
+	modelID := service.GetLatestUserModel("claude", "/project")
 	assert.Equal(t, "gpt-4o", modelID)
-	assert.Equal(t, "high", thinkingEffort)
 }
 
 func TestGetLatestUserModel_NotFound(t *testing.T) {
 	setupDB(t)
 
-	modelID, thinkingEffort := service.GetLatestUserModel("claude", "/project")
+	modelID := service.GetLatestUserModel("claude", "/project")
 	assert.Equal(t, "", modelID)
-	assert.Equal(t, "", thinkingEffort)
 }
 
 // ---------- GetChatHistoryPaged: all branches ----------

@@ -62,8 +62,8 @@ export function convertAudioLinks(html: string): string {
 }
 
 /**
- * Parse ask-question content from XML format.
- * No backward compatibility with JSON — XML-only parsing.
+ * Parse ask-question content from XML or JSON format.
+ * Tries XML first, falls back to JSON if XML fails.
  * Returns null if parsing fails or no valid questions found.
  */
 export function parseAskQuestionContent(rawContent: string): { questions: any[] } | null {

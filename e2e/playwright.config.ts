@@ -3,7 +3,7 @@ import { defineConfig, devices } from '@playwright/test'
 /**
  * Playwright E2E test configuration for ClawBench.
  *
- * Architecture: Real Go backend + MockAIBackend (no real AI CLI).
+ * Architecture: Real Go backend + ACP mock agent (no real AI CLI).
  * The server is managed by globalSetup/globalTeardown in helpers/server.ts.
  *
  * Three browser projects:
@@ -16,7 +16,7 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  workers: process.env.CI ? 1 : 1, // Always 1 worker: ACP mock agent requires serial execution
   reporter: process.env.CI
     ? [['html', { open: 'never' }], ['github']]
     : [['html', { open: 'on-failure' }], ['list']],

@@ -103,6 +103,24 @@ function handleClick(event) {
         }
         return
     }
+    // In-page anchor links: scroll smoothly + flash highlight (matches TocDrawer behavior)
+    const linkEl = (event.target).closest('a[href^="#"]')
+    if (linkEl) {
+        const href = linkEl.getAttribute('href') || ''
+        // Ignore empty anchors (e.g., <a href="#">) so they don't interfere
+        if (href.length > 1) {
+            const targetId = decodeURIComponent(href.slice(1))
+            const targetEl = bodyRef.value?.querySelector(`#${CSS.escape(targetId)}`)
+            if (targetEl) {
+                event.preventDefault()
+                event.stopPropagation()
+                targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                targetEl.classList.add('line-flash')
+                targetEl.addEventListener('animationend', () => targetEl.classList.remove('line-flash'), { once: true })
+                return
+            }
+        }
+    }
     // Handle <a> link clicks (relative paths) + double-click copy
     handleDblClick(event, (href) => {
         const currentDir = props.file?.path ? dirName(props.file.path) : ''

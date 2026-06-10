@@ -154,6 +154,47 @@ func TestDataTypesJSON(t *testing.T) {
 	})
 }
 
+func TestACPStateUpdateDataJSON(t *testing.T) {
+	t.Run("full_fields", func(t *testing.T) {
+		d := ACPStateUpdateData{
+			AgentID: "claude",
+			ModeState: map[string]any{
+				"currentModeId":  "code",
+				"availableModes": []map[string]string{{"id": "code", "name": "Code"}},
+			},
+			ThinkingEffortState: map[string]any{
+				"currentId": "high",
+			},
+			Commands:       []string{"branch", "clear"},
+			ModelListState: map[string]any{"currentModelId": "opus-4"},
+		}
+		data, err := json.Marshal(d)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		s := string(data)
+		for _, field := range []string{"agentId", "modeState", "thinkingEffortState", "commands", "modelListState"} {
+			if !strings.Contains(s, field) {
+				t.Errorf("expected %s in output, got %s", field, s)
+			}
+		}
+	})
+
+	t.Run("optional_fields_omitted", func(t *testing.T) {
+		d := ACPStateUpdateData{AgentID: "claude"}
+		data, err := json.Marshal(d)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		s := string(data)
+		for _, field := range []string{"modeState", "thinkingEffortState", "commands", "modelListState"} {
+			if strings.Contains(s, field) {
+				t.Errorf("expected %s to be omitted when nil, got %s", field, s)
+			}
+		}
+	})
+}
+
 func TestServerMessagePing(t *testing.T) {
 	msg := ServerMessage{Type: "ping"}
 	data, err := json.Marshal(msg)

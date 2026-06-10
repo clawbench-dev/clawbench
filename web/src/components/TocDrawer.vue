@@ -43,7 +43,7 @@ import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
-import { extractToc } from '@/utils/toc.ts'
+import { extractToc, slugify } from '@/utils/toc.ts'
 import { getFileType } from '@/utils/fileType.ts'
 import { fetchCodeSymbols } from '@/composables/useCodeSymbols'
 
@@ -118,7 +118,7 @@ watch([() => props.file, () => props.pdfOutline], ([file, pdfOut]) => {
                     level: s.level,
                     text: s.name,
                     kind: s.kind,
-                    id: 'toc-l' + s.line,
+                    id: s.kind === 'heading' ? slugify(s.name) : 'toc-l' + s.line,
                     line: s.line,
                 }))
             } else {

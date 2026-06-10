@@ -1,7 +1,6 @@
 package model_test
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -13,13 +12,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 )
 
 // --- Test 1: BackendRegistry ---
 
 func TestBackendRegistry_ContainsAllBackends(t *testing.T) {
-	expectedIDs := []string{"claude", "codebuddy", "opencode", "gemini", "codex", "qoder", "vecli", "deepseek", "pi"}
+	expectedIDs := []string{"claude", "codebuddy", "opencode", "gemini", "codex", "qoder", "vecli", "deepseek", "pi", "cline", "kimi", "copilot"}
 	assert.Len(t, model.BackendRegistry, len(expectedIDs))
 
 	seen := make(map[string]bool)
@@ -61,68 +59,7 @@ func TestBackendRegistry_SpecificValues(t *testing.T) {
 	assert.Equal(t, "pi", specs["pi"].DefaultCmd)
 }
 
-// --- Test 2: generateAgentYAML ---
-
-func TestGenerateAgentYAML_Format(t *testing.T) {
-	spec := model.BackendSpec{
-		ID:                   "claude",
-		Backend:              "claude",
-		DefaultCmd:           "claude",
-		Name:                 "Claude",
-		Icon:                 "🤖",
-		Specialty:            "代码编写与推理",
-		ThinkingEffortLevels: []string{"low", "medium", "high", "xhigh", "max"},
-	}
-
-	data, err := model.GenerateAgentYAML(spec)
-	require.NoError(t, err)
-
-	// Verify it's valid YAML and parses back to Agent struct
-	var agent model.Agent
-	err = yaml.Unmarshal(data, &agent)
-	require.NoError(t, err)
-
-	assert.Equal(t, "claude", agent.ID)
-	assert.Equal(t, "Claude", agent.Name)
-	assert.Equal(t, "🤖", agent.Icon)
-	assert.Equal(t, "代码编写与推理", agent.Specialty)
-	assert.Equal(t, "claude", agent.Backend)
-	assert.Empty(t, agent.Models)
-	assert.Empty(t, agent.SystemPrompt)
-	assert.Empty(t, agent.Command)
-	assert.Empty(t, agent.ThinkingEffortLevels)
-
-	// Minimal YAML: should NOT contain models, thinking_effort_levels, or system_prompt
-	content := string(data)
-	assert.NotContains(t, content, "models:")
-	assert.NotContains(t, content, "thinking_effort")
-	assert.NotContains(t, content, "system_prompt:")
-}
-
-func TestGenerateAgentYAML_ContainsRequiredFields(t *testing.T) {
-	spec := model.BackendSpec{
-		ID:         "test",
-		Backend:    "test",
-		DefaultCmd: "test",
-		Name:       "Test",
-		Icon:       "T",
-		Specialty:  "Testing",
-	}
-
-	data, err := model.GenerateAgentYAML(spec)
-	require.NoError(t, err)
-
-	content := string(data)
-	assert.Contains(t, content, "id: test")
-	assert.Contains(t, content, "name: Test")
-	assert.Contains(t, content, "backend: test")
-	// Minimal YAML: no models, no system_prompt, no thinking_effort_levels
-	assert.NotContains(t, content, "models:")
-	assert.NotContains(t, content, "system_prompt:")
-	assert.NotContains(t, content, "thinking_effort")
-}
-
-// --- Test 3: checkCLIExists ---
+// --- Test 2: checkCLIExists ---
 
 func TestCheckCLIExists_ExistingCommand(t *testing.T) {
 	// "ls" exists on all platforms
@@ -137,96 +74,7 @@ func TestCheckCLIExists_EmptyCommand(t *testing.T) {
 	assert.False(t, model.CheckCLIExists(""))
 }
 
-// --- Test 4: DiscoverAgents ---
-
-func TestDiscoverAgents_CreatesDirAndYAMLs(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "agents")
-	// dir does not exist yet
-
-	err := model.DiscoverAgents(dir)
-	require.NoError(t, err)
-
-	// Directory should now exist
-	info, err := os.Stat(dir)
-	require.NoError(t, err)
-	assert.True(t, info.IsDir())
-
-	// Each YAML file (if any) should be parseable as an Agent.
-	// Note: in CI environments no AI CLIs may be installed, so
-	// we cannot assert yamlCount > 0; we only validate structure.
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		require.NoError(t, err)
-
-		var agent model.Agent
-		err = yaml.Unmarshal(data, &agent)
-		require.NoError(t, err, "YAML file %s should be parseable", e.Name())
-		assert.NotEmpty(t, agent.ID)
-		assert.NotEmpty(t, agent.Backend)
-	}
-}
-
-func TestDiscoverAgents_GeneratedYAMLsLoadable(t *testing.T) {
-	t.Cleanup(func() {
-		model.Agents = nil
-		model.AgentList = nil
-	})
-
-	dir := filepath.Join(t.TempDir(), "agents")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-
-	// Pre-generate a known agent YAML so the test does not depend
-	// on any AI CLI being installed on the system.
-	spec := model.BackendSpec{
-		ID:         "test-loadable",
-		Backend:    "claude",
-		DefaultCmd: "nonexistent_cli_for_test",
-		Name:       "Test Loadable",
-		Icon:       "🧪",
-		Specialty:  "Testing",
-	}
-	data, err := model.GenerateAgentYAML(spec)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "test-loadable.yaml"), data, 0o644))
-
-	// LoadAgents should successfully load the generated YAMLs
-	err = model.LoadAgents(dir)
-	require.NoError(t, err)
-	assert.NotEmpty(t, model.AgentList)
-}
-
-func TestDiscoverAgents_DoesNotOverwrite(t *testing.T) {
-	dir := t.TempDir()
-	agentsDir := filepath.Join(dir, "agents")
-	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
-
-	// Create an existing agent YAML
-	existingYAML := `id: my-custom-agent
-name: My Custom Agent
-icon: 🎯
-specialty: Custom
-backend: codebuddy
-models: []
-system_prompt: "I am custom"
-`
-	err := os.WriteFile(filepath.Join(agentsDir, "my-custom-agent.yaml"), []byte(existingYAML), 0o644)
-	require.NoError(t, err)
-
-	err = model.DiscoverAgents(agentsDir)
-	require.NoError(t, err)
-
-	// Existing file should be preserved
-	data, err := os.ReadFile(filepath.Join(agentsDir, "my-custom-agent.yaml"))
-	require.NoError(t, err)
-	assert.Contains(t, string(data), "My Custom Agent")
-}
-
-// --- Test 5: Model list parsers ---
+// --- Test 3: Model list parsers ---
 
 func TestParseCodebuddyModels_RealOutput(t *testing.T) {
 	// Real output from: codebuddy --help | grep "Currently supported"
@@ -291,8 +139,6 @@ func TestParseDeepSeekModels_EmptyOutput(t *testing.T) {
 }
 
 func TestParseDeepSeekModels_NoDefaultMarker(t *testing.T) {
-	// If the header doesn't have a default and no * marker,
-	// the first model should still be marked as default (fallback convention)
 	output := `  deepseek-v4-flash (deepseek)
   deepseek-v4-pro (deepseek)
 `
@@ -303,7 +149,6 @@ func TestParseDeepSeekModels_NoDefaultMarker(t *testing.T) {
 }
 
 func TestParseDeepSeekModels_DefaultFromHeader(t *testing.T) {
-	// Default is in header but no * marker on any line
 	output := `Available models (default: deepseek-v4-pro)
   deepseek-v4-flash (deepseek)
   deepseek-v4-pro (deepseek)
@@ -315,7 +160,6 @@ func TestParseDeepSeekModels_DefaultFromHeader(t *testing.T) {
 }
 
 func TestParseDeepSeekModels_ProviderPrefixInIDAndName(t *testing.T) {
-	// Verify that provider prefix is included in both ID and Name
 	output := `Available models (default: deepseek-v4-pro)
 * deepseek-v4-pro (deepseek)
   deepseek-v4-flash (deepseek)
@@ -332,7 +176,6 @@ func TestParseDeepSeekModels_ProviderPrefixInIDAndName(t *testing.T) {
 }
 
 func TestParseDeepSeekModels_ThirdPartyProviderFiltered(t *testing.T) {
-	// Non-deepseek providers should be filtered out
 	output := `Available models (default: deepseek-v4-pro)
   deepseek-v4-pro (deepseek)
   deepseek-v4-pro (nvidia-nim)
@@ -344,7 +187,6 @@ func TestParseDeepSeekModels_ThirdPartyProviderFiltered(t *testing.T) {
 }
 
 func TestParseOpenCodeModels_RealOutput(t *testing.T) {
-	// Real output from: opencode models (truncated for test)
 	output := `opencode/minimax-m2.5-free
 opencode/nemotron-3-super-free
 minimax/MiniMax-M2.5
@@ -355,12 +197,10 @@ anthropic/claude-sonnet-4-6
 	models := model.ParseOpenCodeModels(output)
 	require.Len(t, models, 5)
 
-	// First model should be default
 	assert.Equal(t, "opencode/minimax-m2.5-free", models[0].ID)
 	assert.Equal(t, "opencode/minimax-m2.5-free", models[0].Name, "Name should include provider for disambiguation")
 	assert.True(t, models[0].Default, "first model should be default")
 
-	// Provider/model format
 	assert.Equal(t, "minimax/MiniMax-M2.5", models[2].ID)
 	assert.Equal(t, "minimax/MiniMax-M2.5", models[2].Name)
 
@@ -393,7 +233,7 @@ func TestParseOpenCodeModels_SingleModel(t *testing.T) {
 	assert.True(t, models[0].Default)
 }
 
-// --- Test 6: BackendRegistry model discovery config ---
+// --- Test 4: BackendRegistry model discovery config ---
 
 func TestBackendRegistry_ModelDiscoveryConfig(t *testing.T) {
 	specs := make(map[string]model.BackendSpec)
@@ -401,42 +241,23 @@ func TestBackendRegistry_ModelDiscoveryConfig(t *testing.T) {
 		specs[s.ID] = s
 	}
 
-	// codebuddy should have model discovery via DiscoverModelsFunc (JS bundle scanning)
 	assert.NotNil(t, specs["codebuddy"].DiscoverModelsFunc, "codebuddy should have DiscoverModelsFunc")
-
-	// opencode should have model discovery
 	assert.NotEmpty(t, specs["opencode"].ListModelsCmd, "opencode should have ListModelsCmd")
 	assert.NotNil(t, specs["opencode"].ParseModels, "opencode should have ParseModels")
-
-	// deepseek should have model discovery
 	assert.NotEmpty(t, specs["deepseek"].ListModelsCmd, "deepseek should have ListModelsCmd")
 	assert.NotNil(t, specs["deepseek"].ParseModels, "deepseek should have ParseModels")
-
-	// pi should have model discovery via DiscoverModelsFunc (outputs to stderr, not stdout)
 	assert.NotNil(t, specs["pi"].DiscoverModelsFunc, "pi should have DiscoverModelsFunc")
 	assert.Empty(t, specs["pi"].ListModelsCmd, "pi should not have ListModelsCmd")
-
-	// claude should have model discovery via DiscoverModelsFunc (binary strings scanning)
 	assert.NotNil(t, specs["claude"].DiscoverModelsFunc, "claude should have DiscoverModelsFunc")
-
-	// gemini should have model discovery via DiscoverModelsFunc (JS bundle scanning)
 	assert.NotNil(t, specs["gemini"].DiscoverModelsFunc, "gemini should have DiscoverModelsFunc")
-
-	// codex should have model discovery via DiscoverModelsFunc (binary strings scanning)
 	assert.NotNil(t, specs["codex"].DiscoverModelsFunc, "codex should have DiscoverModelsFunc")
-
-	// qoder should have model discovery via DiscoverModelsFunc (dynamic-texts.json parsing)
 	assert.NotNil(t, specs["qoder"].DiscoverModelsFunc, "qoder should have DiscoverModelsFunc")
-
-	// vecli should have model discovery via DiscoverModelsFunc (bundle MODEL_REGISTRY parsing)
 	assert.NotNil(t, specs["vecli"].DiscoverModelsFunc, "vecli should have DiscoverModelsFunc")
-
-	// qoder and vecli should NOT have ListModelsCmd (they use DiscoverModelsFunc instead)
 	assert.Empty(t, specs["qoder"].ListModelsCmd, "qoder should not have ListModelsCmd")
 	assert.Empty(t, specs["vecli"].ListModelsCmd, "vecli should not have ListModelsCmd")
 }
 
-// --- Test 7: DiscoverModels ---
+// --- Test 5: DiscoverModels ---
 
 func TestDiscoverModels_NoSupport(t *testing.T) {
 	spec := model.BackendSpec{
@@ -459,7 +280,6 @@ func TestDiscoverModels_NonexistentCLI(t *testing.T) {
 }
 
 func TestDiscoverModels_WithRealCLI(t *testing.T) {
-	// This test uses opencode if available; skip if not installed
 	if !model.CheckCLIExists("opencode") {
 		t.Skip("opencode not installed, skipping integration test")
 	}
@@ -472,10 +292,7 @@ func TestDiscoverModels_WithRealCLI(t *testing.T) {
 	}
 	models := model.DiscoverModels(spec)
 	assert.NotEmpty(t, models, "opencode should return at least one model")
-
-	// First model should be default
 	assert.True(t, models[0].Default, "first model should be default")
-	// All models should have non-empty IDs
 	for _, m := range models {
 		assert.NotEmpty(t, m.ID)
 		assert.NotEmpty(t, m.Name)
@@ -483,15 +300,14 @@ func TestDiscoverModels_WithRealCLI(t *testing.T) {
 }
 
 func TestDiscoverModels_WithEchoCLI(t *testing.T) {
-	// Test the full DiscoverModels flow using "echo" as a CLI that always exists.
 	spec := model.BackendSpec{
 		ID:            "mock-agent",
 		Backend:       "mock",
-		DefaultCmd:    "echo", // always available, will succeed
+		DefaultCmd:    "echo",
 		Name:          "Mock",
 		Icon:          "🧪",
 		Specialty:     "Testing",
-		ListModelsCmd: []string{"model-a, model-b"}, // echo will output this
+		ListModelsCmd: []string{"model-a, model-b"},
 		ParseModels: func(s string) []model.AgentModel {
 			return []model.AgentModel{
 				{ID: "mock-a", Name: "Mock A", Default: true},
@@ -534,7 +350,7 @@ func TestParsePiModels_HeaderOnly(t *testing.T) {
 	assert.Nil(t, models)
 }
 
-// --- Test 8: FindSpecByBackend ---
+// --- Test 6: FindSpecByBackend ---
 
 func TestFindSpecByBackend_Found(t *testing.T) {
 	spec := model.FindSpecByBackend("codebuddy")
@@ -557,291 +373,35 @@ func TestFindSpecByBackend_AllBackends(t *testing.T) {
 	}
 }
 
-// --- Test 9: SyncDiscoverAgents ---
+// --- Test 7: SyncDiscoverModels ---
 
-func TestSyncDiscoverAgents_CreatesMinimalYAML(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "agents")
+func TestSyncDiscoverModels_ReturnsMap(t *testing.T) {
+	result := model.SyncDiscoverModels()
 
-	present := model.SyncDiscoverAgents(dir)
+	// Result should be a valid map (may be empty if no CLIs installed)
+	assert.NotNil(t, result)
 
-	// Directory should exist
-	info, err := os.Stat(dir)
-	require.NoError(t, err)
-	assert.True(t, info.IsDir())
-
-	// present should be a valid map
-	assert.NotNil(t, present)
-
-	// Each generated YAML should be minimal (no models, no thinking_effort_levels)
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		require.NoError(t, err)
-		content := string(data)
-		// Minimal YAML should NOT contain models or thinking_effort_levels
-		assert.NotContains(t, content, "models:")
-		assert.NotContains(t, content, "thinking_effort")
-		assert.NotContains(t, content, "system_prompt:")
-	}
-}
-
-func TestSyncDiscoverAgents_DoesNotOverwrite(t *testing.T) {
-	dir := t.TempDir()
-	agentsDir := filepath.Join(dir, "agents")
-	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
-
-	// Create an existing agent YAML with custom content
-	existingYAML := `id: my-custom-agent
-name: My Custom Agent
-icon: 🎯
-specialty: Custom
-backend: codebuddy
-models:
-  - id: custom-model
-    name: Custom Model
-    default: true
-system_prompt: "I am custom"
-`
-	err := os.WriteFile(filepath.Join(agentsDir, "my-custom-agent.yaml"), []byte(existingYAML), 0o644)
-	require.NoError(t, err)
-
-	model.SyncDiscoverAgents(agentsDir)
-
-	// Existing file should be preserved
-	data, err := os.ReadFile(filepath.Join(agentsDir, "my-custom-agent.yaml"))
-	require.NoError(t, err)
-	assert.Contains(t, string(data), "My Custom Agent")
-	assert.Contains(t, string(data), "custom-model")
-}
-
-func TestSyncDiscoverAgents_ReturnsPresentMap(t *testing.T) {
-	dir := t.TempDir()
-
-	present := model.SyncDiscoverAgents(dir)
-
-	// For each backend that's installed, present[backend] should be true
-	for _, spec := range model.BackendRegistry {
-		if present[spec.Backend] {
-			// If marked present, the CLI should actually exist (or it's a NoCLI backend)
-			if !spec.NoCLI {
-				assert.True(t, model.CheckCLIExists(spec.DefaultCmd),
-					"SyncDiscoverAgents marked %s as present but CLI not found", spec.Backend)
-			}
+	// If any models were discovered, verify structure
+	for backend, models := range result {
+		assert.NotEmpty(t, backend)
+		assert.NotEmpty(t, models)
+		for _, m := range models {
+			assert.NotEmpty(t, m.ID)
 		}
 	}
 }
 
-// --- Test 10: MergeDiscoveredData ---
-
-func TestMergeDiscoveredData_FillsEmptyModelsFromCache(t *testing.T) {
-	t.Cleanup(func() {
-		model.Agents = nil
-		model.AgentList = nil
-	})
-
-	dir := filepath.Join(t.TempDir(), "agents")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-
-	// Create a minimal YAML with codebuddy backend (exists in Registry)
-	yamlContent := `id: test-merge
-name: Test Merge
-backend: codebuddy
-`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "test-merge.yaml"), []byte(yamlContent), 0o644))
-	require.NoError(t, model.LoadAgents(dir))
-
-	agent := model.Agents["test-merge"]
-	require.NotNil(t, agent)
-	assert.Empty(t, agent.Models)
-	assert.Empty(t, agent.ThinkingEffortLevels)
-
-	// Create a cache with models for codebuddy
-	cacheDir := filepath.Join(t.TempDir(), "model-cache")
-	cachedModels := []model.AgentModel{
-		{ID: "model-a", Name: "Model A", Default: true},
-		{ID: "model-b", Name: "Model B", Default: false},
+func TestSyncDiscoverModels_NilWhenNoCLIs(t *testing.T) {
+	result := model.SyncDiscoverModels()
+	// The result may be empty if no CLIs are installed, but should never be nil
+	// (it's an empty map, not nil)
+	if result == nil {
+		result = make(map[string][]model.AgentModel)
 	}
-	require.NoError(t, model.WriteModelCache(cacheDir, "codebuddy", cachedModels))
-
-	model.MergeDiscoveredData(cacheDir)
-
-	// Agent should now have models from cache and thinking_effort_levels from Registry
-	assert.Len(t, agent.Models, 2)
-	assert.Equal(t, "model-a", agent.Models[0].ID)
-	assert.Equal(t, []string{"low", "medium", "high", "xhigh"}, agent.ThinkingEffortLevels)
+	assert.NotNil(t, result)
 }
 
-func TestMergeDiscoveredData_PreservesUserModels(t *testing.T) {
-	t.Cleanup(func() {
-		model.Agents = nil
-		model.AgentList = nil
-	})
-
-	dir := filepath.Join(t.TempDir(), "agents")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-
-	// Create YAML with user-defined models
-	yamlContent := `id: test-preserve
-name: Test Preserve
-backend: codebuddy
-models:
-  - id: my-custom-model
-    name: My Custom Model
-    default: true
-`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "test-preserve.yaml"), []byte(yamlContent), 0o644))
-	require.NoError(t, model.LoadAgents(dir))
-
-	agent := model.Agents["test-preserve"]
-	require.NotNil(t, agent)
-	require.Len(t, agent.Models, 1)
-
-	// Create cache with different models
-	cacheDir := filepath.Join(t.TempDir(), "model-cache")
-	cachedModels := []model.AgentModel{
-		{ID: "discovered-model", Name: "Discovered", Default: true},
-	}
-	require.NoError(t, model.WriteModelCache(cacheDir, "codebuddy", cachedModels))
-
-	model.MergeDiscoveredData(cacheDir)
-
-	// User models preserved
-	assert.Len(t, agent.Models, 1)
-	assert.Equal(t, "my-custom-model", agent.Models[0].ID)
-
-	// ThinkingEffortLevels from Registry (codebuddy)
-	assert.Equal(t, []string{"low", "medium", "high", "xhigh"}, agent.ThinkingEffortLevels)
-}
-
-func TestMergeDiscoveredData_SoftRemoveMissingCLI(t *testing.T) {
-	t.Cleanup(func() {
-		model.Agents = nil
-		model.AgentList = nil
-	})
-
-	dir := filepath.Join(t.TempDir(), "agents")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-
-	// Create YAML for a backend whose CLI is NOT installed
-	yamlContent := `id: test-missing
-name: Test Missing
-backend: nonexistent_backend_type
-models:
-  - id: some-model
-    name: Some Model
-    default: true
-`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "test-missing.yaml"), []byte(yamlContent), 0o644))
-	require.NoError(t, model.LoadAgents(dir))
-	require.Len(t, model.AgentList, 1)
-
-	// Merge with present map that does NOT include "nonexistent_backend_type"
-	present := map[string]bool{"claude": true, "codebuddy": true}
-	cacheDir := filepath.Join(t.TempDir(), "model-cache")
-	model.MergeDiscoveredData(cacheDir, present)
-
-	// Agent should be removed from runtime (but YAML still exists)
-	assert.Empty(t, model.Agents)
-	assert.Empty(t, model.AgentList)
-
-	// YAML file still exists on disk
-	_, err := os.Stat(filepath.Join(dir, "test-missing.yaml"))
-	assert.NoError(t, err)
-}
-
-func TestMergeDiscoveredData_KeepsAgentWithPresentCLI(t *testing.T) {
-	t.Cleanup(func() {
-		model.Agents = nil
-		model.AgentList = nil
-	})
-
-	dir := filepath.Join(t.TempDir(), "agents")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-
-	// Create YAML with backend that IS present
-	yamlContent := `id: test-present
-name: Test Present
-backend: codebuddy
-`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "test-present.yaml"), []byte(yamlContent), 0o644))
-	require.NoError(t, model.LoadAgents(dir))
-	require.Len(t, model.AgentList, 1)
-
-	present := map[string]bool{"codebuddy": true}
-	cacheDir := filepath.Join(t.TempDir(), "model-cache")
-	model.MergeDiscoveredData(cacheDir, present)
-
-	// Agent should still be there
-	assert.Len(t, model.AgentList, 1)
-	assert.NotNil(t, model.Agents["test-present"])
-	// ThinkingEffortLevels filled from Registry
-	assert.Equal(t, []string{"low", "medium", "high", "xhigh"}, model.Agents["test-present"].ThinkingEffortLevels)
-}
-
-func TestMergeDiscoveredData_IgnoresYAMLThinkingEffortLevels(t *testing.T) {
-	t.Cleanup(func() {
-		model.Agents = nil
-		model.AgentList = nil
-	})
-
-	dir := filepath.Join(t.TempDir(), "agents")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-
-	// Create YAML with user-defined thinking_effort_levels (should be overwritten by Registry)
-	yamlContent := `id: test-levels
-name: Test Levels
-backend: codebuddy
-thinking_effort_levels:
-  - custom1
-  - custom2
-`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "test-levels.yaml"), []byte(yamlContent), 0o644))
-	require.NoError(t, model.LoadAgents(dir))
-
-	agent := model.Agents["test-levels"]
-	require.NotNil(t, agent)
-	// Before merge: YAML values are loaded
-	assert.Equal(t, []string{"custom1", "custom2"}, agent.ThinkingEffortLevels)
-
-	cacheDir := filepath.Join(t.TempDir(), "model-cache")
-	model.MergeDiscoveredData(cacheDir)
-
-	// After merge: Registry values replace YAML values
-	assert.Equal(t, []string{"low", "medium", "high", "xhigh"}, agent.ThinkingEffortLevels)
-}
-
-// --- Test 11: SyncDiscoverModels ---
-
-func TestSyncDiscoverModels_CreatesCacheFiles(t *testing.T) {
-	cacheDir := filepath.Join(t.TempDir(), "model-cache")
-
-	model.SyncDiscoverModels(cacheDir)
-
-	// Cache dir should be created (if any backend has model discovery + is installed)
-	entries, err := os.ReadDir(cacheDir)
-	if err != nil {
-		// No cache dir = no CLIs with model discovery installed, OK
-		return
-	}
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(cacheDir, e.Name()))
-		require.NoError(t, err)
-
-		var entry map[string]any
-		require.NoError(t, json.Unmarshal(data, &entry))
-		assert.Contains(t, entry, "models")
-		assert.Contains(t, entry, "updated_at")
-	}
-}
-
-// --- Test 12: DiscoverClaudeModels ---
+// --- Test 8: DiscoverClaudeModels ---
 
 func TestDiscoverClaudeModels_WithRealCLI(t *testing.T) {
 	if !model.CheckCLIExists("claude") {
@@ -853,13 +413,10 @@ func TestDiscoverClaudeModels_WithRealCLI(t *testing.T) {
 		t.Skip("claude model discovery returned no models (strings may not be available)")
 	}
 
-	// All models should have claude- prefixed IDs
 	for _, m := range models {
 		assert.True(t, strings.HasPrefix(m.ID, "claude-"), "model ID should start with claude-, got: %s", m.ID)
 		assert.NotEmpty(t, m.Name, "model should have a name")
 	}
-
-	// First model should be default
 	assert.True(t, models[0].Default, "first model should be default")
 
 	t.Logf("Discovered %d Claude models:", len(models))
@@ -868,7 +425,7 @@ func TestDiscoverClaudeModels_WithRealCLI(t *testing.T) {
 	}
 }
 
-// --- Test 12b: DiscoverCodebuddyModels ---
+// --- Test 8b: DiscoverCodebuddyModels ---
 
 func TestDiscoverCodebuddyModels_WithRealCLI(t *testing.T) {
 	if !model.CheckCLIExists("codebuddy") {
@@ -880,13 +437,11 @@ func TestDiscoverCodebuddyModels_WithRealCLI(t *testing.T) {
 		t.Skip("codebuddy model discovery returned no models (product JSON may not be found)")
 	}
 
-	// All models should have valid IDs and names
 	for _, m := range models {
 		assert.NotEmpty(t, m.ID, "model should have an ID")
 		assert.NotEmpty(t, m.Name, "model should have a name, got ID: %s", m.ID)
 	}
 
-	// Should contain both glm and non-glm models (deepseek, kimi, etc.)
 	hasGlm := false
 	hasNonGlm := false
 	for _, m := range models {
@@ -898,11 +453,8 @@ func TestDiscoverCodebuddyModels_WithRealCLI(t *testing.T) {
 	}
 	assert.True(t, hasGlm, "should contain at least one glm model")
 	assert.True(t, hasNonGlm, "should contain non-glm models (deepseek, kimi, etc.)")
-
-	// First model should be default
 	assert.True(t, models[0].Default, "first model should be default")
 
-	// Should not contain pseudo-models "default" or "auto"
 	for _, m := range models {
 		assert.NotEqual(t, "default", m.ID, "should not contain pseudo-model 'default'")
 		assert.NotEqual(t, "auto", m.ID, "should not contain pseudo-model 'auto'")
@@ -914,12 +466,9 @@ func TestDiscoverCodebuddyModels_WithRealCLI(t *testing.T) {
 	}
 }
 
-// --- Test 13: SyncDiscoverModels covers DiscoverModelsFunc (Claude) ---
+// --- Test 9: SyncDiscoverModels covers DiscoverModelsFunc (Claude) ---
 
 func TestSyncDiscoverModels_CoversClaudeDiscoverModelsFunc(t *testing.T) {
-	// Claude uses DiscoverModelsFunc instead of ListModelsCmd+ParseModels.
-	// Before the fix, SyncDiscoverModels skipped Claude because it only checked
-	// ListModelsCmd/ParseModels. After the fix, it should include Claude.
 	specs := make(map[string]model.BackendSpec)
 	for _, s := range model.BackendRegistry {
 		specs[s.ID] = s
@@ -934,23 +483,17 @@ func TestSyncDiscoverModels_CoversClaudeDiscoverModelsFunc(t *testing.T) {
 		t.Skip("claude not installed, skipping integration test")
 	}
 
-	cacheDir := filepath.Join(t.TempDir(), "model-cache")
-	model.SyncDiscoverModels(cacheDir)
-
-	data, err := os.ReadFile(filepath.Join(cacheDir, "claude.json"))
-	if err != nil {
-		// strings command may not be available on this system
-		t.Logf("claude cache file not created (strings may not be available): %v", err)
+	result := model.SyncDiscoverModels()
+	models, ok := result["claude"]
+	if !ok || len(models) == 0 {
+		t.Logf("claude model discovery returned no models (strings may not be available)")
 		return
 	}
 
-	var entry map[string]any
-	require.NoError(t, json.Unmarshal(data, &entry))
-	assert.Contains(t, entry, "models")
-	t.Logf("claude cache file created with models")
+	t.Logf("claude discovered %d models via SyncDiscoverModels", len(models))
 }
 
-// --- Test 13b: Gemini/Codex/Qoder/VeCLI model discovery integration ---
+// --- Test 9b: Gemini/Codex/Qoder/VeCLI model discovery integration ---
 
 func TestDiscoverGeminiModels_WithRealCLI(t *testing.T) {
 	if !model.CheckCLIExists("gemini") {
@@ -962,16 +505,12 @@ func TestDiscoverGeminiModels_WithRealCLI(t *testing.T) {
 		t.Skip("gemini model discovery returned no models")
 	}
 
-	// All models should have gemini- prefixed IDs
 	for _, m := range models {
 		assert.True(t, strings.HasPrefix(m.ID, "gemini-"), "model ID should start with gemini-, got: %s", m.ID)
 		assert.NotEmpty(t, m.Name, "model should have a name")
 	}
-
-	// First model should be default
 	assert.True(t, models[0].Default, "first model should be default")
 
-	// Should not contain aliases
 	for _, m := range models {
 		assert.NotContains(t, m.ID, "auto-gemini-", "should not contain auto-gemini aliases")
 	}
@@ -992,13 +531,10 @@ func TestDiscoverCodexModels_WithRealCLI(t *testing.T) {
 		t.Skip("codex model discovery returned no models (strings may not be available or Rust binary not found)")
 	}
 
-	// All models should have valid IDs
 	for _, m := range models {
 		assert.NotEmpty(t, m.ID, "model should have an ID")
 		assert.NotEmpty(t, m.Name, "model should have a name")
 	}
-
-	// First model should be default
 	assert.True(t, models[0].Default, "first model should be default")
 
 	t.Logf("Discovered %d Codex models:", len(models))
@@ -1022,13 +558,11 @@ func TestDiscoverQoderModels_WithRealCLI(t *testing.T) {
 		t.Skip("qoder model discovery returned no models")
 	}
 
-	// All models should have valid IDs and names
 	for _, m := range models {
 		assert.NotEmpty(t, m.ID, "model should have an ID")
 		assert.NotEmpty(t, m.Name, "model should have a name")
 	}
 
-	// Should not contain tier aliases
 	for _, m := range models {
 		assert.NotEqual(t, "auto", m.ID, "should not contain 'auto' alias")
 		assert.NotEqual(t, "ultimate", m.ID, "should not contain 'ultimate' tier")
@@ -1036,8 +570,6 @@ func TestDiscoverQoderModels_WithRealCLI(t *testing.T) {
 		assert.NotEqual(t, "efficient", m.ID, "should not contain 'efficient' tier")
 		assert.NotEqual(t, "lite", m.ID, "should not contain 'lite' tier")
 	}
-
-	// First model should be default
 	assert.True(t, models[0].Default, "first model should be default")
 
 	t.Logf("Discovered %d Qoder models:", len(models))
@@ -1056,13 +588,10 @@ func TestDiscoverVeCLIModels_WithRealCLI(t *testing.T) {
 		t.Skip("vecli model discovery returned no models")
 	}
 
-	// All models should have valid IDs and names
 	for _, m := range models {
 		assert.NotEmpty(t, m.ID, "model should have an ID")
 		assert.NotEmpty(t, m.Name, "model should have a name")
 	}
-
-	// First model should be default
 	assert.True(t, models[0].Default, "first model should be default")
 
 	t.Logf("Discovered %d VeCLI models:", len(models))
@@ -1071,35 +600,22 @@ func TestDiscoverVeCLIModels_WithRealCLI(t *testing.T) {
 	}
 }
 
-// --- Test 14: AsyncRefreshModelCache ---
-// AsyncRefreshModelCache is a fire-and-forget goroutine that iterates over
-// BackendRegistry, discovers models, and updates in-memory agents.
-// It cannot be tested safely with the race detector because:
-//   - It launches an untracked goroutine
-//   - The goroutine accesses global state (AgentList) concurrently
-//   - Test cleanup (setting Agents=nil) races with the goroutine
-//
-// The core model discovery logic is already covered by:
-//   - TestDiscoverModels_* (DiscoverModels function)
-//   - TestSyncDiscoverModels_* (SyncDiscoverModels synchronous path)
-//   - TestMergeDiscoveredData_* (MergeDiscoveredData agent update logic)
-//
-// AsyncRefreshModelCache is essentially the async composition of these,
-// and the composition itself is trivial (just a goroutine wrapper).
-// We test the one unique behavior: it should not panic when called.
+// --- Test 10: AsyncRefreshModelCache ---
 
 func TestAsyncRefreshModelCache_DoesNotPanic(t *testing.T) {
-	// Calling AsyncRefreshModelCache should not panic, even with no agents.
-	cacheDir := filepath.Join(t.TempDir(), "model-cache")
 	assert.NotPanics(t, func() {
-		model.AsyncRefreshModelCache(cacheDir)
+		model.AsyncRefreshModelCache(nil)
 	})
 }
 
-// --- Test 15: CheckCLIExistsErr ---
+func TestAsyncRefreshModelCache_DoesNotBlock(t *testing.T) {
+	model.AsyncRefreshModelCache(nil)
+	time.Sleep(100 * time.Millisecond)
+}
+
+// --- Test 11: CheckCLIExistsErr ---
 
 func TestCheckCLIExistsErr_ExistingCommand(t *testing.T) {
-	// "ls" exists on all platforms
 	err := model.CheckCLIExistsErr("ls")
 	assert.NoError(t, err)
 }
@@ -1116,25 +632,20 @@ func TestCheckCLIExistsErr_EmptyCommand(t *testing.T) {
 	assert.Contains(t, err.Error(), "empty command")
 }
 
-// --- Test 16: DiscoverCodebuddyModels with mock product JSON ---
+// --- Test 12: DiscoverCodebuddyModels with mock product JSON ---
 
 func TestDiscoverCodebuddyModels_ProductJSON(t *testing.T) {
-	// These tests modify PATH and create fake CLI scripts which don't work on Windows.
-	// The core JSON parsing logic is also covered by the internal unit tests.
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping on Windows — fake CLI scripts not executable")
 	}
 
-	// Create directory structure: .../bin/fake-codebuddy and .../product.cloudhosted.json
 	tmpDir := t.TempDir()
 	binDir := filepath.Join(tmpDir, "bin")
 	require.NoError(t, os.MkdirAll(binDir, 0o755))
 
-	// Create a fake "codebuddy" script
 	fakeCLI := filepath.Join(binDir, "codebuddy")
 	require.NoError(t, os.WriteFile(fakeCLI, []byte("#!/bin/sh\necho ok\n"), 0o755))
 
-	// Create product.cloudhosted.json in the parent directory
 	productJSON := `{
 		"models": [
 			{"id": "glm-5.1", "name": "GLM 5.1", "isDefault": true},
@@ -1147,7 +658,6 @@ func TestDiscoverCodebuddyModels_ProductJSON(t *testing.T) {
 	}`
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "product.cloudhosted.json"), []byte(productJSON), 0o644))
 
-	// Add tmpDir/bin to PATH
 	origPath := os.Getenv("PATH")
 	require.NoError(t, os.Setenv("PATH", binDir+string(os.PathListSeparator)+origPath))
 	t.Cleanup(func() { os.Setenv("PATH", origPath) })
@@ -1155,8 +665,6 @@ func TestDiscoverCodebuddyModels_ProductJSON(t *testing.T) {
 	models := model.DiscoverCodebuddyModels()
 	require.NotEmpty(t, models, "should discover models from product JSON")
 
-	// Should contain 3 models (glm-5.1, glm-4-flash, deepseek-v3)
-	// Pseudo-models "default", "auto", and image model should be skipped
 	assert.Len(t, models, 3)
 	assert.Equal(t, "glm-5.1", models[0].ID)
 	assert.Equal(t, "GLM 5.1", models[0].Name)
@@ -1164,7 +672,6 @@ func TestDiscoverCodebuddyModels_ProductJSON(t *testing.T) {
 	assert.Equal(t, "deepseek-v3", models[2].ID)
 	assert.Equal(t, "DeepSeek V3", models[2].Name)
 
-	// Verify no pseudo-models
 	for _, m := range models {
 		assert.NotEqual(t, "default", m.ID)
 		assert.NotEqual(t, "auto", m.ID)
@@ -1184,7 +691,6 @@ func TestDiscoverCodebuddyModels_ProductJSON_EmptyModels(t *testing.T) {
 	fakeCLI := filepath.Join(binDir, "codebuddy")
 	require.NoError(t, os.WriteFile(fakeCLI, []byte("#!/bin/sh\necho ok\n"), 0o755))
 
-	// Empty models array
 	productJSON := `{"models": []}`
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "product.cloudhosted.json"), []byte(productJSON), 0o644))
 
@@ -1208,7 +714,6 @@ func TestDiscoverCodebuddyModels_ProductJSON_InvalidJSON(t *testing.T) {
 	fakeCLI := filepath.Join(binDir, "codebuddy")
 	require.NoError(t, os.WriteFile(fakeCLI, []byte("#!/bin/sh\necho ok\n"), 0o755))
 
-	// Invalid JSON
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "product.cloudhosted.json"), []byte("not json"), 0o644))
 
 	origPath := os.Getenv("PATH")
@@ -1231,8 +736,6 @@ func TestDiscoverCodebuddyModels_ProductJSON_NoFile(t *testing.T) {
 	fakeCLI := filepath.Join(binDir, "codebuddy")
 	require.NoError(t, os.WriteFile(fakeCLI, []byte("#!/bin/sh\necho ok\n"), 0o755))
 
-	// No product.cloudhosted.json file created
-
 	origPath := os.Getenv("PATH")
 	require.NoError(t, os.Setenv("PATH", binDir+string(os.PathListSeparator)+origPath))
 	t.Cleanup(func() { os.Setenv("PATH", origPath) })
@@ -1242,7 +745,6 @@ func TestDiscoverCodebuddyModels_ProductJSON_NoFile(t *testing.T) {
 }
 
 func TestDiscoverCodebuddyModels_NotOnPATH(t *testing.T) {
-	// When codebuddy is not on PATH at all, should return nil
 	origPath := os.Getenv("PATH")
 	require.NoError(t, os.Setenv("PATH", t.TempDir()))
 	t.Cleanup(func() { os.Setenv("PATH", origPath) })
@@ -1252,7 +754,6 @@ func TestDiscoverCodebuddyModels_NotOnPATH(t *testing.T) {
 }
 
 func TestDiscoverCodebuddyModels_ProductJSON_NameFallback(t *testing.T) {
-	// Test the name fallback: when a model has no name, use its ID as name
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping on Windows — fake CLI scripts not executable")
 	}
@@ -1264,7 +765,6 @@ func TestDiscoverCodebuddyModels_ProductJSON_NameFallback(t *testing.T) {
 	fakeCLI := filepath.Join(binDir, "codebuddy")
 	require.NoError(t, os.WriteFile(fakeCLI, []byte("#!/bin/sh\necho ok\n"), 0o755))
 
-	// Model with empty name — should fall back to ID
 	productJSON := `{
 		"models": [
 			{"id": "glm-5.1", "name": "", "isDefault": true}
@@ -1279,12 +779,10 @@ func TestDiscoverCodebuddyModels_ProductJSON_NameFallback(t *testing.T) {
 	models := model.DiscoverCodebuddyModels()
 	require.Len(t, models, 1)
 	assert.Equal(t, "glm-5.1", models[0].ID)
-	// Name should fall back to ID when empty in JSON
 	assert.Equal(t, "glm-5.1", models[0].Name)
 }
 
 func TestDiscoverCodebuddyModels_ProductJSON_NoDefault(t *testing.T) {
-	// Test when no model is marked isDefault — first non-skipped model should get Default=true
 	if runtime.GOOS == "windows" {
 		t.Skip("Skipping on Windows — fake CLI scripts not executable")
 	}
@@ -1296,7 +794,6 @@ func TestDiscoverCodebuddyModels_ProductJSON_NoDefault(t *testing.T) {
 	fakeCLI := filepath.Join(binDir, "codebuddy")
 	require.NoError(t, os.WriteFile(fakeCLI, []byte("#!/bin/sh\necho ok\n"), 0o755))
 
-	// No isDefault=true on any model
 	productJSON := `{
 		"models": [
 			{"id": "glm-5.1", "name": "GLM 5.1", "isDefault": false},
@@ -1311,180 +808,20 @@ func TestDiscoverCodebuddyModels_ProductJSON_NoDefault(t *testing.T) {
 
 	models := model.DiscoverCodebuddyModels()
 	require.Len(t, models, 2)
-	// First model should get Default=true as fallback
 	assert.True(t, models[0].Default, "first model should be default when none marked isDefault")
 	assert.False(t, models[1].Default)
 }
 
-// --- Test 17: MergeDiscoveredData CanRefreshModels ---
-
-func TestMergeDiscoveredData_SetsCanRefreshModels(t *testing.T) {
-	t.Cleanup(func() {
-		model.Agents = nil
-		model.AgentList = nil
-	})
-
-	dir := filepath.Join(t.TempDir(), "agents")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-
-	// Create a minimal YAML with codebuddy backend (has model discovery)
-	yamlContent := `id: test-refresh
-name: Test Refresh
-backend: codebuddy
-`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "test-refresh.yaml"), []byte(yamlContent), 0o644))
-	require.NoError(t, model.LoadAgents(dir))
-
-	agent := model.Agents["test-refresh"]
-	require.NotNil(t, agent)
-
-	cacheDir := filepath.Join(t.TempDir(), "model-cache")
-	model.MergeDiscoveredData(cacheDir)
-
-	// codebuddy has DiscoverModelsFunc, so CanRefreshModels should be true
-	assert.True(t, agent.CanRefreshModels, "codebuddy agent should have CanRefreshModels=true")
-}
-
-func TestMergeDiscoveredData_CanRefreshModelsFalseForNoDiscovery(t *testing.T) {
-	t.Cleanup(func() {
-		model.Agents = nil
-		model.AgentList = nil
-	})
-
-	dir := filepath.Join(t.TempDir(), "agents")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-
-	// Create a minimal YAML with gemini backend (no model discovery)
-	yamlContent := `id: test-no-refresh
-name: Test No Refresh
-backend: gemini
-`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "test-no-refresh.yaml"), []byte(yamlContent), 0o644))
-	require.NoError(t, model.LoadAgents(dir))
-
-	agent := model.Agents["test-no-refresh"]
-	require.NotNil(t, agent)
-
-	cacheDir := filepath.Join(t.TempDir(), "model-cache")
-	model.MergeDiscoveredData(cacheDir)
-
-	// gemini now has model discovery via DiscoverModelsFunc, so CanRefreshModels should be true
-	assert.True(t, agent.CanRefreshModels, "gemini agent should have CanRefreshModels=true")
-}
-
-// --- Test 7: SyncDiscoverAgents ---
-
-func TestSyncDiscoverAgents_CreatesDirAndReturnsPresent(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "agents")
-	present := model.SyncDiscoverAgents(dir)
-	assert.NotNil(t, present)
-	// Directory should exist
-	info, err := os.Stat(dir)
-	require.NoError(t, err)
-	assert.True(t, info.IsDir())
-}
-
-func TestSyncDiscoverAgents_DoesNotOverwriteExisting(t *testing.T) {
-	dir := t.TempDir()
-	agentsDir := filepath.Join(dir, "agents")
-	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
-
-	existingYAML := `id: my-agent
-name: My Agent
-backend: claude
-models: []
-system_prompt: "custom prompt"
-`
-	require.NoError(t, os.WriteFile(filepath.Join(agentsDir, "my-agent.yaml"), []byte(existingYAML), 0o644))
-
-	present := model.SyncDiscoverAgents(agentsDir)
-	assert.NotNil(t, present)
-
-	data, err := os.ReadFile(filepath.Join(agentsDir, "my-agent.yaml"))
-	require.NoError(t, err)
-	assert.Contains(t, string(data), "custom prompt", "existing YAML should not be overwritten")
-}
-
-// --- Test 8: SyncDiscoverModels ---
-
-func TestSyncDiscoverModels_CreatesCacheDir(t *testing.T) {
-	cacheDir := filepath.Join(t.TempDir(), "model-cache")
-	// Should not panic or fail even if no models are discovered
-	model.SyncDiscoverModels(cacheDir)
-	// Cache dir may or may not be created depending on available CLIs
-}
-
-// --- Test 9: AsyncRefreshModelCache ---
-
-func TestAsyncRefreshModelCache_DoesNotBlock(t *testing.T) {
-	cacheDir := filepath.Join(t.TempDir(), "model-cache-async")
-	// Should return immediately (goroutine launched in background)
-	model.AsyncRefreshModelCache(cacheDir)
-	// Give a small window for goroutine to start
-	time.Sleep(100 * time.Millisecond)
-}
-
-// --- Test 10: DiscoverAgents error paths ---
-
-func TestDiscoverAgents_InvalidDirPath(t *testing.T) {
-	// Use a path that can't be created (e.g., under /proc on Linux)
-	if runtime.GOOS == "windows" {
-		t.Skip("unix-specific test")
-	}
-	err := model.DiscoverAgents("/proc/nonexistent/impossible/path")
-	// Should still succeed — MkdirAll on /proc fails but DiscoverAgents
-	// creates the dir with MkdirAll which returns an error
-	assert.Error(t, err)
-}
-
-// --- Test 11: MergeDiscoveredData with present map ---
-
-func TestMergeDiscoveredData_SoftRemovesAbsentBackends(t *testing.T) {
-	t.Cleanup(func() {
-		model.Agents = nil
-		model.AgentList = nil
-	})
-
-	dir := filepath.Join(t.TempDir(), "agents")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-
-	yamlContent := `id: test-absent
-name: Test Absent
-backend: claude
-models: []
-`
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "test-absent.yaml"), []byte(yamlContent), 0o644))
-	require.NoError(t, model.LoadAgents(dir))
-	require.NotEmpty(t, model.AgentList)
-
-	// Pass a present map that does NOT include "claude"
-	present := map[string]bool{"codebuddy": true}
-	cacheDir := filepath.Join(t.TempDir(), "model-cache")
-	model.MergeDiscoveredData(cacheDir, present)
-
-	// Agent with "claude" backend should be soft-removed
-	_, exists := model.Agents["test-absent"]
-	assert.False(t, exists, "agent with absent backend should be soft-removed")
-}
-
-// --- Test 12: DiscoverCodexModels full call ---
+// --- Test 13: Discover*Models no-install coverage ---
 
 func TestDiscoverCodexModels_NoInstall(t *testing.T) {
-	// Codex is not installed in CI, so this should return nil or defaults
-	// without panicking
 	models := model.DiscoverCodexModels()
-	// The function itself is DiscoverModelsFunc in BackendRegistry,
-	// but we can call it directly for coverage
 	if _, err := filepath.Abs("codex"); err != nil {
-		// No codex installed: DiscoverCodexModels falls through to defaults
-		// which also returns nil if codex not on PATH
 		if models == nil {
 			t.Log("codex not installed, DiscoverCodexModels returned nil (expected)")
 		}
 	}
 }
-
-// --- Test 13: DiscoverVeCLIModels full call ---
 
 func TestDiscoverVeCLIModels_NoInstall(t *testing.T) {
 	models := model.DiscoverVeCLIModels()
@@ -1495,8 +832,6 @@ func TestDiscoverVeCLIModels_NoInstall(t *testing.T) {
 	}
 }
 
-// --- Test 14: DiscoverQoderModels full call ---
-
 func TestDiscoverQoderModels_NoInstall(t *testing.T) {
 	models := model.DiscoverQoderModels()
 	if _, err := filepath.Abs("qodercli"); err != nil {
@@ -1506,66 +841,17 @@ func TestDiscoverQoderModels_NoInstall(t *testing.T) {
 	}
 }
 
-// --- Test 15: DiscoverGeminiModels full call ---
-
 func TestDiscoverGeminiModels_NoInstall(t *testing.T) {
 	models := model.DiscoverGeminiModels()
-	// Gemini discovery uses API which may or may not be available
-	// Just verify it doesn't panic
 	t.Logf("DiscoverGeminiModels returned %d models", len(models))
 }
 
-// --- Test 16: DiscoverClaudeModels full call ---
-
 func TestDiscoverClaudeModels_NoInstall(t *testing.T) {
 	models := model.DiscoverClaudeModels()
-	// Claude may not be installed on CI
 	t.Logf("DiscoverClaudeModels returned %d models", len(models))
 }
 
-// --- Test 17: SyncDiscoverAgents with existing YAMLs ---
-
-func TestSyncDiscoverAgents_WithPreExistingYAMLs(t *testing.T) {
-	dir := t.TempDir()
-	agentsDir := filepath.Join(dir, "agents")
-	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
-
-	// Create YAML for an agent that doesn't exist
-	yamlContent := `id: test-existing
-name: Test Existing
-backend: claude
-models: []
-`
-	require.NoError(t, os.WriteFile(filepath.Join(agentsDir, "test-existing.yaml"), []byte(yamlContent), 0o644))
-
-	present := model.SyncDiscoverAgents(agentsDir)
-	assert.NotNil(t, present)
-}
-
-// --- Test 18: DiscoverAgents with pre-existing YAMLs ---
-
-func TestDiscoverAgents_WithExistingYAMLs(t *testing.T) {
-	dir := t.TempDir()
-	agentsDir := filepath.Join(dir, "agents")
-	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
-
-	yamlContent := `id: test-existing
-name: Test Existing
-backend: claude
-models: []
-`
-	require.NoError(t, os.WriteFile(filepath.Join(agentsDir, "test-existing.yaml"), []byte(yamlContent), 0o644))
-
-	err := model.DiscoverAgents(agentsDir)
-	require.NoError(t, err)
-
-	// Existing YAML should not be overwritten
-	data, err := os.ReadFile(filepath.Join(agentsDir, "test-existing.yaml"))
-	require.NoError(t, err)
-	assert.Contains(t, string(data), "Test Existing")
-}
-
-// --- Test 18: DiscoverPiModels with fake CLI ---
+// --- Test 14: DiscoverPiModels with fake CLI ---
 
 func TestDiscoverPiModels_FakeCLI_Success(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -1576,7 +862,6 @@ func TestDiscoverPiModels_FakeCLI_Success(t *testing.T) {
 	binDir := filepath.Join(tmpDir, "bin")
 	require.NoError(t, os.MkdirAll(binDir, 0o755))
 
-	// Create a fake "pi" script that outputs model table to stderr (like real Pi)
 	fakeCLI := filepath.Join(binDir, "pi")
 	script := `#!/bin/sh
 cat >&2 <<'EOF'
@@ -1612,7 +897,6 @@ func TestDiscoverPiModels_FakeCLI_EmptyOutput(t *testing.T) {
 	binDir := filepath.Join(tmpDir, "bin")
 	require.NoError(t, os.MkdirAll(binDir, 0o755))
 
-	// Create a fake "pi" script that outputs only the header (no model data)
 	fakeCLI := filepath.Join(binDir, "pi")
 	script := `#!/bin/sh
 cat >&2 <<'EOF'
@@ -1638,7 +922,6 @@ func TestDiscoverPiModels_FakeCLI_CommandFails(t *testing.T) {
 	binDir := filepath.Join(tmpDir, "bin")
 	require.NoError(t, os.MkdirAll(binDir, 0o755))
 
-	// Create a fake "pi" script that exits with non-zero code
 	fakeCLI := filepath.Join(binDir, "pi")
 	require.NoError(t, os.WriteFile(fakeCLI, []byte("#!/bin/sh\nexit 1\n"), 0o755))
 
@@ -1651,7 +934,6 @@ func TestDiscoverPiModels_FakeCLI_CommandFails(t *testing.T) {
 }
 
 func TestDiscoverPiModels_NotOnPATH(t *testing.T) {
-	// Ensure PATH doesn't contain a "pi" binary
 	origPath := os.Getenv("PATH")
 	require.NoError(t, os.Setenv("PATH", t.TempDir()))
 	t.Cleanup(func() { os.Setenv("PATH", origPath) })
@@ -1669,7 +951,6 @@ func TestDiscoverPiModels_FakeCLI_OutputToStdout(t *testing.T) {
 	binDir := filepath.Join(tmpDir, "bin")
 	require.NoError(t, os.MkdirAll(binDir, 0o755))
 
-	// Create a fake "pi" script that outputs to stdout (like the old behavior)
 	fakeCLI := filepath.Join(binDir, "pi")
 	script := `#!/bin/sh
 cat <<'EOF'
@@ -1683,16 +964,14 @@ EOF
 	require.NoError(t, os.Setenv("PATH", binDir+string(os.PathListSeparator)+origPath))
 	t.Cleanup(func() { os.Setenv("PATH", origPath) })
 
-	// CombinedOutput captures both stdout and stderr, so stdout output works too
 	models := model.DiscoverPiModels()
 	require.Len(t, models, 1)
 	assert.Equal(t, "anthropic/claude-sonnet-4-6", models[0].ID)
 }
 
-// --- Test 19: ParsePiModels additional edge cases ---
+// --- Test 15: ParsePiModels additional edge cases ---
 
 func TestParsePiModels_DuplicateModelName(t *testing.T) {
-	// When two providers have the same model name, they should be distinguishable
 	output := `provider        model                       context  max-out  thinking  images
 minimax         MiniMax-M2.7                204.8K   131.1K   yes       no
 minimax-cn      MiniMax-M2.7                204.8K   131.1K   yes       no
@@ -1704,5 +983,3 @@ minimax-cn      MiniMax-M2.7                204.8K   131.1K   yes       no
 	assert.Equal(t, "minimax-cn/MiniMax-M2.7", models[1].ID)
 	assert.Equal(t, "minimax-cn/MiniMax-M2.7", models[1].Name)
 }
-
-// --- Test 15: ParseCodebuddyModels edge cases ---

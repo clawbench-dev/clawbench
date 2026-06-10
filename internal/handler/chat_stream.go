@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 )
@@ -82,6 +83,41 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 
 	flusher, canFlush := w.(http.Flusher)
 
+	// Re-emit cached ACP mode/config/thinking/commands/model list state on SSE connect.
+	// When the frontend reconnects (page reload, session switch), the previous
+	// SSE handler already consumed mode_update events. Re-emit from cache so
+	// the new SSE client receives state without waiting for a new prompt.
+	if s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID); s.Mode != nil || s.Config != nil || s.Effort != nil || len(s.Commands) > 0 || s.ModelList != nil || s.Plan != nil {
+		if s.Mode != nil {
+			data, _ := json.Marshal(s.Mode)
+			fmt.Fprintf(w, "event: mode_update\ndata: %s\n\n", data)
+		}
+		if s.Config != nil {
+			data, _ := json.Marshal(s.Config)
+			fmt.Fprintf(w, "event: config_update\ndata: %s\n\n", data)
+		}
+		if s.Effort != nil {
+			data, _ := json.Marshal(s.Effort)
+			fmt.Fprintf(w, "event: thinking_effort_update\ndata: %s\n\n", data)
+		}
+		if len(s.Commands) > 0 {
+			data, _ := json.Marshal(map[string]any{"commands": s.Commands})
+			fmt.Fprintf(w, "event: commands_update\ndata: %s\n\n", data)
+		}
+		if s.ModelList != nil {
+			data, _ := json.Marshal(s.ModelList)
+			fmt.Fprintf(w, "event: model_list_update\ndata: %s\n\n", data)
+		}
+		if s.Plan != nil {
+			data, _ := json.Marshal(s.Plan)
+			fmt.Fprintf(w, "event: plan_update\ndata: %s\n\n", data)
+		}
+		if canFlush {
+			flusher.Flush()
+		}
+		slog.Debug("sse: re-emitted cached ACP state on connect", "session_id", sessionID)
+	}
+
 	// Heartbeat: send SSE comment lines to keep the connection alive through
 	// reverse proxies and mobile networks during quiet periods (e.g., long-running
 	// tool execution). Proxies typically drop idle connections after 30-60s.
@@ -110,6 +146,8 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 			case "thinking":
 				data, _ := json.Marshal(map[string]string{"text": event.Content})
 				fmt.Fprintf(w, "event: thinking\ndata: %s\n\n", data)
+			case "thinking_done":
+				fmt.Fprintf(w, "event: thinking_done\ndata: {}\n\n")
 			case "tool_use":
 				if event.Tool != nil {
 					var input any
@@ -138,6 +176,17 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 				if event.Tool != nil {
 					payload := map[string]any{
 						"id": event.Tool.ID,
+					}
+					// Include input if provided (ACP tool_call_update completed events
+					// may carry rawInput that was missing from earlier tool_use events)
+					if event.Tool.Input != "" {
+						var input any
+						if json.Unmarshal([]byte(event.Tool.Input), &input) == nil {
+							payload["input"] = input
+						}
+					}
+					if event.Tool.Name != "" {
+						payload["name"] = event.Tool.Name
 					}
 					if event.Tool.Output != "" {
 						payload["output"] = event.Tool.Output
@@ -205,6 +254,38 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 				// and will auto-resume. Forward to frontend so it can reset streaming
 				// state (clear blocks, prepare for new content after resume).
 				fmt.Fprintf(w, "event: resume_split\ndata: {}\n\n")
+			case "mode_update":
+				if event.Mode != nil {
+					data, _ := json.Marshal(event.Mode)
+					fmt.Fprintf(w, "event: mode_update\ndata: %s\n\n", data)
+				}
+			case "config_update":
+				if event.Config != nil {
+					data, _ := json.Marshal(event.Config)
+					fmt.Fprintf(w, "event: config_update\ndata: %s\n\n", data)
+				}
+			case "commands_update":
+				if event.Commands != nil {
+					data, _ := json.Marshal(map[string]any{
+						"commands": event.Commands,
+					})
+					fmt.Fprintf(w, "event: commands_update\ndata: %s\n\n", data)
+				}
+			case "thinking_effort_update":
+				if event.ThinkingEffort != nil {
+					data, _ := json.Marshal(event.ThinkingEffort)
+					fmt.Fprintf(w, "event: thinking_effort_update\ndata: %s\n\n", data)
+				}
+			case "model_list_update":
+				if event.ModelList != nil {
+					data, _ := json.Marshal(event.ModelList)
+					fmt.Fprintf(w, "event: model_list_update\ndata: %s\n\n", data)
+				}
+			case "plan_update":
+				if event.Plan != nil {
+					data, _ := json.Marshal(event.Plan)
+					fmt.Fprintf(w, "event: plan_update\ndata: %s\n\n", data)
+				}
 			}
 
 			if canFlush {
@@ -222,7 +303,12 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 
 		case <-checkTicker.C:
 			if !service.IsSessionRunning(sessionID) {
-				fmt.Fprintf(w, "event: cancelled\ndata: {\"reason\":\"cancelled\"}\n\n")
+				// Session is no longer running — the AI goroutine has finished
+				// but the "done" event may not have been sent through the channel
+				// (e.g. if the channel was already closed/consumed). Send "done"
+				// instead of "cancelled" so the frontend properly finalizes the
+				// streaming state and hides the stop button.
+				fmt.Fprintf(w, "event: done\ndata: {}\n\n")
 				if canFlush {
 					flusher.Flush()
 				}
@@ -242,7 +328,28 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 				"sse client disconnected, ai session continues",
 				slog.String("session_id", sessionID),
 			)
+			// Drain the channel without writing to SSE. If we return immediately,
+			// the channel fills up because no one is consuming it, which causes
+			// the ACP agent process to block on its SessionUpdate callback and
+			// eventually crash with "peer disconnected before response".
+			drainStreamChannel(streamCh, sessionID)
 			return
 		}
 	}
+}
+
+// drainStreamChannel consumes events from the stream channel without writing
+// them to SSE. This is called after the SSE client disconnects to prevent the
+// channel from filling up and blocking the ACP agent process, which would
+// cause "peer disconnected before response" crashes.
+func drainStreamChannel(ch <-chan ai.StreamEvent, sessionID string) {
+	for event := range ch {
+		switch event.Type {
+		case "done", "cancelled", "error":
+			// Terminal event — the AI goroutine is finished, channel will be closed.
+			slog.Debug("sse drain: terminal event", "type", event.Type, "session_id", sessionID)
+			return
+		}
+	}
+	slog.Debug("sse drain: channel closed", "session_id", sessionID)
 }

@@ -33,6 +33,8 @@ func setupTestDBForDiscovery(t *testing.T) *sql.DB {
 			models_auto_detected INTEGER NOT NULL DEFAULT 0,
 			source TEXT NOT NULL DEFAULT 'auto',
 			sort_order INTEGER NOT NULL DEFAULT 0,
+			transport TEXT NOT NULL DEFAULT 'cli',
+			acp_command TEXT NOT NULL DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -66,7 +68,6 @@ func TestSyncDiscoverAgentsDB_DetectsPresentCLIs(t *testing.T) {
 	assert.NotNil(t, present)
 
 	// Any CLI that exists on this system should be in the present map
-	// (which CLIs exist depends on the test environment, so we just verify the map structure)
 	for backend, exists := range present {
 		assert.True(t, exists, "present map should only contain true values, but %s=%v", backend, exists)
 	}
@@ -197,7 +198,7 @@ func TestMergeDiscoveredDataDB_SoftDeletesMissingCLIs(t *testing.T) {
 
 	// Empty present map — nothing is present
 	present := map[string]bool{}
-	MergeDiscoveredDataDB(db, "", present)
+	MergeDiscoveredDataDB(db, nil, present)
 
 	// The auto agent should be deleted
 	var count int
@@ -225,7 +226,7 @@ func TestMergeDiscoveredDataDB_PreservesSetupAgents(t *testing.T) {
 
 	// Empty present map
 	present := map[string]bool{}
-	MergeDiscoveredDataDB(db, "", present)
+	MergeDiscoveredDataDB(db, nil, present)
 
 	// The setup agent should still exist
 	var count int
@@ -252,7 +253,7 @@ func TestMergeDiscoveredDataDB_PreservesManualAgents(t *testing.T) {
 	AgentList = nil
 
 	present := map[string]bool{}
-	MergeDiscoveredDataDB(db, "", present)
+	MergeDiscoveredDataDB(db, nil, present)
 
 	var count int
 	err = db.QueryRow("SELECT COUNT(*) FROM agents WHERE id = 'manual-agent'").Scan(&count)
@@ -279,7 +280,7 @@ func TestMergeDiscoveredDataDB_FillsThinkingEffortLevels(t *testing.T) {
 	AgentList = nil
 
 	present := map[string]bool{"claude": true}
-	MergeDiscoveredDataDB(db, "", present)
+	MergeDiscoveredDataDB(db, nil, present)
 
 	// The thinking_effort_levels should be updated from BackendRegistry
 	var levelsJSON string
@@ -289,7 +290,7 @@ func TestMergeDiscoveredDataDB_FillsThinkingEffortLevels(t *testing.T) {
 	assert.Contains(t, levelsJSON, "high")
 }
 
-func TestMergeDiscoveredDataDB_FillsModelsFromCache(t *testing.T) {
+func TestMergeDiscoveredDataDB_FillsModelsFromDiscovery(t *testing.T) {
 	db := setupTestDBForDiscovery(t)
 
 	// Insert an agent with empty models
@@ -297,13 +298,13 @@ func TestMergeDiscoveredDataDB_FillsModelsFromCache(t *testing.T) {
 		VALUES ('test-empty', 'Test Empty', 'mock', '[]', 0, 'auto')`)
 	require.NoError(t, err)
 
-	// Write a model cache entry for 'mock' backend
-	cacheDir := t.TempDir()
-	models := []AgentModel{
-		{ID: "model-1", Name: "Model 1", Default: true},
-		{ID: "model-2", Name: "Model 2", Default: false},
+	// Provide discovered models for 'mock' backend
+	discoveredModels := map[string][]AgentModel{
+		"mock": {
+			{ID: "model-1", Name: "Model 1", Default: true},
+			{ID: "model-2", Name: "Model 2", Default: false},
+		},
 	}
-	require.NoError(t, WriteModelCache(cacheDir, "mock", models))
 
 	// Save/restore global state
 	origAgents := Agents
@@ -316,32 +317,32 @@ func TestMergeDiscoveredDataDB_FillsModelsFromCache(t *testing.T) {
 	AgentList = nil
 
 	present := map[string]bool{"mock": true}
-	MergeDiscoveredDataDB(db, cacheDir, present)
+	MergeDiscoveredDataDB(db, discoveredModels, present)
 
-	// The models should be filled from cache
+	// The models should be filled from discovery results
 	var modelsJSON string
 	var autoDetected int
 	err = db.QueryRow("SELECT models, models_auto_detected FROM agents WHERE id = 'test-empty'").Scan(&modelsJSON, &autoDetected)
 	require.NoError(t, err)
 	assert.Contains(t, modelsJSON, "model-1")
 	assert.Contains(t, modelsJSON, "model-2")
-	assert.Equal(t, 1, autoDetected, "models_auto_detected should be 1 after filling from cache")
+	assert.Equal(t, 1, autoDetected, "models_auto_detected should be 1 after filling from discovery")
 }
 
 func TestMergeDiscoveredDataDB_DoesNotOverwriteUserModels(t *testing.T) {
 	db := setupTestDBForDiscovery(t)
 
-	// Insert an agent with user-defined models (models_auto_detected=0)
+	// Insert an agent with user-defined models (models_auto_detected=0 but non-empty)
 	_, err := db.Exec(`INSERT INTO agents (id, name, backend, models, models_auto_detected, source)
 		VALUES ('test-user', 'Test User', 'mock', '[{"id":"my-model","name":"My Model","default":true}]', 0, 'auto')`)
 	require.NoError(t, err)
 
-	// Write a model cache entry
-	cacheDir := t.TempDir()
-	cacheModels := []AgentModel{
-		{ID: "cached-model", Name: "Cached Model", Default: true},
+	// Provide discovered models for 'mock' backend
+	discoveredModels := map[string][]AgentModel{
+		"mock": {
+			{ID: "cached-model", Name: "Cached Model", Default: true},
+		},
 	}
-	require.NoError(t, WriteModelCache(cacheDir, "mock", cacheModels))
 
 	// Save/restore global state
 	origAgents := Agents
@@ -354,9 +355,9 @@ func TestMergeDiscoveredDataDB_DoesNotOverwriteUserModels(t *testing.T) {
 	AgentList = nil
 
 	present := map[string]bool{"mock": true}
-	MergeDiscoveredDataDB(db, cacheDir, present)
+	MergeDiscoveredDataDB(db, discoveredModels, present)
 
-	// User models should be preserved
+	// User models should be preserved (the agent has non-empty models, so step 3 query won't match it)
 	var modelsJSON string
 	err = db.QueryRow("SELECT models FROM agents WHERE id = 'test-user'").Scan(&modelsJSON)
 	require.NoError(t, err)

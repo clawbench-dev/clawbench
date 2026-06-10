@@ -82,8 +82,9 @@ export default {
       placeholder: '输入消息...',
       placeholderQueue: '输入消息加入队列...',
       placeholderOptional: '添加描述（可选）...',
-      placeholderQuickSend: '点击⚡选指令 →',
+      placeholderQuickSend: '点击⚡快捷发送消息 →',
       placeholderAtCommand: "输入 {'@'} 执行内置命令",
+      placeholderCommand: "输入 {'@'} 或 {'/'} 执行命令",
       send: '发送',
       enqueue: '加入队列',
       quickMenu: '快捷指令',
@@ -92,9 +93,12 @@ export default {
       confirmStop: '确认停止',
     },
     atCommand: {
-      title: '命令',
+      title: 'ClawBench 命令',
       chatsearchDesc: '搜索聊天历史',
       taskDesc: '管理定时任务',
+    },
+    slashCommand: {
+      title: 'Agent 命令',
     },
     actions: {
       session: '会话',
@@ -106,17 +110,42 @@ export default {
       scheduled: '定时',
       autoSpeech: '自动朗读',
       readAloud: '朗读',
-      switchModel: '切换模型',
+      sessionSettings: '会话设置',
       switchThinkingEffort: '切换思考档位',
       attachment: '附件',
+    },
+    sessionInfo: {
+      default: '默认',
     },
     create: {
       selectAgentOrLongPress: '选择智能体（长按直接新建）',
     },
     modelSwitcher: {
-      title: '选择模型',
+      title: '模型',
     },
-    modelModal: {
+    modeSwitcher: {
+      title: '模式',
+      cliHint: 'CLI 模式不支持切换，如需切换请先改为 ACP 模式',
+    },
+    transportSwitcher: {
+      title: 'API',
+      acp: 'ACP 模式',
+      acpDesc: '结构化协议通信，支持模式切换与权限管理',
+      cli: 'CLI 模式',
+      cliDesc: '命令行文本交互，兼容性更好',
+    },
+    autoApprove: {
+      title: '自动批准',
+      description: '自动批准代理的所有权限请求。',
+    },
+    plan: {
+      title: '执行计划',
+      completedCount: '{completed}/{total} 完成',
+      priorityHigh: '高',
+      priorityMedium: '中',
+      priorityLow: '低',
+    },
+    sessionSetting: {
       searchPlaceholder: '搜索模型...',
       refresh: '刷新模型',
       refreshSuccess: '模型列表已刷新',
@@ -126,10 +155,11 @@ export default {
       defaultBadge: '默认',
       setAsDefault: '设为默认',
       noModels: '暂无可用模型',
+      notAvailable: '当前模式下不可用',
       noSearchResults: '未找到匹配的模型',
     },
     thinkingEffortSwitcher: {
-      title: '选择思考档位',
+      title: '思考',
       auto: '自动',
     },
     attach: {
@@ -146,7 +176,7 @@ export default {
       openDirectory: '打开目录',
     },
     quickSend: {
-      title: '快捷发送',
+      title: '快捷发送消息',
       tapToFill: '长按发送',
       edit: '编辑',
       addItem: '添加项目',
@@ -213,6 +243,10 @@ export default {
       allMessagesLoaded: '已加载全部消息',
       startConversation: '发送消息开始对话',
       startConversationAI: '发送消息开始与 AI 对话',
+      scrollToTop: '回到顶部',
+      scrollToPrev: '上一条消息',
+      scrollToNext: '下一条消息',
+      scrollToBottom: '回到底部',
     },
     pending: {
       uploadedAttachment: '上传附件',
@@ -277,6 +311,9 @@ export default {
       time: '时间:',
       relatedFile: '关联文件:',
       backend: '后端:',
+      transport: '交互类型:',
+      mode: '模式:',
+      thinkingEffort: '思考深度:',
       model: '模型:',
       inputTokens: '输入Token:',
       outputTokens: '输出Token:',
@@ -306,6 +343,7 @@ export default {
     running: '运行中',
     fromTask: '定时',
     confirmDelete: '确定删除此会话及其所有聊天记录?',
+    confirmDeleteRunning: '此会话正在运行中，删除将终止运行并清除记录，确定删除?',
     unnamed: '未命名会话',
     queueFailed: '加入队列失败',
     removeFailed: '移除失败',
@@ -779,8 +817,29 @@ export default {
       pattern: '匹配模式',
       path: '路径',
     },
+    ls: {
+      currentDir: '当前目录',
+    },
     webFetch: {
       url: 'URL',
+    },
+    todoRead: {
+      label: '读取待办列表',
+    },
+    task: {
+      subject: '主题',
+      description: '描述',
+      name: '名称',
+      cron: 'Cron',
+      prompt: '提示词',
+      agent: 'Agent',
+      status: '状态',
+      owner: '负责人',
+      activeForm: '进行中',
+      noDetails: '（无详情）',
+    },
+    sendMessage: {
+      to: '发送给',
     },
     askUser: {
       noQuestions: '（无问题）',
@@ -789,6 +848,15 @@ export default {
       name: '提问',
       supplementary: '补充信息',
       supplementaryPlaceholder: '可选，添加额外补充说明…',
+    },
+    permission: {
+      title: '权限请求',
+      file: '文件',
+      command: '命令',
+      approved: '已批准',
+      denied: '已拒绝',
+      autoApprovedTitle: '自动批准',
+      autoApproved: '自动批准',
     },
   },
   agents: {

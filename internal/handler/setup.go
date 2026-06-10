@@ -472,7 +472,7 @@ func ServeSetupComplete(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 		ModelsAutoDetected: false,
 	}
 
-	// Populate models from provider's KnownModels so the ModelModal shows them immediately
+	// Populate models from provider's KnownModels so the SessionSettingModal shows them immediately
 	if len(spec.KnownModels) > 0 {
 		agent.Models = model.KnownModelsToAgentModels(spec.KnownModels)
 		agent.ModelsAutoDetected = true

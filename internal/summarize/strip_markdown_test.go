@@ -257,11 +257,23 @@ func TestConstants(t *testing.T) {
 
 // --- Ask-question preservation tests ---
 
-func TestStripMarkdown_AskQuestion_PlainJSON(t *testing.T) {
+func TestStripMarkdown_AskQuestion_PlainXML(t *testing.T) {
 	input := `Some text before.
 
 <ask-question>
-{"questions":[{"header":"Approach","multiSelect":false,"options":[{"label":"Option A","description":"Fast but less safe"},{"label":"Option B","description":"Safe but slower"}],"question":"Which approach do you prefer?"}]}
+  <item>
+    <header>Approach</header>
+    <multi-select>false</multi-select>
+    <question>Which approach do you prefer?</question>
+    <option>
+      <label>Option A</label>
+      <description>Fast but less safe</description>
+    </option>
+    <option>
+      <label>Option B</label>
+      <description>Safe but slower</description>
+    </option>
+  </item>
 </ask-question>
 
 Some text after.`
@@ -277,13 +289,23 @@ Some text after.`
 	assert.Contains(t, result, "Some text after")
 }
 
-func TestStripMarkdown_AskQuestion_InCodeFence(t *testing.T) {
+func TestStripMarkdown_AskQuestion_XMLElements(t *testing.T) {
 	input := `Here is a question:
 
 <ask-question>
-` + "```json" + `
-{"questions":[{"header":"Method","multiSelect":false,"options":[{"label":"Redis","description":"In-memory cache"},{"label":"SQLite","description":"File-based storage"}],"question":"Which caching method?"}]}
-` + "```" + `
+  <item>
+    <header>Method</header>
+    <multi-select>false</multi-select>
+    <question>Which caching method?</question>
+    <option>
+      <label>Redis</label>
+      <description>In-memory cache</description>
+    </option>
+    <option>
+      <label>SQLite</label>
+      <description>File-based storage</description>
+    </option>
+  </item>
 </ask-question>
 
 Continue here.`
@@ -293,13 +315,25 @@ Continue here.`
 	assert.Contains(t, result, "SQLite")
 	assert.Contains(t, result, "In-memory cache")
 	assert.Contains(t, result, "File-based storage")
-	assert.NotContains(t, result, "```")
 	assert.NotContains(t, result, "<ask-question>")
 }
 
-func TestStripMarkdown_AskQuestion_MultipleQuestions(t *testing.T) {
+func TestStripMarkdown_AskQuestion_MultipleItems(t *testing.T) {
 	input := `<ask-question>
-{"questions":[{"header":"DB","question":"Which database?","options":[{"label":"PostgreSQL","description":"Relational"},{"label":"MongoDB","description":"Document"}],"multiSelect":false},{"header":"Deploy","question":"Deploy where?","options":[{"label":"AWS","description":"Cloud"},{"label":"On-prem","description":"Self-hosted"}],"multiSelect":true}]}
+  <item>
+    <header>DB</header>
+    <question>Which database?</question>
+    <option><label>PostgreSQL</label><description>Relational</description></option>
+    <option><label>MongoDB</label><description>Document</description></option>
+    <multi-select>false</multi-select>
+  </item>
+  <item>
+    <header>Deploy</header>
+    <question>Deploy where?</question>
+    <option><label>AWS</label><description>Cloud</description></option>
+    <option><label>On-prem</label><description>Self-hosted</description></option>
+    <multi-select>true</multi-select>
+  </item>
 </ask-question>`
 	result := StripMarkdown(input)
 	assert.Contains(t, result, "Which database")
@@ -312,7 +346,13 @@ func TestStripMarkdown_AskQuestion_MultipleQuestions(t *testing.T) {
 
 func TestStripMarkdown_AskQuestion_OptionsNoDescription(t *testing.T) {
 	input := `<ask-question>
-{"questions":[{"header":"Confirm","multiSelect":false,"options":[{"label":"Yes"},{"label":"No"}],"question":"Proceed?"}]}
+  <item>
+    <header>Confirm</header>
+    <multi-select>false</multi-select>
+    <question>Proceed?</question>
+    <option><label>Yes</label></option>
+    <option><label>No</label></option>
+  </item>
 </ask-question>`
 	result := StripMarkdown(input)
 	assert.Contains(t, result, "Proceed")
@@ -320,21 +360,62 @@ func TestStripMarkdown_AskQuestion_OptionsNoDescription(t *testing.T) {
 	assert.Contains(t, result, "No")
 }
 
-func TestStripMarkdown_AskQuestion_InvalidJSON(t *testing.T) {
+func TestStripMarkdown_AskQuestion_InvalidXML(t *testing.T) {
 	input := `<ask-question>
-not valid json
+not valid xml content
 </ask-question>`
 	result := StripMarkdown(input)
-	// Invalid JSON should fall back to raw text
-	assert.Contains(t, result, "not valid json")
+	// No <item> elements found — should fall back to stripped text
+	assert.Contains(t, result, "not valid xml content")
 }
 
 func TestStripMarkdown_AskQuestion_RegularCodeBlockUnaffected(t *testing.T) {
-	input := "Normal code:\n```go\nfmt.Println(\"hello\")\n```\n<ask-question>\n{\"questions\":[{\"header\":\"Go\",\"question\":\"Use Go?\",\"options\":[{\"label\":\"Yes\",\"description\":\"Go ahead\"}],\"multiSelect\":false}]}\n</ask-question>"
+	input := "Normal code:\n```go\nfmt.Println(\"hello\")\n```\n<ask-question>\n  <item>\n    <header>Go</header>\n    <question>Use Go?</question>\n    <option><label>Yes</label><description>Go ahead</description></option>\n    <multi-select>false</multi-select>\n  </item>\n</ask-question>"
 	result := StripMarkdown(input)
 	// Regular code block should still be removed
 	assert.NotContains(t, result, "fmt.Println")
 	// Ask-question should be preserved
 	assert.Contains(t, result, "Use Go")
 	assert.Contains(t, result, "Yes")
+}
+
+func TestStripMarkdown_AskQuestion_JSONFormat(t *testing.T) {
+	input := `<ask-question>
+{"questions":[{"header":"Approach","multiSelect":false,"question":"Which approach?","options":[{"label":"Option A","description":"Fast"},{"label":"Option B","description":"Safe"}]}]}
+</ask-question>`
+	result := StripMarkdown(input)
+	assert.NotContains(t, result, "<ask-question>")
+	assert.NotContains(t, result, "</ask-question>")
+	assert.Contains(t, result, "Which approach?")
+	assert.Contains(t, result, "Option A")
+	assert.Contains(t, result, "Safe")
+}
+
+func TestStripMarkdown_AskQuestion_JSONFormat_MultipleQuestions(t *testing.T) {
+	input := `<ask-question>
+{"questions":[{"header":"Q1","multiSelect":false,"question":"First?","options":[{"label":"A"}]},{"header":"Q2","multiSelect":true,"question":"Second?","options":[{"label":"B","description":"Beta"}]}]}
+</ask-question>`
+	result := StripMarkdown(input)
+	assert.Contains(t, result, "First?")
+	assert.Contains(t, result, "Second?")
+	assert.Contains(t, result, "B")
+	assert.Contains(t, result, "Beta")
+}
+
+func TestStripMarkdown_AskQuestion_JSONFormat_NoDescription(t *testing.T) {
+	input := `<ask-question>
+{"questions":[{"header":"Pick","multiSelect":false,"question":"Choose","options":[{"label":"Yes"}]}]}
+</ask-question>`
+	result := StripMarkdown(input)
+	assert.Contains(t, result, "Choose")
+	assert.Contains(t, result, "Yes")
+}
+
+func TestStripMarkdown_AskQuestion_InvalidJSON(t *testing.T) {
+	input := `<ask-question>
+{not valid json}
+</ask-question>`
+	result := StripMarkdown(input)
+	// Should fall back to stripped text
+	assert.Contains(t, result, "not valid json")
 }

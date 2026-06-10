@@ -900,6 +900,7 @@ func TestAuthTracker_NewAuthTracker(t *testing.T) {
 	tracker := newAuthTracker()
 	if tracker == nil {
 		t.Fatal("expected non-nil tracker")
+		return
 	}
 	if len(tracker.records) != 0 {
 		t.Errorf("expected empty records map, got %d entries", len(tracker.records))

@@ -114,9 +114,12 @@ describe('useSessionIdentity - model preference', () => {
   })
 
   describe('saveThinkingPref / loadThinkingPref', () => {
-    it('saves and loads thinking preference per agent', async () => {
+    it('saveThinkingPref is a no-op — does not persist thinking preference', async () => {
       await saveThinkingPref('codebuddy', 'high')
-      expect(loadThinkingPref('codebuddy')).toBe('high')
+      // saveThinkingPref no longer writes to agent preferredThinkingEffort;
+      // loadThinkingPref reads from agent.preferredThinkingEffort which is set
+      // exclusively via the settings panel or SessionSettingModal star button.
+      expect(loadThinkingPref('codebuddy')).toBeNull()
     })
 
     it('returns null when no preference saved', () => {

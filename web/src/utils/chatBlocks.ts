@@ -14,9 +14,14 @@ export function parseAssistantContent(content: string) {
   if (!content) return { blocks: [], metadata: null }
   try {
     const parsed = JSON.parse(content)
+    if ('blocks' in parsed && !Array.isArray(parsed.blocks)) {
+      // {"blocks":null} — treat as empty blocks instead of rendering as text
+      return { blocks: [], metadata: parsed.metadata || null, cancelled: parsed.cancelled || false }
+    }
     if (parsed.blocks && Array.isArray(parsed.blocks)) {
       const mapped = parsed.blocks.map(b => {
         if (b.type === 'tool_use') {
+          if (!b.name) b.name = ''
           if (b.done === undefined || b.done === false) b.done = true
           if (!b.output && b.input && b.input.output) {
             b.output = b.input.output

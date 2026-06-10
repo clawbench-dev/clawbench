@@ -178,9 +178,65 @@ func TestCancelSession_Running_NoCancelFunc(t *testing.T) {
 
 	SetSessionRunning("session-stuck", true)
 
-	// Running session with no cancel func - can't cancel
+	// Running session with no cancel func - force-clear to unstick
 	result := CancelSession("session-stuck")
-	assert.False(t, result)
+	assert.True(t, result)
+	assert.False(t, IsSessionRunning("session-stuck"))
+}
+
+func TestCancelSession_Running_NoCancelFunc_ClearsQueue(t *testing.T) {
+	cleanupAllSessionState()
+	defer cleanupAllSessionState()
+
+	SetSessionRunning("session-stuck-queue", true)
+	// Enqueue a message to verify it gets cleared on force-cancel
+	EnqueueMessage("session-stuck-queue", model.QueuedMessage{Text: "hello"})
+
+	result := CancelSession("session-stuck-queue")
+	assert.True(t, result)
+	assert.False(t, IsSessionRunning("session-stuck-queue"))
+	// Queue should be cleared
+	assert.Nil(t, GetQueue("session-stuck-queue"))
+}
+
+func TestCancelSession_StuckThenNewMessage(t *testing.T) {
+	// Simulate the exact bug scenario: session gets stuck (running=true, no cancel),
+	// user cancels (force-clear), then sends a new message which should succeed.
+	cleanupAllSessionState()
+	defer cleanupAllSessionState()
+
+	// Simulate stuck state
+	SetSessionRunning("session-bug-repro", true)
+
+	// Cancel should force-clear and return true
+	result := CancelSession("session-bug-repro")
+	assert.True(t, result)
+	assert.False(t, IsSessionRunning("session-bug-repro"))
+
+	// Now TrySetSessionRunning should succeed (the session is unstuck)
+	result2 := TrySetSessionRunning("session-bug-repro")
+	assert.True(t, result2, "session should be startable after force-clear")
+}
+
+func TestCancelSession_CallsACPConnManagerCancelTurn(t *testing.T) {
+	// Verify that CancelSession does not panic when ACPConnManager has no
+	// connection for the session (CancelTurn is a no-op on nil conn).
+	// The actual CancelTurn behavior is tested in acp_pool_test.go.
+	cleanupAllSessionState()
+	defer cleanupAllSessionState()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	RegisterSessionCancel("session-acp-cancel", cancel)
+	SetSessionRunning("session-acp-cancel", true)
+	RegisterSessionStream("session-acp-cancel")
+
+	// CancelSession should succeed even without an ACP connection
+	result := CancelSession("session-acp-cancel")
+	assert.True(t, result)
+	assert.False(t, IsSessionRunning("session-acp-cancel"))
+	// Context should be cancelled
+	assert.Error(t, ctx.Err())
 }
 
 func TestCancelSession_SendsCancelledEvent(t *testing.T) {

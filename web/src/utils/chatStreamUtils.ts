@@ -4,6 +4,21 @@
  */
 
 /**
+ * Detect garbage output values that come from intermediate ACP ToolCallUpdate
+ * events (e.g., a lone "}" from partial JSON streaming). Real tool output
+ * from completed tools is always meaningful — at least a few words long.
+ */
+function isGarbageOutput(output: string | undefined): boolean {
+  if (!output) return false
+  const trimmed = output.trim()
+  // Single character or just braces/brackets — not meaningful output
+  if (trimmed.length <= 1) return true
+  // Very short strings that are just JSON delimiters
+  if (/^[{}\[\],:]+$/.test(trimmed)) return true
+  return false
+}
+
+/**
  * Tool names that modify files on disk (canonical PascalCase, guaranteed by backend normalization).
  * Used to trigger file preview refresh after tool completion.
  */
@@ -38,11 +53,20 @@ export function forceCleanupStreamingState(
   const streamingMsg = messages.find((m: any) => m.role === 'assistant' && m.streaming)
   if (streamingMsg) {
     delete streamingMsg.streaming
-    // Mark all unfinished tool_use blocks as done so spinner stops
+    // Mark all unfinished tool_use blocks as done so spinner stops.
+    // Exception: PermissionApproval blocks require user interaction —
+    // marking them done without a real result makes the card appear
+    // "Approved" when it's actually stuck (no user response received).
     if (streamingMsg.blocks) {
       for (const block of streamingMsg.blocks) {
-        if (block.type === 'tool_use' && !block.done) {
+        if (block.type === 'tool_use' && !block.done && block.name !== 'PermissionApproval') {
           block.done = true
+          // Clear garbage output that may have been set by intermediate
+          // ACP ToolCallUpdate events (e.g., a lone "}" from partial JSON).
+          // Real output arrives via tool_result events which set done=true.
+          if (isGarbageOutput(block.output)) {
+            block.output = ''
+          }
         }
       }
     }

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"clawbench/internal/model"
@@ -112,11 +113,11 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	}
 
 	// 5. Get source session metadata (without deleted=0 — soft-deleted sessions still have valid metadata)
-	var backend, agentID, agentSource, modelName, thinkingEffort, sessProjectPath, externalSessionID string
+	var backend, agentID, agentSource, modelName, sessProjectPath, externalSessionID string
 	err = DB.QueryRow(
-		"SELECT backend, agent_id, agent_source, model, thinking_effort, project_path, external_session_id FROM chat_sessions WHERE id = ?",
+		"SELECT backend, agent_id, agent_source, model, project_path, external_session_id FROM chat_sessions WHERE id = ?",
 		sourceSessionID,
-	).Scan(&backend, &agentID, &agentSource, &modelName, &thinkingEffort, &sessProjectPath, &externalSessionID)
+	).Scan(&backend, &agentID, &agentSource, &modelName, &sessProjectPath, &externalSessionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, fmt.Errorf("source session %s not found", sourceSessionID)
 	}
@@ -168,12 +169,19 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// The continued session inherits the CLI backend's session context, allowing the
 	// same resume flow as a normal session (no special-casing needed).
 	_, err = DB.Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, source_session_id, thinking_effort, external_session_id, last_read_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?, ?, ?, CURRENT_TIMESTAMP)",
-		newSessionID, sessProjectPath, backend, displayTitle, agentID, agentSource, modelName, sourceSessionID, thinkingEffort, externalSessionID,
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, source_session_id, external_session_id, last_read_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?, ?, CURRENT_TIMESTAMP)",
+		newSessionID, sessProjectPath, backend, displayTitle, agentID, agentSource, modelName, sourceSessionID, externalSessionID,
 	)
 	if err != nil {
 		return "", false, fmt.Errorf("failed to create continued session: %w", err)
 	}
+	slog.Info("continued session created",
+		slog.String("session", newSessionID),
+		slog.String("source_session", sourceSessionID),
+		slog.String("external_session_id", externalSessionID),
+		slog.String("backend", backend),
+		slog.String("agent", agentID),
+		slog.Int64("execution", execID))
 
 	// 9. Copy chat_history (only streaming=0)
 	// NOTE: We intentionally do NOT copy created_at. The Go SQLite driver (modernc.org/sqlite)

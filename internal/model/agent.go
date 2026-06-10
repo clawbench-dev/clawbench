@@ -1,53 +1,50 @@
-//nolint:govet // shadowed err is acceptable in sequential blocks
 package model
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
-	"sort"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 // AgentModel represents a model option for an agent.
 type AgentModel struct {
-	ID      string `yaml:"id" json:"id"`
-	Name    string `yaml:"name" json:"name"`
-	Default bool   `yaml:"default" json:"default"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Default bool   `json:"default"`
 }
 
 // Agent represents an AI agent with its own system prompt, backend, and models.
 type Agent struct {
-	ID                      string       `yaml:"id" json:"id"`
-	Name                    string       `yaml:"name" json:"name"`
-	Icon                    string       `yaml:"icon" json:"icon"`
-	Specialty               string       `yaml:"specialty" json:"specialty"`
-	Backend                 string       `yaml:"backend" json:"backend"`
-	Models                  []AgentModel `yaml:"models,omitempty" json:"models"`
-	Command                 string       `yaml:"command,omitempty" json:"command"`                                   // optional: custom command path for the AI backend CLI
-	ThinkingEffort          string       `yaml:"thinking_effort,omitempty" json:"thinkingEffort"`                    // agent's default thinking effort (from YAML); not modified by user preference
-	ThinkingEffortLevels    []string     `yaml:"thinking_effort_levels,omitempty" json:"thinkingEffortLevels"`       // valid levels for this backend, e.g. ["low","medium","high","xhigh"]
-	PreferredModel          string       `yaml:"preferred_model,omitempty" json:"preferredModel"`                    // user's preferred model; empty = use BaseModelID()
-	PreferredThinkingEffort string       `yaml:"preferred_thinking_effort,omitempty" json:"preferredThinkingEffort"` // user's preferred thinking effort; empty = use ThinkingEffort
-	SystemPrompt            string       `yaml:"system_prompt,omitempty" json:"systemPrompt"`
+	ID                      string       `json:"id"`
+	Name                    string       `json:"name"`
+	Icon                    string       `json:"icon"`
+	Specialty               string       `json:"specialty"`
+	Backend                 string       `json:"backend"`
+	Models                  []AgentModel `json:"models"`
+	Command                 string       `json:"command"`                 // optional: custom command path for the AI backend CLI
+	ThinkingEffort          string       `json:"thinkingEffort"`          // agent's default thinking effort; not modified by user preference
+	ThinkingEffortLevels    []string     `json:"thinkingEffortLevels"`    // valid levels for this backend, e.g. ["low","medium","high","xhigh"]
+	PreferredModel          string       `json:"preferredModel"`          // user's preferred model; empty = use BaseModelID()
+	PreferredThinkingEffort string       `json:"preferredThinkingEffort"` // user's preferred thinking effort; empty = use ThinkingEffort
+	SystemPrompt            string       `json:"systemPrompt"`
+
+	// ACP configuration (only used when Transport != "cli")
+	Transport  string `json:"transport"`            // "cli"(default) | "acp-stdio"
+	AcpCommand string `json:"acpCommand,omitempty"` // acp-stdio: spawn command, e.g. "gemini --acp"
 
 	// ModelsAutoDetected indicates whether Models were filled by auto-discovery
-	// (from cache) rather than user-defined in YAML. Used by AsyncRefreshModelCache
+	// (from cache) rather than user-defined. Used by AsyncRefreshModelCache
 	// to know which agents should have their models updated.
-	ModelsAutoDetected bool `yaml:"-" json:"-"`
+	ModelsAutoDetected bool `json:"-"`
 
 	// CanRefreshModels indicates whether this agent supports model refresh via the API.
 	// Computed from BackendRegistry at load time based on whether the backend spec
 	// has model discovery capability (DiscoverModelsFunc or ListModelsCmd+ParseModels).
-	CanRefreshModels bool `yaml:"-" json:"canRefreshModels"`
+	CanRefreshModels bool `json:"canRefreshModels"`
 
 	// Source indicates how the agent was created: "auto" (CLI detected), "setup" (wizard), "manual" (user).
-	Source string `yaml:"-" json:"source"`
+	Source string `json:"source"`
 
 	// SortOrder determines display order in agent list; lower values first.
-	SortOrder int `yaml:"-" json:"sortOrder"`
+	SortOrder int `json:"sortOrder"`
 }
 
 // DefaultModelID returns the default model ID for this agent.
@@ -84,11 +81,9 @@ func (a *Agent) EffectiveThinkingEffort() string {
 }
 
 var (
-	Agents        map[string]*Agent // indexed by ID
-	AgentList     []*Agent          // ordered list for API responses
-	ClawbenchBin  string            // absolute path to clawbench binary for {{CLAWBENCH_BIN}} replacement
-	ModelCacheDir string            // model cache directory, set by main.go at startup
-	ConfigDir     string            // config directory containing agents/ YAML files; set at startup for WriteAgentYAML
+	Agents       map[string]*Agent // indexed by ID
+	AgentList    []*Agent          // ordered list for API responses
+	ClawbenchBin string            // absolute path to clawbench binary for {{CLAWBENCH_BIN}} replacement
 )
 
 // GetDefaultAgentID returns the default agent ID for new sessions.
@@ -103,113 +98,6 @@ func GetDefaultAgentID() string {
 		return AgentList[0].ID
 	}
 	return ""
-}
-
-// LoadAgents reads all YAML files from the given directory and registers them as agents.
-// It builds the common prompt from embedded rules and prepends it to each agent's system prompt.
-func LoadAgents(dir string) error {
-	Agents = make(map[string]*Agent)
-	AgentList = nil
-	// Set ConfigDir to the parent of the agents directory (for WriteAgentYAML)
-	ConfigDir = filepath.Dir(dir)
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return err
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".yaml" {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
-		if err != nil {
-			continue
-		}
-		var agent Agent
-		if err := yaml.Unmarshal(data, &agent); err != nil {
-			continue
-		}
-		if agent.ID == "" {
-			continue
-		}
-
-		Agents[agent.ID] = &agent
-		AgentList = append(AgentList, &agent)
-	}
-
-	// Sort AgentList by ID for deterministic ordering (filesystem iteration order is not guaranteed)
-	sort.Slice(AgentList, func(i, j int) bool {
-		return AgentList[i].ID < AgentList[j].ID
-	})
-
-	// Build common prompt from embedded rules (always fully injected)
-	commonPrompt := BuildCommonPrompt()
-
-	// Prepend common prompt to each agent's system prompt
-	for _, agent := range Agents {
-		if commonPrompt != "" && agent.SystemPrompt != "" {
-			agent.SystemPrompt = commonPrompt + "\n\n" + agent.SystemPrompt
-		} else if commonPrompt != "" {
-			agent.SystemPrompt = commonPrompt
-		}
-	}
-
-	return nil
-}
-
-// WriteAgentYAML writes the agent's user-editable fields back to its YAML file.
-// It uses atomic write (tmp + rename) to avoid partial writes.
-// Only preferred_model and thinking_effort are written; all other fields are preserved as-is.
-//
-// Deprecated: This function will be removed once agent persistence moves fully to DB.
-// It is kept temporarily for backward compatibility during migration.
-func WriteAgentYAML(agent *Agent) error {
-	if ConfigDir == "" {
-		return fmt.Errorf("config directory not initialized")
-	}
-	yamlPath := filepath.Join(ConfigDir, "agents", agent.ID+".yaml")
-
-	// Read existing YAML to preserve all fields
-	data, err := os.ReadFile(yamlPath)
-	if err != nil {
-		return fmt.Errorf("read agent YAML %s: %w", yamlPath, err)
-	}
-
-	// Parse into generic map to preserve unknown fields
-	var raw map[string]any
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return fmt.Errorf("parse agent YAML %s: %w", yamlPath, err)
-	}
-
-	// Patch only the user-editable fields
-	if agent.PreferredModel != "" {
-		raw["preferred_model"] = agent.PreferredModel
-	} else {
-		delete(raw, "preferred_model")
-	}
-	if agent.PreferredThinkingEffort != "" {
-		raw["preferred_thinking_effort"] = agent.PreferredThinkingEffort
-	} else {
-		delete(raw, "preferred_thinking_effort")
-	}
-
-	// Marshal back to YAML
-	out, err := yaml.Marshal(raw)
-	if err != nil {
-		return fmt.Errorf("marshal agent YAML %s: %w", yamlPath, err)
-	}
-
-	// Atomic write: tmp + rename
-	tmpPath := yamlPath + ".tmp"
-	if err := os.WriteFile(tmpPath, out, 0o644); err != nil {
-		return fmt.Errorf("write temp agent YAML %s: %w", tmpPath, err)
-	}
-	if err := os.Rename(tmpPath, yamlPath); err != nil {
-		return fmt.Errorf("rename temp agent YAML: %w", err)
-	}
-
-	return nil
 }
 
 // commonRulesTemplate is the built-in system prompt prepended to all agents.
@@ -264,7 +152,7 @@ var commonRulesTemplate = strings.Join([]string{
 	"",
 	"### The ONLY exception",
 	"",
-	"Pure informational statements that require ZERO user action or response may be plain text. Example: \"I've saved the file to /tmp/output.txt.\" If you add any request for feedback to that statement, it becomes a question.",
+	"Pure informational statements that require ZERO user action or response may be plain text. Example: \"I've saved the file to /tmp/output.txt.\" If you add a request for feedback to that statement, it becomes a question.",
 	"",
 	"### Forbidden patterns (DO NOT output these)",
 	"",

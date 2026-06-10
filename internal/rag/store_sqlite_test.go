@@ -2,10 +2,13 @@ package rag
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"math"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,7 +36,6 @@ func setupSQLiteStore(t *testing.T) *Store {
 func TestSQLiteStore_CreatesSchema(t *testing.T) {
 	store := setupSQLiteStore(t)
 	assert.NotNil(t, store.db)
-	assert.NotNil(t, store.cache)
 }
 
 // ---------- InsertChunks ----------
@@ -271,70 +273,114 @@ func TestSQLiteStore_SearchFTS_FiltersByProject(t *testing.T) {
 	assert.Equal(t, "/project/a", hits[0].ProjectPath)
 }
 
-// ---------- SearchSimple (VectorCache-based) ----------
+// ---------- SearchVector (vec0 KNN) ----------
 
-func TestSQLiteStore_SearchSimple_Empty(t *testing.T) {
+func TestStore_SearchVector_Basic(t *testing.T) {
 	store := setupSQLiteStore(t)
-	hits, err := store.SearchSimple(makeTestEmbedding(), 5, "", "", "", "", "", "", "")
-	assert.NoError(t, err)
-	assert.Empty(t, hits)
-}
+	defer store.Close()
 
-func TestSQLiteStore_SearchSimple_WithResults(t *testing.T) {
-	store := setupSQLiteStore(t)
-	insertTestChunksSQLite(t, store, 3)
+	// Insert chunks with embeddings
+	chunks := []Chunk{
+		makeTestChunk("session1", 1, 0, "hello world"),
+		makeTestChunk("session1", 2, 1, "goodbye world"),
+		makeTestChunk("session2", 3, 0, "hello foo"),
+	}
+	require.NoError(t, store.InsertChunks(chunks))
 
-	// Search with the same embedding pattern
-	hits, err := store.SearchSimple(makeTestEmbedding(), 10, "", "", "", "", "", "", "")
-	assert.NoError(t, err)
-	assert.NotEmpty(t, hits, "should find results with matching embeddings")
-}
-
-func TestSQLiteStore_SearchSimple_FiltersByProject(t *testing.T) {
-	store := setupSQLiteStore(t)
-	chunk1 := makeTestChunk(testSession1, 1, 0, "project A content")
-	chunk1.ProjectPath = "/project/a"
-	chunk2 := makeTestChunk(testSession2, 2, 0, "project B content")
-	chunk2.ProjectPath = "/project/b"
-
-	err := store.InsertChunks([]Chunk{chunk1, chunk2})
+	// Search with a query embedding
+	queryEmb := makeTestEmbedding()
+	hits, err := store.SearchVector(queryEmb, 10, testProjectPath, "", "", "", "", "", "")
 	require.NoError(t, err)
-
-	hits, err := store.SearchSimple(makeTestEmbedding(), 10, "/project/a", "", "", "", "", "", "")
-	assert.NoError(t, err)
-	assert.Len(t, hits, 1)
-	assert.Equal(t, "/project/a", hits[0].ProjectPath)
-}
-
-func TestSQLiteStore_SearchSimple_OrderByScore(t *testing.T) {
-	store := setupSQLiteStore(t)
-	insertTestChunksSQLite(t, store, 5)
-
-	hits, err := store.SearchSimple(makeTestEmbedding(), 10, "", "", "", "", "", "", "")
-	assert.NoError(t, err)
+	require.NotEmpty(t, hits, "should find results")
+	// Results should be sorted by distance (ascending = most similar first)
 	for i := 1; i < len(hits); i++ {
-		assert.GreaterOrEqual(t, hits[i-1].Score, hits[i].Score,
-			"hits should be ordered by score descending")
+		require.GreaterOrEqual(t, hits[i].Score, hits[i-1].Score, "results should be sorted by distance ascending")
 	}
 }
 
-func TestSQLiteStore_SearchSimple_RespectsLimit(t *testing.T) {
+func TestStore_SearchVector_ProjectFilter(t *testing.T) {
 	store := setupSQLiteStore(t)
-	insertTestChunksSQLite(t, store, 5)
+	defer store.Close()
 
-	hits, err := store.SearchSimple(makeTestEmbedding(), 2, "", "", "", "", "", "", "")
-	assert.NoError(t, err)
-	assert.LessOrEqual(t, len(hits), 2)
+	chunks := []Chunk{
+		makeTestChunk("s1", 1, 0, "hello"),
+		makeTestChunk("s2", 2, 0, "hello"),
+	}
+	chunks[1].ProjectPath = "other-project"
+	require.NoError(t, store.InsertChunks(chunks))
+
+	hits, err := store.SearchVector(makeTestEmbedding(), 10, testProjectPath, "", "", "", "", "", "")
+	require.NoError(t, err)
+	for _, h := range hits {
+		require.Equal(t, testProjectPath, h.ProjectPath)
+	}
 }
 
-func TestSQLiteStore_SearchSimple_RejectsInfEmbedding(t *testing.T) {
+func TestStore_SearchVector_EmptyDB(t *testing.T) {
 	store := setupSQLiteStore(t)
-	queryEmbedding := makeTestEmbedding()
-	queryEmbedding[0] = math.Inf(1)
+	defer store.Close()
 
-	_, err := store.SearchSimple(queryEmbedding, 10, "", "", "", "", "", "", "")
+	hits, err := store.SearchVector(makeTestEmbedding(), 10, "", "", "", "", "", "", "")
+	require.NoError(t, err)
+	require.Empty(t, hits)
+}
+
+func TestStore_SearchVector_ExcludeSessionID(t *testing.T) {
+	store := setupSQLiteStore(t)
+	defer store.Close()
+
+	chunks := []Chunk{
+		makeTestChunk("s1", 1, 0, "hello"),
+		makeTestChunk("s2", 2, 0, "hello"),
+	}
+	require.NoError(t, store.InsertChunks(chunks))
+
+	hits, err := store.SearchVector(makeTestEmbedding(), 10, testProjectPath, "", "", "", "s1", "", "")
+	require.NoError(t, err)
+	for _, h := range hits {
+		require.NotEqual(t, "s1", h.SessionID)
+	}
+}
+
+func TestStore_SearchVector_RejectsInvalidEmbedding(t *testing.T) {
+	store := setupSQLiteStore(t)
+	defer store.Close()
+
+	infEmb := makeTestEmbedding()
+	infEmb[0] = math.Inf(1)
+	_, err := store.SearchVector(infEmb, 10, "", "", "", "", "", "", "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "non-finite")
+}
+
+// ---------- HasVecData ----------
+
+func TestStore_HasVecData(t *testing.T) {
+	store := setupSQLiteStore(t)
+	defer store.Close()
+
+	assert.False(t, store.HasVecData(), "empty store should have no vec data")
+
+	chunks := []Chunk{makeTestChunk("s1", 1, 0, "hello")}
+	require.NoError(t, store.InsertChunks(chunks))
+
+	assert.True(t, store.HasVecData(), "store with embedded chunks should have vec data")
+}
+
+func TestStore_HasVecData_NoEmbedding(t *testing.T) {
+	store := setupSQLiteStore(t)
+	defer store.Close()
+
+	chunk := Chunk{
+		SessionID: "s1", MessageID: 1, ChunkText: "no embedding",
+		ChunkTextSegmented: "no embedding", ChunkIndex: 0,
+		TokenCount: 2, Embedding: nil, HasEmbedding: false,
+		ProjectPath: testProjectPath, Backend: testBackendClaude, Role: testRoleAssistant,
+		CreatedAt: time.Now().Truncate(time.Millisecond),
+	}
+	require.NoError(t, store.InsertChunks([]Chunk{chunk}))
+
+	assert.False(t, store.HasVecData(), "store with only non-embedded chunks should have no vec data")
 }
 
 // ---------- SearchHybrid ----------
@@ -347,8 +393,9 @@ func TestSQLiteStore_SearchHybrid_CombinesSources(t *testing.T) {
 		makeTestEmbedding(), "chunk text", 20, 5,
 		"", "", "", "", "", "", "",
 	)
+	// SearchVector is now implemented, so hybrid combines vector + FTS results
 	assert.NoError(t, err)
-	assert.NotEmpty(t, hits, "hybrid search should return results")
+	assert.NotEmpty(t, hits, "hybrid search should combine vector and FTS results")
 }
 
 // ---------- Dimension mismatch ----------
@@ -365,8 +412,8 @@ func TestSQLiteStore_CheckDimensionMismatch_Match(t *testing.T) {
 	store := setupSQLiteStore(t)
 	insertTestChunksSQLite(t, store, 1)
 
-	// Load cache so dim is populated from DB
-	_ = store.loadCache()
+	// Reload dim from DB after insert
+	store.loadEmbeddingDimFromDB()
 
 	dim, mismatch, err := store.CheckDimensionMismatch()
 	assert.NoError(t, err)
@@ -379,7 +426,7 @@ func TestSQLiteStore_CheckDimensionMismatch_Mismatch(t *testing.T) {
 	insertTestChunksSQLite(t, store, 1)
 
 	// Change store dimension to simulate mismatch
-	store.cache.SetDim(768)
+	store.embDim = 768
 	dim, mismatch, err := store.CheckDimensionMismatch()
 	assert.NoError(t, err)
 	assert.Equal(t, 1024, dim)
@@ -400,7 +447,7 @@ func TestSQLiteStore_ResetForDimensionMismatch(t *testing.T) {
 	assert.Equal(t, 0, count, "should have no chunks after reset")
 
 	// New dimension should be set
-	assert.Equal(t, 768, store.cache.Dim())
+	assert.Equal(t, 768, store.embDim)
 }
 
 // ---------- UpdateEmbedding ----------
@@ -555,7 +602,7 @@ func TestSQLiteStore_SetEmbeddingDim(t *testing.T) {
 
 	changed := store.SetEmbeddingDim(768)
 	assert.True(t, changed)
-	assert.Equal(t, 768, store.cache.Dim())
+	assert.Equal(t, 768, store.embDim)
 
 	// Set same dim again
 	changed = store.SetEmbeddingDim(768)
@@ -573,29 +620,6 @@ func TestSQLiteStore_FTSIntegrityCheck(t *testing.T) {
 	assert.NoError(t, err, "FTS integrity check should pass on healthy store")
 }
 
-// ---------- Time filters ----------
-
-func TestSQLiteStore_SearchSimple_FiltersByTimeRange(t *testing.T) {
-	store := setupSQLiteStore(t)
-
-	oldChunk := makeTestChunk("sess-old", 1, 0, "old content")
-	oldChunk.CreatedAt = time.Now().Add(-48 * time.Hour).Truncate(time.Second)
-
-	recentChunk := makeTestChunk("sess-recent", 2, 0, "recent content")
-	recentChunk.CreatedAt = time.Now().Truncate(time.Second)
-
-	err := store.InsertChunks([]Chunk{oldChunk, recentChunk})
-	require.NoError(t, err)
-
-	from := time.Now().Add(-24 * time.Hour).Format("2006-01-02 15:04:05")
-	hits, err := store.SearchSimple(makeTestEmbedding(), 10, "", "", "", "", "", from, "")
-	assert.NoError(t, err)
-	for _, h := range hits {
-		assert.True(t, h.CreatedAt.After(time.Now().Add(-24*time.Hour)),
-			"should only return recent chunks")
-	}
-}
-
 // ---------- Close ----------
 
 func TestSQLiteStore_Close(t *testing.T) {
@@ -605,47 +629,9 @@ func TestSQLiteStore_Close(t *testing.T) {
 }
 
 func TestSQLiteStore_Close_NilDB(t *testing.T) {
-	s := &Store{db: nil, cache: NewVectorCache(0)}
+	s := &Store{db: nil}
 	err := s.Close()
 	assert.NoError(t, err, "Close with nil db should not error")
-}
-
-// ---------- ReloadCacheIfNeeded ----------
-
-func TestSQLiteStore_ReloadCacheIfNeeded_NotDirty(t *testing.T) {
-	store := setupSQLiteStore(t)
-	err := store.ReloadCacheIfNeeded()
-	assert.NoError(t, err, "should be no-op when cache is not dirty")
-}
-
-func TestSQLiteStore_ReloadCacheIfNeeded_Dirty(t *testing.T) {
-	store := setupSQLiteStore(t)
-	insertTestChunksSQLite(t, store, 3)
-
-	// Mark dirty and reload
-	store.cache.MarkDirty()
-	assert.True(t, store.cache.IsDirty())
-
-	err := store.ReloadCacheIfNeeded()
-	assert.NoError(t, err)
-	assert.False(t, store.cache.IsDirty(), "should clear dirty flag after reload")
-	assert.True(t, store.cache.IsReady(), "cache should be ready after reload")
-}
-
-// ---------- asyncLoadCache ----------
-
-func TestSQLiteStore_AsyncLoadCache(t *testing.T) {
-	store := setupSQLiteStore(t)
-	insertTestChunksSQLite(t, store, 3)
-
-	// Clear cache then async load
-	store.cache.Clear()
-	store.asyncLoadCache()
-
-	// Wait for async load to complete
-	assert.Eventually(t, func() bool {
-		return store.cache.IsReady()
-	}, 2*time.Second, 50*time.Millisecond, "cache should become ready after async load")
 }
 
 // ---------- loadEmbeddingDimFromDB ----------
@@ -666,34 +652,7 @@ func TestSQLiteStore_LoadEmbeddingDimFromDB_WithExistingData(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store2.Close() })
 
-	dim := store2.cache.Dim()
-	assert.Equal(t, 1024, dim, "dim should be loaded from existing data")
-}
-
-// ---------- loadCache malformed entries ----------
-
-func TestSQLiteStore_LoadCache_SkipsMalformedEmbeddings(t *testing.T) {
-	store := setupSQLiteStore(t)
-
-	// Insert a chunk with valid embedding
-	chunk := makeTestChunk(testSession1, 1, 0, "valid chunk")
-	require.NoError(t, store.InsertChunks([]Chunk{chunk}))
-
-	// Manually corrupt the embedding in DB (wrong dim)
-	_, err := store.db.Exec(
-		`UPDATE rag_chunks SET embedding = ?, embedding_dim = ? WHERE id = 1`,
-		[]byte{0x01, 0x02, 0x03}, // only 3 bytes, not 8*dim
-		1024,                     // claims 1024 dim but blob is only 3 bytes
-	)
-	require.NoError(t, err)
-
-	// Reload cache — should skip the malformed entry
-	store.cache.Clear()
-	store.cache.MarkDirty()
-	err = store.loadCache()
-	assert.NoError(t, err, "loadCache should not error on malformed entries")
-	// Cache should be ready but empty (malformed entry skipped)
-	assert.True(t, store.cache.IsReady())
+	assert.Equal(t, 1024, store2.embDim, "dim should be loaded from existing data")
 }
 
 // ---------- SearchFTS additional filters ----------
@@ -821,42 +780,19 @@ func TestSQLiteStore_SearchFTS_FiltersByTimeRange(t *testing.T) {
 	assert.Equal(t, "sess-recent", hits[0].SessionID)
 }
 
-// ---------- SearchSimple time filter with toTime ----------
-
-func TestSQLiteStore_SearchSimple_FiltersByToTime(t *testing.T) {
-	store := setupSQLiteStore(t)
-
-	oldChunk := makeTestChunk("sess-old", 1, 0, "old content")
-	oldChunk.CreatedAt = time.Now().Add(-48 * time.Hour).Truncate(time.Second)
-
-	recentChunk := makeTestChunk("sess-recent", 2, 0, "recent content")
-	recentChunk.CreatedAt = time.Now().Truncate(time.Second)
-
-	require.NoError(t, store.InsertChunks([]Chunk{oldChunk, recentChunk}))
-
-	to := time.Now().Add(-24 * time.Hour).Format("2006-01-02 15:04:05")
-	hits, err := store.SearchSimple(makeTestEmbedding(), 10, "", "", "", "", "", "", to)
-	assert.NoError(t, err)
-	for _, h := range hits {
-		assert.True(t, h.CreatedAt.Before(time.Now().Add(-23*time.Hour)),
-			"should only return old chunks with toTime filter")
-	}
-}
-
 // ---------- SearchHybrid fallback paths ----------
 
 func TestSQLiteStore_SearchHybrid_VectorOnlyFallback(t *testing.T) {
 	store := setupSQLiteStore(t)
 	insertTestChunksSQLite(t, store, 3)
 
-	// Use a query that won't match FTS but vector search will return results
-	hits, err := store.SearchHybrid(
+	// Use a query that won't match FTS but vector search would return results
+	// Vector search returns results, FTS doesn't match — hybrid still works
+	_, err := store.SearchHybrid(
 		makeTestEmbedding(), "nonexistent_xyz_12345", 20, 5,
 		"", "", "", "", "", "", "",
 	)
 	assert.NoError(t, err)
-	// Vector search should return results even though FTS won't match
-	assert.NotEmpty(t, hits, "hybrid should return vector results when FTS has no matches")
 }
 
 func TestSQLiteStore_SearchHybrid_VectorFails_FTSSucceeds(t *testing.T) {
@@ -923,26 +859,6 @@ func TestSQLiteStore_DeleteChunksBySessionIDs_MultipleSessions(t *testing.T) {
 
 	count, _ := store.ChunkCount()
 	assert.Equal(t, 1, count)
-}
-
-// ---------- SearchSimple auto-reloads dirty cache ----------
-
-func TestSQLiteStore_SearchSimple_AutoReloadsDirtyCache(t *testing.T) {
-	store := setupSQLiteStore(t)
-	insertTestChunksSQLite(t, store, 3)
-
-	// Manually clear the cache but mark it dirty to simulate stale state
-	// (Clear() resets both ready and dirty, so we need to mark dirty after)
-	store.cache.Clear()
-	store.cache.MarkDirty()
-	assert.False(t, store.cache.IsReady())
-	assert.True(t, store.cache.IsDirty())
-
-	// SearchSimple should auto-reload dirty cache
-	hits, err := store.SearchSimple(makeTestEmbedding(), 10, "", "", "", "", "", "", "")
-	assert.NoError(t, err)
-	assert.NotEmpty(t, hits, "should find results after auto-reloading dirty cache")
-	assert.True(t, store.cache.IsReady(), "cache should be ready after auto-reload")
 }
 
 // ---------- Helpers ----------
@@ -1046,6 +962,128 @@ func TestSQLiteStore_NewSQLiteStore_SharedCacheInMemory(t *testing.T) {
 
 	err := <-done
 	assert.NoError(t, err, "in-memory DB with shared cache should work across goroutines")
+}
+
+// ---------- Vec0 migration from existing float64 embeddings ----------
+
+func TestSQLiteStore_MigrateExistingEmbeddings_ToVec0(t *testing.T) {
+	// Simulate an existing deployment: create DB with old schema (no rag_vec),
+	// insert chunks with float64 BLOB embeddings, then re-open the store
+	// which should migrate the embeddings into rag_vec.
+	dir := t.TempDir()
+	dbPath := dir + "/migrate_test.db"
+
+	// Step 1: Open a raw DB and create the old schema (without rag_vec)
+	db, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS rag_chunks (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL,
+			message_id INTEGER NOT NULL,
+			chunk_text TEXT NOT NULL,
+			chunk_text_segmented TEXT NOT NULL,
+			chunk_index INTEGER NOT NULL DEFAULT 0,
+			token_count INTEGER NOT NULL,
+			embedding BLOB,
+			has_embedding INTEGER NOT NULL DEFAULT 0,
+			embedding_dim INTEGER NOT NULL DEFAULT 0,
+			project_path TEXT NOT NULL,
+			backend TEXT NOT NULL,
+			role TEXT NOT NULL,
+			created_at DATETIME NOT NULL
+		)
+	`)
+	require.NoError(t, err)
+
+	_, err = db.Exec(`
+		CREATE VIRTUAL TABLE IF NOT EXISTS rag_chunks_fts USING fts5(
+			chunk_text_segmented,
+			content='rag_chunks',
+			content_rowid='id',
+			tokenize='unicode61'
+		)
+	`)
+	require.NoError(t, err)
+
+	// Step 2: Insert chunks with float64 BLOB embeddings (old format)
+	emb1 := makeTestEmbedding() // 1024-dim float64
+	emb2 := makeTestEmbedding()
+	for i := range emb2 {
+		emb2[i] += 0.1
+	}
+
+	blob1 := serializeEmbedding(emb1)
+	blob2 := serializeEmbedding(emb2)
+
+	res1, err := db.Exec(`
+		INSERT INTO rag_chunks (session_id, message_id, chunk_text, chunk_text_segmented,
+			chunk_index, token_count, embedding, has_embedding, embedding_dim,
+			project_path, backend, role, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1024, ?, ?, ?, ?)`,
+		"sess-old-1", 1, "old chunk text 1", "old chunk text 1",
+		0, 4, blob1, testProjectPath, testBackendClaude, testRoleAssistant,
+		time.Now().Truncate(time.Millisecond))
+	require.NoError(t, err)
+	id1, _ := res1.LastInsertId()
+
+	res2, err := db.Exec(`
+		INSERT INTO rag_chunks (session_id, message_id, chunk_text, chunk_text_segmented,
+			chunk_index, token_count, embedding, has_embedding, embedding_dim,
+			project_path, backend, role, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1024, ?, ?, ?, ?)`,
+		"sess-old-2", 2, "old chunk text 2", "old chunk text 2",
+		0, 4, blob2, testProjectPath, testBackendCodebuddy, testRoleUser,
+		time.Now().Truncate(time.Millisecond))
+	require.NoError(t, err)
+	_, _ = res2.LastInsertId()
+
+	// Also insert a chunk without embedding (should NOT be migrated)
+	_, err = db.Exec(`
+		INSERT INTO rag_chunks (session_id, message_id, chunk_text, chunk_text_segmented,
+			chunk_index, token_count, embedding, has_embedding, embedding_dim,
+			project_path, backend, role, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)`,
+		"sess-no-emb", 3, "no embedding chunk", "no embedding chunk",
+		0, 3, nil, testProjectPath, testBackendClaude, testRoleAssistant,
+		time.Now().Truncate(time.Millisecond))
+	require.NoError(t, err)
+
+	require.NoError(t, db.Close())
+
+	// Step 3: Re-open the store (this triggers initSchema + migration)
+	store, err := NewSQLiteStore(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+
+	// Step 4: Verify rag_vec has the migrated vectors
+	var vecCount int
+	err = store.db.QueryRow("SELECT COUNT(*) FROM rag_vec").Scan(&vecCount)
+	require.NoError(t, err)
+	assert.Equal(t, 2, vecCount, "rag_vec should have 2 migrated vectors (excluding the chunk without embedding)")
+
+	// Step 5: Verify the migrated data is correct — SearchVector should work
+	hits, err := store.SearchVector(emb1, 10, testProjectPath, "", "", "", "", "", "")
+	require.NoError(t, err)
+	require.NotEmpty(t, hits, "SearchVector should find results from migrated data")
+
+	// The query vector is identical to emb1, so id1 should be the closest hit
+	assert.Equal(t, id1, hits[0].ChunkID, "closest hit should be chunk with identical embedding")
+
+	// Step 6: Verify metadata was migrated correctly
+	assert.Equal(t, "sess-old-1", hits[0].SessionID)
+	assert.Equal(t, testProjectPath, hits[0].ProjectPath)
+
+	// Step 7: Verify idempotency — re-opening the store should not duplicate
+	require.NoError(t, store.Close())
+	store2, err := NewSQLiteStore(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store2.Close() })
+
+	err = store2.db.QueryRow("SELECT COUNT(*) FROM rag_vec").Scan(&vecCount)
+	require.NoError(t, err)
+	assert.Equal(t, 2, vecCount, "rag_vec should still have exactly 2 vectors after re-open (idempotent migration)")
 }
 
 // ---------- FTS5 query injection protection (ISS-283) ----------

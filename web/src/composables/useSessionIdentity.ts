@@ -13,11 +13,19 @@ import { gt } from '@/composables/useLocale'
 const currentSessionId = ref('')
 const currentSessionTitle = ref('')
 const currentBackend = ref('')
-const currentAgentId = ref('')
+export const currentAgentId = ref('')
 const currentModelId = ref('')
 const currentModelName = ref('')
 const currentThinkingEffort = ref('')
-const runningSessions = ref(new Set<string>())
+const currentThinkingEffortName = ref('')
+const currentModeId = ref('')
+const currentModeName = ref('')
+const currentTransport = ref('') // 'acp-stdio' or 'cli'
+const autoApprove = ref(false)
+const availableModes = ref<Array<{ id: string; name: string }>>([])
+const availableCommands = ref<Array<{ name: string; description: string; inputHint?: string }>>([])
+const availableThinkingEfforts = ref<Array<{ id: string; name: string }>>([])
+export const runningSessions = ref(new Set<string>())
 // Bumped on every mutation to runningSessions so computed properties
 // that depend on the set's contents re-evaluate correctly.
 const runningSessionsVersion = ref(0)
@@ -28,6 +36,11 @@ const runningSessionsVersion = ref(0)
 const sessionDrawerOpen = ref(false)
 
 /** Reset all module-level singleton refs — used by SPA hot project switch. */
+/** Read-only accessor for the current session ID (no composable setup needed). */
+export function getSessionId(): string {
+  return currentSessionId.value
+}
+
 export function resetIdentity(): void {
   currentSessionId.value = ''
   currentSessionTitle.value = ''
@@ -36,6 +49,14 @@ export function resetIdentity(): void {
   currentModelId.value = ''
   currentModelName.value = ''
   currentThinkingEffort.value = ''
+  currentThinkingEffortName.value = ''
+  currentModeId.value = ''
+  currentModeName.value = ''
+  currentTransport.value = ''
+  autoApprove.value = false
+  availableModes.value = []
+  availableCommands.value = []
+  availableThinkingEfforts.value = []
   runningSessions.value = new Set()
   runningSessionsVersion.value = 0
   sessionDrawerOpen.value = false
@@ -47,6 +68,15 @@ export function resetIdentity(): void {
   _continueFromExecution = null
   _checkContinueSession = null
   _sessionDrawerRef = null
+  // Clean up E2E test bridge
+  if (typeof window !== 'undefined') {
+    const bridge = (window as any).__clawbench
+    if (bridge) {
+      bridge.createSession = null
+      bridge.switchSession = null
+      bridge.deleteSession = null
+    }
+  }
 }
 
 // ───────────────────────────────────────────────────────────
@@ -73,9 +103,9 @@ function loadModelPref(agentId: string): string | null {
 
 async function saveThinkingPref(agentId: string, level: string) {
   if (!agentId) return
-  // Save to server (agent YAML) via PATCH /api/agents
-  const { patchAgentPref } = await import('@/composables/useSettingsConfig')
-  patchAgentPref(agentId, 'preferred_thinking_effort', level).catch(() => {})
+  // No-op: thinking effort selection in chat is session-scoped and does NOT update
+  // the agent's default. The agent's preferredThinkingEffort is configured exclusively
+  // via the settings panel or SessionSettingModal star button (which calls patchAgentPref directly).
 }
 
 function loadThinkingPref(agentId: string): string | null {
@@ -83,6 +113,115 @@ function loadThinkingPref(agentId: string): string | null {
   // Read from agent's server-side preference (preferredThinkingEffort > thinkingEffort)
   const { getEffectiveThinkingEffort } = useAgents()
   return getEffectiveThinkingEffort(agentId) || null
+}
+
+// ───────────────────────────────────────────────────────────
+// Mode state — ACP session mode (ask/architect/code)
+// currentModeId is set by agent SSE events (takes priority),
+// user action (local ref update), or DB restore (initSessionFromAPI).
+// Agent-initiated mode changes override user selection.
+// ───────────────────────────────────────────────────────────
+
+/** Update mode state from REST API or user action (full state). */
+export function updateModeState(modeId: string, modes: Array<{ id: string; name: string }>) {
+  if (modeId) {
+    currentModeId.value = modeId
+    const mode = modes.find(m => m.id === modeId)
+    currentModeName.value = mode?.name || modeId
+  }
+  if (modes.length > 0) {
+    availableModes.value = modes
+  }
+}
+
+/** Update available modes list without changing current selection.
+ * Used by acpStates cache population (useAgents) — currentModeId
+ * is managed by agent SSE events or user action, not by cache restore. */
+export function updateAvailableModes(modes: Array<{ id: string; name: string }>) {
+  if (modes.length > 0) {
+    availableModes.value = modes
+  }
+}
+
+/** Clear mode state (called on session switch or when leaving ACP session). */
+export function clearModeState() {
+  currentModeId.value = ''
+  currentModeName.value = ''
+  availableModes.value = []
+}
+
+/** Update available slash commands from ACP commands_update event. */
+export function updateCommandState(commands: Array<{ name: string; description: string; inputHint?: string }>) {
+  availableCommands.value = commands
+}
+
+/** Clear command state (called on session switch). */
+export function clearCommandState() {
+  availableCommands.value = []
+}
+
+/**
+ * Slash commands are now populated from GET /api/agents (acpStates.commands)
+ * and SSE commands_update events — no separate prefetch HTTP request needed.
+ * This function is kept as a no-op for backward compatibility with call sites
+ * that haven't been updated yet.
+ * @deprecated Use acpStates from /api/agents instead.
+ */
+export async function prefetchCommands(_agentId: string) {
+  // No-op: commands are now pre-populated from /api/agents acpStates
+}
+
+/** Update thinking effort state from SSE thinking_effort_update event. */
+/** Update thinking effort state from REST API or user action (full state). */
+export function updateThinkingEffortState(currentId: string, levels: Array<{ id: string; name: string }>) {
+  if (currentId) {
+    currentThinkingEffort.value = currentId
+    const level = levels.find(l => l.id === currentId)
+    currentThinkingEffortName.value = level?.name || currentId
+  }
+  if (levels.length > 0) {
+    availableThinkingEfforts.value = levels
+    // Resolve name if id was set before levels arrived
+    if (currentThinkingEffort.value && !currentThinkingEffortName.value) {
+      const level = levels.find(l => l.id === currentThinkingEffort.value)
+      currentThinkingEffortName.value = level?.name || currentThinkingEffort.value
+    }
+  }
+}
+
+/** Update available thinking effort levels without changing current selection.
+ * Used by SSE thinking_effort_update handler — currentThinkingEffort
+ * is managed by user action + DB, not by agent notifications. */
+export function updateAvailableThinkingEfforts(levels: Array<{ id: string; name: string }>) {
+  if (levels.length > 0) {
+    availableThinkingEfforts.value = levels
+    // Resolve name if id was set before levels arrived
+    if (currentThinkingEffort.value) {
+      const level = levels.find(l => l.id === currentThinkingEffort.value)
+      currentThinkingEffortName.value = level?.name || currentThinkingEffort.value
+    }
+  }
+}
+
+/** Clear thinking effort state (called on session switch). */
+export function clearThinkingEffortState() {
+  availableThinkingEfforts.value = []
+  currentThinkingEffortName.value = ''
+}
+
+/** Toggle auto-approve mode and persist to server. */
+export function toggleAutoApprove(enabled: boolean) {
+  autoApprove.value = enabled
+  const sid = currentSessionId.value
+  if (sid) {
+    fetch('/api/ai/session/update', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: sid, autoApprove: enabled }),
+    }).catch(err => {
+      console.error('Failed to update autoApprove:', err)
+    })
+  }
 }
 
 // ───────────────────────────────────────────────────────────
@@ -117,6 +256,11 @@ export interface SessionActions {
 /**
  * Register session action callbacks. Called by App.vue on mount
  * (for openAgentSelector) and ChatPanel on mount (for the rest).
+ *
+ * Also exposes a minimal E2E test bridge on window.__clawbench
+ * so Playwright can call createSession/switchSession without
+ * page reload — session state is updated in-place by the Vue
+ * reactivity system.
  */
 export function registerSessionActions(actions: SessionActions) {
   _switchSession = actions.switchSession
@@ -126,6 +270,16 @@ export function registerSessionActions(actions: SessionActions) {
   _openChatPanel = actions.openChatPanel
   _continueFromExecution = actions.continueFromExecution
   _checkContinueSession = actions.checkContinueSession
+
+  // Expose E2E test bridge on window for Playwright access.
+  // These allow tests to create/switch sessions without page reload,
+  // which is essential for ACP tests that need to switch agents mid-test.
+  if (typeof window !== 'undefined') {
+    const bridge = (window as any).__clawbench || ((window as any).__clawbench = {})
+    bridge.createSession = actions.createSession
+    bridge.switchSession = actions.switchSession
+    bridge.deleteSession = actions.deleteSession
+  }
 }
 
 /** Register the SessionDrawer component ref so openAgentSelector() works. */
@@ -141,17 +295,25 @@ export function registerSessionDrawerRef(drawerRef: any) {
 export async function initSessionFromAPI() {
   const agentsApi = useAgents()
   try {
+    const initCtrl = new AbortController()
+    const initTimer = setTimeout(() => initCtrl.abort(), 60000)
     const [chatResp] = await Promise.all([
-      fetch('/api/ai/chat?limit=1'),
+      fetch('/api/ai/chat?limit=1', { signal: initCtrl.signal }).catch((e) => {
+        if (initCtrl.signal.aborted) return null as any
+        throw e
+      }),
       agentsApi.loadAgents(),
     ])
-    if (chatResp.ok) {
+    clearTimeout(initTimer)
+    if (chatResp && chatResp.ok) {
       const data = await chatResp.json()
       if (data.sessionId) {
         currentSessionId.value = data.sessionId
         currentSessionTitle.value = data.sessionTitle || ''
         currentBackend.value = data.backend || ''
         currentAgentId.value = data.agentId || ''
+        // Slash commands are now populated from /api/agents acpStates (via loadAgents)
+        // and from the chat response below — no separate prefetch request needed.
         // Initialize model: prefer server-persisted modelId, then localStorage pref, then agent default
         if (data.modelId) {
           currentModelId.value = data.modelId
@@ -176,11 +338,62 @@ export async function initSessionFromAPI() {
             currentModelName.value = modelName
           }
         }
-        // Initialize thinking effort: prefer server data, then localStorage pref
-        if (data.thinkingEffort) {
-          currentThinkingEffort.value = data.thinkingEffort
+        // Initialize thinking effort: from ACP state or localStorage pref
+        if (data.thinkingEffortState?.currentId) {
+          currentThinkingEffort.value = data.thinkingEffortState.currentId
+          const level = data.thinkingEffortState.availableLevels?.find((l: {id: string; name: string}) => l.id === data.thinkingEffortState.currentId)
+          currentThinkingEffortName.value = level?.name || data.thinkingEffortState.currentId
         } else {
           currentThinkingEffort.value = loadThinkingPref(data.agentId || '') || ''
+        }
+        // Initialize transport from agent's transport field
+        if (data.transport) {
+          currentTransport.value = data.transport
+        } else {
+          // Fall back to agent's stored transport
+          const agent = agentsApi.getAgent(data.agentId || '')
+          currentTransport.value = agent?.transport || 'cli'
+        }
+        // Initialize autoApprove from server state
+        if (data.autoApprove !== undefined) {
+          autoApprove.value = data.autoApprove
+        }
+        // Populate slash commands from chat response (cached ACP state)
+        if (Array.isArray(data.commands) && data.commands.length > 0 && availableCommands.value.length === 0) {
+          availableCommands.value = data.commands
+        }
+        // Initialize mode: from ACP state currentModeId
+        // Only populate mode state for ACP sessions — CLI backends don't support modes
+        if (currentTransport.value !== 'cli' && data.modeState?.currentModeId) {
+          currentModeId.value = data.modeState.currentModeId
+        }
+        // Populate mode state from chat response — update available modes.
+        // Only for ACP sessions — CLI backends don't support modes
+        if (currentTransport.value !== 'cli' && data.modeState && data.modeState.availableModes?.length > 0) {
+          updateAvailableModes(data.modeState.availableModes)
+          // Set mode name from available modes now that the list is populated
+          if (currentModeId.value) {
+            const mode = data.modeState.availableModes.find((m: any) => m.id === currentModeId.value)
+            currentModeName.value = mode?.name || currentModeId.value
+          }
+        }
+        // Populate thinking effort state — update available levels.
+        // currentThinkingEffort was already set above from ACP state.
+        // Only for ACP sessions — CLI backends don't support thinking effort
+        if (currentTransport.value !== 'cli' && data.thinkingEffortState && data.thinkingEffortState.availableLevels?.length > 0) {
+          updateAvailableThinkingEfforts(data.thinkingEffortState.availableLevels)
+        } else if (currentTransport.value !== 'cli' && data.agentId) {
+          // Fallback: agent config (e.g. OpenCode/Gemini ACP don't expose thought_level)
+          const agentLevels = agentsApi.getAgentThinkingEffortLevels(data.agentId)
+          if (agentLevels.length > 0) {
+            const levels = agentLevels.map((id: string) => ({ id, name: id }))
+            updateAvailableThinkingEfforts(levels)
+            // Resolve name if currentThinkingEffort was set from localStorage pref
+            if (currentThinkingEffort.value && !currentThinkingEffortName.value) {
+              const level = levels.find(l => l.id === currentThinkingEffort.value)
+              currentThinkingEffortName.value = level?.name || currentThinkingEffort.value
+            }
+          }
         }
       }
     }
@@ -299,11 +512,15 @@ export function useSessionIdentity() {
       }
       const url = sid
         ? `/api/ai/chat?session_id=${encodeURIComponent(sid)}`
-        : '/api/ai/chat'
+        : null
+      if (!url) {
+        console.error('sendMessage: no session ID available, cannot send')
+        return
+      }
       await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, filePaths: filePaths || [], modelId: currentModelId.value || undefined, thinkingEffort: currentThinkingEffort.value || undefined }),
+        body: JSON.stringify({ message: text, filePaths: filePaths || [], modelId: currentModelId.value || undefined, thinkingEffort: currentThinkingEffort.value || undefined, transport: currentTransport.value || undefined }),
       })
     } catch (err) {
       console.error('Failed to send message:', err)
@@ -361,6 +578,14 @@ export function useSessionIdentity() {
     currentModelId,
     currentModelName,
     currentThinkingEffort,
+    currentThinkingEffortName,
+    currentModeId,
+    currentModeName,
+    currentTransport,
+    autoApprove,
+    availableModes,
+    availableCommands,
+    availableThinkingEfforts,
     runningSessions,
     runningSessionsVersion,
     agentHeaderTitle,
@@ -385,5 +610,8 @@ export function useSessionIdentity() {
     saveThinkingPref,
     loadModelPref,
     loadThinkingPref,
+    toggleAutoApprove,
+    // Mode state helpers
+    updateModeState,
   }
 }

@@ -1,4 +1,5 @@
 <template>
+  <div class="chat-messages-wrapper">
   <div class="chat-messages" id="aiChatMessages" ref="messagesRef" @click="handleChatClick" @scroll="handleScroll">
     <!-- Lazy load feedback -->
     <div class="chat-load-area">
@@ -77,12 +78,37 @@
       />
     </div>
   </div>
+
+  <!-- Floating scroll buttons — outside scroll container, inside relative wrapper -->
+  <Transition name="scroll-fab">
+    <div v-if="scrolledUp" class="scroll-fab-group scroll-fab-top">
+      <button class="scroll-fab-btn" @click="scrollToTop" :title="t('chat.messageList.scrollToTop')">
+        <ChevronsUp :size="18" />
+      </button>
+      <button class="scroll-fab-btn" @click="scrollToPreviousMessage" :title="t('chat.messageList.scrollToPrev')">
+        <ArrowUp :size="18" />
+      </button>
+    </div>
+  </Transition>
+
+  <Transition name="scroll-fab">
+    <div v-if="scrolledDown" class="scroll-fab-group scroll-fab-bottom">
+      <button class="scroll-fab-btn" @click="scrollToBottomSmooth" :title="t('chat.messageList.scrollToBottom')">
+        <ChevronsDown :size="18" />
+      </button>
+      <button class="scroll-fab-btn" @click="scrollToNextMessage" :title="t('chat.messageList.scrollToNext')">
+        <ArrowDown :size="18" />
+      </button>
+    </div>
+  </Transition>
+
+  </div>
 </template>
 
 <script setup>
 import { ref, nextTick, inject, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronUp } from 'lucide-vue-next'
+import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown } from 'lucide-vue-next'
 import ChatMessageItem from './ChatMessageItem.vue'
 import PendingMessageItem from './PendingMessageItem.vue'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
@@ -148,7 +174,12 @@ const collapsedSet = ref(new Set())
 watch(() => props.messages, () => {
   expandedSet.value = new Set()
   collapsedSet.value = new Set()
-  isAtBottom = true
+  isAtBottom.value = true
+  scrolledUp.value = false
+  scrolledDown.value = false
+  lastScrollTop = 0
+  clearTimeout(scrollUpTimer)
+  clearTimeout(scrollDownTimer)
 })
 
 // Compute the last round: last assistant message + its preceding user message
@@ -261,16 +292,52 @@ async function handleChatClick(event) {
 let loadMorePending = false
 // Track whether the user is at the bottom of the chat.
 // When the user scrolls back to the bottom during streaming, auto-scroll resumes.
-let isAtBottom = true
+const isAtBottom = ref(true)
+
+// Whether user has scrolled up/down enough to show floating scroll buttons
+// Only one group shows at a time — whichever direction the user last scrolled toward
+const scrolledUp = ref(false)
+const scrolledDown = ref(false)
+
+// Auto-hide timers for scroll buttons
+let scrollUpTimer = null
+let scrollDownTimer = null
+let lastScrollTop = 0
+const SCROLL_BUTTON_HIDE_DELAY = 3000
 
 const NEAR_BOTTOM_THRESHOLD = 60
+const SCROLL_BUTTON_TRIGGER = 120
 
 function handleScroll() {
   if (!messagesRef.value) return
   const el = messagesRef.value
 
-  // Update isAtBottom state based on current scroll position
-  isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_THRESHOLD
+  const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+  const nearBottom = distFromBottom < NEAR_BOTTOM_THRESHOLD
+  isAtBottom.value = nearBottom
+
+  // Determine scroll direction
+  const scrollDelta = el.scrollTop - lastScrollTop
+  lastScrollTop = el.scrollTop
+
+  // Scrolled up (toward top): show top buttons, hide bottom
+  const shouldShowUp = scrollDelta < 0 && el.scrollTop > SCROLL_BUTTON_TRIGGER
+  // Scrolled down (toward bottom): show bottom buttons, hide top
+  const shouldShowDown = scrollDelta > 0 && !nearBottom && distFromBottom > SCROLL_BUTTON_TRIGGER
+
+  if (shouldShowUp) {
+    scrolledDown.value = false
+    clearTimeout(scrollDownTimer)
+    scrolledUp.value = true
+    clearTimeout(scrollUpTimer)
+    scrollUpTimer = setTimeout(() => { scrolledUp.value = false }, SCROLL_BUTTON_HIDE_DELAY)
+  } else if (shouldShowDown) {
+    scrolledUp.value = false
+    clearTimeout(scrollUpTimer)
+    scrolledDown.value = true
+    clearTimeout(scrollDownTimer)
+    scrollDownTimer = setTimeout(() => { scrolledDown.value = false }, SCROLL_BUTTON_HIDE_DELAY)
+  }
 
   if (loadMorePending) return
   if (!props.hasMore || props.loadingMore) return
@@ -285,7 +352,7 @@ function scrollToBottom(force = false) {
   nextTick(() => {
     if (!messagesRef.value) return
     const el = messagesRef.value
-    if (force || isAtBottom) {
+    if (force || isAtBottom.value) {
       el.scrollTop = el.scrollHeight
       // Verify the scroll actually reached the bottom — content may have grown
       // between the scrollToBottom call and this nextTick callback, or may grow
@@ -300,7 +367,7 @@ function scrollToBottom(force = false) {
           el.scrollTop = el.scrollHeight
         }
         // Final isAtBottom state based on actual scroll position after correction
-        isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_THRESHOLD
+        isAtBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_THRESHOLD
         // For force scrolls, also do a delayed re-scroll to catch async content
         // rendering (Mermaid, KaTeX, collapse transitions) that settles later.
         if (force) {
@@ -308,7 +375,7 @@ function scrollToBottom(force = false) {
             if (!messagesRef.value) return
             const el = messagesRef.value
             el.scrollTop = el.scrollHeight
-            isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_THRESHOLD
+            isAtBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_THRESHOLD
           }, 300)
         }
       })
@@ -316,14 +383,76 @@ function scrollToBottom(force = false) {
   })
 }
 
+function scrollToTop() {
+  if (!messagesRef.value) return
+  messagesRef.value.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+function scrollToPreviousMessage() {
+  if (!messagesRef.value) return
+  const el = messagesRef.value
+  const items = el.querySelectorAll('.chat-messages-list > .chat-message')
+  if (items.length === 0) return
+  // Find the first message whose bottom is above the viewport top
+  for (let i = items.length - 1; i >= 0; i--) {
+    const rect = items[i].getBoundingClientRect()
+    const containerRect = el.getBoundingClientRect()
+    if (rect.bottom < containerRect.top + 8) {
+      items[i].scrollIntoView({ behavior: 'smooth', block: 'start' })
+      return
+    }
+  }
+  // If no message is above, scroll to top
+  el.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+function scrollToNextMessage() {
+  if (!messagesRef.value) return
+  const el = messagesRef.value
+  const items = el.querySelectorAll('.chat-messages-list > .chat-message')
+  if (items.length === 0) return
+  // Find the first message whose top is below the viewport bottom
+  for (let i = 0; i < items.length; i++) {
+    const rect = items[i].getBoundingClientRect()
+    const containerRect = el.getBoundingClientRect()
+    if (rect.top > containerRect.bottom - 8) {
+      items[i].scrollIntoView({ behavior: 'smooth', block: 'start' })
+      return
+    }
+  }
+  // If no message is below, scroll to bottom
+  scrollToBottomSmooth()
+}
+
+function scrollToBottomSmooth() {
+  if (!messagesRef.value) return
+  const el = messagesRef.value
+  el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+}
+
 defineExpose({
   scrollToBottom,
+  scrollToTop,
+  scrollToPreviousMessage,
+  scrollToNextMessage,
+  scrollToBottomSmooth,
   messagesRef,
-  isAtBottom: () => isAtBottom,
+  isAtBottom: () => isAtBottom.value,
+  scrolledUp,
+  scrolledDown,
 })
 </script>
 
 <style scoped>
+/* Wrapper: positioning context for floating scroll buttons */
+.chat-messages-wrapper {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .chat-messages {
   flex: 1;
   overflow-y: auto;
@@ -331,7 +460,6 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 8px;
-  position: relative;
 }
 
 /* Message list container */
@@ -508,4 +636,83 @@ defineExpose({
   padding-top: 4px;
 }
 
+/* ── Floating scroll buttons (capsule) ── */
+.scroll-fab-group {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  z-index: 8;
+  pointer-events: none;
+  padding: 6px 0;
+}
+
+.scroll-fab-top {
+  top: 0;
+}
+
+.scroll-fab-bottom {
+  bottom: 0;
+}
+
+.scroll-fab-btn {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 28px;
+  border: none;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, transform 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Left button: rounded on left, flat on right */
+.scroll-fab-btn:first-child {
+  border-radius: 14px 0 0 14px;
+}
+
+/* Right button: flat on left, rounded on right */
+.scroll-fab-btn:last-child {
+  border-radius: 0 14px 14px 0;
+}
+
+.scroll-fab-btn:active {
+  transform: scale(0.93);
+}
+
+@media (hover: hover) {
+  .scroll-fab-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--accent-color);
+  }
+}
+
+.scroll-fab-enter-active {
+  transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+}
+.scroll-fab-leave-active {
+  transition: opacity 0.15s ease-in, transform 0.15s ease-in;
+}
+.scroll-fab-top.scroll-fab-enter-from {
+  opacity: 0;
+  transform: translateY(-12px);
+}
+.scroll-fab-top.scroll-fab-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+.scroll-fab-bottom.scroll-fab-enter-from {
+  opacity: 0;
+  transform: translateY(12px);
+}
+.scroll-fab-bottom.scroll-fab-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
 </style>

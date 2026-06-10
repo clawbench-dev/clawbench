@@ -160,6 +160,10 @@ func GetFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	filepathStr = filepathStr[len("/api/file/"):]
+	// Strip leading slashes to handle double-slash URLs (/api/file//path)
+	// caused by encodeURIComponent("/path") which encodes as %2Fpath.
+	// Go's ServeMux decodes %2F back to /, producing double slashes.
+	filepathStr = strings.TrimLeft(filepathStr, "/")
 	filepathStr = path.Clean(filepathStr)
 
 	if filepathStr == ".." || path.IsAbs(filepathStr) {
@@ -238,6 +242,9 @@ func ServeLocalFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	filepathStr = filepathStr[len("/api/local-file/"):]
+	// Strip leading slashes to handle double-slash URLs (/api/local-file//path)
+	// caused by encodeURIComponent("/path") which encodes as %2Fpath.
+	filepathStr = strings.TrimLeft(filepathStr, "/")
 	filepathStr = path.Clean(filepathStr)
 
 	if filepathStr == ".." || path.IsAbs(filepathStr) {

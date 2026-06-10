@@ -511,6 +511,161 @@ func TestAutoResume_FirstStreamClosedWithoutDone(t *testing.T) {
 
 // --- forwardEvent tests ---
 
+func TestAutoResume_OuterCancelDuringDrain(t *testing.T) {
+	// ISS-296: After cancelling inner CLI on ExitPlanMode, the drain loop
+	// must respect ctx.Done() instead of blocking indefinitely on innerCh.
+	// Use a slow-draining backend: after ExitPlanMode, the inner channel
+	// blocks (simulating an unresponsive CLI process that doesn't react to context cancellation).
+	slowDrainCh := make(chan StreamEvent)
+	backend := &slowDrainBackend{
+		firstEvents: []StreamEvent{
+			{Type: "content", Content: "planning..."},
+			{Type: "tool_use", Tool: &ToolCall{Name: "ExitPlanMode", ID: "1", Done: true}},
+		},
+		drainCh: slowDrainCh,
+	}
+
+	wrapper := &AutoResumeBackend{inner: backend}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	ch, err := wrapper.ExecuteStream(ctx, ChatRequest{SessionID: "test"})
+	assert.NoError(t, err)
+
+	// Drain Phase 1 events until resume_split
+	gotResumeSplit := false
+	for !gotResumeSplit {
+		event, ok := <-ch
+		if !ok {
+			t.Fatal("channel closed unexpectedly before drain")
+		}
+		if event.Type == "resume_split" {
+			gotResumeSplit = true
+		}
+	}
+
+	// Now the drain loop is running. The inner CLI is unresponsive (slowDrainBackend
+	// ignores inner context cancellation). Cancel the outer context.
+	// Before ISS-296 fix, this would block indefinitely because the drain
+	// loop used `range innerCh` without checking ctx.Done().
+	cancel()
+
+	// The outer channel should close promptly (within 2s)
+	// May receive a "done" event before closing due to goroutine scheduling
+	select {
+	case event, ok := <-ch:
+		if ok {
+			// May receive a "done" event before channel closes
+			assert.Equal(t, "done", event.Type, "only 'done' event expected before close during drain cancel")
+			// Drain until closed
+			for range ch {
+			}
+		}
+		// Channel is closed — this is the expected outcome
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout: outer channel did not close after cancel during drain — drain loop may be blocking on innerCh without ctx.Done() check (ISS-296)")
+	}
+
+	// Clean up the slowDrainBackend goroutine by closing its drainCh
+	close(slowDrainCh)
+}
+
+func TestAutoResume_DrainForwardsRawOutputThenResumes(t *testing.T) {
+	// Verify that the drain loop (after ExitPlanMode cancel) forwards raw_output
+	// events, and that the drain exits cleanly when the inner channel closes,
+	// allowing Phase 2 (resume) to proceed normally.
+	mock := &TestMockBackend{
+		name: "test",
+		streams: []TestMockStream{
+			// First stream: ExitPlanMode + raw_output after it
+			{
+				events: []StreamEvent{
+					{Type: "content", Content: "planning..."},
+					{Type: "tool_use", Tool: &ToolCall{Name: "ExitPlanMode", ID: "1", Done: true}},
+					{Type: "raw_output", RawOutput: "drain-raw-1"},
+					{Type: "raw_output", RawOutput: "drain-raw-2"},
+				},
+			},
+			// Resume stream
+			{
+				events: []StreamEvent{
+					{Type: "content", Content: "resumed..."},
+					{Type: "done"},
+				},
+			},
+		},
+	}
+
+	wrapper := &AutoResumeBackend{inner: mock}
+	ctx := context.Background()
+
+	ch, err := wrapper.ExecuteStream(ctx, ChatRequest{SessionID: "test"})
+	assert.NoError(t, err)
+
+	var events []StreamEvent
+	for e := range ch {
+		events = append(events, e)
+	}
+
+	// Expected: content, tool_use(ExitPlanMode), resume_split,
+	// raw_output(drain-raw-1), raw_output(drain-raw-2),
+	// content(resume), done
+	assert.Equal(t, 7, len(events))
+	assert.Equal(t, "content", events[0].Type)
+	assert.Equal(t, "tool_use", events[1].Type)
+	assert.Equal(t, "resume_split", events[2].Type)
+	assert.Equal(t, "raw_output", events[3].Type)
+	assert.Equal(t, "drain-raw-1", events[3].RawOutput)
+	assert.Equal(t, "raw_output", events[4].Type)
+	assert.Equal(t, "drain-raw-2", events[4].RawOutput)
+	assert.Equal(t, "content", events[5].Type)
+	assert.Equal(t, "resumed...", events[5].Content)
+	assert.Equal(t, "done", events[6].Type)
+}
+
+// slowDrainBackend returns firstEvents in the first stream, then keeps the channel
+// open with a separate drainCh for simulating slow/unresponsive CLI after ExitPlanMode.
+type slowDrainBackend struct {
+	name        string
+	firstEvents []StreamEvent
+	drainCh     chan StreamEvent
+	callCount   int
+	mu          sync.Mutex
+}
+
+func (b *slowDrainBackend) Name() string { return b.name }
+
+func (b *slowDrainBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) {
+	b.mu.Lock()
+	idx := b.callCount
+	b.callCount++
+	b.mu.Unlock()
+
+	outCh := make(chan StreamEvent)
+
+	if idx == 0 {
+		go func() {
+			defer close(outCh)
+			// Send first events (including ExitPlanMode)
+			for _, e := range b.firstEvents {
+				outCh <- e
+			}
+			// Block on drainCh (simulates unresponsive CLI).
+			// IMPORTANT: We do NOT check ctx.Done() here because the real CLI process
+			// may not respond to context cancellation promptly. The drain loop in
+			// mergeStreams must use the outer ctx.Done() to exit when the CLI is stuck.
+			// Closing drainCh simulates the CLI eventually closing.
+			for e := range b.drainCh {
+				outCh <- e
+			}
+		}()
+	} else {
+		// Resume stream: just close immediately
+		close(outCh)
+	}
+
+	return outCh, nil
+}
+
 func TestForwardEvent_ChannelFull(t *testing.T) {
 	// Create a channel with buffer size 1 and fill it
 	ch := make(chan StreamEvent, 1)

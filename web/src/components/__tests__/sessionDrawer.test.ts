@@ -19,9 +19,13 @@ vi.mock('@/composables/useAgents', () => ({
 
 // ── Configurable dialog mock ──
 let _dialogConfirmResult = false
+let _lastConfirmMessage = ''
 vi.mock('@/composables/useDialog.ts', () => ({
   useDialog: () => ({
-    confirm: vi.fn().mockImplementation(() => Promise.resolve(_dialogConfirmResult)),
+    confirm: vi.fn().mockImplementation((msg: string) => {
+      _lastConfirmMessage = msg
+      return Promise.resolve(_dialogConfirmResult)
+    }),
   }),
 }))
 
@@ -65,7 +69,7 @@ const i18n = createI18n({
   locale: 'zh',
   messages: {
     zh: {
-      session: { title: '会话', newSession: '新建', selectAgent: '选择AI', confirmDelete: '确认删除？', running: '运行中', noSessions: '暂无会话' },
+      session: { title: '会话', newSession: '新建', selectAgent: '选择AI', confirmDelete: '确定删除此会话及其所有聊天记录?', confirmDeleteRunning: '此会话正在运行中，删除将终止运行并清除记录，确定删除?', running: '运行中', noSessions: '暂无会话' },
       common: { loading: '加载中', delete: '删除', cancel: '取消' },
     },
   },
@@ -290,6 +294,41 @@ describe('SessionDrawer: always reload on open', () => {
     expect(fetchFn.mock.calls.length).toBe(fetchCallCount)
 
     _dialogConfirmResult = false
+  })
+
+  it('shows running-session confirmation for running session delete', async () => {
+    _dialogConfirmResult = false
+    const fetchFn = createFetchMock()
+    const { wrapper } = await mountOpenDrawer(fetchFn)
+
+    // Re-mount with s2 as a running session
+    await wrapper.setProps({ runningSessionIds: new Set(['s2']) })
+    await flushPromises()
+
+    // Try to delete the running session
+    await wrapper.vm.deleteSession('s2')
+    await flushPromises()
+
+    // Should show the running-session confirmation message
+    expect(_lastConfirmMessage).toContain('运行中')
+
+    _dialogConfirmResult = true
+  })
+
+  it('shows normal confirmation for non-running session delete', async () => {
+    _dialogConfirmResult = false
+    const fetchFn = createFetchMock()
+    const { wrapper } = await mountOpenDrawer(fetchFn)
+
+    // No running sessions — runningSessionIds is empty
+    await wrapper.vm.deleteSession('s1')
+    await flushPromises()
+
+    // Should show the normal confirmation message
+    expect(_lastConfirmMessage).not.toContain('运行中')
+    expect(_lastConfirmMessage).toContain('聊天记录')
+
+    _dialogConfirmResult = true
   })
 
   it('addSessionLocally prepends a new session without API reload', async () => {

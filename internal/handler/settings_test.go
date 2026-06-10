@@ -834,15 +834,16 @@ func TestServeConfig_Patch_MossNanoSubConfigWithoutModelDir(t *testing.T) {
 	cfg.TTS.MossNano.ModelDir = ""
 	model.ConfigInstance = cfg
 
-	// Saving sub-config when engine is already moss-nano but model_dir is empty should fail
+	// Saving sub-config when engine is already moss-nano and model_dir is empty should succeed
+	// (model_dir is optional — empty value is valid, ResolveMossNanoModelDir handles it)
 	body := `{"tts":{"moss_nano":{"voice":"Junhao"}}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "moss_nano.model_dir is required")
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "Junhao", model.ConfigInstance.TTS.MossNano.Voice)
 }
 
 func TestServeConfig_Patch_InvalidDefaultAgent(t *testing.T) {
@@ -850,10 +851,8 @@ func TestServeConfig_Patch_InvalidDefaultAgent(t *testing.T) {
 	defer teardown()
 
 	// Set up agents so we can validate
-	agentsDir := filepath.Join(t.TempDir(), "agents")
-	require.NoError(t, os.MkdirAll(agentsDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(agentsDir, "test.yaml"), []byte("id: test\nname: Test\nbackend: test\n"), 0o644))
-	require.NoError(t, model.LoadAgents(agentsDir))
+	model.Agents = map[string]*model.Agent{"test": {ID: "test", Name: "Test", Backend: "test"}}
+	model.AgentList = []*model.Agent{{ID: "test", Name: "Test", Backend: "test"}}
 	defer func() { model.Agents = nil; model.AgentList = nil }()
 
 	cfg := model.Config{}

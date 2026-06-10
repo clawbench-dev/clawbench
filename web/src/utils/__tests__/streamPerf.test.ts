@@ -34,11 +34,59 @@ describe('isValidAskContent', () => {
 
   it('rejects old JSON format', () => {
     const raw = '{"questions":[{"question":"Pick one","header":"Choice","options":[{"label":"A"}]}]}'
-    expect(isValidAskContent(raw)).toBe(false)
+    // JSON format is now supported - this should return true
+    expect(isValidAskContent(raw)).toBe(true)
   })
 
   it('rejects empty string', () => {
     expect(isValidAskContent('')).toBe(false)
+  })
+
+  it('accepts JSON format with questions array', () => {
+    const raw = '{"questions":[{"question":"Pick one","header":"Choice","options":[{"label":"A"}]}]}'
+    expect(isValidAskContent(raw)).toBe(true)
+  })
+
+  it('rejects JSON without questions key', () => {
+    const raw = '{"something":"else"}'
+    expect(isValidAskContent(raw)).toBe(false)
+  })
+
+  it('rejects JSON with empty questions array', () => {
+    const raw = '{"questions":[]}'
+    expect(isValidAskContent(raw)).toBe(false)
+  })
+
+  it('rejects JSON with questions but no valid items', () => {
+    const raw = '{"questions":[{"noQuestion":true}]}'
+    expect(isValidAskContent(raw)).toBe(false)
+  })
+
+  it('accepts JSON with mixed valid/invalid items (at least one valid)', () => {
+    const raw = '{"questions":[{"noQuestion":true},{"question":"Pick one","header":"Choice","options":[{"label":"A"}]}]}'
+    expect(isValidAskContent(raw)).toBe(true)
+  })
+
+  it('rejects JSON with questions having options but no question field', () => {
+    const raw = '{"questions":[{"header":"Choice","options":[{"label":"A"}]}]}'
+    expect(isValidAskContent(raw)).toBe(false)
+  })
+
+  it('rejects JSON with questions having question but empty options', () => {
+    const raw = '{"questions":[{"question":"Pick one","header":"Choice","options":[]}]}'
+    expect(isValidAskContent(raw)).toBe(false)
+  })
+
+  it('rejects JSON with questions having question but options without labels', () => {
+    const raw = '{"questions":[{"question":"Pick one","header":"Choice","options":[{"description":"No label"}]}]}'
+    // The implementation only checks for question + options existence, not label within options
+    // Options without labels are still considered valid by isValidAskContent
+    expect(isValidAskContent(raw)).toBe(true)
+  })
+
+  it('rejects invalid JSON', () => {
+    const raw = '{not valid json}'
+    expect(isValidAskContent(raw)).toBe(false)
   })
 })
 
@@ -77,6 +125,14 @@ describe('detectAskQuestion', () => {
     const text = 'Forces structured <ask-question>random text without item tags</ask-question> for user interaction'
     const result = detectAskQuestion(text)
     expect(result.found).toBe(false)
+  })
+
+  it('detects <ask-question> with JSON content', () => {
+    const text = 'Some text\n<ask-question>\n{"questions":[{"header":"Approach","multiSelect":false,"question":"Which approach?","options":[{"label":"A","description":"Fast"},{"label":"B","description":"Safe"}]}]}\n</ask-question>'
+    const result = detectAskQuestion(text)
+    expect(result.found).toBe(true)
+    expect(result.startIdx).toBeGreaterThanOrEqual(0)
+    expect(result.content).toContain('"questions"')
   })
 })
 

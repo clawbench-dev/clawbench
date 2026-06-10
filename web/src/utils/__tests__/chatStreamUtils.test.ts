@@ -180,6 +180,23 @@ describe('forceCleanupStreamingState', () => {
     expect(messages[0].blocks[2]).toEqual({ type: 'text', text: 'hello' })  // Unchanged
   })
 
+  it('does not mark PermissionApproval blocks as done (requires user interaction)', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: '',
+        blocks: [
+          { type: 'tool_use', name: 'Read', id: '1', done: false },
+          { type: 'tool_use', name: 'PermissionApproval', id: 'perm_2', done: false },
+        ],
+        streaming: true,
+      },
+    ]
+    forceCleanupStreamingState(messages, { onRenderNeeded: vi.fn() })
+    expect(messages[0].blocks[0].done).toBe(true)  // Normal tool_use marked done
+    expect(messages[0].blocks[1].done).toBe(false)  // PermissionApproval stays false
+  })
+
   it('calls onRenderNeeded with forceFull=true', () => {
     const onRenderNeeded = vi.fn()
     forceCleanupStreamingState([], { onRenderNeeded })

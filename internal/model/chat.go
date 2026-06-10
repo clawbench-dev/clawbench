@@ -35,6 +35,7 @@ type ChatSession struct {
 	UpdatedAt       time.Time  `json:"updatedAt"`
 	Running         bool       `json:"running,omitempty"`
 	UnreadCount     int        `json:"unreadCount,omitempty"`
+	PendingApproval bool       `json:"pendingApproval,omitempty"` // ACP permission request awaiting user response
 	LastReadAt      *time.Time `json:"-"`
 }
 

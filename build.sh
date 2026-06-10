@@ -99,6 +99,11 @@ if command -v go >/dev/null 2>&1; then
         go build -ldflags "$LDFLAGS" -o "$NAME" ./cmd/server
         echo "  Go binary: ./$NAME"
     fi
+    # Build ACP mock agent binary (for E2E testing with ACP stdio transport)
+    if command -v go >/dev/null 2>&1; then
+        go build -o "acp-mock" ./cmd/acp-mock
+        echo "  ACP mock: ./acp-mock"
+    fi
 else
     echo "  Go not found, skipping backend build"
 fi

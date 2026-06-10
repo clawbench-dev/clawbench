@@ -347,8 +347,14 @@ func (idx *Indexer) indexMessage(ctx context.Context, msg service.UnindexedMessa
 			}
 		} else {
 			for i := range chunks {
-				chunks[i].Embedding = embeddings[i]
-				chunks[i].HasEmbedding = true
+				// Guard against EmbedBatch returning fewer results or nil entries (ISS-285/ISS-305)
+				if i < len(embeddings) && embeddings[i] != nil {
+					chunks[i].Embedding = embeddings[i]
+					chunks[i].HasEmbedding = true
+				} else {
+					chunks[i].Embedding = nil
+					chunks[i].HasEmbedding = false
+				}
 			}
 		}
 	}

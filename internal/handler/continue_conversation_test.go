@@ -33,8 +33,7 @@ func helperCreateScheduledTaskForHandler(t *testing.T, env *testEnv, s *service.
 	// Create a scheduled session
 	sessID, err := service.CreateSession(env.ProjectDir, "claude", "Test Task", "claude", "claude-sonnet-4-6", "default", "scheduled")
 	require.NoError(t, err)
-	err = service.UpdateSessionThinkingEffort(sessID, "high")
-	require.NoError(t, err)
+	// Thinking effort is no longer persisted to DB; it comes from ACP runtime at session init.
 
 	// Add messages
 	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessID, "user", "Review this code", nil, false, "")

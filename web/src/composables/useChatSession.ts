@@ -3,7 +3,9 @@ import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
-import { useAgents } from '@/composables/useAgents'
+import { clearModeState, updateAvailableModes, clearCommandState, updateCommandState, updateAvailableThinkingEfforts, clearThinkingEffortState, currentAgentId as _currentAgentId } from '@/composables/useSessionIdentity.ts'
+import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
+import { useAgents, restoreOriginalModels, populateACPStateFromCache, getAgentThinkingEffortLevels } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
 import { warmWorktreeCache } from '@/composables/useWorktreeAnnotation.ts'
@@ -18,7 +20,9 @@ export async function loadSessionsOnce() {
       const data = await res.json()
       const sessions = data.sessions || []
       const hasRunning = sessions.some((s: any) => s.running)
-      const hasUnread = sessions.some((s: any) => s.unreadCount > 0 && s.id !== identity.currentSessionId.value)
+      const hasUnread = sessions.some((s: any) =>
+        (s.unreadCount > 0 || s.pendingApproval) && s.id !== identity.currentSessionId.value
+      )
       store.state.chatRunning = hasRunning
       store.state.chatUnread = hasUnread
       // Update session count for header indicator
@@ -82,10 +86,10 @@ export function useChatSession(options: UseChatSessionOptions) {
 
   // ── Identity refs from singleton ──
   const identity = useSessionIdentity()
-  const { currentSessionTitle, currentBackend, currentAgentId, currentModelId, currentModelName, currentThinkingEffort, runningSessions, runningSessionsVersion } = identity
+  const { currentSessionTitle, currentBackend, currentAgentId, currentModelId, currentModelName, currentThinkingEffort, runningSessions, runningSessionsVersion, availableCommands, autoApprove, availableThinkingEfforts } = identity
 
   // ── Agents from singleton ──
-  const { agents, loadAgents, getAgentIcon, getAgentName, syncModelFromAgent, getAgentModel, agentHeaderTitle: makeAgentTitle } = useAgents()
+  const { agents, loadAgents, getAgentIcon, getAgentName, getAgent, syncModelFromAgent, getAgentModel, agentHeaderTitle: makeAgentTitle } = useAgents()
 
   // Helper: sync model state from agent config when agent changes
   function syncModelFromAgentLocal(agentId: string) {
@@ -126,8 +130,39 @@ export function useChatSession(options: UseChatSessionOptions) {
   function syncThinkingEffortFromData(thinkingEffortFromServer: string) {
     if (thinkingEffortFromServer) {
       currentThinkingEffort.value = thinkingEffortFromServer
+      // Resolve name from available levels (may be empty if levels haven't loaded yet;
+      // updateAvailableThinkingEfforts will resolve it when levels arrive)
+      const levels = availableThinkingEfforts.value
+      if (levels.length > 0) {
+        const level = levels.find(l => l.id === thinkingEffortFromServer)
+        identity.currentThinkingEffortName.value = level?.name || thinkingEffortFromServer
+      }
     } else {
       currentThinkingEffort.value = identity.loadThinkingPref(currentAgentId.value) || ''
+    }
+  }
+
+  function syncModeFromData(modeIdFromServer?: string, availableModes?: Array<{id: string; name: string}>) {
+    if (modeIdFromServer) {
+      identity.currentModeId.value = modeIdFromServer
+      const mode = availableModes?.find(m => m.id === modeIdFromServer)
+      identity.currentModeName.value = mode?.name || modeIdFromServer
+    } else if (!identity.currentModeId.value) {
+      // No server-persisted mode AND no agent-set mode via SSE — clear stale value.
+      // Agent-initiated mode changes (via SSE mode_update/config_update) take priority
+      // and should not be overwritten by an empty DB value (e.g. after stream completion).
+      identity.currentModeName.value = ''
+    }
+  }
+
+  // Helper: sync transport from server data
+  // Falls back to agent's configured transport, defaulting to 'cli'.
+  function syncTransportFromData(transportFromServer?: string) {
+    if (transportFromServer) {
+      identity.currentTransport.value = transportFromServer
+    } else {
+      const agent = getAgent(currentAgentId.value)
+      identity.currentTransport.value = agent?.transport || 'cli'
     }
   }
 
@@ -149,11 +184,24 @@ export function useChatSession(options: UseChatSessionOptions) {
   // Guard against concurrent switchSession calls — only the last one wins
   let switchSessionSeq = 0
 
+  // Guard against concurrent loadHistory calls — only the last one wins.
+  // Without this, stale responses (e.g. from a loadHistory triggered before
+  // visibility change) can overwrite currentSessionId with a wrong value.
+  let loadHistorySeq = 0
+
   // ── Change detection for polling ──
   // Tracks a lightweight fingerprint of the last loaded messages.
   // When polling-triggered reloads find no change, the UI is not refreshed,
   // preventing expandedTools collapse, scroll reset, and unnecessary re-renders.
   let lastMessageSnapshot = ''
+
+  // Pending reload: when loadHistory is called while a load is already in-flight,
+  // we record the requested parameters and execute one more load after the current
+  // one completes. This prevents redundant concurrent fetches while ensuring the
+  // final state is always fresh.
+  let loadHistoryInProgress = false
+  let pendingReload: { forceScrollBottom: boolean; showOverlay: boolean; skipIfUnchanged: boolean } | null = null
+  let loadHistoryDeferred: { promise: Promise<void> } | null = null
 
   // forceScrollBottom: true = always scroll to bottom (switch session, first load)
   //                   false = only scroll if already near bottom (re-open panel, polling)
@@ -162,6 +210,21 @@ export function useChatSession(options: UseChatSessionOptions) {
   // skipIfUnchanged: true = when data matches last snapshot, skip UI refresh entirely
   //                (used by polling to avoid collapsing expandedTools / resetting scroll)
   async function loadHistory(forceScrollBottom = true, showOverlay = false, skipIfUnchanged = false) {
+    // If a load is already in-flight, record the requested params and return
+    // a promise that resolves when all queued loads complete. This coalesces
+    // rapid calls while ensuring callers can await + .finally() and that the
+    // final state is always fresh.
+    if (loadHistoryInProgress) {
+      pendingReload = { forceScrollBottom, showOverlay, skipIfUnchanged }
+      // Return the in-flight load's promise so callers can await/finally it.
+      // The pendingReload will be executed after the in-flight load completes.
+      return loadHistoryDeferred!.promise
+    }
+    loadHistoryInProgress = true
+    let resolveDeferred: () => void
+    loadHistoryDeferred = { promise: new Promise<void>((r) => { resolveDeferred = r }) }
+
+    const mySeq = ++loadHistorySeq
     if (showOverlay) switching.value = true
     try {
       // Load agents first so we can resolve agent names
@@ -170,15 +233,84 @@ export function useChatSession(options: UseChatSessionOptions) {
       warmWorktreeCache(store.state.projectRoot)
       // Use max of initialMessages and current loaded count to avoid truncating lazy-loaded messages
       const limit = Math.max(store.state.chatInitialMessages, messages.value.length)
-      const url = currentSessionId.value
-        ? `/api/ai/chat?session_id=${encodeURIComponent(currentSessionId.value)}&limit=${limit}`
-        : `/api/ai/chat?limit=${limit}`
-      const resp = await fetch(url)
+      // CRITICAL: When currentSessionId is empty, do NOT call the backend without
+      // session_id. The backend falls back to GetLatestSessionID (ORDER BY updated_at
+      // DESC) which can return a DIFFERENT session than what the user was viewing.
+      // Instead, use initSessionFromAPI to recover the session identity first, then
+      // load history with an explicit session_id.
+      if (!currentSessionId.value) {
+        // Recover session from backend — this sets currentSessionId from the
+        // cookie-aware /api/ai/chat endpoint, but using limit=1 to avoid loading
+        // all messages twice (the full load happens below after recovery).
+        // AbortController timeout is a safety net only; the backend itself has
+        // ACP RPC timeouts (60s) so 60s gives ample room even for slow remote
+        // connections. On abort, we catch and bail gracefully (no toast error).
+        const recoverCtrl = new AbortController()
+        const recoverTimer = setTimeout(() => recoverCtrl.abort(), 60000)
+        let recoverResp: Response
+        try {
+          recoverResp = await fetch(`/api/ai/chat?limit=1`, { signal: recoverCtrl.signal })
+        } catch (e) {
+          clearTimeout(recoverTimer)
+          if (recoverCtrl.signal.aborted) {
+            // Timeout — bail without error toast, let retry handle it
+            switching.value = false
+            return
+          }
+          throw e
+        }
+        clearTimeout(recoverTimer)
+        if (loadHistorySeq !== mySeq) { switching.value = false; return }
+        if (recoverResp.ok) {
+          const recoverData = await recoverResp.json()
+          if (recoverData.sessionId) {
+            currentSessionId.value = recoverData.sessionId
+            currentSessionTitle.value = recoverData.sessionTitle || ''
+            currentBackend.value = recoverData.backend || ''
+            currentAgentId.value = recoverData.agentId || ''
+            syncModelFromData(currentAgentId.value, recoverData.modelId)
+            syncThinkingEffortFromData(recoverData.thinkingEffortState?.currentId || '')
+            syncModeFromData(recoverData.modeState?.currentModeId || '', recoverData.modeState?.availableModes)
+            syncTransportFromData(recoverData.transport)
+            if (recoverData.autoApprove !== undefined) {
+              autoApprove.value = recoverData.autoApprove
+            }
+          }
+        }
+        // If recovery still yields no session, bail — createSession will handle it
+        if (!currentSessionId.value) {
+          switching.value = false
+          return
+        }
+      }
+      const url = `/api/ai/chat?session_id=${encodeURIComponent(currentSessionId.value)}&limit=${limit}`
+      const fetchCtrl = new AbortController()
+      const fetchTimer = setTimeout(() => fetchCtrl.abort(), 60000)
+      let resp: Response
+      try {
+        resp = await fetch(url, { signal: fetchCtrl.signal })
+      } catch (e) {
+        clearTimeout(fetchTimer)
+        if (fetchCtrl.signal.aborted) {
+          // Timeout — bail without error toast
+          switching.value = false
+          loadHistoryInProgress = false
+          resolveDeferred!()
+          loadHistoryDeferred = null
+          return
+        }
+        throw e
+      }
+      clearTimeout(fetchTimer)
+      // If another loadHistory or switchSession started while we were fetching, discard our results
+      if (loadHistorySeq !== mySeq) { switching.value = false; return }
       if (!resp.ok) {
         const errData = await resp.json().catch(() => ({}))
         throw new Error(errData.error || gt('chat.session.requestFailed', { status: resp.status }))
       }
       const data = await resp.json()
+      // Re-check after JSON parse (another async boundary)
+      if (loadHistorySeq !== mySeq) { switching.value = false; return }
       const rawMsgs = data.messages || []
 
       // Change detection: if skipIfUnchanged and data matches last snapshot, do nothing.
@@ -207,12 +339,57 @@ export function useChatSession(options: UseChatSessionOptions) {
       Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
       messages.value = parseMessages(rawMsgs, onParseAssistantContent, messages.value)
       totalMessages.value = data.total || messages.value.length
-      currentSessionId.value = data.sessionId || ''
+      // Sanity check: if the backend returned a different sessionId than what we
+      // requested, log a warning — this indicates a potential issue (e.g. session
+      // was deleted, project mismatch). The sequence guard already prevents stale
+      // responses from winning a race, so we still apply the data but log for
+      // debugging.
+      const requestedId = currentSessionId.value
+      const returnedId = data.sessionId || ''
+      if (returnedId && requestedId && returnedId !== requestedId) {
+        console.warn(`loadHistory: session ID mismatch (requested=${requestedId}, returned=${returnedId})`)
+      }
+      currentSessionId.value = returnedId
       currentSessionTitle.value = data.sessionTitle || ''
       currentBackend.value = data.backend || ''
       currentAgentId.value = data.agentId || ''
       syncModelFromData(currentAgentId.value, data.modelId)
-      syncThinkingEffortFromData(data.thinkingEffort)
+      syncThinkingEffortFromData(data.thinkingEffortState?.currentId || '')
+      syncModeFromData(data.modeState?.currentModeId || '', data.modeState?.availableModes)
+      syncTransportFromData(data.transport)
+      // Restore autoApprove from server state (per-session, not global)
+      if (data.autoApprove !== undefined) {
+        autoApprove.value = data.autoApprove
+      }
+      // Populate ACP mode available modes from REST response.
+      if (data.modeState && data.modeState.availableModes?.length > 0) {
+        updateAvailableModes(data.modeState.availableModes)
+      }
+      // Update available thinking effort levels from ACP state
+      if (data.thinkingEffortState && data.thinkingEffortState.availableLevels?.length > 0) {
+        updateAvailableThinkingEfforts(data.thinkingEffortState.availableLevels)
+      } else if (data.agentId) {
+        // Fallback: agent config (e.g. OpenCode/Gemini ACP don't expose thought_level)
+        const agentLevels = getAgentThinkingEffortLevels(data.agentId)
+        if (agentLevels.length > 0) {
+          updateAvailableThinkingEfforts(agentLevels.map((id: string) => ({ id, name: id })))
+        }
+      } else if (data.agentId) {
+        // Fallback: agent config (e.g. OpenCode/Gemini ACP don't expose thought_level)
+        const agentLevels = getAgentThinkingEffortLevels(data.agentId)
+        if (agentLevels.length > 0) {
+          updateAvailableThinkingEfforts(agentLevels.map((id: string) => ({ id, name: id })))
+        }
+      }
+      // Populate slash commands from REST response (cached ACP state)
+      if (Array.isArray(data.commands) && data.commands.length > 0 && availableCommands.value.length === 0) {
+        updateCommandState(data.commands)
+      }
+      // Populate plan state from REST response (cached ACP state)
+      // Only set if entries are non-empty to avoid clearing active SSE streaming plan
+      if (data.planState && data.planState.entries?.length > 0) {
+        updatePlanEntries(data.planState.entries)
+      }
       onExtractScheduledTasks(messages.value)
       onRenderUpdate(true)
       if (data.running) {
@@ -226,11 +403,41 @@ export function useChatSession(options: UseChatSessionOptions) {
         onScrollBottom(forceScrollBottom)
       }
       switching.value = false
+      // Check if another loadHistory was requested while we were in-flight
+      loadHistoryInProgress = false
+      if (pendingReload) {
+        const next = pendingReload
+        pendingReload = null
+        // Execute pending load — its completion will resolve the deferred
+        setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged), 0)
+      } else {
+        // No pending load — resolve the deferred so all awaiting callers proceed
+        resolveDeferred!()
+        loadHistoryDeferred = null
+      }
     } catch (err) {
       console.error('Failed to load chat history:', err)
       const _msg = err instanceof Error ? err.message : ''
       toast.show(_msg ? gt('chat.session.loadHistoryFailedDetail', { error: _msg }) : gt('chat.session.loadHistoryFailed'), { icon: '⚠️', type: 'error' })
       switching.value = false
+      loadHistoryInProgress = false
+      if (pendingReload) {
+        const next = pendingReload
+        pendingReload = null
+        setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged), 0)
+      } else {
+        resolveDeferred!()
+        loadHistoryDeferred = null
+      }
+    } finally {
+      // Safety net: always reset in-flight state and resolve deferred on any
+      // exit path (early returns via loadHistorySeq guard, etc.) so callers
+      // aren't stuck awaiting and future loadHistory calls aren't blocked.
+      loadHistoryInProgress = false
+      if (loadHistoryDeferred) {
+        resolveDeferred!()
+        loadHistoryDeferred = null
+      }
     }
   }
 
@@ -263,6 +470,9 @@ export function useChatSession(options: UseChatSessionOptions) {
     // Increment sequence counter — if another switch starts before we finish,
     // our results will be discarded (last writer wins)
     const mySeq = ++switchSessionSeq
+    // Also bump loadHistorySeq so any in-flight loadHistory results are discarded
+    // (switchSession takes priority over stale loadHistory responses)
+    ++loadHistorySeq
 
     // Mark switching state immediately so UI can show a fade/placeholder
     switching.value = true
@@ -277,8 +487,20 @@ export function useChatSession(options: UseChatSessionOptions) {
     lastMessageSnapshot = ''  // Invalidate snapshot — new session may have different data
     expandedTools.value = {}
     // Clear stale blockAskQuestions from previous session
+    Object.keys(blockTasks).forEach(k => delete blockTasks[k])
     Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
     Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
+    // Clear ACP state from previous session — will be repopulated by REST response
+    // or SSE events only if the new session's agent actually supports ACP.
+    clearModeState()
+    clearCommandState()
+    clearThinkingEffortState()
+    autoApprove.value = false
+    // Restore original CLI model list in case ACP had overridden it
+    const prevAgentId = _currentAgentId.value
+    if (prevAgentId) restoreOriginalModels(prevAgentId)
+    // Clear plan progress from previous session — will be repopulated by SSE plan_update
+    clearPlanState()
     try {
       // Load agents first so we can resolve agent names
       if (agents.value.length === 0) await loadAgents()
@@ -301,7 +523,26 @@ export function useChatSession(options: UseChatSessionOptions) {
       currentBackend.value = data.backend || ''
       currentAgentId.value = data.agentId || ''
       syncModelFromData(currentAgentId.value, data.modelId)
-      syncThinkingEffortFromData(data.thinkingEffort)
+      syncThinkingEffortFromData(data.thinkingEffortState?.currentId || '')
+      syncModeFromData(data.modeState?.currentModeId || '', data.modeState?.availableModes)
+      syncTransportFromData(data.transport)
+      // Populate ACP mode available modes from REST response.
+      if (data.modeState && data.modeState?.availableModes?.length > 0) {
+        updateAvailableModes(data.modeState.availableModes)
+      }
+      // Update available thinking effort levels from ACP state
+      if (data.thinkingEffortState && data.thinkingEffortState.availableLevels?.length > 0) {
+        updateAvailableThinkingEfforts(data.thinkingEffortState.availableLevels)
+      }
+      // Populate slash commands from REST response (cached ACP state)
+      if (Array.isArray(data.commands) && data.commands.length > 0 && availableCommands.value.length === 0) {
+        updateCommandState(data.commands)
+      }
+      // Populate plan state from REST response (cached ACP state)
+      // Only set if entries are non-empty to avoid clearing active SSE streaming plan
+      if (data.planState && data.planState.entries?.length > 0) {
+        updatePlanEntries(data.planState.entries)
+      }
       onExtractScheduledTasks(messages.value)
       onRenderUpdate(true)
       onScrollBottom(true)
@@ -333,9 +574,11 @@ export function useChatSession(options: UseChatSessionOptions) {
   }
 
   async function createSession(agentId) {
+    // Stop msg count polling for the previous session to prevent race
+    // conditions — if the polling fires during creation, loadHistory could
+    // overwrite the new sessionId and revert to the old session.
+    stopMsgCountPolling()
     try {
-      // Load agents first so UI can resolve agent names
-      if (agents.value.length === 0) await loadAgents()
       const body = agentId ? { agentId } : {}
       const resp = await fetch('/api/ai/sessions', {
         method: 'POST',
@@ -346,19 +589,15 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (!resp.ok || !data.ok) {
         throw new Error(data.error || gt('chat.session.createFailed', { status: resp.status }))
       }
-      currentSessionId.value = data.sessionId
-      currentSessionTitle.value = data.title || ''
-      currentBackend.value = data.backend || ''
-      currentAgentId.value = data.agentId || agentId || ''
-      syncModelFromData(currentAgentId.value, '')
-      currentThinkingEffort.value = identity.loadThinkingPref(currentAgentId.value) || ''
-      messages.value = []
-      totalMessages.value = 0
-      lastMessageSnapshot = ''  // New session — no messages yet
-      Object.keys(blockTasks).forEach(k => delete blockTasks[k])
-      Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
-      Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
-      loading.value = false
+      // Delegate full state transition to switchSession which properly:
+      // - Increments loadHistorySeq to invalidate in-flight loadHistory calls
+      // - Stops all polling (msg count + HTTP)
+      // - Disconnects the SSE stream
+      // - Loads history from the backend
+      // - Starts appropriate polling for the new session
+      // - Calls loadSessionsOnce() to update global state
+      await switchSession(data.sessionId)
+      // Update session count from creation response and show toast
       const maxCount = store.state.sessionMaxCount
       if (typeof data.sessionCount === 'number') store.state.sessionCount = data.sessionCount
       toast.show(gt('chat.session.created', { count: data.sessionCount ?? '', max: maxCount }), { icon: '✨', type: 'success', duration: 1500 })
@@ -393,6 +632,8 @@ export function useChatSession(options: UseChatSessionOptions) {
         const maxCount = store.state.sessionMaxCount
         if (typeof data.sessionCount === 'number') store.state.sessionCount = data.sessionCount
         toast.show(gt('chat.session.deleted', { count: data.sessionCount ?? '', max: maxCount }), { icon: '🗑️', type: 'success', duration: 2000 })
+      } else {
+        toast.show(gt('chat.session.deleteFailed'), { icon: '⚠️', type: 'error' })
       }
     } catch (err) {
       console.error('Failed to delete session:', err)
@@ -437,6 +678,13 @@ export function useChatSession(options: UseChatSessionOptions) {
     if (data.status === 'running') {
       store.state.chatRunning = true
       if (sid) { runningSessions.value.add(sid); runningSessionsVersion.value++ }
+    } else if (data.status === 'permission_pending' || data.status === 'permission_resolved') {
+      // Permission approval state changed — reload sessions to update dot indicators
+      if (sessionEventDebounce) clearTimeout(sessionEventDebounce)
+      sessionEventDebounce = setTimeout(() => {
+        sessionEventDebounce = null
+        loadSessionsOnce()
+      }, 300)
     } else {
       if (sid) { runningSessions.value.delete(sid); runningSessionsVersion.value++ }
       // Update global boolean from remaining set

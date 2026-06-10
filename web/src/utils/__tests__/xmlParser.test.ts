@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   parseAskQuestionXML,
+  parseAskQuestionJSON,
   parseRagResultsXML,
   detectRagResults,
   stripRagResultsTags,
@@ -112,6 +113,101 @@ describe('parseAskQuestionXML', () => {
 </ask-question>`
 
     const result = parseAskQuestionXML(xml)
+    expect(result).not.toBeNull()
+    expect(result!.questions[0].multiSelect).toBe(false)
+  })
+
+  // JSON format fallback tests
+  it('parses JSON format when XML fails', () => {
+    const json = `{"questions":[{"header":"Approach","multiSelect":false,"question":"Which approach?","options":[{"label":"Option A","description":"Fast"},{"label":"Option B","description":"Safe"}]}]}`
+    const result = parseAskQuestionXML(json)
+    expect(result).not.toBeNull()
+    expect(result!.questions).toHaveLength(1)
+    expect(result!.questions[0].header).toBe('Approach')
+    expect(result!.questions[0].multiSelect).toBe(false)
+    expect(result!.questions[0].question).toBe('Which approach?')
+    expect(result!.questions[0].options).toHaveLength(2)
+    expect(result!.questions[0].options[0]).toEqual({ label: 'Option A', description: 'Fast' })
+    expect(result!.questions[0].options[1]).toEqual({ label: 'Option B', description: 'Safe' })
+  })
+
+  it('parses JSON format with multiple questions', () => {
+    const json = `{"questions":[{"header":"Q1","multiSelect":false,"question":"First?","options":[{"label":"A"}]},{"header":"Q2","multiSelect":true,"question":"Second?","options":[{"label":"B"}]}]}`
+    const result = parseAskQuestionXML(json)
+    expect(result).not.toBeNull()
+    expect(result!.questions).toHaveLength(2)
+    expect(result!.questions[1].multiSelect).toBe(true)
+  })
+
+  it('parses JSON format with options without description', () => {
+    const json = `{"questions":[{"header":"Pick","multiSelect":false,"question":"Choose","options":[{"label":"Yes"}]}]}`
+    const result = parseAskQuestionXML(json)
+    expect(result).not.toBeNull()
+    expect(result!.questions[0].options[0]).toEqual({ label: 'Yes' })
+  })
+
+  it('parses JSON format defaulting multiSelect to false', () => {
+    const json = `{"questions":[{"header":"Pick","question":"Choose","options":[{"label":"Yes"}]}]}`
+    const result = parseAskQuestionXML(json)
+    expect(result).not.toBeNull()
+    expect(result!.questions[0].multiSelect).toBe(false)
+  })
+})
+
+// ─── parseAskQuestionJSON ────────────────────────────────────────────────
+
+describe('parseAskQuestionJSON', () => {
+  it('parses single question with options', () => {
+    const json = `{"questions":[{"header":"Approach","multiSelect":false,"question":"Which approach?","options":[{"label":"Option A","description":"Fast"},{"label":"Option B","description":"Safe"}]}]}`
+    const result = parseAskQuestionJSON(json)
+    expect(result).not.toBeNull()
+    expect(result!.questions).toHaveLength(1)
+    expect(result!.questions[0].header).toBe('Approach')
+    expect(result!.questions[0].multiSelect).toBe(false)
+    expect(result!.questions[0].question).toBe('Which approach?')
+    expect(result!.questions[0].options).toHaveLength(2)
+  })
+
+  it('parses multi-select question', () => {
+    const json = `{"questions":[{"header":"Features","multiSelect":true,"question":"Select features","options":[{"label":"Auth"}]}]}`
+    const result = parseAskQuestionJSON(json)
+    expect(result).not.toBeNull()
+    expect(result!.questions[0].multiSelect).toBe(true)
+  })
+
+  it('parses multiple questions', () => {
+    const json = `{"questions":[{"header":"Q1","multiSelect":false,"question":"First?","options":[{"label":"A"}]},{"header":"Q2","multiSelect":false,"question":"Second?","options":[{"label":"B"}]}]}`
+    const result = parseAskQuestionJSON(json)
+    expect(result).not.toBeNull()
+    expect(result!.questions).toHaveLength(2)
+  })
+
+  it('returns null for invalid JSON', () => {
+    expect(parseAskQuestionJSON('not json at all')).toBeNull()
+  })
+
+  it('returns null for JSON without questions', () => {
+    expect(parseAskQuestionJSON('{"something":"else"}')).toBeNull()
+  })
+
+  it('returns null for JSON with empty questions array', () => {
+    expect(parseAskQuestionJSON('{"questions":[]}')).toBeNull()
+  })
+
+  it('returns null for question without options', () => {
+    expect(parseAskQuestionJSON('{"questions":[{"question":"Q?","options":[]}]}')).toBeNull()
+  })
+
+  it('defaults header to empty string when missing', () => {
+    const json = `{"questions":[{"multiSelect":false,"question":"Choose","options":[{"label":"Yes"}]}]}`
+    const result = parseAskQuestionJSON(json)
+    expect(result).not.toBeNull()
+    expect(result!.questions[0].header).toBe('')
+  })
+
+  it('defaults multiSelect to false when missing', () => {
+    const json = `{"questions":[{"question":"Choose","options":[{"label":"Yes"}]}]}`
+    const result = parseAskQuestionJSON(json)
     expect(result).not.toBeNull()
     expect(result!.questions[0].multiSelect).toBe(false)
   })

@@ -53,7 +53,8 @@ export function stripScheduledTaskTags(text: string): string {
 
 /**
  * Validate that <ask-question> content looks like a real structured payload.
- * Supports XML format (with <item> child elements) — JSON format is no longer supported.
+ * Supports both XML format (with <item> child elements) and JSON format
+ * (with "questions" array containing objects with "question" and "options").
  * Only called post-streaming.
  */
 export function isValidAskContent(raw: string): boolean {
@@ -62,6 +63,16 @@ export function isValidAskContent(raw: string): boolean {
   if (probe.includes('<item>') || probe.includes('<item ')) {
     // Basic validation: must have at least a <question> and <option> inside
     return probe.includes('<question>') && probe.includes('<option>')
+  }
+  // JSON format: check for "questions" key with array
+  if (probe.startsWith('{') && probe.includes('"questions"')) {
+    try {
+      const data = JSON.parse(probe)
+      return Array.isArray(data.questions) && data.questions.length > 0
+        && data.questions.some((q: any) => q.question && Array.isArray(q.options) && q.options.length > 0)
+    } catch {
+      return false
+    }
   }
   return false
 }

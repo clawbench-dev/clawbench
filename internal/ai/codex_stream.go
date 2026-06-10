@@ -377,26 +377,7 @@ func parseCodexResumeOutput(scanner *bufio.Scanner, ch chan<- StreamEvent, sessi
 	ch <- StreamEvent{Type: "done"}
 }
 
-// emitBashToolCall emits a canonical Bash tool_use event.
-// Codex only has "command_execution"; we normalize to "Bash" with {"command":"..."} input.
-func emitBashToolCall(ch chan<- StreamEvent, id, input, output string, done bool, exitCode *int) {
-	status := ""
-	if done {
-		if exitCode != nil && *exitCode != 0 {
-			status = "error"
-		} else if output != "" {
-			status = "success"
-		}
-	}
-	ch <- StreamEvent{Type: "tool_use", Tool: &ToolCall{
-		Name:   "Bash",
-		ID:     id,
-		Input:  input,
-		Done:   done,
-		Output: output,
-		Status: status,
-	}}
-}
+// emitBashToolCall has been moved to codex_tool.go
 
 // codexBashInputJSON builds canonical {"command":"..."} JSON from Codex's raw command string.
 func codexBashInputJSON(command string) string { return execCommandJSON(command) }
@@ -461,8 +442,13 @@ func (c *CodexBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-ch
 	if req.Resume && req.SessionID != "" {
 		// For resume, SessionID contains the Codex thread_id (stored as external_session_id)
 		codexArgs = buildCodexResumeArgs(req, req.SessionID)
+		slog.Info("cli: resume (codex)",
+			slog.String("session_id", req.SessionID))
 	} else {
 		codexArgs = buildCodexStreamArgs(req)
+		if req.Resume {
+			slog.Warn("cli: resume requested but no session_id, starting fresh (codex, context amnesia)")
+		}
 	}
 
 	// Combine: "exec" + baseArgs (e.g. --profile m27) + codexArgs

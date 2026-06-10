@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { useAgents, resetAgents } from '@/composables/useAgents'
+import { useAgents, resetAgents, updateACPModelList, restoreOriginalModels, populateACPStateFromCache } from '@/composables/useAgents'
 
 // Mock apiGet to control agent data
 const mockApiGet = vi.fn()
@@ -10,6 +10,27 @@ vi.mock('@/utils/api', () => ({
 // Mock useLocale gt function
 vi.mock('@/composables/useLocale', () => ({
   gt: (key: string) => key,
+}))
+
+// Mock useSessionIdentity functions used by populateACPStateFromCache and loadAgents
+const mockUpdateModeState = vi.fn()
+const mockUpdateThinkingEffortState = vi.fn()
+const mockUpdateCommandState = vi.fn()
+const mockUpdateAvailableModes = vi.fn()
+const mockUpdateAvailableThinkingEfforts = vi.fn()
+const _currentAgentId = { value: '' }
+vi.mock('@/composables/useSessionIdentity.ts', () => ({
+  updateModeState: (...args: any[]) => mockUpdateModeState(...args),
+  updateThinkingEffortState: (...args: any[]) => mockUpdateThinkingEffortState(...args),
+  updateCommandState: (...args: any[]) => mockUpdateCommandState(...args),
+  updateAvailableModes: (...args: any[]) => mockUpdateAvailableModes(...args),
+  updateAvailableThinkingEfforts: (...args: any[]) => mockUpdateAvailableThinkingEfforts(...args),
+  get currentAgentId() { return _currentAgentId },
+}))
+
+const mockUpdatePlanEntries = vi.fn()
+vi.mock('@/composables/usePlanProgress', () => ({
+  updatePlanEntries: (...args: any[]) => mockUpdatePlanEntries(...args),
 }))
 
 describe('useAgents', () => {
@@ -447,6 +468,334 @@ describe('useAgents', () => {
     it('does nothing for unknown agent', () => {
       // Should not throw
       updateAgentField('nonexistent', 'preferredModel', 'test')
+    })
+  })
+
+  // --- updateACPModelList ---
+
+  describe('updateACPModelList', () => {
+    beforeEach(async () => {
+      // Reset module-level singletons (originalModels, acpStatesCache) and reload
+      // Deep-clone testAgents so mutations don't leak between tests
+      resetAgents()
+      mockApiGet.mockResolvedValue({
+        agents: JSON.parse(JSON.stringify(testAgents)),
+        defaultAgent: 'claude',
+      })
+      await loadAgents()
+    })
+
+    it('overrides agent models with ACP models', () => {
+      const acpModels = [
+        { id: 'acp-model-1', name: 'ACP Model 1' },
+        { id: 'acp-model-2', name: 'ACP Model 2' },
+      ]
+      updateACPModelList('claude', acpModels, 'acp-model-2')
+
+      const models = getAgentModels('claude')
+      expect(models).toHaveLength(2)
+      expect(models[0].id).toBe('acp-model-1')
+      expect(models[0].name).toBe('ACP Model 1')
+      expect(models[0].default).toBe(false)
+      expect(models[1].id).toBe('acp-model-2')
+      expect(models[1].default).toBe(true)
+    })
+
+    it('marks first model as default when no currentModelId provided', () => {
+      const acpModels = [
+        { id: 'acp-a', name: 'ACP A' },
+        { id: 'acp-b', name: 'ACP B' },
+      ]
+      updateACPModelList('gpt', acpModels)
+
+      const models = getAgentModels('gpt')
+      expect(models[0].default).toBe(true)
+      expect(models[1].default).toBe(false)
+    })
+
+    it('saves original models so they can be restored', () => {
+      const originalModels = getAgentModels('gpt')
+      expect(originalModels).toHaveLength(1) // gpt-4o
+
+      updateACPModelList('gpt', [{ id: 'acp-x', name: 'ACP X' }])
+      expect(getAgentModels('gpt')).toHaveLength(1)
+      expect(getAgentModels('gpt')[0].id).toBe('acp-x')
+
+      restoreOriginalModels('gpt')
+      const restored = getAgentModels('gpt')
+      expect(restored).toHaveLength(1)
+      expect(restored[0].id).toBe('gpt-4o')
+    })
+
+    it('does not overwrite saved originals on second call', () => {
+      const original = getAgentModels('claude').map(m => ({ ...m }))
+
+      updateACPModelList('claude', [{ id: 'acp-1', name: 'ACP 1' }])
+      updateACPModelList('claude', [{ id: 'acp-2', name: 'ACP 2' }])
+
+      restoreOriginalModels('claude')
+      const restored = getAgentModels('claude')
+      expect(restored).toHaveLength(original.length)
+      expect(restored[0].id).toBe(original[0].id)
+    })
+
+    it('does nothing for unknown agent', () => {
+      // Should not throw
+      updateACPModelList('nonexistent', [{ id: 'x', name: 'X' }])
+    })
+  })
+
+  // --- restoreOriginalModels ---
+
+  describe('restoreOriginalModels', () => {
+    beforeEach(async () => {
+      resetAgents()
+      mockApiGet.mockResolvedValue({
+        agents: JSON.parse(JSON.stringify(testAgents)),
+        defaultAgent: 'claude',
+      })
+      await loadAgents()
+    })
+
+    it('restores original CLI models after ACP override', () => {
+      const original = getAgentModels('claude').map(m => ({ ...m }))
+
+      updateACPModelList('claude', [{ id: 'acp-1', name: 'ACP 1' }])
+      expect(getAgentModels('claude')[0].id).toBe('acp-1')
+
+      restoreOriginalModels('claude')
+      const restored = getAgentModels('claude')
+      expect(restored).toHaveLength(original.length)
+      expect(restored[0].id).toBe(original[0].id)
+    })
+
+    it('is a no-op when no ACP override was applied', () => {
+      const before = getAgentModels('gpt')
+      restoreOriginalModels('gpt')
+      expect(getAgentModels('gpt')).toEqual(before)
+    })
+
+    it('allows re-overriding after restore', () => {
+      updateACPModelList('gpt', [{ id: 'acp-1', name: 'ACP 1' }])
+      restoreOriginalModels('gpt')
+      expect(getAgentModels('gpt')[0].id).toBe('gpt-4o')
+
+      // Second override should work and save fresh originals
+      updateACPModelList('gpt', [{ id: 'acp-2', name: 'ACP 2' }])
+      expect(getAgentModels('gpt')[0].id).toBe('acp-2')
+
+      restoreOriginalModels('gpt')
+      expect(getAgentModels('gpt')[0].id).toBe('gpt-4o')
+    })
+  })
+
+  // --- populateACPStateFromCache ---
+
+  describe('populateACPStateFromCache', () => {
+    const acpState = {
+      claude: {
+        modeState: {
+          currentModeId: 'code',
+          availableModes: [
+            { id: 'ask', name: 'Ask' },
+            { id: 'code', name: 'Code' },
+          ],
+        },
+        thinkingEffortState: {
+          currentId: 'high',
+          availableLevels: [
+            { id: 'low', name: 'Low' },
+            { id: 'high', name: 'High' },
+          ],
+        },
+        commands: [
+          { name: '/help', description: 'Show help' },
+          { name: '/clear', description: 'Clear context' },
+        ],
+        modelListState: {
+          models: [
+            { id: 'acp-claude-1', name: 'ACP Claude 1' },
+          ],
+          currentModelId: 'acp-claude-1',
+        },
+      },
+    }
+
+    beforeEach(() => {
+      mockUpdateAvailableModes.mockReset()
+      mockUpdateAvailableThinkingEfforts.mockReset()
+      mockUpdateCommandState.mockReset()
+    })
+
+    it('populates mode, thinking, commands, and model list from cached acpStates', async () => {
+      // Load agents with acpStates to populate the cache
+      resetAgents()
+      mockApiGet.mockResolvedValue({ agents: testAgents, defaultAgent: 'claude', acpStates: acpState })
+      await loadAgents()
+
+      await populateACPStateFromCache('claude')
+
+      expect(mockUpdateAvailableModes).toHaveBeenCalledWith(acpState.claude.modeState.availableModes)
+      expect(mockUpdateAvailableThinkingEfforts).toHaveBeenCalledWith(acpState.claude.thinkingEffortState.availableLevels)
+      expect(mockUpdateCommandState).toHaveBeenCalledWith(acpState.claude.commands)
+      expect(getAgentModels('claude')[0].id).toBe('acp-claude-1')
+    })
+
+    it('skips mode update when availableModes is empty', async () => {
+      resetAgents()
+      const stateWithoutModes = {
+        claude: {
+          modeState: { currentModeId: '', availableModes: [] },
+          thinkingEffortState: { currentId: 'high', availableLevels: [{ id: 'high', name: 'High' }] },
+        },
+      }
+      mockApiGet.mockResolvedValue({ agents: testAgents, defaultAgent: 'claude', acpStates: stateWithoutModes })
+      await loadAgents()
+
+      await populateACPStateFromCache('claude')
+
+      expect(mockUpdateAvailableModes).not.toHaveBeenCalled()
+      expect(mockUpdateAvailableThinkingEfforts).toHaveBeenCalled()
+    })
+
+    it('does nothing for agent with no cached ACP state and no server state', async () => {
+      resetAgents()
+      mockApiGet.mockResolvedValue({ agents: testAgents, defaultAgent: 'claude', acpStates: {} })
+      await loadAgents()
+
+      await populateACPStateFromCache('nonexistent')
+
+      expect(mockUpdateAvailableModes).not.toHaveBeenCalled()
+      expect(mockUpdateAvailableThinkingEfforts).not.toHaveBeenCalled()
+      expect(mockUpdateCommandState).not.toHaveBeenCalled()
+    })
+
+    it('force-refreshes from server when cache is empty for agent', async () => {
+      resetAgents()
+      mockApiGet.mockClear()
+      // First load: no acpStates for 'claude'
+      mockApiGet.mockResolvedValueOnce({ agents: testAgents, defaultAgent: 'claude', acpStates: {} })
+      await loadAgents()
+
+      // Second load (force): now returns acpStates with claude
+      mockApiGet.mockResolvedValueOnce({ agents: testAgents, defaultAgent: 'claude', acpStates: acpState })
+
+      await populateACPStateFromCache('claude')
+
+      // Should have force-reloaded
+      expect(mockApiGet).toHaveBeenCalledTimes(2)
+      expect(mockUpdateAvailableModes).toHaveBeenCalledWith(acpState.claude.modeState.availableModes)
+    })
+  })
+
+  // --- loadAgents with acpStates ---
+
+  describe('loadAgents with acpStates', () => {
+    const acpState = {
+      claude: {
+        modeState: {
+          currentModeId: 'architect',
+          availableModes: [{ id: 'architect', name: 'Architect' }],
+        },
+        thinkingEffortState: {
+          currentId: 'max',
+          availableLevels: [{ id: 'max', name: 'Max' }],
+        },
+        commands: [{ name: '/compact', description: 'Compact context' }],
+      },
+    }
+
+    beforeEach(() => {
+      mockUpdateAvailableModes.mockReset()
+      mockUpdateAvailableThinkingEfforts.mockReset()
+      mockUpdateCommandState.mockReset()
+      _currentAgentId.value = ''
+    })
+
+    it('caches acpStates from API response', async () => {
+      resetAgents()
+      mockApiGet.mockClear()
+      mockApiGet.mockResolvedValue({ agents: testAgents, defaultAgent: 'claude', acpStates: acpState })
+      await loadAgents()
+
+      // populateACPStateFromCache should work without re-fetching
+      await populateACPStateFromCache('claude')
+      // Only 1 API call — the initial loadAgents (populateACPStateFromCache uses cache)
+      expect(mockApiGet).toHaveBeenCalledTimes(1)
+      expect(mockUpdateAvailableModes).toHaveBeenCalledWith(acpState.claude.modeState.availableModes)
+    })
+
+    it('populates ACP state for the current agent during load', async () => {
+      resetAgents()
+      _currentAgentId.value = 'claude'
+      mockApiGet.mockResolvedValue({ agents: testAgents, defaultAgent: 'claude', acpStates: acpState })
+      await loadAgents()
+
+      expect(mockUpdateAvailableModes).toHaveBeenCalledWith(acpState.claude.modeState.availableModes)
+      expect(mockUpdateAvailableThinkingEfforts).toHaveBeenCalledWith(acpState.claude.thinkingEffortState.availableLevels)
+      expect(mockUpdateCommandState).toHaveBeenCalledWith(acpState.claude.commands)
+    })
+
+    it('does not populate ACP state when currentAgentId does not match', async () => {
+      resetAgents()
+      _currentAgentId.value = 'gpt' // gpt has no acpState
+      mockApiGet.mockResolvedValue({ agents: testAgents, defaultAgent: 'claude', acpStates: acpState })
+      await loadAgents()
+
+      expect(mockUpdateAvailableModes).not.toHaveBeenCalled()
+    })
+
+    it('does not populate ACP state when currentAgentId is empty', async () => {
+      resetAgents()
+      _currentAgentId.value = ''
+      mockApiGet.mockResolvedValue({ agents: testAgents, defaultAgent: 'claude', acpStates: acpState })
+      await loadAgents()
+
+      expect(mockUpdateAvailableModes).not.toHaveBeenCalled()
+    })
+
+    it('overrides models from modelListState during load for current agent', async () => {
+      resetAgents()
+      _currentAgentId.value = 'claude'
+      const stateWithModels = {
+        claude: {
+          modelListState: {
+            models: [{ id: 'acp-new', name: 'ACP New' }],
+            currentModelId: 'acp-new',
+          },
+        },
+      }
+      mockApiGet.mockResolvedValue({ agents: testAgents, defaultAgent: 'claude', acpStates: stateWithModels })
+      await loadAgents()
+
+      expect(getAgentModels('claude')[0].id).toBe('acp-new')
+      expect(getAgentModels('claude')[0].default).toBe(true)
+    })
+  })
+
+  // --- resetAgents clears acpStatesCache ---
+
+  describe('resetAgents clears acpStatesCache', () => {
+    it('clears cached ACP state so populateACPStateFromCache force-refreshes', async () => {
+      const acpState = {
+        claude: {
+          modeState: { currentModeId: 'code', availableModes: [{ id: 'code', name: 'Code' }] },
+        },
+      }
+      resetAgents()
+      mockApiGet.mockClear()
+      mockApiGet.mockResolvedValueOnce({ agents: testAgents, defaultAgent: 'claude', acpStates: acpState })
+      await loadAgents()
+
+      // Cache is populated — populateACPStateFromCache should not re-fetch
+      await populateACPStateFromCache('claude')
+      expect(mockApiGet).toHaveBeenCalledTimes(1)
+
+      // After reset, cache is gone — populateACPStateFromCache must re-fetch
+      resetAgents()
+      mockApiGet.mockResolvedValueOnce({ agents: testAgents, defaultAgent: 'claude', acpStates: acpState })
+      await populateACPStateFromCache('claude')
+      expect(mockApiGet).toHaveBeenCalledTimes(2)
     })
   })
 })

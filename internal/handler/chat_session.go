@@ -2,11 +2,15 @@
 package handler
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 )
@@ -57,8 +61,11 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		for _, id := range runningIDs {
 			runningSet[id] = true
 		}
+		// Batch-check pending approval state from ACP connection pool
+		pendingApprovalSet := ai.GetACPConnManager().GetPendingApprovalSessionIDs()
 		for i := range sessions {
 			sessions[i].Running = runningSet[sessions[i].ID]
+			sessions[i].PendingApproval = pendingApprovalSet[sessions[i].ID]
 		}
 		totalCount, _ := service.GetSessionCount(projectPath)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -157,6 +164,23 @@ func DeleteSession(w http.ResponseWriter, r *http.Request) {
 		backend = "codebuddy"
 	}
 
+	// Cancel the running session before deleting to kill the CLI process.
+	// This ensures no orphan CLI processes remain after soft-delete.
+	if service.IsSessionRunning(sessionID) {
+		slog.Info("cancelling running session before delete", "session_id", sessionID)
+		service.CancelSession(sessionID)
+	}
+
+	// Close the ACP connection for this session before soft-delete
+	// (GetSessionAgentID queries WHERE deleted=0, so we must read it first)
+	agentID := service.GetSessionAgentID(sessionID)
+	if agentID != "" {
+		if agent, ok := model.Agents[agentID]; ok && agent.Transport == "acp-stdio" {
+			slog.Info("acp: closing connection for deleted session", "session_id", sessionID, "agent_id", agentID)
+			ai.GetACPConnManager().CloseConn(sessionID)
+		}
+	}
+
 	if err := service.DeleteSession(projectPath, backend, sessionID); err != nil {
 		model.WriteError(w, model.Internal(fmt.Errorf("failed to delete session")))
 		return
@@ -176,6 +200,73 @@ func getSessionID(r *http.Request) string {
 		return ""
 	}
 	return cookie.Value
+}
+
+// ServeAISessionUpdate handles PATCH /api/ai/session — immediately persists
+// session-scoped settings (mode, thinkingEffort, model, transport) so they
+// survive page reload even without sending a chat message.
+func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPatch) {
+		return
+	}
+	sessionID, ok := requireSessionID(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		ModeID         string `json:"modeId"`
+		ThinkingEffort string `json:"thinkingEffort"`
+		ModelID        string `json:"modelId"`
+		Transport      string `json:"transport"`
+		AutoApprove    *bool  `json:"autoApprove"` // pointer: distinguish "not sent" from false
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.ModeID != "" {
+		// Forward mode change to ACP agent so it updates its runtime state.
+		// Run asynchronously — the RPC can block for up to 30s if the agent
+		// is slow (e.g., Claude bridge adapter starting its CLI subprocess).
+		// Blocking the HTTP handler would tie up a browser HTTP/1.1 connection
+		// and prevent other requests (like session list) from being served.
+		if conn := ai.GetACPConnManager().GetConn(sessionID); conn != nil {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				conn.SetSessionConfigOption(ctx, "mode", req.ModeID)
+			}()
+		}
+	}
+	if req.ThinkingEffort != "" {
+		// Forward thinking effort change to ACP agent — same async pattern as mode.
+		if conn := ai.GetACPConnManager().GetConn(sessionID); conn != nil {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				conn.SetSessionConfigOption(ctx, "thinkingEffort", req.ThinkingEffort)
+			}()
+		}
+	}
+	if req.ModelID != "" {
+		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
+		service.UpdateSessionModel(sessionID, req.ModelID)
+	}
+	if req.Transport != "" {
+		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
+		service.UpdateSessionTransport(sessionID, req.Transport)
+		if req.Transport == "cli" {
+			ai.GetACPConnManager().CloseConn(sessionID)
+		}
+	}
+	if req.AutoApprove != nil {
+		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
+		service.UpdateSessionAutoApprove(sessionID, *req.AutoApprove)
+		// Sync to ACPConn runtime state
+		if conn := ai.GetACPConnManager().GetConn(sessionID); conn != nil {
+			conn.SetAutoApprove(*req.AutoApprove)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
 
 // setSessionID sets session ID in cookie.

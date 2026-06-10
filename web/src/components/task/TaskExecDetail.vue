@@ -228,7 +228,7 @@ function handleShowToolDetail(block) {
     show: true,
     name: block.name || '',
     summary: chatRender.toolCallSummary(block),
-    inputHtml: chatRender.formatToolInput(block.input, block.name),
+    inputHtml: chatRender.formatToolInput(block.input, block.name, { done: block.done, status: block.status, output: block.output }),
     outputHtml: block.output ? formatToolOutput(block.output, block.name) : '',
     status: block.status || '',
     done: !!block.done,

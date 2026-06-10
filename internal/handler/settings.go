@@ -619,17 +619,8 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		if engineSwitched {
 			break // will be validated after user fills in sub-config
 		}
-		effectiveModelDir := cfg.TTS.MossNano.ModelDir
-		if tts, ok := patch["tts"].(map[string]any); ok {
-			if mossNano, ok := tts["moss_nano"].(map[string]any); ok {
-				if v, ok := mossNano["model_dir"].(string); ok {
-					effectiveModelDir = v
-				}
-			}
-		}
-		if effectiveModelDir == "" {
-			return fmt.Errorf("tts.moss_nano.model_dir is required when tts.engine is \"moss-nano\"")
-		}
+		// model_dir is optional — empty value is valid (ResolveMossNanoModelDir
+		// auto-detects the default dir or lets the CLI auto-download models).
 	}
 
 	// 3. default_agent must be an existing agent ID.

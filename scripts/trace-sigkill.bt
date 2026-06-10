@@ -1,0 +1,21 @@
+#!/usr/bin/env bpftrace
+/*
+ * Trace SIGKILL signals targeting node/MainThread processes.
+ * Run with: sudo bpftrace trace-sigkill.bt
+ *
+ * Output includes:
+ *   - Sender PID, command, UID
+ *   - Target PID, command
+ *   - Timestamp
+ *
+ * This helps identify what process is sending SIGKILL to codebuddy --acp.
+ */
+
+tracepoint:signal:signal_generate
+/args->sig == 9/
+{
+	printf("[%s] SIGKILL: sender_pid=%d sender_comm=%s sender_uid=%d → target_pid=%d target_comm=%s\n",
+	       strftime("%H:%M:%S", nsecs),
+	       pid, comm, uid,
+	       args->pid, args->comm);
+}

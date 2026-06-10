@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 )
@@ -33,16 +34,61 @@ func ServeAgents(w http.ResponseWriter, r *http.Request) {
 	writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
 }
 
-func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
+//nolint:gocyclo // serveAgentsGet fan-outs across ACP/CLI transport branches and registry lookups; restructuring breaks readability
+func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 	configMutex.RLock()
 	agents := make([]*model.Agent, len(model.AgentList))
 	copy(agents, model.AgentList)
 	defaultAgent := model.GetDefaultAgentID()
 	configMutex.RUnlock()
 
+	// Attach cached ACP mode/thinking/commands state to each agent.
+	// This lets the frontend populate mode chips and slash commands without
+	// extra API calls. State comes from the AgentCapabilityRegistry (agent-level)
+	// so it persists across connection lifecycle.
+	type acpState struct {
+		Mode      *ai.ModeState             `json:"modeState,omitempty"`
+		Effort    *ai.ThinkingEffortState   `json:"thinkingEffortState,omitempty"`
+		Commands  []ai.AvailableCommandInfo `json:"commands,omitempty"`
+		ModelList *ai.ModelListState        `json:"modelListState,omitempty"`
+		Plan      *ai.PlanState             `json:"planState,omitempty"`
+	}
+	states := make(map[string]*acpState, len(agents))
+	reg := ai.GetAgentCapabilityRegistry()
+	for _, a := range agents {
+		if a.Transport == transportACP {
+			// ACP agents: populate from AgentCapabilityRegistry
+			agentCap := reg.Get(a.ID)
+			if agentCap == nil || !agentCap.HasData() {
+				continue
+			}
+
+			var ms *ai.ModeState
+			var es *ai.ThinkingEffortState
+			var cmds []ai.AvailableCommandInfo
+			var ml *ai.ModelListState
+
+			ms = reg.GetModeState(a.ID, "")
+			es = reg.GetThinkingEffortState(a.ID, "")
+			cmds = reg.GetCommands(a.ID)
+			ml = reg.GetModelListState(a.ID, "")
+
+			// When ACP provides a model list, override the agent's Models
+			// so the frontend SessionSettingModal shows ACP models instead of CLI-discovered ones.
+			if ml != nil && len(ml.Models) > 0 {
+				a.Models = ml.Models
+			}
+
+			if ms != nil || es != nil || len(cmds) > 0 || ml != nil {
+				states[a.ID] = &acpState{Mode: ms, Effort: es, Commands: cmds, ModelList: ml}
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"agents":       agents,
 		"defaultAgent": defaultAgent,
+		"acpStates":    states,
 	})
 }
 
@@ -109,8 +155,31 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		agent.PreferredThinkingEffort = level
 	}
 
+	// Validate and apply transport (only for agents that support ACP)
+	if v, exists := patch["transport"]; exists {
+		transport, _ := v.(string)
+		spec := model.FindSpecByBackend(agent.Backend)
+		hasACP := spec != nil && spec.AcpCommand != ""
+		oldTransport := agent.Transport
+		switch {
+		case transport == "cli":
+			agent.Transport = "cli"
+		case transport == "acp-stdio" && hasACP:
+			agent.Transport = "acp-stdio"
+		default:
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidTransport")
+			return
+		}
+		// When switching from ACP to CLI, close all ACP connections for this agent
+		if oldTransport == "acp-stdio" && agent.Transport == "cli" {
+			mgr := ai.GetACPConnManager()
+			mgr.CloseConnsByAgentID(agentID)
+			slog.Info("closed ACP connections after transport switch to CLI", "agent", agentID)
+		}
+	}
+
 	// Persist to database
-	if err := service.PatchAgent(service.DB, agentID, agent.PreferredModel, agent.PreferredThinkingEffort); err != nil {
+	if err := service.PatchAgent(service.DB, agentID, agent.PreferredModel, agent.PreferredThinkingEffort, agent.Transport); err != nil {
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
@@ -217,11 +286,6 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 	// Update database
 	if err := service.SaveAgent(service.DB, agent); err != nil {
 		slog.Warn("failed to persist model refresh to DB", "agent", agentID, "error", err)
-	}
-
-	// Update cache file
-	if err := model.WriteModelCache(model.ModelCacheDir, agent.Backend, models); err != nil {
-		slog.Warn("failed to write model cache after refresh", "backend", agent.Backend, "error", err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{

@@ -30,6 +30,12 @@ CREATE TABLE IF NOT EXISTS agents (
 	models_auto_detected INTEGER NOT NULL DEFAULT 0,
 	source TEXT NOT NULL DEFAULT 'auto',
 	sort_order INTEGER NOT NULL DEFAULT 0,
+	transport TEXT NOT NULL DEFAULT 'cli',
+	acp_command TEXT NOT NULL DEFAULT '',
+	acp_available_modes TEXT NOT NULL DEFAULT '[]',
+	acp_available_thinking_efforts TEXT NOT NULL DEFAULT '[]',
+	acp_available_commands TEXT NOT NULL DEFAULT '[]',
+	acp_config_options TEXT NOT NULL DEFAULT '',
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -59,7 +65,8 @@ func LoadAgentsFromDB(db *sql.DB) ([]*model.Agent, error) {
 			thinking_effort, thinking_effort_levels,
 			preferred_model, preferred_thinking_effort,
 			system_prompt, models, models_auto_detected,
-			source, sort_order
+			source, sort_order,
+			transport, acp_command
 		FROM agents ORDER BY id
 	`)
 	if err != nil {
@@ -79,6 +86,7 @@ func LoadAgentsFromDB(db *sql.DB) ([]*model.Agent, error) {
 			&a.PreferredModel, &a.PreferredThinkingEffort,
 			&a.SystemPrompt, &modelsJSON, &modelsAutoDetected,
 			&a.Source, &a.SortOrder,
+			&a.Transport, &a.AcpCommand,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan agent: %w", err)
@@ -120,6 +128,10 @@ func SaveAgent(db DBExec, agent *model.Agent) error {
 	if err != nil {
 		return fmt.Errorf("marshal models: %w", err)
 	}
+	// json.Marshal(nil slice) produces "null" instead of "[]" — normalize to "[]"
+	if string(modelsJSON) == "null" {
+		modelsJSON = []byte("[]")
+	}
 	levelsJSON, err := json.Marshal(agent.ThinkingEffortLevels)
 	if err != nil {
 		return fmt.Errorf("marshal thinking_effort_levels: %w", err)
@@ -131,14 +143,19 @@ func SaveAgent(db DBExec, agent *model.Agent) error {
 	}
 
 	sortOrder := agent.SortOrder
+	transport := agent.Transport
+	if transport == "" {
+		transport = "cli"
+	}
 
 	_, err = db.Exec(`
 		INSERT INTO agents (id, name, icon, specialty, backend, command,
 			thinking_effort, thinking_effort_levels,
 			preferred_model, preferred_thinking_effort,
 			system_prompt, models, models_auto_detected,
-			source, sort_order)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			source, sort_order,
+			transport, acp_command)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			icon = excluded.icon,
@@ -154,12 +171,15 @@ func SaveAgent(db DBExec, agent *model.Agent) error {
 			models_auto_detected = excluded.models_auto_detected,
 			source = excluded.source,
 			sort_order = excluded.sort_order,
+			transport = excluded.transport,
+			acp_command = excluded.acp_command,
 			updated_at = CURRENT_TIMESTAMP
 	`, agent.ID, agent.Name, agent.Icon, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON),
 		agent.PreferredModel, agent.PreferredThinkingEffort,
 		agent.SystemPrompt, string(modelsJSON), modelsAutoDetected,
-		agent.Source, sortOrder)
+		agent.Source, sortOrder,
+		transport, agent.AcpCommand)
 	if err != nil {
 		return fmt.Errorf("save agent %s: %w", agent.ID, err)
 	}
@@ -178,14 +198,17 @@ func DeleteAgent(db *sql.DB, id string) error {
 	return nil
 }
 
-// PatchAgent updates only the user-editable fields (preferred_model, preferred_thinking_effort).
+// PatchAgent updates only the user-editable fields (preferred_model, preferred_thinking_effort, transport).
 // Returns nil even if the agent doesn't exist (no rows affected).
-func PatchAgent(db *sql.DB, id, preferredModel, preferredThinkingEffort string) error {
+func PatchAgent(db *sql.DB, id, preferredModel, preferredThinkingEffort, transport string) error {
+	if transport == "" {
+		transport = "cli"
+	}
 	_, err := db.Exec(`
 		UPDATE agents
-		SET preferred_model = ?, preferred_thinking_effort = ?, updated_at = CURRENT_TIMESTAMP
+		SET preferred_model = ?, preferred_thinking_effort = ?, transport = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`,
-		preferredModel, preferredThinkingEffort, id)
+		preferredModel, preferredThinkingEffort, transport, id)
 	if err != nil {
 		return fmt.Errorf("patch agent %s: %w", id, err)
 	}

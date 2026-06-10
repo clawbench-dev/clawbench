@@ -4,6 +4,7 @@ import { ref, nextTick } from 'vue'
 // Mock dependencies
 const mockCurrentSessionId = ref('session-1')
 const mockCurrentBackend = ref('claude')
+const mockRunningSessions = ref(new Set<string>())
 
 vi.mock('@/composables/useSessionIdentity', () => ({
     useSessionIdentity: () => ({
@@ -11,6 +12,12 @@ vi.mock('@/composables/useSessionIdentity', () => ({
         currentBackend: mockCurrentBackend,
         registerSessionActions: vi.fn(),
     }),
+    get runningSessions() { return mockRunningSessions },
+}))
+
+const mockCancelChat = vi.fn()
+vi.mock('@/utils/api', () => ({
+    cancelChat: (...args: any[]) => mockCancelChat(...args),
 }))
 
 const mockToastShow = vi.fn()
@@ -59,6 +66,8 @@ describe('useSessionManager', () => {
         vi.clearAllMocks()
         mockCurrentSessionId.value = 'session-1'
         mockCurrentBackend.value = 'claude'
+        mockRunningSessions.value = new Set()
+        mockCancelChat.mockResolvedValue(undefined)
     })
 
     // ── cleanupActiveStream ──
@@ -218,6 +227,47 @@ describe('useSessionManager', () => {
 
             fetchSpy.mockRestore()
         })
+
+        it('cancels running session before deleting', async () => {
+            const opts = createMockOptions()
+            mockRunningSessions.value = new Set(['session-2'])
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response)
+            const mgr = useSessionManager(opts)
+
+            await mgr.deleteSession('session-2', 'claude')
+
+            expect(mockCancelChat).toHaveBeenCalledWith('session-2')
+            expect(opts.deleteSessionCore).toHaveBeenCalledWith('session-2', 'claude')
+
+            fetchSpy.mockRestore()
+        })
+
+        it('does not cancel non-running session before deleting', async () => {
+            const opts = createMockOptions()
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response)
+            const mgr = useSessionManager(opts)
+
+            await mgr.deleteSession('session-2', 'claude')
+
+            expect(mockCancelChat).not.toHaveBeenCalled()
+            expect(opts.deleteSessionCore).toHaveBeenCalledWith('session-2', 'claude')
+
+            fetchSpy.mockRestore()
+        })
+
+        it('continues with delete even if cancel fails', async () => {
+            const opts = createMockOptions()
+            mockRunningSessions.value = new Set(['session-2'])
+            mockCancelChat.mockRejectedValue(new Error('cancel fail'))
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response)
+            const mgr = useSessionManager(opts)
+
+            await mgr.deleteSession('session-2', 'claude')
+
+            expect(opts.deleteSessionCore).toHaveBeenCalledWith('session-2', 'claude')
+
+            fetchSpy.mockRestore()
+        })
     })
 
     // ── deleteCurrentSession ──
@@ -247,6 +297,21 @@ describe('useSessionManager', () => {
             expect(mgr.pendingMessages.value).toEqual([])
             expect(opts.deleteSessionCore).toHaveBeenCalledWith('session-1', 'claude')
             expect(deleteDraft).toHaveBeenCalledWith('session-1')
+
+            fetchSpy.mockRestore()
+        })
+
+        it('cancels running current session before deleting', async () => {
+            const opts = createMockOptions()
+            mockRunningSessions.value = new Set(['session-1'])
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as Response)
+            const mgr = useSessionManager(opts)
+            const deleteDraft = vi.fn()
+
+            await mgr.deleteCurrentSession(deleteDraft)
+
+            expect(mockCancelChat).toHaveBeenCalledWith('session-1')
+            expect(opts.deleteSessionCore).toHaveBeenCalledWith('session-1', 'claude')
 
             fetchSpy.mockRestore()
         })
