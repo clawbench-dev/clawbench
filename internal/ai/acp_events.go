@@ -754,7 +754,15 @@ func mapACPError(code int, message string) StreamEvent {
 
 // forwardACPEvent sends a StreamEvent to the channel with non-blocking send.
 // Used by ACP event mapping to avoid blocking the SDK's internal goroutine.
+// Recovers from send-on-closed-channel: the ACP SDK's internal goroutines may
+// outlive the channel close in ExecuteStream (e.g., on context cancellation),
+// so a panic from sending to a closed channel is safe to ignore.
 func forwardACPEvent(ch chan<- StreamEvent, event StreamEvent) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Debug("acp: send on closed stream channel, ignoring", "type", event.Type)
+		}
+	}()
 	select {
 	case ch <- event:
 	default:

@@ -3117,8 +3117,10 @@ func TestAIChat_POST_WithSessionID_Succeeds(t *testing.T) {
 	// Should succeed (200 or another non-400 code)
 	assert.NotEqual(t, http.StatusBadRequest, w.Code, "POST with valid session_id should not return 400")
 
-	// Give the async AI goroutine time to finish before teardown closes the DB
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the async AI goroutine to finish before teardown closes the DB
+	assert.Eventually(t, func() bool {
+		return !service.IsSessionRunning(sessionID)
+	}, 5*time.Second, 50*time.Millisecond, "AI goroutine should finish before teardown")
 }
 
 // ============================================================================

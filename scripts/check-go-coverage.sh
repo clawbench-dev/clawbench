@@ -128,7 +128,10 @@ exempt_files = {
     "internal/ai/acp_backend.go",           # ACP ExecuteStream: spawns/communicates with ACP subprocesses
     "internal/ai/acp_pool.go",              # ACP connection pool: manages long-lived subprocesses
     "internal/ai/acp_client.go",            # ACP client: JSON-RPC over stdio, requires real subprocess
+    "internal/ai/acp_conn_lifecycle.go",    # ACP connection lifecycle: spawn/resume/watch require real ACP subprocess
+    "internal/ai/acp_conn_prompt.go",       # ACP Prompt: sends JSON-RPC to subprocess, requires real connection
     "internal/ai/acp_events.go",            # ACP event mapping: 17+ event type branches, each trivial but structurally complex
+    "internal/ai/agent_capability.go",      # ACP agent capability: persistAsync/saveToDB/LoadFromDB require real DB
     "internal/ai/orphan.go",                # Process scanning: reads /proc, requires OS-level integration
     "internal/ai/cline.go",                 # Cline CLI backend: spawns subprocess
     "internal/ai/cline_stream.go",          # Cline stream parser: requires real subprocess output
