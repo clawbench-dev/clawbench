@@ -112,6 +112,12 @@ TIER1_TOLERANCE = 1.5
 DIFF_THRESHOLD = 80.0
 EXCLUDED = {"src/i18n"}  # i18n locale dict aggregation directory
 
+# Individual files to exclude from Tier 1 coverage calculation.
+# These are re-export modules or asset imports that have 0% coverage and cannot be tested.
+TIER1_EXCLUDED_FILES = {
+    "src/utils/globals.ts",  # Pure re-exports of third-party libraries (marked, hljs, katex, DOMPurify, mermaid)
+}
+
 BOLD = "\033[1m"
 RED = "\033[0;31m"
 GREEN = "\033[0;32m"
@@ -150,6 +156,9 @@ dir_stmts = defaultdict(lambda: {"covered": 0, "total": 0})
 for dir_path, data in summary.items():
     src_path = extract_src_path(dir_path)
     if not src_path:
+        continue
+    # Skip individually excluded files
+    if src_path in TIER1_EXCLUDED_FILES:
         continue
     # Aggregate per top-level directory under src/
     parts = src_path.split("/")
