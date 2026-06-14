@@ -43,6 +43,16 @@ type Session struct {
 	exitCode    int
 	closed      bool
 	onClose     func() // called by waitProcess after process exits (set by Manager)
+
+	// suppressOutput is set after Connect() sends the replay buffer.
+	// While true, readPTY() writes PTY output to the ring buffer but does
+	// NOT forward it to the WebSocket client. This prevents the duplicate
+	// prompt that appears when fit() after reconnect triggers SIGWINCH,
+	// causing the shell to redraw its prompt on top of the replay data.
+	// The flag is cleared shortly after the first HandleResize() call
+	// (which is when SIGWINCH fires), once the redraw output has been
+	// consumed and discarded by readPTY().
+	suppressOutput bool
 }
 
 // generateSessionID creates a random 8-byte hex string for session identification.
@@ -131,15 +141,23 @@ func (s *Session) readPTY(ctx context.Context) {
 		if n > 0 {
 			data := buf[:n]
 
-			// Write to ring buffer (for replay)
+			// Always write to ring buffer (for future replays)
 			s.buffer.Write(data)
 
-			// Send to WebSocket client if connected
-			msg := ServerMessage{
-				Type: "output",
-				Data: string(data),
+			// Send to WebSocket client if connected, unless suppressed.
+			// suppressOutput is set after Connect() sends the replay buffer
+			// to prevent the duplicate prompt caused by SIGWINCH after fit().
+			s.mu.Lock()
+			suppressed := s.suppressOutput
+			s.mu.Unlock()
+
+			if !suppressed {
+				msg := ServerMessage{
+					Type: "output",
+					Data: string(data),
+				}
+				s.sendToClient(msg)
 			}
-			s.sendToClient(msg)
 		}
 		if err != nil {
 			if err != io.EOF {
@@ -237,8 +255,19 @@ func (s *Session) Connect(conn *websocket.Conn) error {
 
 	s.wsConn = conn
 
-	// Send replay buffer
-	if replayData := s.buffer.Replay(); replayData != nil {
+	// Send replay buffer and suppress output to prevent duplicate prompts.
+	// When the client reconnects, it receives the replay buffer (which
+	// includes the shell prompt), then calls fit() which sends a resize
+	// message. That resize triggers SIGWINCH, causing the shell to redraw
+	// its prompt. By suppressing output until HandleResize() fires, the
+	// redraw output is discarded by readPTY() instead of being sent as a
+	// duplicate. HandleResize() will clear this flag after a short delay
+	// to allow the SIGWINCH-induced output to be consumed.
+	// Only suppress when there is actual replay data — on first connect
+	// the buffer is empty and there's nothing to duplicate.
+	replayData := s.buffer.Replay()
+	if replayData != nil {
+		s.suppressOutput = true
 		s.sendToClientUnlocked(ServerMessage{
 			Type: "replay",
 			Data: string(replayData),
@@ -295,19 +324,39 @@ func (s *Session) HandleInput(data string) error {
 }
 
 // HandleResize processes a resize message from the WebSocket client.
+// After a reconnect (where Connect() set suppressOutput), this is the first
+// message the client sends (via fit()). Setsize() triggers SIGWINCH, which
+// causes the shell to redraw its prompt. We keep suppressOutput=true briefly
+// after Setsize() so readPTY() discards the redraw output, then clear it.
 func (s *Session) HandleResize(cols, rows uint16) error {
 	s.mu.Lock()
 	ptmx := s.ptmx
+	suppressing := s.suppressOutput
 	s.mu.Unlock()
 
 	if ptmx == nil {
 		return fmt.Errorf("PTY not available")
 	}
 
-	return pty.Setsize(ptmx, &pty.Winsize{
+	err := pty.Setsize(ptmx, &pty.Winsize{
 		Cols: cols,
 		Rows: rows,
 	})
+
+	if suppressing {
+		// Setsize() just sent SIGWINCH. The shell will redraw its prompt
+		// and readPTY() will read that output within microseconds (same
+		// machine, no network). 50ms is more than enough for the kernel
+		// to deliver the signal, the shell to respond, and readPTY() to
+		// consume and discard the output.
+		time.AfterFunc(50*time.Millisecond, func() {
+			s.mu.Lock()
+			s.suppressOutput = false
+			s.mu.Unlock()
+		})
+	}
+
+	return err
 }
 
 // Close terminates the PTY process, closes the WebSocket, and cleans up resources.

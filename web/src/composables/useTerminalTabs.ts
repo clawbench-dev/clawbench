@@ -90,27 +90,20 @@ export function useTerminalTabs(
     })
 
     // Wire session callbacks
-    // After replay on reconnect, suppress output briefly to avoid duplicate prompts.
-    // Replay already contains the shell prompt at the end, but fit() after
-    // reconnect sends SIGWINCH which makes the shell redraw its prompt again.
-    let replayingUntil = 0
-    const REPLAY_SUPPRESS_MS = 150
-
+    // On reconnect, the backend sends a replay buffer then suppresses output
+    // until the first resize completes (to avoid duplicate prompts from
+    // SIGWINCH). The frontend just clears the terminal and writes the replay.
     session.setCallbacks({
       onOutput: (data: string) => {
-        const now = Date.now()
-        if (now < replayingUntil) {
-          console.log(`[terminal] SUPPRESSED output ${now - (replayingUntil - REPLAY_SUPPRESS_MS)}ms after replay, ${replayingUntil - now}ms remaining, data=${JSON.stringify(data.substring(0, 60))}`)
-          return
-        }
         term.write(data)
       },
       onReplay: (data: string) => {
-        console.log(`[terminal] REPLAY received, length=${data.length}, last100=${JSON.stringify(data.substring(data.length - 100))}`)
-        term.clear()
+        // Clear xterm buffer and replace with replay data — discards any
+        // stale content left over from before the disconnect.
+        // The backend suppresses output after replay until the first resize
+        // (triggered by fit()) completes, so no duplicate prompt appears.
+        term.reset()
         term.write(data)
-        replayingUntil = Date.now() + REPLAY_SUPPRESS_MS
-        console.log(`[terminal] Suppressing output until ${replayingUntil}`)
       },
       onStatus: (status: { running: boolean; cwd: string }) => {
         if (status.cwd) {
