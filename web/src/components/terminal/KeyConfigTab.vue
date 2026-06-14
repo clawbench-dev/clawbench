@@ -5,14 +5,12 @@
       <div class="kcf-selected-header">
         <span class="kcf-section-title">{{ t('terminal.keyConfigSelected') }}</span>
         <span class="kcf-count">{{ localSelected.length }}</span>
-        <span class="kcf-hint">{{ t('terminal.keyConfigRemoveHint') }}</span>
       </div>
       <div v-if="localSelected.length > 0" class="kcf-selected-grid">
         <draggable v-model="localSelected" item-key="id" class="kcf-draggable" :animation="200" ghost-class="kcf-ghost" chosen-class="kcf-chosen" drag-class="kcf-drag" @end="onDragEnd">
           <template #item="{ element, index }">
             <button
               class="kcf-chip kcf-chip-selected"
-              @click="removeAt(index)"
             >
               <span class="kcf-chip-label">{{ element.label }}</span>
             </button>
@@ -83,10 +81,6 @@ function toggleSelect(id: string) {
     const def = getDef(props.type, id)
     if (def) localSelected.value.push(def)
   }
-}
-
-function removeAt(index: number) {
-  localSelected.value.splice(index, 1)
 }
 
 function onDragEnd() {
