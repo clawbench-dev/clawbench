@@ -219,6 +219,7 @@ Auto-discovered agent configs use minimal defaults (no model lists or thinking e
 - **Quote & Ask**: Select code or text, ask AI directly, auto-attaches context
 - **Current Directory Attachment**: Chat input supports attaching current directory context, AI auto-gets directory structure
 - **Unread Badge**: Chat panel icon shows unread message count
+- **Auto-Approve Indicator**: Mode chip turns green when auto-approve is enabled, providing visual feedback for ACP permission mode
 
 ### 🖼️ Media Preview
 - In-app preview of images, audio, video
@@ -253,9 +254,12 @@ Auto-discovered agent configs use minimal defaults (no model lists or thinking e
 ### 💻 Web Terminal
 - **Interactive Terminal**: PTY + WebSocket + xterm.js, operate server terminal directly in browser
 - **Concurrent Sessions**: Each client gets an independent PTY session, no interference
+- **Multi-Tab Management**: Close all tabs with empty state UI and create button, dock badge shows active session count
 - **Virtual Key Toolbar**: Color-coded key groups (modifiers, shortcuts, navigation, arrows, actions), three-state modifier toggle
-- **Symbol Bar**: Expandable symbol input row with 19 high-frequency terminal symbols, smart sorting using exponential decay (balances frequency and recency)
-- **Touch Gestures**: Termius-style gestures (swipe→arrow keys, hold-to-repeat, double-tap→Tab, pinch-to-zoom), touch scroll when gestures disabled
+- **Key/Symbol Configuration**: Full-screen config drawer with Keys and Symbols tabs, click-to-add, drag-to-reorder, gesture mode auto-hides select keys, config persisted to database
+- **Symbol Bar**: Expandable symbol input row with 19 high-frequency terminal symbols, transition animation
+- **Touch Gestures**: Termius-style gestures (swipe→arrow keys, hold-to-repeat, double-tap→Tab, pinch-to-zoom), touch scroll when gestures disabled, toast notification on toggle
+- **Auto-Copy on Selection**: Terminal text selection auto-copies to clipboard with toast feedback
 - **Quick Commands**: CRUD management of common commands with drag reorder, hidden flag, auto-execute (auto-run on every connect/reconnect)
 - **Android Volume Keys**: Volume up/down remapped to arrow keys when terminal is open in the app
 - See [Web Terminal User Guide](docs/TERMINAL.en.md)
@@ -274,6 +278,7 @@ Auto-discovered agent configs use minimal defaults (no model lists or thinking e
 - Notification sound + haptic feedback (alerts when AI completes)
 - Browser push notifications
 - **Task Completion Push**: Scheduled task completion notifications include response preview summary; tap to navigate to execution details
+- **ACP Approval Push**: When ACP agents need user approval (e.g., file write, command execution), JPush sends Android notification showing tool name; tap to navigate directly to session for approval
 
 ### 🎨 Themes
 - Light / Dark mode, follows system preference

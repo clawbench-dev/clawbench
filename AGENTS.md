@@ -98,9 +98,10 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 - **SPA hot project switch:** In-place state reset + Vue `:key` rebuild, no `window.location.reload()`.
 - **Worktree annotation:** `useWorktreeAnnotation` annotates worktree paths in chat messages. Runs before file path annotation to prevent partial matches.
 - **Provider models auto-generation:** `scripts/fetch-provider-models.sh` fetches from models.dev API (curl+jq, no Python), writes `provider_models.json` to `<BinDir>/.clawbench/`. Read at runtime by `LoadProviderModelsFromFile()`. `build.sh` and CI generate automatically.
-- **Terminal multi-tab:** `useTerminalTabs` manages tab lifecycle (create/close/switch). `useTerminalKeys` processes virtual key input with modifier lock. `useKeyConfig` persists custom key/symbol layouts to DB via `/api/terminal/key-config`.
+- **Terminal multi-tab:** `useTerminalTabs` manages tab lifecycle (create/close/switch, close-all with empty state). `useTerminalKeys` processes virtual key input with modifier lock. `useKeyConfig` persists custom key/symbol layouts to DB via `/api/terminal/key-config`. Dock badge shows active terminal session count. Auto-copy on text selection replaces copy-output button.
 - **Chat summary modes:** `simple` mode extracts last answer text from blocks (no AI call); `ai` mode uses `AsyncSummarize`; empty string disables summarization. Mode set via `SetChatSummaryMode()`.
 - **Permission pending push:** ACP `permission_pending` events trigger JPush notifications with tool name, allowing mobile users to approve from notification.
+- **Auto-approve indicator:** Mode chip turns green when auto-approve is enabled, providing visual feedback for ACP permission mode.
 
 ## Development Rules
 
