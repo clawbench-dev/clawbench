@@ -79,9 +79,9 @@ export function parseMessages(
  */
 export function applySummaryUpdate(msg: any, summary: string | null | undefined, _atBottom: boolean): void {
   msg.summary = summary
-  if (summary != null && summary !== '') {
-    msg.showingSummary = true
-  } else {
-    msg.showingSummary = false
+  // Only auto-switch to summary view on the first summary_update (user hasn't manually toggled yet).
+  // Once the user has interacted with the toggle, respect their choice.
+  if (!msg._summaryUserToggled) {
+    msg.showingSummary = summary != null && summary !== ''
   }
 }

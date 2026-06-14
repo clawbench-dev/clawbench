@@ -808,6 +808,7 @@ function handleToggleSummary(msgId) {
     const msg = messages.value.find(m => m.id === msgId)
     if (!msg) return
     msg.showingSummary = !msg.showingSummary
+    msg._summaryUserToggled = true
 }
 
 // RAG detail drawer
