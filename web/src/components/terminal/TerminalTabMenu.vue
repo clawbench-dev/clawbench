@@ -6,14 +6,13 @@
     <button class="tab-menu-item danger" @click="handleClose">
       {{ t('terminal.close') }}
     </button>
-    <button class="tab-menu-item danger" :class="{ confirming: confirmingCloseAll }" @click="handleCloseAll">
-      {{ confirmingCloseAll ? t('terminal.confirmCloseAll') : t('terminal.closeAllTabs') }}
+    <button class="tab-menu-item danger" @click="handleCloseAll">
+      {{ t('terminal.closeAllTabs') }}
     </button>
   </PopupMenu>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import PopupMenu from '@/components/common/PopupMenu.vue'
@@ -33,7 +32,6 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const toast = useToast()
-const confirmingCloseAll = ref(false)
 
 function handleClose() {
   emit('update:show', false)
@@ -48,17 +46,11 @@ function handleCopyPath() {
 }
 
 function handleCloseAll() {
-  if (!confirmingCloseAll.value) {
-    confirmingCloseAll.value = true
-    return
-  }
-  confirmingCloseAll.value = false
   emit('update:show', false)
   emit('closeAll')
 }
 
 function onShowChange(val: boolean) {
-  if (!val) confirmingCloseAll.value = false
   emit('update:show', val)
 }
 </script>
@@ -93,9 +85,4 @@ function onShowChange(val: boolean) {
   color: #fff;
 }
 
-.tab-menu-item.confirming {
-  background: var(--color-red, #dc3545);
-  color: #fff;
-  font-weight: 600;
-}
 </style>

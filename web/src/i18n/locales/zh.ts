@@ -1164,7 +1164,7 @@ export default {
     rebuilding: '正在切换目录...',
     close: '关闭',
     closeAllTabs: '关闭所有',
-    confirmCloseAll: '确认关闭所有？',
+    confirmCloseAll: '关闭所有终端会话？此操作不可撤销。',
     copyPath: '复制路径',
     tabLimitReached: '已达到终端会话上限',
     newTab: '新标签页',

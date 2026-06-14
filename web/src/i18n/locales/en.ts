@@ -1164,7 +1164,7 @@ export default {
     rebuilding: 'Switching directory...',
     close: 'Close',
     closeAllTabs: 'Close All',
-    confirmCloseAll: 'Close all tabs?',
+    confirmCloseAll: 'Close all terminal sessions? This cannot be undone.',
     copyPath: 'Copy Path',
     tabLimitReached: 'Maximum terminal sessions reached',
     newTab: 'New Tab',
