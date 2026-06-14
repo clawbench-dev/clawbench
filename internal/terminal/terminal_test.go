@@ -1139,7 +1139,7 @@ func TestSession_SuppressOutputAfterConnect(t *testing.T) {
 
 	// Connect with empty buffer — suppressOutput should NOT be set
 	// (no replay data means nothing to duplicate)
-	err = session.Connect(nil)
+	_ = session.Connect(nil)
 	session.mu.Lock()
 	suppressed = session.suppressOutput
 	session.mu.Unlock()
@@ -1155,7 +1155,7 @@ func TestSession_SuppressOutputAfterConnect(t *testing.T) {
 	session.wsConn = nil // simulate disconnect
 	session.mu.Unlock()
 
-	err = session.Connect(nil)
+	_ = session.Connect(nil)
 	session.mu.Lock()
 	suppressed = session.suppressOutput
 	session.mu.Unlock()
