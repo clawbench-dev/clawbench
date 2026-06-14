@@ -149,15 +149,6 @@
       @close="showKeyConfig = false"
       @saved="onKeyConfigSaved"
     />
-
-    <!-- Close all tabs confirmation -->
-    <ModalDialog :open="showCloseAllConfirm" :title="t('terminal.closeAllTabs')" @close="showCloseAllConfirm = false">
-      <div class="close-all-confirm-body">{{ t('terminal.confirmCloseAll') }}</div>
-      <template #footer>
-        <button class="modal-btn" @click="showCloseAllConfirm = false">{{ t('common.cancel') }}</button>
-        <button class="modal-btn danger" @click="confirmCloseAll">{{ t('terminal.closeAllTabs') }}</button>
-      </template>
-    </ModalDialog>
   </div>
 </template>
 
@@ -167,7 +158,6 @@ import { useI18n } from 'vue-i18n'
 import '@xterm/xterm/css/xterm.css'
 
 import PopupMenu from '@/components/common/PopupMenu.vue'
-import ModalDialog from '@/components/common/ModalDialog.vue'
 import QuickCommandDialog from '@/components/terminal/QuickCommandDialog.vue'
 import KeyConfigDrawer from '@/components/terminal/KeyConfigDrawer.vue'
 import TerminalTabMenu from '@/components/terminal/TerminalTabMenu.vue'
@@ -179,6 +169,7 @@ import { useToast } from '@/composables/useToast'
 import { useQuickCommands } from '@/composables/useQuickCommands'
 import { useAppMode } from '@/composables/useAppMode'
 import { useKeyConfig } from '@/composables/useKeyConfig'
+import { useDialog } from '@/composables/useDialog'
 import { store } from '@/stores/app'
 import {
   DEFAULT_FONT_SIZE,
@@ -202,6 +193,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const toast = useToast()
+const dialog = useDialog()
 const { getServerValueWithDefault } = useSettingsConfig()
 
 // Font size with persistence
@@ -277,7 +269,6 @@ function refreshToolbarFade() {
 
 // Tab menu state
 const showTabMenu = ref(false)
-const showCloseAllConfirm = ref(false)
 const tabMenuTarget = ref<HTMLElement | null>(null)
 const tabMenuTabId = ref<string | null>(null)
 const tabMenuCwd = ref('')
@@ -628,13 +619,12 @@ function handleTabMenuCopyPath() {
   // Already handled by TerminalTabMenu
 }
 
-function handleTabMenuCloseAll() {
-  showCloseAllConfirm.value = true
-}
-
-function confirmCloseAll() {
-  showCloseAllConfirm.value = false
-  tabManager.disposeAll()
+async function handleTabMenuCloseAll() {
+  const confirmed = await dialog.confirm(t('terminal.confirmCloseAll'), {
+    title: t('terminal.closeAllTabs'),
+    dangerous: true,
+  })
+  if (confirmed) tabManager.disposeAll()
 }
 
 // Reconnect for a specific tab
@@ -1304,37 +1294,5 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
   height: 1px;
   background: var(--border-color);
   margin: 4px 0;
-}
-
-/* Close-all confirm modal (unscoped because ModalDialog teleports to body) */
-.close-all-confirm-body {
-  padding: 12px 16px;
-  font-size: 14px;
-  color: var(--text-primary);
-}
-
-.modal-btn {
-  padding: 6px 16px;
-  border: 1px solid var(--border-color, #ddd);
-  border-radius: 6px;
-  background: var(--bg-primary, #fff);
-  color: var(--text-primary);
-  font-size: 13px;
-  cursor: pointer;
-  transition: background 0.12s;
-}
-
-.modal-btn:hover {
-  background: var(--bg-tertiary, #f5f5f5);
-}
-
-.modal-btn.danger {
-  background: var(--color-red, #dc3545);
-  color: #fff;
-  border-color: var(--color-red, #dc3545);
-}
-
-.modal-btn.danger:hover {
-  opacity: 0.9;
 }
 </style>
