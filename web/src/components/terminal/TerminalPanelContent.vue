@@ -300,7 +300,7 @@ function onKeyConfigSaved() {
 
 function handleGestureToggle() {
   gestures.toggle()
-  toast.show(gestures.enabled.value ? t('terminal.gesturesOn') : t('terminal.gesturesOff'), { type: 'info', duration: 1200 })
+  toast.show(gestures.enabled.value ? t('terminal.gesturesOn') : t('terminal.gesturesOff'), { icon: '✋', type: 'info', duration: 1200 })
   focusTerminal()
 }
 

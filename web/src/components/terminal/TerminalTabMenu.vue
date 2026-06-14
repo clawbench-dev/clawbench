@@ -41,7 +41,7 @@ function handleClose() {
 function handleCopyPath() {
   emit('update:show', false)
   navigator.clipboard.writeText(props.cwd).catch(() => {})
-  toast.show(t('common.copied'), { type: 'success', duration: 1500 })
+  toast.show(t('common.copied'), { icon: '📋', type: 'success', duration: 1500 })
   emit('copyPath')
 }
 
