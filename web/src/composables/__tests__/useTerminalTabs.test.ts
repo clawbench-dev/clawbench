@@ -165,6 +165,23 @@ describe('useTerminalTabs', () => {
       const tab = mgr.tabs.value[0]
       expect(tab.session.connectionState).toBe('disconnected')
     })
+
+    // Regression: reactive() auto-unwraps Refs, so .value must NOT be used
+    // on session properties accessed through the reactive tab proxy.
+    // Using .value would read the .value property of the already-unwrapped
+    // string, which is undefined.
+    it('session Refs are auto-unwrapped by reactive() — no .value needed', () => {
+      const mgr = createTabManager()
+      const tab = mgr.tabs.value[0]
+      // Direct access (correct) returns the unwrapped string
+      expect(tab.session.connectionState).toBe('disconnected')
+      expect(tab.session.errorCode).toBe('')
+      expect(tab.session.errorMessage).toBe('')
+      // Accessing .value on the unwrapped string is undefined
+      expect((tab.session.connectionState as any).value).toBeUndefined()
+      expect((tab.session.errorCode as any).value).toBeUndefined()
+      expect((tab.session.errorMessage as any).value).toBeUndefined()
+    })
   })
 
   describe('createTab', () => {
