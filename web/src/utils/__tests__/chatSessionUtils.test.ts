@@ -335,8 +335,6 @@ function customParser(content: string) {
 // ── applySummaryUpdate ──
 
 describe('applySummaryUpdate', () => {
-  // ── No user toggle yet (_summaryUserToggled not set) ──
-
   it('stores summary on the message', () => {
     const msg = { id: '1', showingSummary: undefined }
     applySummaryUpdate(msg, 'A summary', true)
@@ -349,71 +347,48 @@ describe('applySummaryUpdate', () => {
     expect(msg.summary).toBeNull()
   })
 
-  it('sets showingSummary=true when non-empty summary arrives (no prior toggle)', () => {
+  it('sets showingSummary=true when non-empty summary arrives and showingSummary is undefined', () => {
     const msg = { id: '1', showingSummary: undefined }
     applySummaryUpdate(msg, 'Summary text', true)
     expect(msg.showingSummary).toBe(true)
   })
 
-  it('sets showingSummary=false when summary is empty (no prior toggle)', () => {
+  it('sets showingSummary=false when summary is empty and showingSummary is undefined', () => {
     const msg = { id: '1', showingSummary: undefined }
     applySummaryUpdate(msg, '', true)
     expect(msg.showingSummary).toBe(false)
   })
 
-  it('sets showingSummary=false when summary is null (no prior toggle)', () => {
+  it('sets showingSummary=false when summary is null and showingSummary is undefined', () => {
     const msg = { id: '1', showingSummary: undefined }
     applySummaryUpdate(msg, null, true)
     expect(msg.showingSummary).toBe(false)
   })
 
-  it('auto-switches regardless of atBottom when user has not toggled', () => {
+  it('does not depend on atBottom', () => {
     const msg = { id: '1', showingSummary: undefined }
     applySummaryUpdate(msg, 'Summary text', false)
     expect(msg.showingSummary).toBe(true)
   })
 
-  it('still stores summary even when atBottom=false', () => {
-    const msg = { id: '1', showingSummary: undefined }
-    applySummaryUpdate(msg, 'Summary text', false)
-    expect(msg.summary).toBe('Summary text')
-  })
-
-  it('handles undefined summary (no prior toggle)', () => {
+  it('handles undefined summary', () => {
     const msg = { id: '1', showingSummary: undefined }
     applySummaryUpdate(msg, undefined, true)
     expect(msg.showingSummary).toBe(false)
     expect(msg.summary).toBeUndefined()
   })
 
-  // ── User has manually toggled (_summaryUserToggled = true) ──
-
-  it('respects user toggle: does not override showingSummary=true', () => {
-    const msg = { id: '1', showingSummary: true, _summaryUserToggled: true, summary: 'Old' }
+  it('does not override showingSummary when already set to true', () => {
+    const msg = { id: '1', showingSummary: true, summary: 'Old' }
     applySummaryUpdate(msg, 'Updated summary', true)
     expect(msg.showingSummary).toBe(true)
     expect(msg.summary).toBe('Updated summary')
   })
 
-  it('respects user toggle: does not override showingSummary=false', () => {
-    const msg = { id: '1', showingSummary: false, _summaryUserToggled: true, summary: 'Old' }
+  it('does not override showingSummary when already set to false', () => {
+    const msg = { id: '1', showingSummary: false, summary: 'Old' }
     applySummaryUpdate(msg, 'New summary', true)
     expect(msg.showingSummary).toBe(false)
     expect(msg.summary).toBe('New summary')
-  })
-
-  it('respects user toggle even when not atBottom', () => {
-    const msg = { id: '1', showingSummary: true, _summaryUserToggled: true, summary: 'Old' }
-    applySummaryUpdate(msg, 'Updated summary', false)
-    expect(msg.showingSummary).toBe(true)
-    expect(msg.summary).toBe('Updated summary')
-  })
-
-  // ── parseMessages-set state (no _summaryUserToggled) ──
-
-  it('auto-switches on first summary_update when parseMessages set showingSummary=false', () => {
-    const msg = { id: '1', showingSummary: false }
-    applySummaryUpdate(msg, 'Summary text', true)
-    expect(msg.showingSummary).toBe(true)
   })
 })
