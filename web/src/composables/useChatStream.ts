@@ -695,17 +695,57 @@ export function useChatStream(options: UseChatStreamOptions) {
       resetStreamTimeout()
       // Always update pending queue — it's independent of the streaming message
       onQueueConsume?.()
-      if (!guard()) return
+
+      // Session changed — drop event entirely
+      if (currentSessionId.value !== sessionId) return
+
       let data: any
       try { data = JSON.parse(e.data) } catch { console.warn('SSE queue_consume: invalid JSON, skipping'); return }
+
+      const userContent = data.text || ''
+      const userFiles = (data.files || []).map((p: string) => p)
+
+      // Always push the user message — it is independent of streaming state.
+      // If guard() fails, the pending message was already removed from the queue UI,
+      // so failing to push the user message here would lose it entirely.
+      if (!guard()) {
+        // Guard failed (streaming message removed, recovery not possible).
+        // Push user message directly so it isn't lost.
+        const existingUserMsg = messages.value.find(
+          (m: any) => m.role === 'user' && m.content === userContent && !m.id
+        )
+        if (!existingUserMsg) {
+          messages.value.push({
+            role: 'user',
+            content: userContent,
+            blocks: userContent ? [{ type: 'text', text: userContent }] : [],
+            files: userFiles.map((p: string) => ({ path: p })),
+            createdAt: new Date().toISOString(),
+          })
+        }
+        // Create a new streaming assistant placeholder so subsequent SSE events
+        // (content blocks, tool_use, etc.) have a target to write into.
+        const newStreamingMsg = {
+          role: 'assistant' as const,
+          content: '',
+          blocks: [] as any[],
+          streaming: true,
+          createdAt: new Date().toISOString(),
+          backend: currentBackend.value,
+        }
+        messages.value.push(newStreamingMsg)
+        streamingMsg = newStreamingMsg
+        loading.value = true
+        onRenderNeeded()
+        if (isOpen.value) onScrollBottom(true)
+        return
+      }
 
       // Finalize any stale streaming message before adding new messages.
       // queue_done should have already cleaned it up, but if events arrive
       // out of order or guard() let a stale one through, we must finalize
       // it here to prevent the old AI reply from appearing above the new
       // user message (wrong ordering).
-      const userContent = data.text || ''
-      const userFiles = (data.files || []).map((p: string) => p)
       streamingMsg = prepareQueueConsume(
         messages.value, userContent, userFiles, currentBackend.value,
         { onRenderNeeded, onExtractScheduledTasks }

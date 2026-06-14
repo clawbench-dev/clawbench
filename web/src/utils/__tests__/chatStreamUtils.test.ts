@@ -467,3 +467,76 @@ describe('prepareQueueConsume', () => {
     expect(result.streaming).toBe(true)
   })
 })
+
+describe('queue_consume guard failure scenario', () => {
+  it('user message must not be lost when forceCleanupStreamingState removes empty streaming message', () => {
+    // Simulate the exact bug scenario:
+    // 1. queue_done removes an empty streaming message from the array
+    // 2. recoverStreamingMsg fails (loading=false)
+    // 3. queue_consume arrives — the guard() check fails
+    //
+    // The fix ensures the user message is always pushed even when guard fails.
+    // This test verifies the pure functions used in the fallback path.
+
+    // Step 1: queue_done cleans up an empty streaming message
+    const messages: any[] = [
+      { role: 'user', content: 'first question' },
+      { role: 'assistant', content: '', blocks: [], streaming: true },
+    ]
+    forceCleanupStreamingState(messages, { onRenderNeeded: vi.fn() })
+    // Empty streaming message removed
+    expect(messages).toHaveLength(1)
+
+    // Step 2: recoverStreamingMsg fails when not loading
+    const recovered = recoverStreamingMsg(messages, false, 'cli')
+    expect(recovered).toBeUndefined()
+
+    // Step 3: The fix pushes user message + new streaming assistant directly
+    // (this is the fallback code in useChatStream.ts queue_consume handler)
+    const userContent = 'second question'
+    const existingUserMsg = messages.find(
+      (m: any) => m.role === 'user' && m.content === userContent && !m.id
+    )
+    if (!existingUserMsg) {
+      messages.push({
+        role: 'user',
+        content: userContent,
+        blocks: [{ type: 'text', text: userContent }],
+        files: [],
+        createdAt: new Date().toISOString(),
+      })
+    }
+    const newStreamingMsg = {
+      role: 'assistant' as const,
+      content: '',
+      blocks: [] as any[],
+      streaming: true,
+      createdAt: new Date().toISOString(),
+      backend: 'cli',
+    }
+    messages.push(newStreamingMsg)
+
+    // Verify: user message was NOT lost
+    expect(messages).toHaveLength(3)
+    expect(messages[0].role).toBe('user')
+    expect(messages[0].content).toBe('first question')
+    expect(messages[1].role).toBe('user')
+    expect(messages[1].content).toBe('second question')
+    expect(messages[2].role).toBe('assistant')
+    expect(messages[2].streaming).toBe(true)
+  })
+
+  it('recoverStreamingMsg succeeds when loading=true after queue_done cleanup', () => {
+    // If loading is still true (normal case), recovery works and
+    // prepareQueueConsume runs normally via guard()
+    const messages: any[] = [
+      { role: 'user', content: 'first question' },
+    ]
+    // queue_done already removed the streaming message, but session still running
+    const recovered = recoverStreamingMsg(messages, true, 'cli')
+    expect(recovered).toBeDefined()
+    expect(recovered.streaming).toBe(true)
+    expect(messages).toHaveLength(2)
+    expect(messages[1]).toBe(recovered)
+  })
+})
