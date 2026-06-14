@@ -79,9 +79,9 @@ export function parseMessages(
  */
 export function applySummaryUpdate(msg: any, summary: string | null | undefined, _atBottom: boolean): void {
   msg.summary = summary
-  // Only auto-switch to summary view on the first summary_update (user hasn't manually toggled yet).
-  // Once the user has interacted with the toggle, respect their choice.
-  if (!msg._summaryUserToggled) {
+  // Only set default when showingSummary hasn't been set yet.
+  // If the user has already toggled (or parseMessages initialized it), don't override.
+  if (msg.showingSummary === undefined) {
     msg.showingSummary = summary != null && summary !== ''
   }
 }
