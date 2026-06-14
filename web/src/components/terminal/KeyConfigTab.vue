@@ -140,13 +140,6 @@ defineExpose({ getSelectedIds })
   text-align: center;
 }
 
-.kcf-hint {
-  margin-left: auto;
-  font-size: 11px;
-  color: var(--text-muted, #999);
-  opacity: 0.7;
-}
-
 .kcf-selected-grid {
   display: flex;
   flex-wrap: wrap;

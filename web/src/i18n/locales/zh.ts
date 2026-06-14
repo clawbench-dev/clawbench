@@ -1176,7 +1176,6 @@ export default {
     keyConfigSelected: '已选',
     keyConfigAvailable: '可选',
     keyConfigEmpty: '点击下方按键添加到工具栏',
-    keyConfigRemoveHint: '点击移除',
     keyConfigSaved: '配置已保存',
     keyConfigSaveFailed: '保存失败',
     keyGroupModifier: '修饰键',
