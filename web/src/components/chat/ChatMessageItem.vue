@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-message" :class="[msg.role, { 'has-metadata': msg.role === 'assistant' && msg.metadata }]">
+  <div class="chat-message" :class="[msg.role, { 'has-metadata': msg.role === 'assistant' && msg.metadata, pending: msg.pending }]">
 
     <!-- Collapsible content wrapper -->
     <div ref="wrapperRef" class="msg-content-wrapper" :class="{ collapsed }" :style="collapsed ? { maxHeight: store.state.chatCollapsedHeight + 'px' } : {}">
@@ -58,6 +58,13 @@
       </button>
     </div>
 
+    <!-- Pending hint for queued user messages -->
+    <div v-if="msg.pending" class="pending-hint">
+      <span class="pending-spinner"></span>
+      {{ t('chat.pending.queuing') }}
+      <button class="pending-remove" @click="$emit('remove-pending', index)" :title="t('common.remove')">×</button>
+    </div>
+
     <!-- Bottom bar for assistant messages -->
     <div v-if="msg.role === 'assistant' && !msg.streaming && (msgText || msg.blocks?.length)" class="chat-meta-bar">
       <span class="chat-meta-info">
@@ -88,7 +95,7 @@
       </div>
     </div>
     <!-- Bottom bar for user messages -->
-    <div v-if="msg.role === 'user'" class="chat-meta-bar chat-meta-bar-user">
+    <div v-if="msg.role === 'user' && !msg.pending" class="chat-meta-bar chat-meta-bar-user">
       <span class="chat-meta-info">
       </span>
       <button class="chat-info-btn chat-info-btn-user" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
@@ -127,7 +134,7 @@ const props = defineProps({
   active: { type: Boolean, default: true },
 })
 
-const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-thinking-detail', 'show-metadata', 'file-tag-click', 'expand', 'collapse', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'resume-session', 'show-rag-detail'])
+const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-thinking-detail', 'show-metadata', 'file-tag-click', 'expand', 'collapse', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'resume-session', 'show-rag-detail', 'remove-pending'])
 
 const autoSpeech = inject('autoSpeech')
 const layoutRefreshKey = inject('layoutRefreshKey', ref(0))
@@ -453,6 +460,57 @@ const { getAgentIcon, getAgentName } = chatSession
     transition: color 0.2s;
 }
 
+/* ── Pending (queued) user message styles ── */
+.chat-message.user.pending {
+    color: rgba(255, 255, 255, 0.55);
+    background: color-mix(in srgb, var(--user-msg-color) 55%, transparent);
+    border: 1px dashed rgba(255, 255, 255, 0.5);
+    animation: pending-fade-in 0.25s ease-out;
+}
+
+.pending-hint {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.7);
+    flex-basis: 100%;
+    margin-top: 4px;
+}
+
+.pending-spinner {
+    width: 10px;
+    height: 10px;
+    border: 1.5px solid rgba(255, 255, 255, 0.3);
+    border-top-color: rgba(255, 255, 255, 0.8);
+    border-radius: 50%;
+    animation: pending-spin 0.6s linear infinite;
+}
+
+.pending-remove {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: rgba(255, 255, 255, 0.6);
+    padding: 0 2px;
+    font-size: 13px;
+    line-height: 1;
+    transition: color 0.15s;
+}
+
+.pending-remove:hover {
+    color: rgba(255, 255, 255, 1);
+}
+
+@keyframes pending-spin {
+    to { transform: rotate(360deg); }
+}
+
+@keyframes pending-fade-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
 .chat-meta-bar-user:hover {
     color: var(--text-secondary);
 }
@@ -515,7 +573,7 @@ const { getAgentIcon, getAgentName } = chatSession
     will-change: transform;
 }
 
-/* ── File attachment in messages (global for reuse in PendingMessageItem) ── */
+/* ── File attachment in messages ── */
 .chat-files {
   display: flex;
   flex-wrap: wrap;

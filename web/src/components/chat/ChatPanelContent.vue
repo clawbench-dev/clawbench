@@ -15,7 +15,6 @@
       :loadingMore="session.loadingMore.value"
       :totalMessages="session.totalMessages.value"
       :active="props.active"
-      :pendingMessages="manager.pendingMessages.value"
       @touchstart="swipeSession.onTouchStart"
       @touchend="swipeSession.onTouchEnd"
       @toggle-tool="render.toggleToolDetail"
@@ -191,6 +190,7 @@ import { store } from '@/stores/app.ts'
 import { renderMarkdown } from '@/composables/useMarkdownRenderer.ts'
 import { useDialog } from '@/composables/useDialog'
 import { ChevronRight } from 'lucide-vue-next'
+import { syncPendingFromBackend } from '@/utils/chatStreamUtils.ts'
 
 const { t } = useI18n()
 
@@ -285,7 +285,7 @@ const session = useChatSession({
 // - 'done': normal completion → play sound, auto-speech; queue sync handled by
 //   useSessionManager's watch(loading) safety net (loading true→false triggers fetchQueue)
 // - 'cancelled': user cancelled → clear locally for immediate UI response
-// - 'error': error occurred → don't touch pendingMessages; backend preserves queue
+// - 'error': error occurred → don't touch pending messages; backend preserves queue
 function onStreamEnd(reason) {
   if (reason === 'done') {
     playNotificationSound()
@@ -306,9 +306,14 @@ function onStreamEnd(reason) {
     store.loadGitBranch().catch(() => {})
   } else if (reason === 'cancelled') {
     // Backend already cleared queue; clear locally for immediate UI response
-    manager.pendingMessages.value = []
+    // Remove pending messages from messages.value
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      if (messages.value[i].pending) {
+        messages.value.splice(i, 1)
+      }
+    }
   }
-  // 'error': don't touch pendingMessages — backend preserves queue
+  // 'error': don't touch pending messages — backend preserves queue
 }
 
 const stream = useChatStream({
@@ -326,16 +331,6 @@ const stream = useChatStream({
   onToast: (msg, opts) => toast.show(msg, opts),
   onNotification: (title, opts) => notification.show(title, opts),
   onStreamEnd,
-  onQueueUpdate: (queue) => { manager.setPendingMessages(queue) },
-  onQueueConsume: () => {
-    // Optimistically remove the first pending message — it's being consumed now.
-    // The subsequent queue_update SSE event will provide authoritative state,
-    // but this ensures the queue UI updates immediately even if queue_update is delayed or dropped.
-    const current = manager.pendingMessages.value
-    if (current.length > 0) {
-      manager.setPendingMessages(current.slice(1))
-    }
-  },
   onFileModified: (filePath) => {
     // Chat-driven file refresh: when AI's Write/Edit tool completes,
     // refresh the file preview if the modified file is currently being viewed.
@@ -573,10 +568,25 @@ async function sendMessage(text, extraFilePaths) {
       // Capture file arrays before clearing (they're passed by reference)
       const capturedAttached = attachedFiles.value
       const capturedPending = pendingFiles.value.map(f => f.path)
+      // Merge all file paths for the pending message
+      const filePaths = [...(extraFilePaths || []), ...(capturedAttached.length > 0 ? capturedAttached : [])]
+      const allFiles = [...capturedPending, ...filePaths]
       // Clear input state synchronously so user sees immediate feedback
       attachedFiles.value = []
       inputBarRef.value?.clearInput()
       clearPendingFiles()
+      // Push a pending user message into messages.value — single source of truth
+      messages.value.push({
+        role: 'user',
+        content: inputText || '',
+        blocks: inputText ? [{ type: 'text', text: inputText }] : [],
+        files: allFiles.map(p => ({ path: p })),
+        createdAt: new Date().toISOString(),
+        pending: true,
+      })
+      render.updateRenderedContents()
+      scrollBottom(true)
+      // Enqueue to backend (POST /api/ai/queue)
       manager.enqueueMessage(inputText, extraFilePaths, capturedAttached, capturedPending)
       return
     }
@@ -640,18 +650,17 @@ async function sendMessageNow(text, filePaths, files) {
         }
         // Session already running — another request is in progress
         if (data.running) {
-            // Remove the optimistically pushed local user message — the backend
-            // has queued it and will emit it via queue_consume SSE event or
-            // it will appear in the next loadHistory refresh. Keeping it causes
-            // a duplicate (the local version has no id, so dedup by id fails).
+            // Mark the optimistically pushed local user message as pending
+            // instead of removing it — the single-array architecture keeps
+            // pending messages in messages.value with a `pending: true` flag.
             const localIdx = messages.value.findLastIndex(
                 (m) => m.role === 'user' && m.content === (text || '') && !m.id
             )
             if (localIdx !== -1) {
-                messages.value.splice(localIdx, 1)
+                messages.value[localIdx].pending = true
             }
             if (data.queued && data.queue) {
-                manager.setPendingMessages(data.queue)
+                syncPendingFromBackend(messages.value, data.queue)
             }
             stream.connectStream(identity.currentSessionId.value)
             // Proactively sync ACP state for the running session

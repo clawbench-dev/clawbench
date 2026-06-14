@@ -87,49 +87,45 @@ export function forceCleanupStreamingState(
   return streamingMsg
 }
 
+// ── New architecture: single source of truth in messages.value ──
+
 /**
- * Recover a stale streamingMsg reference when guard() fails because the
- * message was removed from the array (e.g. by forceCleanupStreamingState
- * during queue_done, or by loadHistory replacing messages).
- *
- * If the session is still running (isLoading=true), find or create a new
- * streaming assistant message so subsequent SSE events aren't silently dropped.
- *
- * Returns the new streamingMsg, or undefined if recovery is not possible
- * (session changed or not loading).
+ * Find the current streaming assistant message in the messages array.
+ * Replaces the old closure-captured streamingMsg variable — this lookup
+ * is always fresh and never goes stale after loadHistory replaces the array.
  */
-export function recoverStreamingMsg(
-  messages: any[],
-  isLoading: boolean,
-  currentBackend: string
-): any | undefined {
-  if (!isLoading) return undefined
-
-  // Try to find an existing streaming message
-  const existing = messages.find((m: any) => m.role === 'assistant' && m.streaming)
-  if (existing) return existing
-
-  // No streaming message — create one (queue_consume was likely missed)
-  const newMsg = {
-    role: 'assistant' as const,
-    content: '',
-    blocks: [] as any[],
-    streaming: true,
-    createdAt: new Date().toISOString(),
-    backend: currentBackend,
-  }
-  messages.push(newMsg)
-  return newMsg
+export function findStreamingMsg(messages: any[]): any | undefined {
+  return messages.find((m: any) => m.role === 'assistant' && m.streaming)
 }
 
 /**
- * Prepare the messages array for a queue_consume event.
- * Finalizes any stale streaming message before adding the new user + assistant
- * messages, ensuring correct visual ordering (no AI reply above user message).
+ * Create a pending user message object.
+ * Pending messages live in messages.value with a `pending: true` flag.
+ * They are rendered with special styling (dashed border, spinner).
+ * When queue_consume fires, the pending flag is removed.
+ */
+export function createPendingUserMessage(text: string, files: string[] = []): any {
+  return {
+    role: 'user',
+    content: text || '',
+    blocks: text ? [{ type: 'text', text }] : [],
+    files: files.map(p => ({ path: p })),
+    createdAt: new Date().toISOString(),
+    pending: true,
+  }
+}
+
+/**
+ * Process a queue_consume event using the single-array architecture.
+ *
+ * 1. Finalize any stale streaming assistant message
+ * 2. Find the pending user message matching the consumed content and un-mark it
+ *    (if not found — e.g. page was hidden during enqueue — create it)
+ * 3. Push a new streaming assistant placeholder
  *
  * Returns the new streaming assistant message.
  */
-export function prepareQueueConsume(
+export function consumePendingMessage(
   messages: any[],
   userContent: string,
   userFiles: string[],
@@ -139,24 +135,37 @@ export function prepareQueueConsume(
     onExtractScheduledTasks?: (msgs: any[]) => void
   }
 ): any {
-  // Finalize any stale streaming message to prevent wrong ordering
+  // 1. Finalize any stale streaming message
   forceCleanupStreamingState(messages, callbacks)
 
-  // Add user message (deduplicate: skip if a local message with same content exists)
-  const existingUserMsg = messages.find(
-    (m: any) => m.role === 'user' && m.content === userContent && !m.id
+  // 2. Find and un-mark the pending user message
+  const pendingMsg = messages.find(
+    (m: any) => m.role === 'user' && m.pending && m.content === userContent
   )
-  if (!existingUserMsg) {
-    messages.push({
-      role: 'user',
-      content: userContent,
-      blocks: userContent ? [{ type: 'text', text: userContent }] : [],
-      files: userFiles.map(p => ({ path: p })),
-      createdAt: new Date().toISOString(),
-    })
+  if (pendingMsg) {
+    delete pendingMsg.pending
+    // Update files in case they differ (backend may have normalized paths)
+    if (userFiles.length > 0) {
+      pendingMsg.files = userFiles.map(p => ({ path: p }))
+    }
+  } else {
+    // Pending message not found (page was hidden during enqueue, or
+    // sendMessageNow created it without pending flag). Push it now.
+    const existingUserMsg = messages.find(
+      (m: any) => m.role === 'user' && m.content === userContent && !m.id
+    )
+    if (!existingUserMsg) {
+      messages.push({
+        role: 'user',
+        content: userContent,
+        blocks: userContent ? [{ type: 'text', text: userContent }] : [],
+        files: userFiles.map(p => ({ path: p })),
+        createdAt: new Date().toISOString(),
+      })
+    }
   }
 
-  // Create new streaming assistant placeholder
+  // 3. Push new streaming assistant placeholder
   const newStreamingMsg = {
     role: 'assistant' as const,
     content: '',
@@ -168,3 +177,43 @@ export function prepareQueueConsume(
   messages.push(newStreamingMsg)
   return newStreamingMsg
 }
+
+/**
+ * Sync pending messages in messages.value with the authoritative backend queue.
+ * Called on queue_update SSE event and on visibility change.
+ *
+ * The backend queue contains items like { text, files, filePaths }.
+ * We compare by text content and add/remove pending messages as needed.
+ */
+export function syncPendingFromBackend(
+  messages: any[],
+  backendQueue: any[]
+): void {
+  const currentPending = messages.filter((m: any) => m.role === 'user' && m.pending)
+
+  // Add pending messages that are in the backend queue but not locally
+  for (const item of backendQueue) {
+    const text = item.text || ''
+    const exists = currentPending.some((m: any) => m.content === text)
+    if (!exists) {
+      messages.push(createPendingUserMessage(text, [
+        ...(item.files || []),
+        ...(item.filePaths || []),
+      ]))
+    }
+  }
+
+  // Remove pending messages that are no longer in the backend queue
+  // (iterate in reverse to avoid index shifting during splice)
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m.role === 'user' && m.pending) {
+      const inBackend = backendQueue.some((item: any) => (item.text || '') === m.content)
+      if (!inBackend) {
+        messages.splice(i, 1)
+      }
+    }
+  }
+}
+
+

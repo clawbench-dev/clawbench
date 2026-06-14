@@ -331,7 +331,26 @@ export function useChatSession(options: UseChatSessionOptions) {
       // rendering. extractScheduledTasks below will re-populate from current DB state.
       Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
       Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
+
+      // Preserve pending user messages — they exist in messages.value with `pending: true`
+      // but haven't been persisted to the DB yet (backend persists them during queue_consume).
+      // Without this, loadHistory would replace the array and lose pending messages.
+      const localPending = messages.value.filter((m: any) => m.pending)
+      const dbIds = new Set(rawMsgs.filter((m: any) => m.id).map((m: any) => m.id))
+
       messages.value = parseMessages(rawMsgs, onParseAssistantContent, messages.value)
+
+      // Re-append pending messages that aren't yet in the DB.
+      // Dedup by content: if the DB already contains the message (persisted by
+      // queue_consume), don't add the local pending version back.
+      for (const pm of localPending) {
+        const alreadyInDB = messages.value.some(
+          (m: any) => m.role === 'user' && m.content === pm.content && m.id
+        )
+        if (!alreadyInDB) {
+          messages.value.push(pm)
+        }
+      }
       totalMessages.value = data.total || messages.value.length
       // Sanity check: if the backend returned a different sessionId than what we
       // requested, log a warning — this indicates a potential issue (e.g. session
@@ -362,12 +381,6 @@ export function useChatSession(options: UseChatSessionOptions) {
       // Update available thinking effort levels from ACP state
       if (data.thinkingEffortState && data.thinkingEffortState.availableLevels?.length > 0) {
         updateAvailableThinkingEfforts(data.thinkingEffortState.availableLevels)
-      } else if (data.agentId) {
-        // Fallback: agent config (e.g. OpenCode/Gemini ACP don't expose thought_level)
-        const agentLevels = getAgentThinkingEffortLevels(data.agentId)
-        if (agentLevels.length > 0) {
-          updateAvailableThinkingEfforts(agentLevels.map((id: string) => ({ id, name: id })))
-        }
       } else if (data.agentId) {
         // Fallback: agent config (e.g. OpenCode/Gemini ACP don't expose thought_level)
         const agentLevels = getAgentThinkingEffortLevels(data.agentId)

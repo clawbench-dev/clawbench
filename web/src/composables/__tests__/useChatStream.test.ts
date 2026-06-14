@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { ref } from 'vue'
 import { useChatStream } from '@/composables/useChatStream'
-import { forceCleanupStreamingState, FILE_MODIFYING_TOOLS } from '@/utils/chatStreamUtils'
+import { forceCleanupStreamingState, FILE_MODIFYING_TOOLS, syncPendingFromBackend } from '@/utils/chatStreamUtils'
 
 // ── Mock EventSource ──
 
@@ -72,34 +72,43 @@ vi.mock('@/utils/chatStreamUtils', () => ({
     const msg = messages.find((m: any) => m.role === 'assistant' && m.streaming)
     if (msg) delete msg.streaming
   }),
-  recoverStreamingMsg: vi.fn((messages: any[], isLoading: boolean, currentBackend: string) => {
-    if (!isLoading) return undefined
-    const existing = messages.find((m: any) => m.role === 'assistant' && m.streaming)
-    if (existing) return existing
-    const newMsg = { role: 'assistant', content: '', blocks: [], streaming: true, createdAt: new Date().toISOString(), backend: currentBackend }
-    messages.push(newMsg)
-    return newMsg
+  findStreamingMsg: vi.fn((messages: any[]) => {
+    return messages.find((m: any) => m.role === 'assistant' && m.streaming)
   }),
-  prepareQueueConsume: vi.fn((messages: any[], userContent: string, userFiles: string[], currentBackend: string) => {
+  consumePendingMessage: vi.fn((messages: any[], userContent: string, userFiles: string[], currentBackend: string) => {
     // Finalize any stale streaming message
     const streamingMsg = messages.find((m: any) => m.role === 'assistant' && m.streaming)
     if (streamingMsg) delete streamingMsg.streaming
-    // Add user message (deduplicate)
-    const existingUserMsg = messages.find((m: any) => m.role === 'user' && m.content === userContent && !m.id)
-    if (!existingUserMsg) {
-      messages.push({
-        role: 'user',
-        content: userContent,
-        blocks: userContent ? [{ type: 'text', text: userContent }] : [],
-        files: userFiles.map(p => ({ path: p })),
-        createdAt: new Date().toISOString(),
-      })
+    // Find and un-mark the pending user message
+    const pendingMsg = messages.find((m: any) => m.role === 'user' && m.pending && m.content === userContent)
+    if (pendingMsg) {
+      delete pendingMsg.pending
+    } else {
+      const existingUserMsg = messages.find((m: any) => m.role === 'user' && m.content === userContent && !m.id)
+      if (!existingUserMsg) {
+        messages.push({
+          role: 'user',
+          content: userContent,
+          blocks: userContent ? [{ type: 'text', text: userContent }] : [],
+          files: userFiles.map(p => ({ path: p })),
+          createdAt: new Date().toISOString(),
+        })
+      }
     }
     // Create new streaming assistant placeholder
     const newStreamingMsg = { role: 'assistant', content: '', blocks: [], streaming: true, createdAt: new Date().toISOString(), backend: currentBackend }
     messages.push(newStreamingMsg)
     return newStreamingMsg
   }),
+  syncPendingFromBackend: vi.fn(),
+  createPendingUserMessage: vi.fn((text: string, files: string[] = []) => ({
+    role: 'user',
+    content: text || '',
+    blocks: text ? [{ type: 'text', text }] : [],
+    files: files.map(p => ({ path: p })),
+    createdAt: new Date().toISOString(),
+    pending: true,
+  })),
 }))
 
 vi.mock('@/composables/useLocale', () => ({
@@ -147,8 +156,6 @@ function createOptions(overrides: Record<string, any> = {}) {
     onToast: vi.fn(),
     onNotification: vi.fn(),
     onStreamEnd: vi.fn(),
-    onQueueUpdate: vi.fn(),
-    onQueueConsume: vi.fn(),
     onFileModified: vi.fn(),
     onExtractScheduledTasks: vi.fn(),
     ...overrides,
@@ -638,19 +645,6 @@ describe('useChatStream', () => {
       expect(lastMsg.content).toBe('')
     })
 
-    it('should call onQueueConsume callback', () => {
-      const options = createOptions()
-      const { connectStream } = useChatStream(options)
-
-      connectStream('test-session-1')
-      const es = getLatestEs()
-      es.simulateOpen()
-
-      es.simulate('queue_consume', { text: 'Hello' })
-
-      expect(options.onQueueConsume).toHaveBeenCalled()
-    })
-
     it('should deduplicate user message when local copy already exists (no id)', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
@@ -708,7 +702,7 @@ describe('useChatStream', () => {
   })
 
   describe('queue_update event', () => {
-    it('should call onQueueUpdate with queue array from data', () => {
+    it('should sync pending messages from backend queue', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
@@ -718,10 +712,10 @@ describe('useChatStream', () => {
 
       es.simulate('queue_update', { queue: [{ id: 'q1' }, { id: 'q2' }] })
 
-      expect(options.onQueueUpdate).toHaveBeenCalledWith([{ id: 'q1' }, { id: 'q2' }])
+      expect(syncPendingFromBackend).toHaveBeenCalledWith(options.messages.value, [{ id: 'q1' }, { id: 'q2' }])
     })
 
-    it('still calls onQueueUpdate even when guard fails (ISS-304: guard check after queue update)', () => {
+    it('still syncs pending messages even when session changed (queue update is session-independent)', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
@@ -734,9 +728,8 @@ describe('useChatStream', () => {
 
       es.simulate('queue_update', { queue: [{ id: 'q1' }] })
 
-      // onQueueUpdate IS still called because queue update is independent of streaming session (ISS-304)
-      // The guard() check happens after onQueueUpdate to prevent stale events corrupting new session
-      expect(options.onQueueUpdate).toHaveBeenCalledWith([{ id: 'q1' }])
+      // syncPendingFromBackend IS still called because queue update is independent of streaming session
+      expect(syncPendingFromBackend).toHaveBeenCalledWith(options.messages.value, [{ id: 'q1' }])
     })
   })
 
@@ -967,7 +960,7 @@ describe('useChatStream', () => {
       expect(textBlocks.length).toBe(0)
     })
 
-    it('should recover streaming message when it was removed but session is still running', () => {
+    it('should drop content events when streaming message was removed (new architecture: no recovery)', () => {
       const options = createOptions()
       options.loading.value = true
       const { connectStream } = useChatStream(options)
@@ -982,15 +975,17 @@ describe('useChatStream', () => {
       )
       options.messages.value.splice(idx, 1)
 
-      // Content event should recover the streaming message instead of being dropped
-      es.simulate('content', { content: 'recovered content' })
+      // In the new architecture, findStreamingMsg returns undefined when the
+      // streaming message is not in the array. The content handler checks for
+      // this and returns early — no phantom message is created.
+      // This is correct because:
+      // 1. queue_done always creates a new streaming message via queue_consume
+      // 2. If the message is truly gone, creating a ghost message is wrong
+      const prevLength = options.messages.value.length
+      es.simulate('content', { content: 'should be dropped' })
 
-      // A new streaming message should have been created
-      const recoveredMsg = options.messages.value.find(
-        (m: any) => m.role === 'assistant' && m.streaming
-      )
-      expect(recoveredMsg).toBeDefined()
-      expect(recoveredMsg.blocks).toEqual([{ type: 'text', text: 'recovered content' }])
+      // No new message should have been created
+      expect(options.messages.value.length).toBe(prevLength)
     })
 
     it('should drop events when streaming message was removed and session is not running', () => {
