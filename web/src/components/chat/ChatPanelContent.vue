@@ -302,6 +302,8 @@ function onStreamEnd(reason) {
     // unreadCount is now 0 (UpdateLastRead called by loadHistory), so
     // chatUnread should be false if no other sessions have unread messages.
     loadSessionsOnce()
+    // Refresh git branch — AI agent may have checked out a different branch
+    store.loadGitBranch().catch(() => {})
   } else if (reason === 'cancelled') {
     // Backend already cleared queue; clear locally for immediate UI response
     manager.pendingMessages.value = []
