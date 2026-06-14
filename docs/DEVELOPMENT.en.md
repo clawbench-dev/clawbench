@@ -355,6 +355,12 @@ Use `./dev-server.sh` to start an independent development environment:
 ./dev-server.sh --restart    # Restart
 ```
 
+Development environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VITE_BACKEND_PROTO` | `https` | Backend protocol for Vite dev proxy (set to `http` in dev to skip HTTPS) |
+
 ---
 
 ## Architecture Design

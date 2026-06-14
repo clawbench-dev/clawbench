@@ -355,6 +355,12 @@ GitHub Release 中的 Linux 二进制使用动态链接（CGO_ENABLED=1），依
 ./dev-server.sh --restart    # 重启
 ```
 
+开发环境变量：
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `VITE_BACKEND_PROTO` | `https` | Vite 开发代理的后端协议（开发环境设为 `http` 可跳过 HTTPS） |
+
 ---
 
 ## 架构设计

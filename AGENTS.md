@@ -99,8 +99,10 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 - **Worktree annotation:** `useWorktreeAnnotation` annotates worktree paths in chat messages. Runs before file path annotation to prevent partial matches.
 - **Provider models auto-generation:** `scripts/fetch-provider-models.sh` fetches from models.dev API (curl+jq, no Python), writes `provider_models.json` to `<BinDir>/.clawbench/`. Read at runtime by `LoadProviderModelsFromFile()`. `build.sh` and CI generate automatically.
 - **Terminal multi-tab:** `useTerminalTabs` manages tab lifecycle (create/close/switch). `useTerminalKeys` processes virtual key input with modifier lock. `useKeyConfig` persists custom key/symbol layouts to DB via `/api/terminal/key-config`.
-- **Chat summary modes:** `simple` mode extracts last answer text from blocks (no AI call); `ai` mode uses `AsyncSummarize`; empty string disables summarization. Mode set via `SetChatSummaryMode()`.
+- **Chat summary modes:** `simple` mode extracts last answer text from blocks (no AI call); `ai` mode uses `AsyncSummarize`; empty string disables summarization. Mode set via `SetChatSummaryMode()`. Last round (final assistant + preceding user) defaults to showing original text, not summary; user can toggle manually.
+- **Dock badge counts:** Badges on chat/task/port-forward dock icons show numeric counts (unread messages, running tasks, active forwards) rather than boolean indicators.
 - **Permission pending push:** ACP `permission_pending` events trigger JPush notifications with tool name, allowing mobile users to approve from notification.
+- **Auto-approve indicator:** Mode chip turns green when auto-approve is enabled, providing visual feedback for ACP permission mode.
 
 ## Development Rules
 
