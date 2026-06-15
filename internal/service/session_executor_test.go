@@ -534,7 +534,7 @@ func TestSessionExecutor_RunWithChannel_SessionCaptureEvent(t *testing.T) {
 	// Test that session_capture events are handled by handleNonForwardableEvent
 	// and NOT forwarded to SSE or accumulated as blocks.
 	setupExecutorTestDB(t)
-	sid := helperCreateTestSession(t, "/test", "test")
+	sid := helperCreateTestSession(t)
 
 	events := []ai.StreamEvent{
 		{Type: "session_capture", Content: "ext-session-123"},
@@ -654,7 +654,7 @@ func TestSessionExecutor_RunWithChannel_NonMetadataEvent(t *testing.T) {
 func TestSessionExecutor_Finalize_EmptyBlocks_UserCancel(t *testing.T) {
 	// Test buildEmptyContentJSON with user cancel reason.
 	setupExecutorTestDB(t)
-	sid := helperCreateTestSession(t, "/test", "test")
+	sid := helperCreateTestSession(t)
 	helperCreateStreamingMessage(t, sid)
 
 	cfg := RunConfig{
@@ -692,7 +692,7 @@ func TestSessionExecutor_Finalize_EmptyBlocks_UserCancel(t *testing.T) {
 func TestSessionExecutor_Finalize_EmptyBlocks_ContextCancelled(t *testing.T) {
 	// Test buildEmptyContentJSON with context.Canceled.
 	setupExecutorTestDB(t)
-	sid := helperCreateTestSession(t, "/test", "test")
+	sid := helperCreateTestSession(t)
 	helperCreateStreamingMessage(t, sid)
 
 	cfg := RunConfig{
@@ -729,7 +729,7 @@ func TestSessionExecutor_Finalize_EmptyBlocks_ContextCancelled(t *testing.T) {
 func TestSessionExecutor_Finalize_EmptyBlocks_DeadlineExceeded(t *testing.T) {
 	// Test buildEmptyContentJSON with context.DeadlineExceeded.
 	setupExecutorTestDB(t)
-	sid := helperCreateTestSession(t, "/test", "test")
+	sid := helperCreateTestSession(t)
 	helperCreateStreamingMessage(t, sid)
 
 	cfg := RunConfig{
@@ -767,7 +767,7 @@ func TestSessionExecutor_Finalize_EmptyBlocks_DeadlineExceeded(t *testing.T) {
 func TestSessionExecutor_Finalize_EmptyBlocks_DefaultReason(t *testing.T) {
 	// Test buildEmptyContentJSON with no cancel reason and no context error.
 	setupExecutorTestDB(t)
-	sid := helperCreateTestSession(t, "/test", "test")
+	sid := helperCreateTestSession(t)
 	helperCreateStreamingMessage(t, sid)
 
 	cfg := RunConfig{
@@ -802,7 +802,7 @@ func TestSessionExecutor_Finalize_EmptyBlocks_DefaultReason(t *testing.T) {
 func TestSessionExecutor_Finalize_NonEmptyBlocks_UserCancel(t *testing.T) {
 	// Test buildNonEmptyContentJSON with user cancel — should set cancelled=true.
 	setupExecutorTestDB(t)
-	sid := helperCreateTestSession(t, "/test", "test")
+	sid := helperCreateTestSession(t)
 	helperCreateStreamingMessage(t, sid)
 
 	cfg := RunConfig{
@@ -835,7 +835,7 @@ func TestSessionExecutor_Finalize_NonEmptyBlocks_UserCancel(t *testing.T) {
 func TestSessionExecutor_Finalize_NonEmptyBlocks_ContextCancelled(t *testing.T) {
 	// Test buildNonEmptyContentJSON with context.Canceled — should set cancelled=true.
 	setupExecutorTestDB(t)
-	sid := helperCreateTestSession(t, "/test", "test")
+	sid := helperCreateTestSession(t)
 	helperCreateStreamingMessage(t, sid)
 
 	cfg := RunConfig{
@@ -869,7 +869,7 @@ func TestSessionExecutor_Finalize_NonEmptyBlocks_DeadlineExceeded(t *testing.T) 
 	// is embedded in the serialized content JSON, not in the returned blocks slice
 	// (because buildNonEmptyContentJSON only returns a string, not modified blocks).
 	setupExecutorTestDB(t)
-	sid := helperCreateTestSession(t, "/test", "test")
+	sid := helperCreateTestSession(t)
 	helperCreateStreamingMessage(t, sid)
 
 	cfg := RunConfig{
@@ -906,7 +906,7 @@ func TestSessionExecutor_Finalize_NonEmptyBlocks_DeadlineExceeded(t *testing.T) 
 func TestSessionExecutor_Finalize_NonEmptyBlocks_NormalCompletion(t *testing.T) {
 	// Test buildNonEmptyContentJSON with normal completion — no cancel, no timeout.
 	setupExecutorTestDB(t)
-	sid := helperCreateTestSession(t, "/test", "test")
+	sid := helperCreateTestSession(t)
 	helperCreateStreamingMessage(t, sid)
 
 	cfg := RunConfig{
@@ -943,7 +943,7 @@ func TestSessionExecutor_Finalize_NonEmptyBlocks_NormalCompletion(t *testing.T) 
 func TestSessionExecutor_Finalize_DrainRawOutput(t *testing.T) {
 	// Test that drainRawOutput collects remaining raw_output events after finalization.
 	setupExecutorTestDB(t)
-	sid := helperCreateTestSession(t, "/test", "test")
+	sid := helperCreateTestSession(t)
 	helperCreateStreamingMessage(t, sid)
 
 	cfg := RunConfig{
@@ -982,7 +982,7 @@ func TestSessionExecutor_Finalize_DrainRawOutput(t *testing.T) {
 func TestSessionExecutor_Finalize_DrainRawOutput_NilChannel(t *testing.T) {
 	// Test that drainRawOutput returns existing rawOutput when channel is nil.
 	setupExecutorTestDB(t)
-	sid := helperCreateTestSession(t, "/test", "test")
+	sid := helperCreateTestSession(t)
 	helperCreateStreamingMessage(t, sid)
 
 	cfg := RunConfig{
@@ -1012,7 +1012,7 @@ func TestSessionExecutor_Finalize_DrainRawOutput_NilChannel(t *testing.T) {
 func TestSessionExecutor_Finalize_DrainRawOutput_EmptyChannel(t *testing.T) {
 	// Test that drainRawOutput handles an already-empty channel.
 	setupExecutorTestDB(t)
-	sid := helperCreateTestSession(t, "/test", "test")
+	sid := helperCreateTestSession(t)
 	helperCreateStreamingMessage(t, sid)
 
 	cfg := RunConfig{
@@ -1047,7 +1047,7 @@ func TestSessionExecutor_Finalize_DrainRawOutput_EmptyChannel(t *testing.T) {
 func TestSessionExecutor_Finalize_InjectResponseMetadata(t *testing.T) {
 	// Test that injectResponseMetadata sets transport and model fields.
 	setupExecutorTestDB(t)
-	sid := helperCreateTestSession(t, "/test", "test")
+	sid := helperCreateTestSession(t)
 	helperCreateStreamingMessage(t, sid)
 
 	cfg := RunConfig{
@@ -1080,7 +1080,7 @@ func TestSessionExecutor_Finalize_InjectResponseMetadata(t *testing.T) {
 func TestSessionExecutor_Finalize_MsgIDSet(t *testing.T) {
 	// Test that Finalize returns a non-zero MsgID when successful.
 	setupExecutorTestDB(t)
-	sid := helperCreateTestSession(t, "/test", "test")
+	sid := helperCreateTestSession(t)
 	helperCreateStreamingMessage(t, sid)
 
 	cfg := RunConfig{
@@ -1111,7 +1111,7 @@ func TestSessionExecutor_Finalize_MsgIDSet(t *testing.T) {
 func TestSessionExecutor_Finalize_EmptyBlocks_ContainsCancelledField(t *testing.T) {
 	// Verify the JSON content stored by Finalize includes "cancelled":true for user cancel.
 	setupExecutorTestDB(t)
-	sid := helperCreateTestSession(t, "/test", "test")
+	sid := helperCreateTestSession(t)
 	helperCreateStreamingMessage(t, sid)
 
 	cfg := RunConfig{
@@ -1229,12 +1229,12 @@ func setupExecutorTestDB(t *testing.T) {
 	})
 }
 
-func helperCreateTestSession(t *testing.T, projectPath, backend string) string {
+func helperCreateTestSession(t *testing.T) string {
 	t.Helper()
 	id := "test-sess-" + time.Now().Format("150405.000")
 	_, err := DB.Exec(
 		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, session_type) VALUES (?, ?, ?, ?, ?, ?)",
-		id, projectPath, backend, "Test Session", "test", "chat",
+		id, "/test", "test", "Test Session", "test", "chat",
 	)
 	if err != nil {
 		t.Fatalf("failed to create test session: %v", err)
