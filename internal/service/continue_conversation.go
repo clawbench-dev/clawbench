@@ -230,7 +230,9 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 		idMap[m.id] = newID
 	}
 
-	// 10. Copy summaries (only chat_message type)
+	// 10. Copy summaries (chat_message type — covers both interactive and
+	// scheduled sessions since the scheduler now stores summaries as "chat_message"
+	// keyed by the assistant message ID, same as interactive sessions).
 	for oldID, newID := range idMap {
 		var summary string
 		err := DB.QueryRow(
@@ -249,41 +251,6 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 		)
 		if err != nil {
 			return "", false, fmt.Errorf("failed to copy summary for message %d: %w", oldID, err)
-		}
-	}
-
-	// 10b. Copy task_execution type summary as chat_message type
-	// Scheduled sessions store their summary as target_type='task_execution', target_id=execID.
-	// When continuing, we convert it to a chat_message summary attached to the last assistant message,
-	// but ONLY if that message doesn't already have a chat_message summary (10a takes priority).
-	var taskExecSummary string
-	err = DB.QueryRow(
-		"SELECT summary FROM summaries WHERE target_type = 'task_execution' AND target_id = ?",
-		execID,
-	).Scan(&taskExecSummary)
-	if err == nil && taskExecSummary != "" {
-		// Find the last assistant message in the new session
-		var lastAssistantID int64
-		err = DB.QueryRow(
-			"SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1",
-			newSessionID,
-		).Scan(&lastAssistantID)
-		if err == nil {
-			// Only insert if this assistant message doesn't already have a chat_message summary
-			var existingCount int
-			err = DB.QueryRow(
-				"SELECT COUNT(*) FROM summaries WHERE target_type = 'chat_message' AND target_id = ?",
-				lastAssistantID,
-			).Scan(&existingCount)
-			if err == nil && existingCount == 0 {
-				_, err = DB.Exec(
-					"INSERT OR REPLACE INTO summaries (target_type, target_id, summary, created_at) VALUES ('chat_message', ?, ?, CURRENT_TIMESTAMP)",
-					lastAssistantID, taskExecSummary,
-				)
-				if err != nil {
-					return "", false, fmt.Errorf("failed to copy task_execution summary: %w", err)
-				}
-			}
 		}
 	}
 

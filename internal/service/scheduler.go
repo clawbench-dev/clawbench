@@ -809,10 +809,12 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		slog.String("status", newStatus),
 	)
 
-	// Generate summary asynchronously using unified AsyncSummarize
-	if taskSummarizerInstance != nil {
-		projectPath := task.ProjectPath
-		AsyncSummarize("task_execution", executionID, runResult.Blocks, projectPath, sessionID)
+	// Generate summary asynchronously — use "chat_message" type keyed by the
+	// assistant message ID (runResult.MsgID), same as interactive chat sessions.
+	// This unifies the summary storage model so ContinueFromExecution no longer
+	// needs to convert between target_types.
+	if taskSummarizerInstance != nil && runResult.MsgID > 0 {
+		AsyncSummarize("chat_message", runResult.MsgID, runResult.Blocks, task.ProjectPath, sessionID)
 	}
 }
 

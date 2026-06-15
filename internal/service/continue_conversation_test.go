@@ -438,7 +438,11 @@ func helperCreateScheduledSessionWithDetails(t *testing.T, projectPath, backend,
 	return id
 }
 
-func TestContinueFromExecution_CopiesTaskExecutionSummary(t *testing.T) {
+func TestContinueFromExecution_CopiesChatMessageSummary(t *testing.T) {
+	// Since the scheduler now stores summaries as target_type='chat_message'
+	// (keyed by the assistant message ID), ContinueFromExecution simply copies
+	// these chat_message summaries from the source session to the new session,
+	// just like interactive chat sessions.
 	setupDB(t)
 	projectPath := "/test/project"
 
@@ -451,8 +455,12 @@ func TestContinueFromExecution_CopiesTaskExecutionSummary(t *testing.T) {
 	assert.NoError(t, err)
 	execID := helperCreateTaskExecution(t, taskID, sessionID, "completed")
 
-	// Add task_execution type summary (this is what scheduled sessions have)
-	_, err = service.DB.Exec("INSERT INTO summaries (target_type, target_id, summary, created_at) VALUES ('task_execution', ?, 'This is the task execution summary', CURRENT_TIMESTAMP)", execID)
+	// Add chat_message type summary on the source assistant message (this is
+	// what the scheduler now creates — same as interactive sessions)
+	var sourceAssistantID int64
+	err = service.DB.QueryRow("SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", sessionID).Scan(&sourceAssistantID)
+	assert.NoError(t, err)
+	_, err = service.DB.Exec("INSERT INTO summaries (target_type, target_id, summary, created_at) VALUES ('chat_message', ?, 'Scheduled task summary', CURRENT_TIMESTAMP)", sourceAssistantID)
 	assert.NoError(t, err)
 
 	// Continue
@@ -461,7 +469,7 @@ func TestContinueFromExecution_CopiesTaskExecutionSummary(t *testing.T) {
 	assert.False(t, alreadyExists)
 	assert.NotEmpty(t, newSessionID)
 
-	// Verify: task_execution summary is copied as chat_message type to the last assistant message
+	// Verify: chat_message summary is copied to the corresponding new message
 	var lastAssistantID int64
 	err = service.DB.QueryRow("SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", newSessionID).Scan(&lastAssistantID)
 	assert.NoError(t, err)
@@ -469,7 +477,7 @@ func TestContinueFromExecution_CopiesTaskExecutionSummary(t *testing.T) {
 	var copiedSummary string
 	err = service.DB.QueryRow("SELECT summary FROM summaries WHERE target_type = 'chat_message' AND target_id = ?", lastAssistantID).Scan(&copiedSummary)
 	assert.NoError(t, err)
-	assert.Equal(t, "This is the task execution summary", copiedSummary)
+	assert.Equal(t, "Scheduled task summary", copiedSummary)
 }
 
 // ========== restoreDeletedSession (tested via DB) ==========

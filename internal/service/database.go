@@ -519,6 +519,12 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// to chat_metadata automatically via SaveMetadata().
 	MigrateMetadataFromContent()
 
+	// Migrate: convert task_execution summaries to chat_message summaries.
+	// Scheduled tasks now store summaries as target_type='chat_message' keyed by
+	// the assistant message ID (chat_history.id), same as interactive sessions.
+	// This converts any existing 'task_execution' summaries to the new format.
+	MigrateTaskExecutionSummaries()
+
 	return nil
 }
 
@@ -639,6 +645,89 @@ func migrateMetadataBatch(batchSize, offset int) ([]struct {
 		batch = append(batch, r)
 	}
 	return batch, nil
+}
+
+// MigrateTaskExecutionSummaries converts existing target_type='task_execution'
+// summaries to target_type='chat_message' summaries keyed by the assistant
+// message ID in chat_history. After this migration, all summaries use the same
+// target_type, and ContinueFromExecution no longer needs to convert between types.
+//
+// For each task_execution summary, the migration:
+//  1. Finds the corresponding chat_history assistant message via session_id
+//  2. Inserts a 'chat_message' summary keyed by ch.id (if not already present)
+//  3. Deletes the old 'task_execution' summary
+func MigrateTaskExecutionSummaries() {
+	// Check if there are any task_execution summaries to migrate
+	var count int
+	_ = DBRead.QueryRow("SELECT COUNT(*) FROM summaries WHERE target_type = 'task_execution'").Scan(&count)
+	if count == 0 {
+		return
+	}
+	slog.Info("migrating task_execution summaries to chat_message", slog.Int("count", count))
+
+	// For each task_execution summary, find the corresponding assistant message
+	// and create a chat_message summary.
+	// Collect all rows first to avoid holding the read connection while writing
+	// (SQLite single-writer lock would deadlock if DBRead and DB share the same conn).
+	rows, err := DBRead.Query(`
+		SELECT sm.target_id, sm.summary, te.session_id
+		FROM summaries sm
+		JOIN task_executions te ON te.id = sm.target_id
+		WHERE sm.target_type = 'task_execution'
+	`)
+	if err != nil {
+		slog.Error("task_execution summary migration: query failed", slog.String("err", err.Error()))
+		return
+	}
+
+	type migrationRow struct {
+		ExecID    int64
+		Summary   string
+		SessionID string
+	}
+	var migrations []migrationRow
+	for rows.Next() {
+		var m migrationRow
+		if err := rows.Scan(&m.ExecID, &m.Summary, &m.SessionID); err != nil {
+			slog.Error("task_execution summary migration: scan failed", slog.String("err", err.Error()))
+			continue
+		}
+		migrations = append(migrations, m)
+	}
+	_ = rows.Close()
+
+	migrated := 0
+	for _, m := range migrations {
+		// Find the last non-streaming assistant message for this session
+		var msgID int64
+		if err := DBRead.QueryRow(
+			"SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0 ORDER BY id DESC LIMIT 1",
+			m.SessionID,
+		).Scan(&msgID); err != nil {
+			// No assistant message found — delete the orphaned task_execution summary
+			// to prevent it from sticking around forever (it can never be migrated).
+			_, _ = DB.Exec(
+				"DELETE FROM summaries WHERE target_type = 'task_execution' AND target_id = ?",
+				m.ExecID,
+			)
+			continue
+		}
+
+		// Insert as chat_message summary (if not already present)
+		_, _ = DB.Exec(
+			"INSERT OR IGNORE INTO summaries (target_type, target_id, summary, created_at) VALUES ('chat_message', ?, ?, CURRENT_TIMESTAMP)",
+			msgID, m.Summary,
+		)
+
+		// Delete the old task_execution summary
+		_, _ = DB.Exec(
+			"DELETE FROM summaries WHERE target_type = 'task_execution' AND target_id = ?",
+			m.ExecID,
+		)
+		migrated++
+	}
+
+	slog.Info("task_execution summary migration complete", slog.Int("migrated", migrated), slog.Int("total", count))
 }
 
 // CloseDB closes both write and read database connections.

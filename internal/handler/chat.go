@@ -574,8 +574,9 @@ type streamRunResult struct {
 }
 
 // executeStreamRun runs one AI backend execution from start to finish.
-// It handles event accumulation, incremental DB persistence, resume_split,
-// and finalizes the streaming message in the DB.
+// It creates a backend, starts the stream, then delegates the event loop
+// to SessionExecutor.RunWithChannel() and database finalization to
+// SessionExecutor.Finalize().
 // It does NOT send a terminal SSE event — the caller decides what to send.
 func executeStreamRun(
 	ctx context.Context,
@@ -620,401 +621,56 @@ func executeStreamRun(
 		return streamRunResult{err: errMsg}
 	}
 
-	// Record wall-clock start time for duration tracking
-	wallStart := time.Now()
-
 	// Create streaming placeholder message in DB
 	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
 	_, _ = service.AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, "")
 
-	var blocks []model.ContentBlock
-	var responseMetadata *ai.Metadata
-	var rawOutput string               // collected from raw_output event for debugging
-	var firstContentTime time.Duration // track time to first content event
-
-	// Incremental persistence: flush every 1s or every 5 events
-	flushTicker := time.NewTicker(1 * time.Second)
-	defer flushTicker.Stop()
-	eventCount := 0
-
-	serializeBlocks := func() string {
-		serializedBlocks := blocks
-		if serializedBlocks == nil {
-			serializedBlocks = []model.ContentBlock{}
-		}
-		contentMap := map[string]any{"blocks": serializedBlocks}
-		if responseMetadata != nil {
-			contentMap["metadata"] = responseMetadata
-		}
-		blocksJSON, _ := json.Marshal(contentMap)
-		return string(blocksJSON)
+	// Delegate event loop to SessionExecutor
+	cfg := service.RunConfig{
+		Mode:        service.ModeInteractive,
+		ProjectPath: projectPath,
+		BackendName: backendName,
+		SessionID:   sessionID,
+		AgentID:     agentID,
+		ChatRequest: chatReq,
+		FileDir:     fileDir,
+		StreamCh:    streamCh,
+		LocalizeError: func(err error, key string, args map[string]any) string {
+			return T(r, key, args)
+		},
 	}
+	executor := service.NewSessionExecutor(ctx, cfg)
+	runResult := executor.RunWithChannel(eventCh)
 
-	for {
-		select {
-		case event, ok := <-eventCh:
-			if !ok {
-				// Stream ended — finalize below
-				return finalizeStreamRun(ctx, streamCh, projectPath, backendName, sessionID, agentID, chatReq, blocks, responseMetadata, rawOutput, eventCh, wallStart)
-			}
-			// Don't forward "done" here — finalize below
-			if event.Type == "done" {
-				return finalizeStreamRun(ctx, streamCh, projectPath, backendName, sessionID, agentID, chatReq, blocks, responseMetadata, rawOutput, eventCh, wallStart)
-			}
-			// Capture raw output for debugging (not forwarded to SSE)
-			if event.Type == "raw_output" {
-				if rawOutput != "" {
-					rawOutput += "\n"
-				}
-				rawOutput += event.RawOutput
-				continue
-			}
-			// Early capture of external session ID.
-			// Persist immediately so that if the stream is cancelled before
-			// step_finish/turn.completed, the ID is already saved for resumption.
-			// All backends store their CLI-identifiable session ID in external_session_id.
-			if event.Type == "session_capture" {
-				if event.Content != "" {
-					existingExtID := service.GetExternalSessionID(sessionID)
-					if existingExtID == "" || existingExtID == sessionID {
-						if err := service.UpdateExternalSessionID(sessionID, event.Content); err != nil {
-							slog.Error(
-								"failed to save external session ID (early capture)",
-								slog.String("session", sessionID),
-								slog.String("external_id", event.Content),
-								slog.String("err", err.Error()),
-							)
-						} else {
-							slog.Info("early-captured external session ID",
-								slog.String("session", sessionID),
-								slog.String("external_id", event.Content))
-						}
-					}
-				}
-				continue
-			}
-			// Forward to SSE channel
-			if !ai.SendStreamEvent(ctx, streamCh, event) {
-				return finalizeStreamRun(ctx, streamCh, projectPath, backendName, sessionID, agentID, chatReq, blocks, responseMetadata, rawOutput, eventCh, wallStart)
-			}
+	// Finalize: persist to DB, drain channel, save metadata/raw
+	runResult = executor.Finalize(runResult, eventCh)
 
-			// Track time to first content event for perf diagnosis
-			if firstContentTime == 0 && (event.Type == "content" || event.Type == "tool_use" || event.Type == "thinking") {
-				firstContentTime = time.Since(runStart)
-				slog.Info("acp perf: executeStreamRun.first_content_event", "session_id", sessionID, "type", event.Type, "elapsed", firstContentTime)
-			}
+	// Send updated metadata (with wallMs) to SSE before the terminal event
+	ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{Type: "metadata", Meta: runResult.Metadata})
 
-			ai.AccumulateBlock(&blocks, event)
-
-			// Handle resume_split: the AI adapter layer detected ExitPlanMode and
-			// will auto-resume. Finalize current DB message and start a new one.
-			if event.Type == "resume_split" {
-				slog.Info("resume_split received, finalizing current message and starting new one",
-					slog.String("session", sessionID))
-
-				// Finalize current streaming message
-				if msgID, err := service.FinalizeStreamingMessage(projectPath, backendName, sessionID, serializeBlocks()); err != nil {
-					slog.Error("failed to finalize pre-resume message",
-						slog.String("session", sessionID),
-						slog.String("err", err.Error()))
-				} else if msgID > 0 && responseMetadata != nil {
-					_ = service.SaveMetadata(msgID, responseMetadata)
-				}
-
-				// Save raw output if captured so far
-				if rawOutput != "" {
-					if msgID := service.GetStreamingMessageID(sessionID); msgID > 0 {
-						if err := service.SaveRawResponse(sessionID, backendName, msgID, rawOutput); err != nil {
-							slog.Error("failed to save raw response",
-								slog.String("session", sessionID),
-								slog.String("err", err.Error()))
-						}
-					}
-					rawOutput = ""
-				}
-
-				// Reset blocks and metadata for the resumed stream
-				blocks = nil
-				responseMetadata = nil
-				eventCount = 0
-				wallStart = time.Now() // Reset wall-clock start for the resumed segment
-
-				// Create new streaming assistant placeholder
-				emptyContent, _ = json.Marshal(map[string]any{"blocks": []any{}})
-				if _, err := service.AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, ""); err != nil {
-					slog.Error("failed to create resume streaming message",
-						slog.String("session", sessionID),
-						slog.String("err", err.Error()))
-					return streamRunResult{err: "failed to create resume streaming message"}
-				}
-				continue
-			}
-
-			if event.Type == "metadata" && event.Meta != nil {
-				responseMetadata = event.Meta
-				// Capture external session ID from metadata.
-				// All backends store their CLI-identifiable session ID in external_session_id.
-				// Only update if the current value is the default (ClawBench UUID) or empty,
-				// preserving CLI-assigned IDs that were already captured via session_capture.
-				if event.Meta.SessionID != "" {
-					existingExtID := service.GetExternalSessionID(sessionID)
-					if existingExtID == "" || existingExtID == sessionID {
-						if err := service.UpdateExternalSessionID(sessionID, event.Meta.SessionID); err != nil {
-							slog.Error(
-								"failed to save external session ID",
-								slog.String("session", sessionID),
-								slog.String("external_id", event.Meta.SessionID),
-								slog.String("err", err.Error()),
-							)
-						} else {
-							slog.Info("captured external session ID from metadata",
-								slog.String("session", sessionID),
-								slog.String("external_id", event.Meta.SessionID))
-						}
-					} else {
-						slog.Info("metadata session ID skipped (already captured)",
-							slog.String("session", sessionID),
-							slog.String("existing_external_id", existingExtID),
-							slog.String("new_external_id", event.Meta.SessionID))
-					}
-				}
-			}
-			eventCount++
-			if eventCount%5 == 0 {
-				if err := service.UpdateStreamingMessage(projectPath, backendName, sessionID, serializeBlocks()); err != nil {
-					slog.Error(
-						"failed to update streaming message",
-						slog.String("session", sessionID),
-						slog.String("err", err.Error()),
-					)
-				}
-			}
-		case <-ctx.Done():
-			// Context cancelled (user cancel or disconnect) — exit the event loop promptly.
-			// Without this branch, the goroutine blocks until the next event or 1s ticker.
-			slog.Info("executeStreamRun context cancelled, finalizing stream",
-				slog.String("session", sessionID),
-				slog.String("reason", ctx.Err().Error()))
-			return finalizeStreamRun(ctx, streamCh, projectPath, backendName, sessionID, agentID, chatReq, blocks, responseMetadata, rawOutput, eventCh, wallStart)
-		case <-flushTicker.C:
-			if len(blocks) > 0 {
-				if err := service.UpdateStreamingMessage(projectPath, backendName, sessionID, serializeBlocks()); err != nil {
-					slog.Error(
-						"failed to update streaming message",
-						slog.String("session", sessionID),
-						slog.String("err", err.Error()),
-					)
-				}
-			}
-		}
-	}
-}
-
-// finalizeStreamRun handles the finalize phase of a stream run: ask-question detection,
-// DB finalization, raw output saving, and determining the result.
-// It does NOT send a terminal SSE event.
-func finalizeStreamRun(
-	ctx context.Context,
-	streamCh chan<- ai.StreamEvent,
-	projectPath, backendName, sessionID, agentID string,
-	chatReq ai.ChatRequest,
-	blocks []model.ContentBlock,
-	responseMetadata *ai.Metadata,
-	rawOutput string,
-	eventCh <-chan ai.StreamEvent,
-	wallStart time.Time,
-) streamRunResult {
-	// Detect <ask-question> in the fully accumulated text blocks and convert to tool_use blocks.
-	// This enables all backends (not just Claude/Codebuddy) to produce interactive question cards.
-	if ai.StringsContainsAnyBlock(blocks, "<ask-question") {
-		slog.Info(
-			"detected ask-question tag(s) in accumulated text blocks",
-			slog.String("session", sessionID),
-		)
-		blocks = ai.ConvertAskQuestionBlocks(blocks)
-	}
-
-	// Remove tool_use blocks for tool names rejected by the CLI ("not found in agent cli").
-	// This covers both AskUserQuestion (when XML tags are used instead) and hallucinated
-	// tool names like "/commit" (model confuses slash commands with tools).
-	blocks = ai.RemoveRejectedToolBlocks(blocks)
-
-	// Merge fragmented thinking blocks produced by ACP backends.
-	// ACP agents interleave AgentThoughtChunk and ToolCall events, causing
-	// many tiny thinking blocks separated by tool_use. Consolidate them.
-	blocks = ai.MergeConsecutiveThinkingBlocks(blocks)
-
-	// Compute wall-clock duration and inject into metadata
-	wallMs := int(time.Since(wallStart).Milliseconds())
-	if responseMetadata == nil {
-		responseMetadata = &ai.Metadata{}
-	}
-	responseMetadata.WallMs = wallMs
-
-	// Inject ACP mode and thinking effort into metadata (if available)
-	if s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID); s.Mode != nil || s.Effort != nil {
-		if s.Mode != nil && s.Mode.CurrentModeID != "" {
-			responseMetadata.Mode = s.Mode.CurrentModeID
-			// Do NOT overwrite the user's mode selection in DB with the agent's
-			// runtime mode switch. The agent may auto-switch modes (e.g. code→ask)
-			// during execution, but that should not persist over the user's choice.
-			// User-selected mode is already persisted at POST time (line ~422-423).
-		}
-		if s.Effort != nil && s.Effort.CurrentID != "" {
-			responseMetadata.ThinkingEffort = s.Effort.CurrentID
-		}
-	}
-	// Inject transport type based on session-level override or agent configuration
-	effectiveTransport := "cli"
-	if t := service.GetSessionTransport(sessionID); t != "" {
-		effectiveTransport = t
-	} else if agent, ok := model.Agents[agentID]; ok && agent.SupportsACP() {
-		effectiveTransport = "acp-stdio"
-	}
-	responseMetadata.Transport = effectiveTransport
-
-	// Always store our own model selection (not the AI backend's reported model).
-	// The backend may report a different model or none at all; we want consistency.
-	if sessionModel := service.GetSessionModel(sessionID); sessionModel != "" {
-		responseMetadata.Model = sessionModel
-	}
-
-	// Determine cancellation reason
-	cancelReason := service.GetAndClearCancelReason(sessionID)
-
-	// Ensure responseMetadata exists — even for cancelled/empty responses,
-	// we want to persist whatever info we have (wallMs, mode, transport, etc.)
-	if responseMetadata == nil {
-		responseMetadata = &ai.Metadata{}
-	}
-
-	// Serialize blocks + metadata as JSON for database storage
-	var content string
-	if len(blocks) == 0 {
-		// Auto-infer reason for empty response
-		var errMsg string
-		var reason string
-		switch {
-		case cancelReason == "user":
-			errMsg, reason = "User cancelled", ai.ReasonUserCancel
-		case ctx.Err() == context.Canceled:
-			errMsg, reason = "AI response cancelled", ai.ReasonContextCancel
-		case ctx.Err() == context.DeadlineExceeded:
-			errMsg, reason = "AI response timed out (30 min)", ai.ReasonTimeout
-		default:
-			errMsg, reason = "AI returned no content", ai.ReasonEmpty
-		}
-		blocks = append(blocks, model.ContentBlock{Type: "warning", Text: errMsg, Reason: reason})
-		contentMap := map[string]any{"blocks": blocks, "metadata": responseMetadata}
-		if cancelReason == "user" || ctx.Err() == context.Canceled {
-			contentMap["cancelled"] = true
-		}
-		blocksJSON, _ := json.Marshal(contentMap)
-		content = string(blocksJSON)
-	} else {
-		contentMap := map[string]any{"blocks": blocks, "metadata": responseMetadata}
-		// When there are blocks but the stream was interrupted, add a warning and mark cancelled
-		if cancelReason == "user" {
-			contentMap["cancelled"] = true
-		} else if ctx.Err() == context.Canceled {
-			contentMap["cancelled"] = true
-		} else if ctx.Err() == context.DeadlineExceeded {
-			blocks = append(blocks, model.ContentBlock{Type: "warning", Text: "AI response timed out (30 min)", Reason: ai.ReasonTimeout})
-		}
-		contentMap["blocks"] = blocks
-		blocksJSON, _ := json.Marshal(contentMap)
-		content = string(blocksJSON)
-	}
-	msgID, err := service.FinalizeStreamingMessage(projectPath, backendName, sessionID, content)
-	if err != nil {
-		slog.Error(
-			"failed to finalize streaming message",
-			slog.String("session", sessionID),
-			slog.String("err", err.Error()),
-		)
-	}
-
-	// Diagnostic: check if external_session_id was updated during this stream.
-	// For codebuddy/claude/qoder, extID always equals sessionID (ClawBench UUID) — that's normal.
-	// For opencode/codex/deepseek/pi, extID should differ (CLI-assigned ID).
-	// If it still equals sessionID for those backends, the CLI ID was never captured,
-	// which will cause context amnesia on the next resume attempt.
-	if !chatReq.Resume {
-		extID := service.GetExternalSessionID(sessionID)
-		if extID == "" {
-			slog.Warn("session: external_session_id is empty after stream",
-				slog.String("session", sessionID),
-				slog.String("backend", backendName),
-				slog.String("agent", agentID),
-				slog.Bool("cancelled", cancelReason != "" || ctx.Err() != nil))
-		}
-	}
-	// Save metadata to dedicated table for analytical queries
-	if msgID > 0 && responseMetadata != nil {
-		if saveErr := service.SaveMetadata(msgID, responseMetadata); saveErr != nil {
-			slog.Warn("failed to save message metadata", slog.Int64("msg_id", msgID), slog.String("err", saveErr.Error()))
-		}
-	}
-
-	// Drain any remaining events from channel
-	for {
-		select {
-		case event, ok := <-eventCh:
-			if !ok {
-				goto saveRaw
-			}
-			if event.Type == "raw_output" {
-				if rawOutput != "" {
-					rawOutput += "\n"
-				}
-				rawOutput += event.RawOutput
-			}
-		default:
-			goto saveRaw
-		}
-	}
-
-saveRaw:
-	// Save raw AI backend output for debugging/analysis
-	if rawOutput != "" {
-		if msgID := service.GetStreamingMessageID(sessionID); msgID > 0 {
-			if err := service.SaveRawResponse(sessionID, backendName, msgID, rawOutput); err != nil {
-				slog.Error(
-					"failed to save raw response",
-					slog.String("session", sessionID),
-					slog.String("err", err.Error()),
-				)
-			}
-		}
-	}
-
-	// Build result — do NOT send terminal SSE event here
+	// Convert RunResult to streamRunResult
 	result := streamRunResult{}
-
-	if cancelReason == "user" {
-		result.cancelReason = cancelReason
+	if runResult.CancelReason == "user" {
+		result.cancelReason = runResult.CancelReason
 	} else if ctx.Err() == context.Canceled {
 		result.cancelReason = "cancel"
 	} else if ctx.Err() == context.DeadlineExceeded {
 		result.err = "AI response timed out (30 min)"
-	} else if len(blocks) == 0 {
+	} else if runResult.Empty {
 		result.empty = true
 	}
 
-	slog.Info(
-		"ai stream run done",
+	slog.Info("ai stream run done",
 		slog.String("session", sessionID),
-		slog.Int("blocks", len(blocks)),
-		slog.String("cancel_reason", cancelReason),
-		slog.Int("wall_ms", wallMs),
+		slog.Int("blocks", len(runResult.Blocks)),
+		slog.String("cancel_reason", runResult.CancelReason),
+		slog.Int("wall_ms", runResult.WallMs),
 	)
-
-	// Send updated metadata (with wallMs) to SSE before the terminal event
-	// so the frontend has duration info even for cancelled streams.
-	ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{Type: "metadata", Meta: responseMetadata})
 
 	return result
 }
+
+
 
 // buildChatRequest constructs an ai.ChatRequest from the given parameters.
 // modelOverride, if non-empty, takes precedence over the agent's default model.
