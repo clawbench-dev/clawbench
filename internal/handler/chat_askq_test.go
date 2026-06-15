@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/model"
 )
 
@@ -12,7 +13,7 @@ func TestConvertAskQuestionBlocks_JSONFormat(t *testing.T) {
 		{Type: "text", Text: "Here is my analysis.\n\n<ask-question>\n{\"questions\":[{\"header\":\"Approach\",\"multiSelect\":false,\"question\":\"Which approach?\",\"options\":[{\"label\":\"Option A\",\"description\":\"Fast\"},{\"label\":\"Option B\",\"description\":\"Safe\"}]}]}\n</ask-question>"},
 	}
 
-	result := convertAskQuestionBlocks(blocks)
+	result := ai.ConvertAskQuestionBlocks(blocks)
 
 	askQCount := 0
 	textHasAskTag := false
@@ -56,7 +57,7 @@ func TestConvertAskQuestionBlocks_JSONFormat_MultipleQuestions(t *testing.T) {
 		{Type: "text", Text: "<ask-question>\n{\"questions\":[{\"header\":\"Q1\",\"multiSelect\":false,\"question\":\"First?\",\"options\":[{\"label\":\"A\"}]},{\"header\":\"Q2\",\"multiSelect\":true,\"question\":\"Second?\",\"options\":[{\"label\":\"B\"},{\"label\":\"C\"}]}]}\n</ask-question>"},
 	}
 
-	result := convertAskQuestionBlocks(blocks)
+	result := ai.ConvertAskQuestionBlocks(blocks)
 
 	for _, b := range result {
 		if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
@@ -73,132 +74,6 @@ func TestConvertAskQuestionBlocks_JSONFormat_MultipleQuestions(t *testing.T) {
 	t.Error("expected to find an AskUserQuestion tool_use block")
 }
 
-func TestParseAskQuestionJSON(t *testing.T) {
-	tests := []struct {
-		name    string
-		input   string
-		wantOK  bool
-		wantLen int
-	}{
-		{
-			name:    "valid JSON with single question",
-			input:   `{"questions":[{"header":"Pick","multiSelect":false,"question":"Which?","options":[{"label":"A","description":"Fast"}]}]}`,
-			wantOK:  true,
-			wantLen: 1,
-		},
-		{
-			name:    "valid JSON with multiple questions",
-			input:   `{"questions":[{"header":"Q1","question":"First?","options":[{"label":"A"}]},{"header":"Q2","question":"Second?","options":[{"label":"B"}]}]}`,
-			wantOK:  true,
-			wantLen: 2,
-		},
-		{
-			name:    "invalid JSON",
-			input:   `{not valid json}`,
-			wantOK:  false,
-			wantLen: 0,
-		},
-		{
-			name:    "JSON without questions",
-			input:   `{"other":"data"}`,
-			wantOK:  false,
-			wantLen: 0,
-		},
-		{
-			name:    "JSON with empty questions",
-			input:   `{"questions":[]}`,
-			wantOK:  false,
-			wantLen: 0,
-		},
-		{
-			name:    "JSON question without options",
-			input:   `{"questions":[{"question":"Q?","options":[]}]}`,
-			wantOK:  false,
-			wantLen: 0,
-		},
-		{
-			name:    "JSON question without question text",
-			input:   `{"questions":[{"options":[{"label":"A"}]}]}`,
-			wantOK:  false,
-			wantLen: 0,
-		},
-		{
-			name:    "JSON option without label skipped",
-			input:   `{"questions":[{"question":"Q?","options":[{"description":"no label"}]}]}`,
-			wantOK:  false,
-			wantLen: 0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := parseAskQuestionJSON(tt.input)
-			if tt.wantOK {
-				if result == nil {
-					t.Error("expected non-nil result")
-					return
-				}
-				questions, ok := result["questions"].([]map[string]any)
-				if !ok {
-					t.Error("questions is not []map[string]any")
-					return
-				}
-				if len(questions) != tt.wantLen {
-					t.Errorf("expected %d questions, got %d", tt.wantLen, len(questions))
-				}
-			} else if result != nil {
-				t.Errorf("expected nil result, got %v", result)
-			}
-		})
-	}
-}
-
-func TestExtractXMLCandidate_JSON(t *testing.T) {
-	tests := []struct {
-		name   string
-		raw    string
-		wantOK bool
-	}{
-		{
-			name:   "valid JSON with questions",
-			raw:    `{"questions":[{"question":"Which?","options":[{"label":"A"}]}]}`,
-			wantOK: true,
-		},
-		{
-			name:   "JSON without questions key",
-			raw:    `{"other":"data"}`,
-			wantOK: false,
-		},
-		{
-			name:   "JSON with empty questions array",
-			raw:    `{"questions":[]}`,
-			wantOK: false,
-		},
-		{
-			name:   "invalid JSON",
-			raw:    `{not json}`,
-			wantOK: false,
-		},
-		{
-			name:   "JSON question without options",
-			raw:    `{"questions":[{"question":"Q?"}]}`,
-			wantOK: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := extractXMLCandidate(tt.raw)
-			if tt.wantOK && got == "" {
-				t.Error("extractXMLCandidate() returned empty, expected valid content")
-			}
-			if !tt.wantOK && got != "" {
-				t.Errorf("extractXMLCandidate() = %q, expected empty string", got)
-			}
-		})
-	}
-}
-
 func TestConvertAskQuestionBlocks_WrongCloseTag_StripsTagFromText(t *testing.T) {
 	// Regression test: When Strategy 2 (wrong-close regex) matches a non-standard
 	// closing tag instead of the standard </ask-question>, the <ask-question> content
@@ -207,7 +82,7 @@ func TestConvertAskQuestionBlocks_WrongCloseTag_StripsTagFromText(t *testing.T) 
 		{Type: "text", Text: "Here is my analysis.\n\n---\n\n<ask-question>\n<item><header>Pick</header><multi-select>false</multi-select><question>Which one?</question><option><label>A</label><description>Option A</description></option></item>\n</ask-question>"},
 	}
 
-	result := convertAskQuestionBlocks(blocks)
+	result := ai.ConvertAskQuestionBlocks(blocks)
 
 	askQCount := 0
 	textHasAskTag := false
@@ -234,7 +109,7 @@ func TestConvertAskQuestionBlocks_IDUsesUUID(t *testing.T) {
 		{Type: "text", Text: "<ask-question>\n<item><header>Pick</header><multi-select>false</multi-select><question>Which one?</question><option><label>A</label><description>Option A</description></option></item>\n</ask-question>"},
 	}
 
-	result := convertAskQuestionBlocks(blocks)
+	result := ai.ConvertAskQuestionBlocks(blocks)
 
 	for _, b := range result {
 		if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
@@ -270,7 +145,7 @@ func TestConvertAskQuestionBlocks_IDsAreUnique(t *testing.T) {
 			{Type: "text", Text: "<ask-question>\n<item><header>Pick</header><multi-select>false</multi-select><question>Which one?</question><option><label>A</label><description>Option A</description></option></item>\n</ask-question>"},
 		}
 
-		result := convertAskQuestionBlocks(blocks)
+		result := ai.ConvertAskQuestionBlocks(blocks)
 		for _, b := range result {
 			if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
 				if ids[b.ID] {

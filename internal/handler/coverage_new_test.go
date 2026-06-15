@@ -264,7 +264,7 @@ func TestStringsContainsAnyBlock(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := stringsContainsAnyBlock(tt.blocks, tt.substr)
+			got := ai.StringsContainsAnyBlock(tt.blocks, tt.substr)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -279,7 +279,7 @@ func TestSendEvent_ChannelHasCapacity(t *testing.T) {
 	ctx := context.Background()
 
 	event := ai.StreamEvent{Type: "content", Content: "hello"}
-	result := sendEvent(ctx, ch, event)
+	result := ai.SendStreamEvent(ctx, ch, event)
 
 	assert.True(t, result)
 	select {
@@ -297,7 +297,7 @@ func TestSendEvent_ChannelFull_DropsEvent(t *testing.T) {
 
 	ctx := context.Background()
 	event := ai.StreamEvent{Type: "content", Content: "dropped"}
-	result := sendEvent(ctx, ch, event)
+	result := ai.SendStreamEvent(ctx, ch, event)
 
 	// Should return true (event dropped, not a context cancellation)
 	assert.True(t, result)
@@ -312,7 +312,7 @@ func TestSendEvent_ContextCancelled(t *testing.T) {
 	cancel()
 
 	event := ai.StreamEvent{Type: "content", Content: "hello"}
-	_ = sendEvent(ctx, ch, event)
+	_ = ai.SendStreamEvent(ctx, ch, event)
 
 	// With an unbuffered channel and cancelled context, either ctx.Done() or default
 	// could be selected. Both indicate the event was not sent to the channel.
@@ -325,7 +325,7 @@ func TestSendEvent_UnbufferedChannel_NoReader(t *testing.T) {
 	ctx := context.Background()
 
 	event := ai.StreamEvent{Type: "content", Content: "dropped"}
-	result := sendEvent(ctx, ch, event)
+	result := ai.SendStreamEvent(ctx, ch, event)
 
 	// Should return true (event dropped via default case)
 	assert.True(t, result)
@@ -338,7 +338,7 @@ func TestSendEvent_UnbufferedChannel_NoReader(t *testing.T) {
 func TestSendFinalEvent_ChannelHasCapacity(t *testing.T) {
 	ch := make(chan ai.StreamEvent, 1)
 	event := ai.StreamEvent{Type: "done"}
-	sendFinalEvent(ch, event)
+	ai.SendFinalStreamEvent(ch, event)
 
 	select {
 	case e := <-ch:
@@ -355,7 +355,7 @@ func TestSendFinalEvent_ChannelFull_DropsWithoutBlocking(t *testing.T) {
 	// Should not block even though channel is full
 	done := make(chan struct{})
 	go func() {
-		sendFinalEvent(ch, ai.StreamEvent{Type: "done"})
+		ai.SendFinalStreamEvent(ch, ai.StreamEvent{Type: "done"})
 		close(done)
 	}()
 
