@@ -60,7 +60,7 @@ export function useTerminalTabs(
       fontSize: opts.fontSize.value,
       fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
       cursorBlink: true,
-      convertEol: true,
+      convertEol: false,
       scrollback: 5000,
       rightClickSelectsWord: true,
     })
