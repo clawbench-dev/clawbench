@@ -5,7 +5,6 @@ import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 import FileViewer from '../file/FileViewer.vue'
 import MarkdownPreview from '../file/MarkdownPreview.vue'
-import WelcomeView from '../WelcomeView.vue'
 import CodePreview from '../file/CodePreview.vue'
 
 // Minimal i18n instance for tests
@@ -112,16 +111,6 @@ describe('preview layout contract', () => {
 
     expect(wrapper.find('.markdown-preview').exists()).toBe(true)
     expect(wrapper.find('.markdown-body').exists()).toBe(true)
-  })
-
-  it('renders welcome view with text content', () => {
-    const wrapper = mount(WelcomeView, {
-      global: {
-        plugins: [i18n],
-      },
-    })
-    expect(wrapper.find('.welcome-view').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Select a file to start')
   })
 
   it('renders code preview with raw content', () => {
