@@ -669,10 +669,6 @@ async function handleSetupComplete() {
         if (e.detail.field !== undefined) sortField.value = e.detail.field
         if (e.detail.dir !== undefined) sortDir.value = e.detail.dir
     })
-    window.addEventListener('clawbench-sort-change', (e) => {
-        if (e.detail.field !== undefined) sortField.value = e.detail.field
-        if (e.detail.dir !== undefined) sortDir.value = e.detail.dir
-    })
     loadTasks()
     loadConfig()
 
@@ -1081,6 +1077,10 @@ onMounted(async () => {
     })
     window.addEventListener('clawbench-showhidden-change', (e) => {
         showHidden.value = e.detail
+    })
+    window.addEventListener('clawbench-sort-change', (e) => {
+        if (e.detail.field !== undefined) sortField.value = e.detail.field
+        if (e.detail.dir !== undefined) sortDir.value = e.detail.dir
     })
     // Load project first so the backend sets the clawbench_project cookie.
     // Without this, subsequent chat/session API calls fail with NoProjectSelected

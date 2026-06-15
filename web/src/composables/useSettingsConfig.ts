@@ -142,6 +142,12 @@ const legacyKeys: Record<string, {
   sortField: {
     sideEffect(value: string | null) {
       window.dispatchEvent(new CustomEvent('clawbench-sort-change', { detail: { field: value } }))
+      // Reset sortDir when sort is cleared
+      if (value === null && localConfig.sortDir !== 'asc') {
+        localConfig.sortDir = 'asc'
+        try { localStorage.setItem(LOCAL_PREFIX + 'sortDir', JSON.stringify('asc')) } catch { /* ignore */ }
+        window.dispatchEvent(new CustomEvent('clawbench-sort-change', { detail: { dir: 'asc' } }))
+      }
     },
   },
   sortDir: {
