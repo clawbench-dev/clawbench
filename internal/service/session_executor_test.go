@@ -1144,6 +1144,279 @@ func TestSessionExecutor_Finalize_EmptyBlocks_ContainsCancelledField(t *testing.
 	}
 }
 
+// --- Integration: simulate scheduler executeTask SessionExecutor delegation ---
+// These tests exercise the code path that executeTask (scheduler.go:691-740)
+// delegates to: creating a streaming placeholder message, constructing
+// SessionExecutor with ModeScheduled, calling RunWithChannel, and
+// post-processing the RunResult (cancelled / no-terminal / completed + Finalize).
+
+func TestSchedulerExecuteTask_CompletedWithTerminalEvent(t *testing.T) {
+	// Simulate the happy path: executeTask creates a streaming placeholder,
+	// creates SessionExecutor(ModeScheduled), calls RunWithChannel with a
+	// channel that delivers a "done" terminal event, then calls Finalize.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+
+	// Step 1: Create streaming placeholder message (same as executeTask line 691-692)
+	emptyContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{}})
+	msgID, err := AddChatMessage("/test", "test", sid, "assistant", string(emptyContent), nil, true, "")
+	if err != nil {
+		t.Fatalf("failed to create streaming placeholder: %v", err)
+	}
+	if msgID == 0 {
+		t.Fatal("expected non-zero msgID for streaming placeholder")
+	}
+
+	// Step 2: Build event channel with content + terminal event
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "scheduled task output"},
+		{Type: "metadata", Meta: &ai.Metadata{InputTokens: 10, OutputTokens: 20}},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events)+1)
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	// Step 3: Create SessionExecutor with ModeScheduled (same as executeTask line 696-706)
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "run task", ScheduledExecution: true},
+		TaskID:      1,
+		ExecutionID: 1,
+		TriggerType: "auto",
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Step 4: Call RunWithChannel (same as executeTask line 707)
+	runResult := executor.RunWithChannel(ch)
+
+	// Step 5: Verify the result before post-processing
+	if !runResult.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true for completed execution")
+	}
+	if runResult.CancelReason != "" {
+		t.Fatalf("expected empty CancelReason in scheduled mode, got %q", runResult.CancelReason)
+	}
+
+	// Step 6: Call Finalize (same as executeTask line 740)
+	runResult = executor.Finalize(runResult, nil)
+
+	if runResult.MsgID == 0 {
+		t.Fatal("expected non-zero MsgID after Finalize")
+	}
+	if len(runResult.Blocks) == 0 {
+		t.Fatal("expected at least one block after Finalize")
+	}
+	if runResult.Metadata == nil {
+		t.Fatal("expected Metadata after Finalize")
+	}
+	if runResult.Metadata.InputTokens != 10 {
+		t.Fatalf("expected InputTokens=10, got %d", runResult.Metadata.InputTokens)
+	}
+}
+
+func TestSchedulerExecuteTask_ChannelCloseNoTerminal(t *testing.T) {
+	// Simulate CLI process crash: channel closes without "done"/"error".
+	// executeTask should detect !ReceivedTerminal and mark as failed (line 726-736).
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+
+	// Create streaming placeholder
+	emptyContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{}})
+	AddChatMessage("/test", "test", sid, "assistant", string(emptyContent), nil, true, "")
+
+	// Channel closes without terminal event (CLI crash)
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "partial output before crash"},
+	}
+	ch := make(chan ai.StreamEvent, len(events)+1)
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "run task", ScheduledExecution: true},
+		TaskID:      1,
+		ExecutionID: 1,
+		TriggerType: "auto",
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+	runResult := executor.RunWithChannel(ch)
+
+	// executeTask checks: if !runResult.ReceivedTerminal → mark failed
+	if runResult.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=false when channel closes without terminal event")
+	}
+
+	// In real executeTask, this would call UpdateExecutionStatus("failed")
+	// and UpdateTaskStats(task). Here we verify the flag is correct.
+}
+
+func TestSchedulerExecuteTask_ContextCancelled(t *testing.T) {
+	// Simulate context cancellation during execution.
+	// executeTask checks ctx.Err() == context.Canceled and marks as cancelled (line 710-720).
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+
+	// Create streaming placeholder
+	emptyContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{}})
+	AddChatMessage("/test", "test", sid, "assistant", string(emptyContent), nil, true, "")
+
+	// Create a channel that blocks (simulates long-running stream)
+	events := make(chan ai.StreamEvent, 10)
+	events <- ai.StreamEvent{Type: "content", Content: "start"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "run task", ScheduledExecution: true},
+		TaskID:      1,
+		ExecutionID: 1,
+		TriggerType: "auto",
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Cancel context after a short delay
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+
+	runResult := executor.RunWithChannel(events)
+
+	// executeTask checks: if ctx.Err() == context.Canceled → mark cancelled
+	if ctx.Err() != context.Canceled {
+		t.Fatalf("expected context.Canceled, got %v", ctx.Err())
+	}
+	if runResult.ReceivedTerminal {
+		t.Fatal("should not have ReceivedTerminal when context cancelled")
+	}
+}
+
+func TestSchedulerExecuteTask_FinalizeWithStreamingPlaceholder(t *testing.T) {
+	// Test the full flow: AddChatMessage(streaming=true) → RunWithChannel → Finalize
+	// Verify that FinalizeStreamingMessage correctly updates the placeholder.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+
+	// Create streaming placeholder (same as executeTask line 691-692)
+	emptyContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{}})
+	_, err := AddChatMessage("/test", "test", sid, "assistant", string(emptyContent), nil, true, "")
+	if err != nil {
+		t.Fatalf("failed to create streaming placeholder: %v", err)
+	}
+
+	// Run executor with content + terminal event
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "task result"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events)+1)
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "run task", ScheduledExecution: true},
+		TaskID:      1,
+		ExecutionID: 1,
+		TriggerType: "manual",
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+	runResult := executor.RunWithChannel(ch)
+	_ = executor.Finalize(runResult, nil)
+
+	// Verify the streaming message was finalized (streaming=0)
+	var streaming int
+	err = DB.QueryRow(
+		"SELECT streaming FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1",
+		sid,
+	).Scan(&streaming)
+	if err != nil {
+		t.Fatalf("failed to query message: %v", err)
+	}
+	if streaming != 0 {
+		t.Fatalf("expected streaming=0 after Finalize, got %d", streaming)
+	}
+
+	// Verify content contains our block
+	var content string
+	err = DB.QueryRow(
+		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1",
+		sid,
+	).Scan(&content)
+	if err != nil {
+		t.Fatalf("failed to query content: %v", err)
+	}
+	if !contains(content, "task result") {
+		t.Fatalf("expected content to contain 'task result', got: %s", content)
+	}
+}
+
+func TestSchedulerExecuteTask_RunConfigScheduledFields(t *testing.T) {
+	// Verify that all scheduled-mode RunConfig fields are correctly stored
+	// and accessible during execution (TaskID, ExecutionID, TriggerType).
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/sched-proj",
+		BackendName: "codebuddy",
+		SessionID:   "sched-sess-1",
+		AgentID:     "codebuddy",
+		ChatRequest: ai.ChatRequest{Prompt: "check builds", ScheduledExecution: true},
+		TaskID:      42,
+		ExecutionID: 7,
+		TriggerType: "manual",
+	}
+
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	if executor.cfg.Mode != ModeScheduled {
+		t.Fatal("expected ModeScheduled")
+	}
+	if executor.cfg.TaskID != 42 {
+		t.Fatalf("expected TaskID=42, got %d", executor.cfg.TaskID)
+	}
+	if executor.cfg.ExecutionID != 7 {
+		t.Fatalf("expected ExecutionID=7, got %d", executor.cfg.ExecutionID)
+	}
+	if executor.cfg.TriggerType != "manual" {
+		t.Fatalf("expected TriggerType='manual', got %q", executor.cfg.TriggerType)
+	}
+	if !executor.cfg.ChatRequest.ScheduledExecution {
+		t.Fatal("expected ScheduledExecution=true")
+	}
+	if executor.cfg.StreamCh != nil {
+		t.Fatal("expected nil StreamCh for scheduled mode")
+	}
+	if executor.cfg.LocalizeError != nil {
+		t.Fatal("expected nil LocalizeError for scheduled mode")
+	}
+}
+
 // --- DB test helpers for session_executor_test.go ---
 
 const testSchema = `
@@ -1204,6 +1477,35 @@ CREATE TABLE IF NOT EXISTS ai_raw_responses (
 );
 CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_path, backend, session_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_project_backend ON chat_sessions(project_path, backend);
+CREATE TABLE IF NOT EXISTS scheduled_tasks (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	project_path TEXT NOT NULL,
+	name TEXT NOT NULL,
+	cron_expr TEXT NOT NULL,
+	agent_id TEXT NOT NULL,
+	prompt TEXT NOT NULL,
+	session_id TEXT,
+	status TEXT NOT NULL DEFAULT 'active',
+	repeat_mode TEXT NOT NULL DEFAULT 'unlimited',
+	max_runs INTEGER DEFAULT 0,
+	last_run_at DATETIME,
+	next_run_at DATETIME,
+	run_count INTEGER DEFAULT 0,
+	last_read_at DATETIME,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS task_executions (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	task_id INTEGER NOT NULL,
+	session_id TEXT NOT NULL,
+	trigger_type TEXT NOT NULL DEFAULT 'auto',
+	status TEXT NOT NULL DEFAULT 'running',
+	read_at DATETIME,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_executions_task ON task_executions(task_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_executions_session ON task_executions(session_id);
 `
 
 func setupExecutorTestDB(t *testing.T) {
@@ -1251,5 +1553,125 @@ func helperCreateStreamingMessage(t *testing.T, sessionID string) {
 	)
 	if err != nil {
 		t.Fatalf("failed to create streaming message: %v", err)
+	}
+}
+
+// --- Scheduler delegation pattern tests ---
+// These tests verify the SessionExecutor usage pattern from scheduler.executeTask,
+// covering the code path: create placeholder message → RunWithChannel → check cancel/crash → Finalize.
+
+func TestSessionExecutor_SchedulerDelegation_NormalCompletion(t *testing.T) {
+	// Simulate the scheduler.executeTask flow: create placeholder, run events, finalize.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	// Step 1: Create streaming placeholder (same as scheduler.executeTask does)
+	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
+	_, _ = AddChatMessage("/test", "test", sid, "assistant", string(emptyContent), nil, true, "")
+
+	// Step 2: Create executor in scheduled mode (same as scheduler.executeTask)
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "scheduled task prompt", ScheduledExecution: true},
+		TaskID:      42,
+		ExecutionID: 7,
+		TriggerType: "auto",
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	// Step 3: Create event channel with normal completion (same as backend.ExecuteStream returns)
+	events := []ai.StreamEvent{
+		{Type: "text", Content: "task output"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	// Step 4: Run event loop (same as executor.RunWithChannel(eventCh))
+	runResult := executor.RunWithChannel(ch)
+
+	// Step 5: Verify not cancelled, received terminal
+	if runResult.ReceivedTerminal != true {
+		t.Fatal("expected ReceivedTerminal=true for normal completion")
+	}
+
+	// Step 6: Finalize (same as executor.Finalize(runResult, nil))
+	finalized := executor.Finalize(runResult, nil)
+	if len(finalized.Blocks) == 0 {
+		t.Fatal("expected blocks after finalization")
+	}
+}
+
+func TestSessionExecutor_SchedulerDelegation_CancelledContext(t *testing.T) {
+	// Simulate scheduler.executeTask with cancelled context.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
+	_, _ = AddChatMessage("/test", "test", sid, "assistant", string(emptyContent), nil, true, "")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "scheduled task", ScheduledExecution: true},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Channel closed without terminal event (simulates context cancellation during execution)
+	ch := make(chan ai.StreamEvent)
+	close(ch)
+
+	runResult := executor.RunWithChannel(ch)
+
+	// Verify: receivedTerminal=false means CLI process crashed/cancelled
+	if runResult.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=false for cancelled context")
+	}
+	// This matches the scheduler.executeTask check: !runResult.ReceivedTerminal → mark as failed
+}
+
+func TestSessionExecutor_SchedulerDelegation_CrashedProcess(t *testing.T) {
+	// Simulate scheduler.executeTask when CLI process crashes (channel closes without terminal event).
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
+	_, _ = AddChatMessage("/test", "test", sid, "assistant", string(emptyContent), nil, true, "")
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "scheduled task", ScheduledExecution: true},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	// Channel closes without done/error event (simulates CLI process crash)
+	ch := make(chan ai.StreamEvent)
+	close(ch)
+
+	runResult := executor.RunWithChannel(ch)
+
+	// Verify: !ReceivedTerminal means crash → scheduler marks as failed
+	if runResult.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=false for crashed process")
 	}
 }

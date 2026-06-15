@@ -688,8 +688,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 
 	// Create streaming placeholder message in DB (so SessionExecutor.Finalize
 	// can update it via FinalizeStreamingMessage, just like interactive sessions).
-	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
-	_, _ = AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, "")
+	createStreamingPlaceholder(projectPath, backendName, sessionID)
 
 	// Delegate event loop to SessionExecutor (scheduled mode — no SSE forwarding,
 	// no ask-question conversion, no cancel-reason tracking)
@@ -1090,4 +1089,12 @@ func HasUnreadTasks(projectPath string) (bool, error) {
 		).Scan(&count)
 	}
 	return count > 0, err
+}
+
+// createStreamingPlaceholder creates an empty streaming assistant message in the DB
+// so that SessionExecutor.Finalize can update it via FinalizeStreamingMessage,
+// just like interactive sessions.
+func createStreamingPlaceholder(projectPath, backendName, sessionID string) {
+	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
+	_, _ = AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, "")
 }
