@@ -108,6 +108,12 @@ var BackendRegistry = []BackendSpec{
 		ThinkingEffortLevels: []string{"none", "low", "medium", "high", "xhigh", "max"},
 		AcpCommand:           "copilot --acp",
 	},
+	{
+		ID: "mimo", Backend: "mimo", DefaultCmd: "mimo", Name: "MiMo-Code", Icon: "🚀", Specialty: "小米 MiMo 编码助手",
+		DiscoverModelsFunc:   DiscoverMimoModels,
+		ThinkingEffortLevels: []string{"minimal", "high", "max"},
+		AcpCommand:           "mimo acp",
+	},
 }
 
 // CheckCLIExists checks whether a CLI command is available on the system.
@@ -1843,5 +1849,31 @@ func DiscoverCopilotModels() []AgentModel {
 	models := make([]AgentModel, len(copilotDefaultModels))
 	copy(models, copilotDefaultModels)
 	slog.Info("copilot model discovery: using hardcoded defaults", "models", len(models))
+	return models
+}
+
+// --- MiMo-Code model discovery ---
+
+// mimoDefaultModels lists known models for MiMo-Code CLI.
+// MiMo-Code supports multiple providers; these are the most commonly used models.
+var mimoDefaultModels = []AgentModel{
+	{ID: "mimo/mimo-auto", Name: "MiMo Auto", Default: true},
+	{ID: "xiaomi/mimo-v2.5-pro-ultraspeed", Name: "MiMo V2.5 Pro Ultraspeed"},
+	{ID: "xiaomi/mimo-v2.5-pro", Name: "MiMo V2.5 Pro"},
+	{ID: "xiaomi/mimo-v2.5", Name: "MiMo V2.5"},
+	{ID: "xiaomi/mimo-v2-pro", Name: "MiMo V2 Pro"},
+	{ID: "xiaomi/mimo-v2-omni", Name: "MiMo V2 Omni"},
+	{ID: "xiaomi/mimo-v2-flash", Name: "MiMo V2 Flash"},
+}
+
+// DiscoverMimoModels discovers models for MiMo-Code CLI.
+// MiMo-Code is based on OpenCode and uses the same provider/model format.
+func DiscoverMimoModels() []AgentModel {
+	if _, err := exec.LookPath("mimo"); err != nil {
+		return nil
+	}
+	models := make([]AgentModel, len(mimoDefaultModels))
+	copy(models, mimoDefaultModels)
+	slog.Info("mimo model discovery: using hardcoded defaults", "models", len(models))
 	return models
 }

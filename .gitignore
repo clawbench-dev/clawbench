@@ -85,3 +85,5 @@ clawbench-test
 
 # Compiled test binaries
 *.test
+.bin/
+coverage*.out

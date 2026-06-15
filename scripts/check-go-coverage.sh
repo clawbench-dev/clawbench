@@ -99,6 +99,7 @@ exempt_files = {
     "internal/ai/codex_stream.go",           # ExecuteStream spawns CLI subprocesses
     "internal/ai/vecli.go",                  # ExecuteStream spawns CLI subprocesses
     "internal/ai/vecli_stream.go",           # parseVeCLISessionSummary: integration-only
+    "internal/ai/mimo.go",                   # filterLine closure: private CLIBackend field, exercised only via ExecuteStream
     "internal/model/discovery.go",           # model discovery spawns CLI subprocesses and reads external files
     "internal/handler/chat.go",              # executeStreamRun ctx.Done needs mock AI backend + goroutine sync
     "internal/handler/scheduler.go",         # TriggerTask spawns CLI subprocesses in goroutine; success path untestable in unit
