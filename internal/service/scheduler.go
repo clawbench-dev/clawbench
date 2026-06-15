@@ -576,6 +576,14 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		return
 	}
 
+	// Mark session as running so ACP idle sweep does not close the connection
+	// while the scheduled task is still executing. Without this, the 5-minute
+	// idle timeout kills the ACP agent process mid-task (see log: "acp: idle
+	// sweep closing connection" after ~5m, causing "peer disconnected").
+	// skipEvent=true because the scheduler emits its own task events.
+	SetSessionRunning(sessionID, true, true)
+	defer SetSessionRunning(sessionID, false, true)
+
 	slog.Info(
 		"executing scheduled task",
 		slog.Int64("task_id", task.ID),
