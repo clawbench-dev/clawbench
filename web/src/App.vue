@@ -175,6 +175,9 @@
             <button class="dock-btn" :class="{ active: activeTab === 'browse' }" @click.stop="switchTab('browse')" :title="t('nav.fileManager')">
               <FolderOpen />
             </button>
+            <button class="dock-btn" :class="{ active: activeTab === 'history' }" @click.stop="switchTab('history')" :title="t('git.history.projectHistory')">
+              <GitBranch />
+            </button>
             <div class="dock-btn-wrap">
               <button class="dock-btn" :class="{ active: activeTab === dockSlot4Tab, 'has-unread': dockSlot4Tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks', 'just-completed': dockSlot4Tab === 'tasks' && store.state.taskJustCompleted && activeTab !== 'tasks', 'has-running': dockSlot4Tab === 'tasks' && store.state.taskRunning && activeTab !== 'tasks' }" @click.stop="handleDockSlot4Click" :title="dockSlot4Title">
                 <component :is="dockSlot4Icon" />
@@ -209,10 +212,6 @@
             <CalendarClock :size="16" />
             <span>{{ t('nav.tasks') }}</span>
             <span v-if="store.state.taskUnreadCount > 0" class="dock-overflow-count">{{ store.state.taskUnreadCount }}</span>
-          </button>
-          <button class="dock-overflow-item" :class="{ active: activeTab === 'history' }" @click.stop="handleOverflowSelect('history')">
-            <GitBranch :size="16" />
-            <span>{{ t('git.history.projectHistory') }}</span>
           </button>
           <button v-if="!isSSHDisabled" class="dock-overflow-item" :class="{ active: activeTab === 'proxy' }" @click.stop="handleOverflowSelect('proxy')">
             <EthernetPort :size="16" />
@@ -855,7 +854,7 @@ function handleDockTerminal() {
 const overflowMenuOpen = ref(false)
 const overflowBtnRef = ref(null)
 const overflowTabs = computed(() => {
-  const tabs = ['tasks', 'history']
+  const tabs = ['tasks']
   if (!isSSHDisabled.value) tabs.push('proxy')
   if (!isTerminalDisabled.value) tabs.push('terminal')
   tabs.push('settings')
@@ -863,7 +862,6 @@ const overflowTabs = computed(() => {
 })
 const overflowTabMeta = {
   tasks:   { icon: CalendarClock, titleKey: 'nav.tasks' },
-  history: { icon: GitBranch, titleKey: 'git.history.projectHistory' },
   proxy:   { icon: EthernetPort, titleKey: 'nav.portForward' },
   terminal:{ icon: TerminalIcon, titleKey: 'terminal.title' },
   settings:{ icon: Settings, titleKey: 'nav.settings' },
