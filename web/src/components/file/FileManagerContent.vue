@@ -451,6 +451,10 @@ function itemPath(name) {
 // ── Multi-select ──
 const { state: multiSelect, enterMultiSelect, exitMultiSelect, toggleSelect } = _createMultiSelect()
 
+defineExpose({
+    multiSelectState: multiSelect,
+})
+
 const isAllSelected = computed(() => {
     if (!multiSelect.active || visibleEntries.value.length === 0) return false
     return visibleEntries.value.every(e => multiSelect.selected.has(itemPath(e.name)))

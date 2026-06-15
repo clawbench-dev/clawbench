@@ -42,6 +42,7 @@
           <TabPanel tabId="browse" :activeTab="activeTab" :noHeader="true">
             <div class="browse-panel">
               <FileManagerContent
+                ref="fileManagerRef"
                 :entries="dirEntries"
                 :current-dir="currentDir"
                 :current-file="currentFile"
@@ -649,6 +650,7 @@ async function handleSetupComplete() {
 
     // Register event listeners that were skipped during wizard (onMounted skipped them)
     window.addEventListener('open-file-manager', handleOpenFileManager)
+    window.addEventListener('open-file-overlay', handleOpenFileOverlay)
     window.addEventListener('navigate-to-commit', handleNavigateToCommit)
     window.addEventListener('quote-sent', playQuoteEmitAnimation)
     window.addEventListener('scroll-to-line', (e) => { scrollToLine(e.detail.line) })
@@ -728,6 +730,7 @@ const tocFile = computed(() => {
 
 // PDF TOC integration
 const fileOverlayRef = ref(null)
+const fileManagerRef = ref(null)
 const pdfOutline = computed(() => fileOverlayRef.value?.pdfOutline || [])
 function handleJumpPdfPage(pageNum) {
     fileOverlayRef.value?.pdfScrollToPage(pageNum)
@@ -775,6 +778,7 @@ async function handleSelectFile(path) {
 }
 
 async function handleBrowseSelectFile(path) {
+    if (fileManagerRef.value?.multiSelectState?.active) return
     const ok = await store.selectFile(path)
     if (ok) {
         fileNav.openFile(path)
@@ -810,6 +814,14 @@ async function handleOverlayOpenFile(path) {
     if (ok) {
         fileNav.openFile(path)
     }
+}
+
+function handleOpenFileOverlay(e) {
+    const { path, lineStart } = e.detail || {}
+    if (!path) return
+    activeTab.value = 'browse'
+    fileNav.openFile(path)
+    if (lineStart) scrollToLine(lineStart)
 }
 
 function onTaskCardClick(taskId) {
@@ -1091,6 +1103,7 @@ onMounted(async () => {
     loadTasks()
     loadConfig()
     window.addEventListener('open-file-manager', handleOpenFileManager)
+    window.addEventListener('open-file-overlay', handleOpenFileOverlay)
     window.addEventListener('navigate-to-commit', handleNavigateToCommit)
     window.addEventListener('quote-sent', playQuoteEmitAnimation)
     window.addEventListener('scroll-to-line', (e) => { scrollToLine(e.detail.line) })
@@ -1241,6 +1254,7 @@ onUnmounted(() => {
     window.removeEventListener('clawbench-foreground', handleForeground)
     destroyGlobalEvents()
     window.removeEventListener('open-file-manager', handleOpenFileManager)
+    window.removeEventListener('open-file-overlay', handleOpenFileOverlay)
     window.removeEventListener('navigate-to-commit', handleNavigateToCommit)
     window.removeEventListener('quote-sent', playQuoteEmitAnimation)
     window.removeEventListener('clawbench-open-session', handleOpenSession)
