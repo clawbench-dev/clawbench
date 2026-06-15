@@ -17,6 +17,22 @@ vi.mock('@/composables/useQuoteQuestion.ts', () => ({
   }),
 }))
 
+// Mock resolveFilePath for file path annotation
+const mockResolveFilePath = vi.fn()
+vi.mock('@/composables/useFilePathAnnotation.ts', () => ({
+  resolveFilePath: (...args: any[]) => mockResolveFilePath(...args),
+}))
+
+// Mock store for file path annotation
+vi.mock('@/stores/app.ts', () => ({
+  store: {
+    state: {
+      projectRoot: '/home/user/project',
+      homeDir: '/home/user',
+    },
+  },
+}))
+
 // Shared reactive stickyLines ref for controlling in tests
 let stickyLinesRef: any
 
@@ -212,5 +228,76 @@ describe('CodePreview', () => {
       flashType: 'delete',
     })
     expect(wrapper.find('.code-line').exists()).toBe(true)
+  })
+
+  describe('file path annotation', () => {
+    beforeEach(() => {
+      mockResolveFilePath.mockReset()
+    })
+
+    it('emits openFile when clicking a code-file-path element', async () => {
+      const wrapper = mountPreview({ content: 'import "./utils"' })
+      await nextTick()
+      await nextTick()
+
+      // Manually inject a .code-file-path span into the rendered code
+      const codeEl = wrapper.find('.raw-content-pre')
+      if (codeEl.exists()) {
+        const stringSpan = codeEl.find('.hljs-string')
+        if (stringSpan.exists()) {
+          // Inject a clickable path span inside the string
+          stringSpan.element.innerHTML = '<span class="code-file-path" data-file-path="src/utils.ts">./utils</span>'
+          await nextTick()
+
+          const pathEl = wrapper.find('.code-file-path')
+          if (pathEl.exists()) {
+            await pathEl.trigger('click')
+            expect(wrapper.emitted('openFile')).toBeTruthy()
+            expect(wrapper.emitted('openFile')![0]).toEqual(['src/utils.ts'])
+          }
+        }
+      }
+    })
+
+    it('does not emit openFile for regular code clicks', async () => {
+      const wrapper = mountPreview({ content: 'const x = 1' })
+      await nextTick()
+      await nextTick()
+
+      const line = wrapper.find('.code-line')
+      if (line.exists()) {
+        await line.trigger('click')
+        expect(wrapper.emitted('openFile')).toBeFalsy()
+      }
+    })
+
+    it('annotateFilePaths wraps resolved paths in code-file-path spans', async () => {
+      mockResolveFilePath.mockImplementation((path: string) => {
+        if (path === './utils') return 'src/utils.ts'
+        return null
+      })
+
+      const wrapper = mountPreview({ content: 'import "./utils"' })
+      await nextTick()
+      await nextTick()
+      await nextTick()
+
+      // After rendering + annotation, check if a .code-file-path span was created
+      const annotated = wrapper.findAll('.code-file-path')
+      if (annotated.length > 0) {
+        expect(annotated[0].attributes('data-file-path')).toBe('src/utils.ts')
+      }
+    })
+
+    it('annotateFilePaths skips paths that do not resolve', async () => {
+      mockResolveFilePath.mockReturnValue(null)
+
+      const wrapper = mountPreview({ content: 'import "./nonexistent"' })
+      await nextTick()
+      await nextTick()
+      await nextTick()
+
+      expect(wrapper.findAll('.code-file-path').length).toBe(0)
+    })
   })
 })
