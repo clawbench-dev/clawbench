@@ -81,23 +81,39 @@ export function useStickyScroll() {
       return a.line - b.line
     })
 
-    // Only keep scopes whose definition line is scrolled out of view (above the container top).
+    // Build sticky lines from enclosing scopes.
+    // Each line sticks when its DOM position reaches the bottom of the already-sticky zone
+    // (containerTop + accTop), not the container top — so multi-level headings stack
+    // immediately as they touch the previous sticky line.
+    // A sticky line also expires when its endLine content reaches the sticky zone bottom,
+    // meaning the scope has ended and the heading is no longer relevant.
     const result = []
     let accTop = 0
     for (let i = 0; i < enclosing.length && result.length < MAX_STICKY; i++) {
       const sym = enclosing[i]
       const defLineEl = lineEls[sym.line - 1]
-      // A line is "scrolled out of view" when its visual top is above the container's top edge
-      if (defLineEl && defLineEl.getBoundingClientRect().top < containerTop - 0.5) {
-        const h = defLineEl.getBoundingClientRect().height
-        result.push({
-          lineNum: sym.line,
-          kind: sym.kind,
-          top: accTop,   // pixel offset from overlay top
-          height: h,     // actual rendered height (supports wrapped lines)
-        })
-        accTop += h
+      if (!defLineEl) continue
+
+      const stickyThreshold = containerTop + accTop
+
+      // Condition A: definition line must be above the sticky zone bottom to stick
+      const defTop = defLineEl.getBoundingClientRect().top
+      if (defTop >= stickyThreshold - 0.5) continue
+
+      // Condition B: if endLine content has reached the sticky zone, scope has expired
+      if (sym.endLine > sym.line) {
+        const endLineEl = lineEls[sym.endLine - 1]
+        if (endLineEl && endLineEl.getBoundingClientRect().top <= stickyThreshold + 0.5) continue
       }
+
+      const h = defLineEl.getBoundingClientRect().height
+      result.push({
+        lineNum: sym.line,
+        kind: sym.kind,
+        top: accTop,   // pixel offset from overlay top
+        height: h,     // actual rendered height (supports wrapped lines)
+      })
+      accTop += h
     }
 
     stickyLines.value = result

@@ -68,7 +68,18 @@ function handleStickyClick(lineNum) {
     if (!lineEls) return
     const el = lineEls[lineNum - 1]
     if (!el) return
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+
+    // Calculate sticky zone height to scroll target below it (avoid occlusion)
+    let stickyHeight = 0
+    for (const s of stickyLines.value) {
+        stickyHeight += s.height
+    }
+
+    const containerTop = codeRef.value.getBoundingClientRect().top
+    const lineTop = el.getBoundingClientRect().top
+    const scrollDelta = lineTop - containerTop - stickyHeight
+    codeRef.value.scrollBy({ top: scrollDelta, behavior: 'smooth' })
+
     // Flash animation
     el.classList.add('line-flash')
     setTimeout(() => el.classList.remove('line-flash'), 1200)

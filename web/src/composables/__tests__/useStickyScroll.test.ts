@@ -187,6 +187,102 @@ describe('useStickyScroll - DOM integration', () => {
     wrapper.unmount()
   })
 
+  it('H2 sticks when reaching sticky H1 bottom, not container top', async () => {
+    // Bug 1 fix: multi-level headings should stick as soon as they touch
+    // the bottom of the already-sticky zone, not the container top.
+    mockFetchCodeSymbols.mockResolvedValue({
+      symbols: [
+        { name: 'Title', kind: 'heading', line: 1, endLine: 20, level: 1 },
+        { name: 'Section A', kind: 'heading', line: 2, endLine: 10, level: 2 },
+      ],
+    })
+
+    const wrapper = await createTestComponent()
+    const lineHeight = 20.8
+
+    // Scroll just enough that line 1 is above containerTop, but line 2
+    // is between containerTop and containerTop + lineHeight (sticky zone bottom).
+    // With containerTop=0, scrollOffset=25:
+    //   line 1 rect.top = 0*20.8 - 25 = -25  (above containerTop → sticky)
+    //   line 2 rect.top = 1*20.8 - 25 = -4.2  (above containerTop but above stickyThreshold=20.8? No: -4.2 < 20.8 → sticky)
+    // With old logic: line 2 at -4.2 < containerTop(0) → sticks (by coincidence also sticky)
+    //
+    // Better scenario: containerTop=0, scrollOffset=15:
+    //   line 1 rect.top = 0 - 15 = -15  (above containerTop → sticky, accTop becomes 20.8)
+    //   line 2 rect.top = 20.8 - 15 = 5.8  (above containerTop? Yes, 5.8 < 0? No!)
+    //   Old logic: 5.8 < 0 is FALSE → not sticky (BUG!)
+    //   New logic: 5.8 < 0 + 20.8 = 20.8 → sticky (CORRECT!)
+    const lineEls = createMockLineEls(20, lineHeight, 15)
+
+    const mockCodeEl = { querySelectorAll: vi.fn().mockReturnValue(lineEls) }
+    const mockEl = createMockScrollEl({
+      querySelector: vi.fn().mockReturnValue(mockCodeEl),
+      getBoundingClientRect: () => ({ top: 0 }),
+    })
+
+    wrapper.vm.initSticky('/tmp/test.md', mockEl)
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    const scrollHandler = mockEl.addEventListener.mock.calls[0][1]
+    scrollHandler()
+    await wrapper.vm.$nextTick()
+
+    // Both H1 (line 1) and H2 (line 2) should be sticky
+    expect(wrapper.vm.stickyLines.length).toBe(2)
+    expect(wrapper.vm.stickyLines[0].lineNum).toBe(1)
+    expect(wrapper.vm.stickyLines[1].lineNum).toBe(2)
+    expect(wrapper.vm.stickyLines[0].top).toBe(0)
+    expect(wrapper.vm.stickyLines[1].top).toBe(20.8)
+
+    wrapper.unmount()
+  })
+
+  it('sticky heading expires when endLine content reaches sticky zone', async () => {
+    // Bug 2 fix: a sticky heading should disappear when its scope ends —
+    // i.e., when its endLine content reaches the bottom of the sticky zone.
+    mockFetchCodeSymbols.mockResolvedValue({
+      symbols: [
+        { name: 'Title', kind: 'heading', line: 1, endLine: 20, level: 1 },
+        { name: 'Section A', kind: 'heading', line: 2, endLine: 5, level: 2 },
+        { name: 'Section B', kind: 'heading', line: 6, endLine: 20, level: 2 },
+      ],
+    })
+
+    const wrapper = await createTestComponent()
+    const lineHeight = 20.8
+
+    // Scroll so that:
+    //   line 1 (H1) rect.top is above containerTop → sticky, accTop = 20.8
+    //   line 2 (H2 Section A) rect.top is above stickyThreshold (20.8) → eligible
+    //   BUT line 5 (endLine of Section A) rect.top is at or below stickyThreshold → scope expired!
+    // containerTop = 0, scrollOffset = 80:
+    //   line 1: 0 - 80 = -80  (sticky, accTop=20.8)
+    //   line 2: 20.8 - 80 = -59.2  (below stickyThreshold 20.8? Yes, -59.2 < 20.8 → passes cond A)
+    //   line 5: 4*20.8 - 80 = 83.2 - 80 = 3.2  (<= stickyThreshold 20.8? Yes → scope expired! Skip H2-A)
+    const lineEls = createMockLineEls(20, lineHeight, 80)
+
+    const mockCodeEl = { querySelectorAll: vi.fn().mockReturnValue(lineEls) }
+    const mockEl = createMockScrollEl({
+      querySelector: vi.fn().mockReturnValue(mockCodeEl),
+      getBoundingClientRect: () => ({ top: 0 }),
+    })
+
+    wrapper.vm.initSticky('/tmp/test.md', mockEl)
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+
+    const scrollHandler = mockEl.addEventListener.mock.calls[0][1]
+    scrollHandler()
+    await wrapper.vm.$nextTick()
+
+    // Only H1 should be sticky; H2 Section A's scope has expired (endLine content in sticky zone)
+    expect(wrapper.vm.stickyLines.length).toBe(1)
+    expect(wrapper.vm.stickyLines[0].lineNum).toBe(1)
+
+    wrapper.unmount()
+  })
+
   it('updates stickyLines with correct top/height when scrolled past scope definitions', async () => {
     mockFetchCodeSymbols.mockResolvedValue({
       symbols: [
@@ -198,9 +294,9 @@ describe('useStickyScroll - DOM integration', () => {
     const wrapper = await createTestComponent()
 
     // 20 lines, scrolled 100px. Container top = 0.
-    // Line 1 rect.top = 0 - 100 = -100 (above container, scrolled out)
-    // Line 3 rect.top = 2*20.8 - 100 = -58.4 (above container, scrolled out)
-    // Line 6 rect.top = 5*20.8 - 100 = 4.0 (first visible line)
+    // Line 1 rect.top = 0 - 100 = -100 (above container, sticky)
+    // Line 3 rect.top = 2*20.8 - 100 = -58.4 (above container + accTop=20.8, sticky)
+    // Line 8 (endLine of helper) rect.top = 7*20.8 - 100 = 45.6 (above stickyThreshold=41.6? No → scope NOT expired)
     const lineEls = createMockLineEls(20, 20.8, 100)
 
     const mockCodeEl = { querySelectorAll: vi.fn().mockReturnValue(lineEls) }
@@ -217,8 +313,7 @@ describe('useStickyScroll - DOM integration', () => {
     scrollHandler()
     await wrapper.vm.$nextTick()
 
-    // Both main (line 1, rect.top=-100 < containerTop=0) and
-    // helper (line 3, rect.top=-58.4 < containerTop=0) should be sticky
+    // Both main (line 1) and helper (line 3) should be sticky
     expect(wrapper.vm.stickyLines.length).toBe(2)
     expect(wrapper.vm.stickyLines[0].top).toBe(0)
     expect(wrapper.vm.stickyLines[0].height).toBe(20.8)

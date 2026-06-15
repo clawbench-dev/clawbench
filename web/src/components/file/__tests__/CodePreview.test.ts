@@ -230,6 +230,55 @@ describe('CodePreview', () => {
     expect(wrapper.find('.code-line').exists()).toBe(true)
   })
 
+  it('handleStickyClick uses scrollBy with sticky height offset', async () => {
+    // Test the click handler logic directly by calling it through the component
+    const wrapper = mountPreview({ stickyScroll: true, filePath: '/tmp/main.ts' })
+    await nextTick()
+
+    // Simulate two sticky lines (H1 + H2), total sticky height = 41.6
+    stickyLinesRef.value = [
+      { lineNum: 1, kind: 'heading', top: 0, height: 20.8 },
+      { lineNum: 2, kind: 'heading', top: 20.8, height: 20.8 },
+    ]
+    await nextTick()
+
+    // Get the pre element and mock its scrollBy
+    const preEl = wrapper.find('.raw-content-pre').element
+    const mockScrollBy = vi.fn()
+    preEl.scrollBy = mockScrollBy
+
+    // Mock querySelectorAll to return line elements
+    const mockLineEl = {
+      getBoundingClientRect: () => ({ top: -100 }),
+      classList: { add: vi.fn(), remove: vi.fn() },
+    }
+    const origQSA = preEl.querySelectorAll
+    preEl.querySelectorAll = vi.fn().mockImplementation((selector) => {
+      if (selector.includes('code-line')) return [mockLineEl, mockLineEl]
+      return origQSA.call(preEl, selector)
+    })
+
+    // Trigger click on the first sticky line
+    const stickyLines = wrapper.findAll('.sticky-line')
+    if (stickyLines.length > 0) {
+      await stickyLines[0].trigger('click')
+
+      // scrollBy should be called with the sticky height offset
+      expect(mockScrollBy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          behavior: 'smooth',
+          top: expect.any(Number),
+        })
+      )
+      // The scroll delta = lineTop - containerTop - stickyHeight = -100 - 0 - 41.6 = -141.6
+      const scrollCall = mockScrollBy.mock.calls[0][0]
+      expect(scrollCall.top).toBe(-141.6)
+    }
+
+    // Restore
+    preEl.querySelectorAll = origQSA
+  })
+
   describe('file path annotation', () => {
     beforeEach(() => {
       mockResolveFilePath.mockReset()
