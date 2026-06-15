@@ -51,8 +51,8 @@ type QueueUpdateData struct {
 
 // SummaryUpdateData is the data payload for "summary_update" events.
 type SummaryUpdateData struct {
-	TargetType  string `json:"targetType"` // "chat_message" or "task_execution"
-	TargetID    int64  `json:"targetID"`   // chat_history.id or task_executions.id
+	TargetType  string `json:"targetType"` // "chat_message" (legacy: "task_execution" may exist from older versions)
+	TargetID    int64  `json:"targetID"`   // chat_history.id
 	Summary     string `json:"summary"`    // empty = too short, non-empty = summary content
 	ProjectPath string `json:"projectPath,omitempty"`
 	SessionID   string `json:"sessionID,omitempty"`
