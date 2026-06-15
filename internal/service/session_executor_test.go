@@ -2683,3 +2683,154 @@ func TestSessionExecutor_CaptureExternalSessionID_ExistingIDMatchesSessionID(t *
 		t.Fatalf("expected external_session_id='real-external-id', got %q", extID)
 	}
 }
+
+func TestSessionExecutor_FlushTickerWithUnbufferedChannel(t *testing.T) {
+	// Test that the 1-second flush ticker fires when the event channel
+	// has no immediate events but blocks are accumulated.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	ch := make(chan ai.StreamEvent) // unbuffered
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Send events with delays in a goroutine to let the ticker fire
+	go func() {
+		ch <- ai.StreamEvent{Type: "content", Content: "block1"} // initial block
+		// Wait for the 1-second ticker to fire
+		time.Sleep(1100 * time.Millisecond)
+		ch <- ai.StreamEvent{Type: "done"} // terminal event
+		close(ch)
+	}()
+
+	result := executor.RunWithChannel(ch)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+}
+
+func TestSessionExecutor_Interactive_SSESendFailureCtxCancelled(t *testing.T) {
+	// Cover lines 174-176: when SendStreamEvent returns false during SSE
+	// forwarding because context is cancelled while the send is in progress.
+	// Strategy: use an unbuffered SSE channel (SendStreamEvent blocks on send)
+	// and cancel context while the event is being processed.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	// Unbuffered SSE channel — SendStreamEvent will try ch<-event which blocks
+	// since no goroutine is reading. With ctx cancelled, it returns false.
+	sseCh := make(chan ai.StreamEvent)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Use unbuffered event channel so we control when events are delivered
+	ch := make(chan ai.StreamEvent)
+
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+		StreamCh:    sseCh,
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// Send a content event — this will enter processEvent and try SSE forwarding
+		ch <- ai.StreamEvent{Type: "content", Content: "test"}
+		// The event has been received by RunWithChannel. Now cancel context
+		// while SendStreamEvent is blocking on the unbuffered SSE channel.
+		cancel()
+	}()
+
+	result := executor.RunWithChannel(ch)
+	_ = result // Just verify no panic or deadlock
+	<-done
+}
+
+func TestSessionExecutor_DrainRawOutput_OpenChannelNoData(t *testing.T) {
+	// Test drainRawOutput with an open channel that has no immediately available events.
+	// The default branch (line 499-500) should fire and return existing rawOutput.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	// Open channel with no data — drainRawOutput's default branch will fire
+	drainCh := make(chan ai.StreamEvent) // open but empty, no close
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "response"}},
+		Metadata:         &ai.Metadata{},
+		RawOutput:        "existing raw",
+	}
+
+	finalized := executor.Finalize(result, drainCh)
+
+	// drainRawOutput should have hit the default branch and returned existing rawOutput
+	if finalized.RawOutput != "existing raw" {
+		t.Fatalf("expected raw output preserved, got: %q", finalized.RawOutput)
+	}
+}
+
+func TestSessionExecutor_Finalize_SaveRawResponseError(t *testing.T) {
+	// Cover line 392: SaveRawResponse error path in Finalize.
+	// Drop the ai_raw_responses table to force an error.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	// Drop the table to force SaveRawResponse to fail
+	_, _ = DB.Exec("DROP TABLE ai_raw_responses")
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "response"}},
+		Metadata:         &ai.Metadata{},
+		RawOutput:        "raw output to save",
+	}
+
+	// Should not panic, just log error
+	finalized := executor.Finalize(result, nil)
+
+	if finalized.MsgID == 0 {
+		t.Fatal("expected non-zero MsgID even when raw save fails")
+	}
+}
