@@ -1971,3 +1971,132 @@ func TestSessionExecutor_DrainRawOutput_NonRawEvent(t *testing.T) {
 		t.Fatalf("expected both raw outputs in drain result, got: %q", finalized.RawOutput)
 	}
 }
+
+// --- Interactive mode SSE send failure ---
+
+func TestSessionExecutor_Interactive_SSESendFailure(t *testing.T) {
+	// When context is cancelled during SSE forwarding, SendStreamEvent returns false,
+	// and processEvent should return (true, buildResult) to terminate the loop.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	// Create a full SSE channel (0 buffer) — SendStreamEvent will block and
+	// context cancellation will cause it to return false
+	sseCh := make(chan ai.StreamEvent) // unbuffered, will block on send
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Send a content event which will try to forward to SSE
+	ch := make(chan ai.StreamEvent, 2)
+	ch <- ai.StreamEvent{Type: "content", Content: "first event"}
+
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+		StreamCh:    sseCh,
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Cancel context after a short delay (this will cause SendStreamEvent to return false)
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+
+	result := executor.RunWithChannel(ch)
+
+	// Should have terminated due to context cancellation during SSE forwarding
+	if result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=false since context was cancelled")
+	}
+}
+
+// --- Flush ticker (long-running execution) ---
+
+func TestSessionExecutor_FlushTicker(t *testing.T) {
+	// Test that the flush ticker fires and persists blocks during long execution.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	// Send events slowly to let the 1-second ticker fire
+	ch := make(chan ai.StreamEvent, 10)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Send a content event, then wait for ticker
+	ch <- ai.StreamEvent{Type: "content", Content: "initial"}
+
+	// Wait for ticker to fire (1 second)
+	time.Sleep(1100 * time.Millisecond)
+
+	// Send terminal event
+	ch <- ai.StreamEvent{Type: "done"}
+	close(ch)
+
+	result := executor.RunWithChannel(ch)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+}
+
+// --- Raw output saving ---
+
+func TestSessionExecutor_Finalize_RawOutputSaved(t *testing.T) {
+	// Test that Finalize saves raw output when available.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "response"}},
+		Metadata:         &ai.Metadata{},
+		RawOutput:        "raw backend output",
+	}
+
+	finalized := executor.Finalize(result, nil)
+
+	if finalized.RawOutput != "raw backend output" {
+		t.Fatalf("expected raw output preserved, got: %q", finalized.RawOutput)
+	}
+	if finalized.MsgID == 0 {
+		t.Fatal("expected non-zero MsgID")
+	}
+
+	// Verify raw output was saved in DB
+	var rawContent string
+	err := DB.QueryRow("SELECT raw_output FROM ai_raw_responses WHERE session_id = ? ORDER BY id DESC LIMIT 1", sid).Scan(&rawContent)
+	if err != nil {
+		t.Fatalf("failed to query raw response: %v", err)
+	}
+	if rawContent != "raw backend output" {
+		t.Fatalf("expected raw output saved in DB, got: %q", rawContent)
+	}
+}

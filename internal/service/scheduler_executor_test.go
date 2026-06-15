@@ -102,7 +102,7 @@ func TestProcessScheduledStreamEvents_NormalCompletion(t *testing.T) {
 	}
 	close(ch)
 
-	completed := processScheduledStreamEvents(context.Background(), ch, cfg, task, executionID)
+	_, completed := processScheduledStreamEvents(context.Background(), ch, cfg, task, executionID)
 
 	if !completed {
 		t.Fatal("expected completed=true for normal completion")
@@ -160,7 +160,7 @@ func TestProcessScheduledStreamEvents_CancelledContext(t *testing.T) {
 	ch := make(chan ai.StreamEvent)
 	close(ch)
 
-	completed := processScheduledStreamEvents(ctx, ch, cfg, task, executionID)
+	_, completed := processScheduledStreamEvents(ctx, ch, cfg, task, executionID)
 
 	if completed {
 		t.Fatal("expected completed=false for cancelled context")
@@ -215,7 +215,7 @@ func TestProcessScheduledStreamEvents_CrashedProcess(t *testing.T) {
 	ch := make(chan ai.StreamEvent)
 	close(ch)
 
-	completed := processScheduledStreamEvents(context.Background(), ch, cfg, task, executionID)
+	_, completed := processScheduledStreamEvents(context.Background(), ch, cfg, task, executionID)
 
 	if completed {
 		t.Fatal("expected completed=false for crashed process")
@@ -278,7 +278,7 @@ func TestProcessScheduledStreamEvents_WithMetadata(t *testing.T) {
 	}
 	close(ch)
 
-	completed := processScheduledStreamEvents(context.Background(), ch, cfg, task, executionID)
+	_, completed := processScheduledStreamEvents(context.Background(), ch, cfg, task, executionID)
 
 	if !completed {
 		t.Fatal("expected completed=true with metadata events")
