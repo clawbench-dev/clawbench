@@ -52,7 +52,7 @@ type Session struct {
 	// The flag is cleared shortly after the first HandleResize() call
 	// (which is when SIGWINCH fires), once the redraw output has been
 	// consumed and discarded by readPTY().
-	suppressOutput     bool
+	suppressOutput      bool
 	suppressSafetyTimer *time.Timer // safety timeout to prevent permanent suppression
 }
 
@@ -358,7 +358,12 @@ func (s *Session) HandleResize(cols, rows uint16) error {
 		Rows: rows,
 	})
 
-	slog.Debug("terminal: resize", slog.String("session", s.id), slog.Uint64("cols", uint64(cols)), slog.Uint64("rows", uint64(rows)), slog.Bool("suppressing", suppressing), slog.String("error", func() string { if err != nil { return err.Error() }; return "none" }()))
+	slog.Debug("terminal: resize", slog.String("session", s.id), slog.Uint64("cols", uint64(cols)), slog.Uint64("rows", uint64(rows)), slog.Bool("suppressing", suppressing), slog.String("error", func() string {
+		if err != nil {
+			return err.Error()
+		}
+		return "none"
+	}()))
 
 	if suppressing {
 		// Cancel the safety timer since HandleResize was called normally

@@ -215,35 +215,57 @@ func extractXMLCandidate(raw string) string {
 	if trimmed == "" {
 		return ""
 	}
-	if strings.Contains(trimmed, "<item>") || strings.Contains(trimmed, "<item ") {
-		if !strings.Contains(trimmed, "<question>") || !strings.Contains(trimmed, "<option>") {
-			return ""
-		}
+	if isValidXMLCandidate(trimmed) {
 		return trimmed
 	}
-	if strings.HasPrefix(trimmed, "{") && strings.Contains(trimmed, `"questions"`) {
-		var data map[string]any
-		if err := json.Unmarshal([]byte(trimmed), &data); err != nil {
-			return ""
-		}
-		questions, ok := data["questions"].([]any)
-		if !ok || len(questions) == 0 {
-			return ""
-		}
-		for _, q := range questions {
-			qm, ok := q.(map[string]any)
-			if !ok {
-				continue
-			}
-			if _, hasQ := qm["question"]; hasQ {
-				if opts, ok := qm["options"].([]any); ok && len(opts) > 0 {
-					return trimmed
-				}
-			}
-		}
-		return ""
+	if candidate := validateJSONCandidate(trimmed); candidate != "" {
+		return candidate
 	}
 	return ""
+}
+
+// isValidXMLCandidate checks if the content has valid XML ask-question structure.
+func isValidXMLCandidate(s string) bool {
+	if !strings.Contains(s, "<item>") && !strings.Contains(s, "<item ") {
+		return false
+	}
+	return strings.Contains(s, "<question>") && strings.Contains(s, "<option>")
+}
+
+// validateJSONCandidate checks if the content is valid JSON with a questions array.
+// Returns the original string if valid, or empty string otherwise.
+func validateJSONCandidate(s string) string {
+	if !strings.HasPrefix(s, "{") || !strings.Contains(s, `"questions"`) {
+		return ""
+	}
+	var data map[string]any
+	if err := json.Unmarshal([]byte(s), &data); err != nil {
+		return ""
+	}
+	questions, ok := data["questions"].([]any)
+	if !ok || len(questions) == 0 {
+		return ""
+	}
+	if hasValidQuestion(questions) {
+		return s
+	}
+	return ""
+}
+
+// hasValidQuestion checks if at least one question has question text and options.
+func hasValidQuestion(questions []any) bool {
+	for _, q := range questions {
+		qm, ok := q.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, hasQ := qm["question"]; hasQ {
+			if opts, ok := qm["options"].([]any); ok && len(opts) > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // parseAskQuestionXML parses XML-format <ask-question> content into the
@@ -334,51 +356,9 @@ func parseAskQuestionJSON(jsonContent string) map[string]any {
 
 	var questions []map[string]any
 	for _, rq := range rawQuestions {
-		item, ok := rq.(map[string]any)
-		if !ok {
-			continue
+		if q := parseJSONQuestionItem(rq); q != nil {
+			questions = append(questions, q)
 		}
-
-		question, _ := item["question"].(string)
-		if question == "" {
-			continue
-		}
-
-		header, _ := item["header"].(string)
-		_, multiSelect := item["multiSelect"].(bool)
-
-		rawOptions, ok := item["options"].([]any)
-		if !ok || len(rawOptions) == 0 {
-			continue
-		}
-
-		var options []map[string]any
-		for _, ro := range rawOptions {
-			opt, ok := ro.(map[string]any)
-			if !ok {
-				continue
-			}
-			label, _ := opt["label"].(string)
-			if label == "" {
-				continue
-			}
-			entry := map[string]any{"label": label}
-			if desc, ok := opt["description"].(string); ok && desc != "" {
-				entry["description"] = desc
-			}
-			options = append(options, entry)
-		}
-
-		if len(options) == 0 {
-			continue
-		}
-
-		questions = append(questions, map[string]any{
-			"header":      header,
-			"multiSelect": multiSelect,
-			"question":    question,
-			"options":     options,
-		})
 	}
 
 	if len(questions) == 0 {
@@ -386,4 +366,58 @@ func parseAskQuestionJSON(jsonContent string) map[string]any {
 	}
 
 	return map[string]any{"questions": questions}
+}
+
+// parseJSONQuestionItem parses a single question item from JSON ask-question content.
+func parseJSONQuestionItem(rq any) map[string]any {
+	item, ok := rq.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	question, _ := item["question"].(string)
+	if question == "" {
+		return nil
+	}
+
+	header, _ := item["header"].(string)
+	_, multiSelect := item["multiSelect"].(bool)
+
+	rawOptions, ok := item["options"].([]any)
+	if !ok || len(rawOptions) == 0 {
+		return nil
+	}
+
+	options := parseJSONOptions(rawOptions)
+	if len(options) == 0 {
+		return nil
+	}
+
+	return map[string]any{
+		"header":      header,
+		"multiSelect": multiSelect,
+		"question":    question,
+		"options":     options,
+	}
+}
+
+// parseJSONOptions parses the options array from a JSON ask-question item.
+func parseJSONOptions(rawOptions []any) []map[string]any {
+	var options []map[string]any
+	for _, ro := range rawOptions {
+		opt, ok := ro.(map[string]any)
+		if !ok {
+			continue
+		}
+		label, _ := opt["label"].(string)
+		if label == "" {
+			continue
+		}
+		entry := map[string]any{"label": label}
+		if desc, ok := opt["description"].(string); ok && desc != "" {
+			entry["description"] = desc
+		}
+		options = append(options, entry)
+	}
+	return options
 }

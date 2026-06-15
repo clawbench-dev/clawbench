@@ -1,4 +1,4 @@
-//nolint:errcheck,gocyclo,gocognit,gosec,goconst,unparam // legacy file, nolint-only approach for diff stability
+//nolint:errcheck,gocyclo,gocognit,gosec,goconst // legacy file, nolint-only approach for diff stability
 package handler
 
 import (
@@ -670,8 +670,6 @@ func executeStreamRun(
 	return result
 }
 
-
-
 // buildChatRequest constructs an ai.ChatRequest from the given parameters.
 // modelOverride, if non-empty, takes precedence over the agent's default model.
 // thinkingEffortOverride, if non-empty, takes precedence over the agent's YAML default.
@@ -849,5 +847,3 @@ func CancelChat(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
-
-
