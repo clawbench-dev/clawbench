@@ -1675,3 +1675,299 @@ func TestSessionExecutor_SchedulerDelegation_CrashedProcess(t *testing.T) {
 		t.Fatal("expected ReceivedTerminal=false for crashed process")
 	}
 }
+
+// --- Interactive mode SSE forwarding ---
+
+func TestSessionExecutor_Interactive_SSEForwarding(t *testing.T) {
+	// Interactive mode with StreamCh should forward events to the channel.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	// Create an SSE channel to capture forwarded events
+	sseCh := make(chan ai.StreamEvent, 10)
+
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "forwarded content"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events)+1)
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+		StreamCh:    sseCh,
+	}
+	ctx := context.Background()
+	executor := NewSessionExecutor(ctx, cfg)
+	result := executor.RunWithChannel(ch)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+
+	// Verify the content event was forwarded to SSE channel
+	select {
+	case evt := <-sseCh:
+		if evt.Type != "content" || evt.Content != "forwarded content" {
+			t.Fatalf("expected forwarded content event, got: %+v", evt)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for SSE forwarded event")
+	}
+}
+
+// --- Incremental persistence (every 5 events) ---
+
+func TestSessionExecutor_IncrementalPersistence(t *testing.T) {
+	// Sending >5 events should trigger flushStreamingMessage.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	// Send 6 content events + metadata + terminal event
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "line1"},
+		{Type: "content", Content: "line2"},
+		{Type: "content", Content: "line3"},
+		{Type: "content", Content: "line4"},
+		{Type: "content", Content: "line5"},
+		{Type: "content", Content: "line6"}, // triggers flushStreamingMessage (eventCount=6, 6%5==0 is wrong... 5%5==0 is correct)
+		{Type: "metadata", Meta: &ai.Metadata{InputTokens: 10}},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events)+1)
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+	result := executor.RunWithChannel(ch)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+	// The flushStreamingMessage should have been called at eventCount=5
+	// Verify the streaming message was updated in DB
+	var streaming int
+	err := DB.QueryRow("SELECT streaming FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", sid).Scan(&streaming)
+	if err != nil {
+		t.Fatalf("failed to query streaming status: %v", err)
+	}
+	// Should still be streaming=1 since we haven't called Finalize yet
+	if streaming != 1 {
+		t.Fatalf("expected streaming=1 during incremental persistence, got %d", streaming)
+	}
+}
+
+// --- resume_split event handling ---
+
+func TestSessionExecutor_ResumeSplit(t *testing.T) {
+	// Test that resume_split finalizes current message and starts a new one.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "part1"},
+		{Type: "resume_split"},
+		{Type: "content", Content: "part2"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events)+1)
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+	result := executor.RunWithChannel(ch)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+	// resume_split should have caused blocks to reset and new content to accumulate
+	// The final blocks should contain "part2" (from after the split)
+	found := false
+	for _, b := range result.Blocks {
+		if b.Text == "part2" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected 'part2' in blocks after resume_split, got: %+v", result.Blocks)
+	}
+}
+
+// --- injectResponseMetadata ACP/transport/model branches ---
+
+func TestSessionExecutor_InjectResponseMetadata_ACPTransport(t *testing.T) {
+	// Test that injectResponseMetadata sets "acp-stdio" when agent supports ACP.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	// Register an agent that supports ACP
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"acp-agent": {ID: "acp-agent", Backend: "codebuddy", Command: "codebuddy", AcpCommand: "codebuddy --acp"},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "acp-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "response"}},
+		Metadata:         &ai.Metadata{},
+	}
+	finalized := executor.Finalize(result, nil)
+
+	if finalized.Metadata == nil {
+		t.Fatal("expected Metadata to be set")
+	}
+	// Should be "acp-stdio" since agent has AcpCommand set and no session transport override
+	if finalized.Metadata.Transport != "acp-stdio" {
+		t.Fatalf("expected Transport='acp-stdio', got %q", finalized.Metadata.Transport)
+	}
+}
+
+func TestSessionExecutor_InjectResponseMetadata_SessionTransport(t *testing.T) {
+	// Test that injectResponseMetadata uses session transport when available.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	// Set session transport via DB update
+	err := UpdateSessionTransport(sid, "sse")
+	if err != nil {
+		t.Fatalf("failed to update session transport: %v", err)
+	}
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "response"}},
+		Metadata:         &ai.Metadata{},
+	}
+	finalized := executor.Finalize(result, nil)
+
+	if finalized.Metadata.Transport != "sse" {
+		t.Fatalf("expected Transport='sse', got %q", finalized.Metadata.Transport)
+	}
+}
+
+func TestSessionExecutor_InjectResponseMetadata_SessionModel(t *testing.T) {
+	// Test that injectResponseMetadata sets model from session when available.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	// Set session model via DB update
+	err := UpdateSessionModel(sid, "claude-3.5-sonnet")
+	if err != nil {
+		t.Fatalf("failed to update session model: %v", err)
+	}
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "response"}},
+		Metadata:         &ai.Metadata{},
+	}
+	finalized := executor.Finalize(result, nil)
+
+	if finalized.Metadata.Model != "claude-3.5-sonnet" {
+		t.Fatalf("expected Model='claude-3.5-sonnet', got %q", finalized.Metadata.Model)
+	}
+}
+
+// --- drainRawOutput with non-raw event ---
+
+func TestSessionExecutor_DrainRawOutput_NonRawEvent(t *testing.T) {
+	// Test that drainRawOutput ignores non-raw_output events in the drain channel.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	// Channel with mixed events (only raw_output should be collected)
+	drainCh := make(chan ai.StreamEvent, 3)
+	drainCh <- ai.StreamEvent{Type: "raw_output", RawOutput: "raw1"}
+	drainCh <- ai.StreamEvent{Type: "content", Content: "ignored"}
+	drainCh <- ai.StreamEvent{Type: "raw_output", RawOutput: "raw2"}
+	close(drainCh)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "response"}},
+		Metadata:         &ai.Metadata{},
+		RawOutput:        "",
+	}
+
+	finalized := executor.Finalize(result, drainCh)
+
+	if !contains(finalized.RawOutput, "raw1") || !contains(finalized.RawOutput, "raw2") {
+		t.Fatalf("expected both raw outputs in drain result, got: %q", finalized.RawOutput)
+	}
+}

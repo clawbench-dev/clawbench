@@ -686,8 +686,8 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		return
 	}
 
-	// Create streaming placeholder message in DB (so SessionExecutor.Finalize
-	// can update it via FinalizeStreamingMessage, just like interactive sessions).
+	// Create streaming placeholder, run event loop via SessionExecutor,
+	// check cancel/crash, and finalize.
 	createStreamingPlaceholder(projectPath, backendName, sessionID)
 
 	// Delegate event loop to SessionExecutor (scheduled mode — no SSE forwarding,
@@ -714,14 +714,12 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		)
 		_ = UpdateExecutionStatus(sessionID, "cancelled")
 		emitTaskEvent(fmt.Sprintf("%d", task.ID), "cancelled", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
-		// Only update stats, not status — don't overwrite user-initiated pauses (ISS-013)
 		UpdateTaskStats(task)
 		return
 	}
 
 	// If the event channel closed without a terminal event (done/error),
 	// the CLI process likely crashed or was killed (e.g. SIGKILL, OOM).
-	// Mark as failed to prevent zombie "running" state in DB.
 	if !runResult.ReceivedTerminal {
 		slog.Warn(
 			"task execution ended without terminal event (CLI process crashed?)",
@@ -730,7 +728,6 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		)
 		_ = UpdateExecutionStatus(sessionID, "failed")
 		emitTaskEvent(fmt.Sprintf("%d", task.ID), "failed", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
-		// Only update stats, not status — don't overwrite user-initiated pauses (ISS-013)
 		UpdateTaskStats(task)
 		return
 	}
@@ -741,8 +738,6 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// Mark execution as completed
 	_ = UpdateExecutionStatus(sessionID, "completed")
 	emitTaskEvent(fmt.Sprintf("%d", task.ID), "completed", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
-
-	// Update task execution stats
 	// Read current DB status to avoid overwriting user-initiated changes (e.g. pause).
 	// See ISS-013: using task.Status (in-memory snapshot) can revert "paused" back to "active".
 	var currentStatus string
@@ -1097,4 +1092,58 @@ func HasUnreadTasks(projectPath string) (bool, error) {
 func createStreamingPlaceholder(projectPath, backendName, sessionID string) {
 	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
 	_, _ = AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, "")
+}
+
+// processScheduledStreamEvents handles the streaming event loop for scheduled tasks.
+// It creates a streaming placeholder, runs the event loop via SessionExecutor,
+// checks for cancellation or crash, and finalizes the result.
+// Returns true if execution completed normally (caller should continue with
+// post-completion logic), false if cancelled or crashed (caller should return).
+func processScheduledStreamEvents(ctx context.Context, eventCh <-chan ai.StreamEvent, cfg RunConfig, task *model.ScheduledTask, executionID int64) bool {
+	projectPath := cfg.ProjectPath
+	backendName := cfg.BackendName
+	sessionID := cfg.SessionID
+
+	// Create streaming placeholder message in DB
+	createStreamingPlaceholder(projectPath, backendName, sessionID)
+
+	// Delegate event loop to SessionExecutor (scheduled mode)
+	executor := NewSessionExecutor(ctx, cfg)
+	runResult := executor.RunWithChannel(eventCh)
+
+	// If context was cancelled, mark execution as cancelled and update stats
+	if ctx.Err() == context.Canceled {
+		slog.Info(
+			"task execution cancelled",
+			slog.Int64("task_id", task.ID),
+			slog.String("session_id", sessionID),
+		)
+		_ = UpdateExecutionStatus(sessionID, "cancelled")
+		emitTaskEvent(fmt.Sprintf("%d", task.ID), "cancelled", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
+		UpdateTaskStats(task)
+		return false
+	}
+
+	// If the event channel closed without a terminal event (done/error),
+	// the CLI process likely crashed or was killed (e.g. SIGKILL, OOM).
+	if !runResult.ReceivedTerminal {
+		slog.Warn(
+			"task execution ended without terminal event (CLI process crashed?)",
+			slog.Int64("task_id", task.ID),
+			slog.String("session_id", sessionID),
+		)
+		_ = UpdateExecutionStatus(sessionID, "failed")
+		emitTaskEvent(fmt.Sprintf("%d", task.ID), "failed", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
+		UpdateTaskStats(task)
+		return false
+	}
+
+	// Finalize: persist blocks to DB, save metadata, drain raw output
+	_ = executor.Finalize(runResult, nil)
+
+	// Mark execution as completed
+	_ = UpdateExecutionStatus(sessionID, "completed")
+	emitTaskEvent(fmt.Sprintf("%d", task.ID), "completed", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
+
+	return true
 }

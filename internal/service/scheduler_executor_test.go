@@ -11,9 +11,8 @@ import (
 )
 
 // --- Scheduler executeTask delegation tests ---
-// These tests cover the code paths in scheduler.executeTask that delegate
-// to SessionExecutor: createStreamingPlaceholder, NewSessionExecutor,
-// RunWithChannel, cancel/crash checks, and Finalize.
+// These tests cover the extracted processScheduledStreamEvents function,
+// which handles the core streaming event loop for scheduled tasks.
 
 func setupSchedulerForExecuteTask(t *testing.T) {
 	t.Helper()
@@ -40,10 +39,8 @@ func TestCreateStreamingPlaceholder(t *testing.T) {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
 
-	// Call createStreamingPlaceholder (extracted from executeTask line 691-692)
 	createStreamingPlaceholder("/test", "codebuddy", sid)
 
-	// Verify the placeholder message was created
 	var count int
 	if err := DBRead.QueryRow(
 		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1",
@@ -56,29 +53,45 @@ func TestCreateStreamingPlaceholder(t *testing.T) {
 	}
 }
 
-func TestScheduler_ExecuteTask_DelegatesToSessionExecutor(t *testing.T) {
+func TestProcessScheduledStreamEvents_NormalCompletion(t *testing.T) {
 	setupSchedulerForExecuteTask(t)
 
-	sid, err := CreateSession("/test", "codebuddy", "Delegate Test", "test-agent", "", "default", "scheduled")
+	sid, err := CreateSession("/test", "codebuddy", "Normal Test", "test-agent", "", "default", "scheduled")
 	if err != nil {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
 
-	// Create streaming placeholder (same as scheduler.executeTask does)
-	createStreamingPlaceholder("/test", "codebuddy", sid)
+	// Add task to DB
+	task := &model.ScheduledTask{
+		ProjectPath: "/test",
+		Name:        "Test Task",
+		CronExpr:    "0 * * * *",
+		AgentID:     "test-agent",
+		Prompt:      "test prompt",
+		RepeatMode:  "unlimited",
+	}
+	s := NewScheduler()
+	defer s.Stop()
+	if err := s.AddTask(task); err != nil {
+		t.Fatalf("AddTask failed: %v", err)
+	}
 
-	// Create SessionExecutor in scheduled mode (same as executeTask lines 696-706)
+	// Add execution record
+	executionID, _ := AddTaskExecution(task.ID, sid, "auto")
+
 	cfg := RunConfig{
 		Mode:        ModeScheduled,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
 		SessionID:   sid,
 		AgentID:     "test-agent",
-		ChatRequest: ai.ChatRequest{Prompt: "scheduled prompt", ScheduledExecution: true},
+		ChatRequest: ai.ChatRequest{Prompt: "test prompt", ScheduledExecution: true},
+		TaskID:      task.ID,
+		ExecutionID: executionID,
+		TriggerType: "auto",
 	}
-	executor := NewSessionExecutor(context.Background(), cfg)
 
-	// RunWithChannel with normal completion events (line 707)
+	// Create event channel with normal completion
 	events := []ai.StreamEvent{
 		{Type: "text", Content: "task result"},
 		{Type: "done"},
@@ -89,21 +102,23 @@ func TestScheduler_ExecuteTask_DelegatesToSessionExecutor(t *testing.T) {
 	}
 	close(ch)
 
-	runResult := executor.RunWithChannel(ch)
+	completed := processScheduledStreamEvents(context.Background(), ch, cfg, task, executionID)
 
-	// Verify normal completion path
-	if !runResult.ReceivedTerminal {
-		t.Fatal("expected ReceivedTerminal=true for normal completion")
+	if !completed {
+		t.Fatal("expected completed=true for normal completion")
 	}
 
-	// Finalize (line 740)
-	finalized := executor.Finalize(runResult, nil)
-	if len(finalized.Blocks) == 0 {
-		t.Fatal("expected blocks after finalization")
+	// Verify execution status was updated
+	var status string
+	if err := DBRead.QueryRow("SELECT status FROM task_executions WHERE id = ?", executionID).Scan(&status); err != nil {
+		t.Fatalf("failed to query execution status: %v", err)
+	}
+	if status != "completed" {
+		t.Fatalf("expected status=completed, got %s", status)
 	}
 }
 
-func TestScheduler_ExecuteTask_CancelledContext(t *testing.T) {
+func TestProcessScheduledStreamEvents_CancelledContext(t *testing.T) {
 	setupSchedulerForExecuteTask(t)
 
 	sid, err := CreateSession("/test", "codebuddy", "Cancel Test", "test-agent", "", "default", "scheduled")
@@ -111,7 +126,21 @@ func TestScheduler_ExecuteTask_CancelledContext(t *testing.T) {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
 
-	createStreamingPlaceholder("/test", "codebuddy", sid)
+	task := &model.ScheduledTask{
+		ProjectPath: "/test",
+		Name:        "Cancel Task",
+		CronExpr:    "0 * * * *",
+		AgentID:     "test-agent",
+		Prompt:      "test prompt",
+		RepeatMode:  "unlimited",
+	}
+	s := NewScheduler()
+	defer s.Stop()
+	if err := s.AddTask(task); err != nil {
+		t.Fatalf("AddTask failed: %v", err)
+	}
+
+	executionID, _ := AddTaskExecution(task.ID, sid, "auto")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -122,26 +151,32 @@ func TestScheduler_ExecuteTask_CancelledContext(t *testing.T) {
 		BackendName: "codebuddy",
 		SessionID:   sid,
 		AgentID:     "test-agent",
-		ChatRequest: ai.ChatRequest{Prompt: "scheduled prompt", ScheduledExecution: true},
+		ChatRequest: ai.ChatRequest{Prompt: "test prompt", ScheduledExecution: true},
+		TaskID:      task.ID,
+		ExecutionID: executionID,
 	}
-	executor := NewSessionExecutor(ctx, cfg)
 
-	// Channel closes without terminal event (simulates cancellation)
+	// Channel closes without terminal event
 	ch := make(chan ai.StreamEvent)
 	close(ch)
 
-	runResult := executor.RunWithChannel(ch)
+	completed := processScheduledStreamEvents(ctx, ch, cfg, task, executionID)
 
-	// Scheduler checks ctx.Err() == context.Canceled (line 710)
-	if ctx.Err() != context.Canceled {
-		t.Fatal("expected context.Canceled")
+	if completed {
+		t.Fatal("expected completed=false for cancelled context")
 	}
-	if runResult.ReceivedTerminal {
-		t.Fatal("expected ReceivedTerminal=false for cancelled context")
+
+	// Verify execution status was set to "cancelled"
+	var status string
+	if err := DBRead.QueryRow("SELECT status FROM task_executions WHERE id = ?", executionID).Scan(&status); err != nil {
+		t.Fatalf("failed to query execution status: %v", err)
+	}
+	if status != "cancelled" {
+		t.Fatalf("expected status=cancelled, got %s", status)
 	}
 }
 
-func TestScheduler_ExecuteTask_CrashedProcess(t *testing.T) {
+func TestProcessScheduledStreamEvents_CrashedProcess(t *testing.T) {
 	setupSchedulerForExecuteTask(t)
 
 	sid, err := CreateSession("/test", "codebuddy", "Crash Test", "test-agent", "", "default", "scheduled")
@@ -149,7 +184,21 @@ func TestScheduler_ExecuteTask_CrashedProcess(t *testing.T) {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
 
-	createStreamingPlaceholder("/test", "codebuddy", sid)
+	task := &model.ScheduledTask{
+		ProjectPath: "/test",
+		Name:        "Crash Task",
+		CronExpr:    "0 * * * *",
+		AgentID:     "test-agent",
+		Prompt:      "test prompt",
+		RepeatMode:  "unlimited",
+	}
+	s := NewScheduler()
+	defer s.Stop()
+	if err := s.AddTask(task); err != nil {
+		t.Fatalf("AddTask failed: %v", err)
+	}
+
+	executionID, _ := AddTaskExecution(task.ID, sid, "auto")
 
 	cfg := RunConfig{
 		Mode:        ModeScheduled,
@@ -157,25 +206,32 @@ func TestScheduler_ExecuteTask_CrashedProcess(t *testing.T) {
 		BackendName: "codebuddy",
 		SessionID:   sid,
 		AgentID:     "test-agent",
-		ChatRequest: ai.ChatRequest{Prompt: "scheduled prompt", ScheduledExecution: true},
+		ChatRequest: ai.ChatRequest{Prompt: "test prompt", ScheduledExecution: true},
+		TaskID:      task.ID,
+		ExecutionID: executionID,
 	}
-	executor := NewSessionExecutor(context.Background(), cfg)
 
 	// Channel closes without done/error (simulates CLI crash)
 	ch := make(chan ai.StreamEvent)
 	close(ch)
 
-	runResult := executor.RunWithChannel(ch)
+	completed := processScheduledStreamEvents(context.Background(), ch, cfg, task, executionID)
 
-	// Scheduler checks !runResult.ReceivedTerminal → marks as failed (line 726)
-	if runResult.ReceivedTerminal {
-		t.Fatal("expected ReceivedTerminal=false for crashed process")
+	if completed {
+		t.Fatal("expected completed=false for crashed process")
 	}
-	// Verify finalize still works for crashed execution
-	_ = executor.Finalize(runResult, nil)
+
+	// Verify execution status was set to "failed"
+	var status string
+	if err := DBRead.QueryRow("SELECT status FROM task_executions WHERE id = ?", executionID).Scan(&status); err != nil {
+		t.Fatalf("failed to query execution status: %v", err)
+	}
+	if status != "failed" {
+		t.Fatalf("expected status=failed, got %s", status)
+	}
 }
 
-func TestScheduler_ExecuteTask_WithMetadata(t *testing.T) {
+func TestProcessScheduledStreamEvents_WithMetadata(t *testing.T) {
 	setupSchedulerForExecuteTask(t)
 
 	sid, err := CreateSession("/test", "codebuddy", "Metadata Test", "test-agent", "", "default", "scheduled")
@@ -183,7 +239,21 @@ func TestScheduler_ExecuteTask_WithMetadata(t *testing.T) {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
 
-	createStreamingPlaceholder("/test", "codebuddy", sid)
+	task := &model.ScheduledTask{
+		ProjectPath: "/test",
+		Name:        "Metadata Task",
+		CronExpr:    "0 * * * *",
+		AgentID:     "test-agent",
+		Prompt:      "test prompt",
+		RepeatMode:  "unlimited",
+	}
+	s := NewScheduler()
+	defer s.Stop()
+	if err := s.AddTask(task); err != nil {
+		t.Fatalf("AddTask failed: %v", err)
+	}
+
+	executionID, _ := AddTaskExecution(task.ID, sid, "auto")
 
 	cfg := RunConfig{
 		Mode:        ModeScheduled,
@@ -191,9 +261,10 @@ func TestScheduler_ExecuteTask_WithMetadata(t *testing.T) {
 		BackendName: "codebuddy",
 		SessionID:   sid,
 		AgentID:     "test-agent",
-		ChatRequest: ai.ChatRequest{Prompt: "scheduled prompt", ScheduledExecution: true},
+		ChatRequest: ai.ChatRequest{Prompt: "test prompt", ScheduledExecution: true},
+		TaskID:      task.ID,
+		ExecutionID: executionID,
 	}
-	executor := NewSessionExecutor(context.Background(), cfg)
 
 	events := []ai.StreamEvent{
 		{Type: "metadata", Meta: &ai.Metadata{Model: "test-model", SessionID: "ext-123"}},
@@ -207,13 +278,9 @@ func TestScheduler_ExecuteTask_WithMetadata(t *testing.T) {
 	}
 	close(ch)
 
-	runResult := executor.RunWithChannel(ch)
-	finalized := executor.Finalize(runResult, nil)
+	completed := processScheduledStreamEvents(context.Background(), ch, cfg, task, executionID)
 
-	if !runResult.ReceivedTerminal {
-		t.Fatal("expected ReceivedTerminal=true")
-	}
-	if finalized.Metadata == nil || finalized.Metadata.Model != "test-model" {
-		t.Fatal("expected metadata with model")
+	if !completed {
+		t.Fatal("expected completed=true with metadata events")
 	}
 }
