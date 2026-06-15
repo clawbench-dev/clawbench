@@ -68,6 +68,17 @@ export const categoryItems: Record<string, ItemSpec[]> = {
       { labelKey: 'settings.items.fileViewList', value: 'list' },
       { labelKey: 'settings.items.fileViewGrid', value: 'grid' },
     ]},
+    { labelKey: 'settings.items.sortField', descriptionKey: 'settings.items.sortFieldDesc', key: 'sortField', type: 'select', source: 'local', options: [
+      { labelKey: 'settings.items.sortFieldDefault', value: null },
+      { labelKey: 'settings.items.sortFieldName', value: 'name' },
+      { labelKey: 'settings.items.sortFieldTime', value: 'time' },
+      { labelKey: 'settings.items.sortFieldType', value: 'type' },
+      { labelKey: 'settings.items.sortFieldSize', value: 'size' },
+    ]},
+    { labelKey: 'settings.items.sortDir', descriptionKey: 'settings.items.sortDirDesc', key: 'sortDir', type: 'select', source: 'local', dependsOn: { key: 'sortField', values: ['name', 'time', 'type', 'size'] }, options: [
+      { labelKey: 'settings.items.sortDirAsc', value: 'asc' },
+      { labelKey: 'settings.items.sortDirDesc', value: 'desc' },
+    ]},
     { labelKey: 'settings.items.uploadMaxSize', descriptionKey: 'settings.items.uploadMaxSizeDesc', key: 'upload.max_size_mb', type: 'number', source: 'server' },
     { labelKey: 'settings.items.uploadMaxFiles', descriptionKey: 'settings.items.uploadMaxFilesDesc', key: 'upload.max_files', type: 'number', source: 'server' },
   ],
