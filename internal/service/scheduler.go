@@ -690,10 +690,44 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 			if event.Meta != nil {
 				responseMetadata = event.Meta
 			}
+		case "session_capture":
+			// Persist external session ID so that ContinueFromExecution
+			// inherits the correct CLI session ID (not the ClawBench UUID placeholder).
+			// Without this, resuming a continued scheduled-task session causes
+			// the CLI to start a fresh session (context amnesia).
+			if event.Content != "" {
+				existingExtID := GetExternalSessionID(sessionID)
+				if existingExtID == "" || existingExtID == sessionID {
+					if err := UpdateExternalSessionID(sessionID, event.Content); err != nil {
+						slog.Error("failed to save external session ID from scheduled task",
+							slog.String("session", sessionID),
+							slog.String("external_id", event.Content),
+							slog.String("err", err.Error()))
+					} else {
+						slog.Info("captured external session ID from scheduled task",
+							slog.String("session", sessionID),
+							slog.String("external_id", event.Content))
+					}
+				}
+			}
 		case "done", "error":
 			receivedTerminal = true
 		default:
 			ai.AccumulateBlock(&blocks, event)
+		}
+	}
+
+	// Fallback: capture external session ID from metadata.SessionID
+	// (same logic as handler/chat.go event loop).
+	if responseMetadata != nil && responseMetadata.SessionID != "" {
+		existingExtID := GetExternalSessionID(sessionID)
+		if existingExtID == "" || existingExtID == sessionID {
+			if err := UpdateExternalSessionID(sessionID, responseMetadata.SessionID); err != nil {
+				slog.Error("failed to save external session ID from metadata in scheduled task",
+					slog.String("session", sessionID),
+					slog.String("external_id", responseMetadata.SessionID),
+					slog.String("err", err.Error()))
+			}
 		}
 	}
 
