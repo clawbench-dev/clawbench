@@ -5,6 +5,10 @@
       <div class="kcf-selected-header">
         <span class="kcf-section-title">{{ t('terminal.keyConfigSelected') }}</span>
         <span class="kcf-count">{{ localSelected.length }}</span>
+        <div class="kcf-selected-actions">
+          <button class="kcf-action-btn" @click="resetToDefault">{{ t('terminal.keyConfigReset') }}</button>
+          <button class="kcf-action-btn kcf-action-btn-danger" @click="clearAll">{{ t('terminal.keyConfigClear') }}</button>
+        </div>
       </div>
       <div v-if="localSelected.length > 0" class="kcf-selected-grid">
         <draggable v-model="localSelected" item-key="id" class="kcf-draggable" :animation="200" ghost-class="kcf-ghost" chosen-class="kcf-chosen" drag-class="kcf-drag" @end="onDragEnd">
@@ -49,7 +53,7 @@
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import draggable from 'vuedraggable'
-import { getDef, getAllDefs, getGroups, type KeyDef, type ConfigType } from '@/utils/terminalKeyDefs'
+import { getDef, getAllDefs, getGroups, getDefaultIds, type KeyDef, type ConfigType } from '@/utils/terminalKeyDefs'
 
 const props = defineProps<{
   type: ConfigType
@@ -87,6 +91,17 @@ function onDragEnd() {
   // localSelected is already updated by vuedraggable v-model
 }
 
+function resetToDefault() {
+  const defaultIds = getDefaultIds(props.type)
+  localSelected.value = defaultIds
+    .map(id => getDef(props.type, id))
+    .filter((d): d is KeyDef => d !== undefined)
+}
+
+function clearAll() {
+  localSelected.value = []
+}
+
 function getGroupDefs(groupKey: string): KeyDef[] {
   return allDefs.filter(d => d.group === groupKey)
 }
@@ -116,6 +131,32 @@ defineExpose({ getSelectedIds })
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
+}
+
+.kcf-selected-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.kcf-action-btn {
+  font-size: 12px;
+  color: var(--accent, #4f8ef7);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm, 6px);
+  transition: background 0.15s;
+  font-family: inherit;
+}
+
+.kcf-action-btn:active {
+  background: var(--bg-tertiary, #eee);
+}
+
+.kcf-action-btn-danger {
+  color: var(--danger, #e74c3c);
 }
 
 .kcf-section-title {

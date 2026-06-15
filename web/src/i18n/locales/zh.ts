@@ -1178,6 +1178,8 @@ export default {
     keyConfigEmpty: '点击下方按键添加到工具栏',
     keyConfigSaved: '配置已保存',
     keyConfigSaveFailed: '保存失败',
+    keyConfigReset: '重置',
+    keyConfigClear: '清空',
     keyGroupModifier: '修饰键',
     keyGroupFunction: '功能键',
     keyGroupNavigation: '导航键',

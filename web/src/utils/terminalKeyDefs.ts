@@ -158,3 +158,8 @@ export function getAllDefs(type: ConfigType): KeyDef[] {
 export function getGroups(type: ConfigType): KeyGroupInfo[] {
   return type === 'key' ? KEY_GROUPS : SYMBOL_GROUPS
 }
+
+/** Get default IDs for a type */
+export function getDefaultIds(type: ConfigType): string[] {
+  return type === 'key' ? [...DEFAULT_KEY_IDS] : [...DEFAULT_SYMBOL_IDS]
+}

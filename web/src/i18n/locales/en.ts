@@ -1178,6 +1178,8 @@ export default {
     keyConfigEmpty: 'Tap keys below to add to toolbar',
     keyConfigSaved: 'Config saved',
     keyConfigSaveFailed: 'Save failed',
+    keyConfigReset: 'Reset',
+    keyConfigClear: 'Clear',
     keyGroupModifier: 'Modifiers',
     keyGroupFunction: 'Function',
     keyGroupNavigation: 'Navigation',
