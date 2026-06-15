@@ -15,7 +15,7 @@ Brings the full power of AI coding agents to browsers and mobile apps, creating 
 Core Advantage: Native passthrough of AI capabilities (tool calls, extended thinking, Skills, MCP) with zero adaptation cost, fully preserving the power of coding agents. Unlike other mobile AI tools that are merely "remote controllers," ClawBench is a full-featured mobile workstation — files, code, Git, AI, scheduled tasks, TTS, get real work done on your phone without needing a PC online. ([Similar Projects Comparison](docs/COMPARISON.en.md))
 
 - **Supported Platforms**: Browser (PC / Tablet / Phone), Android App, PWA
-- **AI Backends**: CodeBuddy, Claude Code, OpenCode, Gemini CLI, Codex, Qoder CLI, VeCLI, DeepSeek TUI, Pi
+- **AI Backends**: CodeBuddy, Claude Code, OpenCode, Gemini CLI, Codex, Qoder CLI, VeCLI, DeepSeek TUI, MiMo-Code, Pi
 
 ---
 
@@ -87,6 +87,7 @@ graph LR
     Server -->|CLI Invocation · Stream Output| QR["🤖 Qoder CLI"]
     Server -->|CLI Invocation · Stream Output| VC["🤖 VeCLI"]
     Server -->|CLI Invocation · Stream Output| DS["🔍 DeepSeek TUI"]
+    Server -->|CLI Invocation · Stream Output| MM["🚀 MiMo-Code"]
     Server -->|CLI Invocation · Stream Output| PI["🥧 Pi"]
     Server -->|Read/Write| DB[("💾 SQLite\nSessions · History · Scheduled Tasks")]
     CB -->|Native Support| Tools["🔧 Tool Calls"]
@@ -104,6 +105,8 @@ graph LR
     QR -->|Native Support| Tools
     VC -->|Native Support| Tools
     DS -->|Native Support| Tools
+    MM -->|Native Support| Tools
+    MM -->|Native Support| Think
     PI -->|Native Support| Tools
     PI -->|Native Support| Think
 ```
@@ -114,7 +117,7 @@ graph LR
 
 ### Prerequisites
 
-- **A PC (Linux / macOS / Windows)**: To run the ClawBench server, with at least one AI coding agent CLI installed (CodeBuddy, Claude Code, OpenCode, Gemini CLI, Codex, Qoder CLI, VeCLI, DeepSeek TUI, or Pi)
+- **A PC (Linux / macOS / Windows)**: To run the ClawBench server, with at least one AI coding agent CLI installed (CodeBuddy, Claude Code, OpenCode, Gemini CLI, Codex, Qoder CLI, VeCLI, DeepSeek TUI, MiMo-Code, or Pi)
 - **A phone**: Install the [ClawBench Android App](https://github.com/xulongzhe/clawbench/releases), or use a mobile browser (Chrome recommended) to access the server address
 
 ### Download & Start
@@ -159,6 +162,7 @@ Auto-discovered agent configs use minimal defaults (no model lists or thinking e
 - File upload (all file types supported, configurable size and count)
 - Toggle hidden file visibility
 - **Drill-down Browsing + Edge Swipe Back**: Tap folders to drill down, swipe from right edge to go back — intuitive mobile navigation
+- **File Preview Overlay**: Click a file to open a preview overlay on top of the browse tab, no tab switching needed; supports navigation stack (multi-file switching + back), close to return to file list
 
 ### 🎨 Code Preview
 - Syntax highlighting, sticky line numbers, word wrap toggle
@@ -178,8 +182,8 @@ Auto-discovered agent configs use minimal defaults (no model lists or thinking e
 ### 🤖 AI Agents
 - **Streaming Response**: Real-time SSE push, thinking process and tool calls fully visible
 - **Multi-Agent Support**: General assistant, coding expert, handyman, etc. — YAML config, plug-and-play
-- **AI Backend Switching**: CodeBuddy, Claude Code, OpenCode, Gemini CLI, Codex, Qoder CLI, VeCLI, DeepSeek TUI, Pi — session-level isolation
-- **Thinking Effort Levels**: Per-agent thinking depth selection (Auto / Low / Medium / High), supported by 5 backends (Claude/CodeBuddy/OpenCode/Codex/Pi), selection auto-persisted
+- **AI Backend Switching**: CodeBuddy, Claude Code, OpenCode, Gemini CLI, Codex, Qoder CLI, VeCLI, DeepSeek TUI, MiMo-Code, Pi — session-level isolation
+- **Thinking Effort Levels**: Per-agent thinking depth selection (Auto / Low / Medium / High), supported by 6 backends (Claude/CodeBuddy/OpenCode/Codex/MiMo/Pi), selection auto-persisted
 - **Model Selection Modal**: Unified model switching and thinking effort selection in a dual-tab interface, with search filtering, one-click model list refresh (for agents supporting auto-discovery), and long-press to set default model
 - **Model Selection Persistence**: Model choice and thinking effort per agent auto-saved to localStorage, restored on reload/session switch
 - **Scheduled Tasks**: AI creates Cron schedules via CLI subcommands, executes automatically; independent tab with 4-level breadcrumb navigation; task cards embedded in chat messages; frequency presets (hourly/daily/weekly/monthly) + custom cron expressions; per-execution read tracking + TTS playback; execution auto-summary + completion notification (sound/haptic/toast)
@@ -189,7 +193,7 @@ Auto-discovered agent configs use minimal defaults (no model lists or thinking e
 - **Swipe Session Toggle**: Toggle left/right swipe session switching in Settings → Chat; defaults to off to prevent accidental switches when scrolling wide content
 - **Image Upload**: Upload images for AI conversation (multimodal)
 - **Disconnect Protection**: Messages persist immediately, no data loss on disconnect, 15s heartbeat keep-alive + 30s timeout auto-reconnect (live content updates during polling fallback)
-- **Auto Resume**: Automatically sends "continue" after Claude/CodeBuddy/Qoder/DeepSeek/Pi exits Plan Mode
+- **Auto Resume**: Automatically sends "continue" after Claude/CodeBuddy/Qoder/DeepSeek/MiMo/Pi exits Plan Mode
 - **Message Queue**: Messages queue when AI is busy, sent sequentially
 - **Auto Summary**: Automatically generates a summary of the last assistant message on session complete; toggle between summary/original via bottom banner; TTS playback also uses the summary
 - **@ Commands**: Type `@chatsearch` to search conversation history, `@task` to manage scheduled tasks — autocomplete popup menu, purple command badge in user messages

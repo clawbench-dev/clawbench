@@ -92,7 +92,7 @@ cd clawbench
 
 | Dependency | Description |
 |------------|-------------|
-| **CodeBuddy CLI** or **Claude Code CLI** | AI backend (install and authenticate in advance; OpenCode / Gemini / Codex / Qoder / VeCLI optional) |
+| **CodeBuddy CLI** or **Claude Code CLI** | AI backend (install and authenticate in advance; OpenCode / Gemini / Codex / Qoder / VeCLI / MiMo optional) |
 
 ### Configuration File
 
@@ -226,9 +226,11 @@ ClawBench interacts with AI programming tools by calling local CLIs, no extra AP
 
 **DeepSeek TUI backend**: Install DeepSeek TUI (requires v0.8.33+) and complete authentication, ensure the `deepseek` command is available in PATH. Uses `deepseek exec --auto --output-format stream-json` mode with native `--system-prompt`, `--model`, and `--resume` flags.
 
+**MiMo-Code backend**: Install MiMo-Code CLI and complete authentication, ensure the `mimo` command is available in PATH. MiMo-Code is a fork of OpenCode, reusing OpenCode's JSON stream format and stream parser, supporting CLI + ACP dual mode. Uses `mimo run --format json` mode with `--session`, `--model`, and `--variant` (thinking effort) flags. ACP mode enabled via `mimo acp` command.
+
 **Pi backend**: Install Pi CLI and complete authentication, ensure the `pi` command is available in PATH. Pi is a minimalist coding agent that outputs NDJSON event stream via `--mode json`, supports session resume (`--session`/`--continue`) and model selection (`--model`).
 
-All nine backends can be switched in real time on the ClawBench Web UI, with isolated session data.
+All ten backends can be switched in real time on the ClawBench Web UI, with isolated session data.
 
 ### Setup Wizard
 
@@ -364,14 +366,14 @@ Use `./dev-server.sh` to start an independent development environment:
 ClawBench is more than just a "chat shell" — it is a complete agent runtime platform:
 
 - **Agent Database Storage**: Each agent is stored in the database with dedicated system prompt, model, backend, and thinking effort levels — created via setup wizard or auto-discovery
-- **Auto-Discovery**: On first startup, if no agents exist in the database, the system auto-scans for installed AI CLIs (claude, codebuddy, opencode, gemini, codex, qodercli, vecli, deepseek, pi) and creates agent records in the database for each detected backend. One-time only
+- **Auto-Discovery**: On first startup, if no agents exist in the database, the system auto-scans for installed AI CLIs (claude, codebuddy, opencode, gemini, codex, qodercli, vecli, deepseek, mimo, pi) and creates agent records in the database for each detected backend. One-time only
 - **Shared Rules**: Rules template embedded in Go binary (`commonRulesTemplate` in `agent.go`) defines common behaviors and mandatory rules for all agents (media handling), avoiding duplicate configuration. `@chatsearch`/`@task` commands are injected on demand via `processAtCommand()`, replacing old `SCHEDULED_BEGIN/END` markers and static RAG section
 - **Template Placeholder**: `{{AVAILABLE_AGENTS}}` is auto-replaced with the available agent list, facilitating inter-agent dispatching
 - **Multi-Agent Dispatching**: Different tasks match different agents; the all-round assistant handles conversations while specialized agents execute scheduled tasks
 - **Transparent Tool Calls**: AI tool calls (file read/write, Bash commands, code editing) are visualized in real time
 - **Cron Scheduled Execution**: AI creates scheduled tasks via `clawbench task` CLI subcommands; after confirmation, Cron scheduler executes them automatically. Task cards are embedded in chat messages. `list` and `get` subcommands allow inspecting existing tasks; `--prompt` supports `@path` syntax to read prompt text from a file
 - **Cron Governance**: During scheduled execution, the `@task` instructions are never injected (only triggered by explicit user input), preventing AI from recursively creating tasks; CLI layer provides dual-layer protection via `CLAWBENCH_SCHEDULED=1` env var
-- **Multi-Backend Switching**: The same platform simultaneously supports CodeBuddy, Claude Code, OpenCode, Gemini CLI, Codex, Qoder CLI, VeCLI, DeepSeek TUI, and Pi backends with isolated session data
+- **Multi-Backend Switching**: The same platform simultaneously supports CodeBuddy, Claude Code, OpenCode, Gemini CLI, Codex, Qoder CLI, VeCLI, DeepSeek TUI, MiMo-Code, and Pi backends with isolated session data
 
 ### Project Structure
 
@@ -451,6 +453,7 @@ clawbench/
 │       ├── qoder.go / qoder_stream.go
 │       ├── vecli.go / vecli_stream.go
 │       ├── deepseek.go / deepseek_stream.go
+│       ├── mimo.go              # MiMo-Code backend (reuses OpenCode stream parser)
 │       └── pi.go / pi_stream.go
 │   └── speech/                  # TTS speech synthesis
 │       ├── common_tts.go        # CLISpeechProvider shared base
@@ -498,7 +501,7 @@ clawbench/
 | Chart Rendering | Mermaid.js |
 | Math Formulas | KaTeX |
 | HTML Sanitization | DOMPurify |
-| AI Backend | CodeBuddy CLI / Claude Code CLI / OpenCode CLI / Gemini CLI / Codex CLI / Qoder CLI / VeCLI (streaming output → SSE push) |
+| AI Backend | CodeBuddy CLI / Claude Code CLI / OpenCode CLI / Gemini CLI / Codex CLI / Qoder CLI / MiMo-Code CLI / VeCLI (streaming output → SSE push) |
 | TTS Summarization | OpenAI/Anthropic compatible API (local or cloud, e.g. Ollama with `format: "openai"`) |
 | SSH Tunnel | golang.org/x/crypto/ssh (embedded SSH server, direct-tcpip port forwarding) |
 | Scheduled Scheduling | robfig/cron |

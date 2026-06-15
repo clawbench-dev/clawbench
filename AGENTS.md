@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-ClawBench is a mobile-first AI workstation wrapping AI CLI tools (CodeBuddy, Claude Code, OpenCode, Gemini CLI, Codex, Qoder CLI, VeCLI, DeepSeek TUI, Pi) into a web-accessible platform. Go backend shells out to CLI tools and streams JSON output via SSE; Vue 3 frontend renders the streamed events in real time. Supports ACP (Agent Client Protocol) stdio transport for agents with native or bridge-adapter support, providing structured mode switching, slash commands, and permission management. Also supports SSH tunnel-based port forwarding for remote/mobile access and a scheduled task (cron) system for recurring AI execution.
+ClawBench is a mobile-first AI workstation wrapping AI CLI tools (CodeBuddy, Claude Code, OpenCode, Gemini CLI, Codex, Qoder CLI, VeCLI, DeepSeek TUI, MiMo-Code, Pi) into a web-accessible platform. Go backend shells out to CLI tools and streams JSON output via SSE; Vue 3 frontend renders the streamed events in real time. Supports ACP (Agent Client Protocol) stdio transport for agents with native or bridge-adapter support, providing structured mode switching, slash commands, and permission management. Also supports SSH tunnel-based port forwarding for remote/mobile access and a scheduled task (cron) system for recurring AI execution.
 
 ## Build & Run Commands
 
@@ -69,9 +69,9 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 
 **Source root:** `web/src/` — No Vue Router, drawer-based single-page layout. Single `reactive()` store in `stores/app.ts`.
 
-**Composables:** `useChatSession`, `useChatStream` (SSE + reconnect + polling), `useChatRender` (block parsing + coalescing), `useAutoSpeech`, `useQuickSend`, `useSessionIdentity`, `useSessionManager`, `useSetup`, `useReconnect`, `useFileRefresh`, `useSystemEvents`, `useGlobalEvents`, `usePortForward`, `useBackHandler`, `useEdgeSwipeBack`, `useTerminalSession`, `useTerminalTabs` (multi-tab management), `useTerminalKeys` (virtual key processing), `useKeyConfig` (key/symbol persistence), `useTerminalGestures`, `useSwipeDelete`, `useSwipeSession`, `useCodeSymbols`, `useStickyScroll`, `useLocalhostAnnotation`, `useWorktreeAnnotation`, `useFileUpload`, `useAgents`, `useFilePathAnnotation`, `useTaskTab`.
+**Composables:** `useChatSession`, `useChatStream` (SSE + reconnect + polling), `useChatRender` (block parsing + coalescing), `useAutoSpeech`, `useQuickSend`, `useSessionIdentity`, `useSessionManager`, `useSetup`, `useReconnect`, `useFileRefresh`, `useSystemEvents`, `useGlobalEvents`, `usePortForward`, `useBackHandler`, `useEdgeSwipeBack`, `useTerminalSession`, `useTerminalTabs` (multi-tab management), `useTerminalKeys` (virtual key processing), `useKeyConfig` (key/symbol persistence), `useTerminalGestures`, `useSwipeDelete`, `useSwipeSession`, `useCodeSymbols`, `useStickyScroll`, `useLocalhostAnnotation`, `useWorktreeAnnotation`, `useFileUpload`, `useAgents`, `useFilePathAnnotation`, `useFileNavStack` (file overlay navigation stack), `useTaskTab`.
 
-**Components:** `ChatPanel`, `FileManager`/`FileViewer`, `TocDrawer`, `TaskTab`, `TaskExecDetail`, `TerminalPanel` (multi-tab, key/symbol config drawer), `KeyConfigDrawer`, `KeyConfigTab`, `TerminalTabMenu`, `GitGraph`, `GitManageContent`, `SessionSettingModal`, `SetupWizard`, `ContentBlocks`, `SummaryToggle`, `SessionDrawer`, `AcpSessionDrawer`, `BottomSheet`, `PopupMenu`, `Lightbox`, `SwipeToDeleteRow`, `PasswordChangeDialog`.
+**Components:** `ChatPanel`, `FileManager`/`FileViewer`/`FileOverlay` (browse tab + file preview overlay, merged from browse/viewer tabs), `TocDrawer`, `TaskTab`, `TaskExecDetail`, `TerminalPanel` (multi-tab, key/symbol config drawer), `KeyConfigDrawer`, `KeyConfigTab`, `TerminalTabMenu`, `GitGraph`, `GitManageContent`, `SessionSettingModal`, `SetupWizard`, `ContentBlocks`, `SummaryToggle`, `SessionDrawer`, `AcpSessionDrawer`, `PlanPanel`, `BottomSheet`, `PopupMenu`, `Lightbox`, `SwipeToDeleteRow`, `PasswordChangeDialog`.
 
 **Vite:** `hljsThemeWrapper` plugin for light/dark coexistence. Root `web/`, output `public/`. Alias `@` → `web/src/`.
 
@@ -101,6 +101,7 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 - **Terminal multi-tab:** `useTerminalTabs` manages tab lifecycle (create/close/switch). `useTerminalKeys` processes virtual key input with modifier lock. `useKeyConfig` persists custom key/symbol layouts to DB via `/api/terminal/key-config`.
 - **Chat summary modes:** `simple` mode extracts last answer text from blocks (no AI call); `ai` mode uses `AsyncSummarize`; empty string disables summarization. Mode set via `SetChatSummaryMode()`.
 - **Permission pending push:** ACP `permission_pending` events trigger JPush notifications with tool name, allowing mobile users to approve from notification.
+- **File overlay navigation:** `useFileNavStack` manages a stack-based file overlay on the browse tab. Clicking a file pushes it onto the stack (overlay on top of file list); back button pops; close clears the stack. Replaces the separate viewer tab with a unified browse+overlay experience.
 
 ## Development Rules
 

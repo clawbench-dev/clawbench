@@ -16,7 +16,7 @@
 
 
 - **支持平台**：浏览器（PC / 平板 / 手机）、Android App、PWA
-- **AI 后端**：CodeBuddy、Claude Code、OpenCode、Gemini CLI、Codex、Qoder CLI、VeCLI、DeepSeek TUI、Pi
+- **AI 后端**：CodeBuddy、Claude Code、OpenCode、Gemini CLI、Codex、Qoder CLI、VeCLI、DeepSeek TUI、MiMo-Code、Pi
 
 ---
 
@@ -88,6 +88,7 @@ graph LR
     Server -->|CLI 调用 · 流式输出| QR["🤖 Qoder CLI"]
     Server -->|CLI 调用 · 流式输出| VC["🤖 VeCLI"]
     Server -->|CLI 调用 · 流式输出| DS["🔍 DeepSeek TUI"]
+    Server -->|CLI 调用 · 流式输出| MM["🚀 MiMo-Code"]
     Server -->|CLI 调用 · 流式输出| PI["🥧 Pi"]
     Server -->|读写| DB[("💾 SQLite\n会话 · 历史 · 定时任务")]
     CB -->|原生支持| Tools["🔧 工具调用"]
@@ -105,6 +106,8 @@ graph LR
     QR -->|原生支持| Tools
     VC -->|原生支持| Tools
     DS -->|原生支持| Tools
+    MM -->|原生支持| Tools
+    MM -->|原生支持| Think
     PI -->|原生支持| Tools
     PI -->|原生支持| Think
 ```
@@ -115,7 +118,7 @@ graph LR
 
 ### 前置准备
 
-- **一台 PC（Linux / macOS / Windows）**：用于运行 ClawBench 服务端，需已安装至少一种 AI 编程智能体 CLI（CodeBuddy、Claude Code、OpenCode、Gemini CLI、Codex、Qoder CLI、VeCLI、DeepSeek TUI、Pi 均可）
+- **一台 PC（Linux / macOS / Windows）**：用于运行 ClawBench 服务端，需已安装至少一种 AI 编程智能体 CLI（CodeBuddy、Claude Code、OpenCode、Gemini CLI、Codex、Qoder CLI、VeCLI、DeepSeek TUI、MiMo-Code、Pi 均可）
 - **一台手机**：安装 [ClawBench Android App](https://github.com/xulongzhe/clawbench/releases)，或使用手机浏览器（推荐 Chrome）访问服务端地址
 
 ### 下载与启动
@@ -160,6 +163,7 @@ cd clawbench
 - 文件上传（支持所有文件类型，大小和数量可配置）
 - 隐藏文件显示/隐藏切换
 - **下钻浏览 + 边缘滑动回退**：点击文件夹下钻进入，右边缘左滑返回上一级，移动端直觉操作
+- **文件预览覆盖层**：点击文件直接在浏览页上方弹出预览覆盖层，无需切换标签页；支持导航栈（多文件切换 + 返回），关闭即回到文件列表
 
 ### 🎨 代码预览
 - 语法高亮，粘性行号，自动换行切换
@@ -179,8 +183,8 @@ cd clawbench
 ### 🤖 AI 智能体
 - **流式响应**：SSE 实时推送，思维过程、工具调用全程可见
 - **多 Agent 支持**：全能助手、编码专家、勤杂工等，YAML 配置即插即用
-- **AI 后端切换**：CodeBuddy、Claude Code、OpenCode、Gemini CLI、Codex、Qoder CLI、VeCLI、DeepSeek TUI、Pi，会话级隔离
-- **深度思考档位**：支持按智能体选择思考深度（Auto / Low / Medium / High），Claude/CodeBuddy/OpenCode/Codex/Pi 五后端支持，选择自动持久化
+- **AI 后端切换**：CodeBuddy、Claude Code、OpenCode、Gemini CLI、Codex、Qoder CLI、VeCLI、DeepSeek TUI、MiMo-Code、Pi，会话级隔离
+- **深度思考档位**：支持按智能体选择思考深度（Auto / Low / Medium / High），Claude/CodeBuddy/OpenCode/Codex/MiMo/Pi 六后端支持，选择自动持久化
 - **模型选择模态框**：统一模型切换与思考深度选择，双 Tab 界面，搜索过滤，一键刷新模型列表（支持自动发现的智能体），长按设为默认模型
 - **模型选择持久化**：每个智能体的模型选择和思考档位自动保存到 localStorage，刷新/切换会话自动恢复
 - **定时任务**：AI 通过 CLI 子命令创建 Cron 调度，定时自动执行；独立标签页管理，4 级面包屑导航；频率预设（每小时/每天/每周/每月）+ 自定义 Cron 表达式；任务卡片内嵌聊天消息；执行级别已读追踪 + TTS 朗读；执行完成后自动摘要 + 完成通知（音效/震动/Toast）
@@ -190,7 +194,7 @@ cd clawbench
 - **滑动会话切换开关**：可在设置中开关聊天区域左右滑动切换会话，默认关闭避免滚动宽内容时误触
 - **图片上传**：支持上传图片与 AI 对话（多模态）
 - **断连保护**：消息立即落库，网络断开不丢失，15 秒心跳保活 + 30 秒超时自动重连（降级轮询时实时更新内容）
-- **自动恢复**：Claude / CodeBuddy / Qoder / DeepSeek / Pi 退出 Plan Mode 后自动发送"继续"
+- **自动恢复**：Claude / CodeBuddy / Qoder / DeepSeek / MiMo / Pi 退出 Plan Mode 后自动发送"继续"
 - **消息队列**：AI 忙碌时消息排队，依次发送
 - **自动摘要**：会话完成后自动生成最后一条助手消息的摘要，底部横幅一键切换摘要/原文；TTS 朗读也使用摘要
 - **@ 命令**：输入 `@chatsearch` 搜索历史对话、`@task` 管理定时任务，自动补全弹出菜单，用户消息显示紫色命令徽章
