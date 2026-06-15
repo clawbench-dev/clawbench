@@ -37,7 +37,11 @@ func AsyncSummarize(targetType string, targetID int64, blocks []model.ContentBlo
 		sumCtx, sumCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer sumCancel()
 
-		text := summarize.ExtractTextFromBlocks(blocks)
+		// Extract only the last substantive answer (the text after the
+		// last tool_use, or the longest text block). This avoids
+		// summarizing intermediate reasoning like "Let me check..."
+		// when the real answer is just before a terminal tool_use.
+		text := summarize.ExtractLastAnswerFromBlocks(blocks)
 		if utf8.RuneCountInString(text) < summarize.ShortTextThreshold {
 			// Text too short, mark as empty (frontend shows original)
 			if err := SaveSummary(targetType, targetID, ""); err != nil {
