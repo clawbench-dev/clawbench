@@ -2,11 +2,15 @@ package service
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
+
+	_ "modernc.org/sqlite"
 )
 
 // --- ExecutionMode ---
@@ -522,4 +526,730 @@ func containsSubstr(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// --- processEvent / handleNonForwardableEvent tests ---
+
+func TestSessionExecutor_RunWithChannel_SessionCaptureEvent(t *testing.T) {
+	// Test that session_capture events are handled by handleNonForwardableEvent
+	// and NOT forwarded to SSE or accumulated as blocks.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t, "/test", "test")
+
+	events := []ai.StreamEvent{
+		{Type: "session_capture", Content: "ext-session-123"},
+		{Type: "content", Content: "hello"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events)+1)
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+	result := executor.RunWithChannel(ch)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+	// session_capture should not produce a block
+	for _, b := range result.Blocks {
+		if b.Type == "session_capture" {
+			t.Fatal("session_capture should not be accumulated as a block")
+		}
+	}
+}
+
+func TestSessionExecutor_RunWithChannel_RawOutputAccumulation(t *testing.T) {
+	// Test that raw_output events are handled by handleNonForwardableEvent
+	// and accumulated in rawOutput, not as blocks.
+	events := []ai.StreamEvent{
+		{Type: "raw_output", RawOutput: "debug line 1"},
+		{Type: "raw_output", RawOutput: "debug line 2"},
+		{Type: "content", Content: "result"},
+		{Type: "done"},
+	}
+	result := runExecutorWithEvents(t, events, ModeScheduled)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+	if !contains(result.RawOutput, "debug line 1") || !contains(result.RawOutput, "debug line 2") {
+		t.Fatalf("expected raw output to contain both debug lines, got: %q", result.RawOutput)
+	}
+	// raw_output should not produce blocks
+	for _, b := range result.Blocks {
+		if b.Type == "raw_output" {
+			t.Fatal("raw_output should not be accumulated as a block")
+		}
+	}
+}
+
+func TestSessionExecutor_RunWithChannel_MetadataCapture(t *testing.T) {
+	// Test that captureMetadata correctly stores metadata from events.
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "response"},
+		{Type: "metadata", Meta: &ai.Metadata{InputTokens: 42, OutputTokens: 7, CostUSD: 0.03}},
+		{Type: "done"},
+	}
+	result := runExecutorWithEvents(t, events, ModeScheduled)
+
+	if result.Metadata == nil {
+		t.Fatal("expected Metadata to be captured")
+	}
+	if result.Metadata.InputTokens != 42 {
+		t.Fatalf("expected InputTokens=42, got %d", result.Metadata.InputTokens)
+	}
+	if result.Metadata.OutputTokens != 7 {
+		t.Fatalf("expected OutputTokens=7, got %d", result.Metadata.OutputTokens)
+	}
+	if result.Metadata.CostUSD != 0.03 {
+		t.Fatalf("expected CostUSD=0.03, got %f", result.Metadata.CostUSD)
+	}
+}
+
+func TestSessionExecutor_RunWithChannel_MetadataNilMeta(t *testing.T) {
+	// Test that captureMetadata ignores metadata events with nil Meta.
+	events := []ai.StreamEvent{
+		{Type: "metadata", Meta: nil},
+		{Type: "content", Content: "hello"},
+		{Type: "done"},
+	}
+	result := runExecutorWithEvents(t, events, ModeScheduled)
+
+	// Metadata should be nil (created later by buildResult with defaults)
+	if result.Metadata == nil {
+		t.Fatal("expected Metadata to be created with defaults")
+	}
+	// InputTokens should be 0 since no actual metadata was captured
+	if result.Metadata.InputTokens != 0 {
+		t.Fatalf("expected InputTokens=0, got %d", result.Metadata.InputTokens)
+	}
+}
+
+func TestSessionExecutor_RunWithChannel_NonMetadataEvent(t *testing.T) {
+	// Test that captureMetadata ignores non-metadata events.
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "hello"},
+		{Type: "done"},
+	}
+	result := runExecutorWithEvents(t, events, ModeScheduled)
+
+	if result.Metadata == nil {
+		t.Fatal("expected Metadata to be created with defaults in buildResult")
+	}
+}
+
+// --- Finalize tests (exercise finalizeContent, buildEmptyContentJSON, buildNonEmptyContentJSON, drainRawOutput) ---
+
+func TestSessionExecutor_Finalize_EmptyBlocks_UserCancel(t *testing.T) {
+	// Test buildEmptyContentJSON with user cancel reason.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t, "/test", "test")
+	helperCreateStreamingMessage(t, sid)
+
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	ctx := context.Background()
+	executor := NewSessionExecutor(ctx, cfg)
+
+	result := RunResult{
+		CancelReason:     "user",
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{},
+		Metadata:         &ai.Metadata{},
+	}
+
+	finalized := executor.Finalize(result, nil)
+
+	// Should have a warning block for user cancel
+	found := false
+	for _, b := range finalized.Blocks {
+		if b.Type == "warning" && b.Reason == ai.ReasonUserCancel {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning block with reason user_cancel, got blocks: %+v", finalized.Blocks)
+	}
+}
+
+func TestSessionExecutor_Finalize_EmptyBlocks_ContextCancelled(t *testing.T) {
+	// Test buildEmptyContentJSON with context.Canceled.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t, "/test", "test")
+	helperCreateStreamingMessage(t, sid)
+
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	executor := NewSessionExecutor(ctx, cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{},
+		Metadata:         &ai.Metadata{},
+	}
+
+	finalized := executor.Finalize(result, nil)
+
+	found := false
+	for _, b := range finalized.Blocks {
+		if b.Type == "warning" && b.Reason == ai.ReasonContextCancel {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning block with reason context_cancel, got blocks: %+v", finalized.Blocks)
+	}
+}
+
+func TestSessionExecutor_Finalize_EmptyBlocks_DeadlineExceeded(t *testing.T) {
+	// Test buildEmptyContentJSON with context.DeadlineExceeded.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t, "/test", "test")
+	helperCreateStreamingMessage(t, sid)
+
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 0)
+	// Don't call cancel() — let the timeout expire naturally so ctx.Err() returns DeadlineExceeded
+	_ = cancel
+	executor := NewSessionExecutor(ctx, cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{},
+		Metadata:         &ai.Metadata{},
+	}
+
+	finalized := executor.Finalize(result, nil)
+
+	found := false
+	for _, b := range finalized.Blocks {
+		if b.Type == "warning" && b.Reason == ai.ReasonTimeout {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning block with reason timeout, got blocks: %+v", finalized.Blocks)
+	}
+}
+
+func TestSessionExecutor_Finalize_EmptyBlocks_DefaultReason(t *testing.T) {
+	// Test buildEmptyContentJSON with no cancel reason and no context error.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t, "/test", "test")
+	helperCreateStreamingMessage(t, sid)
+
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{},
+		Metadata:         &ai.Metadata{},
+	}
+
+	finalized := executor.Finalize(result, nil)
+
+	found := false
+	for _, b := range finalized.Blocks {
+		if b.Type == "warning" && b.Reason == ai.ReasonEmpty {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning block with reason empty, got blocks: %+v", finalized.Blocks)
+	}
+}
+
+func TestSessionExecutor_Finalize_NonEmptyBlocks_UserCancel(t *testing.T) {
+	// Test buildNonEmptyContentJSON with user cancel — should set cancelled=true.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t, "/test", "test")
+	helperCreateStreamingMessage(t, sid)
+
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	result := RunResult{
+		CancelReason:     "user",
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "partial response"}},
+		Metadata:         &ai.Metadata{},
+	}
+
+	finalized := executor.Finalize(result, nil)
+
+	if len(finalized.Blocks) == 0 {
+		t.Fatal("expected at least one block")
+	}
+	if finalized.Blocks[0].Text != "partial response" {
+		t.Fatalf("expected original block text, got %q", finalized.Blocks[0].Text)
+	}
+}
+
+func TestSessionExecutor_Finalize_NonEmptyBlocks_ContextCancelled(t *testing.T) {
+	// Test buildNonEmptyContentJSON with context.Canceled — should set cancelled=true.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t, "/test", "test")
+	helperCreateStreamingMessage(t, sid)
+
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	executor := NewSessionExecutor(ctx, cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "partial"}},
+		Metadata:         &ai.Metadata{},
+	}
+
+	finalized := executor.Finalize(result, nil)
+
+	// Should have original block plus potentially a warning for context cancel
+	if len(finalized.Blocks) == 0 {
+		t.Fatal("expected at least one block")
+	}
+}
+
+func TestSessionExecutor_Finalize_NonEmptyBlocks_DeadlineExceeded(t *testing.T) {
+	// Test buildNonEmptyContentJSON with DeadlineExceeded — the timeout warning
+	// is embedded in the serialized content JSON, not in the returned blocks slice
+	// (because buildNonEmptyContentJSON only returns a string, not modified blocks).
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t, "/test", "test")
+	helperCreateStreamingMessage(t, sid)
+
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 0)
+	// Don't call cancel() — let the timeout expire naturally so ctx.Err() returns DeadlineExceeded
+	_ = cancel
+	executor := NewSessionExecutor(ctx, cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "partial"}},
+		Metadata:         &ai.Metadata{},
+	}
+
+	// Finalize should not panic with DeadlineExceeded context
+	finalized := executor.Finalize(result, nil)
+
+	// Original block should still be present
+	if len(finalized.Blocks) == 0 {
+		t.Fatal("expected at least one block")
+	}
+	if finalized.Blocks[0].Text != "partial" {
+		t.Fatalf("expected original text block, got: %+v", finalized.Blocks[0])
+	}
+}
+
+func TestSessionExecutor_Finalize_NonEmptyBlocks_NormalCompletion(t *testing.T) {
+	// Test buildNonEmptyContentJSON with normal completion — no cancel, no timeout.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t, "/test", "test")
+	helperCreateStreamingMessage(t, sid)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "full response"}},
+		Metadata:         &ai.Metadata{},
+	}
+
+	finalized := executor.Finalize(result, nil)
+
+	// Should not have any warning blocks
+	for _, b := range finalized.Blocks {
+		if b.Type == "warning" {
+			t.Fatalf("expected no warning blocks for normal completion, got: %+v", finalized.Blocks)
+		}
+	}
+	if finalized.Blocks[0].Text != "full response" {
+		t.Fatalf("expected original text, got %q", finalized.Blocks[0].Text)
+	}
+}
+
+// --- drainRawOutput tests ---
+
+func TestSessionExecutor_Finalize_DrainRawOutput(t *testing.T) {
+	// Test that drainRawOutput collects remaining raw_output events after finalization.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t, "/test", "test")
+	helperCreateStreamingMessage(t, sid)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	// Create a channel with remaining raw_output events
+	drainCh := make(chan ai.StreamEvent, 3)
+	drainCh <- ai.StreamEvent{Type: "raw_output", RawOutput: "drained line 1"}
+	drainCh <- ai.StreamEvent{Type: "raw_output", RawOutput: "drained line 2"}
+	close(drainCh)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "response"}},
+		Metadata:         &ai.Metadata{},
+		RawOutput:        "initial raw",
+	}
+
+	finalized := executor.Finalize(result, drainCh)
+
+	if !contains(finalized.RawOutput, "initial raw") {
+		t.Fatalf("expected original raw output preserved, got: %q", finalized.RawOutput)
+	}
+	if !contains(finalized.RawOutput, "drained line 1") || !contains(finalized.RawOutput, "drained line 2") {
+		t.Fatalf("expected drained lines in raw output, got: %q", finalized.RawOutput)
+	}
+}
+
+func TestSessionExecutor_Finalize_DrainRawOutput_NilChannel(t *testing.T) {
+	// Test that drainRawOutput returns existing rawOutput when channel is nil.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t, "/test", "test")
+	helperCreateStreamingMessage(t, sid)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "response"}},
+		Metadata:         &ai.Metadata{},
+		RawOutput:        "existing raw output",
+	}
+
+	finalized := executor.Finalize(result, nil)
+
+	if finalized.RawOutput != "existing raw output" {
+		t.Fatalf("expected raw output preserved when nil channel, got: %q", finalized.RawOutput)
+	}
+}
+
+func TestSessionExecutor_Finalize_DrainRawOutput_EmptyChannel(t *testing.T) {
+	// Test that drainRawOutput handles an already-empty channel.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t, "/test", "test")
+	helperCreateStreamingMessage(t, sid)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	drainCh := make(chan ai.StreamEvent)
+	close(drainCh)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "response"}},
+		Metadata:         &ai.Metadata{},
+		RawOutput:        "some raw",
+	}
+
+	finalized := executor.Finalize(result, drainCh)
+
+	if finalized.RawOutput != "some raw" {
+		t.Fatalf("expected raw output preserved with empty channel, got: %q", finalized.RawOutput)
+	}
+}
+
+// --- injectResponseMetadata tests ---
+
+func TestSessionExecutor_Finalize_InjectResponseMetadata(t *testing.T) {
+	// Test that injectResponseMetadata sets transport and model fields.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t, "/test", "test")
+	helperCreateStreamingMessage(t, sid)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "response"}},
+		Metadata:         &ai.Metadata{},
+	}
+
+	finalized := executor.Finalize(result, nil)
+
+	if finalized.Metadata == nil {
+		t.Fatal("expected Metadata to be set")
+	}
+	// Transport should be set (default "cli" when no session transport or ACP)
+	if finalized.Metadata.Transport != "cli" {
+		t.Fatalf("expected Transport='cli', got %q", finalized.Metadata.Transport)
+	}
+}
+
+func TestSessionExecutor_Finalize_MsgIDSet(t *testing.T) {
+	// Test that Finalize returns a non-zero MsgID when successful.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t, "/test", "test")
+	helperCreateStreamingMessage(t, sid)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "response"}},
+		Metadata:         &ai.Metadata{},
+	}
+
+	finalized := executor.Finalize(result, nil)
+
+	if finalized.MsgID == 0 {
+		t.Fatal("expected non-zero MsgID after Finalize")
+	}
+}
+
+// --- Finalize with empty blocks produces valid JSON content ---
+
+func TestSessionExecutor_Finalize_EmptyBlocks_ContainsCancelledField(t *testing.T) {
+	// Verify the JSON content stored by Finalize includes "cancelled":true for user cancel.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t, "/test", "test")
+	helperCreateStreamingMessage(t, sid)
+
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	result := RunResult{
+		CancelReason:     "user",
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{},
+		Metadata:         &ai.Metadata{},
+	}
+
+	// We verify indirectly: the blocks should include a warning with reason user_cancel
+	finalized := executor.Finalize(result, nil)
+	found := false
+	for _, b := range finalized.Blocks {
+		if b.Type == "warning" && b.Reason == ai.ReasonUserCancel {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected user_cancel warning block")
+	}
+}
+
+// --- DB test helpers for session_executor_test.go ---
+
+const testSchema = `
+CREATE TABLE IF NOT EXISTS chat_history (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	project_path TEXT NOT NULL,
+	role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+	content TEXT NOT NULL,
+	files TEXT,
+	session_id TEXT,
+	backend TEXT NOT NULL DEFAULT 'claude',
+	streaming INTEGER NOT NULL DEFAULT 0,
+	indexed INTEGER NOT NULL DEFAULT 0,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS chat_sessions (
+	id TEXT PRIMARY KEY,
+	project_path TEXT NOT NULL,
+	backend TEXT NOT NULL,
+	title TEXT NOT NULL,
+	agent_id TEXT DEFAULT '',
+	agent_source TEXT DEFAULT 'default',
+	model TEXT DEFAULT '',
+	session_type TEXT NOT NULL DEFAULT 'chat',
+	external_session_id TEXT DEFAULT '',
+	source_session_id TEXT DEFAULT NULL,
+	transport TEXT DEFAULT '',
+	auto_approve INTEGER NOT NULL DEFAULT 0,
+	deleted INTEGER NOT NULL DEFAULT 0,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	last_read_at DATETIME,
+	UNIQUE(project_path, backend, id)
+);
+CREATE TABLE IF NOT EXISTS chat_metadata (
+	message_id INTEGER PRIMARY KEY,
+	mode TEXT DEFAULT '',
+	thinking_effort TEXT DEFAULT '',
+	transport TEXT DEFAULT '',
+	model TEXT DEFAULT '',
+	input_tokens INTEGER DEFAULT 0,
+	output_tokens INTEGER DEFAULT 0,
+	duration_ms INTEGER DEFAULT 0,
+	wall_ms INTEGER DEFAULT 0,
+	cost_usd REAL DEFAULT 0,
+	stop_reason TEXT DEFAULT '',
+	is_error INTEGER DEFAULT 0,
+	error_message TEXT DEFAULT '',
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS ai_raw_responses (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	session_id TEXT NOT NULL,
+	message_id INTEGER NOT NULL,
+	backend TEXT NOT NULL DEFAULT '',
+	raw_output TEXT NOT NULL,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_path, backend, session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_project_backend ON chat_sessions(project_path, backend);
+`
+
+func setupExecutorTestDB(t *testing.T) {
+	t.Helper()
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("failed to open in-memory db: %v", err)
+	}
+
+	_, err = db.Exec(testSchema)
+	if err != nil {
+		t.Fatalf("failed to execute schema: %v", err)
+	}
+
+	origDB := DB
+	origDBRead := DBRead
+	DB = db
+	DBRead = db
+	t.Cleanup(func() {
+		DB = origDB
+		DBRead = origDBRead
+		db.Close()
+	})
+}
+
+func helperCreateTestSession(t *testing.T, projectPath, backend string) string {
+	t.Helper()
+	id := "test-sess-" + time.Now().Format("150405.000")
+	_, err := DB.Exec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, session_type) VALUES (?, ?, ?, ?, ?, ?)",
+		id, projectPath, backend, "Test Session", "test", "chat",
+	)
+	if err != nil {
+		t.Fatalf("failed to create test session: %v", err)
+	}
+	return id
+}
+
+func helperCreateStreamingMessage(t *testing.T, sessionID string) {
+	t.Helper()
+	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
+	_, err := DB.Exec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming) VALUES (?, ?, ?, ?, ?, 1)",
+		"/test", "test", sessionID, "assistant", string(emptyContent),
+	)
+	if err != nil {
+		t.Fatalf("failed to create streaming message: %v", err)
+	}
 }

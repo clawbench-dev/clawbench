@@ -232,3 +232,342 @@ func TestConvertAskQuestionBlocks_TextBeforeAndAfter(t *testing.T) {
 		t.Fatalf("expected 1 tool_use block, got %d", toolCount)
 	}
 }
+
+// --- isValidXMLCandidate ---
+
+func TestIsValidXMLCandidate_ValidStructure(t *testing.T) {
+	s := `<item><question>Q?</question><option>A</option></item>`
+	if !isValidXMLCandidate(s) {
+		t.Fatal("expected true for valid XML with <item>, <question>, and <option>")
+	}
+}
+
+func TestIsValidXMLCandidate_ValidWithItemAttribute(t *testing.T) {
+	s := `<item id="1"><question>Q?</question><option>A</option></item>`
+	if !isValidXMLCandidate(s) {
+		t.Fatal("expected true for XML with <item > (space after tag name)")
+	}
+}
+
+func TestIsValidXMLCandidate_MissingItem(t *testing.T) {
+	s := `<question>Q?</question><option>A</option>`
+	if isValidXMLCandidate(s) {
+		t.Fatal("expected false when <item> is missing")
+	}
+}
+
+func TestIsValidXMLCandidate_MissingQuestion(t *testing.T) {
+	s := `<item><option>A</option></item>`
+	if isValidXMLCandidate(s) {
+		t.Fatal("expected false when <question> is missing")
+	}
+}
+
+func TestIsValidXMLCandidate_MissingOption(t *testing.T) {
+	s := `<item><question>Q?</question></item>`
+	if isValidXMLCandidate(s) {
+		t.Fatal("expected false when <option> is missing")
+	}
+}
+
+func TestIsValidXMLCandidate_EmptyString(t *testing.T) {
+	if isValidXMLCandidate("") {
+		t.Fatal("expected false for empty string")
+	}
+}
+
+// --- validateJSONCandidate ---
+
+func TestValidateJSONCandidate_Valid(t *testing.T) {
+	s := `{"questions":[{"question":"Q?","options":[{"label":"A"}]}]}`
+	result := validateJSONCandidate(s)
+	if result != s {
+		t.Fatalf("expected original string, got %q", result)
+	}
+}
+
+func TestValidateJSONCandidate_InvalidJSON(t *testing.T) {
+	s := `{not json}`
+	result := validateJSONCandidate(s)
+	if result != "" {
+		t.Fatalf("expected empty string for invalid JSON, got %q", result)
+	}
+}
+
+func TestValidateJSONCandidate_MissingQuestionsKey(t *testing.T) {
+	s := `{"other":[]}`
+	result := validateJSONCandidate(s)
+	if result != "" {
+		t.Fatalf("expected empty string when 'questions' key missing, got %q", result)
+	}
+}
+
+func TestValidateJSONCandidate_QuestionsNotArray(t *testing.T) {
+	s := `{"questions":"not array"}`
+	result := validateJSONCandidate(s)
+	if result != "" {
+		t.Fatalf("expected empty string when questions is not an array, got %q", result)
+	}
+}
+
+func TestValidateJSONCandidate_EmptyQuestionsArray(t *testing.T) {
+	s := `{"questions":[]}`
+	result := validateJSONCandidate(s)
+	if result != "" {
+		t.Fatalf("expected empty string for empty questions array, got %q", result)
+	}
+}
+
+func TestValidateJSONCandidate_NoValidQuestion(t *testing.T) {
+	s := `{"questions":[{"no_question":true}]}`
+	result := validateJSONCandidate(s)
+	if result != "" {
+		t.Fatalf("expected empty string when no valid question in array, got %q", result)
+	}
+}
+
+func TestValidateJSONCandidate_NotStartingWithBrace(t *testing.T) {
+	s := `[]`
+	result := validateJSONCandidate(s)
+	if result != "" {
+		t.Fatalf("expected empty string for non-object JSON, got %q", result)
+	}
+}
+
+// --- hasValidQuestion ---
+
+func TestHasValidQuestion_ValidQuestion(t *testing.T) {
+	questions := []any{
+		map[string]any{"question": "Q?", "options": []any{"A"}},
+	}
+	if !hasValidQuestion(questions) {
+		t.Fatal("expected true for valid question with options")
+	}
+}
+
+func TestHasValidQuestion_NoOptions(t *testing.T) {
+	questions := []any{
+		map[string]any{"question": "Q?", "options": []any{}},
+	}
+	if hasValidQuestion(questions) {
+		t.Fatal("expected false when options is empty")
+	}
+}
+
+func TestHasValidQuestion_OptionsNotArray(t *testing.T) {
+	questions := []any{
+		map[string]any{"question": "Q?", "options": "not array"},
+	}
+	if hasValidQuestion(questions) {
+		t.Fatal("expected false when options is not an array")
+	}
+}
+
+func TestHasValidQuestion_NoQuestionKey(t *testing.T) {
+	questions := []any{
+		map[string]any{"options": []any{"A"}},
+	}
+	if hasValidQuestion(questions) {
+		t.Fatal("expected false when 'question' key is missing")
+	}
+}
+
+func TestHasValidQuestion_ItemNotMap(t *testing.T) {
+	questions := []any{"not a map"}
+	if hasValidQuestion(questions) {
+		t.Fatal("expected false when item is not a map")
+	}
+}
+
+func TestHasValidQuestion_EmptySlice(t *testing.T) {
+	if hasValidQuestion([]any{}) {
+		t.Fatal("expected false for empty slice")
+	}
+}
+
+// --- parseJSONQuestionItem ---
+
+func TestParseJSONQuestionItem_Valid(t *testing.T) {
+	item := map[string]any{
+		"question":    "Which?",
+		"header":      "Choice",
+		"multiSelect": true,
+		"options":     []any{map[string]any{"label": "A", "description": "First"}},
+	}
+	result := parseJSONQuestionItem(item)
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result["question"] != "Which?" {
+		t.Fatalf("expected question='Which?', got %v", result["question"])
+	}
+	if result["header"] != "Choice" {
+		t.Fatalf("expected header='Choice', got %v", result["header"])
+	}
+	if result["multiSelect"] != true {
+		t.Fatalf("expected multiSelect=true, got %v", result["multiSelect"])
+	}
+	opts, ok := result["options"].([]map[string]any)
+	if !ok || len(opts) != 1 || opts[0]["label"] != "A" {
+		t.Fatalf("expected options with label A, got %v", result["options"])
+	}
+}
+
+func TestParseJSONQuestionItem_NotMap(t *testing.T) {
+	result := parseJSONQuestionItem("not a map")
+	if result != nil {
+		t.Fatal("expected nil for non-map input")
+	}
+}
+
+func TestParseJSONQuestionItem_EmptyQuestion(t *testing.T) {
+	item := map[string]any{
+		"question": "",
+		"options":  []any{map[string]any{"label": "A"}},
+	}
+	result := parseJSONQuestionItem(item)
+	if result != nil {
+		t.Fatal("expected nil when question is empty")
+	}
+}
+
+func TestParseJSONQuestionItem_MissingQuestion(t *testing.T) {
+	item := map[string]any{
+		"options": []any{map[string]any{"label": "A"}},
+	}
+	result := parseJSONQuestionItem(item)
+	if result != nil {
+		t.Fatal("expected nil when question key is missing")
+	}
+}
+
+func TestParseJSONQuestionItem_NoOptions(t *testing.T) {
+	item := map[string]any{
+		"question": "Q?",
+	}
+	result := parseJSONQuestionItem(item)
+	if result != nil {
+		t.Fatal("expected nil when options key is missing")
+	}
+}
+
+func TestParseJSONQuestionItem_EmptyOptions(t *testing.T) {
+	item := map[string]any{
+		"question": "Q?",
+		"options":  []any{},
+	}
+	result := parseJSONQuestionItem(item)
+	if result != nil {
+		t.Fatal("expected nil when options is empty")
+	}
+}
+
+func TestParseJSONQuestionItem_OptionsAllInvalid(t *testing.T) {
+	item := map[string]any{
+		"question": "Q?",
+		"options":  []any{map[string]any{"no_label": true}},
+	}
+	result := parseJSONQuestionItem(item)
+	if result != nil {
+		t.Fatal("expected nil when all options are invalid (no label)")
+	}
+}
+
+// --- parseJSONOptions ---
+
+func TestParseJSONOptions_ValidWithDescription(t *testing.T) {
+	raw := []any{
+		map[string]any{"label": "A", "description": "First"},
+		map[string]any{"label": "B"},
+	}
+	result := parseJSONOptions(raw)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 options, got %d", len(result))
+	}
+	if result[0]["label"] != "A" || result[0]["description"] != "First" {
+		t.Fatalf("expected first option with label A and description, got %v", result[0])
+	}
+	if result[1]["label"] != "B" {
+		t.Fatalf("expected second option with label B, got %v", result[1])
+	}
+	if _, hasDesc := result[1]["description"]; hasDesc {
+		t.Fatal("expected no description for second option")
+	}
+}
+
+func TestParseJSONOptions_EmptyLabel(t *testing.T) {
+	raw := []any{
+		map[string]any{"label": ""},
+	}
+	result := parseJSONOptions(raw)
+	if len(result) != 0 {
+		t.Fatalf("expected 0 options for empty label, got %d", len(result))
+	}
+}
+
+func TestParseJSONOptions_NotMap(t *testing.T) {
+	raw := []any{"not a map"}
+	result := parseJSONOptions(raw)
+	if len(result) != 0 {
+		t.Fatalf("expected 0 options for non-map item, got %d", len(result))
+	}
+}
+
+func TestParseJSONOptions_EmptyDescription(t *testing.T) {
+	raw := []any{
+		map[string]any{"label": "A", "description": ""},
+	}
+	result := parseJSONOptions(raw)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 option, got %d", len(result))
+	}
+	if _, hasDesc := result[0]["description"]; hasDesc {
+		t.Fatal("expected no description key when description is empty string")
+	}
+}
+
+func TestParseJSONOptions_NilSlice(t *testing.T) {
+	result := parseJSONOptions(nil)
+	if result != nil {
+		t.Fatalf("expected nil for nil input, got %v", result)
+	}
+}
+
+// --- extractXMLCandidate ---
+
+func TestExtractXMLCandidate_EmptyString(t *testing.T) {
+	result := extractXMLCandidate("")
+	if result != "" {
+		t.Fatalf("expected empty string, got %q", result)
+	}
+}
+
+func TestExtractXMLCandidate_WhitespaceOnly(t *testing.T) {
+	result := extractXMLCandidate("   ")
+	if result != "" {
+		t.Fatalf("expected empty string for whitespace, got %q", result)
+	}
+}
+
+func TestExtractXMLCandidate_ValidXML(t *testing.T) {
+	raw := `<item><question>Q?</question><option>A</option></item>`
+	result := extractXMLCandidate(raw)
+	if result != raw {
+		t.Fatalf("expected %q, got %q", raw, result)
+	}
+}
+
+func TestExtractXMLCandidate_ValidJSON(t *testing.T) {
+	raw := `{"questions":[{"question":"Q?","options":[{"label":"A"}]}]}`
+	result := extractXMLCandidate(raw)
+	if result != raw {
+		t.Fatalf("expected %q, got %q", raw, result)
+	}
+}
+
+func TestExtractXMLCandidate_InvalidContent(t *testing.T) {
+	result := extractXMLCandidate("just some random text")
+	if result != "" {
+		t.Fatalf("expected empty string for invalid content, got %q", result)
+	}
+}
