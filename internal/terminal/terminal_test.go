@@ -15,6 +15,7 @@ import (
 	"clawbench/internal/model"
 
 	"github.com/coder/websocket"
+	"github.com/creack/pty"
 )
 
 const testIdleTimeout = "10m"
@@ -440,6 +441,88 @@ func TestStartPTY_InvalidCwd(t *testing.T) {
 	_, _, err := startPTY("/nonexistent/path/that/does/not/exist")
 	if err == nil {
 		t.Error("expected error for nonexistent working directory")
+	}
+}
+
+// --- startPTY sets TERM and initial size for TUI apps ---
+
+func TestStartPTY_SetsTermEnv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PTY not supported on Windows")
+	}
+
+	cfg := TerminalConfig{
+		IdleTimeout:  "5m",
+		BufferLines:  100,
+		MaxLineBytes: 65536,
+		MaxBufferMB:  4,
+	}
+
+	session, err := NewSession("/tmp", "/tmp", cfg)
+	if err != nil {
+		t.Skipf("PTY not available in this environment: %v", err)
+	}
+	defer session.Close()
+
+	// Verify the command environment contains TERM and COLORTERM
+	session.mu.Lock()
+	cmd := session.cmd
+	session.mu.Unlock()
+
+	foundTerm := false
+	foundColorterm := false
+	for _, env := range cmd.Environ() {
+		if env == "TERM=xterm-256color" {
+			foundTerm = true
+		}
+		if env == "COLORTERM=truecolor" {
+			foundColorterm = true
+		}
+	}
+	if !foundTerm {
+		t.Error("expected TERM=xterm-256color in PTY command environment")
+	}
+	if !foundColorterm {
+		t.Error("expected COLORTERM=truecolor in PTY command environment")
+	}
+}
+
+func TestStartPTY_InitialSize(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PTY not supported on Windows")
+	}
+
+	cfg := TerminalConfig{
+		IdleTimeout:  "5m",
+		BufferLines:  100,
+		MaxLineBytes: 65536,
+		MaxBufferMB:  4,
+	}
+
+	session, err := NewSession("/tmp", "/tmp", cfg)
+	if err != nil {
+		t.Skipf("PTY not available in this environment: %v", err)
+	}
+	defer session.Close()
+
+	// Read the PTY window size directly
+	session.mu.Lock()
+	ptmx := session.ptmx
+	session.mu.Unlock()
+
+	if ptmx == nil {
+		t.Fatal("PTY file is nil")
+	}
+
+	ws, err := pty.GetsizeFull(ptmx)
+	if err != nil {
+		t.Fatalf("failed to get PTY size: %v", err)
+	}
+	if ws.Cols != 80 {
+		t.Errorf("expected initial Cols=80, got %d", ws.Cols)
+	}
+	if ws.Rows != 24 {
+		t.Errorf("expected initial Rows=24, got %d", ws.Rows)
 	}
 }
 

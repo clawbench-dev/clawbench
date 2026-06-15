@@ -72,14 +72,25 @@ func startPTY(cwd string) (*os.File, *exec.Cmd, error) {
 
 	cmd := exec.Command(shell)
 	cmd.Dir = cwd
-	cmd.Env = os.Environ()
+	// Set terminal environment variables so TUI applications (vim, htop,
+	// OpenCode, etc.) can detect terminal capabilities correctly. Without
+	// TERM, ncurses/Bubble Tea cannot initialize and full-screen TUI apps
+	// fail to render. COLORTERM=truecolor signals 24-bit color support.
+	cmd.Env = append(os.Environ(),
+		"TERM=xterm-256color",
+		"COLORTERM=truecolor",
+	)
 
 	// NOTE: Do NOT set Setpgid here. pty.Start -> StartWithSize sets
 	// Setsid=true + Setctty=true, and Setpgid conflicts with Setsid
 	// on Linux (returns EPERM: "operation not permitted").
 	// Setsid already creates a new session and process group.
 
-	ptmx, err := pty.Start(cmd)
+	// Use StartWithSize to provide a reasonable default (80x24) so that
+	// the shell and any TUI apps see correct dimensions from the start.
+	// Without this, the PTY starts at 0x0 and TUI apps may render with
+	// wrong layout until the first frontend fit() + resize arrives.
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 80, Rows: 24})
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to start PTY: %w", err)
 	}
