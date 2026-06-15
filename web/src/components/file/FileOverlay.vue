@@ -102,6 +102,12 @@ const fileViewerRef = ref(null)
 // Forward pdfOutline from FileViewer's exposed API
 const pdfOutline = computed(() => fileViewerRef.value?.pdfOutline || props.pdfOutline || [])
 
+function pdfScrollToPage(pageNum) {
+  fileViewerRef.value?.pdfScrollToPage(pageNum)
+}
+
+defineExpose({ pdfScrollToPage, pdfOutline })
+
 // Click on the overlay background (outside the body) closes it
 function handleOverlayClick(event) {
   if (event.target === event.currentTarget) {

@@ -38,71 +38,53 @@
             />
           </TabPanel>
 
-          <!-- File Browse Tab -->
+          <!-- File Browse Tab (合一：目录浏览 + 文件覆盖预览) -->
           <TabPanel tabId="browse" :activeTab="activeTab" :noHeader="true">
-            <FileManagerContent
-              :entries="dirEntries"
-              :current-dir="currentDir"
-              :current-file="currentFile"
-              :show-hidden="showHidden"
-              :sort-field="sortField"
-              :sort-dir="sortDir"
-              :dir-loading="store.state.dirLoading"
-              @navigate-dir="handleNavigateDir"
-              @select-file="handleBrowseSelectFile"
-              @toggle-sort="handleToggleSort"
-              @toggle-hidden="toggleHidden"
-              @rename="handleRename"
-              @delete="handleDelete"
-              @batch-delete="handleBatchDelete"
-              @refresh="handleRefresh"
-              @open-terminal="handleOpenTerminal"
-            />
-          </TabPanel>
-
-          <!-- File Viewer Tab -->
-          <TabPanel tabId="viewer" :activeTab="activeTab" :noHeader="true">
-            <div class="viewer-panel">
-              <WelcomeView v-if="!currentFile" />
-              <FileViewer
-                v-if="currentFile"
-                ref="fileViewerRef"
-                :file="currentFile"
+            <div class="browse-panel">
+              <FileManagerContent
+                :entries="dirEntries"
+                :current-dir="currentDir"
+                :current-file="currentFile"
+                :show-hidden="showHidden"
+                :sort-field="sortField"
+                :sort-dir="sortDir"
+                :dir-loading="store.state.dirLoading"
+                @navigate-dir="handleNavigateDir"
+                @select-file="handleBrowseSelectFile"
+                @toggle-sort="handleToggleSort"
+                @toggle-hidden="toggleHidden"
+                @rename="handleRename"
+                @delete="handleDelete"
+                @batch-delete="handleBatchDelete"
+                @refresh="handleRefresh"
+                @open-terminal="handleOpenTerminal"
+              />
+              <FileOverlay
+                ref="fileOverlayRef"
+                :overlay-open="fileNav.overlayOpen.value"
+                :current-file="currentFile"
+                :can-go-back="fileNav.canGoBack.value"
                 :toc-open="tocOpen"
                 :search-open="searchOpen"
                 :markdown-view-mode="markdownViewMode"
-                @delete="handleDelete(currentFile?.path)"
+                :file-history-open="fileHistoryOpen"
+                :toc-file="tocFile"
+                :pdf-outline="pdfOutline"
+                @close="handleOverlayClose"
+                @go-back="handleOverlayGoBack"
+                @delete="handleDelete($event)"
                 @show-details="detailsOpen = true"
                 @open-git-history="openFileHistory"
                 @toggle-toc="tocOpen = !tocOpen"
                 @toggle-search="currentFile?.content && (searchOpen = !searchOpen)"
                 @toggle-view="markdownViewMode = markdownViewMode === 'rendered' ? 'raw' : 'rendered'"
                 @refresh="handleRefresh"
+                @jump="scrollToLine"
+                @jump-page="handleJumpPdfPage"
+                @close-git-history="fileHistoryOpen = false"
+                @open-file="handleOverlayOpenFile"
               />
             </div>
-            <!-- Auxiliary overlays for viewer tab — open only when viewer tab is active -->
-            <TocDrawer
-              :file="tocFile"
-              :pdf-outline="pdfOutline"
-              :open="activeTab === 'viewer' && tocOpen"
-              @close="tocOpen = false"
-              @jump="scrollToLine"
-              @jump-page="handleJumpPdfPage"
-            />
-            <SearchDrawer
-              :file="currentFile"
-              :open="activeTab === 'viewer' && searchOpen"
-              :view-mode="currentFileIsMarkdown ? markdownViewMode : undefined"
-              @close="searchOpen = false"
-              @jump="scrollToLine"
-            />
-            <GitHistoryDrawer
-              :open="activeTab === 'viewer' && fileHistoryOpen"
-              mode="file"
-              :file="currentFile"
-              @close="fileHistoryOpen = false"
-              @open-file="handleSelectFile"
-            />
           </TabPanel>
 
           <!-- History Tab -->
@@ -149,7 +131,7 @@
 
       <FileDetailsDialog
         :file="currentFile"
-        :open="activeTab === 'viewer' && detailsOpen"
+        :open="activeTab === 'browse' && fileNav.overlayOpen.value && detailsOpen"
         @close="detailsOpen = false"
       />
 
@@ -189,9 +171,6 @@
               </button>
               <span v-if="store.state.chatUnreadCount > 0 && activeTab !== 'chat'" class="dock-badge dock-badge-count">{{ store.state.chatUnreadCount }}</span>
             </div>
-            <button class="dock-btn" :class="{ active: activeTab === 'viewer' }" @click.stop="switchTab('viewer')" :title="t('nav.fileViewer')">
-              <FileText />
-            </button>
             <button class="dock-btn" :class="{ active: activeTab === 'browse' }" @click.stop="switchTab('browse')" :title="t('nav.fileManager')">
               <FolderOpen />
             </button>
@@ -262,11 +241,10 @@
 import { ref, computed, watch, onMounted, onUnmounted, provide, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
-import { MessageSquare, FolderOpen, FileText, GitBranch, EthernetPort, Terminal as TerminalIcon, CalendarClock, MoreHorizontal, Settings } from 'lucide-vue-next'
+import { MessageSquare, FolderOpen, GitBranch, EthernetPort, Terminal as TerminalIcon, CalendarClock, MoreHorizontal, Settings } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
-import WelcomeView from './components/WelcomeView.vue'
-import FileViewer from './components/file/FileViewer.vue'
+import FileOverlay from './components/file/FileOverlay.vue'
 import Lightbox from './components/media/Lightbox.vue'
 import ChatPanelContent from './components/chat/ChatPanelContent.vue'
 import FileManagerContent from './components/file/FileManagerContent.vue'
@@ -299,9 +277,10 @@ import { useChatKeyboard } from './composables/useChatKeyboard.ts'
 import { usePortForward } from './composables/usePortForward.ts'
 import { useTerminalStatus } from './composables/useTerminalStatus.ts'
 import { useFileWatch } from './composables/useFileWatch.ts'
+import { useFileNavStack } from './composables/useFileNavStack'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
 import { useGlobalEvents } from './composables/useGlobalEvents'
-import { useEdgeSwipeBack } from './composables/useEdgeSwipeBack'
+import { useEdgeSwipeBack, useFeatureBackHandler } from './composables/useEdgeSwipeBack'
 import { handleBackNavigation } from './composables/useBackHandler'
 import { store } from './stores/app.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
@@ -515,6 +494,8 @@ useFileWatch({
   currentFile: computed(() => store.state.currentFile),
 })
 
+const fileNav = useFileNavStack()
+
 const { isAppMode } = useAppMode()
 const { syncToNative, sshInfo, loadSSHInfo } = usePortForward()
 const { terminalRuntimeEnabled, loadTerminalStatus } = useTerminalStatus()
@@ -552,6 +533,24 @@ const handleForeground = () => {
 
 // Edge swipe back gesture detection (right-edge-left-swipe → go back)
 useEdgeSwipeBack()
+
+// 文件覆盖层的返回手势：文件栈优先
+useFeatureBackHandler(
+  'file-overlay',
+  () => activeTab.value === 'browse' && fileNav.overlayOpen.value,
+  () => {
+    if (fileNav.canGoBack.value) {
+      const prevPath = fileNav.goBack()
+      if (prevPath) store.selectFile(prevPath)
+    } else {
+      fileNav.closeOverlay()
+      tocOpen.value = false
+      detailsOpen.value = false
+      searchOpen.value = false
+      fileHistoryOpen.value = false
+    }
+  },
+)
 
 // Android hardware back button / predictive back gesture → delegate to JS
 window.addEventListener('clawbench-back-press', () => {
@@ -728,10 +727,10 @@ const tocFile = computed(() => {
 })
 
 // PDF TOC integration
-const fileViewerRef = ref(null)
-const pdfOutline = computed(() => fileViewerRef.value?.pdfOutline || [])
+const fileOverlayRef = ref(null)
+const pdfOutline = computed(() => fileOverlayRef.value?.pdfOutline || [])
 function handleJumpPdfPage(pageNum) {
-    fileViewerRef.value?.pdfScrollToPage(pageNum)
+    fileOverlayRef.value?.pdfScrollToPage(pageNum)
 }
 
 watch(() => currentFile.value, (f) => {
@@ -768,19 +767,48 @@ async function handleNavigateDir(path) {
 }
 
 async function handleSelectFile(path) {
-    await store.selectFile(path)
+    const ok = await store.selectFile(path)
+    if (ok) {
+        activeTab.value = 'browse'
+        fileNav.openFile(path)
+    }
 }
 
 async function handleBrowseSelectFile(path) {
     const ok = await store.selectFile(path)
-    if (ok) activeTab.value = 'viewer'
+    if (ok) {
+        fileNav.openFile(path)
+    }
 }
 
 async function handleTaskOpenFile(filePath, lineStart) {
     const ok = await store.selectFile(filePath)
     if (ok) {
-        switchTab('viewer')
+        activeTab.value = 'browse'
+        fileNav.openFile(filePath)
         if (lineStart) scrollToLine(lineStart)
+    }
+}
+
+function handleOverlayClose() {
+    fileNav.closeOverlay()
+    tocOpen.value = false
+    detailsOpen.value = false
+    searchOpen.value = false
+    fileHistoryOpen.value = false
+}
+
+async function handleOverlayGoBack() {
+    const prevPath = fileNav.goBack()
+    if (prevPath) {
+        await store.selectFile(prevPath)
+    }
+}
+
+async function handleOverlayOpenFile(path) {
+    const ok = await store.selectFile(path)
+    if (ok) {
+        fileNav.openFile(path)
     }
 }
 
@@ -1236,6 +1264,12 @@ onUnmounted(() => {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+}
+
+.browse-panel {
+  position: relative;
+  width: 100%;
+  height: 100%;
 }
 
 /* When terminal tab is active, remove header padding so content expands to top */
