@@ -78,6 +78,8 @@ type RunResult struct {
 	WallMs int
 	// FirstContentMs is the time to first content event for performance diagnosis.
 	FirstContentMs int
+	// MsgID is the database message ID after finalization (0 if not yet finalized).
+	MsgID int64
 }
 
 // SessionExecutor handles the full lifecycle of a single AI session execution.
@@ -326,4 +328,127 @@ func (e *SessionExecutor) handleResumeSplit() {
 			slog.String("session", e.cfg.SessionID),
 			slog.String("err", err.Error()))
 	}
+}
+
+// Finalize persists the RunResult to the database: builds the content JSON,
+// finalizes the streaming message, saves metadata, drains remaining events,
+// and saves raw output. Returns the finalized RunResult with DB message ID.
+//
+// This replaces the old finalizeStreamRun function from handler/chat.go.
+// The caller is still responsible for SSE terminal events and drain loop logic.
+func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEvent) RunResult {
+	blocks := result.Blocks
+	responseMetadata := result.Metadata
+
+	// Inject ACP mode/thinking/transport/model into metadata
+	if s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(e.cfg.SessionID); s.Mode != nil || s.Effort != nil {
+		if s.Mode != nil && s.Mode.CurrentModeID != "" {
+			responseMetadata.Mode = s.Mode.CurrentModeID
+		}
+		if s.Effort != nil && s.Effort.CurrentID != "" {
+			responseMetadata.ThinkingEffort = s.Effort.CurrentID
+		}
+	}
+	effectiveTransport := "cli"
+	if t := GetSessionTransport(e.cfg.SessionID); t != "" {
+		effectiveTransport = t
+	} else if agent, ok := model.Agents[e.cfg.AgentID]; ok && agent.SupportsACP() {
+		effectiveTransport = "acp-stdio"
+	}
+	responseMetadata.Transport = effectiveTransport
+
+	if sessionModel := GetSessionModel(e.cfg.SessionID); sessionModel != "" {
+		responseMetadata.Model = sessionModel
+	}
+
+	// Build content JSON for DB storage
+	var content string
+	if len(blocks) == 0 {
+		var errMsg string
+		var reason string
+		switch {
+		case result.CancelReason == "user":
+			errMsg, reason = "User cancelled", ai.ReasonUserCancel
+		case e.ctx.Err() == context.Canceled:
+			errMsg, reason = "AI response cancelled", ai.ReasonContextCancel
+		case e.ctx.Err() == context.DeadlineExceeded:
+			errMsg, reason = "AI response timed out (30 min)", ai.ReasonTimeout
+		default:
+			errMsg, reason = "AI returned no content", ai.ReasonEmpty
+		}
+		blocks = append(blocks, model.ContentBlock{Type: "warning", Text: errMsg, Reason: reason})
+		contentMap := map[string]any{"blocks": blocks, "metadata": responseMetadata}
+		if result.CancelReason == "user" || e.ctx.Err() == context.Canceled {
+			contentMap["cancelled"] = true
+		}
+		blocksJSON, _ := json.Marshal(contentMap)
+		content = string(blocksJSON)
+	} else {
+		contentMap := map[string]any{"blocks": blocks, "metadata": responseMetadata}
+		if result.CancelReason == "user" {
+			contentMap["cancelled"] = true
+		} else if e.ctx.Err() == context.Canceled {
+			contentMap["cancelled"] = true
+		} else if e.ctx.Err() == context.DeadlineExceeded {
+			blocks = append(blocks, model.ContentBlock{Type: "warning", Text: "AI response timed out (30 min)", Reason: ai.ReasonTimeout})
+		}
+		contentMap["blocks"] = blocks
+		blocksJSON, _ := json.Marshal(contentMap)
+		content = string(blocksJSON)
+	}
+
+	msgID, err := FinalizeStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, content)
+	if err != nil {
+		slog.Error("failed to finalize streaming message",
+			slog.String("session", e.cfg.SessionID),
+			slog.String("err", err.Error()))
+	}
+
+	// Save metadata to dedicated table for analytical queries
+	if msgID > 0 && responseMetadata != nil {
+		if saveErr := SaveMetadata(msgID, responseMetadata); saveErr != nil {
+			slog.Warn("failed to save message metadata", slog.Int64("msg_id", msgID), slog.String("err", saveErr.Error()))
+		}
+	}
+
+	// Drain any remaining events from channel (collect raw_output)
+	rawOutput := result.RawOutput
+	if eventCh != nil {
+		for {
+			select {
+			case event, ok := <-eventCh:
+				if !ok {
+					goto saveRaw
+				}
+				if event.Type == "raw_output" {
+					if rawOutput != "" {
+						rawOutput += "\n"
+					}
+					rawOutput += event.RawOutput
+				}
+			default:
+				goto saveRaw
+			}
+		}
+	}
+
+saveRaw:
+	// Save raw AI backend output for debugging/analysis
+	if rawOutput != "" {
+		if msgID := GetStreamingMessageID(e.cfg.SessionID); msgID > 0 {
+			if err := SaveRawResponse(e.cfg.SessionID, e.cfg.BackendName, msgID, rawOutput); err != nil {
+				slog.Error("failed to save raw response",
+					slog.String("session", e.cfg.SessionID),
+					slog.String("err", err.Error()))
+			}
+		}
+	}
+
+	// Update result with finalized blocks and metadata
+	result.Blocks = blocks
+	result.Metadata = responseMetadata
+	result.RawOutput = rawOutput
+	result.MsgID = msgID
+
+	return result
 }

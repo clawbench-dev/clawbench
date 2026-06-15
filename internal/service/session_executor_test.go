@@ -379,6 +379,93 @@ func TestSessionExecutor_Finalize_MetadataInjected(t *testing.T) {
 	}
 }
 
+// --- Scheduled mode behavior tests ---
+
+func TestSessionExecutor_Scheduled_NoCancelReason(t *testing.T) {
+	// Scheduled mode should NOT query cancel reasons — there's no interactive user.
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "hello"},
+		{Type: "done"},
+	}
+	result := runExecutorWithEvents(t, events, ModeScheduled)
+
+	if result.CancelReason != "" {
+		t.Fatalf("expected empty CancelReason in scheduled mode, got %q", result.CancelReason)
+	}
+}
+
+func TestSessionExecutor_Scheduled_NoSSEForwarding(t *testing.T) {
+	// Scheduled mode should not attempt to forward events to any SSE channel.
+	// The StreamCh is nil in scheduled mode, which is handled by the executor.
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "hello"},
+		{Type: "done"},
+	}
+
+	ctx := context.Background()
+	ch := make(chan ai.StreamEvent, len(events)+1)
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   "sess-scheduled",
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello", ScheduledExecution: true},
+		StreamCh:    nil, // No SSE channel for scheduled mode
+		TaskID:      42,
+		ExecutionID: 7,
+		TriggerType: "auto",
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+	result := executor.RunWithChannel(ch)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+	if result.CancelReason != "" {
+		t.Fatalf("expected empty CancelReason, got %q", result.CancelReason)
+	}
+}
+
+func TestSessionExecutor_Scheduled_ReceivedTerminalDetectsCrash(t *testing.T) {
+	// Scheduled mode must correctly detect CLI process crash (no terminal event).
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "partial output"},
+		// No "done" event — channel closes, simulating crash
+	}
+	result := runExecutorWithEvents(t, events, ModeScheduled)
+
+	if result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=false when channel closes without terminal event")
+	}
+	// Scheduler uses this flag to mark execution as "failed"
+}
+
+func TestSessionExecutor_Scheduled_MetadataCaptured(t *testing.T) {
+	// Scheduled mode should capture metadata just like interactive mode.
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "result"},
+		{Type: "metadata", Meta: &ai.Metadata{InputTokens: 200, OutputTokens: 100, CostUSD: 0.05}},
+		{Type: "done"},
+	}
+	result := runExecutorWithEvents(t, events, ModeScheduled)
+
+	if result.Metadata == nil {
+		t.Fatal("expected Metadata to be captured in scheduled mode")
+	}
+	if result.Metadata.InputTokens != 200 {
+		t.Fatalf("expected InputTokens=200, got %d", result.Metadata.InputTokens)
+	}
+	if result.Metadata.CostUSD != 0.05 {
+		t.Fatalf("expected CostUSD=0.05, got %f", result.Metadata.CostUSD)
+	}
+}
+
 // --- Helpers ---
 
 // runExecutorWithEvents creates an executor with a mock event channel,

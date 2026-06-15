@@ -686,58 +686,25 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		return
 	}
 
-	// Consume streaming events and build content blocks
-	var blocks []model.ContentBlock
-	var responseMetadata *ai.Metadata
-	var receivedTerminal bool // tracks whether "done" or "error" was received
-	wallStart := time.Now()
+	// Create streaming placeholder message in DB (so SessionExecutor.Finalize
+	// can update it via FinalizeStreamingMessage, just like interactive sessions).
+	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
+	_, _ = AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, "")
 
-	for event := range eventCh {
-		switch event.Type {
-		case "metadata":
-			if event.Meta != nil {
-				responseMetadata = event.Meta
-			}
-		case "session_capture":
-			// Persist external session ID so that ContinueFromExecution
-			// inherits the correct CLI session ID (not the ClawBench UUID placeholder).
-			// Without this, resuming a continued scheduled-task session causes
-			// the CLI to start a fresh session (context amnesia).
-			if event.Content != "" {
-				existingExtID := GetExternalSessionID(sessionID)
-				if existingExtID == "" || existingExtID == sessionID {
-					if err := UpdateExternalSessionID(sessionID, event.Content); err != nil {
-						slog.Error("failed to save external session ID from scheduled task",
-							slog.String("session", sessionID),
-							slog.String("external_id", event.Content),
-							slog.String("err", err.Error()))
-					} else {
-						slog.Info("captured external session ID from scheduled task",
-							slog.String("session", sessionID),
-							slog.String("external_id", event.Content))
-					}
-				}
-			}
-		case "done", "error":
-			receivedTerminal = true
-		default:
-			ai.AccumulateBlock(&blocks, event)
-		}
-	}
-
-	// Fallback: capture external session ID from metadata.SessionID
-	// (same logic as handler/chat.go event loop).
-	if responseMetadata != nil && responseMetadata.SessionID != "" {
-		existingExtID := GetExternalSessionID(sessionID)
-		if existingExtID == "" || existingExtID == sessionID {
-			if err := UpdateExternalSessionID(sessionID, responseMetadata.SessionID); err != nil {
-				slog.Error("failed to save external session ID from metadata in scheduled task",
-					slog.String("session", sessionID),
-					slog.String("external_id", responseMetadata.SessionID),
-					slog.String("err", err.Error()))
-			}
-		}
-	}
+	// Delegate event loop to SessionExecutor (scheduled mode — no SSE forwarding,
+	// no ask-question conversion, no cancel-reason tracking)
+	executor := NewSessionExecutor(ctx, RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: projectPath,
+		BackendName: backendName,
+		SessionID:   sessionID,
+		AgentID:     task.AgentID,
+		ChatRequest: chatReq,
+		TaskID:      task.ID,
+		ExecutionID: executionID,
+		TriggerType: triggerType,
+	})
+	runResult := executor.RunWithChannel(eventCh)
 
 	// If context was cancelled, mark execution as cancelled and update stats
 	if ctx.Err() == context.Canceled {
@@ -756,7 +723,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// If the event channel closed without a terminal event (done/error),
 	// the CLI process likely crashed or was killed (e.g. SIGKILL, OOM).
 	// Mark as failed to prevent zombie "running" state in DB.
-	if !receivedTerminal {
+	if !runResult.ReceivedTerminal {
 		slog.Warn(
 			"task execution ended without terminal event (CLI process crashed?)",
 			slog.Int64("task_id", task.ID),
@@ -769,29 +736,8 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		return
 	}
 
-	// Compute wall-clock duration and inject into metadata
-	wallMs := int(time.Since(wallStart).Milliseconds())
-	if responseMetadata == nil {
-		responseMetadata = &ai.Metadata{}
-	}
-	responseMetadata.WallMs = wallMs
-
-	// Build content JSON for the assistant message
-	contentMap := map[string]any{"blocks": blocks}
-	contentMap["metadata"] = responseMetadata
-	contentJSON, _ := json.Marshal(contentMap)
-
-	// Write assistant message to chat_history
-	msgID, err := AddChatMessage(projectPath, backendName, sessionID, "assistant", string(contentJSON), nil, false, task.Name)
-	if err != nil {
-		slog.Error("failed to write assistant message for task", slog.String("err", err.Error()))
-	}
-	// Save metadata to dedicated table for analytical queries
-	if msgID > 0 && responseMetadata != nil {
-		if saveErr := SaveMetadata(msgID, responseMetadata); saveErr != nil {
-			slog.Warn("failed to save task message metadata", slog.Int64("msg_id", msgID), slog.String("err", saveErr.Error()))
-		}
-	}
+	// Finalize: persist blocks to DB, save metadata, drain raw output
+	runResult = executor.Finalize(runResult, nil)
 
 	// Mark execution as completed
 	_ = UpdateExecutionStatus(sessionID, "completed")
@@ -866,7 +812,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// Generate summary asynchronously using unified AsyncSummarize
 	if taskSummarizerInstance != nil {
 		projectPath := task.ProjectPath
-		AsyncSummarize("task_execution", executionID, blocks, projectPath, sessionID)
+		AsyncSummarize("task_execution", executionID, runResult.Blocks, projectPath, sessionID)
 	}
 }
 
