@@ -414,10 +414,16 @@ jobs:
           cp pkg-linux/clawbench/clawbench .
           cp -r pkg-linux/clawbench/public .
           mkdir -p docker-staging/pi
-          if [ -d "pkg-linux/clawbench/.clawbench/pi" ]; then
-            cp -r pkg-linux/clawbench/.clawbench/pi/. docker-staging/pi/
-          fi
           chmod +x ./clawbench
+
+      - name: Resolve latest Pi version
+        id: pi-version
+        run: |
+          PI_VERSION=$(gh api repos/earendil-works/pi/releases/latest --jq '.tag_name' | sed 's/^v//')
+          echo "version=$PI_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Latest Pi version: v${PI_VERSION}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -442,6 +448,7 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: PI_VERSION=${{ steps.pi-version.outputs.version }}
           tags: |
             ghcr.io/${{ github.repository }}:latest
             ghcr.io/${{ github.repository }}:${{ steps.version.outputs.VERSION }}
