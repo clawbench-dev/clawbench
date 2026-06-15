@@ -38,6 +38,10 @@ export function resolveFilePath(path: string, projectRoot: string, homeDir?: str
     if (/^https?:\/\//i.test(path)) return null
     // Reject environment variable paths (e.g. $HOME/.bashrc, ${HOME}/config)
     if (/\$/.test(path)) return null
+    // Reject bare identifiers without / or file extension — these are package
+    // names (e.g. "fmt", "net/http" without project context), not file paths.
+    // A valid file path must contain at least one / OR end with a file extension.
+    if (!/\//.test(path) && !/\.[a-zA-Z][a-zA-Z0-9]{0,3}$/.test(path.replace(/:\d+(-\d+)?$/, ''))) return null
 
     // Expand tilde (~/...) to absolute path using homeDir.
     // Only handle ~/ (current user's home) — ~username/ is not expanded.
