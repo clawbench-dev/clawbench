@@ -330,6 +330,7 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   // (store state already reset by setProject, but identity/agents need explicit reset)
   resetIdentity()
   resetAgents()
+  fileNav.closeOverlay()
 
   // ── Phase 4: Change key → Vue destroys old component tree & builds new one ──
   projectKey.value = newProjectPath
@@ -1244,8 +1245,8 @@ onMounted(async () => {
         await store.loadFiles(store.state.currentDir)
         await store.selectFile(lastFile)
         if (store.state.currentFile?.error) store.state.currentFile = null
-        // 不再自动跳转到 viewer，保持默认 tab（chat）
-        // 用户切到 browse 时可以直接看到上次打开的文件
+        // 不自动切换 Tab 或打开覆盖层，保持默认 tab（chat）
+        // 用户切到 browse 时可以在 handleBrowseSelectFile 中打开覆盖层
     }
 })
 

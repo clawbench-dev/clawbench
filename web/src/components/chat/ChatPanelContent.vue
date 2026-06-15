@@ -253,7 +253,7 @@ const { openFilePath } = useFilePathAnnotation()
 async function handleFileTagClick(filePath) {
     if (filePath) {
         const ok = await openFilePath(filePath)
-        if (ok) switchTab('viewer')
+        if (ok) switchTab('browse')
     }
 }
 
@@ -420,7 +420,7 @@ provide('chatRender', {
   hasImagesInContent: render.hasImagesInContent,
 })
 provide('chatSession', { getAgentIcon, getAgentName })
-provide('chatUI', { navigateToFileViewer: () => switchTab('viewer') })
+provide('chatUI', { navigateToFileViewer: () => switchTab('browse') })
 provide('autoSpeech', autoSpeech)
 provide('layoutRefreshKey', layoutRefreshKey)
 
@@ -790,7 +790,7 @@ function findToolBlock({ msgId, blockIdx }) {
 async function handleFileOpenInOverlay(filePath, lineStart) {
   toolDetailOverlay.value.show = false
   const ok = await openFilePath(filePath, lineStart)
-  if (ok) switchTab('viewer')
+  if (ok) switchTab('browse')
 }
 
 // Wire up WS event handler for session_update

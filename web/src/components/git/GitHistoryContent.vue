@@ -177,7 +177,7 @@ const emit = defineEmits(['open-file'])
 
 function onOpenFile(path) {
   emit('open-file', path)
-  switchTab('viewer')
+  switchTab('browse')
 }
 
 // ─── Unified state ─────────────────────────────────────────────────────────

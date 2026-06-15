@@ -506,7 +506,10 @@ export async function openFilePath(resolvedPath: string, lineStart?: number): Pr
     }
 
     const ok = await store.selectFile(resolvedPath)
-    if (ok && lineStart) dispatchScrollToLine(lineStart)
+    if (ok) {
+        // 通知 App.vue 打开文件覆盖层
+        window.dispatchEvent(new CustomEvent('open-file-overlay', { detail: { path: resolvedPath, lineStart } }))
+    }
     return ok
 }
 
