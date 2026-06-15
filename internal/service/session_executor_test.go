@@ -2100,3 +2100,586 @@ func TestSessionExecutor_Finalize_RawOutputSaved(t *testing.T) {
 		t.Fatalf("expected raw output saved in DB, got: %q", rawContent)
 	}
 }
+
+// --- ACP state injection via injectResponseMetadata ---
+
+func TestSessionExecutor_InjectResponseMetadata_ACPModeAndEffort(t *testing.T) {
+	// Test that injectResponseMetadata injects ACP mode and thinking effort.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	// Register agent capabilities so GetModeState/GetThinkingEffortState return non-nil
+	agentID := "acp-test-agent"
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.UpdateModes(agentID, []ai.ModeDef{{ID: "code", Name: "Code"}})
+	reg.UpdateThinkingEfforts(agentID, []ai.ThinkingEffortDef{{ID: "high", Name: "High"}})
+	defer reg.UpdateModes(agentID, nil)
+
+	// Inject ACP connection with cached mode and thinking effort
+	agent := &model.Agent{ID: agentID, Backend: "codebuddy"}
+	conn := ai.NewACPConnForTest(agent, sid)
+	conn.UpdateCachedCurrentMode("code")
+	conn.UpdateCachedCurrentThinkingEffort("high")
+	mgr := ai.GetACPConnManager()
+	mgr.SetConnForTest(sid, conn)
+	defer func() {
+		mgr.SetConnForTest(sid, nil)
+	}()
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     agentID,
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "response"}},
+		Metadata:         &ai.Metadata{},
+	}
+	finalized := executor.Finalize(result, nil)
+
+	if finalized.Metadata == nil {
+		t.Fatal("expected Metadata to be set")
+	}
+	if finalized.Metadata.Mode != "code" {
+		t.Fatalf("expected Mode='code', got %q", finalized.Metadata.Mode)
+	}
+	if finalized.Metadata.ThinkingEffort != "high" {
+		t.Fatalf("expected ThinkingEffort='high', got %q", finalized.Metadata.ThinkingEffort)
+	}
+}
+
+// --- Additional coverage tests for diff coverage gate ---
+
+func TestSessionExecutor_ProcessEvent_ErrorEventAccumulatesBlock(t *testing.T) {
+	// Verify that "error" events accumulate a block before terminal return.
+	events := []ai.StreamEvent{
+		{Type: "error", Error: "fatal error"},
+	}
+	result := runExecutorWithEvents(t, events, ModeScheduled)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true for error event")
+	}
+	// The error should have been accumulated as a block
+	if len(result.Blocks) == 0 {
+		t.Fatal("expected at least one block from error event")
+	}
+}
+
+func TestSessionExecutor_HandleNonForwardableEvent_SessionCaptureWithContent(t *testing.T) {
+	// Test session_capture with non-empty Content updates external session ID.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+
+	events := []ai.StreamEvent{
+		{Type: "session_capture", Content: "ext-sid-999"},
+		{Type: "content", Content: "data"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events)+1)
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+	result := executor.RunWithChannel(ch)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+
+	// Verify external session ID was persisted
+	extID := GetExternalSessionID(sid)
+	if extID != "ext-sid-999" {
+		t.Fatalf("expected external_session_id='ext-sid-999', got %q", extID)
+	}
+}
+
+func TestSessionExecutor_HandleNonForwardableEvent_SessionCaptureEmptyContent(t *testing.T) {
+	// Test session_capture with empty Content does NOT call captureExternalSessionID.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+
+	events := []ai.StreamEvent{
+		{Type: "session_capture", Content: ""},
+		{Type: "content", Content: "data"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events)+1)
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+	result := executor.RunWithChannel(ch)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+}
+
+func TestSessionExecutor_HandleNonForwardableEvent_RawOutputNewline(t *testing.T) {
+	// Test that multiple raw_output events are joined with newlines.
+	events := []ai.StreamEvent{
+		{Type: "raw_output", RawOutput: "first"},
+		{Type: "raw_output", RawOutput: "second"},
+		{Type: "raw_output", RawOutput: "third"},
+		{Type: "done"},
+	}
+	result := runExecutorWithEvents(t, events, ModeScheduled)
+
+	if !contains(result.RawOutput, "first\nsecond\nthird") {
+		t.Fatalf("expected newline-joined raw output, got: %q", result.RawOutput)
+	}
+}
+
+func TestSessionExecutor_CaptureMetadata_WithSessionID(t *testing.T) {
+	// Test that metadata events with SessionID trigger captureExternalSessionID.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+
+	events := []ai.StreamEvent{
+		{Type: "metadata", Meta: &ai.Metadata{SessionID: "external-meta-sid", InputTokens: 5}},
+		{Type: "content", Content: "hi"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events)+1)
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+	result := executor.RunWithChannel(ch)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+	// Verify the external session ID from metadata was persisted
+	extID := GetExternalSessionID(sid)
+	if extID != "external-meta-sid" {
+		t.Fatalf("expected external_session_id='external-meta-sid', got %q", extID)
+	}
+}
+
+func TestSessionExecutor_CaptureMetadata_NonMetadataEventType(t *testing.T) {
+	// Test that captureMetadata returns early for non-metadata event types.
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "hello"},
+		{Type: "done"},
+	}
+	result := runExecutorWithEvents(t, events, ModeScheduled)
+
+	// Metadata should be the default (created by buildResult), not from a metadata event
+	if result.Metadata == nil {
+		t.Fatal("expected default Metadata from buildResult")
+	}
+	if result.Metadata.InputTokens != 0 {
+		t.Fatalf("expected InputTokens=0 (no metadata event), got %d", result.Metadata.InputTokens)
+	}
+}
+
+func TestSessionExecutor_BuildEmptyContentJSON_EmptyBlocksEmptyCancelReason(t *testing.T) {
+	// Test buildEmptyContentJSON with empty cancelReason and no context error → "AI returned no content".
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{},
+		Metadata:         &ai.Metadata{},
+		CancelReason:     "",
+	}
+	finalized := executor.Finalize(result, nil)
+
+	found := false
+	for _, b := range finalized.Blocks {
+		if b.Type == "warning" && b.Text == "AI returned no content" && b.Reason == ai.ReasonEmpty {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning 'AI returned no content' with reason empty, got: %+v", finalized.Blocks)
+	}
+}
+
+func TestSessionExecutor_BuildNonEmptyContentJSON_NormalNoCancel(t *testing.T) {
+	// Test buildNonEmptyContentJSON with normal completion (no cancel, no context error).
+	// No warning block should be appended, no cancelled flag.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "ok"}},
+		Metadata:         &ai.Metadata{InputTokens: 10},
+		CancelReason:     "",
+	}
+	finalized := executor.Finalize(result, nil)
+
+	if len(finalized.Blocks) != 1 || finalized.Blocks[0].Text != "ok" {
+		t.Fatalf("expected exactly one block 'ok', got: %+v", finalized.Blocks)
+	}
+}
+
+func TestSessionExecutor_BuildResult_CancelReasonInteractive(t *testing.T) {
+	// Test buildResult in interactive mode with a pre-set cancel reason.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	// Pre-set cancel reason
+	SetCancelReason(sid, "user")
+
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "partial"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events)+1)
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+	result := executor.RunWithChannel(ch)
+
+	if result.CancelReason != "user" {
+		t.Fatalf("expected CancelReason='user', got %q", result.CancelReason)
+	}
+	// With cancelReason="user" and non-empty blocks, Empty should be false
+	if result.Empty {
+		t.Fatal("expected Empty=false when blocks present and cancelReason set")
+	}
+}
+
+func TestSessionExecutor_BuildResult_EmptyFlagTrue(t *testing.T) {
+	// Test buildResult with empty blocks, receivedTerminal=true, no cancelReason → Empty=true.
+	events := []ai.StreamEvent{
+		{Type: "done"},
+	}
+	result := runExecutorWithEvents(t, events, ModeScheduled)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+	if !result.Empty {
+		t.Fatal("expected Empty=true when no blocks, receivedTerminal, no cancelReason")
+	}
+}
+
+func TestSessionExecutor_DrainRawOutput_MultipleRawOutputEvents(t *testing.T) {
+	// Test drainRawOutput with multiple raw_output events already in channel.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	// Channel with 3 raw_output events
+	drainCh := make(chan ai.StreamEvent, 5)
+	drainCh <- ai.StreamEvent{Type: "raw_output", RawOutput: "r1"}
+	drainCh <- ai.StreamEvent{Type: "raw_output", RawOutput: "r2"}
+	drainCh <- ai.StreamEvent{Type: "raw_output", RawOutput: "r3"}
+	close(drainCh)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "response"}},
+		Metadata:         &ai.Metadata{},
+		RawOutput:        "",
+	}
+	finalized := executor.Finalize(result, drainCh)
+
+	if !contains(finalized.RawOutput, "r1") || !contains(finalized.RawOutput, "r2") || !contains(finalized.RawOutput, "r3") {
+		t.Fatalf("expected all drained raw outputs, got: %q", finalized.RawOutput)
+	}
+}
+
+func TestSessionExecutor_InjectResponseMetadata_DefaultCliTransport(t *testing.T) {
+	// Test injectResponseMetadata with no session transport, no ACP agent → "cli".
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "non-acp-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "response"}},
+		Metadata:         &ai.Metadata{},
+	}
+	finalized := executor.Finalize(result, nil)
+
+	if finalized.Metadata.Transport != "cli" {
+		t.Fatalf("expected Transport='cli', got %q", finalized.Metadata.Transport)
+	}
+}
+
+func TestSessionExecutor_Finalize_MetadataSavedWhenMsgIDNonZero(t *testing.T) {
+	// Test that Finalize saves metadata to chat_metadata when MsgID is non-zero.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	helperCreateStreamingMessage(t, sid)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "response"}},
+		Metadata:         &ai.Metadata{InputTokens: 99, OutputTokens: 88, CostUSD: 0.42},
+	}
+	finalized := executor.Finalize(result, nil)
+
+	if finalized.MsgID == 0 {
+		t.Fatal("expected non-zero MsgID")
+	}
+
+	// Verify metadata was saved
+	var inputTokens int
+	err := DB.QueryRow("SELECT input_tokens FROM chat_metadata WHERE message_id = ?", finalized.MsgID).Scan(&inputTokens)
+	if err != nil {
+		t.Fatalf("failed to query chat_metadata: %v", err)
+	}
+	if inputTokens != 99 {
+		t.Fatalf("expected input_tokens=99, got %d", inputTokens)
+	}
+}
+
+func TestSessionExecutor_Finalize_SaveMetadataError(t *testing.T) {
+	// Test Finalize when SaveMetadata fails (msgID=0 should skip save).
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+	// No streaming message created → FinalizeStreamingMessage returns msgID=0
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "response"}},
+		Metadata:         &ai.Metadata{InputTokens: 5},
+	}
+	// Should not panic when msgID=0 (SaveMetadata is skipped)
+	finalized := executor.Finalize(result, nil)
+	_ = finalized
+}
+
+func TestSessionExecutor_CaptureExternalSessionID_EmptyExternalID(t *testing.T) {
+	// Test captureExternalSessionID with empty external ID — should return immediately.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+
+	events := []ai.StreamEvent{
+		{Type: "session_capture", Content: ""},
+		{Type: "content", Content: "data"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events)+1)
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+	result := executor.RunWithChannel(ch)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+	// External session ID should remain empty
+	extID := GetExternalSessionID(sid)
+	if extID != "" {
+		t.Fatalf("expected empty external_session_id, got %q", extID)
+	}
+}
+
+func TestSessionExecutor_CaptureExternalSessionID_ExistingIDDifferent(t *testing.T) {
+	// Test captureExternalSessionID when an existing external ID (different from session ID) is already set.
+	// In this case, the external ID should NOT be overwritten.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+
+	// Pre-set external session ID to something different from the session ID
+	err := UpdateExternalSessionID(sid, "existing-ext-id")
+	if err != nil {
+		t.Fatalf("failed to set initial external session ID: %v", err)
+	}
+
+	events := []ai.StreamEvent{
+		{Type: "session_capture", Content: "new-ext-id"},
+		{Type: "content", Content: "data"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events)+1)
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+	result := executor.RunWithChannel(ch)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+	// External session ID should remain the pre-set value (not overwritten)
+	extID := GetExternalSessionID(sid)
+	if extID != "existing-ext-id" {
+		t.Fatalf("expected external_session_id='existing-ext-id' (not overwritten), got %q", extID)
+	}
+}
+
+func TestSessionExecutor_CaptureExternalSessionID_ExistingIDMatchesSessionID(t *testing.T) {
+	// Test captureExternalSessionID when the existing external ID equals the session ID.
+	// This is the fallback case where the ID should be updated.
+	setupExecutorTestDB(t)
+	sid := helperCreateTestSession(t)
+
+	// Pre-set external session ID to the same as session ID
+	err := UpdateExternalSessionID(sid, sid)
+	if err != nil {
+		t.Fatalf("failed to set initial external session ID: %v", err)
+	}
+
+	events := []ai.StreamEvent{
+		{Type: "session_capture", Content: "real-external-id"},
+		{Type: "content", Content: "data"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events)+1)
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+	result := executor.RunWithChannel(ch)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+	// External session ID should have been updated
+	extID := GetExternalSessionID(sid)
+	if extID != "real-external-id" {
+		t.Fatalf("expected external_session_id='real-external-id', got %q", extID)
+	}
+}
