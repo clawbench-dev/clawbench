@@ -11,11 +11,15 @@ import (
 	"github.com/creack/pty"
 )
 
+// runtimeGOOS is a variable wrapper around runtime.GOOS so tests can
+// override it to cover platform-specific branches on any OS.
+var runtimeGOOS = runtime.GOOS
+
 // resolveShell finds the appropriate shell binary for the current platform.
 // Linux/macOS: $SHELL → /bin/sh
 // Windows: pwsh → powershell → cmd.exe
 func resolveShell() string {
-	switch runtime.GOOS {
+	switch runtimeGOOS {
 	case "windows":
 		// Try PowerShell Core first, then Windows PowerShell, then cmd
 		for _, cmd := range []string{"pwsh", "powershell", "cmd.exe"} {
@@ -50,8 +54,8 @@ func (e *PlatformError) Error() string {
 func startPTY(cwd string) (*os.File, *exec.Cmd, error) {
 	// creack/pty does not support Windows — ConPTY is not implemented.
 	// Return PlatformError so the manager can send the correct error code.
-	if runtime.GOOS == "windows" {
-		return nil, nil, &PlatformError{OS: runtime.GOOS}
+	if runtimeGOOS == "windows" {
+		return nil, nil, &PlatformError{OS: runtimeGOOS}
 	}
 
 	shell := resolveShell()

@@ -3,6 +3,7 @@ package terminal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"os/exec"
@@ -447,15 +448,23 @@ func TestPlatformError(t *testing.T) {
 	if pe.Error() != "terminal not supported on windows" {
 		t.Errorf("unexpected error message: %s", pe.Error())
 	}
-	// On Windows, startPTY should return PlatformError
-	if runtime.GOOS == "windows" {
-		_, _, err := startPTY("")
-		if err == nil {
-			t.Error("expected PlatformError on Windows")
-		}
-		if _, ok := err.(*PlatformError); !ok {
-			t.Errorf("expected *PlatformError, got %T: %v", err, err)
-		}
+}
+
+func TestPlatformError_SimulatedWindows(t *testing.T) {
+	orig := runtimeGOOS
+	runtimeGOOS = "windows"
+	defer func() { runtimeGOOS = orig }()
+
+	_, _, err := startPTY("")
+	if err == nil {
+		t.Fatal("expected PlatformError on simulated Windows")
+	}
+	var pe *PlatformError
+	if !errors.As(err, &pe) {
+		t.Errorf("expected *PlatformError, got %T: %v", err, err)
+	}
+	if pe.OS != "windows" {
+		t.Errorf("expected OS=windows, got %s", pe.OS)
 	}
 }
 
