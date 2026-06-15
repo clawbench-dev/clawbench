@@ -21,6 +21,7 @@ export interface TerminalStatus {
 export interface TerminalErrorMessages {
   shellStartFailed: string
   websocketFailed: string
+  platformUnsupported: string
 }
 
 export function useTerminalSession(
@@ -88,7 +89,11 @@ export function useTerminalSession(
         }
         if (result.state.errorCode) {
           errorCode.value = result.state.errorCode
-          errorMessage.value = errorMessages?.shellStartFailed || 'Shell start failed'
+          if (result.state.errorCode === 'platform_unsupported') {
+            errorMessage.value = errorMessages?.platformUnsupported || 'Platform not supported'
+          } else {
+            errorMessage.value = errorMessages?.shellStartFailed || 'Shell start failed'
+          }
         }
         if (result.state.fatalError) {
           fatalError = true

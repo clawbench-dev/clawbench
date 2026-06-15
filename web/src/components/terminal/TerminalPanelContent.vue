@@ -356,6 +356,7 @@ const tabManager = useTerminalTabs(getWsUrl, {
   errorMessages: {
     shellStartFailed: t('terminal.shellStartFailed'),
     websocketFailed: t('terminal.websocketFailed'),
+    platformUnsupported: t('terminal.platformUnsupported'),
   },
   onCloseSessionViaHttp: (sessionId: string) => {
     fetch(`/api/terminal/close?session=${encodeURIComponent(sessionId)}`, { method: 'POST' }).catch(() => {})

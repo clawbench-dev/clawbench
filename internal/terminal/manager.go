@@ -3,6 +3,7 @@ package terminal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -127,7 +128,27 @@ func (m *Manager) HandleWebSocket(w http.ResponseWriter, r *http.Request, projec
 		newSession, err := NewSession(projectPath, cwd, m.cfg)
 		if err != nil {
 			m.mu.Unlock()
-			return fmt.Errorf("failed to start terminal: %w", err)
+			// Send platform_unsupported instead of shell_start_failed
+			// when the OS does not support PTY (e.g. Windows).
+			errCode := ErrCodeShellFailed
+			if errors.As(err, new(*PlatformError)) {
+				errCode = ErrCodePlatformUnsupported
+			}
+			conn, wsErr := websocket.Accept(w, r, &websocket.AcceptOptions{
+				OriginPatterns: []string{
+					"http://" + r.Host,
+					"https://" + r.Host,
+					"http://localhost:*",
+					"https://localhost:*",
+					"http://127.0.0.1:*",
+					"https://127.0.0.1:*",
+				},
+			})
+			if wsErr == nil {
+				sendWSError(conn, errCode, err.Error())
+				_ = conn.Close(websocket.StatusInternalError, errCode)
+			}
+			return nil
 		}
 
 		// Set onClose callback so the session removes itself from the map

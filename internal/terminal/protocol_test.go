@@ -127,6 +127,7 @@ func TestServerMessage_Exit(t *testing.T) {
 func TestErrorCodeConstants(t *testing.T) {
 	assert.Equal(t, "shell_start_failed", ErrCodeShellFailed)
 	assert.Equal(t, "session_limit", ErrCodeSessionLimit)
+	assert.Equal(t, "platform_unsupported", ErrCodePlatformUnsupported)
 	assert.Equal(t, 4001, StatusReplaced)
 }
 

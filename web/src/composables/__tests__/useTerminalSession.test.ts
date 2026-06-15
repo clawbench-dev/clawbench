@@ -54,8 +54,8 @@ vi.stubGlobal('WebSocket', MockWebSocket)
 
 import { useTerminalSession } from '@/composables/useTerminalSession'
 
-function createSession(errorMessages?: { shellStartFailed: string; websocketFailed: string }) {
-  return useTerminalSession(() => 'ws://localhost:8080/api/terminal/ws', errorMessages)
+function createSession(errorMessages?: { shellStartFailed: string; websocketFailed: string; platformUnsupported?: string }) {
+  return useTerminalSession(() => 'ws://localhost:8080/api/terminal/ws', errorMessages as any)
 }
 
 beforeEach(() => {

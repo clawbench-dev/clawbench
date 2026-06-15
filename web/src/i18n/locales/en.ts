@@ -1126,6 +1126,7 @@ export default {
     websocketFailed: 'Failed to connect to terminal. Please try again.',
     cwdInvalid: 'Working directory not available, using project root instead.',
     shellStartFailed: 'Failed to start system shell.',
+    platformUnsupported: 'Terminal is not supported on this platform.',
     ptyExited: 'Terminal process has exited.',
     sessionClosed: 'Terminal session closed.',
     reconnecting: 'Connection lost, reconnecting...',

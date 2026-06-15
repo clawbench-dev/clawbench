@@ -22,8 +22,9 @@ type ServerMessage struct {
 
 // Error codes for WebSocket error messages
 const (
-	ErrCodeShellFailed  = "shell_start_failed"
-	ErrCodeSessionLimit = "session_limit"
+	ErrCodeShellFailed         = "shell_start_failed"
+	ErrCodeSessionLimit        = "session_limit"
+	ErrCodePlatformUnsupported = "platform_unsupported"
 )
 
 // WebSocket close codes (custom range 4000-4999 per RFC 6455)

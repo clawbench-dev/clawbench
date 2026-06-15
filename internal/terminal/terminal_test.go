@@ -442,6 +442,23 @@ func TestStartPTY_InvalidCwd(t *testing.T) {
 	}
 }
 
+func TestPlatformError(t *testing.T) {
+	pe := &PlatformError{OS: "windows"}
+	if pe.Error() != "terminal not supported on windows" {
+		t.Errorf("unexpected error message: %s", pe.Error())
+	}
+	// On Windows, startPTY should return PlatformError
+	if runtime.GOOS == "windows" {
+		_, _, err := startPTY("")
+		if err == nil {
+			t.Error("expected PlatformError on Windows")
+		}
+		if _, ok := err.(*PlatformError); !ok {
+			t.Errorf("expected *PlatformError, got %T: %v", err, err)
+		}
+	}
+}
+
 // --- generateSessionID uniqueness ---
 
 func TestGenerateSessionID_Uniqueness(t *testing.T) {

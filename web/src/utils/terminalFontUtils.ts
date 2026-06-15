@@ -48,7 +48,7 @@ export function shortCwd(cwd: string | undefined | null): string {
  * terminal_disabled means the feature is turned off — no point reconnecting.
  */
 export function canReconnect(errorCode: string | undefined | null): boolean {
-  if (errorCode === 'terminal_disabled') return false
+  if (errorCode === 'terminal_disabled' || errorCode === 'platform_unsupported') return false
   return true
 }
 
@@ -62,6 +62,7 @@ export function errorDisplayMessage(
 ): string {
   if (errorCode === 'terminal_disabled') return fallback // t('terminal.disabled') passed as fallback
   if (errorCode === 'shell_start_failed') return fallback
+  if (errorCode === 'platform_unsupported') return fallback
   return errorMessage || fallback
 }
 

@@ -9,6 +9,7 @@ export const NO_RECONNECT_CODES = new Set([
   'terminal_disabled',
   'shell_start_failed',
   'session_limit',
+  'platform_unsupported',
 ])
 
 // Custom WebSocket close code: server kicked this client because a new one connected

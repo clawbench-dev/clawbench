@@ -137,6 +137,10 @@ describe('canReconnect', () => {
     expect(canReconnect('terminal_disabled')).toBe(false)
   })
 
+  it('returns false for platform_unsupported', () => {
+    expect(canReconnect('platform_unsupported')).toBe(false)
+  })
+
   it('returns true for shell_start_failed', () => {
     expect(canReconnect('shell_start_failed')).toBe(true)
   })
@@ -159,6 +163,10 @@ describe('errorDisplayMessage', () => {
 
   it('returns fallback for shell_start_failed', () => {
     expect(errorDisplayMessage('shell_start_failed', 'some message', fallback)).toBe(fallback)
+  })
+
+  it('returns fallback for platform_unsupported', () => {
+    expect(errorDisplayMessage('platform_unsupported', 'some message', fallback)).toBe(fallback)
   })
 
   it('returns error message when no special code', () => {

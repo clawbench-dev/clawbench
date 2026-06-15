@@ -336,6 +336,10 @@ describe('NO_RECONNECT_CODES', () => {
     expect(NO_RECONNECT_CODES.has('session_limit')).toBe(true)
   })
 
+  it('contains platform_unsupported', () => {
+    expect(NO_RECONNECT_CODES.has('platform_unsupported')).toBe(true)
+  })
+
   it('does not contain unknown codes', () => {
     expect(NO_RECONNECT_CODES.has('some_other_error')).toBe(false)
   })

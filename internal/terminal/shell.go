@@ -33,10 +33,27 @@ func resolveShell() string {
 	}
 }
 
+// PlatformError is returned when the current OS does not support PTY.
+// The manager uses this to send the platform_unsupported error code
+// instead of the generic shell_start_failed.
+type PlatformError struct {
+	OS string
+}
+
+func (e *PlatformError) Error() string {
+	return fmt.Sprintf("terminal not supported on %s", e.OS)
+}
+
 // startPTY starts a new PTY session with the given working directory.
 // Returns the PTY file, the command, and any error.
 // The shell process is started in its own process group for clean cleanup.
 func startPTY(cwd string) (*os.File, *exec.Cmd, error) {
+	// creack/pty does not support Windows — ConPTY is not implemented.
+	// Return PlatformError so the manager can send the correct error code.
+	if runtime.GOOS == "windows" {
+		return nil, nil, &PlatformError{OS: runtime.GOOS}
+	}
+
 	shell := resolveShell()
 	slog.Info(
 		"terminal: starting PTY",

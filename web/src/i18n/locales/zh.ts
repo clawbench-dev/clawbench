@@ -1126,6 +1126,7 @@ export default {
     websocketFailed: '终端连接失败，请重试。',
     cwdInvalid: '当前目录不可用，将使用项目目录启动。',
     shellStartFailed: '无法启动系统 shell。',
+    platformUnsupported: '当前平台不支持终端功能。',
     ptyExited: '终端进程已退出。',
     sessionClosed: '终端会话已关闭。',
     reconnecting: '连接断开，正在重连...',
