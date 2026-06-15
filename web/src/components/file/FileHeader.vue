@@ -69,6 +69,14 @@
           </div>
         </Teleport>
       </div>
+
+      <!-- Overlay nav: back and close (only when in overlay mode) -->
+      <button v-if="overlayCanGoBack" class="file-header-btn overlay-nav-btn" @click.stop="$emit('overlayGoBack')" :title="t('file.overlay.back')">
+        <ChevronLeft :size="14" />
+      </button>
+      <button v-if="overlayOpen" class="file-header-btn overlay-nav-btn" @click.stop="$emit('overlayClose')" :title="t('common.close')">
+        <X :size="14" />
+      </button>
     </div>
   </div>
 </template>
@@ -76,7 +84,7 @@
 <script setup>
 import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin } from 'lucide-vue-next'
+import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, ChevronLeft, X } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 
@@ -88,8 +96,10 @@ const props = defineProps({
     wordWrap: Boolean,
     showLineNumbers: Boolean,
     stickyScroll: Boolean,
+    overlayOpen: Boolean,
+    overlayCanGoBack: Boolean,
 })
-const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh'])
+const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'overlayGoBack'])
 
 const { isAppMode } = useAppMode()
 const { t } = useI18n()
@@ -284,6 +294,11 @@ onBeforeUnmount(() => {
 /* Dropdown */
 .dropdown-wrapper {
     position: relative;
+}
+
+/* Overlay nav buttons (back/close) */
+.overlay-nav-btn {
+    margin-left: 4px;
 }
 
 .wrap-check {

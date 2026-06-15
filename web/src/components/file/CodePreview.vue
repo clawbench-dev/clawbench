@@ -194,6 +194,21 @@ watch(
     line-height: 1.6;
     tab-size: 4;
     user-select: text;
+    scrollbar-width: thin;
+}
+.raw-content-pre::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+}
+.raw-content-pre::-webkit-scrollbar-track {
+    background: transparent;
+}
+.raw-content-pre::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 2px;
+}
+.raw-content-pre::-webkit-scrollbar-corner {
+    background: transparent;
 }
 
 .raw-content-pre code {

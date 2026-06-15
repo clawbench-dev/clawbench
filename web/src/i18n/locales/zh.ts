@@ -560,6 +560,9 @@ export default {
       fileHistory: '文件历史',
       confirmDelete: '确定要删除"{name}"吗？',
     },
+    overlay: {
+      back: '返回',
+    },
   },
   proxy: {
     title: '端口转发',

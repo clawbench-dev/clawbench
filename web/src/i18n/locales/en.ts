@@ -560,6 +560,9 @@ export default {
       fileHistory: 'File history',
       confirmDelete: 'Delete "{name}"?',
     },
+    overlay: {
+      back: 'Back',
+    },
   },
   proxy: {
     title: 'Port Forward',

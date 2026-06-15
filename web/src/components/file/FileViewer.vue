@@ -10,6 +10,8 @@
       :word-wrap="wordWrap"
       :show-line-numbers="showLineNumbers"
       :sticky-scroll="stickyScroll"
+      :overlay-open="fileNav.overlayOpen.value"
+      :overlay-can-go-back="fileNav.canGoBack.value"
       @delete="emit('delete', file.path)"
       @toggle-view="emit('toggleView')"
       @show-details="emit('showDetails')"
@@ -21,6 +23,8 @@
       @toggle-line-numbers="toggleLineNumbers"
       @toggle-sticky-scroll="toggleStickyScroll"
       @refresh="emit('refresh')"
+      @overlay-close="emit('overlayClose')"
+      @overlay-go-back="emit('overlayGoBack')"
     />
 
     <div class="file-viewer-content" ref="contentRef">
@@ -170,6 +174,7 @@ import FileHeader from './FileHeader.vue'
 import { getFileType, formatFileSize } from '@/utils/fileType.ts'
 import { store } from '@/stores/app.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
+import { useFileNavStack } from '@/composables/useFileNavStack.ts'
 
 const { t } = useI18n()
 const { isAppMode } = useAppMode()
@@ -180,7 +185,9 @@ const props = defineProps({
     searchOpen: Boolean,
     markdownViewMode: String,
 })
-const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'toggleView', 'refresh', 'openFile'])
+const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'overlayGoBack'])
+
+const fileNav = useFileNavStack()
 
 const fileType = computed(() => props.file ? getFileType(props.file.name) : null)
 const rawFileLanguage = computed(() => getFileType(props.file?.name)?.lang || 'plaintext')

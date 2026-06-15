@@ -64,15 +64,12 @@
                 ref="fileOverlayRef"
                 :overlay-open="fileNav.overlayOpen.value"
                 :current-file="currentFile"
-                :can-go-back="fileNav.canGoBack.value"
                 :toc-open="tocOpen"
                 :search-open="searchOpen"
                 :markdown-view-mode="markdownViewMode"
                 :file-history-open="fileHistoryOpen"
                 :toc-file="tocFile"
                 :pdf-outline="pdfOutline"
-                @close="handleOverlayClose"
-                @go-back="handleOverlayGoBack"
                 @delete="handleDelete($event)"
                 @show-details="detailsOpen = true"
                 @open-git-history="openFileHistory"
@@ -84,6 +81,8 @@
                 @jump-page="handleJumpPdfPage"
                 @close-git-history="fileHistoryOpen = false"
                 @open-file="handleOverlayOpenFile"
+                @overlay-close="handleOverlayClose"
+                @overlay-go-back="handleOverlayGoBack"
               />
             </div>
           </TabPanel>
@@ -1275,6 +1274,9 @@ onUnmounted(() => {
   position: relative;
   width: 100%;
   height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 /* When terminal tab is active, remove header padding so content expands to top */

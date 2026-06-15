@@ -3,26 +3,8 @@
     <div
       v-if="overlayOpen"
       class="file-overlay"
-      @click="handleOverlayClick"
     >
-      <!-- Top bar with close / go-back buttons -->
-      <div class="file-overlay-topbar">
-        <button
-          v-if="canGoBack"
-          class="overlay-btn overlay-btn-back"
-          @click.stop="emit('goBack')"
-        >
-          <ChevronLeft :size="20" />
-        </button>
-        <button
-          class="overlay-btn overlay-btn-close"
-          @click.stop="emit('close')"
-        >
-          <X :size="20" />
-        </button>
-      </div>
-
-      <!-- Main viewer area -->
+      <!-- Main viewer area (no separate topbar — nav buttons are in FileManagerContent toolbar) -->
       <div class="file-overlay-body" ref="contentRef" @click="handleContentClick">
         <FileViewer
           ref="fileViewerRef"
@@ -38,6 +20,8 @@
           @toggle-view="emit('toggleView')"
           @refresh="emit('refresh')"
           @open-file="emit('openFile', $event)"
+          @overlay-close="emit('overlayClose')"
+          @overlay-go-back="emit('overlayGoBack')"
         />
       </div>
 
@@ -72,7 +56,6 @@
 
 <script setup>
 import { ref, computed } from 'vue'
-import { ChevronLeft, X } from 'lucide-vue-next'
 import FileViewer from '@/components/file/FileViewer.vue'
 import TocDrawer from '@/components/TocDrawer.vue'
 import SearchDrawer from '@/components/common/SearchDrawer.vue'
@@ -81,7 +64,6 @@ import GitHistoryDrawer from '@/components/git/GitHistoryDrawer.vue'
 const props = defineProps({
   overlayOpen: Boolean,
   currentFile: Object,
-  canGoBack: Boolean,
   tocOpen: Boolean,
   searchOpen: Boolean,
   markdownViewMode: String,
@@ -91,9 +73,10 @@ const props = defineProps({
 })
 
 const emit = defineEmits([
-  'close', 'goBack', 'delete', 'showDetails', 'openGitHistory',
+  'delete', 'showDetails', 'openGitHistory',
   'toggleToc', 'toggleSearch', 'toggleView', 'refresh',
   'jump', 'jumpPage', 'closeGitHistory', 'openFile',
+  'overlayClose', 'overlayGoBack',
 ])
 
 const contentRef = ref(null)
@@ -107,13 +90,6 @@ function pdfScrollToPage(pageNum) {
 }
 
 defineExpose({ pdfScrollToPage, pdfOutline })
-
-// Click on the overlay background (outside the body) closes it
-function handleOverlayClick(event) {
-  if (event.target === event.currentTarget) {
-    emit('close')
-  }
-}
 
 // Intercept file-path link clicks inside the overlay content.
 // When a user clicks a .chat-file-open-btn, .chat-file-path, or .code-file-path,
@@ -155,42 +131,6 @@ function handleContentClick(event) {
   flex-direction: column;
   background: var(--bg-primary);
   overflow: hidden;
-}
-
-.file-overlay-topbar {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  flex-shrink: 0;
-  z-index: 1;
-}
-
-.overlay-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-
-.overlay-btn:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
-.overlay-btn:active {
-  background: var(--bg-secondary);
-}
-
-.overlay-btn-close {
-  margin-left: auto;
 }
 
 .file-overlay-body {
