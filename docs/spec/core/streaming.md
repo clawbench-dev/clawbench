@@ -53,11 +53,11 @@ sequenceDiagram
 ### 功能清单
 
 - **SSE 聊天流**：GET `/api/ai/chat/stream` 建立 SSE 连接，实时推送 AI 回复内容。SSE 天然支持单向流式数据，适合聊天场景的"一发多收"模式
-- **WebSocket 系统事件**：`/api/ai/events/ws` 提供 7 种事件类型（session_start、session_complete、message_new、task_update、task_exec_update、tunnel_status、summary_update），客户端可实时感知系统状态变化
+- **WebSocket 系统事件**：`/api/ai/events/ws` 提供 3 种事件类型（session_update、task_update、summary_update），其中 `session_update` 的 status 字段包含 running、completed、cancelled、permission_pending、permission_resolved 等状态，客户端可实时感知系统状态变化
 - **SSE 重连与降级**：聊天 SSE 断开后尝试 3 次重连（指数退避），失败后降级为 HTTP 轮询（2s 间隔），保证在弱网环境下仍能获取数据
 - **WebSocket 重连与缓冲**：WebSocket 断开后客户端重连时自动回放断线期间的缓冲事件（10s 窗口，最多 50 条），防止状态丢失
 - **SSE 心跳与超时**：SSE 15s 心跳保活，30s 超时检测连接有效性；WebSocket 30s ping，5min 空闲超时
-- **排队状态推送**：排队消息的状态变更（消费、更新、完成）通过 WebSocket `queue_update` 事件推送，保持与系统事件统一的推送通道
+- **排队状态推送**：排队消息的状态变更（消费、更新、完成）通过 SSE `queue_update`/`queue_consume`/`queue_done` 事件推送，与聊天内容共用 SSE 连接
 - **摘要实时推送**：会话完成后 `summary_update` 事件推送生成的摘要，前端 `SummaryToggle` 组件可立即切换显示摘要，无需轮询
 
 ### 设计要点

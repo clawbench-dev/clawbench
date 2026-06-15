@@ -60,7 +60,7 @@ sequenceDiagram
 
 ### 设计要点
 
-- **DB Agent 优先于 YAML**：向导创建的 Agent 存储在数据库（`agents` 表，`source = "wizard"`），与 YAML 定义的 Agent 共存，`LoadAgentsIntoMemory` 合并时 DB 优先——向导创建的配置不会被自动发现覆盖
+- **DB Agent 优先于 YAML**：向导创建的 Agent 存储在数据库（`agents` 表，`source = "setup"`），与 YAML 定义的 Agent 共存，`LoadAgentsIntoMemory` 合并时 DB 优先——向导创建的配置不会被自动发现覆盖
 - **验证路径按模式分流**：内置供应商走 Pi CLI 验证（功能完整），自定义 URL 走直接 HTTP 验证（速度快）。两条路径各有优势，按用户选择的模式自动分流
 - **完成步骤使用互斥锁**：`POST /api/setup/complete` 使用 mutex 防止并发请求重复创建 Agent——首次使用时用户可能重复点击
 - **供应商模型数据来自嵌入式 JSON**：567 个已知工具调用模型从 models.dev API 自动生成，编译时嵌入二进制——不需要运行时网络请求就能提供模型列表

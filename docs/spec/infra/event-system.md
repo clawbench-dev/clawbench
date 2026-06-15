@@ -1,6 +1,6 @@
 # 事件体系
 
-ClawBench 的事件体系是系统实时性的基础设施——会话开始/完成、任务更新、隧道状态变化等事件从后端产生，经 EventBus 到达 WebSocket Manager，再推送给在线客户端；离线客户端则由 JPush 兜底。这套体系保证所有客户端在任何网络条件下都能收到关键状态变更通知。
+ClawBench 的事件体系是系统实时性的基础设施——会话状态变更、任务更新、权限待审等事件从后端产生，经 EventBus 到达 WebSocket Manager，再推送给在线客户端；离线客户端则由 JPush 兜底。这套体系保证所有客户端在任何网络条件下都能收到关键状态变更通知。
 
 ## 流程图
 
@@ -50,7 +50,7 @@ flowchart TD
 
 ### 功能清单
 
-- **WebSocket 事件通道**：`/api/ai/events/ws` 提供 7 种事件类型（session_start、session_complete、message_new、task_update、task_exec_update、tunnel_status、summary_update），客户端实时感知系统状态变化
+- **WebSocket 事件通道**：`/api/ai/events/ws` 提供 3 种事件类型（session_update、task_update、summary_update），其中 `session_update` 的 status 字段区分 running、completed、cancelled、permission_pending、permission_resolved 等状态，客户端实时感知系统状态变化
 - **JPush 推送后备**：WS 断开且 JPush 可用时，事件转为推送通知。保证离线客户端也能收到关键通知（如任务完成）
 - **断线缓冲与回放**：WS 断线后缓冲 10s 内的事件（最多 50 条），重连后自动回放。配合推送确保不丢失关键通知
 - **Push Registration ID 管理**：客户端通过 WS `register` 消息上报 JPush Registration ID，绑定到登录级别。WS 重连后不需要重新注册

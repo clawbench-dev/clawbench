@@ -58,3 +58,4 @@ flowchart LR
 - **续接对话继承会话身份**：续接的新会话继承源会话的 Agent、模型、思考深度和 `external_session_id`，保证对话上下文和 CLI 会话连续性。已存在的续接会话会被复用（已软删除的自动恢复），避免重复创建
 - **硬删除而非软删除**：与聊天会话不同，定时任务使用硬删除。任务定义是用户主动管理的配置项，删除意味着"我不再需要这个任务"
 - **调度器使用 robfig/cron**：标准库级调度器，可靠且久经考验。运行时执行记录存储在 `sync.Map` 中（内存态），重启后从数据库恢复
+- **SessionExecutor 统一执行**：定时任务和交互式聊天共用 `SessionExecutor`，通过 `RunConfig.Mode = ModeScheduled` 控制差异化行为（无 SSE 转发、i18n 错误等）。消除了 handler 和 scheduler 中的重复执行逻辑
