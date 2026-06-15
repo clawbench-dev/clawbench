@@ -37,6 +37,7 @@
           @toggle-search="emit('toggleSearch')"
           @toggle-view="emit('toggleView')"
           @refresh="emit('refresh')"
+          @open-file="emit('openFile', $event)"
         />
       </div>
 
@@ -109,7 +110,7 @@ function handleOverlayClick(event) {
 }
 
 // Intercept file-path link clicks inside the overlay content.
-// When a user clicks a .chat-file-open-btn or a .chat-file-path link,
+// When a user clicks a .chat-file-open-btn, .chat-file-path, or .code-file-path,
 // instead of navigating via store.selectFile, emit 'openFile' so the
 // parent (App.vue) can push onto the nav stack and stay in overlay mode.
 function handleContentClick(event) {
@@ -125,8 +126,8 @@ function handleContentClick(event) {
     return
   }
 
-  // 2. Handle clicks on annotated file-path spans
-  const pathSpan = event.target.closest('.chat-file-path')
+  // 2. Handle clicks on annotated file-path spans (markdown or code)
+  const pathSpan = event.target.closest('.chat-file-path, .code-file-path')
   if (pathSpan) {
     event.preventDefault()
     event.stopPropagation()

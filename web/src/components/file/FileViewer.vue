@@ -132,6 +132,7 @@
           :sticky-scroll="stickyScroll"
           :flash-ranges="flashRanges"
           :flash-type="flashType"
+          @open-file="emit('openFile', $event)"
         />
       </template>
 
@@ -146,6 +147,7 @@
           :sticky-scroll="stickyScroll"
           :flash-ranges="flashRanges"
           :flash-type="flashType"
+          @open-file="emit('openFile', $event)"
         />
       </div>
     </div>
@@ -178,7 +180,7 @@ const props = defineProps({
     searchOpen: Boolean,
     markdownViewMode: String,
 })
-const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'toggleView', 'refresh'])
+const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'toggleView', 'refresh', 'openFile'])
 
 const fileType = computed(() => props.file ? getFileType(props.file.name) : null)
 const rawFileLanguage = computed(() => getFileType(props.file?.name)?.lang || 'plaintext')
