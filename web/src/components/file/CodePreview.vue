@@ -208,8 +208,8 @@ watch(
     position: sticky;
     left: 0;
     z-index: 3;
-    min-width: 48px;
-    padding-right: 12px;
+    min-width: 32px;
+    padding-right: 6px;
     text-align: right;
     user-select: none;
     color: var(--text-muted);
@@ -223,7 +223,7 @@ watch(
 
 .raw-content-pre .sticky-code-text {
     white-space: pre;
-    padding-left: 12px;
+    padding-left: 8px;
     font-size: 13px;
     line-height: 20.8px;
     position: relative;

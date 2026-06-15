@@ -22,8 +22,8 @@
     position: sticky;
     left: 0;
     display: inline-block;
-    min-width: 48px;
-    padding-right: 12px;
+    min-width: 32px;
+    padding-right: 6px;
     color: var(--text-muted);
     text-align: right;
     user-select: none;
@@ -45,7 +45,7 @@
 /* ─── Code text ─── */
 .code-text {
     white-space: pre;
-    padding-left: 12px;
+    padding-left: 8px;
     padding-right: 8px;
 }
 
@@ -69,7 +69,7 @@ pre.code-block-pre code {
 
 /* ─── No-line-numbers mode ─── */
 .no-line-num .code-text {
-    padding-left: 8px;
+    padding-left: 6px;
     padding-right: 8px;
 }
 
