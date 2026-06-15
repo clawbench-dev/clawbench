@@ -1273,14 +1273,6 @@ onUnmounted(() => {
     opacity: 0;
 }
 
-.viewer-panel {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
-}
-
 .browse-panel {
   position: relative;
   width: 100%;

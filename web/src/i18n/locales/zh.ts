@@ -31,7 +31,6 @@ export default {
     refresh: '刷新',
     more: '更多',
     settings: '设置',
-    fileViewer: '文件查看器',
   },
   toast: {
     portForwardAppOnly: '端口转发仅在移动端APP支持',
