@@ -155,3 +155,20 @@ export function buildWsUrl(baseUrl: string, sessionId: string): string {
   const sep = baseUrl.includes('?') ? '&' : '?'
   return `${baseUrl}${sep}session=${encodeURIComponent(sessionId)}`
 }
+
+/**
+ * Strip DEC mode 2026 (Synchronized Output) escape sequences from terminal data.
+ * These sequences (\x1b[?2026h and \x1b[?2026l) cause xterm.js to buffer
+ * rendering updates, only flushing on mode-off or a 1-second safety timeout.
+ * In a remote terminal over WebSocket, the combination of:
+ * - TUI apps (e.g. Bubble Tea) sending \x1b[?2026h before each frame
+ * - xterm.js WriteBuffer's 12ms time-slicing
+ * - The 1-second safety timeout re-enabling sync mode before the renderer fires
+ * causes the alternate screen buffer to remain permanently blank.
+ * Stripping is safe: local xterm.js rendering has no perceptible benefit from
+ * batched updates when streaming over a WebSocket.
+ */
+export function stripSyncOutput(data: string): string {
+  if (!data.includes('\x1b[?2026')) return data
+  return data.replace(/\x1b\[\?2026[hl]/g, '')
+}

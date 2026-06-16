@@ -4,6 +4,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import type { Terminal as TerminalType } from '@xterm/xterm'
+import { stripSyncOutput } from '@/utils/terminalSessionUtils'
 
 export interface TerminalTab {
   id: string
@@ -93,9 +94,21 @@ export function useTerminalTabs(
     // On reconnect, the backend sends a replay buffer then suppresses output
     // until the first resize completes (to avoid duplicate prompts from
     // SIGWINCH). The frontend just clears the terminal and writes the replay.
+    // Strip DEC mode 2026 (Synchronized Output) from PTY output before
+    // writing to xterm.js. TUI apps like OpenCode (Bubble Tea) send
+    // \x1b[?2026h before each rendered frame and \x1b[?2026l after.
+    // xterm.js buffers all rendering while mode 2026 is active, only
+    // flushing on mode-off or a 1-second safety timeout.  In a remote
+    // terminal the round-trip latency and WriteBuffer's 12 ms time-slicing
+    // can cause the safety timeout to fire while the next \x1b[?2026h is
+    // already queued — the renderer sees sync-on again and skips the
+    // frame.  This repeats indefinitely, leaving the alternate screen
+    // permanently blank.  Stripping the sequences is safe: the local
+    // xterm.js renderer has no perceptible benefit from batched updates
+    // since we are streaming data over a WebSocket.
     session.setCallbacks({
       onOutput: (data: string) => {
-        term.write(data)
+        term.write(stripSyncOutput(data))
       },
       onReplay: (data: string) => {
         // Clear xterm buffer and replace with replay data — discards any
@@ -103,7 +116,7 @@ export function useTerminalTabs(
         // The backend suppresses output after replay until the first resize
         // (triggered by fit()) completes, so no duplicate prompt appears.
         term.reset()
-        term.write(data)
+        term.write(stripSyncOutput(data))
       },
       onStatus: (status: { running: boolean; cwd: string }) => {
         if (status.cwd) {
