@@ -16,7 +16,7 @@
 
 
 - **支持平台**：浏览器（PC / 平板 / 手机）、Android App、PWA
-- **AI 后端**：CodeBuddy、Claude Code、OpenCode、Gemini CLI、Codex、Qoder CLI、VeCLI、DeepSeek TUI、MiMo-Code、Pi
+- **AI 后端**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、DeepSeek TUI、MiMo-Code、Pi
 
 ---
 
@@ -83,7 +83,6 @@ graph LR
     Server -->|CLI 调用 · 流式输出| CB["🤖 CodeBuddy CLI"]
     Server -->|CLI 调用 · 流式输出| CC["🤖 Claude Code CLI"]
     Server -->|CLI 调用 · 流式输出| OC["🤖 OpenCode CLI"]
-    Server -->|CLI 调用 · 流式输出| GC["🤖 Gemini CLI"]
     Server -->|CLI 调用 · 流式输出| CX["🤖 Codex CLI"]
     Server -->|CLI 调用 · 流式输出| QR["🤖 Qoder CLI"]
     Server -->|CLI 调用 · 流式输出| VC["🤖 VeCLI"]
@@ -100,8 +99,6 @@ graph LR
     CC -->|原生支持| Skills
     CC -->|原生支持| MCP
     OC -->|原生支持| Tools
-    GC -->|原生支持| Tools
-    GC -->|原生支持| Think
     CX -->|原生支持| Tools
     QR -->|原生支持| Tools
     VC -->|原生支持| Tools
@@ -118,7 +115,7 @@ graph LR
 
 ### 前置准备
 
-- **一台 PC（Linux / macOS / Windows）**：用于运行 ClawBench 服务端，需已安装至少一种 AI 编程智能体 CLI（CodeBuddy、Claude Code、OpenCode、Gemini CLI、Codex、Qoder CLI、VeCLI、DeepSeek TUI、MiMo-Code、Pi 均可）
+- **一台 PC（Linux / macOS / Windows）**：用于运行 ClawBench 服务端，需已安装至少一种 AI 编程智能体 CLI（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、DeepSeek TUI、MiMo-Code、Pi 均可）
 - **一台手机**：安装 [ClawBench Android App](https://github.com/xulongzhe/clawbench/releases)，或使用手机浏览器（推荐 Chrome）访问服务端地址
 
 ### 下载与启动
@@ -171,6 +168,7 @@ cd clawbench
 - 双击复制代码行内容（闪烁动画反馈）
 - **文件改动闪烁高亮**：文件被外部修改时，删除字符红色脉冲闪烁，新增字符蓝色脉冲闪烁，快速定位改动
 - **引用提问**：选中代码片段后，一键向 AI 提问，自动附上文件路径和行号
+- **文件路径跳转**：代码预览中的文件路径可点击跳转，支持 import 路径解析（如 @/composables/useFoo 解析为实际文件路径）
 - 滑动手势：左右滑动切换文件
 
 ### 📝 Markdown
@@ -183,7 +181,7 @@ cd clawbench
 ### 🤖 AI 智能体
 - **流式响应**：SSE 实时推送，思维过程、工具调用全程可见
 - **多 Agent 支持**：全能助手、编码专家、勤杂工等，YAML 配置即插即用
-- **AI 后端切换**：CodeBuddy、Claude Code、OpenCode、Gemini CLI、Codex、Qoder CLI、VeCLI、DeepSeek TUI、MiMo-Code、Pi，会话级隔离
+- **AI 后端切换**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、DeepSeek TUI、MiMo-Code、Pi，会话级隔离
 - **深度思考档位**：支持按智能体选择思考深度（Auto / Low / Medium / High），Claude/CodeBuddy/OpenCode/Codex/MiMo/Pi 六后端支持，选择自动持久化
 - **模型选择模态框**：统一模型切换与思考深度选择，双 Tab 界面，搜索过滤，一键刷新模型列表（支持自动发现的智能体），长按设为默认模型
 - **模型选择持久化**：每个智能体的模型选择和思考档位自动保存到 localStorage，刷新/切换会话自动恢复
@@ -219,7 +217,7 @@ cd clawbench
 ### 🔊 TTS 语音朗读
 - AI 回复自动总结后朗读，边听边看
 - **5 种 TTS 引擎**：Edge TTS（免费，原生 Go 实现，无外部依赖）、MiniMax（音质最佳）、Piper / Kokoro / MOSS-Nano（本地离线）
-- **12 种总结后端**：simple 纯清洗、mmx-cli、api（OpenAI/Anthropic 兼容）、Claude、CodeBuddy、Gemini、OpenCode、Codex、Qoder、VeCLI、DeepSeek、Pi
+- **11 种总结后端**：simple 纯清洗、mmx-cli、api（OpenAI/Anthropic 兼容）、Claude、CodeBuddy、OpenCode、Codex、Qoder、VeCLI、DeepSeek、Pi
 - 详见 [TTS 语音合成部署指南](docs/TTS.md)
 
 ### 📂 Git 集成

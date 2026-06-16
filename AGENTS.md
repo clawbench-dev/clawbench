@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-ClawBench is a mobile-first AI workstation wrapping AI CLI tools (CodeBuddy, Claude Code, OpenCode, Gemini CLI, Codex, Qoder CLI, VeCLI, DeepSeek TUI, MiMo-Code, Pi) into a web-accessible platform. Go backend shells out to CLI tools and streams JSON output via SSE; Vue 3 frontend renders the streamed events in real time. Supports ACP (Agent Client Protocol) stdio transport for agents with native or bridge-adapter support, providing structured mode switching, slash commands, and permission management. Also supports SSH tunnel-based port forwarding for remote/mobile access and a scheduled task (cron) system for recurring AI execution.
+ClawBench is a mobile-first AI workstation wrapping AI CLI tools (CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, DeepSeek TUI, MiMo-Code, Pi) into a web-accessible platform. Go backend shells out to CLI tools and streams JSON output via SSE; Vue 3 frontend renders the streamed events in real time. Supports ACP (Agent Client Protocol) stdio transport for agents with native or bridge-adapter support, providing structured mode switching, slash commands, and permission management. Also supports SSH tunnel-based port forwarding for remote/mobile access and a scheduled task (cron) system for recurring AI execution.
 
 ## Build & Run Commands
 
@@ -49,7 +49,7 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 
 **Packages:**
 - `internal/handler/` — HTTP/SSE endpoints. All `/api/` routes use `middleware.Auth` (localhost bypass for CLI).
-- `internal/service/` — Business logic: chat persistence, auto-summary, scheduler, SQLite, versioned schema migration, agent store (DB-backed), API key encryption (AES-256-GCM).
+- `internal/service/` — Business logic: chat persistence, auto-summary, scheduler, SQLite, versioned schema migration, agent store (DB-backed), API key encryption (AES-256-GCM). `SessionExecutor` unifies AI session execution for both chat and scheduled tasks.
 - `internal/ai/` — AI backend abstraction: `AIBackend` interface → `CLIBackend` (CLI args + LineParser) → `AutoResumeBackend` (ExitPlanMode → cancel → resume) → `ACPBackend` (JSON-RPC over stdio, connection pool). Factory: `factory.go`.
 - `internal/model/` — Data models, `BackendRegistry` (backend specs + model discovery), `ProviderRegistry` (28 LLM providers). Known models from runtime `provider_models.json`.
 - `internal/cli/` — AI agent self-service: `task`, `rag`, `migrate`.
@@ -71,7 +71,7 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 
 **Composables:** `useChatSession`, `useChatStream` (SSE + reconnect + polling), `useChatRender` (block parsing + coalescing), `useAutoSpeech`, `useQuickSend`, `useSessionIdentity`, `useSessionManager`, `useSetup`, `useReconnect`, `useFileRefresh`, `useSystemEvents`, `useGlobalEvents`, `usePortForward`, `useBackHandler`, `useEdgeSwipeBack`, `useTerminalSession`, `useTerminalTabs` (multi-tab management), `useTerminalKeys` (virtual key processing), `useKeyConfig` (key/symbol persistence), `useTerminalGestures`, `useSwipeDelete`, `useSwipeSession`, `useCodeSymbols`, `useStickyScroll`, `useLocalhostAnnotation`, `useWorktreeAnnotation`, `useFileUpload`, `useAgents`, `useFilePathAnnotation`, `useFileNavStack` (file overlay navigation stack), `useTaskTab`.
 
-**Components:** `ChatPanel`, `FileManager`/`FileViewer`/`FileOverlay` (browse tab + file preview overlay, merged from browse/viewer tabs), `TocDrawer`, `TaskTab`, `TaskExecDetail`, `TerminalPanel` (multi-tab, key/symbol config drawer), `KeyConfigDrawer`, `KeyConfigTab`, `TerminalTabMenu`, `GitGraph`, `GitManageContent`, `SessionSettingModal`, `SetupWizard`, `ContentBlocks`, `SummaryToggle`, `SessionDrawer`, `AcpSessionDrawer`, `PlanPanel`, `BottomSheet`, `PopupMenu`, `Lightbox`, `SwipeToDeleteRow`, `PasswordChangeDialog`.
+**Components:** `ChatPanel`, `FileManager`/`FileOverlay` (browse tab + file preview overlay, replacing separate browse/viewer tabs), `FileViewer` (preview content rendered inside FileOverlay), `TocDrawer`, `TaskTab`, `TaskExecDetail`, `TerminalPanel` (multi-tab, key/symbol config drawer), `KeyConfigDrawer`, `KeyConfigTab`, `TerminalTabMenu`, `GitGraph`, `GitManageContent`, `SessionSettingModal`, `SetupWizard`, `ContentBlocks`, `SummaryToggle`, `SessionDrawer`, `AcpSessionDrawer`, `PlanPanel`, `BottomSheet`, `PopupMenu`, `Lightbox`, `SwipeToDeleteRow`, `PasswordChangeDialog`.
 
 **Vite:** `hljsThemeWrapper` plugin for light/dark coexistence. Root `web/`, output `public/`. Alias `@` → `web/src/`.
 
@@ -99,7 +99,8 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 - **Worktree annotation:** `useWorktreeAnnotation` annotates worktree paths in chat messages. Runs before file path annotation to prevent partial matches.
 - **Provider models auto-generation:** `scripts/fetch-provider-models.sh` fetches from models.dev API (curl+jq, no Python), writes `provider_models.json` to `<BinDir>/.clawbench/`. Read at runtime by `LoadProviderModelsFromFile()`. `build.sh` and CI generate automatically.
 - **Terminal multi-tab:** `useTerminalTabs` manages tab lifecycle (create/close/switch). `useTerminalKeys` processes virtual key input with modifier lock. `useKeyConfig` persists custom key/symbol layouts to DB via `/api/terminal/key-config`.
-- **Chat summary modes:** `simple` mode extracts last answer text from blocks (no AI call); `ai` mode uses `AsyncSummarize`; empty string disables summarization. Mode set via `SetChatSummaryMode()`.
+- **Chat summary modes:** `simple` mode extracts last answer text from blocks (no AI call); `ai` mode uses `AsyncSummarize`; empty string disables summarization. Mode set via `SetChatSummaryMode()`. All summaries stored as `target_type='chat_message'` keyed by assistant message ID; legacy `task_execution` summaries auto-migrated on startup via `MigrateTaskExecutionSummaries()`.
+- **File path annotation in code preview:** `useFilePathAnnotation` detects file paths in code blocks and renders them as clickable links. Supports import path resolution (e.g., `@/composables/useFoo` resolves to `web/src/composables/useFoo.ts`) and external file paths. `useWorktreeAnnotation` runs first to prevent partial matches.
 - **Permission pending push:** ACP `permission_pending` events trigger JPush notifications with tool name, allowing mobile users to approve from notification.
 - **File overlay navigation:** `useFileNavStack` manages a stack-based file overlay on the browse tab. Clicking a file pushes it onto the stack (overlay on top of file list); back button pops; close clears the stack. Replaces the separate viewer tab with a unified browse+overlay experience.
 
