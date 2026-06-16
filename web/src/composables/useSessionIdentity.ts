@@ -1,6 +1,7 @@
 import { ref, computed } from 'vue'
 import { useAgents } from '@/composables/useAgents'
 import { gt } from '@/composables/useLocale'
+import { store } from '@/stores/app.ts'
 
 // ───────────────────────────────────────────────────────────
 // Module-level singleton state — shared across the whole app.
@@ -29,6 +30,34 @@ export const runningSessions = ref(new Set<string>())
 // Bumped on every mutation to runningSessions so computed properties
 // that depend on the set's contents re-evaluate correctly.
 const runningSessionsVersion = ref(0)
+
+// Pending chat data cache — populated by initSessionFromAPI when fetching
+// with full limit, consumed by useChatSession.loadHistory to avoid a
+// duplicate API call. Cleared on project switch (resetIdentity) and
+// after consumption.
+let _pendingChatData: {
+  sessionId: string
+  data: any
+  timestamp: number
+} | null = null
+
+/** Consume the cached chat data from initSessionFromAPI.
+ *  Returns null if cache is missing, stale (>5s old), or sessionId mismatch.
+ *  Clears the cache after reading (single-consume semantics). */
+export function consumePendingChatData(expectedSessionId: string): any | null {
+  if (!_pendingChatData) return null
+  const cached = _pendingChatData
+  _pendingChatData = null
+  if (Date.now() - cached.timestamp > 5000) return null
+  if (cached.sessionId !== expectedSessionId) return null
+  return cached.data
+}
+
+/** Invalidate the pending chat data cache. Called on project switch
+ *  and by resetIdentity to prevent stale data from being consumed. */
+export function invalidatePendingChatData(): void {
+  _pendingChatData = null
+}
 
 // Whether the global session drawer is open. Lifted from ChatPanelContent
 // to useSessionIdentity so App.vue can render a single SessionDrawer
@@ -61,6 +90,7 @@ export function resetIdentity(): void {
   runningSessionsVersion.value = 0
   sessionDrawerOpen.value = false
   _switchSession = null
+  _pendingChatData = null
   _createSession = null
   _deleteSession = null
   _sendMessage = null
@@ -298,7 +328,7 @@ export async function initSessionFromAPI() {
     const initCtrl = new AbortController()
     const initTimer = setTimeout(() => initCtrl.abort(), 60000)
     const [chatResp] = await Promise.all([
-      fetch('/api/ai/chat?limit=1', { signal: initCtrl.signal }).catch((e) => {
+      fetch(`/api/ai/chat?limit=${store.state.chatInitialMessages}`, { signal: initCtrl.signal }).catch((e) => {
         if (initCtrl.signal.aborted) return null as any
         throw e
       }),
@@ -395,6 +425,8 @@ export async function initSessionFromAPI() {
             }
           }
         }
+        // Cache the full response for loadHistory to consume (avoids duplicate fetch)
+        _pendingChatData = { sessionId: data.sessionId, data, timestamp: Date.now() }
       }
     }
   } catch (_) {

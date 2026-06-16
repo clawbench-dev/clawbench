@@ -3,7 +3,7 @@ import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
-import { clearModeState, updateAvailableModes, clearCommandState, updateCommandState, updateAvailableThinkingEfforts, clearThinkingEffortState, currentAgentId as _currentAgentId } from '@/composables/useSessionIdentity.ts'
+import { clearModeState, updateAvailableModes, clearCommandState, updateCommandState, updateAvailableThinkingEfforts, clearThinkingEffortState, currentAgentId as _currentAgentId, consumePendingChatData, invalidatePendingChatData } from '@/composables/useSessionIdentity.ts'
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
 import { useAgents, restoreOriginalModels, populateACPStateFromCache, getAgentThinkingEffortLevels } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
@@ -12,31 +12,48 @@ import { warmWorktreeCache } from '@/composables/useWorktreeAnnotation.ts'
 
 // Module-level one-time session list load (replaces continuous polling)
 // Accessible from App.vue without instantiating useChatSession
-export async function loadSessionsOnce() {
-  try {
-    const identity = useSessionIdentity()
-    const res = await fetch('/api/ai/sessions')
-    if (res.ok) {
-      const data = await res.json()
-      const sessions = data.sessions || []
-      const hasRunning = sessions.some((s: any) => s.running)
-      const unreadCount = sessions.filter((s: any) =>
-        (s.unreadCount > 0 || s.pendingApproval) && s.id !== identity.currentSessionId.value
-      ).length
-      store.state.chatRunning = hasRunning
-      store.state.chatUnreadCount = unreadCount
-      // Update session count for header indicator
-      if (typeof data.totalCount === 'number') {
-        store.state.sessionCount = data.totalCount
+let _sessionsLoadPromise: Promise<void> | null = null
+
+export async function loadSessionsOnce(): Promise<void> {
+  // Dedup: if a load is already in-flight, reuse its promise instead of
+  // firing a duplicate request (e.g. App.vue + ChatPanelContent.vue
+  // mounting in quick succession).
+  if (_sessionsLoadPromise) return _sessionsLoadPromise
+  _sessionsLoadPromise = (async () => {
+    try {
+      const identity = useSessionIdentity()
+      const res = await fetch('/api/ai/sessions')
+      if (res.ok) {
+        const data = await res.json()
+        const sessions = data.sessions || []
+        const hasRunning = sessions.some((s: any) => s.running)
+        const unreadCount = sessions.filter((s: any) =>
+          (s.unreadCount > 0 || s.pendingApproval) && s.id !== identity.currentSessionId.value
+        ).length
+        store.state.chatRunning = hasRunning
+        store.state.chatUnreadCount = unreadCount
+        // Update session count for header indicator
+        if (typeof data.totalCount === 'number') {
+          store.state.sessionCount = data.totalCount
+        }
+        // Populate runningSessions set from API data
+        identity.runningSessions.value.clear()
+        for (const s of sessions) {
+          if (s.running) identity.runningSessions.value.add(s.id)
+        }
+        identity.runningSessionsVersion.value++
       }
-      // Populate runningSessions set from API data
-      identity.runningSessions.value.clear()
-      for (const s of sessions) {
-        if (s.running) identity.runningSessions.value.add(s.id)
-      }
-      identity.runningSessionsVersion.value++
+    } catch { /* ignore */ }
+    finally {
+      _sessionsLoadPromise = null
     }
-  } catch { /* ignore */ }
+  })()
+  return _sessionsLoadPromise
+}
+
+/** Reset internal dedup state — called during SPA hot project switch. */
+export function resetChatSessionState(): void {
+  _sessionsLoadPromise = null
 }
 
 export interface UseChatSessionOptions {
@@ -343,35 +360,46 @@ export function useChatSession(options: UseChatSessionOptions) {
       }
       // Load agents in parallel with the main fetch when not in recovery path
       const agentsPromise = agents.value.length === 0 ? loadAgents() : Promise.resolve()
-      const url = `/api/ai/chat?session_id=${encodeURIComponent(currentSessionId.value)}&limit=${limit}`
-      const fetchCtrl = new AbortController()
-      const fetchTimer = setTimeout(() => fetchCtrl.abort(), 60000)
-      let resp: Response
-      try {
-        // Fire agents and chat fetch in parallel
-        const [, fetchResp] = await Promise.all([
-          agentsPromise,
-          fetch(url, { signal: fetchCtrl.signal }),
-        ])
-        resp = fetchResp
-      } catch (e) {
-        clearTimeout(fetchTimer)
-        if (fetchCtrl.signal.aborted) {
-          // Timeout — bail without error toast
-          return
+      let data: any
+
+      // Check for cached data from initSessionFromAPI before making the API call
+      const cachedChatData = consumePendingChatData(currentSessionId.value)
+      if (cachedChatData) {
+        data = cachedChatData
+        await agentsPromise
+        if (loadHistorySeq !== mySeq) { return }
+      } else {
+        // No cached data — fetch from API as usual
+        const url = `/api/ai/chat?session_id=${encodeURIComponent(currentSessionId.value)}&limit=${limit}`
+        const fetchCtrl = new AbortController()
+        const fetchTimer = setTimeout(() => fetchCtrl.abort(), 60000)
+        let resp: Response
+        try {
+          // Fire agents and chat fetch in parallel
+          const [, fetchResp] = await Promise.all([
+            agentsPromise,
+            fetch(url, { signal: fetchCtrl.signal }),
+          ])
+          resp = fetchResp
+        } catch (e) {
+          clearTimeout(fetchTimer)
+          if (fetchCtrl.signal.aborted) {
+            // Timeout — bail without error toast
+            return
+          }
+          throw e
         }
-        throw e
+        clearTimeout(fetchTimer)
+        // If another loadHistory or switchSession started while we were fetching, discard our results
+        if (loadHistorySeq !== mySeq) { return }
+        if (!resp.ok) {
+          const errData = await resp.json().catch(() => ({}))
+          throw new Error(errData.error || gt('chat.session.requestFailed', { status: resp.status }))
+        }
+        data = await resp.json()
+        // Re-check after JSON parse (another async boundary)
+        if (loadHistorySeq !== mySeq) { return }
       }
-      clearTimeout(fetchTimer)
-      // If another loadHistory or switchSession started while we were fetching, discard our results
-      if (loadHistorySeq !== mySeq) { return }
-      if (!resp.ok) {
-        const errData = await resp.json().catch(() => ({}))
-        throw new Error(errData.error || gt('chat.session.requestFailed', { status: resp.status }))
-      }
-      const data = await resp.json()
-      // Re-check after JSON parse (another async boundary)
-      if (loadHistorySeq !== mySeq) { return }
       const rawMsgs = data.messages || []
 
       // Change detection: if skipIfUnchanged and data matches last snapshot, do nothing.

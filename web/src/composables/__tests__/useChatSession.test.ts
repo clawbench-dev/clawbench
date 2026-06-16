@@ -167,6 +167,8 @@ vi.mock('@/composables/useSessionIdentity', () => ({
   updateThinkingEffortState: vi.fn(),
   updateAvailableThinkingEfforts: vi.fn(),
   clearThinkingEffortState: vi.fn(),
+  consumePendingChatData: vi.fn().mockReturnValue(null),
+  invalidatePendingChatData: vi.fn(),
 }))
 
 vi.mock('@/composables/useToast', () => ({
@@ -210,7 +212,7 @@ vi.mock('@/utils/chatSessionUtils', () => ({
 
 // ── Import after mocks ──
 
-import { useChatSession } from '@/composables/useChatSession'
+import { useChatSession, loadSessionsOnce, resetChatSessionState } from '@/composables/useChatSession'
 
 // ── Helpers ──
 
@@ -241,6 +243,7 @@ function createSession() {
 describe('onSessionEvent', () => {
   beforeEach(() => {
     resetMockState()
+    resetChatSessionState()
   })
 
   it('does nothing when data is null', () => {
@@ -481,6 +484,7 @@ describe('loadSessionsOnce', () => {
 
   beforeEach(() => {
     resetMockState()
+    resetChatSessionState()
     originalFetch = globalThis.fetch
   })
 
@@ -786,6 +790,7 @@ describe('switchSession', () => {
 
   beforeEach(() => {
     resetMockState()
+    resetChatSessionState()
     mockState.currentSessionId = 'current-s1'
     originalFetch = globalThis.fetch
   })
@@ -858,7 +863,11 @@ describe('switchSession', () => {
     const session = createSession()
     await session.switchSession('s2')
 
-    expect(mockState.chatUnreadCount).toBe(0)
+    // loadSessionsOnce is fire-and-forget inside switchSession,
+    // wait for it to complete before checking state
+    await vi.waitFor(() => {
+      expect(mockState.chatUnreadCount).toBe(0)
+    })
   })
 
   it('keeps chatUnread=true after switching when other sessions still have unread messages', async () => {
@@ -949,6 +958,7 @@ describe('chatUnread integration', () => {
 
   beforeEach(() => {
     resetMockState()
+    resetChatSessionState()
     mockState.currentSessionId = 's1'
     originalFetch = globalThis.fetch
   })
@@ -1046,8 +1056,12 @@ describe('chatUnread integration', () => {
 
     await session.switchSession('s2')
 
-    // s3 still has unread → chatUnread should stay true
-    expect(mockState.chatUnreadCount).toBeGreaterThan(0)
+    // loadSessionsOnce is fire-and-forget inside switchSession,
+    // wait for it to complete before checking state
+    await vi.waitFor(() => {
+      // s3 still has unread → chatUnread should stay true
+      expect(mockState.chatUnreadCount).toBeGreaterThan(0)
+    })
   })
 
   it('simulates the bug scenario: user on chat tab, other session completes, no phantom flash', () => {
@@ -1148,6 +1162,7 @@ describe('loadHistory', () => {
 
   beforeEach(() => {
     resetMockState()
+    resetChatSessionState()
     resetAdditionalMocks()
     originalFetch = globalThis.fetch
   })
@@ -1555,6 +1570,7 @@ describe('createSession', () => {
 
   beforeEach(() => {
     resetMockState()
+    resetChatSessionState()
     resetAdditionalMocks()
     originalFetch = globalThis.fetch
   })
@@ -2069,6 +2085,7 @@ describe('deleteSession', () => {
 
   beforeEach(() => {
     resetMockState()
+    resetChatSessionState()
     resetAdditionalMocks()
     originalFetch = globalThis.fetch
   })
@@ -2262,6 +2279,7 @@ describe('startMsgCountPolling / stopMsgCountPolling', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     resetMockState()
+    resetChatSessionState()
     resetAdditionalMocks()
     originalFetch = globalThis.fetch
   })
@@ -2381,6 +2399,7 @@ describe('handleVisibilityChange', () => {
 
   beforeEach(() => {
     resetMockState()
+    resetChatSessionState()
     resetAdditionalMocks()
     originalFetch = globalThis.fetch
   })
@@ -2513,6 +2532,7 @@ describe('syncModelFromData', () => {
 
   beforeEach(() => {
     resetMockState()
+    resetChatSessionState()
     resetAdditionalMocks()
     originalFetch = globalThis.fetch
   })
@@ -2604,6 +2624,7 @@ describe('loadMoreMessages', () => {
 
   beforeEach(() => {
     resetMockState()
+    resetChatSessionState()
     resetAdditionalMocks()
     originalFetch = globalThis.fetch
   })
@@ -2752,6 +2773,7 @@ describe('continueFromExecution', () => {
 
   beforeEach(() => {
     resetMockState()
+    resetChatSessionState()
     resetAdditionalMocks()
     originalFetch = globalThis.fetch
   })
@@ -2967,6 +2989,7 @@ describe('loadHistory race protection', () => {
 
   beforeEach(() => {
     resetMockState()
+    resetChatSessionState()
     resetAdditionalMocks()
     originalFetch = globalThis.fetch
   })
@@ -3141,6 +3164,7 @@ describe('loadHistory session_id recovery', () => {
 
   beforeEach(() => {
     resetMockState()
+    resetChatSessionState()
     resetAdditionalMocks()
     originalFetch = globalThis.fetch
     warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -3209,8 +3233,8 @@ describe('loadHistory session_id recovery', () => {
 
     // Should have made two fetch calls: recovery + full load
     expect(globalThis.fetch).toHaveBeenCalledTimes(2)
-    // First call: recovery with limit=1
-    expect(globalThis.fetch).toHaveBeenNthCalledWith(1, expect.stringContaining('limit=1'), expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    // First call: recovery with full limit (from store.state.chatInitialMessages)
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(1, expect.stringContaining('limit=20'), expect.objectContaining({ signal: expect.any(AbortSignal) }))
     // Second call: full load with explicit session_id
     expect(globalThis.fetch).toHaveBeenNthCalledWith(2, expect.stringContaining('session_id=recovered-s1'), expect.objectContaining({ signal: expect.any(AbortSignal) }))
     // currentSessionId should be set from recovery
@@ -3302,5 +3326,71 @@ describe('loadHistory session_id recovery', () => {
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('session ID mismatch')
     )
+  })
+})
+
+// ── loadSessionsOnce dedup / resetChatSessionState ──
+
+describe('loadSessionsOnce dedup', () => {
+  beforeEach(() => {
+    resetChatSessionState()
+    vi.clearAllMocks()
+  })
+
+  it('deduplicates concurrent calls (shares single in-flight request)', async () => {
+    let resolveFetch: (v: any) => void
+    const fetchPromise = new Promise(r => { resolveFetch = r })
+    const mockFetch = vi.fn().mockReturnValue(fetchPromise)
+    vi.stubGlobal('fetch', mockFetch)
+
+    // Fire two concurrent calls before the first resolves
+    const p1 = loadSessionsOnce()
+    const p2 = loadSessionsOnce()
+
+    // Only one fetch call should have been made
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+
+    // Resolve the fetch so both promises complete
+    resolveFetch!({
+      ok: true,
+      json: () => Promise.resolve({ sessions: [], totalCount: 0 }),
+    })
+    await p1
+    await p2
+
+    vi.unstubAllGlobals()
+  })
+
+  it('allows sequential calls (after previous completes)', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ sessions: [], totalCount: 0 }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    await loadSessionsOnce()
+    await loadSessionsOnce()
+
+    // Two fetch calls should have been made
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+
+    vi.unstubAllGlobals()
+  })
+
+  it('resetChatSessionState clears in-flight promise', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ sessions: [], totalCount: 0 }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    await loadSessionsOnce()
+    resetChatSessionState()
+    await loadSessionsOnce()
+
+    // Two fetch calls should have been made
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+
+    vi.unstubAllGlobals()
   })
 })

@@ -270,7 +270,7 @@ import { useQuoteQuestion } from './composables/useQuoteQuestion.ts'
 import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTaskTab.ts'
 import { resetAgents } from '@/composables/useAgents'
 import { useSessionIdentity, registerSessionDrawerRef, resetIdentity } from './composables/useSessionIdentity.ts'
-import { loadSessionsOnce } from './composables/useChatSession.ts'
+import { loadSessionsOnce, resetChatSessionState } from './composables/useChatSession.ts'
 import { useToast } from './composables/useToast.ts'
 import { useAppMode } from './composables/useAppMode.ts'
 import { useTerminalKeyboard } from './composables/useTerminalKeyboard.ts'
@@ -331,6 +331,7 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   // (store state already reset by setProject, but identity/agents need explicit reset)
   resetIdentity()
   resetAgents()
+  resetChatSessionState()
   fileNav.closeOverlay()
   store.resetDirStack()
 
