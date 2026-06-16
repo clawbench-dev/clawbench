@@ -1,5 +1,5 @@
-import { describe, expect, it, beforeEach } from 'vitest'
-import { useDirStack, _resetForTesting, _restoreStack } from '@/composables/useDirStack'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { useDirStack, _resetForTesting } from '@/composables/useDirStack'
 
 beforeEach(() => {
   _resetForTesting()
@@ -168,16 +168,6 @@ describe('useDirStack', () => {
     expect(ds1.canGoBack.value).toBe(true)
   })
 
-  it('_restoreStack: restores a previous stack snapshot', () => {
-    const ds = useDirStack()
-    ds.pushDir('src')
-    ds.pushDir('src/composables')
-    const snapshot = ['a', 'b']
-    _restoreStack(snapshot)
-    expect(ds.dirStack.value).toEqual(['a', 'b'])
-    expect(ds.currentDir.value).toBe('b')
-  })
-
   it('pushDir with empty string (project root)', () => {
     const ds = useDirStack()
     ds.pushDir('')
@@ -205,5 +195,102 @@ describe('useDirStack', () => {
     // Replace
     ds.replaceTop('lib')
     expect(ds.dirStack.value).toEqual(['lib'])
+  })
+
+  // ─── *AndLoad async methods with rollback ───
+
+  it('pushDirAndLoad: pushes and calls loadFn', async () => {
+    const ds = useDirStack()
+    const loadFn = vi.fn().mockResolvedValue(undefined)
+    await ds.pushDirAndLoad('src', loadFn)
+    expect(ds.currentDir.value).toBe('src')
+    expect(loadFn).toHaveBeenCalledOnce()
+  })
+
+  it('pushDirAndLoad: rolls back on loadFn failure', async () => {
+    const ds = useDirStack()
+    ds.pushDir('src')
+    const loadFn = vi.fn().mockRejectedValue(new Error('fail'))
+    await ds.pushDirAndLoad('new', loadFn)
+    expect(ds.currentDir.value).toBe('src')
+    expect(ds.dirStack.value).toEqual(['src'])
+  })
+
+  it('pushDirAndLoad: dedup — no-op if pushing same top', async () => {
+    const ds = useDirStack()
+    ds.pushDir('src')
+    const loadFn = vi.fn().mockResolvedValue(undefined)
+    await ds.pushDirAndLoad('src', loadFn)
+    expect(loadFn).not.toHaveBeenCalled()
+    expect(ds.dirStack.value).toEqual(['src'])
+  })
+
+  it('popDirAndLoad: pops and calls loadFn', async () => {
+    const ds = useDirStack()
+    ds.pushDir('src')
+    ds.pushDir('src/composables')
+    const loadFn = vi.fn().mockResolvedValue(undefined)
+    const result = await ds.popDirAndLoad(loadFn)
+    expect(result).toBe('src')
+    expect(ds.currentDir.value).toBe('src')
+    expect(loadFn).toHaveBeenCalledOnce()
+  })
+
+  it('popDirAndLoad: returns null when stack too shallow', async () => {
+    const ds = useDirStack()
+    ds.pushDir('src')
+    const loadFn = vi.fn().mockResolvedValue(undefined)
+    const result = await ds.popDirAndLoad(loadFn)
+    expect(result).toBeNull()
+    expect(loadFn).not.toHaveBeenCalled()
+  })
+
+  it('popDirAndLoad: rolls back on loadFn failure', async () => {
+    const ds = useDirStack()
+    ds.pushDir('src')
+    ds.pushDir('src/composables')
+    const loadFn = vi.fn().mockRejectedValue(new Error('fail'))
+    const result = await ds.popDirAndLoad(loadFn)
+    expect(result).toBe('src')
+    // Stack should be rolled back to ['src', 'src/composables']
+    expect(ds.dirStack.value).toEqual(['src', 'src/composables'])
+  })
+
+  it('truncateToDirAndLoad: truncates and calls loadFn', async () => {
+    const ds = useDirStack()
+    ds.pushDir('src')
+    ds.pushDir('src/composables')
+    const loadFn = vi.fn().mockResolvedValue(undefined)
+    await ds.truncateToDirAndLoad('src', loadFn)
+    expect(ds.dirStack.value).toEqual(['src'])
+    expect(loadFn).toHaveBeenCalledOnce()
+  })
+
+  it('truncateToDirAndLoad: rolls back on loadFn failure', async () => {
+    const ds = useDirStack()
+    ds.pushDir('src')
+    ds.pushDir('src/composables')
+    const loadFn = vi.fn().mockRejectedValue(new Error('fail'))
+    await ds.truncateToDirAndLoad('src', loadFn)
+    expect(ds.dirStack.value).toEqual(['src', 'src/composables'])
+  })
+
+  it('replaceTopAndLoad: replaces and calls loadFn', async () => {
+    const ds = useDirStack()
+    ds.pushDir('src')
+    ds.pushDir('src/composables')
+    const loadFn = vi.fn().mockResolvedValue(undefined)
+    await ds.replaceTopAndLoad('other', loadFn)
+    expect(ds.dirStack.value).toEqual(['src', 'other'])
+    expect(loadFn).toHaveBeenCalledOnce()
+  })
+
+  it('replaceTopAndLoad: rolls back on loadFn failure', async () => {
+    const ds = useDirStack()
+    ds.pushDir('src')
+    ds.pushDir('src/composables')
+    const loadFn = vi.fn().mockRejectedValue(new Error('fail'))
+    await ds.replaceTopAndLoad('other', loadFn)
+    expect(ds.dirStack.value).toEqual(['src', 'src/composables'])
   })
 })

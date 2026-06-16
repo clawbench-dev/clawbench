@@ -283,6 +283,7 @@ import { useGlobalEvents } from './composables/useGlobalEvents'
 import { useEdgeSwipeBack, useFeatureBackHandler } from './composables/useEdgeSwipeBack'
 import { handleBackNavigation } from './composables/useBackHandler'
 import { store } from './stores/app.ts'
+import { dirName } from './utils/path.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
 import { initMermaid, reRenderMermaid } from './utils/mermaid.ts'
 import { getFileType } from './utils/fileType.ts'
@@ -507,6 +508,28 @@ useFileWatch({
 
 const fileNav = useFileNavStack()
 
+/** Sync the directory listing to the current file's parent dir.
+ *  Used after closing the file overlay so the browse view matches. */
+function syncDirToFileParent() {
+  const filePath = store.state.currentFile?.path
+  if (filePath) {
+    const targetDir = dirName(filePath)
+    if (targetDir !== store.state.currentDir) {
+      store.replaceDirTop(targetDir)
+    }
+  }
+}
+
+/** Close overlay + all side panels, then sync directory to file parent. */
+function closeOverlayAndSync() {
+  fileNav.closeOverlay()
+  tocOpen.value = false
+  detailsOpen.value = false
+  searchOpen.value = false
+  fileHistoryOpen.value = false
+  syncDirToFileParent()
+}
+
 const { isAppMode } = useAppMode()
 const { syncToNative, sshInfo, loadSSHInfo } = usePortForward()
 const { terminalRuntimeEnabled, loadTerminalStatus } = useTerminalStatus()
@@ -554,20 +577,7 @@ useFeatureBackHandler(
       const prevPath = fileNav.goBack()
       if (prevPath) store.selectFile(prevPath)
     } else {
-      // At stack bottom: close overlay and navigate directory to the
-      // current file's parent so the browse listing matches the file.
-      const filePath = store.state.currentFile?.path
-      fileNav.closeOverlay()
-      tocOpen.value = false
-      detailsOpen.value = false
-      searchOpen.value = false
-      fileHistoryOpen.value = false
-      if (filePath) {
-        const targetDir = dirName(filePath)
-        if (targetDir !== store.state.currentDir) {
-          store.replaceDirTop(targetDir)
-        }
-      }
+      closeOverlayAndSync()
     }
   },
 )
@@ -785,7 +795,6 @@ function handleToggleSort(field) {
 }
 
 async function handleNavigateDir(path, mode = 'push') {
-    if (store.state.dirLoading) return
     if (mode === 'truncate') {
         await store.truncateToDir(path)
     } else if (mode === 'replace') {
@@ -796,7 +805,6 @@ async function handleNavigateDir(path, mode = 'push') {
 }
 
 async function handleNavigateBack() {
-    if (store.state.dirLoading) return
     await store.popDir()
 }
 
@@ -826,21 +834,7 @@ async function handleTaskOpenFile(filePath, lineStart) {
 }
 
 function handleOverlayClose() {
-    // Remember the current file before closing (closeOverlay clears the stack)
-    const filePath = store.state.currentFile?.path
-    fileNav.closeOverlay()
-    tocOpen.value = false
-    detailsOpen.value = false
-    searchOpen.value = false
-    fileHistoryOpen.value = false
-    // Navigate directory to the current file's parent so the browse
-    // listing shows the directory the user was actually viewing.
-    if (filePath) {
-        const targetDir = dirName(filePath)
-        if (targetDir !== store.state.currentDir) {
-            store.replaceDirTop(targetDir)
-        }
-    }
+    closeOverlayAndSync()
 }
 
 async function handleOverlayGoBack() {

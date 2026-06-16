@@ -5,7 +5,7 @@ import { baseName, dirName } from '@/utils/path.ts'
 import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
-import { useDirStack, _restoreStack } from '@/composables/useDirStack'
+import { useDirStack } from '@/composables/useDirStack'
 
 interface DirEntry {
     name: string
@@ -440,60 +440,31 @@ async function renameFile(path: string, newName: string): Promise<void> {
 }
 
 // =============================================
-// Navigation
-// =============================================
-
-async function navigateToDir(dirPath: string): Promise<void> {
-    await loadFiles(dirPath)
-}
-
-// =============================================
 // Directory stack navigation
 // =============================================
 
 async function pushDir(path: string): Promise<void> {
+    if (state.dirLoading) return
     const dirStack = useDirStack()
-    const prev = [...dirStack.dirStack.value]
-    dirStack.pushDir(path)
-    try {
-        await loadFiles(path)
-    } catch {
-        _restoreStack(prev)
-    }
+    await dirStack.pushDirAndLoad(path, () => loadFiles(path))
 }
 
 async function popDir(): Promise<void> {
+    if (state.dirLoading) return
     const dirStack = useDirStack()
-    const prev = [...dirStack.dirStack.value]
-    const newDir = dirStack.popDir()
-    if (newDir === null) return
-    try {
-        await loadFiles(newDir)
-    } catch {
-        _restoreStack(prev)
-    }
+    await dirStack.popDirAndLoad(() => loadFiles(useDirStack().currentDir.value))
 }
 
 async function truncateToDir(path: string): Promise<void> {
+    if (state.dirLoading) return
     const dirStack = useDirStack()
-    const prev = [...dirStack.dirStack.value]
-    dirStack.truncateToDir(path)
-    try {
-        await loadFiles(path)
-    } catch {
-        _restoreStack(prev)
-    }
+    await dirStack.truncateToDirAndLoad(path, () => loadFiles(path))
 }
 
 async function replaceDirTop(path: string): Promise<void> {
+    if (state.dirLoading) return
     const dirStack = useDirStack()
-    const prev = [...dirStack.dirStack.value]
-    dirStack.replaceTop(path)
-    try {
-        await loadFiles(path)
-    } catch {
-        _restoreStack(prev)
-    }
+    await dirStack.replaceTopAndLoad(path, () => loadFiles(path))
 }
 
 function resetDirStack(path?: string): void {
@@ -511,7 +482,6 @@ export const store = {
     deleteFile,
     deleteFiles,
     renameFile,
-    navigateToDir,
     pushDir,
     popDir,
     truncateToDir,

@@ -25,7 +25,6 @@ vi.mock('@/stores/app', () => ({
   store: {
     state: { projectRoot: '/home/user/project' },
     selectFile: vi.fn(),
-    navigateToDir: vi.fn(),
     pushDir: vi.fn(),
   },
 }))
