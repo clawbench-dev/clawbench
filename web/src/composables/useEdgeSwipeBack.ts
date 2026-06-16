@@ -8,7 +8,7 @@
  * events that start within the edge zones (left 20px and right 20px).
  */
 import { onMounted, onBeforeUnmount } from 'vue'
-import { handleBackNavigation, registerBackHandler, type BackHandler } from './useBackHandler'
+import { handleBackNavigation, registerBackHandler, type BackHandler, PRIORITY_PAGE, PRIORITY_OVERLAY } from './useBackHandler'
 
 const EDGE_ZONE = 20 // px from screen edge to detect edge swipes
 const SWIPE_THRESHOLD = 50 // minimum px to trigger back navigation
@@ -89,19 +89,23 @@ export function useEdgeSwipeBack() {
  * The canGoBack function is evaluated lazily on each back press / swipe,
  * so it should reflect the current state (e.g., currentView !== 'list').
  *
- * @param id Unique feature ID (e.g., 'tasks', 'git', 'settings')
+ * @param id Unique feature ID (e.g., 'file-overlay', 'browse', 'settings')
  * @param canGoBack Function returning true if the feature can navigate back
  * @param goBack Function to perform the back navigation
+ * @param priority Dispatch priority — higher = checked first.
+ *                  Use PRIORITY_OVERLAY (1000) for overlays/modals,
+ *                  PRIORITY_PAGE (100) for normal drill-down pages.
  */
 export function useFeatureBackHandler(
     id: string,
     canGoBack: () => boolean,
     goBack: () => void,
+    priority: number,
 ) {
     let unregister: (() => void) | null = null
 
     onMounted(() => {
-        const handler: BackHandler = { id, canGoBack, goBack }
+        const handler: BackHandler = { id, canGoBack, goBack, priority }
         unregister = registerBackHandler(handler)
     })
 
@@ -112,3 +116,6 @@ export function useFeatureBackHandler(
         }
     })
 }
+
+// Re-export priority constants for convenience
+export { PRIORITY_OVERLAY, PRIORITY_PAGE } from './useBackHandler'

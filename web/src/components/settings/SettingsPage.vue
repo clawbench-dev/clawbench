@@ -53,7 +53,7 @@ import SettingsCategory from './SettingsCategory.vue'
 import SettingsRestartDialog from './SettingsRestartDialog.vue'
 import { useSettingsNavigation } from '@/composables/useSettingsNavigation'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
-import { useFeatureBackHandler } from '@/composables/useEdgeSwipeBack'
+import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 
 const props = defineProps<{
   active?: boolean
@@ -74,6 +74,7 @@ useFeatureBackHandler(
   'settings',
   () => !!props.active && navStack.value.length > 0,
   () => popNav(),
+  PRIORITY_PAGE,
 )
 
 const currentCategoryTitle = computed(() => {

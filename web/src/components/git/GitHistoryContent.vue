@@ -157,7 +157,7 @@ import GitManageContent from './GitManageContent.vue'
 import { renderDiff } from '@/utils/diff.ts'
 import { store } from '@/stores/app.ts'
 import { useCommitNavigation, consumePendingCommitNavigation, pendingSha as pendingCommitSha, consumePendingManageNavigation, pendingManageView } from '@/composables/useCommitNavigation.ts'
-import { useFeatureBackHandler } from '@/composables/useEdgeSwipeBack'
+import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 const { t } = useI18n()
 
 const switchTab = inject('switchTab', () => {})
@@ -446,6 +446,7 @@ useFeatureBackHandler(
     'git-history',
     () => props.active && currentView.value !== 'commits',
     () => drillBack('commits'),
+    PRIORITY_PAGE,
 )
 
 // Ensure IntersectionObserver is set up whenever user returns to the commits view.

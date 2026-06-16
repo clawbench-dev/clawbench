@@ -1,10 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { registerBackHandler, handleBackNavigation, canNavigateBack } from '../useBackHandler'
+import { registerBackHandler, handleBackNavigation, canNavigateBack, _resetHandlers, PRIORITY_OVERLAY, PRIORITY_PAGE } from '../useBackHandler'
 
 describe('useBackHandler', () => {
     beforeEach(() => {
-        // Clear all handlers between tests by using the module's internal state
-        // Since handlers is module-scoped, we need to handle this via the API
+        _resetHandlers()
     })
 
     it('returns false when no handlers are registered', () => {
@@ -20,11 +19,13 @@ describe('useBackHandler', () => {
             id: 'test1',
             canGoBack: () => false,
             goBack: goBack1,
+            priority: PRIORITY_PAGE,
         })
         const unregister2 = registerBackHandler({
             id: 'test2',
             canGoBack: () => true,
             goBack: goBack2,
+            priority: PRIORITY_PAGE,
         })
 
         const result = handleBackNavigation()
@@ -42,6 +43,7 @@ describe('useBackHandler', () => {
             id: 'test',
             canGoBack: () => false,
             goBack,
+            priority: PRIORITY_PAGE,
         })
 
         expect(handleBackNavigation()).toBe(false)
@@ -55,6 +57,7 @@ describe('useBackHandler', () => {
             id: 'test',
             canGoBack: () => true,
             goBack: vi.fn(),
+            priority: PRIORITY_PAGE,
         })
 
         expect(canNavigateBack()).toBe(true)
@@ -62,27 +65,56 @@ describe('useBackHandler', () => {
         expect(canNavigateBack()).toBe(false)
     })
 
-    it('gives priority to the last registered handler', () => {
+    it('dispatches by priority — higher priority wins regardless of registration order', () => {
+        const pageGoBack = vi.fn()
+        const overlayGoBack = vi.fn()
+
+        // Register overlay AFTER page (simulates the browse-mounts-later bug)
+        const unregPage = registerBackHandler({
+            id: 'page',
+            canGoBack: () => true,
+            goBack: pageGoBack,
+            priority: PRIORITY_PAGE,
+        })
+        const unregOverlay = registerBackHandler({
+            id: 'overlay',
+            canGoBack: () => true,
+            goBack: overlayGoBack,
+            priority: PRIORITY_OVERLAY,
+        })
+
+        handleBackNavigation()
+        // overlay (1000) beats page (100) even though page was registered first
+        expect(overlayGoBack).toHaveBeenCalledTimes(1)
+        expect(pageGoBack).not.toHaveBeenCalled()
+
+        unregPage()
+        unregOverlay()
+    })
+
+    it('among same priority, last registered wins', () => {
         const goBack1 = vi.fn()
         const goBack2 = vi.fn()
 
-        const unregister1 = registerBackHandler({
+        const unreg1 = registerBackHandler({
             id: 'test1',
             canGoBack: () => true,
             goBack: goBack1,
+            priority: PRIORITY_PAGE,
         })
-        const unregister2 = registerBackHandler({
+        const unreg2 = registerBackHandler({
             id: 'test2',
             canGoBack: () => true,
             goBack: goBack2,
+            priority: PRIORITY_PAGE,
         })
 
         handleBackNavigation()
         expect(goBack1).not.toHaveBeenCalled()
         expect(goBack2).toHaveBeenCalledTimes(1)
 
-        unregister1()
-        unregister2()
+        unreg1()
+        unreg2()
     })
 
     it('canNavigateBack returns true if any handler can go back', () => {
@@ -90,16 +122,78 @@ describe('useBackHandler', () => {
             id: 'test1',
             canGoBack: () => false,
             goBack: vi.fn(),
+            priority: PRIORITY_PAGE,
         })
         const unregister2 = registerBackHandler({
             id: 'test2',
             canGoBack: () => true,
             goBack: vi.fn(),
+            priority: PRIORITY_PAGE,
         })
 
         expect(canNavigateBack()).toBe(true)
 
         unregister1()
         unregister2()
+    })
+
+    it('reproduces and fixes the file-overlay vs browse bug', () => {
+        // Simulate: browse (PRIORITY_PAGE) registered AFTER file-overlay (PRIORITY_OVERLAY)
+        // Both canGoBack = true. Before the fix, browse would win (reverse iteration).
+        // After the fix, file-overlay wins due to higher priority.
+        const browseGoBack = vi.fn()
+        const overlayGoBack = vi.fn()
+
+        // file-overlay registered first (App.vue mounts before FileManagerContent)
+        const unregOverlay = registerBackHandler({
+            id: 'file-overlay',
+            canGoBack: () => true,
+            goBack: overlayGoBack,
+            priority: PRIORITY_OVERLAY,
+        })
+        // browse registered later (FileManagerContent mounts when user visits browse tab)
+        const unregBrowse = registerBackHandler({
+            id: 'browse',
+            canGoBack: () => true,
+            goBack: browseGoBack,
+            priority: PRIORITY_PAGE,
+        })
+
+        handleBackNavigation()
+        expect(overlayGoBack).toHaveBeenCalledTimes(1)
+        expect(browseGoBack).not.toHaveBeenCalled()
+
+        unregOverlay()
+        unregBrowse()
+    })
+
+    it('canNavigateBack returns true when only a low-priority handler can go back', () => {
+        const overlayGoBack = vi.fn()
+        const browseGoBack = vi.fn()
+
+        // Overlay can't go back, but browse can
+        const unregOverlay = registerBackHandler({
+            id: 'file-overlay',
+            canGoBack: () => false,
+            goBack: overlayGoBack,
+            priority: PRIORITY_OVERLAY,
+        })
+        const unregBrowse = registerBackHandler({
+            id: 'browse',
+            canGoBack: () => true,
+            goBack: browseGoBack,
+            priority: PRIORITY_PAGE,
+        })
+
+        // canNavigateBack should still return true
+        expect(canNavigateBack()).toBe(true)
+
+        // handleBackNavigation should dispatch to the low-priority browse handler
+        handleBackNavigation()
+        expect(browseGoBack).toHaveBeenCalledTimes(1)
+        expect(overlayGoBack).not.toHaveBeenCalled()
+
+        unregOverlay()
+        unregBrowse()
     })
 })

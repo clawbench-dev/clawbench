@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { handleBackNavigation, registerBackHandler, canNavigateBack } from '../useBackHandler'
+import { handleBackNavigation, registerBackHandler, canNavigateBack, PRIORITY_PAGE, PRIORITY_OVERLAY } from '../useBackHandler'
 
 // Mock vue lifecycle hooks
 const mountedCallbacks: (() => void)[] = []
@@ -83,7 +83,7 @@ describe('useEdgeSwipeBack', () => {
 
     it('triggers back navigation on right-edge left swipe', () => {
         const goBack = vi.fn()
-        cleanupFns.push(registerBackHandler({ id: 'test', canGoBack: () => true, goBack }))
+        cleanupFns.push(registerBackHandler({ id: 'test', canGoBack: () => true, goBack, priority: PRIORITY_PAGE }))
 
         useEdgeSwipeBack()
         mountedCallbacks.forEach(cb => cb())
@@ -100,7 +100,7 @@ describe('useEdgeSwipeBack', () => {
 
     it('does not trigger back navigation on center swipe', () => {
         const goBack = vi.fn()
-        cleanupFns.push(registerBackHandler({ id: 'test', canGoBack: () => true, goBack }))
+        cleanupFns.push(registerBackHandler({ id: 'test', canGoBack: () => true, goBack, priority: PRIORITY_PAGE }))
 
         useEdgeSwipeBack()
         mountedCallbacks.forEach(cb => cb())
@@ -113,7 +113,7 @@ describe('useEdgeSwipeBack', () => {
 
     it('does not trigger back navigation on left-edge right swipe', () => {
         const goBack = vi.fn()
-        cleanupFns.push(registerBackHandler({ id: 'test', canGoBack: () => true, goBack }))
+        cleanupFns.push(registerBackHandler({ id: 'test', canGoBack: () => true, goBack, priority: PRIORITY_PAGE }))
 
         useEdgeSwipeBack()
         mountedCallbacks.forEach(cb => cb())
@@ -126,7 +126,7 @@ describe('useEdgeSwipeBack', () => {
 
     it('does not trigger back navigation on short right-edge swipe', () => {
         const goBack = vi.fn()
-        cleanupFns.push(registerBackHandler({ id: 'test', canGoBack: () => true, goBack }))
+        cleanupFns.push(registerBackHandler({ id: 'test', canGoBack: () => true, goBack, priority: PRIORITY_PAGE }))
 
         useEdgeSwipeBack()
         mountedCallbacks.forEach(cb => cb())
@@ -143,7 +143,7 @@ describe('useEdgeSwipeBack', () => {
 
     it('does not trigger back navigation when no handler can go back', () => {
         const goBack = vi.fn()
-        cleanupFns.push(registerBackHandler({ id: 'test', canGoBack: () => false, goBack }))
+        cleanupFns.push(registerBackHandler({ id: 'test', canGoBack: () => false, goBack, priority: PRIORITY_PAGE }))
 
         useEdgeSwipeBack()
         mountedCallbacks.forEach(cb => cb())
@@ -193,7 +193,7 @@ describe('useFeatureBackHandler', () => {
     it('registers a back handler on mount', () => {
         const goBack = vi.fn()
 
-        useFeatureBackHandler('test-feature', () => true, goBack)
+        useFeatureBackHandler('test-feature', () => true, goBack, PRIORITY_PAGE)
 
         // After mount
         mountedCallbacks.forEach(cb => cb())
@@ -205,7 +205,7 @@ describe('useFeatureBackHandler', () => {
     it('unregisters the handler on unmount', () => {
         const goBack = vi.fn()
 
-        useFeatureBackHandler('test-feature', () => true, goBack)
+        useFeatureBackHandler('test-feature', () => true, goBack, PRIORITY_PAGE)
         mountedCallbacks.forEach(cb => cb())
         handleBackNavigation() // consume the first call
         expect(goBack).toHaveBeenCalledTimes(1)
@@ -221,7 +221,7 @@ describe('useFeatureBackHandler', () => {
         let canReturn = false
         const goBack = vi.fn()
 
-        useFeatureBackHandler('test-feature', () => canReturn, goBack)
+        useFeatureBackHandler('test-feature', () => canReturn, goBack, PRIORITY_PAGE)
         mountedCallbacks.forEach(cb => cb())
 
         expect(handleBackNavigation()).toBe(false)

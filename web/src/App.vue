@@ -280,7 +280,7 @@ import { useFileWatch } from './composables/useFileWatch.ts'
 import { useFileNavStack } from './composables/useFileNavStack'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
 import { useGlobalEvents } from './composables/useGlobalEvents'
-import { useEdgeSwipeBack, useFeatureBackHandler } from './composables/useEdgeSwipeBack'
+import { useEdgeSwipeBack, useFeatureBackHandler, PRIORITY_OVERLAY } from './composables/useEdgeSwipeBack'
 import { handleBackNavigation } from './composables/useBackHandler'
 import { store } from './stores/app.ts'
 import { dirName } from './utils/path.ts'
@@ -568,7 +568,7 @@ const handleForeground = () => {
 // Edge swipe back gesture detection (right-edge-left-swipe → go back)
 useEdgeSwipeBack()
 
-// 文件覆盖层的返回手势：文件栈优先
+// 文件覆盖层的返回手势：overlay 优先级高于 browse，无论 mount 顺序如何
 useFeatureBackHandler(
   'file-overlay',
   () => activeTab.value === 'browse' && fileNav.overlayOpen.value,
@@ -580,6 +580,7 @@ useFeatureBackHandler(
       closeOverlayAndSync()
     }
   },
+  PRIORITY_OVERLAY,
 )
 
 // Android hardware back button / predictive back gesture → delegate to JS
