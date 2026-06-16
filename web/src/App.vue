@@ -650,6 +650,7 @@ async function handleSetupComplete() {
     // Register event listeners that were skipped during wizard (onMounted skipped them)
     window.addEventListener('open-file-manager', handleOpenFileManager)
     window.addEventListener('open-file-overlay', handleOpenFileOverlay)
+    window.addEventListener('close-file-overlay', handleOverlayClose)
     window.addEventListener('navigate-to-commit', handleNavigateToCommit)
     window.addEventListener('quote-sent', playQuoteEmitAnimation)
     window.addEventListener('scroll-to-line', (e) => { scrollToLine(e.detail.line) })
@@ -802,9 +803,13 @@ function handleOverlayClose() {
 }
 
 async function handleOverlayGoBack() {
-    const prevPath = fileNav.goBack()
-    if (prevPath) {
-        await store.selectFile(prevPath)
+    if (fileNav.canGoBack.value) {
+        const prevPath = fileNav.goBack()
+        if (prevPath) {
+            await store.selectFile(prevPath)
+        }
+    } else {
+        handleOverlayClose()
     }
 }
 
@@ -1102,6 +1107,7 @@ onMounted(async () => {
     loadConfig()
     window.addEventListener('open-file-manager', handleOpenFileManager)
     window.addEventListener('open-file-overlay', handleOpenFileOverlay)
+    window.addEventListener('close-file-overlay', handleOverlayClose)
     window.addEventListener('navigate-to-commit', handleNavigateToCommit)
     window.addEventListener('quote-sent', playQuoteEmitAnimation)
     window.addEventListener('scroll-to-line', (e) => { scrollToLine(e.detail.line) })
@@ -1253,6 +1259,7 @@ onUnmounted(() => {
     destroyGlobalEvents()
     window.removeEventListener('open-file-manager', handleOpenFileManager)
     window.removeEventListener('open-file-overlay', handleOpenFileOverlay)
+    window.removeEventListener('close-file-overlay', handleOverlayClose)
     window.removeEventListener('navigate-to-commit', handleNavigateToCommit)
     window.removeEventListener('quote-sent', playQuoteEmitAnimation)
     window.removeEventListener('clawbench-open-session', handleOpenSession)

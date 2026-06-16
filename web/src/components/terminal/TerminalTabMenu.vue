@@ -1,12 +1,15 @@
 <template>
   <PopupMenu :show="show" @update:show="onShowChange" :target-element="targetElement" :max-width="180" :menu-items-count="3" anchor="right">
     <button class="tab-menu-item" @click="handleCopyPath">
+      <CopyIcon :size="14" class="tab-menu-icon" />
       {{ t('terminal.copyPath') }}
     </button>
     <button class="tab-menu-item danger" @click="handleClose">
+      <XIcon :size="14" class="tab-menu-icon" />
       {{ t('terminal.close') }}
     </button>
     <button class="tab-menu-item danger" @click="handleCloseAll">
+      <XCircleIcon :size="14" class="tab-menu-icon" />
       {{ t('terminal.closeAllTabs') }}
     </button>
   </PopupMenu>
@@ -14,6 +17,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
+import { Copy as CopyIcon, X as XIcon, XCircle as XCircleIcon } from 'lucide-vue-next'
 import { useToast } from '@/composables/useToast'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 
@@ -57,7 +61,9 @@ function onShowChange(val: boolean) {
 
 <style>
 .tab-menu-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   padding: 8px 14px;
   border: none;
@@ -69,6 +75,11 @@ function onShowChange(val: boolean) {
   transition: background 0.12s, color 0.12s;
   position: relative;
   overflow: hidden;
+}
+
+.tab-menu-icon {
+  flex-shrink: 0;
+  opacity: 0.7;
 }
 
 .tab-menu-item:hover {
