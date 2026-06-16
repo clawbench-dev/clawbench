@@ -3,7 +3,7 @@ import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
-import { clearModeState, updateAvailableModes, clearCommandState, updateCommandState, updateAvailableThinkingEfforts, clearThinkingEffortState, currentAgentId as _currentAgentId, consumePendingChatData, invalidatePendingChatData } from '@/composables/useSessionIdentity.ts'
+import { clearModeState, updateAvailableModes, clearCommandState, updateCommandState, updateAvailableThinkingEfforts, clearThinkingEffortState, currentAgentId as _currentAgentId } from '@/composables/useSessionIdentity.ts'
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
 import { useAgents, restoreOriginalModels, populateACPStateFromCache, getAgentThinkingEffortLevels } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
@@ -360,46 +360,35 @@ export function useChatSession(options: UseChatSessionOptions) {
       }
       // Load agents in parallel with the main fetch when not in recovery path
       const agentsPromise = agents.value.length === 0 ? loadAgents() : Promise.resolve()
-      let data: any
-
-      // Check for cached data from initSessionFromAPI before making the API call
-      const cachedChatData = consumePendingChatData(currentSessionId.value)
-      if (cachedChatData) {
-        data = cachedChatData
-        await agentsPromise
-        if (loadHistorySeq !== mySeq) { return }
-      } else {
-        // No cached data — fetch from API as usual
-        const url = `/api/ai/chat?session_id=${encodeURIComponent(currentSessionId.value)}&limit=${limit}`
-        const fetchCtrl = new AbortController()
-        const fetchTimer = setTimeout(() => fetchCtrl.abort(), 60000)
-        let resp: Response
-        try {
-          // Fire agents and chat fetch in parallel
-          const [, fetchResp] = await Promise.all([
-            agentsPromise,
-            fetch(url, { signal: fetchCtrl.signal }),
-          ])
-          resp = fetchResp
-        } catch (e) {
-          clearTimeout(fetchTimer)
-          if (fetchCtrl.signal.aborted) {
-            // Timeout — bail without error toast
-            return
-          }
-          throw e
-        }
+      const url = `/api/ai/chat?session_id=${encodeURIComponent(currentSessionId.value)}&limit=${limit}`
+      const fetchCtrl = new AbortController()
+      const fetchTimer = setTimeout(() => fetchCtrl.abort(), 60000)
+      let resp: Response
+      try {
+        // Fire agents and chat fetch in parallel
+        const [, fetchResp] = await Promise.all([
+          agentsPromise,
+          fetch(url, { signal: fetchCtrl.signal }),
+        ])
+        resp = fetchResp
+      } catch (e) {
         clearTimeout(fetchTimer)
-        // If another loadHistory or switchSession started while we were fetching, discard our results
-        if (loadHistorySeq !== mySeq) { return }
-        if (!resp.ok) {
-          const errData = await resp.json().catch(() => ({}))
-          throw new Error(errData.error || gt('chat.session.requestFailed', { status: resp.status }))
+        if (fetchCtrl.signal.aborted) {
+          // Timeout — bail without error toast
+          return
         }
-        data = await resp.json()
-        // Re-check after JSON parse (another async boundary)
-        if (loadHistorySeq !== mySeq) { return }
+        throw e
       }
+      clearTimeout(fetchTimer)
+      // If another loadHistory or switchSession started while we were fetching, discard our results
+      if (loadHistorySeq !== mySeq) { return }
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({}))
+        throw new Error(errData.error || gt('chat.session.requestFailed', { status: resp.status }))
+      }
+      const data = await resp.json()
+      // Re-check after JSON parse (another async boundary)
+      if (loadHistorySeq !== mySeq) { return }
       const rawMsgs = data.messages || []
 
       // Change detection: if skipIfUnchanged and data matches last snapshot, do nothing.

@@ -50,7 +50,7 @@ vi.mock('@/utils/chatSessionUtils', () => ({
     parseMessages: vi.fn().mockReturnValue([]),
 }))
 
-import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, consumePendingChatData, invalidatePendingChatData } from '@/composables/useSessionIdentity'
+import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState } from '@/composables/useSessionIdentity'
 
 describe('useSessionIdentity', () => {
     beforeEach(() => {
@@ -1050,135 +1050,6 @@ describe('useSessionIdentity', () => {
             expect(identity.availableThinkingEfforts.value).toEqual([])
 
             vi.unstubAllGlobals()
-        })
-    })
-
-    // ── consumePendingChatData / invalidatePendingChatData ──
-
-    describe('consumePendingChatData', () => {
-        beforeEach(() => {
-            invalidatePendingChatData()
-        })
-
-        it('returns null when no cache exists', () => {
-            expect(consumePendingChatData('any')).toBeNull()
-        })
-
-        it('returns cached data and clears it (single-consume)', async () => {
-            const identity = useSessionIdentity()
-            resetIdentity()
-
-            const mockFetch = vi.fn().mockResolvedValue({
-                ok: true,
-                json: () => Promise.resolve({
-                    sessionId: 'cache-test',
-                    backend: 'codebuddy',
-                    agentId: 'agent-1',
-                    messages: [{ id: 1, role: 'user', content: 'hi' }],
-                }),
-            })
-            vi.stubGlobal('fetch', mockFetch)
-
-            await initSessionFromAPI()
-            vi.unstubAllGlobals()
-
-            // First consume returns data
-            const data = consumePendingChatData('cache-test')
-            expect(data).not.toBeNull()
-            expect(data.sessionId).toBe('cache-test')
-            expect(data.messages).toHaveLength(1)
-
-            // Second consume returns null (already consumed)
-            expect(consumePendingChatData('cache-test')).toBeNull()
-        })
-
-        it('returns null when sessionId mismatches', async () => {
-            const identity = useSessionIdentity()
-            resetIdentity()
-
-            const mockFetch = vi.fn().mockResolvedValue({
-                ok: true,
-                json: () => Promise.resolve({
-                    sessionId: 'session-A',
-                    backend: 'codebuddy',
-                    agentId: 'agent-1',
-                }),
-            })
-            vi.stubGlobal('fetch', mockFetch)
-
-            await initSessionFromAPI()
-            vi.unstubAllGlobals()
-
-            // Wrong session ID → null
-            expect(consumePendingChatData('session-B')).toBeNull()
-        })
-
-        it('returns null when data is stale (>5s old)', async () => {
-            const identity = useSessionIdentity()
-            resetIdentity()
-
-            const mockFetch = vi.fn().mockResolvedValue({
-                ok: true,
-                json: () => Promise.resolve({
-                    sessionId: 'stale-test',
-                    backend: 'codebuddy',
-                    agentId: 'agent-1',
-                }),
-            })
-            vi.stubGlobal('fetch', mockFetch)
-
-            await initSessionFromAPI()
-            vi.unstubAllGlobals()
-
-            // Advance time past 5 seconds
-            vi.useFakeTimers()
-            vi.advanceTimersByTime(5001)
-
-            expect(consumePendingChatData('stale-test')).toBeNull()
-
-            vi.useRealTimers()
-        })
-
-        it('invalidatePendingChatData clears the cache', async () => {
-            const identity = useSessionIdentity()
-            resetIdentity()
-
-            const mockFetch = vi.fn().mockResolvedValue({
-                ok: true,
-                json: () => Promise.resolve({
-                    sessionId: 'invalidate-test',
-                    backend: 'codebuddy',
-                    agentId: 'agent-1',
-                }),
-            })
-            vi.stubGlobal('fetch', mockFetch)
-
-            await initSessionFromAPI()
-            vi.unstubAllGlobals()
-
-            invalidatePendingChatData()
-            expect(consumePendingChatData('invalidate-test')).toBeNull()
-        })
-
-        it('resetIdentity clears the cache', async () => {
-            const identity = useSessionIdentity()
-            resetIdentity()
-
-            const mockFetch = vi.fn().mockResolvedValue({
-                ok: true,
-                json: () => Promise.resolve({
-                    sessionId: 'reset-test',
-                    backend: 'codebuddy',
-                    agentId: 'agent-1',
-                }),
-            })
-            vi.stubGlobal('fetch', mockFetch)
-
-            await initSessionFromAPI()
-            vi.unstubAllGlobals()
-
-            resetIdentity()
-            expect(consumePendingChatData('reset-test')).toBeNull()
         })
     })
 

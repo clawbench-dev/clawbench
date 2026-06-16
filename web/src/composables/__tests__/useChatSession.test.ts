@@ -167,8 +167,6 @@ vi.mock('@/composables/useSessionIdentity', () => ({
   updateThinkingEffortState: vi.fn(),
   updateAvailableThinkingEfforts: vi.fn(),
   clearThinkingEffortState: vi.fn(),
-  consumePendingChatData: vi.fn().mockReturnValue(null),
-  invalidatePendingChatData: vi.fn(),
 }))
 
 vi.mock('@/composables/useToast', () => ({
