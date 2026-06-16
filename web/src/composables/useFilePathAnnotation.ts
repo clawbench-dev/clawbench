@@ -124,6 +124,7 @@ export function resolveFilePathDual(path: string, projectRoot: string, homeDir?:
             const rel = expanded.slice(projectRoot.length + 1)
             return { primary: rel, fallback: rel }
         }
+        if (expanded === projectRoot) return null
         return { primary: expanded, fallback: expanded }
     }
 

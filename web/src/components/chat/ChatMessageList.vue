@@ -648,7 +648,7 @@ defineExpose({
   right: 0;
   display: flex;
   justify-content: center;
-  z-index: 8;
+  z-index: 3;
   pointer-events: none;
   padding: 6px 0;
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import {
   resolveFilePath,
+  resolveFilePathDual,
   resolveRelativePath,
   fileOpenButtonHtml,
   FILE_OPEN_ICON_SVG,
@@ -33,6 +34,128 @@ vi.mock('@/stores/app', () => ({
 vi.mock('@/composables/useLocale', () => ({
   gt: (key: string) => key,
 }))
+
+// --- resolveFilePathDual ---
+
+describe('resolveFilePathDual', () => {
+  const projectRoot = '/home/user/project'
+
+  describe('absolute paths (single candidate)', () => {
+    it('returns primary === fallback for project-internal absolute path', () => {
+      const result = resolveFilePathDual('/home/user/project/src/main.go', projectRoot)
+      expect(result).toEqual({ primary: 'src/main.go', fallback: 'src/main.go' })
+    })
+
+    it('returns primary === fallback for project-external absolute path', () => {
+      const result = resolveFilePathDual('/etc/hosts', projectRoot)
+      expect(result).toEqual({ primary: '/etc/hosts', fallback: '/etc/hosts' })
+    })
+
+    it('returns null for path equal to projectRoot', () => {
+      expect(resolveFilePathDual('/home/user/project', projectRoot)).toBeNull()
+    })
+  })
+
+  describe('tilde paths (single candidate)', () => {
+    const homeDir = '/home/user'
+
+    it('returns primary === fallback for ~/project path', () => {
+      const result = resolveFilePathDual('~/project/src/main.go', projectRoot, homeDir)
+      expect(result).toEqual({ primary: 'src/main.go', fallback: 'src/main.go' })
+    })
+
+    it('returns primary === fallback for ~/path outside project', () => {
+      const result = resolveFilePathDual('~/.bashrc', projectRoot, homeDir)
+      expect(result).toEqual({ primary: '/home/user/.bashrc', fallback: '/home/user/.bashrc' })
+    })
+
+    it('returns null for ~/project (equals projectRoot)', () => {
+      expect(resolveFilePathDual('~/project', projectRoot, homeDir)).toBeNull()
+    })
+  })
+
+  describe('relative paths without baseDir (single candidate)', () => {
+    it('returns primary === fallback for relative path', () => {
+      const result = resolveFilePathDual('src/main.go', projectRoot)
+      expect(result).toEqual({ primary: 'src/main.go', fallback: 'src/main.go' })
+    })
+
+    it('returns primary === fallback for ./ relative path', () => {
+      const result = resolveFilePathDual('./src/main.go', projectRoot)
+      expect(result).toEqual({ primary: 'src/main.go', fallback: 'src/main.go' })
+    })
+  })
+
+  describe('relative paths with baseDir (dual candidates)', () => {
+    it('returns dual candidates when baseDir resolves differently than projectRoot', () => {
+      // baseDir = '/home/user/project/web/src', path = 'utils.ts'
+      // baseDir result: 'web/src/utils.ts' (primary)
+      // projectRoot result: 'utils.ts' (fallback)
+      const result = resolveFilePathDual('utils.ts', projectRoot, undefined, '/home/user/project/web/src')
+      expect(result).toEqual({ primary: 'web/src/utils.ts', fallback: 'utils.ts' })
+    })
+
+    it('returns single candidate when baseDir and projectRoot produce same result', () => {
+      // baseDir = projectRoot, so no dual candidate
+      const result = resolveFilePathDual('src/main.go', projectRoot, undefined, projectRoot)
+      expect(result).toEqual({ primary: 'src/main.go', fallback: 'src/main.go' })
+    })
+
+    it('returns single candidate when baseDir resolves to project-external path', () => {
+      // baseDir = '/etc', path = 'config.json' → resolves to /etc/config.json (external) → projectRoot wins
+      const result = resolveFilePathDual('config.json', projectRoot, undefined, '/etc')
+      // projectResult for 'config.json' against '/home/user/project' → 'config.json'
+      // Both resolve to 'config.json' → single candidate
+      expect(result).toEqual({ primary: 'config.json', fallback: 'config.json' })
+    })
+
+    it('returns dual candidates for bare filename with extension', () => {
+      const result = resolveFilePathDual('App.vue', projectRoot, undefined, '/home/user/project/web/src')
+      expect(result).toEqual({ primary: 'web/src/App.vue', fallback: 'App.vue' })
+    })
+
+    it('returns dual candidates when baseDir is a subdirectory of projectRoot', () => {
+      // baseDir = '/home/user/project/src', path = 'main.go'
+      // baseDir result: 'src/main.go' (primary)
+      // projectRoot result: 'main.go' (fallback)
+      const result = resolveFilePathDual('main.go', projectRoot, undefined, '/home/user/project/src')
+      expect(result).toEqual({ primary: 'src/main.go', fallback: 'main.go' })
+    })
+
+    it('returns project-external result when path escapes project via relative', () => {
+      // ../../../etc/hosts with projectRoot = /home/user/project
+      // projectResult resolves to /etc/hosts (external) → { primary: '/etc/hosts', fallback: '/etc/hosts' }
+      const result = resolveFilePathDual('../../../etc/hosts', projectRoot)
+      expect(result).toEqual({ primary: '/etc/hosts', fallback: '/etc/hosts' })
+    })
+  })
+
+  describe('rejection rules', () => {
+    it('rejects glob patterns', () => {
+      expect(resolveFilePathDual('*.go', projectRoot)).toBeNull()
+      expect(resolveFilePathDual('src/*.go', projectRoot)).toBeNull()
+    })
+
+    it('rejects URLs', () => {
+      expect(resolveFilePathDual('https://example.com', projectRoot)).toBeNull()
+    })
+
+    it('rejects env vars', () => {
+      expect(resolveFilePathDual('$HOME/.bashrc', projectRoot)).toBeNull()
+    })
+
+    it('rejects bare identifiers without slash or extension', () => {
+      expect(resolveFilePathDual('useAutoSpeech', projectRoot)).toBeNull()
+      expect(resolveFilePathDual('ref', projectRoot)).toBeNull()
+    })
+
+    it('accepts bare filename with extension (even without slash)', () => {
+      const result = resolveFilePathDual('main.go', projectRoot)
+      expect(result).not.toBeNull()
+      expect(result!.primary).toBe('main.go')
+    })
+  })
+})
 
 // --- resolveFilePath ---
 
@@ -257,6 +380,23 @@ describe('fileOpenButtonHtml', () => {
     const html = fileOpenButtonHtml('src/main.go')
     expect(html).not.toContain('data-line-start')
     expect(html).not.toContain('data-line-end')
+  })
+
+  it('includes data-fallback-path when fallbackPath differs from resolvedPath', () => {
+    const html = fileOpenButtonHtml('web/src/utils.ts', undefined, undefined, 'utils.ts')
+    expect(html).toContain('data-file-path="web/src/utils.ts"')
+    expect(html).toContain('data-fallback-path="utils.ts"')
+  })
+
+  it('does not include data-fallback-path when fallbackPath equals resolvedPath', () => {
+    const html = fileOpenButtonHtml('src/main.go', undefined, undefined, 'src/main.go')
+    expect(html).toContain('data-file-path="src/main.go"')
+    expect(html).not.toContain('data-fallback-path')
+  })
+
+  it('escapes HTML in fallbackPath', () => {
+    const html = fileOpenButtonHtml('src/main.go', undefined, undefined, 'src/<weird>.go')
+    expect(html).toContain('data-fallback-path="src/&lt;weird&gt;.go"')
   })
 })
 
@@ -582,6 +722,47 @@ describe('annotateFilePaths', () => {
     const input = '<a href="components/App.vue">App</a>'
     const result = annotateFilePaths(input, { projectRoot, baseDir: 'src' })
     expect(result.detectedPaths).toContain('src/components/App.vue')
+  })
+
+  // ── Dual-candidate annotation with baseDir ──
+
+  describe('dual-candidate annotation with baseDir', () => {
+    const projectRoot = '/home/user/project'
+
+    it('stores data-fallback-path on <code> annotation when baseDir produces dual candidate', () => {
+      const input = '<code>utils.ts</code>'
+      const result = annotateFilePaths(input, { projectRoot, baseDir: '/home/user/project/web/src' })
+      // primary = web/src/utils.ts, fallback = utils.ts
+      expect(result.detectedPaths).toContain('web/src/utils.ts')
+      expect(result.detectedPaths).toContain('utils.ts')
+      expect(result.html).toContain('data-file-path="web/src/utils.ts"')
+      expect(result.html).toContain('data-fallback-path="utils.ts"')
+    })
+
+    it('stores data-fallback-path on text-node span when baseDir produces dual candidate', () => {
+      // Use a multi-segment path that FILE_PATH_RE can match in text nodes
+      const input = '<p>see components/App.vue for details</p>'
+      const result = annotateFilePaths(input, { projectRoot, baseDir: '/home/user/project/web/src' })
+      // primary = web/src/components/App.vue, fallback = components/App.vue
+      expect(result.detectedPaths).toContain('web/src/components/App.vue')
+      expect(result.detectedPaths).toContain('components/App.vue')
+      expect(result.html).toContain('data-file-path="web/src/components/App.vue"')
+      expect(result.html).toContain('data-fallback-path="components/App.vue"')
+    })
+
+    it('does not include data-fallback-path when primary === fallback', () => {
+      const input = '<code>src/main.go</code>'
+      const result = annotateFilePaths(input, { projectRoot })
+      expect(result.html).toContain('data-file-path="src/main.go"')
+      expect(result.html).not.toContain('data-fallback-path')
+    })
+
+    it('button also has data-fallback-path for dual-candidate code annotation', () => {
+      const input = '<code>utils.ts</code>'
+      const result = annotateFilePaths(input, { projectRoot, baseDir: '/home/user/project/web/src' })
+      const btnMatch = result.html.match(/chat-file-open-btn[^>]*data-fallback-path="utils.ts"/)
+      expect(btnMatch).not.toBeNull()
+    })
   })
 
   // ── Chinese path encoding (percent-encoded href decoding) ──
@@ -1133,9 +1314,98 @@ describe('verifyFilePaths', () => {
 
     vi.unstubAllGlobals()
   })
-})
 
-// --- openFilePath ---
+  it('swaps to fallback path when primary does not exist but fallback does', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { 'web/src/utils.ts': 'none', 'utils.ts': 'file' } }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    // Simulate annotation with dual candidates: primary=web/src/utils.ts, fallback=utils.ts
+    container.innerHTML = '<span class="chat-file-path" data-file-path="web/src/utils.ts" data-fallback-path="utils.ts">utils.ts</span><button class="chat-file-open-btn" data-file-path="web/src/utils.ts" data-fallback-path="utils.ts">open</button>'
+
+    await verifyFilePaths(['web/src/utils.ts', 'utils.ts'], container)
+
+    // Primary was swapped to fallback — elements should now have data-file-path="utils.ts"
+    expect(container.querySelector('[data-file-path="utils.ts"]')).not.toBeNull()
+    expect(container.querySelector('[data-file-path="web/src/utils.ts"]')).toBeNull()
+    // Both span and button should have been swapped
+    const swappedSpan = container.querySelector('.chat-file-path[data-file-path="utils.ts"]')
+    expect(swappedSpan).not.toBeNull()
+    expect(swappedSpan!.hasAttribute('data-fallback-path')).toBe(false)
+    const swappedBtn = container.querySelector('.chat-file-open-btn[data-file-path="utils.ts"]')
+    expect(swappedBtn).not.toBeNull()
+    expect(swappedBtn!.hasAttribute('data-fallback-path')).toBe(false)
+
+    vi.unstubAllGlobals()
+  })
+
+  it('removes annotation when neither primary nor fallback exists', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { 'web/src/missing.ts': 'none', 'missing.ts': 'none' } }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML = '<span class="chat-file-path" data-file-path="web/src/missing.ts" data-fallback-path="missing.ts">missing.ts</span><button class="chat-file-open-btn" data-file-path="web/src/missing.ts" data-fallback-path="missing.ts">open</button>'
+
+    await verifyFilePaths(['web/src/missing.ts', 'missing.ts'], container)
+
+    // Both should be removed
+    expect(container.querySelector('.chat-file-path')).toBeNull()
+    expect(container.querySelector('.chat-file-open-btn')).toBeNull()
+    // Text content preserved (unwrapped from span)
+    expect(container.textContent).toContain('missing.ts')
+
+    vi.unstubAllGlobals()
+  })
+
+  it('updates external status when fallback is project-internal', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { '/etc/hosts': 'none', 'etc/hosts': 'file' } }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    // Simulate external path with project-internal fallback
+    container.innerHTML = '<span class="chat-file-path external" data-file-path="/etc/hosts" data-fallback-path="etc/hosts" data-external="true">hosts</span>'
+
+    await verifyFilePaths(['/etc/hosts', 'etc/hosts'], container)
+
+    const swapped = container.querySelector('.chat-file-path')
+    expect(swapped).not.toBeNull()
+    expect(swapped!.getAttribute('data-file-path')).toBe('etc/hosts')
+    expect(swapped!.hasAttribute('data-external')).toBe(false)
+    expect(swapped!.classList.contains('external')).toBe(false)
+
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps annotation when primary exists (no swap needed)', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { 'web/src/utils.ts': 'file' } }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML = '<span class="chat-file-path" data-file-path="web/src/utils.ts" data-fallback-path="utils.ts">utils.ts</span>'
+
+    await verifyFilePaths(['web/src/utils.ts'], container)
+
+    // Primary exists — no swap, original attributes preserved
+    const span = container.querySelector('.chat-file-path')
+    expect(span).not.toBeNull()
+    expect(span!.getAttribute('data-file-path')).toBe('web/src/utils.ts')
+    expect(span!.getAttribute('data-fallback-path')).toBe('utils.ts')
+
+    vi.unstubAllGlobals()
+  })
+})
 
 describe('openFilePath', () => {
   let mockSelectFile: ReturnType<typeof vi.fn>

@@ -19,6 +19,7 @@ import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useStickyScroll } from '@/composables/useStickyScroll.ts'
 import { renderCodeLines } from '@/utils/codeRender.ts'
 import { tryResolveCodeString, stripCodeString, verifyFilePaths } from '@/composables/useFilePathAnnotation.ts'
+import { escapeHtml } from '@/utils/html.ts'
 import { store } from '@/stores/app.ts'
 
 const props = defineProps({
@@ -140,14 +141,14 @@ function annotateFilePaths() {
         const stripped = stripCodeString(text)
         const isExternal = result.primary.startsWith('/')
         const externalClass = isExternal ? ' external' : ''
-        const fallbackAttr = result.fallback !== result.primary ? ` data-fallback-path="${result.fallback}"` : ''
+        const fallbackAttr = result.fallback !== result.primary ? ` data-fallback-path="${escapeHtml(result.fallback)}"` : ''
         const innerHtml = span.innerHTML
         const escapedPath = stripped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
         const pathRegex = new RegExp(`(${escapedPath})`)
         if (pathRegex.test(innerHtml)) {
             span.innerHTML = innerHtml.replace(
                 pathRegex,
-                `<span class="code-file-path${externalClass}" data-file-path="${result.primary}"${fallbackAttr}>$1</span>`
+                `<span class="code-file-path${externalClass}" data-file-path="${escapeHtml(result.primary)}"${fallbackAttr}>$1</span>`
             )
             detectedPaths.push(result.primary)
             if (result.fallback !== result.primary) detectedPaths.push(result.fallback)
