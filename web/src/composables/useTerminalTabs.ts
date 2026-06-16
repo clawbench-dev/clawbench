@@ -1,4 +1,4 @@
-import { ref, reactive, computed, type Ref } from 'vue'
+import { ref, reactive, computed, markRaw, type Ref } from 'vue'
 import { useTerminalSession, type TerminalErrorMessages } from './useTerminalSession'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -79,14 +79,19 @@ export function useTerminalTabs(
     const session = useTerminalSession(() => getWsUrl(resolvedCwd), opts.errorMessages)
     const { term, fit } = createXtermInstance()
 
+    // Mark xterm/addon instances as raw so Vue's reactive() does NOT wrap
+    // them in a Proxy.  xterm.js accesses internal services (coreService,
+    // bufferService, renderService…) via `this` — a Proxy intercepts every
+    // property access, which can break the rendering pipeline for TUI apps
+    // that use alternate screen buffers and rapid updates (e.g. OpenCode).
     const tab = reactive<TerminalTab>({
       id,
       sessionId: '',
       cwd: resolvedCwd,
       title,
       session,
-      xterm: term,
-      fitAddon: fit,
+      xterm: markRaw(term),
+      fitAddon: markRaw(fit),
       container: null,
     })
 
@@ -102,10 +107,9 @@ export function useTerminalTabs(
     // terminal the round-trip latency and WriteBuffer's 12 ms time-slicing
     // can cause the safety timeout to fire while the next \x1b[?2026h is
     // already queued — the renderer sees sync-on again and skips the
-    // frame.  This repeats indefinitely, leaving the alternate screen
-    // permanently blank.  Stripping the sequences is safe: the local
-    // xterm.js renderer has no perceptible benefit from batched updates
-    // since we are streaming data over a WebSocket.
+    // frame.  Stripping the sequences is safe: the local xterm.js renderer
+    // has no perceptible benefit from batched updates since we are streaming
+    // data over a WebSocket.
     session.setCallbacks({
       onOutput: (data: string) => {
         term.write(stripSyncOutput(data))
