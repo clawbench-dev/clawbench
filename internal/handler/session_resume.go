@@ -1,4 +1,3 @@
-//nolint:goconst // Domain string constants defined above; remaining repeated strings ("error") are slog attribute keys
 package handler
 
 import (

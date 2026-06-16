@@ -1390,6 +1390,336 @@ func TestExecuteTask_BackendCreationFailed(t *testing.T) {
 	assert.Equal(t, "/test-project", data1.ProjectPath, "failed event should have project_path")
 }
 
+// --- executeTask: ExecuteStream error path (covers scheduler.go:681-687) ---
+
+func TestExecuteTask_ExecuteStreamError(t *testing.T) {
+	// When backend creation succeeds but ExecuteStream fails,
+	// executeTask should emit "failed" events (running + failed) and return.
+	origDB := DB
+	origDBRead := DBRead
+	db := setupExecTaskDB(t)
+	DB = db
+	DBRead = db
+	defer func() { DB = origDB; DBRead = origDBRead }()
+
+	// Set up ws manager to capture events
+	mgr := ws.NewManagerForTest(nil)
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(nil)
+
+	// Register an agent with "codex" backend — NewBackend succeeds,
+	// but ExecuteStream will fail because the codex binary doesn't exist.
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"test-codex": {
+			ID:      "test-codex",
+			Name:    "Test Codex",
+			Backend: "codex",
+			Command: "/nonexistent/binary/that/does/not/exist",
+		},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	// Insert a task into DB
+	result, err := db.Exec(`INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, repeat_mode, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"/test-project", "Stream Error Task", "0 * * * *", "test-codex", "hello", "unlimited", "active")
+	require.NoError(t, err)
+	taskID, _ := result.LastInsertId()
+
+	task := &model.ScheduledTask{
+		ID:          taskID,
+		ProjectPath: "/test-project",
+		Name:        "Stream Error Task",
+		CronExpr:    "0 * * * *",
+		AgentID:     "test-codex",
+		Prompt:      "hello",
+		RepeatMode:  "unlimited",
+		Status:      "active",
+	}
+
+	s := NewScheduler()
+	defer s.Stop()
+
+	// Subscribe a client to capture events
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "test-client-stream-err", "")
+	_ = sub
+
+	// Execute the task — should fail at ExecuteStream and emit "failed" event
+	s.executeTask(task, "/test-project", "auto")
+
+	// Give a small window for async processing
+	time.Sleep(200 * time.Millisecond)
+
+	// Verify "failed" event was broadcast
+	buffered := sub.GetBufferedEvents()
+	if len(buffered) < 1 {
+		t.Fatalf("expected at least 1 buffered event, got %d", len(buffered))
+	}
+
+	// Find the "failed" event
+	foundFailed := false
+	for _, evt := range buffered {
+		data, ok := evt.Data.(*ws.TaskUpdateData)
+		if !ok {
+			continue
+		}
+		if data.Status == "failed" {
+			foundFailed = true
+			assert.Equal(t, fmt.Sprintf("%d", taskID), data.TaskID)
+			assert.NotEmpty(t, data.SessionID)
+			break
+		}
+	}
+	assert.True(t, foundFailed, "expected a 'failed' event to be emitted")
+
+	// Verify execution was recorded with "failed" status
+	var execStatus string
+	err = db.QueryRow("SELECT status FROM task_executions WHERE task_id = ? ORDER BY id DESC LIMIT 1", taskID).Scan(&execStatus)
+	if err == nil {
+		assert.Equal(t, "failed", execStatus, "execution should be marked as failed")
+	}
+}
+
+// --- executeTask: agent not found path (covers scheduler.go:551-561) ---
+
+func TestExecuteTask_AgentNotFound(t *testing.T) {
+	// When the agent is not found in model.Agents, executeTask should
+	// pause the task and return without creating a session.
+	origDB := DB
+	origDBRead := DBRead
+	db := setupExecTaskDB(t)
+	DB = db
+	DBRead = db
+	defer func() { DB = origDB; DBRead = origDBRead }()
+
+	// Set up ws manager
+	mgr := ws.NewManagerForTest(nil)
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(nil)
+
+	// No agents registered — any agent_id will be "not found"
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{}
+	defer func() { model.Agents = origAgents }()
+
+	// Insert a task
+	result, err := db.Exec(`INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, repeat_mode, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"/test-project", "Missing Agent Task", "0 * * * *", "nonexistent-agent", "hello", "unlimited", "active")
+	require.NoError(t, err)
+	taskID, _ := result.LastInsertId()
+
+	task := &model.ScheduledTask{
+		ID:          taskID,
+		ProjectPath: "/test-project",
+		Name:        "Missing Agent Task",
+		CronExpr:    "0 * * * *",
+		AgentID:     "nonexistent-agent",
+		Prompt:      "hello",
+		RepeatMode:  "unlimited",
+		Status:      "active",
+	}
+
+	s := NewScheduler()
+	defer s.Stop()
+
+	// Execute should pause the task and not panic
+	s.executeTask(task, "/test-project", "auto")
+
+	// Verify task was paused
+	var status string
+	err = db.QueryRow("SELECT status FROM scheduled_tasks WHERE id = ?", taskID).Scan(&status)
+	require.NoError(t, err)
+	assert.Equal(t, "paused", status, "task should be paused when agent not found")
+}
+
+// --- executeTask: SessionExecutor delegation (covers scheduler.go:691-740) ---
+// These tests simulate the code path where executeTask creates a streaming
+// placeholder message, constructs SessionExecutor(ModeScheduled), calls
+// RunWithChannel, and handles the result.
+
+func TestExecuteTask_SessionExecutor_CompletedWithTerminalEvent(t *testing.T) {
+	// Simulate the happy path: streaming placeholder → SessionExecutor(ModeScheduled)
+	// → RunWithChannel with "done" terminal event → Finalize.
+	origDB := DB
+	origDBRead := DBRead
+	db := setupExecTaskDB(t)
+	// Need chat_metadata table for Finalize
+	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS chat_metadata (
+		message_id INTEGER PRIMARY KEY,
+		mode TEXT DEFAULT '',
+		thinking_effort TEXT DEFAULT '',
+		transport TEXT DEFAULT '',
+		model TEXT DEFAULT '',
+		input_tokens INTEGER DEFAULT 0,
+		output_tokens INTEGER DEFAULT 0,
+		duration_ms INTEGER DEFAULT 0,
+		wall_ms INTEGER DEFAULT 0,
+		cost_usd REAL DEFAULT 0,
+		stop_reason TEXT DEFAULT '',
+		is_error INTEGER DEFAULT 0,
+		error_message TEXT DEFAULT '',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`)
+	DB = db
+	DBRead = db
+	defer func() { DB = origDB; DBRead = origDBRead }()
+
+	// Create a session for this execution
+	sessionID, err := CreateSession("/test-project", "test", "Exec Task", "test", "", "default", "scheduled")
+	require.NoError(t, err)
+
+	// Step 1: Create streaming placeholder message (same as executeTask line 691-692)
+	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
+	msgID, err := AddChatMessage("/test-project", "test", sessionID, "assistant", string(emptyContent), nil, true, "")
+	require.NoError(t, err)
+	require.NotZero(t, msgID, "expected non-zero msgID for streaming placeholder")
+
+	// Step 2: Build event channel with content + terminal event
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "scheduled task output"},
+		{Type: "metadata", Meta: &ai.Metadata{InputTokens: 10, OutputTokens: 20}},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events)+1)
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	// Step 3: Create SessionExecutor with ModeScheduled (same as executeTask line 696-706)
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test-project",
+		BackendName: "test",
+		SessionID:   sessionID,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "run task", ScheduledExecution: true},
+		TaskID:      1,
+		ExecutionID: 1,
+		TriggerType: "auto",
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Step 4: Call RunWithChannel (same as executeTask line 707)
+	runResult := executor.RunWithChannel(ch)
+
+	// Step 5: Verify result — executeTask checks ReceivedTerminal (line 726)
+	assert.True(t, runResult.ReceivedTerminal, "expected ReceivedTerminal=true for completed execution")
+	assert.Empty(t, runResult.CancelReason, "expected empty CancelReason in scheduled mode")
+	assert.NotEmpty(t, runResult.Blocks, "expected at least one block")
+
+	// Step 6: Call Finalize (same as executeTask line 740)
+	runResult = executor.Finalize(runResult, nil)
+
+	assert.NotZero(t, runResult.MsgID, "expected non-zero MsgID after Finalize")
+	assert.NotNil(t, runResult.Metadata, "expected Metadata after Finalize")
+	assert.Equal(t, 10, runResult.Metadata.InputTokens)
+
+	// Verify the streaming message was finalized (streaming=0)
+	var streaming int
+	err = db.QueryRow(
+		"SELECT streaming FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1",
+		sessionID,
+	).Scan(&streaming)
+	require.NoError(t, err)
+	assert.Equal(t, 0, streaming, "message should be finalized (streaming=0)")
+}
+
+func TestExecuteTask_SessionExecutor_ChannelCloseNoTerminal(t *testing.T) {
+	// Simulate CLI crash: channel closes without "done"/"error" event.
+	// executeTask checks !ReceivedTerminal → marks as failed (line 726-736).
+	origDB := DB
+	origDBRead := DBRead
+	db := setupExecTaskDB(t)
+	DB = db
+	DBRead = db
+	defer func() { DB = origDB; DBRead = origDBRead }()
+
+	sessionID, err := CreateSession("/test-project", "test", "Crash Task", "test", "", "default", "scheduled")
+	require.NoError(t, err)
+
+	// Create streaming placeholder
+	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
+	_, _ = AddChatMessage("/test-project", "test", sessionID, "assistant", string(emptyContent), nil, true, "")
+
+	// Channel closes without terminal event (CLI crash)
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "partial output before crash"},
+	}
+	ch := make(chan ai.StreamEvent, len(events)+1)
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test-project",
+		BackendName: "test",
+		SessionID:   sessionID,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "run task", ScheduledExecution: true},
+		TaskID:      1,
+		ExecutionID: 1,
+		TriggerType: "auto",
+	}
+	executor := NewSessionExecutor(context.Background(), cfg)
+	runResult := executor.RunWithChannel(ch)
+
+	// executeTask checks: if !runResult.ReceivedTerminal → mark failed
+	assert.False(t, runResult.ReceivedTerminal, "expected ReceivedTerminal=false when channel closes without terminal event")
+}
+
+func TestExecuteTask_SessionExecutor_ContextCancelled(t *testing.T) {
+	// Simulate context cancellation during execution.
+	// executeTask checks ctx.Err() == context.Canceled (line 710-720).
+	origDB := DB
+	origDBRead := DBRead
+	db := setupExecTaskDB(t)
+	DB = db
+	DBRead = db
+	defer func() { DB = origDB; DBRead = origDBRead }()
+
+	sessionID, err := CreateSession("/test-project", "test", "Cancel Task", "test", "", "default", "scheduled")
+	require.NoError(t, err)
+
+	// Create streaming placeholder
+	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
+	_, _ = AddChatMessage("/test-project", "test", sessionID, "assistant", string(emptyContent), nil, true, "")
+
+	// Create a channel that blocks (simulates long-running stream)
+	events := make(chan ai.StreamEvent, 10)
+	events <- ai.StreamEvent{Type: "content", Content: "start"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test-project",
+		BackendName: "test",
+		SessionID:   sessionID,
+		AgentID:     "test",
+		ChatRequest: ai.ChatRequest{Prompt: "run task", ScheduledExecution: true},
+		TaskID:      1,
+		ExecutionID: 1,
+		TriggerType: "auto",
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Cancel context after a short delay
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+
+	runResult := executor.RunWithChannel(events)
+
+	// executeTask checks: if ctx.Err() == context.Canceled → mark cancelled
+	assert.Equal(t, context.Canceled, ctx.Err(), "expected context.Canceled")
+	assert.False(t, runResult.ReceivedTerminal, "should not have ReceivedTerminal when context cancelled")
+}
+
 // --- EmitSessionEvent with toolName ---
 
 func TestEmitSessionEvent_PermissionPendingWithToolName(t *testing.T) {
