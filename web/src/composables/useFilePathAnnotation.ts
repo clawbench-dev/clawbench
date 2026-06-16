@@ -166,7 +166,30 @@ export function resolveFilePathDual(path: string, projectRoot: string, homeDir?:
     }
 
     // baseDir resolved to project-internal path → use as primary, projectRoot as fallback
-    if (!projectResult) return null
+    // If projectResult is project-external (e.g. ../README.md walks above projectRoot),
+    // try a stripped fallback: resolve the path without leading ../ segments against projectRoot.
+    // This handles the common pattern where ../README.md from a subdirectory is intended
+    // to mean the project root's README.md.
+    if (!projectResult) return { primary: baseDirResult, fallback: baseDirResult }
+
+    // projectResult is project-external → try stripped fallback
+    if (projectResult.primary.startsWith('/')) {
+        const stripped = path.replace(/^(?:\.\.\/)+/, '')
+        if (stripped !== path) {
+            const strippedResult = resolveAgainstProjectRoot(stripped, projectRoot)
+            if (strippedResult && !strippedResult.primary.startsWith('/')) {
+                if (baseDirResult === strippedResult.primary) {
+                    return strippedResult
+                }
+                return {
+                    primary: baseDirResult,
+                    fallback: strippedResult.primary,
+                }
+            }
+        }
+        // No valid stripped fallback → single candidate
+        return { primary: baseDirResult, fallback: baseDirResult }
+    }
 
     // Same path — no fallback needed
     if (baseDirResult === projectResult.primary) {

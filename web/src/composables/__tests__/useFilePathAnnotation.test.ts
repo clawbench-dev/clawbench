@@ -139,9 +139,17 @@ describe('resolveFilePathDual', () => {
     it('handles ../path with project-relative baseDir', () => {
       // baseDir = 'test/path-annotation', path = '../README.md'
       // baseDir result: 'test/README.md' (primary)
-      // projectRoot result: '/home/user/README.md' (external, fallback)
+      // projectRoot result: external → stripped fallback: 'README.md'
       const result = resolveFilePathDual('../README.md', projectRoot, undefined, 'test/path-annotation')
-      expect(result).toEqual({ primary: 'test/README.md', fallback: '/home/user/README.md' })
+      expect(result).toEqual({ primary: 'test/README.md', fallback: 'README.md' })
+    })
+
+    it('strips leading ../ for stripped fallback when projectResult is project-external', () => {
+      // ../../go.mod from 'test/path-annotation' → baseDir resolves to 'go.mod',
+      // projectRoot resolves to external → stripped 'go.mod' also resolves to 'go.md'
+      // Both are the same → single candidate
+      const result = resolveFilePathDual('../../go.mod', projectRoot, undefined, 'test/path-annotation')
+      expect(result).toEqual({ primary: 'go.mod', fallback: 'go.mod' })
     })
   })
 
