@@ -1099,6 +1099,13 @@ onUnmounted(() => {
   color: var(--accent-color, #4a90d9);
   background: var(--bg-tertiary, #f0f0f0);
 }
+/* Project-external file open button — orange icon */
+.content-blocks .chat-file-open-btn.external {
+  color: #e67e22;
+}
+.content-blocks .chat-file-open-btn.external:hover {
+  color: #d35400;
+}
 
 /* ── Commit hash annotation (from annotateCommitHashes in text blocks) ── */
 .content-blocks .chat-commit-hash {
@@ -1270,6 +1277,12 @@ onUnmounted(() => {
 .content-blocks .tool-detail .chat-file-open-btn:hover {
   color: var(--accent-color, #4a90d9);
   background: var(--bg-tertiary, #f0f0f0);
+}
+.content-blocks .tool-detail .chat-file-open-btn.external {
+  color: #e67e22;
+}
+.content-blocks .tool-detail .chat-file-open-btn.external:hover {
+  color: #d35400;
 }
 
 .content-blocks .tool-detail .tool-file-path {

@@ -18,7 +18,7 @@ import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useStickyScroll } from '@/composables/useStickyScroll.ts'
 import { renderCodeLines } from '@/utils/codeRender.ts'
-import { resolveFilePath } from '@/composables/useFilePathAnnotation.ts'
+import { resolveFilePath, looksLikeFilePath, verifyFilePaths } from '@/composables/useFilePathAnnotation.ts'
 import { store } from '@/stores/app.ts'
 
 const props = defineProps({
@@ -124,6 +124,7 @@ function annotateFilePaths() {
     if (!codeRef.value) return
     const projectRoot = store.state.projectRoot
     const homeDir = store.state.homeDir
+    const detectedPaths = []
 
     for (const span of codeRef.value.querySelectorAll('.hljs-string')) {
         // Skip already-annotated spans
@@ -134,22 +135,30 @@ function annotateFilePaths() {
         const stripped = text.replace(/^['"`](.*)['"`]$/, '$1').trim()
         if (!stripped || stripped.length < 3) continue
 
+        // Must look like a file path (has / or file extension) — reject bare identifiers like "fmt"
+        if (!looksLikeFilePath(stripped)) continue
+
         const resolved = resolveFilePath(stripped, projectRoot, homeDir)
         if (!resolved) continue
 
-        // Wrap the path text in a clickable span
+        // Wrap the path text in a clickable span (optimistic — verified async below)
+        const isExternal = resolved.startsWith('/')
+        const externalClass = isExternal ? ' external' : ''
         const innerHtml = span.innerHTML
-        // Replace the stripped path (without quotes) in the inner HTML
-        // The hljs-string contains the path with quotes highlighted as part of the string
-        // We need to find the path text within and wrap it
         const escapedPath = stripped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
         const pathRegex = new RegExp(`(${escapedPath})`)
         if (pathRegex.test(innerHtml)) {
             span.innerHTML = innerHtml.replace(
                 pathRegex,
-                `<span class="code-file-path" data-file-path="${resolved}">$1</span>`
+                `<span class="code-file-path${externalClass}" data-file-path="${resolved}">$1</span>`
             )
+            detectedPaths.push(resolved)
         }
+    }
+
+    // Verify paths asynchronously — removes non-existent annotations
+    if (detectedPaths.length > 0) {
+        verifyFilePaths(detectedPaths, codeRef.value)
     }
 }
 
@@ -205,21 +214,6 @@ watch(
     line-height: 1.6;
     tab-size: 4;
     user-select: text;
-    scrollbar-width: thin;
-}
-.raw-content-pre::-webkit-scrollbar {
-    width: 4px;
-    height: 4px;
-}
-.raw-content-pre::-webkit-scrollbar-track {
-    background: transparent;
-}
-.raw-content-pre::-webkit-scrollbar-thumb {
-    background: var(--border-color);
-    border-radius: 2px;
-}
-.raw-content-pre::-webkit-scrollbar-corner {
-    background: transparent;
 }
 
 .raw-content-pre code {
@@ -391,5 +385,12 @@ watch(
 }
 .code-file-path:hover {
     background: rgba(255, 230, 0, 0.2);
+}
+/* Project-external file path — orange underline */
+.code-file-path.external {
+    border-bottom-color: #e67e22;
+}
+.code-file-path.external:hover {
+    background: rgba(230, 126, 34, 0.2);
 }
 </style>

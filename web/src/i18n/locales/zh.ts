@@ -520,6 +520,8 @@ export default {
       switchProjectFailedShort: '切换项目失败',
       dirLoadFailed: '目录不存在或无法访问',
       fileNotFound: '文件不存在',
+      externalFile: '此文件位于项目目录之外',
+      externalDirNotSupported: '暂不支持打开项目外目录',
       archiving: '正在打包 {n} 个文件...',
       archiveDone: '打包下载完成',
       archiveFailed: '打包失败',

@@ -355,12 +355,24 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
     }
 
     try {
-        // Strip leading slash to prevent double-slash URLs (/api/file//path)
-        // which Go's ServeMux decodes from %2F, causing InvalidFilePath errors.
-        const cleanPath = path.replace(/^\/+/, '')
-        const url = forceText && !isText
-            ? `/api/file/${encodeURIComponent(cleanPath)}?forceText=1`
-            : `/api/file/${encodeURIComponent(cleanPath)}`
+        // Absolute paths (project-external) use query parameter to avoid URL path
+        // encoding issues: encodeURIComponent("/path") produces %2Fpath which
+        // Go's ServeMux decodes back to /, making it look like a relative path.
+        // Project-internal relative paths continue to use URL path encoding.
+        const isAbsPath = path.startsWith('/')
+        let url: string
+        if (isAbsPath) {
+            url = forceText && !isText
+                ? `/api/file?path=${encodeURIComponent(path)}&forceText=1`
+                : `/api/file?path=${encodeURIComponent(path)}`
+        } else {
+            // Strip leading slash to prevent double-slash URLs (/api/file//path)
+            // which Go's ServeMux decodes from %2F, causing InvalidFilePath errors.
+            const cleanPath = path.replace(/^\/+/, '')
+            url = forceText && !isText
+                ? `/api/file/${encodeURIComponent(cleanPath)}?forceText=1`
+                : `/api/file/${encodeURIComponent(cleanPath)}`
+        }
         const resp = await fetch(url)
         if (!resp.ok) {
             const err = await resp.json() as { error?: string, msgKey?: string }

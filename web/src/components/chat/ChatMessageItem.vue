@@ -820,6 +820,9 @@ const { getAgentIcon, getAgentName } = chatSession
     color: white;
     background: rgba(255, 255, 255, 0.15);
 }
+.chat-message.user .chat-file-open-btn.external {
+    color: #f0a04b;
+}
 
 .chat-message.user .chat-commit-hash {
     color: rgba(255, 255, 255, 0.9);

@@ -259,7 +259,6 @@ const tooltipStyle = computed(() => {
   flex-shrink: 0;
   min-width: 20px;
   max-width: 300px;
-  scrollbar-width: thin;
   position: relative;
 }
 

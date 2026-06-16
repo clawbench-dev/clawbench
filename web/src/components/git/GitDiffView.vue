@@ -65,25 +65,6 @@ defineProps({
 .git-diff-scroll :deep(.diff-hunk-body) {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-  scrollbar-width: thin;
-}
-
-.git-diff-scroll :deep(.diff-hunk-body::-webkit-scrollbar) {
-  height: 6px;
-}
-
-.git-diff-scroll :deep(.diff-hunk-body::-webkit-scrollbar-track) {
-  background: var(--bg-tertiary, #f0f0f0);
-  border-radius: 3px;
-}
-
-.git-diff-scroll :deep(.diff-hunk-body::-webkit-scrollbar-thumb) {
-  background: var(--border-color, #ccc);
-  border-radius: 3px;
-}
-
-.git-diff-scroll :deep(.diff-hunk-body::-webkit-scrollbar-thumb:hover) {
-  background: #999;
 }
 
 .git-diff-scroll :deep(.diff-table) {

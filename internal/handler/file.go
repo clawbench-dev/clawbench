@@ -154,27 +154,49 @@ func GetFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filepathStr := r.URL.Path
-	if !strings.HasPrefix(filepathStr, "/api/file/") {
-		http.NotFound(w, r)
-		return
-	}
-	filepathStr = filepathStr[len("/api/file/"):]
-	// Strip leading slashes to handle double-slash URLs (/api/file//path)
-	// caused by encodeURIComponent("/path") which encodes as %2Fpath.
-	// Go's ServeMux decodes %2F back to /, producing double slashes.
-	filepathStr = strings.TrimLeft(filepathStr, "/")
-	filepathStr = path.Clean(filepathStr)
+	// Check for absolute path passed as query parameter (?path=/etc/hosts).
+	// This avoids URL path encoding issues: encodeURIComponent("/path")
+	// produces %2Fpath, which Go's ServeMux decodes back to /, making the
+	// absolute path indistinguishable from a project-relative path.
+	var absPath string
+	var isExternal bool
+	if queryPath := r.URL.Query().Get("path"); queryPath != "" {
+		queryPath = path.Clean(queryPath)
+		if !path.IsAbs(queryPath) {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidFilePath")
+			return
+		}
+		var err error
+		absPath, err = filepath.Abs(queryPath)
+		if err != nil {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidFilePath")
+			return
+		}
+		isExternal = true
+	} else {
+		// Project-relative path from URL path
+		filepathStr := r.URL.Path
+		if !strings.HasPrefix(filepathStr, "/api/file/") {
+			http.NotFound(w, r)
+			return
+		}
+		filepathStr = filepathStr[len("/api/file/"):]
+		// Strip leading slashes to handle double-slash URLs (/api/file//path)
+		// caused by encodeURIComponent("/path") which encodes as %2Fpath.
+		// Go's ServeMux decodes %2F back to /, producing double slashes.
+		filepathStr = strings.TrimLeft(filepathStr, "/")
+		filepathStr = path.Clean(filepathStr)
 
-	if filepathStr == ".." || path.IsAbs(filepathStr) {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidFilePath")
-		return
-	}
+		if filepathStr == ".." || path.IsAbs(filepathStr) {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidFilePath")
+			return
+		}
 
-	basePath, _ := filepath.Abs(projectPath)
-	absPath, ok := validateAndResolvePath(w, r, basePath, filepathStr)
-	if !ok {
-		return
+		basePath, _ := filepath.Abs(projectPath)
+		absPath, ok = validateAndResolvePath(w, r, basePath, filepathStr)
+		if !ok {
+			return
+		}
 	}
 
 	info, err := os.Stat(absPath)
@@ -210,11 +232,15 @@ func GetFile(w http.ResponseWriter, r *http.Request) {
 	// Use ?forceText=1 to override (e.g. user explicitly wants to view as text).
 	forceText := r.URL.Query().Get("forceText") == "1"
 	if !forceText && !model.IsTextFile(info.Name()) {
-		relPath, _ := filepath.Rel(projectPath, absPath)
+		respPath := absPath
+		if !isExternal {
+			relPath, _ := filepath.Rel(projectPath, absPath)
+			respPath = filepath.ToSlash(relPath)
+		}
 		writeJSON(w, http.StatusOK, FileContent{
 			Content:   "",
 			Name:      info.Name(),
-			Path:      filepath.ToSlash(relPath),
+			Path:      respPath,
 			Supported: false,
 			IsBinary:  true,
 			Size:      info.Size(),
@@ -228,11 +254,15 @@ func GetFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	relPath, _ := filepath.Rel(projectPath, absPath)
+	respPath := absPath
+	if !isExternal {
+		relPath, _ := filepath.Rel(projectPath, absPath)
+		respPath = filepath.ToSlash(relPath)
+	}
 	writeJSON(w, http.StatusOK, FileContent{
 		Content:   string(content),
 		Name:      info.Name(),
-		Path:      filepath.ToSlash(relPath),
+		Path:      respPath,
 		Supported: model.IsSupportedFile(info.Name()),
 		Size:      info.Size(),
 	})
@@ -447,10 +477,23 @@ func ServeFileBatchExists(w http.ResponseWriter, r *http.Request) {
 		}
 		// Expand ~ to home directory so paths like ~/.bashrc resolve correctly
 		p = platform.ExpandTilde(p)
-		absPath, ok := model.ValidatePath(baseAbs, p)
-		if !ok {
-			results[p] = "none"
-			continue
+		var absPath string
+		if path.IsAbs(p) {
+			// Absolute path — stat directly without project scoping
+			var err error
+			absPath, err = filepath.Abs(p)
+			if err != nil {
+				results[p] = "none"
+				continue
+			}
+		} else {
+			// Relative path — resolve against project root
+			var ok bool
+			absPath, ok = model.ValidatePath(baseAbs, p)
+			if !ok {
+				results[p] = "none"
+				continue
+			}
 		}
 		info, err := os.Stat(absPath)
 		if err != nil {

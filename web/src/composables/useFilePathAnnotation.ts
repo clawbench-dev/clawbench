@@ -48,22 +48,21 @@ export function resolveFilePath(path: string, projectRoot: string, homeDir?: str
     if (path.startsWith('~/') || path === '~') {
         if (!homeDir) return null // can't expand ~ without knowing home directory
         const expanded = homeDir + path.slice(1) // ~/foo → /home/user/foo
-        // Now treat as absolute path
-        if (!projectRoot) return null
-        if (!expanded.startsWith(projectRoot + '/')) return null
-        return expanded.slice(projectRoot.length + 1)
+        if (!projectRoot) return expanded // no project root — return absolute path
+        if (expanded.startsWith(projectRoot + '/')) {
+            return expanded.slice(projectRoot.length + 1) // project-internal
+        }
+        return expanded // project-external — return absolute path
     }
 
     if (path.startsWith('/')) {
-        // Absolute path: must be under projectRoot
-        if (!projectRoot) return null
-        if (!path.startsWith(projectRoot)) return null
-        const absolutePath = path
-        if (absolutePath.startsWith(projectRoot + '/')) {
-            return absolutePath.slice(projectRoot.length + 1)
+        // Absolute path
+        if (!projectRoot) return path // no project root — return as-is
+        if (path.startsWith(projectRoot + '/')) {
+            return path.slice(projectRoot.length + 1) // project-internal
         }
-        if (absolutePath === projectRoot) return null
-        return null
+        if (path === projectRoot) return null
+        return path // project-external — return absolute path
     }
 
     // Relative path
@@ -81,7 +80,7 @@ export function resolveFilePath(path: string, projectRoot: string, homeDir?: str
     for (const seg of segments) {
         if (seg === '..') {
             if (parts.length > 0) parts.pop()
-            else return null // goes above project root
+            else return null // goes above filesystem root
         } else if (seg !== '.' && seg !== '') {
             parts.push(seg)
         }
@@ -90,7 +89,8 @@ export function resolveFilePath(path: string, projectRoot: string, homeDir?: str
     if (absolutePath.startsWith(projectRoot + '/')) {
         return absolutePath.slice(projectRoot.length + 1)
     }
-    return null
+    // Resolved path is outside project root — return absolute path
+    return absolutePath
 }
 
 /**
@@ -102,10 +102,13 @@ export const FILE_OPEN_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="
 /**
  * Generate HTML for the small open-file button.
  * Optionally includes line range attributes for scrolling to specific lines.
+ * Project-external paths (starting with /) get an 'external' CSS class for visual distinction.
  */
 export function fileOpenButtonHtml(resolvedPath: string, lineStart?: number, lineEnd?: number): string {
+    const isExternal = resolvedPath.startsWith('/')
     const lineAttrs = lineStart ? ` data-line-start="${lineStart}"${lineEnd ? ` data-line-end="${lineEnd}"` : ''}` : ''
-    return `<button class="chat-file-open-btn" data-file-path="${escapeHtml(resolvedPath)}"${lineAttrs} title="${escapeHtml(gt('chat.attach.openFile'))}">${FILE_OPEN_ICON_SVG}</button>`
+    const externalClass = isExternal ? ' external' : ''
+    return `<button class="chat-file-open-btn${externalClass}" data-file-path="${escapeHtml(resolvedPath)}"${lineAttrs} title="${escapeHtml(gt('chat.attach.openFile'))}">${FILE_OPEN_ICON_SVG}</button>`
 }
 
 /**
@@ -183,7 +186,7 @@ const FILE_PATH_RE = /(?:~?\/[^\s<>"')\]]+(?:\/[^\s<>"')\]]+)+\.[a-zA-Z][a-zA-Z0
  * Rejects strings containing glob wildcards, angle brackets, or double-star
  * — these are glob patterns or template variables, not real file paths.
  */
-function looksLikeFilePath(text: string): boolean {
+export function looksLikeFilePath(text: string): boolean {
     if (/[*?\\[\]<>]/.test(text) || text.includes('**')) return false
     // Exclude URLs (handled by localhost annotation)
     if (/^https?:\/\//i.test(text)) return false
@@ -255,6 +258,7 @@ export function annotateFilePaths(
         detectedPaths.push(resolved)
         code.classList.add('chat-file-path')
         code.setAttribute('data-file-path', resolved)
+        if (resolved.startsWith('/')) code.setAttribute('data-external', 'true')
         if (lineStart) code.setAttribute('data-line-start', String(lineStart))
         if (lineEnd) code.setAttribute('data-line-end', String(lineEnd))
         code.insertAdjacentHTML('afterend', fileOpenButtonHtml(resolved, lineStart, lineEnd))
@@ -333,6 +337,7 @@ export function annotateFilePaths(
                 const span = doc.createElement('span')
                 span.className = 'chat-file-path'
                 span.setAttribute('data-file-path', part.resolved)
+                if (part.resolved.startsWith('/')) span.setAttribute('data-external', 'true')
                 if (part.lineStart) span.setAttribute('data-line-start', String(part.lineStart))
                 if (part.lineEnd) span.setAttribute('data-line-end', String(part.lineEnd))
                 span.textContent = part.text
@@ -417,6 +422,10 @@ export async function verifyFilePaths(paths: string[], containerEl: HTMLElement)
             containerEl.querySelectorAll(`.chat-file-path[data-file-path="${CSS.escape(path)}"]`).forEach(span => {
                 span.replaceWith(...span.childNodes)
             })
+            // Also remove code viewer path annotations
+            containerEl.querySelectorAll(`.code-file-path[data-file-path="${CSS.escape(path)}"]`).forEach(span => {
+                span.replaceWith(...span.childNodes)
+            })
         }
     }
 }
@@ -473,16 +482,20 @@ export function resolveRelativePath(href: string, baseDir: string): string {
  * If lineStart is provided, dispatches a scroll-to-line event after opening.
  */
 export async function openFilePath(resolvedPath: string, lineStart?: number): Promise<boolean> {
-    // Check if path is a directory
-    try {
-        const resp = await fetch(`/api/dir?path=${encodeURIComponent(resolvedPath)}`)
-        if (resp.ok) {
-            await store.navigateToDir(resolvedPath)
-            window.dispatchEvent(new CustomEvent('open-file-manager'))
-            return true
+    const isExternal = resolvedPath.startsWith('/')
+
+    // Check if path is a directory (project-internal only — external dirs not supported)
+    if (!isExternal) {
+        try {
+            const resp = await fetch(`/api/dir?path=${encodeURIComponent(resolvedPath)}`)
+            if (resp.ok) {
+                await store.navigateToDir(resolvedPath)
+                window.dispatchEvent(new CustomEvent('open-file-manager'))
+                return true
+            }
+        } catch {
+            // Ignore, fall through to open as file
         }
-    } catch {
-        // Ignore, fall through to open as file
     }
 
     // Before selecting the file, verify it actually exists.
@@ -504,6 +517,13 @@ export async function openFilePath(resolvedPath: string, lineStart?: number): Pr
                 useToast().show(gt('file.toast.fileNotFound'), { type: 'error', icon: '⚠️', duration: 2000 })
                 return false
             }
+            // External directories — not supported for navigation
+            if (isExternal && type === 'dir') {
+                const { useToast } = await import('@/composables/useToast')
+                const { gt } = await import('@/composables/useLocale')
+                useToast().show(gt('file.toast.externalDirNotSupported'), { type: 'warning', icon: '📁', duration: 2000 })
+                return false
+            }
         }
     } catch {
         // Batch-exists check failed — proceed with selectFile as best-effort
@@ -513,6 +533,11 @@ export async function openFilePath(resolvedPath: string, lineStart?: number): Pr
     if (ok) {
         // 通知 App.vue 打开文件覆盖层
         window.dispatchEvent(new CustomEvent('open-file-overlay', { detail: { path: resolvedPath, lineStart } }))
+        // Project-external file — show toast notification
+        if (isExternal) {
+            const { useToast } = await import('@/composables/useToast')
+            useToast().show(gt('file.toast.externalFile'), { type: 'info', duration: 2000 })
+        }
     }
     return ok
 }

@@ -481,20 +481,6 @@ onUnmounted(() => {
     overflow-y: auto;
     overflow-x: hidden;
     max-height: 300px;
-    scrollbar-width: thin;
-}
-
-.project-dropdown .dropdown-scroll-area::-webkit-scrollbar {
-    width: 4px;
-}
-
-.project-dropdown .dropdown-scroll-area::-webkit-scrollbar-thumb {
-    background: var(--border-color);
-    border-radius: 2px;
-}
-
-.project-dropdown .dropdown-scroll-area::-webkit-scrollbar-track {
-    background: transparent;
 }
 
 .project-dropdown .dropdown-loading,

@@ -520,6 +520,8 @@ export default {
       switchProjectFailedShort: 'Switch project failed',
       dirLoadFailed: 'Directory not found or inaccessible',
       fileNotFound: 'File not found',
+      externalFile: 'This file is outside the project directory',
+      externalDirNotSupported: 'Opening external directories is not supported',
       archiving: 'Packing {n} items...',
       archiveDone: 'Download ready',
       archiveFailed: 'Pack failed',
