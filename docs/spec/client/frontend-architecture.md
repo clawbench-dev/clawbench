@@ -42,19 +42,20 @@ flowchart LR
 - **模块级 Composable 单例**：多个 composable 使用模块级 `ref`，所有消费者共享同一份状态（如 `useToast`、`useSessionIdentity`、`useGlobalEvents`）。跨组件状态协调无需 provide/inject
 - **SSE/WebSocket 双通道**：聊天内容走 SSE（单向流式，含 ACP 能力状态事件），系统事件走 WebSocket（双向、ack、register、summary_update、permission_pending）。两种通道各有重连策略和 HTTP 轮询降级
 - **ACP 会话管理**：`useAcpSession` 管理 ACP 模式切换、思考深度、斜杠命令、权限审批和计划进度。`AcpSessionDrawer` 展示 ACP 特有的会话状态，`PlanPanel` 显示计划步骤和进度
-- **标注管道**：聊天消息依次经过 Worktree 标注 → 文件路径标注 → localhost URL 标注 → commit hash 标注，全部基于 DOM 遍历而非正则替换。让聊天中的技术信息可直接交互
+- **标注管道**：聊天消息依次经过 Worktree 标注 → 文件路径标注（双候选路径解析）→ localhost URL 标注 → commit hash 标注，全部基于 DOM 遍历而非正则替换。文件路径标注优先基于当前文件所在目录解析，解析失败时回退到项目根目录，验证阶段自动替换为主候选存在的路径。让聊天中的技术信息可直接交互
 - **SPA 热切换项目**：切换项目不需要 `window.location.reload()`，而是原地重置 store + Vue `:key` 重建组件树（0.15s 渐隐过渡）。无页面闪烁
 - **会话设置模态框**：`SessionSettingModal` 组件提供统一的模型切换、思考深度选择和工作模式选择，支持 ACP 模式/CLI 传输切换。设置即时持久化（PATCH 端点），页面重载后自动恢复
 - **摘要切换**：`SummaryToggle` 组件在聊天消息中提供按钮模式切换摘要/原文，在任务执行详情中提供标签页模式——两种场景共享同一摘要数据源
-- **设置向导**：`SetupWizard` 组件引导首次用户 5 步创建 Agent（欢迎 → 供应商 → API Key → 模型验证 → 命名），支持 28+ 供应商和自定义 URL
-- **Android 硬件返回键**：全局 `useBackHandler` 注册表管理返回导航，Android `onBackPressed` 委托给 JS 层——注册了返回处理器则拦截（不退出 App），未注册则传递给原生处理
+- **设置向导**：`SetupWizard` 组件引导首次用户 5 步创建 Agent（欢迎 → 供应商 → API Key → 模型验证 → 命名），支持 27+ 供应商和自定义 URL
+- **Android 硬件返回键**：全局 `useBackHandler` 注册表管理返回导航，Android `onBackPressed` 委托给 JS 层——注册了返回处理器则拦截（不退出 App），未注册则传递给原生处理。处理器按显式优先级排序（overlay 级 1000 > page 级 100），同一优先级内最近注册的优先，确保覆盖层返回不被页面级处理器截获
 - **Sticky Scroll**：`useStickyScroll` 为多级标题提供粘性定位，支持范围过期和点击遮挡处理。长文档浏览时保持上下文可见
 
 ### 设计要点
 
 - **模块级单例是双刃剑**：所有消费者共享状态，跨组件协调零成本；但需要理解模块级状态的生命周期（应用级而非组件级），项目切换时需要显式重置——这是有意为之的架构选择，不是反模式
 - **无 Vue Router 是移动优先的决策**：Tab 式布局不需要 URL 路由，返回导航由 `useBackHandler` 管理。省去了路由配置的复杂度，但也意味着无法通过 URL 深链接到特定页面
-- **标注管道顺序有讲究**：Worktree 标注先于文件路径标注，已标注的元素不再被后续标注匹配——避免 Worktree 路径被文件路径标注二次匹配
+- **标注管道顺序有讲究**：Worktree 标注先于文件路径标注，已标注的元素不再被后续标注匹配——避免 Worktree 路径被文件路径标注二次匹配。文件路径标注采用双候选解析，验证阶段自动替换不存在的候选
 - **reactive store 而非 Pinia**：单个 reactive store + action 函数，不用 Pinia/Vuex。状态形状扁平，action 直接修改——对于这种规模的应用，Pinia 的模块化开销不值得
 - **会话设置即时持久化**：模式/思考深度/模型/传输方式的变更通过 PATCH `/api/ai/session/update` 即时写入数据库，无需发送聊天消息。解决了页面重载后设置丢失的问题
 - **单调序列号防竞态**：并发目录加载时使用单调计数器，保证旧结果不会覆盖新状态。这是异步 UI 的经典问题，单调计数器是最简单的解决方案
+- **返回处理器使用显式优先级**：`useBackHandler` 的处理器按优先级排序（overlay > page），而非依赖注册顺序——注册顺序受组件挂载时机影响，不确定且难以调试。显式优先级让覆盖层返回始终优先于页面级返回

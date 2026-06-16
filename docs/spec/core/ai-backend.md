@@ -1,6 +1,6 @@
 # AI 后端抽象
 
-ClawBench 支持多种 AI 工具，每种工具的调用方式、输出格式各不相同。AI 后端抽象层将这种差异封装为统一的 `AIBackend` 接口——handler 只需调用 `ExecuteStream()`，不关心背后是 Claude 还是 Gemini。系统支持两种传输模式：CLI shell-out（传统模式，通过 stdout 流式解析，新增后端只需实现一个 LineParser 和一组 CLI 参数构造函数）和 ACP stdio（Agent Client Protocol，通过 JSON-RPC 双向通信，提供模式切换、斜杠命令和权限管理等结构化能力）。传输选择在 factory 层根据 Agent 的 `Transport` 字段决定，调用方完全透明。
+ClawBench 支持多种 AI 工具，每种工具的调用方式、输出格式各不相同。AI 后端抽象层将这种差异封装为统一的 `AIBackend` 接口——handler 只需调用 `ExecuteStream()`，不关心背后是 Claude 还是 Kimi。系统支持两种传输模式：CLI shell-out（传统模式，通过 stdout 流式解析，新增后端只需实现一个 LineParser 和一组 CLI 参数构造函数）和 ACP stdio（Agent Client Protocol，通过 JSON-RPC 双向通信，提供模式切换、斜杠命令和权限管理等结构化能力）。传输选择在 factory 层根据 Agent 的 `Transport` 字段决定，调用方完全透明。
 
 ## 流程图
 
@@ -76,7 +76,7 @@ AutoResume 只用于 CLI 模式后端。ACP 后端使用会话级取消而非进
 
 - **统一流式接口**：所有 AI 后端实现 `AIBackend` 接口，对外暴露统一的 `ExecuteStream()` 方法，返回 `<-chan StreamEvent`。调用方无需关心底层差异
 - **双传输模式**：CLI shell-out（传统模式，通过 stdout 解析）和 ACP stdio（JSON-RPC 双向通信，提供模式切换、斜杠命令、权限审批等结构化能力）。Agent 的 `Transport` 字段决定使用哪种传输，可按会话切换
-- **多后端支持**：支持 12 种 AI 后端（Claude、Codebuddy、OpenCode、Gemini、Codex、Qoder、VeCLI、DeepSeek、Cline、Kimi、Copilot、MiMo-Code、Pi），每种 CLI 后端有独立的参数构造和输出解析逻辑
+- **多后端支持**：支持 11 种 AI 后端（Claude、Codebuddy、OpenCode、Codex、Qoder、VeCLI、DeepSeek、Cline、Kimi、Copilot、MiMo-Code、Pi），每种 CLI 后端有独立的参数构造和输出解析逻辑
 - **ACP 连接管理**：每个聊天会话独占一个 ACP 连接（一对一模型），5 分钟空闲自动回收，活跃会话受保护不被回收。连接断开后自动重生并重试，崩溃的配置值自动跳过
 - **自动恢复（AutoResume）**：仅 CLI 模式。对 ExitPlanMode 场景自动执行"取消→恢复继续"流程，避免用户手动干预
 - **流式事件标准化**：各后端不同的输出格式经 LineParser（CLI）或 ACP 事件翻译层（ACP）统一为标准 StreamEvent 类型。ACP 额外提供 mode_update、config_update、thinking_effort_update、plan_update、model_list_update、commands_update 等能力事件
