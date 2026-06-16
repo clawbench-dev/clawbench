@@ -178,11 +178,18 @@ export function annotateWorktreePaths(
         a.insertAdjacentHTML('afterend', worktreeButtonHtml(match.absPath, resolved || undefined))
     }
 
-    // ── Step 2: <code> and <span class="chat-file-path"> whose content is purely a worktree path ──
+    // ── Step 2: <code> tags whose content is purely a worktree path ──
     // Only handles the case where the entire element content matches a worktree.
     // Mixed content is handled by Step 3's text-node walker, which now
     // also enters <code> elements.
-    for (const el of doc.querySelectorAll('code, span.chat-file-path')) {
+    // Note: we only query <code> tags here, not span.chat-file-path from prior
+    // renders. In the same render pipeline, worktree annotation runs BEFORE
+    // file-path annotation, so chat-file-path elements don't exist yet. If a
+    // stale chat-file-path from a previous render matches a worktree, Step 3's
+    // text-node walker will handle it (the walker skips chat-file-path parents,
+    // but the stale span's text node would be inside it — this is acceptable
+    // because on re-render the full pipeline replaces the HTML from scratch).
+    for (const el of doc.querySelectorAll('code')) {
         if (el.classList.contains('chat-commit-hash')) continue
         if (el.classList.contains('chat-worktree-path')) continue
         const stripped = (el.textContent || '').trim()

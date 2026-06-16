@@ -18,7 +18,7 @@ import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useStickyScroll } from '@/composables/useStickyScroll.ts'
 import { renderCodeLines } from '@/utils/codeRender.ts'
-import { resolveFilePath, looksLikeFilePath, verifyFilePaths } from '@/composables/useFilePathAnnotation.ts'
+import { tryResolveCodeString, stripCodeString, verifyFilePaths } from '@/composables/useFilePathAnnotation.ts'
 import { store } from '@/stores/app.ts'
 
 const props = defineProps({
@@ -133,28 +133,24 @@ function annotateFilePaths() {
         if (span.querySelector('.code-file-path')) continue
 
         const text = span.textContent || ''
-        // Strip surrounding quotes to get the raw path
-        const stripped = text.replace(/^['"`](.*)['"`]$/, '$1').trim()
-        if (!stripped || stripped.length < 3) continue
+        const result = tryResolveCodeString(text, projectRoot, homeDir, baseDir)
+        if (!result) continue
 
-        // Must look like a file path (has / or file extension) — reject bare identifiers like "fmt"
-        if (!looksLikeFilePath(stripped)) continue
-
-        const resolved = resolveFilePath(stripped, projectRoot, homeDir, baseDir)
-        if (!resolved) continue
-
-        // Wrap the path text in a clickable span (optimistic — verified async below)
-        const isExternal = resolved.startsWith('/')
+        // Get the stripped path text for HTML replacement
+        const stripped = stripCodeString(text)
+        const isExternal = result.primary.startsWith('/')
         const externalClass = isExternal ? ' external' : ''
+        const fallbackAttr = result.fallback !== result.primary ? ` data-fallback-path="${result.fallback}"` : ''
         const innerHtml = span.innerHTML
         const escapedPath = stripped.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
         const pathRegex = new RegExp(`(${escapedPath})`)
         if (pathRegex.test(innerHtml)) {
             span.innerHTML = innerHtml.replace(
                 pathRegex,
-                `<span class="code-file-path${externalClass}" data-file-path="${resolved}">$1</span>`
+                `<span class="code-file-path${externalClass}" data-file-path="${result.primary}"${fallbackAttr}>$1</span>`
             )
-            detectedPaths.push(resolved)
+            detectedPaths.push(result.primary)
+            if (result.fallback !== result.primary) detectedPaths.push(result.fallback)
         }
     }
 

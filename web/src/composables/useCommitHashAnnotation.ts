@@ -144,7 +144,18 @@ export function annotateCommitHashes(
 }
 
 // Cache of verified commit SHAs: sha -> commit info object (or null if not a commit)
+// LRU eviction: when cache exceeds MAX_CACHE_SIZE, the oldest entry is deleted.
+const MAX_CACHE_SIZE = 500
 const verifiedCommitCache = new Map<string, any>()
+
+/** Set a cache entry with LRU eviction — deletes oldest entry when limit exceeded */
+function commitCacheSet(key: string, value: any): void {
+    if (verifiedCommitCache.size >= MAX_CACHE_SIZE && !verifiedCommitCache.has(key)) {
+        const oldest = verifiedCommitCache.keys().next().value
+        if (oldest !== undefined) verifiedCommitCache.delete(oldest)
+    }
+    verifiedCommitCache.set(key, value)
+}
 // In-flight verification requests to avoid duplicates
 const commitInFlight = new Map<string, Promise<boolean>>()
 
@@ -170,7 +181,7 @@ export async function verifyCommitHashes(shas: string[], containerEl: HTMLElemen
         results = new Map(Object.entries(data.results || {}))
         // Update cache — value is commit info object or null
         for (const [sha, info] of results) {
-            verifiedCommitCache.set(sha, info)
+            commitCacheSet(sha, info)
         }
     } catch {
         return // Network error — leave buttons as-is

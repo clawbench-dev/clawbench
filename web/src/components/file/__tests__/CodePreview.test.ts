@@ -19,8 +19,13 @@ vi.mock('@/composables/useQuoteQuestion.ts', () => ({
 
 // Mock resolveFilePath for file path annotation
 const mockResolveFilePath = vi.fn()
+const mockTryResolveCodeString = vi.fn()
+const mockStripCodeString = vi.fn()
 vi.mock('@/composables/useFilePathAnnotation.ts', () => ({
   resolveFilePath: (...args: any[]) => mockResolveFilePath(...args),
+  tryResolveCodeString: (...args: any[]) => mockTryResolveCodeString(...args),
+  stripCodeString: (...args: any[]) => mockStripCodeString(...args),
+  verifyFilePaths: vi.fn(),
 }))
 
 // Mock store for file path annotation
@@ -282,6 +287,10 @@ describe('CodePreview', () => {
   describe('file path annotation', () => {
     beforeEach(() => {
       mockResolveFilePath.mockReset()
+      mockTryResolveCodeString.mockReset()
+      mockStripCodeString.mockReset()
+      // Default: stripCodeString strips quotes
+      mockStripCodeString.mockImplementation((text: string) => text.replace(/^['"`](.*)['"`]$/, '$1').trim())
     })
 
     it('emits openFile when clicking a code-file-path element', async () => {
@@ -321,10 +330,12 @@ describe('CodePreview', () => {
     })
 
     it('annotateFilePaths wraps resolved paths in code-file-path spans', async () => {
-      mockResolveFilePath.mockImplementation((path: string) => {
-        if (path === './utils') return 'src/utils.ts'
+      mockTryResolveCodeString.mockImplementation((text: string) => {
+        const stripped = text.replace(/^['"`](.*)['"`]$/, '$1').trim()
+        if (stripped === './utils') return { primary: 'src/utils.ts', fallback: 'src/utils.ts' }
         return null
       })
+      mockStripCodeString.mockImplementation((text: string) => text.replace(/^['"`](.*)['"`]$/, '$1').trim())
 
       const wrapper = mountPreview({ content: 'import "./utils"' })
       await nextTick()
@@ -339,7 +350,8 @@ describe('CodePreview', () => {
     })
 
     it('annotateFilePaths skips paths that do not resolve', async () => {
-      mockResolveFilePath.mockReturnValue(null)
+      mockTryResolveCodeString.mockReturnValue(null)
+      mockStripCodeString.mockImplementation((text: string) => text.replace(/^['"`](.*)['"`]$/, '$1').trim())
 
       const wrapper = mountPreview({ content: 'import "./nonexistent"' })
       await nextTick()
