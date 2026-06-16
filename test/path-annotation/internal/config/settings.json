@@ -1,0 +1,8 @@
+{
+  "host": "localhost",
+  "port": 8080,
+  "database": {
+    "driver": "sqlite",
+    "path": "data/app.db"
+  }
+}
