@@ -1,3 +1,10 @@
+//go:build exclude
+// +build exclude
+
+// This file is a TEST FIXTURE for verifying file path annotation behavior.
+// The go:build exclude tag prevents Go toolchain from compiling this file.
+// See README.md in this directory for details.
+
 package handler
 
 // 相对路径引用同级目录文件: test/path-annotation/internal/handler/routes.go

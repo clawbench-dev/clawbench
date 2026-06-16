@@ -1,3 +1,10 @@
+//go:build exclude
+// +build exclude
+
+// This file is a TEST FIXTURE for verifying file path annotation behavior.
+// The go:build exclude tag prevents Go toolchain from compiling this file.
+// See README.md in this directory for details.
+
 package main
 
 import (

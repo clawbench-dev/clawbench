@@ -55,6 +55,7 @@ export default defineConfig({
       '**/cypress/**',
       '**/e2e/**',
       '**/.{idea,git,cache,output,temp}/**',
+      '**/test/path-annotation/**',
     ],
     coverage: {
       reporter: ['text', 'json', 'json-summary'],
