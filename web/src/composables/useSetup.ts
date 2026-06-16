@@ -78,7 +78,6 @@ export interface SetupCompleteRequest {
 export const providerAgentNames: Record<string, { name: string; id: string }> = {
     'anthropic':              { name: 'Anthropic Claude',   id: 'anthropic-claude' },
     'openai':                 { name: 'OpenAI',             id: 'openai' },
-    'google':                 { name: 'Google Gemini',      id: 'google-gemini' },
     'deepseek':               { name: 'DeepSeek',           id: 'deepseek' },
     'minimax':                { name: 'MiniMax',            id: 'minimax' },
     'minimax-cn':             { name: 'MiniMax (中国)',      id: 'minimax-cn' },

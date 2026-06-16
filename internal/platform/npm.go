@@ -14,7 +14,7 @@ import (
 // Matches the node_modules-relative path inside quoted strings, e.g.:
 //
 //	"%dp0%\node_modules\@tencent-ai\codebuddy-code\bin\codebuddy" %*
-//	node  "%dp0%\node_modules\@google\gemini-cli\bundle\gemini" %*
+//	node  "%dp0%\node_modules\@anthropic\claude-code\bin\claude" %*
 //
 // The captured group is the path after node_modules/, e.g.:
 //
@@ -79,7 +79,7 @@ func resolveCmdWrapper(cmdPath string) string {
 
 	// matches[1] is the relative path inside node_modules, e.g.:
 	//   @tencent-ai\codebuddy-code\bin\codebuddy
-	//   @google\gemini-cli\bundle\gemini
+	//   @anthropic\claude-code\bin\claude
 	//   @openai\codex\bin\codex
 	relPath := matches[1]
 

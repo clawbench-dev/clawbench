@@ -35,7 +35,6 @@ var acpAgentSpecs = []acpAgentSpec{
 	{ID: "claude", Backend: "claude", AcpCommand: "npx -y @agentclientprotocol/claude-agent-acp@latest", DefaultCmd: "claude", HasThinking: true, Timeout: 120 * time.Second},
 	{ID: "codebuddy", Backend: "codebuddy", AcpCommand: "codebuddy --acp", DefaultCmd: "codebuddy", HasThinking: true, Timeout: 90 * time.Second},
 	{ID: "opencode", Backend: "opencode", AcpCommand: "opencode acp", DefaultCmd: "opencode", HasThinking: true, Timeout: 90 * time.Second},
-	{ID: "gemini", Backend: "gemini", AcpCommand: "gemini --acp", DefaultCmd: "gemini", HasThinking: false, Timeout: 90 * time.Second},
 	{ID: "codex", Backend: "codex", AcpCommand: "npx -y @agentclientprotocol/codex-acp@latest", DefaultCmd: "codex", HasThinking: true, Timeout: 120 * time.Second},
 	{ID: "qoder", Backend: "qoder", AcpCommand: "qodercli --acp", DefaultCmd: "qodercli", HasThinking: false, Timeout: 90 * time.Second},
 	{ID: "cline", Backend: "cline", AcpCommand: "cline --acp", DefaultCmd: "cline", HasThinking: true, Timeout: 90 * time.Second},
@@ -365,7 +364,7 @@ func TestACPState_AllAgents_ModeThinkingCommandsModel(t *testing.T) {
 // on every ExecuteStream call, which is critical for SSE reconnection.
 func TestACPState_AllAgents_StateReemittedOnSecondPrompt(t *testing.T) {
 	// Test only agents that are likely to have mode state.
-	// Skip gemini/qoder which have no thinking levels in BackendRegistry.
+	// Skip qoder which have no thinking levels in BackendRegistry.
 	criticalSpecs := []acpAgentSpec{}
 	for _, spec := range acpAgentSpecs {
 		if spec.HasThinking {

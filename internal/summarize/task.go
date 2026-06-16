@@ -35,7 +35,7 @@ func TaskSummarizePrompt() string {
 // Unlike the TTS summarization pipeline (ttsPipeline), it does NOT strip markdown
 // from input or output — the summary retains formatting for readability.
 type TaskSummarizer struct {
-	// When using an AI CLI backend (claude/codebuddy/gemini etc.):
+	// When using an AI CLI backend (claude/codebuddy/opencode etc.):
 	Backend ai.AIBackend // exported for test construction
 	model   string       // model ID override (empty = use backend default)
 

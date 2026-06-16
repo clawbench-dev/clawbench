@@ -65,12 +65,6 @@ var ProviderRegistry = map[string]ProviderSpec{
 		ModelsEndpoint: "",
 		APIFormat:      "anthropic", SupportsCLI: true, WizardReady: true,
 	},
-	"google": {
-		ID: "google", Name: "Google Gemini", EnvVar: "GEMINI_API_KEY",
-		ChatEndpoint:   "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-		ModelsEndpoint: "https://generativelanguage.googleapis.com/v1beta/openai/models",
-		APIFormat:      "openai", SupportsCLI: true, WizardReady: true,
-	},
 	"deepseek": {
 		ID: "deepseek", Name: "DeepSeek", EnvVar: "DEEPSEEK_API_KEY",
 		ChatEndpoint:   "https://api.deepseek.com/v1/chat/completions",
@@ -322,7 +316,7 @@ func GetSummarizeModelHint(knownModels []KnownModel, v1Models []ModelInfo) strin
 	// Priority 2: /v1/models keyword matching
 	if len(v1Models) > 0 {
 		// Keywords in priority order — match as hyphen-delimited segment
-		// to avoid false positives (e.g., "mini" matching "gemini")
+		// to avoid false positives (e.g., "mini" matching partial words)
 		keywords := []string{"mini", "flash", "haiku", "lite", "small"}
 		for _, kw := range keywords {
 			for _, m := range v1Models {

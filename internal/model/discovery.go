@@ -35,7 +35,7 @@ type BackendSpec struct {
 	ParseModels          func(string) []AgentModel // optional: parse command stdout into AgentModel list; nil = not supported
 	DiscoverModelsFunc   func() []AgentModel       // optional: custom model discovery function (e.g. binary strings scan); takes priority over ListModelsCmd
 	ThinkingEffortLevels []string                  // supported thinking effort levels, e.g. ["low","medium","high"]; nil = not supported
-	AcpCommand           string                    // ACP spawn command for acp-stdio transport, e.g. "gemini --acp"; empty = no ACP support
+	AcpCommand           string                    // ACP spawn command for acp-stdio transport, e.g. "kimi --acp"; empty = no ACP support
 }
 
 // BackendRegistry lists all known AI backends for auto-discovery.
@@ -60,11 +60,6 @@ var BackendRegistry = []BackendSpec{
 		ListModelsCmd: []string{"models"}, ParseModels: ParseOpenCodeModels,
 		ThinkingEffortLevels: []string{"minimal", "high", "max"},
 		AcpCommand:           "opencode acp",
-	},
-	{
-		ID: "gemini", Backend: "gemini", DefaultCmd: "gemini", Name: "Gemini", Icon: "💎", Specialty: "多模态推理",
-		DiscoverModelsFunc: DiscoverGeminiModels,
-		AcpCommand:         "gemini --acp",
 	},
 	{
 		ID: "codex", Backend: "codex", DefaultCmd: "codex", Name: "Codex", Icon: "🐙", Specialty: "OpenAI 编码代理",
@@ -711,172 +706,6 @@ func DiscoverPiModels() []AgentModel {
 	}
 
 	slog.Info("pi model discovery succeeded", "models", len(models))
-	return models
-}
-
-// --- Gemini model discovery ---
-
-// geminiModelDefRe matches model definition keys in the Gemini CLI JS bundle.
-// Format: "gemini-X.Y-ZZZ": { ... isVisible: true ... }
-var geminiModelDefRe = regexp.MustCompile(`"(gemini-\d+(?:\.\d+)?(?:-[\w-]+))":\s*\{`)
-
-// geminiIsVisibleRe checks whether isVisible: true appears within a model definition block.
-var geminiIsVisibleRe = regexp.MustCompile(`isVisible:\s*true`)
-
-// geminiModelOrder defines the display order for Gemini models: pro first, then flash, then flash-lite.
-var geminiModelOrder = map[string]int{"pro": 0, "flash": 1, "flash-lite": 2}
-
-// geminiModelFamilyOrder defines the order for model families: gemini-3.x first, then gemini-2.5.x.
-var geminiModelFamilyOrder = map[string]int{"gemini-3": 0, "gemini-2.5": 1}
-
-// geminiTierRe extracts the tier value from a model definition block.
-var geminiTierRe = regexp.MustCompile(`tier:\s*"([^"]+)"`)
-
-// geminiFamilyRe extracts the family value from a model definition block.
-var geminiFamilyRe = regexp.MustCompile(`family:\s*"([^"]+)"`)
-
-// hasChunkJS checks whether a directory listing contains any chunk-*.js files,
-// which is how Gemini CLI organizes its JS bundle.
-func hasChunkJS(entries []os.DirEntry) bool {
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasPrefix(e.Name(), "chunk-") && strings.HasSuffix(e.Name(), ".js") {
-			return true
-		}
-	}
-	return false
-}
-
-// DiscoverGeminiModels discovers Gemini model IDs by scanning the JS bundle files
-// in the Gemini CLI npm package directory. The model definitions are embedded in
-// chunk-*.js files with isVisible: true/false markers.
-func DiscoverGeminiModels() []AgentModel { //nolint:gocognit,gocyclo // API-based model discovery with pagination
-	// Resolve the real path for the gemini CLI, handling Windows .cmd wrappers
-	realPath := platform.ResolveCLIPath("gemini")
-	if realPath == "" {
-		return nil
-	}
-
-	// Navigate to the bundle directory: .../node_modules/@google/gemini-cli/bundle/
-	// The JS entry point is typically at .../bundle/gemini, so Dir() gives .../bundle/
-	bundleDir := filepath.Dir(realPath)
-
-	// On Windows, the resolved path from .cmd points directly to the JS entry file
-	// inside the bundle/ directory, so Dir() correctly gives the bundle directory.
-	// On Unix, the symlink also resolves to the bundle/ directory.
-	// Verify by checking for chunk-*.js files.
-	if filepath.Base(bundleDir) != "bundle" {
-		// Try bundle/ subdirectory — the entry file might be at package root
-		// and bundle/ is a subdirectory (e.g. if path resolves differently)
-		altBundleDir := filepath.Join(bundleDir, "bundle")
-		if entries, err := os.ReadDir(altBundleDir); err == nil && hasChunkJS(entries) {
-			bundleDir = altBundleDir
-		} else {
-			slog.Debug("gemini model discovery: unexpected path layout", "path", realPath, "dir", bundleDir)
-			return nil
-		}
-	}
-
-	entries, err := os.ReadDir(bundleDir)
-	if err != nil {
-		slog.Debug("gemini model discovery: cannot read bundle directory", "dir", bundleDir, "error", err)
-		return nil
-	}
-
-	type modelEntry struct {
-		id     string
-		tier   string
-		family string
-	}
-
-	seen := make(map[string]bool)
-	var found []modelEntry
-
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "chunk-") || !strings.HasSuffix(entry.Name(), ".js") {
-			continue
-		}
-
-		data, err := os.ReadFile(filepath.Join(bundleDir, entry.Name()))
-		if err != nil {
-			continue
-		}
-
-		content := string(data)
-		matches := geminiModelDefRe.FindAllStringSubmatchIndex(content, -1)
-		for _, match := range matches {
-			if len(match) < 4 {
-				continue
-			}
-			modelID := content[match[2]:match[3]]
-
-			// Skip aliases (auto-gemini-*, single-word aliases)
-			if strings.HasPrefix(modelID, "auto-gemini-") {
-				continue
-			}
-			// Skip customtools and base variants
-			if strings.HasSuffix(modelID, "-customtools") || strings.HasSuffix(modelID, "-base") {
-				continue
-			}
-			if seen[modelID] {
-				continue
-			}
-
-			// Check for isVisible: true within ~500 chars after the opening brace
-			braceStart := match[1]
-			lookEnd := braceStart + 500
-			if lookEnd > len(content) {
-				lookEnd = len(content)
-			}
-			block := content[braceStart:lookEnd]
-
-			if !geminiIsVisibleRe.MatchString(block) {
-				continue
-			}
-
-			seen[modelID] = true
-
-			tier := ""
-			family := ""
-			if m := geminiTierRe.FindStringSubmatch(block); len(m) >= 2 {
-				tier = m[1]
-			}
-			if m := geminiFamilyRe.FindStringSubmatch(block); len(m) >= 2 {
-				family = m[1]
-			}
-
-			found = append(found, modelEntry{id: modelID, tier: tier, family: family})
-		}
-	}
-
-	if len(found) == 0 {
-		return nil
-	}
-
-	sort.Slice(found, func(i, j int) bool {
-		fi, fj := found[i].family, found[j].family
-		oi, oj := geminiModelFamilyOrder[fi], geminiModelFamilyOrder[fj]
-		if oi != oj {
-			return oi < oj
-		}
-		ti, tj := found[i].tier, found[j].tier
-		tiOrder, tiOk := geminiModelOrder[ti]
-		tjOrder, tjOk := geminiModelOrder[tj]
-		if tiOk && tjOk && tiOrder != tjOrder {
-			return tiOrder < tjOrder
-		}
-		return found[i].id > found[j].id
-	})
-
-	var models []AgentModel
-	for i, e := range found {
-		models = append(models, AgentModel{
-			ID:      e.id,
-			Name:    e.id,
-			Default: i == 0,
-		})
-	}
-
-	slog.Info("gemini model discovery succeeded", "models", len(models))
 	return models
 }
 
@@ -1788,8 +1617,6 @@ var clineDefaultModels = []AgentModel{
 	{ID: "openai/gpt-4o", Name: "GPT-4o"},
 	{ID: "openai/o3", Name: "o3"},
 	{ID: "openai/o4-mini", Name: "o4-mini"},
-	{ID: "google/gemini-2.5-pro", Name: "Gemini 2.5 Pro"},
-	{ID: "google/gemini-2.5-flash", Name: "Gemini 2.5 Flash"},
 	{ID: "minimax/MiniMax-M1", Name: "MiniMax-M1"},
 	{ID: "minimax/MiniMax-M2.7", Name: "MiniMax-M2.7"},
 }
@@ -1837,8 +1664,6 @@ var copilotDefaultModels = []AgentModel{
 	{ID: "o4-mini", Name: "o4-mini"},
 	{ID: "claude-sonnet-4-20250514", Name: "Claude Sonnet 4"},
 	{ID: "claude-opus-4-20250514", Name: "Claude Opus 4"},
-	{ID: "gemini-2.5-pro", Name: "Gemini 2.5 Pro"},
-	{ID: "gemini-2.5-flash", Name: "Gemini 2.5 Flash"},
 }
 
 // DiscoverCopilotModels discovers models for GitHub Copilot CLI.

@@ -123,7 +123,6 @@ func TestSetupProviders_ContainsExpectedProviders(t *testing.T) {
 	// Check key providers exist
 	assert.True(t, providerIDs["openai"])
 	assert.True(t, providerIDs["anthropic"])
-	assert.True(t, providerIDs["google"])
 	assert.True(t, providerIDs["deepseek"])
 }
 

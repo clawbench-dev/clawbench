@@ -38,16 +38,6 @@ func TestNewBackend_OpenCode(t *testing.T) {
 	assert.False(t, ok, "opencode should NOT be wrapped in AutoResumeBackend")
 }
 
-func TestNewBackend_Gemini(t *testing.T) {
-	backend, err := NewBackend("gemini")
-	assert.NoError(t, err)
-	assert.NotNil(t, backend)
-	assert.Equal(t, "gemini", backend.Name())
-	// Gemini is NOT wrapped in AutoResumeBackend (no ExitPlanMode issue)
-	_, ok := backend.(*AutoResumeBackend)
-	assert.False(t, ok, "gemini should NOT be wrapped in AutoResumeBackend")
-}
-
 func TestNewBackend_Qoder(t *testing.T) {
 	backend, err := NewBackend("qoder")
 	assert.NoError(t, err)
@@ -223,22 +213,22 @@ func TestNewBackendForAgent_ACPNoAutoResume(t *testing.T) {
 	t.Cleanup(func() { model.Agents = origAgents })
 
 	model.Agents = map[string]*model.Agent{
-		"test-gemini": {
-			ID:         "test-gemini",
-			Backend:    "gemini",
+		"test-kimi": {
+			ID:         "test-kimi",
+			Backend:    "kimi",
 			Transport:  "acp-stdio",
-			AcpCommand: "gemini --acp",
+			AcpCommand: "kimi --acp",
 		},
 	}
 
-	backend, err := NewBackendForAgent("gemini", "test-gemini")
+	backend, err := NewBackendForAgent("kimi", "test-kimi")
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
-	assert.Equal(t, "gemini", backend.Name())
+	assert.Equal(t, "kimi", backend.Name())
 
-	// gemini ACP is also NOT wrapped in AutoResumeBackend
+	// kimi ACP is NOT wrapped in AutoResumeBackend
 	_, ok := backend.(*ACPBackend)
-	assert.True(t, ok, "gemini ACP should be ACPBackend directly")
+	assert.True(t, ok, "kimi ACP should be ACPBackend directly")
 }
 
 func TestNewBackendForAgent_CLITransport_FallsBack(t *testing.T) {
@@ -305,7 +295,6 @@ func TestNeedsAutoResume(t *testing.T) {
 	assert.True(t, needsAutoResume("copilot"), "copilot needs auto-resume")
 
 	assert.False(t, needsAutoResume("opencode"), "opencode does NOT need auto-resume")
-	assert.False(t, needsAutoResume("gemini"), "gemini does NOT need auto-resume")
 	assert.False(t, needsAutoResume("codex"), "codex does NOT need auto-resume")
 	assert.False(t, needsAutoResume("vecli"), "vecli does NOT need auto-resume")
 }

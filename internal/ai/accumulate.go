@@ -123,7 +123,7 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 		}
 	case "tool_result":
 		// tool_result events update the Output/Status of an existing tool_use block
-		// and mark it as Done. This handles backends (ACP, Gemini, Claude/Codebuddy
+		// and mark it as Done. This handles backends (ACP, Kimi, Claude/Codebuddy
 		// stream_event) that send tool results as a separate event after the tool_use.
 		if event.Tool != nil {
 			// Parse tool input JSON into map (same as tool_use branch)

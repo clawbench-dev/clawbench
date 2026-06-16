@@ -1005,7 +1005,6 @@ export default {
       summarizeApi: 'API摘要',
       summarizeClaude: 'Claude',
       summarizeCodebuddy: 'CodeBuddy',
-      summarizeGemini: 'Gemini',
       summarizeOpencode: 'OpenCode',
       summarizeCodex: 'Codex',
       summarizeQoder: 'Qoder',

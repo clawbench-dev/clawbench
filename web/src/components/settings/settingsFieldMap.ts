@@ -150,7 +150,6 @@ export const categoryItems: Record<string, ItemSpec[]> = {
       { labelKey: 'settings.items.summarizeApi', value: 'api' },
       { labelKey: 'settings.items.summarizeClaude', value: 'claude' },
       { labelKey: 'settings.items.summarizeCodebuddy', value: 'codebuddy' },
-      { labelKey: 'settings.items.summarizeGemini', value: 'gemini' },
       { labelKey: 'settings.items.summarizeOpencode', value: 'opencode' },
       { labelKey: 'settings.items.summarizeCodex', value: 'codex' },
       { labelKey: 'settings.items.summarizeQoder', value: 'qoder' },
@@ -159,7 +158,7 @@ export const categoryItems: Record<string, ItemSpec[]> = {
       { labelKey: 'settings.items.summarizePi', value: 'pi' },
     ]},
     { labelKey: 'settings.items.summarizeModel', descriptionKey: 'settings.items.summarizeModelDesc', key: 'summarize.model', type: 'text', source: 'server',
-      dependsOn: { key: 'summarize.backend', values: ['api', 'claude', 'codebuddy', 'gemini', 'opencode', 'codex', 'qoder', 'vecli', 'deepseek', 'pi'] } },
+      dependsOn: { key: 'summarize.backend', values: ['api', 'claude', 'codebuddy', 'opencode', 'codex', 'qoder', 'vecli', 'deepseek', 'pi'] } },
     // API sub-config (shown when backend is "api")
     { labelKey: 'settings.items.apiBaseUrl', descriptionKey: 'settings.items.apiBaseUrlDesc', key: 'summarize.api.base_url', type: 'text', source: 'server',
       dependsOn: { key: 'summarize.backend', value: 'api' }, sectionHeader: 'settings.items.apiHeader' },

@@ -80,10 +80,10 @@ const mockAgents = {
       transport: 'acp-stdio',
     },
     {
-      id: 'gemini',
-      name: 'Gemini',
+      id: 'kimi',
+      name: 'Kimi',
       icon: '💎',
-      backend: 'gemini',
+      backend: 'kimi',
       models: [],
       thinkingEffortLevels: [],
       preferredModel: '',
@@ -312,7 +312,7 @@ describe('SessionSettingModal', () => {
   })
 
   it('hides refresh button for agents that do not support model refresh', () => {
-    const wrapper = mountModal({ agentId: 'gemini' })
+    const wrapper = mountModal({ agentId: 'kimi' })
     expect(wrapper.find('.refresh-btn').exists()).toBe(false)
   })
 
@@ -482,14 +482,14 @@ describe('SessionSettingModal', () => {
   // --- No models ---
 
   it('shows empty state when agent has no models', () => {
-    const wrapper = mountModal({ agentId: 'gemini' })
+    const wrapper = mountModal({ agentId: 'kimi' })
     const items = wrapper.findAll('.model-item')
     expect(items.length).toBe(0)
     expect(wrapper.find('.model-empty').exists()).toBe(true)
   })
 
   it('shows no-models message in empty state', () => {
-    const wrapper = mountModal({ agentId: 'gemini' })
+    const wrapper = mountModal({ agentId: 'kimi' })
     expect(wrapper.find('.model-empty').text()).toContain('chat.sessionSetting.noModels')
   })
 
@@ -594,7 +594,7 @@ describe('SessionSettingModal', () => {
   // --- No thinking tab for agents without levels ---
 
   it.skip('shows empty hint in thinking tab for agents without thinking effort levels', async () => {
-    const wrapper = mountModal({ agentId: 'gemini', initialTab: 'thinking' })
+    const wrapper = mountModal({ agentId: 'kimi', initialTab: 'thinking' })
     await nextTick()
     // All 4 tabs are always visible (model, thinking, mode, transport)
     const tabs = wrapper.findAll('.model-tab')

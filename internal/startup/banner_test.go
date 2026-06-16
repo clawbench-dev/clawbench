@@ -83,7 +83,7 @@ func TestBannerBasic(t *testing.T) {
 		Agents: []AgentInfo{
 			{Name: "codebuddy", Models: 21},
 			{Name: "pi", Models: 8},
-			{Name: "gemini", Models: 5},
+			{Name: "kimi", Models: 5},
 		},
 		SSHEnabled:      true,
 		SSHPort:         20001,

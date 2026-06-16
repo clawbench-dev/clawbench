@@ -17,8 +17,6 @@ func NewBackend(backendType string) (AIBackend, error) {
 		return &AutoResumeBackend{inner: codebuddyBackend}, nil
 	case "opencode":
 		return opencodeBackend, nil
-	case "gemini":
-		return geminiBackend, nil
 	case "codex":
 		return &CodexBackend{}, nil
 	case "qoder":
@@ -38,7 +36,7 @@ func NewBackend(backendType string) (AIBackend, error) {
 	case "mimo":
 		return &AutoResumeBackend{inner: mimoBackend}, nil
 	default:
-		return nil, fmt.Errorf("unsupported backend type: %s (supported: claude, codebuddy, opencode, gemini, codex, qoder, vecli, deepseek, pi, cline, kimi, copilot, mimo)", backendType)
+		return nil, fmt.Errorf("unsupported backend type: %s (supported: claude, codebuddy, opencode, codex, qoder, vecli, deepseek, pi, cline, kimi, copilot, mimo)", backendType)
 	}
 }
 

@@ -7,7 +7,7 @@ import (
 
 // VeCLIStreamParser treats each stdout line as a content event.
 // VeCLI outputs plain text (not JSON Lines) because it has removed
-// the --output-format flag that Gemini CLI supports.
+// the --output-format flag that Kimi CLI supports.
 type VeCLIStreamParser struct{}
 
 // ParseLine emits a content event for each line of VeCLI output.
@@ -31,7 +31,7 @@ func buildVeCLIArgs(req ChatRequest) []string {
 		"--prompt", prompt,
 	}
 
-	// Working directory — VeCLI inherits --include-directories from Gemini CLI
+	// Working directory — VeCLI inherits --include-directories from Kimi CLI
 	if req.WorkDir != "" {
 		args = append(args, "--include-directories", req.WorkDir)
 	}

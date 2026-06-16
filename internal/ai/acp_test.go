@@ -331,7 +331,7 @@ func TestMapACPToolCallUpdate_InProgressWithDescriptiveTitle(t *testing.T) {
 // --- extractToolName tests ---
 
 func TestExtractToolName_ToolCallIdPrefix(t *testing.T) {
-	// Gemini ACP uses toolCallId prefixes like "read_file-", "list_directory-",
+	// Kimi ACP uses toolCallId prefixes like "read_file-", "list_directory-",
 	// "glob-", "run_shell_command-", "ask-" to encode the tool type.
 	assert.Equal(t, "Read", extractToolName("README.md", acp.ToolKindRead, "read_file-1780647417975-1"))
 	assert.Equal(t, "LS", extractToolName("cmd/server", acp.ToolKindSearch, "list_directory-1780647430067-5"))
@@ -345,7 +345,7 @@ func TestExtractToolName_ToolCallIdPrefix(t *testing.T) {
 }
 
 func TestExtractToolName_ToolCallIdPrefixPriority(t *testing.T) {
-	// toolCallId prefix takes priority over title matching for Gemini ACP
+	// toolCallId prefix takes priority over title matching for Kimi ACP
 	assert.Equal(t, "Read", extractToolName("README.md", acp.ToolKindRead, "read_file-1-1"))
 	// Without toolCallId, "README.md" has a dot → treated as non-canonical word → kind fallback
 	assert.Equal(t, "Read", extractToolName("README.md", acp.ToolKindRead))
@@ -411,10 +411,10 @@ func TestExtractToolName_TerminalPrefix(t *testing.T) {
 	assert.Equal(t, "Bash", extractToolName("Terminal", acp.ToolKindExecute))
 }
 
-// --- Gemini ACP tool call pattern tests ---
+// --- Kimi ACP tool call pattern tests ---
 
-func TestMapACPToolCall_GeminiReadFile(t *testing.T) {
-	// Gemini ACP read_file: kind=read, title=filename, locations=[{path}], no rawInput
+func TestMapACPToolCall_KimiReadFile(t *testing.T) {
+	// Kimi ACP read_file: kind=read, title=filename, locations=[{path}], no rawInput
 	tc := acp.SessionUpdateToolCall{
 		ToolCallId: acp.ToolCallId("read_file-1780647417975-1"),
 		Title:      "README.md",
@@ -434,8 +434,8 @@ func TestMapACPToolCall_GeminiReadFile(t *testing.T) {
 	assert.Contains(t, event.Tool.Input, "/home/user/project/README.md")
 }
 
-func TestMapACPToolCall_GeminiListDirectory(t *testing.T) {
-	// Gemini ACP list_directory: kind=search, title=dirname, no locations
+func TestMapACPToolCall_KimiListDirectory(t *testing.T) {
+	// Kimi ACP list_directory: kind=search, title=dirname, no locations
 	tc := acp.SessionUpdateToolCall{
 		ToolCallId: acp.ToolCallId("list_directory-1780647430067-5"),
 		Title:      "cmd/server",
@@ -450,8 +450,8 @@ func TestMapACPToolCall_GeminiListDirectory(t *testing.T) {
 	assert.Contains(t, event.Tool.Input, "cmd/server")
 }
 
-func TestMapACPToolCall_GeminiGlob(t *testing.T) {
-	// Gemini ACP glob: kind=search, title=pattern, no locations
+func TestMapACPToolCall_KimiGlob(t *testing.T) {
+	// Kimi ACP glob: kind=search, title=pattern, no locations
 	tc := acp.SessionUpdateToolCall{
 		ToolCallId: acp.ToolCallId("glob-1780647418037-4"),
 		Title:      "'cmd/server/**/*.go'",
@@ -466,8 +466,8 @@ func TestMapACPToolCall_GeminiGlob(t *testing.T) {
 	assert.Contains(t, event.Tool.Input, "cmd/server")
 }
 
-func TestMapACPToolCall_GeminiShellCommand(t *testing.T) {
-	// Gemini ACP run_shell_command: kind=execute, title=command, no rawInput
+func TestMapACPToolCall_KimiShellCommand(t *testing.T) {
+	// Kimi ACP run_shell_command: kind=execute, title=command, no rawInput
 	tc := acp.SessionUpdateToolCall{
 		ToolCallId: acp.ToolCallId("run_shell_command-1780647441920-8"),
 		Title:      "ls -R cmd/server",
@@ -482,8 +482,8 @@ func TestMapACPToolCall_GeminiShellCommand(t *testing.T) {
 	assert.Contains(t, event.Tool.Input, "ls -R cmd/server")
 }
 
-func TestMapACPToolCall_GeminiReadFileNoLocations(t *testing.T) {
-	// Gemini ACP read_file with no locations — should use title as file_path fallback
+func TestMapACPToolCall_KimiReadFileNoLocations(t *testing.T) {
+	// Kimi ACP read_file with no locations — should use title as file_path fallback
 	tc := acp.SessionUpdateToolCall{
 		ToolCallId: acp.ToolCallId("read_file-123-1"),
 		Title:      "main.go",
@@ -496,8 +496,8 @@ func TestMapACPToolCall_GeminiReadFileNoLocations(t *testing.T) {
 	assert.Contains(t, event.Tool.Input, "main.go")
 }
 
-func TestMapACPToolCallUpdate_GeminiCompleted(t *testing.T) {
-	// Gemini ACP completed tool_call_update with locations
+func TestMapACPToolCallUpdate_KimiCompleted(t *testing.T) {
+	// Kimi ACP completed tool_call_update with locations
 	completed := acp.ToolCallStatusCompleted
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("read_file-1780647417975-1"),
@@ -517,8 +517,8 @@ func TestMapACPToolCallUpdate_GeminiCompleted(t *testing.T) {
 	assert.Contains(t, event.Tool.Output, "file contents here")
 }
 
-func TestMapACPToolCallUpdate_GeminiCompletedWithContent(t *testing.T) {
-	// Gemini ACP completed update with Content blocks instead of RawOutput
+func TestMapACPToolCallUpdate_KimiCompletedWithContent(t *testing.T) {
+	// Kimi ACP completed update with Content blocks instead of RawOutput
 	completed := acp.ToolCallStatusCompleted
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("glob-1780647418037-4"),
@@ -541,8 +541,8 @@ func TestMapACPToolCallUpdate_GeminiCompletedWithContent(t *testing.T) {
 	assert.Contains(t, event.Tool.Output, "No files found")
 }
 
-func TestMapACPToolCallUpdate_GeminiFailedWithContent(t *testing.T) {
-	// Gemini ACP failed update with Content blocks
+func TestMapACPToolCallUpdate_KimiFailedWithContent(t *testing.T) {
+	// Kimi ACP failed update with Content blocks
 	failed := acp.ToolCallStatusFailed
 	tcu := acp.SessionToolCallUpdate{
 		ToolCallId: acp.ToolCallId("read_file-1780647453119-9"),

@@ -28,7 +28,7 @@ type Agent struct {
 
 	// ACP configuration (only used when Transport != "cli")
 	Transport  string `json:"transport"`            // "cli"(default) | "acp-stdio"
-	AcpCommand string `json:"acpCommand,omitempty"` // acp-stdio: spawn command, e.g. "gemini --acp"
+	AcpCommand string `json:"acpCommand,omitempty"` // acp-stdio: spawn command, e.g. "kimi --acp"
 
 	// ModelsAutoDetected indicates whether Models were filled by auto-discovery
 	// (from cache) rather than user-defined. Used by AsyncRefreshModelCache

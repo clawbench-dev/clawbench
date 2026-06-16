@@ -64,7 +64,7 @@ async function loadAgents(force = false): Promise<void> {
                     if (activeState.thinkingEffortState?.availableLevels?.length > 0) {
                         updateAvailableThinkingEfforts(activeState.thinkingEffortState.availableLevels)
                     } else {
-                        // Fallback: agent config (e.g. OpenCode/Gemini ACP don't expose thought_level)
+                        // Fallback: agent config (e.g. OpenCode/Kimi ACP don't expose thought_level)
                         const agentLevels = getAgentThinkingEffortLevels(activeAgentId)
                         if (agentLevels.length > 0) {
                             updateAvailableThinkingEfforts(agentLevels.map((id: string) => ({ id, name: id })))
@@ -288,7 +288,7 @@ export async function populateACPStateFromCache(agentId: string): Promise<void> 
     if (state.thinkingEffortState?.availableLevels?.length > 0) {
         updateAvailableThinkingEfforts(state.thinkingEffortState.availableLevels)
     } else {
-        // Fallback: agent config (e.g. OpenCode/Gemini ACP don't expose thought_level)
+        // Fallback: agent config (e.g. OpenCode/Kimi ACP don't expose thought_level)
         const agentLevels = getAgentThinkingEffortLevels(agentId)
         if (agentLevels.length > 0) {
             updateAvailableThinkingEfforts(agentLevels.map((id: string) => ({ id, name: id })))

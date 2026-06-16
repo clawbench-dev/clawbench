@@ -10,8 +10,8 @@ import (
 // Tool name heuristics — maps ACP tool identifiers to canonical frontend names
 // ---------------------------------------------------------------------------
 
-// acpToolCallIDPrefix maps Gemini-style toolCallID prefixes to canonical tool names.
-// Gemini ACP uses toolCallID formats like "read_file-<ts>-<n>", "list_directory-<ts>-<n>",
+// acpToolCallIDPrefix maps Kimi-style toolCallID prefixes to canonical tool names.
+// Kimi ACP uses toolCallID formats like "read_file-<ts>-<n>", "list_directory-<ts>-<n>",
 // "glob-<ts>-<n>", "run_shell_command-<ts>-<n>", "ask-<uuid>".
 // The prefix before the first dash encodes the tool type.
 var acpToolCallIDPrefix = map[string]string{
@@ -141,11 +141,11 @@ var acpKindToCanonical = map[acp.ToolKind]string{
 }
 
 // extractToolName resolves the canonical frontend tool name from ACP tool identifiers
-// and input formatting. We try toolCallId prefix first (Gemini pattern),
+// and input formatting. We try toolCallId prefix first (Kimi pattern),
 // then title prefix/alias matching, then kind-to-canonical,
 // then fall back to the title itself.
 func extractToolName(title string, kind acp.ToolKind, toolCallID ...string) string {
-	// Gemini ACP uses descriptive toolCallId prefixes that encode the tool type:
+	// Kimi ACP uses descriptive toolCallId prefixes that encode the tool type:
 	// "read_file-<ts>-<n>", "list_directory-<ts>-<n>", "glob-<ts>-<n>",
 	// "run_shell_command-<ts>-<n>", "ask-<uuid>". Extract the prefix for mapping.
 	if len(toolCallID) > 0 && toolCallID[0] != "" {

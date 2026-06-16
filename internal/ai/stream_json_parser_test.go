@@ -7,9 +7,9 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func parseGeminiLine(line string) []StreamEvent {
+func parseStreamJSONLine(line string) []StreamEvent {
 	ch := make(chan StreamEvent, 64)
-	parser := &GeminiStreamParser{}
+	parser := &StreamJSONParser{}
 	parser.ParseLine(line, ch)
 	close(ch)
 	var events []StreamEvent
@@ -19,9 +19,9 @@ func parseGeminiLine(line string) []StreamEvent {
 	return events
 }
 
-func TestGeminiStream_ParseLine_Init(t *testing.T) {
+func TestStreamJSON_ParseLine_Init(t *testing.T) {
 	line := `{"type":"init","timestamp":"2026-04-25T10:00:00.000Z","session_id":"ses_abc123","model":"gemini-3-pro-preview"}`
-	events := parseGeminiLine(line)
+	events := parseStreamJSONLine(line)
 
 	// Init events don't emit stream events, they just capture session/model
 	if len(events) != 0 {
@@ -30,9 +30,9 @@ func TestGeminiStream_ParseLine_Init(t *testing.T) {
 	}
 }
 
-func TestGeminiStream_ParseLine_AssistantMessage(t *testing.T) {
+func TestStreamJSON_ParseLine_AssistantMessage(t *testing.T) {
 	line := `{"type":"message","timestamp":"2026-04-25T10:00:01.000Z","role":"assistant","content":"Hello, world!","delta":true}`
-	events := parseGeminiLine(line)
+	events := parseStreamJSONLine(line)
 
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
@@ -46,9 +46,9 @@ func TestGeminiStream_ParseLine_AssistantMessage(t *testing.T) {
 	}
 }
 
-func TestGeminiStream_ParseLine_UserMessage(t *testing.T) {
+func TestStreamJSON_ParseLine_UserMessage(t *testing.T) {
 	line := `{"type":"message","timestamp":"2026-04-25T10:00:00.000Z","role":"user","content":"Say hello"}`
-	events := parseGeminiLine(line)
+	events := parseStreamJSONLine(line)
 
 	// User messages should be skipped (they echo back the input)
 	if len(events) != 0 {
@@ -57,9 +57,9 @@ func TestGeminiStream_ParseLine_UserMessage(t *testing.T) {
 	}
 }
 
-func TestGeminiStream_ParseLine_AssistantEmpty(t *testing.T) {
+func TestStreamJSON_ParseLine_AssistantEmpty(t *testing.T) {
 	line := `{"type":"message","timestamp":"2026-04-25T10:00:01.000Z","role":"assistant","content":"","delta":true}`
-	events := parseGeminiLine(line)
+	events := parseStreamJSONLine(line)
 
 	if len(events) != 0 {
 		t.Fatalf("expected 0 events for empty assistant message, got %d", len(events))
@@ -67,9 +67,9 @@ func TestGeminiStream_ParseLine_AssistantEmpty(t *testing.T) {
 	}
 }
 
-func TestGeminiStream_ParseLine_ToolUse(t *testing.T) {
+func TestStreamJSON_ParseLine_ToolUse(t *testing.T) {
 	line := `{"type":"tool_use","timestamp":"2026-04-25T10:00:02.000Z","tool_name":"read_file","tool_id":"call_123","parameters":{"filePath":"/tmp/test.go"}}`
-	events := parseGeminiLine(line)
+	events := parseStreamJSONLine(line)
 
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
@@ -90,7 +90,7 @@ func TestGeminiStream_ParseLine_ToolUse(t *testing.T) {
 		t.Errorf("expected call ID 'call_123', got %q", tool.ID)
 	}
 	if !tool.Done {
-		t.Error("expected Done=true for Gemini tool_use (full input in one event)")
+		t.Error("expected Done=true for stream-json tool_use (full input in one event)")
 	}
 	// Verify input is normalized: filePath → file_path
 	var input map[string]any
@@ -103,11 +103,11 @@ func TestGeminiStream_ParseLine_ToolUse(t *testing.T) {
 	}
 }
 
-func TestGeminiStream_ParseLine_ToolUseNonObjectParams(t *testing.T) {
+func TestStreamJSON_ParseLine_ToolUseNonObjectParams(t *testing.T) {
 	// When parameters is valid JSON but not an object (e.g., an array),
 	// normalizeToolInput should fail and fall back to string(msg.Parameters)
 	line := `{"type":"tool_use","timestamp":"2026-04-25T10:00:02.000Z","tool_name":"list_files","tool_id":"call_arr","parameters":[1,2,3]}`
-	events := parseGeminiLine(line)
+	events := parseStreamJSONLine(line)
 
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
@@ -122,9 +122,9 @@ func TestGeminiStream_ParseLine_ToolUseNonObjectParams(t *testing.T) {
 	assert.Equal(t, "[1,2,3]", tool.Input)
 }
 
-func TestGeminiStream_ParseLine_ToolUseEmptyParams(t *testing.T) {
+func TestStreamJSON_ParseLine_ToolUseEmptyParams(t *testing.T) {
 	line := `{"type":"tool_use","timestamp":"2026-04-25T10:00:02.000Z","tool_name":"list_files","tool_id":"call_456"}`
-	events := parseGeminiLine(line)
+	events := parseStreamJSONLine(line)
 
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
@@ -136,9 +136,9 @@ func TestGeminiStream_ParseLine_ToolUseEmptyParams(t *testing.T) {
 	}
 }
 
-func TestGeminiStream_ParseLine_ToolResult(t *testing.T) {
+func TestStreamJSON_ParseLine_ToolResult(t *testing.T) {
 	line := `{"type":"tool_result","timestamp":"2026-04-25T10:00:03.000Z","tool_id":"call_123","status":"success","output":"file content here"}`
-	events := parseGeminiLine(line)
+	events := parseStreamJSONLine(line)
 
 	// Tool results now emit a tool_result stream event
 	if len(events) != 1 {
@@ -163,9 +163,9 @@ func TestGeminiStream_ParseLine_ToolResult(t *testing.T) {
 	}
 }
 
-func TestGeminiStream_ParseLine_ErrorWarning(t *testing.T) {
+func TestStreamJSON_ParseLine_ErrorWarning(t *testing.T) {
 	line := `{"type":"error","timestamp":"2026-04-25T10:00:03.000Z","severity":"warning","message":"Loop detected, stopping execution"}`
-	events := parseGeminiLine(line)
+	events := parseStreamJSONLine(line)
 
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
@@ -179,9 +179,9 @@ func TestGeminiStream_ParseLine_ErrorWarning(t *testing.T) {
 	}
 }
 
-func TestGeminiStream_ParseLine_ErrorError(t *testing.T) {
+func TestStreamJSON_ParseLine_ErrorError(t *testing.T) {
 	line := `{"type":"error","timestamp":"2026-04-25T10:00:03.000Z","severity":"error","message":"Maximum session turns exceeded"}`
-	events := parseGeminiLine(line)
+	events := parseStreamJSONLine(line)
 
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
@@ -195,9 +195,9 @@ func TestGeminiStream_ParseLine_ErrorError(t *testing.T) {
 	}
 }
 
-func TestGeminiStream_ParseLine_ResultSuccess(t *testing.T) {
+func TestStreamJSON_ParseLine_ResultSuccess(t *testing.T) {
 	line := `{"type":"result","timestamp":"2026-04-25T10:00:05.000Z","status":"success","stats":{"total_tokens":500,"input_tokens":400,"output_tokens":100,"cached":0,"input":400,"duration_ms":3000,"tool_calls":2,"models":{"gemini-3-pro-preview":{"total_tokens":500,"input_tokens":400,"output_tokens":100,"cached":0,"input":400}}}}`
-	events := parseGeminiLine(line)
+	events := parseStreamJSONLine(line)
 
 	if len(events) != 2 {
 		t.Fatalf("expected 2 events (metadata + done), got %d", len(events))
@@ -231,9 +231,9 @@ func TestGeminiStream_ParseLine_ResultSuccess(t *testing.T) {
 	}
 }
 
-func TestGeminiStream_ParseLine_ResultError(t *testing.T) {
+func TestStreamJSON_ParseLine_ResultError(t *testing.T) {
 	line := `{"type":"result","timestamp":"2026-04-25T10:00:05.000Z","status":"error","error":{"type":"FatalAuthenticationError","message":"Authentication failed"},"stats":{"total_tokens":0,"input_tokens":0,"output_tokens":0,"cached":0,"input":0,"duration_ms":0,"tool_calls":0,"models":{}}}`
-	events := parseGeminiLine(line)
+	events := parseStreamJSONLine(line)
 
 	// Result with error: warning event + metadata + done
 	if len(events) != 3 {
@@ -254,25 +254,25 @@ func TestGeminiStream_ParseLine_ResultError(t *testing.T) {
 	}
 }
 
-func TestGeminiStream_ParseLine_UnparseableLine(t *testing.T) {
-	events := parseGeminiLine("not json at all")
+func TestStreamJSON_ParseLine_UnparseableLine(t *testing.T) {
+	events := parseStreamJSONLine("not json at all")
 	if len(events) != 0 {
 		t.Fatalf("expected 0 events for unparseable line, got %d", len(events))
 		return
 	}
 }
 
-func TestGeminiStream_ParseLine_UnknownType(t *testing.T) {
+func TestStreamJSON_ParseLine_UnknownType(t *testing.T) {
 	line := `{"type":"custom_event","timestamp":"2026-04-25T10:00:00.000Z"}`
-	events := parseGeminiLine(line)
+	events := parseStreamJSONLine(line)
 	if len(events) != 0 {
 		t.Fatalf("expected 0 events for unknown type, got %d", len(events))
 		return
 	}
 }
 
-func TestGeminiStream_SessionIDCapture(t *testing.T) {
-	parser := &GeminiStreamParser{}
+func TestStreamJSON_SessionIDCapture(t *testing.T) {
+	parser := &StreamJSONParser{}
 	ch := make(chan StreamEvent, 64)
 
 	// Init captures session ID and model
@@ -301,7 +301,7 @@ func TestGeminiStream_SessionIDCapture(t *testing.T) {
 	}
 }
 
-func TestGeminiStream_FullFlow(t *testing.T) {
+func TestStreamJSON_FullFlow(t *testing.T) {
 	lines := []string{
 		`{"type":"init","timestamp":"2026-04-25T10:00:00.000Z","session_id":"ses_full_flow","model":"gemini-3-pro-preview"}`,
 		`{"type":"message","timestamp":"2026-04-25T10:00:00.500Z","role":"user","content":"Read the main.go file"}`,
@@ -314,7 +314,7 @@ func TestGeminiStream_FullFlow(t *testing.T) {
 	}
 
 	ch := make(chan StreamEvent, 64)
-	parser := &GeminiStreamParser{}
+	parser := &StreamJSONParser{}
 	for _, line := range lines {
 		parser.ParseLine(line, ch)
 	}
@@ -370,64 +370,7 @@ func TestGeminiStream_FullFlow(t *testing.T) {
 	}
 }
 
-func TestBuildGeminiStreamArgs_Basic(t *testing.T) {
-	req := ChatRequest{
-		Prompt:  "say hello",
-		WorkDir: "/home/user/project",
-		Model:   "gemini-3-pro-preview",
-	}
-	args := buildGeminiStreamArgs(req)
-
-	expected := []string{"--prompt", "say hello", "--output-format", "stream-json", "--yolo", "--include-directories", "/home/user/project", "--model", "gemini-3-pro-preview"}
-	if len(args) != len(expected) {
-		t.Fatalf("expected %d args, got %d: %v", len(expected), len(args), args)
-		return
-	}
-	for i, v := range expected {
-		if args[i] != v {
-			t.Errorf("arg %d: expected %q, got %q", i, v, args[i])
-		}
-	}
-}
-
-func TestBuildGeminiStreamArgs_ResumeSession(t *testing.T) {
-	req := ChatRequest{
-		Prompt:    "continue",
-		SessionID: "ses_abc123",
-		Resume:    true,
-		WorkDir:   "/home/user/project",
-	}
-	args := buildGeminiStreamArgs(req)
-
-	// Should contain --resume latest
-	found := false
-	for i, a := range args {
-		if a == "--resume" && i+1 < len(args) && args[i+1] == "latest" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected --resume latest in args when Resume=true")
-	}
-}
-
-func TestBuildGeminiStreamArgs_NoResumeWithoutFlag(t *testing.T) {
-	req := ChatRequest{
-		Prompt:    "new session",
-		SessionID: "some-id",
-		Resume:    false,
-	}
-	args := buildGeminiStreamArgs(req)
-
-	for _, a := range args {
-		if a == "--resume" {
-			t.Error("should not contain --resume when Resume=false")
-		}
-	}
-}
-
-func TestNormalizeGeminiToolName(t *testing.T) {
+func TestNormalizeStreamJSONToolName(t *testing.T) {
 	tests := []struct {
 		input    string
 		expected string
@@ -462,10 +405,10 @@ func TestNormalizeGeminiToolName(t *testing.T) {
 	}
 }
 
-func TestNormalizeGeminiInput_FieldRemapping(t *testing.T) {
+func TestNormalizeStreamJSONInput_FieldRemapping(t *testing.T) {
 	// filePath → file_path
 	input1 := json.RawMessage(`{"filePath":"/tmp/test.go"}`)
-	norm1, err := normalizeToolInput(input1, map[string]string{"dirPath": "path"})
+	norm1, err := normalizeToolInput(input1, getRemaps("kimi_cli"))
 	if err != nil {
 		t.Fatalf("normalizeToolInput failed: %v", err)
 		return
@@ -485,7 +428,7 @@ func TestNormalizeGeminiInput_FieldRemapping(t *testing.T) {
 
 	// dirPath → path
 	input2 := json.RawMessage(`{"dirPath":"./src"}`)
-	norm2, err := normalizeToolInput(input2, map[string]string{"dirPath": "path"})
+	norm2, err := normalizeToolInput(input2, getRemaps("kimi_cli"))
 	if err != nil {
 		t.Fatalf("normalizeToolInput failed: %v", err)
 		return
@@ -505,7 +448,7 @@ func TestNormalizeGeminiInput_FieldRemapping(t *testing.T) {
 
 	// Combined: filePath + dirPath
 	input3 := json.RawMessage(`{"filePath":"main.go","dirPath":"./src"}`)
-	norm3, err := normalizeToolInput(input3, map[string]string{"dirPath": "path"})
+	norm3, err := normalizeToolInput(input3, getRemaps("kimi_cli"))
 	if err != nil {
 		t.Fatalf("normalizeToolInput failed: %v", err)
 		return
@@ -524,17 +467,17 @@ func TestNormalizeGeminiInput_FieldRemapping(t *testing.T) {
 	}
 }
 
-func TestNormalizeGeminiInput_UnparseableJSON(t *testing.T) {
+func TestNormalizeStreamJSONInput_UnparseableJSON(t *testing.T) {
 	bad := json.RawMessage(`not valid json`)
-	_, err := normalizeToolInput(bad, map[string]string{"dirPath": "path"})
+	_, err := normalizeToolInput(bad, getRemaps("kimi_cli"))
 	if err == nil {
 		t.Error("expected error for unparseable JSON")
 	}
 }
 
-func TestNormalizeGeminiInput_AlreadyCanonical(t *testing.T) {
+func TestNormalizeStreamJSONInput_AlreadyCanonical(t *testing.T) {
 	input := json.RawMessage(`{"file_path":"/tmp/test.go"}`)
-	norm, err := normalizeToolInput(input, map[string]string{"dirPath": "path"})
+	norm, err := normalizeToolInput(input, getRemaps("kimi_cli"))
 	if err != nil {
 		t.Fatalf("normalizeToolInput failed: %v", err)
 		return
@@ -550,7 +493,7 @@ func TestNormalizeGeminiInput_AlreadyCanonical(t *testing.T) {
 	}
 }
 
-func TestGeminiStream_ParseLine_ToolUse_NewTools(t *testing.T) {
+func TestStreamJSON_ParseLine_ToolUse_NewTools(t *testing.T) {
 	tests := []struct {
 		name         string
 		line         string
@@ -652,7 +595,7 @@ func TestGeminiStream_ParseLine_ToolUse_NewTools(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			events := parseGeminiLine(tt.line)
+			events := parseStreamJSONLine(tt.line)
 			if len(events) != 1 {
 				t.Fatalf("expected 1 event, got %d", len(events))
 				return
@@ -676,38 +619,9 @@ func TestGeminiStream_ParseLine_ToolUse_NewTools(t *testing.T) {
 	}
 }
 
-func TestBuildGeminiStreamArgs_Minimal(t *testing.T) {
-	req := ChatRequest{
-		Prompt: "hello",
-	}
-	args := buildGeminiStreamArgs(req)
-
-	expected := []string{"--prompt", "hello", "--output-format", "stream-json", "--yolo"}
-	if len(args) != len(expected) {
-		t.Fatalf("expected %d args, got %d: %v", len(expected), len(args), args)
-		return
-	}
-	for i, v := range expected {
-		if args[i] != v {
-			t.Errorf("arg %d: expected %q, got %q", i, v, args[i])
-		}
-	}
-}
-
-func TestGeminiStream_GetCapturedSessionID_AlwaysEmpty(t *testing.T) {
-	// Gemini always returns "" for GetCapturedSessionID since it uses --resume latest
-	parser := &GeminiStreamParser{}
-	assert.Equal(t, "", parser.GetCapturedSessionID())
-
-	// Even after parsing an init event with session_id
-	ch := make(chan StreamEvent, 10)
-	parser.ParseLine(`{"type":"init","session_id":"sess-123","model":"gemini-2.5"}`, ch)
-	assert.Equal(t, "", parser.GetCapturedSessionID(), "Gemini GetCapturedSessionID should always return empty")
-}
-
-func TestGeminiStream_ErrorEmptyMessage(t *testing.T) {
+func TestStreamJSON_ErrorEmptyMessage(t *testing.T) {
 	// Error event with empty message should not produce any event
-	parser := &GeminiStreamParser{}
+	parser := &StreamJSONParser{}
 	ch := make(chan StreamEvent, 10)
 	parser.ParseLine(`{"type":"error","severity":"error","message":""}`, ch)
 
@@ -719,9 +633,9 @@ func TestGeminiStream_ErrorEmptyMessage(t *testing.T) {
 	}
 }
 
-func TestGeminiStream_ToolResultEmptyToolID(t *testing.T) {
+func TestStreamJSON_ToolResultEmptyToolID(t *testing.T) {
 	// tool_result with empty tool_id should be skipped
-	parser := &GeminiStreamParser{}
+	parser := &StreamJSONParser{}
 	ch := make(chan StreamEvent, 10)
 	parser.ParseLine(`{"type":"tool_result","tool_id":"","output":"result","status":"success"}`, ch)
 
@@ -731,39 +645,4 @@ func TestGeminiStream_ToolResultEmptyToolID(t *testing.T) {
 	default:
 		// expected
 	}
-}
-
-func TestBuildGeminiStreamArgs_WithSystemPrompt(t *testing.T) {
-	req := ChatRequest{
-		Prompt:       "hello",
-		SystemPrompt: "you are helpful",
-	}
-	args := buildGeminiStreamArgs(req)
-
-	// Gemini injects system prompt into the user prompt
-	found := false
-	for _, arg := range args {
-		if arg == "[System Instructions: you are helpful]\n\nhello" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("expected system prompt injection in args, got %v", args)
-	}
-}
-
-func TestBuildGeminiStreamArgs_NoSystemPrompt(t *testing.T) {
-	req := ChatRequest{
-		Prompt: "hello",
-	}
-	args := buildGeminiStreamArgs(req)
-
-	// Without system prompt, the prompt is passed as-is
-	for _, arg := range args {
-		if arg == "hello" {
-			return
-		}
-	}
-	t.Errorf("expected plain prompt 'hello' in args, got %v", args)
 }

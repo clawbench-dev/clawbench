@@ -17,7 +17,7 @@ import (
 // --- Test 1: BackendRegistry ---
 
 func TestBackendRegistry_ContainsAllBackends(t *testing.T) {
-	expectedIDs := []string{"claude", "codebuddy", "opencode", "gemini", "codex", "qoder", "vecli", "deepseek", "pi", "cline", "kimi", "copilot", "mimo"}
+	expectedIDs := []string{"claude", "codebuddy", "opencode", "codex", "qoder", "vecli", "deepseek", "pi", "cline", "kimi", "copilot", "mimo"}
 	assert.Len(t, model.BackendRegistry, len(expectedIDs))
 
 	seen := make(map[string]bool)
@@ -51,7 +51,6 @@ func TestBackendRegistry_SpecificValues(t *testing.T) {
 	assert.Equal(t, "claude", specs["claude"].DefaultCmd)
 	assert.Equal(t, "codebuddy", specs["codebuddy"].DefaultCmd)
 	assert.Equal(t, "opencode", specs["opencode"].DefaultCmd)
-	assert.Equal(t, "gemini", specs["gemini"].DefaultCmd)
 	assert.Equal(t, "codex", specs["codex"].DefaultCmd)
 	assert.Equal(t, "qodercli", specs["qoder"].DefaultCmd)
 	assert.Equal(t, "vecli", specs["vecli"].DefaultCmd)
@@ -249,7 +248,7 @@ func TestBackendRegistry_ModelDiscoveryConfig(t *testing.T) {
 	assert.NotNil(t, specs["pi"].DiscoverModelsFunc, "pi should have DiscoverModelsFunc")
 	assert.Empty(t, specs["pi"].ListModelsCmd, "pi should not have ListModelsCmd")
 	assert.NotNil(t, specs["claude"].DiscoverModelsFunc, "claude should have DiscoverModelsFunc")
-	assert.NotNil(t, specs["gemini"].DiscoverModelsFunc, "gemini should have DiscoverModelsFunc")
+	assert.NotNil(t, specs["kimi"].DiscoverModelsFunc, "kimi should have DiscoverModelsFunc")
 	assert.NotNil(t, specs["codex"].DiscoverModelsFunc, "codex should have DiscoverModelsFunc")
 	assert.NotNil(t, specs["qoder"].DiscoverModelsFunc, "qoder should have DiscoverModelsFunc")
 	assert.NotNil(t, specs["vecli"].DiscoverModelsFunc, "vecli should have DiscoverModelsFunc")
@@ -493,33 +492,7 @@ func TestSyncDiscoverModels_CoversClaudeDiscoverModelsFunc(t *testing.T) {
 	t.Logf("claude discovered %d models via SyncDiscoverModels", len(models))
 }
 
-// --- Test 9b: Gemini/Codex/Qoder/VeCLI model discovery integration ---
-
-func TestDiscoverGeminiModels_WithRealCLI(t *testing.T) {
-	if !model.CheckCLIExists("gemini") {
-		t.Skip("gemini not installed, skipping integration test")
-	}
-
-	models := model.DiscoverGeminiModels()
-	if len(models) == 0 {
-		t.Skip("gemini model discovery returned no models")
-	}
-
-	for _, m := range models {
-		assert.True(t, strings.HasPrefix(m.ID, "gemini-"), "model ID should start with gemini-, got: %s", m.ID)
-		assert.NotEmpty(t, m.Name, "model should have a name")
-	}
-	assert.True(t, models[0].Default, "first model should be default")
-
-	for _, m := range models {
-		assert.NotContains(t, m.ID, "auto-gemini-", "should not contain auto-gemini aliases")
-	}
-
-	t.Logf("Discovered %d Gemini models:", len(models))
-	for _, m := range models {
-		t.Logf("  %s (%s) default=%v", m.ID, m.Name, m.Default)
-	}
-}
+// --- Test 9b: Codex/Qoder/VeCLI model discovery integration ---
 
 func TestDiscoverCodexModels_WithRealCLI(t *testing.T) {
 	if !model.CheckCLIExists("codex") {
@@ -839,11 +812,6 @@ func TestDiscoverQoderModels_NoInstall(t *testing.T) {
 			t.Log("qodercli not installed, DiscoverQoderModels returned nil (expected)")
 		}
 	}
-}
-
-func TestDiscoverGeminiModels_NoInstall(t *testing.T) {
-	models := model.DiscoverGeminiModels()
-	t.Logf("DiscoverGeminiModels returned %d models", len(models))
 }
 
 func TestDiscoverClaudeModels_NoInstall(t *testing.T) {

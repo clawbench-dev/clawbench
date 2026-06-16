@@ -245,7 +245,7 @@ func TestGetRemaps_UnknownKey(t *testing.T) {
 }
 
 func TestGetRemaps_EmptyMaps(t *testing.T) {
-	emptyKeys := []string{"claude_acp", "codebuddy_acp", "gemini_acp"}
+	emptyKeys := []string{"claude_acp", "codebuddy_acp", "kimi_acp"}
 	for _, key := range emptyKeys {
 		t.Run(key, func(t *testing.T) {
 			remaps := getRemaps(key)
@@ -261,13 +261,13 @@ func TestGetRemaps_CliKeysRemapEntries(t *testing.T) {
 		fromField string
 		toField   string
 	}{
-		// gemini_cli
-		{"gemini_cli", "dirPath", "path"},
-		{"gemini_cli", "dir_path", "path"},
-		{"gemini_cli", "allow_multiple", "replace_all"},
-		{"gemini_cli", "is_background", "run_in_background"},
-		{"gemini_cli", "include_pattern", "glob"},
-		{"gemini_cli", "name", "skill"},
+		// kimi_cli
+		{"kimi_cli", "dirPath", "path"},
+		{"kimi_cli", "dir_path", "path"},
+		{"kimi_cli", "allow_multiple", "replace_all"},
+		{"kimi_cli", "is_background", "run_in_background"},
+		{"kimi_cli", "include_pattern", "glob"},
+		{"kimi_cli", "name", "skill"},
 		// opencode_cli
 		{"opencode_cli", "oldString", "old_string"},
 		{"opencode_cli", "newString", "new_string"},
@@ -374,9 +374,9 @@ func TestNormalizeToolInput_GenericAcpRemaps(t *testing.T) {
 	assert.Nil(t, parsed["cellType"])
 }
 
-func TestNormalizeToolInput_GeminiCliRemaps(t *testing.T) {
+func TestNormalizeToolInput_KimiCliRemaps(t *testing.T) {
 	input := json.RawMessage(`{"dirPath":"./src","dir_path":"./lib","allow_multiple":true,"is_background":true,"include_pattern":"*.go","name":"my_skill"}`)
-	remaps := getRemaps("gemini_cli")
+	remaps := getRemaps("kimi_cli")
 	norm, err := normalizeToolInput(input, remaps)
 	require.NoError(t, err)
 

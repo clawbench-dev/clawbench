@@ -114,11 +114,11 @@ IF EXIST "%dp0%\node.exe" (
 	}
 }
 
-func TestResolveCmdWrapper_GeminiStyleCmd(t *testing.T) {
+func TestResolveCmdWrapper_KimiStyleCmd(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Gemini uses bundle/gemini as the entry point
-	pkgDir := filepath.Join(tmpDir, "node_modules", "@google", "gemini-cli", "bundle")
+	pkgDir := filepath.Join(tmpDir, "node_modules", "@google", "kimi-cli", "bundle")
 	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -136,10 +136,10 @@ EXIT /b %ERRORLEVEL%
 SETLOCAL
 CALL :find_dp0
 IF EXIST "%dp0%\node.exe" (
-  "%dp0%\node.exe"  "%dp0%\node_modules\@google\gemini-cli\bundle\gemini" %*
+  "%dp0%\node.exe"  "%dp0%\node_modules\@google\kimi-cli\bundle\gemini" %*
 ) ELSE (
   SET PATHEXT=%PATHEXT:;.JS;=;%
-  node  "%dp0%\node_modules\@google\gemini-cli\bundle\gemini" %*
+  node  "%dp0%\node_modules\@google\kimi-cli\bundle\gemini" %*
 )
 `
 	cmdFile := filepath.Join(tmpDir, "gemini.cmd")
@@ -152,7 +152,7 @@ IF EXIST "%dp0%\node.exe" (
 		t.Fatal("expected non-empty result from resolveCmdWrapper")
 	}
 
-	expected := filepath.Join(tmpDir, "node_modules", "@google", "gemini-cli", "bundle", "gemini")
+	expected := filepath.Join(tmpDir, "node_modules", "@google", "kimi-cli", "bundle", "gemini")
 	if result != expected {
 		t.Errorf("resolveCmdWrapper returned %q, want %q", result, expected)
 	}
@@ -249,8 +249,8 @@ func TestCmdEntryRe(t *testing.T) {
 		},
 		{
 			name:     "gemini style",
-			input:    `  node  "%dp0%\node_modules\@google\gemini-cli\bundle\gemini" %*`,
-			expected: `@google\gemini-cli\bundle\gemini`,
+			input:    `  node  "%dp0%\node_modules\@google\kimi-cli\bundle\gemini" %*`,
+			expected: `@google\kimi-cli\bundle\gemini`,
 		},
 		{
 			name:     "codex style",

@@ -52,17 +52,6 @@ func requireCLIAvailable(t *testing.T, cliName string) {
 	}
 }
 
-// requireGeminiEnv ensures the Gemini CLI can run in the test environment.
-// Gemini CLI requires trusted directories; set GEMINI_CLI_TRUST_WORKSPACE=true
-// if not already set.
-func requireGeminiEnv(t *testing.T) {
-	t.Helper()
-	requireCLIAvailable(t, "gemini")
-	if os.Getenv("GEMINI_CLI_TRUST_WORKSPACE") == "" {
-		t.Setenv("GEMINI_CLI_TRUST_WORKSPACE", "true")
-	}
-}
-
 // requireCodexEnv ensures the Codex CLI can actually run. Codex requires specific
 // environment setup (API keys loaded from .env, profile configuration).
 // It loads the project .env file and runs a smoke test with --profile m27
@@ -187,7 +176,7 @@ func extractSessionID(events []StreamEvent) string {
 			return e.Content
 		}
 	}
-	// Fallback to metadata session ID (Claude/Codebuddy/Gemini)
+	// Fallback to metadata session ID (Claude/Codebuddy/Kimi)
 	for _, e := range events {
 		if e.Type == "metadata" && e.Meta != nil && e.Meta.SessionID != "" {
 			return e.Meta.SessionID
@@ -259,42 +248,6 @@ func TestIntegration_Codebuddy_NewSession(t *testing.T) {
 	// AutoResumeBackend now forwards the "done" event
 	doneEvents := findEvents(events, "done")
 	assert.NotEmpty(t, doneEvents, "should receive 'done' event from AutoResumeBackend")
-
-	errorEvents := findEvents(events, "error")
-	assert.Empty(t, errorEvents, "should not have error events")
-}
-
-func TestIntegration_Gemini_NewSession(t *testing.T) {
-	requireGeminiEnv(t)
-	backend, err := NewBackend("gemini")
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:  "说一个字：好",
-		WorkDir: testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events := collectAllEvents(t, ch, 90*time.Second)
-
-	contentEvents := findEvents(events, "content")
-	if len(contentEvents) == 0 {
-		// Gemini CLI may fail to produce content due to network issues
-		warningEvents := findEvents(events, "warning")
-		t.Skipf("gemini produced no content events (likely network issue); warnings: %d, event types: %v",
-			len(warningEvents), eventTypes(events))
-	}
-
-	requireEventSequence(t, events, "content", "metadata")
-	content := concatContent(events)
-	assert.NotEmpty(t, content, "should receive content from gemini")
-
-	metaEvents := findEvents(events, "metadata")
-	require.NotEmpty(t, metaEvents, "should have metadata event")
-	assert.NotEmpty(t, metaEvents[0].Meta.Model, "metadata should contain model name")
 
 	errorEvents := findEvents(events, "error")
 	assert.Empty(t, errorEvents, "should not have error events")
@@ -418,38 +371,6 @@ func TestIntegration_Codebuddy_StreamEvents(t *testing.T) {
 
 	rawEvents := findEvents(events, "raw_output")
 	assert.NotEmpty(t, rawEvents, "should have raw_output event")
-}
-
-func TestIntegration_Gemini_StreamEvents(t *testing.T) {
-	requireGeminiEnv(t)
-	backend, err := NewBackend("gemini")
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:  "1+1等于几？只回答数字",
-		WorkDir: testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events := collectAllEvents(t, ch, 90*time.Second)
-
-	contentEvents := findEvents(events, "content")
-	if len(contentEvents) == 0 {
-		// Gemini CLI may fail to produce content due to network issues (ECONNRESET, etc.)
-		warningEvents := findEvents(events, "warning")
-		errorEvents := findEvents(events, "error")
-		t.Skipf("gemini produced no content events (likely network issue); warnings: %d, errors: %d, event types: %v",
-			len(warningEvents), len(errorEvents), eventTypes(events))
-	}
-	assert.NotEmpty(t, contentEvents, "should have content events")
-
-	metaEvents := findEvents(events, "metadata")
-	require.NotEmpty(t, metaEvents)
-	// Gemini result event provides DurationMs
-	assert.NotZero(t, metaEvents[0].Meta.DurationMs, "gemini metadata should contain DurationMs")
 }
 
 func TestIntegration_OpenCode_StreamEvents(t *testing.T) {
@@ -1006,33 +927,6 @@ func TestIntegration_Codebuddy_CancelMidStream(t *testing.T) {
 	assert.NotEmpty(t, contentEvents, "should have received at least one content before cancel")
 }
 
-func TestIntegration_Gemini_CancelMidStream(t *testing.T) {
-	requireGeminiEnv(t)
-	backend, err := NewBackend("gemini")
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:  "写一篇500字的文章，主题是春天的花园",
-		WorkDir: testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events := cancelOnFirstContent(t, ch, cancel)
-	contentEvents := findEvents(events, "content")
-	if len(contentEvents) == 0 {
-		// Gemini CLI may fail to produce content due to network issues (ECONNRESET, etc.)
-		// This is an infrastructure issue, not a code bug.
-		warningEvents := findEvents(events, "warning")
-		errorEvents := findEvents(events, "error")
-		t.Skipf("gemini produced no content before cancel (likely network issue); warnings: %d, errors: %d, event types: %v",
-			len(warningEvents), len(errorEvents), eventTypes(events))
-	}
-	assert.NotEmpty(t, contentEvents, "should have received at least one content before cancel")
-}
-
 func TestIntegration_OpenCode_CancelMidStream(t *testing.T) {
 	requireCLIAvailable(t, "opencode")
 	backend, err := NewBackend("opencode")
@@ -1111,7 +1005,6 @@ func TestIntegration_InvalidWorkDir(t *testing.T) {
 	}{
 		{"claude", "claude"},
 		{"codebuddy", "codebuddy"},
-		{"gemini", "gemini"},
 		{"opencode", "opencode"},
 		{"vecli", "vecli"},
 	}
@@ -1303,41 +1196,6 @@ func TestIntegration_Codebuddy_SystemPromptInjection(t *testing.T) {
 	content := concatContent(events)
 	if !strings.Contains(content, marker) {
 		t.Logf("codebuddy did not include marker %q in response — AI compliance is non-deterministic; content: %s", marker, truncate(content, 200))
-	}
-}
-
-func TestIntegration_Gemini_SystemPromptInjection(t *testing.T) {
-	requireGeminiEnv(t)
-	backend, err := NewBackend("gemini")
-	require.NoError(t, err)
-
-	// Gemini CLI has no --system-prompt flag; prompt is injected as [System Instructions: ...]
-	const marker = "INTEGRATION_TEST_MARKER_W4M2"
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	// Set ChatSystemPromptInterval so ShouldInjectSystemPrompt returns true on first message
-	model.ChatSystemPromptInterval = 10
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:       "请重复以下标记：" + marker,
-		WorkDir:      testWorkDir(),
-		SystemPrompt: "你必须在你回复的开头包含标记 " + marker + "，这是系统级要求",
-	})
-	require.NoError(t, err)
-
-	events := collectAllEvents(t, ch, 90*time.Second)
-	requireEventSequence(t, events, "content", "metadata")
-
-	// Check that system instructions were injected into the prompt (raw_output or args)
-	// Gemini injects as "[System Instructions: ...]" prefix in the --prompt arg
-	metaEvents := findEvents(events, "metadata")
-	assert.NotEmpty(t, metaEvents, "should complete with metadata event")
-
-	// Best-effort check
-	content := concatContent(events)
-	if !strings.Contains(content, marker) {
-		t.Logf("gemini did not include marker %q in response — AI compliance is non-deterministic; content: %s", marker, truncate(content, 200))
 	}
 }
 

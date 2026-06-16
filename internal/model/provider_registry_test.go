@@ -75,7 +75,7 @@ func setupProviderModels(t *testing.T) {
 
 func TestProviderRegistry_ContainsAllWizardReadyProviders(t *testing.T) {
 	expectedProviders := []string{
-		"openai", "anthropic", "google", "deepseek", "groq",
+		"openai", "anthropic", "deepseek", "groq",
 		"openrouter", "cerebras", "xai", "mistral", "fireworks",
 		"minimax", "minimax-cn", "kimi-coding", "moonshotai", "moonshotai-cn",
 		"xiaomi", "xiaomi-token-plan-cn", "xiaomi-token-plan-ams", "xiaomi-token-plan-sgp",
@@ -165,7 +165,7 @@ func TestProviderRegistry_OpenAIFormatProvidersHaveEndpoints(t *testing.T) {
 		"openai", "deepseek", "groq", "openrouter", "cerebras", "xai",
 		"mistral", "moonshotai", "moonshotai-cn", "xiaomi",
 		"xiaomi-token-plan-cn", "xiaomi-token-plan-ams", "xiaomi-token-plan-sgp",
-		"zai", "huggingface", "opencode", "google",
+		"zai", "huggingface", "opencode",
 	}
 
 	for _, id := range openaiProviders {
@@ -247,11 +247,11 @@ func TestGetSummarizeModelHint_V1Models(t *testing.T) {
 
 func TestGetSummarizeModelHint_V1Models_FlashKeyword(t *testing.T) {
 	models := []ModelInfo{
-		{ID: "gemini-2.5-pro", Name: "Gemini 2.5 Pro"},
-		{ID: "gemini-2.5-flash", Name: "Gemini 2.5 Flash"},
+		{ID: "deepseek-chat", Name: "DeepSeek Chat"},
+		{ID: "deepseek-flash", Name: "DeepSeek Flash"},
 	}
 	hint := GetSummarizeModelHint(nil, models)
-	assert.Equal(t, "gemini-2.5-flash", hint, "should pick model matching 'flash' keyword")
+	assert.Equal(t, "deepseek-flash", hint, "should pick model matching 'flash' keyword")
 }
 
 func TestGetSummarizeModelHint_V1Models_NoMatchFallsToFirst(t *testing.T) {
@@ -263,13 +263,13 @@ func TestGetSummarizeModelHint_V1Models_NoMatchFallsToFirst(t *testing.T) {
 	assert.Equal(t, "some-model-1", hint, "should fall back to first model when no keywords match")
 }
 
-func TestGetSummarizeModelHint_V1Models_MiniDoesNotMatchGemini(t *testing.T) {
+func TestGetSummarizeModelHint_V1Models_MiniDoesNotMatchPartial(t *testing.T) {
 	models := []ModelInfo{
-		{ID: "gemini-2.5-pro", Name: "Gemini 2.5 Pro"},
-		{ID: "gemini-2.5-flash", Name: "Gemini 2.5 Flash"},
+		{ID: "deepseek-chat", Name: "DeepSeek Chat"},
+		{ID: "deepseek-flash", Name: "DeepSeek Flash"},
 	}
 	hint := GetSummarizeModelHint(nil, models)
-	assert.Equal(t, "gemini-2.5-flash", hint, "should pick flash model, not match 'mini' inside 'gemini'")
+	assert.Equal(t, "deepseek-flash", hint, "should pick flash model, not match 'mini' inside partial word")
 }
 
 func TestGetSummarizeModelHint_V1Models_MiniMatchesHyphenated(t *testing.T) {

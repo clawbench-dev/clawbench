@@ -62,7 +62,7 @@ func buildBaseStreamArgs(req ChatRequest, extraFlags func(ChatRequest) []string)
 
 // injectSystemPrompt prepends the system prompt to req.Prompt when
 // ShouldInjectSystemPrompt returns true. Used by CLI backends that lack
-// a --system-prompt flag (gemini, opencode, codex, vecli).
+// a --system-prompt flag (opencode, codex, vecli, kimi).
 func injectSystemPrompt(req ChatRequest) string {
 	if !req.ShouldInjectSystemPrompt() {
 		return req.Prompt
@@ -76,7 +76,7 @@ func injectSystemPrompt(req ChatRequest) string {
 // Canonical names: Read, Write, Edit, Bash, Glob, Grep, LS, WebFetch, WebSearch,
 // Agent, EnterPlanMode, Skill, TodoWrite.
 //
-// The same mapping is used by gemini_stream.go and opencode_stream.go.
+// The same mapping is used by stream_json_parser.go and opencode_stream.go.
 //
 //nolint:gocyclo // complex stream parsing logic
 func normalizeToolName(toolName string) string {
@@ -173,14 +173,14 @@ func normalizeToolInput(rawInput []byte, pathMappings map[string]string) ([]byte
 }
 
 // perAgentInputRemaps maps agent key → field remap table for normalizeToolInput.
-// Keys are "agent_mode" format (e.g., "gemini_cli", "claude_acp").
+// Keys are "agent_mode" format (e.g., "kimi_cli", "claude_acp").
 // Each entry contains only agent-specific overrides; common mappings
 // (filePath→file_path, cmd→command, exec→command) are in defaultMappings.
 var perAgentInputRemaps = map[string]map[string]string{
 	// CLI layer
-	"gemini_cli": {
+	"kimi_cli": {
 		"dirPath":         "path",              // camelCase fallback
-		"dir_path":        "path",              // Gemini CLI outputs snake_case dir_path → canonical path (for Grep/Glob/LS)
+		"dir_path":        "path",              // Kimi CLI outputs snake_case dir_path → canonical path (for Grep/Glob/LS)
 		"allow_multiple":  "replace_all",       // Edit allow_multiple → replace_all
 		"is_background":   "run_in_background", // Bash is_background → run_in_background
 		"include_pattern": "glob",              // Grep include_pattern → canonical glob
@@ -207,7 +207,7 @@ var perAgentInputRemaps = map[string]map[string]string{
 	"claude_acp":    {}, // Claude ACP rawInput already uses snake_case
 	"opencode_acp":  {"oldString": "old_string", "newString": "new_string", "replaceAll": "replace_all"},
 	"codebuddy_acp": {},
-	"gemini_acp":    {}, // Gemini ACP has no rawInput; normalization done during inference
+	"kimi_acp":     {}, // Kimi ACP has no rawInput; normalization done during inference
 	"generic_acp": { // Full remap table for generic fallback path
 		"oldString": "old_string", "newString": "new_string",
 		"dirPath": "path", "filePath": "file_path",

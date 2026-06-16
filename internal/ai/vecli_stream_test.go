@@ -258,7 +258,7 @@ func TestVeCLISessionSummary_ExtractMetadata_MatchingModel(t *testing.T) {
 	raw := `{
 		"sessionMetrics": {
 			"models": {
-				"gemini-2.5-pro": {
+				"kimi-k2": {
 					"api": {"totalRequests": 1, "totalErrors": 0, "totalLatencyMs": 500},
 					"tokens": {"prompt": 300, "candidates": 150, "total": 450, "cached": 0, "thoughts": 0, "tool": 0}
 				},
@@ -275,8 +275,8 @@ func TestVeCLISessionSummary_ExtractMetadata_MatchingModel(t *testing.T) {
 	var summary VeCLISessionSummary
 	require.NoError(t, json.Unmarshal([]byte(raw), &summary))
 
-	meta := summary.extractMetadata("gemini-2.5-pro")
-	assert.Equal(t, "gemini-2.5-pro", meta.Model)
+	meta := summary.extractMetadata("kimi-k2")
+	assert.Equal(t, "kimi-k2", meta.Model)
 	assert.Equal(t, 300, meta.InputTokens)
 	assert.Equal(t, 150, meta.OutputTokens)
 	assert.Equal(t, 500, meta.DurationMs)

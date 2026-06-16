@@ -499,12 +499,12 @@ func TestSaveAgent_WithTransport(t *testing.T) {
 	db := setupTestDBForAgents(t)
 
 	agent := &model.Agent{
-		ID:         "gemini",
-		Name:       "Gemini",
-		Backend:    "gemini",
+		ID:         "kimi",
+		Name:       "Kimi",
+		Backend:    "kimi",
 		Source:     "auto",
 		Transport:  "acp-stdio",
-		AcpCommand: "gemini --acp",
+		AcpCommand: "kimi --acp",
 	}
 
 	err := service.SaveAgent(db, agent)
@@ -517,7 +517,7 @@ func TestSaveAgent_WithTransport(t *testing.T) {
 
 	got := agents[0]
 	assert.Equal(t, "acp-stdio", got.Transport)
-	assert.Equal(t, "gemini --acp", got.AcpCommand)
+	assert.Equal(t, "kimi --acp", got.AcpCommand)
 }
 
 func TestSaveAgent_TransportDefaultsToCLI(t *testing.T) {

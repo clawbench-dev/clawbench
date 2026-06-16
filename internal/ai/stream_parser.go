@@ -212,7 +212,7 @@ type StreamParser struct {
 	emittedToolInputEmpty map[string]bool
 }
 
-// GetCapturedSessionID returns empty string for Claude/Codebuddy/Gemini backends
+// GetCapturedSessionID returns empty string for Claude/Codebuddy/Kimi backends
 // which use ClawBench UUIDs natively and don't need external session ID mapping.
 func (p *StreamParser) GetCapturedSessionID() string { return "" }
 

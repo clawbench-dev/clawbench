@@ -10,7 +10,7 @@ import (
 
 func TestSupportsACP_WithAcpCommand(t *testing.T) {
 	agent := &model.Agent{
-		AcpCommand: "gemini --acp",
+		AcpCommand: "kimi --acp",
 	}
 	assert.True(t, agent.SupportsACP(), "agent with AcpCommand set should support ACP")
 }

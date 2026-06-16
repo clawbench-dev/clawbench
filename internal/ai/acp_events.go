@@ -301,7 +301,7 @@ func mapACPToolCall(tc acp.SessionUpdateToolCall) StreamEvent {
 	}
 
 	// Fallback: for execute-kind tools with no input from RawInput or Content,
-	// use the title as the command. Gemini CLI sends only title (e.g. "echo hello")
+	// use the title as the command. Kimi CLI sends only title (e.g. "echo hello")
 	// with no rawInput or content at all.
 	if tool.Input == "" && tc.Kind == acp.ToolKindExecute && tc.Title != "" {
 		input := map[string]any{"command": tc.Title}
@@ -310,8 +310,8 @@ func mapACPToolCall(tc acp.SessionUpdateToolCall) StreamEvent {
 		}
 	}
 
-	// Gemini ACP: extract input from locations and title for read/search tools.
-	// Gemini sends file paths in `locations` and search targets in `title`
+	// Kimi ACP: extract input from locations and title for read/search tools.
+	// Kimi sends file paths in `locations` and search targets in `title`
 	// instead of `rawInput`. Without this, the frontend shows empty tool bars.
 	if tool.Input == "" {
 		if input := extractInputFromLocationsAndTitle(tc.Locations, tc.Title, tc.Kind, string(tc.ToolCallId)); input != nil {
@@ -378,7 +378,7 @@ func extractInputFromContentUpdate(tcu acp.SessionToolCallUpdate) map[string]any
 }
 
 // extractInputFromLocationsAndTitle extracts tool input from ACP locations and title fields.
-// Gemini ACP sends file paths in `locations` (for read-kind tools) and search targets in `title`
+// Kimi ACP sends file paths in `locations` (for read-kind tools) and search targets in `title`
 // (for search-kind tools) instead of `rawInput`. Without this extraction, the frontend shows
 // empty tool bars with no summary text.
 //
@@ -392,7 +392,7 @@ func extractInputFromLocationsAndTitle(locations []acp.ToolCallLocation, title s
 
 	switch kind {
 	case acp.ToolKindRead:
-		// Read tools: extract file_path from locations (Gemini pattern)
+		// Read tools: extract file_path from locations (Kimi pattern)
 		if len(locations) > 0 {
 			input["file_path"] = locations[0].Path
 		} else if title != "" {
@@ -502,7 +502,7 @@ func mapToolCallInput(tcu acp.SessionToolCallUpdate, tool *ToolCall) {
 		return
 	}
 
-	// For execute-kind tools without RawInput, try title as command (Gemini CLI)
+	// For execute-kind tools without RawInput, try title as command (Kimi CLI)
 	// or Content terminal blocks. Do NOT extract text Content as description —
 	// that carries output, not input.
 	if tcu.Kind != nil && *tcu.Kind == acp.ToolKindExecute {
@@ -510,7 +510,7 @@ func mapToolCallInput(tcu acp.SessionToolCallUpdate, tool *ToolCall) {
 		return
 	}
 
-	// Gemini ACP: extract input from locations for read/search tools.
+	// Kimi ACP: extract input from locations for read/search tools.
 	mapToolCallInputFromLocations(tcu, tool)
 }
 
@@ -590,7 +590,7 @@ func mapToolCallOutput(tcu acp.SessionToolCallUpdate, tool *ToolCall) {
 }
 
 // extractACPToolOutputFromContent extracts human-readable output text from ACP
-// Content blocks. Gemini ACP sends tool results in Content blocks (text, terminal)
+// Content blocks. Kimi ACP sends tool results in Content blocks (text, terminal)
 // instead of RawOutput. This function joins text from all content blocks into a
 // single string, similar to how extractACPToolOutput works for RawOutput.
 func extractACPToolOutputFromContent(contents []acp.ToolCallContent) string {

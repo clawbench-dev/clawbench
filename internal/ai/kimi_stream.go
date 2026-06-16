@@ -2,7 +2,7 @@ package ai
 
 // buildKimiStreamArgs constructs the CLI arguments for Kimi streaming.
 // Kimi uses --print for non-interactive mode and --output-format stream-json
-// for streaming output (same format as Gemini CLI since Kimi is forked from it).
+// for streaming output (Kimi CLI is forked from Gemini CLI and uses the same stream-json format).
 func buildKimiStreamArgs(req ChatRequest) []string {
 	// Kimi CLI has no --system-prompt flag, so inject into the user prompt.
 	prompt := injectSystemPrompt(req)

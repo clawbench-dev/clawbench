@@ -5,9 +5,9 @@ import (
 	"log/slog"
 )
 
-// GeminiStreamMessage represents a single JSON line from `gemini --output-format stream-json`
+// StreamJSONMessage represents a single JSON line from stream-json format (Kimi CLI).
 // Fields are shared across event types — only relevant fields are populated per type.
-type GeminiStreamMessage struct {
+type StreamJSONMessage struct {
 	Type      string `json:"type"`       // "init", "message", "tool_use", "tool_result", "error", "result"
 	Timestamp string `json:"timestamp"`  // ISO 8601
 	SessionID string `json:"session_id"` // from init event
@@ -36,30 +36,30 @@ type GeminiStreamMessage struct {
 	Message  string `json:"message"`  // error message
 
 	// result event fields
-	Error *GeminiResultError `json:"error"` // only when status="error"
-	Stats *GeminiStreamStats `json:"stats"`
+	Error *ResultError   `json:"error"` // only when status="error"
+	Stats *StreamStats   `json:"stats"`
 }
 
-// GeminiResultError represents the error field in a result event
-type GeminiResultError struct {
+// ResultError represents the error field in a result event
+type ResultError struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
 }
 
-// GeminiStreamStats represents the stats field in a result event
-type GeminiStreamStats struct {
-	TotalTokens  int                          `json:"total_tokens"`
-	InputTokens  int                          `json:"input_tokens"`
-	OutputTokens int                          `json:"output_tokens"`
-	Cached       int                          `json:"cached"`
-	Input        int                          `json:"input"`
-	DurationMs   int                          `json:"duration_ms"`
-	ToolCalls    int                          `json:"tool_calls"`
-	Models       map[string]GeminiModelTokens `json:"models"`
+// StreamStats represents the stats field in a result event
+type StreamStats struct {
+	TotalTokens  int                    `json:"total_tokens"`
+	InputTokens  int                    `json:"input_tokens"`
+	OutputTokens int                    `json:"output_tokens"`
+	Cached       int                    `json:"cached"`
+	Input        int                    `json:"input"`
+	DurationMs   int                    `json:"duration_ms"`
+	ToolCalls    int                    `json:"tool_calls"`
+	Models       map[string]ModelTokens `json:"models"`
 }
 
-// GeminiModelTokens represents per-model token usage
-type GeminiModelTokens struct {
+// ModelTokens represents per-model token usage
+type ModelTokens struct {
 	TotalTokens  int `json:"total_tokens"`
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
@@ -67,24 +67,24 @@ type GeminiModelTokens struct {
 	Input        int `json:"input"`
 }
 
-// GeminiStreamParser parses JSON Lines output from `gemini --output-format stream-json`
-type GeminiStreamParser struct {
+// StreamJSONParser parses JSON Lines output from stream-json format (Kimi CLI).
+type StreamJSONParser struct {
 	sessionID string // captured from init event
 	model     string // captured from init event
 }
 
-// GetCapturedSessionID returns empty string for Gemini which uses --resume latest
-// and doesn't need external session ID mapping.
-func (p *GeminiStreamParser) GetCapturedSessionID() string { return "" }
+// GetCapturedSessionID implements LineParser — returns empty string
+// (session ID is captured internally for metadata but not exposed for external resume).
+func (p *StreamJSONParser) GetCapturedSessionID() string { return "" }
 
-// ParseLine parses a single JSON line from Gemini's stream-json output and sends
+// ParseLine parses a single JSON line from stream-json output and sends
 // StreamEvent(s) to the provided channel.
 //
 //nolint:gocognit,gocyclo // complex stream parsing logic
-func (p *GeminiStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
-	var msg GeminiStreamMessage
+func (p *StreamJSONParser) ParseLine(line string, ch chan<- StreamEvent) {
+	var msg StreamJSONMessage
 	if err := json.Unmarshal([]byte(line), &msg); err != nil {
-		slog.Debug("gemini stream: skipping unparseable line", "line", line, "error", err)
+		slog.Debug("stream-json parser: skipping unparseable line", "line", line, "error", err)
 		return
 	}
 
@@ -107,8 +107,8 @@ func (p *GeminiStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 	case "tool_use":
 		inputStr := "{}"
 		if len(msg.Parameters) > 0 {
-			// Normalize input field names from Gemini's camelCase to canonical snake_case
-			normalized, err := normalizeToolInput(msg.Parameters, map[string]string{"dirPath": "path"})
+			// Normalize input field names to canonical snake_case
+			normalized, err := normalizeToolInput(msg.Parameters, getRemaps("kimi_cli"))
 			if err != nil {
 				inputStr = string(msg.Parameters)
 			} else {
@@ -119,7 +119,7 @@ func (p *GeminiStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 			Name:  normalizeToolName(msg.ToolName),
 			ID:    msg.ToolID,
 			Input: inputStr,
-			Done:  true, // Gemini sends full tool input in one event
+			Done:  true, // stream-json format sends full tool input in one event
 		}}
 
 	case "tool_result":
@@ -167,35 +167,6 @@ func (p *GeminiStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 		ch <- StreamEvent{Type: "done"}
 
 	default:
-		slog.Debug("gemini stream: skipping unknown message type", "type", msg.Type)
+		slog.Debug("stream-json parser: skipping unknown message type", "type", msg.Type)
 	}
-}
-
-// buildGeminiStreamArgs constructs the CLI arguments for Gemini streaming
-func buildGeminiStreamArgs(req ChatRequest) []string {
-	// Gemini CLI has no --system-prompt flag, so inject into the user prompt.
-	prompt := injectSystemPrompt(req)
-
-	args := []string{
-		"--prompt", prompt,
-		"--output-format", "stream-json",
-		"--yolo",
-	}
-
-	// Resume previous session
-	if req.SessionID != "" && req.Resume {
-		args = append(args, "--resume", "latest")
-	}
-
-	// Working directory — use --include-directories for additional dirs
-	if req.WorkDir != "" {
-		args = append(args, "--include-directories", req.WorkDir)
-	}
-
-	// Model override
-	if req.Model != "" {
-		args = append(args, "--model", req.Model)
-	}
-
-	return args
 }

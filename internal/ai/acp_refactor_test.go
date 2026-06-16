@@ -778,7 +778,7 @@ func TestRefactor_ExtractACPModelListFromResume(t *testing.T) {
 		modelCat := acp.SessionConfigOptionCategoryModel
 		opts := acp.SessionConfigSelectOptions{
 			Ungrouped: &acp.SessionConfigSelectOptionsUngrouped{
-				{Value: "gemini-pro", Name: "Gemini Pro"},
+				{Value: "kimi-k2", Name: "Kimi K2"},
 			},
 		}
 		resp := &acp.ResumeSessionResponse{
@@ -788,7 +788,7 @@ func TestRefactor_ExtractACPModelListFromResume(t *testing.T) {
 						Category:     &modelCat,
 						Id:           "model",
 						Name:         "Model",
-						CurrentValue: "gemini-pro",
+						CurrentValue: "kimi-k2",
 						Options:      opts,
 					},
 				},
@@ -796,7 +796,7 @@ func TestRefactor_ExtractACPModelListFromResume(t *testing.T) {
 		}
 		ml := extractACPModelListFromResume(resp)
 		require.NotNil(t, ml)
-		assert.Equal(t, "gemini-pro", ml.CurrentModelID)
+		assert.Equal(t, "kimi-k2", ml.CurrentModelID)
 	})
 }
 

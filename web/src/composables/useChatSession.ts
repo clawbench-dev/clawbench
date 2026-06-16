@@ -448,7 +448,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (data.thinkingEffortState && data.thinkingEffortState.availableLevels?.length > 0) {
         updateAvailableThinkingEfforts(data.thinkingEffortState.availableLevels)
       } else if (data.agentId) {
-        // Fallback: agent config (e.g. OpenCode/Gemini ACP don't expose thought_level)
+        // Fallback: agent config (e.g. OpenCode/Kimi ACP don't expose thought_level)
         const agentLevels = getAgentThinkingEffortLevels(data.agentId)
         if (agentLevels.length > 0) {
           updateAvailableThinkingEfforts(agentLevels.map((id: string) => ({ id, name: id })))

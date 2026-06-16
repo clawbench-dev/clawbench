@@ -1005,7 +1005,6 @@ export default {
       summarizeApi: 'API Summary',
       summarizeClaude: 'Claude',
       summarizeCodebuddy: 'CodeBuddy',
-      summarizeGemini: 'Gemini',
       summarizeOpencode: 'OpenCode',
       summarizeCodex: 'Codex',
       summarizeQoder: 'Qoder',

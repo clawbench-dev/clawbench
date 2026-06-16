@@ -235,7 +235,7 @@ var validTTSEngines = map[string]bool{
 // validSummarizeBackends is the set of valid summarization backend values.
 var validSummarizeBackends = map[string]bool{
 	"simple": true, "api": true,
-	"claude": true, "codebuddy": true, "gemini": true,
+	"claude": true, "codebuddy": true,
 	"opencode": true, "codex": true, "qoder": true,
 	"vecli": true, "deepseek": true, "pi": true,
 	"mimo": true,
@@ -642,7 +642,7 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	if summarize, ok := patch["summarize"].(map[string]any); ok {
 		if v, ok := summarize["backend"].(string); ok && v != "" {
 			if !validSummarizeBackends[v] {
-				return fmt.Errorf("summarize.backend must be one of: simple,api,claude,codebuddy,gemini,opencode,codex,qoder,vecli,deepseek,pi,mimo")
+				return fmt.Errorf("summarize.backend must be one of: simple,api,claude,codebuddy,opencode,codex,qoder,vecli,deepseek,pi,mimo")
 			}
 		}
 		// Validate Summarize API sub-config

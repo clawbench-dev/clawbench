@@ -17,9 +17,9 @@ func TestKimiBackend_Fields(t *testing.T) {
 	assert.NotNil(t, b.filterLine, "kimi should have filterSkipNonJSON filter")
 	assert.Nil(t, b.preStart, "kimi does not use preStart")
 
-	// Verify parser is a GeminiStreamParser
+	// Verify parser is a StreamJSONParser
 	parser := b.newParser()
-	assert.IsType(t, &GeminiStreamParser{}, parser)
+	assert.IsType(t, &StreamJSONParser{}, parser)
 
 	// Verify filterLine skips non-JSON lines
 	line, ok := b.filterLine("")
@@ -38,12 +38,12 @@ func TestKimiBackend_Fields(t *testing.T) {
 	assert.False(t, ok, "non-JSON info line should be filtered")
 }
 
-// --- Kimi uses GeminiStreamParser. Test that Kimi's parser correctly
-// handles the Gemini-family stream-json output format. ---
+// --- Kimi uses StreamJSONParser. Test that Kimi's parser correctly
+// handles the stream-json stream-json output format. ---
 
 func TestKimiStreamParser_Init(t *testing.T) {
 	ch := make(chan StreamEvent, 64)
-	parser := &GeminiStreamParser{}
+	parser := &StreamJSONParser{}
 	line := `{"type":"init","timestamp":"2026-05-01T10:00:00.000Z","session_id":"kimi-sess-1","model":"moonshot-v1"}`
 	parser.ParseLine(line, ch)
 	close(ch)
@@ -58,7 +58,7 @@ func TestKimiStreamParser_Init(t *testing.T) {
 
 func TestKimiStreamParser_AssistantMessage(t *testing.T) {
 	ch := make(chan StreamEvent, 64)
-	parser := &GeminiStreamParser{}
+	parser := &StreamJSONParser{}
 	line := `{"type":"message","timestamp":"2026-05-01T10:00:01.000Z","role":"assistant","content":"Hello from Kimi!","delta":true}`
 	parser.ParseLine(line, ch)
 	close(ch)
@@ -75,7 +75,7 @@ func TestKimiStreamParser_AssistantMessage(t *testing.T) {
 
 func TestKimiStreamParser_UserMessageSkipped(t *testing.T) {
 	ch := make(chan StreamEvent, 64)
-	parser := &GeminiStreamParser{}
+	parser := &StreamJSONParser{}
 	line := `{"type":"message","timestamp":"2026-05-01T10:00:00.000Z","role":"user","content":"Read the file"}`
 	parser.ParseLine(line, ch)
 	close(ch)
@@ -90,7 +90,7 @@ func TestKimiStreamParser_UserMessageSkipped(t *testing.T) {
 
 func TestKimiStreamParser_AssistantEmptyContent(t *testing.T) {
 	ch := make(chan StreamEvent, 64)
-	parser := &GeminiStreamParser{}
+	parser := &StreamJSONParser{}
 	line := `{"type":"message","timestamp":"2026-05-01T10:00:01.000Z","role":"assistant","content":"","delta":true}`
 	parser.ParseLine(line, ch)
 	close(ch)
@@ -105,7 +105,7 @@ func TestKimiStreamParser_AssistantEmptyContent(t *testing.T) {
 
 func TestKimiStreamParser_ToolUse(t *testing.T) {
 	ch := make(chan StreamEvent, 64)
-	parser := &GeminiStreamParser{}
+	parser := &StreamJSONParser{}
 	line := `{"type":"tool_use","timestamp":"2026-05-01T10:00:02.000Z","tool_name":"read_file","tool_id":"call_k1","parameters":{"filePath":"main.go"}}`
 	parser.ParseLine(line, ch)
 	close(ch)
@@ -120,12 +120,12 @@ func TestKimiStreamParser_ToolUse(t *testing.T) {
 	require.NotNil(t, events[0].Tool)
 	assert.Equal(t, "Read", events[0].Tool.Name, "tool name should be normalized")
 	assert.Equal(t, "call_k1", events[0].Tool.ID)
-	assert.True(t, events[0].Tool.Done, "Gemini-format tool_use should have Done=true")
+	assert.True(t, events[0].Tool.Done, "Kimi-format tool_use should have Done=true")
 }
 
 func TestKimiStreamParser_ToolUseEmptyParams(t *testing.T) {
 	ch := make(chan StreamEvent, 64)
-	parser := &GeminiStreamParser{}
+	parser := &StreamJSONParser{}
 	line := `{"type":"tool_use","timestamp":"2026-05-01T10:00:02.000Z","tool_name":"list_files","tool_id":"call_k2"}`
 	parser.ParseLine(line, ch)
 	close(ch)
@@ -142,7 +142,7 @@ func TestKimiStreamParser_ToolUseEmptyParams(t *testing.T) {
 
 func TestKimiStreamParser_ToolResult(t *testing.T) {
 	ch := make(chan StreamEvent, 64)
-	parser := &GeminiStreamParser{}
+	parser := &StreamJSONParser{}
 	line := `{"type":"tool_result","timestamp":"2026-05-01T10:00:03.000Z","tool_id":"call_k1","status":"success","output":"file content"}`
 	parser.ParseLine(line, ch)
 	close(ch)
@@ -162,7 +162,7 @@ func TestKimiStreamParser_ToolResult(t *testing.T) {
 
 func TestKimiStreamParser_ToolResultEmptyToolID(t *testing.T) {
 	ch := make(chan StreamEvent, 64)
-	parser := &GeminiStreamParser{}
+	parser := &StreamJSONParser{}
 	line := `{"type":"tool_result","tool_id":"","output":"result","status":"success"}`
 	parser.ParseLine(line, ch)
 	close(ch)
@@ -177,7 +177,7 @@ func TestKimiStreamParser_ToolResultEmptyToolID(t *testing.T) {
 
 func TestKimiStreamParser_ErrorWarning(t *testing.T) {
 	ch := make(chan StreamEvent, 64)
-	parser := &GeminiStreamParser{}
+	parser := &StreamJSONParser{}
 	line := `{"type":"error","severity":"warning","message":"Loop detected"}`
 	parser.ParseLine(line, ch)
 	close(ch)
@@ -194,7 +194,7 @@ func TestKimiStreamParser_ErrorWarning(t *testing.T) {
 
 func TestKimiStreamParser_ErrorError(t *testing.T) {
 	ch := make(chan StreamEvent, 64)
-	parser := &GeminiStreamParser{}
+	parser := &StreamJSONParser{}
 	line := `{"type":"error","severity":"error","message":"Session expired"}`
 	parser.ParseLine(line, ch)
 	close(ch)
@@ -211,7 +211,7 @@ func TestKimiStreamParser_ErrorError(t *testing.T) {
 
 func TestKimiStreamParser_ErrorEmptyMessage(t *testing.T) {
 	ch := make(chan StreamEvent, 64)
-	parser := &GeminiStreamParser{}
+	parser := &StreamJSONParser{}
 	line := `{"type":"error","severity":"error","message":""}`
 	parser.ParseLine(line, ch)
 	close(ch)
@@ -226,7 +226,7 @@ func TestKimiStreamParser_ErrorEmptyMessage(t *testing.T) {
 
 func TestKimiStreamParser_ResultSuccess(t *testing.T) {
 	ch := make(chan StreamEvent, 64)
-	parser := &GeminiStreamParser{}
+	parser := &StreamJSONParser{}
 	line := `{"type":"result","timestamp":"2026-05-01T10:00:05.000Z","status":"success","stats":{"total_tokens":500,"input_tokens":400,"output_tokens":100,"cached":0,"input":400,"duration_ms":2000,"tool_calls":1,"models":{}}}`
 	parser.ParseLine(line, ch)
 	close(ch)
@@ -250,7 +250,7 @@ func TestKimiStreamParser_ResultSuccess(t *testing.T) {
 
 func TestKimiStreamParser_ResultError(t *testing.T) {
 	ch := make(chan StreamEvent, 64)
-	parser := &GeminiStreamParser{}
+	parser := &StreamJSONParser{}
 	line := `{"type":"result","status":"error","error":{"type":"FatalError","message":"API key invalid"},"stats":{"total_tokens":0,"input_tokens":0,"output_tokens":0,"cached":0,"input":0,"duration_ms":0,"tool_calls":0,"models":{}}}`
 	parser.ParseLine(line, ch)
 	close(ch)
@@ -275,7 +275,7 @@ func TestKimiStreamParser_ResultError(t *testing.T) {
 
 func TestKimiStreamParser_UnparseableLine(t *testing.T) {
 	ch := make(chan StreamEvent, 64)
-	parser := &GeminiStreamParser{}
+	parser := &StreamJSONParser{}
 	parser.ParseLine("not json at all", ch)
 	close(ch)
 
@@ -289,7 +289,7 @@ func TestKimiStreamParser_UnparseableLine(t *testing.T) {
 
 func TestKimiStreamParser_UnknownType(t *testing.T) {
 	ch := make(chan StreamEvent, 64)
-	parser := &GeminiStreamParser{}
+	parser := &StreamJSONParser{}
 	line := `{"type":"custom_event","timestamp":"2026-05-01T10:00:00.000Z"}`
 	parser.ParseLine(line, ch)
 	close(ch)
@@ -303,17 +303,17 @@ func TestKimiStreamParser_UnknownType(t *testing.T) {
 }
 
 func TestKimiStreamParser_GetCapturedSessionID(t *testing.T) {
-	parser := &GeminiStreamParser{}
-	assert.Equal(t, "", parser.GetCapturedSessionID(), "GeminiStreamParser always returns empty for GetCapturedSessionID")
+	parser := &StreamJSONParser{}
+	assert.Equal(t, "", parser.GetCapturedSessionID(), "StreamJSONParser always returns empty for GetCapturedSessionID")
 
 	// Even after parsing an init event with session_id
 	ch := make(chan StreamEvent, 10)
 	parser.ParseLine(`{"type":"init","session_id":"kimi-sess","model":"moonshot-v1"}`, ch)
-	assert.Equal(t, "", parser.GetCapturedSessionID(), "GetCapturedSessionID should always return empty for GeminiStreamParser")
+	assert.Equal(t, "", parser.GetCapturedSessionID(), "GetCapturedSessionID should always return empty for StreamJSONParser")
 }
 
 func TestKimiStreamParser_SessionIDCapture(t *testing.T) {
-	parser := &GeminiStreamParser{}
+	parser := &StreamJSONParser{}
 	ch := make(chan StreamEvent, 64)
 
 	// Init captures session ID and model
@@ -347,7 +347,7 @@ func TestKimiStreamParser_FullFlow(t *testing.T) {
 	}
 
 	ch := make(chan StreamEvent, 64)
-	parser := &GeminiStreamParser{}
+	parser := &StreamJSONParser{}
 	for _, line := range lines {
 		parser.ParseLine(line, ch)
 	}

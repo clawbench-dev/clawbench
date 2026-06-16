@@ -295,7 +295,7 @@ describe('taskChanged (semantic equality)', () => {
 
   it('returns true when agentId changes', () => {
     const task1 = { status: 'active', name: 'Test', cronExpr: '0 * * * *', agentId: 'claude' }
-    const task2 = { status: 'active', name: 'Test', cronExpr: '0 * * * *', agentId: 'gemini' }
+    const task2 = { status: 'active', name: 'Test', cronExpr: '0 * * * *', agentId: 'kimi' }
     expect(taskChanged(task1, task2)).toBe(true)
   })
 
