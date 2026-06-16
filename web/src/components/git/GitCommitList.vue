@@ -149,6 +149,7 @@ let touchStartY = 0
 let touchStartTime = 0
 
 function onTouchStart(e) {
+  if (props.mode === 'file') return // No graph to toggle in file mode
   touchStartX = e.touches[0].clientX
   touchStartY = e.touches[0].clientY
   touchStartTime = Date.now()
