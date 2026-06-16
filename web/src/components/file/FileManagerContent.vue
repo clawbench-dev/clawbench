@@ -94,12 +94,12 @@
       @touchend="onContainerTouchEnd"
       @touchcancel="onContainerTouchEnd"
     >
-      <div v-if="dirLoading" class="dir-loading-overlay">
-        <Loader :size="24" class="dir-loading-spinner" />
-        <span>{{ t('common.loading') }}</span>
-      </div>
-      <template v-else>
-      <div v-if="filteredEntries.length === 0" class="empty-state">
+      <Transition name="loading-fade">
+        <div v-if="dirLoading" class="loading-mask">
+          <div class="loading-mask-spinner"></div>
+        </div>
+      </Transition>
+      <div v-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
         <Folder :size="48" />
         <p>{{ currentDir ? t('file.emptyDir') : t('file.noFiles') }}</p>
       </div>
@@ -153,7 +153,6 @@
       <div v-if="hasMoreEntries" class="truncate-hint">
         {{ t('file.truncateHint', { max: MAX_VISIBLE_ENTRIES, total: filteredEntries.length }) }}
       </div>
-      </template>
     </div>
 
     <!-- File grid -->
@@ -165,12 +164,12 @@
       @touchend="onContainerTouchEnd"
       @touchcancel="onContainerTouchEnd"
     >
-      <div v-if="dirLoading" class="dir-loading-overlay">
-        <Loader :size="24" class="dir-loading-spinner" />
-        <span>{{ t('common.loading') }}</span>
-      </div>
-      <template v-else>
-      <div v-if="filteredEntries.length === 0" class="empty-state">
+      <Transition name="loading-fade">
+        <div v-if="dirLoading" class="loading-mask">
+          <div class="loading-mask-spinner"></div>
+        </div>
+      </Transition>
+      <div v-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
         <Folder :size="48" />
         <p>{{ currentDir ? t('file.emptyDir') : t('file.noFiles') }}</p>
       </div>
@@ -201,7 +200,6 @@
       <div v-if="hasMoreEntries" class="truncate-hint">
         {{ t('file.truncateHint', { max: MAX_VISIBLE_ENTRIES, total: filteredEntries.length }) }}
       </div>
-      </template>
     </div>
 
     <!-- Multi-select bottom action bar -->
@@ -291,9 +289,10 @@
 </template>
 
 <script setup>
+import '@/assets/loading-mask.css'
 import { ref, computed, reactive, inject, nextTick, onMounted, onUnmounted, Teleport, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Folder, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, FileText, HardDrive, Eye, EyeOff, Loader, FileImage, FileMusic, ChevronRight, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, FileVideo, Package, Upload, MoreHorizontal } from 'lucide-vue-next'
+import { Folder, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, FileText, HardDrive, Eye, EyeOff, FileImage, FileMusic, ChevronRight, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, FileVideo, Package, Upload, MoreHorizontal } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import {
   buildThumbUrl,
@@ -1094,6 +1093,7 @@ function doDelete() {
 
 /* ── File list area ── */
 .file-list {
+    position: relative;
     flex: 1;
     overflow-y: auto;
     padding: 4px 6px;
@@ -1322,31 +1322,9 @@ function doDelete() {
     flex-shrink: 0;
 }
 
-/* Loading overlay */
-.dir-loading-overlay {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 40px 20px;
-    color: var(--text-muted, #999);
-    font-size: 13px;
-}
-
-.dir-loading-spinner {
-    width: 24px;
-    height: 24px;
-    animation: dir-spin 1s linear infinite;
-}
-
-@keyframes dir-spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
-}
-
 /* ── File Grid ── */
 .file-grid {
+    position: relative;
     flex: 1;
     overflow-y: auto;
     padding: 8px;

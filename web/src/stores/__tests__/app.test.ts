@@ -57,6 +57,7 @@ describe('store', () => {
             store.state.currentDir = '/some/dir'
             store.state.dirEntries = [{ name: 'file.ts', type: 'file' }] as any
             store.state.dirLoading = true
+            store.state.fileLoading = true
             store.state.currentFile = { name: 'file.ts', path: '/file.ts' } as any
 
             store.resetProjectState()
@@ -64,6 +65,7 @@ describe('store', () => {
             expect(store.state.currentDir).toBe('')
             expect(store.state.dirEntries).toEqual([])
             expect(store.state.dirLoading).toBe(false)
+            expect(store.state.fileLoading).toBe(false)
             expect(store.state.currentFile).toBeNull()
         })
 
@@ -354,6 +356,52 @@ describe('store', () => {
             expect(result).toBe(false)
 
             vi.unstubAllGlobals()
+        })
+
+        it('sets fileLoading to true while loading a text file, then false', async () => {
+            let resolveFetch: (v: any) => void
+            const fetchPromise = new Promise(r => { resolveFetch = r })
+            const mockFetch = vi.fn().mockReturnValue(fetchPromise)
+            vi.stubGlobal('fetch', mockFetch)
+
+            const selectPromise = store.selectFile('/test.ts')
+
+            // While fetch is in flight, fileLoading should be true
+            expect(store.state.fileLoading).toBe(true)
+
+            // Resolve the fetch
+            resolveFetch!({
+                ok: true,
+                json: () => Promise.resolve({ name: 'test.ts', path: '/test.ts', content: 'hello' }),
+            })
+
+            await selectPromise
+
+            // After fetch completes, fileLoading should be false
+            expect(store.state.fileLoading).toBe(false)
+
+            vi.unstubAllGlobals()
+        })
+
+        it('resets fileLoading to false when selectFile fails', async () => {
+            const mockFetch = vi.fn().mockResolvedValue({
+                ok: false,
+                json: () => Promise.resolve({ error: 'not found' }),
+            })
+            vi.stubGlobal('fetch', mockFetch)
+
+            await store.selectFile('/missing.ts')
+
+            expect(store.state.fileLoading).toBe(false)
+
+            vi.unstubAllGlobals()
+        })
+
+        it('does not set fileLoading for media files (instant)', async () => {
+            await store.selectFile('/photo.jpg')
+
+            // Media files don't enter the try block, so fileLoading stays false
+            expect(store.state.fileLoading).toBe(false)
         })
     })
 

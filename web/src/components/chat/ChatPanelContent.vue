@@ -33,9 +33,9 @@
     />
 
     <!-- Session switching overlay — placed here to cover the entire message area -->
-    <Transition name="session-switch-fade">
-      <div v-if="session.switching.value" class="session-switch-overlay">
-        <div class="session-switch-spinner"></div>
+    <Transition name="loading-fade">
+      <div v-if="session.switching.value" class="loading-mask">
+        <div class="loading-mask-spinner"></div>
       </div>
     </Transition>
 
@@ -190,6 +190,7 @@ import { store } from '@/stores/app.ts'
 import { renderMarkdown } from '@/composables/useMarkdownRenderer.ts'
 import { useDialog } from '@/composables/useDialog'
 import { ChevronRight } from 'lucide-vue-next'
+import '@/assets/loading-mask.css'
 import { syncPendingFromBackend } from '@/utils/chatStreamUtils.ts'
 
 const { t } = useI18n()
@@ -918,42 +919,6 @@ onUnmounted(() => {
    the message+input area only (not the header above it). */
 :deep(.chat-panel-content) {
   position: relative;
-}
-
-/* Session switch overlay — covers the entire body area (messages + input) */
-.session-switch-overlay {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--bg-primary);
-  z-index: 5;
-  opacity: 0.85;
-}
-
-.session-switch-spinner {
-  width: 28px;
-  height: 28px;
-  border: 3px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: session-switch-spin 0.7s linear infinite;
-}
-
-@keyframes session-switch-spin {
-  to { transform: rotate(360deg); }
-}
-
-.session-switch-fade-enter-active {
-  transition: opacity 0.12s ease-out;
-}
-.session-switch-fade-leave-active {
-  transition: opacity 0.18s ease-in;
-}
-.session-switch-fade-enter-from,
-.session-switch-fade-leave-to {
-  opacity: 0;
 }
 
 /* Session swipe indicator — floats at top of message area */

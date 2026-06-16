@@ -79,6 +79,7 @@ interface AppState {
     currentDir: string
     dirEntries: DirEntry[]
     dirLoading: boolean
+    fileLoading: boolean
 
     // Current file
     currentFile: CurrentFile | null
@@ -125,6 +126,7 @@ const state = reactive<AppState>({
     currentDir: '',
     dirEntries: [],
     dirLoading: false,
+    fileLoading: false,
 
     // Current file
     currentFile: null,
@@ -188,6 +190,7 @@ function resetProjectState(): void {
     state.currentDir = ''
     state.dirEntries = []
     state.dirLoading = false
+    state.fileLoading = false
     state.currentFile = null
     useDirStack().resetStack()
     // Git
@@ -239,6 +242,7 @@ async function loadGitBranch(): Promise<{ isGit: boolean; branch: string; head: 
 // =============================================
 
 let loadFilesSeq = 0 // monotonic counter to suppress stale concurrent loads
+let selectFileSeq = 0 // monotonic counter to suppress stale concurrent file loads
 
 async function loadFiles(dir = ''): Promise<void> {
     const seq = ++loadFilesSeq // this call supersedes any earlier in-flight call
@@ -268,6 +272,7 @@ async function loadFiles(dir = ''): Promise<void> {
 }
 
 async function selectFile(path: string, isImageFile = false, isAudioFile = false, addToHistory = true, forceText = false): Promise<boolean> {
+    const seq = ++selectFileSeq // this call supersedes any earlier in-flight call
     const key = 'clawbenchLastFile_' + state.projectRoot
     if (key !== 'clawbenchLastFile_') localStorage.setItem(key, path)
 
@@ -361,6 +366,7 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
         // encoding issues: encodeURIComponent("/path") produces %2Fpath which
         // Go's ServeMux decodes back to /, making it look like a relative path.
         // Project-internal relative paths continue to use URL path encoding.
+        state.fileLoading = true
         const isAbsPath = path.startsWith('/')
         let url: string
         if (isAbsPath) {
@@ -413,6 +419,10 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
         // Show the error as a toast bubble instead.
         useToast().show((err as Error).message, { type: 'error', icon: '⚠️' })
         return false
+    } finally {
+        if (seq === selectFileSeq) {
+            state.fileLoading = false
+        }
     }
 }
 

@@ -12,6 +12,7 @@
           :toc-open="tocOpen"
           :search-open="searchOpen"
           :markdown-view-mode="markdownViewMode"
+          :external-loading="fileLoading"
           @delete="emit('delete', $event)"
           @show-details="emit('showDetails')"
           @open-git-history="emit('openGitHistory')"
@@ -23,6 +24,12 @@
           @overlay-close="emit('overlayClose')"
           @overlay-go-back="emit('overlayGoBack')"
         />
+        <!-- File loading mask — same style as chat session-switch -->
+        <Transition name="loading-fade">
+          <div v-if="fileLoading" class="loading-mask">
+            <div class="loading-mask-spinner"></div>
+          </div>
+        </Transition>
       </div>
 
       <!-- Drawers -->
@@ -56,6 +63,7 @@
 
 <script setup>
 import { ref, computed } from 'vue'
+import '@/assets/loading-mask.css'
 import FileViewer from '@/components/file/FileViewer.vue'
 import TocDrawer from '@/components/TocDrawer.vue'
 import SearchDrawer from '@/components/common/SearchDrawer.vue'
@@ -64,6 +72,7 @@ import GitHistoryDrawer from '@/components/git/GitHistoryDrawer.vue'
 const props = defineProps({
   overlayOpen: Boolean,
   currentFile: Object,
+  fileLoading: Boolean,
   tocOpen: Boolean,
   searchOpen: Boolean,
   markdownViewMode: String,
@@ -139,6 +148,7 @@ function handleContentClick(event) {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  position: relative;
 }
 </style>
 

@@ -28,9 +28,9 @@
     />
 
     <div class="file-viewer-content" ref="contentRef">
-      <!-- Loading -->
-      <div v-if="loading" class="loading">
-        <div class="spinner" />
+      <!-- Loading (suppressed when external loading mask is active to avoid double flash) -->
+      <div v-if="loading && !externalLoading" class="loading">
+        <div class="loading-spinner"></div>
       </div>
 
       <!-- Error -->
@@ -184,6 +184,7 @@ const props = defineProps({
     tocOpen: Boolean,
     searchOpen: Boolean,
     markdownViewMode: String,
+    externalLoading: Boolean,
 })
 const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'overlayGoBack'])
 
@@ -468,6 +469,19 @@ defineExpose({
     align-items: center;
     justify-content: center;
     padding: 40px;
+}
+
+.loading-spinner {
+    width: 28px;
+    height: 28px;
+    border: 3px solid var(--border-color);
+    border-top-color: var(--accent-color);
+    border-radius: 50%;
+    animation: loading-spin 0.7s linear infinite;
+}
+
+@keyframes loading-spin {
+    to { transform: rotate(360deg); }
 }
 
 .error-bubble {

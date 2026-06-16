@@ -65,6 +65,7 @@
                 ref="fileOverlayRef"
                 :overlay-open="fileNav.overlayOpen.value"
                 :current-file="currentFile"
+                :file-loading="store.state.fileLoading"
                 :toc-open="tocOpen"
                 :search-open="searchOpen"
                 :markdown-view-mode="markdownViewMode"

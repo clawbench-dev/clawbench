@@ -1,0 +1,35 @@
+/* Shared loading-mask overlay — used by ChatPanelContent, FileManagerContent, FileOverlay */
+.loading-mask {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary);
+  z-index: 5;
+  opacity: 0.85;
+}
+
+.loading-mask-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--border-color);
+  border-top-color: var(--accent-color);
+  border-radius: 50%;
+  animation: loading-mask-spin 0.7s linear infinite;
+}
+
+@keyframes loading-mask-spin {
+  to { transform: rotate(360deg); }
+}
+
+.loading-fade-enter-active {
+  transition: opacity 0.12s ease-out;
+}
+.loading-fade-leave-active {
+  transition: opacity 0.18s ease-in;
+}
+.loading-fade-enter-from,
+.loading-fade-leave-to {
+  opacity: 0;
+}
