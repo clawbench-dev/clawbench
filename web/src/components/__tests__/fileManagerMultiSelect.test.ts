@@ -197,7 +197,6 @@ const i18n = createI18n({
         sortClickToClear: '点击清除',
         hideHiddenFiles: '隐藏',
         showHiddenFiles: '显示隐藏',
-        syncToCurrentDir: '同步',
         uploadHere: '上传文件到当前目录',
         viewGrid: '网格视图',
         viewList: '列表视图',

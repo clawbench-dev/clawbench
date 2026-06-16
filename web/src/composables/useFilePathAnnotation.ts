@@ -534,8 +534,8 @@ export async function openFilePath(resolvedPath: string, lineStart?: number): Pr
     }
 
     // Before selecting the file, verify it actually exists.
-    // If it doesn't exist, avoid setting currentFile (which would trigger
-    // syncToCurrentFile to navigate to a non-existent directory).
+    // If it doesn't exist, avoid setting currentFile (which could lead to
+    // navigating to a non-existent directory).
     try {
         const resp = await fetch(`/api/file/batch-exists`, {
             method: 'POST',

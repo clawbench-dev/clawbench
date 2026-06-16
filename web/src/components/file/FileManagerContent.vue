@@ -54,10 +54,6 @@
               <Upload :size="14" />
               <span>{{ t('file.uploadHere') }}</span>
             </button>
-            <button class="toolbar-dropdown-item" :disabled="syncButtonDisabled" @click="syncToCurrentFile(); moreMenuOpen = false">
-              <ArrowRightLeft :size="14" />
-              <span>{{ t('file.syncToCurrentDir') }}</span>
-            </button>
             <button class="toolbar-dropdown-item" @click="viewMode = viewMode === 'grid' ? 'list' : 'grid'; moreMenuOpen = false">
               <LayoutGrid v-if="viewMode === 'list'" :size="14" />
               <LayoutList v-else :size="14" />
@@ -297,7 +293,7 @@
 <script setup>
 import { ref, computed, reactive, inject, nextTick, onMounted, onUnmounted, Teleport, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Folder, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, FileText, HardDrive, Eye, EyeOff, ArrowRightLeft, Loader, FileImage, FileMusic, ChevronRight, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, FileVideo, Package, Upload, MoreHorizontal } from 'lucide-vue-next'
+import { Folder, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, FileText, HardDrive, Eye, EyeOff, Loader, FileImage, FileMusic, ChevronRight, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, FileVideo, Package, Upload, MoreHorizontal } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { dirName } from '@/utils/path.ts'
 import {
@@ -418,30 +414,6 @@ function closeDropdowns(e) {
 
 onMounted(() => document.addEventListener('click', closeDropdowns))
 onUnmounted(() => document.removeEventListener('click', closeDropdowns))
-
-// Sync button: navigate to the directory of the currently opened file
-const isInSync = computed(() => {
-    if (!props.currentFile?.path) return false
-    // Don't consider "in sync" if the file has an error (e.g. doesn't exist)
-    if (props.currentFile.error) return false
-    return dirName(props.currentFile.path) === props.currentDir
-})
-
-// Sync button disabled state: no file selected or file has error (issue #166)
-const syncButtonDisabled = computed(() => !props.currentFile?.path || !!props.currentFile?.error)
-
-function syncToCurrentFile() {
-    if (!props.currentFile?.path) return
-    // Don't sync if the file has an error (e.g. doesn't exist) —
-    // navigating to its directory may lead to a non-existent path (issue #166)
-    if (props.currentFile.error) return
-    const targetDir = dirName(props.currentFile.path)
-    if (targetDir === props.currentDir) {
-        if (toast) toast.show(t('file.alreadyInDir'), { icon: '📍', type: 'success', duration: 1500 })
-        return
-    }
-    emit('navigateDir', targetDir)
-}
 
 // Helper: build item path from entry name
 function itemPath(name) {

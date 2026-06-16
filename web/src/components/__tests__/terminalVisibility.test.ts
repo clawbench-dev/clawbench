@@ -60,7 +60,6 @@ const i18n = createI18n({
         sortClickToClear: '点击清除',
         hideHiddenFiles: '隐藏',
         showHiddenFiles: '显示隐藏',
-        syncToCurrentDir: '同步',
         emptyDir: '此目录为空',
         noFiles: '未找到支持的文件',
         multiSelect: {
@@ -243,96 +242,6 @@ describe('overflowTabs — terminal exclusion logic', () => {
     expect(tabs.value).toContain('terminal')
     // The ref isn't mutable from outside the closure in this test setup,
     // but the logic itself is validated by the static tests above
-  })
-})
-
-// ============================================================
-// Part 4: syncToCurrentFile / isInSync with currentFile.error (issue #166)
-// ============================================================
-
-describe('FileManagerContent — syncToCurrentFile with error state', () => {
-  beforeEach(() => {
-    mockTerminalRuntimeEnabled.value = true
-    document.querySelectorAll('.context-menu').forEach(el => el.remove())
-    document.querySelectorAll('.ctx-overlay').forEach(el => el.remove())
-  })
-
-  function mountComponent(currentFile: any = null) {
-    return mount(FileManagerContent, {
-      props: {
-        entries: [],
-        currentDir: 'src',
-        currentFile,
-        showHidden: false,
-        sortField: '',
-        sortDir: '',
-        dirLoading: false,
-      },
-      attachTo: document.body,
-      global: {
-        plugins: [i18n],
-        stubs: {
-          SearchInput: true,
-          DirBreadcrumb: true,
-        },
-      },
-    })
-  }
-
-  it('syncButtonDisabled is true when currentFile has an error', async () => {
-    const wrapper = mountComponent({
-      path: 'src/deleted/File.ts',
-      name: 'File.ts',
-      error: 'File not found',
-    })
-    await nextTick()
-
-    // Access the computed property directly via vm
-    expect(wrapper.vm.syncButtonDisabled).toBe(true)
-  })
-
-  it('syncButtonDisabled is true when no currentFile', async () => {
-    const wrapper = mountComponent(null)
-    await nextTick()
-
-    expect(wrapper.vm.syncButtonDisabled).toBe(true)
-  })
-
-  it('syncButtonDisabled is false when currentFile has no error', async () => {
-    const wrapper = mountComponent({
-      path: 'src/main.go',
-      name: 'main.go',
-      content: 'package main',
-    })
-    await nextTick()
-
-    expect(wrapper.vm.syncButtonDisabled).toBe(false)
-  })
-
-  it('isInSync is false when currentFile has error', async () => {
-    const wrapper = mountComponent({
-      path: 'src/deleted/File.ts',
-      name: 'File.ts',
-      error: 'File not found',
-    })
-    await nextTick()
-
-    expect(wrapper.vm.isInSync).toBe(false)
-  })
-
-  it('does not emit navigateDir from syncToCurrentFile when currentFile has error', async () => {
-    const wrapper = mountComponent({
-      path: 'src/deleted/File.ts',
-      name: 'File.ts',
-      error: 'File not found',
-    })
-    await nextTick()
-
-    // Call syncToCurrentFile directly
-    wrapper.vm.syncToCurrentFile()
-    await nextTick()
-
-    expect(wrapper.emitted('navigateDir')).toBeUndefined()
   })
 })
 
