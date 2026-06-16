@@ -58,7 +58,7 @@
               <Download :size="14" />
               {{ t('common.download') }}
             </button>
-            <button class="dropdown-item" @click="handleDelete">
+            <button class="dropdown-item danger" @click="handleDelete">
               <Trash2 :size="14" />
               {{ t('common.delete') }}
             </button>
@@ -343,6 +343,16 @@ onBeforeUnmount(() => {
 }
 .file-header-dropdown-menu .dropdown-item svg {
     flex-shrink: 0;
+}
+.file-header-dropdown-menu .dropdown-item.danger {
+    color: #ef4444;
+}
+.file-header-dropdown-menu .dropdown-item.danger:hover {
+    background: #fef2f2;
+    color: #dc2626;
+}
+[data-theme="dark"] .file-header-dropdown-menu .dropdown-item.danger:hover {
+    background: #2d1b1b;
 }
 .file-header-dropdown-menu .wrap-check {
     margin-left: auto;

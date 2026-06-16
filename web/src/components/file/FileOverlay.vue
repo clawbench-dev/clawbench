@@ -12,7 +12,7 @@
           :toc-open="tocOpen"
           :search-open="searchOpen"
           :markdown-view-mode="markdownViewMode"
-          @delete="emit('delete')"
+          @delete="emit('delete', $event)"
           @show-details="emit('showDetails')"
           @open-git-history="emit('openGitHistory')"
           @toggle-toc="emit('toggleToc')"
