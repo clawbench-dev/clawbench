@@ -846,7 +846,18 @@ async function handleRename({ path, name }) {
 }
 
 async function handleDelete(path) {
+    const wasOverlay = fileNav.overlayOpen.value
     await store.deleteFile(path)
+    if (wasOverlay) {
+        if (fileNav.canGoBack.value) {
+            const prevPath = fileNav.goBack()
+            if (prevPath) {
+                await store.selectFile(prevPath)
+            }
+        } else {
+            handleOverlayClose()
+        }
+    }
 }
 
 async function handleBatchDelete(paths) {
