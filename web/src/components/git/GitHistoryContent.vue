@@ -26,6 +26,7 @@
       :count-label="mode === 'file' ? t('git.history.records') : t('git.history.commitRecords')"
       :selected-s-h-a="selectedSHA"
       :refresh-hint="refreshHint"
+      :mode="mode"
       @select="onCommitSelect"
       @search="onSearch"
       @load-more="loadMoreCommits"

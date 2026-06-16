@@ -26,7 +26,7 @@
         <RefreshCw :size="14" />
       </button>
       <button
-        v-if="isGit"
+        v-if="isGit && mode !== 'file'"
         class="drilldown-refresh-btn"
         :title="t('git.manage.title')"
         @click.stop="$emit('manage')"
@@ -61,16 +61,16 @@
       </div>
       <div v-else-if="commits.length === 0" class="git-history-empty">{{ t('git.commitList.noCommits') }}</div>
       <div v-else class="commit-list-container">
-        <!-- Graph SVG - hidden during search because filtering breaks lane continuity -->
+        <!-- Graph SVG - hidden during search or file mode (no multi-branch graph for single file) -->
         <GitGraph
-          v-if="!isSearching"
+          v-if="!isSearching && mode !== 'file'"
           class="commit-list-graph"
           :commits="filteredCommits"
           :row-height="64"
           :collapsed="graphCollapsed"
           @update:collapsed="graphCollapsed = $event"
         />
-        <div v-else class="commit-list-graph-hint">
+        <div v-else-if="isSearching" class="commit-list-graph-hint">
           <Info :size="14" />
         </div>
         <!-- Commit rows -->
@@ -130,6 +130,7 @@ const props = defineProps({
   searchPlaceholder: { type: String, default: '' },
   selectedSHA: { type: String, default: null },
   refreshHint: { type: Boolean, default: false },
+  mode: { type: String, default: 'project' }, // 'project' | 'file'
 })
 
 const emit = defineEmits(['select', 'search', 'load-more', 'init-git', 'refresh', 'manage'])
@@ -154,6 +155,7 @@ function onTouchStart(e) {
 }
 
 function onTouchEnd(e) {
+  if (props.mode === 'file') return // No graph to toggle in file mode
   const dx = e.changedTouches[0].clientX - touchStartX
   const dy = e.changedTouches[0].clientY - touchStartY
   const dt = Date.now() - touchStartTime

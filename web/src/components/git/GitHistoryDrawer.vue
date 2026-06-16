@@ -33,6 +33,7 @@
       :untracked="untracked"
       :count-label="mode === 'file' ? t('git.history.records') : t('git.history.commitRecords')"
       :selected-s-h-a="selectedSHA"
+      :mode="mode"
       @select="onCommitSelect"
       @search="onSearch"
       @load-more="loadMoreCommits"
