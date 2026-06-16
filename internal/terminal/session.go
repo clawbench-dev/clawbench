@@ -153,7 +153,7 @@ func (s *Session) readPTY(ctx context.Context) {
 			s.mu.Unlock()
 
 			if suppressed {
-				slog.Debug("terminal: output suppressed", slog.String("session", s.id), slog.Int("bytes", n))
+				// Output discarded; will be sent once suppressOutput clears
 			} else {
 				msg := ServerMessage{
 					Type: "output",
@@ -357,8 +357,6 @@ func (s *Session) HandleResize(cols, rows uint16) error {
 		Cols: cols,
 		Rows: rows,
 	})
-
-	slog.Debug("terminal: resize", slog.String("session", s.id), slog.Uint64("cols", uint64(cols)), slog.Uint64("rows", uint64(rows)), slog.Bool("suppressing", suppressing), slog.String("error", func() string { if err != nil { return err.Error() }; return "none" }()))
 
 	if suppressing {
 		// Cancel the safety timer since HandleResize was called normally
