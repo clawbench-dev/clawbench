@@ -26,6 +26,7 @@ vi.mock('@/stores/app', () => ({
     state: { projectRoot: '/home/user/project' },
     selectFile: vi.fn(),
     navigateToDir: vi.fn(),
+    pushDir: vi.fn(),
   },
 }))
 
@@ -1139,15 +1140,15 @@ describe('verifyFilePaths', () => {
 
 describe('openFilePath', () => {
   let mockSelectFile: ReturnType<typeof vi.fn>
-  let mockNavigateToDir: ReturnType<typeof vi.fn>
+  let mockPushDir: ReturnType<typeof vi.fn>
 
   beforeEach(async () => {
     clearVerifiedCache()
     const { store } = await import('@/stores/app')
     mockSelectFile = store.selectFile as ReturnType<typeof vi.fn>
-    mockNavigateToDir = store.navigateToDir as ReturnType<typeof vi.fn>
+    mockPushDir = store.pushDir as ReturnType<typeof vi.fn>
     mockSelectFile.mockClear()
-    mockNavigateToDir.mockClear()
+    mockPushDir.mockClear()
   })
 
   afterEach(() => {
@@ -1166,7 +1167,7 @@ describe('openFilePath', () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(1)
     expect(mockFetch.mock.calls[0][0]).toContain('/api/dir?path=')
-    expect(mockNavigateToDir).toHaveBeenCalledWith('src')
+    expect(mockPushDir).toHaveBeenCalledWith('src')
     expect(mockDispatchEvent).toHaveBeenCalled()
 
     window.dispatchEvent = origDispatch

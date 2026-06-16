@@ -51,6 +51,7 @@
                 :sort-dir="sortDir"
                 :dir-loading="store.state.dirLoading"
                 @navigate-dir="handleNavigateDir"
+                @navigate-back="handleNavigateBack"
                 @select-file="handleBrowseSelectFile"
                 @toggle-sort="handleToggleSort"
                 @toggle-hidden="toggleHidden"
@@ -329,6 +330,7 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   resetIdentity()
   resetAgents()
   fileNav.closeOverlay()
+  store.resetDirStack()
 
   // ── Phase 4: Change key → Vue destroys old component tree & builds new one ──
   projectKey.value = newProjectPath
@@ -351,8 +353,9 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   const lastFile = localStorage.getItem('clawbenchLastFile_' + store.state.projectRoot)
   if (lastFile && lastFile !== store.state.currentFile?.path) {
     const lastSlash = lastFile.lastIndexOf('/')
-    store.state.currentDir = lastSlash > 0 ? lastFile.slice(0, lastSlash) : ''
-    await store.loadFiles(store.state.currentDir)
+    const targetDir = lastSlash > 0 ? lastFile.slice(0, lastSlash) : ''
+    store.resetDirStack(targetDir)
+    await store.loadFiles(targetDir)
     await store.selectFile(lastFile)
     if (store.state.currentFile?.error) store.state.currentFile = null
   }
@@ -551,11 +554,20 @@ useFeatureBackHandler(
       const prevPath = fileNav.goBack()
       if (prevPath) store.selectFile(prevPath)
     } else {
+      // At stack bottom: close overlay and navigate directory to the
+      // current file's parent so the browse listing matches the file.
+      const filePath = store.state.currentFile?.path
       fileNav.closeOverlay()
       tocOpen.value = false
       detailsOpen.value = false
       searchOpen.value = false
       fileHistoryOpen.value = false
+      if (filePath) {
+        const targetDir = dirName(filePath)
+        if (targetDir !== store.state.currentDir) {
+          store.replaceDirTop(targetDir)
+        }
+      }
     }
   },
 )
@@ -772,9 +784,20 @@ function handleToggleSort(field) {
     setSetting('sortDir', sortDir.value)
 }
 
-async function handleNavigateDir(path) {
+async function handleNavigateDir(path, mode = 'push') {
     if (store.state.dirLoading) return
-    await store.navigateToDir(path)
+    if (mode === 'truncate') {
+        await store.truncateToDir(path)
+    } else if (mode === 'replace') {
+        await store.replaceDirTop(path)
+    } else {
+        await store.pushDir(path)
+    }
+}
+
+async function handleNavigateBack() {
+    if (store.state.dirLoading) return
+    await store.popDir()
 }
 
 async function handleSelectFile(path) {
@@ -803,11 +826,21 @@ async function handleTaskOpenFile(filePath, lineStart) {
 }
 
 function handleOverlayClose() {
+    // Remember the current file before closing (closeOverlay clears the stack)
+    const filePath = store.state.currentFile?.path
     fileNav.closeOverlay()
     tocOpen.value = false
     detailsOpen.value = false
     searchOpen.value = false
     fileHistoryOpen.value = false
+    // Navigate directory to the current file's parent so the browse
+    // listing shows the directory the user was actually viewing.
+    if (filePath) {
+        const targetDir = dirName(filePath)
+        if (targetDir !== store.state.currentDir) {
+            store.replaceDirTop(targetDir)
+        }
+    }
 }
 
 async function handleOverlayGoBack() {
@@ -1263,8 +1296,9 @@ onMounted(async () => {
     const lastFile = localStorage.getItem('clawbenchLastFile_' + store.state.projectRoot)
     if (lastFile && lastFile !== store.state.currentFile?.path) {
         const lastSlash = lastFile.lastIndexOf('/')
-        store.state.currentDir = lastSlash > 0 ? lastFile.slice(0, lastSlash) : ''
-        await store.loadFiles(store.state.currentDir)
+        const targetDir = lastSlash > 0 ? lastFile.slice(0, lastSlash) : ''
+        store.resetDirStack(targetDir)
+        await store.loadFiles(targetDir)
         await store.selectFile(lastFile)
         if (store.state.currentFile?.error) store.state.currentFile = null
         // 不自动切换 Tab 或打开覆盖层，保持默认 tab（chat）

@@ -73,7 +73,7 @@
           {{ isAllSelected ? t('file.multiSelect.deselectAll') : t('file.multiSelect.selectAll') }}
         </button>
       </div>
-      <DirBreadcrumb v-else :path="currentDir" @navigate="$emit('navigateDir', $event)" />
+      <DirBreadcrumb v-else :path="currentDir" @navigate="$emit('navigateDir', $event, 'truncate')" />
     </div>
 
     <!-- Hidden file input for upload -->
@@ -295,7 +295,6 @@ import { ref, computed, reactive, inject, nextTick, onMounted, onUnmounted, Tele
 import { useI18n } from 'vue-i18n'
 import { Folder, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, FileText, HardDrive, Eye, EyeOff, Loader, FileImage, FileMusic, ChevronRight, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, FileVideo, Package, Upload, MoreHorizontal } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
-import { dirName } from '@/utils/path.ts'
 import {
   buildThumbUrl,
   isImage as isImageEntry, isAudio as isAudioEntry, isVideo as isVideoEntry,
@@ -310,6 +309,7 @@ import { useDialog } from '@/composables/useDialog.ts'
 import { useTerminalStatus } from '@/composables/useTerminalStatus.ts'
 import { useFeatureBackHandler } from '@/composables/useEdgeSwipeBack'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
+import { useDirStack } from '@/composables/useDirStack'
 import SearchInput from '@/components/common/SearchInput.vue'
 import DirBreadcrumb from './DirBreadcrumb.vue'
 
@@ -336,11 +336,13 @@ const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
 
 const activeTab = inject('activeTab', ref(''))
 
+const dirStack = useDirStack()
+
 // Register back handler for file browser directory navigation
 useFeatureBackHandler(
   'browse',
-  () => activeTab.value === 'browse' && !!props.currentDir,
-  () => emit('navigateDir', dirName(props.currentDir)),
+  () => activeTab.value === 'browse' && dirStack.canGoBack.value,
+  () => emit('navigateBack'),
 )
 
 const props = defineProps({
@@ -353,7 +355,7 @@ const props = defineProps({
     dirLoading: Boolean,
 })
 
-const emit = defineEmits(['navigateDir', 'selectFile', 'toggleSort', 'toggleHidden', 'rename', 'delete', 'refresh', 'openTerminal', 'batchDelete'])
+const emit = defineEmits(['navigateDir', 'navigateBack', 'selectFile', 'toggleSort', 'toggleHidden', 'rename', 'delete', 'refresh', 'openTerminal', 'batchDelete'])
 
 
 const searchQuery = ref('')

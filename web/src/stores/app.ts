@@ -5,6 +5,7 @@ import { baseName, dirName } from '@/utils/path.ts'
 import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
+import { useDirStack, _restoreStack } from '@/composables/useDirStack'
 
 interface DirEntry {
     name: string
@@ -188,6 +189,7 @@ function resetProjectState(): void {
     state.dirEntries = []
     state.dirLoading = false
     state.currentFile = null
+    useDirStack().resetStack()
     // Git
     state.gitBranch = ''
     state.gitHead = ''
@@ -445,6 +447,59 @@ async function navigateToDir(dirPath: string): Promise<void> {
     await loadFiles(dirPath)
 }
 
+// =============================================
+// Directory stack navigation
+// =============================================
+
+async function pushDir(path: string): Promise<void> {
+    const dirStack = useDirStack()
+    const prev = [...dirStack.dirStack.value]
+    dirStack.pushDir(path)
+    try {
+        await loadFiles(path)
+    } catch {
+        _restoreStack(prev)
+    }
+}
+
+async function popDir(): Promise<void> {
+    const dirStack = useDirStack()
+    const prev = [...dirStack.dirStack.value]
+    const newDir = dirStack.popDir()
+    if (newDir === null) return
+    try {
+        await loadFiles(newDir)
+    } catch {
+        _restoreStack(prev)
+    }
+}
+
+async function truncateToDir(path: string): Promise<void> {
+    const dirStack = useDirStack()
+    const prev = [...dirStack.dirStack.value]
+    dirStack.truncateToDir(path)
+    try {
+        await loadFiles(path)
+    } catch {
+        _restoreStack(prev)
+    }
+}
+
+async function replaceDirTop(path: string): Promise<void> {
+    const dirStack = useDirStack()
+    const prev = [...dirStack.dirStack.value]
+    dirStack.replaceTop(path)
+    try {
+        await loadFiles(path)
+    } catch {
+        _restoreStack(prev)
+    }
+}
+
+function resetDirStack(path?: string): void {
+    useDirStack().resetStack(path)
+}
+
 export const store = {
     state,
     loadProject,
@@ -457,4 +512,9 @@ export const store = {
     deleteFiles,
     renameFile,
     navigateToDir,
+    pushDir,
+    popDir,
+    truncateToDir,
+    replaceDirTop,
+    resetDirStack,
 }

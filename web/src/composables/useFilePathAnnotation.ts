@@ -521,7 +521,7 @@ export async function openFilePath(resolvedPath: string, lineStart?: number): Pr
         try {
             const resp = await fetch(`/api/dir?path=${encodeURIComponent(resolvedPath)}`)
             if (resp.ok) {
-                await store.navigateToDir(resolvedPath)
+                await store.pushDir(resolvedPath)
                 // Close file overlay before opening file manager — otherwise
                 // the overlay (z-index 100) covers the directory listing.
                 window.dispatchEvent(new CustomEvent('close-file-overlay'))
