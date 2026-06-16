@@ -124,6 +124,8 @@ function annotateFilePaths() {
     if (!codeRef.value) return
     const projectRoot = store.state.projectRoot
     const homeDir = store.state.homeDir
+    // Use file's own directory as baseDir for relative path resolution
+    const baseDir = props.filePath ? props.filePath.substring(0, props.filePath.lastIndexOf('/')) : undefined
     const detectedPaths = []
 
     for (const span of codeRef.value.querySelectorAll('.hljs-string')) {
@@ -138,7 +140,7 @@ function annotateFilePaths() {
         // Must look like a file path (has / or file extension) — reject bare identifiers like "fmt"
         if (!looksLikeFilePath(stripped)) continue
 
-        const resolved = resolveFilePath(stripped, projectRoot, homeDir)
+        const resolved = resolveFilePath(stripped, projectRoot, homeDir, baseDir)
         if (!resolved) continue
 
         // Wrap the path text in a clickable span (optimistic — verified async below)

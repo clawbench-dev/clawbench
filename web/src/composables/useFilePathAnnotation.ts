@@ -30,7 +30,31 @@ function tryDecodeUri(uri: string): string {
  * homeDir + /foo before checking against projectRoot. Without homeDir,
  * tilde-prefixed paths are rejected (we can't determine if they're in-project).
  */
-export function resolveFilePath(path: string, projectRoot: string, homeDir?: string): string | null {
+/**
+ * Resolve a relative path against a base directory.
+ * Returns project-relative path if within project, absolute path if outside,
+ * or null if resolution fails.
+ */
+function resolveRelativePathAgainstBase(path: string, baseDir: string, projectRoot: string): string | null {
+    const parts = baseDir.split('/').filter(Boolean)
+    const segments = path.split('/')
+    for (const seg of segments) {
+        if (seg === '..') {
+            if (parts.length > 0) parts.pop()
+            else return null
+        } else if (seg !== '.' && seg !== '') {
+            parts.push(seg)
+        }
+    }
+    const absolutePath = '/' + parts.join('/')
+    if (projectRoot && absolutePath.startsWith(projectRoot + '/')) {
+        return absolutePath.slice(projectRoot.length + 1)
+    }
+    if (projectRoot && absolutePath === projectRoot) return null
+    return absolutePath
+}
+
+export function resolveFilePath(path: string, projectRoot: string, homeDir?: string, baseDir?: string): string | null {
     // Reject paths containing glob wildcards, angle brackets, or double-star.
     // These are glob patterns or template variables, not real filesystem paths.
     if (/[*?\\[\]<>]/.test(path) || path.includes('**')) return null
@@ -65,22 +89,30 @@ export function resolveFilePath(path: string, projectRoot: string, homeDir?: str
         return path // project-external — return absolute path
     }
 
-    // Relative path
-    if (!projectRoot) {
-        // No projectRoot — strip leading ./ and return as-is (best-effort)
+    // Relative path — resolve against baseDir (file's directory) first,
+    // then fallback to projectRoot. This ensures relative paths like
+    // "settings.json" in internal/config/loader.go resolve to
+    // internal/config/settings.json, not project-root/settings.json.
+    if (!projectRoot && !baseDir) {
         let clean = path.replace(/^\.\//, '')
-        // Reject paths that go above root (../) when we can't verify
         if (clean.startsWith('../')) return null
         return clean
     }
 
-    // Resolve ./ and ../ against projectRoot
+    // Try resolving against baseDir first (file's own directory)
+    if (baseDir && baseDir !== projectRoot) {
+        const baseResult = resolveRelativePathAgainstBase(path, baseDir, projectRoot)
+        if (baseResult) return baseResult
+    }
+
+    // Fallback: resolve against projectRoot
+    if (!projectRoot) return null
     const parts = projectRoot.split('/').filter(Boolean)
     const segments = path.split('/')
     for (const seg of segments) {
         if (seg === '..') {
             if (parts.length > 0) parts.pop()
-            else return null // goes above filesystem root
+            else return null
         } else if (seg !== '.' && seg !== '') {
             parts.push(seg)
         }
@@ -89,7 +121,7 @@ export function resolveFilePath(path: string, projectRoot: string, homeDir?: str
     if (absolutePath.startsWith(projectRoot + '/')) {
         return absolutePath.slice(projectRoot.length + 1)
     }
-    // Resolved path is outside project root — return absolute path
+    if (absolutePath === projectRoot) return null
     return absolutePath
 }
 
@@ -252,7 +284,7 @@ export function annotateFilePaths(
         if (!looksLikeFilePath(stripped)) continue
         // Extract bare path and optional line info
         const { path: barePath, lineStart, lineEnd } = extractLineInfoFromText(stripped)
-        const resolved = resolveFilePath(barePath, projectRoot, homeDir)
+        const resolved = resolveFilePath(barePath, projectRoot, homeDir, baseDir)
         if (!resolved || resolved.includes(' ') || resolved.includes('"')) continue
         // Entire <code> content is a valid file path — annotate the whole element
         detectedPaths.push(resolved)
@@ -297,7 +329,7 @@ export function annotateFilePaths(
         while ((match = FILE_PATH_RE.exec(text)) !== null) {
             const pathStr = match[0]
             const { path: barePath, lineStart, lineEnd } = extractLineInfo(pathStr, match)
-            let resolved = resolveFilePath(barePath, projectRoot, homeDir)
+            let resolved = resolveFilePath(barePath, projectRoot, homeDir, baseDir)
             // If the text immediately after this match continues with a path segment
             // (e.g. "/.worktrees" followed by "/gitgraph-fix"), the regex only matched
             // a directory prefix — skip it so worktree annotation can handle the full path.
