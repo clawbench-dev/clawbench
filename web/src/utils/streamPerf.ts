@@ -160,9 +160,16 @@ export function taskChanged(oldTask: any, newTask: any): boolean {
  * Cache for non-streaming block HTML rendering.
  * Prevents redundant renderTextBlock calls when Vue re-renders
  * already-completed message blocks.
+ * Supports a "fast path" mode: when deferEnhancements is true,
+ * blocks are initially cached with skipEnhancements=true and
+ * scheduled for upgrade to the full pipeline via requestIdleCallback.
  */
 export class StaticBlockCache {
   private cache = new Map<string, string>()
+  // Tracks which cache entries were rendered without enhancements
+  private deferredKeys = new Set<string>()
+  private upgradeScheduled = false
+  private upgradeFn: (() => void) | null = null
 
   private makeKey(msgId: string | number, blockIdx: number, text: string): string {
     const prefix = text.length > 40 ? text.slice(0, 20) : ''
@@ -174,11 +181,52 @@ export class StaticBlockCache {
     return this.cache.get(this.makeKey(msgId, blockIdx, text))
   }
 
-  set(msgId: string | number, blockIdx: number, text: string, html: string): void {
-    this.cache.set(this.makeKey(msgId, blockIdx, text), html)
+  set(msgId: string | number, blockIdx: number, text: string, html: string, deferred = false): void {
+    const key = this.makeKey(msgId, blockIdx, text)
+    this.cache.set(key, html)
+    if (deferred) {
+      this.deferredKeys.add(key)
+    }
+  }
+
+  /** Mark an entry as upgraded from deferred to full render */
+  markUpgraded(msgId: string | number, blockIdx: number, text: string): void {
+    this.deferredKeys.delete(this.makeKey(msgId, blockIdx, text))
+  }
+
+  /** Check if an entry was rendered with deferred enhancements */
+  isDeferred(msgId: string | number, blockIdx: number, text: string): boolean {
+    return this.deferredKeys.has(this.makeKey(msgId, blockIdx, text))
+  }
+
+  /** Set the function to call when deferred entries need upgrading */
+  setUpgradeFn(fn: () => void): void {
+    this.upgradeFn = fn
+  }
+
+  /** Schedule upgrade of deferred entries using requestIdleCallback */
+  scheduleUpgrade(): void {
+    if (this.upgradeScheduled || this.deferredKeys.size === 0) return
+    this.upgradeScheduled = true
+    const schedule = typeof requestIdleCallback !== 'undefined'
+      ? requestIdleCallback
+      : (cb: () => void) => setTimeout(cb, 1)
+    schedule(() => {
+      this.upgradeScheduled = false
+      if (this.upgradeFn && this.deferredKeys.size > 0) {
+        this.upgradeFn()
+      }
+    })
+  }
+
+  /** Get the number of pending deferred entries */
+  get deferredCount(): number {
+    return this.deferredKeys.size
   }
 
   clear(): void {
     this.cache.clear()
+    this.deferredKeys.clear()
+    this.upgradeScheduled = false
   }
 }

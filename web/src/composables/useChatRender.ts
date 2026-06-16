@@ -63,6 +63,34 @@ export function useChatRender(options: { messages: any; theme: any; currentSessi
   // ── StaticBlockCache for non-streaming re-renders ──
   const staticBlockCache = new StaticBlockCache()
 
+  // Upgrade deferred (fast-path) cache entries to full pipeline render.
+  // Called via requestIdleCallback after initial fast render for instant display.
+  staticBlockCache.setUpgradeFn(() => {
+    let upgraded = 0
+    for (const msg of messages.value) {
+      if (msg.role !== 'assistant' || !msg.blocks || msg.streaming) continue
+      for (let bi = 0; bi < msg.blocks.length && upgraded < 5; bi++) {
+        const block = msg.blocks[bi]
+        if (block.type !== 'text' || !block.text) continue
+        if (staticBlockCache.isDeferred(msg.id, bi, block.text)) {
+          // Re-render with full pipeline and replace cache entry
+          const fullHtml = renderTextBlock(block.text, String(msg.id), bi, false, false)
+          staticBlockCache.set(String(msg.id), bi, block.text, fullHtml, false)
+          staticBlockCache.markUpgraded(String(msg.id), bi, block.text)
+          upgraded++
+        }
+      }
+    }
+    // If there are more deferred entries, schedule another batch
+    if (staticBlockCache.deferredCount > 0) {
+      staticBlockCache.scheduleUpgrade()
+    }
+    // Trigger Vue re-render with upgraded content
+    if (upgraded > 0) {
+      updateRenderedContents(true)
+    }
+  })
+
   // Re-render when theme changes — clear caches since rendering may differ
   watch(theme, () => {
     staticBlockCache.clear()
@@ -196,8 +224,13 @@ export function useChatRender(options: { messages: any; theme: any; currentSessi
    * When streaming=false (post-streaming / history load):
    *   Full pipeline: scheduled-task extraction, ask-question detection,
    *   tag stripping, and enhanced markdown rendering.
+   *
+   * When deferEnhancements=true (history load fast path):
+   *   Same as streaming=false but markdown rendering uses skipEnhancements=true
+   *   for instant display. Scheduled tasks and ask-question detection still run.
+   *   The cache upgrade mechanism will later re-render with full enhancements.
    */
-  function renderTextBlock(text: string, msgId: string, blockIdx: number, streaming = false) {
+  function renderTextBlock(text: string, msgId: string, blockIdx: number, streaming = false, deferEnhancements = false) {
     // ── Streaming: pure markdown only ──
     if (streaming) {
       return renderMarkdown(text, { skipEnhancements: true })
@@ -255,7 +288,7 @@ export function useChatRender(options: { messages: any; theme: any; currentSessi
           afterAsk = cleanText.slice(0, askInClean.startIdx).trim()
         }
         afterAsk = stripScheduledTaskTags(afterAsk)
-        return afterAsk ? renderMarkdown(afterAsk) : ''
+        return afterAsk ? renderMarkdown(afterAsk, { skipEnhancements: deferEnhancements }) : ''
       }
       cleanText = stripScheduledTaskTags(cleanText)
       // When rag-results is the only content, cleanText is empty.
@@ -268,7 +301,7 @@ export function useChatRender(options: { messages: any; theme: any; currentSessi
       if (!cleanText) {
         return blockRagResults[ragKey] ? '\u200B' : ''
       }
-      return renderMarkdown(cleanText)
+      return renderMarkdown(cleanText, { skipEnhancements: deferEnhancements })
     }
 
     if (askResult.found) {
@@ -287,12 +320,12 @@ export function useChatRender(options: { messages: any; theme: any; currentSessi
         cleanText = text.slice(0, askResult.startIdx).trim()
       }
       cleanText = stripScheduledTaskTags(cleanText)
-      return cleanText ? renderMarkdown(cleanText) : ''
+      return cleanText ? renderMarkdown(cleanText, { skipEnhancements: deferEnhancements }) : ''
     }
 
     // No ask-question: strip scheduled-task tags and render
     const cleanText = stripScheduledTaskTags(text)
-    return cleanText ? renderMarkdown(cleanText) : ''
+    return cleanText ? renderMarkdown(cleanText, { skipEnhancements: deferEnhancements }) : ''
   }
 
   function extractScheduledTasks(msgs: any[]) {

@@ -156,8 +156,8 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			limit = 100
 		}
 
-		totalCount := service.GetChatMessageCount(sessionID)
-		messages, err := service.GetChatHistoryPaged(projectPath, sessionBackend, sessionID, limit, beforeID)
+		totalCount := 0
+		messages, totalCount, err := service.GetChatHistoryPaged(projectPath, sessionBackend, sessionID, limit, beforeID)
 		// Use cached session info from earlier lookup, or fetch if not yet available
 		// (e.g. when session was found via GetLatestSessionID or newly created).
 		// This avoids an extra DB query for the common case of switching to an existing session.

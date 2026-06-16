@@ -2750,14 +2750,14 @@ func TestGetChatHistoryPaged_LimitAndBeforeID(t *testing.T) {
 	}
 
 	// Get last 2 messages with limit only (no cursor)
-	msgs, err := service.GetChatHistoryPaged("/project", "claude", sid, 2, 0)
+	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 2, 0)
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 2)
 	assert.Equal(t, "msg 3", msgs[0].Content)
 	assert.Equal(t, "msg 4", msgs[1].Content)
 
 	// Get 2 messages before the last message (cursor-based)
-	msgs, err = service.GetChatHistoryPaged("/project", "claude", sid, 2, int(msgIDs[4]))
+	msgs, _, err = service.GetChatHistoryPaged("/project", "claude", sid, 2, int(msgIDs[4]))
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 2)
 	assert.Equal(t, "msg 2", msgs[0].Content)
@@ -2825,7 +2825,7 @@ func TestGetChatHistoryPaged_NoLimit(t *testing.T) {
 	assert.NoError(t, err)
 
 	// limit=0 returns all messages
-	msgs, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
+	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 2)
 }
@@ -2841,7 +2841,7 @@ func TestGetChatHistoryPaged_LimitOnly(t *testing.T) {
 	}
 
 	// limit=3, no cursor — should return the 3 most recent
-	msgs, err := service.GetChatHistoryPaged("/project", "claude", sid, 3, 0)
+	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 3, 0)
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 3)
 	assert.Equal(t, "msg 2", msgs[0].Content) // oldest of the 3
@@ -2853,7 +2853,7 @@ func TestGetChatHistoryPaged_Empty(t *testing.T) {
 
 	sid := helperCreateSession(t, "/project", "claude", "Empty Paged")
 
-	msgs, err := service.GetChatHistoryPaged("/project", "claude", sid, 10, 0)
+	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 10, 0)
 	assert.NoError(t, err)
 	assert.Empty(t, msgs)
 }

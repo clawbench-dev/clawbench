@@ -17,7 +17,8 @@ import (
 
 // GetChatHistory retrieves all chat messages for a given project path, backend, and session.
 func GetChatHistory(projectPath, backend, sessionID string) ([]model.ChatMessage, error) {
-	return GetChatHistoryPaged(projectPath, backend, sessionID, 0, 0)
+	msgs, _, err := GetChatHistoryPaged(projectPath, backend, sessionID, 0, 0)
+	return msgs, err
 }
 
 // GetChatHistoryPaged retrieves chat messages with pagination.
@@ -25,8 +26,10 @@ func GetChatHistory(projectPath, backend, sessionID string) ([]model.ChatMessage
 // beforeID: if > 0, only return messages with id < beforeID (cursor-based for lazy load).
 // When beforeID == 0 and limit > 0, returns the most recent (limit) messages.
 // Returns messages in chronological (ASC) order.
-func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, beforeID int) ([]model.ChatMessage, error) {
+// Also returns the total message count for the session to avoid a separate COUNT query.
+func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, beforeID int) ([]model.ChatMessage, int, error) {
 	messages := []model.ChatMessage{}
+	totalCount := GetChatMessageCount(sessionID)
 
 	if limit > 0 && beforeID > 0 {
 		// Cursor-based: load messages older than beforeID
@@ -37,10 +40,11 @@ func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, befo
 		) sub ORDER BY id ASC`
 		rows, err := DBRead.Query(query, projectPath, sessionID, beforeID, limit)
 		if err != nil {
-			return messages, err
+			return messages, totalCount, err
 		}
 		defer rows.Close()
-		return scanMessages(rows, sessionID)
+		msgs, err := scanMessages(rows, sessionID)
+		return msgs, totalCount, err
 	}
 
 	if limit > 0 {
@@ -52,20 +56,22 @@ func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, befo
 		) sub ORDER BY id ASC`
 		rows, err := DBRead.Query(query, projectPath, sessionID, limit)
 		if err != nil {
-			return messages, err
+			return messages, totalCount, err
 		}
 		defer rows.Close()
-		return scanMessages(rows, sessionID)
+		msgs, err := scanMessages(rows, sessionID)
+		return msgs, totalCount, err
 	}
 
 	// No limit: return all messages in chronological order
 	query := `SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history WHERE project_path = ? AND session_id = ? ORDER BY id ASC`
 	rows, err := DBRead.Query(query, projectPath, sessionID)
 	if err != nil {
-		return messages, err
+		return messages, totalCount, err
 	}
 	defer rows.Close()
-	return scanMessages(rows, sessionID)
+	msgs, err := scanMessages(rows, sessionID)
+	return msgs, totalCount, err
 }
 
 // scanMessages scans rows into ChatMessage slice.
@@ -438,8 +444,9 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 }
 
 // UpdateLastRead sets the last_read_at timestamp for a session to now.
+// Runs asynchronously to avoid blocking the read path with a DB write.
 func UpdateLastRead(sessionID string) {
-	DB.Exec("UPDATE chat_sessions SET last_read_at = CURRENT_TIMESTAMP WHERE id = ?", sessionID)
+	go DB.Exec("UPDATE chat_sessions SET last_read_at = CURRENT_TIMESTAMP WHERE id = ?", sessionID)
 }
 
 // GetSessionBackend returns the backend of a session, or empty string if not found or deleted.
