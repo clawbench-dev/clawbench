@@ -128,6 +128,21 @@ describe('resolveFilePathDual', () => {
       const result = resolveFilePathDual('../../../etc/hosts', projectRoot)
       expect(result).toEqual({ primary: '/etc/hosts', fallback: '/etc/hosts' })
     })
+
+    it('handles project-relative baseDir (not absolute)', () => {
+      // baseDir = 'web/src' (project-relative, not starting with /)
+      // Should produce same result as absolute baseDir '/home/user/project/web/src'
+      const result = resolveFilePathDual('utils.ts', projectRoot, undefined, 'web/src')
+      expect(result).toEqual({ primary: 'web/src/utils.ts', fallback: 'utils.ts' })
+    })
+
+    it('handles ../path with project-relative baseDir', () => {
+      // baseDir = 'test/path-annotation', path = '../README.md'
+      // baseDir result: 'test/README.md' (primary)
+      // projectRoot result: '/home/user/README.md' (external, fallback)
+      const result = resolveFilePathDual('../README.md', projectRoot, undefined, 'test/path-annotation')
+      expect(result).toEqual({ primary: 'test/README.md', fallback: '/home/user/README.md' })
+    })
   })
 
   describe('rejection rules', () => {
@@ -731,7 +746,8 @@ describe('annotateFilePaths', () => {
 
     it('stores data-fallback-path on <code> annotation when baseDir produces dual candidate', () => {
       const input = '<code>utils.ts</code>'
-      const result = annotateFilePaths(input, { projectRoot, baseDir: '/home/user/project/web/src' })
+      // Using project-relative baseDir (as MarkdownPreview does)
+      const result = annotateFilePaths(input, { projectRoot, baseDir: 'web/src' })
       // primary = web/src/utils.ts, fallback = utils.ts
       expect(result.detectedPaths).toContain('web/src/utils.ts')
       expect(result.detectedPaths).toContain('utils.ts')
@@ -742,7 +758,7 @@ describe('annotateFilePaths', () => {
     it('stores data-fallback-path on text-node span when baseDir produces dual candidate', () => {
       // Use a multi-segment path that FILE_PATH_RE can match in text nodes
       const input = '<p>see components/App.vue for details</p>'
-      const result = annotateFilePaths(input, { projectRoot, baseDir: '/home/user/project/web/src' })
+      const result = annotateFilePaths(input, { projectRoot, baseDir: 'web/src' })
       // primary = web/src/components/App.vue, fallback = components/App.vue
       expect(result.detectedPaths).toContain('web/src/components/App.vue')
       expect(result.detectedPaths).toContain('components/App.vue')
@@ -759,9 +775,16 @@ describe('annotateFilePaths', () => {
 
     it('button also has data-fallback-path for dual-candidate code annotation', () => {
       const input = '<code>utils.ts</code>'
-      const result = annotateFilePaths(input, { projectRoot, baseDir: '/home/user/project/web/src' })
+      const result = annotateFilePaths(input, { projectRoot, baseDir: 'web/src' })
       const btnMatch = result.html.match(/chat-file-open-btn[^>]*data-fallback-path="utils.ts"/)
       expect(btnMatch).not.toBeNull()
+    })
+
+    it('resolves ../path with project-relative baseDir', () => {
+      const input = '<code>../README.md</code>'
+      const result = annotateFilePaths(input, { projectRoot, baseDir: 'test/path-annotation' })
+      // primary = test/README.md, fallback = external /home/user/README.md
+      expect(result.detectedPaths).toContain('test/README.md')
     })
   })
 

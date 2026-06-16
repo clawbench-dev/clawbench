@@ -121,7 +121,6 @@
           </div>
           <Folder class="file-icon" :size="28" />
           <span class="file-name">{{ entry.name }}</span>
-          <ChevronRight v-if="!multiSelect.active" :size="14" class="chevron" />
           <span class="file-meta">{{ formatDate(entry.modified) }}</span>
         </div>
 
@@ -292,7 +291,7 @@
 import '@/assets/loading-mask.css'
 import { ref, computed, reactive, inject, nextTick, onMounted, onUnmounted, Teleport, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Folder, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, FileText, HardDrive, Eye, EyeOff, FileImage, FileMusic, ChevronRight, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, FileVideo, Package, Upload, MoreHorizontal } from 'lucide-vue-next'
+import { Folder, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, FileText, HardDrive, Eye, EyeOff, FileImage, FileMusic, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, FileVideo, Package, Upload, MoreHorizontal } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import {
   buildThumbUrl,
@@ -1252,15 +1251,8 @@ function doDelete() {
     background: var(--bg-tertiary, #f0f0f0);
 }
 
-.file-item.dir-item .chevron {
+.file-item.dir-item .file-meta {
     margin-left: auto;
-    color: var(--text-muted, #999);
-    transition: transform 0.2s;
-}
-
-.file-item.dir-item:hover .chevron {
-    transform: translateX(2px);
-    color: var(--accent-color, #4a90d9);
 }
 
 .file-icon {

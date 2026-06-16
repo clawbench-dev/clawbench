@@ -93,7 +93,6 @@
                 <span v-if="c.author"> · {{ c.author }}</span>
               </div>
             </div>
-            <ChevronRight :size="14" class="drilldown-chevron" />
           </div>
           <div ref="listRef" class="git-load-more-sentinel">
             <div v-if="hasMore && loadingMore" class="git-load-more">
@@ -107,7 +106,7 @@
 </template>
 
 <script setup>
-import { CirclePlus, FileText, Info, ChevronRight, RefreshCw, GitBranch } from 'lucide-vue-next'
+import { CirclePlus, FileText, Info, RefreshCw, GitBranch } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitGraph from './GitGraph.vue'
@@ -375,12 +374,6 @@ defineExpose({ observeList, unobserveList, commitSearch })
 
 .drilldown-item:active {
   background: var(--bg-tertiary, #e9ecef);
-}
-
-.drilldown-chevron {
-  flex-shrink: 0;
-  color: var(--text-muted, #ccc);
-  margin-left: 4px;
 }
 
 .git-commit-info {

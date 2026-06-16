@@ -154,8 +154,11 @@ export function resolveFilePathDual(path: string, projectRoot: string, homeDir?:
         return projectResult
     }
 
+    // Normalize baseDir: if project-relative, convert to absolute
+    const absBaseDir = baseDir.startsWith('/') ? baseDir : (projectRoot + '/' + baseDir)
+
     // Compute baseDir candidate
-    const baseDirResult = resolveRelativePathAgainstBase(path, baseDir, projectRoot)
+    const baseDirResult = resolveRelativePathAgainstBase(path, absBaseDir, projectRoot)
 
     // baseDir failed or resolved to project-external absolute → projectRoot wins
     if (!baseDirResult || baseDirResult.startsWith('/')) {
