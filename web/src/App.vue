@@ -379,6 +379,14 @@ const activeTab = ref('chat')
 function switchTab(tab) {
   if (activeTab.value === tab) return
   activeTab.value = tab
+  // Close file browser panels when leaving browse tab — they are teleported
+  // to <body> via BottomSheet so v-show hiding the tab-panel doesn't affect them.
+  if (activeTab.value !== 'browse') {
+    tocOpen.value = false
+    searchOpen.value = false
+    fileHistoryOpen.value = false
+    detailsOpen.value = false
+  }
   if (tab === 'chat') {
     // Recalculate instead of blindly clearing — if the user switches to chat
     // but hasn't opened the unread session, the indicator should keep flashing.
