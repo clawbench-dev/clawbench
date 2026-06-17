@@ -295,7 +295,7 @@ let scrollDownTimer = null
 let lastScrollTop = 0
 const SCROLL_BUTTON_HIDE_DELAY = 3000
 
-const NEAR_BOTTOM_THRESHOLD = 60
+const NEAR_EDGE_THRESHOLD = 100
 const SCROLL_BUTTON_TRIGGER = 200
 const SCROLL_DELTA_THRESHOLD = 10
 
@@ -304,8 +304,19 @@ function handleScroll() {
   const el = messagesRef.value
 
   const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-  const nearBottom = distFromBottom < NEAR_BOTTOM_THRESHOLD
+  const nearBottom = distFromBottom < NEAR_EDGE_THRESHOLD
+  const nearTop = el.scrollTop < NEAR_EDGE_THRESHOLD
   isAtBottom.value = nearBottom
+
+  // Hide scroll buttons when near the edges
+  if (nearTop && scrolledUp.value) {
+    scrolledUp.value = false
+    clearTimeout(scrollUpTimer)
+  }
+  if (nearBottom && scrolledDown.value) {
+    scrolledDown.value = false
+    clearTimeout(scrollDownTimer)
+  }
 
   // Determine scroll direction
   const scrollDelta = el.scrollTop - lastScrollTop
@@ -314,9 +325,9 @@ function handleScroll() {
   // Ignore tiny scroll movements (e.g. finger tremor on mobile) to prevent accidental FAB appearance
   if (Math.abs(scrollDelta) < SCROLL_DELTA_THRESHOLD) return
 
-  // Scrolled up (toward top): show top buttons, hide bottom
-  const shouldShowUp = scrollDelta < 0 && distFromBottom > SCROLL_BUTTON_TRIGGER
-  // Scrolled down (toward bottom): show bottom buttons, hide top
+  // Scrolled up (toward top): show top buttons, hide bottom — but not if already near top
+  const shouldShowUp = scrollDelta < 0 && distFromBottom > SCROLL_BUTTON_TRIGGER && !nearTop
+  // Scrolled down (toward bottom): show bottom buttons, hide top — but not if already near bottom
   const shouldShowDown = scrollDelta > 0 && !nearBottom && distFromBottom > SCROLL_BUTTON_TRIGGER
 
   if (shouldShowUp) {
@@ -379,7 +390,7 @@ function scrollToBottom(force = false) {
           el.scrollTop = el.scrollHeight
         }
         // Final isAtBottom state based on actual scroll position after correction
-        isAtBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_THRESHOLD
+        isAtBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_EDGE_THRESHOLD
         // For force scrolls, also do a delayed re-scroll to catch async content
         // rendering (Mermaid, KaTeX, collapse transitions) that settles later.
         if (force) {
@@ -387,7 +398,7 @@ function scrollToBottom(force = false) {
             if (!messagesRef.value) return
             const el = messagesRef.value
             el.scrollTop = el.scrollHeight
-            isAtBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_THRESHOLD
+            isAtBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_EDGE_THRESHOLD
           }, 300)
         }
       })
@@ -397,6 +408,8 @@ function scrollToBottom(force = false) {
 
 function scrollToTop() {
   if (!messagesRef.value) return
+  scrolledUp.value = false
+  clearTimeout(scrollUpTimer)
   messagesRef.value.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
@@ -438,6 +451,8 @@ function scrollToNextMessage() {
 
 function scrollToBottomSmooth() {
   if (!messagesRef.value) return
+  scrolledDown.value = false
+  clearTimeout(scrollDownTimer)
   const el = messagesRef.value
   el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
 }
