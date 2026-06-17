@@ -40,8 +40,13 @@
       </div>
       <div v-else-if="error" class="git-history-error">{{ error }}</div>
       <div v-else-if="!isGit" class="git-history-empty">
-        <div class="init-git-prompt">
-          <div style="font-size:14px;color:var(--text-muted,#999);">{{ t('git.commitList.notGitRepo') }}</div>
+        <div class="empty-state-card">
+          <GitBranch :size="36" :stroke-width="1.5" style="color:var(--text-muted);" />
+          <div class="empty-state-title">{{ t('git.commitList.notGitRepo') }}</div>
+          <div class="empty-state-desc">{{ t('git.commitList.notGitRepoDesc') }}</div>
+          <div class="empty-state-hint">
+            <code>git init</code>
+          </div>
         </div>
       </div>
       <div v-else-if="commits.length === 0 && untracked" class="git-history-empty">
@@ -455,14 +460,6 @@ defineExpose({ observeList, unobserveList, commitSearch })
     border-radius: 4px;
     font-family: monospace;
     font-size: 11px;
-}
-
-.init-git-prompt {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 40px 20px;
 }
 
 /* Selected commit highlight */
