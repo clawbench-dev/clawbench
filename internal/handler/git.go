@@ -13,8 +13,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"clawbench/internal/model"
 )
 
 // validGitSHA matches a hex commit SHA (6-40 hex chars, abbreviated or full).
@@ -237,33 +235,6 @@ func ServeGitBranch(w http.ResponseWriter, r *http.Request) {
 		"head":   headSHA,
 		"dirty":  dirty,
 	})
-}
-
-// ServeGitInit initializes a new git repository in the project directory.
-func ServeGitInit(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodPost) {
-		return
-	}
-	projectPath, ok := requireProject(w, r)
-	if !ok {
-		return
-	}
-
-	if isGitRepo(projectPath) {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "AlreadyGitRepo")
-		return
-	}
-
-	// git init
-	cmd := exec.Command("git", "init")
-	cmd.Dir = projectPath
-	_, err := cmd.CombinedOutput()
-	if err != nil {
-		model.WriteError(w, model.Internal(fmt.Errorf("failed to init git repository")))
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
 // gitDiff returns the diff for a file at a specific commit (or HEAD for working tree).

@@ -19,7 +19,6 @@
       :has-more="hasMore"
       :loading-more="loadingMore"
       :search-loading="searchLoading"
-      :init-loading="initLoading"
       :loading="false"
       :error="''"
       :untracked="untracked"
@@ -30,7 +29,6 @@
       @select="onCommitSelect"
       @search="onSearch"
       @load-more="loadMoreCommits"
-      @init-git="initGitRepo"
       @refresh="onRefresh"
       @manage="navigateToManage"
     />
@@ -190,7 +188,6 @@ const hasMore = ref(false)
 const searchLoading = ref(false)
 const loadingMore = ref(false)
 const isGit = ref(false)
-const initLoading = ref(false)
 const untracked = ref(false)
 
 const currentView = ref('commits') // 'commits' | 'files' | 'diff' | 'manage'
@@ -395,25 +392,6 @@ async function onSearch(q) {
     }
   } finally {
     searchLoading.value = false
-  }
-}
-
-async function initGitRepo() {
-  isGit.value = true
-  initLoading.value = true
-  try {
-    const resp = await fetch('/api/git/init', { method: 'POST' })
-    if (resp.ok) {
-      if (props.mode === 'file') {
-        await loadFileHistory(props.file?.path)
-      } else {
-        await loadProjectHistory()
-      }
-    }
-  } catch {
-    // ignore
-  } finally {
-    initLoading.value = false
   }
 }
 

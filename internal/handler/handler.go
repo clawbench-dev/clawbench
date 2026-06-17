@@ -244,7 +244,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/git/branch", middleware.Auth(ServeGitBranch))
 	register("/api/git/branches", middleware.Auth(ServeGitBranches))
 	register("/api/git/project-history", middleware.Auth(ServeGitProjectHistory))
-	register("/api/git/init", middleware.Auth(ServeGitInit))
 	register("/api/git/file-diff", middleware.Auth(ServeGitFileDiff))
 	register("/api/git/commit-files", middleware.Auth(ServeGitCommitFiles))
 	register("/api/git/history", middleware.Auth(ServeGitHistory))

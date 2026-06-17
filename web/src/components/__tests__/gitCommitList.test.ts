@@ -17,7 +17,6 @@ const i18n = createI18n({
           loading: 'Loading…',
           refresh: 'Refresh',
           notGitRepo: 'Not a git repo',
-          initGit: 'Init git',
           untrackedFile: 'Untracked file',
           untrackedDesc: 'This file is not tracked by git.',
           untrackedHint: 'to start tracking it.',

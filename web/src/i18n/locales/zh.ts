@@ -728,7 +728,6 @@ export default {
       searchPlaceholder: '搜索提交信息…',
       commitRecords: '提交记录',
       notGitRepo: '尚未初始化 Git 仓库',
-      initGit: '初始化 Git',
       untrackedFile: '此文件未被 Git 跟踪',
       untrackedDesc: '文件尚未纳入版本控制，无历史记录',
       untrackedHint: 'git add <文件名> 可将其添加到跟踪',

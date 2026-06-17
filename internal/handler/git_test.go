@@ -78,63 +78,6 @@ func getHeadSHA(t *testing.T, dir string) string {
 	return string(out[:len(out)-1]) // trim newline
 }
 
-// --- ServeGitInit ---
-
-func TestServeGitInit_Success(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	req := newRequest(t, http.MethodPost, "/api/git/init", nil)
-	withProjectCookie(req, env.ProjectDir)
-
-	w := callHandler(ServeGitInit, req)
-	assertOK(t, w)
-	assertJSONField(t, w, "success", true)
-
-	// Verify .git directory exists
-	_, err := os.Stat(filepath.Join(env.ProjectDir, ".git"))
-	assert.NoError(t, err)
-}
-
-func TestServeGitInit_AlreadyRepo(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	initGitRepo(t, env.ProjectDir)
-
-	req := newRequest(t, http.MethodPost, "/api/git/init", nil)
-	withProjectCookie(req, env.ProjectDir)
-
-	w := callHandler(ServeGitInit, req)
-	assertStatus(t, w, http.StatusBadRequest)
-
-	var resp map[string]interface{}
-	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-	assert.Equal(t, "already a git repository", resp["error"])
-}
-
-func TestServeGitInit_NoProjectCookie(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	req := newRequest(t, http.MethodPost, "/api/git/init", nil)
-	// No project cookie
-
-	w := callHandler(ServeGitInit, req)
-	assertStatus(t, w, http.StatusForbidden)
-}
-
-func TestServeGitInit_WrongMethod(t *testing.T) {
-	env, teardown := setupTestEnv(t)
-	defer teardown()
-
-	req := newRequest(t, http.MethodGet, "/api/git/init", nil)
-	withProjectCookie(req, env.ProjectDir)
-
-	w := callHandler(ServeGitInit, req)
-	assertStatus(t, w, http.StatusMethodNotAllowed)
-}
-
 // --- ServeGitStatus ---
 
 func TestServeGitStatus_UncommittedChanges(t *testing.T) {

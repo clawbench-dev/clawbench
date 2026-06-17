@@ -54,7 +54,6 @@ MissingPathOrDest: Missing path or dest
 ArchiveFailed: Failed to create archive
 MissingShaOrPath: missing sha or path
 MissingSha: missing sha
-AlreadyGitRepo: already a git repository
 NotAGitRepoShort: not a git repository
 InvalidPortNumber: "Invalid port number: {{.Port}}"
 InvalidPortInQuery: Invalid port number in query

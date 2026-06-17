@@ -728,7 +728,6 @@ export default {
       searchPlaceholder: 'Search commits…',
       commitRecords: 'Commits',
       notGitRepo: 'Git repository not initialized',
-      initGit: 'Init Git',
       untrackedFile: 'This file is not tracked by Git',
       untrackedDesc: 'File is not under version control, no history',
       untrackedHint: 'git add <filename> to start tracking',
