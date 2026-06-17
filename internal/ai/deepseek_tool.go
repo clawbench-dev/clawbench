@@ -2,9 +2,9 @@ package ai
 
 // parseDeepSeekToolUse extracts a tool_use ToolCall from a DeepSeek stream message.
 // It normalizes the tool name and input field names using the shared normalization
-// functions (normalizeToolName + normalizeToolInput with getRemaps("deepseek_cli")).
-func parseDeepSeekToolUse(msg *DeepSeekStreamMessage) *ToolCall {
-	normalized, err := normalizeToolInput(msg.Input, getRemaps("deepseek_cli"))
+// functions (normalizeToolName + normalizeToolInput with the provided remaps).
+func parseDeepSeekToolUse(msg *DeepSeekStreamMessage, remaps map[string]string) *ToolCall {
+	normalized, err := normalizeToolInput(msg.Input, remaps)
 	input := string(msg.Input)
 	if err == nil {
 		input = string(normalized)

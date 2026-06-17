@@ -6,6 +6,9 @@ import (
 	"testing"
 )
 
+// piInputRemaps mirrors backends/piInputRemaps for testing.
+var piInputRemaps = map[string]string{"path": "file_path"}
+
 // --- parsePiToolCallEnd ---
 
 func TestParsePiToolCallEnd_ReadTool(t *testing.T) {
@@ -19,7 +22,7 @@ func TestParsePiToolCallEnd_ReadTool(t *testing.T) {
 		},
 	}
 
-	tc := parsePiToolCallEnd(evt)
+	tc := parsePiToolCallEnd(evt, piInputRemaps)
 	if tc == nil {
 		t.Fatal("expected non-nil ToolCall")
 		return
@@ -53,7 +56,7 @@ func TestParsePiToolCallEnd_WriteTool(t *testing.T) {
 		},
 	}
 
-	tc := parsePiToolCallEnd(evt)
+	tc := parsePiToolCallEnd(evt, piInputRemaps)
 	if tc == nil {
 		t.Fatal("expected non-nil ToolCall")
 		return
@@ -77,7 +80,7 @@ func TestParsePiToolCallEnd_EditTool(t *testing.T) {
 		},
 	}
 
-	tc := parsePiToolCallEnd(evt)
+	tc := parsePiToolCallEnd(evt, piInputRemaps)
 	if tc == nil {
 		t.Fatal("expected non-nil ToolCall")
 		return
@@ -115,7 +118,7 @@ func TestParsePiToolCallEnd_BashTool(t *testing.T) {
 		},
 	}
 
-	tc := parsePiToolCallEnd(evt)
+	tc := parsePiToolCallEnd(evt, piInputRemaps)
 	if tc == nil {
 		t.Fatal("expected non-nil ToolCall")
 		return
@@ -140,7 +143,7 @@ func TestParsePiToolCallEnd_GrepTool(t *testing.T) {
 		},
 	}
 
-	tc := parsePiToolCallEnd(evt)
+	tc := parsePiToolCallEnd(evt, piInputRemaps)
 	if tc == nil {
 		t.Fatal("expected non-nil ToolCall")
 		return
@@ -160,7 +163,7 @@ func TestParsePiToolCallEnd_NilToolCall(t *testing.T) {
 		ToolCall: nil,
 	}
 
-	tc := parsePiToolCallEnd(evt)
+	tc := parsePiToolCallEnd(evt, piInputRemaps)
 	if tc != nil {
 		t.Errorf("expected nil for nil ToolCall, got %+v", tc)
 	}
@@ -177,7 +180,7 @@ func TestParsePiToolCallEnd_EmptyArguments(t *testing.T) {
 		},
 	}
 
-	tc := parsePiToolCallEnd(evt)
+	tc := parsePiToolCallEnd(evt, piInputRemaps)
 	if tc == nil {
 		t.Fatal("expected non-nil ToolCall")
 		return
@@ -198,7 +201,7 @@ func TestParsePiToolCallEnd_NilArguments(t *testing.T) {
 		},
 	}
 
-	tc := parsePiToolCallEnd(evt)
+	tc := parsePiToolCallEnd(evt, piInputRemaps)
 	if tc == nil {
 		t.Fatal("expected non-nil ToolCall")
 		return
@@ -220,7 +223,7 @@ func TestParsePiToolCallEnd_EditToolMultipleEdits(t *testing.T) {
 		},
 	}
 
-	tc := parsePiToolCallEnd(evt)
+	tc := parsePiToolCallEnd(evt, piInputRemaps)
 	if tc == nil {
 		t.Fatal("expected non-nil ToolCall")
 		return
@@ -245,7 +248,7 @@ func TestParsePiToolCallEnd_UnknownTool(t *testing.T) {
 		},
 	}
 
-	tc := parsePiToolCallEnd(evt)
+	tc := parsePiToolCallEnd(evt, piInputRemaps)
 	if tc == nil {
 		t.Fatal("expected non-nil ToolCall")
 		return
@@ -258,14 +261,14 @@ func TestParsePiToolCallEnd_UnknownTool(t *testing.T) {
 
 func TestNormalizePiToolInput_InvalidJSONFallback(t *testing.T) {
 	// normalizePiToolInput should return raw input when normalizeToolInput fails
-	result := normalizePiToolInput("bash", json.RawMessage(`not valid json`))
+	result := normalizePiToolInput("bash", json.RawMessage(`not valid json`), piInputRemaps)
 	if result != "not valid json" {
 		t.Errorf("expected invalid JSON returned as-is, got '%s'", result)
 	}
 }
 
 func TestNormalizePiToolInput_EmptyInput(t *testing.T) {
-	result := normalizePiToolInput("bash", nil)
+	result := normalizePiToolInput("bash", nil, piInputRemaps)
 	if result != "{}" {
 		t.Errorf("expected '{}', got '%s'", result)
 	}

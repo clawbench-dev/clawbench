@@ -383,7 +383,7 @@ func TestDeepSeekInputFieldNormalization_InvalidJSON(t *testing.T) {
 	// We can't test this through ParseLine because the outer line itself must be valid JSON
 	// (the input field is parsed from json.RawMessage which just captures the raw bytes).
 	// Instead, test normalizeDeepSeekInput directly.
-	result := normalizeDeepSeekInput("read_file", json.RawMessage(`{invalid}`))
+	result := normalizeDeepSeekInput("read_file", json.RawMessage(`{invalid}`), nil)
 	if result == "" {
 		t.Error("expected non-empty result for invalid JSON input")
 	}
@@ -394,7 +394,7 @@ func TestDeepSeekInputFieldNormalization_InvalidJSON(t *testing.T) {
 
 func TestDeepSeekInputFieldNormalization_EmptyInput(t *testing.T) {
 	// Empty raw input should produce empty result
-	result := normalizeDeepSeekInput("read_file", json.RawMessage(``))
+	result := normalizeDeepSeekInput("read_file", json.RawMessage(``), nil)
 	if result != "" {
 		t.Errorf("expected empty string for empty input, got '%s'", result)
 	}

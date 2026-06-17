@@ -1,10 +1,19 @@
 package pi
 
 import (
+	"fmt"
 	"log/slog"
+	"os/exec"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/model"
 )
+
+// PiInputRemaps maps Pi CLI input field names to canonical names.
+// Injected into PiStreamParser at construction time.
+var PiInputRemaps = map[string]string{
+	"path": "file_path",
+}
 
 func init() {
 	ai.RegisterBackend("pi", newPiBackend, true)
@@ -13,13 +22,61 @@ func init() {
 // newPiBackend returns a CLIBackend instance configured for Pi CLI.
 func newPiBackend() ai.AIBackend {
 	return &ai.CLIBackend{
-		BackendName:  "pi",
-		Cmd:          "pi",
-		BuildArgsFn:  buildPiStreamArgs,
-		NewParserFn:  func() ai.LineParser { return &ai.PiStreamParser{} },
-		FilterLineFn: nil,
-		PreStartFn:   nil,
+		BackendName:   "pi",
+		Cmd:           "pi",
+		BuildArgsFn:   buildPiStreamArgs,
+		NewParserFn:   func() ai.LineParser {
+			return &ai.PiStreamParser{InputRemaps: PiInputRemaps}
+		},
+		FilterLineFn:  nil,
+		PreStartFn:    nil,
+		PreExecHookFn: injectPiAPIKey,
 	}
+}
+
+// injectPiAPIKey loads the encrypted API key for the Pi agent from the database
+// and injects it as an environment variable on the CLI command.
+// Also adds the --provider flag so Pi knows which provider config to use.
+// If the agent has no stored API key, this is a no-op (Pi falls back to auth.json).
+func injectPiAPIKey(cmd *exec.Cmd, req ai.ChatRequest) {
+	loader := ai.GetAgentAPIKeyLoader()
+	if loader == nil {
+		return
+	}
+
+	agent, ok := model.Agents[req.AgentID]
+	if !ok {
+		return
+	}
+
+	// Only inject for Pi backend
+	if agent.Backend != "pi" {
+		return
+	}
+
+	// Find the provider and API key for this agent — single DB query
+	provider, customURL, apiKey, found := loader(req.AgentID)
+	if !found || apiKey == "" {
+		return // No stored API key — Pi will fall back to auth.json
+	}
+
+	// Custom URL mode: provider is the agent ID (set by setup complete).
+	// Use --provider {agentID} + --api-key so Pi reads models.json for the endpoint.
+	if customURL != "" {
+		cmd.Args = append(cmd.Args[:len(cmd.Args)-1], "--provider", provider, "--api-key", apiKey, cmd.Args[len(cmd.Args)-1])
+		slog.Debug("injected custom URL API key for agent", "agent_id", req.AgentID, "provider", provider)
+		return
+	}
+
+	// Built-in provider mode: inject env var + --provider flag
+	spec := model.FindProviderSpec(provider)
+	if spec != nil && spec.EnvVar != "" {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", spec.EnvVar, apiKey))
+		// Add --provider flag to Pi CLI args
+		cmd.Args = append(cmd.Args[:len(cmd.Args)-1], "--provider", provider, cmd.Args[len(cmd.Args)-1])
+	}
+
+	slog.Debug("injected API key for agent", "agent_id", req.AgentID, "provider", provider)
 }
 
 // buildPiStreamArgs constructs the CLI arguments for Pi streaming.

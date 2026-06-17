@@ -42,6 +42,10 @@ type DeepSeekStreamMeta struct {
 type DeepSeekStreamParser struct {
 	sessionID string // captured from session_capture event
 	model     string // captured from metadata event
+
+	// InputRemaps maps input field names for tool input normalization.
+	// When set, normalizeDeepSeekInput uses this as the base remap table.
+	InputRemaps map[string]string
 }
 
 // GetCapturedSessionID returns the session ID captured from session_capture events.
@@ -76,7 +80,7 @@ func (p *DeepSeekStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 		ch <- StreamEvent{Type: "tool_use", Tool: &ToolCall{
 			Name:  normalizeToolName(msg.Name),
 			ID:    msg.ID,
-			Input: normalizeDeepSeekInput(msg.Name, msg.Input),
+			Input: normalizeDeepSeekInput(msg.Name, msg.Input, p.InputRemaps),
 			Done:  msg.Done,
 		}}
 
@@ -126,13 +130,17 @@ func (p *DeepSeekStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 // DeepSeek TUI uses concise snake_case names that differ from the canonical
 // Claude-style names: path→file_path, search→old_string, replace→new_string,
 // command→command (no change), content→content (no change).
-func normalizeDeepSeekInput(toolName string, rawInput json.RawMessage) string {
-	// Per-tool field renames: DeepSeek native → canonical frontend names
+func normalizeDeepSeekInput(toolName string, rawInput json.RawMessage, baseRemaps map[string]string) string {
+	// Start with base remaps from the sub-package (injected at parser construction)
 	remaps := map[string]string{
 		"filePaths": "file_paths", // camelCase fallback
 		"oldString": "old_string", // camelCase fallback
 		"newString": "new_string", // camelCase fallback
 		"dirPath":   "path",       // camelCase fallback
+	}
+	// Merge base remaps (sub-package overrides take precedence)
+	for k, v := range baseRemaps {
+		remaps[k] = v
 	}
 
 	switch toolName {

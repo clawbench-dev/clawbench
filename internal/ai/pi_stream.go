@@ -86,6 +86,10 @@ type PiToolResultContent struct {
 // PiStreamParser parses JSON Lines output from `pi --mode json`.
 type PiStreamParser struct {
 	sessionID string
+
+	// InputRemaps maps input field names for tool input normalization.
+	// When set, normalizePiInput uses this as the base remap table.
+	InputRemaps map[string]string
 }
 
 // GetCapturedSessionID returns the session ID captured from session events.
@@ -158,7 +162,7 @@ func (p *PiStreamParser) parseMessageUpdate(msg *PiStreamMessage, ch chan<- Stre
 
 	case "toolcall_end":
 		if evt.ToolCall != nil {
-			normalizedInput := normalizePiInput(evt.ToolCall.Name, evt.ToolCall.Arguments)
+			normalizedInput := normalizePiInput(evt.ToolCall.Name, evt.ToolCall.Arguments, p.InputRemaps)
 			ch <- StreamEvent{Type: "tool_use", Tool: &ToolCall{
 				Name:  normalizeToolName(evt.ToolCall.Name),
 				ID:    evt.ToolCall.ID,
@@ -244,12 +248,16 @@ func (p *PiStreamParser) parseToolExecutionEnd(msg *PiStreamMessage, ch chan<- S
 //   - write: {path, content} → {file_path, content}
 //   - edit: {path, edits:[{oldText,newText}]} → {file_path, edits:[{old_string,new_string}]}
 //   - bash: {command} → {command} (no change)
-func normalizePiInput(toolName string, rawInput json.RawMessage) string {
+func normalizePiInput(toolName string, rawInput json.RawMessage, baseRemaps map[string]string) string {
 	if len(rawInput) == 0 {
 		return "{}"
 	}
 
+	// Start with base remaps from the sub-package (injected at parser construction)
 	remaps := map[string]string{}
+	for k, v := range baseRemaps {
+		remaps[k] = v
+	}
 
 	switch toolName {
 	case "read", "write":

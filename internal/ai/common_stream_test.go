@@ -227,99 +227,99 @@ func TestNormalizeToolName_Exhaustive(t *testing.T) {
 	}
 }
 
-// --- getRemaps and perAgentInputRemaps tests ---
+// --- Sub-package InputRemaps integration via normalizeToolInput ---
+// These tests mirror the InputRemaps defined in backend sub-packages.
+// We duplicate the maps here to avoid circular imports (internal/ai → backends/* → internal/ai).
 
-func TestGetRemaps_AllKeys(t *testing.T) {
-	// Verify every key in perAgentInputRemaps returns a non-nil map
-	for key := range perAgentInputRemaps {
-		t.Run(key, func(t *testing.T) {
-			remaps := getRemaps(key)
-			assert.NotNil(t, remaps, "getRemaps(%q) should return non-nil map", key)
-		})
+func TestNormalizeToolInput_KimiCliRemaps(t *testing.T) {
+	input := json.RawMessage(`{"dirPath":"./src","dir_path":"./lib","allow_multiple":true,"is_background":true,"include_pattern":"*.go","name":"my_skill"}`)
+	remaps := map[string]string{
+		"dirPath": "path", "dir_path": "path",
+		"allow_multiple": "replace_all", "is_background": "run_in_background",
+		"include_pattern": "glob", "name": "skill",
 	}
-}
-
-func TestGetRemaps_UnknownKey(t *testing.T) {
-	assert.Nil(t, getRemaps("nonexistent_agent"))
-	assert.Nil(t, getRemaps(""))
-}
-
-func TestGetRemaps_EmptyMaps(t *testing.T) {
-	// ACP empty maps have been migrated to backends sub-packages.
-	// Only CLI-layer entries remain in perAgentInputRemaps.
-	// Test that unknown ACP keys return nil (they now use LookupACPRemapsFn instead).
-	emptyKeys := []string{"claude_acp", "codebuddy_acp", "kimi_acp", "generic_acp"}
-	for _, key := range emptyKeys {
-		t.Run(key, func(t *testing.T) {
-			remaps := getRemaps(key)
-			assert.Nil(t, remaps, "getRemaps(%q) should return nil (migrated to backends registry)", key)
-		})
-	}
-}
-
-func TestGetRemaps_CliKeysRemapEntries(t *testing.T) {
-	tests := []struct {
-		key       string
-		fromField string
-		toField   string
-	}{
-		// kimi_cli
-		{"kimi_cli", "dirPath", "path"},
-		{"kimi_cli", "dir_path", "path"},
-		{"kimi_cli", "allow_multiple", "replace_all"},
-		{"kimi_cli", "is_background", "run_in_background"},
-		{"kimi_cli", "include_pattern", "glob"},
-		{"kimi_cli", "name", "skill"},
-		// opencode_cli
-		{"opencode_cli", "oldString", "old_string"},
-		{"opencode_cli", "newString", "new_string"},
-		{"opencode_cli", "replaceAll", "replace_all"},
-		{"opencode_cli", "include", "glob"},
-		{"opencode_cli", "name", "skill"},
-		// deepseek_cli
-		{"deepseek_cli", "path", "file_path"},
-		{"deepseek_cli", "search", "old_string"},
-		{"deepseek_cli", "replace", "new_string"},
-		{"deepseek_cli", "filePaths", "file_paths"},
-		{"deepseek_cli", "dirPath", "path"},
-		// pi_cli
-		{"pi_cli", "path", "file_path"},
-		// codex_cli
-		{"codex_cli", "cmd", "command"},
-		{"codex_cli", "agent_type", "subagent_type"},
-		{"codex_cli", "message", "prompt"},
-		{"codex_cli", "justification", "description"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.key+"/"+tt.fromField, func(t *testing.T) {
-			remaps := getRemaps(tt.key)
-			require.NotNil(t, remaps, "getRemaps(%q) should not be nil", tt.key)
-			assert.Equal(t, tt.toField, remaps[tt.fromField],
-				"getRemaps(%q)[%q] should be %q", tt.key, tt.fromField, tt.toField)
-		})
-	}
-}
-
-// --- perAgentInputRemaps integration via normalizeToolInput ---
-
-func TestNormalizeToolInput_CodexCliRemaps(t *testing.T) {
-	input := json.RawMessage(`{"cmd":"ls","agent_type":"general-purpose","message":"do stuff","justification":"needed"}`)
-	remaps := getRemaps("codex_cli")
 	norm, err := normalizeToolInput(input, remaps)
 	require.NoError(t, err)
 
 	var parsed map[string]any
 	require.NoError(t, json.Unmarshal(norm, &parsed))
 
-	assert.Equal(t, "ls", parsed["command"])
-	assert.Nil(t, parsed["cmd"])
-	assert.Equal(t, "general-purpose", parsed["subagent_type"])
-	assert.Nil(t, parsed["agent_type"])
-	assert.Equal(t, "do stuff", parsed["prompt"])
-	assert.Nil(t, parsed["message"])
-	assert.Equal(t, "needed", parsed["description"])
-	assert.Nil(t, parsed["justification"])
+	assert.Nil(t, parsed["dirPath"])
+	assert.Nil(t, parsed["dir_path"])
+	assert.NotNil(t, parsed["path"])
+	assert.Equal(t, true, parsed["replace_all"])
+	assert.Nil(t, parsed["allow_multiple"])
+	assert.Equal(t, true, parsed["run_in_background"])
+	assert.Nil(t, parsed["is_background"])
+	assert.Equal(t, "*.go", parsed["glob"])
+	assert.Nil(t, parsed["include_pattern"])
+	assert.Equal(t, "my_skill", parsed["skill"])
+	assert.Nil(t, parsed["name"])
+}
+
+func TestNormalizeToolInput_OpenCodeCliRemaps(t *testing.T) {
+	input := json.RawMessage(`{"include":"*.ts","name":"deploy_skill"}`)
+	remaps := map[string]string{
+		"oldString": "old_string", "newString": "new_string",
+		"replaceAll": "replace_all", "include": "glob", "name": "skill",
+	}
+	norm, err := normalizeToolInput(input, remaps)
+	require.NoError(t, err)
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(norm, &parsed))
+
+	assert.Equal(t, "*.ts", parsed["glob"])
+	assert.Nil(t, parsed["include"])
+	assert.Equal(t, "deploy_skill", parsed["skill"])
+	assert.Nil(t, parsed["name"])
+}
+
+func TestNormalizeToolInput_DeepSeekCliRemaps(t *testing.T) {
+	// Test edit_file remap: path→file_path, search→old_string, replace→new_string
+	input := json.RawMessage(`{"path":"main.go","search":"old","replace":"new"}`)
+	remaps := map[string]string{
+		"path": "file_path", "search": "old_string", "replace": "new_string",
+	}
+	norm, err := normalizeToolInput(input, remaps)
+	require.NoError(t, err)
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(norm, &parsed))
+
+	assert.Equal(t, "main.go", parsed["file_path"])
+	assert.Nil(t, parsed["path"])
+	assert.Equal(t, "old", parsed["old_string"])
+	assert.Nil(t, parsed["search"])
+	assert.Equal(t, "new", parsed["new_string"])
+	assert.Nil(t, parsed["replace"])
+}
+
+func TestNormalizeToolInput_DeepSeekCliDirPathRemaps(t *testing.T) {
+	// Test list_dir remap: dirPath→path
+	input := json.RawMessage(`{"dirPath":"./src"}`)
+	remaps := map[string]string{"dirPath": "path"}
+	norm, err := normalizeToolInput(input, remaps)
+	require.NoError(t, err)
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(norm, &parsed))
+
+	assert.Equal(t, "./src", parsed["path"])
+	assert.Nil(t, parsed["dirPath"])
+}
+
+func TestNormalizeToolInput_PiCliRemaps(t *testing.T) {
+	input := json.RawMessage(`{"path":"main.go"}`)
+	remaps := map[string]string{"path": "file_path"}
+	norm, err := normalizeToolInput(input, remaps)
+	require.NoError(t, err)
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(norm, &parsed))
+
+	assert.Equal(t, "main.go", parsed["file_path"])
+	assert.Nil(t, parsed["path"])
 }
 
 func TestNormalizeToolInput_OpenCodeAcpRemaps(t *testing.T) {
@@ -374,44 +374,6 @@ func TestNormalizeToolInput_GenericAcpRemaps(t *testing.T) {
 	assert.Nil(t, parsed["cellIndex"])
 	assert.Equal(t, "code", parsed["cell_type"])
 	assert.Nil(t, parsed["cellType"])
-}
-
-func TestNormalizeToolInput_KimiCliRemaps(t *testing.T) {
-	input := json.RawMessage(`{"dirPath":"./src","dir_path":"./lib","allow_multiple":true,"is_background":true,"include_pattern":"*.go","name":"my_skill"}`)
-	remaps := getRemaps("kimi_cli")
-	norm, err := normalizeToolInput(input, remaps)
-	require.NoError(t, err)
-
-	var parsed map[string]any
-	require.NoError(t, json.Unmarshal(norm, &parsed))
-
-	// dirPath and dir_path both remap to "path" — last one wins after JSON unmarshal order
-	assert.Nil(t, parsed["dirPath"])
-	assert.Nil(t, parsed["dir_path"])
-	assert.NotNil(t, parsed["path"])
-	assert.Equal(t, true, parsed["replace_all"])
-	assert.Nil(t, parsed["allow_multiple"])
-	assert.Equal(t, true, parsed["run_in_background"])
-	assert.Nil(t, parsed["is_background"])
-	assert.Equal(t, "*.go", parsed["glob"])
-	assert.Nil(t, parsed["include_pattern"])
-	assert.Equal(t, "my_skill", parsed["skill"])
-	assert.Nil(t, parsed["name"])
-}
-
-func TestNormalizeToolInput_OpenCodeCliRemaps(t *testing.T) {
-	input := json.RawMessage(`{"include":"*.ts","name":"deploy_skill"}`)
-	remaps := getRemaps("opencode_cli")
-	norm, err := normalizeToolInput(input, remaps)
-	require.NoError(t, err)
-
-	var parsed map[string]any
-	require.NoError(t, json.Unmarshal(norm, &parsed))
-
-	assert.Equal(t, "*.ts", parsed["glob"])
-	assert.Nil(t, parsed["include"])
-	assert.Equal(t, "deploy_skill", parsed["skill"])
-	assert.Nil(t, parsed["name"])
 }
 
 // --- execCommandJSON test ---

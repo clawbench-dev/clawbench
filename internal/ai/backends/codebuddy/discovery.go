@@ -12,6 +12,10 @@ import (
 	"clawbench/internal/platform"
 )
 
+func init() {
+	model.RegisterDiscoverModelsFunc("codebuddy", DiscoverCodebuddyModels)
+}
+
 // codebuddyProductFile is the JSON file in the codebuddy installation that contains
 // the authoritative model list with names, capabilities, and default status.
 const codebuddyProductFile = "product.cloudhosted.json"

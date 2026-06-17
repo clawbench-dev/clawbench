@@ -6,6 +6,32 @@ import (
 	"clawbench/internal/ai"
 )
 
+// OpenCodeInputRemaps maps OpenCode CLI input field names to canonical names.
+// Injected into OpenCodeStreamParser at construction time.
+var OpenCodeInputRemaps = map[string]string{
+	"oldString": "old_string",
+	"newString": "new_string",
+	"replaceAll": "replace_all", // Edit replaceAll → replace_all
+	"include":    "glob",        // Grep include → canonical glob
+	"name":       "skill",       // Skill name → skill
+}
+
+// OpenCodeToolNameMap maps OpenCode CLI tool names to canonical names.
+// Injected into OpenCodeStreamParser at construction time.
+var OpenCodeToolNameMap = map[string]string{
+	"read_file":  "Read",
+	"write_file": "Write",
+	"edit_file":  "Edit",
+	"replace":    "Edit",
+	"bash":       "Bash",
+	"list_files": "LS",
+	"grep":       "Grep",
+	"glob":       "Glob",
+	"web_fetch":  "WebFetch",
+	"agent":      "Agent",
+	"skill":      "Skill",
+}
+
 func init() {
 	ai.RegisterBackend("opencode", newOpenCodeBackend, false)
 }
@@ -16,7 +42,12 @@ func newOpenCodeBackend() ai.AIBackend {
 		BackendName: "opencode",
 		Cmd:         "opencode",
 		BuildArgsFn: buildOpenCodeStreamArgs,
-		NewParserFn: func() ai.LineParser { return &ai.OpenCodeStreamParser{} },
+		NewParserFn: func() ai.LineParser {
+			return &ai.OpenCodeStreamParser{
+				ToolNameMap: OpenCodeToolNameMap,
+				InputRemaps: OpenCodeInputRemaps,
+			}
+		},
 		FilterLineFn: func(line string) (string, bool) {
 			if line == "" || strings.HasPrefix(line, "[opencode-mobile]") {
 				return "", false
