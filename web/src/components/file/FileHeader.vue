@@ -16,7 +16,7 @@
       </button>
 
       <!-- Attach to chat button -->
-      <button ref="attachBtnRef" class="file-header-btn" @click.stop="handleAttachToChat" :title="t('chat.actions.attachToChat')">
+      <button ref="attachBtnRef" class="file-header-btn" :class="{ active: isAttached }" @click.stop="handleAttachToChat" :title="isAttached ? t('chat.attach.removeFromChat') : t('chat.actions.attachToChat')">
         <Paperclip :size="14" />
       </button>
 
@@ -109,8 +109,10 @@ const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory
 
 const { isAppMode } = useAppMode()
 const { t } = useI18n()
-const { addAttachedFile, hasAttachedFile } = useChatContext()
+const { addAttachedFile, hasAttachedFile, toggleAttachedFile, removeAttachedFileByPath } = useChatContext()
 const toast = useToast()
+
+const isAttached = computed(() => !!props.file?.path && hasAttachedFile(props.file.path))
 
 const menuOpen = ref(false)
 const dropdownRef = ref(null)
@@ -204,7 +206,8 @@ function handleAttachToChat() {
     const path = props.file?.path
     if (!path) return
     if (hasAttachedFile(path)) {
-        toast.show(t('chat.attach.alreadyAttached'), { icon: '📎', type: 'info', duration: 1500 })
+        removeAttachedFileByPath(path)
+        toast.show(t('chat.attach.removedFromChat'), { icon: '📎', type: 'info', duration: 1500 })
         return
     }
     addAttachedFile(path)

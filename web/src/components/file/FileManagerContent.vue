@@ -127,7 +127,10 @@
           <div v-if="multiSelect.active" class="ms-check" :class="{ checked: multiSelect.selected.has(itemPath(entry.name)) }">
             <Check v-if="multiSelect.selected.has(itemPath(entry.name))" :size="12" />
           </div>
-          <Folder class="file-icon" :size="28" />
+          <div class="file-icon-wrap" :class="{ 'has-attach': hasAttachedFile(itemPath(entry.name)) }">
+            <Folder class="file-icon" :size="28" />
+            <Paperclip v-if="hasAttachedFile(itemPath(entry.name))" class="attach-badge" :size="15" @click.stop="toggleAttach(itemPath(entry.name))" />
+          </div>
           <span class="file-name">{{ entry.name }}</span>
           <span class="file-meta">{{ formatDate(entry.modified) }}</span>
         </div>
@@ -146,10 +149,13 @@
           <div v-if="multiSelect.active" class="ms-check" :class="{ checked: multiSelect.selected.has(itemPath(entry.name)) }">
             <Check v-if="multiSelect.selected.has(itemPath(entry.name))" :size="12" />
           </div>
-          <img v-if="isThumbLoaded(entry)" class="file-thumb" :src="thumbUrl(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
-          <FileImage v-else-if="isImage(entry)" class="file-icon" :size="28" color="#a855f7" />
-          <FileMusic v-else-if="isAudio(entry)" class="file-icon" :size="28" color="#22c55e" />
-          <FileText v-else class="file-icon" :size="28" :color="getFileType(entry.name).color" />
+          <div class="file-icon-wrap" :class="{ 'has-attach': hasAttachedFile(itemPath(entry.name)) }">
+            <img v-if="isThumbLoaded(entry)" class="file-thumb" :src="thumbUrl(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
+            <FileImage v-else-if="isImage(entry)" class="file-icon" :size="28" color="#a855f7" />
+            <FileMusic v-else-if="isAudio(entry)" class="file-icon" :size="28" color="#22c55e" />
+            <FileText v-else class="file-icon" :size="28" :color="getFileType(entry.name).color" />
+            <Paperclip v-if="hasAttachedFile(itemPath(entry.name))" class="attach-badge" :size="15" @click.stop="toggleAttach(itemPath(entry.name))" />
+          </div>
           <span class="file-name">{{ entry.name }}</span>
           <span class="file-meta">{{ formatFileSize(entry.size) }} · {{ formatDate(entry.modified) }}</span>
         </div>
@@ -192,9 +198,10 @@
         <div v-if="multiSelect.active" class="grid-ms-check" :class="{ checked: multiSelect.selected.has(itemPath(entry.name)) }">
           <Check v-if="multiSelect.selected.has(itemPath(entry.name))" :size="12" />
         </div>
-        <div class="grid-thumb">
+        <div class="grid-thumb" :class="{ 'has-attach': hasAttachedFile(itemPath(entry.name)) }">
           <img v-if="isThumbLoaded(entry)" :src="thumbUrl(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
           <component v-else :is="entryIcon(entry)" class="grid-icon" :size="32" :color="entryIconColor(entry)" />
+          <Paperclip v-if="hasAttachedFile(itemPath(entry.name))" class="attach-badge" :size="15" @click.stop="toggleAttach(itemPath(entry.name))" />
         </div>
         <div class="grid-name">{{ entry.name }}</div>
       </div>
@@ -258,7 +265,7 @@
           </div>
           <div class="context-menu-item" @click.stop="doAttachToChat">
             <Paperclip :size="14" />
-            {{ t('chat.actions.attachToChat') }}
+            {{ ctxMenu.entry && hasAttachedFile(ctxMenu.entry.path) ? t('chat.attach.removeFromChat') : t('chat.actions.attachToChat') }}
           </div>
           <div class="context-menu-item danger" @click.stop="doDelete">
             <Trash2 :size="14" />
@@ -328,7 +335,7 @@ async function onUploadFileSelect(e) {
   emit('refresh')
 }
 const dialog = useDialog()
-const { addAttachedFile, hasAttachedFile } = useChatContext()
+const { addAttachedFile, hasAttachedFile, removeAttachedFileByPath } = useChatContext()
 const { terminalRuntimeEnabled } = useTerminalStatus()
 const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
 
@@ -873,7 +880,8 @@ function doAttachToChat() {
     const path = ctxMenu.entry.path
     closeCtxMenu()
     if (hasAttachedFile(path)) {
-        toast.show(t('chat.attach.alreadyAttached'), { icon: '📎', type: 'info', duration: 1500 })
+        removeAttachedFileByPath(path)
+        toast.show(t('chat.attach.removedFromChat'), { icon: '📎', type: 'info', duration: 1500 })
         return
     }
     addAttachedFile(path)
@@ -889,6 +897,16 @@ function doAttachToChat() {
                 to: { x: animTo.left + animTo.width / 2, y: animTo.top + animTo.height / 2 },
             }
         }))
+    }
+}
+
+function toggleAttach(path) {
+    if (hasAttachedFile(path)) {
+        removeAttachedFileByPath(path)
+        toast.show(t('chat.attach.removedFromChat'), { icon: '📎', type: 'info', duration: 1500 })
+    } else {
+        addAttachedFile(path)
+        toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
     }
 }
 
@@ -1271,6 +1289,41 @@ function doDelete() {
     height: 28px;
 }
 
+.file-icon-wrap {
+    position: relative;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+}
+
+.file-icon-wrap .file-icon {
+    width: 28px;
+    height: 28px;
+}
+
+.file-icon-wrap .file-thumb {
+    width: 28px;
+    height: 28px;
+}
+
+.attach-badge {
+    position: absolute;
+    bottom: -5px;
+    right: -5px;
+    background: var(--accent-color, #4a90d9);
+    color: #fff;
+    border-radius: 50%;
+    padding: 3px;
+    cursor: pointer;
+    z-index: 2;
+    transition: transform 0.15s, background 0.15s;
+}
+
+.attach-badge:hover {
+    transform: scale(1.2);
+    background: #ef4444;
+}
+
 .file-thumb {
     flex-shrink: 0;
     width: 28px;
@@ -1374,6 +1427,25 @@ function doDelete() {
     align-items: center;
     justify-content: center;
     background: var(--bg-tertiary, #f5f5f5);
+    position: relative;
+}
+
+.grid-thumb .attach-badge {
+    position: absolute;
+    bottom: 4px;
+    right: 4px;
+    background: var(--accent-color, #4a90d9);
+    color: #fff;
+    border-radius: 50%;
+    padding: 3px;
+    cursor: pointer;
+    z-index: 2;
+    transition: transform 0.15s, background 0.15s;
+}
+
+.grid-thumb .attach-badge:hover {
+    transform: scale(1.2);
+    background: #ef4444;
 }
 
 .grid-thumb img {

@@ -191,6 +191,8 @@ export default {
       openDirectory: '打开目录',
       addedToChat: '已添加到聊天',
       alreadyAttached: '已在聊天附件中',
+      removedFromChat: '已从聊天附件移除',
+      removeFromChat: '取消附件',
     },
     quickSend: {
       title: '快捷发送消息',

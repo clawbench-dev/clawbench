@@ -191,6 +191,8 @@ export default {
       openDirectory: 'Open directory',
       addedToChat: 'Added to chat',
       alreadyAttached: 'Already in chat attachments',
+      removedFromChat: 'Removed from chat attachments',
+      removeFromChat: 'Remove attachment',
     },
     quickSend: {
       title: 'Quick Send Message',
