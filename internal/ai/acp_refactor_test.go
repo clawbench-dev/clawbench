@@ -326,80 +326,80 @@ func TestRefactor_ConfigKilledConnectionError(t *testing.T) {
 
 func TestRefactor_ExtractToolName(t *testing.T) {
 	t.Run("toolCallID_prefix_match", func(t *testing.T) {
-		assert.Equal(t, "Read", extractToolName("", acp.ToolKindRead, "read_file-1234-5"))
-		assert.Equal(t, "Bash", extractToolName("", acp.ToolKindExecute, "run_shell_command-1234-5"))
-		assert.Equal(t, "LS", extractToolName("", acp.ToolKindOther, "list_directory-1234-5"))
-		assert.Equal(t, "Glob", extractToolName("", acp.ToolKindOther, "glob-1234-5"))
-		assert.Equal(t, "AskUserQuestion", extractToolName("", acp.ToolKindOther, "ask-uuid-123"))
+		assert.Equal(t, "Read", extractToolName("", acp.ToolKindRead, "kimi", "read_file-1234-5"))
+		assert.Equal(t, "Bash", extractToolName("", acp.ToolKindExecute, "kimi", "run_shell_command-1234-5"))
+		assert.Equal(t, "LS", extractToolName("", acp.ToolKindOther, "kimi", "list_directory-1234-5"))
+		assert.Equal(t, "Glob", extractToolName("", acp.ToolKindOther, "kimi", "glob-1234-5"))
+		assert.Equal(t, "AskUserQuestion", extractToolName("", acp.ToolKindOther, "kimi", "ask-uuid-123"))
 	})
 
 	t.Run("toolCallID_no_dash", func(t *testing.T) {
 		// No dash → no prefix extraction
-		assert.Equal(t, "Bash", extractToolName("Bash", acp.ToolKindExecute, "nodash"))
+		assert.Equal(t, "Bash", extractToolName("Bash", acp.ToolKindExecute, "", "nodash"))
 	})
 
 	t.Run("toolCallID_unknown_prefix", func(t *testing.T) {
 		// Unknown prefix falls through to title/alias matching
-		assert.Equal(t, "Bash", extractToolName("Bash", acp.ToolKindExecute, "unknown_prefix-123"))
+		assert.Equal(t, "Bash", extractToolName("Bash", acp.ToolKindExecute, "", "unknown_prefix-123"))
 	})
 
 	t.Run("lowercase_alias", func(t *testing.T) {
-		assert.Equal(t, "Bash", extractToolName("bash", acp.ToolKindExecute))
-		assert.Equal(t, "Bash", extractToolName("terminal", acp.ToolKindExecute))
-		assert.Equal(t, "Bash", extractToolName("shell", acp.ToolKindExecute))
-		assert.Equal(t, "Read", extractToolName("read", acp.ToolKindRead))
-		assert.Equal(t, "Write", extractToolName("write", acp.ToolKindEdit))
-		assert.Equal(t, "Edit", extractToolName("edit", acp.ToolKindEdit))
-		assert.Equal(t, "Glob", extractToolName("glob", acp.ToolKindOther))
-		assert.Equal(t, "Grep", extractToolName("grep", acp.ToolKindSearch))
-		assert.Equal(t, "LS", extractToolName("ls", acp.ToolKindOther))
-		assert.Equal(t, "LS", extractToolName("list", acp.ToolKindOther))
+		assert.Equal(t, "Bash", extractToolName("bash", acp.ToolKindExecute, ""))
+		assert.Equal(t, "Bash", extractToolName("terminal", acp.ToolKindExecute, ""))
+		assert.Equal(t, "Bash", extractToolName("shell", acp.ToolKindExecute, ""))
+		assert.Equal(t, "Read", extractToolName("read", acp.ToolKindRead, ""))
+		assert.Equal(t, "Write", extractToolName("write", acp.ToolKindEdit, ""))
+		assert.Equal(t, "Edit", extractToolName("edit", acp.ToolKindEdit, ""))
+		assert.Equal(t, "Glob", extractToolName("glob", acp.ToolKindOther, ""))
+		assert.Equal(t, "Grep", extractToolName("grep", acp.ToolKindSearch, ""))
+		assert.Equal(t, "LS", extractToolName("ls", acp.ToolKindOther, ""))
+		assert.Equal(t, "LS", extractToolName("list", acp.ToolKindOther, ""))
 	})
 
 	t.Run("prefix_patterns", func(t *testing.T) {
-		assert.Equal(t, "MultiEdit", extractToolName("MultiEdit file", acp.ToolKindEdit))
-		assert.Equal(t, "NotebookEdit", extractToolName("NotebookEdit cell", acp.ToolKindEdit))
-		assert.Equal(t, "WebSearch", extractToolName("WebSearch query", acp.ToolKindFetch))
-		assert.Equal(t, "WebFetch", extractToolName("WebFetch url", acp.ToolKindFetch))
-		assert.Equal(t, "AskUserQuestion", extractToolName("AskUserQuestion about", acp.ToolKindOther))
-		assert.Equal(t, "TodoWrite", extractToolName("TodoWrite list", acp.ToolKindOther))
+		assert.Equal(t, "MultiEdit", extractToolName("MultiEdit file", acp.ToolKindEdit, ""))
+		assert.Equal(t, "NotebookEdit", extractToolName("NotebookEdit cell", acp.ToolKindEdit, ""))
+		assert.Equal(t, "WebSearch", extractToolName("WebSearch query", acp.ToolKindFetch, ""))
+		assert.Equal(t, "WebFetch", extractToolName("WebFetch url", acp.ToolKindFetch, ""))
+		assert.Equal(t, "AskUserQuestion", extractToolName("AskUserQuestion about", acp.ToolKindOther, ""))
+		assert.Equal(t, "TodoWrite", extractToolName("TodoWrite list", acp.ToolKindOther, ""))
 	})
 
 	t.Run("single_word_passthrough", func(t *testing.T) {
 		// Single word without space/dot/slash passes through
-		assert.Equal(t, "CustomTool", extractToolName("CustomTool", acp.ToolKindOther))
+		assert.Equal(t, "CustomTool", extractToolName("CustomTool", acp.ToolKindOther, ""))
 	})
 
 	t.Run("agent_subtype_mapping", func(t *testing.T) {
 		// Known agent subtypes map to "Agent"
-		assert.Equal(t, "Agent", extractToolName("Explore", acp.ToolKindOther))
-		assert.Equal(t, "Agent", extractToolName("Plan", acp.ToolKindOther))
-		assert.Equal(t, "Agent", extractToolName("explore", acp.ToolKindOther))
-		assert.Equal(t, "Agent", extractToolName("general-purpose", acp.ToolKindOther))
+		assert.Equal(t, "Agent", extractToolName("Explore", acp.ToolKindOther, ""))
+		assert.Equal(t, "Agent", extractToolName("Plan", acp.ToolKindOther, ""))
+		assert.Equal(t, "Agent", extractToolName("explore", acp.ToolKindOther, ""))
+		assert.Equal(t, "Agent", extractToolName("general-purpose", acp.ToolKindOther, ""))
 	})
 
 	t.Run("file_path_falls_through_to_kind", func(t *testing.T) {
 		// Titles with dots/slashes are not canonical tool names → fall to kind mapping
-		assert.Equal(t, "Read", extractToolName("README.md", acp.ToolKindRead))
-		assert.Equal(t, "Grep", extractToolName("cmd/server", acp.ToolKindSearch))
+		assert.Equal(t, "Read", extractToolName("README.md", acp.ToolKindRead, ""))
+		assert.Equal(t, "Grep", extractToolName("cmd/server", acp.ToolKindSearch, ""))
 	})
 
 	t.Run("kind_fallback", func(t *testing.T) {
-		assert.Equal(t, "Read", extractToolName("", acp.ToolKindRead))
-		assert.Equal(t, "Edit", extractToolName("", acp.ToolKindEdit))
-		assert.Equal(t, "Edit", extractToolName("", acp.ToolKindDelete))
-		assert.Equal(t, "Edit", extractToolName("", acp.ToolKindMove))
-		assert.Equal(t, "Grep", extractToolName("", acp.ToolKindSearch))
-		assert.Equal(t, "Bash", extractToolName("", acp.ToolKindExecute))
-		assert.Equal(t, "DeepThink", extractToolName("", acp.ToolKindThink))
-		assert.Equal(t, "WebFetch", extractToolName("", acp.ToolKindFetch))
-		assert.Equal(t, "EnterPlanMode", extractToolName("", acp.ToolKindSwitchMode))
-		assert.Equal(t, "Skill", extractToolName("", acp.ToolKindOther))
+		assert.Equal(t, "Read", extractToolName("", acp.ToolKindRead, ""))
+		assert.Equal(t, "Edit", extractToolName("", acp.ToolKindEdit, ""))
+		assert.Equal(t, "Edit", extractToolName("", acp.ToolKindDelete, ""))
+		assert.Equal(t, "Edit", extractToolName("", acp.ToolKindMove, ""))
+		assert.Equal(t, "Grep", extractToolName("", acp.ToolKindSearch, ""))
+		assert.Equal(t, "Bash", extractToolName("", acp.ToolKindExecute, ""))
+		assert.Equal(t, "DeepThink", extractToolName("", acp.ToolKindThink, ""))
+		assert.Equal(t, "WebFetch", extractToolName("", acp.ToolKindFetch, ""))
+		assert.Equal(t, "EnterPlanMode", extractToolName("", acp.ToolKindSwitchMode, ""))
+		assert.Equal(t, "Skill", extractToolName("", acp.ToolKindOther, ""))
 	})
 
 	t.Run("empty_everything", func(t *testing.T) {
 		// Unknown kind falls through to string(kind)
-		result := extractToolName("", acp.ToolKind("custom"))
+		result := extractToolName("", acp.ToolKind("custom"), "")
 		assert.Equal(t, "custom", result)
 	})
 }

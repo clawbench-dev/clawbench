@@ -16,6 +16,12 @@ import (
 // If conn is non-nil, mode/config/thinking cache updates are applied to the connection
 // so that re-emitted SSE events reflect the latest state.
 func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx context.Context, conn *ACPConn, deb *toolCallDebouncer) { //nolint:gocognit,gocyclo,revive,unparam // ACP protocol has many event types, each branch is simple; ctx position follows ACP SDK convention; ctx reserved for future use
+	// Extract backendID once for all downstream ACP event mapping.
+	// conn.agent.Backend provides the backend identifier (e.g. "kimi", "claude").
+	backendID := ""
+	if conn != nil {
+		backendID = conn.BackendID()
+	}
 	// Emit raw_output event for each ACP notification so the handler can
 	// persist the original protocol data to ai_raw_responses for debugging.
 	// This mirrors how CLIBackend collects raw stdout lines.
@@ -48,7 +54,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		if deb != nil {
 			deb.handleToolCall(*tc)
 		}
-		event := mapACPToolCall(*tc)
+		event := mapACPToolCall(*tc, backendID)
 		forwardACPEvent(ch, event)
 
 	case update.ToolCallUpdate != nil:
@@ -83,7 +89,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		}
 
 		// Fallback: no debouncer, forward directly (original behavior).
-		event := mapACPToolCallUpdate(*tcu)
+		event := mapACPToolCallUpdate(*tcu, backendID)
 		forwardACPEvent(ch, event)
 
 		// When a think tool completes, also emit thinking_done so the frontend
@@ -265,9 +271,9 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 }
 
 // mapACPToolCall converts an ACP ToolCall start event to a StreamEvent.
-func mapACPToolCall(tc acp.SessionUpdateToolCall) StreamEvent {
+func mapACPToolCall(tc acp.SessionUpdateToolCall, backendID string) StreamEvent {
 	tool := &ToolCall{
-		Name: extractToolName(tc.Title, tc.Kind, string(tc.ToolCallId)),
+		Name: extractToolName(tc.Title, tc.Kind, backendID, string(tc.ToolCallId)),
 		ID:   string(tc.ToolCallId),
 		Done: false,
 	}
@@ -275,14 +281,8 @@ func mapACPToolCall(tc acp.SessionUpdateToolCall) StreamEvent {
 	// Extract raw input as JSON string, normalizing camelCase → snake_case
 	if tc.RawInput != nil {
 		if inputBytes, err := json.Marshal(tc.RawInput); err == nil {
-			normalized, normErr := normalizeToolInput(inputBytes, map[string]string{
-				"oldString": "old_string",
-				"newString": "new_string",
-				"dirPath":   "path",
-				"filePath":  "file_path",
-				"cellIndex": "cell_index",
-				"cellType":  "cell_type",
-			})
+			remaps := acpRemapsForBackend(backendID)
+			normalized, normErr := normalizeToolInput(inputBytes, remaps)
 			if normErr == nil {
 				tool.Input = string(normalized)
 			} else {
@@ -434,14 +434,14 @@ func extractInputFromLocationsAndTitle(locations []acp.ToolCallLocation, title s
 }
 
 // mapACPToolCallUpdate converts an ACP ToolCallUpdate to a StreamEvent.
-func mapACPToolCallUpdate(tcu acp.SessionToolCallUpdate) StreamEvent {
+func mapACPToolCallUpdate(tcu acp.SessionToolCallUpdate, backendID string) StreamEvent {
 	tool := &ToolCall{
 		ID: string(tcu.ToolCallId),
 	}
 
 	mapToolCallStatus(tcu.Status, tool)
-	mapToolCallInput(tcu, tool)
-	mapToolCallName(tcu, tool)
+	mapToolCallInput(tcu, tool, backendID)
+	mapToolCallName(tcu, tool, backendID)
 	// Only extract output for completed/failed tools.
 	// Intermediate updates (in_progress/pending) may carry partial RawOutput
 	// (e.g., a lone "}" from a streaming JSON object) that is not meaningful
@@ -482,17 +482,11 @@ func mapToolCallStatus(status *acp.ToolCallStatus, tool *ToolCall) {
 }
 
 // mapToolCallInput extracts tool input from RawInput, Content, or Locations/Title.
-func mapToolCallInput(tcu acp.SessionToolCallUpdate, tool *ToolCall) {
+func mapToolCallInput(tcu acp.SessionToolCallUpdate, tool *ToolCall, backendID string) {
 	if tcu.RawInput != nil {
 		if inputBytes, err := json.Marshal(tcu.RawInput); err == nil && string(inputBytes) != "{}" {
-			normalized, normErr := normalizeToolInput(inputBytes, map[string]string{
-				"oldString": "old_string",
-				"newString": "new_string",
-				"dirPath":   "path",
-				"filePath":  "file_path",
-				"cellIndex": "cell_index",
-				"cellType":  "cell_type",
-			})
+			remaps := acpRemapsForBackend(backendID)
+			normalized, normErr := normalizeToolInput(inputBytes, remaps)
 			if normErr == nil {
 				tool.Input = string(normalized)
 			} else {
@@ -559,7 +553,7 @@ func mapToolCallInputFromLocations(tcu acp.SessionToolCallUpdate, tool *ToolCall
 }
 
 // mapToolCallName sets the tool name from title when the tool is not yet done.
-func mapToolCallName(tcu acp.SessionToolCallUpdate, tool *ToolCall) {
+func mapToolCallName(tcu acp.SessionToolCallUpdate, tool *ToolCall, backendID string) {
 	if tcu.Title == nil || *tcu.Title == "" || tool.Done {
 		return
 	}
@@ -577,7 +571,7 @@ func mapToolCallName(tcu acp.SessionToolCallUpdate, tool *ToolCall) {
 	if tcu.Kind != nil {
 		kind = *tcu.Kind
 	}
-	tool.Name = extractToolName(*tcu.Title, kind, string(tcu.ToolCallId))
+	tool.Name = extractToolName(*tcu.Title, kind, backendID, string(tcu.ToolCallId))
 }
 
 // mapToolCallOutput extracts human-readable output from RawOutput or Content blocks.
@@ -775,4 +769,22 @@ func forwardACPEvent(ch chan<- StreamEvent, event StreamEvent) {
 // tests that verify LoadSession replay parsing. Production code must not use this.
 func MapACPSessionUpdateForTest(update acp.SessionUpdate, ch chan<- StreamEvent) {
 	mapACPSessionUpdate(update, ch, nil, nil, nil)
+}
+
+// acpRemapsForBackend returns the ACP input remapping map for the given backendID.
+// Uses LookupACPRemapsFn (wired to backends.LookupACPRemaps) when available,
+// which handles backend-specific remaps and generic fallback internally.
+// Falls back to a local copy of the generic map only when the backends package
+// is not loaded (e.g., isolated test runs).
+func acpRemapsForBackend(backendID string) map[string]string {
+	if LookupACPRemapsFn != nil {
+		return LookupACPRemapsFn(backendID)
+	}
+	// Fallback for isolated test runs without backends package.
+	// Must match genericACPRemaps in backends/registry.go.
+	return map[string]string{
+		"oldString": "old_string", "newString": "new_string",
+		"dirPath": "path", "filePath": "file_path",
+		"cellIndex": "cell_index", "cellType": "cell_type",
+	}
 }

@@ -23,7 +23,7 @@ func TestMapACPToolCall_BasicFields(t *testing.T) {
 		Title:      "Read",
 		Kind:       acp.ToolKindRead,
 	}
-	event := mapACPToolCall(tc)
+	event := mapACPToolCall(tc, "")
 
 	assert.Equal(t, "tool_use", event.Type)
 	require.NotNil(t, event.Tool)
@@ -39,7 +39,7 @@ func TestMapACPToolCall_WithRawInput(t *testing.T) {
 		Kind:       acp.ToolKindEdit,
 		RawInput:   map[string]any{"path": "/tmp/test.txt", "content": "hello"},
 	}
-	event := mapACPToolCall(tc)
+	event := mapACPToolCall(tc, "")
 
 	assert.Equal(t, "Write", event.Tool.Name)
 	assert.Contains(t, event.Tool.Input, "path")
@@ -52,7 +52,7 @@ func TestMapACPToolCall_NoTitleUsesKind(t *testing.T) {
 		Title:      "",
 		Kind:       acp.ToolKindRead,
 	}
-	event := mapACPToolCall(tc)
+	event := mapACPToolCall(tc, "")
 	// Kind fallback now maps to PascalCase canonical name, not lowercase string(kind)
 	assert.Equal(t, "Read", event.Tool.Name)
 }
@@ -72,7 +72,7 @@ func TestMapACPToolCall_ContentWithTerminal(t *testing.T) {
 			},
 		},
 	}
-	event := mapACPToolCall(tc)
+	event := mapACPToolCall(tc, "")
 
 	assert.Equal(t, "Bash", event.Tool.Name)
 	assert.Contains(t, event.Tool.Input, "command")
@@ -96,7 +96,7 @@ func TestMapACPToolCall_ContentWithText(t *testing.T) {
 			},
 		},
 	}
-	event := mapACPToolCall(tc)
+	event := mapACPToolCall(tc, "")
 
 	assert.Equal(t, "Bash", event.Tool.Name)
 	assert.Contains(t, event.Tool.Input, "description")
@@ -119,7 +119,7 @@ func TestMapACPToolCall_RawInputPreferredOverContent(t *testing.T) {
 			},
 		},
 	}
-	event := mapACPToolCall(tc)
+	event := mapACPToolCall(tc, "")
 
 	assert.Equal(t, "Bash", event.Tool.Name)
 	assert.Contains(t, event.Tool.Input, "ls -la")
@@ -133,7 +133,7 @@ func TestMapACPToolCall_WithFilePathRawInput(t *testing.T) {
 		Kind:       acp.ToolKindRead,
 		RawInput:   map[string]any{"filePath": "/home/user/project/main.go"},
 	}
-	event := mapACPToolCall(tc)
+	event := mapACPToolCall(tc, "")
 
 	assert.Equal(t, "Read", event.Tool.Name)
 	assert.Contains(t, event.Tool.Input, "file_path")
@@ -150,7 +150,7 @@ func TestMapACPToolCallUpdate_Completed(t *testing.T) {
 		Status:     &completed,
 		RawOutput:  map[string]any{"result": "file contents"},
 	}
-	event := mapACPToolCallUpdate(tcu)
+	event := mapACPToolCallUpdate(tcu, "")
 
 	assert.Equal(t, "tool_result", event.Type)
 	require.NotNil(t, event.Tool)
@@ -167,7 +167,7 @@ func TestMapACPToolCallUpdate_Failed(t *testing.T) {
 		Status:     &failed,
 		RawOutput:  map[string]any{"error": "permission denied"},
 	}
-	event := mapACPToolCallUpdate(tcu)
+	event := mapACPToolCallUpdate(tcu, "")
 
 	assert.Equal(t, "tool_result", event.Type)
 	assert.True(t, event.Tool.Done)
@@ -180,7 +180,7 @@ func TestMapACPToolCallUpdate_InProgress(t *testing.T) {
 		ToolCallId: acp.ToolCallId("tc-wip"),
 		Status:     &inProgress,
 	}
-	event := mapACPToolCallUpdate(tcu)
+	event := mapACPToolCallUpdate(tcu, "")
 
 	assert.Equal(t, "tool_use", event.Type)
 	assert.False(t, event.Tool.Done)
@@ -197,7 +197,7 @@ func TestMapACPToolCallUpdate_InProgressIgnoresRawOutput(t *testing.T) {
 		Status:     &inProgress,
 		RawOutput:  "}",
 	}
-	event := mapACPToolCallUpdate(tcu)
+	event := mapACPToolCallUpdate(tcu, "")
 
 	assert.Equal(t, "tool_use", event.Type)
 	assert.False(t, event.Tool.Done)
@@ -210,7 +210,7 @@ func TestMapACPToolCallUpdate_Pending(t *testing.T) {
 		ToolCallId: acp.ToolCallId("tc-pend"),
 		Status:     &pending,
 	}
-	event := mapACPToolCallUpdate(tcu)
+	event := mapACPToolCallUpdate(tcu, "")
 
 	assert.Equal(t, "tool_use", event.Type)
 	assert.False(t, event.Tool.Done)
@@ -231,7 +231,7 @@ func TestMapACPToolCallUpdate_InProgressWithRawInput(t *testing.T) {
 			"subagent_type": "explore",
 		},
 	}
-	event := mapACPToolCallUpdate(tcu)
+	event := mapACPToolCallUpdate(tcu, "")
 
 	assert.Equal(t, "tool_use", event.Type, "in_progress update should emit tool_use")
 	require.NotNil(t, event.Tool)
@@ -262,7 +262,7 @@ func TestMapACPToolCallUpdate_CompletedWithRawInput(t *testing.T) {
 		},
 		RawOutput: map[string]any{"result": "project summary"},
 	}
-	event := mapACPToolCallUpdate(tcu)
+	event := mapACPToolCallUpdate(tcu, "")
 
 	assert.Equal(t, "tool_result", event.Type, "completed update should emit tool_result")
 	require.NotNil(t, event.Tool)
@@ -285,7 +285,7 @@ func TestMapACPToolCallUpdate_CompletedWithTitleNoOverride(t *testing.T) {
 		Title:      &title,
 		RawOutput:  map[string]any{"output": "directory listing"},
 	}
-	event := mapACPToolCallUpdate(tcu)
+	event := mapACPToolCallUpdate(tcu, "")
 
 	assert.Equal(t, "tool_result", event.Type)
 	// Name should remain empty (not overwritten by "cmd/server")
@@ -304,7 +304,7 @@ func TestMapACPToolCallUpdate_InProgressWithTitleUpdate(t *testing.T) {
 		Kind:       &readKind,
 		Title:      &title,
 	}
-	event := mapACPToolCallUpdate(tcu)
+	event := mapACPToolCallUpdate(tcu, "")
 
 	assert.Equal(t, "tool_use", event.Type)
 	assert.Equal(t, "Read", event.Tool.Name, "in-progress title should update tool name")
@@ -321,7 +321,7 @@ func TestMapACPToolCallUpdate_InProgressWithDescriptiveTitle(t *testing.T) {
 		Kind:       &executeKind,
 		Title:      &title,
 	}
-	event := mapACPToolCallUpdate(tcu)
+	event := mapACPToolCallUpdate(tcu, "")
 
 	assert.Equal(t, "tool_use", event.Type)
 	// Descriptive title for execute kind won't match patterns, but that's OK
@@ -333,82 +333,82 @@ func TestMapACPToolCallUpdate_InProgressWithDescriptiveTitle(t *testing.T) {
 func TestExtractToolName_ToolCallIdPrefix(t *testing.T) {
 	// Kimi ACP uses toolCallId prefixes like "read_file-", "list_directory-",
 	// "glob-", "run_shell_command-", "ask-" to encode the tool type.
-	assert.Equal(t, "Read", extractToolName("README.md", acp.ToolKindRead, "read_file-1780647417975-1"))
-	assert.Equal(t, "LS", extractToolName("cmd/server", acp.ToolKindSearch, "list_directory-1780647430067-5"))
-	assert.Equal(t, "Glob", extractToolName("'cmd/server/**/*.go'", acp.ToolKindSearch, "glob-1780647418037-4"))
-	assert.Equal(t, "Bash", extractToolName("ls -R cmd/server", acp.ToolKindExecute, "run_shell_command-1780647441920-8"))
-	assert.Equal(t, "AskUserQuestion", extractToolName("ask", acp.ToolKindOther, "ask-4f1164a8-5d96-4ea6-b3b7-7babeb2c8809"))
-	assert.Equal(t, "Write", extractToolName("file.txt", acp.ToolKindEdit, "write_file-123-1"))
-	assert.Equal(t, "Edit", extractToolName("file.go", acp.ToolKindEdit, "edit_file-123-2"))
-	assert.Equal(t, "Grep", extractToolName("pattern", acp.ToolKindSearch, "search_file-123-3"))
-	assert.Equal(t, "Grep", extractToolName("dir", acp.ToolKindSearch, "search_directory-123-4"))
+	assert.Equal(t, "Read", extractToolName("README.md", acp.ToolKindRead, "kimi", "read_file-1780647417975-1"))
+	assert.Equal(t, "LS", extractToolName("cmd/server", acp.ToolKindSearch, "kimi", "list_directory-1780647430067-5"))
+	assert.Equal(t, "Glob", extractToolName("'cmd/server/**/*.go'", acp.ToolKindSearch, "kimi", "glob-1780647418037-4"))
+	assert.Equal(t, "Bash", extractToolName("ls -R cmd/server", acp.ToolKindExecute, "kimi", "run_shell_command-1780647441920-8"))
+	assert.Equal(t, "AskUserQuestion", extractToolName("ask", acp.ToolKindOther, "kimi", "ask-4f1164a8-5d96-4ea6-b3b7-7babeb2c8809"))
+	assert.Equal(t, "Write", extractToolName("file.txt", acp.ToolKindEdit, "kimi", "write_file-123-1"))
+	assert.Equal(t, "Edit", extractToolName("file.go", acp.ToolKindEdit, "kimi", "edit_file-123-2"))
+	assert.Equal(t, "Grep", extractToolName("pattern", acp.ToolKindSearch, "kimi", "search_file-123-3"))
+	assert.Equal(t, "Grep", extractToolName("dir", acp.ToolKindSearch, "kimi", "search_directory-123-4"))
 }
 
 func TestExtractToolName_ToolCallIdPrefixPriority(t *testing.T) {
 	// toolCallId prefix takes priority over title matching for Kimi ACP
-	assert.Equal(t, "Read", extractToolName("README.md", acp.ToolKindRead, "read_file-1-1"))
+	assert.Equal(t, "Read", extractToolName("README.md", acp.ToolKindRead, "kimi", "read_file-1-1"))
 	// Without toolCallId, "README.md" has a dot → treated as non-canonical word → kind fallback
-	assert.Equal(t, "Read", extractToolName("README.md", acp.ToolKindRead))
+	assert.Equal(t, "Read", extractToolName("README.md", acp.ToolKindRead, ""))
 }
 
 func TestExtractToolName_ToolCallIdPrefixUnknown(t *testing.T) {
 	// Unknown prefix falls through to title/kind matching
-	assert.Equal(t, "Bash", extractToolName("Bash", acp.ToolKindExecute, "unknown_prefix-123"))
+	assert.Equal(t, "Bash", extractToolName("Bash", acp.ToolKindExecute, "", "unknown_prefix-123"))
 }
 
 func TestExtractToolName_TitlePreferred(t *testing.T) {
-	assert.Equal(t, "Read", extractToolName("Read", acp.ToolKindRead))
-	assert.Equal(t, "MyCustomTool", extractToolName("MyCustomTool", acp.ToolKindEdit))
-	assert.Equal(t, "MultiEdit", extractToolName("MultiEdit file", acp.ToolKindEdit))
-	assert.Equal(t, "WebSearch", extractToolName("WebSearch query", acp.ToolKindSearch))
-	assert.Equal(t, "Bash", extractToolName("Bash command", acp.ToolKindExecute))
-	assert.Equal(t, "EnterPlanMode", extractToolName("EnterPlanMode", acp.ToolKindSwitchMode))
-	assert.Equal(t, "AskUserQuestion", extractToolName("AskUserQuestion prompt", acp.ToolKindOther))
-	assert.Equal(t, "TaskCreate", extractToolName("TaskCreate new task", acp.ToolKindOther))
-	assert.Equal(t, "ComputerUse", extractToolName("ComputerUse action", acp.ToolKindOther))
-	assert.Equal(t, "save_memory", extractToolName("save_memory", acp.ToolKindOther))
+	assert.Equal(t, "Read", extractToolName("Read", acp.ToolKindRead, ""))
+	assert.Equal(t, "MyCustomTool", extractToolName("MyCustomTool", acp.ToolKindEdit, ""))
+	assert.Equal(t, "MultiEdit", extractToolName("MultiEdit file", acp.ToolKindEdit, ""))
+	assert.Equal(t, "WebSearch", extractToolName("WebSearch query", acp.ToolKindSearch, ""))
+	assert.Equal(t, "Bash", extractToolName("Bash command", acp.ToolKindExecute, ""))
+	assert.Equal(t, "EnterPlanMode", extractToolName("EnterPlanMode", acp.ToolKindSwitchMode, ""))
+	assert.Equal(t, "AskUserQuestion", extractToolName("AskUserQuestion prompt", acp.ToolKindOther, ""))
+	assert.Equal(t, "TaskCreate", extractToolName("TaskCreate new task", acp.ToolKindOther, ""))
+	assert.Equal(t, "ComputerUse", extractToolName("ComputerUse action", acp.ToolKindOther, ""))
+	assert.Equal(t, "save_memory", extractToolName("save_memory", acp.ToolKindOther, ""))
 }
 
 func TestExtractToolName_KindFallback(t *testing.T) {
 	// When title is empty, fall back to ACP ToolKind → canonical mapping
-	assert.Equal(t, "Read", extractToolName("", acp.ToolKindRead))
-	assert.Equal(t, "Edit", extractToolName("", acp.ToolKindEdit))
-	assert.Equal(t, "Bash", extractToolName("", acp.ToolKindExecute))
-	assert.Equal(t, "Grep", extractToolName("", acp.ToolKindSearch))
-	assert.Equal(t, "WebFetch", extractToolName("", acp.ToolKindFetch))
-	assert.Equal(t, "DeepThink", extractToolName("", acp.ToolKindThink))
-	assert.Equal(t, "EnterPlanMode", extractToolName("", acp.ToolKindSwitchMode))
-	assert.Equal(t, "Edit", extractToolName("", acp.ToolKindDelete))
-	assert.Equal(t, "Edit", extractToolName("", acp.ToolKindMove))
-	assert.Equal(t, "Skill", extractToolName("", acp.ToolKindOther))
+	assert.Equal(t, "Read", extractToolName("", acp.ToolKindRead, ""))
+	assert.Equal(t, "Edit", extractToolName("", acp.ToolKindEdit, ""))
+	assert.Equal(t, "Bash", extractToolName("", acp.ToolKindExecute, ""))
+	assert.Equal(t, "Grep", extractToolName("", acp.ToolKindSearch, ""))
+	assert.Equal(t, "WebFetch", extractToolName("", acp.ToolKindFetch, ""))
+	assert.Equal(t, "DeepThink", extractToolName("", acp.ToolKindThink, ""))
+	assert.Equal(t, "EnterPlanMode", extractToolName("", acp.ToolKindSwitchMode, ""))
+	assert.Equal(t, "Edit", extractToolName("", acp.ToolKindDelete, ""))
+	assert.Equal(t, "Edit", extractToolName("", acp.ToolKindMove, ""))
+	assert.Equal(t, "Skill", extractToolName("", acp.ToolKindOther, ""))
 }
 
 func TestExtractToolName_PrefixOrdering(t *testing.T) {
 	// Longer prefixes must match before shorter ones
-	assert.Equal(t, "MultiEdit", extractToolName("MultiEdit changes", acp.ToolKindEdit))
-	assert.Equal(t, "WebSearch", extractToolName("WebSearch for golang", acp.ToolKindSearch))
-	assert.Equal(t, "WebFetch", extractToolName("WebFetch url", acp.ToolKindFetch))
-	assert.Equal(t, "NotebookEdit", extractToolName("NotebookEdit cell", acp.ToolKindEdit))
-	assert.Equal(t, "EnterPlanMode", extractToolName("EnterPlanMode", acp.ToolKindSwitchMode))
-	assert.Equal(t, "ExitPlanMode", extractToolName("ExitPlanMode", acp.ToolKindSwitchMode))
+	assert.Equal(t, "MultiEdit", extractToolName("MultiEdit changes", acp.ToolKindEdit, ""))
+	assert.Equal(t, "WebSearch", extractToolName("WebSearch for golang", acp.ToolKindSearch, ""))
+	assert.Equal(t, "WebFetch", extractToolName("WebFetch url", acp.ToolKindFetch, ""))
+	assert.Equal(t, "NotebookEdit", extractToolName("NotebookEdit cell", acp.ToolKindEdit, ""))
+	assert.Equal(t, "EnterPlanMode", extractToolName("EnterPlanMode", acp.ToolKindSwitchMode, ""))
+	assert.Equal(t, "ExitPlanMode", extractToolName("ExitPlanMode", acp.ToolKindSwitchMode, ""))
 }
 
 func TestExtractToolName_LowerCaseAliases(t *testing.T) {
 	// Lowercase single-word titles should map to canonical PascalCase
-	assert.Equal(t, "Bash", extractToolName("bash", acp.ToolKindExecute))
-	assert.Equal(t, "Bash", extractToolName("terminal", acp.ToolKindExecute))
-	assert.Equal(t, "Bash", extractToolName("shell", acp.ToolKindExecute))
-	assert.Equal(t, "Read", extractToolName("read", acp.ToolKindRead))
-	assert.Equal(t, "Write", extractToolName("write", acp.ToolKindEdit))
-	assert.Equal(t, "Edit", extractToolName("edit", acp.ToolKindEdit))
-	assert.Equal(t, "Glob", extractToolName("glob", acp.ToolKindSearch))
-	assert.Equal(t, "Grep", extractToolName("grep", acp.ToolKindSearch))
-	assert.Equal(t, "LS", extractToolName("ls", acp.ToolKindOther))
+	assert.Equal(t, "Bash", extractToolName("bash", acp.ToolKindExecute, ""))
+	assert.Equal(t, "Bash", extractToolName("terminal", acp.ToolKindExecute, ""))
+	assert.Equal(t, "Bash", extractToolName("shell", acp.ToolKindExecute, ""))
+	assert.Equal(t, "Read", extractToolName("read", acp.ToolKindRead, ""))
+	assert.Equal(t, "Write", extractToolName("write", acp.ToolKindEdit, ""))
+	assert.Equal(t, "Edit", extractToolName("edit", acp.ToolKindEdit, ""))
+	assert.Equal(t, "Glob", extractToolName("glob", acp.ToolKindSearch, ""))
+	assert.Equal(t, "Grep", extractToolName("grep", acp.ToolKindSearch, ""))
+	assert.Equal(t, "LS", extractToolName("ls", acp.ToolKindOther, ""))
 }
 
 func TestExtractToolName_TerminalPrefix(t *testing.T) {
 	// "Terminal" should map to "Bash" via acpToolNamePatterns
-	assert.Equal(t, "Bash", extractToolName("Terminal", acp.ToolKindExecute))
+	assert.Equal(t, "Bash", extractToolName("Terminal", acp.ToolKindExecute, ""))
 }
 
 // --- Kimi ACP tool call pattern tests ---
@@ -423,7 +423,7 @@ func TestMapACPToolCall_KimiReadFile(t *testing.T) {
 			{Path: "/home/user/project/README.md"},
 		},
 	}
-	event := mapACPToolCall(tc)
+	event := mapACPToolCall(tc, "")
 
 	assert.Equal(t, "tool_use", event.Type)
 	require.NotNil(t, event.Tool)
@@ -441,7 +441,7 @@ func TestMapACPToolCall_KimiListDirectory(t *testing.T) {
 		Title:      "cmd/server",
 		Kind:       acp.ToolKindSearch,
 	}
-	event := mapACPToolCall(tc)
+	event := mapACPToolCall(tc, "")
 
 	assert.Equal(t, "tool_use", event.Type)
 	require.NotNil(t, event.Tool)
@@ -457,7 +457,7 @@ func TestMapACPToolCall_KimiGlob(t *testing.T) {
 		Title:      "'cmd/server/**/*.go'",
 		Kind:       acp.ToolKindSearch,
 	}
-	event := mapACPToolCall(tc)
+	event := mapACPToolCall(tc, "")
 
 	assert.Equal(t, "tool_use", event.Type)
 	require.NotNil(t, event.Tool)
@@ -473,7 +473,7 @@ func TestMapACPToolCall_KimiShellCommand(t *testing.T) {
 		Title:      "ls -R cmd/server",
 		Kind:       acp.ToolKindExecute,
 	}
-	event := mapACPToolCall(tc)
+	event := mapACPToolCall(tc, "")
 
 	assert.Equal(t, "tool_use", event.Type)
 	require.NotNil(t, event.Tool)
@@ -489,7 +489,7 @@ func TestMapACPToolCall_KimiReadFileNoLocations(t *testing.T) {
 		Title:      "main.go",
 		Kind:       acp.ToolKindRead,
 	}
-	event := mapACPToolCall(tc)
+	event := mapACPToolCall(tc, "")
 
 	assert.Equal(t, "Read", event.Tool.Name)
 	assert.Contains(t, event.Tool.Input, "file_path")
@@ -509,7 +509,7 @@ func TestMapACPToolCallUpdate_KimiCompleted(t *testing.T) {
 		},
 		RawOutput: map[string]any{"result": "file contents here"},
 	}
-	event := mapACPToolCallUpdate(tcu)
+	event := mapACPToolCallUpdate(tcu, "")
 
 	assert.Equal(t, "tool_result", event.Type)
 	assert.True(t, event.Tool.Done)
@@ -534,7 +534,7 @@ func TestMapACPToolCallUpdate_KimiCompletedWithContent(t *testing.T) {
 			},
 		},
 	}
-	event := mapACPToolCallUpdate(tcu)
+	event := mapACPToolCallUpdate(tcu, "")
 
 	assert.Equal(t, "tool_result", event.Type)
 	assert.True(t, event.Tool.Done)
@@ -558,7 +558,7 @@ func TestMapACPToolCallUpdate_KimiFailedWithContent(t *testing.T) {
 			},
 		},
 	}
-	event := mapACPToolCallUpdate(tcu)
+	event := mapACPToolCallUpdate(tcu, "")
 
 	assert.Equal(t, "tool_result", event.Type)
 	assert.True(t, event.Tool.Done)
@@ -584,7 +584,7 @@ func TestMapACPToolCallUpdate_RawOutputPreferredOverContent(t *testing.T) {
 			},
 		},
 	}
-	event := mapACPToolCallUpdate(tcu)
+	event := mapACPToolCallUpdate(tcu, "")
 
 	assert.Contains(t, event.Tool.Output, "from rawOutput")
 	assert.NotContains(t, event.Tool.Output, "from content")
@@ -1933,7 +1933,7 @@ func TestMapACPToolCall_ExecuteKindFallbackToTitle(t *testing.T) {
 		Kind:       acp.ToolKindExecute,
 		// No RawInput, no Content
 	}
-	event := mapACPToolCall(tc)
+	event := mapACPToolCall(tc, "")
 	require.NotNil(t, event.Tool)
 	assert.Contains(t, event.Tool.Input, "command")
 	assert.Contains(t, event.Tool.Input, "echo hello")
@@ -1945,7 +1945,7 @@ func TestMapACPToolCall_ExecuteKindNoTitle(t *testing.T) {
 		Title:      "",
 		Kind:       acp.ToolKindExecute,
 	}
-	event := mapACPToolCall(tc)
+	event := mapACPToolCall(tc, "")
 	require.NotNil(t, event.Tool)
 	assert.Empty(t, event.Tool.Input)
 }
@@ -1957,7 +1957,7 @@ func TestMapACPToolCall_NonExecuteKindNoFallback(t *testing.T) {
 		Kind:       acp.ToolKindRead,
 		// No RawInput, no Content
 	}
-	event := mapACPToolCall(tc)
+	event := mapACPToolCall(tc, "")
 	require.NotNil(t, event.Tool)
 	// Read kind should NOT fallback to title as command
 	assert.NotContains(t, event.Tool.Input, "command")
@@ -1975,7 +1975,7 @@ func TestMapACPToolCallUpdate_ExecuteKindFallbackToTitle(t *testing.T) {
 		Kind:       &kind,
 		Status:     &status,
 	}
-	event := mapACPToolCallUpdate(tcu)
+	event := mapACPToolCallUpdate(tcu, "")
 	require.NotNil(t, event.Tool)
 	assert.Contains(t, event.Tool.Input, "command")
 	assert.Contains(t, event.Tool.Input, "ls /tmp")

@@ -11,7 +11,7 @@ import (
 //
 // The extraFlags callback receives the ChatRequest and returns additional backend-specific
 // flags (e.g., disallowed-tools list, verbose flag). If nil, no extra flags are appended.
-func buildBaseStreamArgs(req ChatRequest, extraFlags func(ChatRequest) []string) []string {
+func BuildBaseStreamArgs(req ChatRequest, extraFlags func(ChatRequest) []string) []string {
 	args := []string{
 		"--print",
 		"--output-format", "stream-json",
@@ -60,10 +60,10 @@ func buildBaseStreamArgs(req ChatRequest, extraFlags func(ChatRequest) []string)
 	return args
 }
 
-// injectSystemPrompt prepends the system prompt to req.Prompt when
+// InjectSystemPrompt prepends the system prompt to req.Prompt when
 // ShouldInjectSystemPrompt returns true. Used by CLI backends that lack
 // a --system-prompt flag (opencode, codex, vecli, kimi).
-func injectSystemPrompt(req ChatRequest) string {
+func InjectSystemPrompt(req ChatRequest) string {
 	if !req.ShouldInjectSystemPrompt() {
 		return req.Prompt
 	}
@@ -172,10 +172,19 @@ func normalizeToolInput(rawInput []byte, pathMappings map[string]string) ([]byte
 	return normalized, nil
 }
 
+// NormalizeToolInputForTest exports normalizeToolInput for use in integration tests.
+// Production code must not use this.
+func NormalizeToolInputForTest(rawInput []byte, pathMappings map[string]string) ([]byte, error) {
+	return normalizeToolInput(rawInput, pathMappings)
+}
+
 // perAgentInputRemaps maps agent key → field remap table for normalizeToolInput.
-// Keys are "agent_mode" format (e.g., "kimi_cli", "claude_acp").
+// Keys are "agent_mode" format (e.g., "kimi_cli").
 // Each entry contains only agent-specific overrides; common mappings
 // (filePath→file_path, cmd→command, exec→command) are in defaultMappings.
+//
+// ACP layer entries have been migrated to backends sub-packages and are looked up
+// via LookupACPRemapsFn. Only CLI-layer entries remain here.
 var perAgentInputRemaps = map[string]map[string]string{
 	// CLI layer
 	"kimi_cli": {
@@ -202,16 +211,6 @@ var perAgentInputRemaps = map[string]map[string]string{
 		"agent_type":    "subagent_type", // spawn_agent agent_type → subagent_type
 		"message":       "prompt",        // spawn_agent message → prompt
 		"justification": "description",   // exec_command justification → description
-	},
-	// ACP layer
-	"claude_acp":    {}, // Claude ACP rawInput already uses snake_case
-	"opencode_acp":  {"oldString": "old_string", "newString": "new_string", "replaceAll": "replace_all"},
-	"codebuddy_acp": {},
-	"kimi_acp":      {}, // Kimi ACP has no rawInput; normalization done during inference
-	"generic_acp": { // Full remap table for generic fallback path
-		"oldString": "old_string", "newString": "new_string",
-		"dirPath": "path", "filePath": "file_path",
-		"cellIndex": "cell_index", "cellType": "cell_type",
 	},
 }
 

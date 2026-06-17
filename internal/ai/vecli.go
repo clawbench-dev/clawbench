@@ -26,12 +26,12 @@ type VeCLIBackend struct {
 func NewVeCLIBackend() *VeCLIBackend {
 	b := &VeCLIBackend{}
 	b.inner = &CLIBackend{
-		name:           "vecli",
-		defaultCommand: "vecli",
-		buildArgs:      buildVeCLIArgs,
-		newParser:      func() LineParser { return &VeCLIStreamParser{} },
-		filterLine:     nil, // default: skip empty lines only (VeCLI outputs plain text)
-		preStart:       b.vecliPreStart,
+		BackendName:   "vecli",
+		Cmd:           "vecli",
+		BuildArgsFn:   buildVeCLIArgs,
+		NewParserFn:   func() LineParser { return &VeCLIStreamParser{} },
+		FilterLineFn:  nil, // default: skip empty lines only (VeCLI outputs plain text)
+		PreStartFn:    b.vecliPreStart,
 	}
 	return b
 }

@@ -168,7 +168,7 @@ func buildCodexStreamArgs(req ChatRequest) []string {
 	args = append(args, "--skip-git-repo-check")
 
 	// Codex CLI has no --system-prompt flag — inject into user prompt.
-	prompt := injectSystemPrompt(req)
+	prompt := InjectSystemPrompt(req)
 
 	// Prompt is the last argument for new sessions
 	args = append(args, prompt)
@@ -412,7 +412,7 @@ func buildCodexResumeArgs(req ChatRequest, threadID string) []string {
 	args = append(args, threadID)
 
 	// Codex CLI has no --system-prompt flag — inject into user prompt.
-	prompt := injectSystemPrompt(req)
+	prompt := InjectSystemPrompt(req)
 
 	// Prompt for the resumed session
 	args = append(args, prompt)

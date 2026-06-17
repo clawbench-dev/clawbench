@@ -3,41 +3,70 @@ package ai
 import (
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"clawbench/internal/model"
 )
 
+// backendFactory stores factory functions registered by backend plugins.
+// Keyed by backend ID (e.g. "codebuddy").
+var (
+	backendFactories   = make(map[string]*BackendFactoryEntry)
+	backendFactoriesMu sync.RWMutex
+)
+
+type BackendFactoryEntry struct {
+	NewBackendFn     func() AIBackend // returns a new backend instance
+	NeedsAutoResume  bool             // wrap with AutoResumeBackend?
+}
+
+// RegisterBackend registers a backend factory function.
+// Called by backend plugin sub-packages in their init().
+func RegisterBackend(id string, newBackend func() AIBackend, needsAutoResume bool) {
+	backendFactoriesMu.Lock()
+	defer backendFactoriesMu.Unlock()
+	if _, exists := backendFactories[id]; exists {
+		panic(fmt.Sprintf("backend factory already registered: %s", id))
+	}
+	backendFactories[id] = &BackendFactoryEntry{
+		NewBackendFn:    newBackend,
+		NeedsAutoResume: needsAutoResume,
+	}
+}
+
+// lookupBackendFactory returns the factory entry for the given backend ID.
+func lookupBackendFactory(id string) *BackendFactoryEntry {
+	backendFactoriesMu.RLock()
+	defer backendFactoriesMu.RUnlock()
+	return backendFactories[id]
+}
+
+// LookupBackendFactoryForTest returns the factory entry for testing.
+// Do not use in production code.
+func LookupBackendFactoryForTest(id string) *BackendFactoryEntry {
+	return lookupBackendFactory(id)
+}
+
+// NewBackend creates the backend via the factory entry.
+func (e *BackendFactoryEntry) NewBackend() AIBackend {
+	return e.NewBackendFn()
+}
+
 // NewBackend creates a backend instance based on the backend type.
 // For agents with ACP transport configured, use NewBackendForAgent instead.
 func NewBackend(backendType string) (AIBackend, error) {
-	switch backendType {
-	case "claude":
-		return &AutoResumeBackend{inner: claudeBackend}, nil
-	case "codebuddy":
-		return &AutoResumeBackend{inner: codebuddyBackend}, nil
-	case "opencode":
-		return opencodeBackend, nil
-	case "codex":
-		return &CodexBackend{}, nil
-	case "qoder":
-		return &AutoResumeBackend{inner: qoderBackend}, nil
-	case "vecli":
-		return NewVeCLIBackend(), nil
-	case "deepseek":
-		return &AutoResumeBackend{inner: deepseekBackend}, nil
-	case "pi":
-		return &AutoResumeBackend{inner: piBackend}, nil
-	case "cline":
-		return &AutoResumeBackend{inner: clineBackend()}, nil
-	case "kimi":
-		return &AutoResumeBackend{inner: kimiBackend()}, nil
-	case "copilot":
-		return &AutoResumeBackend{inner: copilotBackend()}, nil
-	case "mimo":
-		return &AutoResumeBackend{inner: mimoBackend}, nil
-	default:
-		return nil, fmt.Errorf("unsupported backend type: %s (supported: claude, codebuddy, opencode, codex, qoder, vecli, deepseek, pi, cline, kimi, copilot, mimo)", backendType)
+	// Try plugin registry first (migrated backends)
+	if entry := lookupBackendFactory(backendType); entry != nil {
+		backend := entry.NewBackendFn()
+		if entry.NeedsAutoResume {
+			backend = &AutoResumeBackend{inner: backend}
+		}
+		return backend, nil
 	}
+
+	// All backends have been migrated to the plugin registry.
+	// If we reach here, the backend type is truly unsupported.
+	return nil, fmt.Errorf("unsupported backend type: %s", backendType)
 }
 
 // NewBackendForAgent creates a backend instance for the given agent.
@@ -82,13 +111,3 @@ func NewBackendForAgentWithTransport(backendType, agentID, transportOverride str
 	return NewBackend(backendType)
 }
 
-// needsAutoResume returns true if the backend type should be wrapped in
-// AutoResumeBackend for ExitPlanMode detection (CLI mode only).
-func needsAutoResume(backendType string) bool {
-	switch backendType {
-	case "claude", "codebuddy", "qoder", "deepseek", "pi", "cline", "kimi", "copilot", "mimo":
-		return true
-	default:
-		return false
-	}
-}

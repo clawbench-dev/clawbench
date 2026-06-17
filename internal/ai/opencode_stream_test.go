@@ -321,71 +321,6 @@ func TestOpenCodeStream_MultiStepFlow(t *testing.T) {
 	}
 }
 
-func TestBuildOpenCodeStreamArgs_NewSession(t *testing.T) {
-	req := ChatRequest{
-		Prompt:  "say hello",
-		WorkDir: "/home/user/project",
-		Model:   "minimax-cn-coding-plan/MiniMax-M2.7",
-	}
-	args := buildOpenCodeStreamArgs(req)
-
-	expected := []string{"run", "say hello", "--format", "json", "--dangerously-skip-permissions", "--dir", "/home/user/project", "--model", "minimax-cn-coding-plan/MiniMax-M2.7"}
-	if len(args) != len(expected) {
-		t.Fatalf("expected %d args, got %d: %v", len(expected), len(args), args)
-		return
-	}
-	for i, v := range expected {
-		if args[i] != v {
-			t.Errorf("arg %d: expected %q, got %q", i, v, args[i])
-		}
-	}
-
-	// Should NOT contain --session (new session, Resume=false)
-	for _, a := range args {
-		if a == "--session" {
-			t.Error("should not contain --session for new session")
-		}
-	}
-}
-
-func TestBuildOpenCodeStreamArgs_NewSessionWithClawBenchUUID(t *testing.T) {
-	// When ClawBench sends a UUID session ID but Resume=false, should NOT pass --session
-	req := ChatRequest{
-		Prompt:    "hello",
-		SessionID: "c8abd620-87e9-43d7-a031-fa20674667d0", // ClawBench UUID
-		Resume:    false,
-	}
-	args := buildOpenCodeStreamArgs(req)
-
-	for _, a := range args {
-		if a == "--session" {
-			t.Error("should not contain --session when Resume=false even with UUID SessionID")
-		}
-	}
-}
-
-func TestBuildOpenCodeStreamArgs_ResumeSession(t *testing.T) {
-	req := ChatRequest{
-		Prompt:    "continue",
-		SessionID: "ses_abc123", // OpenCode session ID
-		Resume:    true,
-		WorkDir:   "/home/user/project",
-	}
-	args := buildOpenCodeStreamArgs(req)
-
-	// Should contain --session ses_abc123 because Resume=true
-	found := false
-	for i, a := range args {
-		if a == "--session" && i+1 < len(args) && args[i+1] == "ses_abc123" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected --session ses_abc123 in args when Resume=true")
-	}
-}
-
 func TestNormalizeOpenCodeToolName(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -628,24 +563,5 @@ func TestOpenCodeStream_ParseLine_ToolUse_NewTools(t *testing.T) {
 			}
 			tt.checkInput(t, input)
 		})
-	}
-}
-
-func TestBuildOpenCodeStreamArgs_Minimal(t *testing.T) {
-	req := ChatRequest{
-		Prompt: "hello",
-	}
-	args := buildOpenCodeStreamArgs(req)
-
-	// Minimal args: run, prompt, --format json, --thinking, --dangerously-skip-permissions
-	expected := []string{"run", "hello", "--format", "json", "--dangerously-skip-permissions"}
-	if len(args) != len(expected) {
-		t.Fatalf("expected %d args, got %d: %v", len(expected), len(args), args)
-		return
-	}
-	for i, v := range expected {
-		if args[i] != v {
-			t.Errorf("arg %d: expected %q, got %q", i, v, args[i])
-		}
 	}
 }

@@ -230,7 +230,7 @@ func (c *ClawBenchACPClient) RequestPermission(ctx context.Context, p acp.Reques
 	if p.ToolCall.Kind != nil {
 		kind = *p.ToolCall.Kind
 	}
-	toolName := extractToolName(title, kind)
+	toolName := extractToolName(title, kind, "")
 	var toolInput string
 	if p.ToolCall.RawInput != nil {
 		if b, err := json.Marshal(p.ToolCall.RawInput); err == nil {

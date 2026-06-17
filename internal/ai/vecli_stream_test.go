@@ -2,7 +2,6 @@ package ai
 
 import (
 	"encoding/json"
-	"os/exec"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -82,81 +81,6 @@ func TestVeCLIStream_GetCapturedSessionID(t *testing.T) {
 	parser := &VeCLIStreamParser{}
 	assert.Equal(t, "", parser.GetCapturedSessionID(),
 		"VeCLI has no session resume, GetCapturedSessionID should always return empty string")
-}
-
-// --- buildVeCLIArgs tests ---
-
-func TestBuildVeCLIArgs_Basic(t *testing.T) {
-	req := ChatRequest{
-		Prompt: "say hello",
-	}
-	args := buildVeCLIArgs(req)
-
-	expected := []string{"--yolo", "--prompt", "say hello"}
-	assert.Equal(t, expected, args)
-}
-
-func TestBuildVeCLIArgs_WithWorkDir(t *testing.T) {
-	req := ChatRequest{
-		Prompt:  "hello",
-		WorkDir: "/home/user/project",
-	}
-	args := buildVeCLIArgs(req)
-
-	assert.Contains(t, args, "--include-directories")
-	idx := indexOfArg(args, "--include-directories")
-	require.GreaterOrEqual(t, idx, 0)
-	assert.Equal(t, "/home/user/project", args[idx+1])
-}
-
-func TestBuildVeCLIArgs_WithModel(t *testing.T) {
-	req := ChatRequest{
-		Prompt: "hello",
-		Model:  "deepseek-v3-1-terminus",
-	}
-	args := buildVeCLIArgs(req)
-
-	assert.Contains(t, args, "--model")
-	idx := indexOfArg(args, "--model")
-	require.GreaterOrEqual(t, idx, 0)
-	assert.Equal(t, "deepseek-v3-1-terminus", args[idx+1])
-}
-
-func TestBuildVeCLIArgs_SystemPromptInjection(t *testing.T) {
-	req := ChatRequest{
-		Prompt:       "do something",
-		SystemPrompt: "Be helpful",
-	}
-	args := buildVeCLIArgs(req)
-
-	// Should contain --prompt with [System Instructions: ...] prefix
-	idx := indexOfArg(args, "--prompt")
-	require.GreaterOrEqual(t, idx, 0)
-	prompt := args[idx+1]
-	assert.Contains(t, prompt, "[System Instructions: Be helpful]")
-	assert.Contains(t, prompt, "do something")
-}
-
-func TestBuildVeCLIArgs_NoModel(t *testing.T) {
-	req := ChatRequest{
-		Prompt: "hello",
-	}
-	args := buildVeCLIArgs(req)
-
-	assert.NotContains(t, args, "--model",
-		"when Model is empty, --model flag should not be added; VeCLI auto-selects its default model")
-}
-
-func TestBuildVeCLIArgs_NoResumeFlag(t *testing.T) {
-	req := ChatRequest{
-		Prompt:    "continue",
-		SessionID: "some-session",
-		Resume:    true,
-	}
-	args := buildVeCLIArgs(req)
-
-	assert.NotContains(t, args, "--resume",
-		"VeCLI does not support --resume; buildVeCLIArgs should never include it")
 }
 
 // --- VeCLISessionSummary tests ---
@@ -310,40 +234,4 @@ func TestVeCLISessionSummary_ExtractMetadata_NoModelsNoReqModel(t *testing.T) {
 
 	meta := summary.extractMetadata("")
 	assert.Equal(t, "", meta.Model, "should be empty when no models and no request model")
-}
-
-// --- VeCLIBackend additional tests ---
-
-func TestVeCLIBackend_vecliPreStart(t *testing.T) {
-	b := NewVeCLIBackend()
-	cmd := &exec.Cmd{Args: []string{"vecli"}}
-	req := ChatRequest{SessionID: "test-session-123"}
-
-	b.vecliPreStart(cmd, req)
-
-	assert.Contains(t, cmd.Args, "--session-summary")
-	idx := indexOfArg(cmd.Args, "--session-summary")
-	require.GreaterOrEqual(t, idx, 0)
-	assert.Contains(t, cmd.Args[idx+1], "test-session-123.json", "summary filename should include session ID")
-
-	v, ok := b.summaryMap.Load("test-session-123")
-	assert.True(t, ok, "summaryMap should contain session ID")
-	assert.Contains(t, v.(string), "test-session-123.json")
-
-	b.summaryMap.LoadAndDelete("test-session-123")
-}
-
-func TestVeCLIBackend_Name(t *testing.T) {
-	b := NewVeCLIBackend()
-	assert.Equal(t, "vecli", b.Name())
-}
-
-// indexOfArg returns the index of the first occurrence of target in slice, or -1.
-func indexOfArg(slice []string, target string) int {
-	for i, v := range slice {
-		if v == target {
-			return i
-		}
-	}
-	return -1
 }

@@ -71,6 +71,15 @@ type ModelTokens struct {
 type StreamJSONParser struct {
 	sessionID string // captured from init event
 	model     string // captured from init event
+
+	// ToolNameMap maps backend-specific tool names to canonical names.
+	// When set, ParseLine uses this map instead of the global normalizeToolName().
+	// key: backend raw tool name → value: canonical name (e.g. "read_file" → "Read")
+	ToolNameMap map[string]string
+
+	// InputRemaps maps input field names for tool input normalization.
+	// When set, ParseLine uses this map instead of getRemaps("kimi_cli").
+	InputRemaps map[string]string
 }
 
 // GetCapturedSessionID implements LineParser — returns empty string
@@ -108,15 +117,29 @@ func (p *StreamJSONParser) ParseLine(line string, ch chan<- StreamEvent) {
 		inputStr := "{}"
 		if len(msg.Parameters) > 0 {
 			// Normalize input field names to canonical snake_case
-			normalized, err := normalizeToolInput(msg.Parameters, getRemaps("kimi_cli"))
+			remaps := p.InputRemaps
+			if remaps == nil {
+				remaps = getRemaps("kimi_cli")
+			}
+			normalized, err := normalizeToolInput(msg.Parameters, remaps)
 			if err != nil {
 				inputStr = string(msg.Parameters)
 			} else {
 				inputStr = string(normalized)
 			}
 		}
+		toolName := msg.ToolName
+		if p.ToolNameMap != nil {
+			if canonical, ok := p.ToolNameMap[toolName]; ok {
+				toolName = canonical
+			} else {
+				toolName = normalizeToolName(toolName)
+			}
+		} else {
+			toolName = normalizeToolName(toolName)
+		}
 		ch <- StreamEvent{Type: "tool_use", Tool: &ToolCall{
-			Name:  normalizeToolName(msg.ToolName),
+			Name:  toolName,
 			ID:    msg.ToolID,
 			Input: inputStr,
 			Done:  true, // stream-json format sends full tool input in one event
