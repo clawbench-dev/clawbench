@@ -50,7 +50,14 @@
         </div>
       </div>
       <!-- Attachment tags -->
-      <div v-if="attachedFiles.length > 0 || pendingFiles.length > 0" class="chat-attachment-tags">
+      <div v-if="quoteData || attachedFiles.length > 0 || pendingFiles.length > 0" class="chat-attachment-tags">
+        <!-- Quote selection chip -->
+        <span v-if="quoteData" class="chat-file-attachment attachment-quote" :title="quoteData.filePath" @click="$emit('quote-click')">
+          <MessageSquare :size="12" :stroke-width="1.5" />
+          <span class="chat-file-name">{{ truncateQuoteText(quoteData.text, 20) }}</span>
+          <span v-if="quoteData.startLine" class="quote-line-info">L{{ quoteData.startLine }}</span>
+          <button class="attachment-tag-remove" @click.stop="$emit('remove-quote')" :title="t('common.remove')">×</button>
+        </span>
         <span v-for="(filePath, idx) in attachedFiles" :key="'att-' + filePath" class="chat-file-attachment attachment-ref" @click="$emit('file-tag-click', filePath)" :title="t('chat.attach.openFile')">
           <Folder v-if="isDirPath(filePath)" :size="12" :stroke-width="1.5" />
           <Paperclip v-else :size="12" :stroke-width="1.5" />
@@ -308,6 +315,7 @@ const props = defineProps({
   currentDir: String,
   pendingFiles: Array,
   attachedFiles: Array,
+  quoteData: Object,
   messages: Array,
   autoSpeechEnabled: Boolean,
   currentSessionId: String,
@@ -330,6 +338,8 @@ const emit = defineEmits([
   'remove-file',
   'add-attached',
   'remove-attached',
+  'remove-quote',
+  'quote-click',
   'open-session-tab',
   'file-tag-click',
   'toggle-auto-speech',
@@ -486,7 +496,7 @@ watch(() => props.currentSessionId, (newId, oldId) => {
 
 const uploadingFiles = computed(() => props.pendingFiles.filter(f => f.uploading))
 
-const hasInputContent = computed(() => inputText.value.trim() || props.pendingFiles.length > 0 || props.attachedFiles.length > 0)
+const hasInputContent = computed(() => inputText.value.trim() || props.pendingFiles.length > 0 || props.attachedFiles.length > 0 || props.quoteData)
 
 // Extract recently referenced files from message history
 const recentReferencedFiles = computed(() => {
@@ -520,6 +530,12 @@ function getFileName(path) {
 
 function isDirPath(filePath) {
   return props.currentDir && filePath === props.currentDir
+}
+
+function truncateQuoteText(text, maxLen) {
+  if (!text) return ''
+  const oneLine = text.replace(/\n/g, ' ')
+  return oneLine.length > maxLen ? oneLine.slice(0, maxLen) + '...' : oneLine
 }
 
 function autoResizeTextarea() {
@@ -1246,6 +1262,32 @@ defineExpose({
 
 .chat-attachment-tags .attachment-ref:hover {
   background: color-mix(in srgb, var(--text-muted, #999) 15%, transparent);
+}
+
+/* Quote chip */
+.chat-attachment-tags .attachment-quote {
+  background: color-mix(in srgb, var(--accent-color, #4f9cf7) 8%, transparent);
+  border: 1px dashed var(--accent-color, #4f9cf7);
+  color: var(--accent-color, #4f9cf7);
+  cursor: pointer;
+}
+
+.chat-attachment-tags .attachment-quote .chat-file-name {
+  color: var(--accent-color, #4f9cf7);
+}
+
+.chat-attachment-tags .attachment-quote svg {
+  stroke: var(--accent-color, #4f9cf7);
+}
+
+.chat-attachment-tags .attachment-quote:hover {
+  background: color-mix(in srgb, var(--accent-color, #4f9cf7) 15%, transparent);
+}
+
+.quote-line-info {
+  font-size: 10px;
+  opacity: 0.7;
+  margin-left: 2px;
 }
 
 .attachment-tag-remove {

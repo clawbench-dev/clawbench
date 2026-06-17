@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { useFileUpload } from '@/composables/useFileUpload'
+import { useChatContext } from '@/composables/useChatContext'
 
 // Mock dependencies
 const mockToastShow = vi.fn()
@@ -90,6 +91,8 @@ describe('useFileUpload', () => {
     vi.clearAllMocks()
     xhrSendHandler = null
     teardownXHR = setupXHRMock()
+    // Clear global attachedFiles from useChatContext singleton
+    useChatContext().clearAll()
   })
 
   afterEach(() => {

@@ -655,11 +655,75 @@ function handleSessionDelete(sessionId, backend) {
   sessionIdentity.deleteSession(sessionId, backend)
 }
 
+/** Register global DOM event listeners (idempotent — safe to call multiple times). */
+let appEventListenersRegistered = false
+function registerAppEventListeners() {
+  if (appEventListenersRegistered) return
+  appEventListenersRegistered = true
+  window.addEventListener('open-file-manager', handleOpenFileManager)
+  window.addEventListener('open-file-overlay', handleOpenFileOverlay)
+  window.addEventListener('close-file-overlay', handleOverlayClose)
+  window.addEventListener('navigate-to-commit', handleNavigateToCommit)
+  window.addEventListener('quote-sent', playQuoteEmitAnimation)
+  window.addEventListener('attach-to-chat', playQuoteEmitAnimation)
+  window.addEventListener('scroll-to-line', (e) => { scrollToLine(e.detail.line) })
+  window.addEventListener('clawbench-open-session', handleOpenSession)
+  window.addEventListener('clawbench-open-task', handleOpenTask)
+  document.addEventListener('click', handleOverflowOutsideClick)
+  window.addEventListener('clawbench-theme-change', (e) => {
+      const resolved = e.detail
+      theme.value = resolved
+      initMermaid()
+      reRenderMermaid()
+  })
+  window.addEventListener('clawbench-showhidden-change', (e) => {
+      showHidden.value = e.detail
+  })
+  window.addEventListener('clawbench-sort-change', (e) => {
+      if (e.detail.field !== undefined) sortField.value = e.detail.field
+      if (e.detail.dir !== undefined) sortDir.value = e.detail.dir
+  })
+}
+
+/**
+ * Full app initialization: load project cookie, session identity,
+ * agents, config, and register all infrastructure.
+ * Must complete BEFORE isAuthenticated is set to true (which triggers
+ * ChatPanelContent mount and loadHistory).
+ * Returns false if a fatal error occurred (callers should not set isAuthenticated).
+ */
+async function initializeApp() {
+  // 1. Prerequisite data — must complete before UI renders
+  //    loadProject sets clawbench_project cookie (needed by loadHistory).
+  //    initSessionFromAPI sets session identity (needed by ChatPanelContent).
+  try { await store.loadProject() } catch (_) {
+      toast.show(t('toast.projectLoadFailed'), { icon: '⚠️', type: 'error', duration: 0, onClick: () => location.reload() }); return false
+  }
+  await sessionIdentity.initSessionFromAPI()
+
+  // 2. Infrastructure — global events, rendering, config
+  initGlobalEvents()
+  initMermaid()
+  loadTasks()
+  loadConfig()
+  registerAppEventListeners()
+
+  // 3. Secondary data — non-blocking, can load in parallel with UI render
+  loadSessionsOnce()
+  if (isAppMode.value) syncToNative().catch(() => {})
+  if (isAppMode.value && localConfig.androidLogCapture) {
+    try { if (window.AndroidNative?.startLogCapture) window.AndroidNative.startLogCapture() } catch {}
+  }
+  loadSSHInfo().catch(() => {})
+  loadTerminalStatus().catch(() => {})
+  store.loadGitBranch().catch(() => {})
+  try { await store.loadFiles('') } catch (_) {
+      toast.show(t('toast.fileListLoadFailed'), { icon: '⚠️', type: 'error', duration: 6000 })
+  }
+  return true
+}
+
 async function handleLoginSuccess() {
-    // Load project BEFORE setting isAuthenticated so the backend sets the
-    // clawbench_project cookie first. Without this, ChatPanelContent mounts
-    // and calls loadHistory() which fails with NoProjectSelected (no cookie).
-    try { await store.loadProject() } catch (_) { /* loadProject has its own error handling */ }
     // Check if setup wizard is needed (no agents + embedded Pi binary)
     try {
       const resp = await fetch('/api/setup/status')
@@ -672,61 +736,25 @@ async function handleLoginSuccess() {
         }
       }
     } catch { /* proceed to normal app if check fails */ }
+    // Full initialization BEFORE setting isAuthenticated — ensures
+    // clawbench_project cookie, session identity, and all infrastructure
+    // are ready before ChatPanelContent mounts and calls loadHistory().
+    if (!(await initializeApp())) return
     isAuthenticated.value = true
-    initMermaid()
-    await store.loadFiles('')
 }
 
 async function handleSetupComplete() {
     // Reset cached agents so fresh data is loaded
     resetAgents()
 
-    // Register event listeners that were skipped during wizard (onMounted skipped them)
-    window.addEventListener('open-file-manager', handleOpenFileManager)
-    window.addEventListener('open-file-overlay', handleOpenFileOverlay)
-    window.addEventListener('close-file-overlay', handleOverlayClose)
-    window.addEventListener('navigate-to-commit', handleNavigateToCommit)
-    window.addEventListener('quote-sent', playQuoteEmitAnimation)
-    window.addEventListener('scroll-to-line', (e) => { scrollToLine(e.detail.line) })
-    window.addEventListener('clawbench-open-session', handleOpenSession)
-    window.addEventListener('clawbench-open-task', handleOpenTask)
-    document.addEventListener('click', handleOverflowOutsideClick)
-    window.addEventListener('clawbench-theme-change', (e) => {
-        const resolved = e.detail
-        theme.value = resolved
-        initMermaid()
-        reRenderMermaid()
-    })
-    window.addEventListener('clawbench-showhidden-change', (e) => {
-        showHidden.value = e.detail
-    })
-    window.addEventListener('clawbench-sort-change', (e) => {
-        if (e.detail.field !== undefined) sortField.value = e.detail.field
-        if (e.detail.dir !== undefined) sortDir.value = e.detail.dir
-    })
-    loadTasks()
-    loadConfig()
-
-    // Load project first so backend sets clawbench_project cookie
-    try { await store.loadProject() } catch (_) { /* best effort */ }
-
-    // Load agents and session data BEFORE switching to main UI
-    // to prevent error flashes (e.g., "no agent configured")
-    try {
-        await sessionIdentity.initSessionFromAPI()
-    } catch { /* best effort */ }
-    loadSessionsOnce().catch(() => {})
-    store.loadGitBranch().catch(() => {})
+    // Full initialization BEFORE switching to main UI — ensures all
+    // prerequisites (cookie, session, agents) are ready before
+    // ChatPanelContent mounts. initGlobalEvents is guarded against
+    // duplicate calls (already called during setup wizard phase).
+    if (!(await initializeApp())) return
 
     // Now switch to main UI — agents and session are loaded
     needsSetup.value = false
-    initMermaid()
-
-    // Continue with remaining init that was deferred
-    if (isAppMode.value) syncToNative().catch(() => {})
-    loadSSHInfo().catch(() => {})
-    loadTerminalStatus().catch(() => {})
-    try { await store.loadFiles('') } catch (_) {}
 }
 
 const projectDialogOpen = ref(false)
@@ -1115,8 +1143,9 @@ onMounted(async () => {
         }
         return
     }
+    let authed = false
     if (resp.ok) {
-        isAuthenticated.value = true
+        authed = true
     } else if (resp.status === 401 || resp.status === 403) {
         if (isAppMode.value && window.AndroidNative?.getPassword?.()) {
             const savedPwd = window.AndroidNative.getPassword()
@@ -1124,7 +1153,7 @@ onMounted(async () => {
                 try {
                     const loginRes = await fetch('/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: savedPwd }) })
                     if (loginRes.ok) {
-                        isAuthenticated.value = true
+                        authed = true
                         if (window.AndroidNative?.setSSHPassword) window.AndroidNative.setSSHPassword(savedPwd)
                     } else { isAuthenticated.value = false; return }
                 } catch (_) { isAuthenticated.value = false; return }
@@ -1147,6 +1176,7 @@ onMounted(async () => {
       if (setupResp.ok) {
         const setupData = await setupResp.json()
         if (setupData.needs_setup) {
+          isAuthenticated.value = true
           needsSetup.value = true
           initGlobalEvents() // Needed for WS connection (setup wizard uses API)
           return  // Skip ALL main app initialization — wizard will handle it
@@ -1155,52 +1185,13 @@ onMounted(async () => {
     } catch { /* proceed to normal app if check fails */ }
 
     // ── Main app initialization (only when setup is NOT needed) ──
-    initGlobalEvents()
-    initMermaid()
-    loadTasks()
-    loadConfig()
-    window.addEventListener('open-file-manager', handleOpenFileManager)
-    window.addEventListener('open-file-overlay', handleOpenFileOverlay)
-    window.addEventListener('close-file-overlay', handleOverlayClose)
-    window.addEventListener('navigate-to-commit', handleNavigateToCommit)
-    window.addEventListener('quote-sent', playQuoteEmitAnimation)
-    window.addEventListener('scroll-to-line', (e) => { scrollToLine(e.detail.line) })
-    window.addEventListener('clawbench-open-session', handleOpenSession)
-    window.addEventListener('clawbench-open-task', handleOpenTask)
-    document.addEventListener('click', handleOverflowOutsideClick)
-    window.addEventListener('clawbench-theme-change', (e) => {
-        const resolved = e.detail
-        theme.value = resolved
-        initMermaid()
-        reRenderMermaid()
-    })
-    window.addEventListener('clawbench-showhidden-change', (e) => {
-        showHidden.value = e.detail
-    })
-    window.addEventListener('clawbench-sort-change', (e) => {
-        if (e.detail.field !== undefined) sortField.value = e.detail.field
-        if (e.detail.dir !== undefined) sortDir.value = e.detail.dir
-    })
-    // Load project first so the backend sets the clawbench_project cookie.
-    // Without this, subsequent chat/session API calls fail with NoProjectSelected
-    // on first login (no cookie yet) and show "加载聊天记录失败".
-    try { await store.loadProject() } catch (_) {
-        toast.show(t('toast.projectLoadFailed'), { icon: '⚠️', type: 'error', duration: 0, onClick: () => location.reload() }); return
-    }
-    await sessionIdentity.initSessionFromAPI()
-    // Use loadSessionsOnce() which correctly sets chatUnread to true OR false.
-    // The old code only set chatUnread=true and never corrected a stale true.
-    loadSessionsOnce()
-    if (isAppMode.value) syncToNative().catch(() => {})
-    // Resume Android log capture if previously enabled
-    if (isAppMode.value && localConfig.androidLogCapture) {
-      try { if (window.AndroidNative?.startLogCapture) window.AndroidNative.startLogCapture() } catch {}
-    }
-    loadSSHInfo().catch(() => {})
-    loadTerminalStatus().catch(() => {})
-    try { await store.loadFiles('') } catch (_) {
-        toast.show(t('toast.fileListLoadFailed'), { icon: '⚠️', type: 'error', duration: 6000 })
-    }
+    // Complete ALL initialization BEFORE setting isAuthenticated = true,
+    // so that ChatPanelContent mounts only when the clawbench_project cookie
+    // and session identity are already available. This prevents loadHistory()
+    // from firing with missing cookies (Android first-login bug).
+    if (!(await initializeApp())) return
+    isAuthenticated.value = true
+
     // Handle pending navigation from push notification deep link
     // (cross-project reload or cold start via AndroidNative bridge)
     const processPendingSessionNav = (navSessionId) => {
@@ -1317,6 +1308,7 @@ onUnmounted(() => {
     window.removeEventListener('close-file-overlay', handleOverlayClose)
     window.removeEventListener('navigate-to-commit', handleNavigateToCommit)
     window.removeEventListener('quote-sent', playQuoteEmitAnimation)
+    window.removeEventListener('attach-to-chat', playQuoteEmitAnimation)
     window.removeEventListener('clawbench-open-session', handleOpenSession)
     window.removeEventListener('clawbench-open-task', handleOpenTask)
     document.removeEventListener('click', handleOverflowOutsideClick)

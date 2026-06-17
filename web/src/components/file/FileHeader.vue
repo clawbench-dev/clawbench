@@ -15,9 +15,9 @@
         <Search :size="14" />
       </button>
 
-      <!-- Refresh button -->
-      <button class="file-header-btn" @click.stop="$emit('refresh')" :title="t('nav.refresh')">
-        <RotateCw :size="14" />
+      <!-- Attach to chat button -->
+      <button ref="attachBtnRef" class="file-header-btn" @click.stop="handleAttachToChat" :title="t('chat.actions.attachToChat')">
+        <Paperclip :size="14" />
       </button>
 
       <!-- More actions dropdown -->
@@ -27,6 +27,10 @@
         </button>
         <Teleport to="body">
           <div v-if="menuOpen" ref="menuRef" class="file-header-dropdown-menu" :style="menuStyle">
+            <button class="dropdown-item" @click="handleRefresh">
+              <RotateCw :size="14" />
+              {{ t('nav.refresh') }}
+            </button>
             <button v-if="file.isBinary" class="dropdown-item" @click="handleOpenAsText">
               <Code2 :size="14" />
               {{ t('file.header.openAsText') }}
@@ -84,9 +88,11 @@
 <script setup>
 import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, ChevronLeft, X } from 'lucide-vue-next'
+import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, ChevronLeft, X, Paperclip } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
+import { useChatContext } from '@/composables/useChatContext.ts'
+import { useToast } from '@/composables/useToast.ts'
 
 const props = defineProps({
     file: Object,
@@ -103,11 +109,14 @@ const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory
 
 const { isAppMode } = useAppMode()
 const { t } = useI18n()
+const { addAttachedFile, hasAttachedFile } = useChatContext()
+const toast = useToast()
 
 const menuOpen = ref(false)
 const dropdownRef = ref(null)
 const menuRef = ref(null)
 const menuStyle = ref({})
+const attachBtnRef = ref(null)
 
 function toggleMenu() {
     menuOpen.value = !menuOpen.value
@@ -184,6 +193,36 @@ function handleDelete() {
 function handleGitHistory() {
     menuOpen.value = false
     emit('openGitHistory')
+}
+
+function handleRefresh() {
+    menuOpen.value = false
+    emit('refresh')
+}
+
+function handleAttachToChat() {
+    const path = props.file?.path
+    if (!path) return
+    if (hasAttachedFile(path)) {
+        toast.show(t('chat.attach.alreadyAttached'), { icon: '📎', type: 'info', duration: 1500 })
+        return
+    }
+    addAttachedFile(path)
+    toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
+
+    // Fly-to-chat animation — capture button position before any async work
+    const btn = attachBtnRef.value
+    const dockChatBtn = document.querySelector('.dock-center')?.querySelector('.dock-btn')
+    const animFrom = btn?.getBoundingClientRect() ?? null
+    const animTo = dockChatBtn?.getBoundingClientRect() ?? null
+    if (animFrom && animTo) {
+        window.dispatchEvent(new CustomEvent('attach-to-chat', {
+            detail: {
+                from: { x: animFrom.left + animFrom.width / 2, y: animFrom.top + animFrom.height / 2 },
+                to: { x: animTo.left + animTo.width / 2, y: animTo.top + animTo.height / 2 },
+            }
+        }))
+    }
 }
 
 // Close dropdown on outside click

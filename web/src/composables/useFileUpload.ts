@@ -2,12 +2,16 @@ import { ref } from 'vue'
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
 import { store } from '@/stores/app.ts'
+import { useChatContext } from '@/composables/useChatContext.ts'
 
 export function useFileUpload() {
   const toast = useToast()
 
   const pendingFiles = ref([])
-  const attachedFiles = ref([])
+
+  // attachedFiles is managed globally via useChatContext so any tab
+  // (file preview, chat input, quote-question) can read/write it.
+  const { attachedFiles, addAttachedFile, removeAttachedFile } = useChatContext()
 
   // Upload progress for directory uploads (file manager)
   const dirUploading = ref(false)
@@ -180,16 +184,6 @@ export function useFileUpload() {
       URL.revokeObjectURL(f.previewUrl)
     }
     pendingFiles.value.splice(index, 1)
-  }
-
-  function addAttachedFile(filePath) {
-    if (filePath && !attachedFiles.value.includes(filePath)) {
-      attachedFiles.value.push(filePath)
-    }
-  }
-
-  function removeAttachedFile(index) {
-    attachedFiles.value.splice(index, 1)
   }
 
   function cleanupPreviewUrls() {

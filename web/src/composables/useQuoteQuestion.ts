@@ -4,17 +4,13 @@ import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
 import { buildQuoteMessage } from '@/utils/doubleClickUtils.ts'
 import { closestElement, getLineInfo, getFileInfo } from '@/utils/quoteQuestionUtils.ts'
+import { useChatContext } from '@/composables/useChatContext.ts'
+import type { QuoteData } from '@/composables/useChatContext.ts'
 
-export interface QuoteData {
-  text: string           // selected text
-  filePath: string       // file path
-  language: string       // language identifier (empty for markdown preview)
-  startLine: number      // start line number (1-based, 0 if unknown)
-  endLine: number        // end line number (1-based, 0 if unknown)
-}
-
-// Module-level singleton: selection state shared across all consumers
-const quoteData = ref<QuoteData | null>(null)
+// Module-level singleton: bar visibility state shared across all consumers.
+// quoteData is stored in useChatContext (global singleton) so ChatInputBar
+// can render a quote chip in any tab.
+const { quoteData, setQuoteData, addAttachedFile, hasAttachedFile, clearAll } = useChatContext()
 const barVisible = ref(false)
 const barPinned = ref(false)  // When pinned, selection loss won't auto-hide the bar
 const sheetOpen = ref(false)
@@ -29,7 +25,7 @@ function onSelectionChange() {
       // When bar is pinned (user clicked "引用提问"), don't auto-hide on selection loss
       if (!barPinned.value) {
         barVisible.value = false
-        quoteData.value = null
+        setQuoteData(null)
       }
       return
     }
@@ -54,7 +50,7 @@ function onSelectionChange() {
     const { filePath, language } = getFileInfo(container)
     const { startLine, endLine } = getLineInfo(sel)
 
-    quoteData.value = { text, filePath, language, startLine, endLine }
+    setQuoteData({ text, filePath, language, startLine, endLine })
     barVisible.value = true
   }, 150)
 }
@@ -86,7 +82,7 @@ export function useQuoteQuestion() {
     if (sel) sel.removeAllRanges()
     barVisible.value = false
     barPinned.value = false
-    quoteData.value = null
+    setQuoteData(null)
   }
 
   function pinBar() {
@@ -104,7 +100,7 @@ export function useQuoteQuestion() {
    */
   function showBar(data: QuoteData) {
     setTimeout(() => {
-      quoteData.value = data
+      setQuoteData(data)
       barVisible.value = true
     }, 400)
   }
@@ -118,6 +114,11 @@ export function useQuoteQuestion() {
     // Pass the quoted file as a file attachment so the backend builds
     // the [当前文件: ...] prompt prefix and sets the CLI work_dir.
     const filePaths = q.filePath ? [q.filePath] : []
+
+    // Also add the file to the global attachedFiles so ChatInputBar shows a tag
+    if (q.filePath && !hasAttachedFile(q.filePath)) {
+      addAttachedFile(q.filePath)
+    }
 
     // Capture animation coordinates BEFORE any await — the bar's handleSend()
     // sets expanded=false synchronously right after emit('send'), so the
@@ -145,8 +146,10 @@ export function useQuoteQuestion() {
       toast.show(gt('quoteBar.sendFailed', { error: (err as Error).message }), { icon: '⚠️', type: 'error' })
     }
 
-    // Close the bar after sending — user expects the floating window to dismiss.
-    closeSheet()
+    // Clear all chat context (attachedFiles + quoteData) and close the bar.
+    clearAll()
+    barVisible.value = false
+    barPinned.value = false
   }
 
   return {

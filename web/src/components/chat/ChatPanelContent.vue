@@ -77,6 +77,7 @@
       :currentDir="currentDir"
       :pendingFiles="pendingFiles"
       :attachedFiles="attachedFiles"
+      :quoteData="quoteData"
       :messages="messages"
       :autoSpeechEnabled="autoSpeech.enabled.value"
       :currentSessionId="identity.currentSessionId.value"
@@ -96,6 +97,8 @@
       @remove-file="removeFile"
       @add-attached="addAttachedFile"
       @remove-attached="removeAttachedFile"
+      @remove-quote="setQuoteData(null)"
+      @quote-click="handleQuoteClick"
       @open-session-tab="identity.openSessionTab"
       @file-tag-click="handleFileTagClick"
       @toggle-auto-speech="autoSpeech.toggle"
@@ -181,6 +184,7 @@ import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { applySummaryUpdate } from '@/utils/chatSessionUtils.ts'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
+import { useChatContext } from '@/composables/useChatContext.ts'
 import { refreshCurrentFile } from '@/composables/useFileRefresh.ts'
 import { playNotificationSound } from '@/composables/useNotificationSound.ts'
 import { useAutoSpeech, extractSpeakableText } from '@/composables/useAutoSpeech.ts'
@@ -255,6 +259,15 @@ async function handleFileTagClick(filePath) {
     if (filePath) {
         const ok = await openFilePath(filePath)
         if (ok) switchTab('browse')
+    }
+}
+
+function handleQuoteClick() {
+    const q = quoteData.value
+    if (q?.filePath) {
+        store.selectFile(q.filePath).then(() => {
+            switchTab('browse')
+        })
     }
 }
 
@@ -361,6 +374,7 @@ const stream = useChatStream({
 })
 
 const { pendingFiles, attachedFiles, handleFileSelect, handleFileDrop, removeFile, addAttachedFile, removeAttachedFile, cleanupPreviewUrls, clearPendingFiles } = useFileUpload()
+const { quoteData, setQuoteData, clearAll } = useChatContext()
 
 const manager = useSessionManager({
   messages,
@@ -374,7 +388,7 @@ const manager = useSessionManager({
   stopPolling: stream.stopPolling,
   updateRenderedContents: (forceFull) => render.updateRenderedContents(forceFull),
   clearInputState: () => {
-    attachedFiles.value = []
+    clearAll()
     inputBarRef.value?.clearInput()
     clearPendingFiles()
   },
@@ -560,20 +574,20 @@ function persistSessionUpdate(fields) {
 
 async function sendMessage(text, extraFilePaths) {
     const inputText = text !== undefined ? text : (inputBarRef.value?.inputText?.trim() || '')
-    const hasFiles = pendingFiles.value.length > 0 || attachedFiles.value.length > 0
+    const hasFiles = pendingFiles.value.length > 0 || attachedFiles.value.length > 0 || quoteData.value
 
     if ((!inputText && !hasFiles) || inputDisabled.value) return
 
     // If AI is generating, enqueue the message instead of sending immediately
     if (loading.value) {
       // Capture file arrays before clearing (they're passed by reference)
-      const capturedAttached = attachedFiles.value
+      const capturedAttached = [...attachedFiles.value]
       const capturedPending = pendingFiles.value.map(f => f.path)
-      // Merge all file paths for the pending message
-      const filePaths = [...(extraFilePaths || []), ...(capturedAttached.length > 0 ? capturedAttached : [])]
-      const allFiles = [...capturedPending, ...filePaths]
+      // Merge all file paths for the pending message (deduplicated)
+      const mergedPaths = [...new Set([...(extraFilePaths || []), ...(capturedAttached.length > 0 ? capturedAttached : [])])]
+      const allFiles = [...capturedPending, ...mergedPaths]
       // Clear input state synchronously so user sees immediate feedback
-      attachedFiles.value = []
+      clearAll()
       inputBarRef.value?.clearInput()
       clearPendingFiles()
       // Push a pending user message into messages.value — single source of truth
@@ -593,13 +607,14 @@ async function sendMessage(text, extraFilePaths) {
     }
 
     // Merge attached files from the input bar with extra file paths (e.g. from quote-question)
-    const filePaths = [...(extraFilePaths || []), ...(attachedFiles.value.length > 0 ? attachedFiles.value : [])]
+    // Deduplicate paths that may appear in both extraFilePaths and attachedFiles
+    const filePaths = [...new Set([...(extraFilePaths || []), ...(attachedFiles.value.length > 0 ? attachedFiles.value : [])])]
     const uploadedFiles = pendingFiles.value.map(f => ({ path: f.path }))
     const projectFiles = filePaths.map(p => ({ path: p }))
     const allFiles = [...uploadedFiles, ...projectFiles].map(f => f.path)
 
     // Clear input state before async request
-    attachedFiles.value = []
+    clearAll()
     inputBarRef.value?.clearInput()
     clearPendingFiles()
 

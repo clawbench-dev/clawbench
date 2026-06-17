@@ -127,6 +127,7 @@ export default {
       sessionSettings: 'Session settings',
       switchThinkingEffort: 'Switch thinking effort',
       attachment: 'Attach',
+      attachToChat: 'Add to chat',
     },
     sessionInfo: {
       default: 'Default',
@@ -188,6 +189,8 @@ export default {
       openWorktree: 'Worktree Actions',
       switchWorktree: 'Switch worktree',
       openDirectory: 'Open directory',
+      addedToChat: 'Added to chat',
+      alreadyAttached: 'Already in chat attachments',
     },
     quickSend: {
       title: 'Quick Send Message',

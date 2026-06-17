@@ -127,6 +127,7 @@ export default {
       sessionSettings: '会话设置',
       switchThinkingEffort: '切换思考档位',
       attachment: '附件',
+      attachToChat: '添加到聊天',
     },
     sessionInfo: {
       default: '默认',
@@ -188,6 +189,8 @@ export default {
       openWorktree: 'Worktree 操作',
       switchWorktree: '切换工作树',
       openDirectory: '打开目录',
+      addedToChat: '已添加到聊天',
+      alreadyAttached: '已在聊天附件中',
     },
     quickSend: {
       title: '快捷发送消息',
