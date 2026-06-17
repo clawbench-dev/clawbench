@@ -224,6 +224,10 @@ type cliTestConfig struct {
 	// on new sessions (they capture session IDs from the stream instead).
 	SkipNewSessionID bool
 
+	// EmitsSessionCapture is true if the backend emits a session_capture event
+	// (for backends like opencode/codex/deepseek that auto-capture session IDs).
+	EmitsSessionCapture bool
+
 	// HasModelInMeta is true if the backend always includes a model name in metadata.
 	HasModelInMeta bool
 
@@ -267,22 +271,24 @@ var cliBackends = []cliTestConfig{
 		CLIName:            "opencode",
 		Timeout:            60 * time.Second,
 		CollectTimeout:     90 * time.Second,
-		SkipNewSessionID:   true,
-		HasSessionIDInMeta: true,
-		HasTokenUsageInMeta: true,
-		SupportsResume:     true,
+		SkipNewSessionID:     true,
+		EmitsSessionCapture:  true,
+		HasSessionIDInMeta:   true,
+		HasTokenUsageInMeta:  false, // OpenCodeStreamParser does not always report InputTokens
+		SupportsResume:      true,
 	},
 	{
-		Backend:            "codex",
-		CLIName:            "codex",
-		Command:            codexCommand,
-		Timeout:            60 * time.Second,
-		CollectTimeout:     90 * time.Second,
-		SkipNewSessionID:   true,
-		HasSessionIDInMeta: true,
-		HasTokenUsageInMeta: true,
-		SupportsResume:     true,
-		SetupFn:            func(t *testing.T) { requireCodexEnv(t) },
+		Backend:             "codex",
+		CLIName:             "codex",
+		Command:             codexCommand,
+		Timeout:             60 * time.Second,
+		CollectTimeout:      90 * time.Second,
+		SkipNewSessionID:    true,
+		EmitsSessionCapture: true,
+		HasSessionIDInMeta:  true,
+		HasTokenUsageInMeta: false, // CodexBackend resume path omits token usage
+		SupportsResume:      true,
+		SetupFn:             func(t *testing.T) { requireCodexEnv(t) },
 	},
 	{
 		Backend:            "qoder",
@@ -291,7 +297,7 @@ var cliBackends = []cliTestConfig{
 		CollectTimeout:     90 * time.Second,
 		HasModelInMeta:     true,
 		HasSessionIDInMeta: true,
-		HasTokenUsageInMeta: true,
+		HasTokenUsageInMeta: false, // QoderStreamParser omits InputTokens
 		SupportsResume:     true,
 	},
 	{
@@ -300,8 +306,10 @@ var cliBackends = []cliTestConfig{
 		Timeout:            120 * time.Second,
 		CollectTimeout:     150 * time.Second,
 		HasModelInMeta:     true,
-		HasSessionIDInMeta: true,
-		HasTokenUsageInMeta: true,
+		SkipNewSessionID:     true,   // DeepSeek TUI generates own session IDs
+		EmitsSessionCapture:  true,
+		HasSessionIDInMeta:   true,   // Reports session ID in metadata
+		HasTokenUsageInMeta: false, // DeepSeek TUI mode doesn't reliably report tokens
 		SupportsResume:     true,
 	},
 	{
@@ -309,9 +317,12 @@ var cliBackends = []cliTestConfig{
 		CLIName:          "vecli",
 		Timeout:          60 * time.Second,
 		CollectTimeout:   90 * time.Second,
-		SkipNewSessionID: true,
 		HasModelInMeta:   true,
-		// VeCLI does NOT support resume (explicitly sets req.Resume = false)
+		// VeCLI: no session_capture, no session ID in metadata, no resume support
+		HasSessionIDInMeta:   false,
+		HasTokenUsageInMeta:  false,
+		SkipNewSessionID:     true,
+		EmitsSessionCapture:  false,
 	},
 }
 
@@ -674,10 +685,10 @@ func TestIntegration_CLI_StreamEvents(t *testing.T) {
 			require.NotEmpty(t, metaEvents, "should have metadata event")
 
 			// Backends that capture session ID via session_capture
-			if cfg.SkipNewSessionID {
+			if cfg.EmitsSessionCapture {
 				sessionCaptureEvents := findEvents(events, "session_capture")
 				assert.NotEmpty(t, sessionCaptureEvents, "%s should emit session_capture", cfg.Backend)
-			} else {
+			} else if cfg.HasSessionIDInMeta {
 				assert.NotEmpty(t, metaEvents[0].Meta.SessionID, "%s metadata should contain session ID", cfg.Backend)
 			}
 
@@ -732,7 +743,7 @@ func TestIntegration_CLI_CancelMidStream(t *testing.T) {
 	cancelBackends := []cliTestConfig{
 		{Backend: "claude", CLIName: "claude", Timeout: 60 * time.Second, CollectTimeout: 90 * time.Second},
 		{Backend: "codebuddy", CLIName: "codebuddy", Timeout: 60 * time.Second, CollectTimeout: 90 * time.Second},
-		{Backend: "opencode", CLIName: "opencode", Timeout: 60 * time.Second, CollectTimeout: 90 * time.Second, SkipNewSessionID: true},
+		{Backend: "opencode", CLIName: "opencode", Timeout: 60 * time.Second, CollectTimeout: 90 * time.Second, SkipNewSessionID: true, EmitsSessionCapture: true},
 		{Backend: "codex", CLIName: "codex", Command: codexCommand, Timeout: 60 * time.Second, CollectTimeout: 90 * time.Second, SetupFn: func(t *testing.T) { requireCodexEnv(t) }},
 		{Backend: "deepseek", CLIName: "deepseek", Timeout: 120 * time.Second, CollectTimeout: 150 * time.Second, SkipNewSessionID: true},
 		{Backend: "vecli", CLIName: "vecli", Timeout: 60 * time.Second, CollectTimeout: 90 * time.Second, SkipNewSessionID: true},
