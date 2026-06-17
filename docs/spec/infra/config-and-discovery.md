@@ -56,7 +56,7 @@ flowchart TD
 
 - **Agent 存储以 DB 为主**：Agent 配置存储在数据库（`agents` 表，由向导创建或自动发现），YAML 仅用于手动定义的特殊 Agent（如 E2E 测试用的 acp-mock）。DB 优先，`source` 字段区分 "auto"（自动发现）和 "setup"（向导创建）。已移除 YAML→DB 迁移逻辑
 - **ACP 能力持久化**：Agent 的 ACP 相关属性（`transport`、`acp_command`、可用模式、思考深度、命令等）持久化在 `agents` 表中，重启后无需重新发现——这些信息在首次连接时从 ACP Initialize 握手中提取并缓存
-- **供应商模型运行时加载**：已知模型列表不再编译时嵌入二进制，而是运行时从 `<BinDir>/.clawbench/provider_models.json` 加载。构建脚本和 CI 自动生成该文件——方便更新模型列表而无需重新编译
+- **供应商模型运行时加载**：已知模型列表从 `<BinDir>/.clawbench/provider_models.json` 运行时加载（不再编译时嵌入二进制）。构建脚本和 CI 通过 `scripts/fetch-provider-models.sh` 自动生成该文件——方便更新模型列表而无需重新编译
 - **API 密钥与密码联动**：加密密钥由登录密码派生，密码变更触发全量密钥轮换——修改密码不会导致 API 密钥失效
 - **模型缓存避免重复发现**：首次发现结果写入本地缓存，后续启动直接读取缓存。同步发现只在首次运行，之后由后台异步刷新
 - **Codex/VeCLI/Qoder 无 CLI 模型列表**：这些后端不支持 `--list-models` 类命令，模型由供应商注册表的 `KnownModels` 或用户手动提供。ACP 后端优先使用 ACP 提供的模型列表（覆盖 CLI 发现结果）——ACP 模型列表更准确。Kimi CLI 使用共享的 StreamJSONParser 解析 JSON 流式输出

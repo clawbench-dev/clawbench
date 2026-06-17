@@ -45,7 +45,7 @@ sequenceDiagram
     SessionExecutor->>SessionExecutor: 广播 WebSocket 事件（session_update）
 ```
 
-AI 后端产出的事件同时流向两个方向：一路经 SSE 推送给当前连接的客户端用于实时渲染，另一路触发 SessionExecutor 的增量持久化和 WebSocket 广播（通知其他客户端会话状态变化）。会话完成后，`AsyncSummarize` 自动为最后一条助手消息生成摘要，通过 WebSocket `summary_update` 事件实时推送到前端。
+AI 后端产出的事件同时流向两个方向：一路经 SSE 推送给当前连接的客户端用于实时渲染，另一路触发 SessionExecutor 的增量持久化和 WebSocket 广播（通知其他客户端会话状态变化）。会话完成后自动生成摘要——`simple` 模式直接提取最后回答文本（无需 AI 调用），`ai` 模式异步调用 `AsyncSummarize`，空字符串禁用摘要。摘要结果通过 WebSocket `summary_update` 事件实时推送到前端。
 
 ### ACP 权限审批流程
 
@@ -82,7 +82,7 @@ ACP 后端的工具调用可能需要用户审批（如执行 shell 命令、写
 - **文件上传与引用**：用户可以上传文件作为消息附件，AI 可以读取这些文件。降低了在移动端传递上下文的成本
 - **引用提问**：选中聊天或文件中的文本片段，以引用形式发送新问题。减少上下文描述的开销，尤其适合代码审查场景
 - **快捷发送**：预设常用 prompt 一键发送，避免重复输入。移动端打字成本高，这个功能显著降低了常用操作的交互开销
-- **聊天自动摘要**：会话完成后自动为助手消息生成摘要，通过 WebSocket 实时推送。前端 `SummaryToggle` 组件提供按钮模式（聊天中切换）和标签页模式（任务执行详情中切换）。用户快速浏览 AI 回复的核心内容，不必逐行阅读长输出
+- **聊天自动摘要**：会话完成后自动为助手消息生成摘要，通过 WebSocket 实时推送。支持三种模式：`simple` 提取最后回答文本（无需 AI 调用），`ai` 异步调用 AI 生成，空字符串禁用。前端 `SummaryToggle` 组件提供按钮模式（聊天中切换）和标签页模式（任务执行详情中切换）。用户快速浏览 AI 回复的核心内容，不必逐行阅读长输出
 - **续接对话**：定时任务的执行结果可以续接为新的交互式聊天会话，继承原始会话的消息、摘要和 `external_session_id`。用户看到定时任务结果后想继续追问，无需从头描述上下文
 - **ACP 模式切换**：ACP 后端支持多种工作模式（如 code、ask、architect），用户可在聊天中切换，切换即时生效并持久化。不同模式适合不同任务，用户按需选择
 - **ACP 权限审批**：ACP 后端请求工具调用审批时，系统推送通知提醒用户。移动端通过 JPush 通知收到审批提醒，避免因未审批而阻塞执行
@@ -94,5 +94,5 @@ ACP 后端的工具调用可能需要用户审批（如执行 shell 命令、写
 - **软删除保留 RAG 可搜索性**：删除的会话和消息标记 `deleted=1` 而非物理删除，RAG 索引仍可检索到——历史知识不应因用户整理而丢失
 - **双通道推送**：SSE 负责聊天内容的实时流式推送（长连接、单向），WebSocket 负责系统事件广播（会话状态、任务更新、权限待审）。两种推送模式互补，SSE 适合大体积流式数据，WebSocket 适合轻量级状态变更
 - **前端 Block 合并**：连续的 text/thinking 事件合并为同一个 Block 渲染，tool_use 作为 Block 边界——减少 DOM 更新频率，提升渲染性能
-- **自动摘要由会话完成触发**：`AsyncSummarize` 在 session_complete 事件后异步执行，短文本跳过摘要。摘要结果存入统一的 `summaries` 表，通过 WS `summary_update` 事件推送——摘要生成与聊天流解耦，不影响流式体验
+- **自动摘要有三种模式**：`simple` 模式从消息 Block 中直接提取最后回答文本（同步、无 AI 调用），`ai` 模式在 session_complete 事件后异步调用 `AsyncSummarize`，空字符串禁用摘要。短文本跳过摘要。摘要结果存入统一的 `summaries` 表，通过 WS `summary_update` 事件推送——摘要生成与聊天流解耦，不影响流式体验
 - **SessionExecutor 统一执行引擎**：交互式聊天和定时任务执行共用 `SessionExecutor`，差异化行为通过 `RunConfig.Mode` 控制（ModeInteractive / ModeScheduled）。消除了 handler 和 scheduler 中的重复执行逻辑
