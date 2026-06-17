@@ -475,7 +475,7 @@ export default {
     sortClickToClear: 'Click again to clear sort',
     hideHiddenFiles: 'Hide hidden files',
     showHiddenFiles: 'Show hidden files',
-    uploadHere: 'Upload files here',
+    uploadHere: 'Upload files',
     truncateHint: 'Showing first {max} of {total} items, use search to narrow down',
     emptyDir: 'This directory is empty.',
     noFiles: 'No supported files found.',

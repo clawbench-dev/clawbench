@@ -50,6 +50,15 @@
             <MoreHorizontal :size="16" />
           </button>
           <div v-if="moreMenuOpen" class="toolbar-dropdown toolbar-dropdown-right" @click.stop>
+            <button class="toolbar-dropdown-item" @click="doNewFile(); moreMenuOpen = false">
+              <FilePlus :size="14" />
+              <span>{{ t('file.context.newFile') }}</span>
+            </button>
+            <button class="toolbar-dropdown-item" @click="doNewFolder(); moreMenuOpen = false">
+              <FolderPlus :size="14" />
+              <span>{{ t('file.context.newFolder') }}</span>
+            </button>
+            <div class="toolbar-dropdown-divider" />
             <button class="toolbar-dropdown-item" :disabled="dirUploading" @click="triggerUpload(); moreMenuOpen = false">
               <Upload :size="14" />
               <span>{{ t('file.uploadHere') }}</span>
@@ -108,7 +117,10 @@
         <!-- Directory -->
         <div v-if="entry.type === 'dir'"
           class="file-item dir-item"
-          :class="{ 'ms-selected': multiSelect.active && multiSelect.selected.has(itemPath(entry.name)) }"
+          :class="{
+            'ms-selected': multiSelect.active && multiSelect.selected.has(itemPath(entry.name)),
+            'ctx-highlight': ctxMenu.visible && ctxMenu.entry?.path === itemPath(entry.name)
+          }"
           :data-action="'dir'"
           :data-path="itemPath(entry.name)"
           @contextmenu.prevent="showCtx($event, entry)"
@@ -129,7 +141,8 @@
           class="file-item"
           :class="{
             active: !multiSelect.active && currentFile?.path === itemPath(entry.name),
-            'ms-selected': multiSelect.active && multiSelect.selected.has(itemPath(entry.name))
+            'ms-selected': multiSelect.active && multiSelect.selected.has(itemPath(entry.name)),
+            'ctx-highlight': ctxMenu.visible && ctxMenu.entry?.path === itemPath(entry.name)
           }"
           :data-action="'file'"
           :data-path="itemPath(entry.name)"
@@ -178,7 +191,8 @@
         :class="{
           'grid-dir': entry.type === 'dir',
           'grid-active': !multiSelect.active && entry.type !== 'dir' && currentFile?.path === itemPath(entry.name),
-          'ms-selected': multiSelect.active && multiSelect.selected.has(itemPath(entry.name))
+          'ms-selected': multiSelect.active && multiSelect.selected.has(itemPath(entry.name)),
+          'ctx-highlight': ctxMenu.visible && ctxMenu.entry?.path === itemPath(entry.name)
         }"
         :data-action="entry.type === 'dir' ? 'dir' : 'file'"
         :data-path="itemPath(entry.name)"
@@ -239,17 +253,7 @@
           <ClipboardPaste :size="14" />
           {{ t('file.context.paste') }}
         </div>
-        <!-- Group 2: Create -->
-        <div class="context-menu-divider" />
-        <div class="context-menu-item" @click.stop="doNewFile">
-          <FilePlus :size="14" />
-          {{ ctxMenu.entry?.type === 'dir' ? t('file.context.newFileInDir', { name: ctxMenu.entry.name }) : t('file.context.newFile') }}
-        </div>
-        <div class="context-menu-item" @click.stop="doNewFolder">
-          <FolderPlus :size="14" />
-          {{ ctxMenu.entry?.type === 'dir' ? t('file.context.newFolderInDir', { name: ctxMenu.entry.name }) : t('file.context.newFolder') }}
-        </div>
-        <!-- Group 3: Entry actions -->
+        <!-- Group 2: Entry actions -->
         <template v-if="ctxMenu.entry">
           <div class="context-menu-divider" />
           <div class="context-menu-item" @click.stop="doRename">
@@ -583,6 +587,7 @@ async function doPaste() {
 
 async function doNewFile() {
     ctxMenu.visible = false
+    moreMenuOpen.value = false
     const name = await dialog.prompt(t('file.prompt.fileName'))
     if (!name || !name.trim()) return
     const dir = getDestDir(ctxMenu.entry)
@@ -606,6 +611,7 @@ async function doNewFile() {
 
 async function doNewFolder() {
     ctxMenu.visible = false
+    moreMenuOpen.value = false
     const name = await dialog.prompt(t('file.prompt.folderName'))
     if (!name || !name.trim()) return
     const dir = getDestDir(ctxMenu.entry)
@@ -1041,6 +1047,10 @@ function doDelete() {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, transparent);
 }
 
+.file-item.ctx-highlight {
+    background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
+}
+
 /* ── Multi-select bottom action bar ── */
 .ms-action-bar {
     display: flex;
@@ -1192,6 +1202,12 @@ function doDelete() {
 
 .toolbar-dropdown-item svg {
     flex-shrink: 0;
+}
+
+.toolbar-dropdown-divider {
+    height: 1px;
+    background: var(--border-color, #e5e5e5);
+    margin: 4px 6px;
 }
 
 .toolbar-dropdown-item .sort-dir-icon {
@@ -1349,6 +1365,10 @@ function doDelete() {
 
 .grid-item.ms-selected {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, transparent);
+}
+
+.grid-item.ctx-highlight {
+    background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
 }
 
 .grid-thumb {
