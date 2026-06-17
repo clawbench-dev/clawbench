@@ -140,6 +140,8 @@ linters:
   exclusions:
     paths:
       - node_modules/
+      - test/path-annotation/
+      - test_path_annotation\.go
 
     rules:
       # 测试文件豁免复杂度、安全和代码质量检查

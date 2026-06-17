@@ -1,3 +1,5 @@
+//go:build manualtest
+
 package main
 
 import (
