@@ -15,7 +15,7 @@ func TestVeCLIModelIDRe(t *testing.T) {
 	}{
 		{`id: "minimax-m2.5"`, true},
 		{`id: "model-name"`, true},
-		{`id:"no-space"`, false},
+		{`id:"no-space"`, true},  // \s* matches zero spaces
 		{`name: "something"`, false},
 		{`  id: "indented"`, true},
 	}
@@ -40,7 +40,7 @@ func TestVeCLIModelNameRe(t *testing.T) {
 	}{
 		{`name: "MiniMax M2.5"`, true},
 		{`name: "Model Name"`, true},
-		{`name:"no-space"`, false},
+		{`name:"no-space"`, true},  // \s* matches zero spaces
 		{`id: "something"`, false},
 	}
 
@@ -111,8 +111,12 @@ func TestVeCLIModelParsing_SimulatedRegistry(t *testing.T) {
 	require.Len(t, mName, 2)
 	assert.Equal(t, "MiniMax M2.5", mName[1])
 
-	// Test third entry (no name) falls back to ID
-	noNameSection := content[strings.Index(content, `"no-name-model"`):]
+	// Test third entry (no name) — find the third { block
+	thirdEntryIdx := strings.Index(content, `"no-name-model"`)
+	noNameSection := content[thirdEntryIdx:]
+	// Search backwards to find the opening id: for this entry
+	idPrefixIdx := strings.LastIndex(content[:thirdEntryIdx], "id:")
+	noNameSection = content[idPrefixIdx:]
 	mID := vecliModelIDRe.FindStringSubmatch(noNameSection)
 	require.Len(t, mID, 2)
 	assert.Equal(t, "no-name-model", mID[1])

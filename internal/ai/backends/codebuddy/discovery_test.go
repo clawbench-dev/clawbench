@@ -54,7 +54,7 @@ func TestCodebuddyModelRe(t *testing.T) {
 		expected bool
 	}{
 		{"Currently supported: (glm-4-plus, glm-4-flash)", true},
-		{"Currently supported: ()", true},
+		{"Currently supported: ()", false}, // empty parens — regex requires at least one char inside
 		{"No match here", false},
 		{"Currently supported: (model-a)", true},
 	}
