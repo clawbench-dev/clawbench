@@ -296,7 +296,10 @@ export function useGlobalEvents() {
         registerPushId()
     }
 
+    let initialized = false
     function init() {
+        if (initialized) return
+        initialized = true
         document.addEventListener('visibilitychange', handleVisibilityChange)
         // Listen for JPush registration event from native layer.
         // This fires when JPushReceiver.onRegister() is called, which may happen
@@ -320,6 +323,7 @@ export function useGlobalEvents() {
         missedPongs = 0
         pushAvailable.value = false
         pushRegistered.value = false
+        initialized = false
     }
 
     return {

@@ -352,6 +352,12 @@ export function useChatSession(options: UseChatSessionOptions) {
               return
             }
           }
+        } else {
+          // Recovery request failed (e.g. 403 NoProjectSelected when
+          // clawbench_project cookie is missing). Don't silently bail —
+          // log the error so it's visible in devtools. If initSessionFromAPI
+          // sets currentSessionId later, the normal path below will fetch messages.
+          console.warn('loadHistory recovery failed:', recoverResp.status, recoverResp.statusText)
         }
         // If recovery still yields no session, bail — createSession will handle it
         if (!currentSessionId.value) {
