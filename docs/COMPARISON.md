@@ -25,7 +25,7 @@
 
 | 功能 | ClawBench | Operit | Yep Anywhere | Happy | AnyCoding | AI Agent Remote | FeiLaude | Claude Dispatch | Claude Remote | Cursor Agent | GitHub Copilot | Paseo |
 |------|-----------|--------|-------------|-------|-----------|-----------------|----------|-----------------|---------------|--------------|----------------|-------|
-| **AI 后端数量** | 5 | 10+ | 2 | 2 | 2+ | 5 | 1 | 1 | 1 | 内置 | 内置 | 3 |
+| **AI 后端数量** | 12 | 10+ | 2 | 2 | 2+ | 5 | 1 | 1 | 1 | 内置 | 内置 | 3 |
 | **文件浏览/编辑** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **代码预览/语法高亮** | ✅ | ✅ | ✅（服务端渲染） | ❌ | ✅（终端） | ✅（终端） | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ |
 | **Git 集成** | ✅（分支图/Diff/历史） | ✅（基础） | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅（PR 创建/Diff） | ✅（PR Review） | ❌（仅 Diff 查看） |
@@ -243,7 +243,7 @@ GitHub 官方 AI 编程助手，支持移动端。
 
 1. **唯一的全功能移动端工作台**：其他产品全是"遥控器"——远程操控电脑上的会话。ClawBench 本身就是完整开发环境：文件、代码、Git、AI、定时任务、TTS、媒体预览，手机上直接干活。
 
-2. **7 种 AI 后端**：Happy/Yep Anywhere 只有 2 种，Claude Dispatch/Remote 只有 1 种。ClawBench 支持 CodeBuddy、Claude Code、OpenCode、Gemini CLI、Codex、Qoder CLI、VeCLI，覆盖最广。（注：Operit 支持 10+ 后端但以 API 调用为主，ClawBench 是唯一支持 CLI Agent 的多后端工作台）
+2. **12 种 AI 后端**：Happy/Yep Anywhere 只有 2 种，Claude Dispatch/Remote 只有 1 种。ClawBench 支持 CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、DeepSeek TUI、MiMo-Code、Pi、Cline、Copilot、Kimi，覆盖最广。（注：Operit 支持 10+ 后端但以 API 调用为主，ClawBench 是唯一支持 CLI Agent 的多后端工作台）
 
 3. **不依赖电脑在线**：Happy/Dispatch/Remote/AnyCoding/AI Agent Remote/Yep Anywhere 都需要电脑在线运行 CLI。ClawBench 部署在服务器上，手机随时连上就用，服务器挂机即可。
 
