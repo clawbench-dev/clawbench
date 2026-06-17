@@ -272,6 +272,7 @@ import { resetAgents } from '@/composables/useAgents'
 import { useSessionIdentity, registerSessionDrawerRef, resetIdentity } from './composables/useSessionIdentity.ts'
 import { loadSessionsOnce, resetChatSessionState } from './composables/useChatSession.ts'
 import { useToast } from './composables/useToast.ts'
+import { gt } from './composables/useLocale'
 import { useAppMode } from './composables/useAppMode.ts'
 import { useTerminalKeyboard } from './composables/useTerminalKeyboard.ts'
 import { useChatKeyboard } from './composables/useChatKeyboard.ts'
@@ -852,9 +853,13 @@ async function handleOverlayGoBack() {
 }
 
 async function handleOverlayOpenFile(path) {
+    const isExternal = path.startsWith('/')
     const ok = await store.selectFile(path)
     if (ok) {
         fileNav.openFile(path)
+        if (isExternal) {
+            toast.show(gt('file.toast.externalFile'), { type: 'info', duration: 2000 })
+        }
     }
 }
 
