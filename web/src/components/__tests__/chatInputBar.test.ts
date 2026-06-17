@@ -8,6 +8,23 @@ import ChatInputBar from '@/components/chat/ChatInputBar.vue'
 const mockFetchItems = vi.fn()
 const mockQuickSendItems = vi.fn(() => [])
 
+// Mock useChatContext for quoteData support
+const mockSetQuoteData = vi.fn()
+const mockAddAttachedFile = vi.fn()
+const mockHasAttachedFile = vi.fn(() => false)
+const mockClearAll = vi.fn()
+vi.mock('@/composables/useChatContext', () => ({
+  useChatContext: () => ({
+    attachedFiles: { value: [] },
+    quoteData: { value: null },
+    setQuoteData: mockSetQuoteData,
+    addAttachedFile: mockAddAttachedFile,
+    hasAttachedFile: mockHasAttachedFile,
+    removeAttachedFile: vi.fn(),
+    clearAll: mockClearAll,
+  }),
+}))
+
 vi.mock('@/composables/useQuickSend', () => ({
   useQuickSend: () => ({
     items: { value: [] },
@@ -457,5 +474,106 @@ describe('ChatInputBar — quick-send touch events', () => {
     // No press active — should not throw
     const moveEvent = { touches: [{ clientX: 100, clientY: 100 }] }
     expect(() => wrapper.vm.onQuickSendTouchMove(moveEvent)).not.toThrow()
+  })
+})
+
+describe('ChatInputBar — quoteData chip', () => {
+  it('shows quote chip when quoteData prop is provided', async () => {
+    const wrapper = mountInputBar({
+      quoteData: { text: 'selected code', filePath: '/foo.ts', language: 'typescript', startLine: 10, endLine: 20 },
+    })
+    await nextTick()
+
+    expect(wrapper.find('.attachment-quote').exists()).toBe(true)
+    expect(wrapper.find('.attachment-quote').attributes('title')).toBe('/foo.ts')
+  })
+
+  it('shows line number when startLine is present', async () => {
+    const wrapper = mountInputBar({
+      quoteData: { text: 'some text', filePath: '/bar.ts', language: 'ts', startLine: 5, endLine: 10 },
+    })
+    await nextTick()
+
+    expect(wrapper.find('.quote-line-info').exists()).toBe(true)
+    expect(wrapper.find('.quote-line-info').text()).toBe('L5')
+  })
+
+  it('hides line number when startLine is 0', async () => {
+    const wrapper = mountInputBar({
+      quoteData: { text: 'some text', filePath: '/bar.ts', language: 'ts', startLine: 0, endLine: 0 },
+    })
+    await nextTick()
+
+    expect(wrapper.find('.quote-line-info').exists()).toBe(false)
+  })
+
+  it('emits remove-quote when quote remove button is clicked', async () => {
+    const wrapper = mountInputBar({
+      quoteData: { text: 'quote', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 3 },
+    })
+    await nextTick()
+
+    await wrapper.find('.attachment-quote .attachment-tag-remove').trigger('click')
+    expect(wrapper.emitted('remove-quote')).toBeTruthy()
+  })
+
+  it('emits quote-click when quote chip is clicked', async () => {
+    const wrapper = mountInputBar({
+      quoteData: { text: 'quote', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 3 },
+    })
+    await nextTick()
+
+    await wrapper.find('.attachment-quote').trigger('click')
+    expect(wrapper.emitted('quote-click')).toBeTruthy()
+  })
+
+  it('does not show quote chip when quoteData is null', async () => {
+    const wrapper = mountInputBar({ quoteData: null })
+    await nextTick()
+
+    expect(wrapper.find('.attachment-quote').exists()).toBe(false)
+  })
+
+  it('shows attachment-tags area when quoteData is set even with no attached files', async () => {
+    const wrapper = mountInputBar({
+      quoteData: { text: 'q', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 1 },
+      attachedFiles: [],
+      pendingFiles: [],
+    })
+    await nextTick()
+
+    expect(wrapper.find('.chat-attachment-tags').exists()).toBe(true)
+  })
+
+  it('truncateQuoteText truncates long text with ellipsis', () => {
+    const wrapper = mountInputBar()
+    const result = wrapper.vm.truncateQuoteText('a very long text that exceeds the max length', 20)
+    expect(result.length).toBeLessThanOrEqual(23) // 20 chars + '...'
+    expect(result.endsWith('...')).toBe(true)
+  })
+
+  it('truncateQuoteText returns empty string for null/undefined', () => {
+    const wrapper = mountInputBar()
+    expect(wrapper.vm.truncateQuoteText(null, 20)).toBe('')
+    expect(wrapper.vm.truncateQuoteText(undefined, 20)).toBe('')
+  })
+
+  it('truncateQuoteText replaces newlines with spaces', () => {
+    const wrapper = mountInputBar()
+    const result = wrapper.vm.truncateQuoteText('line1\nline2\nline3', 50)
+    expect(result).toBe('line1 line2 line3')
+  })
+
+  it('truncateQuoteText keeps short text unchanged', () => {
+    const wrapper = mountInputBar()
+    const result = wrapper.vm.truncateQuoteText('short', 20)
+    expect(result).toBe('short')
+  })
+
+  it('hasInputContent is true when quoteData is set', () => {
+    const wrapper = mountInputBar({
+      quoteData: { text: 'q', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 1 },
+    })
+    expect(wrapper.vm.hasInputContent).toBeTruthy()
   })
 })
