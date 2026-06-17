@@ -17,7 +17,6 @@ type ExecutionMode int
 // Sentinel errors for RunResult.Err
 var (
 	errBackendCreate = errors.New("failed to create AI backend")
-	errStreamStart   = errors.New("failed to start AI stream")
 )
 
 const (
@@ -435,8 +434,8 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 saveRaw:
 	// Save raw AI backend output for debugging/analysis
 	if rawOutput != "" {
-		if msgID := GetStreamingMessageID(e.cfg.SessionID); msgID > 0 {
-			if err := SaveRawResponse(e.cfg.SessionID, e.cfg.BackendName, msgID, rawOutput); err != nil {
+		if streamMsgID := GetStreamingMessageID(e.cfg.SessionID); streamMsgID > 0 {
+			if err := SaveRawResponse(e.cfg.SessionID, e.cfg.BackendName, streamMsgID, rawOutput); err != nil {
 				slog.Error("failed to save raw response",
 					slog.String("session", e.cfg.SessionID),
 					slog.String("err", err.Error()))

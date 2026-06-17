@@ -36,8 +36,8 @@ type StreamJSONMessage struct {
 	Message  string `json:"message"`  // error message
 
 	// result event fields
-	Error *ResultError   `json:"error"` // only when status="error"
-	Stats *StreamStats   `json:"stats"`
+	Error *ResultError `json:"error"` // only when status="error"
+	Stats *StreamStats `json:"stats"`
 }
 
 // ResultError represents the error field in a result event

@@ -1331,7 +1331,6 @@ func TestAccumulateBlock_InterleavedToolUse(t *testing.T) {
 	}
 }
 
-
 // ---------- Session ownership validation (ISS-180) — AIChat handler ----------
 
 // TestAIChat_Get_SessionBelongsToDifferentProject verifies that the GET path

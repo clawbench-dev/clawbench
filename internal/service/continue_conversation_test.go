@@ -842,5 +842,3 @@ func TestRestoreDeletedSession_DBError(t *testing.T) {
 	)
 	assert.Error(t, err, "should fail with closed DB")
 }
-
-

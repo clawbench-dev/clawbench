@@ -660,7 +660,8 @@ func executeStreamRun(
 		result.empty = true
 	}
 
-	slog.Info("ai stream run done",
+	slog.Info(
+		"ai stream run done",
 		slog.String("session", sessionID),
 		slog.Int("blocks", len(runResult.Blocks)),
 		slog.String("cancel_reason", runResult.CancelReason),
@@ -669,8 +670,6 @@ func executeStreamRun(
 
 	return result
 }
-
-
 
 // buildChatRequest constructs an ai.ChatRequest from the given parameters.
 // modelOverride, if non-empty, takes precedence over the agent's default model.
@@ -849,5 +848,3 @@ func CancelChat(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
-
-

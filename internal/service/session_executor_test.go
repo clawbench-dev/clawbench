@@ -375,6 +375,15 @@ func TestRunConfig_InteractiveFields(t *testing.T) {
 	if cfg.ProjectPath != "/test/project" {
 		t.Fatal("ProjectPath not set")
 	}
+	if cfg.BackendName != "claude" {
+		t.Fatal("BackendName not set")
+	}
+	if cfg.SessionID != "sess-123" {
+		t.Fatal("SessionID not set")
+	}
+	if cfg.AgentID != "claude" {
+		t.Fatal("AgentID not set")
+	}
 }
 
 func TestRunConfig_ScheduledFields(t *testing.T) {
@@ -391,6 +400,18 @@ func TestRunConfig_ScheduledFields(t *testing.T) {
 	}
 	if cfg.Mode != ModeScheduled {
 		t.Fatal("expected ModeScheduled")
+	}
+	if cfg.ProjectPath != "/test/project" {
+		t.Fatal("ProjectPath not set")
+	}
+	if cfg.BackendName != "codebuddy" {
+		t.Fatal("BackendName not set")
+	}
+	if cfg.SessionID != "sess-456" {
+		t.Fatal("SessionID not set")
+	}
+	if cfg.AgentID != "codebuddy" {
+		t.Fatal("AgentID not set")
 	}
 	if cfg.TaskID != 42 || cfg.ExecutionID != 7 || cfg.TriggerType != "auto" {
 		t.Fatal("scheduled-specific fields not set")
@@ -409,6 +430,9 @@ func TestRunConfig_LocalizeError(t *testing.T) {
 			return "localized: " + key
 		},
 	}
+	if cfg.Mode != ModeInteractive {
+		t.Fatal("expected ModeInteractive")
+	}
 	if cfg.LocalizeError == nil {
 		t.Fatal("LocalizeError should be settable")
 	}
@@ -425,6 +449,9 @@ func TestRunConfig_LocalizeError_NilForScheduled(t *testing.T) {
 	cfg := RunConfig{
 		Mode: ModeScheduled,
 	}
+	if cfg.Mode != ModeScheduled {
+		t.Fatal("expected ModeScheduled")
+	}
 	// Scheduled mode should work with nil LocalizeError
 	if cfg.LocalizeError != nil {
 		t.Fatal("LocalizeError should be nil by default for scheduled mode")
@@ -435,9 +462,8 @@ func TestRunConfig_LocalizeError_NilForScheduled(t *testing.T) {
 
 func TestRunResult_Fields(t *testing.T) {
 	result := RunResult{
-		Err:              nil,
 		CancelReason:     "user",
-		Empty:            false,
+		Empty:            true,
 		ReceivedTerminal: true,
 		Blocks:           []model.ContentBlock{{Type: "text", Text: "hello"}},
 		Metadata:         &ai.Metadata{WallMs: 1500},
@@ -446,6 +472,9 @@ func TestRunResult_Fields(t *testing.T) {
 	}
 	if result.CancelReason != "user" {
 		t.Fatal("CancelReason not set")
+	}
+	if !result.Empty {
+		t.Fatal("Empty should be true")
 	}
 	if !result.ReceivedTerminal {
 		t.Fatal("ReceivedTerminal should be true")
@@ -459,6 +488,9 @@ func TestRunResult_Fields(t *testing.T) {
 	if result.RawOutput != "raw data here" {
 		t.Fatal("RawOutput not set")
 	}
+	if result.WallMs != 1500 {
+		t.Fatal("WallMs not set")
+	}
 }
 
 func TestRunResult_Success(t *testing.T) {
@@ -468,6 +500,12 @@ func TestRunResult_Success(t *testing.T) {
 	}
 	if result.Err != nil || result.CancelReason != "" || result.Empty {
 		t.Fatal("successful result should have no error/cancel/empty")
+	}
+	if !result.ReceivedTerminal {
+		t.Fatal("ReceivedTerminal should be true")
+	}
+	if len(result.Blocks) != 1 {
+		t.Fatal("Blocks should have 1 element")
 	}
 }
 
@@ -479,6 +517,9 @@ func TestRunResult_Failed(t *testing.T) {
 	if result.Err == nil {
 		t.Fatal("failed result should have Err set")
 	}
+	if result.ReceivedTerminal {
+		t.Fatal("failed result should not have ReceivedTerminal")
+	}
 }
 
 func TestRunResult_Empty(t *testing.T) {
@@ -488,6 +529,9 @@ func TestRunResult_Empty(t *testing.T) {
 	}
 	if !result.Empty {
 		t.Fatal("Empty should be true")
+	}
+	if !result.ReceivedTerminal {
+		t.Fatal("ReceivedTerminal should be true")
 	}
 }
 
@@ -838,7 +882,7 @@ func runExecutorWithEventsFinalize(t *testing.T, events []ai.StreamEvent, mode E
 }
 
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstr(s, substr))
+	return len(s) >= len(substr) && (s == substr || s != "" && containsSubstr(s, substr))
 }
 
 func containsSubstr(s, substr string) bool {
@@ -1204,7 +1248,7 @@ func TestSessionExecutor_Finalize_EmptyBlocks_Timeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
 	defer cancel()
 	time.Sleep(time.Millisecond) // ensure deadline exceeded
-	_ = ctx.Err() // drain
+	_ = ctx.Err()                // drain
 
 	cfg := RunConfig{
 		Mode:        ModeInteractive,

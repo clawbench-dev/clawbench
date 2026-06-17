@@ -956,7 +956,7 @@ func TestGetFile_LargeFile_Returns400(t *testing.T) {
 	f, err := os.Create(largeFile)
 	require.NoError(t, err)
 	// Truncate to 11MB (creates sparse file)
-	require.NoError(t, f.Truncate(11 * 1024 * 1024))
+	require.NoError(t, f.Truncate(11*1024*1024))
 	require.NoError(t, f.Close())
 
 	req := newRequest(t, http.MethodGet, "/api/file/large.txt", nil)

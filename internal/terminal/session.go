@@ -52,7 +52,7 @@ type Session struct {
 	// The flag is cleared shortly after the first HandleResize() call
 	// (which is when SIGWINCH fires), once the redraw output has been
 	// consumed and discarded by readPTY().
-	suppressOutput     bool
+	suppressOutput      bool
 	suppressSafetyTimer *time.Timer // safety timeout to prevent permanent suppression
 }
 

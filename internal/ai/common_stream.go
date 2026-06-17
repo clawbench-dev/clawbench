@@ -207,7 +207,7 @@ var perAgentInputRemaps = map[string]map[string]string{
 	"claude_acp":    {}, // Claude ACP rawInput already uses snake_case
 	"opencode_acp":  {"oldString": "old_string", "newString": "new_string", "replaceAll": "replace_all"},
 	"codebuddy_acp": {},
-	"kimi_acp":     {}, // Kimi ACP has no rawInput; normalization done during inference
+	"kimi_acp":      {}, // Kimi ACP has no rawInput; normalization done during inference
 	"generic_acp": { // Full remap table for generic fallback path
 		"oldString": "old_string", "newString": "new_string",
 		"dirPath": "path", "filePath": "file_path",
