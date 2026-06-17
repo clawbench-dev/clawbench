@@ -621,6 +621,10 @@ export function useChatSession(options: UseChatSessionOptions) {
       syncThinkingEffortFromData(data.thinkingEffortState?.currentId || '')
       syncModeFromData(data.modeState?.currentModeId || '', data.modeState?.availableModes)
       syncTransportFromData(data.transport)
+      // Restore autoApprove from server state (per-session, not global)
+      if (data.autoApprove !== undefined) {
+        autoApprove.value = data.autoApprove
+      }
       // Populate ACP mode available modes from REST response.
       if (data.modeState && data.modeState?.availableModes?.length > 0) {
         updateAvailableModes(data.modeState.availableModes)
