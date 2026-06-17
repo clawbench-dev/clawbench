@@ -1,4 +1,4 @@
-//nolint:errcheck,gocyclo,gocognit,gosec,goconst,unparam // legacy file, nolint-only approach for diff stability
+//nolint:errcheck,gocyclo,gocognit,gosec,goconst // legacy file, nolint-only approach for diff stability
 package handler
 
 import (

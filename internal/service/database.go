@@ -694,7 +694,7 @@ func MigrateTaskExecutionSummaries() {
 		}
 		migrations = append(migrations, m)
 	}
-	_ = rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	migrated := 0
 	for _, m := range migrations {

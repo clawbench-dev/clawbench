@@ -34,7 +34,7 @@ func TestSessionExecutor_Finalize_ACPModeInjection(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", agentID)
+	sid := setupExecutorSession(t, agentID)
 
 	// Register agent capabilities so GetModeState/GetThinkingEffortState return non-nil
 	reg := ai.GetAgentCapabilityRegistry()
@@ -85,7 +85,7 @@ func TestSessionExecutor_Finalize_TransportFromSessionOverride(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 	// Set session transport to "sse"
 	if err := UpdateSessionTransport(sid, "sse"); err != nil {
 		t.Fatalf("UpdateSessionTransport failed: %v", err)
@@ -122,7 +122,7 @@ func TestSessionExecutor_Finalize_ModelFromSession(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 	if err := UpdateSessionModel(sid, "glm-5.1"); err != nil {
 		t.Fatalf("UpdateSessionModel failed: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestSessionExecutor_Finalize_WithBlocks_DeadlineExceeded(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
@@ -200,7 +200,7 @@ func TestSessionExecutor_Finalize_DrainRawFromEventChannel(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 
 	ctx := context.Background()
 	cfg := RunConfig{
@@ -246,7 +246,7 @@ func TestSessionExecutor_HandleResumeSplit_WithRawOutput(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 	ctx := context.Background()
 	cfg := RunConfig{
 		Mode:        ModeInteractive,
@@ -292,7 +292,7 @@ func TestSessionExecutor_Finalize_NilMetadata(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 
 	ctx := context.Background()
 	cfg := RunConfig{
@@ -328,7 +328,7 @@ func TestSessionExecutor_FlushStreamingMessage_NilBlocks(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 	ctx := context.Background()
 	cfg := RunConfig{
 		Mode:        ModeInteractive,
@@ -549,7 +549,7 @@ func TestNewSessionExecutor_DoesNotWrapContext(t *testing.T) {
 		ChatRequest: ai.ChatRequest{Prompt: "hello"},
 	}
 
-	executor := NewSessionExecutor(nil, cfg)
+	executor := NewSessionExecutor(context.TODO(), cfg)
 	if executor == nil {
 		t.Fatal("NewSessionExecutor returned nil")
 	}
@@ -907,15 +907,15 @@ func setupExecutorDB(t *testing.T) {
 // setupExecutorSession creates a session and a streaming placeholder message,
 // returning the session ID. This is the minimum DB state needed for
 // flushStreamingMessage, handleResumeSplit, and Finalize.
-func setupExecutorSession(t *testing.T, projectPath, backend, agentID string) string {
+func setupExecutorSession(t *testing.T, agentID string) string {
 	t.Helper()
-	sid, err := CreateSession(projectPath, backend, "Executor Test", agentID, "", "default", "chat")
+	sid, err := CreateSession("/test", "test", "Executor Test", agentID, "", "default", "chat")
 	if err != nil {
 		t.Fatalf("CreateSession failed: %v", err)
 	}
 	// Create streaming assistant placeholder
 	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
-	_, _ = AddChatMessage(projectPath, backend, sid, "assistant", string(emptyContent), nil, true, "")
+	_, _ = AddChatMessage("/test", "test", sid, "assistant", string(emptyContent), nil, true, "")
 	return sid
 }
 
@@ -926,7 +926,7 @@ func TestSessionExecutor_CaptureExternalSessionID(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 	ctx := context.Background()
 	cfg := RunConfig{
 		Mode:        ModeInteractive,
@@ -966,7 +966,7 @@ func TestSessionExecutor_FlushStreamingMessage(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 	ctx := context.Background()
 	cfg := RunConfig{
 		Mode:        ModeInteractive,
@@ -1003,7 +1003,7 @@ func TestSessionExecutor_FlushStreamingMessage_WithMetadata(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 	ctx := context.Background()
 	cfg := RunConfig{
 		Mode:        ModeInteractive,
@@ -1041,7 +1041,7 @@ func TestSessionExecutor_HandleResumeSplit(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 	ctx := context.Background()
 	cfg := RunConfig{
 		Mode:        ModeInteractive,
@@ -1104,7 +1104,7 @@ func TestSessionExecutor_Finalize_WithDB(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 	ctx := context.Background()
 	cfg := RunConfig{
 		Mode:        ModeInteractive,
@@ -1158,7 +1158,7 @@ func TestSessionExecutor_Finalize_EmptyBlocks_UserCancel(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel context immediately
 
@@ -1204,7 +1204,7 @@ func TestSessionExecutor_Finalize_EmptyBlocks_ContextCancel(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -1243,7 +1243,7 @@ func TestSessionExecutor_Finalize_EmptyBlocks_Timeout(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 	// Use a context that has timed out (DeadlineExceeded)
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
 	defer cancel()
@@ -1285,7 +1285,7 @@ func TestSessionExecutor_Finalize_EmptyBlocks_DefaultReason(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 	ctx := context.Background()
 
 	cfg := RunConfig{
@@ -1323,7 +1323,7 @@ func TestSessionExecutor_Finalize_WithBlocks_UserCancel(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -1365,7 +1365,7 @@ func TestSessionExecutor_Finalize_WithBlocks_ContextCancel(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -1392,6 +1392,9 @@ func TestSessionExecutor_Finalize_WithBlocks_ContextCancel(t *testing.T) {
 	runResult := executor.RunWithChannel(ch)
 	runResult = executor.Finalize(runResult, nil)
 	// Context cancelled with blocks present — should set cancelled=true
+	if runResult.MsgID <= 0 {
+		t.Fatal("expected MsgID > 0 after Finalize")
+	}
 }
 
 func TestSessionExecutor_Finalize_WithBlocks_Timeout(t *testing.T) {
@@ -1401,7 +1404,7 @@ func TestSessionExecutor_Finalize_WithBlocks_Timeout(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
 	defer cancel()
 	time.Sleep(time.Millisecond)
@@ -1449,7 +1452,7 @@ func TestSessionExecutor_Finalize_DrainRawOutput(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 	ctx := context.Background()
 	cfg := RunConfig{
 		Mode:        ModeInteractive,
@@ -1491,7 +1494,7 @@ func TestSessionExecutor_RunWithChannel_SessionCapture(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 	ctx := context.Background()
 	cfg := RunConfig{
 		Mode:        ModeScheduled,
@@ -1534,7 +1537,7 @@ func TestSessionExecutor_RunWithChannel_SessionCaptureFromMetadata(t *testing.T)
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 	ctx := context.Background()
 	cfg := RunConfig{
 		Mode:        ModeScheduled,
@@ -1577,7 +1580,7 @@ func TestSessionExecutor_RunWithChannel_ResumeSplit(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 	ctx := context.Background()
 	cfg := RunConfig{
 		Mode:        ModeInteractive,
@@ -1619,7 +1622,7 @@ func TestSessionExecutor_BuildResult_InteractiveCancelReason(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 	ctx := context.Background()
 	cfg := RunConfig{
 		Mode:        ModeInteractive,
@@ -1671,7 +1674,7 @@ func TestSessionExecutor_Finalize_TransportFromACP(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 	ctx := context.Background()
 	cfg := RunConfig{
 		Mode:        ModeInteractive,
@@ -1709,7 +1712,7 @@ func TestSessionExecutor_Finalize_SavesRawOutput(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	sid := setupExecutorSession(t, "test-agent")
 	ctx := context.Background()
 	cfg := RunConfig{
 		Mode:        ModeInteractive,
@@ -1736,6 +1739,9 @@ func TestSessionExecutor_Finalize_SavesRawOutput(t *testing.T) {
 	runResult = executor.Finalize(runResult, nil)
 
 	// Verify raw output was saved
+	if runResult.MsgID <= 0 {
+		t.Fatal("expected MsgID > 0 after Finalize")
+	}
 	var rawCount int
 	err := DBRead.QueryRow(
 		"SELECT COUNT(*) FROM ai_raw_responses WHERE session_id = ?",

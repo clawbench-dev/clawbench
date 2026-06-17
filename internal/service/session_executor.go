@@ -24,6 +24,11 @@ const (
 	ModeInteractive ExecutionMode = iota
 	// ModeScheduled is for automated task execution without a user present.
 	ModeScheduled
+
+	// contentKeyBlocks is the JSON key for content blocks in serialized messages.
+	contentKeyBlocks = "blocks"
+	// cancelReasonUser is the cancel reason when the user explicitly cancels.
+	cancelReasonUser = "user"
 )
 
 // RunConfig configures a single SessionExecutor execution.
@@ -267,7 +272,7 @@ func (e *SessionExecutor) flushStreamingMessage() {
 	if serializedBlocks == nil {
 		serializedBlocks = []model.ContentBlock{}
 	}
-	contentMap := map[string]any{"blocks": serializedBlocks}
+	contentMap := map[string]any{contentKeyBlocks: serializedBlocks}
 	if e.responseMetadata != nil {
 		contentMap["metadata"] = e.responseMetadata
 	}
@@ -289,7 +294,7 @@ func (e *SessionExecutor) handleResumeSplit() {
 	if serializedBlocks == nil {
 		serializedBlocks = []model.ContentBlock{}
 	}
-	contentMap := map[string]any{"blocks": serializedBlocks}
+	contentMap := map[string]any{contentKeyBlocks: serializedBlocks}
 	if e.responseMetadata != nil {
 		contentMap["metadata"] = e.responseMetadata
 	}
@@ -321,7 +326,7 @@ func (e *SessionExecutor) handleResumeSplit() {
 	e.wallStart = time.Now().UnixMilli()
 
 	// Create new streaming assistant placeholder
-	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
+	emptyContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{}})
 	if _, err := AddChatMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, "assistant", string(emptyContent), nil, true, ""); err != nil {
 		slog.Error("failed to create resume streaming message",
 			slog.String("session", e.cfg.SessionID),
@@ -366,7 +371,7 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 		var errMsg string
 		var reason string
 		switch {
-		case result.CancelReason == "user":
+		case result.CancelReason == cancelReasonUser:
 			errMsg, reason = "User cancelled", ai.ReasonUserCancel
 		case e.ctx.Err() == context.Canceled:
 			errMsg, reason = "AI response cancelled", ai.ReasonContextCancel
@@ -376,22 +381,22 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 			errMsg, reason = "AI returned no content", ai.ReasonEmpty
 		}
 		blocks = append(blocks, model.ContentBlock{Type: "warning", Text: errMsg, Reason: reason})
-		contentMap := map[string]any{"blocks": blocks, "metadata": responseMetadata}
-		if result.CancelReason == "user" || e.ctx.Err() == context.Canceled {
+		contentMap := map[string]any{contentKeyBlocks: blocks, "metadata": responseMetadata}
+		if result.CancelReason == cancelReasonUser || e.ctx.Err() == context.Canceled {
 			contentMap["cancelled"] = true
 		}
 		blocksJSON, _ := json.Marshal(contentMap)
 		content = string(blocksJSON)
 	} else {
-		contentMap := map[string]any{"blocks": blocks, "metadata": responseMetadata}
-		if result.CancelReason == "user" {
+		contentMap := map[string]any{contentKeyBlocks: blocks, "metadata": responseMetadata}
+		if result.CancelReason == cancelReasonUser {
 			contentMap["cancelled"] = true
 		} else if e.ctx.Err() == context.Canceled {
 			contentMap["cancelled"] = true
 		} else if e.ctx.Err() == context.DeadlineExceeded {
 			blocks = append(blocks, model.ContentBlock{Type: "warning", Text: "AI response timed out (30 min)", Reason: ai.ReasonTimeout})
 		}
-		contentMap["blocks"] = blocks
+		contentMap[contentKeyBlocks] = blocks
 		blocksJSON, _ := json.Marshal(contentMap)
 		content = string(blocksJSON)
 	}
