@@ -270,8 +270,8 @@ describe('store', () => {
 
             await store.selectFile('/test.ts')
 
-            // URL should not contain double slash — cleanPath strips leading /
-            expect(mockFetch).toHaveBeenCalledWith('/api/file/test.ts')
+            // Absolute paths use query parameter style to avoid encoding issues
+            expect(mockFetch).toHaveBeenCalledWith('/api/file?path=%2Ftest.ts')
             vi.unstubAllGlobals()
         })
 
@@ -284,7 +284,8 @@ describe('store', () => {
 
             await store.selectFile('///test.ts')
 
-            expect(mockFetch).toHaveBeenCalledWith('/api/file/test.ts')
+            // Absolute paths use query parameter style
+            expect(mockFetch).toHaveBeenCalledWith('/api/file?path=%2F%2F%2Ftest.ts')
             vi.unstubAllGlobals()
         })
 
@@ -297,7 +298,8 @@ describe('store', () => {
 
             await store.selectFile('/file.bin', false, false, true, true)
 
-            expect(mockFetch).toHaveBeenCalledWith('/api/file/file.bin?forceText=1')
+            // Absolute paths use query parameter style with forceText
+            expect(mockFetch).toHaveBeenCalledWith('/api/file?path=%2Ffile.bin&forceText=1')
             vi.unstubAllGlobals()
         })
 
