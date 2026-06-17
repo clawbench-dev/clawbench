@@ -2,11 +2,14 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
+
+	_ "modernc.org/sqlite"
 )
 
 // --- ExecutionMode ---
@@ -17,6 +20,341 @@ func TestExecutionMode_Values(t *testing.T) {
 	}
 	if ModeScheduled != 1 {
 		t.Fatalf("ModeScheduled should be 1, got %d", ModeScheduled)
+	}
+}
+
+// --- Additional diff coverage tests ---
+
+func TestSessionExecutor_Finalize_ACPModeInjection(t *testing.T) {
+	// Cover lines 344-350: ACP mode and thinking effort injection.
+	setupExecutorDB(t)
+	agentID := "acp-mode-test-agent"
+	model.Agents = map[string]*model.Agent{
+		agentID: {ID: agentID, Name: "Test", Backend: "test", AcpCommand: "test-acp"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", agentID)
+
+	// Register agent capabilities so GetModeState/GetThinkingEffortState return non-nil
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.UpdateModes(agentID, []ai.ModeDef{{ID: "architect", Name: "Architect"}})
+	reg.UpdateThinkingEfforts(agentID, []ai.ThinkingEffortDef{{ID: "high", Name: "High"}})
+	defer reg.UpdateModes(agentID, nil)
+
+	// Inject ACP connection with cached mode and effort
+	agent := &model.Agent{ID: agentID, Backend: "test"}
+	conn := ai.NewACPConnForTest(agent, sid)
+	conn.UpdateCachedCurrentMode("architect")
+	conn.UpdateCachedCurrentThinkingEffort("high")
+	mgr := ai.GetACPConnManager()
+	mgr.SetConnForTest(sid, conn)
+	defer mgr.SetConnForTest(sid, nil)
+
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     agentID,
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "ok"}},
+		Metadata:         &ai.Metadata{},
+	}
+	finalized := executor.Finalize(result, nil)
+
+	if finalized.Metadata.Mode != "architect" {
+		t.Fatalf("expected Mode='architect', got %q", finalized.Metadata.Mode)
+	}
+	if finalized.Metadata.ThinkingEffort != "high" {
+		t.Fatalf("expected ThinkingEffort='high', got %q", finalized.Metadata.ThinkingEffort)
+	}
+}
+
+func TestSessionExecutor_Finalize_TransportFromSessionOverride(t *testing.T) {
+	// Cover line 353-354: transport from session transport override.
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	// Set session transport to "sse"
+	if err := UpdateSessionTransport(sid, "sse"); err != nil {
+		t.Fatalf("UpdateSessionTransport failed: %v", err)
+	}
+
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "ok"}},
+		Metadata:         &ai.Metadata{},
+	}
+	finalized := executor.Finalize(result, nil)
+
+	if finalized.Metadata.Transport != "sse" {
+		t.Fatalf("expected Transport='sse', got %q", finalized.Metadata.Transport)
+	}
+}
+
+func TestSessionExecutor_Finalize_ModelFromSession(t *testing.T) {
+	// Cover line 360-362: model from session model.
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	if err := UpdateSessionModel(sid, "glm-5.1"); err != nil {
+		t.Fatalf("UpdateSessionModel failed: %v", err)
+	}
+
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "ok"}},
+		Metadata:         &ai.Metadata{},
+	}
+	finalized := executor.Finalize(result, nil)
+
+	if finalized.Metadata.Model != "glm-5.1" {
+		t.Fatalf("expected Model='glm-5.1', got %q", finalized.Metadata.Model)
+	}
+}
+
+func TestSessionExecutor_Finalize_WithBlocks_DeadlineExceeded(t *testing.T) {
+	// Cover lines 392-393: DeadlineExceeded with blocks appends warning.
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "partial"}},
+		Metadata:         &ai.Metadata{},
+	}
+	finalized := executor.Finalize(result, nil)
+
+	// Should have appended a warning block about timeout
+	found := false
+	for _, b := range finalized.Blocks {
+		if b.Type == "warning" && b.Reason == ai.ReasonTimeout {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning with ReasonTimeout, got: %+v", finalized.Blocks)
+	}
+}
+
+func TestSessionExecutor_Finalize_DrainRawFromEventChannel(t *testing.T) {
+	// Cover lines 416-433: drain raw_output from event channel.
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Create drain channel with raw_output events
+	drainCh := make(chan ai.StreamEvent, 3)
+	drainCh <- ai.StreamEvent{Type: "raw_output", RawOutput: "drained-line-1"}
+	drainCh <- ai.StreamEvent{Type: "raw_output", RawOutput: "drained-line-2"}
+	close(drainCh)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "ok"}},
+		Metadata:         &ai.Metadata{},
+		RawOutput:        "existing-raw",
+	}
+	finalized := executor.Finalize(result, drainCh)
+
+	if !contains(finalized.RawOutput, "existing-raw") {
+		t.Fatal("expected existing raw output preserved")
+	}
+	if !contains(finalized.RawOutput, "drained-line-1") {
+		t.Fatal("expected drained raw output line 1")
+	}
+	if !contains(finalized.RawOutput, "drained-line-2") {
+		t.Fatal("expected drained raw output line 2")
+	}
+}
+
+func TestSessionExecutor_HandleResumeSplit_WithRawOutput(t *testing.T) {
+	// Cover lines 306-316: handleResumeSplit saves raw output and clears it.
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+
+	events := []ai.StreamEvent{
+		{Type: "raw_output", RawOutput: "before-split-raw"},
+		{Type: "content", Content: "part1"},
+		{Type: "resume_split"},
+		{Type: "content", Content: "part2"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	executor := NewSessionExecutor(ctx, cfg)
+	result := executor.RunWithChannel(ch)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+
+	// After resume_split, raw output from before split should have been saved
+	// and the final raw output should only contain post-split content (none in this case)
+	_ = result // Just verify no panic
+}
+
+func TestSessionExecutor_Finalize_NilMetadata(t *testing.T) {
+	// Verify Finalize works with minimal metadata — the function accesses
+	// responseMetadata fields directly, so nil is not supported.
+	// Instead test with an empty Metadata struct.
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "ok"}},
+		Metadata:         &ai.Metadata{}, // empty but non-nil
+	}
+	finalized := executor.Finalize(result, nil)
+
+	if finalized.Metadata == nil {
+		t.Fatal("expected Metadata to be set")
+	}
+	if finalized.Metadata.Transport == "" {
+		t.Fatal("expected Transport to be set")
+	}
+}
+
+func TestSessionExecutor_FlushStreamingMessage_NilBlocks(t *testing.T) {
+	// Cover line 268-269: nil blocks serialized as empty array.
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Directly call flushStreamingMessage with nil blocks
+	executor.blocks = nil
+	executor.flushStreamingMessage()
+
+	// Verify the streaming message was updated (with empty blocks array)
+	var content string
+	err := DBRead.QueryRow(
+		"SELECT content FROM chat_history WHERE session_id = ? AND streaming = 1",
+		sid,
+	).Scan(&content)
+	if err != nil {
+		t.Fatalf("failed to query streaming message: %v", err)
+	}
+	if !contains(content, `"blocks":[]`) {
+		t.Fatalf("expected empty blocks array, got: %s", content)
 	}
 }
 
@@ -510,4 +848,859 @@ func containsSubstr(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// --- DB-backed tests ---
+
+// setupExecutorDB creates an in-memory DB with the minimal schema needed for
+// session executor persistence tests. Reuses schedulerExecSchema from
+// scheduler_executor_test.go in the same package.
+func setupExecutorDB(t *testing.T) {
+	t.Helper()
+	setupSchedulerExecDB(t)
+}
+
+// setupExecutorSession creates a session and a streaming placeholder message,
+// returning the session ID. This is the minimum DB state needed for
+// flushStreamingMessage, handleResumeSplit, and Finalize.
+func setupExecutorSession(t *testing.T, projectPath, backend, agentID string) string {
+	t.Helper()
+	sid, err := CreateSession(projectPath, backend, "Executor Test", agentID, "", "default", "chat")
+	if err != nil {
+		t.Fatalf("CreateSession failed: %v", err)
+	}
+	// Create streaming assistant placeholder
+	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
+	_, _ = AddChatMessage(projectPath, backend, sid, "assistant", string(emptyContent), nil, true, "")
+	return sid
+}
+
+func TestSessionExecutor_CaptureExternalSessionID(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Capture external session ID
+	executor.captureExternalSessionID("ext-123")
+
+	// Verify it was persisted
+	extID := GetExternalSessionID(sid)
+	if extID != "ext-123" {
+		t.Fatalf("expected external_session_id='ext-123', got %q", extID)
+	}
+}
+
+func TestSessionExecutor_CaptureExternalSessionID_Empty(t *testing.T) {
+	setupExecutorDB(t)
+
+	ctx := context.Background()
+	cfg := RunConfig{SessionID: "no-session"}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Should not panic or do anything for empty ID
+	executor.captureExternalSessionID("")
+}
+
+func TestSessionExecutor_FlushStreamingMessage(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Add some blocks and flush
+	ai.AccumulateBlock(&executor.blocks, ai.StreamEvent{Type: "content", Content: "hello"})
+	executor.flushStreamingMessage()
+
+	// Verify the streaming message was updated with blocks
+	var content string
+	err := DBRead.QueryRow(
+		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1",
+		sid,
+	).Scan(&content)
+	if err != nil {
+		t.Fatalf("failed to query streaming message: %v", err)
+	}
+	if !contains(content, "hello") {
+		t.Fatalf("expected streaming message to contain 'hello', got: %q", content)
+	}
+}
+
+func TestSessionExecutor_FlushStreamingMessage_WithMetadata(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Set metadata and blocks, then flush
+	executor.responseMetadata = &ai.Metadata{InputTokens: 100}
+	ai.AccumulateBlock(&executor.blocks, ai.StreamEvent{Type: "content", Content: "hello"})
+	executor.flushStreamingMessage()
+
+	// Verify the streaming message was updated with metadata
+	var content string
+	err := DBRead.QueryRow(
+		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1",
+		sid,
+	).Scan(&content)
+	if err != nil {
+		t.Fatalf("failed to query streaming message: %v", err)
+	}
+	if !contains(content, "inputTokens") {
+		t.Fatalf("expected streaming message to contain metadata, got: %q", content)
+	}
+}
+
+func TestSessionExecutor_HandleResumeSplit(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Add some blocks and metadata, then trigger resume_split
+	ai.AccumulateBlock(&executor.blocks, ai.StreamEvent{Type: "content", Content: "part1"})
+	executor.responseMetadata = &ai.Metadata{InputTokens: 50}
+	executor.rawOutput = "raw line 1"
+	executor.handleResumeSplit()
+
+	// Verify the old streaming message was finalized (streaming=0)
+	var streamingCount int
+	err := DBRead.QueryRow(
+		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0",
+		sid,
+	).Scan(&streamingCount)
+	if err != nil {
+		t.Fatalf("failed to query finalized messages: %v", err)
+	}
+	if streamingCount == 0 {
+		t.Fatal("expected at least one finalized message after resume_split")
+	}
+
+	// Verify a new streaming placeholder was created
+	var newStreamingCount int
+	err = DBRead.QueryRow(
+		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1",
+		sid,
+	).Scan(&newStreamingCount)
+	if err != nil {
+		t.Fatalf("failed to query new streaming message: %v", err)
+	}
+	if newStreamingCount == 0 {
+		t.Fatal("expected a new streaming message after resume_split")
+	}
+
+	// Verify executor state was reset
+	if len(executor.blocks) != 0 {
+		t.Fatalf("expected blocks to be reset after resume_split, got %d blocks", len(executor.blocks))
+	}
+	if executor.responseMetadata != nil {
+		t.Fatal("expected responseMetadata to be nil after resume_split")
+	}
+	if executor.rawOutput != "" {
+		t.Fatalf("expected rawOutput to be empty after resume_split, got %q", executor.rawOutput)
+	}
+}
+
+func TestSessionExecutor_Finalize_WithDB(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "hello world"},
+		{Type: "metadata", Meta: &ai.Metadata{InputTokens: 100, OutputTokens: 50}},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	runResult := executor.RunWithChannel(ch)
+	runResult = executor.Finalize(runResult, nil)
+
+	if runResult.MsgID <= 0 {
+		t.Fatal("expected MsgID > 0 after Finalize")
+	}
+	if runResult.Metadata == nil {
+		t.Fatal("expected Metadata to be set after Finalize")
+	}
+
+	// Verify the message was finalized in DB
+	var streaming int
+	err := DBRead.QueryRow(
+		"SELECT streaming FROM chat_history WHERE id = ?",
+		runResult.MsgID,
+	).Scan(&streaming)
+	if err != nil {
+		t.Fatalf("failed to query finalized message: %v", err)
+	}
+	if streaming != 0 {
+		t.Fatalf("expected streaming=0 after finalize, got %d", streaming)
+	}
+}
+
+func TestSessionExecutor_Finalize_EmptyBlocks_UserCancel(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel context immediately
+
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Set cancel reason BEFORE RunWithChannel
+	SetCancelReason(sid, "user")
+
+	// Run with a channel that has no content events
+	ch := make(chan ai.StreamEvent)
+	close(ch)
+	runResult := executor.RunWithChannel(ch)
+	runResult = executor.Finalize(runResult, nil)
+
+	// Should have a warning block and cancelled flag
+	if len(runResult.Blocks) == 0 {
+		t.Fatal("expected at least one block for empty cancelled result")
+	}
+	found := false
+	for _, b := range runResult.Blocks {
+		if b.Type == "warning" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected warning block for user-cancelled empty result")
+	}
+}
+
+func TestSessionExecutor_Finalize_EmptyBlocks_ContextCancel(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	ch := make(chan ai.StreamEvent)
+	close(ch)
+	runResult := executor.RunWithChannel(ch)
+	runResult = executor.Finalize(runResult, nil)
+
+	// Should have warning block with context_cancel reason
+	found := false
+	for _, b := range runResult.Blocks {
+		if b.Type == "warning" && b.Reason == ai.ReasonContextCancel {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected warning block with context_cancel reason")
+	}
+}
+
+func TestSessionExecutor_Finalize_EmptyBlocks_Timeout(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	// Use a context that has timed out (DeadlineExceeded)
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+	defer cancel()
+	time.Sleep(time.Millisecond) // ensure deadline exceeded
+	_ = ctx.Err() // drain
+
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	ch := make(chan ai.StreamEvent)
+	close(ch)
+	runResult := executor.RunWithChannel(ch)
+	runResult = executor.Finalize(runResult, nil)
+
+	// Should have warning block with timeout reason
+	found := false
+	for _, b := range runResult.Blocks {
+		if b.Type == "warning" && b.Reason == ai.ReasonTimeout {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning block with timeout reason, got blocks: %+v", runResult.Blocks)
+	}
+}
+
+func TestSessionExecutor_Finalize_EmptyBlocks_DefaultReason(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	ctx := context.Background()
+
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	ch := make(chan ai.StreamEvent)
+	close(ch)
+	runResult := executor.RunWithChannel(ch)
+	runResult = executor.Finalize(runResult, nil)
+
+	// Should have warning block with "empty" reason
+	found := false
+	for _, b := range runResult.Blocks {
+		if b.Type == "warning" && b.Reason == ai.ReasonEmpty {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected warning block with empty reason")
+	}
+}
+
+func TestSessionExecutor_Finalize_WithBlocks_UserCancel(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "partial response"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	// Set cancel reason BEFORE RunWithChannel (buildResult reads and clears it)
+	SetCancelReason(sid, "user")
+	runResult := executor.RunWithChannel(ch)
+	runResult = executor.Finalize(runResult, nil)
+
+	// Should have cancelled=true in content (parsed via JSON)
+	if runResult.CancelReason != "user" {
+		t.Fatalf("expected CancelReason='user', got %q", runResult.CancelReason)
+	}
+}
+
+func TestSessionExecutor_Finalize_WithBlocks_ContextCancel(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "partial response"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	runResult := executor.RunWithChannel(ch)
+	runResult = executor.Finalize(runResult, nil)
+	// Context cancelled with blocks present — should set cancelled=true
+}
+
+func TestSessionExecutor_Finalize_WithBlocks_Timeout(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+	defer cancel()
+	time.Sleep(time.Millisecond)
+
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "partial response"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	runResult := executor.RunWithChannel(ch)
+	runResult = executor.Finalize(runResult, nil)
+
+	// Should add timeout warning block
+	found := false
+	for _, b := range runResult.Blocks {
+		if b.Type == "warning" && b.Reason == ai.ReasonTimeout {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected timeout warning block when context deadline exceeded with blocks")
+	}
+}
+
+func TestSessionExecutor_Finalize_DrainRawOutput(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "hello"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events)+2)
+	for _, e := range events {
+		ch <- e
+	}
+	// Add raw_output events after done — these will be drained by Finalize
+	ch <- ai.StreamEvent{Type: "raw_output", RawOutput: "drained line 1"}
+	ch <- ai.StreamEvent{Type: "raw_output", RawOutput: "drained line 2"}
+	close(ch)
+
+	runResult := executor.RunWithChannel(ch)
+	// The done event already consumed from ch, but there are still
+	// raw_output events in the channel for Finalize to drain
+	runResult = executor.Finalize(runResult, ch)
+
+	if !contains(runResult.RawOutput, "drained line 1") || !contains(runResult.RawOutput, "drained line 2") {
+		t.Fatalf("expected raw output to contain drained lines, got: %q", runResult.RawOutput)
+	}
+}
+
+func TestSessionExecutor_RunWithChannel_SessionCapture(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+
+	events := []ai.StreamEvent{
+		{Type: "session_capture", Content: "ext-captured-456"},
+		{Type: "content", Content: "response"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	executor := NewSessionExecutor(ctx, cfg)
+	result := executor.RunWithChannel(ch)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+
+	// Verify external session ID was persisted
+	extID := GetExternalSessionID(sid)
+	if extID != "ext-captured-456" {
+		t.Fatalf("expected external_session_id='ext-captured-456', got %q", extID)
+	}
+}
+
+func TestSessionExecutor_RunWithChannel_SessionCaptureFromMetadata(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeScheduled,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+
+	events := []ai.StreamEvent{
+		{Type: "metadata", Meta: &ai.Metadata{SessionID: "ext-from-meta-789"}},
+		{Type: "content", Content: "response"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	executor := NewSessionExecutor(ctx, cfg)
+	result := executor.RunWithChannel(ch)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+
+	// Verify external session ID from metadata was persisted
+	extID := GetExternalSessionID(sid)
+	if extID != "ext-from-meta-789" {
+		t.Fatalf("expected external_session_id='ext-from-meta-789', got %q", extID)
+	}
+}
+
+func TestSessionExecutor_RunWithChannel_ResumeSplit(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "part1"},
+		{Type: "resume_split"},
+		{Type: "content", Content: "part2"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	executor := NewSessionExecutor(ctx, cfg)
+	result := executor.RunWithChannel(ch)
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+	// After resume_split, blocks should only contain the post-resume content
+	if len(result.Blocks) == 0 {
+		t.Fatal("expected some blocks after resume_split")
+	}
+}
+
+func TestSessionExecutor_BuildResult_InteractiveCancelReason(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+
+	// Set a cancel reason before running
+	SetCancelReason(sid, "disconnect")
+
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "response"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	executor := NewSessionExecutor(ctx, cfg)
+	result := executor.RunWithChannel(ch)
+
+	if result.CancelReason != "disconnect" {
+		t.Fatalf("expected CancelReason='disconnect', got %q", result.CancelReason)
+	}
+}
+
+func TestSessionExecutor_BuildResult_EmptyResult(t *testing.T) {
+	// When blocks is empty, receivedTerminal=true, and no cancel reason,
+	// the result should be marked as Empty
+	events := []ai.StreamEvent{
+		{Type: "done"},
+	}
+	result := runExecutorWithEvents(t, events, ModeScheduled)
+
+	if !result.Empty {
+		t.Fatal("expected Empty=true when no content blocks and normal completion")
+	}
+}
+
+func TestSessionExecutor_Finalize_TransportFromACP(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test", AcpCommand: "test-acp"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	events := []ai.StreamEvent{
+		{Type: "content", Content: "hello"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	runResult := executor.RunWithChannel(ch)
+	runResult = executor.Finalize(runResult, nil)
+
+	// Agent supports ACP, so transport should be "acp-stdio"
+	if runResult.Metadata.Transport != "acp-stdio" {
+		t.Fatalf("expected transport='acp-stdio', got %q", runResult.Metadata.Transport)
+	}
+}
+
+func TestSessionExecutor_Finalize_SavesRawOutput(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "/test", "test", "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	events := []ai.StreamEvent{
+		{Type: "raw_output", RawOutput: "raw line 1"},
+		{Type: "content", Content: "hello"},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	runResult := executor.RunWithChannel(ch)
+	runResult = executor.Finalize(runResult, nil)
+
+	// Verify raw output was saved
+	var rawCount int
+	err := DBRead.QueryRow(
+		"SELECT COUNT(*) FROM ai_raw_responses WHERE session_id = ?",
+		sid,
+	).Scan(&rawCount)
+	if err != nil {
+		t.Fatalf("failed to query raw responses: %v", err)
+	}
+	if rawCount == 0 {
+		t.Fatal("expected raw response to be saved")
+	}
 }

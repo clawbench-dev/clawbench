@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"syscall"
 	"testing"
 
 	"clawbench/internal/model"
@@ -800,6 +801,438 @@ func TestServeFileBatchExists(t *testing.T) {
 		assert.Equal(t, "none", results["*.class"])    // glob → none (no os.Stat)
 		assert.Equal(t, "file", results["test.class"]) // real path → file
 	})
+}
+
+// --- isNotDirError ---
+
+func TestIsNotDirError_ENOTDIR(t *testing.T) {
+	if !isNotDirError(syscall.ENOTDIR) {
+		t.Fatal("expected ENOTDIR to be recognized as not-a-dir error")
+	}
+}
+
+func TestIsNotDirError_OtherError(t *testing.T) {
+	if isNotDirError(os.ErrNotExist) {
+		t.Fatal("expected ErrNotExist to NOT be recognized as not-a-dir error")
+	}
+}
+
+func TestIsNotDirError_PathErrorWithErrno(t *testing.T) {
+	// A PathError wrapping an errno should be detected
+	pe := &os.PathError{Op: "read", Path: "/tmp", Err: syscall.ENOTDIR}
+	if !isNotDirError(pe) {
+		t.Fatal("expected PathError with ENOTDIR to be recognized as not-a-dir error")
+	}
+}
+
+// --- buildDirEntries ---
+
+func TestBuildDirEntries_Sorting(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createTestFile(t, env.ProjectDir, "beta.txt", "b")
+	createTestFile(t, env.ProjectDir, "alpha.txt", "a")
+	_ = os.MkdirAll(filepath.Join(env.ProjectDir, "zdir"), 0o755)
+	_ = os.MkdirAll(filepath.Join(env.ProjectDir, "adir"), 0o755)
+
+	req := newRequest(t, http.MethodGet, "/api/dir", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ListDir, req)
+	assertOK(t, w)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+
+	items, ok := result["items"].([]interface{})
+	require.True(t, ok)
+
+	// Verify dirs come first, then files, sorted within each group
+	names := make([]string, len(items))
+	for i, item := range items {
+		entry, _ := item.(map[string]interface{})
+		names[i] = entry["name"].(string)
+	}
+	// Expected: adir, zdir (dirs first, alpha), then alpha.txt, beta.txt (files, alpha)
+	require.Len(t, names, 4)
+	assert.Equal(t, "adir", names[0])
+	assert.Equal(t, "zdir", names[1])
+	assert.Equal(t, "alpha.txt", names[2])
+	assert.Equal(t, "beta.txt", names[3])
+}
+
+// --- GetFile with external path ---
+
+func TestGetFile_ExternalAbsolutePath(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Create a file outside the project but under the watch dir
+	externalFile := filepath.Join(env.WatchDir, "external.txt")
+	require.NoError(t, os.WriteFile(externalFile, []byte("external content"), 0o644))
+
+	req := newRequest(t, http.MethodGet, "/api/file?path="+externalFile, nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(GetFile, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var fc FileContent
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+	assert.Equal(t, "external content", fc.Content)
+	assert.Equal(t, "external.txt", fc.Name)
+}
+
+func TestGetFile_ExternalRelativePath_Returns400(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/file?path=relative/path.txt", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(GetFile, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestGetFile_ExternalPathNotExisting_Returns404(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/file?path=/nonexistent/file.txt", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(GetFile, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// --- GetFile binary handling ---
+
+func TestGetFile_BinaryFile_ReturnsIsBinary(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	binFile := filepath.Join(env.ProjectDir, "test.exe")
+	require.NoError(t, os.WriteFile(binFile, []byte{0x4D, 0x5A, 0x90, 0x00}, 0o644))
+
+	req := newRequest(t, http.MethodGet, "/api/file/test.exe", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(GetFile, req)
+	assertOK(t, w)
+
+	var fc FileContent
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+	assert.True(t, fc.IsBinary)
+	assert.Empty(t, fc.Content)
+	assert.Equal(t, int64(4), fc.Size)
+}
+
+func TestGetFile_BinaryFileWithForceText(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	binFile := filepath.Join(env.ProjectDir, "test.exe")
+	require.NoError(t, os.WriteFile(binFile, []byte{0x4D, 0x5A, 0x90, 0x00}, 0o644))
+
+	req := newRequest(t, http.MethodGet, "/api/file/test.exe?forceText=1", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(GetFile, req)
+	assertOK(t, w)
+
+	var fc FileContent
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+	assert.False(t, fc.IsBinary)
+	assert.NotEmpty(t, fc.Content)
+}
+
+func TestGetFile_LargeFile_Returns400(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Create a sparse file > 10MB
+	largeFile := filepath.Join(env.ProjectDir, "large.txt")
+	f, err := os.Create(largeFile)
+	require.NoError(t, err)
+	// Truncate to 11MB (creates sparse file)
+	require.NoError(t, f.Truncate(11 * 1024 * 1024))
+	require.NoError(t, f.Close())
+
+	req := newRequest(t, http.MethodGet, "/api/file/large.txt", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(GetFile, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestGetFile_PathTraversalViaURL_Returns400(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// ".." as the file path should be rejected
+	req := newRequest(t, http.MethodGet, "/api/file/..", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(GetFile, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestGetFile_AbsolutePathInURL_Returns400(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Absolute path in URL (after stripping prefix) should be rejected
+	req := newRequest(t, http.MethodGet, "/api/file//etc/passwd", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	// Double slash gets trimmed to "etc/passwd" which is a valid relative path
+	// but will 404 since it doesn't exist
+	w := callHandler(GetFile, req)
+	assert.True(t, w.Code == http.StatusNotFound || w.Code == http.StatusBadRequest,
+		"expected 404 or 400, got %d", w.Code)
+}
+
+// --- ServeLocalFile download mode ---
+
+func TestServeLocalFile_DownloadMode(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createTestFile(t, env.ProjectDir, "test.txt", "download me")
+
+	req := newRequest(t, http.MethodGet, "/api/local-file/test.txt?download=1", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeLocalFile, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, `attachment; filename="test.txt"`, w.Header().Get("Content-Disposition"))
+}
+
+func TestServeLocalFile_Directory_Returns400(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	_ = os.MkdirAll(filepath.Join(env.ProjectDir, "mydir"), 0o755)
+
+	req := newRequest(t, http.MethodGet, "/api/local-file/mydir", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeLocalFile, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeLocalFile_PathTraversal_Returns400(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/local-file/..", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeLocalFile, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeLocalFile_UnknownMime(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createTestFile(t, env.ProjectDir, "test.xyz", "unknown")
+
+	req := newRequest(t, http.MethodGet, "/api/local-file/test.xyz", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeLocalFile, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "application/octet-stream", w.Header().Get("Content-Type"))
+}
+
+// --- ServeProjects method handling ---
+
+func TestServeProjects_NonExistentDir_Returns404or400(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	nonExistent := filepath.Join(env.WatchDir, "does-not-exist")
+	req := newRequest(t, http.MethodGet, "/api/projects?path="+nonExistent, nil)
+	w := callHandler(ServeProjects, req)
+	// Returns 404 (not found) or 400 (not a directory) depending on the path resolution
+	assert.True(t, w.Code == http.StatusNotFound || w.Code == http.StatusBadRequest,
+		"expected 404 or 400, got %d", w.Code)
+}
+
+// --- serveProjectsCreate with relative path ---
+
+func TestServeProjects_CreateWithRelativePath(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Create a subdirectory under WatchDir to serve as the parent
+	_ = os.MkdirAll(filepath.Join(env.WatchDir, "subdir"), 0o755)
+
+	req := newRequest(t, http.MethodPost, "/api/projects", map[string]string{
+		"path": "subdir",
+		"name": "new-project",
+	})
+	w := callHandler(ServeProjects, req)
+	assertOK(t, w)
+
+	assertJSONField(t, w, "ok", true)
+}
+
+func TestServeProjects_CreateWithAbsolutePath(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/projects", map[string]string{
+		"path": env.WatchDir,
+		"name": "abs-project",
+	})
+	w := callHandler(ServeProjects, req)
+	assertOK(t, w)
+}
+
+func TestServeProjects_CreateOutsideRoot_Returns403(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/projects", map[string]string{
+		"path": os.TempDir(),
+		"name": "outside-project",
+	})
+	w := callHandler(ServeProjects, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+// --- containsGlobChars ---
+
+func TestContainsGlobChars(t *testing.T) {
+	tests := []struct {
+		path     string
+		expected bool
+	}{
+		{"src/main.go", false},
+		{"*.java", true},
+		{"**/*.class", true},
+		{"src/[test]/file.go", true},
+		{"<template>", true},
+		{"normal/path.txt", false},
+		{"file?name", true},
+	}
+	for _, tt := range tests {
+		result := containsGlobChars(tt.path)
+		assert.Equal(t, tt.expected, result, "containsGlobChars(%q) = %v, want %v", tt.path, result, tt.expected)
+	}
+}
+
+// --- ListDir subdirectory parent ---
+
+func TestListDir_SubdirectoryHasParent(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createTestFile(t, env.ProjectDir, "subdir/nested.txt", "nested")
+
+	req := newRequest(t, http.MethodGet, "/api/dir?path=subdir", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ListDir, req)
+	assertOK(t, w)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.NotNil(t, result["parent"], "subdirectory should have a parent")
+}
+
+func TestListDir_RootDirectoryParentIsNil(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/dir", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ListDir, req)
+	assertOK(t, w)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Nil(t, result["parent"], "root directory should have nil parent")
+}
+
+// --- GetFile_ExternalBinaryFile ---
+
+func TestGetFile_ExternalBinaryFile(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Create a binary file outside project but under watch dir
+	binFile := filepath.Join(env.WatchDir, "test.exe")
+	require.NoError(t, os.WriteFile(binFile, []byte{0x4D, 0x5A}, 0o644))
+
+	req := newRequest(t, http.MethodGet, "/api/file?path="+binFile, nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(GetFile, req)
+	assertOK(t, w)
+
+	var fc FileContent
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+	assert.True(t, fc.IsBinary)
+}
+
+// --- ListDir_NotADirectory ---
+
+func TestListDir_FileInsteadOfDir_Returns400(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createTestFile(t, env.ProjectDir, "notadir.txt", "content")
+
+	req := newRequest(t, http.MethodGet, "/api/dir?path=notadir.txt", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ListDir, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// --- ServeLocalFile with no api prefix ---
+
+func TestServeLocalFile_NoApiPrefix_Returns404or403(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// URL without /api/local-file/ prefix — handler sees no prefix match, returns 404
+	req := newRequest(t, http.MethodGet, "/other-path/test.txt", nil)
+
+	w := callHandler(ServeLocalFile, req)
+	// Returns 403 because requireProject fails (no cookie), or 404 if prefix not matched
+	assert.True(t, w.Code == http.StatusNotFound || w.Code == http.StatusForbidden,
+		"expected 404 or 403, got %d", w.Code)
+}
+
+// --- ServeFileBatchExists with absolute path ---
+
+func TestServeFileBatchExists_AbsolutePathExists(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Create a file under WatchDir (which is a root path)
+	extFile := filepath.Join(env.WatchDir, "external-file.txt")
+	require.NoError(t, os.WriteFile(extFile, []byte("hello"), 0o644))
+
+	req := newRequest(t, http.MethodPost, "/api/file/batch-exists", map[string]interface{}{
+		"paths": []string{extFile},
+	})
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeFileBatchExists, req)
+	assertOK(t, w)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+
+	results := result["results"].(map[string]interface{})
+	assert.Equal(t, "file", results[extFile])
 }
 
 func TestGetFile_BrokenSymlink(t *testing.T) {

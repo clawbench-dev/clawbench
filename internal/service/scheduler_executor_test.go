@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	model TEXT DEFAULT '',
 	session_type TEXT NOT NULL DEFAULT 'chat',
 	external_session_id TEXT DEFAULT '',
+	transport TEXT DEFAULT '',
 	deleted INTEGER NOT NULL DEFAULT 0,
 	last_read_at DATETIME,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -84,14 +85,20 @@ CREATE TABLE IF NOT EXISTS ai_raw_responses (
 CREATE TABLE IF NOT EXISTS chat_metadata (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	message_id INTEGER NOT NULL,
+	mode TEXT DEFAULT '',
+	thinking_effort TEXT DEFAULT '',
+	transport TEXT DEFAULT '',
+	model TEXT DEFAULT '',
 	input_tokens INTEGER DEFAULT 0,
 	output_tokens INTEGER DEFAULT 0,
+	duration_ms INTEGER DEFAULT 0,
+	wall_ms INTEGER DEFAULT 0,
+	cost_usd REAL DEFAULT 0,
+	stop_reason TEXT DEFAULT '',
+	is_error INTEGER DEFAULT 0,
+	error_message TEXT DEFAULT '',
 	cache_creation_input_tokens INTEGER DEFAULT 0,
 	cache_read_input_tokens INTEGER DEFAULT 0,
-	cost_usd REAL DEFAULT 0,
-	model TEXT DEFAULT '',
-	transport TEXT DEFAULT '',
-	wall_ms INTEGER DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 `
