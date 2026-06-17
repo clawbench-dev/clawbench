@@ -245,12 +245,14 @@ func TestGetRemaps_UnknownKey(t *testing.T) {
 }
 
 func TestGetRemaps_EmptyMaps(t *testing.T) {
-	emptyKeys := []string{"claude_acp", "codebuddy_acp", "kimi_acp"}
+	// ACP empty maps have been migrated to backends sub-packages.
+	// Only CLI-layer entries remain in perAgentInputRemaps.
+	// Test that unknown ACP keys return nil (they now use LookupACPRemapsFn instead).
+	emptyKeys := []string{"claude_acp", "codebuddy_acp", "kimi_acp", "generic_acp"}
 	for _, key := range emptyKeys {
 		t.Run(key, func(t *testing.T) {
 			remaps := getRemaps(key)
-			assert.NotNil(t, remaps, "getRemaps(%q) should return non-nil (empty) map", key)
-			assert.Empty(t, remaps, "getRemaps(%q) should return empty map", key)
+			assert.Nil(t, remaps, "getRemaps(%q) should return nil (migrated to backends registry)", key)
 		})
 	}
 }
@@ -287,17 +289,6 @@ func TestGetRemaps_CliKeysRemapEntries(t *testing.T) {
 		{"codex_cli", "agent_type", "subagent_type"},
 		{"codex_cli", "message", "prompt"},
 		{"codex_cli", "justification", "description"},
-		// opencode_acp
-		{"opencode_acp", "oldString", "old_string"},
-		{"opencode_acp", "newString", "new_string"},
-		{"opencode_acp", "replaceAll", "replace_all"},
-		// generic_acp
-		{"generic_acp", "oldString", "old_string"},
-		{"generic_acp", "newString", "new_string"},
-		{"generic_acp", "dirPath", "path"},
-		{"generic_acp", "filePath", "file_path"},
-		{"generic_acp", "cellIndex", "cell_index"},
-		{"generic_acp", "cellType", "cell_type"},
 	}
 
 	for _, tt := range tests {
@@ -333,14 +324,20 @@ func TestNormalizeToolInput_CodexCliRemaps(t *testing.T) {
 
 func TestNormalizeToolInput_OpenCodeAcpRemaps(t *testing.T) {
 	input := json.RawMessage(`{"filePath":"main.go","oldString":"foo","newString":"bar","replaceAll":true}`)
-	remaps := getRemaps("opencode_acp")
+	// Use the same remaps that backends.LookupACPRemaps("opencode") returns.
+	// Test directly to avoid dependency on backends init.
+	remaps := map[string]string{
+		"oldString":  "old_string",
+		"newString":  "new_string",
+		"replaceAll": "replace_all",
+	}
 	norm, err := normalizeToolInput(input, remaps)
 	require.NoError(t, err)
 
 	var parsed map[string]any
 	require.NoError(t, json.Unmarshal(norm, &parsed))
 
-	// filePath → file_path via defaultMappings (opencode_acp doesn't override it)
+	// filePath → file_path via defaultMappings (opencode ACP doesn't override it)
 	assert.Equal(t, "main.go", parsed["file_path"])
 	assert.Nil(t, parsed["filePath"])
 	assert.Equal(t, "foo", parsed["old_string"])
@@ -353,7 +350,12 @@ func TestNormalizeToolInput_OpenCodeAcpRemaps(t *testing.T) {
 
 func TestNormalizeToolInput_GenericAcpRemaps(t *testing.T) {
 	input := json.RawMessage(`{"filePath":"notebook.ipynb","oldString":"x","newString":"y","dirPath":"/tmp","cellIndex":0,"cellType":"code"}`)
-	remaps := getRemaps("generic_acp")
+	// Use the same remaps that acpRemapsForBackend("") returns (generic fallback).
+	remaps := map[string]string{
+		"oldString": "old_string", "newString": "new_string",
+		"dirPath": "path", "filePath": "file_path",
+		"cellIndex": "cell_index", "cellType": "cell_type",
+	}
 	norm, err := normalizeToolInput(input, remaps)
 	require.NoError(t, err)
 

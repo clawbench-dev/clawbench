@@ -12,10 +12,10 @@ import (
 
 func TestCLIBackend_ExecuteStream_CommandFailure(t *testing.T) {
 	b := &CLIBackend{
-		name:           "test",
-		defaultCommand: "nonexistent-cli-command-12345",
-		buildArgs:      func(req ChatRequest) []string { return []string{} },
-		newParser:      func() LineParser { return &StreamParser{} },
+		BackendName: "test",
+		Cmd:         "nonexistent-cli-command-12345",
+		BuildArgsFn: func(req ChatRequest) []string { return []string{} },
+		NewParserFn: func() LineParser { return &StreamParser{} },
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -33,10 +33,10 @@ func TestCLIBackend_ExecuteStream_CommandFailure(t *testing.T) {
 
 func TestCLIBackend_ExecuteStream_ContextCancellation(t *testing.T) {
 	b := &CLIBackend{
-		name:           "test",
-		defaultCommand: "sleep", // will be cancelled
-		buildArgs:      func(req ChatRequest) []string { return []string{"300"} },
-		newParser:      func() LineParser { return &StreamParser{} },
+		BackendName: "test",
+		Cmd:         "sleep", // will be cancelled
+		BuildArgsFn: func(req ChatRequest) []string { return []string{"300"} },
+		NewParserFn: func() LineParser { return &StreamParser{} },
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -74,10 +74,10 @@ func TestFilterSkipNonJSON(t *testing.T) {
 // cmd.Wait() (with timeout) to reap the child process and avoid zombies.
 func TestCLIBackend_ExecuteStream_ContextCancelReapsProcess(t *testing.T) {
 	b := &CLIBackend{
-		name:           "test",
-		defaultCommand: "cat",
-		buildArgs:      func(req ChatRequest) []string { return []string{} },
-		newParser:      func() LineParser { return &StreamParser{} },
+		BackendName: "test",
+		Cmd:         "cat",
+		BuildArgsFn: func(req ChatRequest) []string { return []string{} },
+		NewParserFn: func() LineParser { return &StreamParser{} },
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

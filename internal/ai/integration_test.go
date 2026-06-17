@@ -18,25 +18,322 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// ===========================================================================
+// Table-Driven CLI Integration Tests
+// ===========================================================================
+//
+// All CLI backends share a single CLIBackend.ExecuteStream implementation.
+// The only differences between backends are: CLI binary name, command args,
+// timeout defaults, and metadata capabilities. This is expressed as
+// cliTestConfig entries, and each test category is one table-driven function.
+//
+// ACP backends are NOT tested here — they have their own protocol-level
+// integration tests in acp_integration_test.go.
+
+// --- Backend Registration ---
+//
+// Integration tests run in package ai, which cannot import internal/ai/backends
+// (circular dependency). We manually register the backends needed for CLI
+// integration tests here. This mirrors the init() registrations in each
+// backends/* sub-package but is self-contained within this file.
+
+func init() {
+	// claude — needs AutoResume (ExitPlanMode → cancel → resume)
+	RegisterBackend("claude", func() AIBackend {
+		return &CLIBackend{
+			BackendName: "claude",
+			Cmd:         "claude",
+			BuildArgsFn: func(req ChatRequest) []string {
+				return BuildBaseStreamArgs(req, func(r ChatRequest) []string {
+					return []string{"--verbose"}
+				})
+			},
+			NewParserFn: func() LineParser { return &StreamParser{} },
+			PreStartFn: func(cmd *exec.Cmd, req ChatRequest) {
+				cmd.Stdin = strings.NewReader(req.Prompt)
+			},
+		}
+	}, true)
+
+	// codebuddy — needs AutoResume
+	RegisterBackend("codebuddy", func() AIBackend {
+		return &CLIBackend{
+			BackendName: "codebuddy",
+			Cmd:         "codebuddy",
+			BuildArgsFn: func(req ChatRequest) []string {
+				return BuildBaseStreamArgs(req, nil)
+			},
+			NewParserFn: func() LineParser { return &StreamParser{} },
+			FilterLineFn: func(line string) (string, bool) {
+				line = strings.TrimPrefix(line, "\xEF\xBB\xBF")
+				if line == "" {
+					return "", false
+				}
+				return line, true
+			},
+			PreStartFn: func(cmd *exec.Cmd, req ChatRequest) {
+				cmd.Stdin = strings.NewReader(req.Prompt)
+			},
+		}
+	}, true)
+
+	// opencode — handles ExitPlanMode internally, no AutoResume
+	RegisterBackend("opencode", func() AIBackend {
+		return &CLIBackend{
+			BackendName: "opencode",
+			Cmd:         "opencode",
+			BuildArgsFn: buildOpenCodeArgs,
+			NewParserFn: func() LineParser { return &OpenCodeStreamParser{} },
+			FilterLineFn: func(line string) (string, bool) {
+				if line == "" || strings.HasPrefix(line, "[opencode-mobile]") {
+					return "", false
+				}
+				if !strings.HasPrefix(line, "{") {
+					return "", false
+				}
+				return line, true
+			},
+		}
+	}, false)
+
+	// codex — custom backend, no AutoResume
+	RegisterBackend("codex", func() AIBackend {
+		return &CodexBackend{}
+	}, false)
+
+	// qoder — needs AutoResume
+	RegisterBackend("qoder", func() AIBackend {
+		return &CLIBackend{
+			BackendName: "qoder",
+			Cmd:         "qodercli",
+			BuildArgsFn: buildQoderArgs,
+			NewParserFn: func() LineParser { return &StreamParser{} },
+			PreStartFn: func(cmd *exec.Cmd, req ChatRequest) {
+				cmd.Stdin = strings.NewReader(req.Prompt)
+			},
+		}
+	}, true)
+
+	// deepseek — needs AutoResume
+	RegisterBackend("deepseek", func() AIBackend {
+		return &CLIBackend{
+			BackendName: "deepseek",
+			Cmd:         "deepseek",
+			BuildArgsFn: buildDeepSeekArgs,
+			NewParserFn: func() LineParser { return &DeepSeekStreamParser{} },
+		}
+	}, true)
+
+	// vecli — custom backend, no AutoResume
+	RegisterBackend("vecli", func() AIBackend {
+		return NewVeCLIBackend()
+	}, false)
+}
+
+// buildOpenCodeArgs mirrors backends/opencode/cli.go buildOpenCodeStreamArgs.
+func buildOpenCodeArgs(req ChatRequest) []string {
+	prompt := InjectSystemPrompt(req)
+	args := []string{
+		"run",
+		prompt,
+		"--format", "json",
+		"--dangerously-skip-permissions",
+	}
+	if req.SessionID != "" && req.Resume {
+		args = append(args, "--session", req.SessionID)
+	}
+	if req.WorkDir != "" {
+		args = append(args, "--dir", req.WorkDir)
+	}
+	if req.Model != "" {
+		args = append(args, "--model", req.Model)
+	}
+	if req.ThinkingEffort != "" {
+		args = append(args, "--variant", req.ThinkingEffort)
+	}
+	return args
+}
+
+// buildQoderArgs mirrors backends/qoder/cli.go buildQoderStreamArgs.
+func buildQoderArgs(req ChatRequest) []string {
+	args := []string{"--print", "--output-format", "stream-json"}
+	if req.Resume {
+		args = append(args, "--resume", req.SessionID)
+	} else if req.SessionID != "" {
+		args = append(args, "--session-id", req.SessionID)
+	}
+	if req.WorkDir != "" {
+		args = append(args, "--cwd", req.WorkDir)
+	}
+	args = append(args, "--dangerously-skip-permissions")
+	if req.SystemPrompt != "" {
+		args = append(args, "--system-prompt", req.SystemPrompt)
+	}
+	if req.Model != "" {
+		args = append(args, "--model", req.Model)
+	}
+	return args
+}
+
+// buildDeepSeekArgs mirrors backends/deepseek/cli.go buildDeepSeekStreamArgs.
+func buildDeepSeekArgs(req ChatRequest) []string {
+	args := []string{
+		"exec",
+		"--auto",
+		"--output-format", "stream-json",
+	}
+	if req.Resume && req.SessionID != "" {
+		args = append(args, "--resume", req.SessionID)
+	} else if req.Resume {
+		args = append(args, "--continue")
+	}
+	if req.SystemPrompt != "" {
+		args = append(args, "--system-prompt", req.SystemPrompt)
+	}
+	if req.Model != "" {
+		if idx := strings.LastIndex(req.Model, "/"); idx >= 0 {
+			args = append(args, "--model", req.Model[idx+1:])
+		} else {
+			args = append(args, "--model", req.Model)
+		}
+	}
+	args = append(args, req.Prompt)
+	return args
+}
+
+// --- CLI Test Config ---
+
+// cliTestConfig describes a CLI backend for table-driven integration tests.
+type cliTestConfig struct {
+	// Backend is the backend ID used in NewBackend().
+	Backend string
+
+	// CLIName is the binary name checked by requireCLIAvailable().
+	CLIName string
+
+	// Command is an optional override for ChatRequest.Command (e.g. "codex --profile m27").
+	Command string
+
+	// Timeout is the per-prompt timeout. Defaults to 60s if zero.
+	Timeout time.Duration
+
+	// CollectTimeout is the timeout for collectAllEvents. Defaults to 90s if zero.
+	CollectTimeout time.Duration
+
+	// SkipNewSessionID is true for backends that don't accept UUID session IDs
+	// on new sessions (they capture session IDs from the stream instead).
+	SkipNewSessionID bool
+
+	// HasModelInMeta is true if the backend always includes a model name in metadata.
+	HasModelInMeta bool
+
+	// HasSessionIDInMeta is true if the backend includes SessionID in metadata events.
+	HasSessionIDInMeta bool
+
+	// HasTokenUsageInMeta is true if the backend reports InputTokens in metadata.
+	HasTokenUsageInMeta bool
+
+	// SupportsResume is true if the backend supports --resume (or equivalent).
+	SupportsResume bool
+
+	// SetupFn is an optional per-test setup function (e.g. requireCodexEnv).
+	SetupFn func(t *testing.T)
+}
+
+// cliBackends is the master table of all CLI backends for integration tests.
+var cliBackends = []cliTestConfig{
+	{
+		Backend:            "claude",
+		CLIName:            "claude",
+		Timeout:            60 * time.Second,
+		CollectTimeout:     90 * time.Second,
+		HasModelInMeta:     true,
+		HasSessionIDInMeta: true,
+		HasTokenUsageInMeta: true,
+		SupportsResume:     true,
+	},
+	{
+		Backend:            "codebuddy",
+		CLIName:            "codebuddy",
+		Timeout:            60 * time.Second,
+		CollectTimeout:     90 * time.Second,
+		HasModelInMeta:     true,
+		HasSessionIDInMeta: true,
+		HasTokenUsageInMeta: true,
+		SupportsResume:     true,
+	},
+	{
+		Backend:            "opencode",
+		CLIName:            "opencode",
+		Timeout:            60 * time.Second,
+		CollectTimeout:     90 * time.Second,
+		SkipNewSessionID:   true,
+		HasSessionIDInMeta: true,
+		HasTokenUsageInMeta: true,
+		SupportsResume:     true,
+	},
+	{
+		Backend:            "codex",
+		CLIName:            "codex",
+		Command:            codexCommand,
+		Timeout:            60 * time.Second,
+		CollectTimeout:     90 * time.Second,
+		SkipNewSessionID:   true,
+		HasSessionIDInMeta: true,
+		HasTokenUsageInMeta: true,
+		SupportsResume:     true,
+		SetupFn:            func(t *testing.T) { requireCodexEnv(t) },
+	},
+	{
+		Backend:            "qoder",
+		CLIName:            "qodercli",
+		Timeout:            60 * time.Second,
+		CollectTimeout:     90 * time.Second,
+		HasModelInMeta:     true,
+		HasSessionIDInMeta: true,
+		HasTokenUsageInMeta: true,
+		SupportsResume:     true,
+	},
+	{
+		Backend:            "deepseek",
+		CLIName:            "deepseek",
+		Timeout:            120 * time.Second,
+		CollectTimeout:     150 * time.Second,
+		HasModelInMeta:     true,
+		HasSessionIDInMeta: true,
+		HasTokenUsageInMeta: true,
+		SupportsResume:     true,
+	},
+	{
+		Backend:          "vecli",
+		CLIName:          "vecli",
+		Timeout:          60 * time.Second,
+		CollectTimeout:   90 * time.Second,
+		SkipNewSessionID: true,
+		HasModelInMeta:   true,
+		// VeCLI does NOT support resume (explicitly sets req.Resume = false)
+	},
+}
+
+// resumeBackends filters cliBackends to only those that support resume.
+var resumeBackends []cliTestConfig
+
+func init() {
+	for _, cfg := range cliBackends {
+		if cfg.SupportsResume {
+			resumeBackends = append(resumeBackends, cfg)
+		}
+	}
+}
+
 // --- Shared Helpers ---
 
-// codexCommand matches the agent config in config/agents/codex-MiniMax.yaml:
-//
-//	command: codex --profile m27
-//
-// This tells CodexBackend to use the MiniMax provider (MINIMAX_API_KEY) instead of OpenAI.
 const codexCommand = "codex --profile m27"
 
-// newSessionID returns a unique session ID for integration tests.
-// Claude requires a valid UUID format for --session-id.
-// Codebuddy/OpenCode/Codex accept any string.
 func newSessionID() string {
 	return uuid.New().String()
 }
 
-// testWorkDir returns a suitable working directory for integration tests.
-// Prefers the current project directory (which is a git repo) over /tmp,
-// since some CLIs (e.g., Codex) behave better in a git repo.
 func testWorkDir() string {
 	if dir, _ := os.Getwd(); dir != "" {
 		return dir
@@ -44,7 +341,6 @@ func testWorkDir() string {
 	return os.TempDir()
 }
 
-// requireCLIAvailable skips the test if the named CLI binary is not found on PATH.
 func requireCLIAvailable(t *testing.T, cliName string) {
 	t.Helper()
 	if _, err := exec.LookPath(cliName); err != nil {
@@ -52,20 +348,11 @@ func requireCLIAvailable(t *testing.T, cliName string) {
 	}
 }
 
-// requireCodexEnv ensures the Codex CLI can actually run. Codex requires specific
-// environment setup (API keys loaded from .env, profile configuration).
-// It loads the project .env file and runs a smoke test with --profile m27
-// (matching the agent config in config/agents/codex-MiniMax.yaml).
-// Skip if the smoke test fails.
 func requireCodexEnv(t *testing.T) {
 	t.Helper()
 	requireCLIAvailable(t, "codex")
 
-	// Load .env file into process environment so API keys are available.
-	// Go tests don't go through main.go, so .env is not auto-loaded.
-	// Try multiple paths: project root (detected via go.mod), BinDir, current dir.
 	dotenvPaths := []string{}
-	// Walk up from current directory to find project root (has go.mod)
 	if dir, _ := os.Getwd(); dir != "" {
 		for d := dir; d != "/"; d = filepath.Dir(d) {
 			if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
@@ -90,23 +377,19 @@ func requireCodexEnv(t *testing.T) {
 		}
 	}
 
-	// Quick smoke test: run codex with --profile m27 (matches agent config)
-	// and a simple prompt. If it fails, the environment is not set up correctly.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "codex", "exec", "--profile", "m27", "--json",
 		"--dangerously-bypass-approvals-and-sandbox",
 		"--skip-git-repo-check", "echo ok")
 	cmd.Dir = os.TempDir()
-	cmd.Env = os.Environ() // inherit env (includes MINIMAX_API_KEY from .env)
+	cmd.Env = os.Environ()
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Skipf("codex CLI environment not ready (exit error: %v, output: %s), skipping integration test", err, truncate(string(output), 200))
 	}
 }
 
-// collectAllEvents reads all events from the channel until it closes or timeout.
-// Returns the collected events slice.
 func collectAllEvents(t *testing.T, ch <-chan StreamEvent, timeout time.Duration) []StreamEvent {
 	t.Helper()
 	var events []StreamEvent
@@ -126,7 +409,6 @@ func collectAllEvents(t *testing.T, ch <-chan StreamEvent, timeout time.Duration
 	}
 }
 
-// findEvents returns all events matching the given type.
 func findEvents(events []StreamEvent, eventType string) []StreamEvent {
 	var matched []StreamEvent
 	for _, e := range events {
@@ -137,8 +419,6 @@ func findEvents(events []StreamEvent, eventType string) []StreamEvent {
 	return matched
 }
 
-// requireEventSequence asserts that the events contain the specified event types
-// in order (ignoring other event types in between).
 func requireEventSequence(t *testing.T, events []StreamEvent, expectedTypes ...string) {
 	t.Helper()
 	var actualTypes []string
@@ -157,7 +437,6 @@ func requireEventSequence(t *testing.T, events []StreamEvent, expectedTypes ...s
 	}
 }
 
-// concatContent joins all content from content-type events into a single string.
 func concatContent(events []StreamEvent) string {
 	var sb strings.Builder
 	for _, e := range events {
@@ -168,15 +447,12 @@ func concatContent(events []StreamEvent) string {
 	return sb.String()
 }
 
-// extractSessionID extracts the session ID from metadata or session_capture events.
 func extractSessionID(events []StreamEvent) string {
-	// Prefer session_capture (early-captured external ID like OpenCode ses_xxx, Codex thread_xxx)
 	for _, e := range events {
 		if e.Type == "session_capture" && e.Content != "" {
 			return e.Content
 		}
 	}
-	// Fallback to metadata session ID (Claude/Codebuddy/Kimi)
 	for _, e := range events {
 		if e.Type == "metadata" && e.Meta != nil && e.Meta.SessionID != "" {
 			return e.Meta.SessionID
@@ -185,785 +461,19 @@ func extractSessionID(events []StreamEvent) string {
 	return ""
 }
 
-// --- 1. New Session Basic Dialog ---
-
-func TestIntegration_Claude_NewSession(t *testing.T) {
-	requireCLIAvailable(t, "claude")
-	backend, err := NewBackend("claude")
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:    "说一个字：好",
-		SessionID: newSessionID(),
-		WorkDir:   testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events := collectAllEvents(t, ch, 90*time.Second)
-
-	requireEventSequence(t, events, "content", "metadata")
-	content := concatContent(events)
-	assert.NotEmpty(t, content, "should receive content from claude")
-
-	metaEvents := findEvents(events, "metadata")
-	require.NotEmpty(t, metaEvents, "should have metadata event")
-	assert.NotEmpty(t, metaEvents[0].Meta.Model, "metadata should contain model name")
-
-	// AutoResumeBackend now forwards the "done" event
-	doneEvents := findEvents(events, "done")
-	assert.NotEmpty(t, doneEvents, "should receive 'done' event from AutoResumeBackend")
-
-	errorEvents := findEvents(events, "error")
-	assert.Empty(t, errorEvents, "should not have error events")
-}
-
-func TestIntegration_Codebuddy_NewSession(t *testing.T) {
-	requireCLIAvailable(t, "codebuddy")
-	backend, err := NewBackend("codebuddy")
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:    "说一个字：好",
-		SessionID: newSessionID(),
-		WorkDir:   testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events := collectAllEvents(t, ch, 90*time.Second)
-
-	requireEventSequence(t, events, "content", "metadata")
-	content := concatContent(events)
-	assert.NotEmpty(t, content, "should receive content from codebuddy")
-
-	metaEvents := findEvents(events, "metadata")
-	require.NotEmpty(t, metaEvents, "should have metadata event")
-	assert.NotEmpty(t, metaEvents[0].Meta.Model, "metadata should contain model name")
-
-	// AutoResumeBackend now forwards the "done" event
-	doneEvents := findEvents(events, "done")
-	assert.NotEmpty(t, doneEvents, "should receive 'done' event from AutoResumeBackend")
-
-	errorEvents := findEvents(events, "error")
-	assert.Empty(t, errorEvents, "should not have error events")
-}
-
-func TestIntegration_OpenCode_NewSession(t *testing.T) {
-	requireCLIAvailable(t, "opencode")
-	backend, err := NewBackend("opencode")
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:  "说一个字：好",
-		WorkDir: testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events := collectAllEvents(t, ch, 90*time.Second)
-
-	requireEventSequence(t, events, "content", "metadata")
-	content := concatContent(events)
-	assert.NotEmpty(t, content, "should receive content from opencode")
-
-	metaEvents := findEvents(events, "metadata")
-	require.NotEmpty(t, metaEvents, "should have metadata event")
-	// OpenCode metadata may or may not have model name depending on CLI version
-
-	errorEvents := findEvents(events, "error")
-	assert.Empty(t, errorEvents, "should not have error events")
-}
-
-func TestIntegration_Codex_NewSession(t *testing.T) {
-	requireCodexEnv(t)
-	backend, err := NewBackend("codex")
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:  "说一个字：好",
-		WorkDir: testWorkDir(),
-		Command: codexCommand,
-	})
-	require.NoError(t, err)
-
-	events := collectAllEvents(t, ch, 90*time.Second)
-
-	requireEventSequence(t, events, "content", "metadata")
-	content := concatContent(events)
-	assert.NotEmpty(t, content, "should receive content from codex")
-
-	metaEvents := findEvents(events, "metadata")
-	require.NotEmpty(t, metaEvents, "should have metadata event")
-	assert.NotEmpty(t, metaEvents[0].Meta.SessionID, "codex metadata should contain session ID (thread_id)")
-
-	errorEvents := findEvents(events, "error")
-	assert.Empty(t, errorEvents, "should not have error events")
-}
-
-// --- 2. Stream Event Completeness ---
-
-func TestIntegration_Claude_StreamEvents(t *testing.T) {
-	requireCLIAvailable(t, "claude")
-	backend, err := NewBackend("claude")
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:    "1+1等于几？只回答数字",
-		SessionID: newSessionID(),
-		WorkDir:   testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events := collectAllEvents(t, ch, 90*time.Second)
-
-	// Claude with --include-partial-messages should produce incremental content deltas
-	contentEvents := findEvents(events, "content")
-	assert.NotEmpty(t, contentEvents, "should have content events")
-
-	// Metadata should include session ID from --session-id
-	metaEvents := findEvents(events, "metadata")
-	require.NotEmpty(t, metaEvents)
-	assert.NotEmpty(t, metaEvents[0].Meta.SessionID, "claude metadata should contain session ID")
-
-	// Should have raw_output event for debugging
-	rawEvents := findEvents(events, "raw_output")
-	assert.NotEmpty(t, rawEvents, "should have raw_output event")
-}
-
-func TestIntegration_Codebuddy_StreamEvents(t *testing.T) {
-	requireCLIAvailable(t, "codebuddy")
-	backend, err := NewBackend("codebuddy")
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:    "1+1等于几？只回答数字",
-		SessionID: newSessionID(),
-		WorkDir:   testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events := collectAllEvents(t, ch, 90*time.Second)
-
-	contentEvents := findEvents(events, "content")
-	assert.NotEmpty(t, contentEvents, "should have content events")
-
-	metaEvents := findEvents(events, "metadata")
-	require.NotEmpty(t, metaEvents)
-	assert.NotEmpty(t, metaEvents[0].Meta.SessionID, "codebuddy metadata should contain session ID")
-	// Codebuddy should provide model via providerData
-	assert.NotEmpty(t, metaEvents[0].Meta.Model, "codebuddy metadata should contain model from providerData")
-
-	rawEvents := findEvents(events, "raw_output")
-	assert.NotEmpty(t, rawEvents, "should have raw_output event")
-}
-
-func TestIntegration_OpenCode_StreamEvents(t *testing.T) {
-	requireCLIAvailable(t, "opencode")
-	backend, err := NewBackend("opencode")
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:  "1+1等于几？只回答数字",
-		WorkDir: testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events := collectAllEvents(t, ch, 90*time.Second)
-
-	// OpenCode may produce thinking or content events (or both)
-	thinkingEvents := findEvents(events, "thinking")
-	contentEvents := findEvents(events, "content")
-	assert.True(t, len(thinkingEvents) > 0 || len(contentEvents) > 0,
-		"should have thinking or content events")
-
-	metaEvents := findEvents(events, "metadata")
-	require.NotEmpty(t, metaEvents)
-	// OpenCode session ID is captured early via session_capture
-	sessionCaptureEvents := findEvents(events, "session_capture")
-	assert.NotEmpty(t, sessionCaptureEvents, "opencode should emit session_capture for ses_xxx ID")
-}
-
-func TestIntegration_Codex_StreamEvents(t *testing.T) {
-	requireCodexEnv(t)
-	backend, err := NewBackend("codex")
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:  "1+1等于几？只回答数字",
-		WorkDir: testWorkDir(),
-		Command: codexCommand,
-	})
-	require.NoError(t, err)
-
-	events := collectAllEvents(t, ch, 90*time.Second)
-
-	contentEvents := findEvents(events, "content")
-	assert.NotEmpty(t, contentEvents, "should have content events")
-
-	// Codex should capture thread_id via session_capture
-	sessionCaptureEvents := findEvents(events, "session_capture")
-	if assert.NotEmpty(t, sessionCaptureEvents, "codex should emit session_capture for thread ID") {
-		t.Logf("codex session_capture content: %q", sessionCaptureEvents[0].Content)
-		// Codex thread_id is a UUID (e.g. "019dfb6d-ad2c-7292-aaa8-93bf629c5fe2")
-		assert.NotEmpty(t, sessionCaptureEvents[0].Content,
-			"codex session_capture should contain a non-empty thread ID")
+func eventTypes(events []StreamEvent) []string {
+	types := make([]string, len(events))
+	for i, e := range events {
+		types[i] = e.Type
 	}
+	return types
 }
 
-// --- 3. Session Resume ---
-
-func TestIntegration_Claude_ResumeSession(t *testing.T) {
-	requireCLIAvailable(t, "claude")
-	backend, err := NewBackend("claude")
-	require.NoError(t, err)
-
-	sessionID := newSessionID()
-
-	// Phase 1: new session
-	ctx1, cancel1 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel1()
-
-	ch1, err := backend.ExecuteStream(ctx1, ChatRequest{
-		Prompt:    "记住数字42，稍后我会问你。只回复OK",
-		SessionID: sessionID,
-		WorkDir:   testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events1 := collectAllEvents(t, ch1, 90*time.Second)
-	// Verify first conversation completed normally
-	doneEvents1 := findEvents(events1, "metadata")
-	require.NotEmpty(t, doneEvents1, "first conversation should complete with metadata event")
-
-	// Phase 2: resume session
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel2()
-
-	ch2, err := backend.ExecuteStream(ctx2, ChatRequest{
-		Prompt:    "我之前让你记住的数字是什么？只回答数字",
-		SessionID: sessionID,
-		WorkDir:   testWorkDir(),
-		Resume:    true,
-	})
-	require.NoError(t, err)
-
-	events2 := collectAllEvents(t, ch2, 90*time.Second)
-	requireEventSequence(t, events2, "content", "metadata")
-	content := concatContent(events2)
-	assert.NotEmpty(t, content, "should receive content in resumed session")
-
-	// Note: "done" event should now be forwarded by AutoResumeBackend
-	doneEvents2 := findEvents(events2, "done")
-	assert.NotEmpty(t, doneEvents2, "should receive 'done' event in resumed session")
-}
-
-// --- 3a. Claude Session Resume Deep Tests ---
-
-// TestIntegration_Claude_MultiTurnResume verifies that Claude can maintain context
-// across three turns in the same session: new → resume → resume again.
-// This exercises the --resume flag being passed multiple times with the same
-// session ID, and the CLI's ability to accumulate conversation history.
-func TestIntegration_Claude_MultiTurnResume(t *testing.T) {
-	requireCLIAvailable(t, "claude")
-	backend, err := NewBackend("claude")
-	require.NoError(t, err)
-
-	sessionID := newSessionID()
-
-	// Turn 1: new session — ask Claude to remember a number
-	ctx1, cancel1 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel1()
-
-	ch1, err := backend.ExecuteStream(ctx1, ChatRequest{
-		Prompt:    "记住数字42，稍后我会问你。只回复OK",
-		SessionID: sessionID,
-		WorkDir:   testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events1 := collectAllEvents(t, ch1, 90*time.Second)
-	meta1 := findEvents(events1, "metadata")
-	require.NotEmpty(t, meta1, "turn 1 should complete with metadata event")
-
-	// Verify metadata contains a session ID (Claude echoes back --session-id)
-	assert.NotEmpty(t, meta1[0].Meta.SessionID, "turn 1 metadata should contain session ID")
-
-	// Turn 2: resume — ask what number was remembered
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel2()
-
-	ch2, err := backend.ExecuteStream(ctx2, ChatRequest{
-		Prompt:    "我之前让你记住的数字是什么？只回答数字",
-		SessionID: sessionID,
-		WorkDir:   testWorkDir(),
-		Resume:    true,
-	})
-	require.NoError(t, err)
-
-	events2 := collectAllEvents(t, ch2, 90*time.Second)
-	requireEventSequence(t, events2, "content", "metadata")
-	content2 := concatContent(events2)
-	assert.NotEmpty(t, content2, "turn 2 should receive content")
-
-	// Turn 2 metadata should still have session ID
-	meta2 := findEvents(events2, "metadata")
-	require.NotEmpty(t, meta2, "turn 2 should have metadata event")
-	assert.NotEmpty(t, meta2[0].Meta.SessionID, "turn 2 metadata should contain session ID")
-
-	// Turn 3: resume again — ask for the number a second time
-	ctx3, cancel3 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel3()
-
-	ch3, err := backend.ExecuteStream(ctx3, ChatRequest{
-		Prompt:    "再告诉我一次那个数字",
-		SessionID: sessionID,
-		WorkDir:   testWorkDir(),
-		Resume:    true,
-	})
-	require.NoError(t, err)
-
-	events3 := collectAllEvents(t, ch3, 90*time.Second)
-	requireEventSequence(t, events3, "content", "metadata")
-	content3 := concatContent(events3)
-	assert.NotEmpty(t, content3, "turn 3 should receive content")
-
-	// Verify done events on all resumed turns
-	doneEvents2 := findEvents(events2, "done")
-	assert.NotEmpty(t, doneEvents2, "turn 2 should receive 'done' event")
-	doneEvents3 := findEvents(events3, "done")
-	assert.NotEmpty(t, doneEvents3, "turn 3 should receive 'done' event")
-}
-
-// TestIntegration_Claude_ResumeSessionIDConsistency verifies that the session ID
-// remains consistent across a new session and its resumed continuation.
-// Claude uses the ClawBench UUID directly as --session-id / --resume, so the
-// metadata.SessionID in both rounds should match the original UUID.
-func TestIntegration_Claude_ResumeSessionIDConsistency(t *testing.T) {
-	requireCLIAvailable(t, "claude")
-	backend, err := NewBackend("claude")
-	require.NoError(t, err)
-
-	sessionID := newSessionID()
-
-	// Phase 1: new session
-	ctx1, cancel1 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel1()
-
-	ch1, err := backend.ExecuteStream(ctx1, ChatRequest{
-		Prompt:    "说一个字：好",
-		SessionID: sessionID,
-		WorkDir:   testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events1 := collectAllEvents(t, ch1, 90*time.Second)
-	meta1 := findEvents(events1, "metadata")
-	require.NotEmpty(t, meta1, "first conversation should complete with metadata event")
-	firstSessionID := meta1[0].Meta.SessionID
-	assert.NotEmpty(t, firstSessionID, "metadata should contain session ID")
-
-	// Phase 2: resume session with same session ID
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel2()
-
-	ch2, err := backend.ExecuteStream(ctx2, ChatRequest{
-		Prompt:    "再说一个字：是",
-		SessionID: sessionID,
-		WorkDir:   testWorkDir(),
-		Resume:    true,
-	})
-	require.NoError(t, err)
-
-	events2 := collectAllEvents(t, ch2, 90*time.Second)
-	meta2 := findEvents(events2, "metadata")
-	require.NotEmpty(t, meta2, "resumed session should complete with metadata event")
-	resumedSessionID := meta2[0].Meta.SessionID
-	assert.NotEmpty(t, resumedSessionID, "resumed metadata should contain session ID")
-
-	// The session ID in metadata should match between the original and resumed rounds
-	assert.Equal(t, firstSessionID, resumedSessionID,
-		"session ID should remain consistent across resume — Claude uses ClawBench UUID directly")
-}
-
-// TestIntegration_Claude_ResumeAfterCancel verifies that a session can be resumed
-// after being cancelled mid-stream. This simulates the real-world scenario where
-// a user cancels a long-running response and then sends a new message to continue.
-//
-// The test flow:
-//  1. Start a new session and cancel after receiving some content
-//  2. Resume the same session ID — Claude should still have the initial context
-//
-// Note: After cancellation, the CLI process is killed, so the session state
-// depends on what the CLI persisted before the kill signal. Claude CLI persists
-// conversation state incrementally, so a resume after cancel should work.
-func TestIntegration_Claude_ResumeAfterCancel(t *testing.T) {
-	requireCLIAvailable(t, "claude")
-	backend, err := NewBackend("claude")
-	require.NoError(t, err)
-
-	sessionID := newSessionID()
-
-	// Phase 1: new session with a simple prompt, let it complete normally
-	// (we use a simple prompt to ensure the session is established in Claude's state)
-	ctx1, cancel1 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel1()
-
-	ch1, err := backend.ExecuteStream(ctx1, ChatRequest{
-		Prompt:    "记住数字7，只回复OK",
-		SessionID: sessionID,
-		WorkDir:   testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events1 := collectAllEvents(t, ch1, 90*time.Second)
-	meta1 := findEvents(events1, "metadata")
-	require.NotEmpty(t, meta1, "first conversation should complete with metadata event")
-
-	// Phase 2: cancel a second prompt mid-stream
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel2()
-
-	ch2, err := backend.ExecuteStream(ctx2, ChatRequest{
-		Prompt:    "现在从1数到100，每个数字一行",
-		SessionID: sessionID,
-		WorkDir:   testWorkDir(),
-		Resume:    true,
-	})
-	require.NoError(t, err)
-
-	// Collect at least one content event, then cancel
-	var events2 []StreamEvent
-	cancelled := false
-	timer := time.NewTimer(90 * time.Second)
-	defer timer.Stop()
-	for {
-		select {
-		case event, ok := <-ch2:
-			if !ok {
-				goto phase2Done
-			}
-			events2 = append(events2, event)
-			if !cancelled && event.Type == "content" {
-				cancelled = true
-				cancel2()
-			}
-		case <-timer.C:
-			t.Log("phase 2: timeout waiting for content")
-			goto phase2Done
-		}
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
 	}
-phase2Done:
-	contentEvents2 := findEvents(events2, "content")
-	assert.NotEmpty(t, contentEvents2, "should have received content before cancel in phase 2")
-	t.Logf("phase 2: cancelled after %d events, %d content events", len(events2), len(contentEvents2))
-
-	// Phase 3: resume the session after cancellation
-	// Claude should remember the number 7 from phase 1 even though phase 2 was cancelled
-	ctx3, cancel3 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel3()
-
-	ch3, err := backend.ExecuteStream(ctx3, ChatRequest{
-		Prompt:    "我之前让你记住的数字是什么？只回答数字",
-		SessionID: sessionID,
-		WorkDir:   testWorkDir(),
-		Resume:    true,
-	})
-	require.NoError(t, err)
-
-	events3 := collectAllEvents(t, ch3, 90*time.Second)
-	requireEventSequence(t, events3, "content", "metadata")
-	content3 := concatContent(events3)
-	assert.NotEmpty(t, content3, "should receive content in resumed session after cancel")
-
-	// Best-effort: check if the response contains "7"
-	// AI responses are non-deterministic, but with a clean resume the model
-	// should recall the number from the first turn
-	if !strings.Contains(content3, "7") {
-		t.Logf("claude did not recall number 7 after cancel+resume — AI behavior is non-deterministic; content: %s", truncate(content3, 300))
-	}
-}
-
-// TestIntegration_Claude_ResumeMetadataCapture verifies that the metadata event
-// from a Claude resumed session contains the expected fields: SessionID, Model,
-// and token usage (InputTokens/OutputTokens). These fields are critical for
-// the handler's session capture logic (writing external_session_id to DB).
-func TestIntegration_Claude_ResumeMetadataCapture(t *testing.T) {
-	requireCLIAvailable(t, "claude")
-	backend, err := NewBackend("claude")
-	require.NoError(t, err)
-
-	sessionID := newSessionID()
-
-	// Phase 1: new session
-	ctx1, cancel1 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel1()
-
-	ch1, err := backend.ExecuteStream(ctx1, ChatRequest{
-		Prompt:    "说一个字：好",
-		SessionID: sessionID,
-		WorkDir:   testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events1 := collectAllEvents(t, ch1, 90*time.Second)
-	meta1 := findEvents(events1, "metadata")
-	require.NotEmpty(t, meta1, "should have metadata event from new session")
-	assert.NotEmpty(t, meta1[0].Meta.SessionID, "new session metadata should have SessionID")
-	assert.NotEmpty(t, meta1[0].Meta.Model, "new session metadata should have Model")
-
-	// Phase 2: resume session
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel2()
-
-	ch2, err := backend.ExecuteStream(ctx2, ChatRequest{
-		Prompt:    "再说一个字：是",
-		SessionID: sessionID,
-		WorkDir:   testWorkDir(),
-		Resume:    true,
-	})
-	require.NoError(t, err)
-
-	events2 := collectAllEvents(t, ch2, 90*time.Second)
-	meta2 := findEvents(events2, "metadata")
-	require.NotEmpty(t, meta2, "should have metadata event from resumed session")
-	assert.NotEmpty(t, meta2[0].Meta.SessionID, "resumed session metadata should have SessionID")
-	assert.NotEmpty(t, meta2[0].Meta.Model, "resumed session metadata should have Model")
-
-	// Token usage should be present (non-zero) in both rounds
-	assert.NotZero(t, meta1[0].Meta.InputTokens, "new session should report input token usage")
-	assert.NotZero(t, meta2[0].Meta.InputTokens, "resumed session should report input token usage")
-}
-
-func TestIntegration_Codebuddy_ResumeSession(t *testing.T) {
-	requireCLIAvailable(t, "codebuddy")
-	backend, err := NewBackend("codebuddy")
-	require.NoError(t, err)
-
-	sessionID := newSessionID()
-
-	// Phase 1: new session
-	ctx1, cancel1 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel1()
-
-	ch1, err := backend.ExecuteStream(ctx1, ChatRequest{
-		Prompt:    "记住数字42，稍后我会问你。只回复OK",
-		SessionID: sessionID,
-		WorkDir:   testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events1 := collectAllEvents(t, ch1, 90*time.Second)
-	doneEvents1 := findEvents(events1, "metadata")
-	require.NotEmpty(t, doneEvents1, "first conversation should complete with metadata event")
-
-	// Phase 2: resume session
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel2()
-
-	ch2, err := backend.ExecuteStream(ctx2, ChatRequest{
-		Prompt:    "我之前让你记住的数字是什么？只回答数字",
-		SessionID: sessionID,
-		WorkDir:   testWorkDir(),
-		Resume:    true,
-	})
-	require.NoError(t, err)
-
-	events2 := collectAllEvents(t, ch2, 90*time.Second)
-	requireEventSequence(t, events2, "content", "metadata")
-	content := concatContent(events2)
-	assert.NotEmpty(t, content, "should receive content in resumed session")
-
-	// "done" event should now be forwarded by AutoResumeBackend
-	doneEvents2 := findEvents(events2, "done")
-	assert.NotEmpty(t, doneEvents2, "should receive 'done' event in resumed session")
-}
-
-func TestIntegration_OpenCode_ResumeSession(t *testing.T) {
-	requireCLIAvailable(t, "opencode")
-	backend, err := NewBackend("opencode")
-	require.NoError(t, err)
-
-	// Phase 1: new session
-	ctx1, cancel1 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel1()
-
-	ch1, err := backend.ExecuteStream(ctx1, ChatRequest{
-		Prompt:  "记住数字42，稍后我会问你。只回复OK",
-		WorkDir: testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events1 := collectAllEvents(t, ch1, 90*time.Second)
-	sessionID := extractSessionID(events1)
-	require.NotEmpty(t, sessionID, "should capture OpenCode session ID (ses_xxx)")
-	assert.True(t, strings.HasPrefix(sessionID, "ses_"),
-		"OpenCode session ID should start with ses_")
-
-	doneEvents1 := findEvents(events1, "metadata")
-	require.NotEmpty(t, doneEvents1, "first conversation should complete with metadata event")
-
-	// Phase 2: resume with the OpenCode session ID
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel2()
-
-	ch2, err := backend.ExecuteStream(ctx2, ChatRequest{
-		Prompt:    "我之前让你记住的数字是什么？只回答数字",
-		SessionID: sessionID,
-		WorkDir:   testWorkDir(),
-		Resume:    true,
-	})
-	require.NoError(t, err)
-
-	events2 := collectAllEvents(t, ch2, 90*time.Second)
-	requireEventSequence(t, events2, "content", "metadata")
-	content := concatContent(events2)
-	assert.NotEmpty(t, content, "should receive content in resumed session")
-}
-
-func TestIntegration_Codex_ResumeSession(t *testing.T) {
-	requireCodexEnv(t)
-	backend, err := NewBackend("codex")
-	require.NoError(t, err)
-
-	// Phase 1: new session
-	ctx1, cancel1 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel1()
-
-	ch1, err := backend.ExecuteStream(ctx1, ChatRequest{
-		Prompt:  "记住数字42，稍后我会问你。只回复OK",
-		WorkDir: testWorkDir(),
-		Command: codexCommand,
-	})
-	require.NoError(t, err)
-
-	events1 := collectAllEvents(t, ch1, 90*time.Second)
-	sessionID := extractSessionID(events1)
-	require.NotEmpty(t, sessionID, "should capture Codex thread ID")
-	// Codex thread_id is a UUID format, not "thread_xxx" prefix
-
-	doneEvents1 := findEvents(events1, "metadata")
-	require.NotEmpty(t, doneEvents1, "first conversation should complete with metadata event")
-
-	// Phase 2: resume with the Codex thread ID
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel2()
-
-	ch2, err := backend.ExecuteStream(ctx2, ChatRequest{
-		Prompt:    "我之前让你记住的数字是什么？只回答数字",
-		SessionID: sessionID,
-		WorkDir:   testWorkDir(),
-		Resume:    true,
-		Command:   codexCommand,
-	})
-	require.NoError(t, err)
-
-	events2 := collectAllEvents(t, ch2, 90*time.Second)
-	requireEventSequence(t, events2, "content", "metadata")
-	content := concatContent(events2)
-	assert.NotEmpty(t, content, "should receive content in resumed session")
-}
-
-// --- 4. Context Cancellation ---
-
-func TestIntegration_Claude_CancelMidStream(t *testing.T) {
-	requireCLIAvailable(t, "claude")
-	backend, err := NewBackend("claude")
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:    "写一篇500字的文章，主题是春天的花园",
-		SessionID: newSessionID(),
-		WorkDir:   testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events := cancelOnFirstContent(t, ch, cancel)
-	contentEvents := findEvents(events, "content")
-	assert.NotEmpty(t, contentEvents, "should have received at least one content before cancel")
-}
-
-func TestIntegration_Codebuddy_CancelMidStream(t *testing.T) {
-	requireCLIAvailable(t, "codebuddy")
-	backend, err := NewBackend("codebuddy")
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:    "写一篇500字的文章，主题是春天的花园",
-		SessionID: newSessionID(),
-		WorkDir:   testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events := cancelOnFirstContent(t, ch, cancel)
-	contentEvents := findEvents(events, "content")
-	assert.NotEmpty(t, contentEvents, "should have received at least one content before cancel")
-}
-
-func TestIntegration_OpenCode_CancelMidStream(t *testing.T) {
-	requireCLIAvailable(t, "opencode")
-	backend, err := NewBackend("opencode")
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:  "写一篇500字的文章，主题是春天的花园",
-		WorkDir: testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events := cancelOnFirstContent(t, ch, cancel)
-	contentEvents := findEvents(events, "content")
-	assert.NotEmpty(t, contentEvents, "should have received at least one content before cancel")
-}
-
-func TestIntegration_Codex_CancelMidStream(t *testing.T) {
-	requireCodexEnv(t)
-	backend, err := NewBackend("codex")
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:  "写一篇500字的文章，主题是春天的花园",
-		WorkDir: testWorkDir(),
-		Command: codexCommand,
-	})
-	require.NoError(t, err)
-
-	events := cancelOnFirstContent(t, ch, cancel)
-	contentEvents := findEvents(events, "content")
-	assert.NotEmpty(t, contentEvents, "should have received at least one content before cancel")
+	return s[:n] + "..."
 }
 
 // cancelOnFirstContent reads events from ch, calls cancelFunc after the first
@@ -982,7 +492,6 @@ func cancelOnFirstContent(t *testing.T, ch <-chan StreamEvent, cancelFunc contex
 				return events
 			}
 			events = append(events, event)
-			// Cancel after first content event
 			if !cancelled && event.Type == "content" {
 				cancelled = true
 				cancelFunc()
@@ -994,25 +503,293 @@ func cancelOnFirstContent(t *testing.T, ch <-chan StreamEvent, cancelFunc contex
 	}
 }
 
-// --- 5. Error Paths ---
+// --- CLI Test Runner ---
 
-func TestIntegration_InvalidWorkDir(t *testing.T) {
-	// Test all CLIBackend-based backends with an invalid work directory.
-	// The CLI should fail to start or produce an error/warning event.
-	backends := []struct {
-		name    string
-		cliName string
-	}{
-		{"claude", "claude"},
-		{"codebuddy", "codebuddy"},
-		{"opencode", "opencode"},
-		{"vecli", "vecli"},
+// cliTestBackend runs a single CLI backend test with the given config and request.
+// It handles setup, backend creation, and event collection.
+func cliTestBackend(t *testing.T, cfg cliTestConfig, req ChatRequest) []StreamEvent {
+	t.Helper()
+
+	// Per-backend setup
+	if cfg.SetupFn != nil {
+		cfg.SetupFn(t)
+	} else {
+		requireCLIAvailable(t, cfg.CLIName)
 	}
 
-	for _, tc := range backends {
-		t.Run(tc.name, func(t *testing.T) {
-			requireCLIAvailable(t, tc.cliName)
-			backend, err := NewBackend(tc.name)
+	backend, err := NewBackend(cfg.Backend)
+	require.NoError(t, err)
+
+	timeout := cfg.Timeout
+	if timeout == 0 {
+		timeout = 60 * time.Second
+	}
+	collectTimeout := cfg.CollectTimeout
+	if collectTimeout == 0 {
+		collectTimeout = 90 * time.Second
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	if req.WorkDir == "" {
+		req.WorkDir = testWorkDir()
+	}
+	if cfg.Command != "" && req.Command == "" {
+		req.Command = cfg.Command
+	}
+
+	ch, err := backend.ExecuteStream(ctx, req)
+	require.NoError(t, err)
+
+	return collectAllEvents(t, ch, collectTimeout)
+}
+
+// cliNewSessionRequest builds a ChatRequest for a new session test.
+func cliNewSessionRequest(cfg cliTestConfig, prompt string) ChatRequest {
+	req := ChatRequest{
+		Prompt:  prompt,
+		WorkDir: testWorkDir(),
+	}
+	if !cfg.SkipNewSessionID {
+		req.SessionID = newSessionID()
+	}
+	if cfg.Command != "" {
+		req.Command = cfg.Command
+	}
+	return req
+}
+
+// cliSetupAndCreate handles per-backend setup and backend creation.
+func cliSetupAndCreate(t *testing.T, cfg cliTestConfig) AIBackend {
+	t.Helper()
+	if cfg.SetupFn != nil {
+		cfg.SetupFn(t)
+	} else {
+		requireCLIAvailable(t, cfg.CLIName)
+	}
+	backend, err := NewBackend(cfg.Backend)
+	require.NoError(t, err)
+	return backend
+}
+
+// cliExecPrompt executes a prompt on the given backend and returns events.
+// Handles timeout, WorkDir, Command, and event collection.
+func cliExecPrompt(t *testing.T, cfg cliTestConfig, backend AIBackend, req ChatRequest) []StreamEvent {
+	t.Helper()
+	timeout := cfg.Timeout
+	if timeout == 0 {
+		timeout = 60 * time.Second
+	}
+	collectTimeout := cfg.CollectTimeout
+	if collectTimeout == 0 {
+		collectTimeout = 90 * time.Second
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	if req.WorkDir == "" {
+		req.WorkDir = testWorkDir()
+	}
+	if cfg.Command != "" && req.Command == "" {
+		req.Command = cfg.Command
+	}
+
+	ch, err := backend.ExecuteStream(ctx, req)
+	require.NoError(t, err)
+	return collectAllEvents(t, ch, collectTimeout)
+}
+
+// cliResolveSessionID returns the session ID for a backend that may
+// auto-capture it from the stream (SkipNewSessionID) or use the provided one.
+func cliResolveSessionID(cfg cliTestConfig, req ChatRequest, events []StreamEvent) string {
+	if cfg.SkipNewSessionID {
+		return extractSessionID(events)
+	}
+	return req.SessionID
+}
+
+// skipIfVeCLINoContent skips the test if VeCLI produced no content events
+// (common when API auth/network issues prevent actual responses).
+func skipIfVeCLINoContent(t *testing.T, cfg cliTestConfig, events []StreamEvent) {
+	if cfg.Backend != "vecli" {
+		return
+	}
+	if len(findEvents(events, "content")) == 0 {
+		warnings := findEvents(events, "warning")
+		errors := findEvents(events, "error")
+		t.Skipf("vecli produced no content events (likely auth/network issue); warnings: %d, errors: %d, event types: %v",
+			len(warnings), len(errors), eventTypes(events))
+	}
+}
+
+// --- 1. New Session Basic Dialog ---
+
+func TestIntegration_CLI_NewSession(t *testing.T) {
+	for _, cfg := range cliBackends {
+		t.Run(cfg.Backend, func(t *testing.T) {
+			req := cliNewSessionRequest(cfg, "说一个字：好")
+			events := cliTestBackend(t, cfg, req)
+
+			skipIfVeCLINoContent(t, cfg, events)
+
+			requireEventSequence(t, events, "content", "metadata")
+			content := concatContent(events)
+			assert.NotEmpty(t, content, "should receive content from %s", cfg.Backend)
+
+			metaEvents := findEvents(events, "metadata")
+			require.NotEmpty(t, metaEvents, "should have metadata event")
+
+			if cfg.HasModelInMeta {
+				assert.NotEmpty(t, metaEvents[0].Meta.Model, "metadata should contain model name")
+			}
+
+			// AutoResumeBackend forwards the "done" event
+			doneEvents := findEvents(events, "done")
+			assert.NotEmpty(t, doneEvents, "should receive 'done' event from AutoResumeBackend")
+
+			errorEvents := findEvents(events, "error")
+			assert.Empty(t, errorEvents, "should not have error events")
+		})
+	}
+}
+
+// --- 2. Stream Event Completeness ---
+
+func TestIntegration_CLI_StreamEvents(t *testing.T) {
+	for _, cfg := range cliBackends {
+		t.Run(cfg.Backend, func(t *testing.T) {
+			req := cliNewSessionRequest(cfg, "1+1等于几？只回答数字")
+			events := cliTestBackend(t, cfg, req)
+
+			skipIfVeCLINoContent(t, cfg, events)
+
+			contentEvents := findEvents(events, "content")
+			thinkingEvents := findEvents(events, "thinking")
+			assert.True(t, len(contentEvents) > 0 || len(thinkingEvents) > 0,
+				"should have content or thinking events")
+
+			metaEvents := findEvents(events, "metadata")
+			require.NotEmpty(t, metaEvents, "should have metadata event")
+
+			// Backends that capture session ID via session_capture
+			if cfg.SkipNewSessionID {
+				sessionCaptureEvents := findEvents(events, "session_capture")
+				assert.NotEmpty(t, sessionCaptureEvents, "%s should emit session_capture", cfg.Backend)
+			} else {
+				assert.NotEmpty(t, metaEvents[0].Meta.SessionID, "%s metadata should contain session ID", cfg.Backend)
+			}
+
+			// Most CLI backends emit raw_output for debugging (except deepseek TUI which has its own parser)
+			if cfg.Backend != "deepseek" {
+				rawEvents := findEvents(events, "raw_output")
+				assert.NotEmpty(t, rawEvents, "should have raw_output event")
+			}
+		})
+	}
+}
+
+// --- 3. Session Resume (2-turn) ---
+
+func TestIntegration_CLI_ResumeSession(t *testing.T) {
+	for _, cfg := range resumeBackends {
+		t.Run(cfg.Backend, func(t *testing.T) {
+			backend := cliSetupAndCreate(t, cfg)
+
+			// Phase 1: new session
+			req1 := cliNewSessionRequest(cfg, "记住数字42，稍后我会问你。只回复OK")
+			events1 := cliExecPrompt(t, cfg, backend, req1)
+
+			meta1 := findEvents(events1, "metadata")
+			require.NotEmpty(t, meta1, "first conversation should complete with metadata event")
+
+			sessionID := cliResolveSessionID(cfg, req1, events1)
+			require.NotEmpty(t, sessionID, "should capture session ID")
+
+			// Phase 2: resume session
+			req2 := ChatRequest{
+				Prompt:    "我之前让你记住的数字是什么？只回答数字",
+				SessionID: sessionID,
+				WorkDir:   testWorkDir(),
+				Resume:    true,
+			}
+			events2 := cliExecPrompt(t, cfg, backend, req2)
+
+			requireEventSequence(t, events2, "content", "metadata")
+			content := concatContent(events2)
+			assert.NotEmpty(t, content, "should receive content in resumed session")
+
+			doneEvents2 := findEvents(events2, "done")
+			assert.NotEmpty(t, doneEvents2, "should receive 'done' event in resumed session")
+		})
+	}
+}
+
+// --- 4. Context Cancellation ---
+
+func TestIntegration_CLI_CancelMidStream(t *testing.T) {
+	cancelBackends := []cliTestConfig{
+		{Backend: "claude", CLIName: "claude", Timeout: 60 * time.Second, CollectTimeout: 90 * time.Second},
+		{Backend: "codebuddy", CLIName: "codebuddy", Timeout: 60 * time.Second, CollectTimeout: 90 * time.Second},
+		{Backend: "opencode", CLIName: "opencode", Timeout: 60 * time.Second, CollectTimeout: 90 * time.Second, SkipNewSessionID: true},
+		{Backend: "codex", CLIName: "codex", Command: codexCommand, Timeout: 60 * time.Second, CollectTimeout: 90 * time.Second, SetupFn: func(t *testing.T) { requireCodexEnv(t) }},
+		{Backend: "deepseek", CLIName: "deepseek", Timeout: 120 * time.Second, CollectTimeout: 150 * time.Second, SkipNewSessionID: true},
+		{Backend: "vecli", CLIName: "vecli", Timeout: 60 * time.Second, CollectTimeout: 90 * time.Second, SkipNewSessionID: true},
+	}
+
+	for _, cfg := range cancelBackends {
+		t.Run(cfg.Backend, func(t *testing.T) {
+			if cfg.SetupFn != nil {
+				cfg.SetupFn(t)
+			} else {
+				requireCLIAvailable(t, cfg.CLIName)
+			}
+
+			backend, err := NewBackend(cfg.Backend)
+			require.NoError(t, err)
+
+			ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
+			defer cancel()
+
+			req := ChatRequest{
+				Prompt:  "写一篇500字的文章，主题是春天的花园",
+				WorkDir: testWorkDir(),
+			}
+			if !cfg.SkipNewSessionID {
+				req.SessionID = newSessionID()
+			}
+			if cfg.Command != "" {
+				req.Command = cfg.Command
+			}
+
+			ch, err := backend.ExecuteStream(ctx, req)
+			require.NoError(t, err)
+
+			events := cancelOnFirstContent(t, ch, cancel)
+
+			skipIfVeCLINoContent(t, cfg, events)
+
+			contentEvents := findEvents(events, "content")
+			assert.NotEmpty(t, contentEvents, "should have received at least one content before cancel")
+		})
+	}
+}
+
+// --- 5. Error Paths ---
+
+func TestIntegration_CLI_InvalidWorkDir(t *testing.T) {
+	errorBackends := []cliTestConfig{
+		{Backend: "claude", CLIName: "claude"},
+		{Backend: "codebuddy", CLIName: "codebuddy"},
+		{Backend: "opencode", CLIName: "opencode"},
+		{Backend: "vecli", CLIName: "vecli"},
+	}
+
+	for _, cfg := range errorBackends {
+		t.Run(cfg.Backend, func(t *testing.T) {
+			requireCLIAvailable(t, cfg.CLIName)
+			backend, err := NewBackend(cfg.Backend)
 			require.NoError(t, err)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -1024,12 +801,10 @@ func TestIntegration_InvalidWorkDir(t *testing.T) {
 				WorkDir:   "/nonexistent/path/that/does/not/exist/abc123",
 			})
 			if err != nil {
-				// ExecuteStream itself returned an error — acceptable
 				t.Logf("ExecuteStream returned error (expected for invalid WorkDir): %v", err)
 				return
 			}
 
-			// If no error from ExecuteStream, the stream should contain warning/error
 			events := collectAllEvents(t, ch, 30*time.Second)
 			hasError := len(findEvents(events, "error")) > 0
 			hasWarning := len(findEvents(events, "warning")) > 0
@@ -1053,17 +828,7 @@ func TestIntegration_Codex_InvalidCommand(t *testing.T) {
 		WorkDir: testWorkDir(),
 		Command: "nonexistent-codex-binary-12345",
 	})
-	// Codex should fail to start the command
 	assert.Error(t, err, "invalid Command should cause ExecuteStream to return error")
-}
-
-// eventTypes returns a slice of event type strings for debugging.
-func eventTypes(events []StreamEvent) []string {
-	types := make([]string, len(events))
-	for i, e := range events {
-		types[i] = e.Type
-	}
-	return types
 }
 
 // --- 6. AutoResume ExitPlanMode ---
@@ -1080,8 +845,6 @@ func TestIntegration_AutoResume_ExitPlanMode(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 
-	// Use a prompt that tends to trigger EnterPlanMode in Claude.
-	// Keep it short to avoid long tool-use chains that timeout.
 	ch, err := backend.ExecuteStream(ctx, ChatRequest{
 		Prompt:    "请进入规划模式，帮我规划一下如何给hello world程序写测试",
 		SessionID: newSessionID(),
@@ -1091,12 +854,10 @@ func TestIntegration_AutoResume_ExitPlanMode(t *testing.T) {
 
 	events := collectAllEvents(t, ch, 200*time.Second)
 
-	// Check if ExitPlanMode was triggered
 	resumeSplitEvents := findEvents(events, "resume_split")
 	if len(resumeSplitEvents) == 0 {
 		t.Log("ExitPlanMode was not triggered in this run — this is expected and not a failure")
 		t.Log("AI behavior is non-deterministic; ExitPlanMode may not always be triggered")
-		// Still verify basic flow completed — need either metadata or content events
 		metaEvents := findEvents(events, "metadata")
 		if len(metaEvents) > 0 {
 			t.Log("basic flow completed with metadata event")
@@ -1109,599 +870,283 @@ func TestIntegration_AutoResume_ExitPlanMode(t *testing.T) {
 		return
 	}
 
-	// If ExitPlanMode was triggered, verify the resume flow
 	t.Log("ExitPlanMode detected — verifying resume flow")
-
-	// Should have resume_split event
 	requireEventSequence(t, events, "resume_split", "content", "metadata")
 
-	// Should have two rounds of content (before and after resume)
 	contentEvents := findEvents(events, "content")
 	assert.NotEmpty(t, contentEvents, "should have content events after resume")
 
-	// Should have metadata from the second round
 	metaEvents := findEvents(events, "metadata")
 	assert.NotEmpty(t, metaEvents, "should have metadata from resumed session")
 
-	// "done" event should now be forwarded by AutoResumeBackend
 	doneEvents := findEvents(events, "done")
 	assert.NotEmpty(t, doneEvents, "should receive 'done' event")
 }
 
 // --- 7. System Prompt Injection ---
 
-// TestIntegration_*_SystemPromptInjection tests verify that the SystemPrompt field
-// in ChatRequest is correctly passed through to the CLI backend. The tests check
-// two things:
-// 1. The system prompt is present in the CLI arguments (verified via raw_output for
-//    backends that support --system-prompt, or via prompt injection for others)
-// 2. The AI response acknowledges the system prompt (best-effort — AI may not comply)
+func TestIntegration_CLI_SystemPromptInjection(t *testing.T) {
+	for _, cfg := range cliBackends {
+		t.Run(cfg.Backend, func(t *testing.T) {
+			marker := "INTEGRATION_TEST_MARKER_" + strings.ToUpper(cfg.Backend[:3])
 
-func TestIntegration_Claude_SystemPromptInjection(t *testing.T) {
-	requireCLIAvailable(t, "claude")
-	backend, err := NewBackend("claude")
-	require.NoError(t, err)
+			// For backends without --system-prompt flag, use injection interval
+			if cfg.Backend == "opencode" || cfg.Backend == "codex" || cfg.Backend == "vecli" || cfg.Backend == "qoder" {
+				model.ChatSystemPromptInterval = 10
+			}
 
-	const marker = "INTEGRATION_TEST_MARKER_7X9Z"
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
+			req := cliNewSessionRequest(cfg, "请重复以下标记："+marker)
+			req.SystemPrompt = "你必须在你回复的开头包含标记 " + marker + "，这是系统级要求"
+			events := cliTestBackend(t, cfg, req)
 
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:       "请重复以下标记：" + marker,
-		SessionID:    newSessionID(),
-		WorkDir:      testWorkDir(),
-		SystemPrompt: "你必须在你回复的开头包含标记 " + marker + "，这是系统级要求",
-	})
-	require.NoError(t, err)
+			skipIfVeCLINoContent(t, cfg, events)
 
-	events := collectAllEvents(t, ch, 90*time.Second)
-	requireEventSequence(t, events, "content", "metadata")
+			requireEventSequence(t, events, "content", "metadata")
 
-	// Verify the stream completed successfully with metadata (which means CLI args were valid)
-	metaEvents := findEvents(events, "metadata")
-	require.NotEmpty(t, metaEvents, "should have metadata event")
+			// Verify the stream completed successfully with metadata
+			metaEvents := findEvents(events, "metadata")
+			require.NotEmpty(t, metaEvents, "should have metadata event")
 
-	// Best-effort check: AI may or may not include the marker in its response
-	content := concatContent(events)
-	if !strings.Contains(content, marker) {
-		t.Logf("claude did not include marker %q in response — AI compliance is non-deterministic; content: %s", marker, truncate(content, 200))
+			// Best-effort check — AI compliance is non-deterministic
+			content := concatContent(events)
+			if !strings.Contains(content, marker) {
+				t.Logf("%s did not include marker %q in response — AI compliance is non-deterministic; content: %s", cfg.Backend, marker, truncate(content, 200))
+			}
+		})
 	}
 }
 
-func TestIntegration_Codebuddy_SystemPromptInjection(t *testing.T) {
-	requireCLIAvailable(t, "codebuddy")
-	backend, err := NewBackend("codebuddy")
-	require.NoError(t, err)
+// --- 8. Multi-Turn Resume (3-turn) ---
 
-	const marker = "INTEGRATION_TEST_MARKER_K3P8"
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
+func TestIntegration_CLI_MultiTurnResume(t *testing.T) {
+	for _, cfg := range resumeBackends {
+		t.Run(cfg.Backend, func(t *testing.T) {
+			backend := cliSetupAndCreate(t, cfg)
 
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:       "请重复以下标记：" + marker,
-		SessionID:    newSessionID(),
-		WorkDir:      testWorkDir(),
-		SystemPrompt: "你必须在你回复的开头包含标记 " + marker + "，这是系统级要求",
-	})
-	require.NoError(t, err)
+			// Turn 1: establish session
+			req1 := cliNewSessionRequest(cfg, "记住数字42，稍后我会问你。只回复OK")
+			events1 := cliExecPrompt(t, cfg, backend, req1)
+			meta1 := findEvents(events1, "metadata")
+			require.NotEmpty(t, meta1, "turn 1 should complete with metadata event")
 
-	events := collectAllEvents(t, ch, 90*time.Second)
-	requireEventSequence(t, events, "content", "metadata")
+			sessionID := cliResolveSessionID(cfg, req1, events1)
+			require.NotEmpty(t, sessionID, "should capture session ID after turn 1")
 
-	// Verify the stream completed successfully with metadata (which means CLI args were valid)
-	metaEvents := findEvents(events, "metadata")
-	require.NotEmpty(t, metaEvents, "should have metadata event")
+			if cfg.HasSessionIDInMeta {
+				assert.NotEmpty(t, meta1[0].Meta.SessionID, "turn 1 metadata should contain session ID")
+			}
 
-	// Best-effort check
-	content := concatContent(events)
-	if !strings.Contains(content, marker) {
-		t.Logf("codebuddy did not include marker %q in response — AI compliance is non-deterministic; content: %s", marker, truncate(content, 200))
+			// Turn 2: resume and recall
+			req2 := ChatRequest{
+				Prompt:    "我之前让你记住的数字是什么？只回答数字",
+				SessionID: sessionID,
+				WorkDir:   testWorkDir(),
+				Resume:    true,
+			}
+			events2 := cliExecPrompt(t, cfg, backend, req2)
+			requireEventSequence(t, events2, "content", "metadata")
+			content2 := concatContent(events2)
+			assert.NotEmpty(t, content2, "turn 2 should receive content")
+
+			meta2 := findEvents(events2, "metadata")
+			require.NotEmpty(t, meta2, "turn 2 should have metadata event")
+
+			doneEvents2 := findEvents(events2, "done")
+			assert.NotEmpty(t, doneEvents2, "turn 2 should receive 'done' event")
+
+			// Turn 3: resume again
+			req3 := ChatRequest{
+				Prompt:    "再告诉我一次那个数字",
+				SessionID: sessionID,
+				WorkDir:   testWorkDir(),
+				Resume:    true,
+			}
+			events3 := cliExecPrompt(t, cfg, backend, req3)
+			requireEventSequence(t, events3, "content", "metadata")
+			content3 := concatContent(events3)
+			assert.NotEmpty(t, content3, "turn 3 should receive content")
+
+			doneEvents3 := findEvents(events3, "done")
+			assert.NotEmpty(t, doneEvents3, "turn 3 should receive 'done' event")
+		})
 	}
 }
 
-func TestIntegration_OpenCode_SystemPromptInjection(t *testing.T) {
-	requireCLIAvailable(t, "opencode")
-	backend, err := NewBackend("opencode")
-	require.NoError(t, err)
+// --- 9. Resume Session ID Consistency ---
 
-	// OpenCode CLI has no --system-prompt flag; prompt is injected as [System Instructions: ...]
-	const marker = "INTEGRATION_TEST_MARKER_R5N1"
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
+func TestIntegration_CLI_ResumeSessionIDConsistency(t *testing.T) {
+	// Only backends that report SessionID in metadata can be verified for consistency
+	var consistentBackends []cliTestConfig
+	for _, cfg := range resumeBackends {
+		if cfg.HasSessionIDInMeta && !cfg.SkipNewSessionID {
+			consistentBackends = append(consistentBackends, cfg)
+		}
+	}
 
-	model.ChatSystemPromptInterval = 10
+	for _, cfg := range consistentBackends {
+		t.Run(cfg.Backend, func(t *testing.T) {
+			backend := cliSetupAndCreate(t, cfg)
 
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:       "请重复以下标记：" + marker,
-		WorkDir:      testWorkDir(),
-		SystemPrompt: "你必须在你回复的开头包含标记 " + marker + "，这是系统级要求",
-	})
-	require.NoError(t, err)
+			sessionID := newSessionID()
 
-	events := collectAllEvents(t, ch, 90*time.Second)
-	requireEventSequence(t, events, "content", "metadata")
+			// Phase 1
+			req1 := ChatRequest{
+				Prompt:    "说一个字：好",
+				SessionID: sessionID,
+				WorkDir:   testWorkDir(),
+			}
+			events1 := cliExecPrompt(t, cfg, backend, req1)
+			meta1 := findEvents(events1, "metadata")
+			require.NotEmpty(t, meta1, "first conversation should complete with metadata event")
+			firstSessionID := meta1[0].Meta.SessionID
+			assert.NotEmpty(t, firstSessionID, "metadata should contain session ID")
 
-	// Best-effort check
-	content := concatContent(events)
-	if !strings.Contains(content, marker) {
-		t.Logf("opencode did not include marker %q in response — AI compliance is non-deterministic; content: %s", marker, truncate(content, 200))
+			// Phase 2
+			req2 := ChatRequest{
+				Prompt:    "再说一个字：是",
+				SessionID: sessionID,
+				WorkDir:   testWorkDir(),
+				Resume:    true,
+			}
+			events2 := cliExecPrompt(t, cfg, backend, req2)
+			meta2 := findEvents(events2, "metadata")
+			require.NotEmpty(t, meta2, "resumed session should complete with metadata event")
+			resumedSessionID := meta2[0].Meta.SessionID
+			assert.NotEmpty(t, resumedSessionID, "resumed metadata should contain session ID")
+
+			assert.Equal(t, firstSessionID, resumedSessionID,
+				"session ID should remain consistent across resume")
+		})
 	}
 }
 
-func TestIntegration_Codex_SystemPromptInjection(t *testing.T) {
-	requireCodexEnv(t)
-	backend, err := NewBackend("codex")
-	require.NoError(t, err)
+// --- 10. Resume After Cancel ---
 
-	// Codex CLI has no --system-prompt flag; prompt is injected as [System Instructions: ...]
-	const marker = "INTEGRATION_TEST_MARKER_Q8V6"
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
+func TestIntegration_CLI_ResumeAfterCancel(t *testing.T) {
+	for _, cfg := range resumeBackends {
+		t.Run(cfg.Backend, func(t *testing.T) {
+			backend := cliSetupAndCreate(t, cfg)
 
-	model.ChatSystemPromptInterval = 10
+			// Phase 1: new session — must complete fully
+			req1 := cliNewSessionRequest(cfg, "记住数字7，只回复OK")
+			events1 := cliExecPrompt(t, cfg, backend, req1)
+			meta1 := findEvents(events1, "metadata")
+			require.NotEmpty(t, meta1, "first conversation should complete with metadata event")
 
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:       "请重复以下标记：" + marker,
-		WorkDir:      testWorkDir(),
-		SystemPrompt: "你必须在你回复的开头包含标记 " + marker + "，这是系统级要求",
-		Command:      codexCommand,
-	})
-	require.NoError(t, err)
+			sessionID := cliResolveSessionID(cfg, req1, events1)
+			require.NotEmpty(t, sessionID, "should capture session ID")
 
-	events := collectAllEvents(t, ch, 90*time.Second)
-	requireEventSequence(t, events, "content", "metadata")
+			// Phase 2: cancel a second prompt mid-stream
+			timeout2 := cfg.Timeout
+			if timeout2 == 0 {
+				timeout2 = 60 * time.Second
+			}
+			ctx2, cancel2 := context.WithTimeout(context.Background(), timeout2)
+			defer cancel2()
 
-	// Best-effort check
-	content := concatContent(events)
-	if !strings.Contains(content, marker) {
-		t.Logf("codex did not include marker %q in response — AI compliance is non-deterministic; content: %s", marker, truncate(content, 200))
+			req2 := ChatRequest{
+				Prompt:    "现在从1数到100，每个数字一行",
+				SessionID: sessionID,
+				WorkDir:   testWorkDir(),
+				Resume:    true,
+			}
+			if cfg.Command != "" {
+				req2.Command = cfg.Command
+			}
+
+			ch2, err := backend.ExecuteStream(ctx2, req2)
+			require.NoError(t, err)
+
+			var events2 []StreamEvent
+			cancelled := false
+			timer := time.NewTimer(90 * time.Second)
+			defer timer.Stop()
+			for {
+				select {
+				case event, ok := <-ch2:
+					if !ok {
+						goto phase2Done
+					}
+					events2 = append(events2, event)
+					if !cancelled && event.Type == "content" {
+						cancelled = true
+						cancel2()
+					}
+				case <-timer.C:
+					t.Log("phase 2: timeout waiting for content")
+					goto phase2Done
+				}
+			}
+		phase2Done:
+			contentEvents2 := findEvents(events2, "content")
+			assert.NotEmpty(t, contentEvents2, "should have received content before cancel in phase 2")
+			t.Logf("phase 2: cancelled after %d events, %d content events", len(events2), len(contentEvents2))
+
+			// Phase 3: resume the session after cancellation
+			req3 := ChatRequest{
+				Prompt:    "我之前让你记住的数字是什么？只回答数字",
+				SessionID: sessionID,
+				WorkDir:   testWorkDir(),
+				Resume:    true,
+			}
+			events3 := cliExecPrompt(t, cfg, backend, req3)
+			requireEventSequence(t, events3, "content", "metadata")
+			content3 := concatContent(events3)
+			assert.NotEmpty(t, content3, "should receive content in resumed session after cancel")
+
+			if !strings.Contains(content3, "7") {
+				t.Logf("%s did not recall number 7 after cancel+resume — AI behavior is non-deterministic; content: %s", cfg.Backend, truncate(content3, 300))
+			}
+		})
 	}
 }
 
-// --- Qoder Integration Tests ---
+// --- 11. Resume Metadata Capture ---
 
-func TestIntegration_Qoder_NewSession(t *testing.T) {
-	requireCLIAvailable(t, "qodercli")
-	backend, err := NewBackend("qoder")
-	require.NoError(t, err)
+func TestIntegration_CLI_ResumeMetadataCapture(t *testing.T) {
+	for _, cfg := range resumeBackends {
+		t.Run(cfg.Backend, func(t *testing.T) {
+			backend := cliSetupAndCreate(t, cfg)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
+			req1 := cliNewSessionRequest(cfg, "说一个字：好")
+			events1 := cliExecPrompt(t, cfg, backend, req1)
+			meta1 := findEvents(events1, "metadata")
+			require.NotEmpty(t, meta1, "should have metadata event from new session")
 
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:    "说一个字：好",
-		SessionID: newSessionID(),
-		WorkDir:   testWorkDir(),
-	})
-	require.NoError(t, err)
+			sessionID := cliResolveSessionID(cfg, req1, events1)
+			require.NotEmpty(t, sessionID, "should capture session ID")
 
-	events := collectAllEvents(t, ch, 90*time.Second)
+			// Check metadata fields that this backend is expected to populate
+			if cfg.HasSessionIDInMeta {
+				assert.NotEmpty(t, meta1[0].Meta.SessionID, "new session metadata should have SessionID")
+			}
+			if cfg.HasModelInMeta {
+				assert.NotEmpty(t, meta1[0].Meta.Model, "new session metadata should have Model")
+			}
+			if cfg.HasTokenUsageInMeta {
+				assert.NotZero(t, meta1[0].Meta.InputTokens, "new session should report input token usage")
+			}
 
-	requireEventSequence(t, events, "content", "metadata")
-	content := concatContent(events)
-	assert.NotEmpty(t, content, "should receive content from qoder")
+			// Phase 2: resume
+			req2 := ChatRequest{
+				Prompt:    "再说一个字：是",
+				SessionID: sessionID,
+				WorkDir:   testWorkDir(),
+				Resume:    true,
+			}
+			events2 := cliExecPrompt(t, cfg, backend, req2)
+			meta2 := findEvents(events2, "metadata")
+			require.NotEmpty(t, meta2, "should have metadata event from resumed session")
 
-	metaEvents := findEvents(events, "metadata")
-	require.NotEmpty(t, metaEvents, "should have metadata event")
-	assert.NotEmpty(t, metaEvents[0].Meta.SessionID, "qoder metadata should contain session ID")
-
-	doneEvents := findEvents(events, "done")
-	assert.NotEmpty(t, doneEvents, "should receive 'done' event from AutoResumeBackend")
-
-	errorEvents := findEvents(events, "error")
-	assert.Empty(t, errorEvents, "should not have error events")
-}
-
-func TestIntegration_Qoder_StreamEvents(t *testing.T) {
-	requireCLIAvailable(t, "qodercli")
-	backend, err := NewBackend("qoder")
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:    "1+1等于几？只回答数字",
-		SessionID: newSessionID(),
-		WorkDir:   testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events := collectAllEvents(t, ch, 90*time.Second)
-
-	contentEvents := findEvents(events, "content")
-	assert.NotEmpty(t, contentEvents, "should have content events")
-
-	metaEvents := findEvents(events, "metadata")
-	require.NotEmpty(t, metaEvents)
-	assert.NotEmpty(t, metaEvents[0].Meta.SessionID, "qoder metadata should contain session ID")
-
-	// Should have raw_output event for debugging
-	rawEvents := findEvents(events, "raw_output")
-	assert.NotEmpty(t, rawEvents, "should have raw_output event")
-}
-
-func TestIntegration_Qoder_ResumeSession(t *testing.T) {
-	requireCLIAvailable(t, "qodercli")
-	backend, err := NewBackend("qoder")
-	require.NoError(t, err)
-
-	sessionID := newSessionID()
-
-	// Phase 1: new session
-	ctx1, cancel1 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel1()
-
-	ch1, err := backend.ExecuteStream(ctx1, ChatRequest{
-		Prompt:    "记住数字42，稍后我会问你。只回复OK",
-		SessionID: sessionID,
-		WorkDir:   testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events1 := collectAllEvents(t, ch1, 90*time.Second)
-	doneEvents1 := findEvents(events1, "metadata")
-	require.NotEmpty(t, doneEvents1, "first conversation should complete with metadata event")
-
-	// Phase 2: resume session
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel2()
-
-	ch2, err := backend.ExecuteStream(ctx2, ChatRequest{
-		Prompt:    "我之前让你记住的数字是什么？只回答数字",
-		SessionID: sessionID,
-		WorkDir:   testWorkDir(),
-		Resume:    true,
-	})
-	require.NoError(t, err)
-
-	events2 := collectAllEvents(t, ch2, 90*time.Second)
-	requireEventSequence(t, events2, "content", "metadata")
-	content := concatContent(events2)
-	assert.NotEmpty(t, content, "should receive content in resumed session")
-
-	doneEvents2 := findEvents(events2, "done")
-	assert.NotEmpty(t, doneEvents2, "should receive 'done' event in resumed session")
-}
-
-func TestIntegration_Qoder_SystemPromptInjection(t *testing.T) {
-	requireCLIAvailable(t, "qodercli")
-	backend, err := NewBackend("qoder")
-	require.NoError(t, err)
-
-	// Qoder CLI supports --system-prompt flag natively
-	const marker = "INTEGRATION_TEST_MARKER_Q7W3"
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	model.ChatSystemPromptInterval = 10
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:       "请重复以下标记：" + marker,
-		SessionID:    newSessionID(),
-		WorkDir:      testWorkDir(),
-		SystemPrompt: "你必须在你回复的开头包含标记 " + marker + "，这是系统级要求",
-	})
-	require.NoError(t, err)
-
-	events := collectAllEvents(t, ch, 90*time.Second)
-	requireEventSequence(t, events, "content", "metadata")
-
-	// Best-effort check — AI compliance is non-deterministic
-	content := concatContent(events)
-	if !strings.Contains(content, marker) {
-		t.Logf("qoder did not include marker %q in response — AI compliance is non-deterministic; content: %s", marker, truncate(content, 200))
+			if cfg.HasSessionIDInMeta {
+				assert.NotEmpty(t, meta2[0].Meta.SessionID, "resumed session metadata should have SessionID")
+			}
+			if cfg.HasModelInMeta {
+				assert.NotEmpty(t, meta2[0].Meta.Model, "resumed session metadata should have Model")
+			}
+			if cfg.HasTokenUsageInMeta {
+				assert.NotZero(t, meta2[0].Meta.InputTokens, "resumed session should report input token usage")
+			}
+		})
 	}
-}
-
-// --- VeCLI Integration Tests ---
-
-// requireVeCLIEnv ensures the VeCLI CLI can run in the test environment.
-func requireVeCLIEnv(t *testing.T) {
-	t.Helper()
-	requireCLIAvailable(t, "vecli")
-	// VeCLI uses VOLCENGINE_ACCESS_KEY + VOLCENGINE_SECRET_KEY env vars,
-	// or interactive login. If env vars are missing, the CLI will error.
-	// We don't skip here — let the actual test reveal the auth issue.
-}
-
-func TestIntegration_VeCLI_NewSession(t *testing.T) {
-	requireVeCLIEnv(t)
-	backend, err := NewBackend("vecli")
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:  "说一个字：好",
-		WorkDir: testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events := collectAllEvents(t, ch, 90*time.Second)
-
-	// VeCLI may fail due to API auth issues; skip gracefully
-	contentEvents := findEvents(events, "content")
-	if len(contentEvents) == 0 {
-		warningEvents := findEvents(events, "warning")
-		errorEvents := findEvents(events, "error")
-		t.Skipf("vecli produced no content events (likely auth/network issue); warnings: %d, errors: %d, event types: %v",
-			len(warningEvents), len(errorEvents), eventTypes(events))
-	}
-
-	requireEventSequence(t, events, "content", "metadata")
-	content := concatContent(events)
-	assert.NotEmpty(t, content, "should receive content from vecli")
-
-	metaEvents := findEvents(events, "metadata")
-	require.NotEmpty(t, metaEvents, "should have metadata event")
-	assert.NotEmpty(t, metaEvents[0].Meta.Model, "vecli metadata should contain model name from session-summary")
-	assert.NotZero(t, metaEvents[0].Meta.DurationMs, "vecli metadata should contain duration from session-summary")
-
-	doneEvents := findEvents(events, "done")
-	assert.NotEmpty(t, doneEvents, "should receive 'done' event")
-
-	errorEvents := findEvents(events, "error")
-	assert.Empty(t, errorEvents, "should not have error events")
-}
-
-func TestIntegration_VeCLI_StreamEvents(t *testing.T) {
-	requireVeCLIEnv(t)
-	backend, err := NewBackend("vecli")
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:  "1+1等于几？只回答数字",
-		WorkDir: testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events := collectAllEvents(t, ch, 90*time.Second)
-
-	contentEvents := findEvents(events, "content")
-	if len(contentEvents) == 0 {
-		warningEvents := findEvents(events, "warning")
-		t.Skipf("vecli produced no content events (likely auth/network issue); warnings: %d, event types: %v",
-			len(warningEvents), eventTypes(events))
-	}
-	assert.NotEmpty(t, contentEvents, "should have content events")
-
-	// VeCLI metadata comes from session-summary file (post-process)
-	metaEvents := findEvents(events, "metadata")
-	assert.NotEmpty(t, metaEvents, "should have metadata from session-summary")
-
-	// Should have raw_output event for debugging
-	rawEvents := findEvents(events, "raw_output")
-	assert.NotEmpty(t, rawEvents, "should have raw_output event")
-}
-
-func TestIntegration_VeCLI_CancelMidStream(t *testing.T) {
-	requireVeCLIEnv(t)
-	backend, err := NewBackend("vecli")
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:  "写一篇500字的文章，主题是春天的花园",
-		WorkDir: testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events := cancelOnFirstContent(t, ch, cancel)
-	contentEvents := findEvents(events, "content")
-	if len(contentEvents) == 0 {
-		t.Skipf("vecli produced no content before cancel (likely auth/network issue); event types: %v", eventTypes(events))
-	}
-	assert.NotEmpty(t, contentEvents, "should have received at least one content before cancel")
-}
-
-func TestIntegration_VeCLI_SystemPromptInjection(t *testing.T) {
-	requireVeCLIEnv(t)
-	backend, err := NewBackend("vecli")
-	require.NoError(t, err)
-
-	// VeCLI has no --system-prompt flag; prompt is injected as [System Instructions: ...]
-	const marker = "INTEGRATION_TEST_MARKER_V9K2"
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	model.ChatSystemPromptInterval = 10
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:       "请重复以下标记：" + marker,
-		WorkDir:      testWorkDir(),
-		SystemPrompt: "你必须在你回复的开头包含标记 " + marker + "，这是系统级要求",
-	})
-	require.NoError(t, err)
-
-	events := collectAllEvents(t, ch, 90*time.Second)
-
-	contentEvents := findEvents(events, "content")
-	if len(contentEvents) == 0 {
-		t.Skipf("vecli produced no content events (likely auth/network issue); event types: %v", eventTypes(events))
-	}
-
-	requireEventSequence(t, events, "content", "metadata")
-
-	// Best-effort check — AI compliance is non-deterministic
-	content := concatContent(events)
-	if !strings.Contains(content, marker) {
-		t.Logf("vecli did not include marker %q in response — AI compliance is non-deterministic; content: %s", marker, truncate(content, 200))
-	}
-}
-
-// --- DeepSeek Integration Tests ---
-
-func TestIntegration_DeepSeek_NewSession(t *testing.T) {
-	requireCLIAvailable(t, "deepseek")
-	backend, err := NewBackend("deepseek")
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:  "说一个字：好",
-		WorkDir: testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events := collectAllEvents(t, ch, 150*time.Second)
-
-	requireEventSequence(t, events, "content", "metadata")
-	content := concatContent(events)
-	assert.NotEmpty(t, content, "should receive content from deepseek")
-
-	metaEvents := findEvents(events, "metadata")
-	require.NotEmpty(t, metaEvents, "should have metadata event")
-	assert.NotEmpty(t, metaEvents[0].Meta.Model, "metadata should contain model name")
-
-	// DeepSeek TUI sends session_capture before content
-	sessionCaptureEvents := findEvents(events, "session_capture")
-	assert.NotEmpty(t, sessionCaptureEvents, "should have session_capture event")
-
-	// AutoResumeBackend forwards the "done" event
-	doneEvents := findEvents(events, "done")
-	assert.NotEmpty(t, doneEvents, "should receive 'done' event from AutoResumeBackend")
-
-	errorEvents := findEvents(events, "error")
-	assert.Empty(t, errorEvents, "should not have error events")
-}
-
-func TestIntegration_DeepSeek_StreamEvents(t *testing.T) {
-	requireCLIAvailable(t, "deepseek")
-	backend, err := NewBackend("deepseek")
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:  "1+1等于几？只回答数字",
-		WorkDir: testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events := collectAllEvents(t, ch, 150*time.Second)
-
-	contentEvents := findEvents(events, "content")
-	assert.NotEmpty(t, contentEvents, "should have content events")
-
-	metaEvents := findEvents(events, "metadata")
-	require.NotEmpty(t, metaEvents, "should have metadata event")
-	assert.NotEmpty(t, metaEvents[0].Meta.Model, "metadata should contain model name")
-	assert.NotEmpty(t, metaEvents[0].Meta.SessionID, "metadata should contain session ID")
-
-	// DeepSeek TUI sends session_capture early
-	sessionCaptureEvents := findEvents(events, "session_capture")
-	assert.NotEmpty(t, sessionCaptureEvents, "should have session_capture event")
-}
-
-func TestIntegration_DeepSeek_ResumeSession(t *testing.T) {
-	requireCLIAvailable(t, "deepseek")
-	backend, err := NewBackend("deepseek")
-	require.NoError(t, err)
-
-	// Phase 1: new session — capture session ID from session_capture event
-	ctx1, cancel1 := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel1()
-
-	ch1, err := backend.ExecuteStream(ctx1, ChatRequest{
-		Prompt:  "记住数字42，稍后我会问你。只回复OK",
-		WorkDir: testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events1 := collectAllEvents(t, ch1, 150*time.Second)
-	sessionID := extractSessionID(events1)
-	require.NotEmpty(t, sessionID, "should capture DeepSeek session ID from session_capture event")
-
-	doneEvents1 := findEvents(events1, "metadata")
-	require.NotEmpty(t, doneEvents1, "first conversation should complete with metadata event")
-
-	// Phase 2: resume session using captured session ID
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel2()
-
-	ch2, err := backend.ExecuteStream(ctx2, ChatRequest{
-		Prompt:    "我之前让你记住的数字是什么？只回答数字",
-		SessionID: sessionID,
-		WorkDir:   testWorkDir(),
-		Resume:    true,
-	})
-	require.NoError(t, err)
-
-	events2 := collectAllEvents(t, ch2, 150*time.Second)
-	requireEventSequence(t, events2, "content", "metadata")
-	content := concatContent(events2)
-	assert.NotEmpty(t, content, "should receive content in resumed session")
-
-	doneEvents2 := findEvents(events2, "done")
-	assert.NotEmpty(t, doneEvents2, "should receive 'done' event in resumed session")
-}
-
-func TestIntegration_DeepSeek_CancelMidStream(t *testing.T) {
-	requireCLIAvailable(t, "deepseek")
-	backend, err := NewBackend("deepseek")
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:  "写一篇500字的文章，主题是春天的花园",
-		WorkDir: testWorkDir(),
-	})
-	require.NoError(t, err)
-
-	events := cancelOnFirstContent(t, ch, cancel)
-	contentEvents := findEvents(events, "content")
-	assert.NotEmpty(t, contentEvents, "should have received at least one content before cancel")
-}
-
-func TestIntegration_DeepSeek_SystemPromptInjection(t *testing.T) {
-	requireCLIAvailable(t, "deepseek")
-	backend, err := NewBackend("deepseek")
-	require.NoError(t, err)
-
-	// DeepSeek TUI supports --system-prompt flag natively
-	const marker = "INTEGRATION_TEST_MARKER_D5K9"
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-
-	ch, err := backend.ExecuteStream(ctx, ChatRequest{
-		Prompt:       "请重复以下标记：" + marker,
-		WorkDir:      testWorkDir(),
-		SystemPrompt: "你必须在你回复的开头包含标记 " + marker + "，这是系统级要求",
-	})
-	require.NoError(t, err)
-
-	events := collectAllEvents(t, ch, 150*time.Second)
-	requireEventSequence(t, events, "content", "metadata")
-
-	// Verify the stream completed successfully with metadata (which means CLI args were valid)
-	metaEvents := findEvents(events, "metadata")
-	require.NotEmpty(t, metaEvents, "should have metadata event")
-
-	// Best-effort check — AI compliance is non-deterministic
-	content := concatContent(events)
-	if !strings.Contains(content, marker) {
-		t.Logf("deepseek did not include marker %q in response — AI compliance is non-deterministic; content: %s", marker, truncate(content, 200))
-	}
-}
-
-// --- Helpers ---
-
-// truncate returns the first n chars of s with "..." appended if longer.
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
 }

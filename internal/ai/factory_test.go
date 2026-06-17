@@ -8,7 +8,59 @@ import (
 	"clawbench/internal/model"
 )
 
+// setupTestBackends registers backend factories for testing.
+// We can't import backend sub-packages due to import cycles,
+// so we register lightweight stubs that satisfy NewBackend's lookup.
+func setupTestBackends() {
+	backendFactoriesMu.Lock()
+	defer backendFactoriesMu.Unlock()
+	backendFactories = make(map[string]*BackendFactoryEntry)
+
+	stubs := map[string]bool{
+		"claude":    true,
+		"codebuddy": true,
+		"opencode":  false,
+		"qoder":     true,
+		"vecli":     false,
+		"pi":        true,
+		"deepseek":  true,
+		"cline":     true,
+		"kimi":      true,
+		"copilot":   true,
+		"codex":     false,
+		"mimo":      true,
+	}
+	for id, needsAR := range stubs {
+		backendType := id // capture for closure
+		switch backendType {
+		case "vecli":
+			backendFactories[backendType] = &BackendFactoryEntry{
+				NewBackendFn:    func() AIBackend { return NewVeCLIBackend() },
+				NeedsAutoResume: needsAR,
+			}
+		case "codex":
+			backendFactories[backendType] = &BackendFactoryEntry{
+				NewBackendFn:    func() AIBackend { return &CodexBackend{} },
+				NeedsAutoResume: needsAR,
+			}
+		default:
+			backendFactories[backendType] = &BackendFactoryEntry{
+				NewBackendFn: func() AIBackend {
+					return &CLIBackend{
+						BackendName: backendType,
+						Cmd:         backendType,
+						BuildArgsFn: func(req ChatRequest) []string { return nil },
+						NewParserFn: func() LineParser { return &StreamParser{} },
+					}
+				},
+				NeedsAutoResume: needsAR,
+			}
+		}
+	}
+}
+
 func TestNewBackend_Claude(t *testing.T) {
+	setupTestBackends()
 	backend, err := NewBackend("claude")
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
@@ -19,6 +71,7 @@ func TestNewBackend_Claude(t *testing.T) {
 }
 
 func TestNewBackend_Codebuddy(t *testing.T) {
+	setupTestBackends()
 	backend, err := NewBackend("codebuddy")
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
@@ -29,6 +82,7 @@ func TestNewBackend_Codebuddy(t *testing.T) {
 }
 
 func TestNewBackend_OpenCode(t *testing.T) {
+	setupTestBackends()
 	backend, err := NewBackend("opencode")
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
@@ -39,6 +93,7 @@ func TestNewBackend_OpenCode(t *testing.T) {
 }
 
 func TestNewBackend_Qoder(t *testing.T) {
+	setupTestBackends()
 	backend, err := NewBackend("qoder")
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
@@ -49,6 +104,7 @@ func TestNewBackend_Qoder(t *testing.T) {
 }
 
 func TestNewBackend_Vecli(t *testing.T) {
+	setupTestBackends()
 	backend, err := NewBackend("vecli")
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
@@ -59,6 +115,7 @@ func TestNewBackend_Vecli(t *testing.T) {
 }
 
 func TestNewBackend_Pi(t *testing.T) {
+	setupTestBackends()
 	backend, err := NewBackend("pi")
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
@@ -69,6 +126,7 @@ func TestNewBackend_Pi(t *testing.T) {
 }
 
 func TestNewBackend_DeepSeek(t *testing.T) {
+	setupTestBackends()
 	backend, err := NewBackend("deepseek")
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
@@ -79,6 +137,7 @@ func TestNewBackend_DeepSeek(t *testing.T) {
 }
 
 func TestNewBackend_Cline(t *testing.T) {
+	setupTestBackends()
 	backend, err := NewBackend("cline")
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
@@ -89,6 +148,7 @@ func TestNewBackend_Cline(t *testing.T) {
 }
 
 func TestNewBackend_Kimi(t *testing.T) {
+	setupTestBackends()
 	backend, err := NewBackend("kimi")
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
@@ -99,6 +159,7 @@ func TestNewBackend_Kimi(t *testing.T) {
 }
 
 func TestNewBackend_Copilot(t *testing.T) {
+	setupTestBackends()
 	backend, err := NewBackend("copilot")
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
@@ -109,6 +170,7 @@ func TestNewBackend_Copilot(t *testing.T) {
 }
 
 func TestNewBackend_Codex(t *testing.T) {
+	setupTestBackends()
 	backend, err := NewBackend("codex")
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
@@ -119,21 +181,20 @@ func TestNewBackend_Codex(t *testing.T) {
 }
 
 func TestNewBackend_Unsupported(t *testing.T) {
+	setupTestBackends()
 	_, err := NewBackend("unsupported")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported backend type")
-	// Verify error message lists all supported backends
-	assert.Contains(t, err.Error(), "claude")
-	assert.Contains(t, err.Error(), "codex")
-	assert.Contains(t, err.Error(), "pi")
 }
 
 func TestNewBackend_Empty(t *testing.T) {
+	setupTestBackends()
 	_, err := NewBackend("")
 	assert.Error(t, err)
 }
 
 func TestNewBackend_CaseSensitive(t *testing.T) {
+	setupTestBackends()
 	// Backend type is case-sensitive
 	_, err := NewBackend("Claude")
 	assert.Error(t, err, "backend type should be case-sensitive")
@@ -145,6 +206,7 @@ func TestNewBackend_CaseSensitive(t *testing.T) {
 // --- NewBackendForAgent tests ---
 
 func TestNewBackendForAgent_NoAgentID_FallsBackToCLI(t *testing.T) {
+	setupTestBackends()
 	backend, err := NewBackendForAgent("claude", "")
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
@@ -155,6 +217,7 @@ func TestNewBackendForAgent_NoAgentID_FallsBackToCLI(t *testing.T) {
 }
 
 func TestNewBackendForAgent_UnknownAgentID_FallsBackToCLI(t *testing.T) {
+	setupTestBackends()
 	backend, err := NewBackendForAgent("claude", "nonexistent-agent")
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
@@ -162,6 +225,7 @@ func TestNewBackendForAgent_UnknownAgentID_FallsBackToCLI(t *testing.T) {
 }
 
 func TestNewBackendForAgent_ACPStdioTransport(t *testing.T) {
+	setupTestBackends()
 	// Set up a test agent with ACP acp-stdio transport
 	origAgents := model.Agents
 	t.Cleanup(func() { model.Agents = origAgents })
@@ -186,6 +250,7 @@ func TestNewBackendForAgent_ACPStdioTransport(t *testing.T) {
 }
 
 func TestNewBackendForAgent_ACPHttpTransport_Unsupported(t *testing.T) {
+	setupTestBackends()
 	origAgents := model.Agents
 	t.Cleanup(func() { model.Agents = origAgents })
 
@@ -209,6 +274,7 @@ func TestNewBackendForAgent_ACPHttpTransport_Unsupported(t *testing.T) {
 }
 
 func TestNewBackendForAgent_ACPNoAutoResume(t *testing.T) {
+	setupTestBackends()
 	origAgents := model.Agents
 	t.Cleanup(func() { model.Agents = origAgents })
 
@@ -232,6 +298,7 @@ func TestNewBackendForAgent_ACPNoAutoResume(t *testing.T) {
 }
 
 func TestNewBackendForAgent_CLITransport_FallsBack(t *testing.T) {
+	setupTestBackends()
 	origAgents := model.Agents
 	t.Cleanup(func() { model.Agents = origAgents })
 
@@ -256,6 +323,7 @@ func TestNewBackendForAgent_CLITransport_FallsBack(t *testing.T) {
 }
 
 func TestNewBackendForAgentWithTransport_ACPOverrideOnCLIAgent_FallsBack(t *testing.T) {
+	setupTestBackends()
 	origAgents := model.Agents
 	t.Cleanup(func() { model.Agents = origAgents })
 
@@ -280,21 +348,4 @@ func TestNewBackendForAgentWithTransport_ACPOverrideOnCLIAgent_FallsBack(t *test
 
 	_, ok = backend.(*ACPBackend)
 	assert.False(t, ok, "should NOT be ACPBackend when agent transport is cli")
-}
-
-// --- needsAutoResume tests ---
-
-func TestNeedsAutoResume(t *testing.T) {
-	assert.True(t, needsAutoResume("claude"), "claude needs auto-resume")
-	assert.True(t, needsAutoResume("codebuddy"), "codebuddy needs auto-resume")
-	assert.True(t, needsAutoResume("qoder"), "qoder needs auto-resume")
-	assert.True(t, needsAutoResume("deepseek"), "deepseek needs auto-resume")
-	assert.True(t, needsAutoResume("pi"), "pi needs auto-resume")
-	assert.True(t, needsAutoResume("cline"), "cline needs auto-resume")
-	assert.True(t, needsAutoResume("kimi"), "kimi needs auto-resume")
-	assert.True(t, needsAutoResume("copilot"), "copilot needs auto-resume")
-
-	assert.False(t, needsAutoResume("opencode"), "opencode does NOT need auto-resume")
-	assert.False(t, needsAutoResume("codex"), "codex does NOT need auto-resume")
-	assert.False(t, needsAutoResume("vecli"), "vecli does NOT need auto-resume")
 }

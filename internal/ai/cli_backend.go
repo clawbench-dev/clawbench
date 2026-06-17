@@ -18,28 +18,29 @@ import (
 // JSON output. It implements the AIBackend interface via callbacks for
 // backend-specific behavior.
 type CLIBackend struct {
-	name           string
-	defaultCommand string
-	buildArgs      func(req ChatRequest) []string
-	newParser      func() LineParser
-	filterLine     func(line string) (string, bool)     // nil = skip empty lines only
-	preStart       func(cmd *exec.Cmd, req ChatRequest) // optional, e.g. Claude stdin
+	BackendName   string // exported for sub-package construction; Name() method returns this
+	Cmd           string // default CLI command
+	BuildArgsFn   func(req ChatRequest) []string
+	NewParserFn   func() LineParser
+	FilterLineFn  func(line string) (string, bool)     // nil = skip empty lines only
+	PreStartFn    func(cmd *exec.Cmd, req ChatRequest) // optional, e.g. Claude stdin
+	PreExecHookFn func(cmd *exec.Cmd, req ChatRequest) // optional, e.g. Pi API key injection
 }
 
-// Name returns the backend identifier.
+// Name returns the backend identifier (implements AIBackend).
 func (b *CLIBackend) Name() string {
-	return b.name
+	return b.BackendName
 }
 
 // ExecuteStream runs the CLI backend in streaming mode and returns a channel of events.
 //
 //nolint:gocognit,gocyclo // complex stream parsing logic
 func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) {
-	args := b.buildArgs(req)
+	args := b.BuildArgsFn(req)
 
 	cmdName := req.Command
 	if cmdName == "" {
-		cmdName = b.defaultCommand
+		cmdName = b.Cmd
 	}
 	cmd := exec.CommandContext(ctx, cmdName, args...)
 	cmd.Dir = req.WorkDir
@@ -64,16 +65,21 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 	if req.AgentID != "" {
 		injectAgentAPIKey(cmd, req)
 	}
+	// Call backend-specific pre-exec hook (e.g. Pi API key injection).
+	// When all backends are migrated, injectAgentAPIKey will be replaced by preExecHook.
+	if b.PreExecHookFn != nil {
+		b.PreExecHookFn(cmd, req)
+	}
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf
 
-	if b.preStart != nil {
-		b.preStart(cmd, req)
+	if b.PreStartFn != nil {
+		b.PreStartFn(cmd, req)
 	}
 
 	slog.Info(
 		"executing ai stream command",
-		slog.String("backend", b.name),
+		slog.String("backend", b.BackendName),
 		slog.String("work_dir", req.WorkDir),
 		slog.String("session_id", req.SessionID),
 		slog.String("prompt", req.Prompt),
@@ -82,11 +88,11 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("%s stream: failed to create stdout pipe: %w", b.name, err)
+		return nil, fmt.Errorf("%s stream: failed to create stdout pipe: %w", b.BackendName, err)
 	}
 
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("%s stream: failed to start command: %w", b.name, err)
+		return nil, fmt.Errorf("%s stream: failed to start command: %w", b.BackendName, err)
 	}
 
 	ch := make(chan StreamEvent, streamChanSize)
@@ -119,7 +125,7 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 					case <-waitCh:
 						// Process reaped successfully
 					case <-timer.C:
-						slog.Warn(b.name+" stream: cmd.Wait() timed out after context cancellation, releasing process",
+						slog.Warn(b.BackendName+" stream: cmd.Wait() timed out after context cancellation, releasing process",
 							slog.String("session_id", req.SessionID))
 						_ = cmd.Process.Release()
 					}
@@ -131,13 +137,13 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		buf := make([]byte, scannerInitial)
 		scanner.Buffer(buf, scannerMax)
 
-		parser := b.newParser()
+		parser := b.NewParserFn()
 		for scanner.Scan() {
 			line := scanner.Text()
 
 			// Filter lines based on backend-specific logic
-			if b.filterLine != nil {
-				filtered, ok := b.filterLine(line)
+			if b.FilterLineFn != nil {
+				filtered, ok := b.FilterLineFn(line)
 				if !ok {
 					continue
 				}
@@ -161,7 +167,7 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 				}
 			}
 
-			slog.Debug(b.name+" stream: raw line", "session_id", req.SessionID, "line", line)
+			slog.Debug(b.BackendName+" stream: raw line", "session_id", req.SessionID, "line", line)
 			parser.ParseLine(line, ch)
 
 			// Early capture of external session ID (OpenCode ses_xxx, Codex thread_xxx).
@@ -179,7 +185,7 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 			select {
 			case <-ctx.Done():
 				slog.Warn(
-					b.name+" stream: context cancelled",
+					b.BackendName+" stream: context cancelled",
 					slog.String("session_id", req.SessionID),
 				)
 				// Send raw output before returning so it's available for debugging
@@ -205,7 +211,7 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		if err := cmd.Wait(); err != nil {
 			if ctx.Err() != nil {
 				slog.Warn(
-					b.name+" stream: command cancelled",
+					b.BackendName+" stream: command cancelled",
 					slog.String("session_id", req.SessionID),
 					slog.String("ctx_err", ctx.Err().Error()),
 					slog.String("stderr", stderrBuf.String()),
@@ -221,7 +227,7 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 			}
 			stderr := stderrBuf.String()
 			slog.Error(
-				b.name+" stream: command exited abnormally",
+				b.BackendName+" stream: command exited abnormally",
 				slog.String("session_id", req.SessionID),
 				slog.String("exit_error", err.Error()),
 				slog.String("stderr", stderr),
@@ -237,7 +243,7 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		} else if stderrBuf.Len() > 0 {
 			stderr := stderrBuf.String()
 			slog.Warn(
-				b.name+" stream: command succeeded with stderr output",
+				b.BackendName+" stream: command succeeded with stderr output",
 				slog.String("session_id", req.SessionID),
 				slog.String("stderr", stderr),
 			)

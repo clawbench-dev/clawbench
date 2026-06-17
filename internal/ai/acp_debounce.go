@@ -46,7 +46,11 @@ func newToolCallDebouncer(ch chan<- StreamEvent, conn *ACPConn) *toolCallDebounc
 // Returns true if the event was buffered (caller should NOT forward it directly).
 func (d *toolCallDebouncer) handleToolCallUpdate(tcu acp.SessionToolCallUpdate) bool {
 	toolCallID := string(tcu.ToolCallId)
-	event := mapACPToolCallUpdate(tcu)
+	backendID := ""
+	if d.conn != nil {
+		backendID = d.conn.BackendID()
+	}
+	event := mapACPToolCallUpdate(tcu, backendID)
 
 	// Terminal events (completed/failed) flush immediately.
 	if event.Tool != nil && event.Tool.Done {

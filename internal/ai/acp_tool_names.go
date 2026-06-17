@@ -10,6 +10,18 @@ import (
 // Tool name heuristics — maps ACP tool identifiers to canonical frontend names
 // ---------------------------------------------------------------------------
 
+// LookupACPToolCallIDPrefixesFn is a function variable that returns the
+// ACP toolCallID prefix map for the given backendID. Set by the backends
+// package during init() to enable backend-specific prefix lookup.
+// Returns nil if no backend-specific prefixes are registered.
+var LookupACPToolCallIDPrefixesFn func(backendID string) map[string]string
+
+// LookupACPRemapsFn is a function variable that returns the ACP input
+// remapping map for the given backendID. Set by the backends package during
+// init() to enable backend-specific remap lookup. Falls back to the generic
+// 6-field map if no backend-specific remaps are registered.
+var LookupACPRemapsFn func(backendID string) map[string]string
+
 // acpToolCallIDPrefix maps Kimi-style toolCallID prefixes to canonical tool names.
 // Kimi ACP uses toolCallID formats like "read_file-<ts>-<n>", "list_directory-<ts>-<n>",
 // "glob-<ts>-<n>", "run_shell_command-<ts>-<n>", "ask-<uuid>".
@@ -141,13 +153,24 @@ var acpKindToCanonical = map[acp.ToolKind]string{
 }
 
 // extractToolName resolves the canonical frontend tool name from ACP tool identifiers
-// and input formatting. We try toolCallId prefix first (Kimi pattern),
-// then title prefix/alias matching, then kind-to-canonical,
+// and input formatting. We try backend-specific toolCallId prefix first (Kimi pattern),
+// then shared title prefix/alias matching, then kind-to-canonical,
 // then fall back to the title itself.
-func extractToolName(title string, kind acp.ToolKind, toolCallID ...string) string {
-	// Kimi ACP uses descriptive toolCallId prefixes that encode the tool type:
-	// "read_file-<ts>-<n>", "list_directory-<ts>-<n>", "glob-<ts>-<n>",
-	// "run_shell_command-<ts>-<n>", "ask-<uuid>". Extract the prefix for mapping.
+func extractToolName(title string, kind acp.ToolKind, backendID string, toolCallID ...string) string {
+	// Backend-specific toolCallId prefix lookup (e.g. Kimi ACP uses "read_file-<ts>-<n>").
+	if len(toolCallID) > 0 && toolCallID[0] != "" && backendID != "" && LookupACPToolCallIDPrefixesFn != nil {
+		tid := toolCallID[0]
+		if dashIdx := strings.Index(tid, "-"); dashIdx > 0 {
+			prefix := tid[:dashIdx]
+			if prefixes := LookupACPToolCallIDPrefixesFn(backendID); prefixes != nil {
+				if canonical, ok := prefixes[prefix]; ok {
+					return canonical
+				}
+			}
+		}
+	}
+
+	// Legacy fallback: try the global acpToolCallIDPrefix map if backend-specific lookup failed.
 	if len(toolCallID) > 0 && toolCallID[0] != "" {
 		tid := toolCallID[0]
 		if dashIdx := strings.Index(tid, "-"); dashIdx > 0 {
@@ -195,4 +218,10 @@ func extractToolName(title string, kind acp.ToolKind, toolCallID ...string) stri
 		return canonical
 	}
 	return string(kind)
+}
+
+// ExtractToolNameForTest exports extractToolName for use in integration tests.
+// Production code must not use this.
+func ExtractToolNameForTest(title string, kind acp.ToolKind, backendID string, toolCallID ...string) string {
+	return extractToolName(title, kind, backendID, toolCallID...)
 }

@@ -66,7 +66,7 @@ func TestMapToolCallInput_RawInputNormalization(t *testing.T) {
 		},
 	}
 	tool := &ToolCall{}
-	mapToolCallInput(tcu, tool)
+	mapToolCallInput(tcu, tool, "")
 	assert.Contains(t, tool.Input, "file_path")
 	assert.Contains(t, tool.Input, "old_string")
 	assert.Contains(t, tool.Input, "new_string")
@@ -81,7 +81,7 @@ func TestMapToolCallInput_RawInputEmptyObject(t *testing.T) {
 		RawInput:   map[string]any{},
 	}
 	tool := &ToolCall{}
-	mapToolCallInput(tcu, tool)
+	mapToolCallInput(tcu, tool, "")
 	assert.Equal(t, "", tool.Input, "empty rawInput object should not set input")
 }
 
@@ -96,7 +96,7 @@ func TestMapToolCallInput_RawInputReturnsEarly(t *testing.T) {
 		Title:      &title,
 	}
 	tool := &ToolCall{}
-	mapToolCallInput(tcu, tool)
+	mapToolCallInput(tcu, tool, "")
 	assert.Contains(t, tool.Input, "rm -rf /")
 	assert.NotContains(t, tool.Input, "ls", "RawInput takes priority over title")
 }
@@ -230,7 +230,7 @@ func TestMapToolCallName_NilTitle(t *testing.T) {
 	tcu := acp.SessionToolCallUpdate{
 		Title: nil,
 	}
-	mapToolCallName(tcu, tool)
+	mapToolCallName(tcu, tool, "")
 	assert.Equal(t, "", tool.Name)
 }
 
@@ -240,7 +240,7 @@ func TestMapToolCallName_EmptyTitle(t *testing.T) {
 	tcu := acp.SessionToolCallUpdate{
 		Title: &title,
 	}
-	mapToolCallName(tcu, tool)
+	mapToolCallName(tcu, tool, "")
 	assert.Equal(t, "", tool.Name)
 }
 
@@ -250,7 +250,7 @@ func TestMapToolCallName_DoneToolSkipsName(t *testing.T) {
 	tcu := acp.SessionToolCallUpdate{
 		Title: &title,
 	}
-	mapToolCallName(tcu, tool)
+	mapToolCallName(tcu, tool, "")
 	assert.Equal(t, "", tool.Name, "done tool should not update name from title")
 }
 
@@ -260,7 +260,7 @@ func TestMapToolCallName_InProgressUpdatesName(t *testing.T) {
 	tcu := acp.SessionToolCallUpdate{
 		Title: &title,
 	}
-	mapToolCallName(tcu, tool)
+	mapToolCallName(tcu, tool, "")
 	assert.Equal(t, "Read", tool.Name)
 }
 
@@ -272,7 +272,7 @@ func TestMapToolCallName_NilKindDefaultsToExecute(t *testing.T) {
 		Title: &title,
 		Kind:  nil,
 	}
-	mapToolCallName(tcu, tool)
+	mapToolCallName(tcu, tool, "")
 	assert.Equal(t, "Bash", tool.Name, "nil kind defaults to execute, lowercase 'bash' maps to Bash")
 }
 
@@ -284,7 +284,7 @@ func TestMapToolCallName_WithKind(t *testing.T) {
 		Title: &title,
 		Kind:  &kind,
 	}
-	mapToolCallName(tcu, tool)
+	mapToolCallName(tcu, tool, "")
 	assert.Equal(t, "Read", tool.Name)
 }
 
@@ -528,38 +528,38 @@ func TestExtractInputFromLocationsAndTitle_OtherKind(t *testing.T) {
 // --- extractToolName additional edge cases ---
 
 func TestExtractToolName_EmptyToolCallID(t *testing.T) {
-	assert.Equal(t, "Read", extractToolName("Read", acp.ToolKindRead, ""))
+	assert.Equal(t, "Read", extractToolName("Read", acp.ToolKindRead, "", ""))
 }
 
 func TestExtractToolName_ToolCallIDNoDash(t *testing.T) {
 	// toolCallID with no dash → no prefix extracted → falls to title/kind matching
-	assert.Equal(t, "Bash", extractToolName("Bash", acp.ToolKindExecute, "nodash"))
+	assert.Equal(t, "Bash", extractToolName("Bash", acp.ToolKindExecute, "", "nodash"))
 }
 
 func TestExtractToolName_TitleWithDotAndSlash(t *testing.T) {
 	// Title with both dot and slash → falls through to kind mapping
-	assert.Equal(t, "Read", extractToolName("src/pkg/main.go", acp.ToolKindRead))
+	assert.Equal(t, "Read", extractToolName("src/pkg/main.go", acp.ToolKindRead, ""))
 }
 
 func TestExtractToolName_TitleWithOnlySlash(t *testing.T) {
 	// Title with slash → falls through to kind mapping
-	assert.Equal(t, "Read", extractToolName("src/main", acp.ToolKindRead))
+	assert.Equal(t, "Read", extractToolName("src/main", acp.ToolKindRead, ""))
 }
 
 func TestExtractToolName_ReplacePrefix(t *testing.T) {
-	assert.Equal(t, "Edit", extractToolName("file.go", acp.ToolKindEdit, "replace-123-1"))
+	assert.Equal(t, "Edit", extractToolName("file.go", acp.ToolKindEdit, "kimi", "replace-123-1"))
 }
 
 func TestExtractToolName_LowerAliasAgent(t *testing.T) {
-	assert.Equal(t, "Agent", extractToolName("agent", acp.ToolKindOther))
+	assert.Equal(t, "Agent", extractToolName("agent", acp.ToolKindOther, ""))
 }
 
 func TestExtractToolName_LowerAliasSkill(t *testing.T) {
-	assert.Equal(t, "Skill", extractToolName("skill", acp.ToolKindOther))
+	assert.Equal(t, "Skill", extractToolName("skill", acp.ToolKindOther, ""))
 }
 
 func TestExtractToolName_LowerAliasList(t *testing.T) {
-	assert.Equal(t, "LS", extractToolName("list", acp.ToolKindOther))
+	assert.Equal(t, "LS", extractToolName("list", acp.ToolKindOther, ""))
 }
 
 // --- extractInputFromContent additional tests ---
@@ -1051,7 +1051,7 @@ func TestMapACPToolCallUpdate_NilStatus(t *testing.T) {
 		ToolCallId: acp.ToolCallId("tc-nil-status"),
 		Status:     nil,
 	}
-	event := mapACPToolCallUpdate(tcu)
+	event := mapACPToolCallUpdate(tcu, "")
 	assert.Equal(t, "tool_use", event.Type)
 	assert.False(t, event.Tool.Done)
 	assert.Equal(t, "", event.Tool.Status)
@@ -1068,7 +1068,7 @@ func TestMapACPToolCallUpdate_ExecuteKindWithLocationsFallback(t *testing.T) {
 		Title:      &title,
 		Status:     &inProgress,
 	}
-	event := mapACPToolCallUpdate(tcu)
+	event := mapACPToolCallUpdate(tcu, "")
 	assert.Equal(t, "tool_use", event.Type)
 	assert.Contains(t, event.Tool.Input, "command")
 	assert.Contains(t, event.Tool.Input, "go build")
@@ -1087,7 +1087,7 @@ func TestMapACPToolCallUpdate_ReadKindWithLocations(t *testing.T) {
 			{Path: "/home/user/main.go"},
 		},
 	}
-	event := mapACPToolCallUpdate(tcu)
+	event := mapACPToolCallUpdate(tcu, "")
 	assert.Equal(t, "tool_use", event.Type)
 	assert.Contains(t, event.Tool.Input, "file_path")
 	assert.Contains(t, event.Tool.Input, "/home/user/main.go")
@@ -1103,7 +1103,7 @@ func TestMapACPToolCallUpdate_WithFilePathRawInputNormalization(t *testing.T) {
 			"dirPath":  "/tmp/subdir",
 		},
 	}
-	event := mapACPToolCallUpdate(tcu)
+	event := mapACPToolCallUpdate(tcu, "")
 	assert.Contains(t, event.Tool.Input, "file_path")
 	assert.Contains(t, event.Tool.Input, "path")
 	assert.NotContains(t, event.Tool.Input, "filePath")
@@ -1117,7 +1117,7 @@ func TestMapACPToolCallUpdate_CompletedWithRawOutput(t *testing.T) {
 		Status:     &completed,
 		RawOutput:  "plain string output",
 	}
-	event := mapACPToolCallUpdate(tcu)
+	event := mapACPToolCallUpdate(tcu, "")
 	assert.Equal(t, "tool_result", event.Type)
 	assert.True(t, event.Tool.Done)
 	assert.Equal(t, "success", event.Tool.Status)
@@ -1171,7 +1171,7 @@ func TestMapACPToolCall_RawInputDirPathNormalization(t *testing.T) {
 		Kind:       acp.ToolKindSearch,
 		RawInput:   map[string]any{"dirPath": "/home/user/project"},
 	}
-	event := mapACPToolCall(tc)
+	event := mapACPToolCall(tc, "")
 	assert.Contains(t, event.Tool.Input, "path")
 	assert.NotContains(t, event.Tool.Input, "dirPath")
 	assert.Contains(t, event.Tool.Input, "/home/user/project")
@@ -1187,7 +1187,7 @@ func TestMapACPToolCall_RawInputCellNormalization(t *testing.T) {
 			"cellType":  "code",
 		},
 	}
-	event := mapACPToolCall(tc)
+	event := mapACPToolCall(tc, "")
 	assert.Contains(t, event.Tool.Input, "cell_index")
 	assert.Contains(t, event.Tool.Input, "cell_type")
 	assert.NotContains(t, event.Tool.Input, "cellIndex")
@@ -1203,7 +1203,7 @@ func TestMapACPToolCallUpdate_RawInputDirPathNormalization(t *testing.T) {
 		Status:     &inProgress,
 		RawInput:   map[string]any{"dirPath": "/home/user/project"},
 	}
-	event := mapACPToolCallUpdate(tcu)
+	event := mapACPToolCallUpdate(tcu, "")
 	assert.Contains(t, event.Tool.Input, "path")
 	assert.NotContains(t, event.Tool.Input, "dirPath")
 }
@@ -1409,7 +1409,7 @@ func TestMapToolCallInput_NonExecuteFallsToLocations(t *testing.T) {
 		},
 	}
 	tool := &ToolCall{}
-	mapToolCallInput(tcu, tool)
+	mapToolCallInput(tcu, tool, "")
 	assert.Contains(t, tool.Input, "file_path")
 	assert.Contains(t, tool.Input, "/home/user/main.go")
 }
@@ -1422,7 +1422,7 @@ func TestMapToolCallInput_ExecuteKindNoRawInputNoTitle(t *testing.T) {
 		Title:      nil,
 	}
 	tool := &ToolCall{}
-	mapToolCallInput(tcu, tool)
+	mapToolCallInput(tcu, tool, "")
 	assert.Equal(t, "", tool.Input, "execute kind with no rawInput and no title should not set input")
 }
 
@@ -1434,7 +1434,7 @@ func TestMapToolCallInput_NilKindNoRawInputFallsToLocations(t *testing.T) {
 		Kind:       nil,
 	}
 	tool := &ToolCall{}
-	mapToolCallInput(tcu, tool)
+	mapToolCallInput(tcu, tool, "")
 	assert.Equal(t, "", tool.Input)
 }
 
@@ -1442,14 +1442,14 @@ func TestExtractToolName_AgentSubtypeMappedToAgent(t *testing.T) {
 	// Known Agent sub-type titles should be mapped to "Agent" so the frontend
 	// uses the correct icon/category, not a fallback wrench.
 	for _, title := range []string{"Explore", "explore", "Plan", "plan", "General-purpose", "code-reviewer"} {
-		result := extractToolName(title, acp.ToolKindOther)
+		result := extractToolName(title, acp.ToolKindOther, "")
 		assert.Equal(t, "Agent", result, "title %q should map to Agent", title)
 	}
 }
 
 func TestExtractToolName_UnknownSingleWordNotAgent(t *testing.T) {
 	// A single-word title that is NOT a known agent subtype should pass through.
-	result := extractToolName("CustomTool", acp.ToolKindOther)
+	result := extractToolName("CustomTool", acp.ToolKindOther, "")
 	assert.Equal(t, "CustomTool", result)
 }
 
@@ -1464,7 +1464,7 @@ func TestMapToolCallName_ExistingCanonicalNotOverwritten(t *testing.T) {
 	tcu := acp.SessionToolCallUpdate{
 		Title: &title,
 	}
-	mapToolCallName(tcu, tool)
+	mapToolCallName(tcu, tool, "")
 	assert.Equal(t, "Agent", tool.Name, "existing canonical name should not be overwritten by ToolCallUpdate")
 }
 
@@ -1476,6 +1476,6 @@ func TestMapToolCallName_LowercaseNameGetsOverwritten(t *testing.T) {
 	tcu := acp.SessionToolCallUpdate{
 		Title: &title,
 	}
-	mapToolCallName(tcu, tool)
+	mapToolCallName(tcu, tool, "")
 	assert.Equal(t, "Bash", tool.Name, "lowercase name should be overwritten by ToolCallUpdate")
 }

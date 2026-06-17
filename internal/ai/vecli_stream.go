@@ -24,7 +24,7 @@ func (p *VeCLIStreamParser) GetCapturedSessionID() string { return "" }
 // since the file path varies per request.
 func buildVeCLIArgs(req ChatRequest) []string {
 	// VeCLI has no --system-prompt flag — inject into user prompt.
-	prompt := injectSystemPrompt(req)
+	prompt := InjectSystemPrompt(req)
 
 	args := []string{
 		"--yolo",

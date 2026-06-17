@@ -20,6 +20,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"clawbench/internal/ai"
+	_ "clawbench/internal/ai/backends"
 	"clawbench/internal/cli"
 	"clawbench/internal/handler"
 	"clawbench/internal/model"

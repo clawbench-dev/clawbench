@@ -607,6 +607,17 @@ func (c *ACPConn) AgentID() string {
 	return ""
 }
 
+// BackendID returns the backend identifier of the agent this connection belongs to.
+// Used for ACP event mapping to look up backend-specific tool name and input remap tables.
+func (c *ACPConn) BackendID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.agent != nil {
+		return c.agent.Backend
+	}
+	return ""
+}
+
 // IsAlive returns whether the connection is currently alive.
 func (c *ACPConn) IsAlive() bool {
 	c.mu.Lock()
