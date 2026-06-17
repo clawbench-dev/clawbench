@@ -128,6 +128,191 @@ func init() {
 	RegisterBackend("vecli", func() AIBackend {
 		return NewVeCLIBackend()
 	}, false)
+
+	// cline — needs AutoResume
+	RegisterBackend("cline", func() AIBackend {
+		return &CLIBackend{
+			BackendName: "cline",
+			Cmd:         "cline",
+			BuildArgsFn: func(req ChatRequest) []string {
+				args := []string{"--json", "--auto-approve", "true"}
+				if req.SessionID != "" && req.Resume {
+					args = append(args, "--id", req.SessionID)
+				}
+				if req.WorkDir != "" {
+					args = append(args, "--cwd", req.WorkDir)
+				}
+				if req.Model != "" {
+					args = append(args, "--model", req.Model)
+				}
+				if req.ThinkingEffort != "" {
+					args = append(args, "--thinking", req.ThinkingEffort)
+				}
+				return args
+			},
+			NewParserFn: func() LineParser { return &StreamParser{} },
+			PreStartFn: func(cmd *exec.Cmd, req ChatRequest) {
+				cmd.Stdin = strings.NewReader(req.Prompt)
+			},
+		}
+	}, true)
+
+	// copilot — needs AutoResume
+	RegisterBackend("copilot", func() AIBackend {
+		return &CLIBackend{
+			BackendName: "copilot",
+			Cmd:         "copilot",
+			BuildArgsFn: func(req ChatRequest) []string {
+				args := []string{"--output-format", "json", "--allow-all"}
+				args = append(args, "-p", req.Prompt)
+				if req.SessionID != "" && req.Resume {
+					args = append(args, "--resume", req.SessionID)
+				}
+				if req.WorkDir != "" {
+					args = append(args, "-C", req.WorkDir)
+				}
+				if req.Model != "" {
+					args = append(args, "--model", req.Model)
+				}
+				if req.ThinkingEffort != "" {
+					args = append(args, "--effort", req.ThinkingEffort)
+				}
+				return args
+			},
+			NewParserFn: func() LineParser { return &StreamParser{} },
+			FilterLineFn: func(line string) (string, bool) {
+				if line == "" || !strings.HasPrefix(line, "{") {
+					return "", false
+				}
+				return line, true
+			},
+			PreStartFn: func(cmd *exec.Cmd, req ChatRequest) {
+				cmd.Stdin = strings.NewReader(req.Prompt)
+			},
+		}
+	}, true)
+
+	// kimi — needs AutoResume
+	RegisterBackend("kimi", func() AIBackend {
+		return &CLIBackend{
+			BackendName: "kimi",
+			Cmd:         "kimi",
+			BuildArgsFn: func(req ChatRequest) []string {
+				prompt := InjectSystemPrompt(req)
+				args := []string{"--print", "--prompt", prompt, "--output-format", "stream-json", "--yes"}
+				if req.SessionID != "" && req.Resume {
+					args = append(args, "--session", req.SessionID)
+				}
+				if req.WorkDir != "" {
+					args = append(args, "--work-dir", req.WorkDir)
+				}
+				if req.Model != "" {
+					args = append(args, "--model", req.Model)
+				}
+				return args
+			},
+			NewParserFn: func() LineParser {
+				return &StreamJSONParser{
+					ToolNameMap: map[string]string{
+						"read_file": "Read", "write_file": "Write", "edit_file": "Edit",
+						"replace": "Edit", "run_shell_command": "Bash", "list_directory": "LS",
+						"search_file": "Grep", "search_directory": "Grep", "glob": "Glob",
+						"ask": "AskUserQuestion", "file_search": "Glob", "list_files": "LS",
+						"shell": "Bash",
+					},
+					InputRemaps: map[string]string{
+						"dir_path": "path", "allow_multiple": "replace_all",
+						"is_background": "run_in_background", "include_pattern": "glob",
+						"name": "skill",
+					},
+				}
+			},
+			FilterLineFn: func(line string) (string, bool) {
+				if line == "" || !strings.HasPrefix(line, "{") {
+					return "", false
+				}
+				return line, true
+			},
+		}
+	}, true)
+
+	// mimo — needs AutoResume
+	RegisterBackend("mimo", func() AIBackend {
+		return &CLIBackend{
+			BackendName: "mimo",
+			Cmd:         "mimo",
+			BuildArgsFn: func(req ChatRequest) []string {
+				prompt := InjectSystemPrompt(req)
+				args := []string{"run", prompt, "--format", "json", "--dangerously-skip-permissions"}
+				if req.SessionID != "" && req.Resume {
+					args = append(args, "--session", req.SessionID)
+				}
+				if req.WorkDir != "" {
+					args = append(args, "--dir", req.WorkDir)
+				}
+				if req.Model != "" {
+					args = append(args, "--model", req.Model)
+				}
+				if req.ThinkingEffort != "" {
+					args = append(args, "--variant", req.ThinkingEffort)
+				}
+				return args
+			},
+			NewParserFn: func() LineParser {
+				return &OpenCodeStreamParser{
+					ToolNameMap: map[string]string{
+						"Read": "Read", "Write": "Write", "Edit": "Edit",
+						"Bash": "Bash", "LS": "LS", "Grep": "Grep",
+						"Glob": "Glob", "AskUserQuestion": "AskUserQuestion",
+					},
+					InputRemaps: map[string]string{},
+				}
+			},
+			FilterLineFn: func(line string) (string, bool) {
+				if line == "" || strings.HasPrefix(line, "[opencode-mobile]") {
+					return "", false
+				}
+				if !strings.HasPrefix(line, "{") {
+					return "", false
+				}
+				return line, true
+			},
+		}
+	}, true)
+
+	// pi — needs AutoResume
+	RegisterBackend("pi", func() AIBackend {
+		return &CLIBackend{
+			BackendName: "pi",
+			Cmd:         "pi",
+			BuildArgsFn: func(req ChatRequest) []string {
+				args := []string{"-p", "--mode", "json"}
+				switch {
+				case req.Resume && req.SessionID != "":
+					args = append(args, "--session", req.SessionID)
+				case req.Resume:
+					args = append(args, "--continue")
+				case req.ScheduledExecution:
+					args = append(args, "--no-session")
+				}
+				args = append(args, "--no-context-files")
+				if req.SystemPrompt != "" {
+					args = append(args, "--append-system-prompt", req.SystemPrompt)
+				}
+				if req.Model != "" {
+					args = append(args, "--model", req.Model)
+				}
+				if req.ThinkingEffort != "" {
+					args = append(args, "--thinking", req.ThinkingEffort)
+				}
+				args = append(args, req.Prompt)
+				return args
+			},
+			NewParserFn: func() LineParser {
+				return &PiStreamParser{InputRemaps: map[string]string{"path": "file_path"}}
+			},
+		}
+	}, true)
 }
 
 // buildOpenCodeArgs mirrors backends/opencode/cli.go buildOpenCodeStreamArgs.
@@ -323,6 +508,58 @@ var cliBackends = []cliTestConfig{
 		HasTokenUsageInMeta:  false,
 		SkipNewSessionID:     true,
 		EmitsSessionCapture:  false,
+	},
+	{
+		Backend:            "cline",
+		CLIName:            "cline",
+		Timeout:            60 * time.Second,
+		CollectTimeout:     90 * time.Second,
+		HasModelInMeta:     true,
+		HasSessionIDInMeta: true,
+		HasTokenUsageInMeta: false,
+		SupportsResume:     true,
+	},
+	{
+		Backend:            "copilot",
+		CLIName:            "copilot",
+		Timeout:            60 * time.Second,
+		CollectTimeout:     90 * time.Second,
+		HasModelInMeta:     true,
+		HasSessionIDInMeta: true,
+		HasTokenUsageInMeta: false,
+		SupportsResume:     true,
+	},
+	{
+		Backend:            "kimi",
+		CLIName:            "kimi",
+		Timeout:            60 * time.Second,
+		CollectTimeout:     90 * time.Second,
+		HasModelInMeta:     true,
+		HasSessionIDInMeta: true,
+		HasTokenUsageInMeta: false,
+		SupportsResume:     true,
+	},
+	{
+		Backend:            "mimo",
+		CLIName:            "mimo",
+		Timeout:            60 * time.Second,
+		CollectTimeout:     90 * time.Second,
+		HasModelInMeta:     true,
+		HasSessionIDInMeta: true,
+		HasTokenUsageInMeta: false,
+		SupportsResume:     true,
+	},
+	{
+		Backend:            "pi",
+		CLIName:            "pi",
+		Timeout:            60 * time.Second,
+		CollectTimeout:     90 * time.Second,
+		SkipNewSessionID:     true,
+		EmitsSessionCapture:  true,
+		HasModelInMeta:       true,
+		HasSessionIDInMeta:   true,
+		HasTokenUsageInMeta:  true,
+		SupportsResume:       true,
 	},
 }
 

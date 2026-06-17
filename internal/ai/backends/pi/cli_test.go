@@ -8,6 +8,20 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestPiPlugin_Registered(t *testing.T) {
+	entry := ai.LookupBackendFactoryForTest("pi")
+	if entry == nil {
+		t.Fatal("pi backend factory not registered")
+	}
+}
+
+func TestPiPlugin_NeedsAutoResume(t *testing.T) {
+	entry := ai.LookupBackendFactoryForTest("pi")
+	if !entry.NeedsAutoResume {
+		t.Error("pi should have needsAutoResume=true")
+	}
+}
+
 func TestBuildPiStreamArgs_NewSession(t *testing.T) {
 	req := ai.ChatRequest{
 		Prompt:       "hello world",
