@@ -76,6 +76,18 @@
             android:scaleType="fitCenter"
             app:tint="@color/browser_icon_tint" />
 
+        <!-- Close button (truly destroys the Activity) -->
+        <androidx.appcompat.widget.AppCompatImageButton
+            android:id="@+id/btnClose"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:src="@drawable/ic_browser_close"
+            android:background="@drawable/bg_toolbar_btn"
+            android:contentDescription="@string/browser_close"
+            android:padding="6dp"
+            android:scaleType="fitCenter"
+            app:tint="@color/browser_icon_tint" />
+
     </LinearLayout>
 
     <!-- Progress bar -->

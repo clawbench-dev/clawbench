@@ -12,7 +12,8 @@ import static org.mockito.Mockito.*;
 
 /**
  * Unit tests for BrowserActivity and MainActivity WebView lifecycle methods
- * (pauseWebView/resumeWebView) that pause/resume WebView to save resources.
+ * (pauseWebView/resumeWebView) that pause/resume WebView to save resources,
+ * and BrowserActivity keep-alive behavior (onNewIntent, moveTaskToBack).
  *
  * Uses Unsafe.allocateInstance() to create Activities without triggering
  * AppCompatActivity's constructor. Uses Mockito to mock WebView.
@@ -95,6 +96,73 @@ public class WebViewLifecycleTest {
         verify(mockWebView).resumeTimers();
     }
 
+    // =====================================================
+    // BrowserActivity.onNewIntent tests
+    // =====================================================
+
+    @Test
+    public void browserActivity_onNewIntent_loadsNewUrl() throws Exception {
+        android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
+        setField(browserActivity, "webView", mockWebView);
+        setField(browserActivity, "tunnelRetryCount", 5);
+        // Set a pre-existing targetHost to verify it gets reset when host is empty
+        setField(browserActivity, "targetHost", "old.host.com");
+
+        android.widget.EditText mockUrlBar = mock(android.widget.EditText.class);
+        setField(browserActivity, "urlBar", mockUrlBar);
+
+        android.content.Intent intent = new android.content.Intent();
+        intent.putExtra("port", 8080);
+        intent.putExtra("protocol", "http");
+        intent.putExtra("host", "");
+
+        invokeMethod(browserActivity, "onNewIntent", android.content.Intent.class, intent);
+
+        verify(mockWebView).loadUrl("http://localhost:8080/");
+        // tunnelRetryCount should be reset
+        assert getField(browserActivity.getClass(), "tunnelRetryCount").getInt(browserActivity) == 0;
+        // targetHost should be reset to empty when host is empty
+        assert "".equals(getField(browserActivity.getClass(), "targetHost").get(browserActivity));
+    }
+
+    @Test
+    public void browserActivity_onNewIntent_withHost_setsTargetHost() throws Exception {
+        android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
+        setField(browserActivity, "webView", mockWebView);
+
+        android.widget.EditText mockUrlBar = mock(android.widget.EditText.class);
+        setField(browserActivity, "urlBar", mockUrlBar);
+
+        android.content.Intent intent = new android.content.Intent();
+        intent.putExtra("port", 9090);
+        intent.putExtra("protocol", "https");
+        intent.putExtra("host", "192.168.1.1");
+
+        invokeMethod(browserActivity, "onNewIntent", android.content.Intent.class, intent);
+
+        verify(mockWebView).loadUrl("https://localhost:9090/");
+        assert "192.168.1.1".equals(getField(browserActivity.getClass(), "targetHost").get(browserActivity));
+    }
+
+    @Test
+    public void browserActivity_onNewIntent_stripsDefaultPort() throws Exception {
+        android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
+        setField(browserActivity, "webView", mockWebView);
+
+        android.widget.EditText mockUrlBar = mock(android.widget.EditText.class);
+        setField(browserActivity, "urlBar", mockUrlBar);
+
+        android.content.Intent intent = new android.content.Intent();
+        intent.putExtra("port", 8080);
+        intent.putExtra("protocol", "http");
+        intent.putExtra("host", "example.com:80");
+
+        invokeMethod(browserActivity, "onNewIntent", android.content.Intent.class, intent);
+
+        // Port 80 is default for http, so targetHost should be just "example.com"
+        assert "example.com".equals(getField(browserActivity.getClass(), "targetHost").get(browserActivity));
+    }
+
     // --- Helper methods ---
 
     @SuppressWarnings("unchecked")
@@ -135,6 +203,28 @@ public class WebViewLifecycleTest {
         Method method = findMethod(target.getClass(), methodName);
         method.setAccessible(true);
         method.invoke(target);
+    }
+
+    private static void invokeMethod(Object target, String methodName, Class<?> paramType, Object arg) throws Exception {
+        Method method = findMethod(target.getClass(), methodName, paramType);
+        method.setAccessible(true);
+        method.invoke(target, arg);
+    }
+
+    private static Field getField(Class<?> clazz, String fieldName) throws Exception {
+        Field field = null;
+        Class<?> c = clazz;
+        while (c != null) {
+            try {
+                field = c.getDeclaredField(fieldName);
+                break;
+            } catch (NoSuchFieldException e) {
+                c = c.getSuperclass();
+            }
+        }
+        if (field == null) throw new NoSuchFieldException(fieldName);
+        field.setAccessible(true);
+        return field;
     }
 
     private static Method findMethod(Class<?> clazz, String methodName, Class<?>... paramTypes) throws Exception {

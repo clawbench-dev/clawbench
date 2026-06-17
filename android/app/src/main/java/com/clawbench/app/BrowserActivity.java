@@ -53,6 +53,13 @@ import javax.net.ssl.X509TrustManager;
  * - Data persists across sessions (not cleared on exit)
  * - Auto-accept SSL for localhost, prompt for others
  * - No AndroidNative bridge injected (clean browser environment)
+ *
+ * Lifecycle:
+ * - Back button navigates back to MainActivity (preserves WebView state)
+ *   instead of destroying it, so users can return to the same page.
+ * - Explicit close button (X) truly finishes the Activity.
+ * - When reopened via openInSandbox, existing instance is reused via
+ *   FLAG_ACTIVITY_CLEAR_TOP | FLAG_ACTIVITY_SINGLE_TOP + onNewIntent.
  */
 public class BrowserActivity extends AppCompatActivity {
 
@@ -164,14 +171,17 @@ public class BrowserActivity extends AppCompatActivity {
     }
 
     private void setupToolbar() {
-        // Back button: WebView history back, or close if no history
+        // Back button: WebView history back, or navigate back to main app
         findViewById(R.id.btnBack).setOnClickListener(v -> {
             if (webView.canGoBack()) {
                 webView.goBack();
             } else {
-                finish();
+                navigateBackToMain();
             }
         });
+
+        // Close button: truly finish the Activity (destroy WebView)
+        findViewById(R.id.btnClose).setOnClickListener(v -> finish());
 
         // Refresh button
         findViewById(R.id.btnRefresh).setOnClickListener(v -> webView.reload());
@@ -285,13 +295,91 @@ public class BrowserActivity extends AppCompatActivity {
         webView.resumeTimers();
     }
 
+    /**
+     * Navigate back to MainActivity instead of destroying this Activity.
+     * Since BrowserActivity runs in a separate task (taskAffinity="" + :browser process),
+     * moveTaskToBack would push the whole task to background with no way back.
+     * Starting MainActivity brings the main app to the foreground while this
+     * Activity stays alive in the background, preserving the WebView state.
+     */
     @Override
     public void onBackPressed() {
         if (webView.canGoBack()) {
             webView.goBack();
         } else {
-            super.onBackPressed();
+            navigateBackToMain();
         }
+    }
+
+    /**
+     * Navigate back to the main app while keeping this Activity alive.
+     * Instead of starting a new MainActivity (which can reset tab state),
+     * we move the main app's task to the foreground using ActivityManager.
+     * This preserves the exact UI state the user had before opening the sandbox.
+     */
+    private void navigateBackToMain() {
+        // Move this task (BrowserActivity) to background first
+        moveTaskToBack(true);
+        // Bring the main app's task to the foreground
+        try {
+            android.app.ActivityManager am = (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
+            for (android.app.ActivityManager.AppTask appTask : am.getAppTasks()) {
+                android.content.ComponentName comp = appTask.getTaskInfo().topActivity;
+                if (comp != null && comp.getPackageName().equals(getPackageName())
+                        && !getClass().getName().equals(comp.getClassName())) {
+                    appTask.moveToFront();
+                    break;
+                }
+            }
+        } catch (Exception e) {
+            AppLog.w(TAG, "BrowserActivity: failed to bring main task to front", e);
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+
+        int port = intent.getIntExtra("port", 0);
+        String protocol = intent.getStringExtra("protocol");
+        String host = intent.getStringExtra("host");
+
+        if (port <= 0 || protocol == null) return;
+
+        String newUrl = protocol + "://localhost:" + port + "/";
+
+        // If reopening the same URL, just bring to foreground without reloading
+        if (newUrl.equals(pendingUrl)) {
+            AppLog.i(TAG, "BrowserActivity: onNewIntent same URL, skip reload: " + newUrl);
+            return;
+        }
+
+        localPort = port;
+
+        // Reset and recalculate targetHost
+        targetHost = "";
+        if (host != null && !host.isEmpty()) {
+            String hostPart = host;
+            if (host.contains(":")) {
+                String[] parts = host.split(":", 2);
+                try {
+                    int targetPort = Integer.parseInt(parts[1]);
+                    boolean isDefault = ("http".equals(protocol) && targetPort == 80) ||
+                            ("https".equals(protocol) && targetPort == 443);
+                    hostPart = isDefault ? parts[0] : host;
+                } catch (NumberFormatException e) {
+                    hostPart = host;
+                }
+            }
+            targetHost = hostPart;
+        }
+
+        tunnelRetryCount = 0;
+        pendingUrl = newUrl;
+        AppLog.i(TAG, "BrowserActivity: onNewIntent loading " + newUrl + " (tunnel target: " + (host != null && !host.isEmpty() ? host : "localhost") + ":" + port + ")");
+        webView.loadUrl(newUrl);
+        urlBar.setText(newUrl);
     }
 
     @Override

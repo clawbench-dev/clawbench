@@ -1549,6 +1549,10 @@ public class MainActivity extends AppCompatActivity {
          * Open a forwarded port in the sandbox browser (BrowserActivity).
          * Runs in a separate process for full Cookie/Storage isolation from the main app.
          * Called from the port forwarding panel "open" button (preferred over openInBrowser).
+         *
+         * BrowserActivity uses singleTask launchMode, so if an instance already exists,
+         * Android brings it to the foreground and calls onNewIntent instead of creating
+         * a new Activity (which would reload the WebView).
          */
         @JavascriptInterface
         public void openInSandbox(int port, String protocol, String host) {

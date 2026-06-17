@@ -43,10 +43,13 @@
             android:stopWithTask="false"
             android:exported="false" />
 
-        <!-- Sandbox browser for testing forwarded ports — runs in separate process for Cookie/Storage isolation -->
+        <!-- Sandbox browser for testing forwarded ports — runs in separate process for Cookie/Storage isolation.
+             singleTask ensures only one instance exists; re-opening always triggers onNewIntent
+             instead of creating a new Activity (which would reload the WebView). -->
         <activity
             android:name=".BrowserActivity"
             android:process=":browser"
+            android:launchMode="singleTask"
             android:theme="@style/Theme.ClawBench.Browser"
             android:taskAffinity=""
             android:excludeFromRecents="true"
