@@ -59,6 +59,10 @@ type OpenCodeStreamParser struct {
 	// ToolNameMap maps backend-specific tool names to canonical names.
 	// When set, ParseLine uses this map instead of the global normalizeToolName().
 	ToolNameMap map[string]string
+
+	// InputRemaps maps input field names for tool input normalization.
+	// When set, ParseLine uses this map for normalizing tool input fields.
+	InputRemaps map[string]string
 }
 
 // GetCapturedSessionID returns the OpenCode session ID (ses_xxx) captured from
@@ -121,10 +125,7 @@ func (p *OpenCodeStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 		if part.State != nil && len(part.State.Input) > 0 {
 			// Normalize input field names from OpenCode's camelCase to canonical snake_case
 			inputStr = func() string {
-				normalized, err := normalizeToolInput(part.State.Input, map[string]string{
-					"oldString": "old_string",
-					"newString": "new_string",
-				})
+				normalized, err := normalizeToolInput(part.State.Input, p.InputRemaps)
 				if err != nil {
 					return string(part.State.Input)
 				}

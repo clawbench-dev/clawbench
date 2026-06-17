@@ -7,6 +7,13 @@ import (
 	"clawbench/internal/ai"
 )
 
+// DeepSeekInputRemaps maps DeepSeek CLI input field names to canonical names.
+// Injected into DeepSeekStreamParser at construction time.
+var DeepSeekInputRemaps = map[string]string{
+	"path": "file_path", "search": "old_string", "replace": "new_string",
+	"filePaths": "file_paths", "dirPath": "path",
+}
+
 func init() {
 	ai.RegisterBackend("deepseek", newDeepSeekBackend, true)
 }
@@ -17,7 +24,9 @@ func newDeepSeekBackend() ai.AIBackend {
 		BackendName:   "deepseek",
 		Cmd:           "deepseek",
 		BuildArgsFn:   buildDeepSeekStreamArgs,
-		NewParserFn:   func() ai.LineParser { return &ai.DeepSeekStreamParser{} },
+		NewParserFn:   func() ai.LineParser {
+			return &ai.DeepSeekStreamParser{InputRemaps: DeepSeekInputRemaps}
+		},
 		FilterLineFn:  nil, // skip empty lines only (default)
 		PreStartFn:    nil, // prompt is passed as positional argument
 	}

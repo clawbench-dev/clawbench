@@ -9,7 +9,7 @@ import (
 
 func parseOpenCodeLine(line string) []StreamEvent {
 	ch := make(chan StreamEvent, 64)
-	parser := &OpenCodeStreamParser{}
+	parser := &OpenCodeStreamParser{InputRemaps: openCodeInputRemaps}
 	parser.ParseLine(line, ch)
 	close(ch)
 	var events []StreamEvent
@@ -187,7 +187,7 @@ func TestOpenCodeStream_ParseLine_StepStart(t *testing.T) {
 }
 
 func TestOpenCodeStream_GetCapturedSessionID(t *testing.T) {
-	parser := &OpenCodeStreamParser{}
+	parser := &OpenCodeStreamParser{InputRemaps: openCodeInputRemaps}
 
 	// Before any parsing, session ID is empty
 	if id := parser.GetCapturedSessionID(); id != "" {
@@ -237,7 +237,7 @@ func TestOpenCodeStream_ParseLine_UnknownType(t *testing.T) {
 }
 
 func TestOpenCodeStream_SessionIDCapture(t *testing.T) {
-	parser := &OpenCodeStreamParser{}
+	parser := &OpenCodeStreamParser{InputRemaps: openCodeInputRemaps}
 	ch := make(chan StreamEvent, 64)
 
 	// First message captures session ID
@@ -274,7 +274,7 @@ func TestOpenCodeStream_MultiStepFlow(t *testing.T) {
 	}
 
 	ch := make(chan StreamEvent, 64)
-	parser := &OpenCodeStreamParser{}
+	parser := &OpenCodeStreamParser{InputRemaps: openCodeInputRemaps}
 	for _, line := range lines {
 		parser.ParseLine(line, ch)
 	}

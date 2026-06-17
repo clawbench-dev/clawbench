@@ -78,7 +78,7 @@ type StreamJSONParser struct {
 	ToolNameMap map[string]string
 
 	// InputRemaps maps input field names for tool input normalization.
-	// When set, ParseLine uses this map instead of getRemaps("kimi_cli").
+	// Injected at parser construction time by the backend sub-package.
 	InputRemaps map[string]string
 }
 
@@ -117,11 +117,7 @@ func (p *StreamJSONParser) ParseLine(line string, ch chan<- StreamEvent) {
 		inputStr := "{}"
 		if len(msg.Parameters) > 0 {
 			// Normalize input field names to canonical snake_case
-			remaps := p.InputRemaps
-			if remaps == nil {
-				remaps = getRemaps("kimi_cli")
-			}
-			normalized, err := normalizeToolInput(msg.Parameters, remaps)
+			normalized, err := normalizeToolInput(msg.Parameters, p.InputRemaps)
 			if err != nil {
 				inputStr = string(msg.Parameters)
 			} else {

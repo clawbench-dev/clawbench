@@ -8,7 +8,7 @@ import (
 // parseOpenCodeToolEvent extracts a ToolCall from an OpenCode stream message.
 // OpenCode combines tool_use and tool_result in a single event (via part.tool).
 // Returns nil if the message doesn't contain a valid tool event.
-func parseOpenCodeToolEvent(msg *OpenCodeStreamMessage) *ToolCall {
+func parseOpenCodeToolEvent(msg *OpenCodeStreamMessage, remaps map[string]string) *ToolCall {
 	if msg.Type != "tool_use" {
 		return nil
 	}
@@ -21,7 +21,7 @@ func parseOpenCodeToolEvent(msg *OpenCodeStreamMessage) *ToolCall {
 
 	inputStr := "{}"
 	if part.State != nil && len(part.State.Input) > 0 && string(part.State.Input) != "null" {
-		normalized, err := normalizeToolInput(part.State.Input, getRemaps("opencode_cli"))
+		normalized, err := normalizeToolInput(part.State.Input, remaps)
 		if err != nil {
 			inputStr = string(part.State.Input) // fallback to raw
 		} else {

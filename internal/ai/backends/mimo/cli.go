@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/ai/backends/opencode"
 )
 
 func init() {
@@ -12,13 +13,18 @@ func init() {
 
 // newMimoBackend returns a CLIBackend instance for MiMo-Code CLI.
 // MiMo-Code is a fork of OpenCode and uses the same JSON stream format,
-// so we reuse OpenCode's stream parser.
+// so we reuse OpenCode's stream parser and tool mappings.
 func newMimoBackend() ai.AIBackend {
 	return &ai.CLIBackend{
 		BackendName: "mimo",
 		Cmd:         "mimo",
 		BuildArgsFn: buildMimoStreamArgs,
-		NewParserFn: func() ai.LineParser { return &ai.OpenCodeStreamParser{} },
+		NewParserFn: func() ai.LineParser {
+			return &ai.OpenCodeStreamParser{
+				ToolNameMap: opencode.OpenCodeToolNameMap,
+				InputRemaps: opencode.OpenCodeInputRemaps,
+			}
+		},
 		FilterLineFn: func(line string) (string, bool) {
 			if line == "" || strings.HasPrefix(line, "[opencode-mobile]") {
 				return "", false

@@ -11,16 +11,34 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"clawbench/internal/platform"
-
 	"gopkg.in/yaml.v3"
 )
+
+// --- Discovery function registry ---
+
+// discoverFuncs maps backend ID → model discovery function.
+// Populated by backend sub-packages via RegisterDiscoverModelsFunc in init().
+var discoverFuncs = make(map[string]func() []AgentModel)
+var discoverFuncsMu sync.RWMutex
+
+// RegisterDiscoverModelsFunc registers a model discovery function for a backend.
+// Called by backend sub-packages in their init() functions.
+func RegisterDiscoverModelsFunc(backendID string, fn func() []AgentModel) {
+	discoverFuncsMu.Lock()
+	defer discoverFuncsMu.Unlock()
+	discoverFuncs[backendID] = fn
+}
+
+// lookupDiscoverFunc returns the registered discovery function for a backend, or nil.
+func lookupDiscoverFunc(backendID string) func() []AgentModel {
+	discoverFuncsMu.RLock()
+	defer discoverFuncsMu.RUnlock()
+	return discoverFuncs[backendID]
+}
 
 // BackendSpec defines a known AI backend for auto-discovery.
 type BackendSpec struct {
@@ -45,13 +63,11 @@ type BackendSpec struct {
 var BackendRegistry = []BackendSpec{
 	{
 		ID: "claude", Backend: "claude", DefaultCmd: "claude", Name: "Claude", Icon: "🤖", Specialty: "代码编写与推理",
-		DiscoverModelsFunc:   DiscoverClaudeModels,
 		ThinkingEffortLevels: []string{"low", "medium", "high", "xhigh", "max"},
 		AcpCommand:           "npx -y @agentclientprotocol/claude-agent-acp@latest",
 	},
 	{
 		ID: "codebuddy", Backend: "codebuddy", DefaultCmd: "codebuddy", Name: "Codebuddy", Icon: "🐛", Specialty: "全栈开发助手",
-		DiscoverModelsFunc:   DiscoverCodebuddyModels,
 		ThinkingEffortLevels: []string{"low", "medium", "high", "xhigh"},
 		AcpCommand:           "codebuddy --acp",
 	},
@@ -63,18 +79,15 @@ var BackendRegistry = []BackendSpec{
 	},
 	{
 		ID: "codex", Backend: "codex", DefaultCmd: "codex", Name: "Codex", Icon: "🐙", Specialty: "OpenAI 编码代理",
-		DiscoverModelsFunc:   DiscoverCodexModels,
 		ThinkingEffortLevels: []string{"low", "medium", "high"},
 		AcpCommand:           "npx -y @agentclientprotocol/codex-acp@latest",
 	},
 	{
 		ID: "qoder", Backend: "qoder", DefaultCmd: "qodercli", Name: "Qoder", Icon: "⚡", Specialty: "AI 编码助手",
-		DiscoverModelsFunc: DiscoverQoderModels,
 		AcpCommand:         "qodercli --acp",
 	},
 	{
 		ID: "vecli", Backend: "vecli", DefaultCmd: "vecli", Name: "VeCLI", Icon: "🌿", Specialty: "字节跳动 AI 助手",
-		DiscoverModelsFunc: DiscoverVeCLIModels,
 	},
 	{
 		ID: "deepseek", Backend: "deepseek", DefaultCmd: "deepseek", Name: "DeepSeek", Icon: "🔍", Specialty: "DeepSeek 推理与编码",
@@ -82,30 +95,25 @@ var BackendRegistry = []BackendSpec{
 	},
 	{
 		ID: "pi", Backend: "pi", DefaultCmd: "pi", Name: "Pi", Icon: "🥧", Specialty: "极简编程智能体",
-		DiscoverModelsFunc:   DiscoverPiModels,
 		ThinkingEffortLevels: []string{"off", "minimal", "low", "medium", "high", "xhigh"},
 	},
 	{
 		ID: "cline", Backend: "cline", DefaultCmd: "cline", Name: "Cline", Icon: "🔮", Specialty: "自主编码智能体",
-		DiscoverModelsFunc:   DiscoverClineModels,
 		ThinkingEffortLevels: []string{"none", "low", "medium", "high", "xhigh"},
 		AcpCommand:           "cline --acp",
 	},
 	{
 		ID: "kimi", Backend: "kimi", DefaultCmd: "kimi", Name: "Kimi", Icon: "🌙", Specialty: "Kimi AI 编码助手",
-		DiscoverModelsFunc:   DiscoverKimiModels,
 		ThinkingEffortLevels: []string{"off", "on"},
 		AcpCommand:           "kimi acp",
 	},
 	{
 		ID: "copilot", Backend: "copilot", DefaultCmd: "copilot", Name: "Copilot", Icon: "🤝", Specialty: "GitHub Copilot 编码助手",
-		DiscoverModelsFunc:   DiscoverCopilotModels,
 		ThinkingEffortLevels: []string{"none", "low", "medium", "high", "xhigh", "max"},
 		AcpCommand:           "copilot --acp",
 	},
 	{
 		ID: "mimo", Backend: "mimo", DefaultCmd: "mimo", Name: "MiMo-Code", Icon: "🚀", Specialty: "小米 MiMo 编码助手",
-		DiscoverModelsFunc:   DiscoverMimoModels,
 		ThinkingEffortLevels: []string{"minimal", "high", "max"},
 		AcpCommand:           "mimo acp",
 	},
@@ -194,6 +202,15 @@ func discoverModels(spec BackendSpec) []AgentModel {
 		return models
 	}
 
+	// Check the discovery function registry (populated by backend sub-packages)
+	if fn := lookupDiscoverFunc(spec.Backend); fn != nil {
+		models := fn()
+		if len(models) > 0 {
+			slog.Info("model discovery succeeded (registry)", "backend", spec.ID, "models", len(models))
+		}
+		return models
+	}
+
 	if len(spec.ListModelsCmd) == 0 || spec.ParseModels == nil {
 		return nil
 	}
@@ -229,9 +246,15 @@ func FindSpecByBackend(backend string) *BackendSpec {
 }
 
 // CanDiscoverModels returns true if the spec supports model discovery
-// via either DiscoverModelsFunc or ListModelsCmd+ParseModels.
+// via either DiscoverModelsFunc, the registry, or ListModelsCmd+ParseModels.
 func CanDiscoverModels(spec BackendSpec) bool {
-	return spec.DiscoverModelsFunc != nil || (len(spec.ListModelsCmd) > 0 && spec.ParseModels != nil)
+	if spec.DiscoverModelsFunc != nil {
+		return true
+	}
+	if lookupDiscoverFunc(spec.Backend) != nil {
+		return true
+	}
+	return len(spec.ListModelsCmd) > 0 && spec.ParseModels != nil
 }
 
 // SyncDiscoverModels runs DiscoverModels for all backends that support it
@@ -284,284 +307,8 @@ func AsyncRefreshModelCache(db *sql.DB) {
 	}()
 }
 
-// --- Model list parsers ---
+// --- Model list parsers (used by BackendRegistry ParseModels) ---
 
-// codebuddyProductFile is the JSON file in the codebuddy installation that contains
-// the authoritative model list with names, capabilities, and default status.
-const codebuddyProductFile = "product.cloudhosted.json"
-
-// codebuddyProductModel represents a model entry in codebuddy's product JSON.
-type codebuddyProductModel struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	IsDefault bool   `json:"isDefault"`
-}
-
-// codebuddyProduct represents the top-level structure of codebuddy's product JSON.
-type codebuddyProduct struct {
-	Models []codebuddyProductModel `json:"models"`
-}
-
-// DiscoverCodebuddyModels discovers Codebuddy models by reading the product.cloudhosted.json
-// file from the CLI installation directory. This JSON file contains the authoritative model
-// list with proper names and default status, making it far more reliable than --help output
-// (which launches a TUI that hangs without a TTY) or JS bundle scanning (which is fragile).
-func DiscoverCodebuddyModels() []AgentModel {
-	// Resolve the real path for the codebuddy CLI, handling Windows .cmd wrappers
-	// Path is typically: .../node_modules/@tencent-ai/codebuddy-code/bin/codebuddy
-	realPath := platform.ResolveCLIPath("codebuddy")
-	if realPath == "" {
-		return nil
-	}
-
-	// The product JSON is at .../codebuddy-code/product.cloudhosted.json
-	// From .../bin/codebuddy: Dir → .../bin, Dir again → .../codebuddy-code
-	pkgDir := filepath.Dir(filepath.Dir(realPath))
-	productPath := filepath.Join(pkgDir, codebuddyProductFile)
-
-	data, err := os.ReadFile(productPath)
-	if err != nil {
-		slog.Debug("codebuddy model discovery: product JSON not found", "path", productPath, "error", err)
-		return nil
-	}
-
-	var product codebuddyProduct
-	if err := json.Unmarshal(data, &product); err != nil {
-		slog.Debug("codebuddy model discovery: failed to parse product JSON", "error", err)
-		return nil
-	}
-
-	if len(product.Models) == 0 {
-		slog.Debug("codebuddy model discovery: no models in product JSON")
-		return nil
-	}
-
-	var models []AgentModel
-	for _, m := range product.Models {
-		// Skip pseudo-models like "default" and "auto" — these are selectors, not real model IDs
-		if m.ID == "default" || m.ID == "auto" {
-			continue
-		}
-		// Skip non-LLM models (e.g. text-to-image)
-		if m.ID == "hunyuan-image-v3.0" {
-			continue
-		}
-		name := m.Name
-		if name == "" {
-			name = m.ID
-		}
-		models = append(models, AgentModel{
-			ID:      m.ID,
-			Name:    name,
-			Default: m.IsDefault || (len(models) == 0 && m.ID != "default" && m.ID != "auto"),
-		})
-	}
-
-	if len(models) == 0 {
-		return nil
-	}
-
-	// First non-skipped model gets Default=true if none was marked isDefault
-	if !models[0].Default {
-		models[0].Default = true
-	}
-
-	slog.Info("codebuddy model discovery succeeded", "models", len(models))
-	return models
-}
-
-// codebuddyModelRe extracts model IDs from codebuddy --help output (legacy, kept for ParseCodebuddyModels).
-// Format: "Currently supported: (glm-4.7, glm-4.6, ...)"
-var codebuddyModelRe = regexp.MustCompile(`Currently supported: \(([^)]+)\)`)
-
-// ParseCodebuddyModels parses codebuddy --help output to extract model IDs.
-// Output format: "... --model <model>  Model for the current session. ... Currently supported: (glm-4.7, glm-4.6, ...)"
-//
-// Deprecated: codebuddy --help launches a TUI that hangs without a TTY; use DiscoverCodebuddyModels instead.
-func ParseCodebuddyModels(output string) []AgentModel {
-	matches := codebuddyModelRe.FindStringSubmatch(output)
-	if len(matches) < 2 {
-		return nil
-	}
-
-	parts := strings.Split(matches[1], ",")
-	var models []AgentModel
-	for i, p := range parts {
-		id := strings.TrimSpace(p)
-		if id == "" {
-			continue
-		}
-		models = append(models, AgentModel{
-			ID:      id,
-			Name:    id,
-			Default: i == 0,
-		})
-	}
-	return models
-}
-
-// claudeModelRe matches Claude model IDs like "claude-sonnet-4-6" or "claude-opus-4-5" from strings output.
-// Requires exactly two version segments (major-minor), excludes:
-// - date-stamped like "claude-opus-4-20250514" (8-digit date suffix)
-// - short aliases like "claude-sonnet-4" (points to latest snapshot)
-var claudeModelRe = regexp.MustCompile(`^claude-(sonnet|opus|haiku)-\d+-\d+$`)
-
-// claudeModelOrder defines the preferred display order: sonnet first (default), then opus, then haiku.
-var claudeModelOrder = map[string]int{"sonnet": 0, "opus": 1, "haiku": 2}
-
-// claudeModelNames maps model ID prefixes to human-readable names.
-var claudeModelNames = map[string]string{
-	"sonnet": "Sonnet",
-	"opus":   "Opus",
-	"haiku":  "Haiku",
-}
-
-// claudeConfigDir returns the Claude config directory (~/.claude/).
-// Overridable for testing (same pattern as DiscoverModels variable).
-var claudeConfigDir = platform.ClaudeConfigDir
-
-// LoadClaudeModelOverrides reads ~/.claude/settings.json and returns the
-// modelOverrides map if present. Returns nil on any error (missing file,
-// invalid JSON, no overrides key) — graceful degradation.
-func LoadClaudeModelOverrides() map[string]string {
-	path := filepath.Join(claudeConfigDir(), "settings.json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		slog.Debug("claude model overrides: settings.json not found", "path", path, "error", err)
-		return nil
-	}
-	var cfg struct {
-		ModelOverrides map[string]string `json:"modelOverrides"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		slog.Debug("claude model overrides: invalid JSON", "path", path, "error", err)
-		return nil
-	}
-	if len(cfg.ModelOverrides) == 0 {
-		return nil
-	}
-	return cfg.ModelOverrides
-}
-
-// claudeIsDateStamped returns true if the model ID contains an 8-digit date segment
-// like "claude-opus-4-20250514", which are snapshot aliases we want to skip.
-func claudeIsDateStamped(modelID string) bool {
-	for _, seg := range strings.Split(modelID, "-") {
-		if len(seg) == 8 {
-			return true
-		}
-	}
-	return false
-}
-
-// DiscoverClaudeModels discovers Claude model IDs by scanning the claude binary
-// with `strings`. Claude CLI does not have a --list-models command, so we extract
-// model IDs from the binary which contains hardcoded model name patterns.
-func DiscoverClaudeModels() []AgentModel { //nolint:gocyclo,gocognit // binary scanning model discovery
-	// Resolve the real path for the claude binary, handling Windows .cmd wrappers
-	path := platform.ResolveCLIPath("claude")
-	if path == "" {
-		// Claude binary not found — fall back to known defaults
-		models := make([]AgentModel, len(claudeDefaultModels))
-		copy(models, claudeDefaultModels)
-		if len(models) > 0 {
-			models[0].Default = true
-		}
-		slog.Info("claude model discovery: binary not found, using defaults", "models", len(models))
-		return models
-	}
-
-	// Extract printable strings from the binary (cross-platform replacement for
-	// the POSIX "strings" command, which does not exist on Windows)
-	lines, err := platform.ExtractStrings(path, 4)
-	if err != nil {
-		slog.Debug("claude model discovery: extract strings failed", "error", err)
-		return nil
-	}
-
-	// Extract unique model IDs matching the pattern
-	seen := make(map[string]bool)
-	var models []AgentModel
-	for _, line := range lines {
-		if !claudeModelRe.MatchString(line) || seen[line] {
-			continue
-		}
-		// Skip date-stamped versions like claude-opus-4-20250514
-		if claudeIsDateStamped(line) {
-			continue
-		}
-		seen[line] = true
-
-		// Generate human-readable name: claude-sonnet-4-6 → "Claude Sonnet 4.6"
-		parts := strings.SplitN(line, "-", 3) // ["claude", "sonnet", "4-6"]
-		name := line
-		if len(parts) == 3 {
-			if family, ok := claudeModelNames[parts[1]]; ok {
-				version := strings.ReplaceAll(parts[2], "-", ".")
-				name = "Claude " + family + " " + version
-			}
-		}
-
-		models = append(models, AgentModel{
-			ID:   line,
-			Name: name,
-		})
-	}
-
-	// Sort: sonnet first, then opus, then haiku; within each family, newest first
-	sort.Slice(models, func(i, j int) bool {
-		familyI := strings.SplitN(models[i].ID, "-", 3)
-		familyJ := strings.SplitN(models[j].ID, "-", 3)
-		if len(familyI) >= 2 && len(familyJ) >= 2 {
-			orderI, okI := claudeModelOrder[familyI[1]]
-			orderJ, okJ := claudeModelOrder[familyJ[1]]
-			if okI && okJ && orderI != orderJ {
-				return orderI < orderJ
-			}
-		}
-		// Same family: sort by ID descending (newest first)
-		return models[i].ID > models[j].ID
-	})
-
-	// Mark first model as default
-	if len(models) > 0 {
-		models[0].Default = true
-	}
-
-	// Apply model name overrides from ~/.claude/settings.json
-	// When modelOverrides maps a Claude model ID to another name (e.g. "MiniMax-M2.7"),
-	// we replace the display name so the user sees which underlying model is actually used.
-	// The model ID is NOT changed — CLI invocation always uses the original Claude model ID.
-	if overrides := LoadClaudeModelOverrides(); len(overrides) > 0 {
-		for i := range models {
-			if name, ok := overrides[models[i].ID]; ok {
-				slog.Debug("claude model override applied", "id", models[i].ID, "name", name)
-				models[i].Name = name
-			}
-		}
-	}
-
-	// If binary scanning found no models, fall back to known defaults
-	if len(models) == 0 {
-		models = make([]AgentModel, len(claudeDefaultModels))
-		copy(models, claudeDefaultModels)
-		if len(models) > 0 {
-			models[0].Default = true
-		}
-		slog.Info("claude model discovery: binary scan found nothing, using defaults", "models", len(models))
-		return models
-	}
-
-	return models
-}
-
-// claudeDefaultModels lists known Claude models as a fallback when binary
-// scanning fails (e.g. claude CLI not found or ExtractStrings returns nothing).
-var claudeDefaultModels = []AgentModel{
-	{ID: "claude-sonnet-4-20250514", Name: "Claude Sonnet 4"},
-	{ID: "claude-opus-4-20250514", Name: "Claude Opus 4"},
-	{ID: "claude-haiku-3-5-20241022", Name: "Claude 3.5 Haiku"},
-}
 var deepseekModelLineRe = regexp.MustCompile(`^(\*?)\s*(\S+)\s+\((\S+)\)`)
 
 // deepseekDefaultRe extracts the default model from the header line.
@@ -639,485 +386,6 @@ func ParseOpenCodeModels(output string) []AgentModel {
 			Default: len(models) == 0,
 		})
 	}
-	return models
-}
-
-// piModelLineRe matches lines from `pi --list-models` tabular output.
-// Format: "provider        model                       context  max-out  thinking  images"
-// We match any line with at least 2 whitespace-separated fields where the first
-// doesn't look like a header.
-var piModelLineRe = regexp.MustCompile(`^(\S+)\s+(\S+)`)
-
-// ParsePiModels parses the output of `pi --list-models` into a list of AgentModel.
-// Output format:
-//
-//	provider        model                       context  max-out  thinking  images
-//	anthropic       claude-sonnet-4-6           1M       64K      yes       yes
-//	openai          gpt-4o                      128K     4.1K     no        yes
-//
-// Models are prefixed with provider for disambiguation (e.g., "anthropic/claude-sonnet-4-6").
-func ParsePiModels(output string) []AgentModel {
-	var models []AgentModel
-	for _, line := range strings.Split(output, "\n") {
-		m := piModelLineRe.FindStringSubmatch(line)
-		if len(m) < 3 {
-			continue
-		}
-		provider := m[1]
-		modelID := m[2]
-		// Skip header line
-		if provider == "provider" || modelID == "model" {
-			continue
-		}
-		fullID := provider + "/" + modelID
-		models = append(models, AgentModel{
-			ID:      fullID,
-			Name:    fullID,
-			Default: len(models) == 0,
-		})
-	}
-	return models
-}
-
-// DiscoverPiModels discovers Pi model IDs by running `pi --list-models` and parsing the output.
-// Pi outputs the model table to stderr (not stdout), so we must capture both streams.
-// It first tries the embedded Pi binary at .clawbench/pi/pi, then falls back to PATH.
-func DiscoverPiModels() []AgentModel {
-	piPath := EmbeddedAgentPath()
-	if piPath == "" {
-		piPath = "pi" // fallback to PATH
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, piPath, "--list-models")
-	// Pi outputs the model table to stderr; use CombinedOutput to capture both.
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		slog.Debug("pi model discovery: command failed", "path", piPath, "error", err)
-		return nil
-	}
-
-	models := ParsePiModels(string(out))
-	if len(models) == 0 {
-		slog.Debug("pi model discovery: no models parsed")
-		return nil
-	}
-
-	slog.Info("pi model discovery succeeded", "models", len(models))
-	return models
-}
-
-// --- Codex model discovery ---
-
-// codexModelRe matches OpenAI model IDs in the Codex binary strings output.
-var codexModelRe = regexp.MustCompile(`^(gpt-\d+\.\d+(-mini)?|o[34](-mini)?)$`)
-
-// codexModelOrder defines the preferred display order for Codex models.
-var codexModelOrder = map[string]int{
-	"gpt-5.5":      0,
-	"gpt-5.4":      1,
-	"gpt-5.4-mini": 2,
-	"o3":           3,
-	"o4-mini":      4,
-}
-
-// codexTargetTriple returns the Rust target triple for the current platform.
-func codexTargetTriple() string {
-	arch := runtime.GOARCH
-	switch runtime.GOOS {
-	case "linux", "android":
-		switch arch {
-		case "amd64":
-			return "x86_64-unknown-linux-musl"
-		case "arm64":
-			return "aarch64-unknown-linux-musl"
-		}
-	case "darwin":
-		switch arch {
-		case "amd64":
-			return "x86_64-apple-darwin"
-		case "arm64":
-			return "aarch64-apple-darwin"
-		}
-	case "windows":
-		switch arch {
-		case "amd64":
-			return "x86_64-pc-windows-msvc"
-		case "arm64":
-			return "aarch64-pc-windows-msvc"
-		}
-	}
-	return ""
-}
-
-// DiscoverCodexModels discovers Codex model IDs using multiple strategies:
-// 1. Run `strings` on the embedded Rust binary (works for unstripped binaries)
-// 2. Read model info from the Codex state SQLite database (~/.codex/state_*.sqlite)
-// 3. Fall back to hardcoded defaults based on the installed Codex version
-func DiscoverCodexModels() []AgentModel {
-	// Strategy 1: Try strings on the Rust binary
-	if models := discoverCodexModelsFromBinary(); len(models) > 0 {
-		return models
-	}
-
-	// Strategy 2: Read from Codex state SQLite database
-	if models := discoverCodexModelsFromStateDB(); len(models) > 0 {
-		return models
-	}
-
-	// Strategy 3: Hardcoded defaults for the current generation of Codex models
-	// The Codex Rust binary is stripped, so strings extraction often fails.
-	// We provide known model IDs based on the Codex version.
-	return discoverCodexModelsDefaults()
-}
-
-// discoverCodexModelsFromBinary tries to extract model IDs by scanning the
-// Codex Rust binary for printable strings. This works for unstripped or debug binaries.
-func discoverCodexModelsFromBinary() []AgentModel {
-	// Resolve the real path for the codex CLI, handling Windows .cmd wrappers
-	realPath := platform.ResolveCLIPath("codex")
-	if realPath == "" {
-		return nil
-	}
-
-	// Navigate to the package directory: .../node_modules/@openai/codex/
-	pkgDir := filepath.Dir(filepath.Dir(realPath))
-	vendorDir := filepath.Join(pkgDir, "vendor")
-
-	targetTriple := codexTargetTriple()
-	if targetTriple == "" {
-		return nil
-	}
-
-	binaryName := "codex"
-	if runtime.GOOS == "windows" {
-		binaryName = "codex.exe"
-	}
-	binaryPath := filepath.Join(vendorDir, targetTriple, "codex", binaryName)
-
-	if _, err := os.Stat(binaryPath); err != nil {
-		return nil
-	}
-
-	// Extract printable strings from the binary (cross-platform replacement for
-	// the POSIX "strings" command, which does not exist on Windows)
-	lines, err := platform.ExtractStrings(binaryPath, 4)
-	if err != nil {
-		slog.Debug("codex model discovery: extract strings failed", "path", binaryPath, "error", err)
-		return nil
-	}
-
-	seen := make(map[string]bool)
-	var models []AgentModel
-	for _, line := range lines {
-		if !codexModelRe.MatchString(line) || seen[line] {
-			continue
-		}
-		seen[line] = true
-		models = append(models, AgentModel{
-			ID:   line,
-			Name: line,
-		})
-	}
-
-	if len(models) == 0 {
-		return nil
-	}
-
-	sort.Slice(models, func(i, j int) bool {
-		oi, okI := codexModelOrder[models[i].ID]
-		oj, okJ := codexModelOrder[models[j].ID]
-		if okI && okJ {
-			return oi < oj
-		}
-		if okI {
-			return true
-		}
-		if okJ {
-			return false
-		}
-		return models[i].ID < models[j].ID
-	})
-
-	models[0].Default = true
-	slog.Info("codex model discovery (strings) succeeded", "models", len(models))
-	return models
-}
-
-// discoverCodexModelsFromStateDB reads model info from the Codex state SQLite database.
-// The state database stores the model catalog that Codex fetched from OpenAI's API.
-func discoverCodexModelsFromStateDB() []AgentModel {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil
-	}
-
-	// Find the state SQLite database (e.g., state_5.sqlite)
-	codexDir := filepath.Join(homeDir, ".codex")
-	entries, err := os.ReadDir(codexDir)
-	if err != nil {
-		return nil
-	}
-
-	var dbPath string
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasPrefix(e.Name(), "state_") && strings.HasSuffix(e.Name(), ".sqlite") {
-			dbPath = filepath.Join(codexDir, e.Name())
-			break
-		}
-	}
-
-	if dbPath == "" {
-		return nil
-	}
-
-	// Try to read models from the database
-	// Codex stores model info in a "models" table or similar
-	// Since we can't import C/sqlite3 directly, we use the codex CLI itself
-	// to query models. But codex has no model listing command, so we skip this.
-	return nil
-}
-
-// codexDefaultModels lists the known default models for the current Codex version.
-// These are updated manually based on OpenAI's model catalog.
-// When the strings approach or state DB approach works, those take priority.
-var codexDefaultModels = []AgentModel{
-	{ID: "gpt-5.5", Name: "GPT-5.5", Default: true},
-	{ID: "gpt-5.4", Name: "GPT-5.4", Default: false},
-	{ID: "gpt-5.4-mini", Name: "GPT-5.4 Mini", Default: false},
-}
-
-// discoverCodexModelsDefaults returns hardcoded default models for Codex.
-// This is the fallback when neither binary strings nor state DB extraction works.
-func discoverCodexModelsDefaults() []AgentModel {
-	// Only return defaults if codex is actually installed
-	if platform.ResolveCLIPath("codex") == "" {
-		return nil
-	}
-
-	models := make([]AgentModel, len(codexDefaultModels))
-	copy(models, codexDefaultModels)
-	slog.Info("codex model discovery: using hardcoded defaults", "models", len(models))
-	return models
-}
-
-// --- Qoder model discovery ---
-
-// qoderSkipModels are model IDs in the dynamic-texts.json that are tier-based
-// selectors or routing aliases, not actual models.
-var qoderSkipModels = map[string]bool{
-	"auto":        true,
-	"ultimate":    true,
-	"performance": true,
-	"efficient":   true,
-	"lite":        true,
-}
-
-// qoderModelKeyRe matches keys like "modelSelector.item.qmodel" in the dynamic-texts JSON.
-var qoderModelKeyRe = regexp.MustCompile(`^modelSelector\.item\.(.+)$`)
-
-// DiscoverQoderModels discovers Qoder model IDs by reading the cached model catalog
-// from ~/.qoder/.auth/dynamic-texts.json.
-func DiscoverQoderModels() []AgentModel { //nolint:gocyclo // JSON-based model discovery
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		slog.Debug("qoder model discovery: cannot determine home directory", "error", err)
-		return nil
-	}
-
-	jsonPath := filepath.Join(homeDir, ".qoder", ".auth", "dynamic-texts.json")
-	data, err := os.ReadFile(jsonPath)
-	if err != nil {
-		slog.Debug("qoder model discovery: dynamic-texts.json not found", "path", jsonPath, "error", err)
-		return nil
-	}
-
-	var raw struct {
-		Texts map[string]interface{} `json:"texts"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		slog.Debug("qoder model discovery: failed to parse JSON", "error", err)
-		return nil
-	}
-
-	if len(raw.Texts) == 0 {
-		slog.Debug("qoder model discovery: empty texts in JSON")
-		return nil
-	}
-
-	type modelInfo struct {
-		id   string
-		name string
-	}
-	var modelEntries []modelInfo
-
-	for key, val := range raw.Texts {
-		m := qoderModelKeyRe.FindStringSubmatch(key)
-		if len(m) < 2 {
-			continue
-		}
-		modelID := m[1]
-
-		// Skip description/markdown suffixes
-		if strings.HasSuffix(modelID, ".description") || strings.HasSuffix(modelID, ".markdownDescription") {
-			continue
-		}
-
-		// Skip known tier/alias IDs
-		if qoderSkipModels[modelID] {
-			continue
-		}
-
-		// Skip experts-* entries
-		if strings.HasPrefix(modelID, "experts-") {
-			continue
-		}
-
-		// Skip quest-* entries
-		if strings.HasPrefix(modelID, "quest-") {
-			continue
-		}
-
-		// Skip internal preview/dogfooding models
-		if strings.HasSuffix(modelID, "_preview") {
-			continue
-		}
-
-		// Skip keys with dots in the remaining part (metadata like "lite.description.quest")
-		if strings.Contains(modelID, ".") {
-			continue
-		}
-
-		name := modelID
-		if strVal, ok := val.(string); ok && strVal != "" {
-			name = strVal
-		}
-
-		modelEntries = append(modelEntries, modelInfo{id: modelID, name: name})
-	}
-
-	if len(modelEntries) == 0 {
-		return nil
-	}
-
-	var models []AgentModel
-	for i, e := range modelEntries {
-		models = append(models, AgentModel{
-			ID:      e.id,
-			Name:    e.name,
-			Default: i == 0,
-		})
-	}
-
-	slog.Info("qoder model discovery succeeded", "models", len(models))
-	return models
-}
-
-// --- VeCLI model discovery ---
-
-// vecliModelIDRe matches id: "xxx" in MODEL_REGISTRY entries.
-var vecliModelIDRe = regexp.MustCompile(`id:\s*"([^"]+)"`)
-
-// vecliModelNameRe matches name: "xxx" in MODEL_REGISTRY entries.
-var vecliModelNameRe = regexp.MustCompile(`name:\s*"([^"]+)"`)
-
-// DiscoverVeCLIModels discovers VeCLI model IDs by parsing the MODEL_REGISTRY array
-// embedded in the VeCLI JS bundle. All models are included regardless of enabled status
-// (users can still select disabled models via -m flag; enabled only controls the CLI's default UI).
-func DiscoverVeCLIModels() []AgentModel { //nolint:gocyclo // binary parsing model discovery
-	// Resolve the real path for the vecli CLI, handling Windows .cmd wrappers
-	realPath := platform.ResolveCLIPath("vecli")
-	if realPath == "" {
-		return nil
-	}
-
-	data, err := os.ReadFile(realPath)
-	if err != nil {
-		slog.Debug("vecli model discovery: cannot read bundle file", "path", realPath, "error", err)
-		return nil
-	}
-
-	content := string(data)
-
-	registryStart := strings.Index(content, "MODEL_REGISTRY = [")
-	if registryStart == -1 {
-		slog.Debug("vecli model discovery: MODEL_REGISTRY not found in bundle")
-		return nil
-	}
-
-	registryEnd := strings.Index(content[registryStart:], "];")
-	if registryEnd == -1 {
-		slog.Debug("vecli model discovery: MODEL_REGISTRY closing bracket not found")
-		return nil
-	}
-	registrySection := content[registryStart : registryStart+registryEnd+2]
-
-	type vecliEntry struct {
-		id   string
-		name string
-	}
-
-	var entries []vecliEntry
-	entryStart := strings.Index(registrySection, "{")
-	for entryStart != -1 {
-		depth := 0
-		i := entryStart
-		for ; i < len(registrySection); i++ {
-			if registrySection[i] == '{' {
-				depth++
-			} else if registrySection[i] == '}' {
-				depth--
-				if depth == 0 {
-					break
-				}
-			}
-		}
-		if i >= len(registrySection) {
-			break
-		}
-
-		block := registrySection[entryStart : i+1]
-
-		var id, name string
-		if m := vecliModelIDRe.FindStringSubmatch(block); len(m) >= 2 {
-			id = m[1]
-		}
-		if m := vecliModelNameRe.FindStringSubmatch(block); len(m) >= 2 {
-			name = m[1]
-		}
-
-		if id != "" {
-			entries = append(entries, vecliEntry{id: id, name: name})
-		}
-
-		remaining := registrySection[i+1:]
-		nextEntry := strings.Index(remaining, "{")
-		if nextEntry == -1 {
-			break
-		}
-		entryStart = i + 1 + nextEntry
-	}
-
-	if len(entries) == 0 {
-		return nil
-	}
-
-	var models []AgentModel
-	for i, e := range entries {
-		name := e.name
-		if name == "" {
-			name = e.id
-		}
-		models = append(models, AgentModel{
-			ID:      e.id,
-			Name:    name,
-			Default: i == 0,
-		})
-	}
-
-	slog.Info("vecli model discovery succeeded", "models", len(models))
 	return models
 }
 
@@ -1604,101 +872,4 @@ func loadAgentsFromDBRows(db *sql.DB) ([]*Agent, error) {
 		agents = append(agents, agent)
 	}
 	return agents, nil
-}
-
-// --- Cline model discovery ---
-
-// clineDefaultModels lists known models for Cline CLI.
-// Cline supports multiple providers; these are the most commonly used models.
-var clineDefaultModels = []AgentModel{
-	{ID: "anthropic/claude-sonnet-4-20250514", Name: "Claude Sonnet 4"},
-	{ID: "anthropic/claude-opus-4-20250514", Name: "Claude Opus 4"},
-	{ID: "openai/gpt-4.1", Name: "GPT-4.1"},
-	{ID: "openai/gpt-4o", Name: "GPT-4o"},
-	{ID: "openai/o3", Name: "o3"},
-	{ID: "openai/o4-mini", Name: "o4-mini"},
-	{ID: "minimax/MiniMax-M1", Name: "MiniMax-M1"},
-	{ID: "minimax/MiniMax-M2.7", Name: "MiniMax-M2.7"},
-}
-
-// DiscoverClineModels discovers models for Cline CLI.
-func DiscoverClineModels() []AgentModel {
-	if _, err := exec.LookPath("cline"); err != nil {
-		return nil
-	}
-	models := make([]AgentModel, len(clineDefaultModels))
-	copy(models, clineDefaultModels)
-	slog.Info("cline model discovery: using hardcoded defaults", "models", len(models))
-	return models
-}
-
-// --- Kimi model discovery ---
-
-// kimiDefaultModels lists known models for Kimi CLI.
-var kimiDefaultModels = []AgentModel{
-	{ID: "kimi-k2-0711-chat", Name: "Kimi K2"},
-	{ID: "moonshot-v1-128k", Name: "Moonshot v1 128K"},
-	{ID: "moonshot-v1-32k", Name: "Moonshot v1 32K"},
-	{ID: "moonshot-v1-8k", Name: "Moonshot v1 8K"},
-	{ID: "kimi-latest", Name: "Kimi Latest"},
-}
-
-// DiscoverKimiModels discovers models for Kimi CLI.
-func DiscoverKimiModels() []AgentModel {
-	if _, err := exec.LookPath("kimi"); err != nil {
-		return nil
-	}
-	models := make([]AgentModel, len(kimiDefaultModels))
-	copy(models, kimiDefaultModels)
-	slog.Info("kimi model discovery: using hardcoded defaults", "models", len(models))
-	return models
-}
-
-// --- Copilot model discovery ---
-
-// copilotDefaultModels lists known models for GitHub Copilot CLI.
-var copilotDefaultModels = []AgentModel{
-	{ID: "gpt-4.1", Name: "GPT-4.1"},
-	{ID: "gpt-4o", Name: "GPT-4o"},
-	{ID: "o3", Name: "o3"},
-	{ID: "o4-mini", Name: "o4-mini"},
-	{ID: "claude-sonnet-4-20250514", Name: "Claude Sonnet 4"},
-	{ID: "claude-opus-4-20250514", Name: "Claude Opus 4"},
-}
-
-// DiscoverCopilotModels discovers models for GitHub Copilot CLI.
-func DiscoverCopilotModels() []AgentModel {
-	if _, err := exec.LookPath("copilot"); err != nil {
-		return nil
-	}
-	models := make([]AgentModel, len(copilotDefaultModels))
-	copy(models, copilotDefaultModels)
-	slog.Info("copilot model discovery: using hardcoded defaults", "models", len(models))
-	return models
-}
-
-// --- MiMo-Code model discovery ---
-
-// mimoDefaultModels lists known models for MiMo-Code CLI.
-// MiMo-Code supports multiple providers; these are the most commonly used models.
-var mimoDefaultModels = []AgentModel{
-	{ID: "mimo/mimo-auto", Name: "MiMo Auto", Default: true},
-	{ID: "xiaomi/mimo-v2.5-pro-ultraspeed", Name: "MiMo V2.5 Pro Ultraspeed"},
-	{ID: "xiaomi/mimo-v2.5-pro", Name: "MiMo V2.5 Pro"},
-	{ID: "xiaomi/mimo-v2.5", Name: "MiMo V2.5"},
-	{ID: "xiaomi/mimo-v2-pro", Name: "MiMo V2 Pro"},
-	{ID: "xiaomi/mimo-v2-omni", Name: "MiMo V2 Omni"},
-	{ID: "xiaomi/mimo-v2-flash", Name: "MiMo V2 Flash"},
-}
-
-// DiscoverMimoModels discovers models for MiMo-Code CLI.
-// MiMo-Code is based on OpenCode and uses the same provider/model format.
-func DiscoverMimoModels() []AgentModel {
-	if _, err := exec.LookPath("mimo"); err != nil {
-		return nil
-	}
-	models := make([]AgentModel, len(mimoDefaultModels))
-	copy(models, mimoDefaultModels)
-	slog.Info("mimo model discovery: using hardcoded defaults", "models", len(models))
-	return models
 }

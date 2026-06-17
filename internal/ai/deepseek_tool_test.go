@@ -8,6 +8,13 @@ import (
 
 // --- parseDeepSeekToolUse tests ---
 
+// deepSeekInputRemaps mirrors backends/deepSeekInputRemaps for testing.
+// Duplicated here to avoid circular imports (internal/ai → backends/* → internal/ai).
+var deepSeekInputRemaps = map[string]string{
+	"path": "file_path", "search": "old_string", "replace": "new_string",
+	"filePaths": "file_paths", "dirPath": "path",
+}
+
 func TestDeepSeekTool_EditFileInputRemap(t *testing.T) {
 	msg := &DeepSeekStreamMessage{
 		Type:  "tool_use",
@@ -16,7 +23,7 @@ func TestDeepSeekTool_EditFileInputRemap(t *testing.T) {
 		Input: json.RawMessage(`{"path":"/tmp/a.txt","search":"hello","replace":"world"}`),
 		Done:  true,
 	}
-	tc := parseDeepSeekToolUse(msg)
+	tc := parseDeepSeekToolUse(msg, deepSeekInputRemaps)
 	if tc == nil {
 		t.Fatal("expected non-nil ToolCall")
 		return
@@ -58,7 +65,7 @@ func TestDeepSeekTool_ReadFileInputRemap(t *testing.T) {
 		Input: json.RawMessage(`{"path":"/tmp/b.txt"}`),
 		Done:  true,
 	}
-	tc := parseDeepSeekToolUse(msg)
+	tc := parseDeepSeekToolUse(msg, deepSeekInputRemaps)
 	if tc == nil {
 		t.Fatal("expected non-nil ToolCall")
 		return
@@ -82,7 +89,7 @@ func TestDeepSeekTool_WriteFileInputRemap(t *testing.T) {
 		Input: json.RawMessage(`{"path":"/tmp/c.txt","content":"hello"}`),
 		Done:  true,
 	}
-	tc := parseDeepSeekToolUse(msg)
+	tc := parseDeepSeekToolUse(msg, deepSeekInputRemaps)
 	if tc == nil {
 		t.Fatal("expected non-nil ToolCall")
 		return
@@ -103,7 +110,7 @@ func TestDeepSeekTool_ListDirInputRemap(t *testing.T) {
 		Input: json.RawMessage(`{"path":"/tmp"}`),
 		Done:  true,
 	}
-	tc := parseDeepSeekToolUse(msg)
+	tc := parseDeepSeekToolUse(msg, deepSeekInputRemaps)
 	if tc == nil {
 		t.Fatal("expected non-nil ToolCall")
 		return
@@ -125,7 +132,7 @@ func TestDeepSeekTool_GrepFilesPathNotRemapped(t *testing.T) {
 		Input: json.RawMessage(`{"path":"/tmp","pattern":"TODO"}`),
 		Done:  true,
 	}
-	tc := parseDeepSeekToolUse(msg)
+	tc := parseDeepSeekToolUse(msg, deepSeekInputRemaps)
 	if tc == nil {
 		t.Fatal("expected non-nil ToolCall")
 		return
@@ -158,7 +165,7 @@ func TestDeepSeekTool_FileSearchNameNormalized(t *testing.T) {
 		Input: json.RawMessage(`{"path":"/tmp","pattern":"*.go"}`),
 		Done:  true,
 	}
-	tc := parseDeepSeekToolUse(msg)
+	tc := parseDeepSeekToolUse(msg, deepSeekInputRemaps)
 	if tc == nil {
 		t.Fatal("expected non-nil ToolCall")
 		return
@@ -176,7 +183,7 @@ func TestDeepSeekTool_ExecShellNameNormalized(t *testing.T) {
 		Input: json.RawMessage(`{"command":"ls -la"}`),
 		Done:  true,
 	}
-	tc := parseDeepSeekToolUse(msg)
+	tc := parseDeepSeekToolUse(msg, deepSeekInputRemaps)
 	if tc == nil {
 		t.Fatal("expected non-nil ToolCall")
 		return
@@ -197,7 +204,7 @@ func TestDeepSeekTool_EmptyInput(t *testing.T) {
 		Input: json.RawMessage(``),
 		Done:  true,
 	}
-	tc := parseDeepSeekToolUse(msg)
+	tc := parseDeepSeekToolUse(msg, deepSeekInputRemaps)
 	if tc == nil {
 		t.Fatal("expected non-nil ToolCall")
 		return
@@ -218,7 +225,7 @@ func TestDeepSeekTool_InvalidJSONInput(t *testing.T) {
 		Input: json.RawMessage(`{invalid}`),
 		Done:  false,
 	}
-	tc := parseDeepSeekToolUse(msg)
+	tc := parseDeepSeekToolUse(msg, deepSeekInputRemaps)
 	if tc == nil {
 		t.Fatal("expected non-nil ToolCall")
 		return
@@ -245,7 +252,7 @@ func TestDeepSeekTool_CamelCaseFieldRemap(t *testing.T) {
 		Input: json.RawMessage(`{"dirPath":"/tmp","filePaths":["a.go","b.go"]}`),
 		Done:  true,
 	}
-	tc := parseDeepSeekToolUse(msg)
+	tc := parseDeepSeekToolUse(msg, deepSeekInputRemaps)
 	if tc == nil {
 		t.Fatal("expected non-nil ToolCall")
 		return
@@ -298,7 +305,7 @@ func TestDeepSeekTool_ToolNameNormalization(t *testing.T) {
 			Input: json.RawMessage(`{}`),
 			Done:  true,
 		}
-		tc := parseDeepSeekToolUse(msg)
+		tc := parseDeepSeekToolUse(msg, deepSeekInputRemaps)
 		if tc == nil {
 			t.Fatalf("expected non-nil ToolCall for tool name '%s'", input)
 			return

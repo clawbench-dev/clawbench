@@ -10,8 +10,6 @@ import (
 	"os/exec"
 	"strings"
 	"time"
-
-	"clawbench/internal/model"
 )
 
 // CLIBackend is a generic AI backend that shells out to a CLI tool and streams
@@ -60,13 +58,8 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 	}
 
 	// Inject API key from agent_api_keys table if available.
-	// This enables Pi CLI to authenticate without relying on global auth.json.
-	// Env vars are per-process, so concurrent sessions with different providers work correctly.
-	if req.AgentID != "" {
-		injectAgentAPIKey(cmd, req)
-	}
-	// Call backend-specific pre-exec hook (e.g. Pi API key injection).
-	// When all backends are migrated, injectAgentAPIKey will be replaced by preExecHook.
+	// This is handled by the backend's PreExecHookFn (e.g. Pi's injectPiAPIKey).
+	// Legacy injectAgentAPIKey has been replaced by per-backend PreExecHookFn.
 	if b.PreExecHookFn != nil {
 		b.PreExecHookFn(cmd, req)
 	}
@@ -283,6 +276,12 @@ func SetAgentAPIKeyLoader(loader AgentAPIKeyLoader) {
 	agentAPIKeyLoader = loader
 }
 
+// GetAgentAPIKeyLoader returns the current agent API key loader function.
+// Used by backend sub-packages (e.g. backends/pi) for PreExecHookFn injection.
+func GetAgentAPIKeyLoader() AgentAPIKeyLoader {
+	return agentAPIKeyLoader
+}
+
 // filterSkipNonJSON returns a line filter that discards lines
 // that don't start with '{' (non-JSON lines from CLI stderr).
 func filterSkipNonJSON() func(string) (string, bool) {
@@ -294,52 +293,4 @@ func filterSkipNonJSON() func(string) (string, bool) {
 	}
 }
 
-// injectAgentAPIKey loads the encrypted API key for the agent from the database
-// and injects it as an environment variable on the CLI command. For Pi agents,
-// also adds the --provider flag so Pi knows which provider config to use.
-// If the agent has no stored API key, this is a no-op (Pi falls back to auth.json).
-//
-// For custom URL agents (customURL != ""): the provider stored in agent_api_keys
-// is the agent ID itself (e.g., "custom-agent"), and Pi uses models.json to find
-// the endpoint. We inject --provider {agentID} --api-key {key} directly.
-// For built-in providers: we inject the env var (e.g., OPENAI_API_KEY=sk-...)
-// and --provider {provider}.
-func injectAgentAPIKey(cmd *exec.Cmd, req ChatRequest) {
-	if agentAPIKeyLoader == nil {
-		return
-	}
 
-	agent, ok := model.Agents[req.AgentID]
-	if !ok {
-		return
-	}
-
-	// Only inject for Pi backend (setup-wizard-created agents)
-	if agent.Backend != "pi" {
-		return
-	}
-
-	// Find the provider and API key for this agent — single DB query
-	provider, customURL, apiKey, found := agentAPIKeyLoader(req.AgentID)
-	if !found || apiKey == "" {
-		return // No stored API key — Pi will fall back to auth.json
-	}
-
-	// Custom URL mode: provider is the agent ID (set by setup complete).
-	// Use --provider {agentID} + --api-key so Pi reads models.json for the endpoint.
-	if customURL != "" {
-		cmd.Args = append(cmd.Args[:len(cmd.Args)-1], "--provider", provider, "--api-key", apiKey, cmd.Args[len(cmd.Args)-1])
-		slog.Debug("injected custom URL API key for agent", "agent_id", req.AgentID, "provider", provider)
-		return
-	}
-
-	// Built-in provider mode: inject env var + --provider flag
-	spec := model.FindProviderSpec(provider)
-	if spec != nil && spec.EnvVar != "" {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", spec.EnvVar, apiKey))
-		// Add --provider flag to Pi CLI args
-		cmd.Args = append(cmd.Args[:len(cmd.Args)-1], "--provider", provider, cmd.Args[len(cmd.Args)-1])
-	}
-
-	slog.Debug("injected API key for agent", "agent_id", req.AgentID, "provider", provider)
-}

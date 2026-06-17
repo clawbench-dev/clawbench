@@ -63,6 +63,10 @@ func setupAgentTestEnv(t *testing.T) func() {
 	require.NoError(t, service.SaveAgent(db, codebuddyAgent))
 	require.NoError(t, service.SaveAgent(db, claudeAgent))
 
+	// Register discovery functions for test backends (CanDiscoverModels checks the registry)
+	model.RegisterDiscoverModelsFunc("codebuddy", func() []model.AgentModel { return nil })
+	model.RegisterDiscoverModelsFunc("claude", func() []model.AgentModel { return nil })
+
 	// Load agents into memory
 	model.Agents = map[string]*model.Agent{
 		"codebuddy": codebuddyAgent,

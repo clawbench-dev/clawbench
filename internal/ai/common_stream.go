@@ -178,48 +178,6 @@ func NormalizeToolInputForTest(rawInput []byte, pathMappings map[string]string) 
 	return normalizeToolInput(rawInput, pathMappings)
 }
 
-// perAgentInputRemaps maps agent key → field remap table for normalizeToolInput.
-// Keys are "agent_mode" format (e.g., "kimi_cli").
-// Each entry contains only agent-specific overrides; common mappings
-// (filePath→file_path, cmd→command, exec→command) are in defaultMappings.
-//
-// ACP layer entries have been migrated to backends sub-packages and are looked up
-// via LookupACPRemapsFn. Only CLI-layer entries remain here.
-var perAgentInputRemaps = map[string]map[string]string{
-	// CLI layer
-	"kimi_cli": {
-		"dirPath":         "path",              // camelCase fallback
-		"dir_path":        "path",              // Kimi CLI outputs snake_case dir_path → canonical path (for Grep/Glob/LS)
-		"allow_multiple":  "replace_all",       // Edit allow_multiple → replace_all
-		"is_background":   "run_in_background", // Bash is_background → run_in_background
-		"include_pattern": "glob",              // Grep include_pattern → canonical glob
-		"name":            "skill",             // activate_skill name → canonical skill
-	},
-	"opencode_cli": {
-		"oldString": "old_string", "newString": "new_string",
-		"replaceAll": "replace_all", // Edit replaceAll → replace_all
-		"include":    "glob",        // Grep include → canonical glob
-		"name":       "skill",       // Skill name → skill
-	},
-	"deepseek_cli": {
-		"path": "file_path", "search": "old_string", "replace": "new_string",
-		"filePaths": "file_paths", "dirPath": "path",
-	},
-	"pi_cli": {"path": "file_path"},
-	"codex_cli": {
-		"cmd":           "command",       // exec_command cmd → command (also in defaultMappings but explicit here)
-		"agent_type":    "subagent_type", // spawn_agent agent_type → subagent_type
-		"message":       "prompt",        // spawn_agent message → prompt
-		"justification": "description",   // exec_command justification → description
-	},
-}
-
-// getRemaps returns the input remap table for the given agent key.
-// Returns nil if no agent-specific remaps are defined.
-func getRemaps(key string) map[string]string {
-	return perAgentInputRemaps[key]
-}
-
 // execCommandJSON is a shared helper that returns canonical {"command":"..."} JSON
 // for Bash tool call input normalization. Used by codex_stream.go for its resume
 // output parser.

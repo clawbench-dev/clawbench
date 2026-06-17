@@ -7,9 +7,16 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// kimiInputRemaps mirrors backends/kimiInputRemaps for testing.
+var kimiInputRemaps = map[string]string{
+	"dirPath": "path", "dir_path": "path",
+	"allow_multiple": "replace_all", "is_background": "run_in_background",
+	"include_pattern": "glob", "name": "skill",
+}
+
 func parseStreamJSONLine(line string) []StreamEvent {
 	ch := make(chan StreamEvent, 64)
-	parser := &StreamJSONParser{}
+	parser := &StreamJSONParser{InputRemaps: kimiInputRemaps}
 	parser.ParseLine(line, ch)
 	close(ch)
 	var events []StreamEvent
@@ -408,7 +415,7 @@ func TestNormalizeStreamJSONToolName(t *testing.T) {
 func TestNormalizeStreamJSONInput_FieldRemapping(t *testing.T) {
 	// filePath → file_path
 	input1 := json.RawMessage(`{"filePath":"/tmp/test.go"}`)
-	norm1, err := normalizeToolInput(input1, getRemaps("kimi_cli"))
+	norm1, err := normalizeToolInput(input1, kimiInputRemaps)
 	if err != nil {
 		t.Fatalf("normalizeToolInput failed: %v", err)
 		return
@@ -428,7 +435,7 @@ func TestNormalizeStreamJSONInput_FieldRemapping(t *testing.T) {
 
 	// dirPath → path
 	input2 := json.RawMessage(`{"dirPath":"./src"}`)
-	norm2, err := normalizeToolInput(input2, getRemaps("kimi_cli"))
+	norm2, err := normalizeToolInput(input2, kimiInputRemaps)
 	if err != nil {
 		t.Fatalf("normalizeToolInput failed: %v", err)
 		return
@@ -448,7 +455,7 @@ func TestNormalizeStreamJSONInput_FieldRemapping(t *testing.T) {
 
 	// Combined: filePath + dirPath
 	input3 := json.RawMessage(`{"filePath":"main.go","dirPath":"./src"}`)
-	norm3, err := normalizeToolInput(input3, getRemaps("kimi_cli"))
+	norm3, err := normalizeToolInput(input3, kimiInputRemaps)
 	if err != nil {
 		t.Fatalf("normalizeToolInput failed: %v", err)
 		return
@@ -469,7 +476,7 @@ func TestNormalizeStreamJSONInput_FieldRemapping(t *testing.T) {
 
 func TestNormalizeStreamJSONInput_UnparseableJSON(t *testing.T) {
 	bad := json.RawMessage(`not valid json`)
-	_, err := normalizeToolInput(bad, getRemaps("kimi_cli"))
+	_, err := normalizeToolInput(bad, kimiInputRemaps)
 	if err == nil {
 		t.Error("expected error for unparseable JSON")
 	}
@@ -477,7 +484,7 @@ func TestNormalizeStreamJSONInput_UnparseableJSON(t *testing.T) {
 
 func TestNormalizeStreamJSONInput_AlreadyCanonical(t *testing.T) {
 	input := json.RawMessage(`{"file_path":"/tmp/test.go"}`)
-	norm, err := normalizeToolInput(input, getRemaps("kimi_cli"))
+	norm, err := normalizeToolInput(input, kimiInputRemaps)
 	if err != nil {
 		t.Fatalf("normalizeToolInput failed: %v", err)
 		return

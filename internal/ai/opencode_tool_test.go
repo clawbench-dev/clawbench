@@ -8,6 +8,12 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// openCodeInputRemaps mirrors backends/openCodeInputRemaps for testing.
+var openCodeInputRemaps = map[string]string{
+	"oldString": "old_string", "newString": "new_string",
+	"replaceAll": "replace_all", "include": "glob", "name": "skill",
+}
+
 // helper: build an OpenCodeStreamMessage with the given type and part payload
 func newOpenCodeMsg(msgType string, part any) *OpenCodeStreamMessage {
 	partBytes, _ := json.Marshal(part)
@@ -31,7 +37,7 @@ func TestOpenCodeTool_CompletedWithInput(t *testing.T) {
 		},
 	})
 
-	tc := parseOpenCodeToolEvent(msg)
+	tc := parseOpenCodeToolEvent(msg, openCodeInputRemaps)
 	assert.NotNil(t, tc)
 	assert.Equal(t, "Read", tc.Name)
 	assert.Equal(t, "call_123", tc.ID)
@@ -58,7 +64,7 @@ func TestOpenCodeTool_RunningNotDone(t *testing.T) {
 		},
 	})
 
-	tc := parseOpenCodeToolEvent(msg)
+	tc := parseOpenCodeToolEvent(msg, openCodeInputRemaps)
 	assert.NotNil(t, tc)
 	assert.Equal(t, "Bash", tc.Name)
 	assert.False(t, tc.Done)
@@ -77,7 +83,7 @@ func TestOpenCodeTool_EditWithCamelCaseFields(t *testing.T) {
 		},
 	})
 
-	tc := parseOpenCodeToolEvent(msg)
+	tc := parseOpenCodeToolEvent(msg, openCodeInputRemaps)
 	assert.NotNil(t, tc)
 	assert.Equal(t, "Edit", tc.Name)
 	assert.True(t, tc.Done)
@@ -106,7 +112,7 @@ func TestOpenCodeTool_NilState(t *testing.T) {
 		State:  nil,
 	})
 
-	tc := parseOpenCodeToolEvent(msg)
+	tc := parseOpenCodeToolEvent(msg, openCodeInputRemaps)
 	assert.NotNil(t, tc)
 	assert.Equal(t, "Read", tc.Name)
 	assert.Equal(t, "call_nil_state", tc.ID)
@@ -128,7 +134,7 @@ func TestOpenCodeTool_EmptyInput(t *testing.T) {
 		},
 	})
 
-	tc := parseOpenCodeToolEvent(msg)
+	tc := parseOpenCodeToolEvent(msg, openCodeInputRemaps)
 	assert.NotNil(t, tc)
 	assert.Equal(t, "{}", tc.Input)
 	assert.True(t, tc.Done)
@@ -147,7 +153,7 @@ func TestOpenCodeTool_NonObjectInput(t *testing.T) {
 		},
 	})
 
-	tc := parseOpenCodeToolEvent(msg)
+	tc := parseOpenCodeToolEvent(msg, openCodeInputRemaps)
 	assert.NotNil(t, tc)
 	// normalizeToolInput fails on non-object → fall back to raw input
 	assert.Equal(t, "[1,2,3]", tc.Input)
@@ -166,7 +172,7 @@ func TestOpenCodeTool_OutputTruncation(t *testing.T) {
 		},
 	})
 
-	tc := parseOpenCodeToolEvent(msg)
+	tc := parseOpenCodeToolEvent(msg, openCodeInputRemaps)
 	assert.NotNil(t, tc)
 	assert.True(t, tc.Done)
 	assert.LessOrEqual(t, len(tc.Output), maxToolOutputBytes+100) // +100 for truncation marker
@@ -185,7 +191,7 @@ func TestOpenCodeTool_CompletedNoOutput(t *testing.T) {
 		},
 	})
 
-	tc := parseOpenCodeToolEvent(msg)
+	tc := parseOpenCodeToolEvent(msg, openCodeInputRemaps)
 	assert.NotNil(t, tc)
 	assert.True(t, tc.Done)
 	assert.Empty(t, tc.Status) // status is "success" only when done && output != ""
@@ -199,7 +205,7 @@ func TestOpenCodeTool_NonToolUseType(t *testing.T) {
 		Text: "hello",
 	})
 
-	tc := parseOpenCodeToolEvent(msg)
+	tc := parseOpenCodeToolEvent(msg, openCodeInputRemaps)
 	assert.Nil(t, tc)
 }
 
@@ -211,7 +217,7 @@ func TestOpenCodeTool_UnparseablePart(t *testing.T) {
 		Part:      json.RawMessage(`not valid json`),
 	}
 
-	tc := parseOpenCodeToolEvent(msg)
+	tc := parseOpenCodeToolEvent(msg, openCodeInputRemaps)
 	assert.Nil(t, tc)
 }
 
@@ -247,7 +253,7 @@ func TestOpenCodeTool_ToolNameNormalization(t *testing.T) {
 					Output: "ok",
 				},
 			})
-			tc := parseOpenCodeToolEvent(msg)
+			tc := parseOpenCodeToolEvent(msg, openCodeInputRemaps)
 			assert.NotNil(t, tc)
 			assert.Equal(t, tt.expected, tc.Name)
 		})
@@ -267,7 +273,7 @@ func TestOpenCodeTool_NullInput(t *testing.T) {
 		},
 	})
 
-	tc := parseOpenCodeToolEvent(msg)
+	tc := parseOpenCodeToolEvent(msg, openCodeInputRemaps)
 	assert.NotNil(t, tc)
 	assert.Equal(t, "{}", tc.Input, "null input should produce {}")
 }
@@ -285,7 +291,7 @@ func TestOpenCodeTool_AlreadyCanonicalInput(t *testing.T) {
 		},
 	})
 
-	tc := parseOpenCodeToolEvent(msg)
+	tc := parseOpenCodeToolEvent(msg, openCodeInputRemaps)
 	assert.NotNil(t, tc)
 
 	var input map[string]any
