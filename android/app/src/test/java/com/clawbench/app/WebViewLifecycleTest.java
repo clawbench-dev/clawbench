@@ -7,8 +7,11 @@ import org.junit.Test;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.mockito.Mockito.*;
+
+import androidx.fragment.app.FragmentController;
 
 /**
  * Unit tests for BrowserActivity and MainActivity WebView lifecycle methods
@@ -100,21 +103,38 @@ public class WebViewLifecycleTest {
     // BrowserActivity.onNewIntent tests
     // =====================================================
 
+    /**
+     * FragmentActivity.onNewIntent() calls mFragments.noteStateNotSaved().
+     * ComponentActivity.onNewIntent() iterates mOnNewIntentListeners.
+     * Since we use Unsafe.allocateInstance(), these are null. Initialize them.
+     */
+    private void initFragmentController() throws Exception {
+        FragmentController mockController = mock(FragmentController.class);
+        setField(browserActivity, "mFragments", mockController);
+        // ComponentActivity.mOnNewIntentListeners — needed by super.onNewIntent()
+        setField(browserActivity, "mOnNewIntentListeners", new CopyOnWriteArrayList<>());
+    }
+
     @Test
     public void browserActivity_onNewIntent_loadsNewUrl() throws Exception {
+        initFragmentController();
         android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
         setField(browserActivity, "webView", mockWebView);
         setField(browserActivity, "tunnelRetryCount", 5);
         // Set a pre-existing targetHost to verify it gets reset when host is empty
         setField(browserActivity, "targetHost", "old.host.com");
+        // Ensure pendingUrl is null so the same-URL early-return doesn't trigger
+        setField(browserActivity, "pendingUrl", null);
 
         android.widget.EditText mockUrlBar = mock(android.widget.EditText.class);
         setField(browserActivity, "urlBar", mockUrlBar);
 
-        android.content.Intent intent = new android.content.Intent();
-        intent.putExtra("port", 8080);
-        intent.putExtra("protocol", "http");
-        intent.putExtra("host", "");
+        // android.content.Intent extras return defaults with returnDefaultValues=true,
+        // so we mock the Intent to provide the expected values.
+        android.content.Intent intent = mock(android.content.Intent.class);
+        when(intent.getIntExtra("port", 0)).thenReturn(8080);
+        when(intent.getStringExtra("protocol")).thenReturn("http");
+        when(intent.getStringExtra("host")).thenReturn("");
 
         invokeMethod(browserActivity, "onNewIntent", android.content.Intent.class, intent);
 
@@ -127,16 +147,18 @@ public class WebViewLifecycleTest {
 
     @Test
     public void browserActivity_onNewIntent_withHost_setsTargetHost() throws Exception {
+        initFragmentController();
         android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
         setField(browserActivity, "webView", mockWebView);
+        setField(browserActivity, "pendingUrl", null);
 
         android.widget.EditText mockUrlBar = mock(android.widget.EditText.class);
         setField(browserActivity, "urlBar", mockUrlBar);
 
-        android.content.Intent intent = new android.content.Intent();
-        intent.putExtra("port", 9090);
-        intent.putExtra("protocol", "https");
-        intent.putExtra("host", "192.168.1.1");
+        android.content.Intent intent = mock(android.content.Intent.class);
+        when(intent.getIntExtra("port", 0)).thenReturn(9090);
+        when(intent.getStringExtra("protocol")).thenReturn("https");
+        when(intent.getStringExtra("host")).thenReturn("192.168.1.1");
 
         invokeMethod(browserActivity, "onNewIntent", android.content.Intent.class, intent);
 
@@ -146,16 +168,18 @@ public class WebViewLifecycleTest {
 
     @Test
     public void browserActivity_onNewIntent_stripsDefaultPort() throws Exception {
+        initFragmentController();
         android.webkit.WebView mockWebView = mock(android.webkit.WebView.class);
         setField(browserActivity, "webView", mockWebView);
+        setField(browserActivity, "pendingUrl", null);
 
         android.widget.EditText mockUrlBar = mock(android.widget.EditText.class);
         setField(browserActivity, "urlBar", mockUrlBar);
 
-        android.content.Intent intent = new android.content.Intent();
-        intent.putExtra("port", 8080);
-        intent.putExtra("protocol", "http");
-        intent.putExtra("host", "example.com:80");
+        android.content.Intent intent = mock(android.content.Intent.class);
+        when(intent.getIntExtra("port", 0)).thenReturn(8080);
+        when(intent.getStringExtra("protocol")).thenReturn("http");
+        when(intent.getStringExtra("host")).thenReturn("example.com:80");
 
         invokeMethod(browserActivity, "onNewIntent", android.content.Intent.class, intent);
 
