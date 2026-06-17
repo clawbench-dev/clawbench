@@ -7,11 +7,15 @@ import FileManagerContent from '@/components/file/FileManagerContent.vue'
 // ── Mocks ────────────────────────────────────────────────────
 const mockAddAttachedFile = vi.fn()
 const mockHasAttachedFile = vi.fn(() => false)
+const mockRemoveAttachedFileByPath = vi.fn()
+const mockToggleAttachedFile = vi.fn()
 
 vi.mock('@/composables/useChatContext', () => ({
   useChatContext: () => ({
     addAttachedFile: mockAddAttachedFile,
     hasAttachedFile: mockHasAttachedFile,
+    removeAttachedFileByPath: mockRemoveAttachedFileByPath,
+    toggleAttachedFile: mockToggleAttachedFile,
     attachedFiles: { value: [] },
     quoteData: { value: null },
     setQuoteData: vi.fn(),
@@ -135,7 +139,7 @@ const i18n = createI18n({
       },
       chat: {
         actions: { attachToChat: '附加到聊天' },
-        attach: { alreadyAttached: '已附加', addedToChat: '已添加到聊天' },
+        attach: { alreadyAttached: '已附加', addedToChat: '已添加到聊天', removedFromChat: '已从聊天移除' },
       },
       common: { remove: '移除', copied: '已复制', delete: '删除', operationFailed: '操作失败' },
       nav: { refresh: '刷新' },
@@ -213,6 +217,7 @@ describe('FileManagerContent — doAttachToChat', () => {
     await wrapper.vm.doAttachToChat()
 
     expect(mockAddAttachedFile).not.toHaveBeenCalled()
+    expect(mockRemoveAttachedFileByPath).toHaveBeenCalledWith('test.ts')
     expect(mockToastShow).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ type: 'info' }),
@@ -229,6 +234,34 @@ describe('FileManagerContent — doAttachToChat', () => {
     await wrapper.vm.doAttachToChat()
 
     expect(mockAddAttachedFile).not.toHaveBeenCalled()
+  })
+})
+
+describe('FileManagerContent — toggleAttach', () => {
+  it('removes file and shows info toast when already attached', async () => {
+    mockHasAttachedFile.mockReturnValue(true)
+    const wrapper = mountContent()
+
+    await wrapper.vm.toggleAttach('test.ts')
+
+    expect(mockRemoveAttachedFileByPath).toHaveBeenCalledWith('test.ts')
+    expect(mockToastShow).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ type: 'info' }),
+    )
+  })
+
+  it('adds file and shows success toast when not attached', async () => {
+    mockHasAttachedFile.mockReturnValue(false)
+    const wrapper = mountContent()
+
+    await wrapper.vm.toggleAttach('test.ts')
+
+    expect(mockAddAttachedFile).toHaveBeenCalledWith('test.ts')
+    expect(mockToastShow).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ type: 'success' }),
+    )
   })
 })
 

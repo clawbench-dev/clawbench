@@ -7,11 +7,15 @@ import FileHeader from '@/components/file/FileHeader.vue'
 // ── Mocks ────────────────────────────────────────────────────
 const mockAddAttachedFile = vi.fn()
 const mockHasAttachedFile = vi.fn(() => false)
+const mockRemoveAttachedFileByPath = vi.fn()
+const mockToggleAttachedFile = vi.fn()
 
 vi.mock('@/composables/useChatContext', () => ({
   useChatContext: () => ({
     addAttachedFile: mockAddAttachedFile,
     hasAttachedFile: mockHasAttachedFile,
+    removeAttachedFileByPath: mockRemoveAttachedFileByPath,
+    toggleAttachedFile: mockToggleAttachedFile,
     attachedFiles: { value: [] },
     quoteData: { value: null },
     setQuoteData: vi.fn(),
@@ -57,7 +61,7 @@ const i18n = createI18n({
       },
       chat: {
         actions: { attachToChat: '附加到聊天' },
-        attach: { alreadyAttached: '已附加', addedToChat: '已添加到聊天' },
+        attach: { alreadyAttached: '已附加', addedToChat: '已添加到聊天', removedFromChat: '已从聊天移除' },
       },
       nav: { refresh: '刷新' },
     },
@@ -116,6 +120,7 @@ describe('FileHeader — handleAttachToChat', () => {
     await nextTick()
 
     expect(mockAddAttachedFile).not.toHaveBeenCalled()
+    expect(mockRemoveAttachedFileByPath).toHaveBeenCalledWith('/test.ts')
     expect(mockToastShow).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ type: 'info' }),

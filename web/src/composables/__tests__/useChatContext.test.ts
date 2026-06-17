@@ -45,6 +45,36 @@ describe('useChatContext', () => {
     it('hasAttachedFile returns false for empty path', () => {
       expect(ctx.hasAttachedFile('')).toBe(false)
     })
+
+    it('removeAttachedFileByPath removes by path', () => {
+      ctx.addAttachedFile('/a.txt')
+      ctx.addAttachedFile('/b.txt')
+      ctx.removeAttachedFileByPath('/a.txt')
+      expect(ctx.attachedFiles.value).toHaveLength(1)
+      expect(ctx.attachedFiles.value[0]).toBe('/b.txt')
+    })
+
+    it('removeAttachedFileByPath does nothing for non-existent path', () => {
+      ctx.addAttachedFile('/a.txt')
+      ctx.removeAttachedFileByPath('/z.txt')
+      expect(ctx.attachedFiles.value).toHaveLength(1)
+    })
+
+    it('toggleAttachedFile adds when not present', () => {
+      ctx.toggleAttachedFile('/a.txt')
+      expect(ctx.attachedFiles.value).toContain('/a.txt')
+    })
+
+    it('toggleAttachedFile removes when already present', () => {
+      ctx.addAttachedFile('/a.txt')
+      ctx.toggleAttachedFile('/a.txt')
+      expect(ctx.attachedFiles.value).not.toContain('/a.txt')
+    })
+
+    it('toggleAttachedFile does nothing for empty path', () => {
+      ctx.toggleAttachedFile('')
+      expect(ctx.attachedFiles.value).toHaveLength(0)
+    })
   })
 
   describe('quoteData', () => {
