@@ -161,8 +161,9 @@ func GetFile(w http.ResponseWriter, r *http.Request) {
 	var absPath string
 	var isExternal bool
 	if queryPath := r.URL.Query().Get("path"); queryPath != "" {
-		queryPath = filepath.Clean(queryPath)
-		if !filepath.IsAbs(queryPath) {
+		// Accept paths starting with / (POSIX-style absolute from frontend)
+		// or platform-native absolute paths (e.g. C:\ on Windows).
+		if !strings.HasPrefix(queryPath, "/") && !filepath.IsAbs(queryPath) {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidFilePath")
 			return
 		}
@@ -478,7 +479,7 @@ func ServeFileBatchExists(w http.ResponseWriter, r *http.Request) {
 		// Expand ~ to home directory so paths like ~/.bashrc resolve correctly
 		p = platform.ExpandTilde(p)
 		var absPath string
-		if filepath.IsAbs(p) {
+		if strings.HasPrefix(p, "/") || filepath.IsAbs(p) {
 			// Absolute path — stat directly without project scoping
 			var err error
 			absPath, err = filepath.Abs(p)
