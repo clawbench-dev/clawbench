@@ -1,6 +1,6 @@
 # AI 后端插件化重构方案
 
-> 日期：2026-06-16（v2 — 评审修订版）
+> 日期：2026-06-16（v3 — 代码验证补充版）
 > 状态：设计完成，待实现
 
 ## 1. 背景与动机
@@ -399,6 +399,18 @@ func NewBackendForAgentWithTransport(backendType, agentID, transportOverride str
 2. **共享 parser 在构造时接受 ToolNameMap**，ParseLine 中使用闭包内的 map 替代全局 switch
 3. **`normalizeToolName()` 保留为全局 fallback**——处理未被子包覆盖的通用别名，逐步瘦身
 
+**`normalizeToolName` 调用者分布**：
+
+| Parser | 调用位置 | 迁移方式 |
+|--------|----------|----------|
+| `StreamParser`（Claude-family） | 不调用 `normalizeToolName` | **无需 ToolNameMap**——CLI 已输出规范名 |
+| `StreamJSONParser`（Kimi） | `stream_json_parser.go:119` | ToolNameMap 闭包注入 |
+| `OpenCodeStreamParser` | `opencode_stream.go:140` | ToolNameMap 闭包注入 |
+| `PiStreamParser` | `pi_stream.go:163` | 整体迁入 `backends/pi/` |
+| `DeepSeekStreamParser` | `deepseek_stream.go:77` | 整体迁入 `backends/deepseek/` |
+| `*_tool.go` 文件 | `deepseek_tool.go`、`opencode_tool.go`、`pi_tool.go` | 随子包迁移 |
+| ACP 事件处理 | `acp_tool_names.go` `extractToolName` | ACP 阶段单独处理（见 4.7 节） |
+
 ```go
 // 子包中的 parser 构造（以 Kimi 为例）
 func newParser(toolNameMap map[string]string) ai.StreamParser {
@@ -449,18 +461,49 @@ CLI: &backends.CLIPlugin{
 
 ### 4.7 ACP 映射数据的运行时查询
 
-ACP 事件处理代码保留在 `internal/ai/`，运行时从注册表查询映射数据：
+ACP 事件处理代码保留在 `internal/ai/`，运行时从注册表查询映射数据。
+
+**参数传递路径**：`mapACPSessionUpdate` 已接收 `conn *ACPConn`，`conn.agent.Backend` 即为 backendID。
+需将 `backendID string` 参数向下传递到 `mapACPToolCall`/`mapACPToolCallUpdate`/`mapToolCallInput` 等函数。
 
 ```go
 // acp_events.go 中的改动
-func mapACPToolCall(agent *model.Agent, msg json.RawMessage) []StreamEvent {
+
+// mapACPSessionUpdate 签名不变，从 conn 中提取 backendID
+func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx context.Context, conn *ACPConn, deb *toolCallDebouncer) {
+    var backendID string
+    if conn != nil && conn.agent != nil {
+        backendID = conn.agent.Backend
+    }
+    // ... 传递 backendID 到子函数 ...
+}
+
+// mapACPToolCall 增加参数
+func mapACPToolCall(tc acp.SessionUpdateToolCall, backendID string) StreamEvent {
     // 查询注册表获取该后端的 toolCallID 前缀映射
-    prefixes := backends.LookupACPToolCallIDPrefixes(agent.Backend)
+    prefixes := backends.LookupACPToolCallIDPrefixes(backendID)
     // 查询注册表获取该后端的 ACP 输入重映射
-    remaps := backends.LookupACPRemaps(agent.Backend)
+    remaps := backends.LookupACPRemaps(backendID)
     // ... 其余逻辑不变 ...
 }
+
+// mapToolCallInput 改用注册表查询替代内联 map
+func mapToolCallInput(tcu acp.SessionToolCallUpdate, tool *ToolCall, backendID string) {
+    if tcu.RawInput != nil {
+        if inputBytes, err := json.Marshal(tcu.RawInput); err == nil && string(inputBytes) != "{}" {
+            remaps := backends.LookupACPRemaps(backendID)
+            normalized, normErr := normalizeToolInput(inputBytes, remaps)
+            // ... 替换当前内联的 6 字段 map ...
+        }
+    }
+    // ...
+}
 ```
+
+**消除重复**：当前 `acp_events.go:278` 和 `acp_events.go:488` 各内联了一个相同的 6 字段 map
+（`oldString→old_string`, `newString→new_string`, `dirPath→path`, `filePath→file_path`, `cellIndex→cell_index`, `cellType→cell_type`），
+与 `perAgentInputRemaps["generic_acp"]` 完全重复。迁移后统一改用 `LookupACPRemaps(backendID)`，
+未注册 ACP 映射的后端自动 fallback 到 `registry.go` 中的 `genericACPRemaps`，消除内联重复。
 
 ## 5. 后端子包示例
 
@@ -704,7 +747,8 @@ func injectPiAPIKey(cmd *exec.Cmd, req ai.ChatRequest) {
 2. 迁移 `common_stream.go` 中该后端的 `perAgentInputRemaps` 条目到子包 `InputRemaps`
 3. 迁移 `normalizeToolName()` 中该后端的别名到子包 `ToolNameMap`
 4. **关键**：`buildBaseStreamArgs` 保留在 `common_stream.go` 作为共享 helper，子包调用它
-5. **关键**：共享 parser（StreamJSONParser）通过 ToolNameMap 闭包注入工具名映射
+5. **关键**：共享 parser（StreamJSONParser/OpenCodeStreamParser）通过 ToolNameMap 闭包注入工具名映射
+6. **注意**：Claude/Codebuddy/Qoder/Cline/Copilot 使用 `StreamParser`（Claude-family），该 parser 不需要 ToolNameMap 注入——CLI 已输出规范名，`StreamParser.ParseLine` 不调用 `normalizeToolName()`。这些后端迁移时只需迁移 CLI 配置（buildArgs/filterLine/preStart），无需处理工具名映射
 
 ### 阶段 5：迁移 MiMo-Code（使用共享 OpenCodeStreamParser）（~1h）
 
@@ -727,13 +771,18 @@ func injectPiAPIKey(cmd *exec.Cmd, req ai.ChatRequest) {
 3. 迁移 `opencode_tool.go` 中的工具名映射到 `ToolNameMap`
 4. `OpenCodeStreamParser` 保留在 `internal/ai/`（MiMo 也使用）
 
-### 阶段 8：迁移 ACP 映射数据（~2h）
+### 阶段 8：迁移 ACP 映射数据（~3h）
 
 1. 各后端子包添加 `acp.go`，注册 `ACPPlugin`（ToolCallIDPrefixes + InputRemaps）
-2. 修改 `acp_events.go` 中的 `extractToolName` 和 `mapACPToolCall`，从注册表查询映射数据
-3. 将 `acpToolCallIDPrefix` 和 `perAgentInputRemaps` 中的 `_acp` 条目迁移到子包
-4. **保留** `generic_acp` 作为 fallback（在 `registry.go` 中）
-5. **验证**：ACP 集成测试全部通过
+2. **传递 backendID 参数**：修改 `acp_events.go` 的函数签名链，将 `backendID string` 从 `mapACPSessionUpdate` 向下传递到 `mapACPToolCall`/`mapACPToolCallUpdate`/`mapToolCallInput`/`mapToolCallInputFromExecute`/`mapToolCallInputFromLocations`/`mapToolCallName`/`mapToolCallOutput`
+   - `mapACPSessionUpdate` 从 `conn.agent.Backend` 提取 backendID（`conn` 参数已存在）
+   - `extractToolName` 改为接收 `backendID` 参数，从注册表查询 `LookupACPToolCallIDPrefixes(backendID)` 替代全局 `acpToolCallIDPrefix`
+3. **消除内联重复**：`acp_events.go:278` 和 `acp_events.go:488` 中内联的 6 字段 map 替换为 `backends.LookupACPRemaps(backendID)`，未注册 ACP 映射的后端自动 fallback 到 `genericACPRemaps`
+4. 将 `acpToolCallIDPrefix` 迁移到子包 `ACPPlugin.ToolCallIDPrefixes`（当前仅 Kimi 有条目）
+5. 将 `perAgentInputRemaps` 中的 `_acp` 条目迁移到子包 `ACPPlugin.InputRemaps`
+6. **保留** `acp_tool_names.go` 中的全局映射（`acpLowerAlias`、`acpToolNamePatterns`、`acpKindToCanonical`、`acpAgentSubtypes`）——这些是后端无关的通用匹配规则
+7. **保留** `generic_acp` 作为 fallback（在 `registry.go` 中）
+8. **验证**：ACP 集成测试全部通过（注意：测试中 `conn` 为 nil 时 backendID 为空字符串，`LookupACPRemaps("")` 返回 `genericACPRemaps`，行为与当前内联 map 一致）
 
 ### 阶段 9：前端 API 驱动（独立，非阻塞）（~4h+）
 
@@ -766,9 +815,13 @@ func injectPiAPIKey(cmd *exec.Cmd, req ai.ChatRequest) {
 | 7 | CLI/ACP/Custom 三路径 | Custom 字段支持完全自定义后端 | Codex 直接实现 AIBackend、VeCLI 包装 CLIBackend——单一 CLIPlugin 路径无法表达 |
 | 8 | 前端 | API 驱动 vs 硬编码 | 后端列表动态变化，前端不应硬编码（但独立于后端重构，不阻塞） |
 | 9 | 注册时机 | 集中式 all.go + init() vs 分散注册 | all.go 是唯一注册入口，import 列表一目了然 |
-| 10 | 共享 Parser 保留在框架层 | StreamJSONParser/OpenCodeStreamParser 不迁移 | 多后端共用，不属于任何单一后端子包 |
+| 10 | 共享 Parser 保留在框架层 | StreamParser/StreamJSONParser/OpenCodeStreamParser 不迁移 | 多后端共用，不属于任何单一后端子包。注意：`StreamParser`（Claude-family，587 行）不需要 ToolNameMap 注入——Claude-family CLI 已输出 PascalCase 规范名，无需映射 |
 | 11 | 工具名归一化分发 | 闭包注入 ToolNameMap + 全局 fallback | Parser 构造时获取映射表，未覆盖的别名走全局 normalizeToolName() |
 | 12 | PreExecHook 机制 | CLIPlugin 增加可选 hook | 消除 injectAgentAPIKey 中的后端特定硬编码 |
+| 13 | ACP 事件处理获取 backendID | **参数传递 vs 全局状态** | `mapACPSessionUpdate` 已接收 `conn *ACPConn` 参数，`conn.agent.Backend` 可直接获取 backendID。向下传递到 `mapACPToolCall`/`mapToolCallInput` 等函数即可调用 `LookupACPRemaps`/`LookupACPToolCallIDPrefixes`，无需引入全局状态 |
+| 14 | StreamParser（Claude-family）无需 ToolNameMap | 不注入 vs 闭包注入 | Claude-family CLI 输出已为 PascalCase 规范名，`StreamParser.ParseLine` 不调用 `normalizeToolName()`，无需映射。仅 `StreamJSONParser` 和 `OpenCodeStreamParser` 需要闭包注入 |
+| 15 | CLIPlugin.NewBackend 返回值 | 允许返回预构建实例 vs 强制新实例 | `CLIBackend` 无可变状态，子包可返回包级 var（单例，与当前行为一致），也可每次 new。工厂函数不强制分配策略 |
+| 16 | acp_tool_names.go 全局映射归属 | 保留在框架层 vs 迁入注册表 | `acpLowerAlias`、`acpToolNamePatterns`、`acpKindToCanonical`、`acpAgentSubtypes` 是后端无关的通用匹配规则，保留在 `acp_tool_names.go` 作为共享基础设施（与 `acp_events.go` 同级）。仅 `acpToolCallIDPrefix` 迁入子包 ACPPlugin |
 
 ### 决策 #4 变更说明（v1 → v2）
 
@@ -791,6 +844,10 @@ v2 改为"数据注册"——子包只注册映射数据（ToolCallIDPrefixes + 
 | `generic_acp` fallback 丢失 | 保留在 `registry.go` 中作为默认 ACP remaps，所有未注册 ACP 映射的后端使用此 fallback |
 | PreExecHook 引入新的调用时机 | Hook 在 `cmd.Start()` 前调用，与当前 `injectAgentAPIKey` 调用时机一致。nil hook 为 no-op，无性能影响 |
 | 自定义后端与 AutoResume 的交互 | Custom 后端自行决定是否需要 AutoResume。当前 Codex/VeCLI 不需要，未来自定义后端可在 NewBackend 中自行包装 |
+| ACP backendID 参数传递影响测试 | 测试中 `conn` 为 nil 时 backendID 为空字符串，`LookupACPRemaps("")` 返回 `genericACPRemaps`，与当前内联 map 行为一致。需确保所有 ACP 测试通过 |
+| StreamParser（Claude-family）误加 ToolNameMap | Claude-family CLI 已输出 PascalCase 规范名，`StreamParser.ParseLine` 不调用 `normalizeToolName()`。不应为它添加 ToolNameMap 注入——冗余且增加理解成本 |
+| `acpToolCallIDPrefix` 迁移后的空 fallback | 当前仅 Kimi 有条目。`extractToolName` 中 `acpToolCallIDPrefix[prefix]` 查找失败时走 title/kind 逻辑。迁移后 `LookupACPToolCallIDPrefixes` 返回 nil 时同样走 fallback，行为一致 |
+| 单例 vs 新实例行为变化 | 当前 9 个后端用包级 var（单例），3 个用函数调用（新实例）。`CLIPlugin.NewBackend` 是工厂函数，子包可返回预构建实例保持兼容。无需统一策略——`CLIBackend` 无可变状态，两种方式均安全 |
 
 ## 9. 不变的部分
 
@@ -800,12 +857,13 @@ v2 改为"数据注册"——子包只注册映射数据（ToolCallIDPrefixes + 
 - `CLIBackend` 通用骨架（进程管理、stdout 管道、上下文取消）
 - `AutoResumeBackend` 装饰器
 - `ACPBackend` 通用骨架（连接管理、debounce、crash diagnostics）
-- `acp_events.go` 整体——ACP 事件处理是后端无关的共享基础设施
-- `acp_tool_names.go` 中 `extractToolName` 核心逻辑（映射表数据从注册表查询，匹配算法保留）
-- `StreamParser` / `StreamJSONParser` / `OpenCodeStreamParser` 通用解析器
+- `acp_events.go` 整体——ACP 事件处理是后端无关的共享基础设施（映射数据从注册表查询，需传递 `backendID` 参数，见 4.7 节）
+- `acp_tool_names.go` 整体——`extractToolName` 核心逻辑（`acpLowerAlias`、`acpToolNamePatterns`、`acpKindToCanonical`、`acpAgentSubtypes` 是后端无关的通用匹配规则）。仅 `acpToolCallIDPrefix` 的数据迁入子包 `ACPPlugin.ToolCallIDPrefixes`，`extractToolName` 算法保留，改为从注册表查询前缀映射
+- `StreamParser`（Claude-family，587 行）——**不需要 ToolNameMap 注入**。Claude-family CLI 已输出 PascalCase 规范名，`StreamParser.ParseLine` 不调用 `normalizeToolName()`，无需映射
+- `StreamJSONParser` / `OpenCodeStreamParser` 通用解析器——通过 ToolNameMap 闭包注入配置
 - `buildBaseStreamArgs` 共享参数构造 helper
 - `normalizeToolName` / `normalizeToolInput` 通用归一化函数（核心逻辑保留，per-agent 映射表迁移到子包）
-- `generic_acp` fallback 映射
+- `generic_acp` fallback 映射（保留在 `registry.go`）
 - 孤儿进程清理逻辑
 
 ## 10. 评审记录
@@ -841,3 +899,19 @@ v2 改为"数据注册"——子包只注册映射数据（ToolCallIDPrefixes + 
 | M2 | ACP 阶段工时估算过低 | 数据注册模式从 ~6h 降至 ~2h（不再拆分 ProcessEvent） |
 | M3 | needsAutoResume 函数迁移步骤遗漏 | 在阶段 10 清理中明确列出 |
 | M4 | ACPState 设计与实际状态管理不匹配 | 移除 ACPState struct（不再需要——ProcessEvent 不迁移） |
+
+### v2 → v3 补充（2026-06-17，代码验证后）
+
+> 基于对 `internal/ai/` 93 个文件的实际代码阅读，补充以下遗漏和修正。
+
+#### 补充问题
+
+| # | 问题 | 修复 |
+|---|------|------|
+| S1 | `mapACPToolCall`/`mapToolCallInput` 无 `backendID` 参数，无法调用 `LookupACPRemaps()` | `mapACPSessionUpdate` 已接收 `conn *ACPConn`，`conn.agent.Backend` 即为 backendID。需将 `backendID string` 向下传递到子函数（见 4.7 节更新） |
+| S2 | `acp_events.go:278,488` 内联 6 字段 map 与 `generic_acp` 重复 | 迁移后统一改用 `LookupACPRemaps(backendID)`，消除内联重复（见 4.7 节更新） |
+| S3 | `StreamParser`（Claude-family，587 行）是否需要 ToolNameMap 未说明 | **不需要**——Claude-family CLI 已输出 PascalCase 规范名，`StreamParser.ParseLine` 不调用 `normalizeToolName()`。补充到决策 #14 和"不变的部分" |
+| S4 | `acp_tool_names.go` 中全局映射（`acpLowerAlias` 等）归属未说明 | 保留在 `acp_tool_names.go` 作为后端无关的通用匹配规则。仅 `acpToolCallIDPrefix` 数据迁入子包。补充到决策 #16 和"不变的部分" |
+| S5 | `CLIPlugin.NewBackend` 返回新实例 vs 当前多数用单例 | 工厂函数不强制分配策略，子包可返回预构建实例。补充到决策 #15 |
+| S6 | 阶段 8 缺少 backendID 参数传递的详细步骤 | 更新阶段 8 为 ~3h，列出完整的函数签名变更链和测试兼容性说明 |
+| S7 | 阶段 4 未说明 Claude-family 后端无需 ToolNameMap | 补充第 6 条说明，明确 Claude/Codebuddy/Qoder/Cline/Copilot 迁移时只需迁移 CLI 配置 |
