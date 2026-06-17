@@ -29,6 +29,19 @@ vi.mock('@/composables/useDialog', () => ({
     useDialog: () => ({ confirm: vi.fn().mockResolvedValue(true) }),
 }))
 
+// Mock useDirStack
+const mockDirStack = {
+    pushDirAndLoad: vi.fn().mockResolvedValue(undefined),
+    popDirAndLoad: vi.fn().mockResolvedValue(undefined),
+    truncateToDirAndLoad: vi.fn().mockResolvedValue(undefined),
+    replaceTopAndLoad: vi.fn().mockResolvedValue(undefined),
+    resetStack: vi.fn(),
+    currentDir: { value: '/project' },
+}
+vi.mock('@/composables/useDirStack', () => ({
+    useDirStack: () => mockDirStack,
+}))
+
 import { store } from '@/stores/app'
 
 describe('store', () => {
@@ -435,6 +448,141 @@ describe('store', () => {
             const result = await store.setProject('/my/project')
 
             expect(result).toBe('/my/project')
+        })
+    })
+
+    // ── deleteFile / deleteFiles / renameFile ──
+
+    describe('deleteFile', () => {
+        it('calls delete API and reloads files', async () => {
+            store.state.currentDir = '/project'
+            store.state.currentFile = { path: '/project/old.txt', name: 'old.txt', content: '', isBinary: false, size: 0, isImage: false, isAudio: false }
+
+            mockApiPost.mockResolvedValue({})
+
+            await store.deleteFile('/project/old.txt')
+
+            expect(mockApiPost).toHaveBeenCalledWith('/api/file/delete', { path: '/project/old.txt' })
+            // currentFile should be cleared since it matches deleted path
+            expect(store.state.currentFile).toBeNull()
+        })
+
+        it('does not clear currentFile if different file deleted', async () => {
+            store.state.currentDir = '/project'
+            store.state.currentFile = { path: '/project/other.txt', name: 'other.txt', content: '', isBinary: false, size: 0, isImage: false, isAudio: false }
+            mockApiGet.mockResolvedValue({ entries: [] })
+
+            mockApiPost.mockResolvedValue({})
+
+            await store.deleteFile('/project/old.txt')
+
+            expect(store.state.currentFile).not.toBeNull()
+        })
+    })
+
+    describe('deleteFiles', () => {
+        it('deletes multiple files and clears currentFile if matched', async () => {
+            store.state.currentDir = '/project'
+            store.state.currentFile = { path: '/project/a.txt', name: 'a.txt', content: '', isBinary: false, size: 0, isImage: false, isAudio: false }
+            mockApiGet.mockResolvedValue({ entries: [] })
+
+            mockApiPost.mockResolvedValue({})
+
+            await store.deleteFiles(['/project/a.txt', '/project/b.txt'])
+
+            expect(mockApiPost).toHaveBeenCalledTimes(2)
+            expect(store.state.currentFile).toBeNull()
+        })
+
+        it('returns early when paths array is empty', async () => {
+            await store.deleteFiles([])
+            expect(mockApiPost).not.toHaveBeenCalled()
+        })
+    })
+
+    describe('renameFile', () => {
+        it('calls rename API and reloads files', async () => {
+            store.state.currentDir = '/project'
+            mockApiGet.mockResolvedValue({ entries: [] })
+            mockApiPost.mockResolvedValue({})
+
+            await store.renameFile('/project/old.txt', 'new.txt')
+
+            expect(mockApiPost).toHaveBeenCalledWith('/api/file/rename', { path: '/project/old.txt', name: 'new.txt' })
+        })
+    })
+
+    // ── Directory stack navigation ──
+
+    describe('pushDir', () => {
+        it('calls dirStack.pushDirAndLoad', async () => {
+            store.state.dirLoading = false
+
+            await store.pushDir('/project/sub')
+
+            expect(mockDirStack.pushDirAndLoad).toHaveBeenCalledWith('/project/sub', expect.any(Function))
+        })
+
+        it('skips if dirLoading is true', async () => {
+            store.state.dirLoading = true
+
+            await store.pushDir('/project/sub')
+
+            expect(mockDirStack.pushDirAndLoad).not.toHaveBeenCalled()
+        })
+    })
+
+    describe('popDir', () => {
+        it('calls dirStack.popDirAndLoad', async () => {
+            store.state.dirLoading = false
+
+            await store.popDir()
+
+            expect(mockDirStack.popDirAndLoad).toHaveBeenCalledWith(expect.any(Function))
+        })
+
+        it('skips if dirLoading is true', async () => {
+            store.state.dirLoading = true
+
+            await store.popDir()
+
+            expect(mockDirStack.popDirAndLoad).not.toHaveBeenCalled()
+        })
+    })
+
+    describe('truncateToDir', () => {
+        it('calls dirStack.truncateToDirAndLoad', async () => {
+            store.state.dirLoading = false
+
+            await store.truncateToDir('/project')
+
+            expect(mockDirStack.truncateToDirAndLoad).toHaveBeenCalledWith('/project', expect.any(Function))
+        })
+
+        it('skips if dirLoading is true', async () => {
+            store.state.dirLoading = true
+
+            await store.truncateToDir('/project')
+
+            expect(mockDirStack.truncateToDirAndLoad).not.toHaveBeenCalled()
+        })
+    })
+
+    describe('replaceDirTop', () => {
+        it('calls dirStack.replaceTopAndLoad', async () => {
+            store.state.dirLoading = false
+
+            await store.replaceDirTop('/project/other')
+
+            expect(mockDirStack.replaceTopAndLoad).toHaveBeenCalledWith('/project/other', expect.any(Function))
+        })
+
+        it('skips if dirLoading is true', async () => {
+            store.state.dirLoading = true
+
+            await store.replaceDirTop('/project/other')
+
+            expect(mockDirStack.replaceTopAndLoad).not.toHaveBeenCalled()
         })
     })
 })

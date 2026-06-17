@@ -319,7 +319,7 @@ describe('annotateWorktreePaths', () => {
         expect(result.html).toContain('data-file-path=".worktrees/feature-x"')
     })
 
-    it('does NOT add data-file-path for worktree path outside projectRoot', async () => {
+    it('adds data-file-path with absolute path for worktree path outside projectRoot', async () => {
         const externalWorktrees = [
             { ...MOCK_WORKTREES[0] },
             { path: '/other/location/worktree-x', displayPath: './worktree-x', branch: 'worktree-x', isCurrent: false, dirty: false, changeCount: 0, untrackedCount: 0, locked: false, missing: false },
@@ -328,8 +328,8 @@ describe('annotateWorktreePaths', () => {
         const result = annotateWorktreePaths('<p>/other/location/worktree-x</p>', { projectRoot: PROJECT_ROOT })
         expect(result.html).toContain('chat-worktree-btn')
         expect(result.html).toContain('data-worktree-path="/other/location/worktree-x"')
-        // No data-file-path because /other/location is outside projectRoot
-        expect(result.html).not.toContain('data-file-path')
+        // data-file-path is the absolute path since /other/location is outside projectRoot
+        expect(result.html).toContain('data-file-path="/other/location/worktree-x"')
     })
 
     it('skips <code> that already has chat-worktree-path class (already annotated)', async () => {

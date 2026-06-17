@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { isValidAskContent, detectAskQuestion, extractScheduledTaskIds, stripScheduledTaskTags, taskChanged, StaticBlockCache, SCHEDULED_TASK_RE } from '../streamPerf'
 
 describe('isValidAskContent', () => {
@@ -327,5 +327,81 @@ describe('StaticBlockCache', () => {
     const cache = new StaticBlockCache()
     cache.set(42, 0, 'text', '<p>ok</p>')
     expect(cache.get(42, 0, 'text')).toBe('<p>ok</p>')
+  })
+
+  // ── Deferred enhancement support ──
+
+  it('tracks deferred entries', () => {
+    const cache = new StaticBlockCache()
+    cache.set('msg1', 0, 'text', '<p>basic</p>', true)
+    expect(cache.isDeferred('msg1', 0, 'text')).toBe(true)
+    expect(cache.deferredCount).toBe(1)
+  })
+
+  it('non-deferred entries are not tracked as deferred', () => {
+    const cache = new StaticBlockCache()
+    cache.set('msg1', 0, 'text', '<p>full</p>', false)
+    expect(cache.isDeferred('msg1', 0, 'text')).toBe(false)
+    expect(cache.deferredCount).toBe(0)
+  })
+
+  it('markUpgraded removes entry from deferred set', () => {
+    const cache = new StaticBlockCache()
+    cache.set('msg1', 0, 'text', '<p>basic</p>', true)
+    expect(cache.isDeferred('msg1', 0, 'text')).toBe(true)
+
+    cache.markUpgraded('msg1', 0, 'text')
+    expect(cache.isDeferred('msg1', 0, 'text')).toBe(false)
+    expect(cache.deferredCount).toBe(0)
+  })
+
+  it('setUpgradeFn and scheduleUpgrade invoke the fn', async () => {
+    const cache = new StaticBlockCache()
+    const upgradeFn = vi.fn()
+    cache.setUpgradeFn(upgradeFn)
+
+    cache.set('msg1', 0, 'text', '<p>basic</p>', true)
+    cache.scheduleUpgrade()
+
+    // Wait for the idle callback / timeout
+    await new Promise(r => setTimeout(r, 50))
+
+    expect(upgradeFn).toHaveBeenCalledTimes(1)
+  })
+
+  it('scheduleUpgrade does nothing when no deferred entries', async () => {
+    const cache = new StaticBlockCache()
+    const upgradeFn = vi.fn()
+    cache.setUpgradeFn(upgradeFn)
+
+    cache.scheduleUpgrade()
+
+    await new Promise(r => setTimeout(r, 50))
+
+    expect(upgradeFn).not.toHaveBeenCalled()
+  })
+
+  it('scheduleUpgrade does not double-schedule', async () => {
+    const cache = new StaticBlockCache()
+    const upgradeFn = vi.fn()
+    cache.setUpgradeFn(upgradeFn)
+
+    cache.set('msg1', 0, 'text', '<p>basic</p>', true)
+    cache.scheduleUpgrade()
+    cache.scheduleUpgrade() // second call should be a no-op
+
+    await new Promise(r => setTimeout(r, 50))
+
+    expect(upgradeFn).toHaveBeenCalledTimes(1)
+  })
+
+  it('clear resets deferred state', () => {
+    const cache = new StaticBlockCache()
+    cache.set('msg1', 0, 'text', '<p>basic</p>', true)
+    expect(cache.deferredCount).toBe(1)
+
+    cache.clear()
+    expect(cache.deferredCount).toBe(0)
+    expect(cache.isDeferred('msg1', 0, 'text')).toBe(false)
   })
 })

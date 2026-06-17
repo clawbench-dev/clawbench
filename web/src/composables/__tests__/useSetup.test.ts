@@ -259,7 +259,7 @@ describe('providerAgentNames', () => {
   it('contains entries for major providers', () => {
     expect(providerAgentNames['openai']).toBeDefined()
     expect(providerAgentNames['anthropic']).toBeDefined()
-    expect(providerAgentNames['google']).toBeDefined()
+    expect(providerAgentNames['minimax']).toBeDefined()
     expect(providerAgentNames['deepseek']).toBeDefined()
   })
 
