@@ -181,6 +181,7 @@ export default {
       currentFile: '当前文件',
       currentDir: '当前目录',
       recentReferences: '最近引用',
+      takePhoto: '拍照',
       uploadFile: '上传文件',
       dropToUpload: '松开上传文件',
       uploading: '上传中...',
@@ -539,6 +540,7 @@ export default {
     viewer: {
       fileTooLarge: '文件过大，无法在浏览器中预览',
       binaryFile: '二进制文件，无法在浏览器中预览',
+      truncated: '内容已截断，仅显示部分文本',
     },
     details: {
       title: '文件详情',

@@ -142,6 +142,10 @@
 
       <!-- Code / plain text -->
       <div v-else class="raw-content-viewer">
+        <div v-if="file.truncated" class="truncated-notice">
+          <AlertTriangle :size="14" />
+          {{ t('file.viewer.truncated') }}
+        </div>
         <CodePreview
           :content="file.content"
           :language="rawFileLanguage"
@@ -162,7 +166,7 @@
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
-import { FileText, Download, Code2 } from 'lucide-vue-next'
+import { FileText, Download, Code2, AlertTriangle } from 'lucide-vue-next'
 import ImagePreview from '@/components/media/ImagePreview.vue'
 import PdfPreview from '@/components/media/PdfPreview.vue'
 import AudioPreview from '@/components/media/AudioPreview.vue'
@@ -504,11 +508,28 @@ defineExpose({
     border: none;
     background: #fff;
 }
+
+.truncated-notice {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: rgba(245, 158, 11, 0.1);
+    color: var(--warning-color, #d97706);
+    font-size: 12px;
+    border-bottom: 1px solid rgba(245, 158, 11, 0.2);
+}
 </style>
 
 <style>
 [data-theme="dark"] .error-bubble {
     background: rgba(239, 68, 68, 0.15);
     color: #fca5a5;
+}
+
+[data-theme="dark"] .truncated-notice {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+    border-bottom-color: rgba(245, 158, 11, 0.3);
 }
 </style>

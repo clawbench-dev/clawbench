@@ -25,6 +25,7 @@ interface CurrentFile {
     isHtml?: boolean
     isBinary?: boolean
     tooLarge?: boolean
+    truncated?: boolean
     size?: number
     error?: string
 }
@@ -278,59 +279,11 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
     const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.ico', '.tiff', '.tif', '.avif']
     const audioExts = ['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac', '.wma', '.opus']
     const videoExts = ['.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv', '.m4v', '.3gp', '.m3u8']
-    // Only fetch content for known text file extensions; everything else is binary.
-    // This must match the backend model.IsTextFile() list.
-    const textExts = [
-        '.md', '.markdown',
-        '.json', '.jsonc', '.json5',
-        '.yaml', '.yml',
-        '.toml',
-        '.xml', '.plist',
-        '.ini', '.properties', '.conf', '.cfg',
-        '.go', '.mod', '.sum',
-        '.py', '.pyi',
-        '.rs',
-        '.js', '.mjs', '.cjs',
-        '.ts', '.tsx', '.mts', '.cts',
-        '.java',
-        '.cs',
-        '.rb',
-        '.php',
-        '.swift',
-        '.kt', '.kts',
-        '.scala',
-        '.c', '.h', '.cpp', '.hpp', '.cc', '.cxx',
-        '.lua',
-        '.r', '.R',
-        '.pl', '.pm',
-        '.sh', '.bash', '.zsh', '.fish', '.ksh', '.ash',
-        '.ps1', '.psm1',
-        '.sql',
-        '.graphql', '.gql',
-        '.html', '.htm', '.xhtml',
-        '.css', '.scss', '.sass', '.less', '.styl',
-        '.vue', '.svelte',
-        '.dockerfile', '.dockerignore',
-        '.makefile', '.mak',
-        '.nginx',
-        '.gitignore', '.gitattributes', '.gitconfig',
-        '.editorconfig',
-        '.env', '.env.example', '.env.local',
-        '.ignore',
-        '.txt', '.text',
-        '.log',
-        '.diff', '.patch',
-        '.csv', '.tsv',
-        '.tex',
-        '.pem', '.crt', '.key', '.pub',
-        '.regex', '.regexp',
-    ]
     const lower = path.toLowerCase()
     const isPdf = lower.endsWith('.pdf')
     const isImage = isImageFile || imageExts.some(ext => lower.endsWith(ext))
     const isAudio = isAudioFile || audioExts.some(ext => lower.endsWith(ext))
     const isVideo = videoExts.some(ext => lower.endsWith(ext))
-    const isText = textExts.some(ext => lower.endsWith(ext))
     if (isPdf) {
         const fileName = baseName(path)
         state.currentFile = { name: fileName, path, content: null, isPdf: true }
@@ -351,13 +304,6 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
         state.currentFile = { name: fileName, path, content: null, isVideo: true }
         return true
     }
-    if (!isText && !forceText) {
-        // Unknown extension → treat as binary, don't even call the API
-        const fileName = baseName(path)
-        const sizeInfo = state.dirEntries.find(e => e.name === fileName)
-        state.currentFile = { name: fileName, path, content: null, isBinary: true, size: sizeInfo?.size }
-        return true
-    }
 
     try {
         // Absolute paths (project-external) use query parameter to avoid URL path
@@ -368,14 +314,14 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
         const isAbsPath = path.startsWith('/')
         let url: string
         if (isAbsPath) {
-            url = forceText && !isText
+            url = forceText
                 ? `/api/file?path=${encodeURIComponent(path)}&forceText=1`
                 : `/api/file?path=${encodeURIComponent(path)}`
         } else {
             // Strip leading slash to prevent double-slash URLs (/api/file//path)
             // which Go's ServeMux decodes from %2F, causing InvalidFilePath errors.
             const cleanPath = path.replace(/^\/+/, '')
-            url = forceText && !isText
+            url = forceText
                 ? `/api/file/${encodeURIComponent(cleanPath)}?forceText=1`
                 : `/api/file/${encodeURIComponent(cleanPath)}`
         }
@@ -391,8 +337,7 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
             throw new Error(err.error || 'Failed')
         }
         const data = await resp.json() as CurrentFile
-        // When forceText=true, backend omits isBinary:false (Go zero value).
-        // Must explicitly clear it so the binary fallback view disappears.
+        // When forceText=true, clear isBinary/tooLarge so binary fallback disappears
         if (forceText) {
             data.isBinary = false
             data.tooLarge = false

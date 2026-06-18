@@ -16,6 +16,7 @@ import (
 
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
+	"unicode/utf8"
 )
 
 // mimeTypes maps file extensions to MIME types for ServeLocalFile.
@@ -230,31 +231,62 @@ func GetFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only serve content for known text files; everything else is binary.
-	// This prevents accidentally reading large binary files into memory.
-	// Use ?forceText=1 to override (e.g. user explicitly wants to view as text).
+	// For non-text files, check if the content is actually binary (via null-byte
+	// sniffing). If binary, return isBinary=true without the content — the
+	// frontend shows a placeholder with "Open as text" button.
+	// Use ?forceText=1 to override: returns sanitized content (truncated +
+	// non-printable chars replaced) safe for DOM rendering.
+	isText := model.IsTextFile(info.Name())
 	forceText := r.URL.Query().Get("forceText") == "1"
-	if !forceText && !model.IsTextFile(info.Name()) {
-		respPath := absPath
-		if !isExternal {
-			relPath, _ := filepath.Rel(projectPath, absPath)
-			respPath = filepath.ToSlash(relPath)
+
+	if !isText && !forceText {
+		// Sniff content to detect binary — read first 8KB
+		sniffBuf := make([]byte, binarySniffSize)
+		f, err := os.Open(absPath)
+		if err != nil {
+			model.WriteError(w, model.Internal(fmt.Errorf("cannot open file")))
+			return
 		}
-		writeJSON(w, http.StatusOK, FileContent{
-			Content:   "",
-			Name:      info.Name(),
-			Path:      respPath,
-			Supported: false,
-			IsBinary:  true,
-			Size:      info.Size(),
-		})
-		return
+		n, _ := f.Read(sniffBuf)
+		_ = f.Close()
+
+		isBinary := false
+		for i := 0; i < n; i++ {
+			if sniffBuf[i] == 0 {
+				isBinary = true
+				break
+			}
+		}
+
+		if isBinary {
+			respPath := absPath
+			if !isExternal {
+				relPath, _ := filepath.Rel(projectPath, absPath)
+				respPath = filepath.ToSlash(relPath)
+			}
+			writeJSON(w, http.StatusOK, FileContent{
+				Content:   "",
+				Name:      info.Name(),
+				Path:      respPath,
+				Supported: false,
+				IsBinary:  true,
+				Size:      info.Size(),
+			})
+			return
+		}
 	}
 
 	content, err := os.ReadFile(absPath)
 	if err != nil {
 		model.WriteError(w, model.Internal(fmt.Errorf("cannot read file")))
 		return
+	}
+
+	// Sanitize content for non-text files when forceText is used,
+	// or when the file passed binary sniffing (non-text ext but actually text).
+	var truncated bool
+	if !isText {
+		content, truncated = sanitizeTextContent(content)
 	}
 
 	respPath := absPath
@@ -268,6 +300,7 @@ func GetFile(w http.ResponseWriter, r *http.Request) {
 		Path:      respPath,
 		Supported: model.IsSupportedFile(info.Name()),
 		Size:      info.Size(),
+		Truncated: truncated,
 	})
 }
 
@@ -539,6 +572,7 @@ type FileContent struct {
 	Path      string `json:"path"`
 	Supported bool   `json:"supported"`
 	IsBinary  bool   `json:"isBinary,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
 	Size      int64  `json:"size"`
 }
 
@@ -689,4 +723,70 @@ func serveProjectsCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "path": newDirAbs})
+}
+
+const (
+	// binarySniffSize is how many bytes to inspect for null-byte detection.
+	binarySniffSize = 8192
+	// maxForceTextSize is the maximum bytes to return for large text files.
+	maxForceTextSize = 512 * 1024 // 512KB
+	// maxBinaryTextSize is the maximum bytes to return for binary files
+	// opened as text (detected via null-byte sniffing).
+	maxBinaryTextSize = 64 * 1024 // 64KB
+)
+
+// sanitizeTextContent prepares raw file bytes for text display.
+// For binary files (detected via null-byte sniffing in the first 8KB):
+// - Truncates to maxBinaryTextSize
+// - Replaces non-printable characters with '.'
+// For large text files:
+// - Truncates to maxForceTextSize at a UTF-8 boundary
+// Returns the sanitized content and whether truncation occurred.
+func sanitizeTextContent(data []byte) ([]byte, bool) {
+	if len(data) == 0 {
+		return data, false
+	}
+
+	// Sniff for binary content: check first 8KB for null bytes
+	sniffEnd := len(data)
+	if sniffEnd > binarySniffSize {
+		sniffEnd = binarySniffSize
+	}
+	isBinary := false
+	for i := 0; i < sniffEnd; i++ {
+		if data[i] == 0 {
+			isBinary = true
+			break
+		}
+	}
+
+	truncated := false
+
+	if isBinary {
+		// Truncate binary content aggressively
+		if len(data) > maxBinaryTextSize {
+			data = data[:maxBinaryTextSize]
+			truncated = true
+		}
+		// Replace non-printable characters (keep \n, \r, \t)
+		out := make([]byte, len(data))
+		for i, b := range data {
+			if b == '\n' || b == '\r' || b == '\t' || (b >= 0x20 && b < 0x7F) || b >= 0x80 {
+				out[i] = b
+			} else {
+				out[i] = '.'
+			}
+		}
+		data = out
+	} else if len(data) > maxForceTextSize {
+		// Text file: truncate at UTF-8 boundary to avoid splitting multi-byte chars
+		cut := maxForceTextSize
+		for cut > 0 && cut < len(data) && !utf8.RuneStart(data[cut]) {
+			cut--
+		}
+		data = data[:cut]
+		truncated = true
+	}
+
+	return data, truncated
 }

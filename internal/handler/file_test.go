@@ -935,6 +935,7 @@ func TestGetFile_BinaryFileWithForceText(t *testing.T) {
 	binFile := filepath.Join(env.ProjectDir, "test.exe")
 	require.NoError(t, os.WriteFile(binFile, []byte{0x4D, 0x5A, 0x90, 0x00}, 0o644))
 
+	// forceText=1 overrides binary detection, returns sanitized content
 	req := newRequest(t, http.MethodGet, "/api/file/test.exe?forceText=1", nil)
 	withProjectCookie(req, env.ProjectDir)
 
@@ -945,6 +946,8 @@ func TestGetFile_BinaryFileWithForceText(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
 	assert.False(t, fc.IsBinary)
 	assert.NotEmpty(t, fc.Content)
+	// Null byte should be replaced with '.'
+	assert.Contains(t, fc.Content, ".")
 }
 
 func TestGetFile_LargeFile_Returns400(t *testing.T) {
@@ -1165,9 +1168,9 @@ func TestGetFile_ExternalBinaryFile(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// Create a binary file outside project but under watch dir
+	// Create a binary file outside project but under watch dir (with null byte)
 	binFile := filepath.Join(env.WatchDir, "test.exe")
-	require.NoError(t, os.WriteFile(binFile, []byte{0x4D, 0x5A}, 0o644))
+	require.NoError(t, os.WriteFile(binFile, []byte{0x4D, 0x5A, 0x00}, 0o644))
 
 	req := newRequest(t, http.MethodGet, "/api/file?path="+binFile, nil)
 	withProjectCookie(req, env.ProjectDir)
@@ -1178,6 +1181,7 @@ func TestGetFile_ExternalBinaryFile(t *testing.T) {
 	var fc FileContent
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
 	assert.True(t, fc.IsBinary)
+	assert.Empty(t, fc.Content)
 }
 
 // --- ListDir_NotADirectory ---

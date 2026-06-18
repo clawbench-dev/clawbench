@@ -181,6 +181,7 @@ export default {
       currentFile: 'Current file',
       currentDir: 'Current directory',
       recentReferences: 'Recent references',
+      takePhoto: 'Take photo',
       uploadFile: 'Upload file',
       dropToUpload: 'Drop to upload',
       uploading: 'Uploading...',
@@ -539,6 +540,7 @@ export default {
     viewer: {
       fileTooLarge: 'File too large to preview in browser',
       binaryFile: 'Binary file, cannot preview in browser',
+      truncated: 'Content truncated, showing partial text only',
     },
     details: {
       title: 'File Details',
