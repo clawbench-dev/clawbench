@@ -163,6 +163,7 @@ Auto-discovered agent configs use minimal defaults (no model lists or thinking e
 - Toggle hidden file visibility
 - **Drill-down Browsing + Edge Swipe Back**: Tap folders to drill down, swipe from right edge to go back — intuitive mobile navigation
 - **File Preview Overlay**: Click a file to open a preview overlay on top of the browse tab, no tab switching needed; supports navigation stack (multi-file switching + back), close to return to file list
+- **Binary File Preview**: Binary files show a placeholder UI with "Open as text" option; large files auto-truncate (64KB binary / 512KB text), truncation notice banner when truncated
 
 ### 🎨 Code Preview
 - Syntax highlighting, sticky line numbers, word wrap toggle
@@ -170,7 +171,7 @@ Auto-discovered agent configs use minimal defaults (no model lists or thinking e
 - Double-click to copy code line content (flash animation feedback)
 - **File Change Flash Highlight**: When files are modified externally, deleted characters flash red and new characters flash blue for quick change identification
 - **Quote & Ask**: Select a code snippet, one-click ask AI, auto-attaches file path and line number
-- **File Path Navigation**: Clickable file paths in code previews with import path resolution (e.g., @/composables/useFoo resolves to the actual file path)
+- **File Path Navigation**: Clickable file paths in code previews with import path resolution (e.g., @/composables/useFoo resolves to the actual file path); line range navigation support (e.g., `file.go:42-50`) with flash highlight
 - Swipe gestures: swipe left/right to switch files
 
 ### 📝 Markdown
@@ -178,7 +179,7 @@ Auto-discovered agent configs use minimal defaults (no model lists or thinking e
 - **Quote & Ask**: Select text, one-click ask AI
 - Smart table of contents drawer (TOC) with tree-sitter code symbol extraction (100+ languages, 17 symbol kind icons), LaTeX math, Mermaid diagrams
 - **Image Lightbox**: Images support zoom, swipe browsing
-- **File Path Navigation**: Clickable file paths in Markdown
+- **File Path Navigation**: Clickable file paths in Markdown, with line range navigation
 
 ### 🤖 AI Agents
 - **Streaming Response**: Real-time SSE push, thinking process and tool calls fully visible
@@ -194,7 +195,7 @@ Auto-discovered agent configs use minimal defaults (no model lists or thinking e
 - **Swipe Session Toggle**: Toggle left/right swipe session switching in Settings → Chat; defaults to off to prevent accidental switches when scrolling wide content
 - **Image Upload**: Upload images for AI conversation (multimodal)
 - **Disconnect Protection**: Messages persist immediately, no data loss on disconnect, 15s heartbeat keep-alive + 30s timeout auto-reconnect (live content updates during polling fallback)
-- **Auto Resume**: Automatically sends "continue" after Claude/CodeBuddy/Qoder/DeepSeek/MiMo/Pi/Cline/Copilot/Kimi exits Plan Mode
+- **Auto Resume**: Automatically sends "continue" after Claude/CodeBuddy/Qoder/CodeWhale/MiMo/Pi/Cline/Copilot/Kimi exits Plan Mode
 - **Message Queue**: Messages queue when AI is busy, sent sequentially
 - **Auto Summary**: Automatically generates a summary of the last assistant message on session complete; toggle between summary/original via bottom banner; TTS playback also uses the summary
 - **@ Commands**: Type `@chatsearch` to search conversation history, `@task` to manage scheduled tasks — autocomplete popup menu, purple command badge in user messages
@@ -218,7 +219,7 @@ Auto-discovered agent configs use minimal defaults (no model lists or thinking e
 ### 🤖 AI Conversation
 - **Tool Call Visualization**: Name, parameters, execution results displayed in real time with success/error status
 - **Extended Thinking**: Complex tasks auto-trigger extended thinking, reasoning visible in real time
-- **File Path Navigation**: Clickable file paths in AI responses
+- **File Path Navigation**: Clickable file paths in AI responses, with line range navigation
 - **Localhost URL Navigation**: localhost URLs in AI responses (e.g., http://localhost:3000) are auto-detected with an open button; in App mode, port forwarding is auto-registered and the URL opens via WebView with zero manual config
 - **Quick Send**: Preset common commands (continue, build, commit, etc.) with drag reorder, one-click send, input placeholder hint showing current quick send; long-press fills input box (with progressive fill bar) for editing before sending
 - **Quote & Ask**: Select code or text, ask AI directly, auto-attaches context
