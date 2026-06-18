@@ -49,9 +49,6 @@ type BackendSpec struct {
 	Name                 string                    // display name, e.g. "Claude"
 	Icon                 string                    // emoji icon, e.g. "🤖"
 	Specialty            string                    // short description, e.g. "代码编写与推理"
-	ListModelsCmd        []string                  // optional: args to list models, e.g. ["models"]; empty = not supported
-	ParseModels          func(string) []AgentModel // optional: parse command stdout into AgentModel list; nil = not supported
-	DiscoverModelsFunc   func() []AgentModel       // optional: custom model discovery function (e.g. binary strings scan); takes priority over ListModelsCmd
 	ThinkingEffortLevels []string                  // supported thinking effort levels, e.g. ["low","medium","high"]; nil = not supported
 	AcpCommand           string                    // ACP spawn command for acp-stdio transport, e.g. "kimi --acp"; empty = no ACP support
 	EmbeddedSubDir       string                    // subdirectory under .clawbench/ for embedded binary, e.g. "pi"; empty = no embedded binary

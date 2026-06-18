@@ -37,7 +37,7 @@ type Agent struct {
 
 	// CanRefreshModels indicates whether this agent supports model refresh via the API.
 	// Computed from BackendRegistry at load time based on whether the backend spec
-	// has model discovery capability (DiscoverModelsFunc or ListModelsCmd+ParseModels).
+	// has model discovery capability (registered via RegisterDiscoverModelsFunc).
 	CanRefreshModels bool `json:"canRefreshModels"`
 
 	// Source indicates how the agent was created: "auto" (CLI detected), "setup" (wizard), "manual" (user).

@@ -92,13 +92,14 @@ func TestBackendRegistry_ModelDiscoveryConfig(t *testing.T) {
 		specs[s.ID] = s
 	}
 
-	// OpenCode and DeepSeek use registry-based discovery (no ListModelsCmd on spec)
-	assert.Empty(t, specs["opencode"].ListModelsCmd, "opencode should not have ListModelsCmd (uses registry)")
-	assert.Empty(t, specs["deepseek"].ListModelsCmd, "deepseek should not have ListModelsCmd (uses registry)")
+	// All backends with a discovery function registered support model discovery
+	assert.True(t, model.CanDiscoverModels(specs["opencode"]), "opencode should support model discovery")
+	assert.True(t, model.CanDiscoverModels(specs["deepseek"]), "deepseek should support model discovery")
+	assert.True(t, model.CanDiscoverModels(specs["qoder"]), "qoder should support model discovery")
+	assert.True(t, model.CanDiscoverModels(specs["vecli"]), "vecli should support model discovery")
 
-	// Qoder and VeCLI don't have model discovery
-	assert.Empty(t, specs["qoder"].ListModelsCmd, "qoder should not have ListModelsCmd")
-	assert.Empty(t, specs["vecli"].ListModelsCmd, "vecli should not have ListModelsCmd")
+	// Backend with no registered discovery function does not support model discovery
+	assert.False(t, model.CanDiscoverModels(model.BackendSpec{Backend: "nonexistent_xyz"}), "nonexistent backend should not support model discovery")
 }
 
 // --- Test 4b: Discovery function registry ---
@@ -234,9 +235,8 @@ func TestSyncDiscoverModels_NilWhenNoCLIs(t *testing.T) {
 // --- Test 8: Discovery function registry integration ---
 
 func TestDiscoverModels_RegistryPath(t *testing.T) {
-	// Test that the registry path works: when a spec has no DiscoverModelsFunc
-	// and no ListModelsCmd, but a function is registered for its backend,
-	// DiscoverModels should use the registered function.
+	// Test that the registry path works: when a function is registered for
+	// a backend, DiscoverModels should use it.
 	called := false
 	model.RegisterDiscoverModelsFunc("test-registry-path", func() []model.AgentModel {
 		called = true
@@ -282,7 +282,7 @@ func TestCheckCLIExistsErr_EmptyCommand(t *testing.T) {
 	assert.Contains(t, err.Error(), "empty command")
 }
 
-// --- Test 13: DiscoverModels for backends with ListModelsCmd ---
+// --- Test 13: DiscoverModels for backends with registry ---
 
 func TestDiscoverModels_DeepSeekWithRealCLI(t *testing.T) {
 	if !model.CheckCLIExists("deepseek") {
