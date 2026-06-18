@@ -651,7 +651,7 @@ function registerAppEventListeners() {
   window.addEventListener('navigate-to-commit', handleNavigateToCommit)
   window.addEventListener('quote-sent', playQuoteEmitAnimation)
   window.addEventListener('attach-to-chat', playQuoteEmitAnimation)
-  window.addEventListener('scroll-to-line', (e) => { scrollToLine(e.detail.line) })
+  window.addEventListener('scroll-to-line', (e) => { scrollToLine(e.detail.line, e.detail.lineEnd) })
   window.addEventListener('clawbench-open-session', handleOpenSession)
   window.addEventListener('clawbench-open-task', handleOpenTask)
   document.addEventListener('click', handleOverflowOutsideClick)
@@ -865,11 +865,13 @@ async function handleOverlayGoBack() {
     }
 }
 
-async function handleOverlayOpenFile(path) {
+async function handleOverlayOpenFile(payload) {
+    const { path, lineStart, lineEnd } = typeof payload === 'string' ? { path: payload } : payload
     const isExternal = path.startsWith('/')
     const ok = await store.selectFile(path)
     if (ok) {
         fileNav.openFile(path)
+        if (lineStart) scrollToLine(lineStart, lineEnd)
         if (isExternal) {
             toast.show(gt('file.toast.externalFile'), { type: 'info', duration: 2000 })
         }
@@ -877,11 +879,11 @@ async function handleOverlayOpenFile(path) {
 }
 
 function handleOpenFileOverlay(e) {
-    const { path, lineStart } = e.detail || {}
+    const { path, lineStart, lineEnd } = e.detail || {}
     if (!path) return
     activeTab.value = 'browse'
     fileNav.openFile(path)
-    if (lineStart) scrollToLine(lineStart)
+    if (lineStart) scrollToLine(lineStart, lineEnd)
 }
 
 function onTaskCardClick(taskId) {
@@ -1035,13 +1037,22 @@ function handleOpenTerminal(cwd) {
     switchTab('terminal')
 }
 
-function scrollToLine(line) {
+function scrollToLine(line, lineEnd) {
     nextTick(() => {
-        const el = document.querySelector(`.code-line[data-line="${line}"]`)
-        if (!el) return
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        el.classList.add('line-flash')
-        el.addEventListener('animationend', () => el.classList.remove('line-flash'), { once: true })
+        const startLine = Math.max(1, line)
+        const endLine = Math.min(lineEnd && lineEnd > startLine ? lineEnd : startLine, startLine + 200)
+        // Scroll the first line into view
+        const firstEl = document.querySelector(`.code-line[data-line="${startLine}"]`)
+        if (!firstEl) return
+        firstEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        // Flash the range
+        for (let i = startLine; i <= endLine; i++) {
+            const el = document.querySelector(`.code-line[data-line="${i}"]`)
+            if (el) {
+                el.classList.add('line-flash')
+                el.addEventListener('animationend', () => el.classList.remove('line-flash'), { once: true })
+            }
+        }
     })
 }
 

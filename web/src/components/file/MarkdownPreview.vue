@@ -99,8 +99,9 @@ function handleClick(event) {
         event.stopPropagation()
         const filePath = btn.getAttribute('data-file-path')
         const lineStart = btn.getAttribute('data-line-start')
+        const lineEnd = btn.getAttribute('data-line-end')
         if (filePath) {
-            openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined)
+            openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined)
         }
         return
     }

@@ -81,7 +81,8 @@ function handleBodyClick(event) {
   if (fileBtn) {
     const filePath = fileBtn.getAttribute('data-file-path')
     const lineStart = fileBtn.getAttribute('data-line-start')
-    if (filePath) emit('file-open', filePath, lineStart ? parseInt(lineStart, 10) : undefined)
+    const lineEnd = fileBtn.getAttribute('data-line-end')
+    if (filePath) emit('file-open', { path: filePath, lineStart: lineStart ? parseInt(lineStart, 10) : undefined, lineEnd: lineEnd ? parseInt(lineEnd, 10) : undefined })
     return
   }
   // Handle worktree action buttons

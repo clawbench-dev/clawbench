@@ -265,8 +265,9 @@ async function handleChatClick(event) {
     event.stopPropagation()
     const filePath = btn.getAttribute('data-file-path')
     const lineStart = btn.getAttribute('data-line-start')
+    const lineEnd = btn.getAttribute('data-line-end')
     if (filePath) {
-      const ok = await openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined)
+      const ok = await openFilePath(filePath, lineStart ? parseInt(lineStart, 10) : undefined, lineEnd ? parseInt(lineEnd, 10) : undefined)
       if (ok) chatUI.navigateToFileViewer?.()
     }
     return

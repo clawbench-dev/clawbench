@@ -629,7 +629,7 @@ export function tryResolveCodeString(
  * If it's a file, selects it in the store.
  * If the file doesn't exist, shows a toast and does not navigate.
  */
-export async function openFilePath(resolvedPath: string, lineStart?: number): Promise<boolean> {
+export async function openFilePath(resolvedPath: string, lineStart?: number, lineEnd?: number): Promise<boolean> {
     const isExternal = resolvedPath.startsWith('/')
 
     if (!isExternal) {
@@ -674,7 +674,7 @@ export async function openFilePath(resolvedPath: string, lineStart?: number): Pr
 
     const ok = await store.selectFile(resolvedPath)
     if (ok) {
-        window.dispatchEvent(new CustomEvent('open-file-overlay', { detail: { path: resolvedPath, lineStart } }))
+        window.dispatchEvent(new CustomEvent('open-file-overlay', { detail: { path: resolvedPath, lineStart, lineEnd } }))
         if (isExternal) {
             const { useToast } = await import('@/composables/useToast')
             useToast().show(gt('file.toast.externalFile'), { type: 'info', duration: 2000 })
@@ -686,8 +686,8 @@ export async function openFilePath(resolvedPath: string, lineStart?: number): Pr
 /**
  * Dispatch a scroll-to-line event after a file has been opened.
  */
-export function dispatchScrollToLine(line: number): void {
+export function dispatchScrollToLine(line: number, lineEnd?: number): void {
     setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('scroll-to-line', { detail: { line } }))
+        window.dispatchEvent(new CustomEvent('scroll-to-line', { detail: { line, lineEnd } }))
     }, 100)
 }

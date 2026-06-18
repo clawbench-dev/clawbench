@@ -111,8 +111,10 @@ function handleContentClick(event) {
     event.preventDefault()
     event.stopPropagation()
     const filePath = btn.getAttribute('data-file-path')
+    const lineStart = btn.getAttribute('data-line-start')
+    const lineEnd = btn.getAttribute('data-line-end')
     if (filePath) {
-      emit('openFile', filePath)
+      emit('openFile', { path: filePath, lineStart: lineStart ? parseInt(lineStart, 10) : undefined, lineEnd: lineEnd ? parseInt(lineEnd, 10) : undefined })
     }
     return
   }
@@ -123,8 +125,10 @@ function handleContentClick(event) {
     event.preventDefault()
     event.stopPropagation()
     const filePath = pathSpan.getAttribute('data-file-path')
+    const lineStart = pathSpan.getAttribute('data-line-start')
+    const lineEnd = pathSpan.getAttribute('data-line-end')
     if (filePath) {
-      emit('openFile', filePath)
+      emit('openFile', { path: filePath, lineStart: lineStart ? parseInt(lineStart, 10) : undefined, lineEnd: lineEnd ? parseInt(lineEnd, 10) : undefined })
     }
     return
   }

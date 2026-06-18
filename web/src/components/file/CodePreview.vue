@@ -83,7 +83,7 @@ function handleStickyClick(lineNum) {
 
     // Flash animation
     el.classList.add('line-flash')
-    setTimeout(() => el.classList.remove('line-flash'), 1200)
+    el.addEventListener('animationend', () => el.classList.remove('line-flash'), { once: true })
 }
 
 const { handleDblClick } = useDoubleClickCopy({
@@ -113,8 +113,10 @@ function handleClick(event) {
         event.preventDefault()
         event.stopPropagation()
         const filePath = pathEl.getAttribute('data-file-path')
+        const lineStart = pathEl.getAttribute('data-line-start')
+        const lineEnd = pathEl.getAttribute('data-line-end')
         if (filePath) {
-            emit('openFile', filePath)
+            emit('openFile', { path: filePath, lineStart: lineStart ? parseInt(lineStart, 10) : undefined, lineEnd: lineEnd ? parseInt(lineEnd, 10) : undefined })
         }
         return
     }

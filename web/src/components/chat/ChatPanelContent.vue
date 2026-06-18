@@ -803,9 +803,10 @@ function findToolBlock({ msgId, blockIdx }) {
   return (block && block.type === 'tool_use') ? block : null
 }
 
-async function handleFileOpenInOverlay(filePath, lineStart) {
+async function handleFileOpenInOverlay(payload) {
+  const { path, lineStart, lineEnd } = typeof payload === 'string' ? { path: payload } : payload
   toolDetailOverlay.value.show = false
-  const ok = await openFilePath(filePath, lineStart)
+  const ok = await openFilePath(path, lineStart, lineEnd)
   if (ok) switchTab('browse')
 }
 
