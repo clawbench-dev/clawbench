@@ -36,9 +36,9 @@ func ServeSetupStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	needsSetup := len(model.AgentList) == 0
-	embeddedPath := model.EmbeddedAgentPath()
+	embeddedPath := model.EmbeddedBinaryPath("pi")
 	embeddedAgent := embeddedPath != ""
-	agentVersion := model.EmbeddedAgentVersion()
+	agentVersion := model.EmbeddedBinaryVersion("pi", "VERSION")
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"needs_setup":    needsSetup,
@@ -321,7 +321,7 @@ func ServeSetupVerify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Built-in provider mode: verify via Pi CLI
-	piPath := model.EmbeddedAgentPath()
+	piPath := model.EmbeddedBinaryPath("pi")
 	if piPath == "" {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "EmbeddedAgentNotFound")
 		return
@@ -444,7 +444,7 @@ func ServeSetupComplete(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 	}
 
 	// Determine Pi binary path
-	piPath := model.EmbeddedAgentPath()
+	piPath := model.EmbeddedBinaryPath("pi")
 
 	// 1. Write Pi config files (auth.json, settings.json) — best effort, don't block on failure
 	if piPath != "" {

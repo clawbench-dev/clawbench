@@ -302,18 +302,6 @@ func EmbeddedBinaryVersion(subDir, versionFile string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// EmbeddedAgentPath returns the absolute path to the embedded Pi binary,
-// or empty string if not found. Convenience wrapper for EmbeddedBinaryPath("pi").
-func EmbeddedAgentPath() string {
-	return EmbeddedBinaryPath("pi")
-}
-
-// EmbeddedAgentVersion extracts the version from the embedded Pi binary.
-// Convenience wrapper for EmbeddedBinaryVersion("pi", "VERSION").
-func EmbeddedAgentVersion() string {
-	return EmbeddedBinaryVersion("pi", "VERSION")
-}
-
 // --- DB-based agent discovery and merge ---
 
 // SyncDiscoverAgentsDB is the DB-based replacement for SyncDiscoverAgents.

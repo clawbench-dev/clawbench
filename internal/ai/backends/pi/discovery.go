@@ -56,7 +56,7 @@ func ParsePiModels(output string) []model.AgentModel {
 // Pi outputs the model table to stderr (not stdout), so we must capture both streams.
 // It first tries the embedded Pi binary at .clawbench/pi/pi, then falls back to PATH.
 func DiscoverPiModels() []model.AgentModel {
-	piPath := model.EmbeddedAgentPath()
+	piPath := model.EmbeddedBinaryPath("pi")
 	if piPath == "" {
 		piPath = "pi" // fallback to PATH
 	}
