@@ -50,7 +50,8 @@ func TestBackendRegistry_SpecificValues(t *testing.T) {
 	assert.Equal(t, "codex", specs["codex"].DefaultCmd)
 	assert.Equal(t, "qodercli", specs["qoder"].DefaultCmd)
 	assert.Equal(t, "vecli", specs["vecli"].DefaultCmd)
-	assert.Equal(t, "deepseek", specs["deepseek"].DefaultCmd)
+	assert.Equal(t, "codewhale", specs["deepseek"].DefaultCmd)
+	assert.Equal(t, "deepseek", specs["deepseek"].AltCmd)
 	assert.Equal(t, "pi", specs["pi"].DefaultCmd)
 }
 

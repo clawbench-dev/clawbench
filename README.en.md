@@ -15,7 +15,7 @@ Brings the full power of AI coding agents to browsers and mobile apps, creating 
 Core Advantage: Native passthrough of AI capabilities (tool calls, extended thinking, Skills, MCP) with zero adaptation cost, fully preserving the power of coding agents. Unlike other mobile AI tools that are merely "remote controllers," ClawBench is a full-featured mobile workstation — files, code, Git, AI, scheduled tasks, TTS, get real work done on your phone without needing a PC online. ([Similar Projects Comparison](docs/COMPARISON.en.md))
 
 - **Supported Platforms**: Browser (PC / Tablet / Phone), Android App, PWA
-- **AI Backends**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, DeepSeek TUI, MiMo-Code, Pi, Cline, Copilot, Kimi
+- **AI Backends**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Cline, Copilot, Kimi
 
 ---
 
@@ -85,7 +85,7 @@ graph LR
     Server -->|CLI Invocation · Stream Output| CX["🤖 Codex CLI"]
     Server -->|CLI Invocation · Stream Output| QR["🤖 Qoder CLI"]
     Server -->|CLI Invocation · Stream Output| VC["🤖 VeCLI"]
-    Server -->|CLI Invocation · Stream Output| DS["🔍 DeepSeek TUI"]
+    Server -->|CLI Invocation · Stream Output| DS["🐋 CodeWhale"]
     Server -->|CLI Invocation · Stream Output| MM["🚀 MiMo-Code"]
     Server -->|CLI Invocation · Stream Output| PI["🥧 Pi"]
     Server -->|CLI Invocation · Stream Output| CL["🤖 Cline"]
@@ -117,7 +117,7 @@ graph LR
 
 ### Prerequisites
 
-- **A PC (Linux / macOS / Windows)**: To run the ClawBench server, with at least one AI coding agent CLI installed (CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, DeepSeek TUI, MiMo-Code, Pi, Cline, Copilot, or Kimi)
+- **A PC (Linux / macOS / Windows)**: To run the ClawBench server, with at least one AI coding agent CLI installed (CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Cline, Copilot, or Kimi)
 - **A phone**: Install the [ClawBench Android App](https://github.com/xulongzhe/clawbench/releases), or use a mobile browser (Chrome recommended) to access the server address
 
 ### Download & Start
@@ -184,7 +184,7 @@ Auto-discovered agent configs use minimal defaults (no model lists or thinking e
 ### 🤖 AI Agents
 - **Streaming Response**: Real-time SSE push, thinking process and tool calls fully visible
 - **Multi-Agent Support**: General assistant, coding expert, handyman, etc. — YAML config, plug-and-play
-- **AI Backend Switching**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, DeepSeek TUI, MiMo-Code, Pi, Cline, Copilot, Kimi — session-level isolation
+- **AI Backend Switching**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Cline, Copilot, Kimi — session-level isolation
 - **Thinking Effort Levels**: Per-agent thinking depth selection (Auto / Low / Medium / High), supported by 9 backends (Claude/CodeBuddy/OpenCode/Codex/MiMo/Pi/Cline/Copilot/Kimi), selection auto-persisted
 - **Model Selection Modal**: Unified model switching and thinking effort selection in a dual-tab interface, with search filtering, one-click model list refresh (for agents supporting auto-discovery), and long-press to set default model
 - **Model Selection Persistence**: Model choice and thinking effort per agent auto-saved to localStorage, restored on reload/session switch

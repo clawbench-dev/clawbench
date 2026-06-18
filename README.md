@@ -16,7 +16,7 @@
 
 
 - **支持平台**：浏览器（PC / 平板 / 手机）、Android App、PWA
-- **AI 后端**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、DeepSeek TUI、MiMo-Code、Pi、Cline、Copilot、Kimi
+- **AI 后端**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Cline、Copilot、Kimi
 
 ---
 
@@ -86,7 +86,7 @@ graph LR
     Server -->|CLI 调用 · 流式输出| CX["🤖 Codex CLI"]
     Server -->|CLI 调用 · 流式输出| QR["🤖 Qoder CLI"]
     Server -->|CLI 调用 · 流式输出| VC["🤖 VeCLI"]
-    Server -->|CLI 调用 · 流式输出| DS["🔍 DeepSeek TUI"]
+    Server -->|CLI 调用 · 流式输出| DS["🐋 CodeWhale"]
     Server -->|CLI 调用 · 流式输出| MM["🚀 MiMo-Code"]
     Server -->|CLI 调用 · 流式输出| PI["🥧 Pi"]
     Server -->|CLI 调用 · 流式输出| CL["🤖 Cline"]
@@ -118,7 +118,7 @@ graph LR
 
 ### 前置准备
 
-- **一台 PC（Linux / macOS / Windows）**：用于运行 ClawBench 服务端，需已安装至少一种 AI 编程智能体 CLI（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、DeepSeek TUI、MiMo-Code、Pi、Cline、Copilot、Kimi 均可）
+- **一台 PC（Linux / macOS / Windows）**：用于运行 ClawBench 服务端，需已安装至少一种 AI 编程智能体 CLI（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Cline、Copilot、Kimi 均可）
 - **一台手机**：安装 [ClawBench Android App](https://github.com/xulongzhe/clawbench/releases)，或使用手机浏览器（推荐 Chrome）访问服务端地址
 
 ### 下载与启动
@@ -185,7 +185,7 @@ cd clawbench
 ### 🤖 AI 智能体
 - **流式响应**：SSE 实时推送，思维过程、工具调用全程可见
 - **多 Agent 支持**：全能助手、编码专家、勤杂工等，YAML 配置即插即用
-- **AI 后端切换**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、DeepSeek TUI、MiMo-Code、Pi、Cline、Copilot、Kimi，会话级隔离
+- **AI 后端切换**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Cline、Copilot、Kimi，会话级隔离
 - **深度思考档位**：支持按智能体选择思考深度（Auto / Low / Medium / High），Claude/CodeBuddy/OpenCode/Codex/MiMo/Pi/Cline/Copilot/Kimi 九后端支持，选择自动持久化
 - **模型选择模态框**：统一模型切换与思考深度选择，双 Tab 界面，搜索过滤，一键刷新模型列表（支持自动发现的智能体），长按设为默认模型
 - **模型选择持久化**：每个智能体的模型选择和思考档位自动保存到 localStorage，刷新/切换会话自动恢复

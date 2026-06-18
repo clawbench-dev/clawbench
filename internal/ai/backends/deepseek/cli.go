@@ -7,7 +7,7 @@ import (
 	"clawbench/internal/ai"
 )
 
-// DeepSeekInputRemaps maps DeepSeek CLI input field names to canonical names.
+// DeepSeekInputRemaps maps CodeWhale (formerly DeepSeek TUI) CLI input field names to canonical names.
 // Injected into DeepSeekStreamParser at construction time.
 var DeepSeekInputRemaps = map[string]string{
 	"path": "file_path", "search": "old_string", "replace": "new_string",
@@ -18,11 +18,13 @@ func init() {
 	ai.RegisterBackend("deepseek", newDeepSeekBackend, true)
 }
 
-// newDeepSeekBackend returns a CLIBackend instance configured for DeepSeek TUI CLI.
+// newDeepSeekBackend returns a CLIBackend instance configured for CodeWhale CLI.
+// CodeWhale was formerly known as DeepSeek TUI; the backend ID remains "deepseek"
+// for backward compatibility with existing session data.
 func newDeepSeekBackend() ai.AIBackend {
 	return &ai.CLIBackend{
 		BackendName:   "deepseek",
-		Cmd:           "deepseek",
+		Cmd:           "codewhale", // primary; legacy "deepseek" shim handled via req.Command
 		BuildArgsFn:   buildDeepSeekStreamArgs,
 		NewParserFn:   func() ai.LineParser {
 			return &ai.DeepSeekStreamParser{InputRemaps: DeepSeekInputRemaps}
@@ -32,9 +34,9 @@ func newDeepSeekBackend() ai.AIBackend {
 	}
 }
 
-// buildDeepSeekStreamArgs constructs the CLI arguments for DeepSeek TUI streaming.
+// buildDeepSeekStreamArgs constructs the CLI arguments for CodeWhale streaming.
 //
-// Command: deepseek exec --auto --output-format stream-json [flags] "prompt"
+// Command: codewhale exec --auto --output-format stream-json [flags] "prompt"
 //
 // Supported flags:
 //
@@ -53,22 +55,22 @@ func buildDeepSeekStreamArgs(req ai.ChatRequest) []string {
 	// Resume previous session
 	if req.Resume && req.SessionID != "" {
 		args = append(args, "--resume", req.SessionID)
-		slog.Info("cli: --resume (deepseek)",
+		slog.Info("cli: --resume (codewhale)",
 			slog.String("session_id", req.SessionID))
 	} else if req.Resume {
 		// Session capture event was missed — fall back to --continue
 		// which resumes the most recent session without needing an ID.
 		args = append(args, "--continue")
-		slog.Warn("cli: --continue fallback (deepseek, session_id missing)",
+		slog.Warn("cli: --continue fallback (codewhale, session_id missing)",
 			slog.String("backend", "deepseek"))
 	}
 
-	// System prompt — DeepSeek TUI supports --system-prompt natively
+	// System prompt — CodeWhale supports --system-prompt natively
 	if req.SystemPrompt != "" {
 		args = append(args, "--system-prompt", req.SystemPrompt)
 	}
 
-	// Model override — DeepSeek CLI expects a plain model ID (e.g. "deepseek-v4-pro"),
+	// Model override — CodeWhale expects a plain model ID (e.g. "deepseek-v4-pro"),
 	// but ClawBench stores model IDs as "provider/model" (e.g. "deepseek/deepseek-v4-pro").
 	// Strip the provider prefix before passing to the CLI.
 	if req.Model != "" {

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-ClawBench is a mobile-first AI workstation wrapping AI CLI tools (CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, DeepSeek TUI, MiMo-Code, Pi, Cline, Copilot, Kimi) into a web-accessible platform. Go backend shells out to CLI tools and streams JSON output via SSE; Vue 3 frontend renders the streamed events in real time. Supports ACP (Agent Client Protocol) stdio transport for agents with native or bridge-adapter support, providing structured mode switching, slash commands, and permission management. Also supports SSH tunnel-based port forwarding for remote/mobile access and a scheduled task (cron) system for recurring AI execution.
+ClawBench is a mobile-first AI workstation wrapping AI CLI tools (CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Cline, Copilot, Kimi) into a web-accessible platform. Go backend shells out to CLI tools and streams JSON output via SSE; Vue 3 frontend renders the streamed events in real time. Supports ACP (Agent Client Protocol) stdio transport for agents with native or bridge-adapter support, providing structured mode switching, slash commands, and permission management. Also supports SSH tunnel-based port forwarding for remote/mobile access and a scheduled task (cron) system for recurring AI execution.
 
 ## Build & Run Commands
 

@@ -224,7 +224,7 @@ ClawBench interacts with AI programming tools by calling local CLIs, no extra AP
 
 **VeCLI backend**: Install VeCLI (Volcengine Doubao) and complete authentication, ensure the `vecli` command is available in PATH. VeCLI outputs plain text (not JSON Lines), does not support session resume, and metadata is extracted from a `--session-summary` file after the process exits. Model auto-discovery is implemented by parsing `MODEL_REGISTRY`.
 
-**DeepSeek TUI backend**: Install DeepSeek TUI (requires v0.8.33+) and complete authentication, ensure the `deepseek` command is available in PATH. Uses `deepseek exec --auto --output-format stream-json` mode with native `--system-prompt`, `--model`, and `--resume` flags.
+**CodeWhale backend**: Install CodeWhale (requires v0.8.33+) and complete authentication, ensure the `codewhale` command is available in PATH. Uses `codewhale exec --auto --output-format stream-json` mode with native `--system-prompt`, `--model`, and `--resume` flags.
 
 **MiMo-Code backend**: Install MiMo-Code CLI and complete authentication, ensure the `mimo` command is available in PATH. MiMo-Code is a fork of OpenCode, reusing OpenCode's JSON stream format and stream parser, supporting CLI + ACP dual mode. Uses `mimo run --format json` mode with `--session`, `--model`, and `--variant` (thinking effort) flags. ACP mode enabled via `mimo acp` command.
 
@@ -373,7 +373,7 @@ ClawBench is more than just a "chat shell" — it is a complete agent runtime pl
 - **Transparent Tool Calls**: AI tool calls (file read/write, Bash commands, code editing) are visualized in real time
 - **Cron Scheduled Execution**: AI creates scheduled tasks via `clawbench task` CLI subcommands; after confirmation, Cron scheduler executes them automatically. Task cards are embedded in chat messages. `list` and `get` subcommands allow inspecting existing tasks; `--prompt` supports `@path` syntax to read prompt text from a file
 - **Cron Governance**: During scheduled execution, the `@task` instructions are never injected (only triggered by explicit user input), preventing AI from recursively creating tasks; CLI layer provides dual-layer protection via `CLAWBENCH_SCHEDULED=1` env var
-- **Multi-Backend Switching**: The same platform simultaneously supports CodeBuddy, Claude Code, OpenCode, Gemini CLI, Codex, Qoder CLI, VeCLI, DeepSeek TUI, MiMo-Code, and Pi backends with isolated session data
+- **Multi-Backend Switching**: The same platform simultaneously supports CodeBuddy, Claude Code, OpenCode, Gemini CLI, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, and Pi backends with isolated session data
 
 ### Project Structure
 

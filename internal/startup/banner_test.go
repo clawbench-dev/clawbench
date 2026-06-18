@@ -256,7 +256,7 @@ func TestBannerAgentNameAlignment(t *testing.T) {
 		Agents: []AgentInfo{
 			{Name: "pi", Models: 8},
 			{Name: "codebuddy", Models: 21},
-			{Name: "deepseek-tui", Models: 3},
+			{Name: "codewhale", Models: 3},
 		},
 		TTSEngine:       "edge",
 		RAGAvailable:    true,

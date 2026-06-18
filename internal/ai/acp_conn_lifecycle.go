@@ -245,6 +245,15 @@ func (c *ACPConn) killProcessLocked() {
 	if c.cmd == nil || c.cmd.Process == nil {
 		return
 	}
+
+	// Close the stdout filter first to unblock pending reads on the pipe.
+	// This prevents cmd.Wait() from hanging when the process is killed but
+	// stdout hasn't been closed yet.
+	if c.stdoutFilter != nil {
+		c.stdoutFilter.Close()
+		c.stdoutFilter = nil
+	}
+
 	_ = c.cmd.Process.Kill()
 	oldCmd := c.cmd
 	c.mu.Unlock()
@@ -268,6 +277,10 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 			cancelCtx, cancelCancel := context.WithTimeout(context.Background(), 3*time.Second)
 			_ = c.conn.Cancel(cancelCtx, acp.CancelNotification{SessionId: acp.SessionId(c.acpSID)})
 			cancelCancel()
+		}
+		// Close the old stdout filter to unblock pending reads before killing
+		if c.stdoutFilter != nil {
+			c.stdoutFilter.Close()
 		}
 		_ = c.cmd.Process.Kill()
 		oldCmd := c.cmd
@@ -322,7 +335,13 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 
 	client := NewClawBenchACPClient()
 	client.connRef = c // back-reference for cache updates
-	conn := acp.NewClientSideConnection(client, stdinPipe, stdoutPipe)
+
+	// Wrap stdout to fix common ACP protocol violations:
+	// - CodeWhale/codewhale returns string IDs ("1") for numeric requests (1)
+	// - Some agents emit terminal escape sequences on stdout
+	stdoutFilter := newACPStdoutFilter(stdoutPipe)
+
+	conn := acp.NewClientSideConnection(client, stdinPipe, stdoutFilter)
 	conn.SetLogger(slog.Default())
 
 	initCtx, initCancel := context.WithTimeout(ctx, 60*time.Second)
@@ -344,6 +363,7 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 		},
 	})
 	if err != nil {
+		stdoutFilter.Close()
 		_ = cmd.Process.Kill()
 		return fmt.Errorf("acp: initialize: %w", err)
 	}
@@ -365,6 +385,7 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 	c.cmd = cmd
 	c.conn = conn
 	c.client = client
+	c.stdoutFilter = stdoutFilter
 	c.acpSID = "" // cleared on respawn — will be set by ensureAliveWithSession
 	c.alive = true
 	c.lastUsed = time.Now()

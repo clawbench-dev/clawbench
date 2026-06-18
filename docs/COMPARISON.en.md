@@ -245,7 +245,7 @@ GitHub's official AI programming assistant, with mobile support.
 
 1. **The only full-featured mobile workstation**: All other products are "remote controllers" — they remotely control sessions on a PC. ClawBench itself is a complete development environment: files, code, Git, AI, scheduled tasks, TTS, media preview — get work done directly on your phone.
 
-2. **12 AI backends**: Happy/Yep Anywhere has only 2, Claude Dispatch/Remote has only 1. ClawBench supports CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, DeepSeek TUI, MiMo-Code, Pi, Cline, Copilot, and Kimi — the broadest coverage. (Note: Operit supports 10+ backends but primarily via API calls; ClawBench is the only multi-backend workstation supporting CLI Agents)
+2. **12 AI backends**: Happy/Yep Anywhere has only 2, Claude Dispatch/Remote has only 1. ClawBench supports CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Cline, Copilot, and Kimi — the broadest coverage. (Note: Operit supports 10+ backends but primarily via API calls; ClawBench is the only multi-backend workstation supporting CLI Agents)
 
 3. **No dependency on PC being online**: Happy/Dispatch/Remote/AnyCoding/AI Agent Remote/Yep Anywhere all require a PC online running the CLI. ClawBench is deployed on a server — connect from your phone anytime; just leave the server running.
 

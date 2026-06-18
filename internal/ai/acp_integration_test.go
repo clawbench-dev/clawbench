@@ -1595,3 +1595,105 @@ func TestACPIntegration_CancelAndCrash_ResumeConversation(t *testing.T) {
 	assert.True(t, strings.Contains(content5, "1234"),
 		"AI should remember the password '1234' after cancel+crash+resume, got: %s", content5)
 }
+
+// ---------------------------------------------------------------------------
+// CodeWhale (formerly DeepSeek TUI) ACP Integration Tests
+// ---------------------------------------------------------------------------
+
+// codeWhaleTestAgent returns a model.Agent configured for CodeWhale ACP transport.
+func codeWhaleTestAgent() *model.Agent {
+	return &model.Agent{
+		ID:         "codewhale-acp-test",
+		Name:       "CodeWhale ACP Test",
+		Backend:    "deepseek",
+		Transport:  "acp-stdio",
+		AcpCommand: "codewhale serve --acp",
+		Models: []model.AgentModel{
+			{ID: "deepseek/deepseek-v4-pro", Name: "deepseek/deepseek-v4-pro", Default: true},
+		},
+	}
+}
+
+// requireCodeWhaleACPAvailable skips the test if codewhale CLI is not installed.
+func requireCodeWhaleACPAvailable(t *testing.T) {
+	t.Helper()
+	path, err := exec.LookPath("codewhale")
+	if err != nil {
+		// Try legacy deepseek shim
+		path, err = exec.LookPath("deepseek")
+		if err != nil {
+			t.Skipf("codewhale/deepseek CLI not available, skipping CodeWhale ACP integration test")
+		}
+	}
+	// Verify acp subcommand is supported
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "serve", "--acp", "--help")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Skipf("codewhale serve --acp not supported (error: %v, output: %s), skipping",
+			err, truncate(string(output), 200))
+	}
+}
+
+// TestACPIntegration_CodeWhale_BasicSession tests the CodeWhale ACP backend
+// can create a session, receive a prompt, and stream content back.
+func TestACPIntegration_CodeWhale_BasicSession(t *testing.T) {
+	requireCodeWhaleACPAvailable(t)
+
+	agent := codeWhaleTestAgent()
+	_ = setupACPTestEnvForAgent(t, agent)
+	sessionID := acpSessionID()
+
+	backend, err := NewACPBackend(agent)
+	require.NoError(t, err, "NewACPBackend should succeed for CodeWhale")
+
+	events := sendACPPrompt(t, backend, sessionID, "说一句话证明你是AI", 120*time.Second)
+	t.Logf("CodeWhale ACP: got %d events, types: %v", len(events), acpEventTypes(events))
+
+	// Should have at least content and done events
+	contentEvents := findACPEvents(events, "content")
+	assert.NotEmpty(t, contentEvents, "expected content events from CodeWhale ACP")
+
+	doneEvents := findACPEvents(events, "done")
+	assert.NotEmpty(t, doneEvents, "expected done event from CodeWhale ACP")
+
+	// Log the content for debugging
+	content := concatACPContent(events)
+	t.Logf("CodeWhale ACP content: %q", truncate(content, 300))
+}
+
+// TestACPIntegration_CodeWhale_SessionCaptureAndResume tests that CodeWhale ACP
+// captures external session IDs and can resume sessions.
+func TestACPIntegration_CodeWhale_SessionCaptureAndResume(t *testing.T) {
+	requireCodeWhaleACPAvailable(t)
+
+	agent := codeWhaleTestAgent()
+	env := setupACPTestEnvForAgent(t, agent)
+	sessionID := acpSessionID()
+
+	backend, err := NewACPBackend(agent)
+	require.NoError(t, err)
+
+	// Turn 1: Initial prompt
+	events1 := sendACPPrompt(t, backend, sessionID, "记住数字42", 120*time.Second)
+	requireDoneEvent(t, events1)
+
+	// Check for session_capture event
+	captureEvents := findACPEvents(events1, "session_capture")
+	if len(captureEvents) > 0 {
+		acpSID := captureEvents[0].Content
+		env.storeSID(sessionID, acpSID)
+		t.Logf("CodeWhale ACP captured session ID: %s", acpSID)
+	}
+
+	content1 := concatACPContent(events1)
+	t.Logf("CodeWhale ACP turn 1: %q", truncate(content1, 200))
+
+	// Turn 2: Resume — ask about the remembered number
+	events2 := sendACPPrompt(t, backend, sessionID, "我让你记住的数字是什么？只回答数字", 120*time.Second)
+	requireDoneEvent(t, events2)
+
+	content2 := concatACPContent(events2)
+	t.Logf("CodeWhale ACP turn 2: %q", truncate(content2, 200))
+}

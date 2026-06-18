@@ -285,7 +285,6 @@ import { useGlobalEvents } from './composables/useGlobalEvents'
 import { useEdgeSwipeBack, useFeatureBackHandler, PRIORITY_OVERLAY } from './composables/useEdgeSwipeBack'
 import { handleBackNavigation } from './composables/useBackHandler'
 import { store } from './stores/app.ts'
-import { dirName } from './utils/path.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
 import { initMermaid, reRenderMermaid } from './utils/mermaid.ts'
 import { getFileType } from './utils/fileType.ts'
@@ -511,26 +510,12 @@ useFileWatch({
 
 const fileNav = useFileNavStack()
 
-/** Sync the directory listing to the current file's parent dir.
- *  Used after closing the file overlay so the browse view matches. */
-function syncDirToFileParent() {
-  const filePath = store.state.currentFile?.path
-  if (filePath) {
-    const targetDir = dirName(filePath)
-    if (targetDir !== store.state.currentDir) {
-      store.replaceDirTop(targetDir)
-    }
-  }
-}
-
-/** Close overlay + all side panels, then sync directory to file parent. */
 function closeOverlayAndSync() {
   fileNav.closeOverlay()
   tocOpen.value = false
   detailsOpen.value = false
   searchOpen.value = false
   fileHistoryOpen.value = false
-  syncDirToFileParent()
 }
 
 const { isAppMode } = useAppMode()

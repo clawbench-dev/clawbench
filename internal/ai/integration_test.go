@@ -114,11 +114,11 @@ func init() {
 		}
 	}, true)
 
-	// deepseek — needs AutoResume
+	// deepseek (CodeWhale) — needs AutoResume
 	RegisterBackend("deepseek", func() AIBackend {
 		return &CLIBackend{
 			BackendName: "deepseek",
-			Cmd:         "deepseek",
+			Cmd:         "codewhale",
 			BuildArgsFn: buildDeepSeekArgs,
 			NewParserFn: func() LineParser { return &DeepSeekStreamParser{} },
 		}
@@ -396,6 +396,9 @@ type cliTestConfig struct {
 	// CLIName is the binary name checked by requireCLIAvailable().
 	CLIName string
 
+	// AltCLIName is a fallback binary name (e.g. "deepseek" legacy shim when "codewhale" not found).
+	AltCLIName string
+
 	// Command is an optional override for ChatRequest.Command (e.g. "codex --profile m27").
 	Command string
 
@@ -487,14 +490,15 @@ var cliBackends = []cliTestConfig{
 	},
 	{
 		Backend:            "deepseek",
-		CLIName:            "deepseek",
+		CLIName:            "codewhale",
+		AltCLIName:         "deepseek", // legacy shim (removed in CodeWhale v0.9.0)
 		Timeout:            120 * time.Second,
 		CollectTimeout:     150 * time.Second,
 		HasModelInMeta:     true,
-		SkipNewSessionID:     true,   // DeepSeek TUI generates own session IDs
+		SkipNewSessionID:     true,   // CodeWhale generates own session IDs
 		EmitsSessionCapture:  true,
 		HasSessionIDInMeta:   true,   // Reports session ID in metadata
-		HasTokenUsageInMeta: false, // DeepSeek TUI mode doesn't reliably report tokens
+		HasTokenUsageInMeta: false, // CodeWhale mode doesn't reliably report tokens
 		SupportsResume:     true,
 	},
 	{
@@ -594,6 +598,23 @@ func requireCLIAvailable(t *testing.T, cliName string) {
 	if _, err := exec.LookPath(cliName); err != nil {
 		t.Skipf("%s CLI not available, skipping integration test", cliName)
 	}
+}
+
+// requireBackendCLI checks if the CLI for a backend config is available.
+// If CLIName is not found, tries AltCLIName as fallback.
+// Returns the actual command name to use (may differ from CLIName if AltCLIName was used).
+func requireBackendCLI(t *testing.T, cfg cliTestConfig) string {
+	t.Helper()
+	if _, err := exec.LookPath(cfg.CLIName); err == nil {
+		return cfg.CLIName
+	}
+	if cfg.AltCLIName != "" {
+		if _, err := exec.LookPath(cfg.AltCLIName); err == nil {
+			return cfg.AltCLIName
+		}
+	}
+	t.Skipf("%s CLI not available, skipping integration test", cfg.CLIName)
+	return ""
 }
 
 func requireCodexEnv(t *testing.T) {
@@ -762,7 +783,10 @@ func cliTestBackend(t *testing.T, cfg cliTestConfig, req ChatRequest) []StreamEv
 	if cfg.SetupFn != nil {
 		cfg.SetupFn(t)
 	} else {
-		requireCLIAvailable(t, cfg.CLIName)
+		actualCmd := requireBackendCLI(t, cfg)
+		if actualCmd != cfg.CLIName && cfg.Command == "" {
+			req.Command = actualCmd
+		}
 	}
 
 	backend, err := NewBackend(cfg.Backend)
@@ -814,7 +838,7 @@ func cliSetupAndCreate(t *testing.T, cfg cliTestConfig) AIBackend {
 	if cfg.SetupFn != nil {
 		cfg.SetupFn(t)
 	} else {
-		requireCLIAvailable(t, cfg.CLIName)
+		requireBackendCLI(t, cfg)
 	}
 	backend, err := NewBackend(cfg.Backend)
 	require.NoError(t, err)
@@ -929,7 +953,7 @@ func TestIntegration_CLI_StreamEvents(t *testing.T) {
 				assert.NotEmpty(t, metaEvents[0].Meta.SessionID, "%s metadata should contain session ID", cfg.Backend)
 			}
 
-			// Most CLI backends emit raw_output for debugging (except deepseek TUI which has its own parser)
+			// Most CLI backends emit raw_output for debugging (except CodeWhale which has its own parser)
 			if cfg.Backend != "deepseek" {
 				rawEvents := findEvents(events, "raw_output")
 				assert.NotEmpty(t, rawEvents, "should have raw_output event")
@@ -982,7 +1006,7 @@ func TestIntegration_CLI_CancelMidStream(t *testing.T) {
 		{Backend: "codebuddy", CLIName: "codebuddy", Timeout: 60 * time.Second, CollectTimeout: 90 * time.Second},
 		{Backend: "opencode", CLIName: "opencode", Timeout: 60 * time.Second, CollectTimeout: 90 * time.Second, SkipNewSessionID: true, EmitsSessionCapture: true},
 		{Backend: "codex", CLIName: "codex", Command: codexCommand, Timeout: 60 * time.Second, CollectTimeout: 90 * time.Second, SetupFn: func(t *testing.T) { requireCodexEnv(t) }},
-		{Backend: "deepseek", CLIName: "deepseek", Timeout: 120 * time.Second, CollectTimeout: 150 * time.Second, SkipNewSessionID: true},
+		{Backend: "deepseek", CLIName: "codewhale", AltCLIName: "deepseek", Timeout: 120 * time.Second, CollectTimeout: 150 * time.Second, SkipNewSessionID: true},
 		{Backend: "vecli", CLIName: "vecli", Timeout: 60 * time.Second, CollectTimeout: 90 * time.Second, SkipNewSessionID: true},
 	}
 
@@ -991,7 +1015,7 @@ func TestIntegration_CLI_CancelMidStream(t *testing.T) {
 			if cfg.SetupFn != nil {
 				cfg.SetupFn(t)
 			} else {
-				requireCLIAvailable(t, cfg.CLIName)
+				requireBackendCLI(t, cfg)
 			}
 
 			backend, err := NewBackend(cfg.Backend)
@@ -1036,7 +1060,7 @@ func TestIntegration_CLI_InvalidWorkDir(t *testing.T) {
 
 	for _, cfg := range errorBackends {
 		t.Run(cfg.Backend, func(t *testing.T) {
-			requireCLIAvailable(t, cfg.CLIName)
+			requireBackendCLI(t, cfg)
 			backend, err := NewBackend(cfg.Backend)
 			require.NoError(t, err)
 

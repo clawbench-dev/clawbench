@@ -6,7 +6,7 @@ import (
 )
 
 // DeepSeekStreamMessage represents a single JSON line from
-// `deepseek exec --output-format stream-json`.
+// `codewhale exec --output-format stream-json`.
 // Fields are shared across event types — only relevant fields are populated per type.
 type DeepSeekStreamMessage struct {
 	Type    string `json:"type"`    // "content", "thinking", "tool_use", "tool_result", "metadata", "session_capture", "done", "error"
@@ -29,7 +29,7 @@ type DeepSeekStreamMessage struct {
 	Error string `json:"error"` // error message
 }
 
-// DeepSeekStreamMeta represents the meta field in a metadata event from DeepSeek TUI.
+// DeepSeekStreamMeta represents the meta field in a metadata event from CodeWhale.
 type DeepSeekStreamMeta struct {
 	Model        string `json:"model"`
 	InputTokens  int    `json:"input_tokens"`
@@ -38,7 +38,7 @@ type DeepSeekStreamMeta struct {
 }
 
 // DeepSeekStreamParser parses JSON Lines output from
-// `deepseek exec --output-format stream-json`.
+// `codewhale exec --output-format stream-json`.
 type DeepSeekStreamParser struct {
 	sessionID string // captured from session_capture event
 	model     string // captured from metadata event
@@ -54,7 +54,7 @@ func (p *DeepSeekStreamParser) GetCapturedSessionID() string {
 	return p.sessionID
 }
 
-// ParseLine parses a single JSON line from DeepSeek TUI's stream-json output and sends
+// ParseLine parses a single JSON line from CodeWhale's stream-json output and sends
 // StreamEvent(s) to the provided channel.
 //
 //nolint:gocyclo // complex stream parsing logic
@@ -124,10 +124,10 @@ func (p *DeepSeekStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 	}
 }
 
-// normalizeDeepSeekInput normalizes tool input field names from DeepSeek TUI's
+// normalizeDeepSeekInput normalizes tool input field names from CodeWhale's
 // native names to the canonical names expected by the frontend renderers.
 //
-// DeepSeek TUI uses concise snake_case names that differ from the canonical
+// CodeWhale uses concise snake_case names that differ from the canonical
 // Claude-style names: path→file_path, search→old_string, replace→new_string,
 // command→command (no change), content→content (no change).
 func normalizeDeepSeekInput(toolName string, rawInput json.RawMessage, baseRemaps map[string]string) string {

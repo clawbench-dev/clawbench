@@ -1,6 +1,6 @@
 # ClawBench 系统设计规格
 
-ClawBench 是一个移动优先的 AI 工作站，将多种 AI CLI 工具（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、DeepSeek TUI、Cline、Kimi、Copilot、MiMo-Code、Pi）包装为 Web 可访问的平台。Go 后端通过 shell 调用 CLI 工具并经 SSE 流式输出 JSON，同时支持 ACP（Agent Client Protocol）stdio 传输，提供结构化的模式切换、斜杠命令和权限管理。Vue 3 前端实时渲染流式事件。支持 SSH 隧道端口转发、定时任务系统、零配置启动引导和聊天自动摘要。
+ClawBench 是一个移动优先的 AI 工作站，将多种 AI CLI 工具（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、Cline、Kimi、Copilot、MiMo-Code、Pi）包装为 Web 可访问的平台。Go 后端通过 shell 调用 CLI 工具并经 SSE 流式输出 JSON，同时支持 ACP（Agent Client Protocol）stdio 传输，提供结构化的模式切换、斜杠命令和权限管理。Vue 3 前端实时渲染流式事件。支持 SSH 隧道端口转发、定时任务系统、零配置启动引导和聊天自动摘要。
 
 ## 模块地图
 

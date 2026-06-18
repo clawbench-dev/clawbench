@@ -45,9 +45,9 @@ func TestDeepSeekPlugin_NewBackendIsCLIBackend(t *testing.T) {
 		t.Errorf("expected *DeepSeekStreamParser, got %T", parser)
 	}
 
-	// Verify Cmd
-	if clib.Cmd != "deepseek" {
-		t.Errorf("expected Cmd 'deepseek', got %q", clib.Cmd)
+	// Verify Cmd — primary command is "codewhale", legacy "deepseek" handled via req.Command
+	if clib.Cmd != "codewhale" {
+		t.Errorf("expected Cmd 'codewhale', got %q", clib.Cmd)
 	}
 
 	// Verify PreStartFn is nil
@@ -196,7 +196,7 @@ func TestDeepSeekPlugin_BuildArgs_ContinueFallback(t *testing.T) {
 func TestDeepSeekPlugin_CmdName(t *testing.T) {
 	entry := ai.LookupBackendFactoryForTest("deepseek")
 	clib := entry.NewBackend().(*ai.CLIBackend)
-	if clib.Cmd != "deepseek" {
-		t.Errorf("expected Cmd 'deepseek', got %q", clib.Cmd)
+	if clib.Cmd != "codewhale" {
+		t.Errorf("expected Cmd 'codewhale', got %q", clib.Cmd)
 	}
 }

@@ -224,7 +224,7 @@ ClawBench 通过调用本地 CLI 实现与 AI 编程工具的交互，无需额�
 
 **VeCLI 后端**：安装 VeCLI（火山引擎 Doubao）并完成认证，确保 `vecli` 命令在 PATH 中可用。VeCLI 输出纯文本（非 JSON Lines），不支持会话恢复，元数据通过 `--session-summary` 文件在进程退出后提取。模型自动发现通过解析 `MODEL_REGISTRY` 实现。
 
-**DeepSeek TUI 后端**：安装 DeepSeek TUI（需 v0.8.33+）并完成认证，确保 `deepseek` 命令在 PATH 中可用。使用 `deepseek exec --auto --output-format stream-json` 模式，原生支持 `--system-prompt`、`--model`、`--resume` 参数。
+**CodeWhale 后端**：安装 CodeWhale（需 v0.8.33+）并完成认证，确保 `codewhale` 命令在 PATH 中可用。使用 `codewhale exec --auto --output-format stream-json` 模式，原生支持 `--system-prompt`、`--model`、`--resume` 参数。
 
 **MiMo-Code 后端**：安装 MiMo-Code CLI 并完成认证，确保 `mimo` 命令在 PATH 中可用。MiMo-Code 是 OpenCode 的分支，复用 OpenCode 的 JSON 流格式和流解析器，支持 CLI + ACP 双模式。使用 `mimo run --format json` 模式，支持 `--session`、`--model`、`--variant`（思考档位）参数。ACP 模式通过 `mimo acp` 命令启用。
 
@@ -373,7 +373,7 @@ ClawBench 不只是一个"聊天壳"——它是一个完整的智能体运行�
 - **工具调用透传**：AI 的工具调用（文件读写、Bash 命令、代码编辑）实时可视化展示
 - **Cron 定时执行**：AI 通过 `clawbench task` CLI 子命令创建定时任务，确认后由 Cron 调度自动执行，聊天消息中内嵌任务卡片；`list` 和 `get` 子命令可查看已有任务，`--prompt` 支持 `@path` 语法从文件读取提示词
 - **Cron 管控**：定时任务执行时不注入 `@task` 命令模板，防止 AI 递归创建任务；CLI 层通过 `CLAWBENCH_SCHEDULED=1` 环境变量提供双重保护
-- **多后端可切换**：同一平台同时支持 CodeBuddy、Claude Code、OpenCode、Gemini CLI、Codex、Qoder CLI、VeCLI、DeepSeek TUI、MiMo-Code、Pi 后端，会话数据隔离
+- **多后端可切换**：同一平台同时支持 CodeBuddy、Claude Code、OpenCode、Gemini CLI、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi 后端，会话数据隔离
 
 ### 项目结构
 

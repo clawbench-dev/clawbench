@@ -45,6 +45,7 @@ type BackendSpec struct {
 	ID                   string                    // agent id, e.g. "claude"
 	Backend              string                    // backend type, e.g. "claude"
 	DefaultCmd           string                    // command to detect on PATH, e.g. "claude"
+	AltCmd               string                    // fallback CLI command (e.g. "deepseek" when primary is "codewhale"); used for detection if DefaultCmd not found
 	NoCLI                bool                      // if true, this backend has no CLI (e.g. mock); always considered "present"
 	Name                 string                    // display name, e.g. "Claude"
 	Icon                 string                    // emoji icon, e.g. "🤖"
@@ -90,8 +91,9 @@ var BackendRegistry = []BackendSpec{
 		ID: "vecli", Backend: "vecli", DefaultCmd: "vecli", Name: "VeCLI", Icon: "🌿", Specialty: "字节跳动 AI 助手",
 	},
 	{
-		ID: "deepseek", Backend: "deepseek", DefaultCmd: "deepseek", Name: "DeepSeek", Icon: "🔍", Specialty: "DeepSeek 推理与编码",
+		ID: "deepseek", Backend: "deepseek", DefaultCmd: "codewhale", AltCmd: "deepseek", Name: "CodeWhale", Icon: "🐋", Specialty: "AI 推理与编码",
 		ListModelsCmd: []string{"models"}, ParseModels: ParseDeepSeekModels,
+		AcpCommand:    "codewhale serve --acp",
 	},
 	{
 		ID: "pi", Backend: "pi", DefaultCmd: "pi", Name: "Pi", Icon: "🥧", Specialty: "极简编程智能体",
@@ -219,10 +221,17 @@ func discoverModels(spec BackendSpec) []AgentModel {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, spec.DefaultCmd, spec.ListModelsCmd...)
+	cmdName := spec.DefaultCmd
+	cmd := exec.CommandContext(ctx, cmdName, spec.ListModelsCmd...)
 	out, err := cmd.Output()
+	if err != nil && spec.AltCmd != "" {
+		// Fallback to AltCmd if DefaultCmd fails
+		cmdName = spec.AltCmd
+		cmd = exec.CommandContext(ctx, cmdName, spec.ListModelsCmd...)
+		out, err = cmd.Output()
+	}
 	if err != nil {
-		slog.Debug("model discovery command failed", "cmd", spec.DefaultCmd, "args", spec.ListModelsCmd, "error", err)
+		slog.Debug("model discovery command failed", "cmd", spec.DefaultCmd, "alt_cmd", spec.AltCmd, "args", spec.ListModelsCmd, "error", err)
 		return nil
 	}
 
@@ -460,7 +469,7 @@ func SyncDiscoverAgentsDB(db *sql.DB) map[string]bool { //nolint:gocognit,gocycl
 		wg.Add(1)
 		go func(i int, spec BackendSpec) {
 			defer wg.Done()
-			exists := spec.NoCLI || CheckCLIExists(spec.DefaultCmd)
+			exists := spec.NoCLI || CheckCLIExists(spec.DefaultCmd) || (spec.AltCmd != "" && CheckCLIExists(spec.AltCmd))
 			results[i] = result{spec: spec, exists: exists}
 		}(i, spec)
 	}
@@ -506,13 +515,39 @@ func SyncDiscoverAgentsDB(db *sql.DB) map[string]bool { //nolint:gocognit,gocycl
 			continue
 		}
 		if count > 0 {
-			// Update acp_command if it changed in BackendSpec (e.g., claude moved
-			// from "claude acp" to the npx bridge adapter).
+			// Update spec-derived fields if they changed in BackendSpec
+			// (e.g., deepseek renamed to CodeWhale, ACP command changed)
+			updates := map[string]interface{}{}
+			var existingName, existingIcon, existingCommand string
+			_ = db.QueryRow("SELECT COALESCE(name,''), COALESCE(icon,''), COALESCE(command,'') FROM agents WHERE backend = ?", r.spec.Backend).Scan(&existingName, &existingIcon, &existingCommand)
+
+			if r.spec.Name != "" && existingName != r.spec.Name {
+				updates["name"] = r.spec.Name
+			}
+			if r.spec.Icon != "" && existingIcon != r.spec.Icon {
+				updates["icon"] = r.spec.Icon
+			}
+			// Update command if the primary CLI changed (e.g., "deepseek" → "codewhale")
+			if r.spec.DefaultCmd != "" && existingCommand != "" && existingCommand != r.spec.DefaultCmd && CheckCLIExists(r.spec.DefaultCmd) {
+				updates["command"] = r.spec.DefaultCmd
+			}
 			if r.spec.AcpCommand != "" && existingAcpCommand != r.spec.AcpCommand {
-				if _, updateErr := db.Exec("UPDATE agents SET acp_command = ? WHERE backend = ? AND source = 'auto'", r.spec.AcpCommand, r.spec.Backend); updateErr != nil {
-					slog.Warn("failed to update acp_command", "backend", r.spec.Backend, "error", updateErr)
+				updates["acp_command"] = r.spec.AcpCommand
+			}
+
+			if len(updates) > 0 {
+				setClauses := make([]string, 0, len(updates))
+				args := make([]interface{}, 0, len(updates)+1)
+				for col, val := range updates {
+					setClauses = append(setClauses, col+" = ?")
+					args = append(args, val)
+				}
+				args = append(args, r.spec.Backend)
+				query := "UPDATE agents SET " + strings.Join(setClauses, ", ") + " WHERE backend = ? AND source = 'auto'"
+				if _, updateErr := db.Exec(query, args...); updateErr != nil {
+					slog.Warn("failed to update auto-discovered agent", "backend", r.spec.Backend, "error", updateErr)
 				} else {
-					slog.Info("updated acp_command for auto-discovered agent", "backend", r.spec.Backend, "old", existingAcpCommand, "new", r.spec.AcpCommand)
+					slog.Info("updated auto-discovered agent", "backend", r.spec.Backend, "updates", updates)
 				}
 			}
 			continue // Don't overwrite other existing DB fields

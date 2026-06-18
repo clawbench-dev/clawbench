@@ -519,6 +519,11 @@ type ACPConn struct {
 	conn   *acp.ClientSideConnection
 	client *ClawBenchACPClient
 
+	// stdoutFilter wraps the agent's stdout pipe to fix ACP protocol violations
+	// (string-number IDs, non-JSON lines). Must be Close'd when the process dies
+	// to unblock pending reads and prevent cleanup hangs.
+	stdoutFilter *acpStdoutFilter
+
 	// acpSID is the ACP session ID. Populated from DB (ResumeSession) or
 	// from NewSession response. Empty means no session yet.
 	acpSID string
