@@ -109,6 +109,48 @@ func TestACPInitRegistration(t *testing.T) {
 			t.Errorf("expected nil ToolCallIDPrefixes for codebuddy, got %v", p.ACP.ToolCallIDPrefixes)
 		}
 	})
+
+	t.Run("pi", func(t *testing.T) {
+		p := Lookup("pi")
+		if p == nil {
+			t.Fatal("expected pi plugin to be registered after init")
+		}
+		if p.ACP == nil {
+			t.Fatal("expected pi ACP to be registered after init")
+		}
+		// Pi ACP uses standard ACP field names — InputRemaps is empty (falls back to generic)
+		if len(p.ACP.InputRemaps) != 0 {
+			t.Errorf("expected empty InputRemaps for pi ACP, got %v", p.ACP.InputRemaps)
+		}
+		if p.ACP.ToolCallIDPrefixes != nil {
+			t.Errorf("expected nil ToolCallIDPrefixes for pi, got %v", p.ACP.ToolCallIDPrefixes)
+		}
+	})
+
+	t.Run("deepseek", func(t *testing.T) {
+		p := Lookup("deepseek")
+		if p == nil {
+			t.Fatal("expected deepseek plugin to be registered after init")
+		}
+		if p.ACP == nil {
+			t.Fatal("expected deepseek ACP to be registered after init")
+		}
+		// DeepSeek (CodeWhale) ACP has both InputRemaps and ToolCallIDPrefixes
+		remaps := p.ACP.InputRemaps
+		if remaps == nil || len(remaps) == 0 {
+			t.Fatal("expected non-empty InputRemaps for deepseek ACP")
+		}
+		if remaps["path"] != "file_path" {
+			t.Errorf("expected path->file_path, got %q", remaps["path"])
+		}
+		prefixes := p.ACP.ToolCallIDPrefixes
+		if prefixes == nil {
+			t.Fatal("expected non-nil ToolCallIDPrefixes for deepseek ACP")
+		}
+		if prefixes["read_file"] != "Read" {
+			t.Errorf("expected read_file->Read, got %q", prefixes["read_file"])
+		}
+	})
 }
 
 // TestACPLookupAfterInit verifies LookupACPRemaps and LookupACPToolCallIDPrefixes

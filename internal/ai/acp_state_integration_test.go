@@ -40,6 +40,7 @@ var acpAgentSpecs = []acpAgentSpec{
 	{ID: "cline", Backend: "cline", AcpCommand: "cline --acp", DefaultCmd: "cline", HasThinking: true, Timeout: 90 * time.Second},
 	{ID: "kimi", Backend: "kimi", AcpCommand: "kimi acp", DefaultCmd: "kimi", HasThinking: true, Timeout: 90 * time.Second},
 	{ID: "copilot", Backend: "copilot", AcpCommand: "copilot --acp", DefaultCmd: "copilot", HasThinking: true, Timeout: 90 * time.Second},
+	{ID: "pi", Backend: "pi", AcpCommand: "npx -y @touchtechclub/pi-acp@latest", DefaultCmd: "pi", HasThinking: true, Timeout: 120 * time.Second},
 }
 
 // ---------------------------------------------------------------------------

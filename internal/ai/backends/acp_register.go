@@ -3,8 +3,10 @@ package backends
 import (
 	"clawbench/internal/ai/backends/claude"
 	"clawbench/internal/ai/backends/codebuddy"
+	"clawbench/internal/ai/backends/deepseek"
 	"clawbench/internal/ai/backends/kimi"
 	"clawbench/internal/ai/backends/opencode"
+	"clawbench/internal/ai/backends/pi"
 )
 
 func init() {
@@ -14,12 +16,19 @@ func init() {
 	registerACP("codebuddy", &ACPPlugin{
 		InputRemaps: codebuddy.CodebuddyACPRemaps,
 	})
+	registerACP("deepseek", &ACPPlugin{
+		ToolCallIDPrefixes: deepseek.CodeWhaleACPToolCallIDPrefixes,
+		InputRemaps:        deepseek.CodeWhaleACPInputRemaps,
+	})
 	registerACP("kimi", &ACPPlugin{
 		ToolCallIDPrefixes: kimi.KimiACPTCIDPrefixes,
 		InputRemaps:        map[string]string{},
 	})
 	registerACP("opencode", &ACPPlugin{
 		InputRemaps: opencode.OpenCodeACPInputRemaps,
+	})
+	registerACP("pi", &ACPPlugin{
+		InputRemaps: pi.PiACPInputRemaps,
 	})
 }
 

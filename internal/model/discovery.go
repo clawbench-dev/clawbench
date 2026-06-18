@@ -96,6 +96,7 @@ var BackendRegistry = []BackendSpec{
 	{
 		ID: "pi", Backend: "pi", DefaultCmd: "pi", Name: "Pi", Icon: "🥧", Specialty: "极简编程智能体",
 		ThinkingEffortLevels: []string{"off", "minimal", "low", "medium", "high", "xhigh"},
+		AcpCommand:           "npx -y @touchtechclub/pi-acp@latest",
 	},
 	{
 		ID: "cline", Backend: "cline", DefaultCmd: "cline", Name: "Cline", Icon: "🔮", Specialty: "自主编码智能体",
