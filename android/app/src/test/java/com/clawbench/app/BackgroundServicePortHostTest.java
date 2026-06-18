@@ -377,13 +377,15 @@ public class BackgroundServicePortHostTest {
         ports.put(testPort, new BackgroundService.PortInfo(testPort, "10.0.0.1"));
 
         // addPortForward should detect the port is not reachable, delete old forwarding,
-        // then re-register with setPortForwardingL
+        // then re-register with setPortForwardingL.
+        // For non-localhost hosts, the SSH tunnel routes through the server-side reverse
+        // proxy (127.0.0.1:{localPort}) instead of directly to the remote host.
         invokeMethod(service, "addPortForward", testPort, testPort, "10.0.0.1");
 
         // Verify delPortForwardingL was called to remove stale forwarding
         verify(mockSession).delPortForwardingL(testPort);
-        // Verify setPortForwardingL was called to re-register
-        verify(mockSession).setPortForwardingL(eq("127.0.0.1"), eq(testPort), eq("10.0.0.1"), eq(testPort));
+        // Verify setPortForwardingL was called with reverse proxy routing
+        verify(mockSession).setPortForwardingL(eq("127.0.0.1"), eq(testPort), eq("127.0.0.1"), eq(testPort));
     }
 
     // =====================================================
@@ -507,6 +509,21 @@ public class BackgroundServicePortHostTest {
         assertEquals("Null host should default to empty string", "", info2.host);
     }
 
+    @Test
+    public void testPortInfo_isNonLocalhost() throws Exception {
+        // Non-localhost hosts
+        assertTrue("LAN IP is non-localhost", new BackgroundService.PortInfo(80, "192.168.100.1").isNonLocalhost());
+        assertTrue("Private IP is non-localhost", new BackgroundService.PortInfo(80, "10.0.0.1").isNonLocalhost());
+        assertTrue("Domain is non-localhost", new BackgroundService.PortInfo(80, "example.com").isNonLocalhost());
+
+        // Localhost hosts
+        assertFalse("Empty host is localhost", new BackgroundService.PortInfo(80, "").isNonLocalhost());
+        assertFalse("Null host is localhost", new BackgroundService.PortInfo(80, null).isNonLocalhost());
+        assertFalse("localhost is localhost", new BackgroundService.PortInfo(80, "localhost").isNonLocalhost());
+        assertFalse("127.0.0.1 is localhost", new BackgroundService.PortInfo(80, "127.0.0.1").isNonLocalhost());
+        assertFalse("::1 is localhost", new BackgroundService.PortInfo(80, "::1").isNonLocalhost());
+    }
+
     // =====================================================
     // Round-trip test: save then restore
     // =====================================================
@@ -534,6 +551,61 @@ public class BackgroundServicePortHostTest {
         assertEquals("", ports.get(20000).host);
         assertEquals(80, ports.get(3080).targetPort);
         assertEquals("192.168.1.5", ports.get(3080).host);
+    }
+
+    // =====================================================
+    // SSH tunnel routing: non-localhost → reverse proxy, localhost → direct
+    // =====================================================
+
+    @Test
+    public void testAddPortForward_nonLocalhostHost_routesThroughReverseProxy() throws Exception {
+        // For non-localhost targets, the SSH tunnel should route through the server-side
+        // reverse proxy (127.0.0.1:{localPort}) to ensure correct Host header rewriting.
+        com.jcraft.jsch.Session mockSession = mock(com.jcraft.jsch.Session.class);
+        when(mockSession.isConnected()).thenReturn(true);
+        when(mockSession.setPortForwardingL(anyString(), anyInt(), anyString(), anyInt())).thenReturn(0);
+        doNothing().when(mockSession).disconnect();
+
+        Field sshField = BackgroundService.class.getDeclaredField("sshSession");
+        sshField.setAccessible(true);
+        sshField.set(service, mockSession);
+
+        try {
+            // Port 80 on 192.168.100.1 — should route through 127.0.0.1:{localPort}
+            invokeMethod(service, "addPortForward", 3080, 80, "192.168.100.1");
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            if (!(e.getCause() instanceof NullPointerException)) {
+                throw e;
+            }
+        }
+
+        // Verify: SSH tunnel targets 127.0.0.1:3080 (reverse proxy), NOT 192.168.100.1:80
+        verify(mockSession).setPortForwardingL(eq("127.0.0.1"), eq(3080), eq("127.0.0.1"), eq(3080));
+    }
+
+    @Test
+    public void testAddPortForward_localhostHost_routesDirectly() throws Exception {
+        // For localhost targets, the SSH tunnel connects directly (no reverse proxy needed).
+        com.jcraft.jsch.Session mockSession = mock(com.jcraft.jsch.Session.class);
+        when(mockSession.isConnected()).thenReturn(true);
+        when(mockSession.setPortForwardingL(anyString(), anyInt(), anyString(), anyInt())).thenReturn(0);
+        doNothing().when(mockSession).disconnect();
+
+        Field sshField = BackgroundService.class.getDeclaredField("sshSession");
+        sshField.setAccessible(true);
+        sshField.set(service, mockSession);
+
+        try {
+            // Port 5173 on localhost — should route directly to 127.0.0.1:5173
+            invokeMethod(service, "addPortForward", 5173, 5173, "");
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            if (!(e.getCause() instanceof NullPointerException)) {
+                throw e;
+            }
+        }
+
+        // Verify: SSH tunnel targets 127.0.0.1:5173 (direct, no reverse proxy)
+        verify(mockSession).setPortForwardingL(eq("127.0.0.1"), eq(5173), eq("127.0.0.1"), eq(5173));
     }
 
     // --- Helper methods ---

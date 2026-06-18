@@ -109,6 +109,12 @@ public class BackgroundService extends Service {
             this.targetPort = targetPort;
             this.host = host != null ? host : "";
         }
+        /** Returns true if this target is a non-localhost host.
+         *  Non-localhost targets must route through the server-side reverse proxy
+         *  (which rewrites the Host header) rather than connecting directly. */
+        boolean isNonLocalhost() {
+            return !host.isEmpty() && !host.equals("localhost") && !host.equals("127.0.0.1") && !host.equals("::1");
+        }
     }
 
     private final Map<Integer, PortInfo> forwardedPorts = new java.util.concurrent.ConcurrentHashMap<>();
@@ -766,15 +772,29 @@ public class BackgroundService extends Service {
         // already registered throws "PortForwardingL: local port ... is already registered".
         // This can happen if addPortForward added the port before we reconnected, or
         // if the session was briefly alive during a reconnect race. Catch and skip.
+        //
+        // For non-localhost targets, the SSH tunnel routes through the server-side
+        // reverse proxy (127.0.0.1:{localPort}) instead of directly to the remote host.
+        // The reverse proxy rewrites the Host header so the backend receives the
+        // correct hostname instead of "localhost:port".
         int reEstablished = 0;
         for (Map.Entry<Integer, PortInfo> entry : forwardedPorts.entrySet()) {
             int localPort = entry.getKey();
             PortInfo info = entry.getValue();
-            String targetHost = info.host.isEmpty() ? "127.0.0.1" : info.host;
+            String sshTargetHost;
+            int sshTargetPort;
+            if (info.isNonLocalhost()) {
+                // Route through server-side reverse proxy for Host header rewriting
+                sshTargetHost = "127.0.0.1";
+                sshTargetPort = localPort;
+            } else {
+                sshTargetHost = info.host.isEmpty() ? "127.0.0.1" : info.host;
+                sshTargetPort = info.targetPort;
+            }
             try {
-                sshSession.setPortForwardingL("127.0.0.1", localPort, targetHost, info.targetPort);
+                sshSession.setPortForwardingL("127.0.0.1", localPort, sshTargetHost, sshTargetPort);
                 reEstablished++;
-                AppLog.i(TAG, "SSH: re-established port forward " + localPort + " -> " + targetHost + ":" + info.targetPort);
+                AppLog.i(TAG, "SSH: re-established port forward " + localPort + " -> " + sshTargetHost + ":" + sshTargetPort);
             } catch (com.jcraft.jsch.JSchException e) {
                 if (e.getMessage() != null && e.getMessage().contains("already registered")) {
                     AppLog.d(TAG, "SSH: port forward " + localPort + " already registered, skipping");
@@ -812,7 +832,6 @@ public class BackgroundService extends Service {
      * MUST be called from a background thread (network I/O).
      */
     private synchronized void addPortForward(int localPort, int targetPort, String host) {
-        String targetHost = (host == null || host.isEmpty()) ? "127.0.0.1" : host;
         boolean alreadyInSet = forwardedPorts.containsKey(localPort);
 
         AppLog.i(TAG, "SSH: addPortForward ENTER: localPort=" + localPort + ", targetPort=" + targetPort + ", host=" + host
@@ -852,12 +871,26 @@ public class BackgroundService extends Service {
         try {
             ensureConnection();
 
+            // Determine SSH tunnel routing: for non-localhost targets, route through
+            // the server-side reverse proxy (which rewrites the Host header) instead
+            // of connecting directly to the remote host.
+            PortInfo info = forwardedPorts.get(localPort);
+            String sshTargetHost;
+            int sshTargetPort;
+            if (info != null && info.isNonLocalhost()) {
+                sshTargetHost = "127.0.0.1";
+                sshTargetPort = localPort;
+            } else {
+                sshTargetHost = (host == null || host.isEmpty()) ? "127.0.0.1" : host;
+                sshTargetPort = targetPort;
+            }
+
             // Always try setPortForwardingL. If ensureConnection just reconnected,
             // the port was already set up in the re-establish loop and this will
             // throw "already registered" — which we catch and treat as success.
             try {
-                sshSession.setPortForwardingL("127.0.0.1", localPort, targetHost, targetPort);
-                AppLog.i(TAG, "SSH: setPortForwardingL succeeded for localhost:" + localPort + " → " + targetHost + ":" + targetPort);
+                sshSession.setPortForwardingL("127.0.0.1", localPort, sshTargetHost, sshTargetPort);
+                AppLog.i(TAG, "SSH: setPortForwardingL succeeded for localhost:" + localPort + " → " + sshTargetHost + ":" + sshTargetPort);
             } catch (com.jcraft.jsch.JSchException e) {
                 if (e.getMessage() != null && e.getMessage().contains("already registered")) {
                     AppLog.d(TAG, "SSH: port " + localPort + " already registered in JSch, treating as success");
@@ -870,7 +903,7 @@ public class BackgroundService extends Service {
             boolean reachable = testLocalPort(localPort);
             AppLog.i(TAG, "SSH: addPortForward testLocalPort(" + localPort + ") = " + reachable);
             if (reachable) {
-                AppLog.i(TAG, "SSH: port forward ready and verified: localhost:" + localPort + " → " + targetHost + ":" + targetPort);
+                AppLog.i(TAG, "SSH: port forward ready and verified: localhost:" + localPort + " → " + sshTargetHost + ":" + sshTargetPort);
                 success = true;
             } else {
                 // Port registered but not reachable yet — wait briefly and retry.

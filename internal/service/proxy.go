@@ -245,6 +245,20 @@ func (r *ProxyRegistry) UpdatePort(localPort int, port int, host string, name st
 		}
 	}
 
+	// Determine if reverse proxy needs to be restarted:
+	// host, port, or protocol changed for a non-localhost target,
+	// or the target switched between localhost and non-localhost.
+	hostChanged := host != existing.Host
+	portChanged := port != existing.Port
+	protocolChanged := protocol != existing.Protocol
+	wasNonLocalhost := isNonLocalhostTarget(existing.Host)
+	isNonLocalhost := isNonLocalhostTarget(host)
+	needProxyRestart := (hostChanged || portChanged || protocolChanged) && (wasNonLocalhost || isNonLocalhost)
+
+	if needProxyRestart {
+		r.stopReverseProxy(localPort)
+	}
+
 	// If localPort changed, move the entry in the map
 	if newLocalPort != localPort {
 		delete(r.ports, localPort)
@@ -259,6 +273,19 @@ func (r *ProxyRegistry) UpdatePort(localPort int, port int, host string, name st
 		Protocol:   protocol,
 		AutoDetect: existing.AutoDetect,
 		Active:     checkPortActive(port, host),
+	}
+
+	// Start reverse proxy if needed for the new target
+	if needProxyRestart && isNonLocalhost {
+		if err := r.startReverseProxy(newLocalPort, port, host, protocol); err != nil {
+			slog.Warn(
+				"failed to restart reverse proxy after UpdatePort",
+				slog.Int("local_port", newLocalPort),
+				slog.Int("target_port", port),
+				slog.String("host", host),
+				slog.String("err", err.Error()),
+			)
+		}
 	}
 
 	r.savePortToDB(newLocalPort, port, host, name, protocol)
@@ -302,8 +329,10 @@ func (r *ProxyRegistry) ListPorts() []model.ForwardedPort {
 	defer r.mu.RUnlock()
 
 	result := make([]model.ForwardedPort, 0, len(r.ports))
-	for _, p := range r.ports {
-		result = append(result, *p)
+	for lp, p := range r.ports {
+		fp := *p
+		_, fp.HasReverseProxy = r.proxies[lp]
+		result = append(result, fp)
 	}
 
 	// Sort by local port number for stable output

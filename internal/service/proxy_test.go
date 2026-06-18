@@ -1188,3 +1188,120 @@ func TestProxyRegistry_LoadPortsFromDB_NonLocalhostReverseProxyStarts(t *testing
 		assert.Greater(t, rp.Port(), 0, "reverse proxy should be listening on a valid port")
 	}
 }
+
+// ---------- Bug fix: UpdatePort restarts reverse proxy when host changes ----------
+
+func TestProxyRegistry_UpdatePort_LocalhostToNonLocalhost_StartsReverseProxy(t *testing.T) {
+	r := newTestRegistry(t)
+	defer r.Stop()
+
+	// Register a localhost port — no reverse proxy
+	localPort, err := r.RegisterPort(8080, "", "local-api", "http")
+	assert.NoError(t, err)
+
+	r.mu.RLock()
+	_, hasProxy := r.proxies[localPort]
+	r.mu.RUnlock()
+	assert.False(t, hasProxy, "no reverse proxy for localhost target")
+
+	// Update host to non-localhost — should start reverse proxy
+	err = r.UpdatePort(localPort, 8080, "192.168.1.100", "remote-api", "http")
+	assert.NoError(t, err)
+
+	r.mu.RLock()
+	_, hasProxyAfter := r.proxies[localPort]
+	r.mu.RUnlock()
+	assert.True(t, hasProxyAfter, "reverse proxy should be started after updating host to non-localhost")
+}
+
+func TestProxyRegistry_UpdatePort_NonLocalhostToLocalhost_StopsReverseProxy(t *testing.T) {
+	r := newTestRegistry(t)
+	defer r.Stop()
+
+	// Register a non-localhost port — starts reverse proxy
+	localPort, err := r.RegisterPort(8080, "192.168.1.100", "remote-api", "http")
+	assert.NoError(t, err)
+
+	r.mu.RLock()
+	_, hasProxy := r.proxies[localPort]
+	r.mu.RUnlock()
+	assert.True(t, hasProxy, "reverse proxy should be started for non-localhost target")
+
+	// Update host to localhost — should stop reverse proxy
+	err = r.UpdatePort(localPort, 8080, "", "local-api", "http")
+	assert.NoError(t, err)
+
+	r.mu.RLock()
+	_, hasProxyAfter := r.proxies[localPort]
+	r.mu.RUnlock()
+	assert.False(t, hasProxyAfter, "reverse proxy should be stopped after updating host to localhost")
+}
+
+func TestProxyRegistry_UpdatePort_NonLocalhostToDifferentHost_RestartsReverseProxy(t *testing.T) {
+	r := newTestRegistry(t)
+	defer r.Stop()
+
+	// Register a non-localhost port — starts reverse proxy
+	localPort, err := r.RegisterPort(8080, "192.168.1.100", "remote-api", "http")
+	assert.NoError(t, err)
+
+	// Update to different non-localhost host — should restart reverse proxy
+	err = r.UpdatePort(localPort, 8080, "10.0.0.1", "other-remote", "http")
+	assert.NoError(t, err)
+
+	r.mu.RLock()
+	_, hasProxy := r.proxies[localPort]
+	r.mu.RUnlock()
+	assert.True(t, hasProxy, "reverse proxy should be restarted after updating to different non-localhost host")
+
+	// Verify the port info was updated
+	ports := r.ListPorts()
+	assert.Len(t, ports, 1)
+	assert.Equal(t, "10.0.0.1", ports[0].Host)
+}
+
+func TestProxyRegistry_UpdatePort_SameHostNoChange_NoReverseProxyRestart(t *testing.T) {
+	r := newTestRegistry(t)
+	defer r.Stop()
+
+	// Register a non-localhost port — starts reverse proxy
+	localPort, err := r.RegisterPort(8080, "192.168.1.100", "remote-api", "http")
+	assert.NoError(t, err)
+
+	r.mu.RLock()
+	rpBefore := r.proxies[localPort]
+	r.mu.RUnlock()
+
+	// Update name only — should NOT restart reverse proxy
+	err = r.UpdatePort(localPort, 8080, "192.168.1.100", "remote-api-v2", "http")
+	assert.NoError(t, err)
+
+	r.mu.RLock()
+	rpAfter := r.proxies[localPort]
+	r.mu.RUnlock()
+	assert.Equal(t, rpBefore, rpAfter, "reverse proxy should NOT be restarted when host/port/protocol unchanged")
+}
+
+// ---------- ListPorts sets HasReverseProxy ----------
+
+func TestProxyRegistry_ListPorts_HasReverseProxy(t *testing.T) {
+	r := newTestRegistry(t)
+	defer r.Stop()
+
+	// Register localhost port — HasReverseProxy should be false
+	localPort1, err := r.RegisterPort(3000, "", "local-app", "http")
+	assert.NoError(t, err)
+
+	// Register non-localhost port — HasReverseProxy should be true
+	localPort2, err := r.RegisterPort(8080, "192.168.1.100", "remote-api", "http")
+	assert.NoError(t, err)
+
+	ports := r.ListPorts()
+	portMap := make(map[int]model.ForwardedPort)
+	for _, p := range ports {
+		portMap[p.LocalPort] = p
+	}
+
+	assert.False(t, portMap[localPort1].HasReverseProxy, "localhost port should not have reverse proxy")
+	assert.True(t, portMap[localPort2].HasReverseProxy, "non-localhost port should have reverse proxy")
+}

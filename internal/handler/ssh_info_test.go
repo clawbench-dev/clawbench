@@ -111,6 +111,64 @@ func TestServeSSHInfo_Enabled(t *testing.T) {
 	}
 }
 
+func TestServeSSHInfo_NonLocalhostTarget_UsesReverseProxyRoute(t *testing.T) {
+	// When a non-localhost target has a reverse proxy, the SSH -L command should
+	// route through the reverse proxy (127.0.0.1:{localPort}) instead of directly
+	// to the remote host, so that the Host header is rewritten correctly.
+	origProxy := service.ProxyService
+	service.ProxyService = service.NewProxyRegistry(0)
+	defer func() {
+		service.ProxyService.Stop()
+		service.ProxyService = origProxy
+	}()
+
+	// Register a localhost port (direct connection)
+	_, _ = service.ProxyService.RegisterPort(5173, "", "Vite Dev", "http")
+	// Register a non-localhost port (routed through reverse proxy)
+	_, _ = service.ProxyService.RegisterPort(8080, "192.168.100.1", "Remote Router", "http")
+
+	srv := ssh.NewServer(model.PortForwardConfig{Enabled: true, Port: 20001}, 20000, "test-password", service.ProxyService)
+	if err := srv.InitHostKey(); err != nil {
+		t.Fatalf("failed to init host key: %v", err)
+	}
+	origSSH := sshServerRef
+	sshServerRef = srv
+	defer func() { sshServerRef = origSSH }()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/ssh/info", http.NoBody)
+	req.Host = "myserver.com:20000"
+	w := httptest.NewRecorder()
+	ServeSSHInfo(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to parse JSON: %v", err)
+	}
+
+	cmd, ok := result["command"].(string)
+	if !ok {
+		t.Fatalf("expected command to be string, got %v", result["command"])
+	}
+
+	// Localhost port should use direct connection: -L 5173:localhost:5173
+	if !containsStr(cmd, "-L 5173:localhost:5173") {
+		t.Errorf("command should contain -L 5173:localhost:5173 for localhost target, got: %s", cmd)
+	}
+
+	// Non-localhost port should route through reverse proxy: -L 8080:127.0.0.1:8080
+	// (NOT -L 8080:192.168.100.1:8080 which would bypass the reverse proxy)
+	if !containsStr(cmd, "-L 8080:127.0.0.1:8080") {
+		t.Errorf("command should contain -L 8080:127.0.0.1:8080 for reverse proxy route, got: %s", cmd)
+	}
+	if containsStr(cmd, "192.168.100.1") {
+		t.Errorf("command should NOT contain the remote host IP directly (should go through reverse proxy), got: %s", cmd)
+	}
+}
+
 func TestServeSSHInfo_MethodNotAllowed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/ssh/info", http.NoBody)
 	w := httptest.NewRecorder()

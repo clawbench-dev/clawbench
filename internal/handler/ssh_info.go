@@ -48,16 +48,23 @@ func ServeSSHInfo(w http.ResponseWriter, r *http.Request) {
 	port := sshServerRef.Port()
 	fingerprint := sshServerRef.Fingerprint()
 
-	// Build ssh -L command from all registered ports
+	// Build ssh -L command from all registered ports.
+	// For non-localhost targets with a reverse proxy, the SSH tunnel must route
+	// through the reverse proxy (127.0.0.1:{localPort}) instead of directly to
+	// the remote host, so that the Host header is rewritten correctly.
 	var forwardArgs []string
 	if service.ProxyService != nil {
 		ports := service.ProxyService.ListPorts()
 		for _, p := range ports {
-			targetHost := p.Host
-			if targetHost == "" {
-				targetHost = "localhost"
+			if p.HasReverseProxy {
+				forwardArgs = append(forwardArgs, fmt.Sprintf("-L %d:127.0.0.1:%d", p.LocalPort, p.LocalPort))
+			} else {
+				targetHost := p.Host
+				if targetHost == "" {
+					targetHost = "localhost"
+				}
+				forwardArgs = append(forwardArgs, fmt.Sprintf("-L %d:%s:%d", p.LocalPort, targetHost, p.Port))
 			}
-			forwardArgs = append(forwardArgs, fmt.Sprintf("-L %d:%s:%d", p.LocalPort, targetHost, p.Port))
 		}
 	}
 
