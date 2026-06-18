@@ -181,7 +181,6 @@ export default {
       currentFile: 'Current file',
       currentDir: 'Current directory',
       recentReferences: 'Recent references',
-      takePhoto: 'Take photo',
       uploadFile: 'Upload file',
       dropToUpload: 'Drop to upload',
       uploading: 'Uploading...',

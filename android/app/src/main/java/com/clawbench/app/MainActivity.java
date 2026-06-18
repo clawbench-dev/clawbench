@@ -122,6 +122,21 @@ public class MainActivity extends AppCompatActivity {
     // File chooser state for WebView <input type="file"> support
     private ValueCallback<Uri[]> filePathCallback;
     private Uri cameraImageUri; // URI for camera capture image
+    private Intent pendingFileChooserIntent; // Stored chooser intent while waiting for camera permission
+
+    // Camera permission launcher — requests CAMERA runtime permission before
+    // launching the camera intent. On many OEM ROMs (Xiaomi, Huawei, etc.),
+    // ACTION_IMAGE_CAPTURE fails silently without the CAMERA permission granted,
+    // even though AOSP doesn't strictly require it.
+    private final ActivityResultLauncher<String> cameraPermissionLauncher =
+            registerForActivityResult(new ActivityResultContracts.RequestPermission(), isGranted -> {
+                if (isGranted) {
+                    launchFileChooserWithCamera();
+                } else {
+                    AppLog.w(TAG, "CAMERA permission denied — launching file chooser without camera option");
+                    launchFileChooserWithoutCamera();
+                }
+            });
 
     // Notification permission launcher (Android 13+) — required for foreground service notification
     private final ActivityResultLauncher<String> notificationPermissionLauncher =
@@ -312,41 +327,18 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
 
-                // Offer camera as an additional option
-                Intent cameraIntent = null;
-                try {
-                    cameraIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
-                    if (cameraIntent.resolveActivity(getPackageManager()) != null) {
-                        File photoFile = createImageFile();
-                        if (photoFile != null) {
-                            cameraImageUri = androidx.core.content.FileProvider.getUriForFile(
-                                    MainActivity.this,
-                                    getPackageName() + ".fileprovider",
-                                    photoFile
-                            );
-                            cameraIntent.putExtra(MediaStore.EXTRA_OUTPUT, cameraImageUri);
-                        } else {
-                            cameraIntent = null;
-                        }
-                    } else {
-                        cameraIntent = null;
-                    }
-                } catch (Exception e) {
-                    AppLog.w(TAG, "Camera intent not available", e);
-                    cameraIntent = null;
-                }
+                // Store the chooser intent for use after permission check
+                pendingFileChooserIntent = chooserIntent;
 
-                try {
-                    if (cameraIntent != null) {
-                        // Show chooser with both file picker and camera options
-                        chooserIntent = Intent.createChooser(chooserIntent, "选择文件");
-                        chooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[]{ cameraIntent });
-                    }
-                    fileChooserLauncher.launch(chooserIntent);
-                } catch (Exception e) {
-                    AppLog.e(TAG, "File chooser failed to launch", e);
-                    filePathCallback = null;
-                    return false;
+                // Request CAMERA runtime permission before offering the camera option.
+                // Many OEM ROMs (Xiaomi, Huawei, Samsung) require this permission to be
+                // granted at runtime, even though AOSP's ACTION_IMAGE_CAPTURE should work
+                // without it when using FileProvider URI.
+                if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.CAMERA)
+                        == PackageManager.PERMISSION_GRANTED) {
+                    launchFileChooserWithCamera();
+                } else {
+                    cameraPermissionLauncher.launch(Manifest.permission.CAMERA);
                 }
                 return true;
             }
@@ -506,6 +498,70 @@ public class MainActivity extends AppCompatActivity {
         } catch (IOException e) {
             AppLog.e(TAG, "Failed to create image file", e);
             return null;
+        }
+    }
+
+    /**
+     * Launch file chooser with camera option included.
+     * Called after CAMERA runtime permission is confirmed.
+     */
+    private void launchFileChooserWithCamera() {
+        if (filePathCallback == null) return;
+        Intent chooserIntent = pendingFileChooserIntent;
+        pendingFileChooserIntent = null;
+
+        // Build camera intent with FileProvider URI
+        Intent cameraIntent = null;
+        try {
+            cameraIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+            if (cameraIntent.resolveActivity(getPackageManager()) != null) {
+                File photoFile = createImageFile();
+                if (photoFile != null) {
+                    cameraImageUri = androidx.core.content.FileProvider.getUriForFile(
+                            this,
+                            getPackageName() + ".fileprovider",
+                            photoFile
+                    );
+                    cameraIntent.putExtra(MediaStore.EXTRA_OUTPUT, cameraImageUri);
+                    // Grant URI permissions so the camera app can write to the FileProvider URI
+                    cameraIntent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                } else {
+                    cameraIntent = null;
+                }
+            } else {
+                cameraIntent = null;
+            }
+        } catch (Exception e) {
+            AppLog.w(TAG, "Camera intent not available", e);
+            cameraIntent = null;
+        }
+
+        try {
+            if (cameraIntent != null) {
+                // Show chooser with both file picker and camera options
+                chooserIntent = Intent.createChooser(chooserIntent, "选择文件");
+                chooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[]{ cameraIntent });
+            }
+            fileChooserLauncher.launch(chooserIntent);
+        } catch (Exception e) {
+            AppLog.e(TAG, "File chooser failed to launch", e);
+            filePathCallback = null;
+        }
+    }
+
+    /**
+     * Launch file chooser without camera option (fallback when CAMERA permission denied).
+     */
+    private void launchFileChooserWithoutCamera() {
+        if (filePathCallback == null) return;
+        Intent chooserIntent = pendingFileChooserIntent;
+        pendingFileChooserIntent = null;
+
+        try {
+            fileChooserLauncher.launch(chooserIntent);
+        } catch (Exception e) {
+            AppLog.e(TAG, "File chooser failed to launch", e);
+            filePathCallback = null;
         }
     }
 
