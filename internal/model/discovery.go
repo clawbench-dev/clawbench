@@ -55,6 +55,8 @@ type BackendSpec struct {
 	DiscoverModelsFunc   func() []AgentModel       // optional: custom model discovery function (e.g. binary strings scan); takes priority over ListModelsCmd
 	ThinkingEffortLevels []string                  // supported thinking effort levels, e.g. ["low","medium","high"]; nil = not supported
 	AcpCommand           string                    // ACP spawn command for acp-stdio transport, e.g. "kimi --acp"; empty = no ACP support
+	EmbeddedSubDir       string                    // subdirectory under .clawbench/ for embedded binary, e.g. "pi"; empty = no embedded binary
+	EmbeddedVersionFile  string                    // filename for fast version lookup under EmbeddedSubDir, e.g. "VERSION"; empty = no version file
 }
 
 // BackendRegistry lists all known AI backends for auto-discovery.
@@ -99,6 +101,8 @@ var BackendRegistry = []BackendSpec{
 		ID: "pi", Backend: "pi", DefaultCmd: "pi", Name: "Pi", Icon: "🥧", Specialty: "极简编程智能体",
 		ThinkingEffortLevels: []string{"off", "minimal", "low", "medium", "high", "xhigh"},
 		AcpCommand:           "npx -y @touchtechclub/pi-acp@latest",
+		EmbeddedSubDir:       "pi",
+		EmbeddedVersionFile:  "VERSION",
 	},
 	{
 		ID: "cline", Backend: "cline", DefaultCmd: "cline", Name: "Cline", Icon: "🔮", Specialty: "自主编码智能体",
@@ -127,15 +131,17 @@ var BackendRegistry = []BackendSpec{
 // If that fails, it falls back to exec.LookPath — some CLIs (especially Node.js ones)
 // may return non-zero exit codes for --version when run without a TTY or in certain
 // environments, but the binary itself is still present and functional.
-// For the "pi" command, also checks the embedded binary at .clawbench/pi/pi.
+// For backends with EmbeddedSubDir, also checks the embedded binary.
 func CheckCLIExists(cmd string) bool {
 	if cmd == "" {
 		return false
 	}
 
-	// Special case: embedded Pi binary
-	if cmd == "pi" && EmbeddedAgentPath() != "" {
-		return true
+	// Check for embedded binary (e.g. .clawbench/pi/pi)
+	if spec := findSpecByDefaultCmd(cmd); spec != nil && spec.EmbeddedSubDir != "" {
+		if EmbeddedBinaryPath(spec.EmbeddedSubDir) != "" {
+			return true
+		}
 	}
 
 	// Primary check: run `cmd --version`
@@ -162,15 +168,17 @@ func CheckCLIExists(cmd string) bool {
 
 // CheckCLIExistsErr returns an error describing why the CLI is not available,
 // or nil if the CLI is available. This is used for more specific error reporting.
-// For the "pi" command, also checks the embedded binary at .clawbench/pi/pi.
+// For backends with EmbeddedSubDir, also checks the embedded binary.
 func CheckCLIExistsErr(cmd string) error {
 	if cmd == "" {
 		return fmt.Errorf("empty command")
 	}
 
-	// Special case: embedded Pi binary
-	if cmd == "pi" && EmbeddedAgentPath() != "" {
-		return nil
+	// Check for embedded binary
+	if spec := findSpecByDefaultCmd(cmd); spec != nil && spec.EmbeddedSubDir != "" {
+		if EmbeddedBinaryPath(spec.EmbeddedSubDir) != "" {
+			return nil
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -249,6 +257,16 @@ func discoverModels(spec BackendSpec) []AgentModel {
 func FindSpecByBackend(backend string) *BackendSpec {
 	for i := range BackendRegistry {
 		if BackendRegistry[i].Backend == backend {
+			return &BackendRegistry[i]
+		}
+	}
+	return nil
+}
+
+// findSpecByDefaultCmd returns the BackendSpec whose DefaultCmd matches, or nil.
+func findSpecByDefaultCmd(cmd string) *BackendSpec {
+	for i := range BackendRegistry {
+		if BackendRegistry[i].DefaultCmd == cmd {
 			return &BackendRegistry[i]
 		}
 	}
@@ -399,19 +417,20 @@ func ParseOpenCodeModels(output string) []AgentModel {
 	return models
 }
 
-// --- Embedded Pi binary detection ---
+// --- Embedded binary detection ---
 
-// EmbeddedAgentPath returns the absolute path to the embedded Pi binary,
-// or empty string if not found. Checks {binDir}/.clawbench/pi/ for the binary.
-func EmbeddedAgentPath() string {
+// EmbeddedBinaryPath returns the absolute path to the embedded binary under
+// .clawbench/{subDir}/, or empty string if not found.
+// subDir is the BackendSpec.EmbeddedSubDir value (e.g. "pi").
+func EmbeddedBinaryPath(subDir string) string {
 	exePath, err := os.Executable()
 	if err != nil {
 		slog.Error("failed to get executable path", "error", err)
 		return ""
 	}
 	baseDir := filepath.Dir(exePath)
-	for _, name := range []string{"pi", "pi.exe"} {
-		p := filepath.Join(baseDir, ".clawbench", "pi", name)
+	for _, name := range []string{subDir, subDir + ".exe"} {
+		p := filepath.Join(baseDir, ".clawbench", subDir, name)
 		if info, err := os.Stat(p); err == nil && !info.IsDir() {
 			return p
 		}
@@ -419,36 +438,51 @@ func EmbeddedAgentPath() string {
 	return ""
 }
 
-// EmbeddedAgentVersion extracts the version from the embedded Pi binary.
-// First checks .clawbench/pi/VERSION file (fast), falls back to pi --version.
-func EmbeddedAgentVersion() string {
+// EmbeddedBinaryVersion extracts the version for an embedded binary.
+// First reads .clawbench/{subDir}/{versionFile} (fast), then falls back to
+// running {binary} --version.
+func EmbeddedBinaryVersion(subDir, versionFile string) string {
 	exePath, err := os.Executable()
 	if err != nil {
 		return ""
 	}
 	baseDir := filepath.Dir(exePath)
 
-	// Fast path: read VERSION file
-	versionFile := filepath.Join(baseDir, ".clawbench", "pi", "VERSION")
-	if data, err := os.ReadFile(versionFile); err == nil {
-		v := strings.TrimSpace(string(data))
-		if v != "" {
-			return v
+	// Fast path: read version file
+	if versionFile != "" {
+		vf := filepath.Join(baseDir, ".clawbench", subDir, versionFile)
+		if data, err := os.ReadFile(vf); err == nil {
+			v := strings.TrimSpace(string(data))
+			if v != "" {
+				return v
+			}
 		}
 	}
 
-	// Slow path: run pi --version
-	piPath := EmbeddedAgentPath()
-	if piPath == "" {
+	// Slow path: run binary --version
+	binPath := EmbeddedBinaryPath(subDir)
+	if binPath == "" {
 		return ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, piPath, "--version").Output()
+	out, err := exec.CommandContext(ctx, binPath, "--version").Output()
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// EmbeddedAgentPath returns the absolute path to the embedded Pi binary,
+// or empty string if not found. Convenience wrapper for EmbeddedBinaryPath("pi").
+func EmbeddedAgentPath() string {
+	return EmbeddedBinaryPath("pi")
+}
+
+// EmbeddedAgentVersion extracts the version from the embedded Pi binary.
+// Convenience wrapper for EmbeddedBinaryVersion("pi", "VERSION").
+func EmbeddedAgentVersion() string {
+	return EmbeddedBinaryVersion("pi", "VERSION")
 }
 
 // --- DB-based agent discovery and merge ---
@@ -456,7 +490,7 @@ func EmbeddedAgentVersion() string {
 // SyncDiscoverAgentsDB is the DB-based replacement for SyncDiscoverAgents.
 // It detects installed CLIs from BackendRegistry and writes new agents to the database
 // instead of YAML files. Existing DB records are never overwritten.
-// It also checks for the embedded Pi binary.
+// It also checks for embedded binaries (backends with EmbeddedSubDir).
 // Returns a set of backend types whose CLI is currently present.
 func SyncDiscoverAgentsDB(db *sql.DB) map[string]bool { //nolint:gocognit,gocyclo // multi-backend DB agent discovery
 	type result struct {
@@ -475,16 +509,13 @@ func SyncDiscoverAgentsDB(db *sql.DB) map[string]bool { //nolint:gocognit,gocycl
 	}
 	wg.Wait()
 
-	// Also check for embedded Pi binary
-	embeddedPath := EmbeddedAgentPath()
-	if embeddedPath != "" {
-		// Mark pi as present for model discovery, but do NOT auto-create an agent.
-		// The setup wizard handles agent creation with API key + model configuration.
-		// Auto-creating here would set needs_setup=false, skipping the wizard,
-		// and leave a broken agent with no API key.
-		for i, r := range results {
-			if r.spec.Backend == "pi" && !r.exists {
+	// Also check for embedded binaries (backends with EmbeddedSubDir)
+	embeddedPaths := make(map[string]string) // backend → embedded binary path
+	for i, r := range results {
+		if r.spec.EmbeddedSubDir != "" && !r.exists {
+			if p := EmbeddedBinaryPath(r.spec.EmbeddedSubDir); p != "" {
 				results[i] = result{spec: r.spec, exists: true}
+				embeddedPaths[r.spec.Backend] = p
 			}
 		}
 	}
@@ -496,13 +527,15 @@ func SyncDiscoverAgentsDB(db *sql.DB) map[string]bool { //nolint:gocognit,gocycl
 			present[r.spec.Backend] = true
 		}
 
-		// Skip auto-creation for Pi when it's only found via embedded binary.
-		// The setup wizard handles Pi agent creation with API key + model config.
+		// Skip auto-creation for backends only found via embedded binary.
+		// The setup wizard handles agent creation with API key + model config.
 		// Auto-creating from embedded binary would leave a broken agent (no API key).
-		if r.spec.Backend == "pi" && embeddedPath != "" {
-			// Only auto-create if Pi CLI is genuinely installed on PATH (not just embedded)
-			if _, lookupErr := exec.LookPath(r.spec.DefaultCmd); lookupErr != nil {
-				continue
+		if r.spec.EmbeddedSubDir != "" {
+			if _, ok := embeddedPaths[r.spec.Backend]; ok {
+				// Only auto-create if the CLI is genuinely installed on PATH (not just embedded)
+				if _, lookupErr := exec.LookPath(r.spec.DefaultCmd); lookupErr != nil {
+					continue
+				}
 			}
 		}
 
@@ -567,9 +600,9 @@ func SyncDiscoverAgentsDB(db *sql.DB) map[string]bool { //nolint:gocognit,gocycl
 			Source:    "auto",
 		}
 
-		// Set command to embedded path for pi backend
-		if r.spec.Backend == "pi" && embeddedPath != "" {
-			agent.Command = embeddedPath
+		// Set command to embedded binary path for backends with embedded binaries
+		if p, ok := embeddedPaths[r.spec.Backend]; ok {
+			agent.Command = p
 		}
 
 		// Store ACP command info from BackendSpec (transport defaults to "cli")
