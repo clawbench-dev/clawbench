@@ -167,8 +167,6 @@ async function loadProject(): Promise<void> {
         state.projectName = baseName(data.path)
         state.homeDir = data.homeDir || ''
         localStorage.setItem('currentProjectPath', data.path)
-        // Add to recent projects
-        apiPost('/api/recent-projects', { path: data.path }).catch(() => {})
     } catch (error) {
         console.error('[loadProject] failed:', error)
     }

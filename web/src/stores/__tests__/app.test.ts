@@ -202,19 +202,6 @@ describe('store', () => {
             expect(localStorage.getItem('currentProjectPath')).toBe('/home/user/myproject')
         })
 
-        it('posts project path to recent-projects API', async () => {
-            mockApiGet.mockImplementation((url: string) => {
-                if (url === '/api/roots') return { roots: ['/'] }
-                if (url === '/api/project') return { path: '/home/user/myproject' }
-                return {}
-            })
-            mockApiPost.mockResolvedValue({})
-
-            await store.loadProject()
-
-            expect(mockApiPost).toHaveBeenCalledWith('/api/recent-projects', { path: '/home/user/myproject' })
-        })
-
         it('does not set projectRoot when /api/project returns empty path', async () => {
             store.state.projectRoot = '/previous'
 

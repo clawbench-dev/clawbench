@@ -83,7 +83,8 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		CREATE TABLE IF NOT EXISTS recent_projects (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_path TEXT UNIQUE NOT NULL,
-			accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			is_default INTEGER NOT NULL DEFAULT 0
 		);
 		CREATE TABLE IF NOT EXISTS scheduled_tasks (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -512,6 +513,17 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		if _, err := DB.Exec("ALTER TABLE agents ADD COLUMN acp_list_sessions BOOLEAN NOT NULL DEFAULT false"); err != nil {
 			return fmt.Errorf("failed to add acp_list_sessions column: %w", err)
 		}
+	}
+
+	// Migrate: add is_default column to recent_projects for server-side default project.
+	var hasIsDefault int
+	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('recent_projects') WHERE name='is_default'").Scan(&hasIsDefault)
+	if hasIsDefault == 0 {
+		if _, err := DB.Exec("ALTER TABLE recent_projects ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return fmt.Errorf("failed to add is_default column: %w", err)
+		}
+		// Backfill: set the most recently accessed project as default
+		_, _ = DB.Exec("UPDATE recent_projects SET is_default = 1 WHERE id = (SELECT id FROM recent_projects ORDER BY accessed_at DESC LIMIT 1)")
 	}
 
 	// Migrate: extract metadata from chat_history.content into chat_metadata table.

@@ -1110,7 +1110,8 @@ func TestSchema_ForwardedPortsMigration_HostColumnFromOldSchema(t *testing.T) {
 		CREATE TABLE IF NOT EXISTS recent_projects (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_path TEXT UNIQUE NOT NULL,
-			accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			is_default INTEGER NOT NULL DEFAULT 0
 		);
 		CREATE TABLE IF NOT EXISTS ai_raw_responses (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1494,7 +1495,8 @@ func TestSchema_ExternalSessionIDBackfill_FillsEmpty(t *testing.T) {
 		CREATE TABLE IF NOT EXISTS recent_projects (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_path TEXT UNIQUE NOT NULL,
-			accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			is_default INTEGER NOT NULL DEFAULT 0
 		);
 		CREATE TABLE IF NOT EXISTS ai_raw_responses (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,

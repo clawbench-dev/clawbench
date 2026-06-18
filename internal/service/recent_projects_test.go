@@ -19,7 +19,8 @@ const recentProjectsSchema = `
 CREATE TABLE IF NOT EXISTS recent_projects (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	project_path TEXT UNIQUE NOT NULL,
-	accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	is_default INTEGER NOT NULL DEFAULT 0
 );
 `
 
@@ -196,6 +197,146 @@ func TestAddRecentProject_PruneKeepsMostRecent(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "new project should be in the list")
+}
+
+// --- GetDefaultProject / SetDefaultProject tests ---
+
+func TestGetDefaultProject_IsDefaultRow(t *testing.T) {
+	db := setupRecentProjectsDB(t)
+
+	dirA := createTempProjectDir(t)
+	dirB := createTempProjectDir(t)
+
+	baseTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	insertProjectWithTime(t, db, dirA, baseTime)
+	insertProjectWithTime(t, db, dirB, baseTime.Add(1*time.Second))
+
+	// Set dirA as default (not the most recently accessed)
+	_, err := db.Exec("UPDATE recent_projects SET is_default = 1 WHERE project_path = ?", dirA)
+	assert.NoError(t, err)
+
+	path, err := service.GetDefaultProject()
+	assert.NoError(t, err)
+	assert.Equal(t, dirA, path, "should return the is_default=1 project, not the most recent")
+}
+
+func TestGetDefaultProject_FallbackToMostRecent(t *testing.T) {
+	db := setupRecentProjectsDB(t)
+
+	dirA := createTempProjectDir(t)
+	dirB := createTempProjectDir(t)
+
+	baseTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	insertProjectWithTime(t, db, dirA, baseTime)
+	insertProjectWithTime(t, db, dirB, baseTime.Add(1*time.Second))
+
+	// No is_default=1 set — should fall back to most recent
+	path, err := service.GetDefaultProject()
+	assert.NoError(t, err)
+	assert.Equal(t, dirB, path, "should fall back to most recently accessed project")
+}
+
+func TestGetDefaultProject_FallbackToHomeDir(t *testing.T) {
+	setupRecentProjectsDB(t)
+
+	// Empty DB — should fall back to home directory
+	path, err := service.GetDefaultProject()
+	assert.NoError(t, err)
+	assert.NotEmpty(t, path, "should return home directory when no recent projects")
+}
+
+func TestGetDefaultProject_StaleDefaultCleared(t *testing.T) {
+	db := setupRecentProjectsDB(t)
+
+	dirA := createTempProjectDir(t)
+	nonExistentPath := "/tmp/clawbench-default-stale-" + fmt.Sprintf("%d", time.Now().UnixNano())
+
+	baseTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	insertProjectWithTime(t, db, dirA, baseTime)
+	insertProjectWithTime(t, db, nonExistentPath, baseTime.Add(1*time.Second))
+
+	// Set nonexistent path as default
+	_, err := db.Exec("UPDATE recent_projects SET is_default = 1 WHERE project_path = ?", nonExistentPath)
+	assert.NoError(t, err)
+
+	path, err := service.GetDefaultProject()
+	assert.NoError(t, err)
+	assert.Equal(t, dirA, path, "should fall back to existing project after stale default is cleared")
+
+	// Verify stale default was cleared
+	var isDefault int
+	err = db.QueryRow("SELECT is_default FROM recent_projects WHERE project_path = ?", nonExistentPath).Scan(&isDefault)
+	if err == nil { // row may have been removed by GetRecentProjects stale cleanup
+		assert.Equal(t, 0, isDefault, "stale default should be cleared")
+	}
+}
+
+func TestSetDefaultProject_ClearsOldDefault(t *testing.T) {
+	db := setupRecentProjectsDB(t)
+
+	dirA := createTempProjectDir(t)
+	dirB := createTempProjectDir(t)
+
+	assert.NoError(t, service.AddRecentProject(dirA))
+	assert.NoError(t, service.AddRecentProject(dirB))
+
+	// Set dirA as default
+	assert.NoError(t, service.SetDefaultProject(dirA))
+
+	// Set dirB as default — should clear dirA's flag
+	assert.NoError(t, service.SetDefaultProject(dirB))
+
+	var count int
+	err := db.QueryRow("SELECT COUNT(*) FROM recent_projects WHERE is_default = 1").Scan(&count)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, count, "only one project should be default")
+
+	var defaultPath string
+	err = db.QueryRow("SELECT project_path FROM recent_projects WHERE is_default = 1").Scan(&defaultPath)
+	assert.NoError(t, err)
+	assert.Equal(t, dirB, defaultPath, "dirB should be the default")
+}
+
+func TestSetDefaultProject_UpsertsProject(t *testing.T) {
+	db := setupRecentProjectsDB(t)
+
+	newDir := createTempProjectDir(t)
+
+	// Set default on a project not yet in recent_projects
+	assert.NoError(t, service.SetDefaultProject(newDir))
+
+	var defaultPath string
+	err := db.QueryRow("SELECT project_path FROM recent_projects WHERE is_default = 1").Scan(&defaultPath)
+	assert.NoError(t, err)
+	assert.Equal(t, newDir, defaultPath)
+
+	// Verify it's also in recent_projects
+	paths, err := service.GetRecentProjects()
+	assert.NoError(t, err)
+	assert.Contains(t, paths, newDir)
+}
+
+func TestRemoveRecentProject_ClearsDefaultFlag(t *testing.T) {
+	db := setupRecentProjectsDB(t)
+
+	dirA := createTempProjectDir(t)
+	assert.NoError(t, service.AddRecentProject(dirA))
+	assert.NoError(t, service.SetDefaultProject(dirA))
+
+	// Verify it's default
+	var isDefault int
+	err := db.QueryRow("SELECT is_default FROM recent_projects WHERE project_path = ?", dirA).Scan(&isDefault)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, isDefault)
+
+	// Remove it
+	assert.NoError(t, service.RemoveRecentProject(dirA))
+
+	// Verify it's gone
+	var count int
+	err = db.QueryRow("SELECT COUNT(*) FROM recent_projects WHERE project_path = ?", dirA).Scan(&count)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, count, "removed project should not be in DB")
 }
 
 func TestAddRecentProject_DuplicateDoesNotIncreaseCount(t *testing.T) {

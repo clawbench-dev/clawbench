@@ -15,15 +15,18 @@ import (
 )
 
 func TestServeProjectSet(t *testing.T) {
-	t.Run("GET_WithProjectCookie_ReturnsPath", func(t *testing.T) {
+	t.Run("GET_ReturnsDefaultProject", func(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()
 
 		projectPath := filepath.Join(env.WatchDir, "myproject")
 		_ = os.MkdirAll(projectPath, 0o755)
 
+		// Set project as default in DB (GET now reads from DB, not cookie)
+		_, err := service.DB.Exec("INSERT INTO recent_projects (project_path, is_default) VALUES (?, 1)", projectPath)
+		assert.NoError(t, err)
+
 		req := newRequest(t, http.MethodGet, "/api/project", nil)
-		withProjectCookie(req, projectPath)
 
 		w := callHandler(ServeProjectSet, req)
 
@@ -35,17 +38,17 @@ func TestServeProjectSet(t *testing.T) {
 		assert.NotEmpty(t, resp["homeDir"], "homeDir should be present in response")
 	})
 
-	t.Run("GET_WithoutCookie_FallsBackToHomeDir", func(t *testing.T) {
+	t.Run("GET_NoDefault_FallsBackToHomeDir", func(t *testing.T) {
 		_, teardown := setupTestEnv(t)
 		defer teardown()
 
 		req := newRequest(t, http.MethodGet, "/api/project", nil)
-		// No project cookie, no recent projects → should fallback to home directory
+		// No default in DB, no recent projects → should fallback to home directory
 
 		w := callHandler(ServeProjectSet, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		// When no cookie and no recents, should fallback to home directory
+		// When no default and no recents, should fallback to home directory
 		// (not RootPaths[0] which is "/" on Linux)
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
@@ -53,7 +56,7 @@ func TestServeProjectSet(t *testing.T) {
 		assert.NotEqual(t, "/", resp["path"], "path should not be root /")
 	})
 
-	t.Run("GET_WithoutCookie_FallsBackToRecentProject", func(t *testing.T) {
+	t.Run("GET_NoDefault_FallsBackToRecentProject", func(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()
 
@@ -106,6 +109,29 @@ func TestServeProjectSet(t *testing.T) {
 		}
 		assert.True(t, projectCookieFound, "expected project cookie to be set")
 		assert.True(t, sessionCleared, "expected chat session cookie to be cleared")
+	})
+
+	t.Run("POST_ValidPath_SetsDefaultInDB", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		projectPath := filepath.Join(env.WatchDir, "myproject2")
+		_ = os.MkdirAll(projectPath, 0o755)
+
+		req := newRequest(t, http.MethodPost, "/api/project", map[string]string{
+			"path": projectPath,
+		})
+
+		w := callHandler(ServeProjectSet, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assertJSONField(t, w, "ok", "true")
+
+		// Verify is_default=1 in DB
+		var isDefault int
+		err := service.DB.QueryRow("SELECT is_default FROM recent_projects WHERE project_path = ?", projectPath).Scan(&isDefault)
+		assert.NoError(t, err, "project should exist in recent_projects")
+		assert.Equal(t, 1, isDefault, "posted project should be marked as default")
 	})
 
 	t.Run("POST_PathOutsideWatchDir_Returns403", func(t *testing.T) {

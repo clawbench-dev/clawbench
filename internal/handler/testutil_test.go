@@ -107,7 +107,8 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		CREATE TABLE IF NOT EXISTS recent_projects (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_path TEXT UNIQUE NOT NULL,
-			accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			is_default INTEGER NOT NULL DEFAULT 0
 		);
 		CREATE TABLE IF NOT EXISTS scheduled_tasks (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,

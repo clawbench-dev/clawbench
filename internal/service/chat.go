@@ -12,6 +12,7 @@ import (
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
+	"clawbench/internal/platform"
 	"clawbench/internal/summarize"
 )
 
@@ -307,8 +308,61 @@ func AddRecentProject(projectPath string) error {
 }
 
 // RemoveRecentProject deletes a project path from the recent projects list.
+// If the removed project was the default, its is_default flag is cleared first.
 func RemoveRecentProject(projectPath string) error {
+	_, _ = DB.Exec("UPDATE recent_projects SET is_default = 0 WHERE project_path = ? AND is_default = 1", projectPath)
 	_, err := DB.Exec("DELETE FROM recent_projects WHERE project_path = ?", projectPath)
+	return err
+}
+
+// GetDefaultProject returns the project path marked as default (is_default=1),
+// or falls back to the most recently accessed project, or the user's home directory,
+// or the first root path. This is the server-side source of truth for project selection.
+// It does NOT update accessed_at (avoids the self-reinforcing loop).
+func GetDefaultProject() (string, error) {
+	// 1. Try is_default=1 row
+	var path string
+	err := DBRead.QueryRow("SELECT project_path FROM recent_projects WHERE is_default = 1 LIMIT 1").Scan(&path)
+	if err == nil {
+		// Verify directory still exists
+		if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
+			return path, nil
+		}
+		// Stale default — clear it
+		_, _ = DB.Exec("UPDATE recent_projects SET is_default = 0 WHERE is_default = 1")
+	}
+
+	// 2. Fall back to most recently accessed (DO NOT update accessed_at)
+	recents, err := GetRecentProjects()
+	if err == nil && len(recents) > 0 {
+		return recents[0], nil
+	}
+
+	// 3. Home directory
+	if homeDir := platform.UserHomeDir(); homeDir != "" {
+		return homeDir, nil
+	}
+
+	// 4. First root path
+	if len(model.RootPaths) > 0 {
+		return model.RootPaths[0], nil
+	}
+
+	return "", fmt.Errorf("no project path available")
+}
+
+// SetDefaultProject marks the given project path as the default project.
+// It clears any existing default first (only one row can have is_default=1).
+// This should only be called on user-initiated project switches.
+func SetDefaultProject(projectPath string) error {
+	// Clear existing default
+	_, _ = DB.Exec("UPDATE recent_projects SET is_default = 0 WHERE is_default = 1")
+	// Ensure the project exists in recent_projects (upsert with accessed_at update)
+	if err := AddRecentProject(projectPath); err != nil {
+		return err
+	}
+	// Set the new default
+	_, err := DB.Exec("UPDATE recent_projects SET is_default = 1 WHERE project_path = ?", projectPath)
 	return err
 }
 

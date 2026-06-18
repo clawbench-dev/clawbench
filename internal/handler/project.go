@@ -67,34 +67,25 @@ func ServeRecentProjects(w http.ResponseWriter, r *http.Request) {
 func ServeProjectSet(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,gocyclo // multi-method project handler
 	switch r.Method {
 	case http.MethodGet:
-		cookie, err := r.Cookie("clawbench_project")
-		projectPath := ""
-		if err == nil && cookie.Value != "" {
-			decoded, decErr := url.QueryUnescape(cookie.Value)
-			if decErr == nil {
-				projectPath = decoded
-			} else {
-				projectPath = cookie.Value
-			}
-		} else {
-			recents, _ := service.GetRecentProjects()
-			if len(recents) > 0 {
-				projectPath = recents[0]
-			} else if homeDir := platform.UserHomeDir(); homeDir != "" {
+		projectPath, _ := service.GetDefaultProject()
+		if projectPath == "" {
+			if homeDir := platform.UserHomeDir(); homeDir != "" {
 				projectPath = homeDir
 			} else if len(model.RootPaths) > 0 {
 				projectPath = model.RootPaths[0]
 			}
-			http.SetCookie(w, &http.Cookie{
-				Name:     "clawbench_project",
-				Value:    url.QueryEscape(projectPath),
-				Path:     "/",
-				MaxAge:   7 * 24 * 3600,
-				HttpOnly: true,
-				Secure:   r.TLS != nil,
-				SameSite: http.SameSiteLaxMode,
-			})
 		}
+		// Always set/re-set the cookie so subsequent requests via requireProject() work.
+		// The cookie is a session cache derived from the DB default, not the source of truth.
+		http.SetCookie(w, &http.Cookie{
+			Name:     "clawbench_project",
+			Value:    url.QueryEscape(projectPath),
+			Path:     "/",
+			MaxAge:   7 * 24 * 3600,
+			HttpOnly: true,
+			Secure:   r.TLS != nil,
+			SameSite: http.SameSiteLaxMode,
+		})
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"path": projectPath, "homeDir": platform.UserHomeDir()})
 
@@ -136,6 +127,11 @@ func ServeProjectSet(w http.ResponseWriter, r *http.Request) { //nolint:gocognit
 		if err != nil || !info.IsDir() {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "NotADirectory")
 			return
+		}
+
+		// Persist as default project in DB (user-initiated switch)
+		if err := service.SetDefaultProject(absPath); err != nil {
+			slog.Warn("failed to set default project", "path", absPath, "err", err)
 		}
 
 		// Clear chat session cookie when switching project
