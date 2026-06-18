@@ -166,6 +166,7 @@ watch(() => props.messages, () => {
   scrolledUp.value = false
   scrolledDown.value = false
   lastScrollTop = 0
+  programmaticScrolling = false
   clearTimeout(scrollUpTimer)
   clearTimeout(scrollDownTimer)
 })
@@ -300,6 +301,9 @@ const NEAR_EDGE_THRESHOLD = 100
 const SCROLL_BUTTON_TRIGGER = 200
 const SCROLL_DELTA_THRESHOLD = 10
 
+// Flag to suppress handleScroll button logic during programmatic smooth scroll
+let programmaticScrolling = false
+
 function handleScroll() {
   if (!messagesRef.value) return
   const el = messagesRef.value
@@ -308,6 +312,19 @@ function handleScroll() {
   const nearBottom = distFromBottom < NEAR_EDGE_THRESHOLD
   const nearTop = el.scrollTop < NEAR_EDGE_THRESHOLD
   isAtBottom.value = nearBottom
+
+  // When near edges during programmatic scroll, hide buttons immediately
+  if (programmaticScrolling) {
+    if (nearTop && scrolledUp.value) {
+      scrolledUp.value = false
+      clearTimeout(scrollUpTimer)
+    }
+    if (nearBottom && scrolledDown.value) {
+      scrolledDown.value = false
+      clearTimeout(scrollDownTimer)
+    }
+    return
+  }
 
   // Hide scroll buttons when near the edges
   if (nearTop && scrolledUp.value) {
@@ -409,53 +426,68 @@ function scrollToBottom(force = false) {
 
 function scrollToTop() {
   if (!messagesRef.value) return
-  scrolledUp.value = false
   clearTimeout(scrollUpTimer)
+  scrollUpTimer = setTimeout(() => { scrolledUp.value = false }, SCROLL_BUTTON_HIDE_DELAY)
+  programmaticScrolling = true
   messagesRef.value.scrollTo({ top: 0, behavior: 'smooth' })
+  // Smooth scroll takes ~300-500ms; clear flag after settling
+  setTimeout(() => { programmaticScrolling = false }, 600)
 }
 
 function scrollToPreviousMessage() {
   if (!messagesRef.value) return
+  clearTimeout(scrollUpTimer)
+  scrollUpTimer = setTimeout(() => { scrolledUp.value = false }, SCROLL_BUTTON_HIDE_DELAY)
+  programmaticScrolling = true
   const el = messagesRef.value
   const items = el.querySelectorAll('.chat-messages-list > .chat-message')
-  if (items.length === 0) return
+  if (items.length === 0) { programmaticScrolling = false; return }
   // Find the first message whose bottom is above the viewport top
   for (let i = items.length - 1; i >= 0; i--) {
     const rect = items[i].getBoundingClientRect()
     const containerRect = el.getBoundingClientRect()
     if (rect.bottom < containerRect.top + 8) {
       items[i].scrollIntoView({ behavior: 'smooth', block: 'start' })
+      setTimeout(() => { programmaticScrolling = false }, 600)
       return
     }
   }
   // If no message is above, scroll to top
   el.scrollTo({ top: 0, behavior: 'smooth' })
+  setTimeout(() => { programmaticScrolling = false }, 600)
 }
 
 function scrollToNextMessage() {
   if (!messagesRef.value) return
+  clearTimeout(scrollDownTimer)
+  scrollDownTimer = setTimeout(() => { scrolledDown.value = false }, SCROLL_BUTTON_HIDE_DELAY)
+  programmaticScrolling = true
   const el = messagesRef.value
   const items = el.querySelectorAll('.chat-messages-list > .chat-message')
-  if (items.length === 0) return
+  if (items.length === 0) { programmaticScrolling = false; return }
   // Find the first message whose top is below the viewport bottom
   for (let i = 0; i < items.length; i++) {
     const rect = items[i].getBoundingClientRect()
     const containerRect = el.getBoundingClientRect()
     if (rect.top > containerRect.bottom - 8) {
       items[i].scrollIntoView({ behavior: 'smooth', block: 'start' })
+      setTimeout(() => { programmaticScrolling = false }, 600)
       return
     }
   }
   // If no message is below, scroll to bottom
+  programmaticScrolling = false
   scrollToBottomSmooth()
 }
 
 function scrollToBottomSmooth() {
   if (!messagesRef.value) return
-  scrolledDown.value = false
   clearTimeout(scrollDownTimer)
+  scrollDownTimer = setTimeout(() => { scrolledDown.value = false }, SCROLL_BUTTON_HIDE_DELAY)
+  programmaticScrolling = true
   const el = messagesRef.value
   el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+  setTimeout(() => { programmaticScrolling = false }, 600)
 }
 
 defineExpose({
