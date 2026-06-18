@@ -23,7 +23,7 @@ ClawBench 是一个移动优先的 AI 工作站，将多种 AI CLI 工具（Code
 | [Web 终端](features/terminal.md) | PTY 多标签会话、WebSocket 双向通信、手势与虚拟键盘、键位/符号配置、TUI 应用支持 |
 | [Git 管理](features/git-management.md) | 历史浏览、Worktree 隔离、分支/标签 CRUD、滑动手势删除 |
 | [文件管理](features/file-management.md) | 浏览+覆盖层预览合一、目录导航栈、双候选路径解析、编辑、上传、代码符号提取、归档打包 |
-| [RAG 检索](features/rag.md) | 文档分块、向量化（BGE-M3）、DuckDB 向量存储、混合检索（可选编译） |
+| [RAG 检索](features/rag.md) | 文档分块、向量化（BGE-M3）、SQLite vec0 向量索引、混合检索 |
 | [推送通知](features/push-notifications.md) | JPush 集成、WebSocket 后备、权限待审推送、推送感知的后台策略 |
 
 ### infra/ — 基础设施
@@ -47,7 +47,7 @@ ClawBench 是一个移动优先的 AI 工作站，将多种 AI CLI 工具（Code
 
 | 层 | 技术 |
 |----|------|
-| 后端 | Go 1.23+、SQLite（WAL）、DuckDB（向量，可选）、robfig/cron、gotreesitter（符号提取） |
+| 后端 | Go 1.23+、SQLite（WAL + vec0 向量索引）、robfig/cron、gotreesitter（符号提取） |
 | 前端 | Vue 3 + TypeScript、Vite、xterm.js、marked + hljs |
 | AI 集成 | Shell-out 到 CLI 工具、ACP JSON-RPC over stdio、stream-json 解析 |
 | 实时通信 | SSE（聊天流）、WebSocket（系统事件+摘要推送+权限待审）、SSH（端口转发） |

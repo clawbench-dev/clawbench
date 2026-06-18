@@ -31,7 +31,7 @@ flowchart TD
 
 ### 功能清单
 
-- **密码认证**：远程访问需要密码，密码存储为 SHA-256 加盐哈希（`sha256(password + "clawbench-salt")`，带 `sha256:` 前缀），使用常量时间比较防止时序攻击。密码可配置，未配置时自动生成 8 位 hex 并持久化到 `.clawbench/auto-password`
+- **密码认证**：远程访问需要密码，密码存储为 SHA-256 加盐哈希（带前缀标识），使用常量时间比较防止时序攻击。密码可配置，未配置时自动生成 8 位 hex 并持久化到 `.clawbench/auto-password`
 - **localhost 旁路**：来自 127.0.0.1/::1 的请求自动放行，不需要密码。CLI 工具（`clawbench task`、`clawbench rag`）通过 localhost HTTP 调用服务端 API，无需处理认证——这是 CLI 集成的关键设计
 - **Panic 恢复**：中间件链最外层捕获 panic，返回 500 而不是让进程崩溃。任何 handler 的未处理异常都被优雅地降级为错误响应
 - **请求 ID**：每个请求分配唯一 ID（`X-Request-ID` header），贯穿日志和错误响应。追踪问题时的关键线索

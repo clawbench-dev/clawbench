@@ -1,6 +1,6 @@
 # RAG 检索
 
-RAG（Retrieval-Augmented Generation）让用户搜索历史对话内容——"上次我让 Claude 修那个 bug 时它怎么说的？"不需要翻遍历史记录，语义搜索直接找到相关对话。系统将聊天消息分块、向量化、存入 DuckDB，支持向量检索、全文检索和混合检索三种模式。
+RAG（Retrieval-Augmented Generation）让用户搜索历史对话内容——"上次我让 Claude 修那个 bug 时它怎么说的？"不需要翻遍历史记录，语义搜索直接找到相关对话。系统将聊天消息分块、向量化、存入 SQLite vec0 向量索引，支持向量检索、全文检索和混合检索三种模式。
 
 ## 流程图
 
@@ -11,14 +11,14 @@ sequenceDiagram
     participant service
     participant indexer
     participant Ollama
-    participant DuckDB
+    participant SQLite
 
     service->>indexer: 新消息（indexed=0）
     indexer->>indexer: 分块（512 token，重叠）
     indexer->>indexer: 过滤 thinking/tool_use
     indexer->>Ollama: 生成嵌入向量（BGE-M3）
     Ollama-->>indexer: 向量
-    indexer->>DuckDB: 存储分块+向量+FTS 索引
+    indexer->>SQLite: 存储分块+向量（vec0）+FTS 索引
     indexer->>service: 标记 indexed=1
 ```
 
@@ -49,7 +49,7 @@ flowchart TD
 
 ### 设计要点
 
-- **双数据库架构**：SQLite 存聊天消息（OLTP），DuckDB 存向量索引（OLAP+向量）。各取所长——SQLite 的 WAL 模式适合高频写入，DuckDB 的向量索引适合相似度查询
+- **统一 SQLite 存储**：聊天消息和向量索引都存储在 SQLite 中，向量索引使用 sqlite-vec 纯 Go 扩展的 vec0 虚拟表（余弦相似度）。SQLite 的 WAL 模式适合高频写入，vec0 虚拟表支持高效向量搜索——无需引入额外的数据库依赖
 - **优雅降级**：如果 Ollama/嵌入 API 不可用，退化为 FTS-only 索引和搜索，后续嵌入 API 恢复后自动回填向量——嵌入服务不是强制依赖
 - **自适应嵌入维度**：从 API 响应自动检测向量维度，维度变化时重建表。支持切换嵌入模型而无需手动迁移
 - **中文分词用 gse**：BM25 全文检索使用 gse 分词器处理中文文本，gse 不可用时退化为字符级分词——中文搜索不依赖外部分词服务

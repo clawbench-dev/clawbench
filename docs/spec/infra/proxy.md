@@ -48,4 +48,4 @@ flowchart TD
 - **Host 重写是核心价值**：没有 Host 重写，通过 SSH 隧道访问虚拟主机后端（如 `admin.example.com`）会得到 404——浏览器发送的 Host 是 `localhost:port`，后端不认识这个 Host。反向代理将 Host 改回目标地址，问题迎刃而解
 - **特权端口映射对 Android 必要**：Android 没有 root 权限，无法绑定 1024 以下端口。自动映射到高端口号后，SSH 隧道在 Android 上也能转发 80/443 端口的服务
 - **默认端口剥离**：重写 Host 时按 HTTP 规范剥离默认端口号（80 for HTTP, 443 for HTTPS），避免 `backend:80` 这样的非规范 Host 导致后端匹配失败
-- **支持自签名证书**：HTTPS 目标使用 `InsecureSkipVerify` 跳过证书验证——开发环境常用自签名证书，严格验证会阻断转发
+- **支持自签名证书**：HTTPS 目标跳过证书验证——开发环境常用自签名证书，严格验证会阻断转发
