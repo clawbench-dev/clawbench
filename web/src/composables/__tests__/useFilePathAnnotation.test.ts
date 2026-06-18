@@ -1544,4 +1544,71 @@ describe('openFilePath', () => {
 
     vi.unstubAllGlobals()
   })
+
+  it('dispatches open-file-overlay with lineStart and lineEnd', async () => {
+    mockSelectFile.mockResolvedValue(true)
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce({ ok: false }) // /api/dir
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'src/main.go': 'file' } }) }) // batch-exists
+
+    vi.stubGlobal('fetch', mockFetch)
+
+    const mockDispatchEvent = vi.fn()
+    const origDispatch = window.dispatchEvent
+    window.dispatchEvent = mockDispatchEvent
+
+    await openFilePath('src/main.go', 42, 50)
+
+    expect(mockSelectFile).toHaveBeenCalledWith('src/main.go')
+    const overlayCalls = mockDispatchEvent.mock.calls.filter(call => call[0].type === 'open-file-overlay')
+    expect(overlayCalls).toHaveLength(1)
+    expect(overlayCalls[0][0].detail).toEqual({ path: 'src/main.go', lineStart: 42, lineEnd: 50 })
+
+    window.dispatchEvent = origDispatch
+    vi.unstubAllGlobals()
+  })
+
+  it('dispatches open-file-overlay with lineStart only (no lineEnd)', async () => {
+    mockSelectFile.mockResolvedValue(true)
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce({ ok: false }) // /api/dir
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'src/main.go': 'file' } }) }) // batch-exists
+
+    vi.stubGlobal('fetch', mockFetch)
+
+    const mockDispatchEvent = vi.fn()
+    const origDispatch = window.dispatchEvent
+    window.dispatchEvent = mockDispatchEvent
+
+    await openFilePath('src/main.go', 10)
+
+    const overlayCalls = mockDispatchEvent.mock.calls.filter(call => call[0].type === 'open-file-overlay')
+    expect(overlayCalls).toHaveLength(1)
+    expect(overlayCalls[0][0].detail).toEqual({ path: 'src/main.go', lineStart: 10, lineEnd: undefined })
+
+    window.dispatchEvent = origDispatch
+    vi.unstubAllGlobals()
+  })
+
+  it('dispatches open-file-overlay without line info when none provided', async () => {
+    mockSelectFile.mockResolvedValue(true)
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce({ ok: false }) // /api/dir
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'src/main.go': 'file' } }) }) // batch-exists
+
+    vi.stubGlobal('fetch', mockFetch)
+
+    const mockDispatchEvent = vi.fn()
+    const origDispatch = window.dispatchEvent
+    window.dispatchEvent = mockDispatchEvent
+
+    await openFilePath('src/main.go')
+
+    const overlayCalls = mockDispatchEvent.mock.calls.filter(call => call[0].type === 'open-file-overlay')
+    expect(overlayCalls).toHaveLength(1)
+    expect(overlayCalls[0][0].detail).toEqual({ path: 'src/main.go', lineStart: undefined, lineEnd: undefined })
+
+    window.dispatchEvent = origDispatch
+    vi.unstubAllGlobals()
+  })
 })
