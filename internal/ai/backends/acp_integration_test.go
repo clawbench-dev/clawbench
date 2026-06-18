@@ -1,10 +1,13 @@
-package backends
+package backends_test
 
 import (
 	"encoding/json"
 	"testing"
 
 	"clawbench/internal/ai"
+	_ "clawbench/internal/ai/backends/kimi"
+	_ "clawbench/internal/ai/backends/opencode"
+
 	acp "github.com/coder/acp-go-sdk"
 )
 

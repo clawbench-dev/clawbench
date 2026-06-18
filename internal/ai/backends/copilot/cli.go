@@ -5,10 +5,21 @@ import (
 	"strings"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/ai/backends"
+	"clawbench/internal/model"
 )
 
 func init() {
 	ai.RegisterBackend("copilot", newCopilotBackend, true)
+	backends.Register(&backends.BackendPlugin{
+		ID: "copilot",
+		Spec: model.BackendSpec{
+			ID: "copilot", Backend: "copilot", DefaultCmd: "copilot", Name: "Copilot", Icon: "🤝", Specialty: "GitHub Copilot 编码助手",
+			ThinkingEffortLevels: []string{"none", "low", "medium", "high", "xhigh", "max"},
+			AcpCommand:           "copilot --acp",
+			SortOrder:            11,
+		},
+	})
 }
 
 // newCopilotBackend returns a CLIBackend instance for GitHub Copilot CLI.

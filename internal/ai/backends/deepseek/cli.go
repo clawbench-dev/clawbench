@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/ai/backends"
+	"clawbench/internal/model"
 )
 
 // DeepSeekInputRemaps maps CodeWhale (formerly DeepSeek TUI) CLI input field names to canonical names.
@@ -16,6 +18,18 @@ var DeepSeekInputRemaps = map[string]string{
 
 func init() {
 	ai.RegisterBackend("deepseek", newDeepSeekBackend, true)
+	backends.Register(&backends.BackendPlugin{
+		ID: "deepseek",
+		Spec: model.BackendSpec{
+			ID: "deepseek", Backend: "deepseek", DefaultCmd: "codewhale", AltCmd: "deepseek", Name: "CodeWhale", Icon: "🐋", Specialty: "AI 推理与编码",
+			AcpCommand: "codewhale serve --acp",
+			SortOrder:  7,
+		},
+		ACP: &backends.ACPPlugin{
+			ToolCallIDPrefixes: CodeWhaleACPToolCallIDPrefixes,
+			InputRemaps:        CodeWhaleACPInputRemaps,
+		},
+	})
 }
 
 // newDeepSeekBackend returns a CLIBackend instance configured for CodeWhale CLI.

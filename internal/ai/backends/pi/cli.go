@@ -6,6 +6,7 @@ import (
 	"os/exec"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/ai/backends"
 	"clawbench/internal/model"
 )
 
@@ -17,6 +18,20 @@ var PiInputRemaps = map[string]string{
 
 func init() {
 	ai.RegisterBackend("pi", newPiBackend, true)
+	backends.Register(&backends.BackendPlugin{
+		ID: "pi",
+		Spec: model.BackendSpec{
+			ID: "pi", Backend: "pi", DefaultCmd: "pi", Name: "Pi", Icon: "🥧", Specialty: "极简编程智能体",
+			ThinkingEffortLevels: []string{"off", "minimal", "low", "medium", "high", "xhigh"},
+			AcpCommand:           "npx -y @touchtechclub/pi-acp@latest",
+			EmbeddedSubDir:       "pi",
+			EmbeddedVersionFile:  "VERSION",
+			SortOrder:            8,
+		},
+		ACP: &backends.ACPPlugin{
+			InputRemaps: PiACPInputRemaps,
+		},
+	})
 }
 
 // newPiBackend returns a CLIBackend instance configured for Pi CLI.

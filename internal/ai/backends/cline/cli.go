@@ -5,10 +5,21 @@ import (
 	"strings"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/ai/backends"
+	"clawbench/internal/model"
 )
 
 func init() {
 	ai.RegisterBackend("cline", newClineBackend, true)
+	backends.Register(&backends.BackendPlugin{
+		ID: "cline",
+		Spec: model.BackendSpec{
+			ID: "cline", Backend: "cline", DefaultCmd: "cline", Name: "Cline", Icon: "🔮", Specialty: "自主编码智能体",
+			ThinkingEffortLevels: []string{"none", "low", "medium", "high", "xhigh"},
+			AcpCommand:           "cline --acp",
+			SortOrder:            9,
+		},
+	})
 }
 
 func newClineBackend() ai.AIBackend {

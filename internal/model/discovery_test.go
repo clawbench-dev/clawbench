@@ -4,6 +4,18 @@ import (
 	"testing"
 	"time"
 
+	_ "clawbench/internal/ai/backends/claude"
+	_ "clawbench/internal/ai/backends/cline"
+	_ "clawbench/internal/ai/backends/codebuddy"
+	_ "clawbench/internal/ai/backends/codex"
+	_ "clawbench/internal/ai/backends/copilot"
+	_ "clawbench/internal/ai/backends/deepseek"
+	_ "clawbench/internal/ai/backends/kimi"
+	_ "clawbench/internal/ai/backends/mimo"
+	_ "clawbench/internal/ai/backends/opencode"
+	_ "clawbench/internal/ai/backends/pi"
+	_ "clawbench/internal/ai/backends/qoder"
+	_ "clawbench/internal/ai/backends/vecli"
 	"clawbench/internal/model"
 
 	"github.com/stretchr/testify/assert"
@@ -14,10 +26,10 @@ import (
 
 func TestBackendRegistry_ContainsAllBackends(t *testing.T) {
 	expectedIDs := []string{"claude", "codebuddy", "opencode", "codex", "qoder", "vecli", "deepseek", "pi", "cline", "kimi", "copilot", "mimo"}
-	assert.Len(t, model.BackendRegistry, len(expectedIDs))
+	assert.Len(t, model.GetBackendRegistry(), len(expectedIDs))
 
 	seen := make(map[string]bool)
-	for _, spec := range model.BackendRegistry {
+	for _, spec := range model.GetBackendRegistry() {
 		seen[spec.ID] = true
 	}
 	for _, id := range expectedIDs {
@@ -26,7 +38,7 @@ func TestBackendRegistry_ContainsAllBackends(t *testing.T) {
 }
 
 func TestBackendRegistry_FieldsPopulated(t *testing.T) {
-	for _, spec := range model.BackendRegistry {
+	for _, spec := range model.GetBackendRegistry() {
 		assert.NotEmpty(t, spec.ID, "ID should not be empty")
 		assert.NotEmpty(t, spec.Backend, "Backend should not be empty for %s", spec.ID)
 		if !spec.NoCLI {
@@ -40,7 +52,7 @@ func TestBackendRegistry_FieldsPopulated(t *testing.T) {
 
 func TestBackendRegistry_SpecificValues(t *testing.T) {
 	specs := make(map[string]model.BackendSpec)
-	for _, s := range model.BackendRegistry {
+	for _, s := range model.GetBackendRegistry() {
 		specs[s.ID] = s
 	}
 
@@ -76,7 +88,7 @@ func TestCheckCLIExists_EmptyCommand(t *testing.T) {
 
 func TestBackendRegistry_ModelDiscoveryConfig(t *testing.T) {
 	specs := make(map[string]model.BackendSpec)
-	for _, s := range model.BackendRegistry {
+	for _, s := range model.GetBackendRegistry() {
 		specs[s.ID] = s
 	}
 
@@ -184,7 +196,7 @@ func TestFindSpecByBackend_NotFound(t *testing.T) {
 }
 
 func TestFindSpecByBackend_AllBackends(t *testing.T) {
-	for _, s := range model.BackendRegistry {
+	for _, s := range model.GetBackendRegistry() {
 		spec := model.FindSpecByBackend(s.Backend)
 		require.NotNil(t, spec, "should find spec for backend %s", s.Backend)
 		assert.Equal(t, s.ID, spec.ID)

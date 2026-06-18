@@ -5,10 +5,24 @@ import (
 	"strings"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/ai/backends"
+	"clawbench/internal/model"
 )
 
 func init() {
 	ai.RegisterBackend("claude", newClaudeBackend, true)
+	backends.Register(&backends.BackendPlugin{
+		ID: "claude",
+		Spec: model.BackendSpec{
+			ID: "claude", Backend: "claude", DefaultCmd: "claude", Name: "Claude", Icon: "🤖", Specialty: "代码编写与推理",
+			ThinkingEffortLevels: []string{"low", "medium", "high", "xhigh", "max"},
+			AcpCommand:           "npx -y @agentclientprotocol/claude-agent-acp@latest",
+			SortOrder:            1,
+		},
+		ACP: &backends.ACPPlugin{
+			InputRemaps: ClaudeACPRemaps,
+		},
+	})
 }
 
 // newClaudeBackend returns a CLIBackend instance configured for Claude CLI.

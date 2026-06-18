@@ -5,10 +5,20 @@ import (
 	"strings"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/ai/backends"
+	"clawbench/internal/model"
 )
 
 func init() {
 	ai.RegisterBackend("qoder", newQoderBackend, true)
+	backends.Register(&backends.BackendPlugin{
+		ID: "qoder",
+		Spec: model.BackendSpec{
+			ID: "qoder", Backend: "qoder", DefaultCmd: "qodercli", Name: "Qoder", Icon: "⚡", Specialty: "AI 编码助手",
+			AcpCommand: "qodercli --acp",
+			SortOrder:  5,
+		},
+	})
 }
 
 // newQoderBackend returns a CLIBackend instance for Qoder CLI.

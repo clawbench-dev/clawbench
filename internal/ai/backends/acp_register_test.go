@@ -1,15 +1,23 @@
-package backends
+package backends_test
 
 import (
 	"testing"
+
+	"clawbench/internal/ai/backends"
+	_ "clawbench/internal/ai/backends/claude"
+	_ "clawbench/internal/ai/backends/codebuddy"
+	_ "clawbench/internal/ai/backends/deepseek"
+	_ "clawbench/internal/ai/backends/kimi"
+	_ "clawbench/internal/ai/backends/opencode"
+	_ "clawbench/internal/ai/backends/pi"
 )
 
-// TestACPInitRegistration verifies that acp_register.go's init() correctly
-// registers ACP mapping data for all backends with ACP support.
+// TestACPInitRegistration verifies that each backend's init() correctly
+// registers ACP mapping data via backends.Register().
 // This test does NOT call ResetForTest() — it validates the real init state.
 func TestACPInitRegistration(t *testing.T) {
 	t.Run("kimi", func(t *testing.T) {
-		p := Lookup("kimi")
+		p := backends.Lookup("kimi")
 		if p == nil {
 			t.Fatal("expected kimi plugin to be registered after init")
 		}
@@ -44,7 +52,7 @@ func TestACPInitRegistration(t *testing.T) {
 	})
 
 	t.Run("opencode", func(t *testing.T) {
-		p := Lookup("opencode")
+		p := backends.Lookup("opencode")
 		if p == nil {
 			t.Fatal("expected opencode plugin to be registered after init")
 		}
@@ -71,7 +79,7 @@ func TestACPInitRegistration(t *testing.T) {
 	})
 
 	t.Run("claude", func(t *testing.T) {
-		p := Lookup("claude")
+		p := backends.Lookup("claude")
 		if p == nil {
 			t.Fatal("expected claude plugin to be registered after init")
 		}
@@ -91,7 +99,7 @@ func TestACPInitRegistration(t *testing.T) {
 	})
 
 	t.Run("codebuddy", func(t *testing.T) {
-		p := Lookup("codebuddy")
+		p := backends.Lookup("codebuddy")
 		if p == nil {
 			t.Fatal("expected codebuddy plugin to be registered after init")
 		}
@@ -111,7 +119,7 @@ func TestACPInitRegistration(t *testing.T) {
 	})
 
 	t.Run("pi", func(t *testing.T) {
-		p := Lookup("pi")
+		p := backends.Lookup("pi")
 		if p == nil {
 			t.Fatal("expected pi plugin to be registered after init")
 		}
@@ -128,7 +136,7 @@ func TestACPInitRegistration(t *testing.T) {
 	})
 
 	t.Run("deepseek", func(t *testing.T) {
-		p := Lookup("deepseek")
+		p := backends.Lookup("deepseek")
 		if p == nil {
 			t.Fatal("expected deepseek plugin to be registered after init")
 		}
@@ -158,7 +166,7 @@ func TestACPInitRegistration(t *testing.T) {
 func TestACPLookupAfterInit(t *testing.T) {
 	t.Run("kimi_remaps_fallback", func(t *testing.T) {
 		// Kimi has empty InputRemaps, so LookupACPRemaps should fall back to generic
-		remaps := LookupACPRemaps("kimi")
+		remaps := backends.LookupACPRemaps("kimi")
 		if remaps == nil {
 			t.Fatal("expected generic fallback remaps for kimi")
 		}
@@ -168,7 +176,7 @@ func TestACPLookupAfterInit(t *testing.T) {
 	})
 
 	t.Run("kimi_prefixes", func(t *testing.T) {
-		prefixes := LookupACPToolCallIDPrefixes("kimi")
+		prefixes := backends.LookupACPToolCallIDPrefixes("kimi")
 		if prefixes == nil {
 			t.Fatal("expected non-nil prefixes for kimi")
 		}
@@ -178,7 +186,7 @@ func TestACPLookupAfterInit(t *testing.T) {
 	})
 
 	t.Run("opencode_remaps", func(t *testing.T) {
-		remaps := LookupACPRemaps("opencode")
+		remaps := backends.LookupACPRemaps("opencode")
 		if remaps == nil {
 			t.Fatal("expected non-nil remaps for opencode")
 		}
@@ -191,7 +199,7 @@ func TestACPLookupAfterInit(t *testing.T) {
 	})
 
 	t.Run("claude_remaps_fallback", func(t *testing.T) {
-		remaps := LookupACPRemaps("claude")
+		remaps := backends.LookupACPRemaps("claude")
 		if remaps == nil {
 			t.Fatal("expected generic fallback remaps for claude")
 		}
@@ -201,7 +209,7 @@ func TestACPLookupAfterInit(t *testing.T) {
 	})
 
 	t.Run("nonexistent_fallback", func(t *testing.T) {
-		remaps := LookupACPRemaps("nonexistent_backend")
+		remaps := backends.LookupACPRemaps("nonexistent_backend")
 		if remaps == nil {
 			t.Fatal("expected generic fallback remaps for nonexistent backend")
 		}
@@ -211,7 +219,7 @@ func TestACPLookupAfterInit(t *testing.T) {
 	})
 
 	t.Run("nonexistent_prefixes_nil", func(t *testing.T) {
-		prefixes := LookupACPToolCallIDPrefixes("nonexistent_backend")
+		prefixes := backends.LookupACPToolCallIDPrefixes("nonexistent_backend")
 		if prefixes != nil {
 			t.Errorf("expected nil prefixes for nonexistent backend, got %v", prefixes)
 		}

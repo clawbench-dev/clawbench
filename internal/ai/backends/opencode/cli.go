@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/ai/backends"
+	"clawbench/internal/model"
 )
 
 // OpenCodeInputRemaps maps OpenCode CLI input field names to canonical names.
@@ -34,6 +36,18 @@ var OpenCodeToolNameMap = map[string]string{
 
 func init() {
 	ai.RegisterBackend("opencode", newOpenCodeBackend, false)
+	backends.Register(&backends.BackendPlugin{
+		ID: "opencode",
+		Spec: model.BackendSpec{
+			ID: "opencode", Backend: "opencode", DefaultCmd: "opencode", Name: "OpenCode", Icon: "📟", Specialty: "终端编码工具",
+			ThinkingEffortLevels: []string{"minimal", "high", "max"},
+			AcpCommand:           "opencode acp",
+			SortOrder:            3,
+		},
+		ACP: &backends.ACPPlugin{
+			InputRemaps: OpenCodeACPInputRemaps,
+		},
+	})
 }
 
 // newOpenCodeBackend returns a CLIBackend instance configured for OpenCode CLI.

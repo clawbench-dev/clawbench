@@ -4,11 +4,22 @@ import (
 	"strings"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/ai/backends"
 	"clawbench/internal/ai/backends/opencode"
+	"clawbench/internal/model"
 )
 
 func init() {
 	ai.RegisterBackend("mimo", newMimoBackend, true)
+	backends.Register(&backends.BackendPlugin{
+		ID: "mimo",
+		Spec: model.BackendSpec{
+			ID: "mimo", Backend: "mimo", DefaultCmd: "mimo", Name: "MiMo-Code", Icon: "🚀", Specialty: "小米 MiMo 编码助手",
+			ThinkingEffortLevels: []string{"minimal", "high", "max"},
+			AcpCommand:           "mimo acp",
+			SortOrder:            12,
+		},
+	})
 }
 
 // newMimoBackend returns a CLIBackend instance for MiMo-Code CLI.

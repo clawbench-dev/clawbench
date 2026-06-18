@@ -2,6 +2,7 @@ package backends
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 
 	"clawbench/internal/model"
@@ -50,6 +51,15 @@ func AllSpecs() []model.BackendSpec {
 	for _, p := range plugins {
 		specs = append(specs, p.Spec)
 	}
+	return specs
+}
+
+// AllSpecsSorted returns BackendSpec for all registered backends, sorted by SortOrder.
+func AllSpecsSorted() []model.BackendSpec {
+	specs := AllSpecs()
+	sort.Slice(specs, func(i, j int) bool {
+		return specs[i].SortOrder < specs[j].SortOrder
+	})
 	return specs
 }
 

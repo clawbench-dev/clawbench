@@ -5,10 +5,24 @@ import (
 	"strings"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/ai/backends"
+	"clawbench/internal/model"
 )
 
 func init() {
 	ai.RegisterBackend("codebuddy", newCodebuddyBackend, true)
+	backends.Register(&backends.BackendPlugin{
+		ID: "codebuddy",
+		Spec: model.BackendSpec{
+			ID: "codebuddy", Backend: "codebuddy", DefaultCmd: "codebuddy", Name: "Codebuddy", Icon: "🐛", Specialty: "全栈开发助手",
+			ThinkingEffortLevels: []string{"low", "medium", "high", "xhigh"},
+			AcpCommand:           "codebuddy --acp",
+			SortOrder:            2,
+		},
+		ACP: &backends.ACPPlugin{
+			InputRemaps: CodebuddyACPRemaps,
+		},
+	})
 }
 
 // newCodebuddyBackend returns a CLIBackend instance configured for Codebuddy CLI.

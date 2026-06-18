@@ -56,71 +56,31 @@ type BackendSpec struct {
 	AcpCommand           string                    // ACP spawn command for acp-stdio transport, e.g. "kimi --acp"; empty = no ACP support
 	EmbeddedSubDir       string                    // subdirectory under .clawbench/ for embedded binary, e.g. "pi"; empty = no embedded binary
 	EmbeddedVersionFile  string                    // filename for fast version lookup under EmbeddedSubDir, e.g. "VERSION"; empty = no version file
+	SortOrder            int                       // display/registration order for deterministic BackendRegistry ordering
 }
 
+// LoadBackendSpecs is set by the backends package at init time to provide
+// BackendSpec entries from all registered backend plugins. Uses function-variable
+// injection to avoid import cycles (model cannot import backends).
+var LoadBackendSpecs func() []BackendSpec
+
 // BackendRegistry lists all known AI backends for auto-discovery.
-// When no agent DB records exist, each entry is checked: if DefaultCmd
-// is found on PATH, a minimal agent record is inserted into the DB.
-// For backends with ListModelsCmd+ParseModels, model lists are auto-discovered too.
-var BackendRegistry = []BackendSpec{
-	{
-		ID: "claude", Backend: "claude", DefaultCmd: "claude", Name: "Claude", Icon: "🤖", Specialty: "代码编写与推理",
-		ThinkingEffortLevels: []string{"low", "medium", "high", "xhigh", "max"},
-		AcpCommand:           "npx -y @agentclientprotocol/claude-agent-acp@latest",
-	},
-	{
-		ID: "codebuddy", Backend: "codebuddy", DefaultCmd: "codebuddy", Name: "Codebuddy", Icon: "🐛", Specialty: "全栈开发助手",
-		ThinkingEffortLevels: []string{"low", "medium", "high", "xhigh"},
-		AcpCommand:           "codebuddy --acp",
-	},
-	{
-		ID: "opencode", Backend: "opencode", DefaultCmd: "opencode", Name: "OpenCode", Icon: "📟", Specialty: "终端编码工具",
-		ThinkingEffortLevels: []string{"minimal", "high", "max"},
-		AcpCommand:           "opencode acp",
-	},
-	{
-		ID: "codex", Backend: "codex", DefaultCmd: "codex", Name: "Codex", Icon: "🐙", Specialty: "OpenAI 编码代理",
-		ThinkingEffortLevels: []string{"low", "medium", "high"},
-		AcpCommand:           "npx -y @agentclientprotocol/codex-acp@latest",
-	},
-	{
-		ID: "qoder", Backend: "qoder", DefaultCmd: "qodercli", Name: "Qoder", Icon: "⚡", Specialty: "AI 编码助手",
-		AcpCommand:         "qodercli --acp",
-	},
-	{
-		ID: "vecli", Backend: "vecli", DefaultCmd: "vecli", Name: "VeCLI", Icon: "🌿", Specialty: "字节跳动 AI 助手",
-	},
-	{
-		ID: "deepseek", Backend: "deepseek", DefaultCmd: "codewhale", AltCmd: "deepseek", Name: "CodeWhale", Icon: "🐋", Specialty: "AI 推理与编码",
-		AcpCommand: "codewhale serve --acp",
-	},
-	{
-		ID: "pi", Backend: "pi", DefaultCmd: "pi", Name: "Pi", Icon: "🥧", Specialty: "极简编程智能体",
-		ThinkingEffortLevels: []string{"off", "minimal", "low", "medium", "high", "xhigh"},
-		AcpCommand:           "npx -y @touchtechclub/pi-acp@latest",
-		EmbeddedSubDir:       "pi",
-		EmbeddedVersionFile:  "VERSION",
-	},
-	{
-		ID: "cline", Backend: "cline", DefaultCmd: "cline", Name: "Cline", Icon: "🔮", Specialty: "自主编码智能体",
-		ThinkingEffortLevels: []string{"none", "low", "medium", "high", "xhigh"},
-		AcpCommand:           "cline --acp",
-	},
-	{
-		ID: "kimi", Backend: "kimi", DefaultCmd: "kimi", Name: "Kimi", Icon: "🌙", Specialty: "Kimi AI 编码助手",
-		ThinkingEffortLevels: []string{"off", "on"},
-		AcpCommand:           "kimi acp",
-	},
-	{
-		ID: "copilot", Backend: "copilot", DefaultCmd: "copilot", Name: "Copilot", Icon: "🤝", Specialty: "GitHub Copilot 编码助手",
-		ThinkingEffortLevels: []string{"none", "low", "medium", "high", "xhigh", "max"},
-		AcpCommand:           "copilot --acp",
-	},
-	{
-		ID: "mimo", Backend: "mimo", DefaultCmd: "mimo", Name: "MiMo-Code", Icon: "🚀", Specialty: "小米 MiMo 编码助手",
-		ThinkingEffortLevels: []string{"minimal", "high", "max"},
-		AcpCommand:           "mimo acp",
-	},
+// Populated lazily from backend plugins via GetBackendRegistry().
+// Direct reads should use GetBackendRegistry() to ensure initialization.
+var BackendRegistry []BackendSpec
+
+var backendRegistryOnce sync.Once
+
+// GetBackendRegistry returns the populated BackendRegistry, initializing it
+// lazily on first call from backend plugin specs. This ensures all backend
+// sub-package init()s have completed before the registry is built.
+func GetBackendRegistry() []BackendSpec {
+	backendRegistryOnce.Do(func() {
+		if LoadBackendSpecs != nil {
+			BackendRegistry = LoadBackendSpecs()
+		}
+	})
+	return BackendRegistry
 }
 
 // CheckCLIExists checks whether a CLI command is available on the system.
@@ -214,9 +174,10 @@ func discoverModels(spec BackendSpec) []AgentModel {
 
 // FindSpecByBackend returns the BackendSpec for the given backend type, or nil.
 func FindSpecByBackend(backend string) *BackendSpec {
-	for i := range BackendRegistry {
-		if BackendRegistry[i].Backend == backend {
-			return &BackendRegistry[i]
+	registry := GetBackendRegistry()
+	for i := range registry {
+		if registry[i].Backend == backend {
+			return &registry[i]
 		}
 	}
 	return nil
@@ -224,9 +185,10 @@ func FindSpecByBackend(backend string) *BackendSpec {
 
 // findSpecByDefaultCmd returns the BackendSpec whose DefaultCmd matches, or nil.
 func findSpecByDefaultCmd(cmd string) *BackendSpec {
-	for i := range BackendRegistry {
-		if BackendRegistry[i].DefaultCmd == cmd {
-			return &BackendRegistry[i]
+	registry := GetBackendRegistry()
+	for i := range registry {
+		if registry[i].DefaultCmd == cmd {
+			return &registry[i]
 		}
 	}
 	return nil
@@ -242,7 +204,7 @@ func CanDiscoverModels(spec BackendSpec) bool {
 // This is called synchronously on first startup (when no DB models exist yet).
 func SyncDiscoverModels() map[string][]AgentModel {
 	result := make(map[string][]AgentModel)
-	for _, spec := range BackendRegistry {
+	for _, spec := range GetBackendRegistry() {
 		if !CanDiscoverModels(spec) {
 			continue
 		}
@@ -260,7 +222,7 @@ func SyncDiscoverModels() map[string][]AgentModel {
 // and updates in-memory Agent data + DB. Call this after startup — it does not block.
 func AsyncRefreshModelCache(db *sql.DB) {
 	go func() {
-		for _, spec := range BackendRegistry {
+		for _, spec := range GetBackendRegistry() {
 			if !CanDiscoverModels(spec) {
 				continue
 			}
@@ -367,9 +329,10 @@ func SyncDiscoverAgentsDB(db *sql.DB) map[string]bool { //nolint:gocognit,gocycl
 		spec   BackendSpec
 		exists bool
 	}
-	results := make([]result, len(BackendRegistry))
+	registry := GetBackendRegistry()
+	results := make([]result, len(registry))
 	var wg sync.WaitGroup
-	for i, spec := range BackendRegistry {
+	for i, spec := range registry {
 		wg.Add(1)
 		go func(i int, spec BackendSpec) {
 			defer wg.Done()

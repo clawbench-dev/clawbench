@@ -93,8 +93,8 @@ func ServeSetupBackends(w http.ResponseWriter, r *http.Request) {
 		ThinkingEffortLevels []string `json:"thinking_effort_levels,omitempty"`
 	}
 
-	backends := make([]backendInfo, 0, len(model.BackendRegistry))
-	for _, spec := range model.BackendRegistry {
+	backends := make([]backendInfo, 0, len(model.GetBackendRegistry()))
+	for _, spec := range model.GetBackendRegistry() {
 		if spec.NoCLI {
 			continue // skip non-CLI backends (e.g. mock)
 		}

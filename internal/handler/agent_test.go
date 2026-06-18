@@ -9,6 +9,12 @@ import (
 	"time"
 
 	"clawbench/internal/ai"
+	_ "clawbench/internal/ai/backends/claude"
+	_ "clawbench/internal/ai/backends/codebuddy"
+	_ "clawbench/internal/ai/backends/codex"
+	_ "clawbench/internal/ai/backends/deepseek"
+	_ "clawbench/internal/ai/backends/opencode"
+	_ "clawbench/internal/ai/backends/pi"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 
@@ -872,16 +878,16 @@ func TestServeAgentsGet_PrefetchACPStateForUncachedAgent(t *testing.T) {
 	origSpec := spec
 	// If no spec exists, inject a temporary one
 	if spec == nil {
-		model.BackendRegistry = append(model.BackendRegistry, model.BackendSpec{
+		model.BackendRegistry = append(model.GetBackendRegistry(), model.BackendSpec{
 			ID:         "acp-prefetch",
 			Backend:    "acp-prefetch",
 			AcpCommand: "echo",
 		})
 		defer func() {
 			// Remove the injected spec
-			for i, s := range model.BackendRegistry {
+			for i, s := range model.GetBackendRegistry() {
 				if s.Backend == "acp-prefetch" {
-					model.BackendRegistry = append(model.BackendRegistry[:i], model.BackendRegistry[i+1:]...)
+					model.BackendRegistry = append(model.GetBackendRegistry()[:i], model.GetBackendRegistry()[i+1:]...)
 					break
 				}
 			}

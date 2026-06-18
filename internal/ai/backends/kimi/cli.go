@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/ai/backends"
+	"clawbench/internal/model"
 )
 
 // KimiInputRemaps maps Kimi CLI input field names to canonical names.
@@ -37,6 +39,19 @@ var KimiToolNameMap = map[string]string{
 
 func init() {
 	ai.RegisterBackend("kimi", newKimiBackend, true)
+	backends.Register(&backends.BackendPlugin{
+		ID: "kimi",
+		Spec: model.BackendSpec{
+			ID: "kimi", Backend: "kimi", DefaultCmd: "kimi", Name: "Kimi", Icon: "🌙", Specialty: "Kimi AI 编码助手",
+			ThinkingEffortLevels: []string{"off", "on"},
+			AcpCommand:           "kimi acp",
+			SortOrder:            10,
+		},
+		ACP: &backends.ACPPlugin{
+			ToolCallIDPrefixes: KimiACPTCIDPrefixes,
+			InputRemaps:        map[string]string{},
+		},
+	})
 }
 
 // newKimiBackend returns a CLIBackend instance for Kimi CLI.

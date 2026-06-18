@@ -1,4 +1,4 @@
-package backends
+package backends_test
 
 import (
 	"fmt"
@@ -6,13 +6,14 @@ import (
 	"testing"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/ai/backends"
 	"clawbench/internal/model"
 )
 
 func TestRegistry_RegisterAndLookup(t *testing.T) {
-	ResetForTest()
+	backends.ResetForTest()
 
-	p := &BackendPlugin{
+	p := &backends.BackendPlugin{
 		ID: "test-backend",
 		Spec: model.BackendSpec{
 			ID:        "test-backend",
@@ -21,7 +22,7 @@ func TestRegistry_RegisterAndLookup(t *testing.T) {
 			Icon:      "T",
 			Specialty: "test backend",
 		},
-		CLI: &CLIPlugin{
+		CLI: &backends.CLIPlugin{
 			NewBackend: func() *ai.CLIBackend {
 				return &ai.CLIBackend{}
 			},
@@ -31,9 +32,9 @@ func TestRegistry_RegisterAndLookup(t *testing.T) {
 		NeedsAutoResume: true,
 	}
 
-	Register(p)
+	backends.Register(p)
 
-	got := Lookup("test-backend")
+	got := backends.Lookup("test-backend")
 	if got == nil {
 		t.Fatal("expected to find registered backend, got nil")
 	}
@@ -49,35 +50,35 @@ func TestRegistry_RegisterAndLookup(t *testing.T) {
 }
 
 func TestRegistry_LookupNotFound(t *testing.T) {
-	ResetForTest()
+	backends.ResetForTest()
 
-	got := Lookup("nonexistent")
+	got := backends.Lookup("nonexistent")
 	if got != nil {
 		t.Errorf("expected nil for unregistered backend, got %+v", got)
 	}
 }
 
 func TestRegistry_RegisterDuplicatePanics(t *testing.T) {
-	ResetForTest()
+	backends.ResetForTest()
 
-	p := &BackendPlugin{ID: "dup"}
-	Register(p)
+	p := &backends.BackendPlugin{ID: "dup"}
+	backends.Register(p)
 
 	defer func() {
 		if r := recover(); r == nil {
 			t.Error("expected panic on duplicate registration, but no panic occurred")
 		}
 	}()
-	Register(&BackendPlugin{ID: "dup"})
+	backends.Register(&backends.BackendPlugin{ID: "dup"})
 }
 
 func TestRegistry_All(t *testing.T) {
-	ResetForTest()
+	backends.ResetForTest()
 
-	Register(&BackendPlugin{ID: "a"})
-	Register(&BackendPlugin{ID: "b"})
+	backends.Register(&backends.BackendPlugin{ID: "a"})
+	backends.Register(&backends.BackendPlugin{ID: "b"})
 
-	all := All()
+	all := backends.All()
 	if len(all) != 2 {
 		t.Fatalf("expected 2 backends, got %d", len(all))
 	}
@@ -92,9 +93,9 @@ func TestRegistry_All(t *testing.T) {
 }
 
 func TestRegistry_AllSpecs(t *testing.T) {
-	ResetForTest()
+	backends.ResetForTest()
 
-	Register(&BackendPlugin{
+	backends.Register(&backends.BackendPlugin{
 		ID: "spec-test",
 		Spec: model.BackendSpec{
 			ID:      "spec-test",
@@ -103,7 +104,7 @@ func TestRegistry_AllSpecs(t *testing.T) {
 		},
 	})
 
-	specs := AllSpecs()
+	specs := backends.AllSpecs()
 	if len(specs) != 1 {
 		t.Fatalf("expected 1 spec, got %d", len(specs))
 	}
@@ -113,55 +114,55 @@ func TestRegistry_AllSpecs(t *testing.T) {
 }
 
 func TestRegistry_ResetForTest(t *testing.T) {
-	ResetForTest()
+	backends.ResetForTest()
 
-	Register(&BackendPlugin{ID: "temp"})
-	if Lookup("temp") == nil {
+	backends.Register(&backends.BackendPlugin{ID: "temp"})
+	if backends.Lookup("temp") == nil {
 		t.Fatal("expected to find 'temp' after registration")
 	}
 
-	ResetForTest()
+	backends.ResetForTest()
 
-	if Lookup("temp") != nil {
+	if backends.Lookup("temp") != nil {
 		t.Error("expected nil after ResetForTest, but found backend")
 	}
 }
 
 func TestRegistry_ResetForTestConcurrent(t *testing.T) {
-	ResetForTest()
+	backends.ResetForTest()
 
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			Register(&BackendPlugin{ID: fmt.Sprintf("concurrent-%d", i)})
+			backends.Register(&backends.BackendPlugin{ID: fmt.Sprintf("concurrent-%d", i)})
 		}(i)
 	}
 	wg.Wait()
 
-	all := All()
+	all := backends.All()
 	if len(all) != 10 {
 		t.Errorf("expected 10 backends after concurrent registration, got %d", len(all))
 	}
 }
 
 func TestRegistry_LookupACPRemaps(t *testing.T) {
-	ResetForTest()
+	backends.ResetForTest()
 
 	// Backend with ACP remaps
-	Register(&BackendPlugin{
+	backends.Register(&backends.BackendPlugin{
 		ID: "kimi",
-		ACP: &ACPPlugin{
+		ACP: &backends.ACPPlugin{
 			InputRemaps: map[string]string{"filePath": "file_path"},
 		},
 	})
 
 	// Backend without ACP
-	Register(&BackendPlugin{ID: "claude"})
+	backends.Register(&backends.BackendPlugin{ID: "claude"})
 
 	// Lookup existing ACP remaps
-	remaps := LookupACPRemaps("kimi")
+	remaps := backends.LookupACPRemaps("kimi")
 	if remaps == nil {
 		t.Fatal("expected non-nil remaps for kimi")
 	}
@@ -170,7 +171,7 @@ func TestRegistry_LookupACPRemaps(t *testing.T) {
 	}
 
 	// Lookup backend without ACP -> fallback to generic
-	remaps = LookupACPRemaps("claude")
+	remaps = backends.LookupACPRemaps("claude")
 	if len(remaps) == 0 {
 		t.Error("expected generic_acp fallback remaps for claude, got empty map")
 	}
@@ -179,7 +180,7 @@ func TestRegistry_LookupACPRemaps(t *testing.T) {
 	}
 
 	// Lookup nonexistent -> fallback to generic
-	remaps = LookupACPRemaps("nonexistent")
+	remaps = backends.LookupACPRemaps("nonexistent")
 	if len(remaps) == 0 {
 		t.Error("expected generic_acp fallback remaps for nonexistent, got empty map")
 	}
@@ -189,17 +190,17 @@ func TestRegistry_LookupACPRemaps(t *testing.T) {
 }
 
 func TestRegistry_LookupACPRemapsEmptyMapFallback(t *testing.T) {
-	ResetForTest()
+	backends.ResetForTest()
 
 	// Backend with empty ACP remaps should fall back to generic
-	Register(&BackendPlugin{
+	backends.Register(&backends.BackendPlugin{
 		ID: "empty_acp",
-		ACP: &ACPPlugin{
+		ACP: &backends.ACPPlugin{
 			InputRemaps: map[string]string{},
 		},
 	})
 
-	remaps := LookupACPRemaps("empty_acp")
+	remaps := backends.LookupACPRemaps("empty_acp")
 	if len(remaps) == 0 {
 		t.Error("expected generic_acp fallback remaps for empty_acp, got empty map")
 	}
@@ -209,17 +210,17 @@ func TestRegistry_LookupACPRemapsEmptyMapFallback(t *testing.T) {
 }
 
 func TestRegistry_LookupACPToolCallIDPrefixes(t *testing.T) {
-	ResetForTest()
+	backends.ResetForTest()
 
-	Register(&BackendPlugin{
+	backends.Register(&backends.BackendPlugin{
 		ID: "kimi",
-		ACP: &ACPPlugin{
+		ACP: &backends.ACPPlugin{
 			ToolCallIDPrefixes: map[string]string{"read_file": "Read"},
 		},
 	})
 
 	// Lookup existing
-	prefixes := LookupACPToolCallIDPrefixes("kimi")
+	prefixes := backends.LookupACPToolCallIDPrefixes("kimi")
 	if prefixes == nil {
 		t.Fatal("expected non-nil prefixes for kimi")
 	}
@@ -228,7 +229,7 @@ func TestRegistry_LookupACPToolCallIDPrefixes(t *testing.T) {
 	}
 
 	// Lookup backend without ACP -> nil
-	prefixes = LookupACPToolCallIDPrefixes("nonexistent")
+	prefixes = backends.LookupACPToolCallIDPrefixes("nonexistent")
 	if prefixes != nil {
 		t.Errorf("expected nil for nonexistent backend, got %v", prefixes)
 	}
