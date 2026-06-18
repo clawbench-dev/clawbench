@@ -315,9 +315,7 @@ watch(() => props.file, (f, oldF) => {
     }
     if (f?.path !== oldF?.path) {
         const savedScroll = scrollPositions.get(f.path)
-        if (savedScroll != null) {
-            pendingRestore = { path: f.path, scrollTop: savedScroll }
-        }
+        pendingRestore = { path: f.path, scrollTop: savedScroll ?? 0 }
         // Poll until content is rendered and scrollable
         restoreAttempts = 0
         restoreTimer = setInterval(tryRestoreOrAttach, 50)
