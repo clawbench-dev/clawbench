@@ -1,0 +1,393 @@
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
+import { createI18n } from 'vue-i18n'
+import ChatMessageList from '@/components/chat/ChatMessageList.vue'
+
+// ── Mocks ────────────────────────────────────────────────────
+vi.mock('@/composables/useDoubleClickCopy', () => ({
+  useDoubleClickCopy: () => ({ handleDblClick: vi.fn() }),
+}))
+
+vi.mock('@/composables/useFilePathAnnotation', () => ({
+  useFilePathAnnotation: () => ({ openFilePath: vi.fn() }),
+}))
+
+vi.mock('@/composables/useLocalhostAnnotation', () => ({
+  useLocalhostUrlClickHandler: () => ({ handleLocalhostUrlClick: vi.fn() }),
+}))
+
+vi.mock('@/composables/useDialog', () => ({
+  useDialog: () => ({ confirm: vi.fn() }),
+}))
+
+vi.mock('@/stores/app', () => ({
+  store: {},
+}))
+
+vi.mock('@/utils/messageListUtils', () => ({
+  computeRemainingCount: vi.fn(() => 0),
+  computeLastRoundIndices: vi.fn(() => new Set()),
+  isCollapsed: vi.fn(() => false),
+}))
+
+// ── i18n ─────────────────────────────────────────────────────
+const i18n = createI18n({
+  legacy: false,
+  locale: 'zh',
+  messages: {
+    zh: {
+      chat: {
+        messageList: {
+          scrollToTop: '跳到顶部',
+          scrollToPrev: '上一条消息',
+          scrollToBottom: '跳到底部',
+          scrollToNext: '下一条消息',
+          loadingMore: '加载中…',
+          moreOlderMessages: '还有 {count} 条更早的消息',
+          allMessagesLoaded: '所有消息已加载',
+          startConversation: '开始对话',
+          startConversationAI: '开始与 AI 对话',
+        },
+      },
+    },
+  },
+})
+
+// ── Helpers ──────────────────────────────────────────────────
+function createMessages(count) {
+  return Array.from({ length: count }, (_, i) => ({
+    id: i + 1,
+    role: i % 2 === 0 ? 'user' : 'assistant',
+    content: `Message ${i + 1}`,
+  }))
+}
+
+function mountComponent(props = {}) {
+  const wrapper = mount(ChatMessageList, {
+    props: {
+      messages: [],
+      expandedTools: {},
+      blockTasks: {},
+      blockAskQuestions: {},
+      blockRagResults: {},
+      ...props,
+    },
+    global: {
+      stubs: {
+        ChatMessageItem: true,
+        Transition: {
+          props: ['name'],
+          renders: true,
+          setup(_, { slots }) {
+            return () => slots.default?.()
+          },
+        },
+        // Stub lucide-vue-next icons
+        ChevronsUp: { template: '<span />' },
+        ArrowUp: { template: '<span />' },
+        ChevronsDown: { template: '<span />' },
+        ArrowDown: { template: '<span />' },
+        ChevronUp: { template: '<span />' },
+      },
+      plugins: [i18n],
+    },
+    attachTo: document.body,
+  })
+
+  // jsdom doesn't implement scrollTo on elements — polyfill it
+  const el = wrapper.find('#aiChatMessages').element
+  if (!el.scrollTo) {
+    el.scrollTo = vi.fn()
+  }
+
+  return wrapper
+}
+
+/**
+ * Simulate scroll on the messages container.
+ * Sets scroll properties and dispatches a scroll event.
+ */
+function simulateScroll(el, overrides = {}) {
+  const scrollHeight = overrides.scrollHeight ?? 2000
+  const clientHeight = overrides.clientHeight ?? 400
+  const scrollTop = overrides.scrollTop ?? 0
+
+  Object.defineProperty(el, 'scrollHeight', { value: scrollHeight, configurable: true, writable: true })
+  Object.defineProperty(el, 'clientHeight', { value: clientHeight, configurable: true, writable: true })
+  Object.defineProperty(el, 'scrollTop', { value: scrollTop, configurable: true, writable: true })
+
+  el.dispatchEvent(new Event('scroll'))
+}
+
+// ── Tests ────────────────────────────────────────────────────
+
+describe('ChatMessageList — scroll FAB timer reset', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('scrollToTop resets the auto-hide timer instead of immediately hiding buttons', async () => {
+    const wrapper = mountComponent({ messages: createMessages(20) })
+    const vm = wrapper.vm
+
+    // Manually set scrolledUp = true to simulate buttons being visible
+    vm.scrolledUp = true
+    await nextTick()
+
+    // Click scroll-to-top button
+    await wrapper.find('.scroll-fab-btn').trigger('click')
+    await nextTick()
+
+    // Button should still be visible after click (timer was reset, not cleared immediately)
+    expect(vm.scrolledUp).toBe(true)
+
+    // Advance time by 2999ms — button should still be visible
+    vi.advanceTimersByTime(2999)
+    expect(vm.scrolledUp).toBe(true)
+
+    // Advance past 3000ms — button should auto-hide
+    vi.advanceTimersByTime(2)
+    expect(vm.scrolledUp).toBe(false)
+  })
+
+  it('scrollToBottomSmooth resets the auto-hide timer instead of immediately hiding buttons', async () => {
+    const wrapper = mountComponent({ messages: createMessages(20) })
+    const vm = wrapper.vm
+
+    vm.scrolledDown = true
+    await nextTick()
+
+    // Click scroll-to-bottom button
+    const buttons = wrapper.findAll('.scroll-fab-btn')
+    await buttons[0].trigger('click')
+    await nextTick()
+
+    // Button should still be visible
+    expect(vm.scrolledDown).toBe(true)
+
+    // Timer should be 3000ms
+    vi.advanceTimersByTime(2999)
+    expect(vm.scrolledDown).toBe(true)
+
+    vi.advanceTimersByTime(2)
+    expect(vm.scrolledDown).toBe(false)
+  })
+
+  it('scrollToPreviousMessage resets scrollUp timer', async () => {
+    const wrapper = mountComponent({ messages: createMessages(20) })
+    const vm = wrapper.vm
+
+    vm.scrolledUp = true
+    await nextTick()
+
+    // Call via exposed method
+    vm.scrollToPreviousMessage()
+    await nextTick()
+
+    // Button should still be visible after click
+    expect(vm.scrolledUp).toBe(true)
+
+    // Auto-hide after 3s
+    vi.advanceTimersByTime(3000)
+    expect(vm.scrolledUp).toBe(false)
+  })
+
+  it('scrollToNextMessage resets scrollDown timer', async () => {
+    const wrapper = mountComponent({ messages: createMessages(20) })
+    const vm = wrapper.vm
+
+    vm.scrolledDown = true
+    await nextTick()
+
+    vm.scrollToNextMessage()
+    await nextTick()
+
+    expect(vm.scrolledDown).toBe(true)
+
+    vi.advanceTimersByTime(3000)
+    expect(vm.scrolledDown).toBe(false)
+  })
+
+  it('repeated clicks keep resetting the timer', async () => {
+    const wrapper = mountComponent({ messages: createMessages(20) })
+    const vm = wrapper.vm
+
+    vm.scrolledUp = true
+    await nextTick()
+
+    // Click once
+    vm.scrollToTop()
+    await nextTick()
+
+    // Click again after 2s
+    vi.advanceTimersByTime(2000)
+    vm.scrollToTop()
+    await nextTick()
+
+    // Button should still be visible 2s after the second click
+    vi.advanceTimersByTime(2000)
+    expect(vm.scrolledUp).toBe(true)
+
+    // But should hide 3s after the second click
+    vi.advanceTimersByTime(1001)
+    expect(vm.scrolledUp).toBe(false)
+  })
+})
+
+describe('ChatMessageList — programmaticScrolling flag', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('scrollToTop calls scrollTo and schedules programmaticScrolling clear', async () => {
+    const wrapper = mountComponent({ messages: createMessages(20) })
+    const vm = wrapper.vm
+    const el = wrapper.find('#aiChatMessages').element
+
+    vm.scrollToTop()
+
+    // scrollTo should have been called
+    expect(el.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' })
+  })
+
+  it('scrollToBottomSmooth calls scrollTo and schedules programmaticScrolling clear', async () => {
+    const wrapper = mountComponent({ messages: createMessages(20) })
+    const vm = wrapper.vm
+    const el = wrapper.find('#aiChatMessages').element
+
+    // Set scrollHeight so scrollTo receives the correct value
+    Object.defineProperty(el, 'scrollHeight', { value: 2000, configurable: true, writable: true })
+
+    vm.scrollToBottomSmooth()
+
+    expect(el.scrollTo).toHaveBeenCalledWith({ top: 2000, behavior: 'smooth' })
+
+    // Advance past both the 600ms programmaticScrolling clear
+    // and the 3000ms auto-hide timer
+    vi.advanceTimersByTime(3000)
+    expect(vm.scrolledDown).toBe(false)
+  })
+
+  it('scrollToNextMessage resets programmaticScrolling when no chat-message elements exist', async () => {
+    const wrapper = mountComponent({ messages: createMessages(20) })
+    const vm = wrapper.vm
+
+    // With stubbed ChatMessageItem, there are no .chat-message elements in DOM,
+    // so scrollToNextMessage hits the early return (items.length === 0)
+    // which resets programmaticScrolling immediately
+    vm.scrolledDown = true
+    vm.scrollToNextMessage()
+    await nextTick()
+
+    // Button should still be visible (timer was reset)
+    expect(vm.scrolledDown).toBe(true)
+
+    // Auto-hide after 3s
+    vi.advanceTimersByTime(3000)
+    expect(vm.scrolledDown).toBe(false)
+  })
+})
+
+describe('ChatMessageList — handleScroll suppression during programmatic scroll', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('handleScroll hides scrolledUp when reaching top during programmatic scroll', async () => {
+    const wrapper = mountComponent({ messages: createMessages(20) })
+    const vm = wrapper.vm
+    const el = wrapper.find('#aiChatMessages').element
+
+    vm.scrolledUp = true
+    await nextTick()
+
+    // Start programmatic scroll to top
+    vm.scrollToTop()
+    await nextTick()
+
+    // Simulate scroll reaching top (near top: scrollTop < 100)
+    simulateScroll(el, { scrollTop: 0, scrollHeight: 2000, clientHeight: 400 })
+
+    // During programmatic scroll, reaching top should hide the button
+    expect(vm.scrolledUp).toBe(false)
+  })
+
+  it('handleScroll hides scrolledDown when reaching bottom during programmatic scroll', async () => {
+    const wrapper = mountComponent({ messages: createMessages(20) })
+    const vm = wrapper.vm
+    const el = wrapper.find('#aiChatMessages').element
+
+    vm.scrolledDown = true
+    await nextTick()
+
+    vm.scrollToBottomSmooth()
+    await nextTick()
+
+    // Simulate scroll reaching bottom (distFromBottom < 100)
+    simulateScroll(el, { scrollTop: 1600, scrollHeight: 2000, clientHeight: 400 })
+
+    // During programmatic scroll, reaching bottom should hide the button
+    expect(vm.scrolledDown).toBe(false)
+  })
+
+  it('handleScroll does not toggle button direction during programmatic scroll', async () => {
+    const wrapper = mountComponent({ messages: createMessages(20) })
+    const vm = wrapper.vm
+    const el = wrapper.find('#aiChatMessages').element
+
+    // Set up: scrolledUp is true, scrolledDown is false
+    vm.scrolledUp = true
+    vm.scrolledDown = false
+    await nextTick()
+
+    // Start programmatic scroll to top
+    vm.scrollToTop()
+    await nextTick()
+
+    // Simulate a large downward scroll delta (scrollDelta > SCROLL_DELTA_THRESHOLD)
+    // that would normally trigger shouldShowDown — but programmaticScrolling should block it
+    simulateScroll(el, { scrollTop: 800, scrollHeight: 2000, clientHeight: 400 })
+
+    // scrolledDown should NOT become true during programmatic scroll
+    expect(vm.scrolledDown).toBe(false)
+  })
+})
+
+describe('ChatMessageList — session switch resets scroll state', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('changing messages resets scrolledUp, scrolledDown, and timers', async () => {
+    const wrapper = mountComponent({ messages: createMessages(20) })
+    const vm = wrapper.vm
+
+    vm.scrolledUp = true
+    vm.scrolledDown = true
+    await nextTick()
+
+    // Change messages (simulates session switch)
+    await wrapper.setProps({ messages: createMessages(5) })
+    await nextTick()
+
+    expect(vm.scrolledUp).toBe(false)
+    expect(vm.scrolledDown).toBe(false)
+  })
+})
