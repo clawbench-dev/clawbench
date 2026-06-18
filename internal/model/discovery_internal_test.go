@@ -9,33 +9,28 @@ import (
 // --- canDiscoverModels internal tests ---
 
 func TestCanDiscoverModels(t *testing.T) {
+	// Register a test discovery function to test the positive case
+	RegisterDiscoverModelsFunc("test-can-discover", func() []AgentModel {
+		return nil
+	})
+
 	tests := []struct {
 		name     string
 		spec     BackendSpec
 		expected bool
 	}{
 		{
-			name:     "with DiscoverModelsFunc",
-			spec:     BackendSpec{DiscoverModelsFunc: func() []AgentModel { return nil }},
+			name:     "with registered discovery function",
+			spec:     BackendSpec{Backend: "test-can-discover"},
 			expected: true,
 		},
 		{
-			name:     "with ListModelsCmd and ParseModels",
-			spec:     BackendSpec{ListModelsCmd: []string{"models"}, ParseModels: ParseOpenCodeModels},
-			expected: true,
-		},
-		{
-			name:     "with ListModelsCmd only",
-			spec:     BackendSpec{ListModelsCmd: []string{"models"}},
+			name:     "with nothing registered",
+			spec:     BackendSpec{Backend: "nonexistent_backend_xyz"},
 			expected: false,
 		},
 		{
-			name:     "with ParseModels only",
-			spec:     BackendSpec{ParseModels: ParseOpenCodeModels},
-			expected: false,
-		},
-		{
-			name:     "with nothing",
+			name:     "empty spec",
 			spec:     BackendSpec{},
 			expected: false,
 		},

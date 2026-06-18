@@ -70,131 +70,7 @@ func TestCheckCLIExists_EmptyCommand(t *testing.T) {
 	assert.False(t, model.CheckCLIExists(""))
 }
 
-// --- Test 3: Model list parsers (still in model package) ---
-
-func TestParseDeepSeekModels_RealOutput(t *testing.T) {
-	output := `Available models (default: deepseek-v4-pro)
-  deepseek-v4-flash (deepseek)
-* deepseek-v4-pro (deepseek)
-  deepseek-ai/deepseek-v4-pro (nvidia-nim)
-  deepseek-ai/deepseek-v4-flash (nvidia-nim)
-  gpt-4.1 (openai)
-  gpt-4.1-mini (openai)
-  deepseek/deepseek-v4-pro (openrouter)
-  deepseek/deepseek-v4-flash (openrouter)
-  deepseek-coder:1.3b (ollama)
-`
-
-	models := model.ParseDeepSeekModels(output)
-	require.Len(t, models, 2, "should only include deepseek provider models, not third-party")
-
-	assert.Equal(t, "deepseek/deepseek-v4-flash", models[0].ID)
-	assert.Equal(t, "deepseek/deepseek-v4-flash", models[0].Name)
-	assert.False(t, models[0].Default, "flash is not the default")
-	assert.Equal(t, "deepseek/deepseek-v4-pro", models[1].ID)
-	assert.Equal(t, "deepseek/deepseek-v4-pro", models[1].Name)
-	assert.True(t, models[1].Default, "pro is the default (marked with *)")
-}
-
-func TestParseDeepSeekModels_EmptyOutput(t *testing.T) {
-	models := model.ParseDeepSeekModels("no models here")
-	assert.Nil(t, models)
-}
-
-func TestParseDeepSeekModels_NoDefaultMarker(t *testing.T) {
-	output := `  deepseek-v4-flash (deepseek)
-  deepseek-v4-pro (deepseek)
-`
-	models := model.ParseDeepSeekModels(output)
-	require.Len(t, models, 2)
-	assert.True(t, models[0].Default, "first model should be default as fallback")
-	assert.False(t, models[1].Default)
-}
-
-func TestParseDeepSeekModels_DefaultFromHeader(t *testing.T) {
-	output := `Available models (default: deepseek-v4-pro)
-  deepseek-v4-flash (deepseek)
-  deepseek-v4-pro (deepseek)
-`
-	models := model.ParseDeepSeekModels(output)
-	require.Len(t, models, 2)
-	assert.False(t, models[0].Default)
-	assert.True(t, models[1].Default, "should match default from header")
-}
-
-func TestParseDeepSeekModels_ProviderPrefixInIDAndName(t *testing.T) {
-	output := `Available models (default: deepseek-v4-pro)
-* deepseek-v4-pro (deepseek)
-  deepseek-v4-flash (deepseek)
-`
-	models := model.ParseDeepSeekModels(output)
-	require.Len(t, models, 2)
-
-	assert.Equal(t, "deepseek/deepseek-v4-pro", models[0].ID)
-	assert.Equal(t, "deepseek/deepseek-v4-pro", models[0].Name)
-	assert.True(t, models[0].Default)
-
-	assert.Equal(t, "deepseek/deepseek-v4-flash", models[1].ID)
-	assert.Equal(t, "deepseek/deepseek-v4-flash", models[1].Name)
-}
-
-func TestParseDeepSeekModels_ThirdPartyProviderFiltered(t *testing.T) {
-	output := `Available models (default: deepseek-v4-pro)
-  deepseek-v4-pro (deepseek)
-  deepseek-v4-pro (nvidia-nim)
-  gpt-4.1 (openai)
-`
-	models := model.ParseDeepSeekModels(output)
-	require.Len(t, models, 1)
-	assert.Equal(t, "deepseek/deepseek-v4-pro", models[0].ID)
-}
-
-func TestParseOpenCodeModels_RealOutput(t *testing.T) {
-	output := `opencode/minimax-m2.5-free
-opencode/nemotron-3-super-free
-minimax/MiniMax-M2.5
-minimax/MiniMax-M2.7
-anthropic/claude-sonnet-4-6
-`
-
-	models := model.ParseOpenCodeModels(output)
-	require.Len(t, models, 5)
-
-	assert.Equal(t, "opencode/minimax-m2.5-free", models[0].ID)
-	assert.Equal(t, "opencode/minimax-m2.5-free", models[0].Name, "Name should include provider for disambiguation")
-	assert.True(t, models[0].Default, "first model should be default")
-
-	assert.Equal(t, "minimax/MiniMax-M2.5", models[2].ID)
-	assert.Equal(t, "minimax/MiniMax-M2.5", models[2].Name)
-
-	assert.Equal(t, "anthropic/claude-sonnet-4-6", models[4].ID)
-	assert.Equal(t, "anthropic/claude-sonnet-4-6", models[4].Name)
-}
-
-func TestParseOpenCodeModels_EmptyOutput(t *testing.T) {
-	models := model.ParseOpenCodeModels("")
-	assert.Nil(t, models)
-}
-
-func TestParseOpenCodeModels_InvalidLines(t *testing.T) {
-	output := `minimax/MiniMax-M2.5
-not-a-valid-line
-anthropic/claude-sonnet-4-6
-
-`
-	models := model.ParseOpenCodeModels(output)
-	require.Len(t, models, 2)
-	assert.Equal(t, "minimax/MiniMax-M2.5", models[0].ID)
-	assert.Equal(t, "anthropic/claude-sonnet-4-6", models[1].ID)
-}
-
-func TestParseOpenCodeModels_SingleModel(t *testing.T) {
-	output := `opencode/minimax-m2.5-free`
-	models := model.ParseOpenCodeModels(output)
-	require.Len(t, models, 1)
-	assert.Equal(t, "opencode/minimax-m2.5-free", models[0].ID)
-	assert.True(t, models[0].Default)
-}
+// --- Test 3: Discovery function registry (parsers moved to backend packages) ---
 
 // --- Test 4: BackendRegistry model discovery config ---
 
@@ -204,13 +80,11 @@ func TestBackendRegistry_ModelDiscoveryConfig(t *testing.T) {
 		specs[s.ID] = s
 	}
 
-	// OpenCode and DeepSeek use ListModelsCmd+ParseModels
-	assert.NotEmpty(t, specs["opencode"].ListModelsCmd, "opencode should have ListModelsCmd")
-	assert.NotNil(t, specs["opencode"].ParseModels, "opencode should have ParseModels")
-	assert.NotEmpty(t, specs["deepseek"].ListModelsCmd, "deepseek should have ListModelsCmd")
-	assert.NotNil(t, specs["deepseek"].ParseModels, "deepseek should have ParseModels")
+	// OpenCode and DeepSeek use registry-based discovery (no ListModelsCmd on spec)
+	assert.Empty(t, specs["opencode"].ListModelsCmd, "opencode should not have ListModelsCmd (uses registry)")
+	assert.Empty(t, specs["deepseek"].ListModelsCmd, "deepseek should not have ListModelsCmd (uses registry)")
 
-	// Qoder and VeCLI don't use ListModelsCmd (they use registry-based discovery)
+	// Qoder and VeCLI don't have model discovery
 	assert.Empty(t, specs["qoder"].ListModelsCmd, "qoder should not have ListModelsCmd")
 	assert.Empty(t, specs["vecli"].ListModelsCmd, "vecli should not have ListModelsCmd")
 }
@@ -247,27 +121,20 @@ func TestDiscoverModels_NoSupport(t *testing.T) {
 
 func TestDiscoverModels_NonexistentCLI(t *testing.T) {
 	spec := model.BackendSpec{
-		ID:            "test",
-		DefaultCmd:    "definitely_not_a_real_command_xyz_12345",
-		ListModelsCmd: []string{"models"},
-		ParseModels:   model.ParseOpenCodeModels,
+		ID:         "test",
+		DefaultCmd: "definitely_not_a_real_command_xyz_12345",
 	}
 	models := model.DiscoverModels(spec)
-	assert.Nil(t, models, "should return nil when CLI doesn't exist")
+	assert.Nil(t, models, "should return nil when no discovery function registered")
 }
 
 func TestDiscoverModels_WithRealCLI(t *testing.T) {
-	if !model.CheckCLIExists("opencode") {
-		t.Skip("opencode not installed, skipping integration test")
+	spec := model.FindSpecByBackend("opencode")
+	if spec == nil || !model.CanDiscoverModels(*spec) {
+		t.Skip("opencode not installed or no discovery function, skipping integration test")
 	}
 
-	spec := model.BackendSpec{
-		ID:            "opencode",
-		DefaultCmd:    "opencode",
-		ListModelsCmd: []string{"models"},
-		ParseModels:   model.ParseOpenCodeModels,
-	}
-	models := model.DiscoverModels(spec)
+	models := model.DiscoverModels(*spec)
 	assert.NotEmpty(t, models, "opencode should return at least one model")
 	assert.True(t, models[0].Default, "first model should be default")
 	for _, m := range models {
@@ -277,20 +144,21 @@ func TestDiscoverModels_WithRealCLI(t *testing.T) {
 }
 
 func TestDiscoverModels_WithEchoCLI(t *testing.T) {
+	// Register a discovery function for a mock backend
+	model.RegisterDiscoverModelsFunc("mock-echo-cli", func() []model.AgentModel {
+		return []model.AgentModel{
+			{ID: "mock-a", Name: "Mock A", Default: true},
+			{ID: "mock-b", Name: "Mock B", Default: false},
+		}
+	})
+
 	spec := model.BackendSpec{
-		ID:            "mock-agent",
-		Backend:       "mock",
-		DefaultCmd:    "echo",
-		Name:          "Mock",
-		Icon:          "🧪",
-		Specialty:     "Testing",
-		ListModelsCmd: []string{"model-a, model-b"},
-		ParseModels: func(s string) []model.AgentModel {
-			return []model.AgentModel{
-				{ID: "mock-a", Name: "Mock A", Default: true},
-				{ID: "mock-b", Name: "Mock B", Default: false},
-			}
-		},
+		ID:         "mock-echo-cli",
+		Backend:    "mock-echo-cli",
+		DefaultCmd: "echo",
+		Name:       "Mock",
+		Icon:       "🧪",
+		Specialty:  "Testing",
 	}
 
 	models := model.DiscoverModels(spec)

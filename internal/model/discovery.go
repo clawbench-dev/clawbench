@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -76,7 +75,6 @@ var BackendRegistry = []BackendSpec{
 	},
 	{
 		ID: "opencode", Backend: "opencode", DefaultCmd: "opencode", Name: "OpenCode", Icon: "📟", Specialty: "终端编码工具",
-		ListModelsCmd: []string{"models"}, ParseModels: ParseOpenCodeModels,
 		ThinkingEffortLevels: []string{"minimal", "high", "max"},
 		AcpCommand:           "opencode acp",
 	},
@@ -94,8 +92,7 @@ var BackendRegistry = []BackendSpec{
 	},
 	{
 		ID: "deepseek", Backend: "deepseek", DefaultCmd: "codewhale", AltCmd: "deepseek", Name: "CodeWhale", Icon: "🐋", Specialty: "AI 推理与编码",
-		ListModelsCmd: []string{"models"}, ParseModels: ParseDeepSeekModels,
-		AcpCommand:    "codewhale serve --acp",
+		AcpCommand: "codewhale serve --acp",
 	},
 	{
 		ID: "pi", Backend: "pi", DefaultCmd: "pi", Name: "Pi", Icon: "🥧", Specialty: "极简编程智能体",
@@ -204,15 +201,6 @@ func CheckCLIExistsErr(cmd string) error {
 var DiscoverModels = discoverModels
 
 func discoverModels(spec BackendSpec) []AgentModel {
-	// Custom discovery function takes priority (e.g. binary strings scan for claude)
-	if spec.DiscoverModelsFunc != nil {
-		models := spec.DiscoverModelsFunc()
-		if len(models) > 0 {
-			slog.Info("model discovery succeeded", "backend", spec.ID, "models", len(models))
-		}
-		return models
-	}
-
 	// Check the discovery function registry (populated by backend sub-packages)
 	if fn := lookupDiscoverFunc(spec.Backend); fn != nil {
 		models := fn()
@@ -221,36 +209,7 @@ func discoverModels(spec BackendSpec) []AgentModel {
 		}
 		return models
 	}
-
-	if len(spec.ListModelsCmd) == 0 || spec.ParseModels == nil {
-		return nil
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	cmdName := spec.DefaultCmd
-	cmd := exec.CommandContext(ctx, cmdName, spec.ListModelsCmd...)
-	out, err := cmd.Output()
-	if err != nil && spec.AltCmd != "" {
-		// Fallback to AltCmd if DefaultCmd fails
-		cmdName = spec.AltCmd
-		cmd = exec.CommandContext(ctx, cmdName, spec.ListModelsCmd...)
-		out, err = cmd.Output()
-	}
-	if err != nil {
-		slog.Debug("model discovery command failed", "cmd", spec.DefaultCmd, "alt_cmd", spec.AltCmd, "args", spec.ListModelsCmd, "error", err)
-		return nil
-	}
-
-	models := spec.ParseModels(string(out))
-	if len(models) == 0 {
-		slog.Debug("model discovery returned no models", "cmd", spec.DefaultCmd)
-		return nil
-	}
-
-	slog.Info("model discovery succeeded", "backend", spec.ID, "models", len(models))
-	return models
+	return nil
 }
 
 // FindSpecByBackend returns the BackendSpec for the given backend type, or nil.
@@ -273,16 +232,9 @@ func findSpecByDefaultCmd(cmd string) *BackendSpec {
 	return nil
 }
 
-// CanDiscoverModels returns true if the spec supports model discovery
-// via either DiscoverModelsFunc, the registry, or ListModelsCmd+ParseModels.
+// CanDiscoverModels returns true if the spec supports model discovery via the registry.
 func CanDiscoverModels(spec BackendSpec) bool {
-	if spec.DiscoverModelsFunc != nil {
-		return true
-	}
-	if lookupDiscoverFunc(spec.Backend) != nil {
-		return true
-	}
-	return len(spec.ListModelsCmd) > 0 && spec.ParseModels != nil
+	return lookupDiscoverFunc(spec.Backend) != nil
 }
 
 // SyncDiscoverModels runs DiscoverModels for all backends that support it
@@ -333,88 +285,6 @@ func AsyncRefreshModelCache(db *sql.DB) {
 			}
 		}
 	}()
-}
-
-// --- Model list parsers (used by BackendRegistry ParseModels) ---
-
-var deepseekModelLineRe = regexp.MustCompile(`^(\*?)\s*(\S+)\s+\((\S+)\)`)
-
-// deepseekDefaultRe extracts the default model from the header line.
-var deepseekDefaultRe = regexp.MustCompile(`Available models \(default:\s*(\S+)\)`)
-
-// ParseDeepSeekModels parses deepseek models output.
-// Output format:
-//
-//	Available models (default: deepseek-v4-pro)
-//	  deepseek-v4-flash (deepseek)
-//	* deepseek-v4-pro (deepseek)
-//
-// The Name field includes the provider prefix for disambiguation (e.g., "deepseek/deepseek-v4-pro"),
-// consistent with Pi and OpenCode model naming.
-func ParseDeepSeekModels(output string) []AgentModel {
-	// Extract default model name from header
-	var defaultModel string
-	if m := deepseekDefaultRe.FindStringSubmatch(output); len(m) >= 2 {
-		defaultModel = m[1]
-	}
-
-	var models []AgentModel
-	for _, line := range strings.Split(output, "\n") {
-		m := deepseekModelLineRe.FindStringSubmatch(line)
-		if len(m) < 4 {
-			continue
-		}
-		isDefault := m[1] == "*" || m[2] == defaultModel || (defaultModel == "" && len(models) == 0)
-		modelID := m[2]
-		provider := m[3]
-
-		// Only include the native deepseek provider
-		if !strings.EqualFold(provider, "deepseek") {
-			continue
-		}
-
-		fullID := provider + "/" + modelID
-		models = append(models, AgentModel{
-			ID:      fullID,
-			Name:    fullID,
-			Default: isDefault,
-		})
-	}
-	return models
-}
-
-// opencodeModelLineRe matches lines like "minimax/MiniMax-M2.5" or "opencode/minimax-m2.5-free"
-var opencodeModelLineRe = regexp.MustCompile(`^(\S+)/(\S+)$`)
-
-// ParseOpenCodeModels parses opencode models output.
-// Output format: one "provider/model" per line, e.g.:
-//
-//	opencode/minimax-m2.5-free
-//	minimax/MiniMax-M2.5
-//	anthropic/claude-sonnet-4-6
-//
-// The Name field includes the provider prefix for disambiguation,
-// since different providers may offer models with identical names.
-// The first model is marked as default.
-func ParseOpenCodeModels(output string) []AgentModel {
-	var models []AgentModel
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		m := opencodeModelLineRe.FindStringSubmatch(line)
-		if len(m) < 3 {
-			continue
-		}
-
-		models = append(models, AgentModel{
-			ID:      line,              // full "provider/model" as ID (opencode uses this format)
-			Name:    m[1] + "/" + m[2], // include provider in display name for disambiguation
-			Default: len(models) == 0,
-		})
-	}
-	return models
 }
 
 // --- Embedded binary detection ---
