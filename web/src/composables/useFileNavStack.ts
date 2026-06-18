@@ -19,7 +19,10 @@ export function _resetForTesting() {
 export function useFileNavStack() {
   function openFile(path: string) {
     _overlayOpen.value = true
-    _pathStack.value = [..._pathStack.value, path]
+    // Deduplicate: if the same file is already at the top, don't push again
+    const stack = _pathStack.value
+    if (stack.length > 0 && stack[stack.length - 1] === path) return
+    _pathStack.value = [...stack, path]
   }
 
   function goBack(): string | null {

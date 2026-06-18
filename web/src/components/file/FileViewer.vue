@@ -163,7 +163,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { FileText, Download, Code2, AlertTriangle } from 'lucide-vue-next'
@@ -299,9 +299,21 @@ function tryRestoreOrAttach() {
     attachScrollListener()
 }
 
+function handleCancelScrollRestore() {
+    pendingRestore = null
+}
+
 onBeforeUnmount(() => {
     detachScrollListener()
     clearRestoreTimer()
+    window.removeEventListener('cancel-scroll-restore', handleCancelScrollRestore)
+})
+
+// When an explicit scroll-to-line is requested (e.g. clicking a file path
+// annotation with line numbers), cancel any pending scroll-position restore
+// so it doesn't override the line scroll.
+onMounted(() => {
+    window.addEventListener('cancel-scroll-restore', handleCancelScrollRestore)
 })
 
 // Save/restore scroll position when switching files

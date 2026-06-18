@@ -1038,22 +1038,34 @@ function handleOpenTerminal(cwd) {
 }
 
 function scrollToLine(line, lineEnd) {
-    nextTick(() => {
-        const startLine = Math.max(1, line)
-        const endLine = Math.min(lineEnd && lineEnd > startLine ? lineEnd : startLine, startLine + 200)
-        // Scroll the first line into view
-        const firstEl = document.querySelector(`.code-line[data-line="${startLine}"]`)
-        if (!firstEl) return
-        firstEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        // Flash the range
-        for (let i = startLine; i <= endLine; i++) {
-            const el = document.querySelector(`.code-line[data-line="${i}"]`)
-            if (el) {
-                el.classList.add('line-flash')
-                el.addEventListener('animationend', () => el.classList.remove('line-flash'), { once: true })
+    const startLine = Math.max(1, line)
+    const endLine = Math.min(lineEnd && lineEnd > startLine ? lineEnd : startLine, startLine + 200)
+    const selector = `.code-line[data-line="${startLine}"]`
+    const maxAttempts = 30
+    let attempts = 0
+    function tryScroll() {
+        attempts++
+        const firstEl = document.querySelector(selector)
+        if (firstEl) {
+            // Cancel any pending scroll-position restore in FileViewer
+            // so it doesn't override our scroll target
+            window.dispatchEvent(new CustomEvent('cancel-scroll-restore'))
+            firstEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            // Flash the range
+            for (let i = startLine; i <= endLine; i++) {
+                const el = document.querySelector(`.code-line[data-line="${i}"]`)
+                if (el) {
+                    el.classList.add('line-flash')
+                    el.addEventListener('animationend', () => el.classList.remove('line-flash'), { once: true })
+                }
             }
+            return
         }
-    })
+        if (attempts < maxAttempts) {
+            nextTick(tryScroll)
+        }
+    }
+    nextTick(tryScroll)
 }
 
 function toggleTheme() {

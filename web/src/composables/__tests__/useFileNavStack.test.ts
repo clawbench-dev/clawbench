@@ -74,14 +74,23 @@ describe('useFileNavStack', () => {
     expect(nav.overlayOpen.value).toBe(false)
   })
 
-  it('openFile same path twice: stack has two entries', () => {
+  it('openFile same path consecutively: deduplicates top of stack', () => {
     const nav = useFileNavStack()
     nav.openFile('/src/a.ts')
     nav.openFile('/src/a.ts')
-    expect(nav.canGoBack.value).toBe(true)
-    const back = nav.goBack()
-    expect(back).toBe('/src/a.ts')
     expect(nav.canGoBack.value).toBe(false)
+    expect(nav.currentFilePath.value).toBe('/src/a.ts')
+  })
+
+  it('openFile same path non-consecutively: keeps both entries', () => {
+    const nav = useFileNavStack()
+    nav.openFile('/src/a.ts')
+    nav.openFile('/src/b.ts')
+    nav.openFile('/src/a.ts')
+    expect(nav.canGoBack.value).toBe(true)
+    expect(nav.currentFilePath.value).toBe('/src/a.ts')
+    const back = nav.goBack()
+    expect(back).toBe('/src/b.ts')
   })
 
   it('after closeOverlay, openFile starts fresh stack', () => {
