@@ -76,15 +76,26 @@ function getScrollContainer(): HTMLElement | null {
   return (document.querySelector('.markdown-body') || document.querySelector('.raw-content-pre')) as HTMLElement | null
 }
 
-function getScrollRatio(el: HTMLElement | null): number {
-  if (!el) return 0
-  const maxScroll = el.scrollHeight - el.clientHeight
-  if (maxScroll <= 0) return 0
-  return el.scrollTop / maxScroll
+/**
+ * Save scroll position as { scrollTop, lineHeight } so we can restore it
+ * even after content changes alter scrollHeight. Uses pixel scrollTop directly
+ * rather than a ratio, which breaks when content is added/removed.
+ */
+function getScrollPosition(): number {
+  const el = getScrollContainer()
+  return el ? el.scrollTop : 0
 }
 
-function restoreScrollRatio(ratio: number): void {
-  if (ratio <= 0) return
+/**
+ * Restore scroll position after content update.
+ * Uses the saved scrollTop pixel value directly — this keeps the viewport
+ * anchored to the same absolute position. If content was added above the
+ * viewport, the user sees new content scroll in from the top, which is
+ * the natural behavior. If content was removed above, the viewport
+ * stays at the same absolute offset.
+ */
+function restoreScrollPosition(scrollTop: number): void {
+  if (scrollTop <= 0) return
   const startTime = Date.now()
   const MAX_WAIT = 3000
 
@@ -94,12 +105,12 @@ function restoreScrollRatio(ratio: number): void {
       if (Date.now() - startTime < MAX_WAIT) requestAnimationFrame(tryRestore)
       return
     }
-    const maxScroll = el.scrollHeight - el.clientHeight
-    if (maxScroll <= 0) {
+    // Only restore if the content is tall enough
+    if (el.scrollHeight - el.clientHeight <= 0) {
       if (Date.now() - startTime < MAX_WAIT) requestAnimationFrame(tryRestore)
       return
     }
-    el.scrollTop = ratio * maxScroll
+    el.scrollTop = Math.min(scrollTop, el.scrollHeight - el.clientHeight)
   }
   requestAnimationFrame(() => requestAnimationFrame(tryRestore))
 }
@@ -231,9 +242,8 @@ async function doRefreshCurrentFile(options: {
   const oldContent = currentFile?.content ?? null
   const oldPath = currentFilePath
 
-  // Save scroll position as ratio before refresh
-  const scrollEl = getScrollContainer()
-  const scrollRatio = getScrollRatio(scrollEl)
+  // Save scroll position before refresh
+  const savedScrollTop = getScrollPosition()
 
   // Refresh directory listing if requested
   if (loadDir && store.state.currentDir !== undefined) {
@@ -353,7 +363,7 @@ async function doRefreshCurrentFile(options: {
 
   // ─── Restore scroll position (common) ───
 
-  restoreScrollRatio(scrollRatio)
+  restoreScrollPosition(savedScrollTop)
 }
 
-export { getScrollContainer, getScrollRatio, restoreScrollRatio }
+export { getScrollContainer, getScrollPosition, restoreScrollPosition }
