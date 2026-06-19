@@ -13,7 +13,7 @@
         :data-marker-id="pm.id"
       >
         <button
-          class="diff-marker-btn"
+          class="diff-marker diff-marker-btn"
           :data-marker-id="pm.id"
           role="button"
           tabindex="0"
@@ -49,11 +49,12 @@ import { dirName, splitPath } from '@/utils/path.ts'
 import { flashRanges, flashType } from '@/composables/useFileRefresh.ts'
 import {
   diffMarkers,
-  openDiffDrawer,
   clearDiffMarkers,
   extractBlocks,
   extractBlockElements,
 } from '@/composables/useMarkdownDiff.ts'
+import { handleDiffMarkerClick } from '@/composables/useDiffMarkerClick.ts'
+import '@/assets/diff-marker.css'
 
 const props = defineProps({
     file: Object,
@@ -119,17 +120,7 @@ const { annotateFilePaths, verifyFilePaths, resolveRelativePath, openFilePath } 
 
 function handleClick(event) {
     // Check for diff marker click first
-    const markerEl = event.target.closest('.diff-marker-overlay')
-    if (markerEl) {
-        event.preventDefault()
-        event.stopPropagation()
-        const markerId = markerEl.getAttribute('data-marker-id')
-        if (markerId) {
-            const marker = diffMarkers.value.find(m => m.id === markerId)
-            if (marker) openDiffDrawer(marker)
-        }
-        return
-    }
+    if (handleDiffMarkerClick(event, '.diff-marker-overlay')) return
 
     // Check for commit-hash click
     const commitEl = event.target.closest('.chat-commit-hash, .chat-commit-open-btn')
@@ -349,7 +340,7 @@ defineExpose({
 </style>
 
 <style>
-/* ─── Diff marker overlays (inside .markdown-body, declarative v-for) ─── */
+/* ─── Diff marker overlays (structural only — visual styles in diff-marker.css) ─── */
 
 /* Overlay: position:absolute relative to .markdown-body, right-aligned.
    Scrolls with content naturally (no JS scroll handler needed). */
@@ -365,81 +356,10 @@ defineExpose({
   z-index: 2;
 }
 
-/* Clickable button inside overlay */
+/* Clickable button inside overlay — structural sizing only */
 .diff-marker-btn {
   width: 100%;
   height: 100%;
-  min-height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: 3px 0 0 3px;
-  cursor: pointer;
-  opacity: 0.45;
-  transition: opacity 0.15s;
-  font-size: 9px;
-  font-weight: 700;
-  user-select: none;
-  color: white;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-  line-height: 1;
-  padding: 0;
-  font-family: sans-serif;
   pointer-events: auto;
-}
-
-.diff-marker-btn:hover,
-.diff-marker-btn:focus-visible {
-  opacity: 0.85;
-  outline: none;
-  box-shadow: 0 0 0 2px var(--accent-color);
-}
-
-.diff-marker-btn:focus-visible {
-  opacity: 1;
-}
-
-/* ─── Marker colors + highlight animation ─── */
-
-/* Modified: orange */
-.diff-marker-modified .diff-marker-btn {
-  background: rgba(255, 165, 0, 0.7);
-  animation: diff-marker-highlight 1.5s ease-out;
-}
-
-/* Deleted: red */
-.diff-marker-deleted .diff-marker-btn {
-  background: rgba(255, 80, 80, 0.7);
-  animation: diff-marker-highlight 1.5s ease-out;
-}
-
-/* Added: green */
-.diff-marker-added .diff-marker-btn {
-  background: rgba(80, 200, 80, 0.7);
-  animation: diff-marker-added-flash 1.5s ease-out;
-}
-
-/* Shared highlight animation: brief flash → settle */
-@keyframes diff-marker-highlight {
-  0% { opacity: 1; }
-  100% { opacity: 0.45; }
-}
-
-/* Added: blue → green color shift with flash */
-@keyframes diff-marker-added-flash {
-  0% { background: rgba(100, 200, 255, 0.9); opacity: 1; }
-  100% { background: rgba(80, 200, 80, 0.7); opacity: 0.45; }
-}
-
-/* Dark theme adjustments */
-[data-theme="dark"] .diff-marker-modified .diff-marker-btn {
-  background: rgba(255, 165, 0, 0.6);
-}
-[data-theme="dark"] .diff-marker-deleted .diff-marker-btn {
-  background: rgba(255, 80, 80, 0.6);
-}
-[data-theme="dark"] .diff-marker-added .diff-marker-btn {
-  background: rgba(80, 200, 80, 0.6);
 }
 </style>

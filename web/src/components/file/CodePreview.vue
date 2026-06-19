@@ -25,9 +25,10 @@ import { escapeHtml } from '@/utils/html.ts'
 import { store } from '@/stores/app.ts'
 import {
   diffMarkers,
-  openDiffDrawer,
   clearDiffMarkers,
 } from '@/composables/useMarkdownDiff.ts'
+import { handleDiffMarkerClick } from '@/composables/useDiffMarkerClick.ts'
+import '@/assets/diff-marker.css'
 
 const props = defineProps({
     /** Raw file content */
@@ -114,17 +115,7 @@ const { handleDblClick } = useDoubleClickCopy({
 
 function handleClick(event) {
     // Check for diff marker click first
-    const markerEl = event.target.closest('.diff-marker-inline')
-    if (markerEl) {
-        event.preventDefault()
-        event.stopPropagation()
-        const markerId = markerEl.getAttribute('data-marker-id')
-        if (markerId) {
-            const marker = diffMarkers.value.find(m => m.id === markerId)
-            if (marker) openDiffDrawer(marker)
-        }
-        return
-    }
+    if (handleDiffMarkerClick(event, '.diff-marker-inline')) return
 
     // Intercept clicks on annotated file-path spans in code
     const pathEl = event.target.closest('.code-file-path')
@@ -432,81 +423,13 @@ onBeforeUnmount(() => {
     border-radius: 2px;
 }
 
-/* ─── Diff marker inline (inside .code-line) ─── */
+/* ─── Diff marker inline (structural only — visual styles in diff-marker.css) ─── */
 
 .diff-marker-inline {
     position: absolute;
     right: 0;
     width: 20px;
-    min-height: 24px;
     height: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: none;
-    border-radius: 3px 0 0 3px;
-    cursor: pointer;
-    opacity: 0.45;
-    transition: opacity 0.15s;
-    font-size: 9px;
-    font-weight: 700;
-    user-select: none;
-    color: white;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-    line-height: 1;
-    padding: 0;
-    font-family: sans-serif;
-}
-
-.diff-marker-inline:hover,
-.diff-marker-inline:focus-visible {
-    opacity: 0.85;
-    outline: none;
-    box-shadow: 0 0 0 2px var(--accent-color);
-}
-
-.diff-marker-inline:focus-visible {
-    opacity: 1;
-}
-
-/* Modified: orange */
-.diff-marker-modified {
-    background: rgba(255, 165, 0, 0.7);
-    animation: diff-marker-highlight 1.5s ease-out;
-}
-
-/* Deleted: red */
-.diff-marker-deleted {
-    background: rgba(255, 80, 80, 0.7);
-    animation: diff-marker-highlight 1.5s ease-out;
-}
-
-/* Added: green */
-.diff-marker-added {
-    background: rgba(80, 200, 80, 0.7);
-    animation: diff-marker-added-flash 1.5s ease-out;
-}
-
-/* Shared highlight animation: brief flash → settle */
-@keyframes diff-marker-highlight {
-    0% { opacity: 1; }
-    100% { opacity: 0.45; }
-}
-
-@keyframes diff-marker-added-flash {
-    0% { background: rgba(100, 200, 255, 0.9); opacity: 1; }
-    100% { background: rgba(80, 200, 80, 0.7); opacity: 0.45; }
-}
-
-/* Dark theme adjustments */
-[data-theme="dark"] .diff-marker-modified {
-    background: rgba(255, 165, 0, 0.6);
-}
-[data-theme="dark"] .diff-marker-deleted {
-    background: rgba(255, 80, 80, 0.6);
-}
-[data-theme="dark"] .diff-marker-added {
-    background: rgba(80, 200, 80, 0.6);
 }
 
 /* Clickable file path in code strings */

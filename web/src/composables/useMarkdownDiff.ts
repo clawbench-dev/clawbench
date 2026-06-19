@@ -370,13 +370,37 @@ export function computeMarkdownDiff(
     }
 }
 
-function toMarker(type: MarkerType, block: BlockInfo, blockIndex: number, charDiff: CharDiff | null, oldBlockText?: string): DiffMarker {
-    const labels: Record<MarkerType, string> = { modified: 'M', deleted: 'D', added: '+' }
-    const ariaLabels: Record<MarkerType, string> = {
-        modified: `Modified: ${block.tag}`,
-        deleted: `Deleted: ${block.tag}`,
-        added: `Added: ${block.tag}`,
+// ─── Marker label mapping ───
+
+const MARKER_LABELS: Record<MarkerType, string> = { modified: 'M', deleted: 'D', added: '+' }
+
+/**
+ * Shared factory for constructing DiffMarker objects.
+ * Centralizes the label mapping and ensures consistent construction.
+ */
+function buildDiffMarker(opts: {
+    id: string
+    type: MarkerType
+    blockSelector?: string
+    lineNumbers?: number[]
+    charDiff: CharDiff | null
+    diffLines?: DiffLine[]
+    ariaLabel: string
+}): DiffMarker {
+    return {
+        id: opts.id,
+        type: opts.type,
+        label: MARKER_LABELS[opts.type],
+        blockSelector: opts.blockSelector ?? '',
+        lineNumbers: opts.lineNumbers,
+        charDiff: opts.charDiff,
+        diffLines: opts.diffLines,
+        ariaLabel: opts.ariaLabel,
     }
+}
+
+function toMarker(type: MarkerType, block: BlockInfo, blockIndex: number, charDiff: CharDiff | null, oldBlockText?: string): DiffMarker {
+    const ariaLabel = `${type.charAt(0).toUpperCase() + type.slice(1)}: ${block.tag}`
     // For modified/deleted blocks with old content, use line-level diff
     let diffLines: DiffLine[] | undefined
     if (type === 'modified' && oldBlockText !== undefined && oldBlockText !== block.textContent) {
@@ -390,15 +414,14 @@ function toMarker(type: MarkerType, block: BlockInfo, blockIndex: number, charDi
     } else if (charDiff) {
         diffLines = charDiffToLines(charDiff)
     }
-    return {
+    return buildDiffMarker({
         id: `${type}-${blockIndex}-${block.tag}`,
         type,
-        label: labels[type],
         blockSelector: block.selector,
         charDiff,
         diffLines,
-        ariaLabel: ariaLabels[type],
-    }
+        ariaLabel,
+    })
 }
 
 /**
@@ -645,19 +668,16 @@ function makeCodeMarker(
 ): DiffMarker {
     const startLine = newLines[0]
     const endLine = newLines[newLines.length - 1]
-    const labels: Record<MarkerType, string> = { modified: 'M', deleted: 'D', added: '+' }
-    return {
+    return buildDiffMarker({
         id: `code-${type}-${startLine}-${endLine}`,
         type,
-        label: labels[type],
-        blockSelector: '',
         lineNumbers: newLines,
         charDiff,
         diffLines: contentToDiffLinesWithCtx(oldContent, newContent, newLines),
         ariaLabel: newLines.length === 1
             ? `${type} line ${startLine}`
             : `${type} lines ${startLine}-${endLine}`,
-    }
+    })
 }
 
 /**
