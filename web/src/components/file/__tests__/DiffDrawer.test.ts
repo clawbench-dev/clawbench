@@ -35,6 +35,12 @@ vi.mock('@/composables/useToast.ts', () => ({
   useToast: () => ({ show: mockToastShow, dismiss: vi.fn() }),
 }))
 
+// Mock useDialog
+const mockDialogConfirm = vi.fn().mockResolvedValue(true)
+vi.mock('@/composables/useDialog.ts', () => ({
+  useDialog: () => ({ confirm: mockDialogConfirm, alert: vi.fn(), prompt: vi.fn(), resolve: vi.fn(), state: { value: {} } }),
+}))
+
 const i18n = createI18n({
   legacy: false,
   locale: 'en',
@@ -197,22 +203,20 @@ describe('DiffDrawer', () => {
     diffOldContent.value = 'old content'
     diffOldFilePath.value = '/test/file.txt'
 
-    // Mock confirm to return true
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
-    // Mock fetch to return success
+    mockDialogConfirm.mockResolvedValue(true)
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as any)
 
     const wrapper = mountDrawer()
     await wrapper.find('.diff-revert-btn').trigger('click')
     await nextTick()
 
+    expect(mockDialogConfirm).toHaveBeenCalledWith('Revert to the previous content?', { dangerous: true })
     expect(globalThis.fetch).toHaveBeenCalledWith('/api/file/write', expect.objectContaining({
       method: 'POST',
       body: JSON.stringify({ path: '/test/file.txt', content: 'old content' }),
     }))
     expect(mockToastShow).toHaveBeenCalledWith('Reverted', { type: 'success' })
 
-    // Cleanup
     diffOldContent.value = null
     diffOldFilePath.value = null
     vi.restoreAllMocks()
@@ -223,7 +227,7 @@ describe('DiffDrawer', () => {
     diffOldContent.value = 'old content'
     diffOldFilePath.value = '/test/file.txt'
 
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockDialogConfirm.mockResolvedValue(true)
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false } as any)
 
     const wrapper = mountDrawer()
@@ -242,7 +246,7 @@ describe('DiffDrawer', () => {
     diffOldContent.value = 'old content'
     diffOldFilePath.value = '/test/file.txt'
 
-    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    mockDialogConfirm.mockResolvedValue(false)
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
 
     const wrapper = mountDrawer()
@@ -258,7 +262,7 @@ describe('DiffDrawer', () => {
   it('does not revert when file path mismatch', async () => {
     const { diffOldContent, diffOldFilePath } = await import('@/composables/useMarkdownDiff.ts')
     diffOldContent.value = 'old content'
-    diffOldFilePath.value = '/different/file.txt'  // Mismatch with store path
+    diffOldFilePath.value = '/different/file.txt'
 
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
 

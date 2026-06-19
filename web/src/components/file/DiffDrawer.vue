@@ -55,9 +55,11 @@ import { diffOldContent, diffOldFilePath, clearDiffMarkers } from '@/composables
 import type { CharDiff, DiffLine } from '@/composables/useMarkdownDiff.ts'
 import { store } from '@/stores/app.ts'
 import { useToast } from '@/composables/useToast.ts'
+import { useDialog } from '@/composables/useDialog.ts'
 
 const { t } = useI18n()
 const toast = useToast()
+const dialog = useDialog()
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -83,7 +85,7 @@ async function handleRevert() {
   const oldContent = diffOldContent.value
   if (!filePath || filePath !== currentPath || oldContent === null) return
 
-  if (!window.confirm(t('git.diffView.revertConfirm'))) return
+  if (!await dialog.confirm(t('git.diffView.revertConfirm'), { dangerous: true })) return
 
   reverting.value = true
   try {
