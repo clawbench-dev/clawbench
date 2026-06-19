@@ -7,15 +7,26 @@
   >
     <template #header>
       <span class="diff-drawer-title">{{ title }}</span>
-      <button
-        v-if="canRevert"
-        class="diff-revert-btn"
-        :disabled="reverting"
-        @click.stop="handleRevert"
-      >
-        <Undo2 :size="14" />
-        {{ reverting ? '…' : t('git.diffView.revert') }}
-      </button>
+      <div class="diff-drawer-actions">
+        <button
+          v-if="canUndo"
+          class="diff-action-btn"
+          :disabled="busy"
+          @click.stop="handleUndo"
+        >
+          <Undo2 :size="14" />
+          {{ busy ? '…' : t('git.diffView.undo') }}
+        </button>
+        <button
+          v-if="canRedo"
+          class="diff-action-btn"
+          :disabled="busy"
+          @click.stop="handleRedo"
+        >
+          <Redo2 :size="14" />
+          {{ busy ? '…' : t('git.diffView.redo') }}
+        </button>
+      </div>
     </template>
     <div class="diff-drawer-body">
       <!-- Unified diff table view -->
@@ -50,16 +61,14 @@
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
-import { Undo2 } from 'lucide-vue-next'
-import { diffOldContent, diffOldFilePath, clearDiffMarkers } from '@/composables/useMarkdownDiff.ts'
+import { Undo2, Redo2 } from 'lucide-vue-next'
+import { diffOldContent, diffOldFilePath, diffRedoContent, clearDiffMarkers } from '@/composables/useMarkdownDiff.ts'
 import type { CharDiff, DiffLine } from '@/composables/useMarkdownDiff.ts'
 import { store } from '@/stores/app.ts'
 import { useToast } from '@/composables/useToast.ts'
-import { useDialog } from '@/composables/useDialog.ts'
 
 const { t } = useI18n()
 const toast = useToast()
-const dialog = useDialog()
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -70,39 +79,66 @@ const props = defineProps({
 
 const emit = defineEmits(['close'])
 
-const reverting = ref(false)
+const busy = ref(false)
 
 const title = computed(() => {
   const key = { modified: 'modified', deleted: 'deleted', added: 'added' }[props.markerType]
   return key ? t(`git.diffView.${key}`) : 'Diff'
 })
 
-const canRevert = computed(() => diffOldContent.value !== null)
+const canUndo = computed(() => diffOldContent.value !== null)
+const canRedo = computed(() => diffRedoContent.value !== null)
 
-async function handleRevert() {
+async function writeContent(filePath: string, content: string) {
+  const resp = await fetch('/api/file/write', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: filePath, content }),
+  })
+  if (!resp.ok) throw new Error('write failed')
+}
+
+async function handleUndo() {
   const filePath = diffOldFilePath.value
   const currentPath = store.state.currentFile?.path
   const oldContent = diffOldContent.value
   if (!filePath || filePath !== currentPath || oldContent === null) return
 
-  if (!await dialog.confirm(t('git.diffView.revertConfirm'), { dangerous: true })) return
-
-  reverting.value = true
+  busy.value = true
   try {
-    const resp = await fetch('/api/file/write', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: filePath, content: oldContent }),
-    })
-    if (!resp.ok) throw new Error('write failed')
+    // Save current content for redo
+    diffRedoContent.value = store.state.currentFile?.content ?? null
+
+    await writeContent(filePath, oldContent)
     await store.selectFile(filePath, false, false, false)
     clearDiffMarkers()
     emit('close')
-    toast.show(t('git.diffView.revertSuccess'), { type: 'success' })
+    toast.show(t('git.diffView.undoSuccess'), { type: 'success' })
   } catch {
-    toast.show(t('git.diffView.revertFailed'), { type: 'error' })
+    toast.show(t('git.diffView.undoFailed'), { type: 'error' })
   } finally {
-    reverting.value = false
+    busy.value = false
+  }
+}
+
+async function handleRedo() {
+  const filePath = diffOldFilePath.value
+  const currentPath = store.state.currentFile?.path
+  const redoContent = diffRedoContent.value
+  if (!filePath || filePath !== currentPath || redoContent === null) return
+
+  busy.value = true
+  try {
+    await writeContent(filePath, redoContent)
+    diffRedoContent.value = null
+    await store.selectFile(filePath, false, false, false)
+    clearDiffMarkers()
+    emit('close')
+    toast.show(t('git.diffView.redoSuccess'), { type: 'success' })
+  } catch {
+    toast.show(t('git.diffView.redoFailed'), { type: 'error' })
+  } finally {
+    busy.value = false
   }
 }
 
@@ -142,27 +178,32 @@ const segments = computed<Segment[]>(() => {
   color: var(--text-primary);
 }
 
-.diff-revert-btn {
+.diff-drawer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-shrink: 0;
+}
+
+.diff-action-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 12px;
   font-size: 12px;
   font-weight: 500;
-  color: #dc2626;
-  background: rgba(239, 68, 68, 0.08);
-  border: 1px solid rgba(239, 68, 68, 0.2);
-  border-radius: 6px;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
   cursor: pointer;
-  transition: background 0.15s;
+  padding: 0;
+  transition: color 0.15s;
 }
 
-.diff-revert-btn:hover:not(:disabled) {
-  background: rgba(239, 68, 68, 0.15);
+.diff-action-btn:hover:not(:disabled) {
+  color: var(--text-primary);
 }
 
-.diff-revert-btn:disabled {
+.diff-action-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -266,14 +307,6 @@ const segments = computed<Segment[]>(() => {
 [data-theme="dark"] .diff-line-add {
   border-left-color: #4ade80;
   background: rgba(34, 197, 94, 0.22);
-}
-[data-theme="dark"] .diff-revert-btn {
-  color: #f87171;
-  background: rgba(239, 68, 68, 0.12);
-  border-color: rgba(239, 68, 68, 0.25);
-}
-[data-theme="dark"] .diff-revert-btn:hover:not(:disabled) {
-  background: rgba(239, 68, 68, 0.20);
 }
 [data-theme="dark"] .diff-seg-del {
   background: rgba(255, 80, 80, 0.25);

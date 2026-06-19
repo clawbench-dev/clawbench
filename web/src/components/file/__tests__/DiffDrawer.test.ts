@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
@@ -18,13 +18,14 @@ vi.mock('@/components/common/BottomSheet.vue', () => ({
 vi.mock('@/composables/useMarkdownDiff.ts', () => ({
   diffOldContent: { value: null },
   diffOldFilePath: { value: null },
+  diffRedoContent: { value: null },
   clearDiffMarkers: vi.fn(),
 }))
 
 // Mock store
 vi.mock('@/stores/app.ts', () => ({
   store: {
-    state: { currentFile: { path: '/test/file.txt' } },
+    state: { currentFile: { path: '/test/file.txt', content: 'current content' } },
     selectFile: vi.fn().mockResolvedValue(undefined),
   },
 }))
@@ -33,12 +34,6 @@ vi.mock('@/stores/app.ts', () => ({
 const mockToastShow = vi.fn()
 vi.mock('@/composables/useToast.ts', () => ({
   useToast: () => ({ show: mockToastShow, dismiss: vi.fn() }),
-}))
-
-// Mock useDialog
-const mockDialogConfirm = vi.fn().mockResolvedValue(true)
-vi.mock('@/composables/useDialog.ts', () => ({
-  useDialog: () => ({ confirm: mockDialogConfirm, alert: vi.fn(), prompt: vi.fn(), resolve: vi.fn(), state: { value: {} } }),
 }))
 
 const i18n = createI18n({
@@ -52,10 +47,12 @@ const i18n = createI18n({
           deleted: 'Deleted',
           added: 'Added',
           noDiffDetails: 'No diff details',
-          revert: 'Revert',
-          revertConfirm: 'Revert to the previous content?',
-          revertSuccess: 'Reverted',
-          revertFailed: 'Revert failed',
+          undo: 'Undo',
+          redo: 'Redo',
+          undoSuccess: 'Undone',
+          undoFailed: 'Undo failed',
+          redoSuccess: 'Redone',
+          redoFailed: 'Redo failed',
         },
       },
       common: {
@@ -79,6 +76,10 @@ function mountDrawer(props = {}) {
 }
 
 describe('DiffDrawer', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
   it('passes visible prop to BottomSheet', () => {
     const wrapper = mountDrawer({ visible: true })
     expect(wrapper.find('.mock-bottom-sheet').exists()).toBe(true)
@@ -184,82 +185,77 @@ describe('DiffDrawer', () => {
     expect(rows[2].classes()).not.toContain('diff-line-ellipsis')
   })
 
-  it('hides revert button when diffOldContent is null', () => {
+  it('hides Undo button when diffOldContent is null', () => {
     const wrapper = mountDrawer()
-    expect(wrapper.find('.diff-revert-btn').exists()).toBe(false)
+    expect(wrapper.findAll('.diff-action-btn').length).toBe(0)
   })
 
-  it('shows revert button when diffOldContent is set', async () => {
+  it('shows Undo button when diffOldContent is set', async () => {
     const { diffOldContent } = await import('@/composables/useMarkdownDiff.ts')
     diffOldContent.value = 'old content'
     const wrapper = mountDrawer()
-    expect(wrapper.find('.diff-revert-btn').exists()).toBe(true)
-    expect(wrapper.find('.diff-revert-btn').text()).toBe('Revert')
+    const btns = wrapper.findAll('.diff-action-btn')
+    expect(btns.length).toBe(1)
+    expect(btns[0].text()).toBe('Undo')
     diffOldContent.value = null
   })
 
-  it('calls handleRevert on button click and shows success toast', async () => {
+  it('shows Redo button when diffRedoContent is set', async () => {
+    const { diffOldContent, diffRedoContent } = await import('@/composables/useMarkdownDiff.ts')
+    diffOldContent.value = 'old content'
+    diffRedoContent.value = 'redo content'
+    const wrapper = mountDrawer()
+    const btns = wrapper.findAll('.diff-action-btn')
+    expect(btns.length).toBe(2)
+    expect(btns[0].text()).toBe('Undo')
+    expect(btns[1].text()).toBe('Redo')
+    diffOldContent.value = null
+    diffRedoContent.value = null
+  })
+
+  it('calls handleUndo on Undo click and shows success toast', async () => {
     const { diffOldContent, diffOldFilePath } = await import('@/composables/useMarkdownDiff.ts')
     diffOldContent.value = 'old content'
     diffOldFilePath.value = '/test/file.txt'
 
-    mockDialogConfirm.mockResolvedValue(true)
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as any)
 
     const wrapper = mountDrawer()
-    await wrapper.find('.diff-revert-btn').trigger('click')
+    const undoBtn = wrapper.findAll('.diff-action-btn')[0]
+    await undoBtn.trigger('click')
     await nextTick()
 
-    expect(mockDialogConfirm).toHaveBeenCalledWith('Revert to the previous content?', { dangerous: true })
     expect(globalThis.fetch).toHaveBeenCalledWith('/api/file/write', expect.objectContaining({
       method: 'POST',
       body: JSON.stringify({ path: '/test/file.txt', content: 'old content' }),
     }))
-    expect(mockToastShow).toHaveBeenCalledWith('Reverted', { type: 'success' })
+    expect(mockToastShow).toHaveBeenCalledWith('Undone', { type: 'success' })
 
     diffOldContent.value = null
     diffOldFilePath.value = null
     vi.restoreAllMocks()
   })
 
-  it('shows error toast on revert failure', async () => {
+  it('shows error toast on undo failure', async () => {
     const { diffOldContent, diffOldFilePath } = await import('@/composables/useMarkdownDiff.ts')
     diffOldContent.value = 'old content'
     diffOldFilePath.value = '/test/file.txt'
 
-    mockDialogConfirm.mockResolvedValue(true)
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false } as any)
 
     const wrapper = mountDrawer()
-    await wrapper.find('.diff-revert-btn').trigger('click')
+    const undoBtn = wrapper.findAll('.diff-action-btn')[0]
+    await undoBtn.trigger('click')
     await nextTick()
 
-    expect(mockToastShow).toHaveBeenCalledWith('Revert failed', { type: 'error' })
+    expect(mockToastShow).toHaveBeenCalledWith('Undo failed', { type: 'error' })
 
     diffOldContent.value = null
     diffOldFilePath.value = null
     vi.restoreAllMocks()
   })
 
-  it('does not revert when confirm is cancelled', async () => {
-    const { diffOldContent, diffOldFilePath } = await import('@/composables/useMarkdownDiff.ts')
-    diffOldContent.value = 'old content'
-    diffOldFilePath.value = '/test/file.txt'
-
-    mockDialogConfirm.mockResolvedValue(false)
-    const fetchSpy = vi.spyOn(globalThis, 'fetch')
-
-    const wrapper = mountDrawer()
-    await wrapper.find('.diff-revert-btn').trigger('click')
-
-    expect(fetchSpy).not.toHaveBeenCalled()
-
-    diffOldContent.value = null
-    diffOldFilePath.value = null
-    vi.restoreAllMocks()
-  })
-
-  it('does not revert when file path mismatch', async () => {
+  it('does not undo when file path mismatch', async () => {
     const { diffOldContent, diffOldFilePath } = await import('@/composables/useMarkdownDiff.ts')
     diffOldContent.value = 'old content'
     diffOldFilePath.value = '/different/file.txt'
@@ -267,12 +263,39 @@ describe('DiffDrawer', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
 
     const wrapper = mountDrawer()
-    await wrapper.find('.diff-revert-btn').trigger('click')
+    const undoBtn = wrapper.findAll('.diff-action-btn')[0]
+    await undoBtn.trigger('click')
 
     expect(fetchSpy).not.toHaveBeenCalled()
 
     diffOldContent.value = null
     diffOldFilePath.value = null
+    vi.restoreAllMocks()
+  })
+
+  it('calls handleRedo on Redo click and shows success toast', async () => {
+    const { diffOldContent, diffOldFilePath, diffRedoContent } = await import('@/composables/useMarkdownDiff.ts')
+    diffOldContent.value = 'old content'
+    diffOldFilePath.value = '/test/file.txt'
+    diffRedoContent.value = 'redo content'
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as any)
+
+    const wrapper = mountDrawer()
+    // Second button is Redo
+    const redoBtn = wrapper.findAll('.diff-action-btn')[1]
+    await redoBtn.trigger('click')
+    await nextTick()
+
+    expect(globalThis.fetch).toHaveBeenCalledWith('/api/file/write', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ path: '/test/file.txt', content: 'redo content' }),
+    }))
+    expect(mockToastShow).toHaveBeenCalledWith('Redone', { type: 'success' })
+
+    diffOldContent.value = null
+    diffOldFilePath.value = null
+    diffRedoContent.value = null
     vi.restoreAllMocks()
   })
 })
