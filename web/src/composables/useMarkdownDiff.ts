@@ -785,10 +785,8 @@ export const diffDrawerVisible = ref(false)
 export const diffDrawerMarker = shallowRef<DiffMarker | null>(null)
 /** Full file content before changes (for undo) */
 export const diffOldContent = ref<string | null>(null)
-/** File path when diff was computed (for undo/redo path validation) */
+/** File path when diff was computed (for undo path validation) */
 export const diffOldFilePath = ref<string | null>(null)
-/** Content that was undone (for redo). Set after undo, cleared after redo. */
-export const diffRedoContent = ref<string | null>(null)
 
 export function openDiffDrawer(marker: DiffMarker) {
     diffDrawerMarker.value = marker
@@ -804,6 +802,5 @@ export function clearDiffMarkers() {
     diffMarkers.value = []
     diffOldContent.value = null
     diffOldFilePath.value = null
-    diffRedoContent.value = null
     closeDiffDrawer()
 }

@@ -17,15 +17,6 @@
           <Undo2 :size="14" />
           {{ busy ? '…' : t('git.diffView.undo') }}
         </button>
-        <button
-          v-if="canRedo"
-          class="diff-action-btn"
-          :disabled="busy"
-          @click.stop="handleRedo"
-        >
-          <Redo2 :size="14" />
-          {{ busy ? '…' : t('git.diffView.redo') }}
-        </button>
       </div>
     </template>
     <div class="diff-drawer-body">
@@ -61,8 +52,8 @@
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
-import { Undo2, Redo2 } from 'lucide-vue-next'
-import { diffOldContent, diffOldFilePath, diffRedoContent, clearDiffMarkers } from '@/composables/useMarkdownDiff.ts'
+import { Undo2 } from 'lucide-vue-next'
+import { diffOldContent, diffOldFilePath, clearDiffMarkers } from '@/composables/useMarkdownDiff.ts'
 import type { CharDiff, DiffLine } from '@/composables/useMarkdownDiff.ts'
 import { store } from '@/stores/app.ts'
 import { useToast } from '@/composables/useToast.ts'
@@ -87,16 +78,6 @@ const title = computed(() => {
 })
 
 const canUndo = computed(() => diffOldContent.value !== null)
-const canRedo = computed(() => diffRedoContent.value !== null)
-
-async function writeContent(filePath: string, content: string) {
-  const resp = await fetch('/api/file/write', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path: filePath, content }),
-  })
-  if (!resp.ok) throw new Error('write failed')
-}
 
 async function handleUndo() {
   const filePath = diffOldFilePath.value
@@ -106,37 +87,18 @@ async function handleUndo() {
 
   busy.value = true
   try {
-    // Save current content for redo
-    diffRedoContent.value = store.state.currentFile?.content ?? null
-
-    await writeContent(filePath, oldContent)
+    const resp = await fetch('/api/file/write', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: filePath, content: oldContent }),
+    })
+    if (!resp.ok) throw new Error('write failed')
     await store.selectFile(filePath, false, false, false)
     clearDiffMarkers()
     emit('close')
     toast.show(t('git.diffView.undoSuccess'), { type: 'success' })
   } catch {
     toast.show(t('git.diffView.undoFailed'), { type: 'error' })
-  } finally {
-    busy.value = false
-  }
-}
-
-async function handleRedo() {
-  const filePath = diffOldFilePath.value
-  const currentPath = store.state.currentFile?.path
-  const redoContent = diffRedoContent.value
-  if (!filePath || filePath !== currentPath || redoContent === null) return
-
-  busy.value = true
-  try {
-    await writeContent(filePath, redoContent)
-    diffRedoContent.value = null
-    await store.selectFile(filePath, false, false, false)
-    clearDiffMarkers()
-    emit('close')
-    toast.show(t('git.diffView.redoSuccess'), { type: 'success' })
-  } catch {
-    toast.show(t('git.diffView.redoFailed'), { type: 'error' })
   } finally {
     busy.value = false
   }
@@ -236,7 +198,7 @@ const segments = computed<Segment[]>(() => {
 }
 
 .diff-line-del {
-  background: rgba(239, 68, 68, 0.18);
+  background: rgba(239, 68, 68, 0.35);
 }
 
 /* Added lines */
@@ -246,7 +208,7 @@ const segments = computed<Segment[]>(() => {
 
 .diff-line-add {
   border-left: 2px solid #16a34a;
-  background: rgba(34, 197, 94, 0.18);
+  background: rgba(34, 197, 94, 0.35);
 }
 
 /* Context lines */
@@ -299,14 +261,14 @@ const segments = computed<Segment[]>(() => {
   color: #f87171;
 }
 [data-theme="dark"] .diff-line-del {
-  background: rgba(239, 68, 68, 0.22);
+  background: rgba(239, 68, 68, 0.40);
 }
 [data-theme="dark"] .diff-line-add .diff-content {
   color: #4ade80;
 }
 [data-theme="dark"] .diff-line-add {
   border-left-color: #4ade80;
-  background: rgba(34, 197, 94, 0.22);
+  background: rgba(34, 197, 94, 0.40);
 }
 [data-theme="dark"] .diff-seg-del {
   background: rgba(255, 80, 80, 0.25);

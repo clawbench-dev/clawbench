@@ -18,7 +18,6 @@ vi.mock('@/components/common/BottomSheet.vue', () => ({
 vi.mock('@/composables/useMarkdownDiff.ts', () => ({
   diffOldContent: { value: null },
   diffOldFilePath: { value: null },
-  diffRedoContent: { value: null },
   clearDiffMarkers: vi.fn(),
 }))
 
@@ -200,19 +199,6 @@ describe('DiffDrawer', () => {
     diffOldContent.value = null
   })
 
-  it('shows Redo button when diffRedoContent is set', async () => {
-    const { diffOldContent, diffRedoContent } = await import('@/composables/useMarkdownDiff.ts')
-    diffOldContent.value = 'old content'
-    diffRedoContent.value = 'redo content'
-    const wrapper = mountDrawer()
-    const btns = wrapper.findAll('.diff-action-btn')
-    expect(btns.length).toBe(2)
-    expect(btns[0].text()).toBe('Undo')
-    expect(btns[1].text()).toBe('Redo')
-    diffOldContent.value = null
-    diffRedoContent.value = null
-  })
-
   it('calls handleUndo on Undo click and shows success toast', async () => {
     const { diffOldContent, diffOldFilePath } = await import('@/composables/useMarkdownDiff.ts')
     diffOldContent.value = 'old content'
@@ -270,32 +256,6 @@ describe('DiffDrawer', () => {
 
     diffOldContent.value = null
     diffOldFilePath.value = null
-    vi.restoreAllMocks()
-  })
-
-  it('calls handleRedo on Redo click and shows success toast', async () => {
-    const { diffOldContent, diffOldFilePath, diffRedoContent } = await import('@/composables/useMarkdownDiff.ts')
-    diffOldContent.value = 'old content'
-    diffOldFilePath.value = '/test/file.txt'
-    diffRedoContent.value = 'redo content'
-
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as any)
-
-    const wrapper = mountDrawer()
-    // Second button is Redo
-    const redoBtn = wrapper.findAll('.diff-action-btn')[1]
-    await redoBtn.trigger('click')
-    await nextTick()
-
-    expect(globalThis.fetch).toHaveBeenCalledWith('/api/file/write', expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify({ path: '/test/file.txt', content: 'redo content' }),
-    }))
-    expect(mockToastShow).toHaveBeenCalledWith('Redone', { type: 'success' })
-
-    diffOldContent.value = null
-    diffOldFilePath.value = null
-    diffRedoContent.value = null
     vi.restoreAllMocks()
   })
 })
