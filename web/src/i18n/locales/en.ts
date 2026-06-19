@@ -40,6 +40,7 @@ export default {
     projectLoadFailed: 'Project load failed, backend service may not be running properly',
     fileListLoadFailed: 'File list load failed',
     sendFailed: 'Send failed, please retry',
+    swipeAgainToExit: 'Swipe again to exit',
   },
   login: {
     slogan: 'From Terminal to Palm',

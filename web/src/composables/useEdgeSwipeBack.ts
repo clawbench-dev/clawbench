@@ -8,7 +8,8 @@
  * events that start within the edge zones (left 20px and right 20px).
  */
 import { onMounted, onBeforeUnmount } from 'vue'
-import { handleBackNavigation, registerBackHandler, type BackHandler, PRIORITY_PAGE, PRIORITY_OVERLAY } from './useBackHandler'
+import { registerBackHandler, type BackHandler, PRIORITY_PAGE, PRIORITY_OVERLAY } from './useBackHandler'
+import { useAppMode } from './useAppMode'
 
 const EDGE_ZONE = 20 // px from screen edge to detect edge swipes
 const SWIPE_THRESHOLD = 50 // minimum px to trigger back navigation
@@ -29,6 +30,11 @@ export function useEdgeSwipeBack() {
     let touchStartY = 0
     let touchStartTime = 0
     let touchStartEdge: 'left' | 'right' | null = null
+
+    // In Android app mode, the native onBackPressed handles back gestures via
+    // evaluateJavascript — the JS edge-swipe detection would cause double-dispatch.
+    // Only dispatch from JS when running in a browser (web mode).
+    const { isAppMode } = useAppMode()
 
     function onTouchStart(e: TouchEvent) {
         if (e.touches.length !== 1) return
@@ -63,7 +69,14 @@ export function useEdgeSwipeBack() {
             if (Math.abs(deltaY) <= Math.abs(deltaX) * MAX_VERTICAL_RATIO) {
                 // Must be a quick swipe or significant distance
                 if (duration < SWIPE_MAX_DURATION || Math.abs(deltaX) > SWIPE_THRESHOLD * 2) {
-                    handleBackNavigation()
+                    // In web mode, dispatch the clawbench-back-press event so the
+                    // double-back-to-exit logic in App.vue applies uniformly.
+                    // In Android app mode, skip — the native onBackPressed already
+                    // dispatches this event via evaluateJavascript, and dispatching
+                    // from JS too would cause double-dispatch on a single swipe.
+                    if (!isAppMode.value) {
+                        window.dispatchEvent(new CustomEvent('clawbench-back-press'))
+                    }
                 }
             }
         }

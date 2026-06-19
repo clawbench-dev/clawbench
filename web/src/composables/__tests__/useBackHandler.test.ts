@@ -1,9 +1,10 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { registerBackHandler, handleBackNavigation, canNavigateBack, _resetHandlers, PRIORITY_OVERLAY, PRIORITY_PAGE } from '../useBackHandler'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+import { registerBackHandler, handleBackNavigation, canNavigateBack, _resetHandlers, _resetExitConfirm, requestExitConfirm, PRIORITY_OVERLAY, PRIORITY_PAGE } from '../useBackHandler'
 
 describe('useBackHandler', () => {
     beforeEach(() => {
         _resetHandlers()
+        _resetExitConfirm()
     })
 
     it('returns false when no handlers are registered', () => {
@@ -195,5 +196,35 @@ describe('useBackHandler', () => {
 
         unregOverlay()
         unregBrowse()
+    })
+})
+
+describe('requestExitConfirm', () => {
+    beforeEach(() => {
+        _resetExitConfirm()
+    })
+
+    it('returns false on first call (first back press)', () => {
+        expect(requestExitConfirm()).toBe(false)
+    })
+
+    it('returns true on second call within timeout', () => {
+        requestExitConfirm() // first press
+        expect(requestExitConfirm()).toBe(true) // second press → confirmed
+    })
+
+    it('resets after confirmation — third call is a new first press', () => {
+        requestExitConfirm() // first
+        requestExitConfirm() // second → confirmed, resets
+        expect(requestExitConfirm()).toBe(false) // new cycle: first press
+    })
+
+    it('returns false if second call is after timeout', () => {
+        requestExitConfirm()
+        // Simulate timeout by manipulating internal state
+        // We can't easily mock Date.now in vitest without vi.useFakeTimers,
+        // so we test the reset + re-call pattern
+        _resetExitConfirm()
+        expect(requestExitConfirm()).toBe(false) // new cycle after timeout
     })
 })

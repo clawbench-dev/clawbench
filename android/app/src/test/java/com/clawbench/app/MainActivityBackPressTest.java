@@ -94,17 +94,68 @@ public class MainActivityBackPressTest {
         // Set WebView URL to login page
         when(mockWebView.getUrl()).thenReturn(LOGIN_HTML_URL);
 
-        // On login page, onBackPressed calls super.onBackPressed() directly.
-        // Since super.onBackPressed() crashes on Unsafe-allocated activity,
-        // we verify the inverse: that evaluateJavascript is NOT called.
+        // On login page, onBackPressed now shows a toast on first press (double-back-to-exit).
+        // Toast.makeText crashes on Unsafe-allocated activity, so we catch the NPE.
         try {
             activity.onBackPressed();
         } catch (NullPointerException e) {
-            // Expected: super.onBackPressed() fails on Unsafe-allocated activity.
-            // This proves the login-page branch was taken (calls super, not JS).
+            // Expected: Toast.makeText needs a valid Activity context
         }
 
         // Should NOT dispatch JS back-press event
+        verify(mockWebView, never()).evaluateJavascript(contains("clawbench-back-press"), any(ValueCallback.class));
+    }
+
+    @Test
+    public void onBackPressed_loginPage_firstPress_showsToast() throws Exception {
+        when(mockWebView.getUrl()).thenReturn(LOGIN_HTML_URL);
+
+        // First press on login page → shows toast, does NOT exit
+        // Toast.makeText crashes on Unsafe-allocated activity, so we catch the NPE.
+        try {
+            activity.onBackPressed();
+        } catch (NullPointerException e) {
+            // Expected: Toast.makeText needs a valid Activity context
+        }
+
+        // Should NOT dispatch JS back-press event
+        verify(mockWebView, never()).evaluateJavascript(contains("clawbench-back-press"), any(ValueCallback.class));
+    }
+
+    @Test
+    public void onBackPressed_loginPage_secondPress_withinTimeout_exitsApp() throws Exception {
+        when(mockWebView.getUrl()).thenReturn(LOGIN_HTML_URL);
+
+        // Simulate first press
+        setField(activity, "lastBackPressTime", System.currentTimeMillis());
+        // Second press should call super.onBackPressed() → crashes on Unsafe-allocated activity
+        try {
+            activity.onBackPressed();
+        } catch (NullPointerException e) {
+            // Expected: super.onBackPressed() fails on Unsafe-allocated activity
+            assertTrue("NPE should be from super.onBackPressed()",
+                e.getMessage() == null || e.getMessage().contains("getLifecycle") ||
+                e.getStackTrace()[0].getClassName().contains("ComponentActivity"));
+        }
+
+        verify(mockWebView, never()).evaluateJavascript(contains("clawbench-back-press"), any(ValueCallback.class));
+    }
+
+    @Test
+    public void onBackPressed_loginPage_secondPress_afterTimeout_showsToast() throws Exception {
+        when(mockWebView.getUrl()).thenReturn(LOGIN_HTML_URL);
+
+        // Set lastBackPressTime to a value older than BACK_PRESS_TIMEOUT
+        setField(activity, "lastBackPressTime", System.currentTimeMillis() - 3000);
+
+        // This should be treated as a first press (timeout expired) → toast, no exit
+        // Toast.makeText crashes on Unsafe-allocated activity
+        try {
+            activity.onBackPressed();
+        } catch (NullPointerException e) {
+            // Expected: Toast.makeText needs a valid Activity context
+        }
+
         verify(mockWebView, never()).evaluateJavascript(contains("clawbench-back-press"), any(ValueCallback.class));
     }
 
@@ -178,8 +229,8 @@ public class MainActivityBackPressTest {
 
         assertNotNull("Callback should have been captured", capturedCallback[0]);
 
-        // Simulate JS returning "false" (not handled) — callback calls super.onBackPressed()
-        // which crashes on Unsafe-allocated activity. The NPE proves the "not handled" branch.
+        // JS returns "false" = second back press confirmed exit → super.onBackPressed()
+        // which crashes on Unsafe-allocated activity. The NPE proves the exit path.
         try {
             capturedCallback[0].onReceiveValue("false");
             // If no exception, the callback path works correctly

@@ -28,4 +28,5 @@
     <string name="browser_ssl_message">该站点使用了不受信任的证书，连接可能不安全。\n\n仅当您信任该站点时才继续。</string>
     <string name="browser_ssl_positive">信任并继续</string>
     <string name="browser_ssl_negative">取消连接</string>
+    <string name="press_again_to_exit">再按一次退出应用</string>
 </resources>

@@ -83,3 +83,30 @@ export function handleBackNavigation(): boolean {
 export function canNavigateBack(): boolean {
     return handlers.some(h => h.canGoBack())
 }
+
+// --- Exit confirmation (double-back-to-exit) ---
+
+const EXIT_CONFIRM_TIMEOUT = 2000 // ms — second back must be within this window
+let lastExitRequestTime = 0
+
+/**
+ * Request exit confirmation. Returns true if this is the second request
+ * within the timeout window (meaning the user wants to actually exit).
+ *
+ * On the first call, returns false (user should see a "swipe again to exit" tip).
+ * On the second call within EXIT_CONFIRM_TIMEOUT ms, returns true.
+ */
+export function requestExitConfirm(): boolean {
+    const now = Date.now()
+    if (now - lastExitRequestTime < EXIT_CONFIRM_TIMEOUT) {
+        lastExitRequestTime = 0
+        return true // confirmed — proceed to exit
+    }
+    lastExitRequestTime = now
+    return false // first press — show tip, don't exit
+}
+
+/** @internal Reset exit state — for tests only */
+export function _resetExitConfirm() {
+    lastExitRequestTime = 0
+}

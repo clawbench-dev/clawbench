@@ -40,6 +40,7 @@ export default {
     projectLoadFailed: '项目加载失败，后端服务可能未正确启动',
     fileListLoadFailed: '文件列表加载失败',
     sendFailed: '发送失败，请重试',
+    swipeAgainToExit: '再滑一次退出应用',
   },
   login: {
     slogan: '从终端到掌心',

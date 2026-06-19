@@ -1,6 +1,12 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { handleBackNavigation, registerBackHandler, canNavigateBack, PRIORITY_PAGE, PRIORITY_OVERLAY } from '../useBackHandler'
 
+// Mock useAppMode — default to web mode (isAppMode = false)
+const isAppModeRef = { value: false }
+vi.mock('../useAppMode', () => ({
+    useAppMode: () => ({ isAppMode: isAppModeRef }),
+}))
+
 // Mock vue lifecycle hooks
 const mountedCallbacks: (() => void)[] = []
 const unmountedCallbacks: (() => void)[] = []
@@ -81,9 +87,9 @@ describe('useEdgeSwipeBack', () => {
         cleanupFns.length = 0
     })
 
-    it('triggers back navigation on right-edge left swipe', () => {
-        const goBack = vi.fn()
-        cleanupFns.push(registerBackHandler({ id: 'test', canGoBack: () => true, goBack, priority: PRIORITY_PAGE }))
+    it('dispatches clawbench-back-press event on right-edge left swipe', () => {
+        const listener = vi.fn()
+        window.addEventListener('clawbench-back-press', listener)
 
         useEdgeSwipeBack()
         mountedCallbacks.forEach(cb => cb())
@@ -95,12 +101,14 @@ describe('useEdgeSwipeBack', () => {
         dispatchTouch('touchstart', [{ clientX: startX, clientY: 200 }])
         dispatchTouch('touchend', [{ clientX: endX, clientY: 210 }])
 
-        expect(goBack).toHaveBeenCalledTimes(1)
+        expect(listener).toHaveBeenCalledTimes(1)
+
+        window.removeEventListener('clawbench-back-press', listener)
     })
 
-    it('does not trigger back navigation on center swipe', () => {
-        const goBack = vi.fn()
-        cleanupFns.push(registerBackHandler({ id: 'test', canGoBack: () => true, goBack, priority: PRIORITY_PAGE }))
+    it('does not dispatch back-press event on center swipe', () => {
+        const listener = vi.fn()
+        window.addEventListener('clawbench-back-press', listener)
 
         useEdgeSwipeBack()
         mountedCallbacks.forEach(cb => cb())
@@ -108,12 +116,14 @@ describe('useEdgeSwipeBack', () => {
         dispatchTouch('touchstart', [{ clientX: 200, clientY: 200 }])
         dispatchTouch('touchend', [{ clientX: 120, clientY: 210 }])
 
-        expect(goBack).not.toHaveBeenCalled()
+        expect(listener).not.toHaveBeenCalled()
+
+        window.removeEventListener('clawbench-back-press', listener)
     })
 
-    it('does not trigger back navigation on left-edge right swipe', () => {
-        const goBack = vi.fn()
-        cleanupFns.push(registerBackHandler({ id: 'test', canGoBack: () => true, goBack, priority: PRIORITY_PAGE }))
+    it('does not dispatch back-press event on left-edge right swipe', () => {
+        const listener = vi.fn()
+        window.addEventListener('clawbench-back-press', listener)
 
         useEdgeSwipeBack()
         mountedCallbacks.forEach(cb => cb())
@@ -121,12 +131,14 @@ describe('useEdgeSwipeBack', () => {
         dispatchTouch('touchstart', [{ clientX: 10, clientY: 200 }])
         dispatchTouch('touchend', [{ clientX: 90, clientY: 210 }])
 
-        expect(goBack).not.toHaveBeenCalled()
+        expect(listener).not.toHaveBeenCalled()
+
+        window.removeEventListener('clawbench-back-press', listener)
     })
 
-    it('does not trigger back navigation on short right-edge swipe', () => {
-        const goBack = vi.fn()
-        cleanupFns.push(registerBackHandler({ id: 'test', canGoBack: () => true, goBack, priority: PRIORITY_PAGE }))
+    it('does not dispatch back-press event on short right-edge swipe', () => {
+        const listener = vi.fn()
+        window.addEventListener('clawbench-back-press', listener)
 
         useEdgeSwipeBack()
         mountedCallbacks.forEach(cb => cb())
@@ -138,12 +150,14 @@ describe('useEdgeSwipeBack', () => {
         dispatchTouch('touchstart', [{ clientX: startX, clientY: 200 }])
         dispatchTouch('touchend', [{ clientX: endX, clientY: 200 }])
 
-        expect(goBack).not.toHaveBeenCalled()
+        expect(listener).not.toHaveBeenCalled()
+
+        window.removeEventListener('clawbench-back-press', listener)
     })
 
-    it('does not trigger back navigation when no handler can go back', () => {
-        const goBack = vi.fn()
-        cleanupFns.push(registerBackHandler({ id: 'test', canGoBack: () => false, goBack, priority: PRIORITY_PAGE }))
+    it('dispatches back-press event even when no handler can go back', () => {
+        const listener = vi.fn()
+        window.addEventListener('clawbench-back-press', listener)
 
         useEdgeSwipeBack()
         mountedCallbacks.forEach(cb => cb())
@@ -155,7 +169,34 @@ describe('useEdgeSwipeBack', () => {
         dispatchTouch('touchstart', [{ clientX: startX, clientY: 200 }])
         dispatchTouch('touchend', [{ clientX: endX, clientY: 210 }])
 
-        expect(goBack).not.toHaveBeenCalled()
+        // In web mode (default), the event is dispatched
+        expect(listener).toHaveBeenCalledTimes(1)
+
+        window.removeEventListener('clawbench-back-press', listener)
+    })
+
+    it('does not dispatch back-press event in app mode (native handles it)', () => {
+        // Switch to app mode
+        isAppModeRef.value = true
+
+        const listener = vi.fn()
+        window.addEventListener('clawbench-back-press', listener)
+
+        useEdgeSwipeBack()
+        mountedCallbacks.forEach(cb => cb())
+
+        const innerWidth = window.innerWidth
+        const startX = innerWidth - 10
+        const endX = startX - 80
+
+        dispatchTouch('touchstart', [{ clientX: startX, clientY: 200 }])
+        dispatchTouch('touchend', [{ clientX: endX, clientY: 210 }])
+
+        // In app mode, JS should NOT dispatch — native handles it
+        expect(listener).not.toHaveBeenCalled()
+
+        window.removeEventListener('clawbench-back-press', listener)
+        isAppModeRef.value = false // reset
     })
 
     it('removes event listeners on unmount', () => {

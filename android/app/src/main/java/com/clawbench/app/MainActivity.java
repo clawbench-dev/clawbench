@@ -810,6 +810,10 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /** Timestamp of the last unhandled back press (for double-back-to-exit) */
+    private long lastBackPressTime = 0;
+    private static final long BACK_PRESS_TIMEOUT = 2000; // ms
+
     @Override
     public void onBackPressed() {
         // If in fullscreen video mode, exit fullscreen first
@@ -820,10 +824,16 @@ public class MainActivity extends AppCompatActivity {
             }
             return;
         }
-        // If currently on the login page, allow the system back gesture (exit app)
+        // If currently on the login page, apply double-back-to-exit
         String currentUrl = webView.getUrl();
         if (currentUrl != null && currentUrl.equals(LOGIN_HTML_URL)) {
-            super.onBackPressed();
+            if (System.currentTimeMillis() - lastBackPressTime < BACK_PRESS_TIMEOUT) {
+                lastBackPressTime = 0;
+                super.onBackPressed();
+            } else {
+                lastBackPressTime = System.currentTimeMillis();
+                Toast.makeText(this, R.string.press_again_to_exit, Toast.LENGTH_SHORT).show();
+            }
             return;
         }
         // If the WebView is not connected (stuck on black screen or error),
@@ -835,9 +845,9 @@ public class MainActivity extends AppCompatActivity {
         // Delegate to JS: dispatch a clawbench-back-press event.
         // The JS layer checks if any drill-down page can navigate back.
         // If it can, the JS handler calls goBack() and sets __clawbenchBackHandled = true.
-        // If not, we fall back to the default behavior (super.onBackPressed)
-        // so that non-drill-down pages (chat, terminal, etc.) retain the normal
-        // Android back/edge-swipe-to-exit behavior.
+        // If not, the JS layer implements double-back-to-exit:
+        //   - First press: shows toast tip, sets __clawbenchBackHandled = true (prevents exit)
+        //   - Second press within 2s: sets __clawbenchBackHandled = false (allows exit)
         webView.evaluateJavascript(
             "(function() {" +
             "  if (typeof window.__clawbenchBackHandled === 'undefined') window.__clawbenchBackHandled = false;" +
@@ -848,9 +858,7 @@ public class MainActivity extends AppCompatActivity {
             result -> {
                 boolean handled = "true".equals(result);
                 if (!handled) {
-                    // No JS handler consumed the back press — fall back to default behavior.
-                    // This allows the system edge-swipe-to-exit to work on pages
-                    // without drill-down navigation (chat, terminal, etc.).
+                    // JS confirmed exit — second press within timeout
                     super.onBackPressed();
                 }
             }

@@ -283,7 +283,7 @@ import { useFileNavStack } from './composables/useFileNavStack'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
 import { useGlobalEvents } from './composables/useGlobalEvents'
 import { useEdgeSwipeBack, useFeatureBackHandler, PRIORITY_OVERLAY } from './composables/useEdgeSwipeBack'
-import { handleBackNavigation } from './composables/useBackHandler'
+import { handleBackNavigation, requestExitConfirm } from './composables/useBackHandler'
 import { store } from './stores/app.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
 import { initMermaid, reRenderMermaid } from './utils/mermaid.ts'
@@ -575,8 +575,19 @@ useFeatureBackHandler(
 window.addEventListener('clawbench-back-press', () => {
     // If any feature can handle back, do it and prevent the default Android behavior
     const handled = handleBackNavigation()
-    // Set flag for the Android native code to check
-    window.__clawbenchBackHandled = !!handled
+    if (handled) {
+        window.__clawbenchBackHandled = true
+    } else {
+        // No back stack — double-back-to-exit pattern
+        if (requestExitConfirm()) {
+            // Second press within timeout → allow native exit
+            window.__clawbenchBackHandled = false
+        } else {
+            // First press → show tip, prevent exit
+            window.__clawbenchBackHandled = true
+            toast.show(t('toast.swipeAgainToExit'), { type: 'info', duration: 2000 })
+        }
+    }
 })
 window.addEventListener('clawbench-foreground', handleForeground)
 const terminalRequestedCwd = ref(null)
