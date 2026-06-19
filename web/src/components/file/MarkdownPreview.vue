@@ -4,22 +4,17 @@
     <div v-if="viewMode === 'rendered'" class="markdown-body" ref="bodyRef" :data-file-path="file?.path || ''" @click="handleClick">
       <div class="markdown-content" v-html="renderedHtml" />
       <!-- Diff markers: declarative v-for, positioned absolutely inside .markdown-body -->
-      <div
+      <button
         v-for="pm in positionedMarkers"
         :key="pm.id"
-        class="diff-marker-overlay"
+        class="diff-marker diff-marker-inline"
         :class="`diff-marker-${pm.type}`"
         :style="{ top: pm.top + 'px', height: pm.height + 'px' }"
         :data-marker-id="pm.id"
-      >
-        <button
-          class="diff-marker diff-marker-btn"
-          :data-marker-id="pm.id"
-          role="button"
-          tabindex="0"
-          :aria-label="pm.ariaLabel"
-        >{{ pm.label }}</button>
-      </div>
+        role="button"
+        tabindex="0"
+        :aria-label="pm.ariaLabel"
+      >{{ pm.label }}</button>
     </div>
 
     <!-- Raw markdown -->
@@ -120,7 +115,7 @@ const { annotateFilePaths, verifyFilePaths, resolveRelativePath, openFilePath } 
 
 function handleClick(event) {
     // Check for diff marker click first
-    if (handleDiffMarkerClick(event, '.diff-marker-overlay')) return
+    if (handleDiffMarkerClick(event, '.diff-marker-inline')) return
 
     // Check for commit-hash click
     const commitEl = event.target.closest('.chat-commit-hash, .chat-commit-open-btn')
@@ -340,26 +335,15 @@ defineExpose({
 </style>
 
 <style>
-/* ─── Diff marker overlays (structural only — visual styles in diff-marker.css) ─── */
+/* ─── Diff markers (same style as CodePreview inline markers) ─── */
 
-/* Overlay: position:absolute relative to .markdown-body, right-aligned.
-   Scrolls with content naturally (no JS scroll handler needed). */
-.diff-marker-overlay {
-  position: absolute;
-  right: 0;
-  width: 20px;
-  min-height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  pointer-events: none;
-  z-index: 2;
-}
-
-/* Clickable button inside overlay — structural sizing only */
-.diff-marker-btn {
-  width: 100%;
-  height: 100%;
-  pointer-events: auto;
+/* Override height:100% from CodePreview's global .diff-marker-inline —
+   Markdown markers use inline :style for height from DOM measurement */
+.markdown-body .diff-marker-inline {
+    position: absolute;
+    right: 0;
+    width: 20px;
+    height: auto;
+    z-index: 2;
 }
 </style>
