@@ -585,7 +585,7 @@ window.addEventListener('clawbench-back-press', () => {
         } else {
             // First press → show tip, prevent exit
             window.__clawbenchBackHandled = true
-            toast.show(t('toast.swipeAgainToExit'), { type: 'info', duration: 2000 })
+            toast.show(t('toast.swipeAgainToExit'), { icon: '👋', type: 'info', duration: 2000 })
         }
     }
 })
