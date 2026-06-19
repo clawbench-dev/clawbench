@@ -22,6 +22,7 @@ import {
   offscreenExtractBlocks,
   diffMarkers,
   diffOldContent,
+  diffOldFilePath,
   clearDiffMarkers,
   extractBlocks,
   computeCodeDiffMarkers,
@@ -206,6 +207,7 @@ async function refreshMarkdownFile(
     if (diffResult && diffResult.hasChanges) {
         diffMarkers.value = diffResult.markers
         diffOldContent.value = oldContent
+        diffOldFilePath.value = currentFilePath
     } else {
         clearDiffMarkers()
     }
@@ -327,6 +329,7 @@ export async function refreshCurrentFile(options: {
   if (codeMarkers && codeMarkers.length > 0) {
       diffMarkers.value = codeMarkers
       diffOldContent.value = oldContent
+      diffOldFilePath.value = currentFilePath
   } else {
       clearDiffMarkers()
   }

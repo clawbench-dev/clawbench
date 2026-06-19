@@ -23,6 +23,8 @@ export interface DiffLine {
     content: string
     oldLine: number | null
     newLine: number | null
+    /** True for collapsed-gap ellipsis lines (not real file content) */
+    isEllipsis?: boolean
 }
 
 interface Hunk {

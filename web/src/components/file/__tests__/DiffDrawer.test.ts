@@ -17,6 +17,7 @@ vi.mock('@/components/common/BottomSheet.vue', () => ({
 // Mock useMarkdownDiff exports
 vi.mock('@/composables/useMarkdownDiff.ts', () => ({
   diffOldContent: { value: null },
+  diffOldFilePath: { value: null },
   clearDiffMarkers: vi.fn(),
 }))
 
@@ -24,8 +25,14 @@ vi.mock('@/composables/useMarkdownDiff.ts', () => ({
 vi.mock('@/stores/app.ts', () => ({
   store: {
     state: { currentFile: { path: '/test/file.txt' } },
-    selectFile: vi.fn(),
+    selectFile: vi.fn().mockResolvedValue(undefined),
   },
+}))
+
+// Mock useToast
+const mockToastShow = vi.fn()
+vi.mock('@/composables/useToast.ts', () => ({
+  useToast: () => ({ show: mockToastShow, dismiss: vi.fn() }),
 }))
 
 const i18n = createI18n({
@@ -157,6 +164,20 @@ describe('DiffDrawer', () => {
     expect(wrapper.find('.diff-inline-view').exists()).toBe(false)
   })
 
+  it('applies ellipsis class via isEllipsis flag', () => {
+    const wrapper = mountDrawer({
+      diffLines: [
+        { type: 'ctx', oldLine: 1, newLine: 1, content: 'hello' },
+        { type: 'ctx', content: '⋯', oldLine: null, newLine: null, isEllipsis: true },
+        { type: 'add', oldLine: null, newLine: 2, content: 'world' },
+      ],
+    })
+    const rows = wrapper.findAll('.diff-line')
+    expect(rows[0].classes()).not.toContain('diff-line-ellipsis')
+    expect(rows[1].classes()).toContain('diff-line-ellipsis')
+    expect(rows[2].classes()).not.toContain('diff-line-ellipsis')
+  })
+
   it('hides revert button when diffOldContent is null', () => {
     const wrapper = mountDrawer()
     expect(wrapper.find('.diff-revert-btn').exists()).toBe(false)
@@ -169,5 +190,85 @@ describe('DiffDrawer', () => {
     expect(wrapper.find('.diff-revert-btn').exists()).toBe(true)
     expect(wrapper.find('.diff-revert-btn').text()).toBe('Revert')
     diffOldContent.value = null
+  })
+
+  it('calls handleRevert on button click and shows success toast', async () => {
+    const { diffOldContent, diffOldFilePath } = await import('@/composables/useMarkdownDiff.ts')
+    diffOldContent.value = 'old content'
+    diffOldFilePath.value = '/test/file.txt'
+
+    // Mock confirm to return true
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    // Mock fetch to return success
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true } as any)
+
+    const wrapper = mountDrawer()
+    await wrapper.find('.diff-revert-btn').trigger('click')
+    await nextTick()
+
+    expect(globalThis.fetch).toHaveBeenCalledWith('/api/file/write', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ path: '/test/file.txt', content: 'old content' }),
+    }))
+    expect(mockToastShow).toHaveBeenCalledWith('Reverted', { type: 'success' })
+
+    // Cleanup
+    diffOldContent.value = null
+    diffOldFilePath.value = null
+    vi.restoreAllMocks()
+  })
+
+  it('shows error toast on revert failure', async () => {
+    const { diffOldContent, diffOldFilePath } = await import('@/composables/useMarkdownDiff.ts')
+    diffOldContent.value = 'old content'
+    diffOldFilePath.value = '/test/file.txt'
+
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false } as any)
+
+    const wrapper = mountDrawer()
+    await wrapper.find('.diff-revert-btn').trigger('click')
+    await nextTick()
+
+    expect(mockToastShow).toHaveBeenCalledWith('Revert failed', { type: 'error' })
+
+    diffOldContent.value = null
+    diffOldFilePath.value = null
+    vi.restoreAllMocks()
+  })
+
+  it('does not revert when confirm is cancelled', async () => {
+    const { diffOldContent, diffOldFilePath } = await import('@/composables/useMarkdownDiff.ts')
+    diffOldContent.value = 'old content'
+    diffOldFilePath.value = '/test/file.txt'
+
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+
+    const wrapper = mountDrawer()
+    await wrapper.find('.diff-revert-btn').trigger('click')
+
+    expect(fetchSpy).not.toHaveBeenCalled()
+
+    diffOldContent.value = null
+    diffOldFilePath.value = null
+    vi.restoreAllMocks()
+  })
+
+  it('does not revert when file path mismatch', async () => {
+    const { diffOldContent, diffOldFilePath } = await import('@/composables/useMarkdownDiff.ts')
+    diffOldContent.value = 'old content'
+    diffOldFilePath.value = '/different/file.txt'  // Mismatch with store path
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+
+    const wrapper = mountDrawer()
+    await wrapper.find('.diff-revert-btn').trigger('click')
+
+    expect(fetchSpy).not.toHaveBeenCalled()
+
+    diffOldContent.value = null
+    diffOldFilePath.value = null
+    vi.restoreAllMocks()
   })
 })

@@ -56,8 +56,6 @@ export interface DiffMarker {
     charDiff: CharDiff | null
     /** Unified diff lines for drawer rendering */
     diffLines?: DiffLine[]
-    /** Pre-change file content (for revert) */
-    oldContent?: string
     /** aria-label for accessibility */
     ariaLabel: string
 }
@@ -494,12 +492,10 @@ export function contentToDiffLinesWithCtx(
     const centerSet = new Set(centerNewLines)
 
     // Mark each line as "center" (changed) or not
-    const isCenter = allLines.map(dl => {
+    const isCenter = allLines.map((dl, idx) => {
         if (dl.type !== 'ctx' && dl.newLine !== null) return centerSet.has(dl.newLine)
         // For deleted lines, check if they are adjacent to any center new line
         if (dl.type === 'del' && dl.oldLine !== null) {
-            // Approximate: treat del lines as center if they appear between center lines
-            const idx = allLines.indexOf(dl)
             const prev = idx > 0 ? allLines[idx - 1] : null
             const next = idx < allLines.length - 1 ? allLines[idx + 1] : null
             if (prev && prev.newLine !== null && centerSet.has(prev.newLine)) return true
@@ -524,14 +520,14 @@ export function contentToDiffLinesWithCtx(
 
     // Leading ellipsis if we're not starting from the beginning
     if (sortedKeep.length > 0 && sortedKeep[0] > 0) {
-        result.push({ type: 'ctx', content: '⋯', oldLine: null, newLine: null })
+        result.push({ type: 'ctx', content: '⋯', oldLine: null, newLine: null, isEllipsis: true })
     }
 
     let lastKept = -1
     for (const i of sortedKeep) {
         if (lastKept >= 0 && i > lastKept + 1) {
             // Insert ellipsis separator
-            result.push({ type: 'ctx', content: '⋯', oldLine: null, newLine: null })
+            result.push({ type: 'ctx', content: '⋯', oldLine: null, newLine: null, isEllipsis: true })
         }
         result.push(allLines[i])
         lastKept = i
@@ -539,7 +535,7 @@ export function contentToDiffLinesWithCtx(
 
     // Trailing ellipsis if we're not ending at the last line
     if (sortedKeep.length > 0 && sortedKeep[sortedKeep.length - 1] < allLines.length - 1) {
-        result.push({ type: 'ctx', content: '⋯', oldLine: null, newLine: null })
+        result.push({ type: 'ctx', content: '⋯', oldLine: null, newLine: null, isEllipsis: true })
     }
 
     return result
@@ -644,7 +640,6 @@ function makeCodeMarker(
         lineNumbers: newLines,
         charDiff,
         diffLines: contentToDiffLinesWithCtx(oldContent, newContent, newLines),
-        oldContent,
         ariaLabel: newLines.length === 1
             ? `${type} line ${startLine}`
             : `${type} lines ${startLine}-${endLine}`,
@@ -742,6 +737,8 @@ export const diffDrawerVisible = ref(false)
 export const diffDrawerMarker = shallowRef<DiffMarker | null>(null)
 /** Full file content before changes (for revert) */
 export const diffOldContent = ref<string | null>(null)
+/** File path when diff was computed (for revert path validation) */
+export const diffOldFilePath = ref<string | null>(null)
 
 export function openDiffDrawer(marker: DiffMarker) {
     diffDrawerMarker.value = marker
@@ -756,5 +753,6 @@ export function closeDiffDrawer() {
 export function clearDiffMarkers() {
     diffMarkers.value = []
     diffOldContent.value = null
+    diffOldFilePath.value = null
     closeDiffDrawer()
 }

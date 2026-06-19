@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -157,6 +158,91 @@ func TestServeFileRename(t *testing.T) {
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(ServeFileRename, req)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+}
+
+func TestServeFileWrite(t *testing.T) {
+	t.Run("WriteFullContent_Succeeds", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		createTestFile(t, env.ProjectDir, "write.txt", "old content")
+
+		req := newRequest(t, http.MethodPost, "/api/file/write", map[string]interface{}{
+			"path":    "write.txt",
+			"content": "new content",
+		})
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ServeFileWrite, req)
+		assertOK(t, w)
+
+		data, err := os.ReadFile(filepath.Join(env.ProjectDir, "write.txt"))
+		assert.NoError(t, err)
+		assert.Equal(t, "new content", string(data))
+	})
+
+	t.Run("AtomicWrite_NoTempFileLeft", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		createTestFile(t, env.ProjectDir, "atomic.txt", "before")
+
+		req := newRequest(t, http.MethodPost, "/api/file/write", map[string]interface{}{
+			"path":    "atomic.txt",
+			"content": "after",
+		})
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ServeFileWrite, req)
+		assertOK(t, w)
+
+		// No temp files left behind
+		entries, err := os.ReadDir(env.ProjectDir)
+		assert.NoError(t, err)
+		for _, e := range entries {
+			assert.False(t, strings.HasPrefix(e.Name(), ".clawbench-write-"), "temp file left behind: %s", e.Name())
+		}
+	})
+
+	t.Run("MissingPath_Returns400", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := newRequest(t, http.MethodPost, "/api/file/write", map[string]interface{}{
+			"content": "data",
+		})
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ServeFileWrite, req)
+		assertStatus(t, w, http.StatusBadRequest)
+	})
+
+	t.Run("PathTraversal_Returns403", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := newRequest(t, http.MethodPost, "/api/file/write", map[string]interface{}{
+			"path":    "../../etc/passwd",
+			"content": "hacked",
+		})
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ServeFileWrite, req)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+
+	t.Run("NoProjectCookie_Returns403", func(t *testing.T) {
+		_, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := newRequest(t, http.MethodPost, "/api/file/write", map[string]interface{}{
+			"path":    "file.txt",
+			"content": "data",
+		})
+
+		w := callHandler(ServeFileWrite, req)
 		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
 }

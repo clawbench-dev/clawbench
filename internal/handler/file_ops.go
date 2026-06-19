@@ -60,6 +60,7 @@ func ServeFileRename(w http.ResponseWriter, r *http.Request) {
 
 // ServeFileWrite handles writing full file content (used for revert/restore).
 func ServeFileWrite(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize())
 	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
@@ -81,8 +82,28 @@ func ServeFileWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := os.WriteFile(absPath, []byte(req.Content), 0o644); err != nil {
+	// Atomic write: write to temp file then rename to prevent corruption on crash
+	dir := filepath.Dir(absPath)
+	tmpFile, err := os.CreateTemp(dir, ".clawbench-write-*")
+	if err != nil {
+		model.WriteError(w, model.Internal(fmt.Errorf("cannot create temp file")))
+		return
+	}
+	tmpPath := tmpFile.Name()
+	if _, err := tmpFile.WriteString(req.Content); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
 		model.WriteError(w, model.Internal(fmt.Errorf("cannot write file")))
+		return
+	}
+	if err := tmpFile.Close(); err != nil {
+		os.Remove(tmpPath)
+		model.WriteError(w, model.Internal(fmt.Errorf("cannot close temp file")))
+		return
+	}
+	if err := os.Rename(tmpPath, absPath); err != nil {
+		os.Remove(tmpPath)
+		model.WriteError(w, model.Internal(fmt.Errorf("cannot rename temp file")))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

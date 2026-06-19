@@ -24,7 +24,7 @@
             v-for="(dl, i) in diffLines"
             :key="i"
             class="diff-line"
-            :class="[`diff-line-${dl.type}`, { 'diff-line-ellipsis': dl.content === '⋯' }]"
+            :class="[`diff-line-${dl.type}`, { 'diff-line-ellipsis': dl.isEllipsis }]"
           >
             <td class="diff-content">{{ dl.content }}</td>
           </tr>
@@ -49,11 +49,13 @@
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
-import { diffOldContent, clearDiffMarkers } from '@/composables/useMarkdownDiff.ts'
+import { diffOldContent, diffOldFilePath, clearDiffMarkers } from '@/composables/useMarkdownDiff.ts'
 import type { CharDiff, DiffLine } from '@/composables/useMarkdownDiff.ts'
 import { store } from '@/stores/app.ts'
+import { useToast } from '@/composables/useToast.ts'
 
 const { t } = useI18n()
+const toast = useToast()
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -74,9 +76,12 @@ const title = computed(() => {
 const canRevert = computed(() => diffOldContent.value !== null)
 
 async function handleRevert() {
-  const filePath = store.state.currentFile?.path
+  const filePath = diffOldFilePath.value
+  const currentPath = store.state.currentFile?.path
   const oldContent = diffOldContent.value
-  if (!filePath || oldContent === null) return
+  if (!filePath || filePath !== currentPath || oldContent === null) return
+
+  if (!window.confirm(t('git.diffView.revertConfirm'))) return
 
   reverting.value = true
   try {
@@ -86,12 +91,12 @@ async function handleRevert() {
       body: JSON.stringify({ path: filePath, content: oldContent }),
     })
     if (!resp.ok) throw new Error('write failed')
-    // Refresh the file view
     await store.selectFile(filePath, false, false, false)
     clearDiffMarkers()
     emit('close')
+    toast.show(t('git.diffView.revertSuccess'), { type: 'success' })
   } catch {
-    // Silently fail — the button state resets below
+    toast.show(t('git.diffView.revertFailed'), { type: 'error' })
   } finally {
     reverting.value = false
   }
