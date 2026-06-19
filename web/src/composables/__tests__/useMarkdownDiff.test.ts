@@ -184,7 +184,9 @@ describe('computeMarkdownDiff', () => {
     expect(result.markers[0].type).toBe('deleted')
   })
 
-  it('uses innerHTML for diff (detects formatting changes)', () => {
+  it('skips marker when innerHTML changes but textContent is identical', () => {
+    // Formatting-only changes (e.g. <strong> removed) produce no visible
+    // content change, so no marker should appear.
     const oldBlocks = [
       { tag: 'P', textContent: 'bold text', innerHTML: '<strong>bold</strong> text', selector: ':scope' },
     ]
@@ -192,8 +194,8 @@ describe('computeMarkdownDiff', () => {
       { tag: 'P', textContent: 'bold text', innerHTML: 'bold text', selector: ':scope' },
     ]
     const result = computeMarkdownDiff(oldBlocks, newBlocks)
-    expect(result.hasChanges).toBe(true)
-    expect(result.markers[0].type).toBe('modified')
+    expect(result.hasChanges).toBe(false)
+    expect(result.markers).toHaveLength(0)
   })
 
   it('uses textContent for PRE block diff', () => {

@@ -297,10 +297,15 @@ export function computeMarkdownDiff(
                 const addedCount = nextChange.count
                 const pairCount = Math.min(removedCount, addedCount)
 
-                // Paired blocks: modified
+                // Paired blocks: modified (only if content actually changed)
                 for (let i = 0; i < pairCount; i++) {
                     const oldBlock = oldBlocks[oldIdx + i]
                     const newBlock = newBlocks[newIdx + i]
+                    if (oldBlock.textContent === newBlock.textContent) {
+                        // innerHTML changed (e.g. link resolution, auto-numbering)
+                        // but actual text is the same — not a real modification
+                        continue
+                    }
                     const charDiff = computeCharDiff(oldBlock.textContent, newBlock.textContent)
                     markers.push(toMarker('modified', newBlock, newIdx + i, charDiff, oldBlock.textContent))
                 }
