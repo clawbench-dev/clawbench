@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
@@ -59,25 +58,21 @@ func ServeFileRename(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// ServeFileEditLine handles single-line editing operations.
-func ServeFileEditLine(w http.ResponseWriter, r *http.Request) {
+// ServeFileWrite handles writing full file content (used for revert/restore).
+func ServeFileWrite(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
 
 	var req struct {
-		Path        string `json:"path"`
-		LineNum     int    `json:"lineNum"`
-		Content     string `json:"content,omitempty"`
-		Delete      bool   `json:"delete,omitempty"`
-		InsertAbove bool   `json:"insertAbove,omitempty"`
-		InsertBelow bool   `json:"insertBelow,omitempty"`
+		Path    string `json:"path"`
+		Content string `json:"content"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.Path == "" || req.LineNum < 1 {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+	if req.Path == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "MissingPath")
 		return
 	}
 
@@ -86,26 +81,7 @@ func ServeFileEditLine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := os.ReadFile(absPath)
-	if err != nil {
-		model.WriteError(w, model.Internal(fmt.Errorf("cannot read file")))
-		return
-	}
-	lines := strings.Split(string(data), "\n")
-	if req.LineNum > len(lines) {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "LineNumberOutOfRange")
-		return
-	}
-	if req.Delete {
-		lines = append(lines[:req.LineNum-1], lines[req.LineNum:]...)
-	} else if req.InsertAbove {
-		lines = append(lines[:req.LineNum-1], append([]string{""}, lines[req.LineNum-1:]...)...)
-	} else if req.InsertBelow {
-		lines = append(lines[:req.LineNum], append([]string{""}, lines[req.LineNum:]...)...)
-	} else {
-		lines[req.LineNum-1] = req.Content
-	}
-	if err := os.WriteFile(absPath, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+	if err := os.WriteFile(absPath, []byte(req.Content), 0o644); err != nil {
 		model.WriteError(w, model.Internal(fmt.Errorf("cannot write file")))
 		return
 	}

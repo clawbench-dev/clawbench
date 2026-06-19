@@ -278,6 +278,7 @@ describe('CodePreview', () => {
     const mockLineEl = {
       getBoundingClientRect: () => ({ top: -100 }),
       classList: { add: vi.fn(), remove: vi.fn() },
+      addEventListener: vi.fn(),
     }
     const origQSA = preEl.querySelectorAll
     preEl.querySelectorAll = vi.fn().mockImplementation((selector) => {

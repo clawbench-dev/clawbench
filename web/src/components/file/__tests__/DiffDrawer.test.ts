@@ -4,6 +4,30 @@ import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 import DiffDrawer from '../DiffDrawer.vue'
 
+// Mock BottomSheet (teleported, complex to test inline)
+vi.mock('@/components/common/BottomSheet.vue', () => ({
+  default: {
+    name: 'BottomSheet',
+    template: '<div class="mock-bottom-sheet" v-if="open"><slot name="header" /><slot /></div>',
+    props: ['open', 'title', 'auto', 'transparentOverlay'],
+    emits: ['close'],
+  },
+}))
+
+// Mock useMarkdownDiff exports
+vi.mock('@/composables/useMarkdownDiff.ts', () => ({
+  diffOldContent: { value: null },
+  clearDiffMarkers: vi.fn(),
+}))
+
+// Mock store
+vi.mock('@/stores/app.ts', () => ({
+  store: {
+    state: { currentFile: { path: '/test/file.txt' } },
+    selectFile: vi.fn(),
+  },
+}))
+
 const i18n = createI18n({
   legacy: false,
   locale: 'en',
@@ -15,6 +39,10 @@ const i18n = createI18n({
           deleted: 'Deleted',
           added: 'Added',
           noDiffDetails: 'No diff details',
+          revert: 'Revert',
+          revertConfirm: 'Revert to the previous content?',
+          revertSuccess: 'Reverted',
+          revertFailed: 'Revert failed',
         },
       },
       common: {
@@ -38,14 +66,15 @@ function mountDrawer(props = {}) {
 }
 
 describe('DiffDrawer', () => {
-  it('renders when visible is true', () => {
+  it('passes visible prop to BottomSheet', () => {
     const wrapper = mountDrawer({ visible: true })
-    expect(wrapper.find('.diff-drawer').exists()).toBe(true)
+    expect(wrapper.find('.mock-bottom-sheet').exists()).toBe(true)
   })
 
-  it('does not render when visible is false', () => {
-    const wrapper = mountDrawer({ visible: false })
-    expect(wrapper.find('.diff-drawer').exists()).toBe(false)
+  it('passes transparentOverlay to BottomSheet', () => {
+    const wrapper = mountDrawer({ visible: true })
+    const bs = wrapper.findComponent({ name: 'BottomSheet' })
+    expect(bs.props('transparentOverlay')).toBe(true)
   })
 
   it('shows title based on markerType', () => {
@@ -61,12 +90,6 @@ describe('DiffDrawer', () => {
   it('shows added title for added markerType', () => {
     const wrapper = mountDrawer({ markerType: 'added' })
     expect(wrapper.find('.diff-drawer-title').text()).toBe('Added')
-  })
-
-  it('emits close when close button is clicked', async () => {
-    const wrapper = mountDrawer()
-    await wrapper.find('.diff-drawer-close').trigger('click')
-    expect(wrapper.emitted('close')).toBeTruthy()
   })
 
   it('shows empty message when no diff data', () => {
@@ -88,6 +111,16 @@ describe('DiffDrawer', () => {
     expect(rows[0].classes()).toContain('diff-line-ctx')
     expect(rows[1].classes()).toContain('diff-line-del')
     expect(rows[2].classes()).toContain('diff-line-add')
+  })
+
+  it('does not render line numbers or prefix in diff table', () => {
+    const wrapper = mountDrawer({
+      diffLines: [
+        { type: 'del', oldLine: 2, newLine: null, content: 'world' },
+      ],
+    })
+    expect(wrapper.find('.diff-linum').exists()).toBe(false)
+    expect(wrapper.find('.diff-prefix').exists()).toBe(false)
   })
 
   it('renders inline char diff when charDiff provided without diffLines', () => {
@@ -122,5 +155,19 @@ describe('DiffDrawer', () => {
     })
     expect(wrapper.find('.diff-table').exists()).toBe(true)
     expect(wrapper.find('.diff-inline-view').exists()).toBe(false)
+  })
+
+  it('hides revert button when diffOldContent is null', () => {
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.diff-revert-btn').exists()).toBe(false)
+  })
+
+  it('shows revert button when diffOldContent is set', async () => {
+    const { diffOldContent } = await import('@/composables/useMarkdownDiff.ts')
+    diffOldContent.value = 'old content'
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.diff-revert-btn').exists()).toBe(true)
+    expect(wrapper.find('.diff-revert-btn').text()).toBe('Revert')
+    diffOldContent.value = null
   })
 })

@@ -1,51 +1,57 @@
 <template>
-  <Transition name="drawer">
-    <div v-if="visible" class="diff-drawer" @keydown.escape="emit('close')">
-      <div class="diff-drawer-header">
-        <span class="diff-drawer-title">{{ title }}</span>
-        <button class="diff-drawer-close" @click="emit('close')" :aria-label="t('common.close')">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
-      </div>
-      <div class="diff-drawer-body">
-        <!-- Unified diff table view -->
-        <template v-if="diffLines && diffLines.length > 0">
-          <table class="diff-table">
-            <tr
-              v-for="(dl, i) in diffLines"
-              :key="i"
-              class="diff-line"
-              :class="`diff-line-${dl.type}`"
-            >
-              <td class="diff-linum diff-linum-old">{{ dl.oldLine ?? '' }}</td>
-              <td class="diff-linum diff-linum-new">{{ dl.newLine ?? '' }}</td>
-              <td class="diff-prefix">{{ dl.type === 'add' ? '+' : dl.type === 'del' ? '-' : ' ' }}</td>
-              <td class="diff-content">{{ dl.content }}</td>
-            </tr>
-          </table>
-        </template>
-        <!-- Fallback: inline char-level diff (legacy) -->
-        <template v-else-if="charDiff">
-          <div class="diff-inline-view">
-            <span
-              v-for="(seg, i) in segments"
-              :key="i"
-              :class="seg.cls"
-            >{{ seg.text }}</span>
-          </div>
-        </template>
-        <div v-else class="diff-drawer-empty">{{ t('git.diffView.noDiffDetails') }}</div>
-      </div>
+  <BottomSheet
+    :open="visible"
+    :auto="true"
+    :transparent-overlay="true"
+    @close="emit('close')"
+  >
+    <template #header>
+      <span class="diff-drawer-title">{{ title }}</span>
+      <button
+        v-if="canRevert"
+        class="diff-revert-btn"
+        :disabled="reverting"
+        @click.stop="handleRevert"
+      >
+        {{ reverting ? '…' : t('git.diffView.revert') }}
+      </button>
+    </template>
+    <div class="diff-drawer-body">
+      <!-- Unified diff table view -->
+      <template v-if="diffLines && diffLines.length > 0">
+        <table class="diff-table">
+          <tr
+            v-for="(dl, i) in diffLines"
+            :key="i"
+            class="diff-line"
+            :class="[`diff-line-${dl.type}`, { 'diff-line-ellipsis': dl.content === '⋯' }]"
+          >
+            <td class="diff-content">{{ dl.content }}</td>
+          </tr>
+        </table>
+      </template>
+      <!-- Fallback: inline char-level diff (legacy) -->
+      <template v-else-if="charDiff">
+        <div class="diff-inline-view">
+          <span
+            v-for="(seg, i) in segments"
+            :key="i"
+            :class="seg.cls"
+          >{{ seg.text }}</span>
+        </div>
+      </template>
+      <div v-else class="diff-drawer-empty">{{ t('git.diffView.noDiffDetails') }}</div>
     </div>
-  </Transition>
+  </BottomSheet>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import BottomSheet from '@/components/common/BottomSheet.vue'
+import { diffOldContent, clearDiffMarkers } from '@/composables/useMarkdownDiff.ts'
 import type { CharDiff, DiffLine } from '@/composables/useMarkdownDiff.ts'
+import { store } from '@/stores/app.ts'
 
 const { t } = useI18n()
 
@@ -58,10 +64,38 @@ const props = defineProps({
 
 const emit = defineEmits(['close'])
 
+const reverting = ref(false)
+
 const title = computed(() => {
   const key = { modified: 'modified', deleted: 'deleted', added: 'added' }[props.markerType]
   return key ? t(`git.diffView.${key}`) : 'Diff'
 })
+
+const canRevert = computed(() => diffOldContent.value !== null)
+
+async function handleRevert() {
+  const filePath = store.state.currentFile?.path
+  const oldContent = diffOldContent.value
+  if (!filePath || oldContent === null) return
+
+  reverting.value = true
+  try {
+    const resp = await fetch('/api/file/write', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: filePath, content: oldContent }),
+    })
+    if (!resp.ok) throw new Error('write failed')
+    // Refresh the file view
+    await store.selectFile(filePath, false, false, false)
+    clearDiffMarkers()
+    emit('close')
+  } catch {
+    // Silently fail — the button state resets below
+  } finally {
+    reverting.value = false
+  }
+}
 
 interface Segment {
   text: string
@@ -85,57 +119,40 @@ const segments = computed<Segment[]>(() => {
 </script>
 
 <style scoped>
-.diff-drawer {
-  border-top: 1px solid var(--border-color);
-  background: var(--bg-secondary);
-  max-height: 300px;
-  display: flex;
-  flex-direction: column;
-  flex-shrink: 0;
-}
-
-.diff-drawer-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border-color);
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.diff-drawer-title {
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.diff-drawer-close {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  border-radius: 4px;
-  transition: background 0.15s;
-}
-
-.diff-drawer-close:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
 .diff-drawer-body {
-  flex: 1;
   overflow: auto;
-  padding: 0;
   font-family: 'SF Mono', Monaco, 'Cascadia Code', Consolas, monospace;
   font-size: 12px;
   line-height: 1.5;
+}
+
+.diff-drawer-title {
+  flex: 1;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.diff-revert-btn {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #dc2626;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.diff-revert-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.diff-revert-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .diff-drawer-empty {
@@ -147,64 +164,53 @@ const segments = computed<Segment[]>(() => {
 /* ─── Unified diff table ─── */
 
 .diff-table {
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
   border-collapse: collapse;
-}
-
-.diff-linum {
-  width: 1%;
-  min-width: 30px;
-  padding: 0 4px;
-  text-align: right;
-  color: var(--text-muted);
-  font-size: 11px;
-  user-select: none;
-  white-space: nowrap;
-  background: var(--bg-tertiary);
-  border-right: 1px solid var(--border-color);
-}
-
-.diff-prefix {
-  width: 1%;
-  padding: 0 2px;
-  text-align: center;
-  font-weight: 700;
-  user-select: none;
-  white-space: nowrap;
+  table-layout: fixed;
 }
 
 .diff-content {
-  padding: 0 6px;
-  white-space: pre;
+  padding: 0 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: break-word;
   min-width: 0;
 }
 
-/* Line type colors */
+/* Deleted lines */
+.diff-line-del .diff-content {
+  color: #dc2626;
+}
+
 .diff-line-del {
-  background: rgba(239, 68, 68, 0.08);
+  background: rgba(239, 68, 68, 0.06);
 }
-.diff-line-del .diff-prefix {
-  color: #dc2626;
-}
-.diff-line-del .diff-linum {
-  color: #dc2626;
-  opacity: 0.6;
+
+/* Added lines */
+.diff-line-add .diff-content {
+  color: #16a34a;
 }
 
 .diff-line-add {
-  background: rgba(34, 197, 94, 0.08);
-}
-.diff-line-add .diff-prefix {
-  color: #16a34a;
-}
-.diff-line-add .diff-linum {
-  color: #16a34a;
-  opacity: 0.6;
+  border-left: 2px solid #16a34a;
+  background: rgba(34, 197, 94, 0.06);
 }
 
+/* Context lines */
 .diff-line-ctx .diff-content {
-  color: var(--text-primary);
+  color: var(--text-secondary);
+}
+
+.diff-line-ctx {
+  border-left: 2px solid transparent;
+}
+
+/* Ellipsis separator */
+.diff-line-ellipsis .diff-content {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 2px 12px;
+  letter-spacing: 2px;
 }
 
 /* ─── Inline char diff (legacy fallback) ─── */
@@ -232,26 +238,34 @@ const segments = computed<Segment[]>(() => {
   color: var(--text-primary);
   border-radius: 2px;
 }
-
-/* Drawer slide transition */
-.drawer-enter-active,
-.drawer-leave-active {
-  transition: transform 0.25s ease, opacity 0.25s ease;
-}
-
-.drawer-enter-from,
-.drawer-leave-to {
-  transform: translateY(100%);
-  opacity: 0;
-}
 </style>
 
 <style>
 /* Dark theme adjustments */
+[data-theme="dark"] .diff-line-del .diff-content {
+  color: #f87171;
+}
+[data-theme="dark"] .diff-line-del {
+  background: rgba(239, 68, 68, 0.10);
+}
+[data-theme="dark"] .diff-line-add .diff-content {
+  color: #4ade80;
+}
+[data-theme="dark"] .diff-line-add {
+  border-left-color: #4ade80;
+  background: rgba(34, 197, 94, 0.10);
+}
+[data-theme="dark"] .diff-revert-btn {
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.25);
+}
+[data-theme="dark"] .diff-revert-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.20);
+}
 [data-theme="dark"] .diff-seg-del {
   background: rgba(255, 80, 80, 0.25);
 }
-
 [data-theme="dark"] .diff-seg-add {
   background: rgba(100, 200, 255, 0.25);
 }

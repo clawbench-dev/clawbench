@@ -4,7 +4,7 @@
       v-if="everOpened"
       v-show="open || leaving"
       class="bs-overlay"
-      :class="{ 'bs-leaving': leaving, 'bs-instant': instant }"
+      :class="{ 'bs-leaving': leaving, 'bs-instant': instant, 'bs-transparent-overlay': transparentOverlay }"
       @click.self="handleClose"
     >
       <div class="bs-panel" :class="{ 'bs-leaving': leaving, 'bs-instant': instant, 'bs-compact': compact, 'bs-auto': auto, 'bs-handle-only': handleOnly }">
@@ -42,6 +42,7 @@ const props = defineProps({
   auto: Boolean,     // 自适应模式，高度按内容需要，最大全屏
   noHeader: Boolean, // 隐藏Header（含手柄）
   handleOnly: Boolean, // 仅显示拖拽手柄，无标题栏
+  transparentOverlay: Boolean, // 透明遮罩（可点击关闭但可见底层内容）
 })
 
 const emit = defineEmits(['close'])
@@ -282,5 +283,10 @@ defineExpose({
 /* Compact mode footer — add bottom padding for dock bar clearance */
 .bs-panel.bs-compact > .bs-footer {
     padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+}
+
+/* Transparent overlay — clickable but see-through */
+.bs-overlay.bs-transparent-overlay {
+  background: transparent;
 }
 </style>

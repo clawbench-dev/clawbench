@@ -256,7 +256,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/git/checkout", middleware.Auth(ServeGitCheckout))
 	register("/api/git/tags", middleware.Auth(ServeGitTags))
 	register("/api/file/rename", middleware.Auth(ServeFileRename))
-	register("/api/file/edit-line", middleware.Auth(ServeFileEditLine))
+	register("/api/file/write", middleware.Auth(ServeFileWrite))
 	register("/api/file/delete", middleware.Auth(ServeFileDelete))
 	register("/api/file/batch-delete", middleware.Auth(ServeFileBatchDelete))
 	register("/api/file/batch-exists", middleware.Auth(ServeFileBatchExists))

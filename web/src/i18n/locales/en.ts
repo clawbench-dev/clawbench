@@ -742,6 +742,10 @@ export default {
       deleted: 'Deleted',
       added: 'Added',
       noDiffDetails: 'No diff details',
+      revert: 'Revert',
+      revertConfirm: 'Revert to the previous content?',
+      revertSuccess: 'Reverted',
+      revertFailed: 'Revert failed',
     },
     fileType: {
       added: 'Added',

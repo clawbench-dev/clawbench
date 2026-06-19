@@ -21,6 +21,7 @@ import {
   computeMarkdownDiff,
   offscreenExtractBlocks,
   diffMarkers,
+  diffOldContent,
   clearDiffMarkers,
   extractBlocks,
   computeCodeDiffMarkers,
@@ -204,6 +205,7 @@ async function refreshMarkdownFile(
     // Apply diff markers
     if (diffResult && diffResult.hasChanges) {
         diffMarkers.value = diffResult.markers
+        diffOldContent.value = oldContent
     } else {
         clearDiffMarkers()
     }
@@ -324,6 +326,7 @@ export async function refreshCurrentFile(options: {
   // Set persistent diff markers (after content update, since markers reference new line numbers)
   if (codeMarkers && codeMarkers.length > 0) {
       diffMarkers.value = codeMarkers
+      diffOldContent.value = oldContent
   } else {
       clearDiffMarkers()
   }

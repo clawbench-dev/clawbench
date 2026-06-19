@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { extractBlocks, computeMarkdownDiff, computeCharDiff, offscreenExtractBlocks, charDiffToLines, contentToDiffLines, isDiffBlock, extractBlockElements, computeCodeDiffMarkers } from '@/composables/useMarkdownDiff'
+import { extractBlocks, computeMarkdownDiff, computeCharDiff, offscreenExtractBlocks, charDiffToLines, contentToDiffLines, contentToDiffLinesWithCtx, isDiffBlock, extractBlockElements, computeCodeDiffMarkers } from '@/composables/useMarkdownDiff'
 
 // Mock globals for renderMarkdown
 vi.mock('@/utils/globals', () => ({
@@ -307,6 +307,48 @@ describe('contentToDiffLines', () => {
   it('handles empty new content', () => {
     const lines = contentToDiffLines('a\nb', '')
     expect(lines.every(l => l.type === 'del')).toBe(true)
+  })
+})
+
+describe('contentToDiffLinesWithCtx', () => {
+  const oldContent = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join('\n')
+  const newContent = oldContent.replace('line 10', 'line 10 MODIFIED')
+
+  it('returns context lines around the changed line', () => {
+    const lines = contentToDiffLinesWithCtx(oldContent, newContent, [10], 3)
+    // Should have ~3 context before + del + add + ~3 context after = ~8 lines
+    const nonEllipsis = lines.filter(l => l.content !== '⋯')
+    expect(nonEllipsis.length).toBeLessThan(12)
+    expect(nonEllipsis.length).toBeGreaterThan(2)
+    // Should contain the modified line
+    expect(lines.some(l => l.content === 'line 10 MODIFIED')).toBe(true)
+    expect(lines.some(l => l.content === 'line 10')).toBe(true)
+  })
+
+  it('inserts ellipsis for distant context', () => {
+    const lines = contentToDiffLinesWithCtx(oldContent, newContent, [10], 2)
+    expect(lines.some(l => l.content === '⋯')).toBe(true)
+  })
+
+  it('does not insert ellipsis when all lines fit', () => {
+    const shortOld = 'a\nb\nc'
+    const shortNew = 'a\nb2\nc'
+    const lines = contentToDiffLinesWithCtx(shortOld, shortNew, [2], 3)
+    expect(lines.some(l => l.content === '⋯')).toBe(false)
+  })
+
+  it('returns empty for empty content', () => {
+    const lines = contentToDiffLinesWithCtx('', '', [1], 3)
+    expect(lines).toEqual([])
+  })
+
+  it('works with multiple center lines', () => {
+    const old2 = 'a\nb\nc\nd\ne'
+    const new2 = 'a\nb2\nc\nd2\ne'
+    const lines = contentToDiffLinesWithCtx(old2, new2, [2, 4], 1)
+    // Should show context around both lines 2 and 4
+    expect(lines.some(l => l.content === 'b2')).toBe(true)
+    expect(lines.some(l => l.content === 'd2')).toBe(true)
   })
 })
 

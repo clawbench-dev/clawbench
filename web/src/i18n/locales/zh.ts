@@ -742,6 +742,10 @@ export default {
       deleted: '已删除',
       added: '已新增',
       noDiffDetails: '无变更详情',
+      revert: '回退',
+      revertConfirm: '确定要回退到修改前的内容吗？',
+      revertSuccess: '已回退',
+      revertFailed: '回退失败',
     },
     fileType: {
       added: '新增',
