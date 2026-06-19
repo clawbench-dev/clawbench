@@ -226,6 +226,8 @@ Auto-discovered agent configs use minimal defaults (no model lists or thinking e
 - **Current Directory Attachment**: Chat input supports attaching current directory context, AI auto-gets directory structure
 - **Unread Badge**: Chat panel icon shows unread message count
 
+- **Auto-Approve Indicator**: Mode chip turns green when auto-approve is enabled, providing visual feedback for ACP permission mode
+
 ### 🖼️ Media Preview
 - In-app preview of images, audio, video
 - Lightbox zoom, fullscreen view, support for pinch-zoom and drag
@@ -279,6 +281,7 @@ Auto-discovered agent configs use minimal defaults (no model lists or thinking e
 - Notification sound + haptic feedback (alerts when AI completes)
 - Browser push notifications
 - **Task Completion Push**: Scheduled task completion notifications include response preview summary; tap to navigate to execution details
+- **ACP Approval Push**: When ACP agents need user approval (e.g., file write, command execution), JPush sends Android notification showing tool name; tap to navigate directly to session for approval
 
 ### 🎨 Themes
 - Light / Dark mode, follows system preference

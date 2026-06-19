@@ -145,6 +145,7 @@ jobs:
         with:
           name: linux-package
           path: pkg-linux/clawbench/
+          include-hidden-files: true
 
   build-windows:
     name: Build Windows amd64
