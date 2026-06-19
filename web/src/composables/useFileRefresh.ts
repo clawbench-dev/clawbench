@@ -15,7 +15,7 @@
  */
 import { ref, watch } from 'vue'
 import { store } from '@/stores/app.ts'
-import { computeDiff, wholeLineRanges, charMapToRanges } from '@/utils/diffUtils.ts'
+import { computeDiff, wholeLineRanges } from '@/utils/diffUtils.ts'
 import type { LineDiff } from '@/utils/diffUtils.ts'
 import {
   computeMarkdownDiff,
@@ -294,7 +294,7 @@ export async function refreshCurrentFile(options: {
   if (hasDeletions && diffResult) {
       const delRanges: FlashRange[] = [
           ...wholeLineRanges(diffResult.deletedInOld),
-          ...charMapToRanges(diffResult.deletedChars),
+          ...wholeLineRanges([...diffResult.deletedChars.keys()]),
       ]
 
       flashRanges.value = delRanges
@@ -338,7 +338,7 @@ export async function refreshCurrentFile(options: {
   if (diffResult) {
       const addRanges: FlashRange[] = [
           ...wholeLineRanges(diffResult.addedInNew),
-          ...charMapToRanges(diffResult.addedChars),
+          ...wholeLineRanges([...diffResult.addedChars.keys()]),
       ]
 
       if (addRanges.length > 0) {
