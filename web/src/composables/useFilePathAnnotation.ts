@@ -667,6 +667,13 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
                 useToast().show(gt('file.toast.externalDirNotSupported'), { type: 'warning', icon: '📁', duration: 2000 })
                 return false
             }
+            if (type === 'dir') {
+                // Path is a directory — navigate into it instead of opening as file
+                await store.pushDir(resolvedPath)
+                window.dispatchEvent(new CustomEvent('close-file-overlay'))
+                window.dispatchEvent(new CustomEvent('open-file-manager'))
+                return true
+            }
         }
     } catch {
         // Batch-exists check failed — proceed with selectFile as best-effort

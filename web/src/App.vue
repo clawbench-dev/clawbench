@@ -867,6 +867,21 @@ async function handleOverlayGoBack() {
 
 async function handleOverlayOpenFile(payload) {
     const { path, lineStart, lineEnd } = typeof payload === 'string' ? { path: payload } : payload
+    // Try as directory first — navigate into dir and close overlay
+    if (!path.startsWith('/')) {
+        try {
+            const resp = await fetch(`/api/dir?path=${encodeURIComponent(path)}`)
+            if (resp.ok) {
+                await store.pushDir(path)
+                window.dispatchEvent(new CustomEvent('close-file-overlay'))
+                window.dispatchEvent(new CustomEvent('open-file-manager'))
+                return
+            }
+        } catch {
+            // Not a directory, fall through to open as file
+        }
+    }
+    // Open as file in the overlay nav stack
     const isExternal = path.startsWith('/')
     const ok = await store.selectFile(path)
     if (ok) {

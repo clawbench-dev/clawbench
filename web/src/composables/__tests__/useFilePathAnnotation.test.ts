@@ -1611,4 +1611,55 @@ describe('openFilePath', () => {
     window.dispatchEvent = origDispatch
     vi.unstubAllGlobals()
   })
+
+  it('navigates to directory when /api/dir fails but batch-exists returns dir', async () => {
+    // First fetch: /api/dir check → not ok (e.g. trailing slash issue)
+    // Second fetch: /api/file/batch-exists → type is "dir"
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce({ ok: false }) // /api/dir
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { 'internal/rag/': 'dir' } }) }) // batch-exists
+
+    vi.stubGlobal('fetch', mockFetch)
+
+    const mockDispatchEvent = vi.fn()
+    const origDispatch = window.dispatchEvent
+    window.dispatchEvent = mockDispatchEvent
+
+    await openFilePath('internal/rag/')
+
+    // Should navigate to directory, NOT call selectFile
+    expect(mockPushDir).toHaveBeenCalledWith('internal/rag/')
+    expect(mockSelectFile).not.toHaveBeenCalled()
+    // Should close file overlay and open file manager
+    const eventTypes = mockDispatchEvent.mock.calls.map(call => call[0].type)
+    expect(eventTypes).toContain('close-file-overlay')
+    expect(eventTypes).toContain('open-file-manager')
+
+    window.dispatchEvent = origDispatch
+    vi.unstubAllGlobals()
+  })
+
+  it('shows external dir toast when batch-exists returns dir for external path', async () => {
+    // First fetch: /api/dir is skipped for external paths
+    // Second fetch: /api/file/batch-exists → type is "dir"
+    const mockFetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ results: { '/external/dir': 'dir' } }) }) // batch-exists
+
+    vi.stubGlobal('fetch', mockFetch)
+
+    // Mock useToast
+    const mockShow = vi.fn()
+    vi.doMock('@/composables/useToast', () => ({
+      useToast: () => ({ show: mockShow }),
+    }))
+
+    await openFilePath('/external/dir')
+
+    // Should NOT navigate to directory for external paths
+    expect(mockPushDir).not.toHaveBeenCalled()
+    expect(mockSelectFile).not.toHaveBeenCalled()
+
+    vi.unstubAllGlobals()
+    vi.doUnmock('@/composables/useToast')
+  })
 })
