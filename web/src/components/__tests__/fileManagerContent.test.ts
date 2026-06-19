@@ -406,3 +406,199 @@ describe('FileManagerContent — doCopy/doCut with closeCtxMenu', () => {
     expect(wrapper.vm.ctxMenu.entry).toBeNull()
   })
 })
+
+describe('FileManagerContent — doDelete emits correct path after closeCtxMenu', () => {
+  it('emits delete with path even though closeCtxMenu nulls entry', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'src/test.ts' }
+    await nextTick()
+
+    wrapper.vm.doDelete()
+
+    // closeCtxMenu sets entry to null, but delete event should still fire with correct path
+    expect(wrapper.emitted('delete')).toBeTruthy()
+    expect(wrapper.emitted('delete')[0]).toEqual(['src/test.ts'])
+    expect(wrapper.vm.ctxMenu.visible).toBe(false)
+    expect(wrapper.vm.ctxMenu.entry).toBeNull()
+  })
+
+  it('does nothing when no entry in context menu', () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = null
+
+    wrapper.vm.doDelete()
+
+    expect(wrapper.emitted('delete')).toBeFalsy()
+  })
+})
+
+describe('FileManagerContent — doDownload uses saved path/name after closeCtxMenu', () => {
+  it('creates download link with correct path after closeCtxMenu nulls entry', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'readme.md', path: 'docs/readme.md' }
+    await nextTick()
+
+    const clickSpy = vi.fn()
+    const appendSpy = vi.spyOn(document.body, 'appendChild').mockImplementation((el) => el)
+    const removeSpy = vi.spyOn(document.body, 'removeChild').mockImplementation((el) => el)
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(clickSpy)
+
+    wrapper.vm.doDownload()
+
+    expect(wrapper.vm.ctxMenu.entry).toBeNull()
+    expect(appendSpy).toHaveBeenCalled()
+    const anchor = appendSpy.mock.calls[0][0]
+    expect(anchor.href).toContain('docs%2Freadme.md')
+    expect(anchor.download).toBe('readme.md')
+    expect(clickSpy).toHaveBeenCalled()
+
+    appendSpy.mockRestore()
+    removeSpy.mockRestore()
+  })
+
+  it('does nothing when no entry in context menu', () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = null
+
+    const appendSpy = vi.spyOn(document.body, 'appendChild')
+    wrapper.vm.doDownload()
+
+    expect(appendSpy).not.toHaveBeenCalled()
+    appendSpy.mockRestore()
+  })
+})
+
+describe('FileManagerContent — doArchiveDir uses saved entry after closeCtxMenu', () => {
+  it('fetches /api/file/archive with correct path after closeCtxMenu nulls entry', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      blob: () => Promise.resolve(new Blob()),
+    })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'src', path: 'src' }
+    await nextTick()
+
+    wrapper.vm.doArchiveDir()
+
+    expect(wrapper.vm.ctxMenu.entry).toBeNull()
+    expect(fetchSpy).toHaveBeenCalledWith('/api/file/archive', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ paths: ['src'] }),
+    }))
+
+    vi.unstubAllGlobals()
+  })
+
+  it('does nothing for file entries', async () => {
+    const fetchSpy = vi.fn()
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+    await nextTick()
+
+    wrapper.vm.doArchiveDir()
+
+    expect(fetchSpy).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('does nothing when no entry in context menu', () => {
+    const fetchSpy = vi.fn()
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = null
+
+    wrapper.vm.doArchiveDir()
+
+    expect(fetchSpy).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+})
+
+describe('FileManagerContent — doOpenAsProject uses saved path after closeCtxMenu', () => {
+  it('fetches /api/project with correct absPath after closeCtxMenu nulls entry', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'subproject', path: 'subproject' }
+    await nextTick()
+
+    wrapper.vm.doOpenAsProject()
+
+    expect(wrapper.vm.ctxMenu.entry).toBeNull()
+    expect(fetchSpy).toHaveBeenCalledWith('/api/project', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ path: '/project/subproject' }),
+    }))
+
+    fetchSpy.mockRestore()
+    vi.unstubAllGlobals()
+  })
+
+  it('does nothing for file entries', async () => {
+    const fetchSpy = vi.fn()
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
+    await nextTick()
+
+    wrapper.vm.doOpenAsProject()
+
+    expect(fetchSpy).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+})
+
+describe('FileManagerContent — doOpenTerminal uses saved cwd after closeCtxMenu', () => {
+  it('emits openTerminal with dir path after closeCtxMenu nulls entry', async () => {
+    const wrapper = mountContent()
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'src', path: 'src' }
+    await nextTick()
+
+    wrapper.vm.doOpenTerminal()
+
+    expect(wrapper.vm.ctxMenu.entry).toBeNull()
+    expect(wrapper.emitted('openTerminal')).toBeTruthy()
+    expect(wrapper.emitted('openTerminal')[0]).toEqual(['src'])
+  })
+
+  it('falls back to currentDir when entry is a file', async () => {
+    const wrapper = mountContent({ currentDir: 'docs' })
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'readme.md', path: 'docs/readme.md' }
+    await nextTick()
+
+    wrapper.vm.doOpenTerminal()
+
+    expect(wrapper.emitted('openTerminal')).toBeTruthy()
+    expect(wrapper.emitted('openTerminal')[0]).toEqual(['docs'])
+  })
+
+  it('falls back to currentDir when no entry in context menu', async () => {
+    const wrapper = mountContent({ currentDir: 'docs' })
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = null
+    await nextTick()
+
+    wrapper.vm.doOpenTerminal()
+
+    expect(wrapper.emitted('openTerminal')).toBeTruthy()
+    expect(wrapper.emitted('openTerminal')[0]).toEqual(['docs'])
+  })
+})

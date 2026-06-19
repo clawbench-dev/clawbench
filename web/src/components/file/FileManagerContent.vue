@@ -758,8 +758,9 @@ function clampCtxMenu() {
 
 function doOpenAsProject() {
     if (!ctxMenu.entry || ctxMenu.entry.type !== 'dir') return
+    const entryPath = ctxMenu.entry.path
     closeCtxMenu()
-    const absPath = store.state.projectRoot + '/' + ctxMenu.entry.path
+    const absPath = store.state.projectRoot + '/' + entryPath
     fetch('/api/project', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -780,10 +781,10 @@ function doOpenAsProject() {
 }
 
 function doOpenTerminal() {
-    closeCtxMenu()
     const targetCwd = ctxMenu.entry && ctxMenu.entry.type === 'dir'
         ? ctxMenu.entry.path
         : props.currentDir
+    closeCtxMenu()
     emit('openTerminal', targetCwd || '')
 }
 
@@ -797,15 +798,16 @@ async function doRename() {
 
 function doDownload() {
     if (!ctxMenu.entry) return
-    closeCtxMenu()
     const path = ctxMenu.entry.path
+    const name = ctxMenu.entry.name
+    closeCtxMenu()
     const native = window.AndroidNative
     if (isAppMode.value && native && native.downloadFile) {
         native.downloadFile(path)
     } else {
         const a = document.createElement('a')
         a.href = '/api/local-file/' + encodeURIComponent(path) + '?download=1'
-        a.download = ctxMenu.entry.name
+        a.download = name
         document.body.appendChild(a)
         a.click()
         document.body.removeChild(a)
@@ -860,9 +862,10 @@ async function doArchive(paths, zipName) {
 
 function doArchiveDir() {
     if (!ctxMenu.entry || ctxMenu.entry.type !== 'dir') return
+    const entry = ctxMenu.entry
     closeCtxMenu()
-    const zipName = ctxMenu.entry.name + '.zip'
-    doArchive([ctxMenu.entry.path], zipName)
+    const zipName = entry.name + '.zip'
+    doArchive([entry.path], zipName)
 }
 
 function doBatchArchive() {
@@ -912,8 +915,9 @@ function toggleAttach(path) {
 
 function doDelete() {
     if (!ctxMenu.entry) return
+    const path = ctxMenu.entry.path
     closeCtxMenu()
-    emit('delete', ctxMenu.entry.path)
+    emit('delete', path)
 }
 
 </script>
