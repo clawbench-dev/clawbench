@@ -86,9 +86,13 @@ export function splitHighlightedHtml(html: string): string[] {
  */
 function codeLineHtml(lineNum: number, contentHtml: string, showLineNumbers: boolean, markerInfo?: CodeDiffMarkerInfo): string {
     const lineNumHtml = showLineNumbers ? `<span class="line-num">${lineNum}</span>` : ''
-    const markerHtml = markerInfo
-        ? `<span class="diff-marker diff-marker-inline diff-marker-${markerInfo.type}" data-marker-id="${markerInfo.id}" role="button" tabindex="0" aria-label="${markerInfo.type} line ${lineNum}">${markerInfo.label}</span>`
-        : ''
+    let markerHtml = ''
+    if (markerInfo) {
+        const heightStyle = (markerInfo.lineCount && markerInfo.lineCount > 1)
+            ? ` style="height: calc(${markerInfo.lineCount} * var(--code-line-height, 20.8px))"`
+            : ''
+        markerHtml = `<span class="diff-marker diff-marker-inline diff-marker-${markerInfo.type}" data-marker-id="${markerInfo.id}" role="button" tabindex="0" aria-label="${markerInfo.type} line ${lineNum}"${heightStyle}>${markerInfo.label}</span>`
+    }
     return `<div class="code-line" data-line="${lineNum}">${lineNumHtml}<span class="code-text">${contentHtml}</span>${markerHtml}</div>`
 }
 

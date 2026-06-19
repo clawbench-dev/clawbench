@@ -70,50 +70,6 @@
 
 ---
 
-## 技术架构
-
-ClawBench 的核心哲学：
-
-- **零适配透传**：不重新实现 AI 能力，而是将 AI 编程智能体 CLI 作为后端引擎，通过 Web 服务封装为 HTTP API + SSE 流式接口，完整保留工具调用、深度思考、Skill、MCP 等全部能力，零适配成本。前端只负责渲染和交互，所有智能逻辑由 CLI 原生提供。
-- **AI 负责改，我负责看**：项目不提供直接的文件编辑能力，所有修改通过 AI 完成。重点打造 Markdown 和代码的预览体验，以及在预览过程中与 AI 的交互能力——选中代码或文本即可向 AI 提问、要求修改，快速迭代。
-
-```mermaid
-graph LR
-    Client["📱 手机 / PWA / Pad"] -->|HTTP / SSE| Server["🏗️ ClawBench\nGo Web Server"]
-    Server -->|CLI 调用 · 流式输出| CB["🤖 CodeBuddy CLI"]
-    Server -->|CLI 调用 · 流式输出| CC["🤖 Claude Code CLI"]
-    Server -->|CLI 调用 · 流式输出| OC["🤖 OpenCode CLI"]
-    Server -->|CLI 调用 · 流式输出| CX["🤖 Codex CLI"]
-    Server -->|CLI 调用 · 流式输出| QR["🤖 Qoder CLI"]
-    Server -->|CLI 调用 · 流式输出| VC["🤖 VeCLI"]
-    Server -->|CLI 调用 · 流式输出| DS["🐋 CodeWhale"]
-    Server -->|CLI 调用 · 流式输出| MM["🚀 MiMo-Code"]
-    Server -->|CLI 调用 · 流式输出| PI["🥧 Pi"]
-    Server -->|CLI 调用 · 流式输出| CL["🤖 Cline"]
-    Server -->|CLI 调用 · 流式输出| CP["🤖 Copilot"]
-    Server -->|CLI 调用 · 流式输出| KM["🤖 Kimi"]
-    Server -->|读写| DB[("💾 SQLite\n会话 · 历史 · 定时任务")]
-    CB -->|原生支持| Tools["🔧 工具调用"]
-    CB -->|原生支持| Think["🧠 深度思考"]
-    CB -->|原生支持| Skills["🎯 Skill"]
-    CB -->|原生支持| MCP["🔌 MCP"]
-    CC -->|原生支持| Tools
-    CC -->|原生支持| Think
-    CC -->|原生支持| Skills
-    CC -->|原生支持| MCP
-    OC -->|原生支持| Tools
-    CX -->|原生支持| Tools
-    QR -->|原生支持| Tools
-    VC -->|原生支持| Tools
-    DS -->|原生支持| Tools
-    MM -->|原生支持| Tools
-    MM -->|原生支持| Think
-    PI -->|原生支持| Tools
-    PI -->|原生支持| Think
-```
-
----
-
 ## 快速开始
 
 ### 前置准备

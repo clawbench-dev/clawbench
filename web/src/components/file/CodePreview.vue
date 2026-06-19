@@ -175,16 +175,15 @@ function annotateFilePaths() {
 
 /**
  * Build a markerMap from diffMarkers for code rendering.
- * Maps each changed line number to its CodeDiffMarkerInfo.
+ * Maps only the first line of each marker group so consecutive changed
+ * lines show a single marker instead of per-line overlapping markers.
  */
 function buildMarkerMap() {
     const map = new Map()
     for (const marker of diffMarkers.value) {
-        if (!marker.lineNumbers) continue
-        const info = { type: marker.type, label: marker.label, id: marker.id }
-        for (const lineNum of marker.lineNumbers) {
-            map.set(lineNum, info)
-        }
+        if (!marker.lineNumbers || marker.lineNumbers.length === 0) continue
+        const info = { type: marker.type, label: marker.label, id: marker.id, lineCount: marker.lineNumbers.length }
+        map.set(marker.lineNumbers[0], info)
     }
     return map.size > 0 ? map : undefined
 }

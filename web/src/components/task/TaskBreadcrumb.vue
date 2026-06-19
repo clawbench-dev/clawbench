@@ -112,16 +112,16 @@ function navigate(target) {
 }
 
 
-/* Right arrow — same color as crumb body */
+/* Right arrow — same color as crumb body, overlaps 1px to prevent gap */
 .crumb::after {
   content: '';
   position: absolute;
-  right: -6px;
+  right: -7px;
   top: 0;
   width: 0;
   height: 0;
   border-style: solid;
-  border-width: 10px 0 10px 6px;
+  border-width: 10px 0 10px 7px;
   border-color: transparent transparent transparent var(--bg-tertiary, #e9ecef);
   transition: border-color 0.15s;
   z-index: 1;
