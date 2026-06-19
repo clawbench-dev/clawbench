@@ -216,13 +216,14 @@ function toBlockInfo(el: Element, selector: string, index: number): BlockInfo {
 
 /**
  * Get the comparison key for a block.
- * Uses innerHTML to detect formatting changes, with special handling
- * for code blocks and mermaid diagrams.
+ * Uses textContent for semantic comparison — innerHTML is unreliable
+ * because live DOM blocks may contain rendered artifacts (image timestamps,
+ * file-path annotations, hljs classes) that differ from offscreen renders
+ * even when the actual content is identical.
  */
 function blockKey(block: BlockInfo): string {
-    if (block.tag === 'PRE') return block.textContent
     if (block.mermaidSource !== undefined) return block.mermaidSource
-    return block.innerHTML
+    return block.textContent
 }
 
 // ─── Diff computation ───
