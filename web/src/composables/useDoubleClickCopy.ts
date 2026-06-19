@@ -52,13 +52,22 @@ export function useDoubleClickCopy(options?: DoubleClickCopyOptions) {
      * 执行复制操作
      */
     function doCopy(target: EventTarget | null): boolean {
-        const selector = options?.lineSelector || BLOCK_SELECTORS
-        const element = (target as HTMLElement | null)?.closest<HTMLElement>(selector)
+        // Try line selector first (code view), then fall back to block selectors (markdown view)
+        let element: HTMLElement | null = null
+        let isLineMode = false
+        if (options?.lineSelector) {
+            element = (target as HTMLElement | null)?.closest<HTMLElement>(options.lineSelector)
+            isLineMode = true
+        }
+        if (!element) {
+            element = (target as HTMLElement | null)?.closest<HTMLElement>(BLOCK_SELECTORS)
+            isLineMode = false
+        }
         if (!element) return false
 
         // 行级模式：只取 .code-text 的文本（不含行号）
         let text: string
-        if (options?.lineSelector) {
+        if (isLineMode) {
             const codeText = element.querySelector('.code-text')
             text = (codeText?.textContent ?? element.textContent)?.trim() || ''
         } else {

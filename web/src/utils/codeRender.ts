@@ -13,6 +13,7 @@
 
 import { hljs } from '@/utils/globals.ts'
 import { escapeHtml } from '@/utils/html.ts'
+import type { CodeDiffMarkerInfo } from '@/composables/useMarkdownDiff.ts'
 
 // ─── HTML line splitting ───
 
@@ -83,9 +84,12 @@ export function splitHighlightedHtml(html: string): string[] {
 /**
  * Build a single code-line div HTML string.
  */
-function codeLineHtml(lineNum: number, contentHtml: string, showLineNumbers: boolean): string {
+function codeLineHtml(lineNum: number, contentHtml: string, showLineNumbers: boolean, markerInfo?: CodeDiffMarkerInfo): string {
     const lineNumHtml = showLineNumbers ? `<span class="line-num">${lineNum}</span>` : ''
-    return `<div class="code-line" data-line="${lineNum}">${lineNumHtml}<span class="code-text">${contentHtml}</span></div>`
+    const markerHtml = markerInfo
+        ? `<span class="diff-marker-inline diff-marker-${markerInfo.type}" data-marker-id="${markerInfo.id}" role="button" tabindex="0" aria-label="${markerInfo.type} line ${lineNum}">${markerInfo.label}</span>`
+        : ''
+    return `<div class="code-line" data-line="${lineNum}">${lineNumHtml}<span class="code-text">${contentHtml}</span>${markerHtml}</div>`
 }
 
 /**
@@ -122,6 +126,7 @@ export function buildCodeLinesFromEscaped(escapedHtml: string, showLineNumbers =
  * @param showNums  Whether to show line numbers
  * @param flashMap  Optional: line number → flash ranges for change highlighting
  * @param flashCls  CSS class for flash spans ('char-flash-add' or 'char-flash-delete')
+ * @param markerMap Optional: line number → diff marker info for inline markers
  * @returns HTML string of code-line divs
  */
 export function renderCodeLines(
@@ -130,10 +135,12 @@ export function renderCodeLines(
     showNums: boolean,
     flashMap?: Map<number, Array<{ start: number; end: number }>>,
     flashCls?: string,
+    markerMap?: Map<number, CodeDiffMarkerInfo>,
 ): string {
     return content.split('\n').map((rawLine, i) => {
         const lineNum = i + 1
         const lineRanges = flashMap?.get(lineNum)
+        const markerInfo = markerMap?.get(lineNum)
         let h: string
 
         if (lineRanges && flashCls) {
@@ -147,7 +154,7 @@ export function renderCodeLines(
             h = h.replace(/^<span class="line">/, '').replace(/<\/span>\s*$/, '')
         }
 
-        return codeLineHtml(lineNum, h, showNums)
+        return codeLineHtml(lineNum, h, showNums, markerInfo)
     }).join('')
 }
 

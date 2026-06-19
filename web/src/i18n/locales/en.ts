@@ -738,6 +738,10 @@ export default {
     },
     diffView: {
       noChanges: 'No changes',
+      modified: 'Modified',
+      deleted: 'Deleted',
+      added: 'Added',
+      noDiffDetails: 'No diff details',
     },
     fileType: {
       added: 'Added',

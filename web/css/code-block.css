@@ -15,6 +15,7 @@
 .code-line {
     display: flex;
     align-items: start;
+    position: relative; /* anchor for diff-marker-inline */
 }
 
 /* ─── Line numbers ─── */

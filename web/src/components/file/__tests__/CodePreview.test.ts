@@ -17,6 +17,28 @@ vi.mock('@/composables/useQuoteQuestion.ts', () => ({
   }),
 }))
 
+// Mock useMarkdownDiff (diff markers + drawer state)
+vi.mock('@/composables/useMarkdownDiff.ts', () => {
+  const { ref, shallowRef } = require('vue')
+  return {
+    diffMarkers: ref([]),
+    diffDrawerVisible: ref(false),
+    diffDrawerMarker: shallowRef(null),
+    openDiffDrawer: vi.fn(),
+    closeDiffDrawer: vi.fn(),
+    clearDiffMarkers: vi.fn(),
+  }
+})
+
+// Mock DiffDrawer component
+vi.mock('../DiffDrawer.vue', () => ({
+  default: {
+    name: 'DiffDrawer',
+    template: '<div class="mock-diff-drawer" v-if="visible"><slot /></div>',
+    props: ['visible', 'markerType', 'charDiff'],
+  },
+}))
+
 // Mock resolveFilePath for file path annotation
 const mockResolveFilePath = vi.fn()
 const mockTryResolveCodeString = vi.fn()

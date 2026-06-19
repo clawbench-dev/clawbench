@@ -738,6 +738,10 @@ export default {
     },
     diffView: {
       noChanges: '无变更',
+      modified: '已修改',
+      deleted: '已删除',
+      added: '已新增',
+      noDiffDetails: '无变更详情',
     },
     fileType: {
       added: '新增',

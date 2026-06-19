@@ -242,9 +242,9 @@ describe('charDiff', () => {
     it('handles identical strings', () => {
         const result = emptyResult()
         charDiff('same', 'same', 1, 1, result)
-        // charDiff always sets the map keys, but with empty ranges for identical strings
-        expect(result.deletedChars.get(1)).toEqual([])
-        expect(result.addedChars.get(1)).toEqual([])
+        // charDiff skips map entries for identical strings
+        expect(result.deletedChars.get(1)).toBeUndefined()
+        expect(result.addedChars.get(1)).toBeUndefined()
     })
 
     it('handles empty old line with content in new', () => {

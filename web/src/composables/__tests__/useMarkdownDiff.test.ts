@@ -1,0 +1,442 @@
+import { describe, expect, it, vi } from 'vitest'
+import { extractBlocks, computeMarkdownDiff, computeCharDiff, offscreenExtractBlocks, charDiffToLines, contentToDiffLines, isDiffBlock, extractBlockElements, computeCodeDiffMarkers } from '@/composables/useMarkdownDiff'
+
+// Mock globals for renderMarkdown
+vi.mock('@/utils/globals', () => ({
+  marked: {
+    parse: (s: string) => {
+      // Minimal markdown→HTML for testing
+      return s
+        .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+        .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+        .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+        .replace(/^> (.+)$/gm, '<blockquote><p>$1</p></blockquote>')
+        .replace(/^- (.+)$/gm, '<li>$1</li>')
+        .replace(/```mermaid\n([\s\S]*?)```/g, '<pre class="mermaid">$1</pre>')
+        .replace(/```\n?([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/^(?!<[hupobl])/gm, (m) => m.trim() ? `<p>${m}</p>` : m)
+    },
+  },
+  katex: { renderToString: vi.fn() },
+  mermaid: { render: vi.fn() },
+  DOMPurify: { sanitize: (html: string) => html },
+}))
+
+vi.mock('@/utils/html', () => ({
+  escapeHtml: (s: string) => s,
+}))
+
+// Helper: create a DOM element from HTML string
+function htmlToElement(html: string): Element {
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  return doc.body
+}
+
+describe('extractBlocks', () => {
+  it('extracts top-level block elements', () => {
+    const el = htmlToElement('<h1>Title</h1><p>Paragraph 1</p><p>Paragraph 2</p>')
+    const blocks = extractBlocks(el)
+    expect(blocks).toHaveLength(3)
+    expect(blocks[0].tag).toBe('H1')
+    expect(blocks[1].tag).toBe('P')
+    expect(blocks[2].tag).toBe('P')
+  })
+
+  it('recurses into LI elements', () => {
+    const el = htmlToElement('<ul><li>Item 1</li><li>Item 2</li></ul>')
+    const blocks = extractBlocks(el)
+    // UL is not a block tag, so it recurses inside → finds LI elements
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0].tag).toBe('LI')
+    expect(blocks[0].textContent).toBe('Item 1')
+    expect(blocks[1].tag).toBe('LI')
+  })
+
+  it('recurses into BLOCKQUOTE elements', () => {
+    const el = htmlToElement('<blockquote><p>Quoted</p></blockquote>')
+    const blocks = extractBlocks(el)
+    // BLOCKQUOTE is a block, then recurse finds P inside
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0].tag).toBe('BLOCKQUOTE')
+    expect(blocks[1].tag).toBe('P')
+  })
+
+  it('detects div.table-wrap as a block', () => {
+    const el = htmlToElement('<div class="table-wrap"><table><tr><td>cell</td></tr></table></div>')
+    const blocks = extractBlocks(el)
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].tag).toBe('DIV')
+  })
+
+  it('detects div.mermaid as a block', () => {
+    const el = htmlToElement('<div class="mermaid" data-mermaid="graph TD">svg content</div>')
+    const blocks = extractBlocks(el)
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].tag).toBe('DIV')
+    expect(blocks[0].mermaidSource).toBe('graph TD')
+  })
+
+  it('uses textContent for PRE blocks', () => {
+    const el = htmlToElement('<pre><code class="hljs">const x = 1;</code></pre>')
+    const blocks = extractBlocks(el)
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].tag).toBe('PRE')
+    // innerHTML should be textContent (not the hljs markup)
+    expect(blocks[0].innerHTML).toBe('const x = 1;')
+  })
+
+  it('does NOT treat generic DIVs as blocks', () => {
+    const el = htmlToElement('<div><p>Inside div</p></div>')
+    const blocks = extractBlocks(el)
+    // Generic DIV is not a block, recurse to find P
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].tag).toBe('P')
+  })
+
+  it('skips non-block children and recurses', () => {
+    const el = htmlToElement('<section><h1>Title</h1><span>inline</span><p>Text</p></section>')
+    const blocks = extractBlocks(el)
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0].tag).toBe('H1')
+    expect(blocks[1].tag).toBe('P')
+  })
+
+  it('detects katex-display as a block', () => {
+    const el = htmlToElement('<div class="katex-display">formula</div>')
+    const blocks = extractBlocks(el)
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].tag).toBe('DIV')
+  })
+})
+
+describe('computeMarkdownDiff', () => {
+  it('detects added blocks', () => {
+    const oldBlocks = [
+      { tag: 'H1', textContent: 'Title', innerHTML: 'Title', selector: ':scope' },
+    ]
+    const newBlocks = [
+      { tag: 'H1', textContent: 'Title', innerHTML: 'Title', selector: ':scope' },
+      { tag: 'P', textContent: 'New paragraph', innerHTML: 'New paragraph', selector: ':scope' },
+    ]
+    const result = computeMarkdownDiff(oldBlocks, newBlocks)
+    expect(result.hasChanges).toBe(true)
+    expect(result.markers).toHaveLength(1)
+    expect(result.markers[0].type).toBe('added')
+    expect(result.markers[0].label).toBe('+')
+  })
+
+  it('detects deleted blocks', () => {
+    const oldBlocks = [
+      { tag: 'H1', textContent: 'Title', innerHTML: 'Title', selector: ':scope' },
+      { tag: 'P', textContent: 'Paragraph', innerHTML: 'Paragraph', selector: ':scope' },
+    ]
+    const newBlocks = [
+      { tag: 'H1', textContent: 'Title', innerHTML: 'Title', selector: ':scope' },
+    ]
+    const result = computeMarkdownDiff(oldBlocks, newBlocks)
+    expect(result.hasChanges).toBe(true)
+    expect(result.markers).toHaveLength(1)
+    expect(result.markers[0].type).toBe('deleted')
+  })
+
+  it('detects modified blocks', () => {
+    const oldBlocks = [
+      { tag: 'P', textContent: 'Hello world', innerHTML: 'Hello world', selector: ':scope' },
+    ]
+    const newBlocks = [
+      { tag: 'P', textContent: 'Hello universe', innerHTML: 'Hello universe', selector: ':scope' },
+    ]
+    const result = computeMarkdownDiff(oldBlocks, newBlocks)
+    expect(result.hasChanges).toBe(true)
+    expect(result.markers).toHaveLength(1)
+    expect(result.markers[0].type).toBe('modified')
+    expect(result.markers[0].charDiff).toBeTruthy()
+  })
+
+  it('returns no changes for identical blocks', () => {
+    const blocks = [
+      { tag: 'H1', textContent: 'Title', innerHTML: 'Title', selector: ':scope' },
+    ]
+    const result = computeMarkdownDiff(blocks, blocks)
+    expect(result.hasChanges).toBe(false)
+    expect(result.markers).toHaveLength(0)
+  })
+
+  it('handles empty old blocks (all added)', () => {
+    const newBlocks = [
+      { tag: 'P', textContent: 'New', innerHTML: 'New', selector: ':scope' },
+    ]
+    const result = computeMarkdownDiff([], newBlocks)
+    expect(result.hasChanges).toBe(true)
+    expect(result.markers).toHaveLength(1)
+    expect(result.markers[0].type).toBe('added')
+  })
+
+  it('handles empty new blocks (all deleted)', () => {
+    const oldBlocks = [
+      { tag: 'P', textContent: 'Old', innerHTML: 'Old', selector: ':scope' },
+    ]
+    const result = computeMarkdownDiff(oldBlocks, [])
+    expect(result.hasChanges).toBe(true)
+    expect(result.markers).toHaveLength(1)
+    expect(result.markers[0].type).toBe('deleted')
+  })
+
+  it('uses innerHTML for diff (detects formatting changes)', () => {
+    const oldBlocks = [
+      { tag: 'P', textContent: 'bold text', innerHTML: '<strong>bold</strong> text', selector: ':scope' },
+    ]
+    const newBlocks = [
+      { tag: 'P', textContent: 'bold text', innerHTML: 'bold text', selector: ':scope' },
+    ]
+    const result = computeMarkdownDiff(oldBlocks, newBlocks)
+    expect(result.hasChanges).toBe(true)
+    expect(result.markers[0].type).toBe('modified')
+  })
+
+  it('uses textContent for PRE block diff', () => {
+    const oldBlocks = [
+      { tag: 'PRE', textContent: 'const x = 1;', innerHTML: 'const x = 1;', selector: ':scope' },
+    ]
+    const newBlocks = [
+      { tag: 'PRE', textContent: 'const x = 2;', innerHTML: 'const x = 2;', selector: ':scope' },
+    ]
+    const result = computeMarkdownDiff(oldBlocks, newBlocks)
+    expect(result.hasChanges).toBe(true)
+    expect(result.markers[0].type).toBe('modified')
+  })
+})
+
+describe('computeCharDiff', () => {
+  it('produces char-level diff', () => {
+    const result = computeCharDiff('hello world', 'hello universe')
+    expect(result.oldText).toBe('hello world')
+    expect(result.newText).toBe('hello universe')
+    expect(result.changes.length).toBeGreaterThan(0)
+    // Verify the diff captures the change: old text and new text are different
+    const fullOld = result.changes.filter(c => c.removed).map(c => c.value).join('')
+    const fullNew = result.changes.filter(c => c.added).map(c => c.value).join('')
+    expect(fullOld).toBeTruthy()
+    expect(fullNew).toBeTruthy()
+  })
+})
+
+describe('offscreenExtractBlocks', () => {
+  it('simulates mermaid transformation', () => {
+    const content = '# Title\n\n```mermaid\ngraph TD\n  A-->B\n```'
+    const blocks = offscreenExtractBlocks(content)
+    // Should find H1 and a DIV.mermaid (not PRE.mermaid)
+    expect(blocks.length).toBeGreaterThanOrEqual(1)
+    const mermaidBlock = blocks.find(b => b.tag === 'DIV' && b.mermaidSource !== undefined)
+    expect(mermaidBlock).toBeTruthy()
+    expect(mermaidBlock!.mermaidSource).toContain('graph TD')
+  })
+})
+
+describe('charDiffToLines', () => {
+  it('converts CharDiff to DiffLine[] with correct line numbers', () => {
+    const charDiff = computeCharDiff('hello world', 'hello universe')
+    const lines = charDiffToLines(charDiff)
+    expect(lines.length).toBeGreaterThan(0)
+    // Single-line change: should have ctx + del + add or similar
+    const hasDel = lines.some(l => l.type === 'del')
+    const hasAdd = lines.some(l => l.type === 'add')
+    expect(hasDel || hasAdd).toBe(true)
+  })
+
+  it('handles multi-line content correctly', () => {
+    const charDiff = computeCharDiff('line1\nline2\nline3', 'line1\nline2b\nline3')
+    const lines = charDiffToLines(charDiff)
+    // Should produce lines with proper oldLine/newLine numbering
+    expect(lines.length).toBeGreaterThan(0)
+    // Verify line numbers are sequential
+    const ctxLines = lines.filter(l => l.type === 'ctx')
+    for (const cl of ctxLines) {
+      expect(cl.oldLine).not.toBeNull()
+      expect(cl.newLine).not.toBeNull()
+    }
+  })
+
+  it('handles pure deletion', () => {
+    const charDiff = computeCharDiff('hello', '')
+    const lines = charDiffToLines(charDiff)
+    if (lines.length > 0) {
+      expect(lines.every(l => l.type === 'del')).toBe(true)
+      expect(lines[0].oldLine).toBe(1)
+      expect(lines[0].newLine).toBeNull()
+    }
+  })
+
+  it('handles pure addition', () => {
+    const charDiff = computeCharDiff('', 'hello')
+    const lines = charDiffToLines(charDiff)
+    if (lines.length > 0) {
+      expect(lines.every(l => l.type === 'add')).toBe(true)
+      expect(lines[0].oldLine).toBeNull()
+      expect(lines[0].newLine).toBe(1)
+    }
+  })
+})
+
+describe('contentToDiffLines', () => {
+  it('converts old/new content to DiffLine[] at line level', () => {
+    const lines = contentToDiffLines('a\nb\nc', 'a\nb2\nc')
+    // diffArrays produces: ctx(a) + del(b) + add(b2) + ctx(c)
+    expect(lines.length).toBe(4)
+    // Line 1: context
+    expect(lines[0].type).toBe('ctx')
+    expect(lines[0].oldLine).toBe(1)
+    expect(lines[0].newLine).toBe(1)
+    // Line 2: deleted
+    expect(lines[1].type).toBe('del')
+    expect(lines[1].content).toBe('b')
+    // Line 3: added
+    expect(lines[2].type).toBe('add')
+    expect(lines[2].content).toBe('b2')
+    // Line 4: context
+    expect(lines[3].type).toBe('ctx')
+  })
+
+  it('handles empty old content', () => {
+    const lines = contentToDiffLines('', 'a\nb')
+    expect(lines.every(l => l.type === 'add')).toBe(true)
+  })
+
+  it('handles empty new content', () => {
+    const lines = contentToDiffLines('a\nb', '')
+    expect(lines.every(l => l.type === 'del')).toBe(true)
+  })
+})
+
+describe('isDiffBlock', () => {
+  it('recognizes standard block tags', () => {
+    const el = htmlToElement('<h1>Title</h1>').firstElementChild!
+    expect(isDiffBlock(el)).toBe(true)
+  })
+
+  it('recognizes P as a block tag', () => {
+    const el = htmlToElement('<p>text</p>').firstElementChild!
+    expect(isDiffBlock(el)).toBe(true)
+  })
+
+  it('recognizes div.table-wrap as a block', () => {
+    const el = htmlToElement('<div class="table-wrap"><table></table></div>').firstElementChild!
+    expect(isDiffBlock(el)).toBe(true)
+  })
+
+  it('recognizes div.mermaid as a block', () => {
+    const el = htmlToElement('<div class="mermaid">svg</div>').firstElementChild!
+    expect(isDiffBlock(el)).toBe(true)
+  })
+
+  it('rejects generic divs', () => {
+    const el = htmlToElement('<div>content</div>').firstElementChild!
+    expect(isDiffBlock(el)).toBe(false)
+  })
+
+  it('rejects inline elements like span', () => {
+    const el = htmlToElement('<span>text</span>').firstElementChild!
+    expect(isDiffBlock(el)).toBe(false)
+  })
+})
+
+describe('extractBlockElements', () => {
+  it('returns block elements with el references', () => {
+    const el = htmlToElement('<h1>Title</h1><p>Para</p>')
+    const blocks = extractBlockElements(el)
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0].tag).toBe('H1')
+    expect(blocks[0].el).toBeTruthy()
+    expect(blocks[1].tag).toBe('P')
+    expect(blocks[1].el).toBeTruthy()
+  })
+
+  it('generates CSS selectors for each block', () => {
+    const el = htmlToElement('<h1>Title</h1><p>Para</p>')
+    const blocks = extractBlockElements(el)
+    expect(blocks[0].selector).toContain(':scope')
+    expect(blocks[1].selector).toContain(':scope')
+  })
+
+  it('recurses into LI elements', () => {
+    const el = htmlToElement('<ul><li>Item 1</li><li>Item 2</li></ul>')
+    const blocks = extractBlockElements(el)
+    expect(blocks).toHaveLength(2)
+    expect(blocks[0].tag).toBe('LI')
+  })
+
+  it('includes katex-display elements', () => {
+    const el = htmlToElement('<div class="katex-display">formula</div>')
+    const blocks = extractBlockElements(el)
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].tag).toBe('DIV')
+  })
+})
+
+describe('computeCodeDiffMarkers', () => {
+  it('creates modified markers for changed lines', () => {
+    const lineDiff: import('@/utils/diffUtils.ts').LineDiff = {
+      deletedInOld: [],
+      addedInNew: [],
+      deletedChars: new Map([[1, [{ start: 6, end: 11 }]]]),
+      addedChars: new Map([[1, [{ start: 6, end: 14 }]]]),
+    }
+    const markers = computeCodeDiffMarkers(lineDiff, 'hello world', 'hello universe')
+    expect(markers.length).toBeGreaterThan(0)
+    const mod = markers.find(m => m.type === 'modified')
+    expect(mod).toBeTruthy()
+    expect(mod!.lineNumbers).toContain(1)
+    expect(mod!.charDiff).toBeTruthy()
+  })
+
+  it('creates added markers for new lines', () => {
+    const lineDiff: import('@/utils/diffUtils.ts').LineDiff = {
+      deletedInOld: [],
+      addedInNew: [3],
+      deletedChars: new Map(),
+      addedChars: new Map(),
+    }
+    const markers = computeCodeDiffMarkers(lineDiff, 'a\nb', 'a\nb\nc')
+    const add = markers.find(m => m.type === 'added')
+    expect(add).toBeTruthy()
+    expect(add!.lineNumbers).toContain(3)
+  })
+
+  it('creates deleted markers for removed lines', () => {
+    const lineDiff: import('@/utils/diffUtils.ts').LineDiff = {
+      deletedInOld: [2],
+      addedInNew: [],
+      deletedChars: new Map(),
+      addedChars: new Map(),
+    }
+    const markers = computeCodeDiffMarkers(lineDiff, 'a\nb', 'a')
+    const del = markers.find(m => m.type === 'deleted')
+    expect(del).toBeTruthy()
+  })
+
+  it('groups consecutive modified lines', () => {
+    const lineDiff: import('@/utils/diffUtils.ts').LineDiff = {
+      deletedInOld: [],
+      addedInNew: [],
+      deletedChars: new Map([[1, [{ start: 0, end: 1 }]], [2, [{ start: 0, end: 1 }]]]),
+      addedChars: new Map([[1, [{ start: 0, end: 1 }]], [2, [{ start: 0, end: 1 }]]]),
+    }
+    const markers = computeCodeDiffMarkers(lineDiff, 'a\nb', 'x\ny')
+    const mod = markers.find(m => m.type === 'modified')
+    expect(mod).toBeTruthy()
+    expect(mod!.lineNumbers).toEqual([1, 2])
+  })
+
+  it('returns empty array for no changes', () => {
+    const lineDiff: import('@/utils/diffUtils.ts').LineDiff = {
+      deletedInOld: [],
+      addedInNew: [],
+      deletedChars: new Map(),
+      addedChars: new Map(),
+    }
+    const markers = computeCodeDiffMarkers(lineDiff, 'same', 'same')
+    expect(markers).toHaveLength(0)
+  })
+})

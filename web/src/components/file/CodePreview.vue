@@ -1,19 +1,28 @@
 <template>
-  <pre class="raw-content-pre" :class="{ 'word-wrap': wordWrap, 'no-line-num': !showLineNumbers }" ref="codeRef" :data-file-path="filePath" :data-language="language" @click="handleClick">
-    <div v-if="stickyLines.length > 0" class="sticky-scroll-overlay">
-      <div v-for="s in stickyLines" :key="s.lineNum" class="sticky-line"
-        :data-line="s.lineNum" :style="{ top: s.top + 'px', height: s.height + 'px' }"
-        @click="handleStickyClick(s.lineNum)">
-        <span v-if="showLineNumbers" class="sticky-line-num">{{ s.lineNum }}</span>
-        <span class="sticky-code-text" v-html="getStickyLineHtml(s.lineNum)" />
+  <div class="code-preview-wrapper">
+    <pre class="raw-content-pre" :class="{ 'word-wrap': wordWrap, 'no-line-num': !showLineNumbers }" ref="codeRef" :data-file-path="filePath" :data-language="language" @click="handleClick">
+      <div v-if="stickyLines.length > 0" class="sticky-scroll-overlay">
+        <div v-for="s in stickyLines" :key="s.lineNum" class="sticky-line"
+          :data-line="s.lineNum" :style="{ top: s.top + 'px', height: s.height + 'px' }"
+          @click="handleStickyClick(s.lineNum)">
+          <span v-if="showLineNumbers" class="sticky-line-num">{{ s.lineNum }}</span>
+          <span class="sticky-code-text" v-html="getStickyLineHtml(s.lineNum)" />
+        </div>
       </div>
-    </div>
-    <code v-html="codeHtml" />
-  </pre>
+      <code v-html="codeHtml" />
+    </pre>
+    <DiffDrawer
+      :visible="drawerVisible"
+      :marker-type="drawerMarkerType"
+      :char-diff="drawerCharDiff"
+      :diff-lines="drawerDiffLines"
+      @close="closeDrawer"
+    />
+  </div>
 </template>
 
 <script setup>
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, computed, onBeforeUnmount } from 'vue'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useStickyScroll } from '@/composables/useStickyScroll.ts'
@@ -21,6 +30,15 @@ import { renderCodeLines } from '@/utils/codeRender.ts'
 import { tryResolveCodeString, stripCodeString, verifyFilePaths } from '@/composables/useFilePathAnnotation.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { store } from '@/stores/app.ts'
+import DiffDrawer from './DiffDrawer.vue'
+import {
+  diffMarkers,
+  diffDrawerVisible,
+  diffDrawerMarker,
+  openDiffDrawer,
+  closeDiffDrawer,
+  clearDiffMarkers,
+} from '@/composables/useMarkdownDiff.ts'
 
 const props = defineProps({
     /** Raw file content */
@@ -47,6 +65,16 @@ const codeHtml = ref('')
 const codeRef = ref(null)
 
 const quoteQuestion = useQuoteQuestion()
+
+// ─── Diff drawer state ───
+const drawerVisible = computed(() => diffDrawerVisible.value)
+const drawerMarkerType = computed(() => diffDrawerMarker.value?.type || 'modified')
+const drawerCharDiff = computed(() => diffDrawerMarker.value?.charDiff || null)
+const drawerDiffLines = computed(() => diffDrawerMarker.value?.diffLines)
+
+function closeDrawer() {
+    closeDiffDrawer()
+}
 
 // Sticky scroll
 const { stickyLines, initSticky, teardownSticky, invalidateCache } = useStickyScroll()
@@ -89,7 +117,6 @@ function handleStickyClick(lineNum) {
 const { handleDblClick } = useDoubleClickCopy({
     lineSelector: '.code-line',
     onCopy(target, text) {
-        // 从 DOM 读取文件信息和行号
         const lineEl = target && 'closest' in target ? target.closest('.code-line') : null
         const preEl = lineEl?.closest('.raw-content-pre')
         const filePath = preEl?.getAttribute('data-file-path') || ''
@@ -107,6 +134,19 @@ const { handleDblClick } = useDoubleClickCopy({
 })
 
 function handleClick(event) {
+    // Check for diff marker click first
+    const markerEl = event.target.closest('.diff-marker-inline')
+    if (markerEl) {
+        event.preventDefault()
+        event.stopPropagation()
+        const markerId = markerEl.getAttribute('data-marker-id')
+        if (markerId) {
+            const marker = diffMarkers.value.find(m => m.id === markerId)
+            if (marker) openDiffDrawer(marker)
+        }
+        return
+    }
+
     // Intercept clicks on annotated file-path spans in code
     const pathEl = event.target.closest('.code-file-path')
     if (pathEl) {
@@ -163,6 +203,22 @@ function annotateFilePaths() {
     }
 }
 
+/**
+ * Build a markerMap from diffMarkers for code rendering.
+ * Maps each changed line number to its CodeDiffMarkerInfo.
+ */
+function buildMarkerMap() {
+    const map = new Map()
+    for (const marker of diffMarkers.value) {
+        if (!marker.lineNumbers) continue
+        const info = { type: marker.type, label: marker.label, id: marker.id }
+        for (const lineNum of marker.lineNumbers) {
+            map.set(lineNum, info)
+        }
+    }
+    return map.size > 0 ? map : undefined
+}
+
 function doRender(content) {
     if (!content) return
 
@@ -176,12 +232,16 @@ function doRender(content) {
     }
     const flashCls = props.flashType === 'delete' ? 'char-flash-delete' : 'char-flash-add'
 
+    // Build marker map from diffMarkers
+    const markerMap = buildMarkerMap()
+
     codeHtml.value = renderCodeLines(
         content,
         props.language,
         props.showLineNumbers,
         flashMap.size > 0 ? flashMap : undefined,
         flashMap.size > 0 ? flashCls : undefined,
+        markerMap,
     )
     lineHtmlCache.clear()
     invalidateCache()
@@ -200,9 +260,25 @@ watch(
     () => doRender(props.content),
     { immediate: true }
 )
+
+// Re-render when diff markers change
+watch(diffMarkers, () => {
+    doRender(props.content)
+}, { deep: true })
+
+onBeforeUnmount(() => {
+    clearDiffMarkers()
+})
 </script>
 
 <style scoped>
+.code-preview-wrapper {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+}
+
 /* Raw content pre - code display area (CodePreview-specific layout) */
 .raw-content-pre {
     margin: 0;
@@ -375,6 +451,83 @@ watch(
 .char-flash-add {
     animation: char-flash-add-anim 1.5s ease-out forwards;
     border-radius: 2px;
+}
+
+/* ─── Diff marker inline (inside .code-line) ─── */
+
+.diff-marker-inline {
+    position: absolute;
+    right: 0;
+    width: 20px;
+    min-height: 24px;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 3px 0 0 3px;
+    cursor: pointer;
+    opacity: 0.45;
+    transition: opacity 0.15s;
+    font-size: 9px;
+    font-weight: 700;
+    user-select: none;
+    color: white;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    line-height: 1;
+    padding: 0;
+    font-family: sans-serif;
+}
+
+.diff-marker-inline:hover,
+.diff-marker-inline:focus-visible {
+    opacity: 0.85;
+    outline: none;
+    box-shadow: 0 0 0 2px var(--accent-color);
+}
+
+.diff-marker-inline:focus-visible {
+    opacity: 1;
+}
+
+/* Modified: orange */
+.diff-marker-modified {
+    background: rgba(255, 165, 0, 0.7);
+    animation: diff-marker-highlight 1.5s ease-out;
+}
+
+/* Deleted: red */
+.diff-marker-deleted {
+    background: rgba(255, 80, 80, 0.7);
+    animation: diff-marker-highlight 1.5s ease-out;
+}
+
+/* Added: green */
+.diff-marker-added {
+    background: rgba(80, 200, 80, 0.7);
+    animation: diff-marker-added-flash 1.5s ease-out;
+}
+
+/* Shared highlight animation: brief flash → settle */
+@keyframes diff-marker-highlight {
+    0% { opacity: 1; }
+    100% { opacity: 0.45; }
+}
+
+@keyframes diff-marker-added-flash {
+    0% { background: rgba(100, 200, 255, 0.9); opacity: 1; }
+    100% { background: rgba(80, 200, 80, 0.7); opacity: 0.45; }
+}
+
+/* Dark theme adjustments */
+[data-theme="dark"] .diff-marker-modified {
+    background: rgba(255, 165, 0, 0.6);
+}
+[data-theme="dark"] .diff-marker-deleted {
+    background: rgba(255, 80, 80, 0.6);
+}
+[data-theme="dark"] .diff-marker-added {
+    background: rgba(80, 200, 80, 0.6);
 }
 
 /* Clickable file path in code strings */

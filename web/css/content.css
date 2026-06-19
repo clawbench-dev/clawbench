@@ -16,6 +16,7 @@
     overflow-x: hidden;
     box-sizing: border-box;
     width: 100%;
+    position: relative;
 }
 
 .markdown-body h1,
