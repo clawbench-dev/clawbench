@@ -6,7 +6,7 @@ import {
 import type { LineDiff } from '@/utils/diffUtils'
 
 function emptyResult(): LineDiff {
-    return { deletedInOld: [], addedInNew: [], deletedChars: new Map(), addedChars: new Map() }
+    return { deletedInOld: [], addedInNew: [], deletedChars: new Map(), addedChars: new Map(), modifiedPairs: [] }
 }
 
 // ── computeDiff ──

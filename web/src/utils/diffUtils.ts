@@ -22,6 +22,8 @@ export interface LineDiff {
     deletedChars: Map<number, { start: number; end: number }[]>
     /** For modified lines: new line → char-level ranges added */
     addedChars: Map<number, { start: number; end: number }[]>
+    /** Paired modified lines: [oldLineNum, newLineNum][] in order */
+    modifiedPairs: [number, number][]
 }
 
 /**
@@ -34,6 +36,7 @@ export function computeDiff(oldText: string, newText: string): LineDiff {
         addedInNew: [],
         deletedChars: new Map(),
         addedChars: new Map(),
+        modifiedPairs: [],
     }
 
     // Line-level diff using jsdiff
@@ -81,6 +84,7 @@ export function computeDiff(oldText: string, newText: string): LineDiff {
         for (let i = 0; i < pairCount; i++) {
             const oldLineNum = delGroup.startOld + i
             const newLineNum = addGroup.startNew + i
+            result.modifiedPairs.push([oldLineNum, newLineNum])
             charDiff(delGroup.lines[i], addGroup.lines[i], oldLineNum, newLineNum, result)
         }
 

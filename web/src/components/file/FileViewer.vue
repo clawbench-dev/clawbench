@@ -159,6 +159,15 @@
         />
       </div>
     </div>
+
+    <!-- Shared diff drawer for all file types -->
+    <DiffDrawer
+      :visible="drawerVisible"
+      :marker-type="drawerMarkerType"
+      :char-diff="drawerCharDiff"
+      :diff-lines="drawerDiffLines"
+      @close="closeDrawer"
+    />
   </div>
 </template>
 
@@ -173,6 +182,8 @@ import AudioPreview from '@/components/media/AudioPreview.vue'
 import VideoPreview from '@/components/media/VideoPreview.vue'
 import MarkdownPreview from './MarkdownPreview.vue'
 import CodePreview from './CodePreview.vue'
+import DiffDrawer from './DiffDrawer.vue'
+import { useDiffDrawer } from '@/composables/useDiffDrawer.ts'
 import { flashRanges, flashType } from '@/composables/useFileRefresh.ts'
 import FileHeader from './FileHeader.vue'
 import { getFileType, formatFileSize } from '@/utils/fileType.ts'
@@ -182,6 +193,7 @@ import { useFileNavStack } from '@/composables/useFileNavStack.ts'
 
 const { t } = useI18n()
 const { isAppMode } = useAppMode()
+const { drawerVisible, drawerMarkerType, drawerCharDiff, drawerDiffLines, closeDrawer } = useDiffDrawer()
 
 const props = defineProps({
     file: Object,

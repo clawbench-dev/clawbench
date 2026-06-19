@@ -424,6 +424,7 @@ describe('computeCodeDiffMarkers', () => {
       addedInNew: [],
       deletedChars: new Map([[1, [{ start: 6, end: 11 }]]]),
       addedChars: new Map([[1, [{ start: 6, end: 14 }]]]),
+      modifiedPairs: [[1, 1]],
     }
     const markers = computeCodeDiffMarkers(lineDiff, 'hello world', 'hello universe')
     expect(markers.length).toBeGreaterThan(0)
@@ -433,12 +434,43 @@ describe('computeCodeDiffMarkers', () => {
     expect(mod!.charDiff).toBeTruthy()
   })
 
+  it('creates modified markers even when only deletedChars exists (no addedChars)', () => {
+    // This was the bug: pure deletion within a modified line would not
+    // produce a marker because addedChars was empty, causing pairCount=0.
+    const lineDiff: import('@/utils/diffUtils.ts').LineDiff = {
+      deletedInOld: [],
+      addedInNew: [],
+      deletedChars: new Map([[1, [{ start: 5, end: 11 }]]]),
+      addedChars: new Map(),  // empty — no char-level additions
+      modifiedPairs: [[1, 1]],
+    }
+    const markers = computeCodeDiffMarkers(lineDiff, 'hello world', 'hello')
+    const mod = markers.find(m => m.type === 'modified')
+    expect(mod).toBeTruthy()
+    expect(mod!.lineNumbers).toContain(1)
+  })
+
+  it('creates modified markers when only addedChars exists (no deletedChars)', () => {
+    const lineDiff: import('@/utils/diffUtils.ts').LineDiff = {
+      deletedInOld: [],
+      addedInNew: [],
+      deletedChars: new Map(),  // empty — no char-level deletions
+      addedChars: new Map([[1, [{ start: 5, end: 12 }]]]),
+      modifiedPairs: [[1, 1]],
+    }
+    const markers = computeCodeDiffMarkers(lineDiff, 'hello', 'hello world')
+    const mod = markers.find(m => m.type === 'modified')
+    expect(mod).toBeTruthy()
+    expect(mod!.lineNumbers).toContain(1)
+  })
+
   it('creates added markers for new lines', () => {
     const lineDiff: import('@/utils/diffUtils.ts').LineDiff = {
       deletedInOld: [],
       addedInNew: [3],
       deletedChars: new Map(),
       addedChars: new Map(),
+      modifiedPairs: [],
     }
     const markers = computeCodeDiffMarkers(lineDiff, 'a\nb', 'a\nb\nc')
     const add = markers.find(m => m.type === 'added')
@@ -452,6 +484,7 @@ describe('computeCodeDiffMarkers', () => {
       addedInNew: [],
       deletedChars: new Map(),
       addedChars: new Map(),
+      modifiedPairs: [],
     }
     const markers = computeCodeDiffMarkers(lineDiff, 'a\nb', 'a')
     const del = markers.find(m => m.type === 'deleted')
@@ -464,6 +497,7 @@ describe('computeCodeDiffMarkers', () => {
       addedInNew: [],
       deletedChars: new Map([[1, [{ start: 0, end: 1 }]], [2, [{ start: 0, end: 1 }]]]),
       addedChars: new Map([[1, [{ start: 0, end: 1 }]], [2, [{ start: 0, end: 1 }]]]),
+      modifiedPairs: [[1, 1], [2, 2]],
     }
     const markers = computeCodeDiffMarkers(lineDiff, 'a\nb', 'x\ny')
     const mod = markers.find(m => m.type === 'modified')
@@ -477,6 +511,7 @@ describe('computeCodeDiffMarkers', () => {
       addedInNew: [],
       deletedChars: new Map(),
       addedChars: new Map(),
+      modifiedPairs: [],
     }
     const markers = computeCodeDiffMarkers(lineDiff, 'same', 'same')
     expect(markers).toHaveLength(0)

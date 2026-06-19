@@ -576,26 +576,20 @@ export function computeCodeDiffMarkers(
     const markers: DiffMarker[] = []
 
     // ── Modified lines ──
-    // computeDiff pairs modified lines 1:1 in deletedChars/addedChars.
-    // The keys are old/new line numbers respectively, paired by insertion order.
-    const delKeys = [...lineDiff.deletedChars.keys()]
-    const addKeys = [...lineDiff.addedChars.keys()]
-    const pairCount = Math.min(delKeys.length, addKeys.length)
+    // Use modifiedPairs (explicit old↔new pairing) instead of trying to
+    // reconstruct the pairing from deletedChars/addedChars keys, which
+    // fails when only one side has entries (e.g. pure deletion or addition
+    // within a modified line).
+    const modifiedNewLineSet = new Set(lineDiff.modifiedPairs.map(([, nl]) => nl))
 
-    // Build a set of added line numbers that are "modified" (not pure additions)
-    const modifiedNewLineSet = new Set(addKeys.slice(0, pairCount))
-
-    // Group consecutive modified new lines
-    const sortedModifiedNew = [...modifiedNewLineSet].sort((a, b) => a - b)
-    for (const group of groupConsecutive(sortedModifiedNew)) {
-        // Find corresponding old lines for each new line in this group
-        const oldLineNums = group.map(nl => {
-            const idx = addKeys.indexOf(nl)
-            return idx >= 0 && idx < pairCount ? delKeys[idx] : nl
-        })
+    // Group consecutive modified new lines, preserving old→new mapping
+    const sortedPairs = [...lineDiff.modifiedPairs].sort((a, b) => a[1] - b[1])
+    for (const group of groupConsecutivePairs(sortedPairs)) {
+        const newLineNums = group.map(([, nl]) => nl)
+        const oldLineNums = group.map(([ol]) => ol)
         const oldText = oldLineNums.map(ol => oldLines[ol - 1] || '').join('\n')
-        const newText = group.map(nl => newLines[nl - 1] || '').join('\n')
-        markers.push(makeCodeMarker('modified', group, computeCharDiff(oldText, newText), oldContent, newContent))
+        const newText = newLineNums.map(nl => newLines[nl - 1] || '').join('\n')
+        markers.push(makeCodeMarker('modified', newLineNums, computeCharDiff(oldText, newText), oldContent, newContent))
     }
 
     // ── Pure added lines ──
@@ -709,6 +703,20 @@ function groupConsecutive(nums: number[]): number[][] {
             groups[groups.length - 1].push(nums[i])
         } else {
             groups.push([nums[i]])
+        }
+    }
+    return groups
+}
+
+/** Group consecutive pairs by their new-line numbers being adjacent */
+function groupConsecutivePairs(pairs: [number, number][]): [number, number][][] {
+    if (pairs.length === 0) return []
+    const groups: [number, number][][] = [[pairs[0]]]
+    for (let i = 1; i < pairs.length; i++) {
+        if (pairs[i][1] === pairs[i - 1][1] + 1) {
+            groups[groups.length - 1].push(pairs[i])
+        } else {
+            groups.push([pairs[i]])
         }
     }
     return groups

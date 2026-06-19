@@ -34,23 +34,12 @@
       :flash-type="flashType"
       :sticky-scroll="stickyScroll"
     />
-
-    <!-- Diff drawer -->
-    <DiffDrawer
-      v-if="viewMode === 'rendered'"
-      :visible="drawerVisible"
-      :marker-type="drawerMarkerType"
-      :char-diff="drawerCharDiff"
-      :diff-lines="drawerDiffLines"
-      @close="closeDrawer"
-    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, watch, nextTick, onBeforeUnmount, computed } from 'vue'
 import CodePreview from './CodePreview.vue'
-import DiffDrawer from './DiffDrawer.vue'
 import { useMarkdownRenderer } from '@/composables/useMarkdownRenderer.ts'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
@@ -60,10 +49,7 @@ import { dirName, splitPath } from '@/utils/path.ts'
 import { flashRanges, flashType } from '@/composables/useFileRefresh.ts'
 import {
   diffMarkers,
-  diffDrawerVisible,
-  diffDrawerMarker,
   openDiffDrawer,
-  closeDiffDrawer,
   clearDiffMarkers,
   extractBlocks,
   extractBlockElements,
@@ -130,16 +116,6 @@ const { handleDblClick } = useDoubleClickCopy({
 })
 const { renderMarkdown, renderMermaidInElement } = useMarkdownRenderer()
 const { annotateFilePaths, verifyFilePaths, resolveRelativePath, openFilePath } = useFilePathAnnotation()
-
-// ─── Drawer state ───
-const drawerVisible = computed(() => diffDrawerVisible.value)
-const drawerMarkerType = computed(() => diffDrawerMarker.value?.type || 'modified')
-const drawerCharDiff = computed(() => diffDrawerMarker.value?.charDiff || null)
-const drawerDiffLines = computed(() => diffDrawerMarker.value?.diffLines)
-
-function closeDrawer() {
-    closeDiffDrawer()
-}
 
 function handleClick(event) {
     // Check for diff marker click first

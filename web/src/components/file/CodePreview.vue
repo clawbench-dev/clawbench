@@ -11,13 +11,6 @@
       </div>
       <code v-html="codeHtml" />
     </pre>
-    <DiffDrawer
-      :visible="drawerVisible"
-      :marker-type="drawerMarkerType"
-      :char-diff="drawerCharDiff"
-      :diff-lines="drawerDiffLines"
-      @close="closeDrawer"
-    />
   </div>
 </template>
 
@@ -30,13 +23,9 @@ import { renderCodeLines } from '@/utils/codeRender.ts'
 import { tryResolveCodeString, stripCodeString, verifyFilePaths } from '@/composables/useFilePathAnnotation.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { store } from '@/stores/app.ts'
-import DiffDrawer from './DiffDrawer.vue'
 import {
   diffMarkers,
-  diffDrawerVisible,
-  diffDrawerMarker,
   openDiffDrawer,
-  closeDiffDrawer,
   clearDiffMarkers,
 } from '@/composables/useMarkdownDiff.ts'
 
@@ -65,16 +54,6 @@ const codeHtml = ref('')
 const codeRef = ref(null)
 
 const quoteQuestion = useQuoteQuestion()
-
-// ─── Diff drawer state ───
-const drawerVisible = computed(() => diffDrawerVisible.value)
-const drawerMarkerType = computed(() => diffDrawerMarker.value?.type || 'modified')
-const drawerCharDiff = computed(() => diffDrawerMarker.value?.charDiff || null)
-const drawerDiffLines = computed(() => diffDrawerMarker.value?.diffLines)
-
-function closeDrawer() {
-    closeDiffDrawer()
-}
 
 // Sticky scroll
 const { stickyLines, initSticky, teardownSticky, invalidateCache } = useStickyScroll()
