@@ -195,7 +195,7 @@ const segments = computed<Segment[]>(() => {
 }
 
 .diff-line-del {
-  background: rgba(239, 68, 68, 0.06);
+  background: rgba(239, 68, 68, 0.18);
 }
 
 /* Added lines */
@@ -205,7 +205,7 @@ const segments = computed<Segment[]>(() => {
 
 .diff-line-add {
   border-left: 2px solid #16a34a;
-  background: rgba(34, 197, 94, 0.06);
+  background: rgba(34, 197, 94, 0.18);
 }
 
 /* Context lines */
@@ -258,14 +258,14 @@ const segments = computed<Segment[]>(() => {
   color: #f87171;
 }
 [data-theme="dark"] .diff-line-del {
-  background: rgba(239, 68, 68, 0.10);
+  background: rgba(239, 68, 68, 0.22);
 }
 [data-theme="dark"] .diff-line-add .diff-content {
   color: #4ade80;
 }
 [data-theme="dark"] .diff-line-add {
   border-left-color: #4ade80;
-  background: rgba(34, 197, 94, 0.10);
+  background: rgba(34, 197, 94, 0.22);
 }
 [data-theme="dark"] .diff-revert-btn {
   color: #f87171;

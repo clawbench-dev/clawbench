@@ -62,6 +62,10 @@ let flashTimer: ReturnType<typeof setTimeout> | null = null
 
 // Generation counter to prevent race conditions with concurrent refreshCurrentFile calls
 let refreshGeneration = 0
+// Whether a refresh is currently in-flight
+let refreshing = false
+// If a new refresh arrives while one is in-flight, we defer it
+let pendingRefreshOptions: { loadDir?: boolean; clearOnError?: boolean } | null = null
 
 function clearFlash() {
     if (flashTimer) { clearTimeout(flashTimer); flashTimer = null }
@@ -236,6 +240,12 @@ const ADD_FLASH_CLEAR_MS = 2000
  * For code/raw files: Two-phase flash (red delete → blue add).
  * For markdown files: Block-level diff markers + bottom drawer.
  *
+ * Deduplication: if a refresh is already in-flight, the new call is deferred
+ * and merged — when the current refresh completes, one more refresh runs with
+ * the latest options.  This prevents concurrent refreshes from fighting over
+ * flashRanges / diffMarkers (which caused the "first edit misses deletion
+ * flash and markers" bug).
+ *
  * @param options.loadDir - Also refresh the directory listing (default: false)
  * @param options.clearOnError - If the file fails to load, clear currentFile (default: false)
  */
@@ -243,6 +253,39 @@ export async function refreshCurrentFile(options: {
   loadDir?: boolean
   clearOnError?: boolean
 } = {}): Promise<void> {
+  // Dedup: if a refresh is already running, just remember to do another one after
+  if (refreshing) {
+    // Merge: if either wants loadDir or clearOnError, keep that
+    if (pendingRefreshOptions) {
+      if (options.loadDir) pendingRefreshOptions.loadDir = true
+      if (options.clearOnError) pendingRefreshOptions.clearOnError = true
+    } else {
+      pendingRefreshOptions = { ...options }
+    }
+    return
+  }
+  refreshing = true
+
+  try {
+    await doRefreshCurrentFile(options)
+  } finally {
+    refreshing = false
+    // If a refresh was deferred while we were running, execute it now
+    if (pendingRefreshOptions) {
+      const opts = pendingRefreshOptions
+      pendingRefreshOptions = null
+      await refreshCurrentFile(opts)
+    }
+  }
+}
+
+/**
+ * Internal implementation — always runs serially (caller ensures dedup).
+ */
+async function doRefreshCurrentFile(options: {
+  loadDir?: boolean
+  clearOnError?: boolean
+}): Promise<void> {
   const { loadDir = false, clearOnError = false } = options
   const gen = ++refreshGeneration
 
@@ -303,8 +346,9 @@ export async function refreshCurrentFile(options: {
 
       await new Promise<void>(resolve => setTimeout(resolve, DELETE_FLASH_MS))
 
+      // Stale generation: just exit — don't clearFlash because the current
+      // generation may have already set its own flash state.
       if (gen !== refreshGeneration || store.state.currentFile?.path !== oldPath) {
-          clearFlash()
           return
       }
   }
