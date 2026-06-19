@@ -13,6 +13,7 @@
         :disabled="reverting"
         @click.stop="handleRevert"
       >
+        <Undo2 :size="14" />
         {{ reverting ? '…' : t('git.diffView.revert') }}
       </button>
     </template>
@@ -49,6 +50,7 @@
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
+import { Undo2 } from 'lucide-vue-next'
 import { diffOldContent, diffOldFilePath, clearDiffMarkers } from '@/composables/useMarkdownDiff.ts'
 import type { CharDiff, DiffLine } from '@/composables/useMarkdownDiff.ts'
 import { store } from '@/stores/app.ts'
@@ -140,6 +142,9 @@ const segments = computed<Segment[]>(() => {
 
 .diff-revert-btn {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   padding: 4px 12px;
   font-size: 12px;
   font-weight: 500;
