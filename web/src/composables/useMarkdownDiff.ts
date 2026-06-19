@@ -258,6 +258,7 @@ export function computeMarkdownDiff(
                 label: 'D',
                 blockSelector: ':scope',
                 charDiff: { oldText: oldBlocks.map(b => b.textContent).join('\n'), newText: '', changes: [] },
+                diffLines: oldBlocks.map(b => b.textContent).join('\n').split('\n').map((content, i) => ({ type: 'del' as const, content, oldLine: i + 1, newLine: null })),
                 ariaLabel: `${oldBlocks.length} blocks deleted`,
             }],
             hasChanges: true,
@@ -301,7 +302,7 @@ export function computeMarkdownDiff(
                     const oldBlock = oldBlocks[oldIdx + i]
                     const newBlock = newBlocks[newIdx + i]
                     const charDiff = computeCharDiff(oldBlock.textContent, newBlock.textContent)
-                    markers.push(toMarker('modified', newBlock, newIdx + i, charDiff))
+                    markers.push(toMarker('modified', newBlock, newIdx + i, charDiff, oldBlock.textContent))
                 }
 
                 // Extra removed blocks: deleted
@@ -363,12 +364,25 @@ export function computeMarkdownDiff(
     }
 }
 
-function toMarker(type: MarkerType, block: BlockInfo, blockIndex: number, charDiff: CharDiff | null): DiffMarker {
+function toMarker(type: MarkerType, block: BlockInfo, blockIndex: number, charDiff: CharDiff | null, oldBlockText?: string): DiffMarker {
     const labels: Record<MarkerType, string> = { modified: 'M', deleted: 'D', added: '+' }
     const ariaLabels: Record<MarkerType, string> = {
         modified: `Modified: ${block.tag}`,
         deleted: `Deleted: ${block.tag}`,
         added: `Added: ${block.tag}`,
+    }
+    // For modified/deleted blocks with old content, use line-level diff
+    let diffLines: DiffLine[] | undefined
+    if (type === 'modified' && oldBlockText !== undefined && oldBlockText !== block.textContent) {
+        diffLines = contentToDiffLines(oldBlockText, block.textContent)
+    } else if (type === 'deleted' && charDiff) {
+        diffLines = charDiffToLines(charDiff)
+    } else if (type === 'added') {
+        // Pure addition: show all lines as added
+        const lines = block.textContent ? block.textContent.split('\n') : []
+        diffLines = lines.map((content, i) => ({ type: 'add' as const, content, oldLine: null, newLine: i + 1 }))
+    } else if (charDiff) {
+        diffLines = charDiffToLines(charDiff)
     }
     return {
         id: `${type}-${blockIndex}-${block.tag}`,
@@ -376,7 +390,7 @@ function toMarker(type: MarkerType, block: BlockInfo, blockIndex: number, charDi
         label: labels[type],
         blockSelector: block.selector,
         charDiff,
-        diffLines: charDiff ? charDiffToLines(charDiff) : undefined,
+        diffLines,
         ariaLabel: ariaLabels[type],
     }
 }
