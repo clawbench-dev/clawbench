@@ -52,6 +52,14 @@ export function forceCleanupStreamingState(
 ): any | undefined {
   const streamingMsg = messages.find((m: any) => m.role === 'assistant' && m.streaming)
   if (streamingMsg) {
+    const hasContent = streamingMsg.content || (streamingMsg.blocks && streamingMsg.blocks.length > 0)
+    console.log(
+      `[forceCleanupStreamingState] found streaming msg:`,
+      `content="${(streamingMsg.content || '').slice(0, 50)}"`,
+      `blocks=${streamingMsg.blocks?.length || 0}`,
+      `hasContent=${!!hasContent}`,
+      `willDelete=${!hasContent}`
+    )
     delete streamingMsg.streaming
     // Mark all unfinished tool_use blocks as done so spinner stops.
     // Exception: PermissionApproval blocks require user interaction —
@@ -77,11 +85,13 @@ export function forceCleanupStreamingState(
     // If the streaming message received no content at all (e.g. network lost
     // before any SSE event arrived), remove it entirely so the user doesn't
     // see an empty AI reply bubble.
-    const hasContent = streamingMsg.content || (streamingMsg.blocks && streamingMsg.blocks.length > 0)
     if (!hasContent) {
       const idx = messages.indexOf(streamingMsg)
       if (idx !== -1) messages.splice(idx, 1)
+      console.log(`[forceCleanupStreamingState] DELETED empty streaming msg at index ${idx}`)
     }
+  } else {
+    console.log(`[forceCleanupStreamingState] no streaming msg found (already finalized or none)`)
   }
   callbacks.onRenderNeeded(true)
   return streamingMsg
@@ -135,8 +145,37 @@ export function consumePendingMessage(
     onExtractScheduledTasks?: (msgs: any[]) => void
   }
 ): any {
-  // 1. Finalize any stale streaming message
-  forceCleanupStreamingState(messages, callbacks)
+  // 1. Finalize any stale streaming message.
+  // Use lightweight cleanup instead of full forceCleanupStreamingState to avoid
+  // accidentally deleting a message with content (which causes key shifts and
+  // DOM reuse errors in the v-for list). The queue_done event should have
+  // already finalized the previous streaming message; this is a safety net
+  // for when queue_done was lost (e.g. network drop, page hidden).
+  const streamingMsg = messages.find((m: any) => m.role === 'assistant' && m.streaming)
+  if (streamingMsg) {
+    delete streamingMsg.streaming
+    // Mark unfinished tool_use blocks as done (same as forceCleanupStreamingState)
+    if (streamingMsg.blocks) {
+      for (const block of streamingMsg.blocks) {
+        if (block.type === 'tool_use' && !block.done && block.name !== 'PermissionApproval') {
+          block.done = true
+          if (isGarbageOutput(block.output)) {
+            block.output = ''
+          }
+        }
+      }
+    }
+    callbacks.onExtractScheduledTasks?.(messages)
+    // Do NOT delete the message even if it appears empty — the SSE stream
+    // may not have delivered all content events yet, and deleting causes
+    // index-based key shifts in the v-for list (key="local-{i}").
+    // Empty messages will be cleaned up by loadHistory after the stream ends.
+    console.log(
+      `[consumePendingMessage] finalized stale streaming msg:`,
+      `content="${(streamingMsg.content || '').slice(0, 30)}"`,
+      `blocks=${streamingMsg.blocks?.length || 0}`
+    )
+  }
 
   // 2. Find and un-mark the pending user message
   const pendingMsg = messages.find(
@@ -148,6 +187,7 @@ export function consumePendingMessage(
     if (userFiles.length > 0) {
       pendingMsg.files = userFiles.map(p => ({ path: p }))
     }
+    console.log(`[consumePendingMessage] found and un-marked pending msg: content="${userContent.slice(0, 50)}"`)
   } else {
     // Pending message not found (page was hidden during enqueue, or
     // sendMessageNow created it without pending flag). Push it now.
@@ -162,6 +202,9 @@ export function consumePendingMessage(
         files: userFiles.map(p => ({ path: p })),
         createdAt: new Date().toISOString(),
       })
+      console.log(`[consumePendingMessage] created new user msg (pending not found): content="${userContent.slice(0, 50)}"`)
+    } else {
+      console.log(`[consumePendingMessage] pending not found but existing user msg exists: content="${userContent.slice(0, 50)}"`)
     }
   }
 
@@ -175,6 +218,7 @@ export function consumePendingMessage(
     backend: currentBackend,
   }
   messages.push(newStreamingMsg)
+  console.log(`[consumePendingMessage] pushed new streaming assistant, total messages=${messages.length}`)
   return newStreamingMsg
 }
 
