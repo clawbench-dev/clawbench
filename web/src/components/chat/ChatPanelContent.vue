@@ -197,7 +197,8 @@ import { renderMarkdown } from '@/composables/useMarkdownRenderer.ts'
 import { useDialog } from '@/composables/useDialog'
 import { ChevronRight } from 'lucide-vue-next'
 import '@/assets/loading-mask.css'
-import { syncPendingFromBackend, shouldRetryToolFetch, resolveEffectiveMsgId } from '@/utils/chatStreamUtils.ts'
+import { syncPendingFromBackend } from '@/utils/chatStreamUtils.ts'
+import { useToolDetailOverlay } from '@/composables/useToolDetailOverlay.ts'
 
 const { t } = useI18n()
 
@@ -234,21 +235,6 @@ const metadataModal = ref({
   sessionId: '',
   indexed: false
 })
-const toolDetailOverlay = ref({
-  show: false,
-  name: '',
-  subagentType: '',
-  summary: '',
-  inputHtml: '',
-  outputHtml: '',
-  status: '',
-  done: true,
-})
-// Active thinking overlay: tracks which block is being shown so we can reactively update
-const activeThinkingOverlay = ref(null) // { msgId, blockIdx } or null
-// Active tool overlay: tracks which tool block is being shown so we can reactively update
-const activeToolOverlay = ref(null) // { msgId, blockIdx } or null
-let thinkingRenderTimer = null
 const toast = useToast()
 const dialog = useDialog()
 const notification = useNotification()
@@ -276,6 +262,43 @@ function handleQuoteClick() {
 const { planEntries, planCollapsed, planHasUpdate, hasPlan, togglePlanCollapse, clearPlanState } = usePlanProgress()
 
 const render = useChatRender({ messages, theme, currentSessionId: identity.currentSessionId })
+
+/** Look up the thinking block from the live messages array by msgId + blockIdx */
+function findThinkingBlock({ msgId, blockIdx }) {
+  const msg = messages.value.find(m => String(m.id) === msgId)
+  if (!msg || !msg.blocks) return null
+  const block = msg.blocks[blockIdx]
+  return (block && block.type === 'thinking') ? block : null
+}
+
+/** Look up the tool_use block from the live messages array by msgId + blockIdx */
+function findToolBlock({ msgId, blockIdx }) {
+  const msg = messages.value.find(m => String(m.id) === msgId)
+  if (!msg || !msg.blocks) return null
+  const block = msg.blocks[blockIdx]
+  return (block && block.type === 'tool_use') ? block : null
+}
+
+const {
+  toolDetailOverlay,
+  activeToolOverlay,
+  handleShowToolDetail,
+  handleOverlayRetryClick,
+  fetchToolCallDetail,
+  handleFileOpenInOverlay,
+  closeOverlay,
+} = useToolDetailOverlay({
+  chatRender: render,
+  onFileOpen: async (path, lineStart, lineEnd) => {
+    const ok = await openFilePath(path, lineStart, lineEnd)
+    if (ok) switchTab('browse')
+  },
+  findLiveBlock: (ids) => findToolBlock(ids),
+})
+
+// Active thinking overlay: tracks which block is being shown so we can reactively update
+const activeThinkingOverlay = ref(null) // { msgId, blockIdx } or null
+let thinkingRenderTimer = null
 
 const session = useChatSession({
   currentSessionId: identity.currentSessionId,
@@ -762,100 +785,6 @@ function showMetadata(msg) {
     metadataModal.value.show = true
 }
 
-function handleShowToolDetail(block) {
-  const { formatToolInput } = render
-  // Store identifiers for reactive lookup (survives messages array replacement on loadHistory)
-  activeToolOverlay.value = { msgId: String(block.msgId), blockIdx: block.blockIdx }
-
-  // Slim format: input/output may be absent — show overlay immediately with
-  // available data, then fetch from API if needed.
-  const hasInput = block.input && Object.keys(block.input).length > 0
-  const hasOutput = !!block.output
-
-  toolDetailOverlay.value = {
-    show: true,
-    name: block.name || '',
-    subagentType: block.display_name || block.input?.subagent_type || '',
-    summary: block.summary || render.toolCallSummary(block),
-    inputHtml: hasInput ? formatToolInput(block.input, block.name, { done: block.done, status: block.status, output: block.output }) : '',
-    outputHtml: hasOutput ? formatToolOutput(block.output, block.name) : '',
-    status: block.status || '',
-    done: !!block.done,
-    _fetchIds: null,
-  }
-
-  // Fetch tool call detail from API if input/output are missing
-  if ((!hasInput || !hasOutput) && block.tool_id && block.msgId) {
-    const toolId = block.tool_id
-    const msgId = block.msgId
-    toolDetailOverlay.value._fetchIds = { toolId, msgId }
-    fetchToolCallDetail(toolId, msgId, block)
-  }
-}
-
-/** Generate empty-state HTML with a retry button */
-function toolCallEmptyState(msg) {
-  return `<div class="tool-call-empty"><span class="tool-call-empty-msg">${msg}</span><button class="tool-call-retry-btn" onclick="this.closest('.tool-call-empty').dataset.retry='1'">${t('chat.contentBlocks.retry')}</button></div>`
-}
-
-/** Handle retry click inside overlay v-html via event delegation */
-function handleOverlayRetryClick(e) {
-  const empty = e.target.closest('.tool-call-empty')
-  if (!empty || empty.dataset.retry !== '1') return
-  empty.dataset.retry = ''
-  const ids = toolDetailOverlay.value._fetchIds
-  if (!ids) return
-  const block = findToolBlock(activeToolOverlay.value)
-  fetchToolCallDetail(ids.toolId, ids.msgId, block || { name: toolDetailOverlay.value.name })
-}
-
-/** Fetch full tool call data from the API and update the overlay */
-async function fetchToolCallDetail(toolId, msgId, block, _retryCount = 0) {
-  // Show loading state
-  if (!toolDetailOverlay.value.inputHtml) {
-    toolDetailOverlay.value.inputHtml = '<div class="tool-call-loading"></div>'
-  }
-  try {
-    const resp = await fetch(`/api/ai/chat/tool-call?tool_id=${encodeURIComponent(toolId)}&message_id=${encodeURIComponent(msgId)}`)
-    if (!resp.ok) {
-      // During streaming, the tool call may not yet be persisted to the DB (404),
-      // or the msgId may point to a stale message. Don't show an error immediately —
-      // retry up to 3 times with a short delay. After that, fall back to the
-      // reactive watcher which will populate the overlay once loadHistory replaces
-      // the messages array with full block data.
-      if (shouldRetryToolFetch(resp.status, _retryCount, toolDetailOverlay.value.show)) {
-        setTimeout(() => {
-          if (!toolDetailOverlay.value.show) return
-          // Re-resolve msgId from the live messages array (may have changed after loadHistory)
-          const liveBlock = findToolBlock(activeToolOverlay.value)
-          const effectiveMsgId = resolveEffectiveMsgId(liveBlock, activeToolOverlay.value.msgId, msgId)
-          fetchToolCallDetail(toolId, effectiveMsgId, liveBlock || block, _retryCount + 1)
-        }, 800)
-        return
-      }
-      if (resp.status !== 404) {
-        toolDetailOverlay.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsUnavailable'))
-      }
-      return
-    }
-    const data = await resp.json()
-    const { formatToolInput } = render
-    // Update overlay with fetched data
-    if (data.input) {
-      const input = typeof data.input === 'string' ? JSON.parse(data.input) : data.input
-      toolDetailOverlay.value.inputHtml = formatToolInput(input, block.name || data.name, { done: block.done, status: block.status, output: data.output || '' })
-    } else {
-      toolDetailOverlay.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsUnavailable'))
-    }
-    if (data.output) {
-      toolDetailOverlay.value.outputHtml = formatToolOutput(data.output, block.name || data.name)
-    }
-  } catch (e) {
-    console.warn('Failed to fetch tool call detail:', e)
-    toolDetailOverlay.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsLoadFailed'))
-  }
-}
-
 function handleShowThinkingDetail({ text, msgId, blockIdx }) {
   // Store identifiers for reactive lookup (survives messages array replacement on loadHistory)
   activeThinkingOverlay.value = { msgId: String(msgId), blockIdx }
@@ -873,29 +802,6 @@ function handleShowThinkingDetail({ text, msgId, blockIdx }) {
     status: '',
     done: !loading.value, // Will update to true when streaming ends
   }
-}
-
-/** Look up the thinking block from the live messages array by msgId + blockIdx */
-function findThinkingBlock({ msgId, blockIdx }) {
-  const msg = messages.value.find(m => String(m.id) === msgId)
-  if (!msg || !msg.blocks) return null
-  const block = msg.blocks[blockIdx]
-  return (block && block.type === 'thinking') ? block : null
-}
-
-/** Look up the tool_use block from the live messages array by msgId + blockIdx */
-function findToolBlock({ msgId, blockIdx }) {
-  const msg = messages.value.find(m => String(m.id) === msgId)
-  if (!msg || !msg.blocks) return null
-  const block = msg.blocks[blockIdx]
-  return (block && block.type === 'tool_use') ? block : null
-}
-
-async function handleFileOpenInOverlay(payload) {
-  const { path, lineStart, lineEnd } = typeof payload === 'string' ? { path: payload } : payload
-  toolDetailOverlay.value.show = false
-  const ok = await openFilePath(path, lineStart, lineEnd)
-  if (ok) switchTab('browse')
 }
 
 // Wire up WS event handler for session_update

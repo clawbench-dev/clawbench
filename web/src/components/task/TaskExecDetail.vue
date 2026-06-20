@@ -42,6 +42,7 @@
     <ToolDetailOverlay
       :show="toolDetailOverlay.show"
       :toolName="toolDetailOverlay.name"
+      :toolSubagentType="toolDetailOverlay.subagentType"
       :toolSummary="toolDetailOverlay.summary"
       :toolInputHtml="toolDetailOverlay.inputHtml"
       :toolOutputHtml="toolDetailOverlay.outputHtml"
@@ -85,7 +86,7 @@ import { store as appStore } from '@/stores/app.ts'
 import { useAutoSpeech } from '@/composables/useAutoSpeech.ts'
 import { useTaskTab } from '@/composables/useTaskTab.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
-import { formatToolOutput } from '@/utils/renderToolDetail.ts'
+import { useToolDetailOverlay } from '@/composables/useToolDetailOverlay.ts'
 
 const props = defineProps({
   execDetail: Object,
@@ -171,7 +172,7 @@ const msgData = computed(() => {
   const { blocks } = chatRender.parseAssistantContent(props.execDetail.content || '{}')
   if (!blocks || blocks.length === 0) return null
   return {
-    id: props.execDetail.id || 'exec',
+    id: props.execDetail.messageId || props.execDetail.id || 'exec',
     role: 'assistant',
     content: props.execDetail.content,
     blocks,
@@ -214,84 +215,18 @@ function toggleTool(key) {
 }
 
 // ── Tool Detail Overlay ──
-const toolDetailOverlay = ref({
-  show: false,
-  name: '',
-  summary: '',
-  inputHtml: '',
-  outputHtml: '',
-  status: '',
-  done: true,
+const {
+  toolDetailOverlay,
+  handleShowToolDetail,
+  handleOverlayRetryClick,
+  handleFileOpenInOverlay,
+} = useToolDetailOverlay({
+  chatRender,
+  onFileOpen: (path, lineStart, lineEnd) => {
+    openFilePath(path, lineStart, lineEnd)
+    emit('open-file', { path, lineStart, lineEnd })
+  },
 })
-
-function handleShowToolDetail(block) {
-  const hasInput = block.input && Object.keys(block.input).length > 0
-  const hasOutput = !!block.output
-
-  toolDetailOverlay.value = {
-    show: true,
-    name: block.name || '',
-    summary: block.summary || chatRender.toolCallSummary(block),
-    inputHtml: hasInput ? chatRender.formatToolInput(block.input, block.name, { done: block.done, status: block.status, output: block.output }) : '',
-    outputHtml: hasOutput ? formatToolOutput(block.output, block.name) : '',
-    status: block.status || '',
-    done: !!block.done,
-    _fetchIds: null,
-  }
-
-  // Fetch tool call detail from API if input/output are missing
-  if ((!hasInput || !hasOutput) && block.tool_id && block.msgId) {
-    toolDetailOverlay.value._fetchIds = { toolId: block.tool_id, msgId: block.msgId }
-    fetchToolCallDetail(block.tool_id, block.msgId, block)
-  }
-}
-
-function toolCallEmptyState(msg) {
-  return `<div class="tool-call-empty"><span class="tool-call-empty-msg">${msg}</span><button class="tool-call-retry-btn" onclick="this.closest('.tool-call-empty').dataset.retry='1'">${t('chat.contentBlocks.retry')}</button></div>`
-}
-
-function handleOverlayRetryClick(e) {
-  const empty = e.target.closest('.tool-call-empty')
-  if (!empty || empty.dataset.retry !== '1') return
-  empty.dataset.retry = ''
-  const ids = toolDetailOverlay.value._fetchIds
-  if (!ids) return
-  fetchToolCallDetail(ids.toolId, ids.msgId, { name: toolDetailOverlay.value.name })
-}
-
-/** Fetch full tool call data from the API and update the overlay */
-async function fetchToolCallDetail(toolId, msgId, block) {
-  if (!toolDetailOverlay.value.inputHtml) {
-    toolDetailOverlay.value.inputHtml = '<div class="tool-call-loading"></div>'
-  }
-  try {
-    const resp = await fetch(`/api/ai/chat/tool-call?tool_id=${encodeURIComponent(toolId)}&message_id=${encodeURIComponent(msgId)}`)
-    if (!resp.ok) {
-      toolDetailOverlay.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsUnavailable'))
-      return
-    }
-    const data = await resp.json()
-    if (data.input) {
-      const input = typeof data.input === 'string' ? JSON.parse(data.input) : data.input
-      toolDetailOverlay.value.inputHtml = chatRender.formatToolInput(input, block.name || data.name, { done: block.done, status: block.status, output: data.output || '' })
-    } else {
-      toolDetailOverlay.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsUnavailable'))
-    }
-    if (data.output) {
-      toolDetailOverlay.value.outputHtml = formatToolOutput(data.output, block.name || data.name)
-    }
-  } catch (e) {
-    console.warn('Failed to fetch tool call detail:', e)
-    toolDetailOverlay.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsLoadFailed'))
-  }
-}
-
-function handleFileOpenInOverlay(payload) {
-  const { path, lineStart, lineEnd } = typeof payload === 'string' ? { path: payload } : payload
-  toolDetailOverlay.value.show = false
-  openFilePath(path, lineStart, lineEnd)
-  emit('open-file', { path, lineStart, lineEnd })
-}
 
 // ── Metadata Modal ──
 const metadataModal = ref({
