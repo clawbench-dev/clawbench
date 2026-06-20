@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // kimiInputRemaps mirrors backends/kimiInputRemaps for testing.
@@ -652,4 +653,79 @@ func TestStreamJSON_ToolResultEmptyToolID(t *testing.T) {
 	default:
 		// expected
 	}
+}
+
+func TestStreamJSON_GetCapturedSessionID_AlwaysEmpty(t *testing.T) {
+	parser := &StreamJSONParser{InputRemaps: kimiInputRemaps}
+	// Parse an init event that sets session ID
+	parser.ParseLine(`{"type":"init","session_id":"ses_123","model":"test"}`, make(chan StreamEvent, 1))
+	// GetCapturedSessionID should still return ""
+	assert.Equal(t, "", parser.GetCapturedSessionID())
+}
+
+func TestStreamJSON_ParseLine_ToolUse_ToolNameMap(t *testing.T) {
+	ch := make(chan StreamEvent, 64)
+	parser := &StreamJSONParser{
+		ToolNameMap: map[string]string{"custom_read": "Read"},
+		InputRemaps: kimiInputRemaps,
+	}
+	parser.ParseLine(`{"type":"tool_use","tool_name":"custom_read","tool_id":"call_1","parameters":{"filePath":"/tmp/test.go"}}`, ch)
+	close(ch)
+
+	var events []StreamEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+	require.Len(t, events, 1)
+	assert.Equal(t, "Read", events[0].Tool.Name, "ToolNameMap should map custom_read to Read")
+}
+
+func TestStreamJSON_ParseLine_ToolUse_ToolNameMapFallback(t *testing.T) {
+	ch := make(chan StreamEvent, 64)
+	parser := &StreamJSONParser{
+		ToolNameMap: map[string]string{"other_tool": "Skill"},
+		InputRemaps: kimiInputRemaps,
+	}
+	parser.ParseLine(`{"type":"tool_use","tool_name":"read_file","tool_id":"call_1","parameters":{}}`, ch)
+	close(ch)
+
+	var events []StreamEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+	require.Len(t, events, 1)
+	assert.Equal(t, "Read", events[0].Tool.Name, "fallback to normalizeToolName when ToolNameMap has no entry")
+}
+
+func TestStreamJSON_ParseLine_ResultNoStats(t *testing.T) {
+	ch := make(chan StreamEvent, 64)
+	parser := &StreamJSONParser{InputRemaps: kimiInputRemaps}
+	parser.ParseLine(`{"type":"result","status":"success"}`, ch)
+	close(ch)
+
+	var events []StreamEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+	require.Len(t, events, 2)
+	assert.Equal(t, "metadata", events[0].Type)
+	assert.Equal(t, 0, events[0].Meta.InputTokens)
+	assert.Equal(t, 0, events[0].Meta.OutputTokens)
+	assert.Equal(t, "done", events[1].Type)
+}
+
+func TestStreamJSON_ParseLine_ResultErrorNoErrorObj(t *testing.T) {
+	ch := make(chan StreamEvent, 64)
+	parser := &StreamJSONParser{InputRemaps: kimiInputRemaps}
+	parser.ParseLine(`{"type":"result","status":"error"}`, ch)
+	close(ch)
+
+	var events []StreamEvent
+	for ev := range ch {
+		events = append(events, ev)
+	}
+	require.Len(t, events, 2)
+	assert.Equal(t, "metadata", events[0].Type)
+	assert.True(t, events[0].Meta.IsError)
+	assert.Empty(t, events[0].Meta.ErrorMessage)
 }
