@@ -199,6 +199,7 @@
               >
                 <component :is="overflowButtonIcon" />
               </button>
+              <span v-if="overflowHasBadge" class="dock-badge"></span>
             </div>
           </div>
         </div>
@@ -1036,6 +1037,10 @@ const overflowButtonIcon = computed(() => {
   return overflowTabMeta[activeTab.value]?.icon ?? MoreHorizontal
 })
 
+const overflowHasBadge = computed(() => {
+  return store.state.taskUnreadCount > 0 || store.state.portForwardActiveCount > 0 || store.state.terminalSessionCount > 0
+})
+
 const overflowButtonTitle = computed(() => {
   if (activeTab.value === dockSlot4Tab.value) return t('nav.more')
   return overflowTabMeta[activeTab.value] ? t(overflowTabMeta[activeTab.value].titleKey) : t('nav.more')
@@ -1580,6 +1585,10 @@ onUnmounted(() => {
 }
 
 /* Overflow menu */
+.dock-overflow-wrapper {
+    position: relative;
+}
+
 .dock-overflow-popup {
     background: var(--bg-elevated, var(--bg-primary));
     border: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
