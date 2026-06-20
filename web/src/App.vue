@@ -10,9 +10,8 @@
     <SetupWizard v-else-if="needsSetup" @complete="handleSetupComplete" />
 
     <!-- Main app -->
-    <div v-else class="app-container" :class="{ 'chrome-hidden': terminalActive, 'chat-keyboard-open': chatKeyboardActive, 'project-switching': switchingProject }" :key="projectKey">
+    <div v-else class="app-container" :class="{ 'chat-keyboard-open': chatKeyboardActive, 'project-switching': switchingProject }" :key="projectKey">
       <AppHeader
-        :hidden="terminalActive"
         :project-root="projectRoot"
         :home-dir="homeDir"
         @open-project-dialog="handleOpenProjectDialog"
@@ -167,6 +166,7 @@
       <div v-if="isAuthenticated" v-show="!anyKeyboardActive" class="bottom-dock-wrapper">
         <div class="bottom-dock">
           <div class="dock-center">
+            <div class="dock-active-indicator" :style="dockIndicatorStyle"></div>
             <div class="dock-btn-wrap">
               <button class="dock-btn" :class="{ active: activeTab === 'chat', 'has-unread': store.state.chatUnreadCount > 0 && activeTab !== 'chat', 'has-running': store.state.chatRunning && activeTab !== 'chat' }" @click.stop="switchTab('chat')" :title="t('nav.chat')">
                 <MessageSquare />
@@ -389,6 +389,23 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
 
 const activeTab = ref('chat')
 
+// Dock active indicator — water-drop sliding highlight
+// 5 buttons evenly spaced: btn_width=34, gap=12, step=46
+// Index: chat=0, browse=1, history=2, slot4=3, overflow=4
+const DOCK_STEP = 46 // 34 (btn width) + 12 (gap)
+
+const dockActiveIndex = computed(() => {
+  if (['chat', 'browse', 'history'].includes(activeTab.value)) {
+    return ['chat', 'browse', 'history'].indexOf(activeTab.value)
+  }
+  if (activeTab.value === dockSlot4Tab.value) return 3
+  return 4 // overflow
+})
+
+const dockIndicatorStyle = computed(() => ({
+  transform: `translateX(${dockActiveIndex.value * DOCK_STEP}px)`,
+}))
+
 function switchTab(tab) {
   if (activeTab.value === tab) return
   activeTab.value = tab
@@ -599,8 +616,8 @@ window.addEventListener('clawbench-back-press', () => {
 window.addEventListener('clawbench-foreground', handleForeground)
 const terminalRequestedCwd = ref(null)
 
-// Hide AppHeader when terminal tab is active (always); remove padding-top too
-// so terminal fills the full screen. Dock is hidden only when keyboard is open.
+// Terminal keyboard height for detecting when soft keyboard is open in terminal tab.
+// Dock is hidden only when keyboard is open.
 const terminalActive = computed(() => activeTab.value === 'terminal')
 const { keyboardHeight: terminalKeyboardHeight } = useTerminalKeyboard()
 const terminalKeyboardActive = computed(() => terminalActive.value && terminalKeyboardHeight.value > 0)
@@ -1374,11 +1391,6 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-/* When terminal tab is active, remove header padding so content expands to top */
-.chrome-hidden {
-    padding-top: 0 !important;
-}
-
 /* When chat keyboard is open on iOS (no adjustResize), shrink the app container
    from the bottom so content stays above the keyboard. */
 .chat-keyboard-open {
@@ -1408,8 +1420,25 @@ onUnmounted(() => {
 .dock-center {
     display: flex;
     align-items: center;
-    justify-content: center;
     gap: 12px;
+    position: relative;
+    /* Use margin:auto instead of justify-content:center so absolute-positioned
+       indicator at left:0 aligns exactly with the first button */
+    margin-inline: auto;
+    width: fit-content;
+}
+
+/* Water-drop sliding indicator — accent background that drifts to the active button */
+.dock-active-indicator {
+    position: absolute;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: var(--accent-color);
+    /* Water-drop feel: slightly overshoot then settle */
+    transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+    z-index: 0;
+    pointer-events: none;
 }
 
 .dock-btn {
@@ -1418,17 +1447,17 @@ onUnmounted(() => {
     height: 34px;
     border: none;
     border-radius: 50%;
-    background: var(--bg-tertiary);
+    background: transparent;
     color: var(--text-secondary);
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: background 0.2s, color 0.2s, transform 0.15s;
+    transition: color 0.25s, transform 0.15s;
+    z-index: 1;
 }
 
 .dock-btn:hover {
-    background: var(--bg-secondary);
     color: var(--text-primary);
 }
 
@@ -1437,12 +1466,10 @@ onUnmounted(() => {
 }
 
 .dock-btn.active {
-    background: var(--accent-color);
     color: #fff;
 }
 
 .dock-btn.active:hover {
-    background: var(--accent-hover);
     color: #fff;
 }
 

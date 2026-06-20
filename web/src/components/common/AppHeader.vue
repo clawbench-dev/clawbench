@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-  <header v-show="!props.hidden" class="header">
+  <header class="header">
     <img class="header-logo" src="/logo.png" alt="ClawBench">
 
     <div class="project-dropdown-wrapper" ref="dropdownRef">
@@ -74,7 +74,6 @@ const switchTab = inject('switchTab')
 const props = defineProps({
     projectRoot: String,
     homeDir: String,
-    hidden: Boolean,
 })
 const emit = defineEmits(['openProjectDialog'])
 
