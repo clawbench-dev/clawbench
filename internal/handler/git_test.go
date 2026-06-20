@@ -816,6 +816,44 @@ func TestParseDecorateRefs_Tag(t *testing.T) {
 	assert.Equal(t, "tag: v1.0", refs[0])
 }
 
+func TestParseFileCountFromShortstat(t *testing.T) {
+	tests := []struct {
+		input string
+		want  int
+	}{
+		{" 2 files changed, 10 insertions(+), 5 deletions(-)", 2},
+		{" 1 file changed, 3 insertions(+)", 1},
+		{" 15 files changed, 200 insertions(+), 50 deletions(-)", 15},
+		{" 1 file changed, 2 deletions(-)", 1},
+		{"", 0},
+		{"some unrelated text", 0},
+	}
+	for _, tt := range tests {
+		got := parseFileCountFromShortstat(tt.input)
+		assert.Equal(t, tt.want, got, "parseFileCountFromShortstat(%q)", tt.input)
+	}
+}
+
+func TestParseGitLogWithStats(t *testing.T) {
+	// Simulate actual git log output with null byte separator and shortstat
+	output := "abc123|parent1|fix bug|2026-01-01|Author (HEAD -> main)\x00\n\n 2 files changed, 10 insertions(+), 5 deletions(-)\nsha456||initial commit|2026-01-02|Author\x00\n\n 1 file changed, 3 insertions(+)\n"
+	commits := parseGitLogWithStats(output)
+	assert.Len(t, commits, 2)
+	assert.Equal(t, 2, commits[0].FileCount)
+	assert.Equal(t, "fix bug", commits[0].Msg)
+	assert.Equal(t, 1, commits[1].FileCount)
+	assert.Equal(t, "initial commit", commits[1].Msg)
+}
+
+func TestParseGitLogWithStats_NoShortstat(t *testing.T) {
+	// When shortstat is missing (e.g. merge commit with no changes), fileCount should be 0
+	output := "abc123|parent1 parent2|merge commit|2026-01-01|Author\x00\n"
+	commits := parseGitLogWithStats(output)
+	assert.Len(t, commits, 1)
+	assert.Equal(t, 0, commits[0].FileCount)
+	assert.Equal(t, "merge commit", commits[0].Msg)
+}
+
 func TestServeGitProjectHistory_IncludesParents(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
@@ -843,6 +881,11 @@ func TestServeGitProjectHistory_IncludesParents(t *testing.T) {
 	parents, ok := first["parents"].([]interface{})
 	assert.True(t, ok)
 	assert.GreaterOrEqual(t, len(parents), 1)
+
+	// First commit should have fileCount > 0 (it changed README.md)
+	fc, ok := first["fileCount"].(float64)
+	assert.True(t, ok)
+	assert.GreaterOrEqual(t, int(fc), 1)
 }
 
 // --- parseWorktreePorcelain ---

@@ -310,7 +310,7 @@ async function loadProjectHistory() {
 
     // Prepend working tree entry if there are uncommitted changes
     if (loadedWtFiles.length > 0) {
-      commits.value = [{ sha: 'HEAD', msg: t('git.history.workingTreeChanges'), date: '', author: '', isWT: true }, ...histCommits]
+      commits.value = [{ sha: 'HEAD', msg: t('git.history.workingTreeChanges'), date: '', author: '', isWT: true, fileCount: loadedWtFiles.length }, ...histCommits]
     } else {
       commits.value = histCommits
     }

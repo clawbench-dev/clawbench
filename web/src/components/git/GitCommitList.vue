@@ -86,6 +86,7 @@
               <div class="git-commit-msg">{{ c.msg }}</div>
               <div class="git-commit-meta">
                 <span v-if="!c.isWT" class="git-commit-sha">{{ c.sha.slice(0, 7) }}</span>
+                <span v-if="c.fileCount > 0" class="git-commit-file-count">{{ c.fileCount }}</span>
                 <span v-if="c.refs && c.refs.length" class="git-commit-refs">
                   <span v-for="ref in c.refs" :key="ref" class="git-ref-tag" :class="refTagClass(ref)">{{ refLabelText(ref) }}</span>
                 </span>
@@ -487,6 +488,17 @@ defineExpose({ observeList, unobserveList, commitSearch })
   color: var(--text-muted, #999);
   background: var(--bg-tertiary, #f0f0f0);
   padding: 1px 4px;
+  border-radius: 3px;
+  margin-right: 4px;
+}
+
+/* File change count badge */
+.git-commit-file-count {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent-color, #4a90d9);
+  background: rgba(74, 144, 217, 0.12);
+  padding: 1px 5px;
   border-radius: 3px;
   margin-right: 4px;
 }

@@ -171,21 +171,24 @@
               <button class="dock-btn" :class="{ active: activeTab === 'chat', 'has-unread': store.state.chatUnreadCount > 0 && activeTab !== 'chat', 'has-running': store.state.chatRunning && activeTab !== 'chat' }" @click.stop="switchTab('chat')" :title="t('nav.chat')">
                 <MessageSquare />
               </button>
-              <span v-if="store.state.chatUnreadCount > 0 && activeTab !== 'chat'" class="dock-badge dock-badge-count">{{ store.state.chatUnreadCount }}</span>
+              <span v-if="store.state.chatUnreadCount > 0 && activeTab !== 'chat'" class="dock-badge dock-badge-count">{{ formatBadgeCount(store.state.chatUnreadCount) }}</span>
             </div>
             <button class="dock-btn" :class="{ active: activeTab === 'browse' }" @click.stop="switchTab('browse')" :title="t('nav.fileManager')">
               <FolderOpen />
             </button>
-            <button class="dock-btn" :class="{ active: activeTab === 'history' }" @click.stop="switchTab('history')" :title="t('git.history.projectHistory')">
-              <GitBranch />
-            </button>
+            <div class="dock-btn-wrap">
+              <button class="dock-btn" :class="{ active: activeTab === 'history' }" @click.stop="switchTab('history')" :title="t('git.history.projectHistory')">
+                <GitBranch />
+              </button>
+              <span v-if="store.state.gitWorkingTreeChangeCount > 0 && activeTab !== 'history'" class="dock-badge dock-badge-count">{{ formatBadgeCount(store.state.gitWorkingTreeChangeCount) }}</span>
+            </div>
             <div class="dock-btn-wrap">
               <button class="dock-btn" :class="{ active: activeTab === dockSlot4Tab, 'has-unread': dockSlot4Tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks', 'just-completed': dockSlot4Tab === 'tasks' && store.state.taskJustCompleted && activeTab !== 'tasks', 'has-running': dockSlot4Tab === 'tasks' && store.state.taskRunning && activeTab !== 'tasks' }" @click.stop="handleDockSlot4Click" :title="dockSlot4Title">
                 <component :is="dockSlot4Icon" />
               </button>
-              <span v-if="dockSlot4Tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count">{{ store.state.taskUnreadCount }}</span>
-              <span v-if="dockSlot4Tab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count">{{ store.state.terminalSessionCount }}</span>
-              <span v-if="dockSlot4Tab === 'proxy' && store.state.portForwardActiveCount > 0 && activeTab !== 'proxy'" class="dock-badge dock-badge-count">{{ store.state.portForwardActiveCount }}</span>
+              <span v-if="dockSlot4Tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
+              <span v-if="dockSlot4Tab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
+              <span v-if="dockSlot4Tab === 'proxy' && store.state.portForwardActiveCount > 0 && activeTab !== 'proxy'" class="dock-badge dock-badge-count">{{ formatBadgeCount(store.state.portForwardActiveCount) }}</span>
             </div>
             <div class="dock-overflow-wrapper">
               <button
@@ -213,17 +216,17 @@
           <button class="dock-overflow-item" :class="{ active: activeTab === 'tasks' }" @click.stop="handleOverflowSelect('tasks')">
             <CalendarClock :size="16" />
             <span>{{ t('nav.tasks') }}</span>
-            <span v-if="store.state.taskUnreadCount > 0" class="dock-overflow-count">{{ store.state.taskUnreadCount }}</span>
+            <span v-if="store.state.taskUnreadCount > 0" class="dock-overflow-count">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
           </button>
           <button v-if="!isSSHDisabled" class="dock-overflow-item" :class="{ active: activeTab === 'proxy' }" @click.stop="handleOverflowSelect('proxy')">
             <EthernetPort :size="16" />
             <span>{{ t('nav.portForward') }}</span>
-            <span v-if="store.state.portForwardActiveCount > 0" class="dock-overflow-count">{{ store.state.portForwardActiveCount }}</span>
+            <span v-if="store.state.portForwardActiveCount > 0" class="dock-overflow-count">{{ formatBadgeCount(store.state.portForwardActiveCount) }}</span>
           </button>
           <button v-if="!isTerminalDisabled" class="dock-overflow-item" :class="{ active: activeTab === 'terminal' }" @click.stop="handleOverflowSelect('terminal')">
             <TerminalIcon :size="16" />
             <span>{{ t('terminal.title') }}</span>
-            <span v-if="store.state.terminalSessionCount > 0" class="dock-overflow-count">{{ store.state.terminalSessionCount }}</span>
+            <span v-if="store.state.terminalSessionCount > 0" class="dock-overflow-count">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
           </button>
           <div class="dock-overflow-divider"></div>
           <button class="dock-overflow-item" @click.stop="handleOverflowSettings">
@@ -289,6 +292,7 @@ import { store } from './stores/app.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
 import { initMermaid, reRenderMermaid } from './utils/mermaid.ts'
 import { getFileType } from './utils/fileType.ts'
+import { formatBadgeCount } from './utils/format.ts'
 import 'highlight.js/styles/github.css'
 import 'highlight.js/styles/github-dark.css'
 import './assets/hljs-light-override.css'
@@ -1555,7 +1559,7 @@ onUnmounted(() => {
     position: absolute;
     inset: 1.5px;
     border-radius: inherit;
-    background: var(--bg-tertiary);
+    background: transparent;
     z-index: -1;
 }
 

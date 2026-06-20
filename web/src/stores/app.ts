@@ -92,6 +92,7 @@ interface AppState {
     gitBranch: string
     gitHead: string
     gitDirty: boolean
+    gitWorkingTreeChangeCount: number
 
 }
 
@@ -139,6 +140,7 @@ const state = reactive<AppState>({
     gitBranch: '',
     gitHead: '',
     gitDirty: false,
+    gitWorkingTreeChangeCount: 0,
 
 })
 
@@ -217,6 +219,7 @@ function resetProjectState(): void {
     state.gitBranch = ''
     state.gitHead = ''
     state.gitDirty = false
+    state.gitWorkingTreeChangeCount = 0
     // Chat/task badges
     state.chatUnreadCount = 0
     state.chatRunning = false
@@ -242,18 +245,20 @@ function resetProjectState(): void {
 // Git
 // =============================================
 
-async function loadGitBranch(): Promise<{ isGit: boolean; branch: string; head: string; dirty: boolean }> {
+async function loadGitBranch(): Promise<{ isGit: boolean; branch: string; head: string; dirty: boolean; changeCount: number }> {
     try {
-        const data = await apiGet<{ isGit: boolean; branch: string; head: string; dirty: boolean }>('/api/git/branch')
+        const data = await apiGet<{ isGit: boolean; branch: string; head: string; dirty: boolean; changeCount: number }>('/api/git/branch')
         state.gitBranch = data.branch || ''
         state.gitHead = data.head || ''
         state.gitDirty = !!data.dirty
+        state.gitWorkingTreeChangeCount = data.changeCount || 0
         return data
     } catch (_) {
         state.gitBranch = ''
         state.gitHead = ''
         state.gitDirty = false
-        return { isGit: false, branch: '', head: '', dirty: false }
+        state.gitWorkingTreeChangeCount = 0
+        return { isGit: false, branch: '', head: '', dirty: false, changeCount: 0 }
     }
 }
 
