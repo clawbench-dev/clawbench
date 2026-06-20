@@ -307,6 +307,9 @@ export default {
       hoursAgo: '{count}小时前',
       hoursFromNow: '{count}小时后',
       close: '关闭',
+      retry: '重试',
+      detailsUnavailable: '详情暂不可用',
+      detailsLoadFailed: '加载失败',
       warningReasons: {
         user_cancel: '用户已中断',
         disconnect: '连接已断开，AI 响应中断',

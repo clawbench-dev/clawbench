@@ -307,6 +307,9 @@ export default {
       hoursAgo: '{count} hr ago',
       hoursFromNow: '{count} hr from now',
       close: 'Close',
+      retry: 'Retry',
+      detailsUnavailable: 'Details unavailable',
+      detailsLoadFailed: 'Failed to load details',
       warningReasons: {
         user_cancel: 'User cancelled',
         disconnect: 'Connection lost, AI response interrupted',

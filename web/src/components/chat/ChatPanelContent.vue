@@ -141,6 +141,7 @@
     @close="toolDetailOverlay.show = false"
     @file-open="handleFileOpenInOverlay"
     @send-message="handleToolSendMessage"
+    @click="handleOverlayRetryClick"
   />
   <!-- RAG search result detail drawer -->
   <BottomSheet :open="!!ragDetailItem" handleOnly auto @close="ragDetailItem = null">
@@ -772,23 +773,44 @@ function handleShowToolDetail(block) {
     outputHtml: hasOutput ? formatToolOutput(block.output, block.name) : '',
     status: block.status || '',
     done: !!block.done,
+    _fetchIds: null,
   }
 
   // Fetch tool call detail from API if input/output are missing
   if ((!hasInput || !hasOutput) && block.tool_id && block.msgId) {
     const toolId = block.tool_id
     const msgId = block.msgId
+    toolDetailOverlay.value._fetchIds = { toolId, msgId }
     fetchToolCallDetail(toolId, msgId, block)
   }
 }
 
+/** Generate empty-state HTML with a retry button */
+function toolCallEmptyState(msg) {
+  return `<div class="tool-call-empty"><span class="tool-call-empty-msg">${msg}</span><button class="tool-call-retry-btn" onclick="this.closest('.tool-call-empty').dataset.retry='1'">${t('chat.contentBlocks.retry')}</button></div>`
+}
+
+/** Handle retry click inside overlay v-html via event delegation */
+function handleOverlayRetryClick(e) {
+  const empty = e.target.closest('.tool-call-empty')
+  if (!empty || empty.dataset.retry !== '1') return
+  empty.dataset.retry = ''
+  const ids = toolDetailOverlay.value._fetchIds
+  if (!ids) return
+  const block = findToolBlock(activeToolOverlay.value)
+  fetchToolCallDetail(ids.toolId, ids.msgId, block || { name: toolDetailOverlay.value.name })
+}
+
 /** Fetch full tool call data from the API and update the overlay */
 async function fetchToolCallDetail(toolId, msgId, block) {
+  // Show loading state
+  if (!toolDetailOverlay.value.inputHtml) {
+    toolDetailOverlay.value.inputHtml = '<div class="tool-call-loading"></div>'
+  }
   try {
     const resp = await fetch(`/api/ai/chat/tool-call?tool_id=${encodeURIComponent(toolId)}&message_id=${encodeURIComponent(msgId)}`)
     if (!resp.ok) {
-      // Old data or not found — show "query failed" state
-      toolDetailOverlay.value.inputHtml = '<div style="color: var(--text-muted); font-style: italic; padding: 8px;">Details unavailable (legacy data)</div>'
+      toolDetailOverlay.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsUnavailable'))
       return
     }
     const data = await resp.json()
@@ -797,13 +819,15 @@ async function fetchToolCallDetail(toolId, msgId, block) {
     if (data.input) {
       const input = typeof data.input === 'string' ? JSON.parse(data.input) : data.input
       toolDetailOverlay.value.inputHtml = formatToolInput(input, block.name || data.name, { done: block.done, status: block.status, output: data.output || '' })
+    } else {
+      toolDetailOverlay.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsUnavailable'))
     }
     if (data.output) {
       toolDetailOverlay.value.outputHtml = formatToolOutput(data.output, block.name || data.name)
     }
   } catch (e) {
     console.warn('Failed to fetch tool call detail:', e)
-    toolDetailOverlay.value.inputHtml = '<div style="color: var(--text-muted); font-style: italic; padding: 8px;">Failed to load details</div>'
+    toolDetailOverlay.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsLoadFailed'))
   }
 }
 
@@ -1183,5 +1207,52 @@ onUnmounted(() => {
 
 .rag-detail-resume-btn:active {
   opacity: 0.7;
+}
+</style>
+
+<style>
+/* Tool call empty state — unscoped so it works inside v-html */
+.tool-call-loading {
+  display: flex;
+  justify-content: center;
+  padding: 24px;
+}
+.tool-call-loading::after {
+  content: '';
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border-color, #e5e7eb);
+  border-top-color: var(--primary, #6366f1);
+  border-radius: 50%;
+  animation: tool-call-spin 0.6s linear infinite;
+}
+@keyframes tool-call-spin {
+  to { transform: rotate(360deg); }
+}
+.tool-call-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 12px;
+  color: var(--text-muted, #9ca3af);
+}
+.tool-call-empty-msg {
+  font-size: 13px;
+  font-style: italic;
+}
+.tool-call-retry-btn {
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, #e5e7eb);
+  background: var(--bg-secondary, #f3f4f6);
+  color: var(--text-secondary, #6b7280);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.tool-call-retry-btn:hover {
+  background: var(--bg-tertiary, #e5e7eb);
+  color: var(--text-primary, #111827);
 }
 </style>
