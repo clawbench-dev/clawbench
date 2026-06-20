@@ -24,10 +24,10 @@ func init() {
 
 func newClineBackend() ai.AIBackend {
 	return &ai.CLIBackend{
-		BackendName:  "cline",
-		Cmd:          "cline",
-		BuildArgsFn:  buildClineStreamArgs,
-		NewParserFn:  func() ai.LineParser { return &ai.StreamParser{} },
+		BackendName: "cline",
+		Cmd:         "cline",
+		BuildArgsFn: buildClineStreamArgs,
+		NewParserFn: func() ai.LineParser { return &ai.StreamParser{} },
 		FilterLineFn: nil,
 		PreStartFn: func(cmd *exec.Cmd, req ai.ChatRequest) {
 			cmd.Stdin = strings.NewReader(req.Prompt)

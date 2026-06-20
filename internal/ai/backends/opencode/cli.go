@@ -11,8 +11,8 @@ import (
 // OpenCodeInputRemaps maps OpenCode CLI input field names to canonical names.
 // Injected into OpenCodeStreamParser at construction time.
 var OpenCodeInputRemaps = map[string]string{
-	"oldString":  "old_string",
-	"newString":  "new_string",
+	"oldString": "old_string",
+	"newString": "new_string",
 	"replaceAll": "replace_all", // Edit replaceAll → replace_all
 	"include":    "glob",        // Grep include → canonical glob
 	"name":       "skill",       // Skill name → skill

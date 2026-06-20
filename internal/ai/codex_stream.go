@@ -94,10 +94,9 @@ func (p *CodexStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 
 		case "command_execution":
 			// Emit Bash tool_use event for completed command execution.
-			// Codex's raw command string is wrapped into canonical {"command":"..."} JSON.
-			input := codexBashInputJSON(msg.Item.Command)
-			output := truncateToolOutput(msg.Item.AggregatedOutput)
-			emitBashToolCall(ch, msg.Item.ID, input, output, true, msg.Item.ExitCode)
+			if tc := parseCodexToolComplete(&msg); tc != nil {
+				ch <- StreamEvent{Type: "tool_use", Tool: tc}
+			}
 		}
 
 	case "item.started":
@@ -105,8 +104,9 @@ func (p *CodexStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 			return
 		}
 		if msg.Item.Type == "command_execution" {
-			input := codexBashInputJSON(msg.Item.Command)
-			emitBashToolCall(ch, msg.Item.ID, input, "", false, nil)
+			if tc := parseCodexToolStart(&msg); tc != nil {
+				ch <- StreamEvent{Type: "tool_use", Tool: tc}
+			}
 		}
 
 	case "turn.completed":
@@ -378,9 +378,6 @@ func parseCodexResumeOutput(scanner *bufio.Scanner, ch chan<- StreamEvent, sessi
 }
 
 // emitBashToolCall has been moved to codex_tool.go
-
-// codexBashInputJSON builds canonical {"command":"..."} JSON from Codex's raw command string.
-func codexBashInputJSON(command string) string { return execCommandJSON(command) }
 
 // buildCodexResumeArgs constructs the CLI arguments for resuming a Codex session.
 // "codex exec resume" does not support --json, so output is plain text.

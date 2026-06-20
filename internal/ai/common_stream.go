@@ -178,6 +178,37 @@ func NormalizeToolInputForTest(rawInput []byte, pathMappings map[string]string) 
 	return normalizeToolInput(rawInput, pathMappings)
 }
 
+// perAgentInputRemaps defines per-agent input field remapping tables.
+// Each key is a "<backend>_<mode>" identifier (e.g., "opencode_cli", "claude_acp").
+// Per-agent remaps only contain backend-specific overrides — the shared defaultMappings
+// (filePath→file_path, cmd→command, exec→command) are applied automatically by
+// normalizeToolInput, so they don't need to be repeated here.
+var perAgentInputRemaps = map[string]map[string]string{
+	// CLI layer
+	"opencode_cli": {"oldString": "old_string", "newString": "new_string"},
+	"deepseek_cli": {
+		"path": "file_path", "search": "old_string", "replace": "new_string",
+		"filePaths": "file_paths", "dirPath": "path",
+	},
+	"pi_cli": {"path": "file_path"},
+	// ACP layer
+	"claude_acp":    {}, // Claude ACP rawInput already snake_case, defaultMappings sufficient
+	"opencode_acp":  {"oldString": "old_string", "newString": "new_string"},
+	"codebuddy_acp": {},
+	"kimi_acp":      {}, // Kimi ACP has no rawInput; remap key exists for completeness only
+	"generic_acp": { // Full remap table for generic fallback — includes defaultMappings overlap as safety net
+		"oldString": "old_string", "newString": "new_string",
+		"dirPath": "path",
+		"cellIndex": "cell_index", "cellType": "cell_type",
+	},
+}
+
+// getRemaps returns the per-agent input remapping table for the given key.
+// Returns nil if no remaps are defined for that key.
+func getRemaps(key string) map[string]string {
+	return perAgentInputRemaps[key]
+}
+
 // execCommandJSON is a shared helper that returns canonical {"command":"..."} JSON
 // for Bash tool call input normalization. Used by codex_stream.go for its resume
 // output parser.

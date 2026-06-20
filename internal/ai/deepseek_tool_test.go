@@ -141,7 +141,7 @@ func TestDeepSeekTool_GrepFilesPathNotRemapped(t *testing.T) {
 		t.Errorf("expected name 'Grep', got '%s'", tc.Name)
 	}
 	// For grep_files, 'path' should remain as 'path' — the deepseek_cli remap
-	// maps path→file_path, but the existing behavior in normalizeDeepSeekInput
+	// maps path→file_path, but parseDeepSeekToolUse
 	// explicitly does NOT remap for grep_files/file_search. The new design uses
 	// a single unified remap table (path→file_path), so grep_files will get
 	// path→file_path remapped. This matches the design doc's approach.

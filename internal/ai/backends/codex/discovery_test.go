@@ -17,10 +17,10 @@ func TestCodexModelRe(t *testing.T) {
 		{"gpt-5.4-mini", true},
 		{"o3", true},
 		{"o4-mini", true},
-		{"gpt-4", false},         // single version segment
-		{"gpt-4.1", true},        // matches gpt-\d+\.\d+
-		{"o3-mini", true},        // matches o[34](-mini)?
-		{"o4", true},             // matches o[34]
+		{"gpt-4", false},       // single version segment
+		{"gpt-4.1", true},      // matches gpt-\d+\.\d+
+		{"o3-mini", true},      // matches o[34](-mini)?
+		{"o4", true},           // matches o[34]
 		{"gpt-3.5-turbo", false}, // "turbo" is not "-mini", regex only allows -mini suffix
 		{"claude-sonnet-4", false},
 		{"model-x", false},

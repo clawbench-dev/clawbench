@@ -36,12 +36,12 @@ func TestClaudeModelRe(t *testing.T) {
 		{"claude-sonnet-4-6", true},
 		{"claude-opus-4-5", true},
 		{"claude-haiku-3-5", true},
-		{"claude-sonnet-4-20250514", true}, // regex matches (4-20250514 is two digit segments), but claudeIsDateStamped filters it
-		{"claude-opus-4", false},           // single version segment
-		{"claude-3-5-haiku", false},        // old naming convention
-		{"gpt-4.1", false},                 // not a Claude model
-		{"sonnet-4-6", false},              // missing "claude-" prefix
-		{"claude-sonnet-4-6-1", false},     // three version segments
+		{"claude-sonnet-4-20250514", true},  // regex matches (4-20250514 is two digit segments), but claudeIsDateStamped filters it
+		{"claude-opus-4", false},            // single version segment
+		{"claude-3-5-haiku", false},         // old naming convention
+		{"gpt-4.1", false},                  // not a Claude model
+		{"sonnet-4-6", false},               // missing "claude-" prefix
+		{"claude-sonnet-4-6-1", false},      // three version segments
 	}
 
 	for _, tt := range tests {

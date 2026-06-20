@@ -270,61 +270,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 	}
 }
 
-// mapACPToolCall converts an ACP ToolCall start event to a StreamEvent.
-func mapACPToolCall(tc acp.SessionUpdateToolCall, backendID string) StreamEvent {
-	tool := &ToolCall{
-		Name: extractToolName(tc.Title, tc.Kind, backendID, string(tc.ToolCallId)),
-		ID:   string(tc.ToolCallId),
-		Done: false,
-	}
-
-	// Extract raw input as JSON string, normalizing camelCase → snake_case
-	if tc.RawInput != nil {
-		if inputBytes, err := json.Marshal(tc.RawInput); err == nil {
-			remaps := acpRemapsForBackend(backendID)
-			normalized, normErr := normalizeToolInput(inputBytes, remaps)
-			if normErr == nil {
-				tool.Input = string(normalized)
-			} else {
-				tool.Input = string(inputBytes)
-			}
-		}
-	} else if len(tc.Content) > 0 {
-		// Some ACP agents (e.g., Claude) use Content blocks instead of RawInput
-		// for tool calls like Terminal/Bash. Extract input from Content fields.
-		input := extractInputFromContent(tc)
-		if input != nil {
-			if inputBytes, err := json.Marshal(input); err == nil {
-				tool.Input = string(inputBytes)
-			}
-		}
-	}
-
-	// Fallback: for execute-kind tools with no input from RawInput or Content,
-	// use the title as the command. Kimi CLI sends only title (e.g. "echo hello")
-	// with no rawInput or content at all.
-	if tool.Input == "" && tc.Kind == acp.ToolKindExecute && tc.Title != "" {
-		input := map[string]any{"command": tc.Title}
-		if inputBytes, err := json.Marshal(input); err == nil {
-			tool.Input = string(inputBytes)
-		}
-	}
-
-	// Kimi ACP: extract input from locations and title for read/search tools.
-	// Kimi sends file paths in `locations` and search targets in `title`
-	// instead of `rawInput`. Without this, the frontend shows empty tool bars.
-	if tool.Input == "" {
-		if input := extractInputFromLocationsAndTitle(tc.Locations, tc.Title, tc.Kind, string(tc.ToolCallId)); input != nil {
-			if inputBytes, err := json.Marshal(input); err == nil {
-				tool.Input = string(inputBytes)
-			}
-		}
-	}
-
-	return StreamEvent{Type: "tool_use", Tool: tool}
-}
-
-// extractInputFromContent extracts tool input parameters from ACP Content blocks.
+	// extractInputFromContent extracts tool input parameters from ACP Content blocks.
 // Terminal content blocks contain the command being executed; text content blocks
 // may contain the description or command text.
 func extractInputFromContent(tc acp.SessionUpdateToolCall) map[string]any {
@@ -431,37 +377,6 @@ func extractInputFromLocationsAndTitle(locations []acp.ToolCallLocation, title s
 		return nil
 	}
 	return input
-}
-
-// mapACPToolCallUpdate converts an ACP ToolCallUpdate to a StreamEvent.
-func mapACPToolCallUpdate(tcu acp.SessionToolCallUpdate, backendID string) StreamEvent {
-	tool := &ToolCall{
-		ID: string(tcu.ToolCallId),
-	}
-
-	mapToolCallStatus(tcu.Status, tool)
-	mapToolCallInput(tcu, tool, backendID)
-	mapToolCallName(tcu, tool, backendID)
-	// Only extract output for completed/failed tools.
-	// Intermediate updates (in_progress/pending) may carry partial RawOutput
-	// (e.g., a lone "}" from a streaming JSON object) that is not meaningful
-	// and would be persisted to the DB as garbage output if the session is
-	// cancelled before the tool finishes.
-	if tool.Done {
-		mapToolCallOutput(tcu, tool)
-	}
-
-	// Determine event type: if tool is done, emit tool_result; otherwise update tool_use
-	eventType := "tool_use"
-	if tool.Done {
-		eventType = "tool_result"
-	}
-
-	slog.Debug("acp: tool_call_update", "tool_call_id", tool.ID, "done", tool.Done, "event_type", eventType, "has_output", tool.Output != "",
-		"status", fmt.Sprintf("%v", tcu.Status), "content_count", len(tcu.Content), "title", tcu.Title,
-		"raw_input", fmt.Sprintf("%v", tcu.RawInput))
-
-	return StreamEvent{Type: eventType, Tool: tool}
 }
 
 // mapToolCallStatus sets the tool's Done and Status fields based on ACP status.
@@ -771,20 +686,4 @@ func MapACPSessionUpdateForTest(update acp.SessionUpdate, ch chan<- StreamEvent)
 	mapACPSessionUpdate(update, ch, nil, nil, nil)
 }
 
-// acpRemapsForBackend returns the ACP input remapping map for the given backendID.
-// Uses LookupACPRemapsFn (wired to backends.LookupACPRemaps) when available,
-// which handles backend-specific remaps and generic fallback internally.
-// Falls back to a local copy of the generic map only when the backends package
-// is not loaded (e.g., isolated test runs).
-func acpRemapsForBackend(backendID string) map[string]string {
-	if LookupACPRemapsFn != nil {
-		return LookupACPRemapsFn(backendID)
-	}
-	// Fallback for isolated test runs without backends package.
-	// Must match genericACPRemaps in backends/registry.go.
-	return map[string]string{
-		"oldString": "old_string", "newString": "new_string",
-		"dirPath": "path", "filePath": "file_path",
-		"cellIndex": "cell_index", "cellType": "cell_type",
-	}
-}
+

@@ -7,15 +7,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func indexOf(slice []string, target string) int {
-	for i, v := range slice {
-		if v == target {
-			return i
-		}
-	}
-	return -1
-}
-
 func parseOpenCodeLine(line string) []StreamEvent {
 	ch := make(chan StreamEvent, 64)
 	parser := &OpenCodeStreamParser{InputRemaps: openCodeInputRemaps}
@@ -362,85 +353,6 @@ func TestNormalizeOpenCodeToolName(t *testing.T) {
 	}
 }
 
-func TestBuildOpenCodeStreamArgs_ResumeWithSessionID(t *testing.T) {
-	req := ChatRequest{
-		Prompt:    "continue",
-		SessionID: "ses_abc123",
-		Resume:    true,
-	}
-	args := buildOpenCodeStreamArgs(req)
-	assert.Contains(t, args, "--session")
-	idx := indexOf(args, "--session")
-	assert.Equal(t, "ses_abc123", args[idx+1])
-}
-
-func TestBuildOpenCodeStreamArgs_NewSessionNoResume(t *testing.T) {
-	req := ChatRequest{
-		Prompt:    "hello",
-		SessionID: "ses_abc123",
-		Resume:    false,
-	}
-	args := buildOpenCodeStreamArgs(req)
-	assert.NotContains(t, args, "--session")
-}
-
-func TestBuildOpenCodeStreamArgs_WithWorkDir(t *testing.T) {
-	req := ChatRequest{
-		Prompt:  "hello",
-		WorkDir: "/home/user/project",
-	}
-	args := buildOpenCodeStreamArgs(req)
-	assert.Contains(t, args, "--dir")
-	idx := indexOf(args, "--dir")
-	assert.Equal(t, "/home/user/project", args[idx+1])
-}
-
-func TestBuildOpenCodeStreamArgs_WithModel(t *testing.T) {
-	req := ChatRequest{
-		Prompt: "hello",
-		Model:  "minimax-cn/MiniMax-M2.7",
-	}
-	args := buildOpenCodeStreamArgs(req)
-	assert.Contains(t, args, "--model")
-	idx := indexOf(args, "--model")
-	assert.Equal(t, "minimax-cn/MiniMax-M2.7", args[idx+1])
-}
-
-func TestBuildOpenCodeStreamArgs_WithThinkingEffort(t *testing.T) {
-	req := ChatRequest{
-		Prompt:         "hello",
-		ThinkingEffort: "high",
-	}
-	args := buildOpenCodeStreamArgs(req)
-	assert.Contains(t, args, "--variant")
-	idx := indexOf(args, "--variant")
-	assert.Equal(t, "high", args[idx+1])
-}
-
-func TestBuildOpenCodeStreamArgs_SystemPromptInjection(t *testing.T) {
-	req := ChatRequest{
-		Prompt:       "hello",
-		SystemPrompt: "you are helpful",
-	}
-	args := buildOpenCodeStreamArgs(req)
-	// System prompt should be injected into the prompt text, not as a flag
-	assert.NotContains(t, args, "--system-prompt")
-	// The prompt (at index 1, after "run") should contain the system instruction
-	assert.Contains(t, args[1], "you are helpful")
-}
-
-func TestBuildOpenCodeStreamArgs_MinimalRequest(t *testing.T) {
-	req := ChatRequest{
-		Prompt: "hello",
-	}
-	args := buildOpenCodeStreamArgs(req)
-	assert.Contains(t, args, "run")
-	assert.Contains(t, args, "--format")
-	assert.Contains(t, args, "json")
-	assert.Contains(t, args, "--dangerously-skip-permissions")
-	assert.Equal(t, "hello", args[1])
-}
-
 func TestNormalizeOpenCodeInput_FieldRemapping(t *testing.T) {
 	// filePath → file_path
 	input1 := json.RawMessage(`{"filePath":"/tmp/test.go"}`)
@@ -652,64 +564,4 @@ func TestOpenCodeStream_ParseLine_ToolUse_NewTools(t *testing.T) {
 			tt.checkInput(t, input)
 		})
 	}
-}
-
-func TestOpenCodeStream_ParseLine_ToolUse_ToolNameMap(t *testing.T) {
-	ch := make(chan StreamEvent, 64)
-	parser := &OpenCodeStreamParser{
-		ToolNameMap: map[string]string{"custom_read": "Read"},
-		InputRemaps: openCodeInputRemaps,
-	}
-	line := `{"type":"tool_use","timestamp":1,"sessionID":"ses_1","part":{"type":"tool","tool":"custom_read","callID":"call_1","state":{"status":"completed","input":{"filePath":"/tmp/test.go"},"output":"ok"}}}`
-	parser.ParseLine(line, ch)
-	close(ch)
-
-	var events []StreamEvent
-	for ev := range ch {
-		events = append(events, ev)
-	}
-	if len(events) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(events))
-	}
-	assert.Equal(t, "Read", events[0].Tool.Name, "ToolNameMap should map custom_read to Read")
-}
-
-func TestOpenCodeStream_ParseLine_ToolUse_ToolNameMapFallback(t *testing.T) {
-	ch := make(chan StreamEvent, 64)
-	parser := &OpenCodeStreamParser{
-		ToolNameMap: map[string]string{"other_tool": "Skill"},
-		InputRemaps: openCodeInputRemaps,
-	}
-	line := `{"type":"tool_use","timestamp":1,"sessionID":"ses_1","part":{"type":"tool","tool":"read_file","callID":"call_1","state":{"status":"completed","input":{},"output":"ok"}}}`
-	parser.ParseLine(line, ch)
-	close(ch)
-
-	var events []StreamEvent
-	for ev := range ch {
-		events = append(events, ev)
-	}
-	if len(events) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(events))
-	}
-	assert.Equal(t, "Read", events[0].Tool.Name, "fallback to normalizeToolName when ToolNameMap has no entry")
-}
-
-func TestOpenCodeStream_ParseLine_ToolUse_NilToolNameMap(t *testing.T) {
-	ch := make(chan StreamEvent, 64)
-	parser := &OpenCodeStreamParser{
-		ToolNameMap: nil,
-		InputRemaps: openCodeInputRemaps,
-	}
-	line := `{"type":"tool_use","timestamp":1,"sessionID":"ses_1","part":{"type":"tool","tool":"read_file","callID":"call_1","state":{"status":"completed","input":{},"output":"ok"}}}`
-	parser.ParseLine(line, ch)
-	close(ch)
-
-	var events []StreamEvent
-	for ev := range ch {
-		events = append(events, ev)
-	}
-	if len(events) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(events))
-	}
-	assert.Equal(t, "Read", events[0].Tool.Name, "nil ToolNameMap should use normalizeToolName")
 }

@@ -28,10 +28,10 @@ func init() {
 // newClaudeBackend returns a CLIBackend instance configured for Claude CLI.
 func newClaudeBackend() ai.AIBackend {
 	return &ai.CLIBackend{
-		BackendName:  "claude",
-		Cmd:          "claude",
-		BuildArgsFn:  buildClaudeStreamArgs,
-		NewParserFn:  func() ai.LineParser { return &ai.StreamParser{} },
+		BackendName: "claude",
+		Cmd:         "claude",
+		BuildArgsFn: buildClaudeStreamArgs,
+		NewParserFn: func() ai.LineParser { return &ai.StreamParser{} },
 		FilterLineFn: nil, // skip empty lines only (default)
 		PreStartFn: func(cmd *exec.Cmd, req ai.ChatRequest) {
 			// Claude CLI in --print mode with stdout piped (non-TTY) requires prompt

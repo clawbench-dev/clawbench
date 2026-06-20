@@ -379,23 +379,22 @@ func TestDeepSeekInputFieldNormalization_GrepFilesPathNotRemapped(t *testing.T) 
 }
 
 func TestDeepSeekInputFieldNormalization_InvalidJSON(t *testing.T) {
-	// When tool input is invalid JSON, normalizeDeepSeekInput returns the raw string.
-	// We can't test this through ParseLine because the outer line itself must be valid JSON
-	// (the input field is parsed from json.RawMessage which just captures the raw bytes).
-	// Instead, test normalizeDeepSeekInput directly.
-	result := normalizeDeepSeekInput("read_file", json.RawMessage(`{invalid}`), nil)
-	if result == "" {
+	// When tool input is invalid JSON, parseDeepSeekToolUse returns the raw string.
+	msg := DeepSeekStreamMessage{Name: "read_file", Input: json.RawMessage(`{invalid}`)}
+	tc := parseDeepSeekToolUse(&msg, nil)
+	if tc.Input == "" {
 		t.Error("expected non-empty result for invalid JSON input")
 	}
-	if result != "{invalid}" {
-		t.Errorf("expected raw input returned on parse error, got '%s'", result)
+	if tc.Input != "{invalid}" {
+		t.Errorf("expected raw input returned on parse error, got '%s'", tc.Input)
 	}
 }
 
 func TestDeepSeekInputFieldNormalization_EmptyInput(t *testing.T) {
 	// Empty raw input should produce empty result
-	result := normalizeDeepSeekInput("read_file", json.RawMessage(``), nil)
-	if result != "" {
-		t.Errorf("expected empty string for empty input, got '%s'", result)
+	msg := DeepSeekStreamMessage{Name: "read_file", Input: json.RawMessage(``)}
+	tc := parseDeepSeekToolUse(&msg, nil)
+	if tc.Input != "" {
+		t.Errorf("expected empty string for empty input, got '%s'", tc.Input)
 	}
 }
