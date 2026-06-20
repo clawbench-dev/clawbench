@@ -1456,7 +1456,7 @@ onUnmounted(() => {
     height: 34px;
     border: none;
     border-radius: 50%;
-    background: var(--bg-primary);
+    background: transparent;
     color: var(--text-secondary);
     cursor: pointer;
     display: flex;
@@ -1533,7 +1533,6 @@ onUnmounted(() => {
     position: relative;
     isolation: isolate;
     overflow: hidden;
-    background: var(--bg-primary);
     border-color: transparent;
     box-shadow: 0 0 4px 1px color-mix(in srgb, var(--accent-color, #0066cc) 25%, transparent);
 }
