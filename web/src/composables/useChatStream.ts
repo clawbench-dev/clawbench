@@ -500,6 +500,13 @@ export function useChatStream(options: UseChatStreamOptions) {
       }
       if (streamTimeout) { clearTimeout(streamTimeout); streamTimeout = null }
       clearToolUseTimeouts()
+
+      // Diagnostic: log message state when done event received
+      const doneSummary = messages.value.map((m: any, i: number) =>
+        `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.pending ? ' PENDING' : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
+      ).join(' | ')
+      console.log(`[done] before loadHistory: ${doneSummary}`)
+
       disconnectStream()
       reconnect.reset()
       onLoadHistory().finally(() => {
@@ -644,6 +651,12 @@ export function useChatStream(options: UseChatStreamOptions) {
       const userContent = data.text || ''
       const userFiles = (data.files || []).map((p: string) => p)
 
+      // Diagnostic: log message state before queue_consume processing
+      const preConsumeSummary = messages.value.map((m: any, i: number) =>
+        `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.pending ? ' PENDING' : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
+      ).join(' | ')
+      console.log(`[queue_consume] text="${userContent}" | before: ${preConsumeSummary}`)
+
       // Use the new consumePendingMessage — it finds the pending user message
       // in messages.value, removes the pending flag, and pushes a new streaming
       // assistant placeholder. No more onQueueConsume callback needed.
@@ -651,6 +664,12 @@ export function useChatStream(options: UseChatStreamOptions) {
         messages.value, userContent, userFiles, currentBackend.value,
         { onRenderNeeded, onExtractScheduledTasks }
       )
+
+      // Diagnostic: log message state after queue_consume processing
+      const postConsumeSummary = messages.value.map((m: any, i: number) =>
+        `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.pending ? ' PENDING' : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
+      ).join(' | ')
+      console.log(`[queue_consume] after: ${postConsumeSummary}`)
 
       if (isOpen.value) {
         onRenderNeeded()
@@ -674,7 +693,21 @@ export function useChatStream(options: UseChatStreamOptions) {
     eventSource.addEventListener('queue_done', () => {
       if (sessionChanged()) return
       resetStreamTimeout()
+
+      // Diagnostic: log message state before queue_done processing
+      const preDoneSummary = messages.value.map((m: any, i: number) =>
+        `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.pending ? ' PENDING' : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
+      ).join(' | ')
+      console.log(`[queue_done] before: ${preDoneSummary}`)
+
       _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
+
+      // Diagnostic: log message state after queue_done processing
+      const postDoneSummary = messages.value.map((m: any, i: number) =>
+        `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.pending ? ' PENDING' : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
+      ).join(' | ')
+      console.log(`[queue_done] after: ${postDoneSummary}`)
+
       if (isOpen.value) {
         onScrollBottom()
       }
