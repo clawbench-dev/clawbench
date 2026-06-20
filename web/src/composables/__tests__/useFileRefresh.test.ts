@@ -10,6 +10,7 @@
  * in-flight, new calls are deferred until the current one completes.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { diffLines, diffChars } from 'diff'
 
 // Mock dependencies before importing
 vi.mock('@/stores/app.ts', () => ({
@@ -184,7 +185,6 @@ describe('useFileRefresh modified-line flash', () => {
     // Use real computeDiff for these tests
     vi.mocked(computeDiff).mockImplementation(
       (oldText: string, newText: string) => {
-        const { diffLines, diffChars } = require('diff')
         const result = {
           deletedInOld: [] as number[],
           addedInNew: [] as number[],

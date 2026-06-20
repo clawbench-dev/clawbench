@@ -341,6 +341,7 @@ else:
     exempt_files = {
         "android/app/src/main/java/com/clawbench/app/BackgroundService.java",  # onStartCommand, ensureConnection need Android framework + JSch
         "android/app/src/main/java/com/clawbench/app/BrowserActivity.java",    # shouldInterceptRequest needs WebView + HttpURLConnection; onReceivedError needs WebViewClient lifecycle
+        "android/app/src/main/java/com/clawbench/app/MainActivity.java",       # launchFileChooserWithCamera needs PackageManager + FileProvider; onShowFileChooser needs WebView ChromeClient lifecycle
         "android/app/src/main/java/com/clawbench/app/PushService.java",        # Service lifecycle methods (onCreate/onStartCommand/startForeground) need Android framework; static methods tested in PushServiceTest
     }
 
