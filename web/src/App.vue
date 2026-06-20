@@ -1456,7 +1456,7 @@ onUnmounted(() => {
     height: 34px;
     border: none;
     border-radius: 50%;
-    background: transparent;
+    background: var(--bg-primary);
     color: var(--text-secondary);
     cursor: pointer;
     display: flex;
@@ -1560,7 +1560,7 @@ onUnmounted(() => {
     position: absolute;
     inset: 1.5px;
     border-radius: inherit;
-    background: transparent;
+    background: var(--bg-primary);
     z-index: -1;
 }
 
