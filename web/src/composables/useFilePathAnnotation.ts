@@ -3,7 +3,14 @@ import { splitPath } from '@/utils/path.ts'
 import { store } from '@/stores/app.ts'
 import { gt } from '@/composables/useLocale'
 import { clearCommitHashCache } from '@/composables/useCommitHashAnnotation.ts'
-import { clearWorktreeCache } from '@/composables/useWorktreeAnnotation.ts'
+// NOTE: do NOT import clearWorktreeCache from useWorktreeAnnotation here —
+// that creates a circular dependency (useFilePathAnnotation ↔ useWorktreeAnnotation).
+// Instead, we use a lazy indirection registered at init time.
+let _clearWorktreeCache: (() => void) | null = null
+
+export function registerWorktreeCacheClearter(fn: () => void) {
+  _clearWorktreeCache = fn
+}
 
 // ── Dual-candidate resolution types ─────────────────────────────────────────────
 
@@ -558,7 +565,7 @@ export function clearVerifiedCache(): void {
     pendingPaths = []
     batchInFlight = null
     clearCommitHashCache()
-    clearWorktreeCache()
+    _clearWorktreeCache?.()
 }
 
 // ── Composable ─────────────────────────────────────────────────────────────────

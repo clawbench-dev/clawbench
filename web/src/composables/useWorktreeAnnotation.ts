@@ -1,6 +1,10 @@
 import { escapeHtml } from '@/utils/html.ts'
 import { gt } from '@/composables/useLocale'
-import { resolveFilePath } from '@/composables/useFilePathAnnotation.ts'
+import { resolveFilePath, registerWorktreeCacheClearter } from '@/composables/useFilePathAnnotation.ts'
+
+// Register the clearWorktreeCache function to break circular dependency.
+// useFilePathAnnotation calls this instead of importing clearWorktreeCache directly.
+registerWorktreeCacheClearter(() => { worktreeListCache.clear() })
 
 /**
  * SVG icon markup for the worktree button (GitBranch icon from lucide).

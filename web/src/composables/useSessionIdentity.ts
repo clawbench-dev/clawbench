@@ -1,5 +1,5 @@
 import { ref, computed } from 'vue'
-import { useAgents } from '@/composables/useAgents'
+import { useAgents, registerIdentityUpdaters } from '@/composables/useAgents'
 import { gt } from '@/composables/useLocale'
 
 // ───────────────────────────────────────────────────────────
@@ -38,6 +38,16 @@ const runningSessionsVersion = ref(0)
 // to useSessionIdentity so App.vue can render a single SessionDrawer
 // instance that's accessible from any tab (chat, viewer, QuoteQuestionBar).
 const sessionDrawerOpen = ref(false)
+
+// Register identity updaters in useAgents to break the circular dependency.
+// This must run at module evaluation time so that useAgents can call the
+// updaters during loadAgents() without importing useSessionIdentity.
+registerIdentityUpdaters({
+  updateAvailableModes,
+  updateAvailableThinkingEfforts,
+  updateCommandState,
+  currentAgentId,
+})
 
 /** Reset all module-level singleton refs — used by SPA hot project switch. */
 /** Read-only accessor for the current session ID (no composable setup needed). */
