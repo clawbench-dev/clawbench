@@ -5,7 +5,7 @@ import { gt } from '@/composables/useLocale'
 import { updateModeState, updateAvailableModes, updateCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, currentAgentId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
-import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, consumePendingMessage, syncPendingFromBackend } from '@/utils/chatStreamUtils.ts'
+import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, drainQueueMessage, syncPendingFromBackend } from '@/utils/chatStreamUtils.ts'
 
 export interface UseChatStreamOptions {
   messages: Ref<any[]>
@@ -639,37 +639,37 @@ export function useChatStream(options: UseChatStreamOptions) {
       }
     })
 
-    // ── Queue events — new architecture ──
-    // queue_consume: find the pending user message and un-mark it, push new streaming assistant
-    eventSource.addEventListener('queue_consume', (e) => {
+    // ── Queue drain — atomic replacement for old queue_done + queue_consume ──
+    // Single event that atomically: finalizes current streaming, un-marks pending
+    // user message, creates new streaming placeholder.
+    eventSource.addEventListener('queue_drain', (e) => {
       resetStreamTimeout()
-      if (sessionChanged()) return
-
       let data: any
-      try { data = JSON.parse(e.data) } catch { console.warn('SSE queue_consume: invalid JSON, skipping'); return }
+      try { data = JSON.parse(e.data) } catch { console.warn('SSE queue_drain: invalid JSON, skipping'); return }
 
       const userContent = data.text || ''
       const userFiles = (data.files || []).map((p: string) => p)
 
-      // Diagnostic: log message state before queue_consume processing
-      const preConsumeSummary = messages.value.map((m: any, i: number) =>
-        `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.pending ? ' PENDING' : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
-      ).join(' | ')
-      console.log(`[queue_consume] text="${userContent}" | before: ${preConsumeSummary}`)
+      if (sessionChanged()) {
+        // Session changed — still sync pending messages from backend queue
+        // but don't process the drain (a different session owns it now)
+        syncPendingFromBackend(messages.value, data.queue || [])
+        return
+      }
 
-      // Use the new consumePendingMessage — it finds the pending user message
-      // in messages.value, removes the pending flag, and pushes a new streaming
-      // assistant placeholder. No more onQueueConsume callback needed.
-      consumePendingMessage(
+      // Process the drain FIRST: finalize streaming, un-mark pending user msg,
+      // push new streaming placeholder. This must happen before syncPendingFromBackend
+      // because the backend queue no longer contains the drained message — if we
+      // synced first, the pending message would be deleted before we can un-mark it.
+      drainQueueMessage(
         messages.value, userContent, userFiles, currentBackend.value,
         { onRenderNeeded, onExtractScheduledTasks }
       )
 
-      // Diagnostic: log message state after queue_consume processing
-      const postConsumeSummary = messages.value.map((m: any, i: number) =>
-        `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.pending ? ' PENDING' : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
-      ).join(' | ')
-      console.log(`[queue_consume] after: ${postConsumeSummary}`)
+      // Now sync pending messages with the backend queue state.
+      // At this point, the drained message's pending flag is already removed,
+      // so syncPendingFromBackend won't touch it.
+      syncPendingFromBackend(messages.value, data.queue || [])
 
       if (isOpen.value) {
         onRenderNeeded()
@@ -677,7 +677,8 @@ export function useChatStream(options: UseChatStreamOptions) {
       }
     })
 
-    // queue_update: sync pending messages with authoritative backend queue state
+    // queue_update: sent when a new message is enqueued while a session is running.
+    // Syncs pending messages with the authoritative backend queue state.
     eventSource.addEventListener('queue_update', (e) => {
       resetStreamTimeout()
       let data: any
@@ -687,30 +688,9 @@ export function useChatStream(options: UseChatStreamOptions) {
       syncPendingFromBackend(messages.value, data.queue || [])
 
       if (sessionChanged()) return
-    })
 
-    // queue_done: finalize the current streaming assistant message
-    eventSource.addEventListener('queue_done', () => {
-      if (sessionChanged()) return
-      resetStreamTimeout()
-
-      // Diagnostic: log message state before queue_done processing
-      const preDoneSummary = messages.value.map((m: any, i: number) =>
-        `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.pending ? ' PENDING' : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
-      ).join(' | ')
-      console.log(`[queue_done] before: ${preDoneSummary}`)
-
-      _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
-
-      // Diagnostic: log message state after queue_done processing
-      const postDoneSummary = messages.value.map((m: any, i: number) =>
-        `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.pending ? ' PENDING' : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
-      ).join(' | ')
-      console.log(`[queue_done] after: ${postDoneSummary}`)
-
-      if (isOpen.value) {
-        onScrollBottom()
-      }
+      // Trigger render when pending messages are added/removed
+      onRenderNeeded()
     })
 
     eventSource.addEventListener('error', (e) => {

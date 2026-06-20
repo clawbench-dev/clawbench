@@ -155,14 +155,14 @@ type UsageState struct {
 
 // StreamEvent represents a single event in the streaming output
 type StreamEvent struct {
-	Type           string                 // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "raw_output", "resume_split", "queue_consume", "queue_update", "queue_done", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update"
+	Type           string                 // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "raw_output", "resume_split", "queue_drain", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update"
 	Content        string                 // Incremental text (Type=content, Type=thinking) or captured session ID (Type=session_capture)
 	Reason         string                 // Structured reason code for i18n (e.g. "disconnect", "timeout", "parse_error")
 	Meta           *Metadata              // Metadata (Type=metadata)
 	Error          string                 // Error message (Type=error)
 	Tool           *ToolCall              // Tool call info (Type=tool_use, Type=tool_result)
 	RawOutput      string                 // Raw stdout lines from AI backend (Type=raw_output)
-	QueueEvent     *QueueEventData        // Queue data (Type=queue_consume, Type=queue_update)
+	QueueEvent     *QueueEventData        // Queue data (Type=queue_drain)
 	Mode           *ModeState             // Mode state (Type=mode_update)
 	Config         *ConfigOptionState     // Config option state (Type=config_update)
 	Commands       []AvailableCommandInfo // Slash commands (Type=commands_update)
@@ -201,7 +201,9 @@ func truncateToolOutput(output string) string {
 	return output[:maxToolOutputBytes] + fmt.Sprintf("\n[truncated: original %d bytes]", len(output))
 }
 
-// QueueEventData carries data for queue_consume and queue_update SSE events.
+// QueueEventData carries data for queue_drain and queue_update SSE events.
+// queue_drain: atomically finalizes current streaming, starts next queued message.
+// queue_update: sent when a new message is enqueued while a session is running.
 type QueueEventData struct {
 	Text      string                `json:"text,omitempty"`
 	FilePaths []string              `json:"filePaths,omitempty"`

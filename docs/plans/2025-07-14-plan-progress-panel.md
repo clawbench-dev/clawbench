@@ -85,7 +85,7 @@ Add `Plan` field to `StreamEvent` struct (after `ThinkingEffort`):
 Update the `Type` comment to include `"plan_update"`:
 
 ```go
-	Type string // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "raw_output", "resume_split", "queue_consume", "queue_update", "queue_done", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update"
+	Type string // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "raw_output", "resume_split", "queue_drain", "queue_update", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update"
 ```
 
 **Step 4: Map ACP Plan to StreamEvent in acp_events.go**

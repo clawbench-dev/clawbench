@@ -267,8 +267,8 @@ export function useSessionManager(options: UseSessionManagerOptions) {
   })
 
   // When the page becomes visible after being in the background (e.g. mobile screen
-  // unlock), sync pending messages with the backend. SSE events (queue_consume,
-  // queue_update, queue_done) are dropped while the page is hidden, so local
+  // unlock), sync pending messages with the backend. SSE events (queue_drain,
+  // queue_update) are dropped while the page is hidden, so local
   // pending messages may be stale — showing ghost "queuing" items that the backend
   // has already consumed.
   function handleVisibilityChange() {

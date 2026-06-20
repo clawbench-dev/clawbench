@@ -697,18 +697,18 @@ func TestAIChatStream_WarningEvent(t *testing.T) {
 	assert.Equal(t, "done", events[2]["event"])
 }
 
-func TestAIChatStream_QueueConsumeEvent(t *testing.T) {
+func TestAIChatStream_QueueDrainEvent(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	sessionID := "stream-queue-consume"
+	sessionID := "stream-queue-drain"
 	ch := setupStreamSession(sessionID)
 	defer cleanupStreamSession(sessionID)
 
 	go func() {
 		ch <- ai.StreamEvent{
-			Type:       "queue_consume",
-			QueueEvent: &ai.QueueEventData{Text: "hello", FilePaths: []string{"/test.go"}},
+			Type:       "queue_drain",
+			QueueEvent: &ai.QueueEventData{Text: "hello", FilePaths: []string{"/test.go"}, Files: []string{"/a.txt"}, Queue: []model.QueuedMessage{{Text: "next"}}},
 		}
 		ch <- ai.StreamEvent{Type: "done"}
 	}()
@@ -718,12 +718,16 @@ func TestAIChatStream_QueueConsumeEvent(t *testing.T) {
 	w := callHandler(AIChatStream, req)
 
 	events := parseSSEEvents(w.Body.String())
-	assert.Equal(t, "queue_consume", events[0]["event"])
+	assert.Equal(t, "queue_drain", events[0]["event"])
 	var data map[string]any
 	require.NoError(t, json.Unmarshal([]byte(events[0]["data"]), &data))
 	assert.Equal(t, "hello", data["text"])
 	filePaths, _ := data["filePaths"].([]any)
 	assert.Equal(t, "/test.go", filePaths[0])
+	files, _ := data["files"].([]any)
+	assert.Equal(t, "/a.txt", files[0])
+	queue, _ := data["queue"].([]any)
+	assert.Len(t, queue, 1)
 }
 
 func TestAIChatStream_QueueUpdateEvent(t *testing.T) {
@@ -737,7 +741,7 @@ func TestAIChatStream_QueueUpdateEvent(t *testing.T) {
 	go func() {
 		ch <- ai.StreamEvent{
 			Type:       "queue_update",
-			QueueEvent: &ai.QueueEventData{},
+			QueueEvent: &ai.QueueEventData{Queue: []model.QueuedMessage{{Text: "enqueued"}}},
 		}
 		ch <- ai.StreamEvent{Type: "done"}
 	}()
@@ -748,6 +752,10 @@ func TestAIChatStream_QueueUpdateEvent(t *testing.T) {
 
 	events := parseSSEEvents(w.Body.String())
 	assert.Equal(t, "queue_update", events[0]["event"])
+	var data map[string]any
+	require.NoError(t, json.Unmarshal([]byte(events[0]["data"]), &data))
+	queue, _ := data["queue"].([]any)
+	assert.Len(t, queue, 1)
 }
 
 func TestAIChatStream_ChannelClosed(t *testing.T) {

@@ -755,7 +755,7 @@ async function handleToolSendMessage(text) {
     if (!text) return
     if (loading.value) {
       // Push a pending user message into messages.value so the user sees
-      // immediate feedback and queue_consume can find and un-mark it.
+      // immediate feedback and queue_drain can find and un-mark it.
       messages.value.push({
         role: 'user',
         content: text,

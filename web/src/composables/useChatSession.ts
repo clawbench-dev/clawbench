@@ -430,7 +430,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
 
       // Preserve pending user messages — they exist in messages.value with `pending: true`
-      // but haven't been persisted to the DB yet (backend persists them during queue_consume).
+      // but haven't been persisted to the DB yet (backend persists them during queue_drain).
       // Without this, loadHistory would replace the array and lose pending messages.
       const localPending = messages.value.filter((m: any) => m.pending)
       const dbIds = new Set(rawMsgs.filter((m: any) => m.id).map((m: any) => m.id))
@@ -439,7 +439,7 @@ export function useChatSession(options: UseChatSessionOptions) {
 
       // Re-append pending messages that aren't yet in the DB.
       // Dedup by content: if the DB already contains the message (persisted by
-      // queue_consume), don't add the local pending version back.
+      // queue_drain), don't add the local pending version back.
       for (const pm of localPending) {
         const alreadyInDB = messages.value.some(
           (m: any) => m.role === 'user' && m.content === pm.content && m.id

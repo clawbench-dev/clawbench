@@ -75,8 +75,8 @@ vi.mock('@/utils/chatStreamUtils', () => ({
   findStreamingMsg: vi.fn((messages: any[]) => {
     return messages.find((m: any) => m.role === 'assistant' && m.streaming)
   }),
-  consumePendingMessage: vi.fn((messages: any[], userContent: string, userFiles: string[], currentBackend: string) => {
-    // Finalize any stale streaming message
+  drainQueueMessage: vi.fn((messages: any[], userContent: string, userFiles: string[], currentBackend: string) => {
+    // Finalize any streaming message
     const streamingMsg = messages.find((m: any) => m.role === 'assistant' && m.streaming)
     if (streamingMsg) delete streamingMsg.streaming
     // Find and un-mark the pending user message
@@ -599,7 +599,7 @@ describe('useChatStream', () => {
     })
   })
 
-  describe('queue_consume event', () => {
+  describe('queue_drain event', () => {
     it('should add user message bubble with text content', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
@@ -608,7 +608,7 @@ describe('useChatStream', () => {
       const es = getLatestEs()
       es.simulateOpen()
 
-      es.simulate('queue_consume', { text: 'Hello AI' })
+      es.simulate('queue_drain', { text: 'Hello AI', queue: [] })
 
       const userMsg = options.messages.value.find((m: any) => m.role === 'user')
       expect(userMsg).toBeDefined()
@@ -624,7 +624,7 @@ describe('useChatStream', () => {
       const es = getLatestEs()
       es.simulateOpen()
 
-      es.simulate('queue_consume', { text: 'Check these', files: ['/a.txt', '/b.txt'] })
+      es.simulate('queue_drain', { text: 'Check these', files: ['/a.txt', '/b.txt'], queue: [] })
 
       const userMsg = options.messages.value.find((m: any) => m.role === 'user')
       expect(userMsg).toBeDefined()
@@ -639,11 +639,9 @@ describe('useChatStream', () => {
       const es = getLatestEs()
       es.simulateOpen()
 
-      es.simulate('queue_consume', { text: 'Hello' })
+      es.simulate('queue_drain', { text: 'Hello', queue: [] })
 
-      // After queue_consume, the last message should be a new streaming assistant.
-      // (The initial placeholder from connectStream is also still streaming,
-      //  since queue_done hasn't fired to clean it up.)
+      // After queue_drain, the last message should be a new streaming assistant.
       const lastMsg = options.messages.value[options.messages.value.length - 1]
       expect(lastMsg.role).toBe('assistant')
       expect(lastMsg.streaming).toBe(true)
@@ -669,8 +667,8 @@ describe('useChatStream', () => {
 
       const userCountBefore = options.messages.value.filter((m: any) => m.role === 'user').length
 
-      // queue_consume with the same content should NOT push another user message
-      es.simulate('queue_consume', { text: 'Hello AI' })
+      // queue_drain with the same content should NOT push another user message
+      es.simulate('queue_drain', { text: 'Hello AI', queue: [] })
 
       const userCountAfter = options.messages.value.filter((m: any) => m.role === 'user').length
       expect(userCountAfter).toBe(userCountBefore)
@@ -684,7 +682,7 @@ describe('useChatStream', () => {
       const es = getLatestEs()
       es.simulateOpen()
 
-      es.simulate('queue_consume', { text: 'Hello' })
+      es.simulate('queue_drain', { text: 'Hello', queue: [] })
 
       expect(options.onRenderNeeded).toHaveBeenCalled()
       expect(options.onScrollBottom).toHaveBeenCalledWith(true)
@@ -698,16 +696,46 @@ describe('useChatStream', () => {
       const es = getLatestEs()
       es.simulateOpen()
 
-      es.simulate('queue_consume', { text: '' })
+      es.simulate('queue_drain', { text: '', queue: [] })
 
       const userMsg = options.messages.value.find((m: any) => m.role === 'user')
       expect(userMsg).toBeDefined()
       expect(userMsg.content).toBe('')
       expect(userMsg.blocks).toEqual([])
     })
+
+    it('should sync pending messages from backend queue', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('queue_drain', { text: 'Hello', queue: [{ id: 'q1' }, { id: 'q2' }] })
+
+      expect(syncPendingFromBackend).toHaveBeenCalledWith(options.messages.value, [{ id: 'q1' }, { id: 'q2' }])
+    })
+
+    it('still syncs pending messages even when session changed (queue update is session-independent)', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      // Change session to fail guard
+      options.currentSessionId.value = 'different-session'
+
+      es.simulate('queue_drain', { text: 'Hello', queue: [{ id: 'q1' }] })
+
+      // syncPendingFromBackend IS still called because queue sync is independent of streaming session
+      expect(syncPendingFromBackend).toHaveBeenCalledWith(options.messages.value, [{ id: 'q1' }])
+    })
   })
 
-  describe('queue_update event', () => {
+  describe('queue_update event (enqueue notification)', () => {
     it('should sync pending messages from backend queue', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
@@ -739,37 +767,8 @@ describe('useChatStream', () => {
     })
   })
 
-  describe('queue_done event', () => {
-    it('should call forceCleanupStreamingState', () => {
-      const options = createOptions()
-      const { connectStream } = useChatStream(options)
-
-      connectStream('test-session-1')
-      const es = getLatestEs()
-      es.simulateOpen()
-
-      es.simulate('queue_done', {})
-
-      expect(forceCleanupStreamingState).toHaveBeenCalled()
-    })
-
-    it('should call onScrollBottom', () => {
-      const options = createOptions()
-      const { connectStream } = useChatStream(options)
-
-      connectStream('test-session-1')
-      const es = getLatestEs()
-      es.simulateOpen()
-
-      const scrollCallsBefore = options.onScrollBottom.mock.calls.length
-      es.simulate('queue_done', {})
-
-      expect(options.onScrollBottom.mock.calls.length).toBeGreaterThan(scrollCallsBefore)
-    })
-  })
-
-  describe('queue_done → queue_consume sequence', () => {
-    it('should preserve A output when transitioning to B message', () => {
+  describe('queue_drain preserves A output when transitioning to B message', () => {
+    it('should preserve A output and create streaming assistant for B', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
@@ -794,17 +793,8 @@ describe('useChatStream', () => {
 
       const msgCountBefore = options.messages.value.length
 
-      // queue_done finalizes A
-      es.simulate('queue_done', {})
-
-      // A's assistant message should still exist
-      expect(options.messages.value.length).toBe(msgCountBefore)
-      const aAssistant = options.messages.value.find((m: any) => m.role === 'assistant' && !m.streaming)
-      expect(aAssistant).toBeDefined()
-      expect(aAssistant.blocks).toEqual([{ type: 'text', text: 'A reply content' }])
-
-      // queue_consume starts B
-      es.simulate('queue_consume', { text: 'B msg' })
+      // queue_drain atomically finalizes A and starts B
+      es.simulate('queue_drain', { text: 'B msg', queue: [] })
 
       // All messages preserved + new streaming assistant for B
       expect(options.messages.value.length).toBe(msgCountBefore + 1)
@@ -818,7 +808,7 @@ describe('useChatStream', () => {
       expect(bStreaming).toBeDefined()
     })
 
-    it('should handle queue_consume without queue_done (lost event)', () => {
+    it('should handle queue_drain for pending message with files', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
@@ -826,49 +816,8 @@ describe('useChatStream', () => {
       const es = getLatestEs()
       es.simulateOpen()
 
-      // Simulate A streaming with content
-      const streamingMsg = options.messages.value.find((m: any) => m.role === 'assistant' && m.streaming)
-      streamingMsg.content = ''
-      streamingMsg.blocks = [{ type: 'text', text: 'A reply' }]
-      streamingMsg.id = 42
-
-      // Add B as pending
-      options.messages.value.push({
-        role: 'user',
-        content: 'B msg',
-        blocks: [{ type: 'text', text: 'B msg' }],
-        pending: true,
-      })
-
-      // Skip queue_done — only queue_consume arrives
-      es.simulate('queue_consume', { text: 'B msg' })
-
-      // A's assistant message must NOT be deleted (lightweight cleanup)
-      const aAssistant = options.messages.value.find((m: any) => m.id === 42)
-      expect(aAssistant).toBeDefined()
-      expect(aAssistant.streaming).toBeUndefined()
-      expect(aAssistant.blocks).toEqual([{ type: 'text', text: 'A reply' }])
-
-      // B's pending removed, new streaming for B
-      const bUserMsg = options.messages.value.find((m: any) => m.role === 'user' && m.content === 'B msg')
-      expect(bUserMsg.pending).toBeUndefined()
-      const bStreaming = options.messages.value.find((m: any) => m.role === 'assistant' && m.streaming)
-      expect(bStreaming).toBeDefined()
-    })
-
-    it('should handle queue_consume for pending message with files', () => {
-      const options = createOptions()
-      const { connectStream } = useChatStream(options)
-
-      connectStream('test-session-1')
-      const es = getLatestEs()
-      es.simulateOpen()
-
-      // queue_done first
-      es.simulate('queue_done', {})
-
-      // queue_consume with files
-      es.simulate('queue_consume', { text: 'Check this', files: ['/a.txt', '/b.txt'] })
+      // queue_drain with files
+      es.simulate('queue_drain', { text: 'Check this', files: ['/a.txt', '/b.txt'], queue: [] })
 
       const userMsg = options.messages.value.find((m: any) => m.role === 'user' && m.content === 'Check this')
       expect(userMsg).toBeDefined()
@@ -1551,7 +1500,7 @@ describe('useChatStream', () => {
       expect(options.onRenderNeeded).not.toHaveBeenCalled()
     })
 
-    it('should skip onRenderNeeded and onScrollBottom on queue_consume when isOpen=false', () => {
+    it('should skip onRenderNeeded and onScrollBottom on queue_drain when isOpen=false', () => {
       const options = createOptions({ isOpen: ref(false) })
       const { connectStream } = useChatStream(options)
 
@@ -1562,7 +1511,7 @@ describe('useChatStream', () => {
       options.onRenderNeeded.mockClear()
       options.onScrollBottom.mockClear()
 
-      es.simulate('queue_consume', { text: 'Hello' })
+      es.simulate('queue_drain', { text: 'Hello', queue: [] })
 
       const userMsg = options.messages.value.find((m: any) => m.role === 'user')
       expect(userMsg).toBeDefined()
@@ -1571,23 +1520,7 @@ describe('useChatStream', () => {
       expect(options.onScrollBottom).not.toHaveBeenCalled()
     })
 
-    it('should skip onScrollBottom on queue_done when isOpen=false', () => {
-      const options = createOptions({ isOpen: ref(false) })
-      const { connectStream } = useChatStream(options)
-
-      connectStream('test-session-1')
-      const es = getLatestEs()
-      es.simulateOpen()
-
-      options.onScrollBottom.mockClear()
-
-      es.simulate('queue_done', {})
-
-      expect(forceCleanupStreamingState).toHaveBeenCalled()
-      expect(options.onScrollBottom).not.toHaveBeenCalled()
-    })
-
-    it('should call onScrollBottom on queue_done when isOpen=true', () => {
+    it('should call onScrollBottom on queue_drain when isOpen=true', () => {
       const options = createOptions({ isOpen: ref(true) })
       const { connectStream } = useChatStream(options)
 
@@ -1597,9 +1530,9 @@ describe('useChatStream', () => {
 
       options.onScrollBottom.mockClear()
 
-      es.simulate('queue_done', {})
+      es.simulate('queue_drain', { text: 'Hello', queue: [] })
 
-      expect(options.onScrollBottom).toHaveBeenCalled()
+      expect(options.onScrollBottom).toHaveBeenCalledWith(true)
     })
 
     it('should still call onToast and onNotification on done when isOpen=false', async () => {

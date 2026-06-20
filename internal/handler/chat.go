@@ -536,27 +536,22 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			// Queue has next message — notify frontend that current message is done,
-			// then send queue_consume + queue_update, persist, execute the next one
+			// Queue has next message — drain it atomically
 			slog.Info("draining queued message", slog.String("session", sessionID), slog.String("text", qMsg.Text))
-
-			// Notify frontend: current streaming message is finalized (remove loading dots)
-			ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{Type: "queue_done"})
-
-			// Notify frontend: a queued message is about to execute
-			ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{
-				Type:       "queue_consume",
-				QueueEvent: &ai.QueueEventData{Text: qMsg.Text, FilePaths: qMsg.FilePaths, Files: qMsg.Files},
-			})
 
 			// Persist user message to DB
 			service.AddChatMessage(projectPath, backendName, sessionID, "user", qMsg.Text, qMsg.Files, false, T(r, "FileMessage"))
 
-			// Send updated queue state
+			// Send single atomic queue_drain event (replaces old queue_done + queue_consume + queue_update)
 			remainingQueue := service.GetQueue(sessionID)
 			ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{
-				Type:       "queue_update",
-				QueueEvent: &ai.QueueEventData{Queue: remainingQueue},
+				Type: "queue_drain",
+				QueueEvent: &ai.QueueEventData{
+					Text:      qMsg.Text,
+					FilePaths: qMsg.FilePaths,
+					Files:     qMsg.Files,
+					Queue:     remainingQueue,
+				},
 			})
 
 			// Build chat request from queued message and execute
