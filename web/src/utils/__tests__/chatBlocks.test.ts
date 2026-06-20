@@ -334,6 +334,21 @@ describe('toolCallSummary', () => {
   it('returns empty when input is an array', () => {
     expect(toolCallSummary({ input: ['a', 'b'] })).toBe('')
   })
+
+  // Slim format: block.summary takes priority over computing from input
+  it('prefers block.summary over input-derived summary', () => {
+    expect(toolCallSummary({
+      summary: 'pre-extracted summary',
+      input: { description: 'input description', file_path: '/test.go' },
+    })).toBe('pre-extracted summary')
+  })
+
+  it('falls back to input when summary is empty string', () => {
+    expect(toolCallSummary({
+      summary: '',
+      input: { file_path: '/main.go' },
+    })).toBe('main.go')
+  })
 })
 
 // ── hasImagesInContent ──

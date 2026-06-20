@@ -173,6 +173,7 @@ func TestAIChatStream_ToolUseEvent(t *testing.T) {
 		ch <- ai.StreamEvent{
 			Type: "tool_use",
 			Tool: &ai.ToolCall{Name: "Read", ID: "t1", Input: `{"file_path":"/foo.go"}`, Done: true},
+			ToolMeta: &ai.ToolCallMeta{ToolID: "t1", Summary: "foo.go", FilePath: "/foo.go"},
 		}
 		ch <- ai.StreamEvent{Type: "done"}
 	}()
@@ -188,8 +189,11 @@ func TestAIChatStream_ToolUseEvent(t *testing.T) {
 	assert.Equal(t, "Read", data["name"])
 	assert.Equal(t, "t1", data["id"])
 	assert.Equal(t, true, data["done"])
-	input, _ := data["input"].(map[string]any)
-	assert.Equal(t, "/foo.go", input["file_path"])
+	// Slim SSE: no input/output
+	assert.Nil(t, data["input"], "slim SSE should not include input")
+	// But summary/file_path should be present
+	assert.Equal(t, "foo.go", data["summary"])
+	assert.Equal(t, "/foo.go", data["file_path"])
 }
 
 func TestAIChatStream_ToolUseEventWithOutput(t *testing.T) {
@@ -204,6 +208,7 @@ func TestAIChatStream_ToolUseEventWithOutput(t *testing.T) {
 		ch <- ai.StreamEvent{
 			Type: "tool_use",
 			Tool: &ai.ToolCall{Name: "Bash", ID: "t3", Input: `{"command":"ls"}`, Done: true, Output: "file1.go\nfile2.go", Status: "success"},
+			ToolMeta: &ai.ToolCallMeta{ToolID: "t3", Summary: "ls"},
 		}
 		ch <- ai.StreamEvent{Type: "done"}
 	}()
@@ -217,8 +222,10 @@ func TestAIChatStream_ToolUseEventWithOutput(t *testing.T) {
 	var data map[string]any
 	require.NoError(t, json.Unmarshal([]byte(events[0]["data"]), &data))
 	assert.Equal(t, "Bash", data["name"])
-	assert.Equal(t, "file1.go\nfile2.go", data["output"])
 	assert.Equal(t, "success", data["status"])
+	// Slim SSE: no output in the event
+	assert.Nil(t, data["output"], "slim SSE should not include output")
+	assert.Equal(t, "ls", data["summary"])
 }
 
 func TestAIChatStream_ToolResultEvent(t *testing.T) {
@@ -231,8 +238,9 @@ func TestAIChatStream_ToolResultEvent(t *testing.T) {
 
 	go func() {
 		ch <- ai.StreamEvent{
-			Type: "tool_result",
-			Tool: &ai.ToolCall{ID: "t5", Output: "file contents here", Status: "success"},
+			Type:     "tool_result",
+			Tool:     &ai.ToolCall{ID: "t5", Output: "file contents here", Status: "success"},
+			ToolMeta: &ai.ToolCallMeta{ToolID: "t5", Summary: "result"},
 		}
 		ch <- ai.StreamEvent{Type: "done"}
 	}()
@@ -246,8 +254,10 @@ func TestAIChatStream_ToolResultEvent(t *testing.T) {
 	var data map[string]any
 	require.NoError(t, json.Unmarshal([]byte(events[0]["data"]), &data))
 	assert.Equal(t, "t5", data["id"])
-	assert.Equal(t, "file contents here", data["output"])
 	assert.Equal(t, "success", data["status"])
+	// Slim SSE: no output
+	assert.Nil(t, data["output"], "slim SSE should not include output")
+	assert.Equal(t, "result", data["summary"])
 }
 
 func TestAIChatStream_ToolResultEventError(t *testing.T) {
@@ -260,8 +270,9 @@ func TestAIChatStream_ToolResultEventError(t *testing.T) {
 
 	go func() {
 		ch <- ai.StreamEvent{
-			Type: "tool_result",
-			Tool: &ai.ToolCall{ID: "t6", Output: "command not found", Status: "error"},
+			Type:     "tool_result",
+			Tool:     &ai.ToolCall{ID: "t6", Output: "command not found", Status: "error"},
+			ToolMeta: &ai.ToolCallMeta{ToolID: "t6"},
 		}
 		ch <- ai.StreamEvent{Type: "done"}
 	}()
@@ -275,8 +286,9 @@ func TestAIChatStream_ToolResultEventError(t *testing.T) {
 	var data map[string]any
 	require.NoError(t, json.Unmarshal([]byte(events[0]["data"]), &data))
 	assert.Equal(t, "t6", data["id"])
-	assert.Equal(t, "command not found", data["output"])
 	assert.Equal(t, "error", data["status"])
+	// Slim SSE: no output
+	assert.Nil(t, data["output"], "slim SSE should not include output")
 }
 
 func TestAIChatStream_ToolResultEventNilTool(t *testing.T) {
@@ -356,8 +368,8 @@ func TestAIChatStream_ToolUseEvent_EmptyInput(t *testing.T) {
 	assert.Equal(t, "tool_use", events[0]["event"])
 	var data map[string]any
 	require.NoError(t, json.Unmarshal([]byte(events[0]["data"]), &data))
-	input, _ := data["input"].(map[string]any)
-	assert.Empty(t, input)
+	// Slim SSE: no input field at all for non-interactive tools
+	assert.Nil(t, data["input"], "slim SSE should not include input")
 }
 
 func TestAIChatStream_ToolUseEvent_StringInput(t *testing.T) {
@@ -370,9 +382,8 @@ func TestAIChatStream_ToolUseEvent_StringInput(t *testing.T) {
 
 	go func() {
 		// Tool call with input that deserializes to a string (e.g., partial JSON
-		// from input_json_delta's first chunk "{"). The SSE handler must coerce
-		// this to an empty object so the frontend toolCallSummary doesn't display
-		// "{" as the tool summary.
+		// from input_json_delta's first chunk "{"). With slim SSE, non-interactive
+		// tools don't include input at all, so this no longer needs the coercion.
 		ch <- ai.StreamEvent{
 			Type: "tool_use",
 			Tool: &ai.ToolCall{Name: "Bash", ID: "t3", Input: `"<partial>"`, Done: false},
@@ -388,11 +399,44 @@ func TestAIChatStream_ToolUseEvent_StringInput(t *testing.T) {
 	assert.Equal(t, "tool_use", events[0]["event"])
 	var data map[string]any
 	require.NoError(t, json.Unmarshal([]byte(events[0]["data"]), &data))
-	// Input must be an object (map), never a string — prevents frontend from
-	// showing "{" or other partial JSON as the tool summary title
+	// Slim SSE: no input for non-interactive tools
+	assert.Nil(t, data["input"], "slim SSE should not include input")
+}
+
+func TestAIChatStream_ToolUseEvent_InteractiveToolIncludesInput(t *testing.T) {
+	// Interactive tools (AskUserQuestion, PermissionApproval) must include input
+	// in the SSE event so the frontend can render the question UI without
+	// waiting for a DB round-trip.
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "stream-tooluse-interactive"
+	ch := setupStreamSession(sessionID)
+	defer cleanupStreamSession(sessionID)
+
+	go func() {
+		ch <- ai.StreamEvent{
+			Type: "tool_use",
+			Tool: &ai.ToolCall{Name: "AskUserQuestion", ID: "t4", Input: `{"questions":[{"header":"Choose","question":"A or B?"}]}`, Done: false},
+			ToolMeta: &ai.ToolCallMeta{ToolID: "t4", Summary: "Choose"},
+		}
+		ch <- ai.StreamEvent{Type: "done"}
+	}()
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(AIChatStream, req)
+
+	events := parseSSEEvents(w.Body.String())
+	assert.Equal(t, "tool_use", events[0]["event"])
+	var data map[string]any
+	require.NoError(t, json.Unmarshal([]byte(events[0]["data"]), &data))
+	assert.Equal(t, "AskUserQuestion", data["name"])
+	// Interactive tools still include input
 	input, ok := data["input"].(map[string]any)
-	assert.True(t, ok, "input should be a JSON object, got %T: %v", data["input"], data["input"])
-	assert.Empty(t, input)
+	assert.True(t, ok, "interactive tool SSE should include input")
+	assert.NotNil(t, input["questions"])
+	assert.Equal(t, "Choose", data["summary"])
 }
 
 func TestAIChatStream_ToolUseEvent_NilTool(t *testing.T) {

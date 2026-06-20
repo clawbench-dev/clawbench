@@ -376,31 +376,52 @@ export function useChatStream(options: UseChatStreamOptions) {
       const existing = blocks.find(b => b.type === 'tool_use' && b.id === data.id)
       if (data.done) {
         if (existing) {
-          existing.input = data.input || existing.input
+          // Slim SSE: only input present for interactive tools
+          if (data.input && Object.keys(data.input).length > 0) {
+            existing.input = data.input
+          }
           existing.done = true
-          if (data.output !== undefined) existing.output = data.output
           if (data.status !== undefined) existing.status = data.status
+          // Slim fields
+          if (data.summary !== undefined) existing.summary = data.summary
+          if (data.display_name !== undefined) existing.display_name = data.display_name
+          if (data.file_path !== undefined) existing.file_path = data.file_path
         }
         const timer = toolUseTimeouts.get(data.id)
         if (timer) { clearTimeout(timer); toolUseTimeouts.delete(data.id) }
 
+        // Use file_path from slim meta (no need to read input)
         if (FILE_MODIFYING_TOOLS.has(data.name) && onFileModified) {
-          const input = data.input || existing?.input
-          const filePath = input?.file_path
+          const filePath = data.file_path || existing?.file_path
           if (filePath) {
             onFileModified(filePath)
           }
         }
       } else {
         if (existing) {
+          // Slim SSE: only input present for interactive tools
           if (data.input && Object.keys(data.input).length > 0) {
             existing.input = data.input
           }
           if (data.name) existing.name = data.name
-          if (data.output !== undefined) existing.output = data.output
           if (data.status !== undefined) existing.status = data.status
+          // Slim fields
+          if (data.summary !== undefined) existing.summary = data.summary
+          if (data.display_name !== undefined) existing.display_name = data.display_name
+          if (data.file_path !== undefined) existing.file_path = data.file_path
         } else {
-          const newBlock = { type: 'tool_use', name: data.name, id: data.id, input: data.input || {}, done: false, output: data.output || '', status: data.status || '' }
+          const newBlock: any = {
+            type: 'tool_use', name: data.name, id: data.id, done: false,
+            status: data.status || '',
+          }
+          // Slim SSE: only input present for interactive tools (AskUserQuestion, PermissionApproval)
+          if (data.input && Object.keys(data.input).length > 0) {
+            newBlock.input = data.input
+          }
+          // Slim fields
+          if (data.summary) newBlock.summary = data.summary
+          if (data.display_name) newBlock.display_name = data.display_name
+          if (data.file_path) newBlock.file_path = data.file_path
           blocks.push(newBlock)
           if (data.name !== 'PermissionApproval') {
             const timer = setTimeout(() => {
@@ -430,11 +451,8 @@ export function useChatStream(options: UseChatStreamOptions) {
       const blocks = sm.blocks
       const existing = blocks.find(b => b.type === 'tool_use' && b.id === data.id)
       if (existing) {
-        if (data.input && Object.keys(data.input).length > 0) {
-          existing.input = data.input
-        }
+        // Slim SSE: no input/output in tool_result events
         if (data.name) existing.name = data.name
-        if (data.output !== undefined) existing.output = data.output
         if (data.status !== undefined) existing.status = data.status
         existing.done = true
       }

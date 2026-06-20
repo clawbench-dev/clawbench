@@ -205,7 +205,9 @@ func TestLoadSessionParsing_ToolCallUpdate_ProducesToolResultBlock(t *testing.T)
 	require.True(t, ok)
 	assert.Equal(t, "tool_use", block["type"])
 	assert.Equal(t, true, block["done"], "tool should be marked done after completion")
-	assert.Equal(t, "file contents here", block["output"], "tool output should be extracted")
+	// Slim serialization: output is not included in serialized blocks
+	// (stored in chat_tool_calls table instead)
+	assert.Nil(t, block["output"], "tool output should NOT be in slim serialization")
 }
 
 // TestLoadSessionParsing_ThinkingChunk_ProducesThinkingBlock

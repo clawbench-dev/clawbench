@@ -40,7 +40,7 @@
       <template v-else-if="block.type === 'tool_use'">
         <div class="chat-tool-call" :class="{ done: block.done }" :data-category="getToolIcon(block.name).category" @click.stop="handleToolClick(block, key(bi), bi)">
           <component :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
-          <span class="tool-name">{{ toolDisplayName(block.name, block.input) }}</span>
+          <span class="tool-name">{{ toolDisplayName(block.name, block.input, block.display_name) }}</span>
           <span v-if="toolCallSummary(block)" class="tool-summary">{{ toolCallSummary(block) }}</span>
           <!-- Loading: spinner -->
           <span v-if="!block.done" class="tool-spinner"></span>
@@ -187,12 +187,16 @@ function handleToolClick(block, blockKeyStr, blockIdx) {
     return
   }
   // All other tools: open the overlay with block data
+  // Slim format: input/output may be absent — overlay will fetch from API if needed
   emit('show-tool-detail', {
     name: block.name,
     input: block.input,
     output: block.output,
     status: block.status,
     done: block.done,
+    display_name: block.display_name,
+    summary: block.summary,
+    tool_id: block.id,
     msgId: props.msgId,
     blockIdx,
   })

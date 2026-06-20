@@ -623,18 +623,19 @@ func executeStreamRun(
 
 	// Create streaming placeholder message in DB
 	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
-	_, _ = service.AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, "")
+	streamingMsgID, _ := service.AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, "")
 
 	// Delegate event loop to SessionExecutor
 	cfg := service.RunConfig{
-		Mode:        service.ModeInteractive,
-		ProjectPath: projectPath,
-		BackendName: backendName,
-		SessionID:   sessionID,
-		AgentID:     agentID,
-		ChatRequest: chatReq,
-		FileDir:     fileDir,
-		StreamCh:    streamCh,
+		Mode:               service.ModeInteractive,
+		ProjectPath:        projectPath,
+		BackendName:        backendName,
+		SessionID:          sessionID,
+		AgentID:            agentID,
+		ChatRequest:        chatReq,
+		FileDir:            fileDir,
+		StreamingMessageID: streamingMsgID,
+		StreamCh:           streamCh,
 		LocalizeError: func(err error, key string, args map[string]any) string {
 			return T(r, key, args)
 		},

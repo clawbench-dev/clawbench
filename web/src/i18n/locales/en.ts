@@ -988,7 +988,7 @@ export default {
       sortFieldType: 'By Type',
       sortFieldSize: 'By Size',
       sortDir: 'Sort Direction',
-      sortDirDesc: 'Ascending or descending order',
+      sortDirHint: 'Ascending or descending order',
       sortDirAsc: 'Ascending',
       sortDirDesc: 'Descending',
       uploadMaxSize: 'Upload Size Limit (MB)',

@@ -483,18 +483,20 @@ watch(
     if (!activeToolOverlay.value) return null
     const block = findToolBlock(activeToolOverlay.value)
     if (!block) return null
-    return { output: block.output, done: block.done, status: block.status, input: block.input, name: block.name }
+    return { output: block.output, done: block.done, status: block.status, input: block.input, name: block.name, summary: block.summary, display_name: block.display_name }
   },
   (data) => {
     if (data === null || !toolDetailOverlay.value.show) return
     const { formatToolInput } = render
+    const hasInput = data.input && Object.keys(data.input).length > 0
     toolDetailOverlay.value = {
       ...toolDetailOverlay.value,
-      outputHtml: data.output ? formatToolOutput(data.output, data.name) : '',
+      outputHtml: data.output ? formatToolOutput(data.output, data.name) : toolDetailOverlay.value.outputHtml,
       status: data.status || '',
       done: !!data.done,
-      // Update input in case it was enriched by a later tool_use/tool_result event
-      inputHtml: formatToolInput(data.input, data.name, { done: data.done, status: data.status, output: data.output }),
+      // Only update input if it's available (slim format may not have it)
+      inputHtml: hasInput ? formatToolInput(data.input, data.name, { done: data.done, status: data.status, output: data.output }) : toolDetailOverlay.value.inputHtml,
+      summary: data.summary || toolDetailOverlay.value.summary,
     }
   }
 )
@@ -756,15 +758,52 @@ function handleShowToolDetail(block) {
   // Store identifiers for reactive lookup (survives messages array replacement on loadHistory)
   activeToolOverlay.value = { msgId: String(block.msgId), blockIdx: block.blockIdx }
 
+  // Slim format: input/output may be absent — show overlay immediately with
+  // available data, then fetch from API if needed.
+  const hasInput = block.input && Object.keys(block.input).length > 0
+  const hasOutput = !!block.output
+
   toolDetailOverlay.value = {
     show: true,
     name: block.name || '',
-    subagentType: block.input?.subagent_type || '',
-    summary: render.toolCallSummary(block),
-    inputHtml: formatToolInput(block.input, block.name, { done: block.done, status: block.status, output: block.output }),
-    outputHtml: block.output ? formatToolOutput(block.output, block.name) : '',
+    subagentType: block.display_name || block.input?.subagent_type || '',
+    summary: block.summary || render.toolCallSummary(block),
+    inputHtml: hasInput ? formatToolInput(block.input, block.name, { done: block.done, status: block.status, output: block.output }) : '',
+    outputHtml: hasOutput ? formatToolOutput(block.output, block.name) : '',
     status: block.status || '',
     done: !!block.done,
+  }
+
+  // Fetch tool call detail from API if input/output are missing
+  if ((!hasInput || !hasOutput) && block.tool_id && block.msgId) {
+    const toolId = block.tool_id
+    const msgId = block.msgId
+    fetchToolCallDetail(toolId, msgId, block)
+  }
+}
+
+/** Fetch full tool call data from the API and update the overlay */
+async function fetchToolCallDetail(toolId, msgId, block) {
+  try {
+    const resp = await fetch(`/api/ai/chat/tool-call?tool_id=${encodeURIComponent(toolId)}&message_id=${encodeURIComponent(msgId)}`)
+    if (!resp.ok) {
+      // Old data or not found — show "query failed" state
+      toolDetailOverlay.value.inputHtml = '<div style="color: var(--text-muted); font-style: italic; padding: 8px;">Details unavailable (legacy data)</div>'
+      return
+    }
+    const data = await resp.json()
+    const { formatToolInput } = render
+    // Update overlay with fetched data
+    if (data.input) {
+      const input = typeof data.input === 'string' ? JSON.parse(data.input) : data.input
+      toolDetailOverlay.value.inputHtml = formatToolInput(input, block.name || data.name, { done: block.done, status: block.status, output: data.output || '' })
+    }
+    if (data.output) {
+      toolDetailOverlay.value.outputHtml = formatToolOutput(data.output, block.name || data.name)
+    }
+  } catch (e) {
+    console.warn('Failed to fetch tool call detail:', e)
+    toolDetailOverlay.value.inputHtml = '<div style="color: var(--text-muted); font-style: italic; padding: 8px;">Failed to load details</div>'
   }
 }
 

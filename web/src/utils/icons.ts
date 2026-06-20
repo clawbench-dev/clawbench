@@ -92,7 +92,9 @@ export function getToolIcon(name: string) {
  * For Agent/Task calls with a subagent_type, show the sub-agent name
  * (PascalCased) instead of the generic "Agent".
  */
-export function toolDisplayName(name: string, input?: Record<string, any>): string {
+export function toolDisplayName(name: string, input?: Record<string, any>, displayName?: string): string {
+  // Prefer pre-extracted display_name from slim SSE/DB
+  if (displayName) return displayName
   const safeName = name || ''
   const lower = safeName.toLowerCase()
   if ((lower === 'agent' || lower === 'task') && input?.subagent_type) {

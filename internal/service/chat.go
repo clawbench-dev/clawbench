@@ -1037,6 +1037,9 @@ func PurgeDeletedData(sessionIDs []string) (sessionsPurged int64, messagesPurged
 	// Delete ai_raw_responses for these sessions
 	_, _ = tx.Exec("DELETE FROM ai_raw_responses WHERE session_id IN ("+placeholders+")", args...)
 
+	// Delete chat_tool_calls for these sessions
+	_, _ = tx.Exec("DELETE FROM chat_tool_calls WHERE session_id IN ("+placeholders+")", args...)
+
 	// Delete chat_history for these sessions (includes deleted messages)
 	result, err := tx.Exec("DELETE FROM chat_history WHERE session_id IN ("+placeholders+")", args...)
 	if err != nil {
@@ -1072,6 +1075,7 @@ func HardDeleteSession(sessionID string) error {
 	defer tx.Rollback()
 
 	_, _ = tx.Exec("DELETE FROM ai_raw_responses WHERE session_id = ?", sessionID)
+	_, _ = tx.Exec("DELETE FROM chat_tool_calls WHERE session_id = ?", sessionID)
 	_, _ = tx.Exec("DELETE FROM chat_history WHERE session_id = ?", sessionID)
 	_, _ = tx.Exec("DELETE FROM task_executions WHERE session_id = ?", sessionID)
 	_, err = tx.Exec("DELETE FROM chat_sessions WHERE id = ?", sessionID)
