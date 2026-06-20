@@ -127,6 +127,7 @@ export default {
       readAloud: '朗读',
       sessionSettings: '会话设置',
       switchThinkingEffort: '切换思考档位',
+      forkSession: '派生会话',
       attachment: '附件',
       attachToChat: '添加到聊天',
     },
@@ -261,6 +262,8 @@ export default {
       clickToViewDetails: '点击查看详情',
       continueFailed: '继续对话失败',
       continued: '已继续对话 ({count}/{max})',
+      forkFailed: '派生会话失败',
+      forked: '已派生会话 ({count}/{max})',
       sessionLimitReached: '已达到最大会话数',
     },
     messageList: {

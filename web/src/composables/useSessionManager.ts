@@ -34,6 +34,7 @@ export interface UseSessionManagerOptions {
   createSessionCore: (agentId?: string) => Promise<void>
   deleteSessionCore: (sessionId: string, backend?: string) => Promise<void>
   continueFromExecutionCore: (taskId: number, execId: number, switchTabFn: (tab: string) => void) => Promise<boolean>
+  forkSessionCore: (sessionId: string) => Promise<boolean>
   checkContinueSessionCore: (taskId: number, execId: number) => Promise<{ exists: boolean; sessionId: string }>
 
   // Stream operations (from useChatStream)
@@ -70,6 +71,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     createSessionCore,
     deleteSessionCore,
     continueFromExecutionCore,
+    forkSessionCore,
     checkContinueSessionCore,
     disconnectStream,
     stopPolling,
@@ -232,6 +234,13 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     return await continueFromExecutionCore(taskId, execId, switchTabFn)
   }
 
+  /** Fork the current session — create a new session with copied messages. */
+  async function forkSession(sessionId: string): Promise<boolean> {
+    cleanupActiveStream()
+    clearPendingMessages(messages.value)
+    return await forkSessionCore(sessionId)
+  }
+
   /** Check whether a continued session already exists for a task execution. */
   async function checkContinueSession(taskId: number, execId: number): Promise<{ exists: boolean; sessionId: string }> {
     return await checkContinueSessionCore(taskId, execId)
@@ -284,6 +293,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       sendMessage: extra.sendMessage,
       openChatPanel: extra.openChatPanel,
       continueFromExecution,
+      forkSession,
       checkContinueSession,
     })
   }
@@ -299,6 +309,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     deleteSession,
     deleteCurrentSession,
     continueFromExecution,
+    forkSession,
     checkContinueSession,
     // Cleanup (exposed for onStreamEnd and other edge cases)
     cleanupActiveStream,

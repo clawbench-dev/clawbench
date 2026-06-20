@@ -105,6 +105,7 @@
       @create-session="() => manager.createSession()"
       @show-agent-selector="handleShowAgentSelector"
       @delete-session="() => manager.deleteCurrentSession((draftId) => inputBarRef.value?.deleteDraft(draftId))"
+      @fork-session="handleForkSession"
       @switch-model="handleSwitchModel"
       @switch-thinking-effort="handleSwitchThinkingEffort"
       @switch-mode="handleSwitchMode"
@@ -384,6 +385,7 @@ const manager = useSessionManager({
   createSessionCore: session.createSession,
   deleteSessionCore: session.deleteSession,
   continueFromExecutionCore: session.continueFromExecution,
+  forkSessionCore: session.forkSession,
   checkContinueSessionCore: session.checkContinueSession,
   disconnectStream: stream.disconnectStream,
   stopPolling: stream.stopPolling,
@@ -483,11 +485,10 @@ watch(
   () => {
     if (!activeToolOverlay.value) return null
     const block = findToolBlock(activeToolOverlay.value)
-    if (!block) { console.log('[tool-detail-watcher] block NOT found', activeToolOverlay.value); return null }
+    if (!block) return null
     return { output: block.output, done: block.done, status: block.status, input: block.input, name: block.name, summary: block.summary, display_name: block.display_name }
   },
   (data) => {
-    console.log('[tool-detail-watcher] fired', data ? { hasOutput: !!data.output, done: data.done, hasInput: !!data.input } : null)
     if (data === null || !toolDetailOverlay.value.show) return
     const { formatToolInput } = render
     const hasInput = data.input && Object.keys(data.input).length > 0
@@ -561,6 +562,12 @@ function handleSwitchTransport(transport) {
 async function handleAcpSessionLoaded(sessionId) {
   // After ACP LoadSession, switch to the new session (reuse existing switchSession logic)
   await manager.switchSession(sessionId)
+}
+
+async function handleForkSession() {
+  const sid = identity.currentSessionId.value
+  if (!sid) return
+  await manager.forkSession(sid)
 }
 
 /** Persist session-scoped settings (mode, thinkingEffort, model, transport)
@@ -759,7 +766,6 @@ function handleShowToolDetail(block) {
   const { formatToolInput } = render
   // Store identifiers for reactive lookup (survives messages array replacement on loadHistory)
   activeToolOverlay.value = { msgId: String(block.msgId), blockIdx: block.blockIdx }
-  console.log('[tool-detail] handleShowToolDetail', { msgId: block.msgId, msgIdStr: String(block.msgId), blockIdx: block.blockIdx, tool_id: block.tool_id, hasInput: !!block.input, hasOutput: !!block.output })
 
   // Slim format: input/output may be absent — show overlay immediately with
   // available data, then fetch from API if needed.
@@ -779,9 +785,7 @@ function handleShowToolDetail(block) {
   }
 
   // Fetch tool call detail from API if input/output are missing
-  const shouldFetch = (!hasInput || !hasOutput) && block.tool_id && block.msgId
-  console.log('[tool-detail] shouldFetch?', shouldFetch, { noInput: !hasInput, noOutput: !hasOutput, hasToolId: !!block.tool_id, hasMsgId: !!block.msgId })
-  if (shouldFetch) {
+  if ((!hasInput || !hasOutput) && block.tool_id && block.msgId) {
     const toolId = block.tool_id
     const msgId = block.msgId
     toolDetailOverlay.value._fetchIds = { toolId, msgId }
@@ -806,21 +810,35 @@ function handleOverlayRetryClick(e) {
 }
 
 /** Fetch full tool call data from the API and update the overlay */
-async function fetchToolCallDetail(toolId, msgId, block) {
-  console.log('[tool-detail] fetchToolCallDetail', { toolId, msgId })
+async function fetchToolCallDetail(toolId, msgId, block, _retryCount = 0) {
   // Show loading state
   if (!toolDetailOverlay.value.inputHtml) {
     toolDetailOverlay.value.inputHtml = '<div class="tool-call-loading"></div>'
   }
   try {
     const resp = await fetch(`/api/ai/chat/tool-call?tool_id=${encodeURIComponent(toolId)}&message_id=${encodeURIComponent(msgId)}`)
-    console.log('[tool-detail] fetch response', resp.status, resp.ok)
     if (!resp.ok) {
-      toolDetailOverlay.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsUnavailable'))
+      // During streaming, the tool call may not yet be persisted to the DB (404),
+      // or the msgId may point to a stale message. Don't show an error immediately —
+      // retry up to 3 times with a short delay. After that, fall back to the
+      // reactive watcher which will populate the overlay once loadHistory replaces
+      // the messages array with full block data.
+      if (resp.status === 404 && _retryCount < 3) {
+        setTimeout(() => {
+          if (!toolDetailOverlay.value.show) return
+          // Re-resolve msgId from the live messages array (may have changed after loadHistory)
+          const liveBlock = findToolBlock(activeToolOverlay.value)
+          const effectiveMsgId = liveBlock ? activeToolOverlay.value.msgId : msgId
+          fetchToolCallDetail(toolId, effectiveMsgId, liveBlock || block, _retryCount + 1)
+        }, 800)
+        return
+      }
+      if (resp.status !== 404) {
+        toolDetailOverlay.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsUnavailable'))
+      }
       return
     }
     const data = await resp.json()
-    console.log('[tool-detail] fetch data', { hasInput: !!data.input, hasOutput: !!data.output, name: data.name })
     const { formatToolInput } = render
     // Update overlay with fetched data
     if (data.input) {

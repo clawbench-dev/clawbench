@@ -263,6 +263,7 @@ let _sendMessage: ((text: string, filePaths?: string[]) => Promise<void>) | null
 let _openChatPanel: (() => void) | null = null
 let _continueFromExecution: ((taskId: number, execId: number, switchTabFn: (tab: string) => void) => Promise<boolean>) | null = null
 let _checkContinueSession: ((taskId: number, execId: number) => Promise<{ exists: boolean; sessionId: string }>) | null = null
+let _forkSession: ((sessionId: string) => Promise<boolean>) | null = null
 // SessionDrawer component ref — set by App.vue. Allows any component to
 // trigger openAgentSelector() on the global drawer without coupling.
 let _sessionDrawerRef: any = null
@@ -275,6 +276,7 @@ export interface SessionActions {
   openChatPanel: () => void
   continueFromExecution: (taskId: number, execId: number, switchTabFn: (tab: string) => void) => Promise<boolean>
   checkContinueSession: (taskId: number, execId: number) => Promise<{ exists: boolean; sessionId: string }>
+  forkSession: (sessionId: string) => Promise<boolean>
 }
 
 /**
@@ -294,6 +296,7 @@ export function registerSessionActions(actions: SessionActions) {
   _openChatPanel = actions.openChatPanel
   _continueFromExecution = actions.continueFromExecution
   _checkContinueSession = actions.checkContinueSession
+  _forkSession = actions.forkSession
 
   // Expose E2E test bridge on window for Playwright access.
   // These allow tests to create/switch sessions without page reload,

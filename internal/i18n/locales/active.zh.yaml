@@ -89,3 +89,5 @@ PushPermissionPending: 需要审批
 NotFound: 未找到
 PermissionNotFound: 未找到待审批的权限请求
 ACPSessionNotFound: 该会话在智能体端已不存在
+ForkPrefix: "［派生］"
+Session: 会话

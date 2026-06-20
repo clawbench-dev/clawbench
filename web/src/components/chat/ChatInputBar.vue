@@ -18,6 +18,11 @@
           :title="t('chat.create.selectAgentOrLongPress')">
           <Plus :size="14" />
         </button>
+        <button v-if="isACPTransport" class="chat-action-btn"
+          @click="emit('fork-session')"
+          :title="t('chat.actions.forkSession')">
+          <Split :size="14" />
+        </button>
         <button class="chat-action-btn chat-action-btn-delete" :class="{ disabled: !currentSessionId }"
           @click="handleDelete"
           :title="currentSessionId ? t('chat.actions.deleteCurrentSession') : t('chat.actions.noSessionToDelete')">
@@ -262,7 +267,7 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, FileImage, FileText, Folder, XCircle, Inbox, Send, Square, Settings, Zap, Loader2, Cpu, Compass, Brain, Cable, RotateCcw, Activity } from 'lucide-vue-next'
+import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, FileImage, FileText, Folder, XCircle, Inbox, Send, Square, Settings, Zap, Loader2, Cpu, Compass, Brain, Cable, RotateCcw, Activity, Split } from 'lucide-vue-next'
 import { baseName } from '@/utils/path.ts'
 import { computeRecentReferencedFiles, computeHasFileGroups, computeAttachMenuItemCount } from '@/utils/chatInputUtils.ts'
 import PopupMenu from '@/components/common/PopupMenu.vue'
@@ -410,6 +415,7 @@ const emit = defineEmits([
   'create-session',
   'show-agent-selector',
   'delete-session',
+  'fork-session',
   'switch-model',
   'switch-thinking-effort',
   'switch-mode',

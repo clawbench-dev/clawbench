@@ -60,6 +60,7 @@ function createMockOptions() {
         messages, loading,
         switchSessionCore, createSessionCore, deleteSessionCore,
         continueFromExecutionCore: vi.fn().mockResolvedValue(true),
+        forkSessionCore: vi.fn().mockResolvedValue(true),
         checkContinueSessionCore: vi.fn().mockResolvedValue({ exists: false, sessionId: '' }),
         disconnectStream, stopPolling,
         updateRenderedContents, clearInputState, scrollBottom,

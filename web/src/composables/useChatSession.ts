@@ -467,6 +467,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       syncThinkingEffortFromData(data.thinkingEffortState?.currentId || '')
       syncModeFromData(data.modeState?.currentModeId || '', data.modeState?.availableModes)
       syncTransportFromData(data.transport)
+      syncUsageFromData(data.usageState)
       // Restore autoApprove from server state (per-session, not global)
       if (data.autoApprove !== undefined) {
         autoApprove.value = data.autoApprove
@@ -922,6 +923,41 @@ export function useChatSession(options: UseChatSessionOptions) {
     }
   }
 
+  /** Fork the current session — create a new session with copied messages. */
+  async function forkSession(sessionId: string): Promise<boolean> {
+    try {
+      const resp = await fetch('/api/ai/session/fork', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      })
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({}))
+        const msgKey = errData.msgKey || ''
+        if (resp.status === 409 || msgKey === 'SessionLimitReached') {
+          toast.show(gt('chat.session.sessionLimitReached'), { icon: '⚠️', type: 'error' })
+        } else {
+          toast.show(errData.error || gt('chat.session.forkFailed'), { icon: '⚠️', type: 'error' })
+        }
+        return false
+      }
+      const data = await resp.json()
+      if (!data.ok || !data.sessionId) {
+        toast.show(gt('chat.session.forkFailed'), { icon: '⚠️', type: 'error' })
+        return false
+      }
+      const maxCount = store.state.sessionMaxCount
+      if (typeof data.sessionCount === 'number') store.state.sessionCount = data.sessionCount
+      toast.show(gt('chat.session.forked', { count: data.sessionCount ?? '', max: maxCount }), { icon: '🔀', type: 'success', duration: 1500 })
+      await switchSession(data.sessionId)
+      return true
+    } catch (err) {
+      console.error('Failed to fork session:', err)
+      toast.show(gt('chat.session.forkFailed'), { icon: '⚠️', type: 'error' })
+      return false
+    }
+  }
+
   return {
     // Exposed refs (consumed by ChatPanelContent etc.)
     currentSessionId,
@@ -947,6 +983,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     stopMsgCountPolling,
     handleVisibilityChange,
     continueFromExecution,
+    forkSession,
     checkContinueSession,
     // Agent helpers — delegate to singleton
     getAgentIcon,

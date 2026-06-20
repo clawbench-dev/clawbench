@@ -127,6 +127,7 @@ export default {
       readAloud: 'Read',
       sessionSettings: 'Session settings',
       switchThinkingEffort: 'Switch thinking effort',
+      forkSession: 'Fork session',
       attachment: 'Attach',
       attachToChat: 'Add to chat',
     },
@@ -261,6 +262,8 @@ export default {
       clickToViewDetails: 'Click to view details',
       continueFailed: 'Failed to continue conversation',
       continued: 'Conversation continued ({count}/{max})',
+      forkFailed: 'Failed to fork session',
+      forked: 'Session forked ({count}/{max})',
       sessionLimitReached: 'Maximum session limit reached',
     },
     messageList: {
