@@ -240,7 +240,7 @@
       </template>
       <template v-if="showTransportInfo">
         <span class="session-info-divider"></span>
-        <span class="session-info-transport" @click.stop="openSettingsModal('transport')"><Cable :size="11" />{{ currentTransport }}</span>
+        <span class="session-info-transport" @click.stop="openSettingsModal('transport')"><Cable :size="11" />{{ currentTransport === 'acp-stdio' ? 'ACP' : 'CLI' }}</span>
       </template>
       <template v-if="showResumeIcon">
         <span class="session-info-divider"></span>
