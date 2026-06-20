@@ -419,6 +419,10 @@ export async function initSessionFromAPI() {
             }
           }
         }
+        // Initialize usage state from server cached data
+        if (data.usageState && data.usageState.size > 0) {
+          updateUsageState(data.usageState.used ?? 0, data.usageState.size, data.usageState.cost, data.usageState.currency)
+        }
       }
     }
   } catch (_) {

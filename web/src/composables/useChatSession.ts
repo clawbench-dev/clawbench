@@ -3,7 +3,7 @@ import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
-import { clearModeState, updateAvailableModes, clearCommandState, updateCommandState, updateAvailableThinkingEfforts, clearThinkingEffortState, clearUsageState, currentAgentId as _currentAgentId } from '@/composables/useSessionIdentity.ts'
+import { clearModeState, updateAvailableModes, clearCommandState, updateCommandState, updateAvailableThinkingEfforts, clearThinkingEffortState, clearUsageState, updateUsageState, currentAgentId as _currentAgentId } from '@/composables/useSessionIdentity.ts'
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
 import { useAgents, restoreOriginalModels, populateACPStateFromCache, getAgentThinkingEffortLevels } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
@@ -183,6 +183,13 @@ export function useChatSession(options: UseChatSessionOptions) {
     }
   }
 
+  // Helper: sync usage state from server data
+  function syncUsageFromData(usageStateData?: { used?: number; size?: number; cost?: number; currency?: string }) {
+    if (usageStateData && usageStateData.size > 0) {
+      updateUsageState(usageStateData.used ?? 0, usageStateData.size, usageStateData.cost, usageStateData.currency)
+    }
+  }
+
   // Switching state — true while a session switch is in progress (distinct from
   // "loading" which means "AI is generating"). Used to show a fade/placeholder
   // transition so the user sees immediate feedback instead of a frozen UI.
@@ -290,6 +297,7 @@ export function useChatSession(options: UseChatSessionOptions) {
             syncThinkingEffortFromData(recoverData.thinkingEffortState?.currentId || '')
             syncModeFromData(recoverData.modeState?.currentModeId || '', recoverData.modeState?.availableModes)
             syncTransportFromData(recoverData.transport)
+            syncUsageFromData(recoverData.usageState)
             if (recoverData.autoApprove !== undefined) {
               autoApprove.value = recoverData.autoApprove
             }

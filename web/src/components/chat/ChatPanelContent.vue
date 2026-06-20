@@ -483,10 +483,11 @@ watch(
   () => {
     if (!activeToolOverlay.value) return null
     const block = findToolBlock(activeToolOverlay.value)
-    if (!block) return null
+    if (!block) { console.log('[tool-detail-watcher] block NOT found', activeToolOverlay.value); return null }
     return { output: block.output, done: block.done, status: block.status, input: block.input, name: block.name, summary: block.summary, display_name: block.display_name }
   },
   (data) => {
+    console.log('[tool-detail-watcher] fired', data ? { hasOutput: !!data.output, done: data.done, hasInput: !!data.input } : null)
     if (data === null || !toolDetailOverlay.value.show) return
     const { formatToolInput } = render
     const hasInput = data.input && Object.keys(data.input).length > 0
@@ -758,6 +759,7 @@ function handleShowToolDetail(block) {
   const { formatToolInput } = render
   // Store identifiers for reactive lookup (survives messages array replacement on loadHistory)
   activeToolOverlay.value = { msgId: String(block.msgId), blockIdx: block.blockIdx }
+  console.log('[tool-detail] handleShowToolDetail', { msgId: block.msgId, msgIdStr: String(block.msgId), blockIdx: block.blockIdx, tool_id: block.tool_id, hasInput: !!block.input, hasOutput: !!block.output })
 
   // Slim format: input/output may be absent — show overlay immediately with
   // available data, then fetch from API if needed.
@@ -777,7 +779,9 @@ function handleShowToolDetail(block) {
   }
 
   // Fetch tool call detail from API if input/output are missing
-  if ((!hasInput || !hasOutput) && block.tool_id && block.msgId) {
+  const shouldFetch = (!hasInput || !hasOutput) && block.tool_id && block.msgId
+  console.log('[tool-detail] shouldFetch?', shouldFetch, { noInput: !hasInput, noOutput: !hasOutput, hasToolId: !!block.tool_id, hasMsgId: !!block.msgId })
+  if (shouldFetch) {
     const toolId = block.tool_id
     const msgId = block.msgId
     toolDetailOverlay.value._fetchIds = { toolId, msgId }
@@ -803,17 +807,20 @@ function handleOverlayRetryClick(e) {
 
 /** Fetch full tool call data from the API and update the overlay */
 async function fetchToolCallDetail(toolId, msgId, block) {
+  console.log('[tool-detail] fetchToolCallDetail', { toolId, msgId })
   // Show loading state
   if (!toolDetailOverlay.value.inputHtml) {
     toolDetailOverlay.value.inputHtml = '<div class="tool-call-loading"></div>'
   }
   try {
     const resp = await fetch(`/api/ai/chat/tool-call?tool_id=${encodeURIComponent(toolId)}&message_id=${encodeURIComponent(msgId)}`)
+    console.log('[tool-detail] fetch response', resp.status, resp.ok)
     if (!resp.ok) {
       toolDetailOverlay.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsUnavailable'))
       return
     }
     const data = await resp.json()
+    console.log('[tool-detail] fetch data', { hasInput: !!data.input, hasOutput: !!data.output, name: data.name })
     const { formatToolInput } = render
     // Update overlay with fetched data
     if (data.input) {
