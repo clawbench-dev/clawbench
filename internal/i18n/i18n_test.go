@@ -100,6 +100,8 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"SessionIdRequired",
 		"NewSession",
 		"NewSessionN",
+		"ForkPrefix",
+		"Session",
 		"FileMessage",
 		"FileTooLarge",
 		"TextTooLong",

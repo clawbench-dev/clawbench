@@ -69,6 +69,8 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     mockIdentityFns.saveThinkingPref.mockReset()
     mockIdentityFns.updateUsageState.mockReset()
     mockIdentityFns.clearUsageState.mockReset()
+    mockUpdateUsageState.mockReset()
+    mockClearUsageState.mockReset()
     mockAgentFns.loadAgents.mockReset().mockResolvedValue(undefined)
     mockAgentFns.getAgentIcon.mockReset().mockReturnValue('🤖')
     mockAgentFns.getAgentName.mockReset().mockReturnValue('Test')
@@ -154,6 +156,7 @@ vi.mock('@/composables/useSessionIdentity.ts', () => ({
     openAgentSelector: vi.fn(),
     continueFromExecution: vi.fn(),
     checkContinueSession: vi.fn(),
+    forkSession: vi.fn(),
     registerSessionActions: vi.fn(),
     initSessionFromAPI: vi.fn(),
     saveModelPref: mockIdentityFns.saveModelPref,
@@ -171,8 +174,8 @@ vi.mock('@/composables/useSessionIdentity.ts', () => ({
   updateThinkingEffortState: vi.fn(),
   updateAvailableThinkingEfforts: vi.fn(),
   clearThinkingEffortState: vi.fn(),
-  updateUsageState: mockIdentityFns.updateUsageState,
-  clearUsageState: mockIdentityFns.clearUsageState,
+  updateUsageState: mockUpdateUsageState,
+  clearUsageState: mockClearUsageState,
 }))
 
 vi.mock('@/composables/useToast', () => ({
@@ -217,6 +220,10 @@ vi.mock('@/utils/chatSessionUtils', () => ({
 // ── Import after mocks ──
 
 import { useChatSession, loadSessionsOnce, resetChatSessionState } from '@/composables/useChatSession'
+
+// Get direct references to the mocked functions from useSessionIdentity
+const mockUpdateUsageState = vi.hoisted(() => vi.fn())
+const mockClearUsageState = vi.hoisted(() => vi.fn())
 
 // ── Helpers ──
 
@@ -953,6 +960,9 @@ describe('switchSession', () => {
   })
 
   it('restores usage state from API response after switch', async () => {
+    resetAdditionalMocks() // Ensure mock call records are clean
+    mockClearUsageState.mockClear()
+    mockUpdateUsageState.mockClear()
     globalThis.fetch = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
@@ -977,11 +987,13 @@ describe('switchSession', () => {
     await session.switchSession('s2')
 
     // clearUsageState is called first (to clear stale state), then updateUsageState restores from API
-    expect(mockIdentityFns.clearUsageState).toHaveBeenCalled()
-    expect(mockIdentityFns.updateUsageState).toHaveBeenCalledWith(50000, 200000, 1.5, 'USD')
+    expect(mockClearUsageState).toHaveBeenCalled()
+    expect(mockUpdateUsageState).toHaveBeenCalledWith(50000, 200000, 1.5, 'USD')
   })
 
   it('does not call updateUsageState when API response has no usageState', async () => {
+    mockClearUsageState.mockClear()
+    mockUpdateUsageState.mockClear()
     globalThis.fetch = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
@@ -1006,11 +1018,13 @@ describe('switchSession', () => {
     await session.switchSession('s2')
 
     // clearUsageState is still called, but updateUsageState should NOT be called
-    expect(mockIdentityFns.clearUsageState).toHaveBeenCalled()
-    expect(mockIdentityFns.updateUsageState).not.toHaveBeenCalled()
+    expect(mockClearUsageState).toHaveBeenCalled()
+    expect(mockUpdateUsageState).not.toHaveBeenCalled()
   })
 
   it('does not call updateUsageState when usageState.size is 0', async () => {
+    mockClearUsageState.mockClear()
+    mockUpdateUsageState.mockClear()
     globalThis.fetch = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
@@ -1035,8 +1049,8 @@ describe('switchSession', () => {
     await session.switchSession('s2')
 
     // size=0 means no context window info available — should not restore
-    expect(mockIdentityFns.clearUsageState).toHaveBeenCalled()
-    expect(mockIdentityFns.updateUsageState).not.toHaveBeenCalled()
+    expect(mockClearUsageState).toHaveBeenCalled()
+    expect(mockUpdateUsageState).not.toHaveBeenCalled()
   })
 })
 
@@ -2747,7 +2761,7 @@ describe('syncUsageFromData', () => {
     const session = createSession()
     await session.loadHistory(true, false, false)
 
-    expect(mockIdentityFns.updateUsageState).toHaveBeenCalledWith(100000, 200000, 2.5, 'EUR')
+    expect(mockUpdateUsageState).toHaveBeenCalledWith(100000, 200000, 2.5, 'EUR')
   })
 
   it('does not call updateUsageState when usageState is missing', async () => {
@@ -2764,7 +2778,7 @@ describe('syncUsageFromData', () => {
     const session = createSession()
     await session.loadHistory(true, false, false)
 
-    expect(mockIdentityFns.updateUsageState).not.toHaveBeenCalled()
+    expect(mockUpdateUsageState).not.toHaveBeenCalled()
   })
 
   it('does not call updateUsageState when usageState.size is 0', async () => {
@@ -2782,7 +2796,7 @@ describe('syncUsageFromData', () => {
     const session = createSession()
     await session.loadHistory(true, false, false)
 
-    expect(mockIdentityFns.updateUsageState).not.toHaveBeenCalled()
+    expect(mockUpdateUsageState).not.toHaveBeenCalled()
   })
 })
 
@@ -3144,6 +3158,114 @@ describe('continueFromExecution', () => {
     const result = await session.checkContinueSession(1, 42)
 
     expect(result).toEqual({ exists: false, sessionId: '' })
+  })
+})
+
+// ───────────────────────────────────────────────────────────
+// forkSession
+// ───────────────────────────────────────────────────────────
+
+describe('forkSession', () => {
+  let originalFetch: typeof globalThis.fetch
+
+  beforeEach(() => {
+    resetMockState()
+    resetChatSessionState()
+    resetAdditionalMocks()
+    originalFetch = globalThis.fetch
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  it('calls fork API and switches to new session', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, sessionId: 'forked-s1', sessionCount: 2 }),
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 'source-s1'
+    const result = await session.forkSession('source-s1')
+
+    expect(result).toBe(true)
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      '/api/ai/session/fork',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ sessionId: 'source-s1' }),
+      })
+    )
+    // switchSession should have been called with the new session ID
+    // (tested via the fetch for loadHistory after switch)
+  })
+
+  it('shows session limit toast on 409', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: () => Promise.resolve({ msgKey: 'SessionLimitReached' }),
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 'source-s1'
+    const result = await session.forkSession('source-s1')
+
+    expect(result).toBe(false)
+    expect(mockToastFn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ type: 'error' })
+    )
+  })
+
+  it('shows generic error toast on non-ok response', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve({ error: 'Internal error' }),
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 'source-s1'
+    const result = await session.forkSession('source-s1')
+
+    expect(result).toBe(false)
+    expect(mockToastFn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ type: 'error' })
+    )
+  })
+
+  it('shows error toast on network failure', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValueOnce(new Error('Network error'))
+
+    const session = createSession()
+    mockState.currentSessionId = 'source-s1'
+    const result = await session.forkSession('source-s1')
+
+    expect(result).toBe(false)
+    expect(mockToastFn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ type: 'error' })
+    )
+  })
+
+  it('shows error toast when response lacks sessionId', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ ok: true }),
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 'source-s1'
+    const result = await session.forkSession('source-s1')
+
+    expect(result).toBe(false)
+    expect(mockToastFn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ type: 'error' })
+    )
   })
 })
 
