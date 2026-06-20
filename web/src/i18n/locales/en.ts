@@ -132,6 +132,12 @@ export default {
     },
     sessionInfo: {
       default: 'Default',
+      contextUsage: 'Context',
+      contextUsageTooltip: '{used} / {size} tokens ({pct}%)',
+      contextCost: 'Cost: ${cost} {currency}',
+      used: 'Used',
+      size: 'Total',
+      remaining: 'Remaining',
     },
     create: {
       selectAgentOrLongPress: 'Select agent (long press to create new)',

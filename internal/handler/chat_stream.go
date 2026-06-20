@@ -88,7 +88,7 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 	// When the frontend reconnects (page reload, session switch), the previous
 	// SSE handler already consumed mode_update events. Re-emit from cache so
 	// the new SSE client receives state without waiting for a new prompt.
-	if s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID); s.Mode != nil || s.Config != nil || s.Effort != nil || len(s.Commands) > 0 || s.ModelList != nil || s.Plan != nil {
+	if s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID); s.Mode != nil || s.Config != nil || s.Effort != nil || len(s.Commands) > 0 || s.ModelList != nil || s.Plan != nil || s.Usage != nil {
 		if s.Mode != nil {
 			data, _ := json.Marshal(s.Mode)
 			fmt.Fprintf(w, "event: mode_update\ndata: %s\n\n", data)
@@ -112,6 +112,10 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 		if s.Plan != nil {
 			data, _ := json.Marshal(s.Plan)
 			fmt.Fprintf(w, "event: plan_update\ndata: %s\n\n", data)
+		}
+		if s.Usage != nil {
+			data, _ := json.Marshal(s.Usage)
+			fmt.Fprintf(w, "event: usage_update\ndata: %s\n\n", data)
 		}
 		if canFlush {
 			flusher.Flush()
@@ -311,6 +315,11 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 				if event.Plan != nil {
 					data, _ := json.Marshal(event.Plan)
 					fmt.Fprintf(w, "event: plan_update\ndata: %s\n\n", data)
+				}
+			case "usage_update":
+				if event.Usage != nil {
+					data, _ := json.Marshal(event.Usage)
+					fmt.Fprintf(w, "event: usage_update\ndata: %s\n\n", data)
 				}
 			}
 

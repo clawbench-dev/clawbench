@@ -25,6 +25,10 @@ const autoApprove = ref(false)
 const availableModes = ref<Array<{ id: string; name: string }>>([])
 const availableCommands = ref<Array<{ name: string; description: string; inputHint?: string }>>([])
 const availableThinkingEfforts = ref<Array<{ id: string; name: string }>>([])
+const contextUsed = ref(0)
+const contextSize = ref(0)
+const contextCost = ref(0)
+const contextCurrency = ref('')
 export const runningSessions = ref(new Set<string>())
 // Bumped on every mutation to runningSessions so computed properties
 // that depend on the set's contents re-evaluate correctly.
@@ -57,6 +61,10 @@ export function resetIdentity(): void {
   availableModes.value = []
   availableCommands.value = []
   availableThinkingEfforts.value = []
+  contextUsed.value = 0
+  contextSize.value = 0
+  contextCost.value = 0
+  contextCurrency.value = ''
   runningSessions.value = new Set()
   runningSessionsVersion.value = 0
   sessionDrawerOpen.value = false
@@ -207,6 +215,22 @@ export function updateAvailableThinkingEfforts(levels: Array<{ id: string; name:
 export function clearThinkingEffortState() {
   availableThinkingEfforts.value = []
   currentThinkingEffortName.value = ''
+}
+
+/** Update context usage state from SSE usage_update event. */
+export function updateUsageState(used: number, size: number, cost?: number, currency?: string) {
+  contextUsed.value = used
+  contextSize.value = size
+  contextCost.value = cost ?? 0
+  contextCurrency.value = currency ?? ''
+}
+
+/** Clear usage state (called on session switch or reset). */
+export function clearUsageState() {
+  contextUsed.value = 0
+  contextSize.value = 0
+  contextCost.value = 0
+  contextCurrency.value = ''
 }
 
 /** Toggle auto-approve mode and persist to server. */
@@ -588,6 +612,10 @@ export function useSessionIdentity() {
     availableThinkingEfforts,
     runningSessions,
     runningSessionsVersion,
+    contextUsed,
+    contextSize,
+    contextCost,
+    contextCurrency,
     agentHeaderTitle,
     // Global session drawer state
     sessionDrawerOpen,
@@ -619,5 +647,7 @@ export function useSessionIdentity() {
     clearCommandState,
     updateAvailableThinkingEfforts,
     clearThinkingEffortState,
+    updateUsageState,
+    clearUsageState,
   }
 }

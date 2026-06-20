@@ -372,6 +372,7 @@ type ACPCachedState struct {
 	Commands  []AvailableCommandInfo
 	ModelList *ModelListState
 	Plan      *PlanState
+	Usage     *UsageState
 }
 
 // GetCachedStateByClawbenchSID returns the cached state for the connection
@@ -392,6 +393,7 @@ func (m *ACPConnManager) GetCachedStateByClawbenchSID(clawbenchSID string) ACPCa
 	currentThinkingEffortID := conn.currentThinkingEffortID
 	currentModelID := conn.currentModelID
 	planState := conn.cachedPlanState
+	usageState := conn.cachedUsageState
 	agentID := ""
 	if conn.agent != nil {
 		agentID = conn.agent.ID
@@ -410,6 +412,7 @@ func (m *ACPConnManager) GetCachedStateByClawbenchSID(clawbenchSID string) ACPCa
 		Commands:  reg.GetCommands(agentID),
 		Config:    reg.GetConfigState(agentID),
 		Plan:      planState,
+		Usage:     usageState,
 	}
 }
 
@@ -561,6 +564,7 @@ type ACPConn struct {
 	currentThinkingEffortID string
 	currentModelID          string
 	cachedPlanState         *PlanState
+	cachedUsageState        *UsageState
 
 	// lastSetConfig tracks the last values successfully sent to the agent via
 	// setSessionConfigOption. Used to avoid re-sending unchanged values.
@@ -724,6 +728,20 @@ func (c *ACPConn) GetCachedPlanState() *PlanState {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.cachedPlanState
+}
+
+// SetCachedUsageState caches the usage state from a usage_update event.
+func (c *ACPConn) SetCachedUsageState(state *UsageState) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cachedUsageState = state
+}
+
+// GetCachedUsageState returns the cached usage state.
+func (c *ACPConn) GetCachedUsageState() *UsageState {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cachedUsageState
 }
 
 // SetAutoApprove enables or disables hands-off mode for this connection.

@@ -3,7 +3,7 @@ import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
-import { clearModeState, updateAvailableModes, clearCommandState, updateCommandState, updateAvailableThinkingEfforts, clearThinkingEffortState, currentAgentId as _currentAgentId } from '@/composables/useSessionIdentity.ts'
+import { clearModeState, updateAvailableModes, clearCommandState, updateCommandState, updateAvailableThinkingEfforts, clearThinkingEffortState, clearUsageState, currentAgentId as _currentAgentId } from '@/composables/useSessionIdentity.ts'
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
 import { useAgents, restoreOriginalModels, populateACPStateFromCache, getAgentThinkingEffortLevels } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
@@ -591,6 +591,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     clearModeState()
     clearCommandState()
     clearThinkingEffortState()
+    clearUsageState()
     autoApprove.value = false
     // Restore original CLI model list in case ACP had overridden it
     const prevAgentId = _currentAgentId.value

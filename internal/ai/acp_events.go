@@ -266,7 +266,18 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		slog.Debug("acp: session info update")
 
 	case update.UsageUpdate != nil:
-		slog.Debug("acp: usage update", "size", update.UsageUpdate.Size, "used", update.UsageUpdate.Used)
+		usageState := &UsageState{
+			Used: update.UsageUpdate.Used,
+			Size: update.UsageUpdate.Size,
+		}
+		if update.UsageUpdate.Cost != nil {
+			usageState.Cost = update.UsageUpdate.Cost.Amount
+			usageState.Currency = update.UsageUpdate.Cost.Currency
+		}
+		forwardACPEvent(ch, StreamEvent{Type: "usage_update", Usage: usageState})
+		if conn != nil {
+			conn.SetCachedUsageState(usageState)
+		}
 	}
 }
 

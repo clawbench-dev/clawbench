@@ -206,6 +206,34 @@ func TestGetCachedStateByClawbenchSID_WithCachedState(t *testing.T) {
 	assert.Len(t, s.Plan.Entries, 1)
 }
 
+func TestACPConn_SetCachedUsageState(t *testing.T) {
+	conn := newACPConn(nil, "test-usage-sid")
+	assert.Nil(t, conn.GetCachedUsageState())
+
+	state := &UsageState{Used: 50000, Size: 200000}
+	conn.SetCachedUsageState(state)
+	got := conn.GetCachedUsageState()
+	assert.Equal(t, 50000, got.Used)
+	assert.Equal(t, 200000, got.Size)
+}
+
+func TestGetCachedStateByClawbenchSID_Usage(t *testing.T) {
+	mgr := GetACPConnManager()
+	agent := &model.Agent{ID: "test-usage-agent", Backend: "acp-stdio", AcpCommand: "echo"}
+	conn := newACPConn(agent, "test-sid-usage")
+	usageState := &UsageState{Used: 100000, Size: 200000, Cost: 1.5, Currency: "USD"}
+	conn.SetCachedUsageState(usageState)
+	mgr.SetConnForTest("test-sid-usage", conn)
+	defer mgr.CloseConn("test-sid-usage")
+
+	state := mgr.GetCachedStateByClawbenchSID("test-sid-usage")
+	assert.NotNil(t, state.Usage)
+	assert.Equal(t, 100000, state.Usage.Used)
+	assert.Equal(t, 200000, state.Usage.Size)
+	assert.InDelta(t, 1.5, state.Usage.Cost, 0.001)
+	assert.Equal(t, "USD", state.Usage.Currency)
+}
+
 // --- ACPConn.shouldSetConfig / markConfigSet ---
 
 func TestACPConn_ShouldSetConfig_ModeInitial(t *testing.T) {

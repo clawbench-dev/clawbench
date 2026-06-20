@@ -132,6 +132,12 @@ export default {
     },
     sessionInfo: {
       default: '默认',
+      contextUsage: '上下文',
+      contextUsageTooltip: '{used} / {size} tokens ({pct}%)',
+      contextCost: '费用: ${cost} {currency}',
+      used: '已用',
+      size: '总量',
+      remaining: '剩余',
     },
     create: {
       selectAgentOrLongPress: '选择智能体（长按直接新建）',

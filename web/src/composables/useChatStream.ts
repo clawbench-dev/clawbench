@@ -2,7 +2,7 @@ import { onMounted, onUnmounted, type Ref } from 'vue'
 import { cancelChat } from '@/utils/api'
 import { useReconnect } from './useReconnect'
 import { gt } from '@/composables/useLocale'
-import { updateModeState, updateAvailableModes, updateCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, currentAgentId } from './useSessionIdentity'
+import { updateModeState, updateAvailableModes, updateCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, currentAgentId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
 import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, consumePendingMessage, syncPendingFromBackend } from '@/utils/chatStreamUtils.ts'
@@ -613,6 +613,15 @@ export function useChatStream(options: UseChatStreamOptions) {
       try { data = JSON.parse(e.data) } catch { console.warn('SSE plan_update: invalid JSON, skipping'); return }
       if (Array.isArray(data.entries)) {
         updatePlanEntries(data.entries)
+      }
+    })
+
+    eventSource.addEventListener('usage_update', (e) => {
+      if (sessionChanged()) return
+      let data: any
+      try { data = JSON.parse(e.data) } catch { console.warn('SSE usage_update: invalid JSON, skipping'); return }
+      if (data.size > 0) {
+        updateUsageState(data.used ?? 0, data.size, data.cost, data.currency)
       }
     })
 
