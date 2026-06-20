@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -1675,14 +1676,21 @@ func TestSessionExecutor_BuildResult_AskUserQuestionToolCallPersisted(t *testing
 	defer func() { model.Agents = nil }()
 
 	sid := setupExecutorSession(t, "test-agent")
+	// Get the streaming message ID (created by setupExecutorSession)
+	streamingMsgID := GetStreamingMessageID(sid)
+	if streamingMsgID == 0 {
+		t.Fatal("expected non-zero streaming message ID from setup")
+	}
+
 	ctx := context.Background()
 	cfg := RunConfig{
-		Mode:        ModeInteractive,
-		ProjectPath: "/test",
-		BackendName: "test",
-		SessionID:   sid,
-		AgentID:     "test-agent",
-		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: streamingMsgID,
 	}
 
 	// Emit content with <ask-question> tag — ConvertAskQuestionBlocks will
@@ -1718,18 +1726,13 @@ func TestSessionExecutor_BuildResult_AskUserQuestionToolCallPersisted(t *testing
 		t.Fatal("expected AskUserQuestion block to have input")
 	}
 
-	// Verify the content JSON includes input (not slim-serialized away)
-	contentJSON := executor.Finalize(result, nil)
-	var parsed map[string]any
-	if err := json.Unmarshal([]byte(contentJSON.Blocks[len(contentJSON.Blocks)-1].(any).(map[string]any)["input"].(string)), nil); err != nil {
-		// The actual check: verify the block's input is in the serialized content
+	// Finalize and verify the tool call is persisted in chat_tool_calls table
+	finalized := executor.Finalize(result, nil)
+	msgID := finalized.MsgID
+	if msgID == 0 {
+		t.Fatal("expected non-zero message ID after Finalize")
 	}
 
-	// Verify the tool call is persisted in chat_tool_calls table
-	msgID := GetStreamingMessageID(sid)
-	if msgID == 0 {
-		t.Fatal("expected non-zero streaming message ID after Finalize")
-	}
 	rec, err := GetToolCall(askBlock.ID, msgID)
 	if err != nil {
 		t.Fatalf("GetToolCall failed: %v", err)
@@ -1739,6 +1742,104 @@ func TestSessionExecutor_BuildResult_AskUserQuestionToolCallPersisted(t *testing
 	}
 	if rec.Name != "AskUserQuestion" {
 		t.Errorf("expected tool call name=AskUserQuestion, got %q", rec.Name)
+	}
+	// Verify the input JSON contains questions
+	var toolInput map[string]any
+	if err := json.Unmarshal(rec.Input, &toolInput); err != nil {
+		t.Fatalf("failed to parse tool call input JSON: %v", err)
+	}
+	questions, ok := toolInput["questions"].([]any)
+	if !ok || len(questions) == 0 {
+		t.Errorf("expected questions array in tool call input, got %v", toolInput)
+	}
+}
+
+func TestSessionExecutor_BuildResult_AskUserQuestionContentJSONIncludesInput(t *testing.T) {
+	// Verify that the content JSON persisted to chat_history includes input
+	// for AskUserQuestion blocks (not slim-serialized away).
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	streamingMsgID := GetStreamingMessageID(sid)
+	if streamingMsgID == 0 {
+		t.Fatal("expected non-zero streaming message ID from setup")
+	}
+
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: streamingMsgID,
+	}
+
+	events := []ai.StreamEvent{
+		{Type: "content", Content: `<ask-question><item><question>Pick one</question><option><label>X</label></option></item></ask-question>`},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	executor := NewSessionExecutor(ctx, cfg)
+	result := executor.RunWithChannel(ch)
+	finalized := executor.Finalize(result, nil)
+
+	// Read the persisted content from DB
+	msgID := finalized.MsgID
+	if msgID == 0 {
+		t.Fatal("expected non-zero message ID after Finalize")
+	}
+	var content string
+	err := DBRead.QueryRow("SELECT content FROM chat_history WHERE id = ?", msgID).Scan(&content)
+	if err != nil {
+		t.Fatalf("failed to read content from DB: %v", err)
+	}
+
+	// Parse the content JSON and find the AskUserQuestion block
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		t.Fatalf("failed to parse content JSON: %v", err)
+	}
+	blocks, ok := parsed["blocks"].([]any)
+	if !ok || len(blocks) == 0 {
+		t.Fatal("expected blocks array in content JSON")
+	}
+
+	// Find the AskUserQuestion block
+	var askBlock map[string]any
+	for _, b := range blocks {
+		bm, _ := b.(map[string]any)
+		if bm["name"] == "AskUserQuestion" {
+			askBlock = bm
+			break
+		}
+	}
+	if askBlock == nil {
+		t.Fatal("expected AskUserQuestion block in content JSON")
+	}
+
+	// Verify input is present (not stripped by slim serialization)
+	input, ok := askBlock["input"]
+	if !ok {
+		t.Fatal("AskUserQuestion block missing 'input' field — was slim-serialized")
+	}
+	inputMap, ok := input.(map[string]any)
+	if !ok {
+		t.Fatalf("expected input to be a map, got %T", input)
+	}
+	questions, ok := inputMap["questions"].([]any)
+	if !ok || len(questions) == 0 {
+		t.Errorf("expected questions array in input, got %v", inputMap)
 	}
 }
 

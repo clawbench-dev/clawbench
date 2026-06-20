@@ -101,6 +101,22 @@ CREATE TABLE IF NOT EXISTS chat_metadata (
 	cache_read_input_tokens INTEGER DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS chat_tool_calls (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	message_id INTEGER NOT NULL,
+	session_id TEXT NOT NULL,
+	tool_id TEXT NOT NULL,
+	name TEXT NOT NULL DEFAULT '',
+	input TEXT DEFAULT '',
+	output TEXT DEFAULT '',
+	status TEXT DEFAULT '',
+	done INTEGER NOT NULL DEFAULT 0,
+	summary TEXT DEFAULT '',
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(tool_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_message ON chat_tool_calls(message_id);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON chat_tool_calls(session_id, created_at DESC);
 `
 
 func setupSchedulerExecDB(t *testing.T) {
