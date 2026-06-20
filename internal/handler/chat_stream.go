@@ -119,6 +119,16 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 		slog.Debug("sse: re-emitted cached ACP state on connect", "session_id", sessionID)
 	}
 
+	// Send stream_start with the streaming assistant message ID so the frontend
+	// can fetch tool call details from the API during streaming.
+	if msgID := service.GetStreamingMessageID(sessionID); msgID > 0 {
+		data, _ := json.Marshal(map[string]int64{"message_id": msgID})
+		fmt.Fprintf(w, "event: stream_start\ndata: %s\n\n", data)
+		if canFlush {
+			flusher.Flush()
+		}
+	}
+
 	// Heartbeat: send SSE comment lines to keep the connection alive through
 	// reverse proxies and mobile networks during quiet periods (e.g., long-running
 	// tool execution). Proxies typically drop idle connections after 30-60s.

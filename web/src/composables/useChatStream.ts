@@ -294,6 +294,17 @@ export function useChatStream(options: UseChatStreamOptions) {
     // Start stream timeout
     resetStreamTimeout()
 
+    // Receive streaming message ID from backend for tool call detail API queries
+    eventSource.addEventListener('stream_start', (e) => {
+      if (sessionChanged()) return
+      let data
+      try { data = JSON.parse(e.data) } catch { return }
+      const sm = findStreamingMsg(messages.value)
+      if (sm && data.message_id) {
+        sm.id = data.message_id
+      }
+    })
+
     eventSource.addEventListener('resume_split', () => {
       if (sessionChanged()) return
       const sm = findStreamingMsg(messages.value)
