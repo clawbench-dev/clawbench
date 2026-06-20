@@ -34,6 +34,7 @@
     "@vitejs/plugin-vue": "^5.2.4",
     "@vitest/coverage-v8": "^4.1.8",
     "@vue/test-utils": "^2.4.11",
+    "diff": "^9.0.0",
     "jsdom": "^29.0.2",
     "nyc": "^17.1.0",
     "typescript": "^6.0.2",
