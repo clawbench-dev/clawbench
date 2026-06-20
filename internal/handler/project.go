@@ -154,24 +154,42 @@ func ServeProjectSet(w http.ResponseWriter, r *http.Request) { //nolint:gocognit
 			SameSite: http.SameSiteLaxMode,
 		})
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"ok": "true", "path": absPath})
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":                     "true",
+			"path":                   absPath,
+			"homeDir":                platform.UserHomeDir(),
+			"roots":                  rootPaths(),
+			"uploadMaxSizeMB":        model.UploadMaxSizeMB,
+			"uploadMaxFiles":         model.UploadMaxFiles,
+			"chatInitialMessages":    model.ChatInitialMessages,
+			"chatPageSize":           model.ChatPageSize,
+			"chatSessionPageSize":    model.ChatSessionPageSize,
+			"chatCollapsedHeight":    model.ChatCollapsedHeight,
+			"sessionMaxCount":        model.SessionMaxCount,
+			"recentProjectsMaxCount": model.RecentProjectsMaxCount,
+		})
 
 	default:
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
 	}
 }
 
-// ServeRoots returns the filesystem root paths and configuration limits as JSON.
+// rootPaths returns the configured filesystem root paths.
 // On Linux/macOS, roots is ["/"]. On Windows, roots is the list of available drives.
-func ServeRoots(w http.ResponseWriter, r *http.Request) {
+func rootPaths() []string {
 	roots := model.RootPaths
 	if len(roots) == 0 {
 		slog.Warn("no root paths configured")
 		roots = []string{platform.UserHomeDir()}
 	}
+	return roots
+}
+
+// ServeRoots returns the filesystem root paths and configuration limits as JSON.
+func ServeRoots(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"roots":                  roots,
+		"roots":                  rootPaths(),
 		"uploadMaxSizeMB":        model.UploadMaxSizeMB,
 		"uploadMaxFiles":         model.UploadMaxFiles,
 		"chatInitialMessages":    model.ChatInitialMessages,

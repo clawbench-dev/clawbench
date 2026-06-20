@@ -306,7 +306,7 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   await nextTick()
   await new Promise(r => setTimeout(r, 150))
 
-  // ── Phase 2: POST to backend to set new project cookie ──
+  // ── Phase 2: POST to backend — now returns full init data (roots, homeDir, config) ──
   try {
     await store.setProject(newProjectPath)
   } catch (err) {
@@ -315,7 +315,6 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
     const msgKey = err?.msgKey
     if (msgKey === 'NotADirectory') {
       toast.show(t('appHeader.projectPathNotFound'), { icon: '⚠️', type: 'error', duration: 3000 })
-      // Remove stale project from recent list
       fetch('/api/recent-projects', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
@@ -328,7 +327,6 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   }
 
   // ── Phase 3: Reset module-level singletons ──
-  // (store state already reset by setProject, but identity/agents need explicit reset)
   resetIdentity()
   resetAgents()
   resetChatSessionState()
@@ -338,46 +336,55 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   // ── Phase 4: Change key → Vue destroys old component tree & builds new one ──
   projectKey.value = newProjectPath
 
-  // ── Phase 5: Reload all project-scoped data (mirrors onMounted after auth) ──
-  try { await store.loadProject() } catch (_) {
-    toast.show(t('toast.projectLoadFailed'), { icon: '⚠️', type: 'error', duration: 0, onClick: () => location.reload() })
-  }
-  await sessionIdentity.initSessionFromAPI()
-  loadSessionsOnce()
-  try { await store.loadFiles('') } catch (_) {}
-  store.loadGitBranch().catch(() => {})
-  loadTasks()
-  loadConfig()
-  loadSSHInfo().catch(() => {})
-  loadTerminalStatus().catch(() => {})
+  // ── Phase 5: Fade in EARLY — UI is visible while data loads in background ──
+  //  store.setProject() already filled projectRoot, rootPaths, homeDir, config from the
+  //  expanded POST response, so no need for loadProject(). ChatPanel's
+  //  watch({ immediate: true }) will call loadHistory which recovers session identity
+  //  AND messages in one request, so initSessionFromAPI() is redundant here.
+  switchingProject.value = false
+
+  // ── Phase 6: Background data loading — all independent, fully parallel, non-blocking ──
+  const bgLoad = Promise.allSettled([
+    store.loadFiles(''),
+    sessionIdentity.initSessionFromAPI(),
+    loadSessionsOnce(),
+    store.loadGitBranch(),
+    loadTasks(),
+    loadConfig(),
+    loadSSHInfo(),
+    loadTerminalStatus(),
+  ])
   if (isAppMode.value) syncToNative().catch(() => {})
 
-  // ── Phase 6: Restore last opened file for the new project ──
-  const lastFile = localStorage.getItem('clawbenchLastFile_' + store.state.projectRoot)
-  if (lastFile && lastFile !== store.state.currentFile?.path) {
-    const lastSlash = lastFile.lastIndexOf('/')
-    const targetDir = lastSlash > 0 ? lastFile.slice(0, lastSlash) : ''
-    store.resetDirStack(targetDir)
-    await store.loadFiles(targetDir)
-    await store.selectFile(lastFile)
-    if (store.state.currentFile?.error) store.state.currentFile = null
-  }
-
-  // ── Phase 7: Handle cross-project pending navigation ──
-  if (pendingSessionId) {
-    const checkReady = () => {
-      if (sessionIdentity.currentSessionId.value) {
-        switchTab('chat')
-        sessionIdentity.switchSession(pendingSessionId)
-      } else {
-        setTimeout(checkReady, 100)
-      }
+  // ── Phase 7: Restore last opened file (non-blocking) ──
+  bgLoad.then(() => {
+    const lastFile = localStorage.getItem('clawbenchLastFile_' + store.state.projectRoot)
+    if (lastFile && lastFile !== store.state.currentFile?.path) {
+      const lastSlash = lastFile.lastIndexOf('/')
+      const targetDir = lastSlash > 0 ? lastFile.slice(0, lastSlash) : ''
+      store.resetDirStack(targetDir)
+      store.loadFiles(targetDir)
+        .then(() => store.selectFile(lastFile))
+        .then(() => { if (store.state.currentFile?.error) store.state.currentFile = null })
+        .catch(() => {})
     }
-    checkReady()
-  }
+  })
 
-  // ── Phase 8: Fade in ──
-  switchingProject.value = false
+  // ── Phase 8: Handle cross-project pending navigation ──
+  if (pendingSessionId) {
+    // Watch for session identity to be ready instead of polling
+    const stopWatch = watch(
+      () => sessionIdentity.currentSessionId.value,
+      (id) => {
+        if (id) {
+          stopWatch()
+          switchTab('chat')
+          sessionIdentity.switchSession(pendingSessionId)
+        }
+      },
+      { immediate: true }
+    )
+  }
 }
 
 const activeTab = ref('chat')
