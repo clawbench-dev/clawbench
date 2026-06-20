@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"clawbench/internal/ai"
@@ -150,29 +151,38 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 				fmt.Fprintf(w, "event: thinking_done\ndata: {}\n\n")
 			case "tool_use":
 				if event.Tool != nil {
-					var input any
-					if event.Tool.Input != "" {
-						json.Unmarshal([]byte(event.Tool.Input), &input)
-					}
-					// Ensure input is always a JSON object (map), never a string or
-					// other primitive. Partial JSON streaming may produce string values
-					// (e.g., input_json_delta's first chunk "{") that would be sent as
-					// raw strings to the frontend, causing toolCallSummary to display
-					// "{" as the tool summary instead of the actual tool description.
-					if _, ok := input.(map[string]any); !ok {
-						input = map[string]any{}
-					}
 					payload := map[string]any{
-						"name":  event.Tool.Name,
-						"id":    event.Tool.ID,
-						"input": input,
-						"done":  event.Tool.Done,
-					}
-					if event.Tool.Output != "" {
-						payload["output"] = event.Tool.Output
+						"name": event.Tool.Name,
+						"id":   event.Tool.ID,
+						"done": event.Tool.Done,
 					}
 					if event.Tool.Status != "" {
 						payload["status"] = event.Tool.Status
+					}
+					// Include slim meta fields (extracted before SSE forwarding)
+					if event.ToolMeta != nil {
+						if event.ToolMeta.Summary != "" {
+							payload["summary"] = event.ToolMeta.Summary
+						}
+						if event.ToolMeta.DisplayName != "" {
+							payload["display_name"] = event.ToolMeta.DisplayName
+						}
+						if event.ToolMeta.FilePath != "" {
+							payload["file_path"] = event.ToolMeta.FilePath
+						}
+					}
+					// Interactive tools exception: include input so frontend
+					// can render the question/permission UI without waiting for DB
+					nameLower := strings.ToLower(event.Tool.Name)
+					if nameLower == "askuserquestion" || nameLower == "permissionapproval" {
+						var input any
+						if event.Tool.Input != "" {
+							json.Unmarshal([]byte(event.Tool.Input), &input)
+						}
+						if _, ok := input.(map[string]any); !ok {
+							input = map[string]any{}
+						}
+						payload["input"] = input
 					}
 					data, _ := json.Marshal(payload)
 					fmt.Fprintf(w, "event: tool_use\ndata: %s\n\n", data)
@@ -182,24 +192,23 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 					payload := map[string]any{
 						"id": event.Tool.ID,
 					}
-					// Include input if provided (ACP tool_call_update completed events
-					// may carry rawInput that was missing from earlier tool_use events)
-					if event.Tool.Input != "" {
-						var input any
-						if json.Unmarshal([]byte(event.Tool.Input), &input) == nil {
-							if _, ok := input.(map[string]any); ok {
-								payload["input"] = input
-							}
-						}
-					}
 					if event.Tool.Name != "" {
 						payload["name"] = event.Tool.Name
 					}
-					if event.Tool.Output != "" {
-						payload["output"] = event.Tool.Output
-					}
 					if event.Tool.Status != "" {
 						payload["status"] = event.Tool.Status
+					}
+					// Include slim meta fields
+					if event.ToolMeta != nil {
+						if event.ToolMeta.Summary != "" {
+							payload["summary"] = event.ToolMeta.Summary
+						}
+						if event.ToolMeta.DisplayName != "" {
+							payload["display_name"] = event.ToolMeta.DisplayName
+						}
+						if event.ToolMeta.FilePath != "" {
+							payload["file_path"] = event.ToolMeta.FilePath
+						}
 					}
 					data, _ := json.Marshal(payload)
 					fmt.Fprintf(w, "event: tool_result\ndata: %s\n\n", data)

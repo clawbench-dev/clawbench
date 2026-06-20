@@ -224,14 +224,44 @@ const toolDetailOverlay = ref({
 })
 
 function handleShowToolDetail(block) {
+  const hasInput = block.input && Object.keys(block.input).length > 0
+  const hasOutput = !!block.output
+
   toolDetailOverlay.value = {
     show: true,
     name: block.name || '',
-    summary: chatRender.toolCallSummary(block),
-    inputHtml: chatRender.formatToolInput(block.input, block.name, { done: block.done, status: block.status, output: block.output }),
-    outputHtml: block.output ? formatToolOutput(block.output, block.name) : '',
+    summary: block.summary || chatRender.toolCallSummary(block),
+    inputHtml: hasInput ? chatRender.formatToolInput(block.input, block.name, { done: block.done, status: block.status, output: block.output }) : '',
+    outputHtml: hasOutput ? formatToolOutput(block.output, block.name) : '',
     status: block.status || '',
     done: !!block.done,
+  }
+
+  // Fetch tool call detail from API if input/output are missing
+  if ((!hasInput || !hasOutput) && block.tool_id && block.msgId) {
+    fetchToolCallDetail(block.tool_id, block.msgId, block)
+  }
+}
+
+/** Fetch full tool call data from the API and update the overlay */
+async function fetchToolCallDetail(toolId, msgId, block) {
+  try {
+    const resp = await fetch(`/api/ai/chat/tool-call?tool_id=${encodeURIComponent(toolId)}&message_id=${encodeURIComponent(msgId)}`)
+    if (!resp.ok) {
+      toolDetailOverlay.value.inputHtml = '<div style="color: var(--text-muted); font-style: italic; padding: 8px;">Details unavailable (legacy data)</div>'
+      return
+    }
+    const data = await resp.json()
+    if (data.input) {
+      const input = typeof data.input === 'string' ? JSON.parse(data.input) : data.input
+      toolDetailOverlay.value.inputHtml = chatRender.formatToolInput(input, block.name || data.name, { done: block.done, status: block.status, output: data.output || '' })
+    }
+    if (data.output) {
+      toolDetailOverlay.value.outputHtml = formatToolOutput(data.output, block.name || data.name)
+    }
+  } catch (e) {
+    console.warn('Failed to fetch tool call detail:', e)
+    toolDetailOverlay.value.inputHtml = '<div style="color: var(--text-muted); font-style: italic; padding: 8px;">Failed to load details</div>'
   }
 }
 

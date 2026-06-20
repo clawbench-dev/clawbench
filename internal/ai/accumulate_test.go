@@ -605,6 +605,71 @@ func TestAccumulateBlock_UnknownEventType(t *testing.T) {
 	assert.Len(t, blocks, 0)
 }
 
+func TestAccumulateBlock_ToolUseSlimFields(t *testing.T) {
+	// Verify that AccumulateBlock populates Summary, DisplayName, FilePath
+	// on tool_use blocks from the merged input.
+	t.Run("ReadPopulatesSummaryAndFilePath", func(t *testing.T) {
+		blocks := []model.ContentBlock{}
+		AccumulateBlock(&blocks, StreamEvent{
+			Type: "tool_use",
+			Tool: &ToolCall{Name: "Read", ID: "t1", Input: `{"file_path":"/src/main.go"}`, Done: true},
+		})
+		assert.Equal(t, "main.go", blocks[0].Summary, "summary should be basename of file_path")
+		assert.Equal(t, "/src/main.go", blocks[0].FilePath, "file_path should be extracted")
+	})
+
+	t.Run("AgentPopulatesDisplayName", func(t *testing.T) {
+		blocks := []model.ContentBlock{}
+		AccumulateBlock(&blocks, StreamEvent{
+			Type: "tool_use",
+			Tool: &ToolCall{Name: "Agent", ID: "t2", Input: `{"subagent_type":"Explore","prompt":"find files"}`, Done: true},
+		})
+		assert.Equal(t, "Explore", blocks[0].DisplayName, "display_name should be subagent_type")
+		assert.Equal(t, "find files", blocks[0].Summary, "summary should be prompt for Agent tools")
+	})
+
+	t.Run("BashPopulatesSummaryFromCommand", func(t *testing.T) {
+		blocks := []model.ContentBlock{}
+		AccumulateBlock(&blocks, StreamEvent{
+			Type: "tool_use",
+			Tool: &ToolCall{Name: "Bash", ID: "t3", Input: `{"command":"go test ./..."}`, Done: true},
+		})
+		assert.Equal(t, "go test ./...", blocks[0].Summary, "summary should be command")
+	})
+
+	t.Run("MergeUpdateRefreshesSummary", func(t *testing.T) {
+		blocks := []model.ContentBlock{}
+		AccumulateBlock(&blocks, StreamEvent{
+			Type: "tool_use",
+			Tool: &ToolCall{Name: "Agent", ID: "t4", Input: `{}`, Done: false},
+		})
+		assert.Empty(t, blocks[0].Summary, "summary should be empty with no input fields")
+
+		AccumulateBlock(&blocks, StreamEvent{
+			Type: "tool_use",
+			Tool: &ToolCall{Name: "Agent", ID: "t4", Input: `{"subagent_type":"Plan","description":"plan the feature"}`, Done: false},
+		})
+		assert.Equal(t, "Plan", blocks[0].DisplayName, "display_name should be updated after merge")
+		assert.Equal(t, "plan the feature", blocks[0].Summary, "summary should be updated after merge")
+	})
+
+	t.Run("ToolResultRefreshesSummary", func(t *testing.T) {
+		blocks := []model.ContentBlock{}
+		AccumulateBlock(&blocks, StreamEvent{
+			Type: "tool_use",
+			Tool: &ToolCall{Name: "Read", ID: "t5", Input: `{}`, Done: false},
+		})
+		assert.Empty(t, blocks[0].Summary)
+
+		AccumulateBlock(&blocks, StreamEvent{
+			Type: "tool_result",
+			Tool: &ToolCall{ID: "t5", Input: `{"file_path":"/app/Go"}`, Output: "contents", Status: "success"},
+		})
+		assert.Equal(t, "Go", blocks[0].Summary, "summary should be refreshed from tool_result input")
+		assert.Equal(t, "/app/Go", blocks[0].FilePath)
+	})
+}
+
 func TestMergeConsecutiveThinkingBlocks_Empty(t *testing.T) {
 	assert.Nil(t, MergeConsecutiveThinkingBlocks(nil))
 	assert.Empty(t, MergeConsecutiveThinkingBlocks([]model.ContentBlock{}))

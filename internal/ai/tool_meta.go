@@ -39,6 +39,17 @@ func ExtractToolCallMeta(event StreamEvent) ToolCallMeta {
 	}
 }
 
+// ExtractToolCallMetaFromInput extracts metadata from already-parsed tool input.
+// Used by AccumulateBlock after input has been merged/updated.
+func ExtractToolCallMetaFromInput(name, toolID string, input map[string]any) ToolCallMeta {
+	return ToolCallMeta{
+		ToolID:      toolID,
+		Summary:     ExtractSummary(name, input),
+		DisplayName: ExtractDisplayName(name, input),
+		FilePath:    ExtractFilePath(name, input),
+	}
+}
+
 // ExtractSummary generates a human-readable summary for a tool call,
 // mirroring the frontend toolCallSummary() priority chain:
 // description > file_path > command > pattern > query > url > skill >

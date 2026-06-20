@@ -988,7 +988,7 @@ export default {
       sortFieldType: '按类型',
       sortFieldSize: '按大小',
       sortDir: '排序方向',
-      sortDirDesc: '升序或降序排列',
+      sortDirHint: '升序或降序排列',
       sortDirAsc: '升序',
       sortDirDesc: '降序',
       uploadMaxSize: '上传大小限制 (MB)',

@@ -75,7 +75,7 @@ export const categoryItems: Record<string, ItemSpec[]> = {
       { labelKey: 'settings.items.sortFieldType', value: 'type' },
       { labelKey: 'settings.items.sortFieldSize', value: 'size' },
     ]},
-    { labelKey: 'settings.items.sortDir', descriptionKey: 'settings.items.sortDirDesc', key: 'sortDir', type: 'select', source: 'local', dependsOn: { key: 'sortField', values: ['name', 'time', 'type', 'size'] }, options: [
+    { labelKey: 'settings.items.sortDir', descriptionKey: 'settings.items.sortDirHint', key: 'sortDir', type: 'select', source: 'local', dependsOn: { key: 'sortField', values: ['name', 'time', 'type', 'size'] }, options: [
       { labelKey: 'settings.items.sortDirAsc', value: 'asc' },
       { labelKey: 'settings.items.sortDirDesc', value: 'desc' },
     ]},

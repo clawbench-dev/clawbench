@@ -352,17 +352,20 @@ describe('useChatStream', () => {
       expect(toolBlock).toBeDefined()
       expect(toolBlock.done).toBe(false)
 
-      // Complete tool use
+      // Complete tool use (slim SSE: no output, but includes status)
       es.simulate('tool_use', {
         name: 'Read',
         id: 'tool-1',
         done: true,
-        output: 'file contents',
         status: 'success',
+        summary: 'main.go',
       })
 
       expect(toolBlock.done).toBe(true)
-      expect(toolBlock.output).toBe('file contents')
+      expect(toolBlock.status).toBe('success')
+      // Slim SSE: output is NOT included in the event
+      expect(toolBlock.output).toBeUndefined()
+      expect(toolBlock.summary).toBe('main.go')
     })
 
     it('should handle done event by disconnecting and loading history', () => {
@@ -465,10 +468,10 @@ describe('useChatStream', () => {
         input: { file_path: '/tmp/test.txt' },
       })
 
-      // Now send tool_result for the same id
+      // Now send tool_result for the same id (slim: no output in SSE)
       es.simulate('tool_result', {
         id: 'tool-1',
-        output: 'file contents here',
+        status: 'success',
       })
 
       const assistantMsg = options.messages.value.find(
@@ -477,7 +480,10 @@ describe('useChatStream', () => {
       const toolBlock = assistantMsg.blocks.find(
         (b: any) => b.type === 'tool_use' && b.id === 'tool-1'
       )
-      expect(toolBlock.output).toBe('file contents here')
+      expect(toolBlock.done).toBe(true)
+      expect(toolBlock.status).toBe('success')
+      // Slim SSE: output is NOT included in the event
+      expect(toolBlock.output).toBeUndefined()
     })
 
     it('should update status of existing tool_use block with matching id', () => {
@@ -1071,16 +1077,15 @@ describe('useChatStream', () => {
       es.simulate('tool_use', {
         name: 'Write',
         id: 'tool-write',
-        input: { file_path: '/tmp/newfile.txt' },
       })
 
+      // Slim SSE: file_path is a dedicated field, not in input
       es.simulate('tool_use', {
         name: 'Write',
         id: 'tool-write',
         done: true,
-        input: { file_path: '/tmp/newfile.txt', content: 'hello' },
-        output: 'File written',
         status: 'success',
+        file_path: '/tmp/newfile.txt',
       })
 
       expect(options.onFileModified).toHaveBeenCalledWith('/tmp/newfile.txt')
@@ -1367,7 +1372,7 @@ describe('useChatStream', () => {
 
       es.simulate('tool_result', {
         id: 'tool-guard-2',
-        output: 'file contents',
+        status: 'success',
       })
 
       const assistantMsg = options.messages.value.find(
@@ -1376,7 +1381,8 @@ describe('useChatStream', () => {
       const toolBlock = assistantMsg.blocks.find(
         (b: any) => b.type === 'tool_use' && b.id === 'tool-guard-2'
       )
-      expect(toolBlock.output).toBe('file contents')
+      expect(toolBlock.done).toBe(true)
+      expect(toolBlock.status).toBe('success')
       expect(options.onScrollBottom).not.toHaveBeenCalled()
     })
 

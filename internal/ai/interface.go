@@ -161,6 +161,7 @@ type StreamEvent struct {
 	ThinkingEffort *ThinkingEffortState   // Thinking effort state (Type=thinking_effort_update)
 	Plan           *PlanState             // Plan state (Type=plan_update)
 	ModelList      *ModelListState        // Model list state (Type=model_list_update)
+	ToolMeta       *ToolCallMeta          // Extracted tool metadata for SSE forwarding (Type=tool_use, Type=tool_result)
 }
 
 // ToolCall represents a tool invocation by the AI.
