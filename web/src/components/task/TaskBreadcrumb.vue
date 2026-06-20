@@ -8,7 +8,7 @@
     >{{ t('task.title') }}</span>
 
     <template v-if="taskName">
-      <span class="crumb-sep">/</span>
+      <span class="crumb-sep">›</span>
 
       <!-- Task name crumb -->
       <span
@@ -19,7 +19,7 @@
     </template>
 
     <template v-if="showHistoryCrumb">
-      <span class="crumb-sep">/</span>
+      <span class="crumb-sep">›</span>
 
       <!-- History crumb -->
       <span
@@ -30,14 +30,14 @@
     </template>
 
     <template v-if="execDetailOpen">
-      <span class="crumb-sep">/</span>
+      <span class="crumb-sep">›</span>
 
       <!-- Exec detail crumb -->
       <span class="crumb current">{{ t('task.exec.detail') }}</span>
     </template>
 
     <template v-if="formViewOpen">
-      <span class="crumb-sep">/</span>
+      <span class="crumb-sep">›</span>
 
       <!-- Form crumb -->
       <span class="crumb current">{{ formMode === 'create' ? t('task.form.createTitle') : t('task.form.editTitle') }}</span>
