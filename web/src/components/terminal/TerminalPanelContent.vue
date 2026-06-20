@@ -892,7 +892,7 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
   gap: 4px;
   padding: 2px 6px 2px 10px;
   height: 24px;
-  border-radius: 6px;
+  border-radius: 2px;
   cursor: pointer;
   flex-shrink: 0;
   transition: background 0.15s ease;
@@ -958,7 +958,7 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
   width: 24px;
   height: 24px;
   border: none;
-  border-radius: 6px;
+  border-radius: 2px;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
