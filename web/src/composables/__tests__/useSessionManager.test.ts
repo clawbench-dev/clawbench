@@ -408,6 +408,43 @@ describe('useSessionManager', () => {
             fetchSpy.mockRestore()
         })
 
+        it('removes stale pending message on fetch error', async () => {
+            // When enqueueMessage fails, the locally-pushed pending message
+            // should be removed so the user doesn't see a ghost "queuing" entry.
+            const opts = createMockOptions()
+            // Simulate a pending message that was optimistically pushed
+            opts.messages.value = [
+                { role: 'user', content: 'hello', pending: true, blocks: [{ type: 'text', text: 'hello' }] },
+            ]
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('fail'))
+            const mgr = useSessionManager(opts)
+
+            await mgr.enqueueMessage('hello')
+
+            // The pending message should have been removed on error
+            expect(opts.messages.value).toHaveLength(0)
+
+            fetchSpy.mockRestore()
+        })
+
+        it('keeps other pending messages when removing failed one on error', async () => {
+            const opts = createMockOptions()
+            opts.messages.value = [
+                { role: 'user', content: 'earlier', pending: true, blocks: [{ type: 'text', text: 'earlier' }] },
+                { role: 'user', content: 'hello', pending: true, blocks: [{ type: 'text', text: 'hello' }] },
+            ]
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('fail'))
+            const mgr = useSessionManager(opts)
+
+            await mgr.enqueueMessage('hello')
+
+            // Only the failed 'hello' message is removed; 'earlier' stays
+            expect(opts.messages.value).toHaveLength(1)
+            expect(opts.messages.value[0].content).toBe('earlier')
+
+            fetchSpy.mockRestore()
+        })
+
         it('shows toast on fetch error', async () => {
             const opts = createMockOptions()
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('fail'))
