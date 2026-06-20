@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -595,7 +596,8 @@ func TestGetSessionID_NoQueryParamNoCookie(t *testing.T) {
 
 func TestSetSessionID_SetsHttpOnlyCookie(t *testing.T) {
 	w := httptest.NewRecorder()
-	setSessionID(w, "test-session-123")
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	setSessionID(w, r, "test-session-123")
 
 	cookies := w.Result().Cookies()
 	require.Len(t, cookies, 1, "should set exactly one cookie")
@@ -604,8 +606,21 @@ func TestSetSessionID_SetsHttpOnlyCookie(t *testing.T) {
 	assert.Equal(t, "test-session-123", c.Value)
 	assert.Equal(t, "/", c.Path)
 	assert.True(t, c.HttpOnly, "cookie should be HttpOnly to mitigate XSS")
+	assert.False(t, c.Secure, "cookie should not be Secure over plain HTTP")
 	assert.Equal(t, http.SameSiteLaxMode, c.SameSite)
 	assert.Equal(t, 86400*30, c.MaxAge)
+}
+
+func TestSetSessionID_SetsSecureCookieOverTLS(t *testing.T) {
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.TLS = &tls.ConnectionState{} // simulate TLS
+	setSessionID(w, r, "test-session-456")
+
+	cookies := w.Result().Cookies()
+	require.Len(t, cookies, 1, "should set exactly one cookie")
+	c := cookies[0]
+	assert.True(t, c.Secure, "cookie should be Secure over TLS")
 }
 
 // ============================================================================

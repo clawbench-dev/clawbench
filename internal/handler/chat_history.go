@@ -44,7 +44,7 @@ func ServeChatHistory(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 				} else {
 					sessionID = sessions[0].ID
 				}
-				setSessionID(w, sessionID)
+				setSessionID(w, r, sessionID)
 			}
 		}
 		// ISS-077: Verify the session belongs to the requesting project

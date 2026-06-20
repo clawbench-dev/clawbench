@@ -133,7 +133,7 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			model.WriteError(w, model.Internal(fmt.Errorf("failed to create session")))
 			return
 		}
-		setSessionID(w, sessionID)
+		setSessionID(w, r, sessionID)
 		// Return session count for UI indicator
 		sessionCount, _ := service.GetSessionCount(projectPath)
 		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "sessionId": sessionID, "backend": backend, "agentId": resolvedAgentID, "sessionCount": sessionCount, "title": title})
@@ -274,13 +274,14 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 
 // setSessionID sets session ID in cookie.
 // HttpOnly: true prevents JavaScript access, mitigating XSS-based session hijack (ISS-123).
-func setSessionID(w http.ResponseWriter, sessionID string) {
+func setSessionID(w http.ResponseWriter, r *http.Request, sessionID string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "chat_session_id",
 		Value:    sessionID,
 		Path:     "/",
 		MaxAge:   86400 * 30, // 30 days
 		HttpOnly: true,
+		Secure:   r.TLS != nil,
 		SameSite: http.SameSiteLaxMode,
 	})
 }
@@ -336,7 +337,7 @@ func ServeForkSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	setSessionID(w, newSessionID)
+	setSessionID(w, r, newSessionID)
 	sessionCount, _ := service.GetSessionCount(projectPath)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "sessionId": newSessionID, "sessionCount": sessionCount})
 }

@@ -118,7 +118,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Always update cookie with current session ID
-		setSessionID(w, sessionID)
+		setSessionID(w, r, sessionID)
 		// Mark session as read
 		service.UpdateLastRead(sessionID)
 

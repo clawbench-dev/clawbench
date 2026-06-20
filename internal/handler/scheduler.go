@@ -539,7 +539,7 @@ func serveContinueConversationCreate(w http.ResponseWriter, r *http.Request, tas
 	}
 
 	// Set session cookie for subsequent requests
-	setSessionID(w, sessionID)
+	setSessionID(w, r, sessionID)
 
 	sessionCount, _ := service.GetSessionCount(projectPath)
 	writeJSON(w, http.StatusOK, map[string]any{
