@@ -283,7 +283,15 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 				// Internal event from AutoResumeBackend: the AI detected ExitPlanMode
 				// and will auto-resume. Forward to frontend so it can reset streaming
 				// state (clear blocks, prepare for new content after resume).
-				fmt.Fprintf(w, "event: resume_split\ndata: {}\n\n")
+				// Include the new streaming message ID so the frontend can update
+				// the streaming message's id for tool call detail API queries.
+				resumeMsgID := service.GetStreamingMessageID(sessionID)
+				if resumeMsgID > 0 {
+					data, _ := json.Marshal(map[string]int64{"message_id": resumeMsgID})
+					fmt.Fprintf(w, "event: resume_split\ndata: %s\n\n", data)
+				} else {
+					fmt.Fprintf(w, "event: resume_split\ndata: {}\n\n")
+				}
 			case "mode_update":
 				if event.Mode != nil {
 					data, _ := json.Marshal(event.Mode)

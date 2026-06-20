@@ -185,6 +185,42 @@ export function consumePendingMessage(
  * The backend queue contains items like { text, files, filePaths }.
  * We compare by text content and add/remove pending messages as needed.
  */
+/**
+ * Determine whether a failed tool call detail fetch should be retried.
+ *
+ * During streaming, tool call data may not yet be persisted to the DB (404),
+ * or the msgId may point to a stale message. Instead of showing an error
+ * immediately, we retry up to maxRetries times with a short delay.
+ *
+ * Pure function — no Vue reactivity dependencies.
+ */
+export function shouldRetryToolFetch(
+  httpStatus: number,
+  retryCount: number,
+  overlayOpen: boolean,
+  maxRetries: number = 3,
+): boolean {
+  return httpStatus === 404 && retryCount < maxRetries && overlayOpen
+}
+
+/**
+ * Resolve the effective message ID for a tool detail fetch retry.
+ *
+ * After loadHistory replaces the messages array, the live block may have
+ * a different (correct) msgId. If the live block is found, use the overlay's
+ * current msgId; otherwise fall back to the original msgId.
+ *
+ * Pure function — no Vue reactivity dependencies.
+ */
+export function resolveEffectiveMsgId(
+  liveBlock: any | undefined,
+  overlayMsgId: number | string | undefined,
+  originalMsgId: number | string,
+): number | string {
+  return liveBlock ? (overlayMsgId ?? originalMsgId) : originalMsgId
+}
+
+
 export function syncPendingFromBackend(
   messages: any[],
   backendQueue: any[]

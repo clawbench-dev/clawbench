@@ -45,6 +45,8 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     loadThinkingPref: vi.fn(),
     saveModelPref: vi.fn(),
     saveThinkingPref: vi.fn(),
+    updateUsageState: vi.fn(),
+    clearUsageState: vi.fn(),
   }
   const mockAgentFns = {
     loadAgents: vi.fn().mockResolvedValue(undefined),
@@ -65,6 +67,8 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     mockIdentityFns.loadThinkingPref.mockReset()
     mockIdentityFns.saveModelPref.mockReset()
     mockIdentityFns.saveThinkingPref.mockReset()
+    mockIdentityFns.updateUsageState.mockReset()
+    mockIdentityFns.clearUsageState.mockReset()
     mockAgentFns.loadAgents.mockReset().mockResolvedValue(undefined)
     mockAgentFns.getAgentIcon.mockReset().mockReturnValue('🤖')
     mockAgentFns.getAgentName.mockReset().mockReturnValue('Test')
@@ -79,7 +83,7 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
 
 // ── Mocks ──
 
-vi.mock('@/composables/useSessionIdentity', () => ({
+vi.mock('@/composables/useSessionIdentity.ts', () => ({
   useSessionIdentity: () => ({
     currentSessionId: {
       get value() { return mockState.currentSessionId },
@@ -167,6 +171,8 @@ vi.mock('@/composables/useSessionIdentity', () => ({
   updateThinkingEffortState: vi.fn(),
   updateAvailableThinkingEfforts: vi.fn(),
   clearThinkingEffortState: vi.fn(),
+  updateUsageState: mockIdentityFns.updateUsageState,
+  clearUsageState: mockIdentityFns.clearUsageState,
 }))
 
 vi.mock('@/composables/useToast', () => ({
@@ -944,6 +950,93 @@ describe('switchSession', () => {
 
     // Only one fetch call (the failed chat request), no sessions fetch
     expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('restores usage state from API response after switch', async () => {
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 's2',
+          messages: [],
+          total: 0,
+          backend: 'claude',
+          agentId: 'agent1',
+          modelId: '',
+          thinkingEffort: '',
+          running: false,
+          usageState: { used: 50000, size: 200000, cost: 1.5, currency: 'USD' },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [] }),
+      })
+
+    const session = createSession()
+    await session.switchSession('s2')
+
+    // clearUsageState is called first (to clear stale state), then updateUsageState restores from API
+    expect(mockIdentityFns.clearUsageState).toHaveBeenCalled()
+    expect(mockIdentityFns.updateUsageState).toHaveBeenCalledWith(50000, 200000, 1.5, 'USD')
+  })
+
+  it('does not call updateUsageState when API response has no usageState', async () => {
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 's2',
+          messages: [],
+          total: 0,
+          backend: 'claude',
+          agentId: 'agent1',
+          modelId: '',
+          thinkingEffort: '',
+          running: false,
+          // no usageState field
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [] }),
+      })
+
+    const session = createSession()
+    await session.switchSession('s2')
+
+    // clearUsageState is still called, but updateUsageState should NOT be called
+    expect(mockIdentityFns.clearUsageState).toHaveBeenCalled()
+    expect(mockIdentityFns.updateUsageState).not.toHaveBeenCalled()
+  })
+
+  it('does not call updateUsageState when usageState.size is 0', async () => {
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 's2',
+          messages: [],
+          total: 0,
+          backend: 'claude',
+          agentId: 'agent1',
+          modelId: '',
+          thinkingEffort: '',
+          running: false,
+          usageState: { used: 0, size: 0 },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [] }),
+      })
+
+    const session = createSession()
+    await session.switchSession('s2')
+
+    // size=0 means no context window info available — should not restore
+    expect(mockIdentityFns.clearUsageState).toHaveBeenCalled()
+    expect(mockIdentityFns.updateUsageState).not.toHaveBeenCalled()
   })
 })
 
@@ -2614,6 +2707,82 @@ describe('syncModelFromData', () => {
     expect(mockAgentFns.syncModelFromAgent).toHaveBeenCalledWith('agent1')
     expect(mockIdentity.currentModelId).toBe('default-model')
     expect(mockIdentity.currentModelName).toBe('Default Model')
+  })
+})
+
+// ───────────────────────────────────────────────────────────
+// syncUsageFromData (tested indirectly through loadHistory)
+// ───────────────────────────────────────────────────────────
+
+describe('syncUsageFromData', () => {
+  let originalFetch: typeof globalThis.fetch
+
+  beforeEach(() => {
+    resetMockState()
+    resetChatSessionState()
+    resetAdditionalMocks()
+    originalFetch = globalThis.fetch
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  it('restores usage state from loadHistory API response', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 's1',
+        messages: [],
+        total: 0,
+        backend: 'claude',
+        agentId: 'agent1',
+        modelId: '',
+        thinkingEffort: '',
+        running: false,
+        usageState: { used: 100000, size: 200000, cost: 2.5, currency: 'EUR' },
+      }),
+    })
+
+    const session = createSession()
+    await session.loadHistory(true, false, false)
+
+    expect(mockIdentityFns.updateUsageState).toHaveBeenCalledWith(100000, 200000, 2.5, 'EUR')
+  })
+
+  it('does not call updateUsageState when usageState is missing', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 's1',
+        messages: [],
+        total: 0,
+        running: false,
+      }),
+    })
+
+    const session = createSession()
+    await session.loadHistory(true, false, false)
+
+    expect(mockIdentityFns.updateUsageState).not.toHaveBeenCalled()
+  })
+
+  it('does not call updateUsageState when usageState.size is 0', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 's1',
+        messages: [],
+        total: 0,
+        running: false,
+        usageState: { used: 0, size: 0 },
+      }),
+    })
+
+    const session = createSession()
+    await session.loadHistory(true, false, false)
+
+    expect(mockIdentityFns.updateUsageState).not.toHaveBeenCalled()
   })
 })
 

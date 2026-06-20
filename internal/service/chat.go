@@ -891,11 +891,23 @@ func FinalizeStreamingMessage(projectPath, backend, sessionID, content string) (
 	return msgID, nil
 }
 
-// GetStreamingMessageID returns the ID of the finalized assistant message for a session.
+// GetStreamingMessageID returns the ID of the current or most recent assistant message for a session.
+// Prefers the actively streaming message (streaming=1) so that stream_start events
+// and tool call detail APIs reference the correct message ID during streaming.
+// Falls back to the latest finalized message (streaming=0) if no active stream exists.
 // Returns 0 if not found.
 func GetStreamingMessageID(sessionID string) int64 {
 	var id int64
+	// Prefer actively streaming message
 	err := DBRead.QueryRow(
+		"SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1 ORDER BY id DESC LIMIT 1",
+		sessionID,
+	).Scan(&id)
+	if err == nil {
+		return id
+	}
+	// Fallback: latest finalized message
+	err = DBRead.QueryRow(
 		"SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0 ORDER BY id DESC LIMIT 1",
 		sessionID,
 	).Scan(&id)

@@ -305,7 +305,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       }
     })
 
-    eventSource.addEventListener('resume_split', () => {
+    eventSource.addEventListener('resume_split', (e) => {
       if (sessionChanged()) return
       const sm = findStreamingMsg(messages.value)
       if (!sm) return
@@ -313,14 +313,21 @@ export function useChatStream(options: UseChatStreamOptions) {
       // Finalize Phase 1 message
       delete sm.streaming
       // Create Phase 2 streaming message
-      messages.value.push({
+      const phase2 = {
         role: 'assistant',
         content: '',
         blocks: [],
         streaming: true,
         createdAt: new Date().toISOString(),
         backend: currentBackend.value
-      })
+      }
+      // Set the new streaming message ID from the resume_split event data
+      let data
+      try { data = JSON.parse(e.data) } catch { /* empty */ }
+      if (data?.message_id) {
+        phase2.id = data.message_id
+      }
+      messages.value.push(phase2)
       onRenderNeeded()
       debouncedRender()
     })

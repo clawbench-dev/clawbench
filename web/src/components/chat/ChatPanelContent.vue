@@ -197,7 +197,7 @@ import { renderMarkdown } from '@/composables/useMarkdownRenderer.ts'
 import { useDialog } from '@/composables/useDialog'
 import { ChevronRight } from 'lucide-vue-next'
 import '@/assets/loading-mask.css'
-import { syncPendingFromBackend } from '@/utils/chatStreamUtils.ts'
+import { syncPendingFromBackend, shouldRetryToolFetch, resolveEffectiveMsgId } from '@/utils/chatStreamUtils.ts'
 
 const { t } = useI18n()
 
@@ -823,12 +823,12 @@ async function fetchToolCallDetail(toolId, msgId, block, _retryCount = 0) {
       // retry up to 3 times with a short delay. After that, fall back to the
       // reactive watcher which will populate the overlay once loadHistory replaces
       // the messages array with full block data.
-      if (resp.status === 404 && _retryCount < 3) {
+      if (shouldRetryToolFetch(resp.status, _retryCount, toolDetailOverlay.value.show)) {
         setTimeout(() => {
           if (!toolDetailOverlay.value.show) return
           // Re-resolve msgId from the live messages array (may have changed after loadHistory)
           const liveBlock = findToolBlock(activeToolOverlay.value)
-          const effectiveMsgId = liveBlock ? activeToolOverlay.value.msgId : msgId
+          const effectiveMsgId = resolveEffectiveMsgId(liveBlock, activeToolOverlay.value.msgId, msgId)
           fetchToolCallDetail(toolId, effectiveMsgId, liveBlock || block, _retryCount + 1)
         }, 800)
         return

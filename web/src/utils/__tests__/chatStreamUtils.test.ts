@@ -7,6 +7,8 @@ import {
   createPendingUserMessage,
   consumePendingMessage,
   syncPendingFromBackend,
+  shouldRetryToolFetch,
+  resolveEffectiveMsgId,
 } from '@/utils/chatStreamUtils.ts'
 
 describe('FILE_MODIFYING_TOOLS', () => {
@@ -479,6 +481,85 @@ describe('syncPendingFromBackend', () => {
     expect(messages).toHaveLength(1)
     expect(messages[0].content).toBe('new')
     expect(messages[0].pending).toBe(true)
+  })
+})
+
+describe('shouldRetryToolFetch', () => {
+  it('returns true for 404 with retries remaining and overlay open', () => {
+    expect(shouldRetryToolFetch(404, 0, true)).toBe(true)
+    expect(shouldRetryToolFetch(404, 1, true)).toBe(true)
+    expect(shouldRetryToolFetch(404, 2, true)).toBe(true)
+  })
+
+  it('returns false when retry count exhausted (3 retries)', () => {
+    expect(shouldRetryToolFetch(404, 3, true)).toBe(false)
+    expect(shouldRetryToolFetch(404, 4, true)).toBe(false)
+  })
+
+  it('returns false when overlay is closed', () => {
+    expect(shouldRetryToolFetch(404, 0, false)).toBe(false)
+    expect(shouldRetryToolFetch(404, 2, false)).toBe(false)
+  })
+
+  it('returns false for non-404 errors', () => {
+    expect(shouldRetryToolFetch(500, 0, true)).toBe(false)
+    expect(shouldRetryToolFetch(403, 0, true)).toBe(false)
+    expect(shouldRetryToolFetch(200, 0, true)).toBe(false)
+  })
+
+  it('returns false for 404 with retries exhausted AND overlay closed', () => {
+    expect(shouldRetryToolFetch(404, 3, false)).toBe(false)
+  })
+
+  it('respects custom maxRetries', () => {
+    expect(shouldRetryToolFetch(404, 3, true, 5)).toBe(true)
+    expect(shouldRetryToolFetch(404, 5, true, 5)).toBe(false)
+  })
+
+  it('boundary: retryCount equals maxRetries should not retry', () => {
+    expect(shouldRetryToolFetch(404, 3, true, 3)).toBe(false)
+  })
+
+  it('boundary: retryCount one less than maxRetries should retry', () => {
+    expect(shouldRetryToolFetch(404, 2, true, 3)).toBe(true)
+  })
+})
+
+describe('resolveEffectiveMsgId', () => {
+  it('uses overlay msgId when live block exists', () => {
+    const liveBlock = { type: 'tool_use', name: 'Read', tool_id: 'call_123' }
+    expect(resolveEffectiveMsgId(liveBlock, 999, 100)).toBe(999)
+  })
+
+  it('uses overlay msgId (string) when live block exists', () => {
+    const liveBlock = { type: 'tool_use', name: 'Read', tool_id: 'call_123' }
+    expect(resolveEffectiveMsgId(liveBlock, 'abc', 'original')).toBe('abc')
+  })
+
+  it('falls back to original msgId when live block is undefined', () => {
+    expect(resolveEffectiveMsgId(undefined, 999, 100)).toBe(100)
+  })
+
+  it('falls back to original msgId when live block is null', () => {
+    expect(resolveEffectiveMsgId(null, 999, 100)).toBe(100)
+  })
+
+  it('uses overlay msgId even when it differs from original', () => {
+    // Scenario: loadHistory replaced messages array, msgId changed from 100 → 200
+    const liveBlock = { type: 'tool_use', name: 'Read' }
+    expect(resolveEffectiveMsgId(liveBlock, 200, 100)).toBe(200)
+  })
+
+  it('uses original msgId when overlay msgId is undefined and live block exists', () => {
+    const liveBlock = { type: 'tool_use', name: 'Read' }
+    expect(resolveEffectiveMsgId(liveBlock, undefined, 100)).toBe(100)
+  })
+
+  it('uses overlay msgId=0 when live block exists (0 is a valid value)', () => {
+    // In the original code: liveBlock ? overlayMsgId : originalMsgId
+    // If overlayMsgId is 0, it's used as-is (not falsy fallback)
+    const liveBlock = { type: 'tool_use', name: 'Read' }
+    expect(resolveEffectiveMsgId(liveBlock, 0, 100)).toBe(0)
   })
 })
 

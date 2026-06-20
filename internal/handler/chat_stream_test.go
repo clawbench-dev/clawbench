@@ -605,7 +605,7 @@ func TestAIChatStream_ResumeSplitEvent(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(events[0]["data"]), &data1))
 	assert.Equal(t, "phase 1 content", data1["content"])
 
-	// Second event: resume_split
+	// Second event: resume_split — no streaming message in DB, so data is {}
 	assert.Equal(t, "resume_split", events[1]["event"])
 	assert.Equal(t, "{}", events[1]["data"])
 
@@ -617,6 +617,55 @@ func TestAIChatStream_ResumeSplitEvent(t *testing.T) {
 
 	// Final event: done
 	assert.Equal(t, "done", events[3]["event"])
+}
+
+func TestAIChatStream_ResumeSplitEventWithMessageID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "stream-resume-split-msgid"
+	ch := setupStreamSession(sessionID)
+	defer cleanupStreamSession(sessionID)
+
+	// Create a streaming assistant message in the DB so GetStreamingMessageID
+	// returns a non-zero ID. This simulates the scenario where resume_split
+	// occurs after the backend has already created the Phase 2 streaming placeholder.
+	streamingMsgID, err := service.AddChatMessage(env.ProjectDir, "claude", sessionID, "assistant", `{"blocks":[]}`, nil, true, "")
+	require.NoError(t, err)
+	require.Greater(t, streamingMsgID, int64(0), "streaming message should have a positive ID")
+
+	go func() {
+		ch <- ai.StreamEvent{Type: "content", Content: "phase 1 content"}
+		ch <- ai.StreamEvent{Type: "resume_split"}
+		ch <- ai.StreamEvent{Type: "content", Content: "phase 2 content"}
+		ch <- ai.StreamEvent{Type: "done"}
+	}()
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(AIChatStream, req)
+
+	events := parseSSEEvents(w.Body.String())
+	// stream_start is also sent because GetStreamingMessageID > 0
+	assert.GreaterOrEqual(t, len(events), 4, "expected at least content, resume_split, content, done events")
+
+	// Find the resume_split event
+	var resumeSplitData string
+	for _, ev := range events {
+		if ev["event"] == "resume_split" {
+			resumeSplitData = ev["data"]
+			break
+		}
+	}
+	require.NotEmpty(t, resumeSplitData, "should find a resume_split event")
+
+	// resume_split should contain message_id
+	var resumeData map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(resumeSplitData), &resumeData))
+	msgID, ok := resumeData["message_id"]
+	require.True(t, ok, "resume_split data should contain message_id")
+	// JSON numbers are float64 by default
+	assert.Equal(t, float64(streamingMsgID), msgID, "resume_split message_id should match the streaming message")
 }
 
 func TestAIChatStream_WarningEvent(t *testing.T) {

@@ -1950,6 +1950,81 @@ describe('useChatStream', () => {
 
       expect(options.onRenderNeeded).toHaveBeenCalled()
     })
+
+    it('should set Phase 2 message id from resume_split message_id', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('content', { content: 'Phase 1' })
+      // resume_split with message_id — backend sends the new streaming message ID
+      es.simulate('resume_split', { message_id: 12345 })
+
+      const phase2Msg = options.messages.value.find(
+        (m: any) => m.role === 'assistant' && m.streaming
+      )
+      expect(phase2Msg).toBeDefined()
+      expect(phase2Msg.id).toBe(12345)
+    })
+
+    it('should create Phase 2 without id when resume_split data has no message_id (backward compat)', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      // resume_split with empty data — old backend behavior
+      es.simulate('resume_split', {})
+
+      const phase2Msg = options.messages.value.find(
+        (m: any) => m.role === 'assistant' && m.streaming
+      )
+      expect(phase2Msg).toBeDefined()
+      expect(phase2Msg.id).toBeUndefined()
+    })
+
+    it('should handle resume_split with malformed JSON gracefully', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      // resume_split with data that causes JSON.parse to fail
+      // The mock EventSource simulate method stringifies the data,
+      // so we test with an object that won't have message_id
+      es.simulate('resume_split', { foo: 'bar' })
+
+      const phase2Msg = options.messages.value.find(
+        (m: any) => m.role === 'assistant' && m.streaming
+      )
+      expect(phase2Msg).toBeDefined()
+      expect(phase2Msg.id).toBeUndefined()
+    })
+
+    it('should not set Phase 2 id when message_id is 0 (falsy)', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      // message_id: 0 is falsy — should not set phase2.id
+      es.simulate('resume_split', { message_id: 0 })
+
+      const phase2Msg = options.messages.value.find(
+        (m: any) => m.role === 'assistant' && m.streaming
+      )
+      expect(phase2Msg).toBeDefined()
+      expect(phase2Msg.id).toBeUndefined()
+    })
   })
 
   describe('ACP SSE events', () => {
