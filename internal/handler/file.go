@@ -13,10 +13,10 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
-	"unicode/utf8"
 )
 
 // mimeTypes maps file extensions to MIME types for ServeLocalFile.

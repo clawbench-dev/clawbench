@@ -894,7 +894,7 @@ func TestServeFileCopy(t *testing.T) {
 }
 
 // splitLines splits a string by newline, matching the handler's behavior.
-func splitLines(s string) []string {
+func splitLines(s string) []string { //nolint:unused // test utility kept for future use
 	if s == "" {
 		return nil
 	}

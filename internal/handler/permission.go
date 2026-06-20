@@ -81,7 +81,8 @@ func ServePermissionRespond(w http.ResponseWriter, r *http.Request) {
 
 	ok = client.RespondPermission(key, req.OptionID, req.Cancelled)
 	if !ok {
-		slog.Warn("permission respond: no pending permission found",
+		slog.Warn(
+			"permission respond: no pending permission found",
 			"session_id", req.SessionID,
 			"tool_call_id", req.ToolCallID,
 		)
@@ -89,7 +90,8 @@ func ServePermissionRespond(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("permission respond: user responded to permission request",
+	slog.Info(
+		"permission respond: user responded to permission request",
 		"session_id", req.SessionID,
 		"tool_call_id", req.ToolCallID,
 		"option_id", req.OptionID,

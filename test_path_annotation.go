@@ -50,19 +50,21 @@ import (
 
 // ── 字符串字面量中的路径 ──
 
-var configPath = "config/app.yaml"
-var templateDir = "./templates/"
-var outputPath = "../build/output.bin"
-var logFile = "/var/log/app.log"
-var readmeFile = "README.md"
-var packageName = "fmt"           // 不应标注
-var anotherPkg = "net/http"      // 有斜杠，会被乐观标注但校验后移除
-var justAWord = "strings"        // 不应标注
-var anExtension = "go.mod"       // 应标注
-var urlStr = "https://example.com" // URL，不应标注
-var envPath = "$HOME/.bashrc"    // 环境变量，不应标注
-var globPattern = "src/**/*.go"  // 通配符，不应标注
-var templateVar = "<placeholder>" // 尖括号，不应标注
+var (
+	configPath  = "config/app.yaml"
+	templateDir = "./templates/"
+	outputPath  = "../build/output.bin"
+	logFile     = "/var/log/app.log"
+	readmeFile  = "README.md"
+	packageName = "fmt"                 // 不应标注
+	anotherPkg  = "net/http"            // 有斜杠，会被乐观标注但校验后移除
+	justAWord   = "strings"             // 不应标注
+	anExtension = "go.mod"              // 应标注
+	urlStr      = "https://example.com" // URL，不应标注
+	envPath     = "$HOME/.bashrc"       // 环境变量，不应标注
+	globPattern = "src/**/*.go"         // 通配符，不应标注
+	templateVar = "<placeholder>"       // 尖括号，不应标注
+)
 
 func main() {
 	fmt.Println("config path:", configPath)
@@ -73,10 +75,10 @@ func main() {
 	fmt.Println("see web/src/App.vue for details")
 	fmt.Println("check internal/config/settings.json:50")
 	fmt.Println("refer to README.md")
-	fmt.Println("import fmt")              // 不应标注 fmt
-	fmt.Println("import net/http")         // 乐观标注后移除
-	fmt.Println("see go.mod")              // 应标注
-	fmt.Println("open main.go:30")         // 应标注
+	fmt.Println("import fmt")      // 不应标注 fmt
+	fmt.Println("import net/http") // 乐观标注后移除
+	fmt.Println("see go.mod")      // 应标注
+	fmt.Println("open main.go:30") // 应标注
 
 	// 多路径在一行
 	fmt.Println("compare web/src/App.vue and web/src/main.ts")

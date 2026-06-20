@@ -619,7 +619,8 @@ func SaveMetadata(messageID int64, meta *ai.Metadata) error {
 	if meta.IsError {
 		isError = 1
 	}
-	_, err := DB.Exec(`
+	_, err := DB.Exec(
+		`
 		INSERT OR REPLACE INTO chat_metadata
 			(message_id, mode, thinking_effort, transport, model, input_tokens, output_tokens,
 			 duration_ms, wall_ms, cost_usd, stop_reason, is_error, error_message)

@@ -76,7 +76,8 @@ func startPTY(cwd string) (*os.File, *exec.Cmd, error) {
 	// OpenCode, etc.) can detect terminal capabilities correctly. Without
 	// TERM, ncurses/Bubble Tea cannot initialize and full-screen TUI apps
 	// fail to render. COLORTERM=truecolor signals 24-bit color support.
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(
+		os.Environ(),
 		"TERM=xterm-256color",
 		"COLORTERM=truecolor",
 	)

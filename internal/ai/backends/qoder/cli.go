@@ -24,10 +24,10 @@ func init() {
 // newQoderBackend returns a CLIBackend instance for Qoder CLI.
 func newQoderBackend() ai.AIBackend {
 	return &ai.CLIBackend{
-		BackendName: "qoder",
-		Cmd:         "qodercli",
-		BuildArgsFn: buildQoderStreamArgs,
-		NewParserFn: func() ai.LineParser { return &ai.StreamParser{} },
+		BackendName:  "qoder",
+		Cmd:          "qodercli",
+		BuildArgsFn:  buildQoderStreamArgs,
+		NewParserFn:  func() ai.LineParser { return &ai.StreamParser{} },
 		FilterLineFn: nil, // skip empty lines only (default)
 		PreStartFn: func(cmd *exec.Cmd, req ai.ChatRequest) {
 			// Qoder CLI in --print mode with stdout piped (non-TTY) requires

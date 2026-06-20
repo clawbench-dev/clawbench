@@ -37,14 +37,14 @@ func init() {
 // for backward compatibility with existing session data.
 func newDeepSeekBackend() ai.AIBackend {
 	return &ai.CLIBackend{
-		BackendName:   "deepseek",
-		Cmd:           "codewhale", // primary; legacy "deepseek" shim handled via req.Command
-		BuildArgsFn:   buildDeepSeekStreamArgs,
-		NewParserFn:   func() ai.LineParser {
+		BackendName: "deepseek",
+		Cmd:         "codewhale", // primary; legacy "deepseek" shim handled via req.Command
+		BuildArgsFn: buildDeepSeekStreamArgs,
+		NewParserFn: func() ai.LineParser {
 			return &ai.DeepSeekStreamParser{InputRemaps: DeepSeekInputRemaps}
 		},
-		FilterLineFn:  nil, // skip empty lines only (default)
-		PreStartFn:    nil, // prompt is passed as positional argument
+		FilterLineFn: nil, // skip empty lines only (default)
+		PreStartFn:   nil, // prompt is passed as positional argument
 	}
 }
 

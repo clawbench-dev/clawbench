@@ -29,7 +29,6 @@ import (
 type acpStdoutFilter struct {
 	pr     *io.PipeReader
 	pw     *io.PipeWriter
-	once   sync.Once
 	closed bool
 	mu     sync.Mutex
 }

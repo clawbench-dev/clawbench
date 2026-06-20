@@ -36,7 +36,8 @@ func (c *ACPConn) CacheNewSessionState() {
 		slog.Warn("acp: CacheNewSessionState called with nil sessResp")
 		return
 	}
-	slog.Info("acp: caching new session state",
+	slog.Info(
+		"acp: caching new session state",
 		"has_modes", sessResp.Modes != nil,
 		"config_options_count", len(sessResp.ConfigOptions),
 	)
@@ -59,7 +60,8 @@ func (c *ACPConn) MergeResumedSessionState() {
 		slog.Warn("acp: MergeResumedSessionState called with nil resumeResp")
 		return
 	}
-	slog.Info("acp: merging resumed session state",
+	slog.Info(
+		"acp: merging resumed session state",
 		"has_modes", resumeResp.Modes != nil,
 		"config_options_count", len(resumeResp.ConfigOptions),
 	)

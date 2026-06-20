@@ -56,7 +56,8 @@ func (p *EdgeTTSProvider) Synthesize(ctx context.Context, text string, outputPat
 		return fmt.Errorf("edge-tts: failed to create output directory: %w", err)
 	}
 
-	slog.Info("edge-tts synthesize",
+	slog.Info(
+		"edge-tts synthesize",
 		slog.String("output", outputPath),
 		slog.Int("text_len", len([]rune(text))),
 	)
@@ -86,7 +87,8 @@ func (p *EdgeTTSProvider) Synthesize(ctx context.Context, text string, outputPat
 		return fmt.Errorf("edge-tts: %w", err)
 	}
 
-	slog.Info("edge-tts synthesize completed",
+	slog.Info(
+		"edge-tts synthesize completed",
 		slog.String("output", outputPath),
 		slog.Int("text_len", len([]rune(text))),
 	)

@@ -37,10 +37,10 @@ func init() {
 // newPiBackend returns a CLIBackend instance configured for Pi CLI.
 func newPiBackend() ai.AIBackend {
 	return &ai.CLIBackend{
-		BackendName:   "pi",
-		Cmd:           "pi",
-		BuildArgsFn:   buildPiStreamArgs,
-		NewParserFn:   func() ai.LineParser {
+		BackendName: "pi",
+		Cmd:         "pi",
+		BuildArgsFn: buildPiStreamArgs,
+		NewParserFn: func() ai.LineParser {
 			return &ai.PiStreamParser{InputRemaps: PiInputRemaps}
 		},
 		FilterLineFn:  nil,

@@ -21,8 +21,10 @@ import (
 
 // discoverFuncs maps backend ID → model discovery function.
 // Populated by backend sub-packages via RegisterDiscoverModelsFunc in init().
-var discoverFuncs = make(map[string]func() []AgentModel)
-var discoverFuncsMu sync.RWMutex
+var (
+	discoverFuncs   = make(map[string]func() []AgentModel)
+	discoverFuncsMu sync.RWMutex
+)
 
 // RegisterDiscoverModelsFunc registers a model discovery function for a backend.
 // Called by backend sub-packages in their init() functions.
@@ -41,19 +43,19 @@ func lookupDiscoverFunc(backendID string) func() []AgentModel {
 
 // BackendSpec defines a known AI backend for auto-discovery.
 type BackendSpec struct {
-	ID                   string                    // agent id, e.g. "claude"
-	Backend              string                    // backend type, e.g. "claude"
-	DefaultCmd           string                    // command to detect on PATH, e.g. "claude"
-	AltCmd               string                    // fallback CLI command (e.g. "deepseek" when primary is "codewhale"); used for detection if DefaultCmd not found
-	NoCLI                bool                      // if true, this backend has no CLI (e.g. mock); always considered "present"
-	Name                 string                    // display name, e.g. "Claude"
-	Icon                 string                    // emoji icon, e.g. "🤖"
-	Specialty            string                    // short description, e.g. "代码编写与推理"
-	ThinkingEffortLevels []string                  // supported thinking effort levels, e.g. ["low","medium","high"]; nil = not supported
-	AcpCommand           string                    // ACP spawn command for acp-stdio transport, e.g. "kimi --acp"; empty = no ACP support
-	EmbeddedSubDir       string                    // subdirectory under .clawbench/ for embedded binary, e.g. "pi"; empty = no embedded binary
-	EmbeddedVersionFile  string                    // filename for fast version lookup under EmbeddedSubDir, e.g. "VERSION"; empty = no version file
-	SortOrder            int                       // display/registration order for deterministic BackendRegistry ordering
+	ID                   string   // agent id, e.g. "claude"
+	Backend              string   // backend type, e.g. "claude"
+	DefaultCmd           string   // command to detect on PATH, e.g. "claude"
+	AltCmd               string   // fallback CLI command (e.g. "deepseek" when primary is "codewhale"); used for detection if DefaultCmd not found
+	NoCLI                bool     // if true, this backend has no CLI (e.g. mock); always considered "present"
+	Name                 string   // display name, e.g. "Claude"
+	Icon                 string   // emoji icon, e.g. "🤖"
+	Specialty            string   // short description, e.g. "代码编写与推理"
+	ThinkingEffortLevels []string // supported thinking effort levels, e.g. ["low","medium","high"]; nil = not supported
+	AcpCommand           string   // ACP spawn command for acp-stdio transport, e.g. "kimi --acp"; empty = no ACP support
+	EmbeddedSubDir       string   // subdirectory under .clawbench/ for embedded binary, e.g. "pi"; empty = no embedded binary
+	EmbeddedVersionFile  string   // filename for fast version lookup under EmbeddedSubDir, e.g. "VERSION"; empty = no version file
+	SortOrder            int      // display/registration order for deterministic BackendRegistry ordering
 }
 
 // LoadBackendSpecs is set by the backends package at init time to provide
