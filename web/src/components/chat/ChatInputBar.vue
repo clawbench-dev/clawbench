@@ -151,7 +151,7 @@
           class="quick-send-item"
           :class="{ 'qs-pressing': quickSendPressingId === item.id }"
           @click="handleQuickSendClick(item)"
-          @touchstart.prevent="onQuickSendTouchStart(item, $event)"
+          @touchstart="onQuickSendTouchStart(item, $event)"
           @touchmove="onQuickSendTouchMove"
           @touchend="onQuickSendTouchEnd"
           @touchcancel="onQuickSendTouchEnd"
@@ -730,7 +730,7 @@ let quickSendCurrentItem = null
 
 function handleQuickSendClick(item) {
   // Desktop: click directly sends
-  // Mobile: click is suppressed by touchstart.prevent; send is handled in onQuickSendTouchEnd
+  // Mobile: touchend handles send and sets quickSendJustTriggered to prevent this click from re-sending
   if (quickSendJustTriggered) {
     quickSendJustTriggered = false
     return
@@ -788,6 +788,7 @@ function onQuickSendTouchEnd() {
     const item = quickSendCurrentItem
     quickSendCurrentItem = null
     quickSendPressingId.value = null
+    quickSendJustTriggered = true // prevent synthetic click from re-sending
     showQuickMenu.value = false
     emit('send', item.command)
   } else {
