@@ -116,49 +116,9 @@ func (p *OpenCodeStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 		}
 
 	case "tool_use":
-		var part OpenCodeToolPart
-		if err := json.Unmarshal(msg.Part, &part); err != nil {
-			slog.Debug("opencode stream: skipping unparseable tool_use part", "error", err)
-			return
+		if tc := parseOpenCodeToolEvent(&msg, p.ToolNameMap, p.InputRemaps); tc != nil {
+			ch <- StreamEvent{Type: "tool_use", Tool: tc}
 		}
-		inputStr := "{}"
-		if part.State != nil && len(part.State.Input) > 0 {
-			// Normalize input field names from OpenCode's camelCase to canonical snake_case
-			inputStr = func() string {
-				normalized, err := normalizeToolInput(part.State.Input, p.InputRemaps)
-				if err != nil {
-					return string(part.State.Input)
-				}
-				return string(normalized)
-			}()
-		}
-		done := part.State != nil && part.State.Status == "completed"
-		output := ""
-		status := ""
-		if part.State != nil {
-			output = truncateToolOutput(part.State.Output)
-			if done && part.State.Output != "" {
-				status = "success"
-			}
-		}
-		toolName := part.Tool
-		if p.ToolNameMap != nil {
-			if canonical, ok := p.ToolNameMap[toolName]; ok {
-				toolName = canonical
-			} else {
-				toolName = normalizeToolName(toolName)
-			}
-		} else {
-			toolName = normalizeToolName(toolName)
-		}
-		ch <- StreamEvent{Type: "tool_use", Tool: &ToolCall{
-			Name:   toolName,
-			ID:     part.CallID,
-			Input:  inputStr,
-			Done:   done,
-			Output: output,
-			Status: status,
-		}}
 
 	case "step_finish":
 		var part OpenCodeFinishPart

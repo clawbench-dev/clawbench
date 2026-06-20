@@ -24,7 +24,6 @@ Long texts are automatically summarized before reading aloud, controlled by `sum
 | `mmx-cli` | mmx text chat (lightweight and fast) | Requires mmx CLI |
 | `claude` | Claude CLI (high summarization quality) | Requires claude CLI |
 | `codebuddy` | CodeBuddy CLI | Requires codebuddy CLI |
-| `gemini` | Gemini CLI | Requires gemini CLI |
 | `opencode` | OpenCode CLI | Requires opencode CLI |
 | `codex` | Codex CLI | Requires codex CLI |
 | `qoder` | Qoder CLI (Alibaba coding agent) | Requires qoder CLI |
