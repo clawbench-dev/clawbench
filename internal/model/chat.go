@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -71,9 +72,41 @@ type ContentBlock struct {
 // MarshalJSON implements custom serialization for ContentBlock.
 // For tool_use blocks, only slim fields are serialized (no input/output),
 // which are stored separately in the chat_tool_calls table.
+// Exception: interactive tools (AskUserQuestion, PermissionApproval) include
+// input inline because they need it for immediate card rendering and their
+// input is not stored in chat_tool_calls when created by ConvertAskQuestionBlocks.
 // For other block types, standard serialization is used.
 func (b ContentBlock) MarshalJSON() ([]byte, error) {
 	if b.Type == "tool_use" {
+		nameLower := strings.ToLower(b.Name)
+		isInteractive := nameLower == "askuserquestion" || nameLower == "permissionapproval"
+		if isInteractive {
+			// Interactive tools: include input for immediate frontend rendering
+			type InteractiveBlock struct {
+				Type        string         `json:"type"`
+				Name        string         `json:"name,omitempty"`
+				ID          string         `json:"id,omitempty"`
+				Input       map[string]any `json:"input"`
+				Output      string         `json:"output,omitempty"`
+				Status      string         `json:"status,omitempty"`
+				Done        bool           `json:"done"`
+				Summary     string         `json:"summary,omitempty"`
+				DisplayName string         `json:"display_name,omitempty"`
+				FilePath    string         `json:"file_path,omitempty"`
+			}
+			return json.Marshal(InteractiveBlock{
+				Type:        b.Type,
+				Name:        b.Name,
+				ID:          b.ID,
+				Input:       b.Input,
+				Output:      b.Output,
+				Status:      b.Status,
+				Done:        b.Done,
+				Summary:     b.Summary,
+				DisplayName: b.DisplayName,
+				FilePath:    b.FilePath,
+			})
+		}
 		// Slim serialization: type+name+id+status+done+summary+display_name+file_path
 		type SlimBlock struct {
 			Type        string `json:"type"`

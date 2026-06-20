@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"clawbench/internal/ai"
@@ -245,6 +246,27 @@ func (e *SessionExecutor) buildResult(receivedTerminal bool, wallStart time.Time
 	// Common block post-processing (idempotent, cheap)
 	blocks = ai.RemoveRejectedToolBlocks(blocks)
 	blocks = ai.MergeConsecutiveThinkingBlocks(blocks)
+
+	// Persist interactive tool blocks created by ConvertAskQuestionBlocks
+	// to chat_tool_calls table (they were created post-SSE and missed
+	// the normal upsertToolCallToDB path during the event loop).
+	if e.cfg.StreamingMessageID > 0 && e.cfg.SessionID != "" {
+		for i := range blocks {
+			b := &blocks[i]
+			if b.Type == "tool_use" && strings.HasPrefix(b.ID, "ask-") && b.Name == "AskUserQuestion" {
+				inputJSON, _ := json.Marshal(b.Input)
+				if err := UpsertToolCall(
+					e.cfg.StreamingMessageID, e.cfg.SessionID,
+					b.ID, b.Name, inputJSON,
+					b.Output, b.Status, b.Summary, b.Done,
+				); err != nil {
+					slog.Warn("upsert converted AskUserQuestion tool call failed",
+						slog.String("toolID", b.ID),
+						slog.String("err", err.Error()))
+				}
+			}
+		}
+	}
 
 	// Inject WallMs into metadata
 	if e.responseMetadata == nil {

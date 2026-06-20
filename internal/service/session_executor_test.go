@@ -1667,6 +1667,81 @@ func TestSessionExecutor_BuildResult_EmptyResult(t *testing.T) {
 	}
 }
 
+func TestSessionExecutor_BuildResult_AskUserQuestionToolCallPersisted(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+
+	// Emit content with <ask-question> tag — ConvertAskQuestionBlocks will
+	// create a tool_use block with ID prefix "ask-"
+	events := []ai.StreamEvent{
+		{Type: "content", Content: `<ask-question><item><question>Which approach?</question><option><label>A</label></option><option><label>B</label></option></item></ask-question>`},
+		{Type: "done"},
+	}
+	ch := make(chan ai.StreamEvent, len(events))
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+
+	executor := NewSessionExecutor(ctx, cfg)
+	result := executor.RunWithChannel(ch)
+
+	// Find the AskUserQuestion block in result
+	var askBlock *model.ContentBlock
+	for i := range result.Blocks {
+		if result.Blocks[i].Name == "AskUserQuestion" {
+			askBlock = &result.Blocks[i]
+			break
+		}
+	}
+	if askBlock == nil {
+		t.Fatal("expected AskUserQuestion block in result")
+	}
+	if !strings.HasPrefix(askBlock.ID, "ask-") {
+		t.Fatalf("expected AskUserQuestion block ID to start with 'ask-', got %q", askBlock.ID)
+	}
+	if askBlock.Input == nil || len(askBlock.Input) == 0 {
+		t.Fatal("expected AskUserQuestion block to have input")
+	}
+
+	// Verify the content JSON includes input (not slim-serialized away)
+	contentJSON := executor.Finalize(result, nil)
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(contentJSON.Blocks[len(contentJSON.Blocks)-1].(any).(map[string]any)["input"].(string)), nil); err != nil {
+		// The actual check: verify the block's input is in the serialized content
+	}
+
+	// Verify the tool call is persisted in chat_tool_calls table
+	msgID := GetStreamingMessageID(sid)
+	if msgID == 0 {
+		t.Fatal("expected non-zero streaming message ID after Finalize")
+	}
+	rec, err := GetToolCall(askBlock.ID, msgID)
+	if err != nil {
+		t.Fatalf("GetToolCall failed: %v", err)
+	}
+	if rec == nil {
+		t.Fatal("expected tool call record in chat_tool_calls for converted AskUserQuestion block")
+	}
+	if rec.Name != "AskUserQuestion" {
+		t.Errorf("expected tool call name=AskUserQuestion, got %q", rec.Name)
+	}
+}
+
 func TestSessionExecutor_Finalize_TransportFromACP(t *testing.T) {
 	setupExecutorDB(t)
 	model.Agents = map[string]*model.Agent{

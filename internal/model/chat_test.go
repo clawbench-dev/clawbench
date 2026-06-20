@@ -119,3 +119,93 @@ func TestContentBlockSlimUnmarshal(t *testing.T) {
 		t.Errorf("expected nil input for slim format, got %v", block.Input)
 	}
 }
+
+func TestContentBlockInteractiveToolMarshalWithInput(t *testing.T) {
+	// AskUserQuestion blocks should serialize WITH input for frontend rendering
+	block := ContentBlock{
+		Type:  "tool_use",
+		Name:  "AskUserQuestion",
+		ID:    "ask-123",
+		Input: map[string]any{"questions": []map[string]any{{"question": "Which approach?", "options": []map[string]any{{"label": "A"}}}}},
+		Done:  true,
+	}
+
+	data, err := json.Marshal(block)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	// Should include input
+	if _, ok := parsed["input"]; !ok {
+		t.Error("AskUserQuestion should include input in serialization")
+	}
+	input, _ := parsed["input"].(map[string]any)
+	if input == nil {
+		t.Fatal("input should not be nil")
+	}
+	questions, _ := input["questions"].([]any)
+	if len(questions) != 1 {
+		t.Errorf("expected 1 question, got %d", len(questions))
+	}
+}
+
+func TestContentBlockPermissionApprovalMarshalWithInput(t *testing.T) {
+	// PermissionApproval blocks should serialize WITH input
+	block := ContentBlock{
+		Type:  "tool_use",
+		Name:  "PermissionApproval",
+		ID:    "perm-456",
+		Input: map[string]any{"tool_name": "Bash", "command": "rm -rf /tmp"},
+		Done:  true,
+	}
+
+	data, err := json.Marshal(block)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	// Should include input
+	if _, ok := parsed["input"]; !ok {
+		t.Error("PermissionApproval should include input in serialization")
+	}
+}
+
+func TestContentBlockRegularToolStillSlim(t *testing.T) {
+	// Regular tool_use blocks (not interactive) should still use slim serialization
+	block := ContentBlock{
+		Type:  "tool_use",
+		Name:  "Read",
+		ID:    "t3",
+		Input: map[string]any{"file_path": "/test.go"},
+		Output: "contents",
+		Done:  true,
+	}
+
+	data, err := json.Marshal(block)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	// Should NOT have input/output
+	if _, ok := parsed["input"]; ok {
+		t.Error("Read tool should not include input in slim serialization")
+	}
+	if _, ok := parsed["output"]; ok {
+		t.Error("Read tool should not include output in slim serialization")
+	}
+}

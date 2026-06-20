@@ -637,6 +637,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       syncThinkingEffortFromData(data.thinkingEffortState?.currentId || '')
       syncModeFromData(data.modeState?.currentModeId || '', data.modeState?.availableModes)
       syncTransportFromData(data.transport)
+      syncUsageFromData(data.usageState)
       // Restore autoApprove from server state (per-session, not global)
       if (data.autoApprove !== undefined) {
         autoApprove.value = data.autoApprove
