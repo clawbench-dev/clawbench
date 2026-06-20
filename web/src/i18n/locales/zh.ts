@@ -262,6 +262,7 @@ export default {
       clickToViewDetails: '点击查看详情',
       continueFailed: '继续对话失败',
       continued: '已继续对话 ({count}/{max})',
+      forkConfirm: '派生此会话？将创建一个包含当前对话记录副本的新会话，你可以在新会话中独立探索不同方向。',
       forkFailed: '派生会话失败',
       forked: '已派生会话 ({count}/{max})',
       sessionLimitReached: '已达到最大会话数',

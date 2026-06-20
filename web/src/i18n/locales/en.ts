@@ -262,6 +262,7 @@ export default {
       clickToViewDetails: 'Click to view details',
       continueFailed: 'Failed to continue conversation',
       continued: 'Conversation continued ({count}/{max})',
+      forkConfirm: 'Fork this session? A new session will be created with a copy of the conversation history, allowing you to explore a different direction independently.',
       forkFailed: 'Failed to fork session',
       forked: 'Session forked ({count}/{max})',
       sessionLimitReached: 'Maximum session limit reached',

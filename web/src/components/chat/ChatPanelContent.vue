@@ -590,7 +590,9 @@ async function handleAcpSessionLoaded(sessionId) {
 async function handleForkSession() {
   const sid = identity.currentSessionId.value
   if (!sid) return
-  await manager.forkSession(sid)
+  if (await dialog.confirm(t('chat.session.forkConfirm'))) {
+    await manager.forkSession(sid)
+  }
 }
 
 /** Persist session-scoped settings (mode, thinkingEffort, model, transport)
@@ -752,6 +754,17 @@ async function sendMessageNow(text, filePaths, files) {
 async function handleToolSendMessage(text) {
     if (!text) return
     if (loading.value) {
+      // Push a pending user message into messages.value so the user sees
+      // immediate feedback and queue_consume can find and un-mark it.
+      messages.value.push({
+        role: 'user',
+        content: text,
+        blocks: [{ type: 'text', text }],
+        createdAt: new Date().toISOString(),
+        pending: true,
+      })
+      render.updateRenderedContents()
+      scrollBottom(true)
       manager.enqueueMessage(text)
     } else {
       await sendMessage(text)
