@@ -24,9 +24,9 @@
 
 ### 登录与导航
 
-| 登录 | 首页 | 选择项目 |
-|------|------|----------|
-| ![登录](docs/screenshots/login.png) | ![首页](docs/screenshots/home.png) | ![选择项目](docs/screenshots/project-select.png) |
+| 登录 | 首页 | 选择项目 | 设置面板 |
+|------|------|----------|----------|
+| ![登录](docs/screenshots/login.png) | ![首页](docs/screenshots/home.png) | ![选择项目](docs/screenshots/project-select.png) | ![设置面板](docs/screenshots/settings-panel.png) |
 
 ### 文件浏览与代码编辑
 
@@ -40,11 +40,13 @@
 |---------------|------------|-------------|----------|
 | ![Markdown 渲染](docs/screenshots/markdown-preview.png) | ![LaTeX 公式](docs/screenshots/latex-formula.png) | ![Mermaid 图表](docs/screenshots/mermaid-diagram.png) | ![目录导航](docs/screenshots/toc-drawer.png) |
 
+> 目录抽屉支持 Tree-sitter 代码符号提取（100+ 语言，17 种符号类型图标），可一键跳转到任意章节。
+
 ### AI 智能体
 
-| 智能体选择 | AI 对话 | 结构化提问 | 会话管理 |
-|------------|---------|------------|----------|
-| ![智能体选择](docs/screenshots/agent-selector.png) | ![AI 对话](docs/screenshots/chat-panel.png) | ![结构化提问](docs/screenshots/ask-question.png) | ![会话管理](docs/screenshots/session-manager.png) |
+| 智能体选择 | AI 对话 | ACP 权限审批 | 会话管理 |
+|------------|---------|-------------|----------|
+| ![智能体选择](docs/screenshots/agent-selector.png) | ![AI 对话](docs/screenshots/chat-panel.png) | ![ACP 权限审批](docs/screenshots/acp-permission.png) | ![会话管理](docs/screenshots/session-manager.png) |
 
 | 定时任务 | 创建任务 | 任务卡片 |
 |----------|----------|----------|
@@ -52,9 +54,9 @@
 
 ### Git 集成
 
-| 提交历史与分支图 | 提交详情 | 比较报告 |
-|------------------|----------|----------|
-| ![提交历史与分支图](docs/screenshots/git-history.png) | ![提交详情](docs/screenshots/git-commit-detail.png) | ![比较报告](docs/screenshots/git-comparison-report.png) |
+| 提交历史与分支图 | 分支管理 | 提交详情 | 比较报告 |
+|------------------|----------|----------|----------|
+| ![提交历史与分支图](docs/screenshots/git-history.png) | ![分支管理](docs/screenshots/git-branches.png) | ![提交详情](docs/screenshots/git-commit-detail.png) | ![比较报告](docs/screenshots/git-comparison-report.png) |
 
 ### 媒体预览
 
@@ -64,9 +66,9 @@
 
 ### SSH 隧道与 Web 终端
 
-| 端口转发 | 交互式终端 |
-|---------|-----------|
-| ![端口转发](docs/screenshots/port-forwarding.png) | ![交互式终端](docs/screenshots/terminal.png) |
+| 端口转发 | 交互式终端 | 按键/符号配置 |
+|---------|-----------|--------------|
+| ![端口转发](docs/screenshots/port-forwarding.png) | ![交互式终端](docs/screenshots/terminal.png) | ![按键配置](docs/screenshots/terminal-key-config.png) |
 
 ---
 
