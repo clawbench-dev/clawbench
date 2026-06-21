@@ -140,21 +140,13 @@ func TestValidateWorktreePath(t *testing.T) {
 
 	initGitRepo(t, env.ProjectDir)
 
-	run := func(name string, args ...string) {
-		cmd := exec.Command(name, args...)
-		cmd.Dir = env.ProjectDir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("command %s %v failed: %v\n%s", name, args, err, out)
-		}
-	}
+	// Resolve the project dir path (macOS /var → /private/var) so it matches
+	// git worktree list --porcelain output which also resolves symlinks.
+	resolvedProjectDir := resolveSymlinkPath(env.ProjectDir)
 
 	t.Run("valid worktree path but is current", func(t *testing.T) {
-		// Resolve the project dir path (macOS /var → /private/var)
-		resolved, err := filepath.EvalSymlinks(env.ProjectDir)
-		require.NoError(t, err)
-
 		w := httptest.NewRecorder()
-		result := validateWorktreePath(w, env.ProjectDir, resolved)
+		result := validateWorktreePath(w, resolvedProjectDir, resolvedProjectDir)
 		assert.False(t, result, "current worktree should fail validation")
 
 		var resp map[string]interface{}
@@ -164,7 +156,7 @@ func TestValidateWorktreePath(t *testing.T) {
 
 	t.Run("non-existent worktree path", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		result := validateWorktreePath(w, env.ProjectDir, "/tmp/nonexistent-path-xyz")
+		result := validateWorktreePath(w, resolvedProjectDir, "/tmp/nonexistent-path-xyz")
 		assert.False(t, result, "non-existent path should fail validation")
 
 		var resp map[string]interface{}
@@ -173,15 +165,21 @@ func TestValidateWorktreePath(t *testing.T) {
 	})
 
 	t.Run("non-current worktree path passes", func(t *testing.T) {
-		wtPath := filepath.Join(filepath.Dir(env.ProjectDir), "wt-validate-ok")
+		run := func(name string, args ...string) {
+			cmd := exec.Command(name, args...)
+			cmd.Dir = resolvedProjectDir
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("command %s %v failed: %v\n%s", name, args, err, out)
+			}
+		}
+		wtPath := filepath.Join(filepath.Dir(resolvedProjectDir), "wt-validate-ok")
 		run("git", "worktree", "add", wtPath, "-b", "wt-validate-ok-branch")
 
-		// Resolve the worktree path (macOS symlink compatibility)
-		resolved, err := filepath.EvalSymlinks(wtPath)
-		require.NoError(t, err)
+		// Resolve the worktree path for consistent comparison
+		resolvedWtPath := resolveSymlinkPath(wtPath)
 
 		w := httptest.NewRecorder()
-		result := validateWorktreePath(w, env.ProjectDir, resolved)
+		result := validateWorktreePath(w, resolvedProjectDir, resolvedWtPath)
 		assert.True(t, result, "non-current worktree path should pass validation")
 	})
 }
