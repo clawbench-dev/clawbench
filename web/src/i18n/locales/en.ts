@@ -820,6 +820,8 @@ export default {
       deleteBranchConfirm: 'Delete branch "{name}"?',
       deleteWorktree: 'Delete Worktree',
       deleteWorktreeConfirm: 'Delete worktree "{name}"?',
+      deleteWorktreeDirty: 'This worktree contains modified or untracked files.\nForce delete will discard all changes.',
+      deleteWorktreeForce: 'Force Delete',
       deleteTag: 'Delete Tag',
       deleteTagConfirm: 'Delete tag "{name}"?',
       deleteFailed: 'Delete failed',

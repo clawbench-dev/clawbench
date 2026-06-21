@@ -60,6 +60,8 @@ func loadConfig() {
 	}
 	model.ApplyDefaults(&cfg, presence)
 	model.ConfigInstance = cfg
+	// Set ServerPort so ScopedCookieName works correctly in CLI context
+	model.ServerPort = cfg.Port
 }
 
 // apiURL returns the base URL for the local server API.
@@ -144,7 +146,7 @@ func httpDoWithProject(method, path string, body any, projectPath string) (map[s
 	// Set project cookie so server's requireProject() can extract it
 	if projectPath != "" {
 		req.AddCookie(&http.Cookie{
-			Name:  "clawbench_project",
+			Name:  model.ScopedCookieName("clawbench_project"),
 			Value: url.QueryEscape(projectPath),
 		})
 	}

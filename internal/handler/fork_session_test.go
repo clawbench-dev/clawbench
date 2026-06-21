@@ -28,7 +28,7 @@ func TestServeForkSession_NormalFlow(t *testing.T) {
 
 	req := newRequest(t, http.MethodPost, "/api/ai/session/fork", map[string]string{"sessionId": sessID})
 	req = withProjectCookie(req, env.ProjectDir)
-	req.AddCookie(&http.Cookie{Name: "chat_session_id", Value: sessID})
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("chat_session_id"), Value: sessID})
 
 	w := callHandler(ServeForkSession, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -75,7 +75,7 @@ func TestServeForkSession_SessionNotFound(t *testing.T) {
 
 	req := newRequest(t, http.MethodPost, "/api/ai/session/fork", map[string]string{"sessionId": "nonexistent"})
 	req = withProjectCookie(req, env.ProjectDir)
-	req.AddCookie(&http.Cookie{Name: "chat_session_id", Value: "nonexistent"})
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("chat_session_id"), Value: "nonexistent"})
 
 	w := callHandler(ServeForkSession, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -93,7 +93,7 @@ func TestServeForkSession_UsesCookieSessionID(t *testing.T) {
 	// No sessionId in body, but cookie is set
 	req := newRequest(t, http.MethodPost, "/api/ai/session/fork", map[string]string{})
 	req = withProjectCookie(req, env.ProjectDir)
-	req.AddCookie(&http.Cookie{Name: "chat_session_id", Value: sessID})
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("chat_session_id"), Value: sessID})
 
 	w := callHandler(ServeForkSession, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -118,7 +118,7 @@ func TestServeForkSession_SessionLimitReturns409(t *testing.T) {
 
 	req := newRequest(t, http.MethodPost, "/api/ai/session/fork", map[string]string{"sessionId": sessID})
 	req = withProjectCookie(req, env.ProjectDir)
-	req.AddCookie(&http.Cookie{Name: "chat_session_id", Value: sessID})
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("chat_session_id"), Value: sessID})
 
 	w := callHandler(ServeForkSession, req)
 	assert.Equal(t, http.StatusConflict, w.Code)
@@ -138,7 +138,7 @@ func TestServeForkSession_SessionCountIncremented(t *testing.T) {
 
 	req := newRequest(t, http.MethodPost, "/api/ai/session/fork", map[string]string{"sessionId": sessID})
 	req = withProjectCookie(req, env.ProjectDir)
-	req.AddCookie(&http.Cookie{Name: "chat_session_id", Value: sessID})
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("chat_session_id"), Value: sessID})
 
 	w := callHandler(ServeForkSession, req)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -169,7 +169,7 @@ func TestServeForkSession_BodySessionIdOverridesCookie(t *testing.T) {
 	// Cookie points to sess1, but body specifies sess2
 	req := newRequest(t, http.MethodPost, "/api/ai/session/fork", map[string]string{"sessionId": sess2})
 	req = withProjectCookie(req, env.ProjectDir)
-	req.AddCookie(&http.Cookie{Name: "chat_session_id", Value: sess1})
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("chat_session_id"), Value: sess1})
 
 	w := callHandler(ServeForkSession, req)
 	require.Equal(t, http.StatusOK, w.Code)

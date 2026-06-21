@@ -4,37 +4,6 @@
     <!-- Logo: hidden in APP mode -->
     <img v-if="!isAppMode" class="header-logo" src="/logo.png" alt="ClawBench">
 
-    <!-- Server selector (APP mode only) -->
-    <div v-if="isAppMode" class="server-dropdown-wrapper" ref="serverDropdownRef">
-      <button class="server-switch-btn" @click="toggleServerDropdown" :title="t('login.switchServer')">
-        <Server :size="14" />
-        <span class="server-name">{{ currentServerName }}</span>
-        <ChevronDown :size="12" class="switch-chevron" :class="{ open: serverDropdownOpen }" />
-      </button>
-    </div>
-    <Teleport to="body">
-      <Transition name="dropdown">
-        <div v-if="serverDropdownOpen" class="project-dropdown" :style="serverDropdownStyle" ref="serverDropdownPanelRef">
-          <div v-if="serverList.length === 0" class="dropdown-empty">{{ t('login.addServer') }}</div>
-          <div v-else class="dropdown-scroll-area">
-            <div
-              v-for="srv in serverList"
-              :key="srv.url"
-              class="dropdown-item"
-              :class="{ active: srv.url === currentServerUrl }"
-              @click="switchServer(srv.url)"
-            >
-              <Server :size="14" class="item-icon" />
-              <span class="item-label">{{ formatServerHost(srv.url) }}</span>
-              <button class="server-item-delete" @click.stop="deleteServer(srv.url)" :title="t('login.deleteServer')">
-                <X :size="10" />
-              </button>
-            </div>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
-
     <div class="project-dropdown-wrapper" ref="dropdownRef">
       <button class="project-switch-btn" @click="toggleDropdown" :title="t('appHeader.switchProject')">
         <Projector :size="16" />
@@ -76,20 +45,55 @@
       <span class="branch-name">{{ gitBranch }}</span>
     </div>
 
-    <!-- Logout button (APP mode) -->
-    <button v-if="isAppMode" class="logout-btn" @click="handleLogout" :title="t('login.logout')">
-      <LogOut :size="16" />
-    </button>
-
-    <button ref="statusBtnRef" class="status-toggle" @click="toggleStatusMenu" :title="t('appHeader.connectionStatus')">
+    <!-- Status dot: in APP mode it doubles as server switcher, in web mode it shows connection status -->
+    <button ref="statusBtnRef" class="status-toggle" @click="onStatusDotClick" :title="isAppMode ? t('login.switchServer') : t('appHeader.connectionStatus')">
       <span class="status-dot" :class="statusDotClass"></span>
     </button>
-    <PopupMenu v-model:show="statusMenuOpen" :target-element="statusBtnRef" :max-width="200" :max-height="120" :menu-items-count="2">
+
+    <!-- Web mode: simple connection status popup -->
+    <PopupMenu v-if="!isAppMode" v-model:show="statusMenuOpen" :target-element="statusBtnRef" :max-width="200" :max-height="120" :menu-items-count="2">
       <div class="status-menu-item">
         <span class="status-indicator" :class="statusDotClass"></span>
         <span class="status-value">{{ serverStatusLabel }}</span>
       </div>
     </PopupMenu>
+
+    <!-- APP mode: server switcher dropdown from status dot -->
+    <Teleport to="body">
+      <Transition name="dropdown">
+        <div v-if="isAppMode && serverDropdownOpen" class="project-dropdown" :style="serverDropdownStyle" ref="serverDropdownPanelRef">
+          <!-- Connection status header -->
+          <div class="status-menu-header">
+            <span class="status-indicator" :class="statusDotClass"></span>
+            <span class="status-value">{{ currentServerName }} · {{ serverStatusLabel }}</span>
+          </div>
+          <div class="dropdown-divider"></div>
+          <!-- Server list -->
+          <div v-if="serverList.length === 0" class="dropdown-empty">{{ t('login.addServer') }}</div>
+          <div v-else class="dropdown-scroll-area">
+            <div
+              v-for="srv in serverList"
+              :key="srv.url"
+              class="dropdown-item"
+              :class="{ active: srv.url === currentServerUrl }"
+              @click="switchServer(srv.url)"
+            >
+              <Server :size="14" class="item-icon" />
+              <span class="item-label">{{ formatServerHost(srv.url) }}</span>
+              <button class="server-item-delete" @click.stop="deleteServer(srv.url)" :title="t('login.deleteServer')">
+                <X :size="10" />
+              </button>
+            </div>
+          </div>
+          <div class="dropdown-divider"></div>
+          <!-- Logout at bottom, like "Browse..." in project selector -->
+          <div class="dropdown-item other-item" @click="handleLogout">
+            <LogOut :size="14" class="item-icon" />
+            <span class="item-label">{{ t('login.logout') }}</span>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </header>
   </Teleport>
 </template>
@@ -122,13 +126,9 @@ const emit = defineEmits(['openProjectDialog'])
 const toast = inject('toast')
 const hotSwitchProject = inject('hotSwitchProject')
 
-// Connection status menu state
+// Connection status menu state (web mode only)
 const statusBtnRef = ref(null)
 const statusMenuOpen = ref(false)
-
-function toggleStatusMenu() {
-    statusMenuOpen.value = !statusMenuOpen.value
-}
 
 // Status dot class for the button indicator and popup
 const statusDotClass = computed(() => {
@@ -302,9 +302,21 @@ function onPathClick(e) {
     // If not dragged, let the click bubble up to the parent .dropdown-item's selectRecent
 }
 
-// --- Server selector (APP mode) ---
+// --- Status dot click handler (APP mode = server switcher, web mode = connection status) ---
+function onStatusDotClick() {
+    if (isAppMode.value) {
+        toggleServerDropdown()
+    } else {
+        toggleStatusMenu()
+    }
+}
+
+function toggleStatusMenu() {
+    statusMenuOpen.value = !statusMenuOpen.value
+}
+
+// --- Server dropdown (APP mode, triggered from status dot) ---
 const serverDropdownOpen = ref(false)
-const serverDropdownRef = ref(null)
 const serverDropdownPanelRef = ref(null)
 const serverDropdownStyle = ref({})
 
@@ -323,13 +335,14 @@ function toggleServerDropdown() {
 }
 
 function updateServerDropdownPosition() {
-    if (!serverDropdownRef.value) return
-    const rect = serverDropdownRef.value.getBoundingClientRect()
+    if (!statusBtnRef.value) return
+    const rect = statusBtnRef.value.getBoundingClientRect()
     serverDropdownStyle.value = {
         position: 'fixed',
         top: `${rect.bottom + 4}px`,
-        left: `${rect.left}px`,
-        minWidth: `${Math.max(200, rect.width)}px`,
+        right: `${window.innerWidth - rect.right}px`,
+        left: 'auto',
+        minWidth: '200px',
         maxWidth: '260px',
     }
 }
@@ -352,13 +365,18 @@ function deleteServer(url) {
 }
 
 function handleLogout() {
-    // Just navigate to /login which clears the session cookie and shows login page
-    window.location.href = '/login'
+    serverDropdownOpen.value = false
+    // Use native showServerDialog to return to the static login page
+    if (window.AndroidNative?.showServerDialog) {
+        window.AndroidNative.showServerDialog()
+    } else {
+        window.location.href = '/login'
+    }
 }
 
 // Close server dropdown on outside click
 function onServerClickOutside(e) {
-    if (serverDropdownRef.value && serverDropdownRef.value.contains(e.target)) return
+    if (statusBtnRef.value && statusBtnRef.value.contains(e.target)) return
     if (serverDropdownPanelRef.value && serverDropdownPanelRef.value.contains(e.target)) return
     serverDropdownOpen.value = false
 }
@@ -382,54 +400,6 @@ onUnmounted(() => {
     flex-shrink: 0;
 }
 
-/* Server selector (APP mode) */
-.server-dropdown-wrapper {
-    position: relative;
-    flex-shrink: 1;
-    min-width: 0;
-}
-
-.server-switch-btn {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 3px 6px 3px 8px;
-    border: 1px solid color-mix(in srgb, var(--accent-color) 40%, var(--border-color));
-    background: color-mix(in srgb, var(--accent-color) 8%, var(--bg-secondary));
-    cursor: pointer;
-    color: var(--text-primary);
-    border-radius: 999px;
-    font-size: 12px;
-    font-weight: 500;
-    max-width: 160px;
-    width: 100%;
-    min-width: 0;
-    transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
-    line-height: 1.4;
-}
-
-.server-switch-btn:hover {
-    background: color-mix(in srgb, var(--accent-color) 15%, var(--bg-secondary));
-    border-color: var(--accent-color);
-    box-shadow: 0 0 0 1px var(--accent-color);
-}
-
-.server-switch-btn:active {
-    transform: scale(0.97);
-}
-
-.server-switch-btn svg:first-child {
-    color: var(--accent-color);
-    flex-shrink: 0;
-}
-
-.server-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-}
-
 .server-item-delete {
     flex-shrink: 0;
     border: none;
@@ -446,35 +416,6 @@ onUnmounted(() => {
 }
 
 .server-item-delete:hover {
-    background: var(--bg-tertiary);
-    color: var(--color-red, #ef4444);
-}
-
-.dropdown-item.active .server-item-delete {
-    color: rgba(255,255,255,0.5);
-}
-
-.dropdown-item.active .server-item-delete:hover {
-    color: #fff;
-    background: rgba(255,255,255,0.15);
-}
-
-/* Logout button (APP mode) */
-.logout-btn {
-    padding: 4px;
-    border: none;
-    background: transparent;
-    cursor: pointer;
-    border-radius: var(--radius-sm);
-    color: var(--text-muted);
-    transition: background 0.15s, color 0.15s;
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.logout-btn:hover {
     background: var(--bg-tertiary);
     color: var(--color-red, #ef4444);
 }
@@ -579,7 +520,7 @@ onUnmounted(() => {
     min-width: 0;
 }
 
-/* Connection status button */
+/* Connection status button / server switcher dot */
 .status-toggle {
     padding: 6px;
     border: none;
@@ -636,6 +577,17 @@ onUnmounted(() => {
     padding: 6px 10px;
     font-size: 12px;
     white-space: nowrap;
+}
+
+/* Status header in server dropdown (APP mode) */
+.status-menu-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+    white-space: nowrap;
+    color: var(--text-muted);
 }
 
 .status-dot-connected,
@@ -726,6 +678,15 @@ onUnmounted(() => {
 
 .project-dropdown .dropdown-item.active .item-icon {
     color: #fff;
+}
+
+.project-dropdown .dropdown-item.active .server-item-delete {
+    color: rgba(255,255,255,0.5);
+}
+
+.project-dropdown .dropdown-item.active .server-item-delete:hover {
+    color: #fff;
+    background: rgba(255,255,255,0.15);
 }
 
 .project-dropdown .item-label {

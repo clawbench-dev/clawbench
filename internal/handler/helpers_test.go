@@ -185,7 +185,7 @@ func TestRequireSessionID_FromQueryParam(t *testing.T) {
 func TestRequireSessionID_FromCookie(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
-	r.AddCookie(&http.Cookie{Name: "chat_session_id", Value: "cookie-session"})
+	r.AddCookie(&http.Cookie{Name: model.ScopedCookieName("chat_session_id"), Value: "cookie-session"})
 	sessionID, ok := requireSessionID(w, r)
 	assert.True(t, ok)
 	assert.Equal(t, "cookie-session", sessionID)
@@ -205,7 +205,7 @@ func TestRequireSessionID_Missing(t *testing.T) {
 func TestRequireProject_Valid(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
-	r.AddCookie(&http.Cookie{Name: "clawbench_project", Value: "/tmp"})
+	r.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: "/tmp"})
 	projectPath, ok := requireProject(w, r)
 	assert.True(t, ok)
 	assert.Equal(t, "/tmp", projectPath)
@@ -236,7 +236,7 @@ func TestHelperIntegration_MethodGuardAndWriteJSON(t *testing.T) {
 
 	// Valid request
 	r := httptest.NewRequest(http.MethodGet, "/test", http.NoBody)
-	r.AddCookie(&http.Cookie{Name: "clawbench_project", Value: "/tmp/project"})
+	r.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: "/tmp/project"})
 	w := httptest.NewRecorder()
 	handler(w, r)
 	assert.Equal(t, http.StatusOK, w.Code)

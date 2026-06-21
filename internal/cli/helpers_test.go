@@ -191,7 +191,7 @@ func TestHTTPDoWithProject_SetsCookie(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for _, c := range r.Cookies() {
-			if c.Name == "clawbench_project" {
+			if c.Name == model.ScopedCookieName("clawbench_project") {
 				receivedCookie = c
 			}
 		}
@@ -206,7 +206,7 @@ func TestHTTPDoWithProject_SetsCookie(t *testing.T) {
 	assert.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{
-		Name:  "clawbench_project",
+		Name:  model.ScopedCookieName("clawbench_project"),
 		Value: "/my/project",
 	})
 
@@ -216,7 +216,7 @@ func TestHTTPDoWithProject_SetsCookie(t *testing.T) {
 
 	assert.NotNil(t, receivedCookie, "clawbench_project cookie should be set")
 	if receivedCookie != nil {
-		assert.Equal(t, "clawbench_project", receivedCookie.Name)
+		assert.Equal(t, model.ScopedCookieName("clawbench_project"), receivedCookie.Name)
 		// Value is URL-encoded
 		assert.Contains(t, receivedCookie.Value, "project")
 	}

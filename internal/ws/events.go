@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"clawbench/internal/model"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -49,7 +50,7 @@ func EventsHandler(w http.ResponseWriter, r *http.Request) {
 	// Extract user's locale preference for push notification i18n (ISS-129)
 	locale := r.Header.Get("X-Locale")
 	if locale == "" {
-		if c, err := r.Cookie("clawbench-locale"); err == nil {
+		if c, err := r.Cookie(model.ScopedCookieName("clawbench-locale")); err == nil {
 			locale = c.Value
 		}
 	}

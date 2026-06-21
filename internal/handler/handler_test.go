@@ -394,7 +394,7 @@ func TestServeSessions_Post_SetsSessionCookie(t *testing.T) {
 	cookies := w.Result().Cookies()
 	found := false
 	for _, c := range cookies {
-		if c.Name == "chat_session_id" {
+		if c.Name == model.ScopedCookieName("chat_session_id") {
 			found = true
 			assert.NotEmpty(t, c.Value, "session cookie should have a value")
 			assert.True(t, c.HttpOnly, "session cookie should be HttpOnly")
@@ -582,7 +582,7 @@ func TestDeleteSession_SessionFromCookie(t *testing.T) {
 
 func TestGetSessionID_QueryParamTakesPrecedence(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/test?session_id=from-query", http.NoBody)
-	r.AddCookie(&http.Cookie{Name: "chat_session_id", Value: "from-cookie"})
+	r.AddCookie(&http.Cookie{Name: model.ScopedCookieName("chat_session_id"), Value: "from-cookie"})
 
 	sessionID := getSessionID(r)
 	assert.Equal(t, "from-query", sessionID, "query param should take precedence over cookie")
@@ -602,7 +602,7 @@ func TestSetSessionID_SetsHttpOnlyCookie(t *testing.T) {
 	cookies := w.Result().Cookies()
 	require.Len(t, cookies, 1, "should set exactly one cookie")
 	c := cookies[0]
-	assert.Equal(t, "chat_session_id", c.Name)
+	assert.Equal(t, model.ScopedCookieName("chat_session_id"), c.Name)
 	assert.Equal(t, "test-session-123", c.Value)
 	assert.Equal(t, "/", c.Path)
 	assert.True(t, c.HttpOnly, "cookie should be HttpOnly to mitigate XSS")

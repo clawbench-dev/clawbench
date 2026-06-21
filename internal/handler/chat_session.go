@@ -198,7 +198,7 @@ func getSessionID(r *http.Request) string {
 	if sessionID := r.URL.Query().Get("session_id"); sessionID != "" {
 		return sessionID
 	}
-	cookie, err := r.Cookie("chat_session_id")
+	cookie, err := r.Cookie(model.ScopedCookieName("chat_session_id"))
 	if err != nil {
 		return ""
 	}
@@ -276,7 +276,7 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 // HttpOnly: true prevents JavaScript access, mitigating XSS-based session hijack (ISS-123).
 func setSessionID(w http.ResponseWriter, r *http.Request, sessionID string) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     "chat_session_id",
+		Name:     model.ScopedCookieName("chat_session_id"),
 		Value:    sessionID,
 		Path:     "/",
 		MaxAge:   86400 * 30, // 30 days

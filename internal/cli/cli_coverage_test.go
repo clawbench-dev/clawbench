@@ -148,7 +148,7 @@ func TestHTTPDoWithProject_SetsCookieAndReturnsData(t *testing.T) {
 	var receivedProject string
 	setupTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		for _, c := range r.Cookies() {
-			if c.Name == "clawbench_project" {
+			if c.Name == model.ScopedCookieName("clawbench_project") {
 				receivedProject = c.Value
 			}
 		}

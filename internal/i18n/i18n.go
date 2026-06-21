@@ -1,6 +1,7 @@
 package i18n
 
 import (
+	"clawbench/internal/model"
 	"embed"
 	"net/http"
 
@@ -36,7 +37,7 @@ func mustLoadEmbed(path string) {
 func Localizer(r *http.Request) *i18n.Localizer {
 	xLocale := r.Header.Get("X-Locale")
 	cookieLocale := ""
-	if c, err := r.Cookie("clawbench-locale"); err == nil {
+	if c, err := r.Cookie(model.ScopedCookieName("clawbench-locale")); err == nil {
 		cookieLocale = c.Value
 	}
 	acceptLang := r.Header.Get("Accept-Language")

@@ -136,7 +136,7 @@ func ServeAuthCheck(w http.ResponseWriter, r *http.Request) {
 	if validateToken == "" {
 		validateToken = model.SessionToken
 	}
-	token, err := r.Cookie(model.SessionCookie)
+	token, err := r.Cookie(model.ScopedCookieName(model.SessionCookie))
 	if err != nil || token == nil || subtle.ConstantTimeCompare([]byte(token.Value), []byte(validateToken)) != 1 {
 		writeLocalizedError(w, r, model.Unauthorized(nil))
 		return
@@ -211,7 +211,7 @@ func ServeLogin(w http.ResponseWriter, r *http.Request) {
 				model.PersistCookieToken(cookieToken)
 			}
 			http.SetCookie(w, &http.Cookie{
-				Name:     model.SessionCookie,
+				Name:     model.ScopedCookieName(model.SessionCookie),
 				Value:    cookieToken,
 				Path:     "/",
 				HttpOnly: true,

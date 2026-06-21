@@ -820,6 +820,8 @@ export default {
       deleteBranchConfirm: '确定删除分支「{name}」？',
       deleteWorktree: '删除工作树',
       deleteWorktreeConfirm: '确定删除工作树「{name}」？',
+      deleteWorktreeDirty: '工作树包含未提交的修改或未跟踪的文件，\n强制删除将丢失这些更改。',
+      deleteWorktreeForce: '强制删除',
       deleteTag: '删除标签',
       deleteTagConfirm: '确定删除标签「{name}」？',
       deleteFailed: '删除失败',

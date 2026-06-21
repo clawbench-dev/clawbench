@@ -1,6 +1,7 @@
 package i18n
 
 import (
+	"clawbench/internal/model"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -34,7 +35,7 @@ func TestLocalizer_Chinese(t *testing.T) {
 
 func TestLocalizer_Cookie(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
-	r.AddCookie(&http.Cookie{Name: "clawbench-locale", Value: "zh"})
+	r.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench-locale"), Value: "zh"})
 	loc := Localizer(r)
 
 	msg, err := loc.Localize(&i18n.LocalizeConfig{MessageID: "FileTooLarge"})
@@ -55,7 +56,7 @@ func TestLocalizer_AcceptLanguage(t *testing.T) {
 func TestLocalizer_XLocaleOverridesCookie(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	r.Header.Set("X-Locale", "en")
-	r.AddCookie(&http.Cookie{Name: "clawbench-locale", Value: "zh"})
+	r.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench-locale"), Value: "zh"})
 	loc := Localizer(r)
 
 	// X-Locale takes priority over cookie
