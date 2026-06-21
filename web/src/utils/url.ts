@@ -2,7 +2,7 @@
 export function formatServerHost(url: string): string {
   try {
     const u = new URL(url)
-    return u.host + (u.port && ![80, 443].includes(Number(u.port)) ? ':' + u.port : '')
+    return u.host
   } catch {
     return url
   }

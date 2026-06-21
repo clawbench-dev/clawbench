@@ -136,7 +136,7 @@ const showAddForm = ref(false)
 const newServerUrl = ref('')
 const newServerPassword = ref('')
 
-const showServerSelector = computed(() => servers.value.length >= 2)
+const showServerSelector = computed(() => servers.value.length >= 1)
 
 function selectServer(srv) {
   if (srv.url === selectedServerUrl.value) return

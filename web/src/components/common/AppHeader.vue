@@ -62,27 +62,24 @@
     <Teleport to="body">
       <Transition name="dropdown">
         <div v-if="isAppMode && serverDropdownOpen" class="project-dropdown" :style="serverDropdownStyle" ref="serverDropdownPanelRef">
-          <!-- Connection status header -->
+          <!-- Current server header -->
           <div class="status-menu-header">
-            <span class="status-indicator" :class="statusDotClass"></span>
-            <span class="status-value">{{ currentServerName }} · {{ serverStatusLabel }}</span>
+            <Server :size="14" class="item-icon" />
+            <span class="status-value">{{ currentServerName }}</span>
+            <span class="status-indicator" :class="statusDotClass" style="margin-left:auto;"></span>
           </div>
           <div class="dropdown-divider"></div>
-          <!-- Server list -->
-          <div v-if="serverList.length === 0" class="dropdown-empty">{{ t('login.addServer') }}</div>
+          <!-- Server list (exclude current server — no point switching to yourself) -->
+          <div v-if="otherServers.length === 0" class="dropdown-empty">{{ t('login.addServer') }}</div>
           <div v-else class="dropdown-scroll-area">
             <div
-              v-for="srv in serverList"
+              v-for="srv in otherServers"
               :key="srv.url"
               class="dropdown-item"
-              :class="{ active: srv.url === currentServerUrl }"
               @click="switchServer(srv.url)"
             >
               <Server :size="14" class="item-icon" />
               <span class="item-label">{{ formatServerHost(srv.url) }}</span>
-              <button class="server-item-delete" @click.stop="deleteServer(srv.url)" :title="t('login.deleteServer')">
-                <X :size="10" />
-              </button>
             </div>
           </div>
           <div class="dropdown-divider"></div>
@@ -99,7 +96,7 @@
 </template>
 
 <script setup>
-import { Projector, ChevronDown, Search, GitBranch, Server, X, LogOut } from 'lucide-vue-next'
+import { Projector, ChevronDown, Search, GitBranch, Server, LogOut } from 'lucide-vue-next'
 import { ref, computed, onMounted, onUnmounted, inject, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
@@ -114,7 +111,7 @@ import PopupMenu from '@/components/common/PopupMenu.vue'
 const { t } = useI18n()
 const { wsStatus } = useGlobalEvents()
 const { isAppMode } = useAppMode()
-const { servers: serverList, load: loadServerList, remove: removeServer } = useServerList()
+const { servers: serverList, load: loadServerList } = useServerList()
 const switchTab = inject('switchTab')
 
 const props = defineProps({
@@ -324,6 +321,8 @@ const currentServerUrl = computed(() => window.location.origin)
 
 const currentServerName = computed(() => formatServerHost(window.location.origin))
 
+const otherServers = computed(() => serverList.value.filter(s => s.url !== currentServerUrl.value))
+
 function toggleServerDropdown() {
     if (serverDropdownOpen.value) {
         serverDropdownOpen.value = false
@@ -357,11 +356,6 @@ function switchServer(url) {
     } else {
         window.location.href = url + '/'
     }
-}
-
-function deleteServer(url) {
-    if (!confirm(t('login.deleteServer'))) return
-    removeServer(url)
 }
 
 function handleLogout() {
@@ -398,26 +392,6 @@ onUnmounted(() => {
     height: 28px;
     border-radius: 50%;
     flex-shrink: 0;
-}
-
-.server-item-delete {
-    flex-shrink: 0;
-    border: none;
-    background: transparent;
-    color: var(--text-muted);
-    cursor: pointer;
-    padding: 2px;
-    border-radius: 3px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-left: auto;
-    transition: background 0.1s, color 0.1s;
-}
-
-.server-item-delete:hover {
-    background: var(--bg-tertiary);
-    color: var(--color-red, #ef4444);
 }
 
 .project-dropdown-wrapper {
@@ -678,15 +652,6 @@ onUnmounted(() => {
 
 .project-dropdown .dropdown-item.active .item-icon {
     color: #fff;
-}
-
-.project-dropdown .dropdown-item.active .server-item-delete {
-    color: rgba(255,255,255,0.5);
-}
-
-.project-dropdown .dropdown-item.active .server-item-delete:hover {
-    color: #fff;
-    background: rgba(255,255,255,0.15);
 }
 
 .project-dropdown .item-label {

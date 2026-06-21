@@ -659,7 +659,7 @@ public class MainActivity extends AppCompatActivity {
         new Thread(() -> {
             try {
                 AuthResult result = performLoginRequest(url, password);
-                handleAuthResponse(result.statusCode, url, result.cookies);
+                handleAuthResponse(result.statusCode, url, password, result.cookies);
             } catch (Exception e) {
                 // SSL error (self-signed cert), network error, etc.
                 // Fall back to direct WebView navigation — it may handle
@@ -724,7 +724,7 @@ public class MainActivity extends AppCompatActivity {
      * @param url        the server URL to navigate to on success/fallback
      * @param cookies    Set-Cookie headers from the response (may be empty)
      */
-    void handleAuthResponse(int statusCode, String url, java.util.List<String> cookies) {
+    void handleAuthResponse(int statusCode, String url, String password, java.util.List<String> cookies) {
         if (statusCode == 200) {
             // Extract Set-Cookie and inject into WebView CookieManager
             if (cookies != null && !cookies.isEmpty()) {
@@ -739,8 +739,9 @@ public class MainActivity extends AppCompatActivity {
                     AppLog.w(TAG, "Failed to inject auth cookie", e);
                 }
             }
-            // Auth success — navigate WebView (cookie already set)
+            // Auth success — promote server to head of list, then navigate
             runOnUiThread(() -> {
+                saveServerInternal(url, password);
                 webView.loadUrl(url);
                 startConnectionTimeout();
             });
@@ -1871,35 +1872,14 @@ public class MainActivity extends AppCompatActivity {
 
         /**
          * Save (add or update) a server entry in the server list.
-         * If a server with the same URL already exists, its password is updated.
+         * If a server with the same URL already exists, its password is updated
+         * and the entry is moved to the head of the list (most recently used).
          * @param url      The server URL (e.g. "https://192.168.1.100:20000")
          * @param password The password for this server
          */
         @JavascriptInterface
         public void saveServer(String url, String password) {
-            try {
-                org.json.JSONArray list = new org.json.JSONArray(
-                        activity.prefs.getString(KEY_SERVER_LIST, "[]"));
-                boolean found = false;
-                for (int i = 0; i < list.length(); i++) {
-                    org.json.JSONObject entry = list.getJSONObject(i);
-                    if (url.equals(entry.optString("url", ""))) {
-                        entry.put("password", password);
-                        list.put(i, entry);
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    org.json.JSONObject entry = new org.json.JSONObject();
-                    entry.put("url", url);
-                    entry.put("password", password);
-                    list.put(entry);
-                }
-                activity.prefs.edit().putString(KEY_SERVER_LIST, list.toString()).apply();
-            } catch (Exception e) {
-                android.util.Log.e(TAG, "saveServer failed", e);
-            }
+            activity.saveServerInternal(url, password);
         }
 
         /**
@@ -1922,6 +1902,50 @@ public class MainActivity extends AppCompatActivity {
             } catch (Exception e) {
                 android.util.Log.e(TAG, "removeServer failed", e);
             }
+        }
+    }
+
+    /**
+     * Save (add or update) a server entry in the server list.
+     * If the URL already exists, its password is updated and the entry is
+     * promoted to the head of the list (most recently used).
+     * Thread-safe: only called on the UI thread.
+     */
+    private void saveServerInternal(String url, String password) {
+        try {
+            org.json.JSONArray list = new org.json.JSONArray(
+                    prefs.getString(KEY_SERVER_LIST, "[]"));
+            org.json.JSONArray reordered = new org.json.JSONArray();
+            org.json.JSONObject updated = null;
+
+            // Find and update existing entry
+            for (int i = 0; i < list.length(); i++) {
+                org.json.JSONObject entry = list.getJSONObject(i);
+                if (url.equals(entry.optString("url", ""))) {
+                    entry.put("password", password);
+                    updated = entry;
+                } else {
+                    reordered.put(entry);
+                }
+            }
+
+            // If not found, create new entry
+            if (updated == null) {
+                updated = new org.json.JSONObject();
+                updated.put("url", url);
+                updated.put("password", password);
+            }
+
+            // Insert at head (most recently used)
+            org.json.JSONArray result = new org.json.JSONArray();
+            result.put(updated);
+            for (int i = 0; i < reordered.length(); i++) {
+                result.put(reordered.get(i));
+            }
+
+            prefs.edit().putString(KEY_SERVER_LIST, result.toString()).apply();
+        } catch (Exception e) {
+            AppLog.e(TAG, "saveServerInternal failed", e);
         }
     }
 }

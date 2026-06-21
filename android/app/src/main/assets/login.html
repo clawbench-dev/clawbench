@@ -10,6 +10,7 @@
   :root {
     --bg-primary: #0d1117;
     --bg-secondary: #161b22;
+    --bg-tertiary: #1c2129;
     --text-primary: #e6edf3;
     --text-muted: #8b949e;
     --text-hint: #484f58;
@@ -136,6 +137,95 @@
     border-radius: 14px;
     padding: 28px 24px;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  }
+
+  /* Server list */
+  .server-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 16px;
+    max-height: 160px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+
+  .server-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.1s;
+    font-size: 13px;
+  }
+
+  .server-item:hover {
+    background: var(--bg-tertiary);
+  }
+
+  .server-item:active {
+    background: var(--bg-tertiary);
+  }
+
+  .server-item.active {
+    background: var(--accent-color);
+    color: #fff;
+  }
+
+  .server-item-info {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .server-item-icon {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    color: var(--accent-color);
+  }
+
+  .server-item.active .server-item-icon {
+    color: #fff;
+  }
+
+  .server-item-url {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+
+  .server-delete-btn {
+    flex-shrink: 0;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.1s, color 0.1s;
+  }
+
+  .server-delete-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--color-red);
+  }
+
+  .server-item.active .server-delete-btn {
+    color: rgba(255,255,255,0.6);
+  }
+
+  .server-item.active .server-delete-btn:hover {
+    color: #fff;
+    background: rgba(255,255,255,0.15);
   }
 
   .field-group {
@@ -293,6 +383,24 @@
     to { transform: rotate(360deg); }
   }
 
+  /* Cancel button */
+  .cancel-btn {
+    width: 100%;
+    height: 40px;
+    margin-top: 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .cancel-btn:hover {
+    background: var(--bg-tertiary);
+  }
+
   /* Error — matches LoginView.vue .error */
   .error {
     margin-top: 14px;
@@ -313,6 +421,30 @@
 
   .error svg {
     flex-shrink: 0;
+  }
+
+  /* Add server button — dashed border style */
+  .add-server-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    padding: 10px;
+    margin-top: 12px;
+    border: 1px dashed var(--border-color);
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+
+  .add-server-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--accent-color);
+    border-color: var(--accent-color);
   }
 
   /* Version footer */
@@ -349,44 +481,20 @@
 
     <!-- Form -->
     <div class="form-card">
-      <form id="connectForm" onsubmit="return false;">
-        <!-- Protocol -->
-        <div class="field-group">
-          <span class="field-label">协议</span>
-          <div class="protocol-group">
-            <label>
-              <input type="radio" name="protocol" value="https" checked>
-              HTTPS
-            </label>
-            <label>
-              <input type="radio" name="protocol" value="http">
-              HTTP
-            </label>
-          </div>
-        </div>
+      <!-- Saved server list (shown when servers exist) -->
+      <div id="serverListSection" class="server-list" style="display:none;"></div>
 
-        <!-- Host + Port -->
-        <div class="field-group">
-          <span class="field-label">服务器地址</span>
-          <div class="host-row">
-            <input type="text" id="host" placeholder="192.168.1.100" autocorrect="off" autocapitalize="none" spellcheck="false">
-            <span class="colon">:</span>
-            <input type="number" id="port" value="20000" inputmode="numeric">
-          </div>
-        </div>
-
-        <!-- Password -->
-        <div class="field-group">
+      <!-- Login form for existing / current server -->
+      <form id="connectForm" onsubmit="return false;" style="display:none;">
+        <div id="passwordGroup" class="field-group">
           <span class="field-label">登录密码</span>
           <input type="password" id="password" placeholder="密码">
         </div>
 
-        <!-- Connect -->
         <button type="submit" class="connect-btn" id="connectBtn">
           <span id="btnText">连 接</span>
         </button>
 
-        <!-- Error -->
         <div class="error" id="errorMsg">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
             <circle cx="12" cy="12" r="10"/>
@@ -396,6 +504,60 @@
           <span id="errorText"></span>
         </div>
       </form>
+
+      <!-- Add server form (hidden by default) -->
+      <form id="addServerForm" onsubmit="return false;" style="display:none;">
+        <!-- Protocol -->
+        <div class="field-group">
+          <span class="field-label">协议</span>
+          <div class="protocol-group">
+            <label>
+              <input type="radio" name="addProtocol" value="https" checked>
+              HTTPS
+            </label>
+            <label>
+              <input type="radio" name="addProtocol" value="http">
+              HTTP
+            </label>
+          </div>
+        </div>
+
+        <!-- Host + Port -->
+        <div class="field-group">
+          <span class="field-label">服务器地址</span>
+          <div class="host-row">
+            <input type="text" id="addHost" placeholder="192.168.1.100" autocorrect="off" autocapitalize="none" spellcheck="false">
+            <span class="colon">:</span>
+            <input type="number" id="addPort" value="20000" inputmode="numeric">
+          </div>
+        </div>
+
+        <!-- Password -->
+        <div class="field-group">
+          <span class="field-label">登录密码</span>
+          <input type="password" id="addPassword" placeholder="密码">
+        </div>
+
+        <button type="submit" class="connect-btn" id="addConnectBtn">
+          <span id="addBtnText">添 加 并 连 接</span>
+        </button>
+        <button type="button" class="cancel-btn" id="cancelAddBtn">取 消</button>
+
+        <div class="error" id="addErrorMsg">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="15" y1="9" x2="9" y2="15"/>
+            <line x1="9" y1="9" x2="15" y2="15"/>
+          </svg>
+          <span id="addErrorText"></span>
+        </div>
+      </form>
+
+      <!-- Add server button (shown in main view when server list exists) -->
+      <button type="button" class="add-server-btn" id="addServerBtn" style="display:none;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        <span>添加服务器</span>
+      </button>
     </div>
 
     <div class="version" id="version"></div>
@@ -403,93 +565,282 @@
 
 <script>
   var connecting = false;
+  var savedServers = [];
 
-  // Pre-fill from saved values
+  // SVG icons
+  var SVG_SERVER = '<svg class="server-item-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>';
+  var SVG_X = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+
   window.addEventListener('DOMContentLoaded', function() {
-    try {
-      var saved = JSON.parse(AndroidNative.getSavedServerConfig());
-      if (saved.protocol) {
-        var radios = document.querySelectorAll('input[name="protocol"]');
-        radios.forEach(function(r) { r.checked = (r.value === saved.protocol); });
-      }
-      if (saved.host) document.getElementById('host').value = saved.host;
-      if (saved.port) document.getElementById('port').value = saved.port;
-      if (saved.password) document.getElementById('password').value = saved.password;
-    } catch(e) {}
+    // Load server list (single source of truth)
+    loadServerList();
 
+    // Version
     try {
       var ver = AndroidNative.getAppVersion();
       if (ver) document.getElementById('version').textContent = 'v' + ver;
     } catch(e) {}
+
+    // Event: connect to existing server
+    document.getElementById('connectForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      if (connecting) return;
+      hideError('errorMsg');
+
+      var passwordEl = document.getElementById('password');
+      var passwordVisible = document.getElementById('passwordGroup').style.display !== 'none';
+      var password = passwordVisible ? passwordEl.value : (connectForm.getAttribute('data-saved-password') || '');
+
+      if (!password) {
+        showError('errorMsg', '请输入密码');
+        passwordEl.focus();
+        return;
+      }
+
+      // Current server URL is stored as data attribute on the form
+      var url = document.getElementById('connectForm').getAttribute('data-url');
+      if (!url) return;
+
+      setConnecting(true);
+      try {
+        // Update saved password in case it was changed
+        AndroidNative.saveServer(url, password);
+        AndroidNative.connectToServer(url, password);
+      } catch(e) {
+        showError('errorMsg', '连接失败: ' + e.message);
+        setConnecting(false);
+      }
+    });
+
+    // Event: add and connect to new server
+    document.getElementById('addServerForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      if (connecting) return;
+      hideError('addErrorMsg');
+
+      var host = document.getElementById('addHost').value.trim();
+      var port = document.getElementById('addPort').value.trim();
+      var password = document.getElementById('addPassword').value;
+      var protocol = document.querySelector('input[name="addProtocol"]:checked').value;
+
+      if (!host) {
+        showError('addErrorMsg', '请输入服务器地址');
+        document.getElementById('addHost').focus();
+        return;
+      }
+      if (!port) {
+        port = (protocol === 'https') ? '443' : '80';
+      }
+
+      var url = protocol + '://' + host + ':' + port;
+      if (url.endsWith('/')) url = url.substring(0, url.length - 1);
+
+      setConnecting(true, true);
+      try {
+        // Save to native list first
+        AndroidNative.saveServer(url, password);
+        AndroidNative.connectToServer(url, password);
+      } catch(e) {
+        showError('addErrorMsg', '连接失败: ' + e.message);
+        setConnecting(false, true);
+      }
+    });
+
+    // Event: show add form
+    document.getElementById('addServerBtn').addEventListener('click', function() {
+      showAddForm();
+    });
+
+    // Event: cancel add form
+    document.getElementById('cancelAddBtn').addEventListener('click', function() {
+      hideAddForm();
+    });
   });
 
-  function showError(msg) {
-    var el = document.getElementById('errorMsg');
-    document.getElementById('errorText').textContent = msg;
+  function loadServerList() {
+    try {
+      var json = AndroidNative.getServerList();
+      savedServers = JSON.parse(json);
+      if (!Array.isArray(savedServers)) savedServers = [];
+    } catch(e) {
+      savedServers = [];
+    }
+    renderServerList();
+  }
+
+  function renderServerList() {
+    var container = document.getElementById('serverListSection');
+    var connectForm = document.getElementById('connectForm');
+    var addBtn = document.getElementById('addServerBtn');
+
+    if (savedServers.length === 0) {
+      // No saved servers — show the add form directly
+      container.style.display = 'none';
+      connectForm.style.display = 'none';
+      addBtn.style.display = 'none';
+      showAddForm();
+      return;
+    }
+
+    // Build server list HTML — default to first server in list
+    var html = '';
+    savedServers.forEach(function(srv, idx) {
+      var isActive = (idx === 0);
+      html += '<div class="server-item' + (isActive ? ' active' : '') + '" data-url="' + escHtml(srv.url) + '" onclick="selectServer(\'' + escJs(srv.url) + '\')">';
+      html += '  <div class="server-item-info">';
+      html += '    ' + SVG_SERVER;
+      html += '    <span class="server-item-url">' + escHtml(formatHost(srv.url)) + '</span>';
+      html += '  </div>';
+      html += '  <button class="server-delete-btn" onclick="event.stopPropagation(); deleteServer(\'' + escJs(srv.url) + '\')" title="删除">';
+      html += '    ' + SVG_X;
+      html += '  </button>';
+      html += '</div>';
+    });
+
+    container.innerHTML = html;
+    container.style.display = 'flex';
+
+    // Show connect form and add button
+    connectForm.style.display = 'block';
+    addBtn.style.display = 'flex';
+
+    // Select first server by default
+    var selected = savedServers[0];
+
+    connectForm.setAttribute('data-url', selected.url);
+    connectForm.setAttribute('data-saved-password', selected.password || '');
+    // Hide password field if saved password exists; show if no password saved
+    var passwordGroup = document.getElementById('passwordGroup');
+    var passwordEl = document.getElementById('password');
+    if (selected.password) {
+      passwordGroup.style.display = 'none';
+      passwordEl.value = '';
+    } else {
+      passwordGroup.style.display = 'block';
+      passwordEl.value = '';
+      passwordEl.focus();
+    }
+  }
+
+  function selectServer(url) {
+    var srv = savedServers.find(function(s) { return s.url === url; });
+    if (!srv) return;
+
+    // Update active state visually
+    var items = document.querySelectorAll('.server-item');
+    items.forEach(function(el) {
+      if (el.getAttribute('data-url') === url) {
+        el.classList.add('active');
+      } else {
+        el.classList.remove('active');
+      }
+    });
+
+    // Update connect form
+    var connectForm = document.getElementById('connectForm');
+    var passwordGroup = document.getElementById('passwordGroup');
+    var passwordEl = document.getElementById('password');
+    connectForm.setAttribute('data-url', url);
+    connectForm.setAttribute('data-saved-password', srv.password || '');
+    hideError('errorMsg');
+    if (srv.password) {
+      passwordGroup.style.display = 'none';
+      passwordEl.value = '';
+    } else {
+      passwordGroup.style.display = 'block';
+      passwordEl.value = '';
+      passwordEl.focus();
+    }
+  }
+
+  function deleteServer(url) {
+    if (!confirm('删除此服务器？')) return;
+    try {
+      AndroidNative.removeServer(url);
+    } catch(e) {}
+    loadServerList();
+  }
+
+  function showAddForm() {
+    document.getElementById('serverListSection').style.display = 'none';
+    document.getElementById('connectForm').style.display = 'none';
+    document.getElementById('addServerBtn').style.display = 'none';
+    document.getElementById('addServerForm').style.display = 'block';
+  }
+
+  function hideAddForm() {
+    document.getElementById('addServerForm').style.display = 'none';
+    document.getElementById('addErrorMsg').classList.remove('visible');
+    renderServerList();
+  }
+
+  function formatHost(url) {
+    try {
+      var u = new URL(url);
+      return u.host;
+    } catch(e) {
+      return url;
+    }
+  }
+
+  function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function escJs(s) {
+    return s.replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"');
+  }
+
+  function showError(id, msg) {
+    var el = document.getElementById(id);
+    var textId = id === 'errorMsg' ? 'errorText' : 'addErrorText';
+    document.getElementById(textId).textContent = msg;
     el.classList.add('visible');
   }
 
-  function hideError() {
-    document.getElementById('errorMsg').classList.remove('visible');
+  function hideError(id) {
+    document.getElementById(id).classList.remove('visible');
   }
 
-  function setConnecting(loading) {
+  function setConnecting(loading, isAddForm) {
     connecting = loading;
-    var btn = document.getElementById('connectBtn');
-    var btnText = document.getElementById('btnText');
+    var btnId = isAddForm ? 'addConnectBtn' : 'connectBtn';
+    var btn = document.getElementById(btnId);
     if (loading) {
       btn.disabled = true;
       btn.innerHTML = '<div class="spinner"></div><span>认证中...</span>';
     } else {
       btn.disabled = false;
-      btn.innerHTML = '<span id="btnText">连 接</span>';
+      if (isAddForm) {
+        btn.innerHTML = '<span id="addBtnText">添 加 并 连 接</span>';
+      } else {
+        btn.innerHTML = '<span id="btnText">连 接</span>';
+      }
     }
   }
-
-  document.getElementById('connectForm').addEventListener('submit', function(e) {
-    e.preventDefault();
-    if (connecting) return;
-
-    hideError();
-
-    var host = document.getElementById('host').value.trim();
-    var port = document.getElementById('port').value.trim();
-    var password = document.getElementById('password').value;
-    var protocol = document.querySelector('input[name="protocol"]:checked').value;
-
-    if (!host) {
-      showError('请输入服务器地址');
-      document.getElementById('host').focus();
-      return;
-    }
-
-    if (!port) {
-      port = (protocol === 'https') ? '443' : '80';
-    }
-
-    var url = protocol + '://' + host + ':' + port;
-    if (url.endsWith('/')) url = url.substring(0, url.length - 1);
-
-    setConnecting(true);
-
-    try {
-      AndroidNative.connectToServer(url, password);
-    } catch(e) {
-      showError('连接失败: ' + e.message);
-      setConnecting(false);
-    }
-  });
 
   // Called by native code on connection failure
   function onConnectError(msg) {
     setConnecting(false);
-    showError(msg || '无法连接到服务器，请检查地址和网络。');
+    setConnecting(false, true);
+    var addForm = document.getElementById('addServerForm');
+    if (addForm.style.display !== 'none') {
+      showError('addErrorMsg', msg || '无法连接到服务器，请检查地址和网络。');
+    } else {
+      showError('errorMsg', msg || '无法连接到服务器，请检查地址和网络。');
+      // Show password field on error (e.g. wrong password) — clear it so user can re-enter
+      var passwordGroup = document.getElementById('passwordGroup');
+      var passwordEl = document.getElementById('password');
+      passwordGroup.style.display = 'block';
+      passwordEl.value = '';
+      passwordEl.focus();
+    }
   }
 
-  // Called by native code on connection success (not strictly needed,
-  // since the WebView will navigate away from this page)
+  // Called by native code on connection success
   function onConnectSuccess() {
     setConnecting(false);
+    setConnecting(false, true);
   }
 </script>
 </body>
