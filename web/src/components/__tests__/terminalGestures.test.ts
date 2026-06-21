@@ -11,11 +11,11 @@ function makeTouchEvent(
   touches: Touch[],
   changedTouches: Touch[] = touches
 ): TouchEvent & { preventDefault: ReturnType<typeof vi.fn> } {
-  const event = new Event(type, { bubbles: true, cancelable: true }) as TouchEvent & { preventDefault: ReturnType<typeof vi.fn> }
+  const event = new Event(type, { bubbles: true, cancelable: true })
   Object.defineProperty(event, 'touches', { value: touches })
   Object.defineProperty(event, 'changedTouches', { value: changedTouches })
   event.preventDefault = vi.fn()
-  return event
+  return event as TouchEvent & { preventDefault: ReturnType<typeof vi.fn> }
 }
 
 function dispatchTouch(
@@ -59,6 +59,16 @@ function setupGestures() {
 
   return { el, sent, hints, zoomDeltas, scrollDeltas, gestures }
 }
+
+describe('shouldPreventTerminalContextMenu', () => {
+  it('allows the native long-press copy menu when gestures are disabled', () => {
+    expect(shouldPreventTerminalContextMenu(false)).toBe(false)
+  })
+
+  it('suppresses the native context menu while gestures are enabled', () => {
+    expect(shouldPreventTerminalContextMenu(true)).toBe(true)
+  })
+})
 
 describe('useTerminalGestures', () => {
   it('prevents the native double-tap selection side effect when sending Tab', () => {
@@ -204,16 +214,6 @@ describe('useTerminalGestures', () => {
 
     expect(gestures.enabled.value).toBe(true)
     expect(el.style.touchAction).not.toBe('none')
-  })
-})
-
-describe('shouldPreventTerminalContextMenu', () => {
-  it('allows the native long-press copy menu when gestures are disabled', () => {
-    expect(shouldPreventTerminalContextMenu(false)).toBe(false)
-  })
-
-  it('suppresses the native context menu while gestures are enabled', () => {
-    expect(shouldPreventTerminalContextMenu(true)).toBe(true)
   })
 })
 

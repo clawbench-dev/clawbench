@@ -46,7 +46,6 @@
         v-show="tab.id === activeTabId"
         :ref="(el) => setTabContainer(tab.id, el as HTMLElement | null)"
         class="terminal-container"
-        :class="{ 'copy-mode': copyMode }"
         @click.self="focusTerminal"
       >
         <!-- Rebuild overlay (per-tab) -->
@@ -65,11 +64,6 @@
         <Transition name="gesture-hint">
           <div v-if="gestureHint" class="gesture-hint">{{ gestureHint }}</div>
         </Transition>
-
-        <!-- Floating copy button for selection mode -->
-        <button v-if="hasSelection && copyMode && tab.id === activeTabId" class="floating-copy-btn" @click="handleCopySelection">
-          {{ t('common.copy') }}
-        </button>
       </div>
     </div>
 
@@ -88,10 +82,8 @@
 
       <!-- Main toolbar row -->
       <div class="main-toolbar-row">
-        <button class="toolbar-btn modifier mode-indicator" @click="handleModeToggle" @contextmenu.prevent :title="modeToggleTitle">
-          <TextCursorIcon v-if="copyMode" :size="14" />
-          <KeyboardIcon v-else-if="!gestures.enabled.value" :size="14" />
-          <HandIcon v-else :size="14" />
+        <button class="toolbar-btn modifier gesture-toggle" :class="{ active: gestures.enabled.value }" @click="handleGestureToggle" @contextmenu.prevent :title="t('terminal.gestures')">
+          <HandIcon :size="14" />
         </button>
         <button class="toolbar-btn modifier gesture-toggle" :class="{ active: showSymbolBar }" @click="toggleSymbolBar()" @contextmenu.prevent :title="t('terminal.symbols')">
           <HashIcon :size="14" />
@@ -114,6 +106,10 @@
           <div class="key-group">
             <button ref="cmdBtnRef" class="toolbar-btn btn-action" @click="showCommands = !showCommands" :title="t('terminal.quickCommands')">
               <ZapIcon :size="14" />
+            </button>
+            <!-- Copy output button -->
+            <button class="toolbar-btn btn-action" @click="handleCopyOutput" :title="t('terminal.copyOutput')">
+              <CopyIcon :size="14" />
             </button>
             <!-- Settings button (always present) -->
             <button class="toolbar-btn btn-action" @click="showKeyConfig = true" :title="t('terminal.keyConfigTitle')">
@@ -157,6 +153,14 @@
       @close="showKeyConfig = false"
       @saved="onKeyConfigSaved"
     />
+
+    <!-- Output text drawer — copy visible terminal output -->
+    <OutputDrawer
+      :open="props.active && showOutputDrawer"
+      :output-text="outputDrawerText"
+      :font-size="fontSize"
+      @close="showOutputDrawer = false"
+    />
   </div>
 </template>
 
@@ -168,6 +172,7 @@ import '@xterm/xterm/css/xterm.css'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import QuickCommandDialog from '@/components/terminal/QuickCommandDialog.vue'
 import KeyConfigDrawer from '@/components/terminal/KeyConfigDrawer.vue'
+import OutputDrawer from '@/components/terminal/OutputDrawer.vue'
 import TerminalTabMenu from '@/components/terminal/TerminalTabMenu.vue'
 import { useTerminalTabs, type TerminalTab } from '@/composables/useTerminalTabs'
 import { useTerminalViewport } from '@/composables/useTerminalViewport'
@@ -189,7 +194,7 @@ import { localConfig, setLocalConfig, useSettingsConfig } from '@/composables/us
 import type { KeyDef } from '@/utils/terminalKeyDefs'
 import { copyText } from '@/utils/clipboard'
 
-import { Zap as ZapIcon, Hand as HandIcon, Hash as HashIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, Terminal as TerminalIcon, Settings, TextCursor as TextCursorIcon, Keyboard as KeyboardIcon } from 'lucide-vue-next'
+import { Zap as ZapIcon, Hand as HandIcon, Hash as HashIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, Terminal as TerminalIcon, Settings, Copy as CopyIcon } from 'lucide-vue-next'
 const props = defineProps<{
   requestedCwd?: string | null
   active?: boolean
@@ -232,8 +237,8 @@ function applyFontSize(size: number) {
 // Refs
 const gestureHint = ref('')
 let gestureHintTimer: ReturnType<typeof setTimeout> | null = null
-const copyMode = ref(false)
-const hasSelection = ref(false)
+const showOutputDrawer = ref(false)
+const outputDrawerText = ref('')
 const showCommands = ref(false)
 const cmdBtnRef = ref<HTMLElement | null>(null)
 const showSymbolBar = ref(false)
@@ -309,42 +314,9 @@ function onKeyConfigSaved() {
   showKeyConfig.value = false
 }
 
-// Three-state mode cycle: gesture → copy → normal → gesture
-type TerminalMode = 'gesture' | 'copy' | 'normal'
-
-function getCurrentMode(): TerminalMode {
-  if (copyMode.value) return 'copy'
-  if (gestures.enabled.value) return 'gesture'
-  return 'normal'
-}
-
-const modeToggleTitle = computed(() => {
-  const mode = getCurrentMode()
-  if (mode === 'gesture') return t('terminal.gestures')
-  if (mode === 'copy') return t('terminal.copyMode')
-  return t('terminal.normalMode')
-})
-
-function handleModeToggle() {
-  const mode = getCurrentMode()
-  if (mode === 'gesture') {
-    // gesture → copy
-    gestures.toggle()  // disables gestures (applyState runs, but copyMode still false)
-    copyMode.value = true
-    gestures.refresh() // re-apply with copyMode=true → detach disabledScroll
-    toast.show(t('terminal.copyModeOn'), { icon: '🖱️', type: 'info', duration: 1500 })
-  } else if (mode === 'copy') {
-    // copy → normal
-    copyMode.value = false
-    gestures.refresh() // re-apply with copyMode=false → attach disabledScroll
-    activeTab.value?.xterm?.clearSelection()
-    hasSelection.value = false
-    toast.show(t('terminal.normalModeOn'), { icon: '⌨️', type: 'info', duration: 1200 })
-  } else {
-    // normal → gesture
-    gestures.toggle()
-    toast.show(t('terminal.gesturesOn'), { icon: '✋', type: 'info', duration: 1200 })
-  }
+function handleGestureToggle() {
+  gestures.toggle()
+  toast.show(gestures.enabled.value ? t('terminal.gesturesOn') : t('terminal.gesturesOff'), { icon: '✋', type: 'info', duration: 1200 })
   focusTerminal()
 }
 
@@ -464,7 +436,6 @@ const gestures = useTerminalGestures(
       gestureHintTimer = setTimeout(() => { gestureHint.value = '' }, 600)
     },
   },
-  copyMode,
 )
 
 // Re-evaluate fade when gesture toggle changes visible buttons
@@ -473,8 +444,6 @@ watch(() => gestures.enabled.value, () => nextTick(refreshToolbarFade))
 // Re-bind gesture listeners when switching/creating tabs (container element changes).
 // Use double nextTick to ensure mountTabToContainer has already run.
 watch(activeTabId, () => {
-  copyMode.value = false
-  hasSelection.value = false
   nextTick(() => nextTick(() => gestures.attach()))
 })
 
@@ -558,18 +527,8 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
   }
   const oldCtx = (container as any).__terminalContextMenuHandler
   if (oldCtx) {
-    container.removeEventListener('contextmenu', oldCtx, true)
+    container.removeEventListener('contextmenu', oldCtx)
     delete (container as any).__terminalContextMenuHandler
-  }
-  const oldDisposable = (container as any).__terminalSelectionDisposable
-  if (oldDisposable) {
-    oldDisposable.dispose()
-    delete (container as any).__terminalSelectionDisposable
-  }
-  const oldMouseUp = (container as any).__terminalMouseUpHandler
-  if (oldMouseUp) {
-    container.removeEventListener('mouseup', oldMouseUp)
-    delete (container as any).__terminalMouseUpHandler
   }
 
   tabManager.mountTabXterm(tab, container)
@@ -585,34 +544,14 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
   container.addEventListener('wheel', wheelHandler, { passive: false })
   ;(container as any).__terminalWheelHandler = wheelHandler
 
-  // Context menu handler — block in all modes to disable long-press behavior
-  // (in copy mode, long-press should start drag selection, not rightClickSelect;
-  //  in gesture/normal modes, long-press should do nothing)
-  // Use capture phase to intercept before xterm's own contextmenu handler
+  // Context menu handler — suppress long-press context menu while gestures are enabled
   const contextMenuHandler = (e: Event) => {
-    e.preventDefault()
-    e.stopImmediatePropagation()
-  }
-  container.addEventListener('contextmenu', contextMenuHandler, true)
-  ;(container as any).__terminalContextMenuHandler = contextMenuHandler
-
-  // Mouse up handler for selection mode — check if xterm has a selection after drag
-  const mouseUpHandler = () => {
-    if (copyMode.value) {
-      hasSelection.value = tab.xterm?.hasSelection() ?? false
+    if (shouldPreventTerminalContextMenu(gestures.enabled.value)) {
+      e.preventDefault()
     }
   }
-  container.addEventListener('mouseup', mouseUpHandler)
-  ;(container as any).__terminalMouseUpHandler = mouseUpHandler
-
-  // Selection change handler (for selection mode floating copy button)
-  if (tab.xterm) {
-    const disposable = tab.xterm.onSelectionChange(() => {
-      if (tab.id !== activeTabId.value || !tab.xterm) return
-      hasSelection.value = tab.xterm.hasSelection()
-    })
-    ;(container as any).__terminalSelectionDisposable = disposable
-  }
+  container.addEventListener('contextmenu', contextMenuHandler)
+  ;(container as any).__terminalContextMenuHandler = contextMenuHandler
 
   // Fit the terminal after mounting
   requestAnimationFrame(() => {
@@ -699,17 +638,33 @@ function handleTabMenuCopyPath() {
   // Already handled by TerminalTabMenu
 }
 
-function handleCopySelection() {
+function handleCopyOutput() {
   const xterm = activeTab.value?.xterm
   if (!xterm) return
-  const text = xterm.getSelection()
-  if (text) {
-    copyText(text, () => {
-      toast.show(t('common.copied'), { type: 'success', duration: 1500 })
-    })
-    xterm.clearSelection()
-    hasSelection.value = false
+  const buffer = xterm.buffer.active
+  const viewportY = buffer.viewportY
+  const rows = xterm.rows
+  const lines: string[] = []
+  for (let i = viewportY; i < viewportY + rows && i < buffer.length; i++) {
+    const line = buffer.getLine(i)
+    if (!line) continue
+    const text = line.translateToString(true)
+    if (line.isWrapped && lines.length > 0) {
+      lines[lines.length - 1] += text
+    } else {
+      lines.push(text)
+    }
   }
+  // Trim trailing empty lines
+  while (lines.length > 0 && lines[lines.length - 1] === '') {
+    lines.pop()
+  }
+  if (lines.length === 0) {
+    toast.show(t('terminal.noOutput'), { type: 'info', duration: 1500 })
+    return
+  }
+  outputDrawerText.value = lines.join('\n')
+  showOutputDrawer.value = true
 }
 
 async function handleTabMenuCloseAll() {
@@ -1125,39 +1080,6 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
   background: #eff1f5;
 }
 
-.terminal-container.copy-mode :deep(.xterm) {
-  user-select: text;
-  -webkit-user-select: text;
-  touch-action: none;
-}
-
-.terminal-container.copy-mode :deep(.xterm-screen),
-.terminal-container.copy-mode :deep(.xterm-scrollable-element) {
-  touch-action: none;
-}
-
-.floating-copy-btn {
-  position: absolute;
-  bottom: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 6px 20px;
-  border: none;
-  border-radius: var(--radius-sm, 6px);
-  background: var(--accent, #4f8ef7);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  z-index: 11;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-  -webkit-tap-highlight-color: transparent;
-}
-
-.floating-copy-btn:active {
-  opacity: 0.7;
-}
-
 .terminal-rebuild-overlay {
   position: absolute;
   inset: 0;
@@ -1334,19 +1256,6 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
 }
 
 .gesture-toggle { flex-shrink: 0; margin-right: 2px; }
-.toolbar-btn.mode-indicator {
-  min-width: 28px;
-  border-radius: 0;
-  background: transparent;
-  color: var(--text-secondary, #888);
-}
-.toolbar-btn.mode-indicator:active {
-  background: transparent;
-  transform: none;
-}
-.toolbar-btn.mode-indicator:hover {
-  background: transparent;
-}
 
 .toolbar-scroll {
   display: flex;
@@ -1401,7 +1310,7 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
 .toolbar-btn.shortcut:active { background: var(--toolbar-key-active); }
 .toolbar-btn.danger { color: var(--toolbar-key-text); opacity: 0.78; }
 .toolbar-btn.danger:hover { opacity: 1; background: var(--toolbar-key-hover); }
-.toolbar-btn.gesture-toggle { min-width: 32px; }
+.toolbar-btn.gesture-toggle { min-width: 32px; border-radius: 9px; }
 
 .btn-shift-tab {
   display: flex !important;
