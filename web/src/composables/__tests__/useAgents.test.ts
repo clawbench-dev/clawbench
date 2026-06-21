@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { useAgents, resetAgents, updateACPModelList, restoreOriginalModels, populateACPStateFromCache } from '@/composables/useAgents'
+import { useAgents, resetAgents, updateACPModelList, restoreOriginalModels, populateACPStateFromCache, registerIdentityUpdaters } from '@/composables/useAgents'
 
 // Mock apiGet to control agent data
 const mockApiGet = vi.fn()
@@ -39,6 +39,19 @@ describe('useAgents', () => {
     getAgent, getAgentModel, getAgentDefaultModelName, agentHeaderTitle,
     syncModelFromAgent, getAgentThinkingEffortLevels, hasThinkingEffortLevels,
     updateAgentField, canRefreshModels } = useAgents()
+
+  // Register mock identity updaters — normally done by useSessionIdentity at
+  // module evaluation time, but that module is mocked so we wire manually.
+  // resetAgents() clears the updaters, so we need a helper to re-register.
+  function registerMocks() {
+    registerIdentityUpdaters({
+      updateAvailableModes: (...args: any[]) => mockUpdateAvailableModes(...args),
+      updateAvailableThinkingEfforts: (...args: any[]) => mockUpdateAvailableThinkingEfforts(...args),
+      updateCommandState: (...args: any[]) => mockUpdateCommandState(...args),
+      currentAgentId: _currentAgentId,
+    })
+  }
+  registerMocks()
 
   const testAgents = [
     {
@@ -375,6 +388,7 @@ describe('useAgents', () => {
       expect(defaultAgentId.value).toBe('claude')
 
       resetAgents()
+      registerMocks()
 
       expect(agents.value).toEqual([])
       expect(defaultAgentId.value).toBe('')
@@ -388,6 +402,7 @@ describe('useAgents', () => {
       expect(mockApiGet.mock.calls.length).toBe(callCountBefore) // cached, no new call
 
       resetAgents()
+      registerMocks()
       mockApiGet.mockResolvedValue({ agents: testAgents, defaultAgent: 'gpt' })
       await loadAgents()
       expect(mockApiGet.mock.calls.length).toBe(callCountBefore + 1) // new API call made
@@ -478,6 +493,7 @@ describe('useAgents', () => {
       // Reset module-level singletons (originalModels, acpStatesCache) and reload
       // Deep-clone testAgents so mutations don't leak between tests
       resetAgents()
+      registerMocks()
       mockApiGet.mockResolvedValue({
         agents: JSON.parse(JSON.stringify(testAgents)),
         defaultAgent: 'claude',
@@ -550,6 +566,7 @@ describe('useAgents', () => {
   describe('restoreOriginalModels', () => {
     beforeEach(async () => {
       resetAgents()
+      registerMocks()
       mockApiGet.mockResolvedValue({
         agents: JSON.parse(JSON.stringify(testAgents)),
         defaultAgent: 'claude',
@@ -630,6 +647,7 @@ describe('useAgents', () => {
     it('populates mode, thinking, commands, and model list from cached acpStates', async () => {
       // Load agents with acpStates to populate the cache
       resetAgents()
+      registerMocks()
       mockApiGet.mockResolvedValue({ agents: testAgents, defaultAgent: 'claude', acpStates: acpState })
       await loadAgents()
 
@@ -643,6 +661,7 @@ describe('useAgents', () => {
 
     it('skips mode update when availableModes is empty', async () => {
       resetAgents()
+      registerMocks()
       const stateWithoutModes = {
         claude: {
           modeState: { currentModeId: '', availableModes: [] },
@@ -660,6 +679,7 @@ describe('useAgents', () => {
 
     it('does nothing for agent with no cached ACP state and no server state', async () => {
       resetAgents()
+      registerMocks()
       mockApiGet.mockResolvedValue({ agents: testAgents, defaultAgent: 'claude', acpStates: {} })
       await loadAgents()
 
@@ -672,6 +692,7 @@ describe('useAgents', () => {
 
     it('force-refreshes from server when cache is empty for agent', async () => {
       resetAgents()
+      registerMocks()
       mockApiGet.mockClear()
       // First load: no acpStates for 'claude'
       mockApiGet.mockResolvedValueOnce({ agents: testAgents, defaultAgent: 'claude', acpStates: {} })
@@ -714,6 +735,7 @@ describe('useAgents', () => {
 
     it('caches acpStates from API response', async () => {
       resetAgents()
+      registerMocks()
       mockApiGet.mockClear()
       mockApiGet.mockResolvedValue({ agents: testAgents, defaultAgent: 'claude', acpStates: acpState })
       await loadAgents()
@@ -727,6 +749,7 @@ describe('useAgents', () => {
 
     it('populates ACP state for the current agent during load', async () => {
       resetAgents()
+      registerMocks()
       _currentAgentId.value = 'claude'
       mockApiGet.mockResolvedValue({ agents: testAgents, defaultAgent: 'claude', acpStates: acpState })
       await loadAgents()
@@ -738,6 +761,7 @@ describe('useAgents', () => {
 
     it('does not populate ACP state when currentAgentId does not match', async () => {
       resetAgents()
+      registerMocks()
       _currentAgentId.value = 'gpt' // gpt has no acpState
       mockApiGet.mockResolvedValue({ agents: testAgents, defaultAgent: 'claude', acpStates: acpState })
       await loadAgents()
@@ -747,6 +771,7 @@ describe('useAgents', () => {
 
     it('does not populate ACP state when currentAgentId is empty', async () => {
       resetAgents()
+      registerMocks()
       _currentAgentId.value = ''
       mockApiGet.mockResolvedValue({ agents: testAgents, defaultAgent: 'claude', acpStates: acpState })
       await loadAgents()
@@ -756,6 +781,7 @@ describe('useAgents', () => {
 
     it('overrides models from modelListState during load for current agent', async () => {
       resetAgents()
+      registerMocks()
       _currentAgentId.value = 'claude'
       const stateWithModels = {
         claude: {
@@ -783,6 +809,7 @@ describe('useAgents', () => {
         },
       }
       resetAgents()
+      registerMocks()
       mockApiGet.mockClear()
       mockApiGet.mockResolvedValueOnce({ agents: testAgents, defaultAgent: 'claude', acpStates: acpState })
       await loadAgents()
@@ -793,6 +820,7 @@ describe('useAgents', () => {
 
       // After reset, cache is gone — populateACPStateFromCache must re-fetch
       resetAgents()
+      registerMocks()
       mockApiGet.mockResolvedValueOnce({ agents: testAgents, defaultAgent: 'claude', acpStates: acpState })
       await populateACPStateFromCache('claude')
       expect(mockApiGet).toHaveBeenCalledTimes(2)

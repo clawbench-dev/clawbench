@@ -32,6 +32,7 @@ vi.mock('@/composables/useAgents', () => ({
     getAgent: mockGetAgent,
     getEffectiveThinkingEffort: mockGetEffectiveThinkingEffort,
   }),
+  registerIdentityUpdaters: vi.fn(),
 }))
 
 // Mock useSettingsConfig — saveModelPref is now a no-op, but patchAgentPref

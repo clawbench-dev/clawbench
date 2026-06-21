@@ -317,7 +317,7 @@ export async function populateACPStateFromCache(agentId: string): Promise<void> 
         // Fallback: agent config (e.g. OpenCode/Kimi ACP don't expose thought_level)
         const agentLevels = getAgentThinkingEffortLevels(agentId)
         if (agentLevels.length > 0) {
-            updateAvailableThinkingEfforts(agentLevels.map((id: string) => ({ id, name: id })))
+            _updateAvailableThinkingEfforts?.(agentLevels.map((id: string) => ({ id, name: id })))
         }
     }
     if (Array.isArray(state.commands) && state.commands.length > 0) {

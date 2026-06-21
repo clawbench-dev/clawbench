@@ -431,8 +431,8 @@ describe('store', () => {
             const result = await store.setProject('/new/project')
 
             expect(mockApiPost).toHaveBeenCalledWith('/api/project', { path: '/new/project' })
-            // After setProject, resetProjectState should have been called
-            expect(store.state.projectRoot).toBe('')
+            // After setProject, resetProjectState clears then applies new project data
+            expect(store.state.projectRoot).toBe('/new/project')
             expect(store.state.gitBranch).toBe('')
             expect(store.state.chatRunning).toBe(false)
             // Returns the path from API response

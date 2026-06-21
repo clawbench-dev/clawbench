@@ -431,6 +431,10 @@ describe('useFileUpload', () => {
 
   describe('cleanupPreviewUrls', () => {
     it('revokes all preview URLs', () => {
+      // Ensure revokeObjectURL exists in jsdom (may not be available in all environments)
+      if (!URL.revokeObjectURL) {
+        URL.revokeObjectURL = vi.fn()
+      }
       const revokeSpy = vi.spyOn(URL, 'revokeObjectURL')
       const upload = useFileUpload()
       upload.pendingFiles.value.push(

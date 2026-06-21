@@ -27,6 +27,7 @@ vi.mock('@/composables/useAgents', () => ({
         agentHeaderTitle: mockAgentHeaderTitle,
         supportsDualTransport: vi.fn().mockReturnValue(true),
     }),
+    registerIdentityUpdaters: vi.fn(),
 }))
 
 vi.mock('@/composables/useToast', () => ({
