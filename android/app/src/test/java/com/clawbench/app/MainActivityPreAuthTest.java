@@ -203,8 +203,9 @@ public class MainActivityPreAuthTest {
 
         Thread.sleep(500);
 
-        // Non-200/401/429 status now returns to login page, not WebView fallback
-        verify(mockWebView, never()).loadUrl(anyString());
+        // Non-200/401/429 status now returns to login page, not WebView fallback to server URL
+        verify(mockWebView).loadUrl(LOGIN_HTML_URL);
+        verify(mockWebView, never()).loadUrl(TEST_URL);
     }
 
     // =====================================================
@@ -221,7 +222,8 @@ public class MainActivityPreAuthTest {
         Thread.sleep(500);
 
         // Network errors now return to login page, not WebView fallback
-        verify(mockWebView, never()).loadUrl(anyString());
+        verify(mockWebView).loadUrl(LOGIN_HTML_URL);
+        verify(mockWebView, never()).loadUrl(TEST_URL);
     }
 
     @Test
@@ -234,7 +236,8 @@ public class MainActivityPreAuthTest {
         Thread.sleep(500);
 
         // Network errors now return to login page
-        verify(mockWebView, never()).postDelayed(any(Runnable.class), anyLong());
+        verify(mockWebView).loadUrl(LOGIN_HTML_URL);
+        verify(mockWebView, never()).loadUrl(TEST_URL);
     }
 
     @Test
@@ -246,8 +249,8 @@ public class MainActivityPreAuthTest {
 
         Thread.sleep(500);
 
-        // SSL errors now show confirmation dialog, not WebView fallback
-        verify(mockWebView, never()).loadUrl(anyString());
+        // SSL errors now show confirmation dialog, not WebView fallback to server URL
+        verify(mockWebView, never()).loadUrl(TEST_URL);
     }
 
     // =====================================================
@@ -341,22 +344,25 @@ public class MainActivityPreAuthTest {
     public void handleAuthResponse_500_showsLoginPage() throws Exception {
         invokeHandleAuthResponse(500, TEST_URL, "testpass", Collections.emptyList());
 
-        // Non-200/401/429 status now returns to login page, not WebView fallback
-        verify(mockWebView, never()).loadUrl(anyString());
+        // Non-200/401/429 status now returns to login page
+        verify(mockWebView).loadUrl(LOGIN_HTML_URL);
+        verify(mockWebView, never()).loadUrl(TEST_URL);
     }
 
     @Test
     public void handleAuthResponse_403_showsLoginPage() throws Exception {
         invokeHandleAuthResponse(403, TEST_URL, "testpass", Collections.emptyList());
 
-        verify(mockWebView, never()).loadUrl(anyString());
+        verify(mockWebView).loadUrl(LOGIN_HTML_URL);
+        verify(mockWebView, never()).loadUrl(TEST_URL);
     }
 
     @Test
     public void handleAuthResponse_302_showsLoginPage() throws Exception {
         invokeHandleAuthResponse(302, TEST_URL, "testpass", Collections.emptyList());
 
-        verify(mockWebView, never()).loadUrl(anyString());
+        verify(mockWebView).loadUrl(LOGIN_HTML_URL);
+        verify(mockWebView, never()).loadUrl(TEST_URL);
     }
 
     // =====================================================
