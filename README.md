@@ -44,9 +44,9 @@
 
 ### AI 智能体
 
-| 智能体选择 | AI 对话 | ACP 权限审批 | 会话管理 |
-|------------|---------|-------------|----------|
-| ![智能体选择](docs/screenshots/agent-selector.png) | ![AI 对话](docs/screenshots/chat-panel.png) | ![ACP 权限审批](docs/screenshots/acp-permission.png) | ![会话管理](docs/screenshots/session-manager.png) |
+| 智能体选择 | AI 对话 | ACP 权限审批 | RAG 检索 | 会话管理 |
+|------------|---------|-------------|----------|----------|
+| ![智能体选择](docs/screenshots/agent-selector.png) | ![AI 对话](docs/screenshots/chat-panel.png) | ![ACP 权限审批](docs/screenshots/acp-permission.png) | ![RAG 检索](docs/screenshots/rag-search.png) | ![会话管理](docs/screenshots/session-manager.png) |
 
 | 定时任务 | 创建任务 | 任务卡片 |
 |----------|----------|----------|
