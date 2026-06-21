@@ -264,7 +264,7 @@ async function confirm() {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 10px 4px;
+  padding: 4px 10px 4px;
 }
 
 .dialog-toolbar-row :deep(.search-pill) {
@@ -281,8 +281,8 @@ async function confirm() {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: none;
   border-radius: 50%;
