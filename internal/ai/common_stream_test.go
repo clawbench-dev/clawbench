@@ -376,15 +376,6 @@ func TestNormalizeToolInput_GenericAcpRemaps(t *testing.T) {
 	assert.Nil(t, parsed["cellType"])
 }
 
-func TestNormalizeToolInputForTest_Wrapper(t *testing.T) {
-	input := json.RawMessage(`{"filePath":"/tmp/test.go"}`)
-	norm, err := NormalizeToolInputForTest(input, nil)
-	require.NoError(t, err)
-	var parsed map[string]any
-	require.NoError(t, json.Unmarshal(norm, &parsed))
-	assert.Equal(t, "/tmp/test.go", parsed["file_path"])
-}
-
 // --- execCommandJSON test ---
 
 func TestExecCommandJSON(t *testing.T) {

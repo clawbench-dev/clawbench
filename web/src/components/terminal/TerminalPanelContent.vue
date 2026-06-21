@@ -107,6 +107,10 @@
             <button ref="cmdBtnRef" class="toolbar-btn btn-action" @click="showCommands = !showCommands" :title="t('terminal.quickCommands')">
               <ZapIcon :size="14" />
             </button>
+            <!-- Copy output button -->
+            <button class="toolbar-btn btn-action" @click="handleCopyOutput" :title="t('terminal.copyOutput')">
+              <CopyIcon :size="14" />
+            </button>
             <!-- Settings button (always present) -->
             <button class="toolbar-btn btn-action" @click="showKeyConfig = true" :title="t('terminal.keyConfigTitle')">
               <Settings :size="14" />
@@ -149,6 +153,14 @@
       @close="showKeyConfig = false"
       @saved="onKeyConfigSaved"
     />
+
+    <!-- Output text drawer — copy visible terminal output -->
+    <OutputDrawer
+      :open="props.active && showOutputDrawer"
+      :output-text="outputDrawerText"
+      :font-size="fontSize"
+      @close="showOutputDrawer = false"
+    />
   </div>
 </template>
 
@@ -160,6 +172,7 @@ import '@xterm/xterm/css/xterm.css'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import QuickCommandDialog from '@/components/terminal/QuickCommandDialog.vue'
 import KeyConfigDrawer from '@/components/terminal/KeyConfigDrawer.vue'
+import OutputDrawer from '@/components/terminal/OutputDrawer.vue'
 import TerminalTabMenu from '@/components/terminal/TerminalTabMenu.vue'
 import { useTerminalTabs, type TerminalTab } from '@/composables/useTerminalTabs'
 import { useTerminalViewport } from '@/composables/useTerminalViewport'
@@ -179,8 +192,9 @@ import {
 } from '@/utils/terminalFontUtils'
 import { localConfig, setLocalConfig, useSettingsConfig } from '@/composables/useSettingsConfig'
 import type { KeyDef } from '@/utils/terminalKeyDefs'
+import { copyText } from '@/utils/clipboard'
 
-import { Zap as ZapIcon, Hand as HandIcon, Hash as HashIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, Terminal as TerminalIcon, Settings } from 'lucide-vue-next'
+import { Zap as ZapIcon, Hand as HandIcon, Hash as HashIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, Terminal as TerminalIcon, Settings, Copy as CopyIcon } from 'lucide-vue-next'
 const props = defineProps<{
   requestedCwd?: string | null
   active?: boolean
@@ -223,6 +237,8 @@ function applyFontSize(size: number) {
 // Refs
 const gestureHint = ref('')
 let gestureHintTimer: ReturnType<typeof setTimeout> | null = null
+const showOutputDrawer = ref(false)
+const outputDrawerText = ref('')
 const showCommands = ref(false)
 const cmdBtnRef = ref<HTMLElement | null>(null)
 const showSymbolBar = ref(false)
@@ -427,7 +443,9 @@ watch(() => gestures.enabled.value, () => nextTick(refreshToolbarFade))
 
 // Re-bind gesture listeners when switching/creating tabs (container element changes).
 // Use double nextTick to ensure mountTabToContainer has already run.
-watch(activeTabId, () => nextTick(() => nextTick(() => gestures.attach())))
+watch(activeTabId, () => {
+  nextTick(() => nextTick(() => gestures.attach()))
+})
 
 // Volume keys (Android)
 const { isAppMode } = useAppMode()
@@ -501,6 +519,18 @@ function setTabContainer(tabId: string, el: HTMLElement | null) {
 }
 
 function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
+  // Clean up previous handlers from a prior mount on the same container
+  const oldWheel = (container as any).__terminalWheelHandler
+  if (oldWheel) {
+    container.removeEventListener('wheel', oldWheel)
+    delete (container as any).__terminalWheelHandler
+  }
+  const oldCtx = (container as any).__terminalContextMenuHandler
+  if (oldCtx) {
+    container.removeEventListener('contextmenu', oldCtx)
+    delete (container as any).__terminalContextMenuHandler
+  }
+
   tabManager.mountTabXterm(tab, container)
 
   // Add Ctrl+Wheel zoom handler
@@ -514,7 +544,7 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
   container.addEventListener('wheel', wheelHandler, { passive: false })
   ;(container as any).__terminalWheelHandler = wheelHandler
 
-  // Context menu handler
+  // Context menu handler — suppress long-press context menu while gestures are enabled
   const contextMenuHandler = (e: Event) => {
     if (shouldPreventTerminalContextMenu(gestures.enabled.value)) {
       e.preventDefault()
@@ -522,18 +552,6 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
   }
   container.addEventListener('contextmenu', contextMenuHandler)
   ;(container as any).__terminalContextMenuHandler = contextMenuHandler
-
-  // Auto-copy selected text on selection change (long-press select → auto copy)
-  if (tab.xterm) {
-    const selectionDisposable = tab.xterm.onSelectionChange(() => {
-      const selection = tab.xterm?.getSelection()
-      if (selection) {
-        navigator.clipboard.writeText(selection).catch(() => {})
-        toast.show(t('common.copied'), { type: 'success', duration: 1500 })
-      }
-    })
-    ;(tab as any).__selectionDisposable = selectionDisposable
-  }
 
   // Fit the terminal after mounting
   requestAnimationFrame(() => {
@@ -618,6 +636,35 @@ function handleTabMenuClose() {
 
 function handleTabMenuCopyPath() {
   // Already handled by TerminalTabMenu
+}
+
+function handleCopyOutput() {
+  const xterm = activeTab.value?.xterm
+  if (!xterm) return
+  const buffer = xterm.buffer.active
+  const viewportY = buffer.viewportY
+  const rows = xterm.rows
+  const lines: string[] = []
+  for (let i = viewportY; i < viewportY + rows && i < buffer.length; i++) {
+    const line = buffer.getLine(i)
+    if (!line) continue
+    const text = line.translateToString(true)
+    if (line.isWrapped && lines.length > 0) {
+      lines[lines.length - 1] += text
+    } else {
+      lines.push(text)
+    }
+  }
+  // Trim trailing empty lines
+  while (lines.length > 0 && lines[lines.length - 1] === '') {
+    lines.pop()
+  }
+  if (lines.length === 0) {
+    toast.show(t('terminal.noOutput'), { type: 'info', duration: 1500 })
+    return
+  }
+  outputDrawerText.value = lines.join('\n')
+  showOutputDrawer.value = true
 }
 
 async function handleTabMenuCloseAll() {

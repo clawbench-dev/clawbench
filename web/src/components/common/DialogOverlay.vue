@@ -101,6 +101,10 @@ function handleCancel() {
   line-height: 1.5;
   margin-bottom: 14px;
   white-space: pre-line;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  max-height: 40vh;
+  overflow-y: auto;
 }
 
 .dlg-input {

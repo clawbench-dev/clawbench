@@ -216,6 +216,30 @@ type StreamParser struct {
 // which use ClawBench UUIDs natively and don't need external session ID mapping.
 func (p *StreamParser) GetCapturedSessionID() string { return "" }
 
+// toolState returns a ClaudeStreamToolState populated from the parser's fields.
+func (p *StreamParser) toolState() ClaudeStreamToolState {
+	return ClaudeStreamToolState{
+		ActiveTools:            p.activeTools,
+		ActiveToolResults:      p.activeToolResults,
+		ActiveThinkingBlocks:   p.activeThinkingBlocks,
+		EmittedToolInputEmpty:  p.emittedToolInputEmpty,
+		ReceivedPartialToolUse: p.receivedPartialToolUse,
+		ReceivedPartial:        p.receivedPartial,
+		ReceivedPartialThinking: p.receivedPartialThinking,
+	}
+}
+
+// syncToolState writes back tool state fields from the struct to the parser.
+func (p *StreamParser) syncToolState(state ClaudeStreamToolState) {
+	p.activeTools = state.ActiveTools
+	p.activeToolResults = state.ActiveToolResults
+	p.activeThinkingBlocks = state.ActiveThinkingBlocks
+	p.emittedToolInputEmpty = state.EmittedToolInputEmpty
+	p.receivedPartialToolUse = state.ReceivedPartialToolUse
+	p.receivedPartial = state.ReceivedPartial
+	p.receivedPartialThinking = state.ReceivedPartialThinking
+}
+
 // ParseLine parses a single JSON line from stream-json output and sends
 // StreamEvent(s) to the provided channel. This is the shared parser used by
 // both Claude and Codebuddy streaming implementations.
@@ -230,72 +254,13 @@ func (p *StreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 
 	switch msg.Type {
 	case "assistant":
-		// Claude verbose format: content blocks in msg.Message.Content
+		state := p.toolState()
+		events := parseClaudeAssistantToolUse(&msg, &state)
+		for _, ev := range events {
+			ch <- ev
+		}
+		p.syncToolState(state)
 		if msg.Message != nil {
-			for _, block := range msg.Message.Content {
-				switch block.Type {
-				case "tool_use":
-					if p.receivedPartialToolUse {
-						// We already emitted this tool_use via stream_event.
-						// However, some CLIs/models send empty input_json_delta,
-						// resulting in tool_use blocks with no Input. If the
-						// verbose assistant message contains the full Input,
-						// re-emit a tool_use event so AccumulateBlock can update
-						// the existing block with the correct input data.
-						if p.emittedToolInputEmpty != nil && p.emittedToolInputEmpty[block.ID] {
-							inputStr := string(block.Input)
-							if inputStr != "" && inputStr != "{}" {
-								slog.Debug("stream: supplementing empty tool_use input from assistant message",
-									"tool_id", block.ID, "tool_name", block.Name, "input_len", len(inputStr))
-								ch <- StreamEvent{Type: "tool_use", Tool: &ToolCall{
-									Name:  block.Name,
-									ID:    block.ID,
-									Input: inputStr,
-									Done:  true,
-								}}
-							}
-							delete(p.emittedToolInputEmpty, block.ID)
-						}
-						continue
-					}
-					// Emit tool_use event with full input from the complete message
-					// Claude/Codebuddy already use canonical tool names and field names
-					inputStr := string(block.Input)
-					ch <- StreamEvent{Type: "tool_use", Tool: &ToolCall{
-						Name:  block.Name,
-						ID:    block.ID,
-						Input: inputStr,
-						Done:  true,
-					}}
-				case "tool_result":
-					// Tool result in assistant verbose format — emit tool_result event
-					toolUseID := block.ToolUseID
-					if toolUseID == "" {
-						toolUseID = block.ID
-					}
-					status := "success"
-					if block.IsError {
-						status = "error"
-					}
-					output := extractContentText(block.Content)
-					if output == "" && block.Text != "" {
-						output = block.Text
-					}
-					ch <- StreamEvent{Type: "tool_result", Tool: &ToolCall{
-						ID:     toolUseID,
-						Output: truncateToolOutput(output),
-						Status: status,
-					}}
-				case "thinking":
-					if block.Thinking != "" && !p.receivedPartialThinking {
-						ch <- StreamEvent{Type: "thinking", Content: block.Thinking}
-					}
-				case "text":
-					if block.Text != "" && !p.receivedPartial {
-						ch <- StreamEvent{Type: "content", Content: block.Text}
-					}
-				}
-			}
 			return
 		}
 		// If we already received partial content via stream_event, skip text/thinking
@@ -369,213 +334,20 @@ func (p *StreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 		// System messages (e.g., init, tool use) - skip
 
 	case "user":
-		// Claude/Codebuddy verbose format: tool_result blocks appear in user messages
-		// (tool results are sent back to the model as "user" role). Extract them
-		// so that tool_use blocks get their output/status populated.
-		if msg.Message != nil {
-			for _, block := range msg.Message.Content {
-				if block.Type != "tool_result" {
-					continue
-				}
-				toolUseID := block.ToolUseID
-				if toolUseID == "" {
-					toolUseID = block.ID
-				}
-				status := "success"
-				if block.IsError {
-					status = "error"
-				}
-				output := extractContentText(block.Content)
-				if output == "" && block.Text != "" {
-					output = block.Text
-				}
-				slog.Debug("stream: emitting tool_result from user message", "tool_use_id", toolUseID, "output_len", len(output), "status", status)
-				ch <- StreamEvent{Type: "tool_result", Tool: &ToolCall{
-					ID:     toolUseID,
-					Output: truncateToolOutput(output),
-					Status: status,
-				}}
-			}
+		events := parseClaudeUserToolResult(&msg)
+		for _, ev := range events {
+			ch <- ev
 		}
 
 	case "stream_event":
-		// Codebuddy --include-partial-messages: incremental token streaming
-		if msg.Event == nil {
-			return
-		}
-		switch msg.Event.Type {
-		case "content_block_delta":
-			if msg.Event.Delta == nil {
-				return
-			}
-			switch msg.Event.Delta.Type {
-			case "text_delta":
-				// Check if this text_delta belongs to an active tool_result block.
-				// If so, accumulate the text into the tool result output instead of
-				// emitting it as a content event — this prevents tool output from
-				// leaking into the assistant's text response.
-				if p.activeToolResults != nil {
-					if accum, ok := p.activeToolResults[msg.Event.Index]; ok {
-						if msg.Event.Delta.Text != "" {
-							accum.Output.WriteString(msg.Event.Delta.Text)
-						}
-						return
-					}
-				}
-				if msg.Event.Delta.Text != "" {
-					p.receivedPartial = true
-					ch <- StreamEvent{Type: "content", Content: msg.Event.Delta.Text}
-				}
-			case "input_json_delta":
-				// Accumulate tool input JSON via partial_json field (canonical format).
-				// Use the index field to find the correct tool in activeTools,
-				// since parallel sub-agents may interleave events for different tools.
-				if tool, ok := p.activeTools[msg.Event.Index]; ok {
-					delta := msg.Event.Delta.PartialJSON
-					if delta != "" {
-						tool.Input += delta
-					}
-				}
-			case "thinking_delta":
-				if msg.Event.Delta.Thinking != "" {
-					p.receivedPartialThinking = true
-					ch <- StreamEvent{Type: "thinking", Content: msg.Event.Delta.Thinking}
-				}
-			}
-		case "content_block_start":
-			if msg.Event.ContentBlock != nil {
-				switch msg.Event.ContentBlock.Type {
-				case "tool_use":
-					p.receivedPartialToolUse = true
-					tool := &ToolCall{
-						Name: msg.Event.ContentBlock.Name,
-						ID:   msg.Event.ContentBlock.ID,
-					}
-					// Capture input from content_block_start if provided.
-					// Some CLIs (e.g., Claude CLI with certain models) include the
-					// full tool input in the content_block_start event instead of
-					// sending separate input_json_delta events.
-					// Skip empty input "{}" — it's a placeholder; the real input
-					// will arrive via input_json_delta events. Setting it would
-					// cause JSON corruption when deltas are appended.
-					if len(msg.Event.ContentBlock.Input) > 0 &&
-						string(msg.Event.ContentBlock.Input) != "{}" {
-						tool.Input = string(msg.Event.ContentBlock.Input)
-					}
-					// Track by content block index so that interleaved events from
-					// parallel sub-agents can be correctly routed to their tool.
-					if p.activeTools == nil {
-						p.activeTools = make(map[int]*ToolCall)
-					}
-					// If there's already a tool at this index that hasn't received
-					// content_block_stop (e.g., CLI reused the same index for a
-					// replacement tool without emitting stop), auto-close it first.
-					if existing, ok := p.activeTools[msg.Event.Index]; ok {
-						slog.Debug("stream: auto-closing tool at reused index", "index", msg.Event.Index, "tool_id", existing.ID, "tool_name", existing.Name)
-						closed := *existing // copy before mutating
-						closed.Done = true
-						ch <- StreamEvent{Type: "tool_use", Tool: &closed}
-					}
-					p.activeTools[msg.Event.Index] = tool
-					// Send a copy to the channel so that later mutations (Input accumulation,
-					// Done=true) don't affect events already queued for SSE consumption.
-					startCopy := *tool
-					ch <- StreamEvent{Type: "tool_use", Tool: &startCopy}
-					// Track tool IDs emitted with empty Input so that when the
-					// assistant verbose message arrives, we can supplement the
-					// missing input data. This handles CLIs/models where
-					// input_json_delta.partial_json is always empty.
-					if tool.Input == "" {
-						if p.emittedToolInputEmpty == nil {
-							p.emittedToolInputEmpty = make(map[string]bool)
-						}
-						p.emittedToolInputEmpty[tool.ID] = true
-					}
-				case "tool_result":
-					// Track tool_result block to suppress text_delta leak.
-					// When a tool_result content_block_start is received, subsequent
-					// text_delta events for this index should be accumulated as tool
-					// output rather than emitted as content events.
-					if p.activeToolResults == nil {
-						p.activeToolResults = make(map[int]*toolResultAccum)
-					}
-					accum := &toolResultAccum{
-						IsError: msg.Event.ContentBlock.IsError,
-					}
-					// The tool_use_id field links this result back to the original tool_use call.
-					// Fall back to the ID field if tool_use_id is not present.
-					toolUseID := msg.Event.ContentBlock.ToolUseID
-					if toolUseID == "" {
-						toolUseID = msg.Event.ContentBlock.ID
-					}
-					accum.ToolUseID = toolUseID
-					// Some CLIs may include the full output in content_block_start
-					if msg.Event.ContentBlock.Content != "" {
-						accum.Output.WriteString(msg.Event.ContentBlock.Content)
-					}
-					p.activeToolResults[msg.Event.Index] = accum
-				case "thinking":
-					// Track thinking block index so we can emit thinking_done
-					// when content_block_stop arrives for it.
-					if p.activeThinkingBlocks == nil {
-						p.activeThinkingBlocks = make(map[int]bool)
-					}
-					p.activeThinkingBlocks[msg.Event.Index] = true
-				}
-			}
-		case "content_block_stop":
-			// Check if this is a tool_result block being finalized
-			if p.activeToolResults != nil {
-				if accum, ok := p.activeToolResults[msg.Event.Index]; ok {
-					status := "success"
-					if accum.IsError {
-						status = "error"
-					}
-					ch <- StreamEvent{Type: "tool_result", Tool: &ToolCall{
-						ID:     accum.ToolUseID,
-						Output: truncateToolOutput(accum.Output.String()),
-						Status: status,
-					}}
-					delete(p.activeToolResults, msg.Event.Index)
-				}
-			}
-			// Check if this is a tool_use block being finalized
-			if tool, ok := p.activeTools[msg.Event.Index]; ok {
-				closed := *tool // copy before mutating
-				closed.Done = true
-				ch <- StreamEvent{Type: "tool_use", Tool: &closed}
-				// Track tool IDs where the final Input is still empty after
-				// content_block_stop. The assistant verbose message may
-				// contain the full input data.
-				if closed.Input == "" {
-					if p.emittedToolInputEmpty == nil {
-						p.emittedToolInputEmpty = make(map[string]bool)
-					}
-					p.emittedToolInputEmpty[closed.ID] = true
-				}
-				delete(p.activeTools, msg.Event.Index)
-			} else if p.activeThinkingBlocks != nil && p.activeThinkingBlocks[msg.Event.Index] {
-				// Thinking block completed — emit thinking_done so the
-				// frontend spinner disappears immediately instead of
-				// waiting for the entire response to finish.
-				ch <- StreamEvent{Type: "thinking_done"}
-				delete(p.activeThinkingBlocks, msg.Event.Index)
-			} else {
-				slog.Debug("stream: content_block_stop for unknown index", "index", msg.Event.Index)
-			}
-		case "message_start":
-			// Extract model name from message_start
+		state := p.toolState()
+		parseClaudeStreamToolEvent(&msg, &state, ch)
+		p.syncToolState(state)
+		// Extract model name from message_start
+		if msg.Event != nil && msg.Event.Type == "message_start" {
 			if msg.Event.Message != nil && msg.Event.Message.Model != "" {
 				p.model = msg.Event.Message.Model
 			}
-			// Reset partial flags for a new assistant turn (ISS-028).
-			// Each message_start begins a fresh turn — previous partial
-			// content flags must not suppress content from the new turn.
-			p.receivedPartial = false
-			p.receivedPartialThinking = false
-			p.receivedPartialToolUse = false
-		case "message_delta", "message_stop":
-			// Structural events - no content to emit
 		}
 
 	case "file-history-snapshot":

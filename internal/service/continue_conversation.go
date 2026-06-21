@@ -256,3 +256,123 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 
 	return newSessionID, false, nil
 }
+
+// ForkSession creates a new chat session by copying all non-streaming messages
+// and summaries from the source session. Unlike ContinueFromExecution, this
+// does NOT copy external_session_id — the forked session starts fresh.
+// The title is prefix + source title (handler provides the localized prefix).
+func ForkSession(sourceSessionID, projectPath, title string) (string, error) {
+	// 1. Get source session metadata
+	var backend, agentID, agentSource, modelName, sessProjectPath string
+	err := DB.QueryRow(
+		"SELECT backend, agent_id, agent_source, model, project_path FROM chat_sessions WHERE id = ? AND deleted = 0",
+		sourceSessionID,
+	).Scan(&backend, &agentID, &agentSource, &modelName, &sessProjectPath)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("source session %s not found", sourceSessionID)
+	}
+	if err != nil {
+		return "", err
+	}
+
+	// 2. Validate project ownership
+	if sessProjectPath != projectPath {
+		return "", fmt.Errorf("session %s does not belong to project %q", sourceSessionID, projectPath)
+	}
+
+	// 3. Max session count check
+	if model.SessionMaxCount > 0 {
+		var count int
+		err = DB.QueryRow(
+			"SELECT COUNT(*) FROM chat_sessions WHERE project_path = ? AND deleted = 0 AND session_type = 'chat'",
+			sessProjectPath,
+		).Scan(&count)
+		if err != nil {
+			return "", err
+		}
+		if count >= model.SessionMaxCount {
+			return "", fmt.Errorf("session limit reached (%d/%d)", count, model.SessionMaxCount)
+		}
+	}
+
+	// 4. Title is provided by handler (localized prefix + source title)
+
+	// 5. Create new session (no external_session_id inheritance)
+	newSessionID := generateSessionID()
+	_, err = DB.Exec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, source_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?)",
+		newSessionID, sessProjectPath, backend, title, agentID, agentSource, modelName, sourceSessionID,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create forked session: %w", err)
+	}
+	slog.Info("session forked",
+		slog.String("session", newSessionID),
+		slog.String("source_session", sourceSessionID),
+		slog.String("backend", backend),
+		slog.String("agent", agentID))
+
+	// 6. Copy chat_history (only streaming=0), same pattern as ContinueFromExecution
+	rows, err := DB.Query(
+		"SELECT id, project_path, role, content, files, backend FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id",
+		sourceSessionID,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to query source messages: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	type sourceMsg struct {
+		id          int64
+		projectPath string
+		role        string
+		content     string
+		files       sql.NullString
+		backend     string
+	}
+	var messages []sourceMsg
+	for rows.Next() {
+		var m sourceMsg
+		if err := rows.Scan(&m.id, &m.projectPath, &m.role, &m.content, &m.files, &m.backend); err != nil {
+			return "", fmt.Errorf("failed to scan source message: %w", err)
+		}
+		messages = append(messages, m)
+	}
+
+	idMap := make(map[int64]int64)
+	for _, m := range messages {
+		result, err := DB.Exec(
+			"INSERT INTO chat_history (project_path, role, content, files, session_id, backend, streaming) VALUES (?, ?, ?, ?, ?, ?, 0)",
+			m.projectPath, m.role, m.content, m.files, newSessionID, m.backend,
+		)
+		if err != nil {
+			return "", fmt.Errorf("failed to copy message %d: %w", m.id, err)
+		}
+		newID, _ := result.LastInsertId()
+		idMap[m.id] = newID
+	}
+
+	// 7. Copy summaries
+	for oldID, newID := range idMap {
+		var summary string
+		err := DB.QueryRow(
+			"SELECT summary FROM summaries WHERE target_type = 'chat_message' AND target_id = ?",
+			oldID,
+		).Scan(&summary)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("failed to query summary for message %d: %w", oldID, err)
+		}
+		_, err = DB.Exec(
+			"INSERT OR REPLACE INTO summaries (target_type, target_id, summary, created_at) VALUES ('chat_message', ?, ?, CURRENT_TIMESTAMP)",
+			newID, summary,
+		)
+		if err != nil {
+			return "", fmt.Errorf("failed to copy summary for message %d: %w", oldID, err)
+		}
+	}
+
+	return newSessionID, nil
+}

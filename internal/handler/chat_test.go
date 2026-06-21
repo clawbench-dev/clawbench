@@ -328,9 +328,10 @@ func TestAccumulateBlock_TextFlushedBeforeToolUse(t *testing.T) {
 
 func TestBlocksSerialization(t *testing.T) {
 	// Verify that blocks can be serialized to JSON and deserialized correctly
+	// Note: tool_use blocks serialize in slim format (no input/output)
 	blocks := []model.ContentBlock{
 		{Type: "thinking", Text: "Analyzing..."},
-		{Type: "tool_use", Name: "Read", ID: "t1", Input: map[string]any{"file_path": "/src/main.go"}},
+		{Type: "tool_use", Name: "Read", ID: "t1", Summary: "main.go", FilePath: "/src/main.go", Input: map[string]any{"file_path": "/src/main.go"}},
 		{Type: "text", Text: "Here is the result."},
 	}
 
@@ -357,8 +358,13 @@ func TestBlocksSerialization(t *testing.T) {
 	if result.Blocks[1].Type != "tool_use" || result.Blocks[1].Name != "Read" {
 		t.Errorf("block 1 mismatch: %+v", result.Blocks[1])
 	}
-	if result.Blocks[1].Input["file_path"] != "/src/main.go" {
-		t.Errorf("block 1 input mismatch: %v", result.Blocks[1].Input)
+	// Slim serialization: input is NOT present in serialized form
+	if result.Blocks[1].Input != nil {
+		t.Errorf("block 1 input should be nil after slim round-trip, got %v", result.Blocks[1].Input)
+	}
+	// But summary/file_path should be present
+	if result.Blocks[1].Summary != "main.go" {
+		t.Errorf("block 1 summary mismatch: got %v", result.Blocks[1].Summary)
 	}
 	if result.Blocks[2].Type != "text" || result.Blocks[2].Text != "Here is the result." {
 		t.Errorf("block 2 mismatch: %+v", result.Blocks[2])
@@ -367,9 +373,10 @@ func TestBlocksSerialization(t *testing.T) {
 
 func TestBlocksSerialization_RoundTrip(t *testing.T) {
 	// Verify blocks survive a full serialize → DB store → deserialize cycle
+	// Note: tool_use blocks serialize in slim format (no input/output)
 	original := []model.ContentBlock{
 		{Type: "thinking", Text: "Deep thought"},
-		{Type: "tool_use", Name: "Bash", ID: "toolu_1", Input: map[string]any{"command": "ls -la"}},
+		{Type: "tool_use", Name: "Bash", ID: "toolu_1", Summary: "ls -la", Input: map[string]any{"command": "ls -la"}},
 		{Type: "text", Text: "Result here."},
 	}
 
@@ -394,12 +401,15 @@ func TestBlocksSerialization_RoundTrip(t *testing.T) {
 		t.Errorf("thinking block lost in round-trip: %+v", parsed.Blocks[0])
 	}
 
-	// Verify tool_use
+	// Verify tool_use — slim format: no input, but summary is preserved
 	if parsed.Blocks[1].Type != "tool_use" || parsed.Blocks[1].Name != "Bash" {
 		t.Errorf("tool_use block lost in round-trip: %+v", parsed.Blocks[1])
 	}
-	if parsed.Blocks[1].Input["command"] != "ls -la" {
-		t.Errorf("tool input lost in round-trip: %v", parsed.Blocks[1].Input)
+	if parsed.Blocks[1].Input != nil {
+		t.Errorf("tool input should be nil after slim round-trip, got %v", parsed.Blocks[1].Input)
+	}
+	if parsed.Blocks[1].Summary != "ls -la" {
+		t.Errorf("tool summary lost in round-trip: got %v", parsed.Blocks[1].Summary)
 	}
 
 	// Verify text
@@ -2995,4 +3005,37 @@ func TestBuildChatRequest_ACPNewSession_NoResume(t *testing.T) {
 	req := buildChatRequest("hello", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "acp-stdio", "")
 	assert.False(t, req.Resume, "new ACP session should not be resume")
 	assert.Equal(t, sessionID, req.SessionID, "new ACP session should use ClawBench UUID")
+}
+
+// --- ServeToolCallDetail ---
+
+func TestServeToolCallDetail_MissingParams(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Missing both params
+	req := newRequest(t, http.MethodGet, "/api/ai/chat/tool-call", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeToolCallDetail, req)
+	assertStatus(t, w, http.StatusBadRequest)
+}
+
+func TestServeToolCallDetail_NotFound(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat/tool-call?tool_id=nonexistent&message_id=999", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeToolCallDetail, req)
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+func TestServeToolCallDetail_WrongMethod(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/ai/chat/tool-call", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeToolCallDetail, req)
+	assertStatus(t, w, http.StatusMethodNotAllowed)
 }

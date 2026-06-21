@@ -118,7 +118,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Always update cookie with current session ID
-		setSessionID(w, sessionID)
+		setSessionID(w, r, sessionID)
 		// Mark session as read
 		service.UpdateLastRead(sessionID)
 
@@ -187,15 +187,16 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		// look up from AgentCapabilityRegistry so mode chips appear on first load.
 		// For CLI sessions, synthesize a read-only mode from the backend name
 		// so the mode chip is visible but non-switchable.
-		var modeState, thinkingEffortState, modelListState, planState any
+		var modeState, thinkingEffortState, modelListState, planState, usageState any
 		var commands []ai.AvailableCommandInfo
 		if sessionID != "" && sessionTransport != "cli" {
-			if s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID); s.Mode != nil || s.Effort != nil || len(s.Commands) > 0 || s.ModelList != nil || s.Plan != nil {
+			if s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID); s.Mode != nil || s.Effort != nil || len(s.Commands) > 0 || s.ModelList != nil || s.Plan != nil || s.Usage != nil {
 				modeState = s.Mode
 				thinkingEffortState = s.Effort
 				commands = s.Commands
 				modelListState = s.ModelList
 				planState = s.Plan
+				usageState = s.Usage
 			} else if sessionAgentID != "" {
 				// No session-level mapping yet (new session, never sent a message).
 				// Fall back to agent-level registry so mode/thinking/command chips
@@ -220,10 +221,10 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "autoApprove": sessionAutoApprove, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState})
+			writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "autoApprove": sessionAutoApprove, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "usageState": usageState})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "autoApprove": sessionAutoApprove, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState})
+		writeJSON(w, http.StatusOK, map[string]any{"messages": messages, "running": running, "sessionId": sessionID, "sessionTitle": sessionTitle, "backend": sessionBackend, "agentId": sessionAgentID, "modelId": sessionModelID, "transport": sessionTransport, "autoApprove": sessionAutoApprove, "total": totalCount, "modeState": modeState, "thinkingEffortState": thinkingEffortState, "commands": commands, "modelListState": modelListState, "planState": planState, "usageState": usageState})
 		return
 	}
 
@@ -535,27 +536,22 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			// Queue has next message — notify frontend that current message is done,
-			// then send queue_consume + queue_update, persist, execute the next one
+			// Queue has next message — drain it atomically
 			slog.Info("draining queued message", slog.String("session", sessionID), slog.String("text", qMsg.Text))
-
-			// Notify frontend: current streaming message is finalized (remove loading dots)
-			ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{Type: "queue_done"})
-
-			// Notify frontend: a queued message is about to execute
-			ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{
-				Type:       "queue_consume",
-				QueueEvent: &ai.QueueEventData{Text: qMsg.Text, FilePaths: qMsg.FilePaths, Files: qMsg.Files},
-			})
 
 			// Persist user message to DB
 			service.AddChatMessage(projectPath, backendName, sessionID, "user", qMsg.Text, qMsg.Files, false, T(r, "FileMessage"))
 
-			// Send updated queue state
+			// Send single atomic queue_drain event (replaces old queue_done + queue_consume + queue_update)
 			remainingQueue := service.GetQueue(sessionID)
 			ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{
-				Type:       "queue_update",
-				QueueEvent: &ai.QueueEventData{Queue: remainingQueue},
+				Type: "queue_drain",
+				QueueEvent: &ai.QueueEventData{
+					Text:      qMsg.Text,
+					FilePaths: qMsg.FilePaths,
+					Files:     qMsg.Files,
+					Queue:     remainingQueue,
+				},
 			})
 
 			// Build chat request from queued message and execute
@@ -623,18 +619,19 @@ func executeStreamRun(
 
 	// Create streaming placeholder message in DB
 	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
-	_, _ = service.AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, "")
+	streamingMsgID, _ := service.AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, "")
 
 	// Delegate event loop to SessionExecutor
 	cfg := service.RunConfig{
-		Mode:        service.ModeInteractive,
-		ProjectPath: projectPath,
-		BackendName: backendName,
-		SessionID:   sessionID,
-		AgentID:     agentID,
-		ChatRequest: chatReq,
-		FileDir:     fileDir,
-		StreamCh:    streamCh,
+		Mode:               service.ModeInteractive,
+		ProjectPath:        projectPath,
+		BackendName:        backendName,
+		SessionID:          sessionID,
+		AgentID:            agentID,
+		ChatRequest:        chatReq,
+		FileDir:            fileDir,
+		StreamingMessageID: streamingMsgID,
+		StreamCh:           streamCh,
 		LocalizeError: func(err error, key string, args map[string]any) string {
 			return T(r, key, args)
 		},

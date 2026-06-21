@@ -18,7 +18,27 @@
 
       <!-- Form section -->
       <div class="login-form-card">
-        <form @submit.prevent="handleLogin">
+        <!-- Server selector (APP mode, >=2 servers) -->
+        <div v-if="isAppMode && showServerSelector" class="server-selector">
+          <div
+            v-for="srv in servers"
+            :key="srv.url"
+            class="server-item"
+            :class="{ active: srv.url === selectedServerUrl }"
+            @click="selectServer(srv)"
+          >
+            <div class="server-info">
+              <Server :size="14" class="server-icon" />
+              <span class="server-url">{{ formatServerHost(srv.url) }}</span>
+            </div>
+            <button class="server-delete" @click.stop="deleteServer(srv.url)" :title="t('login.deleteServer')">
+              <X :size="12" />
+            </button>
+          </div>
+        </div>
+
+        <!-- Login form (existing server) -->
+        <form v-if="!showAddForm" @submit.prevent="handleLogin">
           <div class="input-group">
             <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
@@ -44,60 +64,189 @@
             <button v-if="isAppMode && networkError" class="reconfigure-link" @click="handleReconfigure">{{ t('appHeader.reconfigureServer') }}</button>
           </div>
         </form>
+
+        <!-- Add server form -->
+        <form v-else @submit.prevent="handleAddServer">
+          <div class="input-group">
+            <Server :size="18" class="input-icon" />
+            <input
+              type="url"
+              v-model="newServerUrl"
+              :placeholder="t('login.serverUrlPlaceholder')"
+              autocomplete="off"
+              :disabled="loading"
+            />
+          </div>
+          <div class="input-group" style="margin-top: 10px;">
+            <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            <input
+              type="password"
+              v-model="newServerPassword"
+              :placeholder="t('login.serverPasswordPlaceholder')"
+              autocomplete="off"
+              :disabled="loading"
+            />
+          </div>
+          <button type="submit" :disabled="loading || !newServerUrl" class="login-btn">
+            <span v-if="loading" class="btn-spinner"></span>
+            <span>{{ loading ? t('login.verifying') : t('login.addServerSubmit') }}</span>
+          </button>
+          <button type="button" class="cancel-btn" @click="showAddForm = false">{{ t('common.cancel') }}</button>
+          <div v-if="error" class="error">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
+            </svg>
+            {{ error }}
+          </div>
+        </form>
+
+        <!-- Add server button (APP mode) -->
+        <button v-if="isAppMode && !showAddForm" class="add-server-btn" @click="showAddForm = true">
+          <Plus :size="14" />
+          <span>{{ t('login.addServer') }}</span>
+        </button>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppMode } from '@/composables/useAppMode'
+import { useServerList } from '@/composables/useServerList'
+import { formatServerHost } from '@/utils/url'
+import { Server, X, Plus } from 'lucide-vue-next'
 
 const { t } = useI18n()
 const { isAppMode } = useAppMode()
 const emit = defineEmits(['loginSuccess'])
 
+const { servers, load: loadServers, save: saveServer, remove: removeServer, getPassword } = useServerList()
+
 const password = ref('')
 const loading = ref(false)
 const error = ref('')
 const networkError = ref(false)
+const selectedServerUrl = ref('')
+const showAddForm = ref(false)
+const newServerUrl = ref('')
+const newServerPassword = ref('')
+
+const showServerSelector = computed(() => servers.value.length >= 1)
+
+function selectServer(srv) {
+  if (srv.url === selectedServerUrl.value) return
+  // Use native connectToServer for pre-auth, SSL handling, and error recovery
+  if (window.AndroidNative?.connectToServer) {
+    window.AndroidNative.connectToServer(srv.url, srv.password)
+  } else {
+    window.location.href = srv.url + '/login'
+  }
+}
+
+function deleteServer(url) {
+  if (!confirm(t('login.deleteServer'))) return
+  removeServer(url)
+}
 
 async function handleLogin() {
-    if (!password.value) return
-    loading.value = true
-    error.value = ''
-    networkError.value = false
-    try {
-        const res = await fetch('/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password: password.value })
-        })
-        if (res.ok) {
-            // Save password to Android native layer for SSH tunnel authentication
-            if (window.AndroidNative?.isNativeApp?.()) {
-                window.AndroidNative.setSSHPassword(password.value)
-            }
-            emit('loginSuccess')
-        } else if (res.status >= 500) {
-            error.value = t('login.serverError')
-        } else {
-            error.value = t('login.wrongPassword')
-        }
-    } catch (_) {
-        error.value = t('login.networkError')
-        networkError.value = true
-    } finally {
-        loading.value = false
+  if (!password.value) return
+  loading.value = true
+  error.value = ''
+  networkError.value = false
+  try {
+    const res = await fetch('/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: password.value })
+    })
+    if (res.ok) {
+      // Save password to Android native layer
+      if (window.AndroidNative?.isNativeApp?.()) {
+        window.AndroidNative.setSSHPassword(password.value)
+        // Also save to server list
+        const currentUrl = window.location.origin
+        saveServer(currentUrl, password.value)
+      }
+      emit('loginSuccess')
+    } else if (res.status >= 500) {
+      error.value = t('login.serverError')
+    } else {
+      error.value = t('login.wrongPassword')
     }
+  } catch (_) {
+    error.value = t('login.networkError')
+    networkError.value = true
+  } finally {
+    loading.value = false
+  }
+}
+
+async function handleAddServer() {
+  if (!newServerUrl.value) return
+  loading.value = true
+  error.value = ''
+
+  // Normalize URL
+  let url = newServerUrl.value.trim()
+  if (!/^https?:\/\//i.test(url)) {
+    url = 'https://' + url
+  }
+
+  // Save to native server list first (so it persists even if connection fails later)
+  saveServer(url, newServerPassword.value)
+
+  // Use native connectToServer for pre-auth, CORS bypass, SSL handling, and error recovery
+  if (window.AndroidNative?.connectToServer) {
+    window.AndroidNative.connectToServer(url, newServerPassword.value)
+    // connectToServer handles navigation, cookie injection, and error display
+    // No need to handle response here — the native layer takes over
+    return
+  }
+
+  // Fallback for non-APP mode (same-origin only)
+  try {
+    const res = await fetch(url + '/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: newServerPassword.value })
+    })
+    if (res.ok) {
+      window.location.href = url + '/'
+    } else if (res.status >= 500) {
+      error.value = t('login.serverError')
+    } else {
+      error.value = t('login.wrongPassword')
+    }
+  } catch (_) {
+    error.value = t('login.networkError')
+  } finally {
+    loading.value = false
+  }
 }
 
 function handleReconfigure() {
-    if (window.AndroidNative?.showServerDialog) {
-        window.AndroidNative.showServerDialog()
-    }
+  if (window.AndroidNative?.showServerDialog) {
+    window.AndroidNative.showServerDialog()
+  }
 }
+
+onMounted(() => {
+  if (isAppMode.value) {
+    loadServers()
+    // Set current server URL
+    selectedServerUrl.value = window.location.origin
+    // Pre-fill password if available
+    const savedPassword = getPassword(selectedServerUrl.value)
+    if (savedPassword) {
+      password.value = savedPassword
+    }
+  }
+})
 </script>
 
 <style scoped>
@@ -218,6 +367,89 @@ function handleReconfigure() {
     box-shadow: var(--shadow-sm);
 }
 
+/* Server selector */
+.server-selector {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 16px;
+    max-height: 160px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+}
+
+.server-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.1s;
+    font-size: 13px;
+}
+
+.server-item:hover {
+    background: var(--bg-tertiary);
+}
+
+.server-item.active {
+    background: var(--accent-color);
+    color: #fff;
+}
+
+.server-item.active .server-icon {
+    color: #fff;
+}
+
+.server-item.active .server-delete {
+    color: rgba(255,255,255,0.6);
+}
+
+.server-item.active .server-delete:hover {
+    color: #fff;
+    background: rgba(255,255,255,0.15);
+}
+
+.server-info {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    flex: 1;
+}
+
+.server-icon {
+    flex-shrink: 0;
+    color: var(--accent-color);
+}
+
+.server-url {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+}
+
+.server-delete {
+    flex-shrink: 0;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.1s, color 0.1s;
+}
+
+.server-delete:hover {
+    background: var(--bg-tertiary);
+    color: var(--color-red, #ef4444);
+}
+
 .input-group {
     position: relative;
     display: flex;
@@ -234,7 +466,8 @@ function handleReconfigure() {
     flex-shrink: 0;
 }
 
-input[type="password"] {
+input[type="password"],
+input[type="url"] {
     width: 100%;
     padding: 13px 14px 13px 42px;
     border: 1.5px solid var(--border-color);
@@ -247,7 +480,7 @@ input[type="password"] {
     box-sizing: border-box;
 }
 
-input[type="password"]:focus {
+input:focus {
     border-color: var(--accent-color);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-color) 12%, transparent);
 }
@@ -297,6 +530,23 @@ input[type="password"]:focus {
     to { transform: rotate(360deg); }
 }
 
+.cancel-btn {
+    width: 100%;
+    padding: 10px;
+    margin-top: 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.cancel-btn:hover {
+    background: var(--bg-tertiary);
+}
+
 .error {
     margin-top: 14px;
     padding: 10px 14px;
@@ -331,5 +581,29 @@ input[type="password"]:focus {
 
 .reconfigure-link:hover {
     background: color-mix(in srgb, var(--color-red, #dc2626) 20%, transparent);
+}
+
+/* Add server button */
+.add-server-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    padding: 10px;
+    margin-top: 12px;
+    border: 1px dashed var(--border-color);
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.add-server-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--accent-color);
+    border-color: var(--accent-color);
 }
 </style>

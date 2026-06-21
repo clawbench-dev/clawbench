@@ -104,6 +104,7 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 					(*blocks)[i].Status = event.Tool.Status
 				}
 				found = true
+				upsertToolCallMeta(&(*blocks)[i])
 				break
 			}
 			if !found {
@@ -119,6 +120,7 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 					Output: event.Tool.Output,
 					Status: event.Tool.Status,
 				})
+				upsertToolCallMeta(&(*blocks)[len(*blocks)-1])
 			}
 		}
 	case "tool_result":
@@ -145,6 +147,7 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 					(*blocks)[i].Output = event.Tool.Output
 					(*blocks)[i].Status = event.Tool.Status
 					(*blocks)[i].Done = true
+					upsertToolCallMeta(&(*blocks)[i])
 					break
 				}
 			}
@@ -198,4 +201,17 @@ func MergeConsecutiveThinkingBlocks(blocks []model.ContentBlock) []model.Content
 	}
 	flushThinking()
 	return result
+}
+
+// upsertToolCallMeta extracts summary/displayName/filePath from a tool_use block's
+// merged input and populates the slim fields. The DB upsert is done by the caller
+// (SessionExecutor) to avoid import cycles.
+func upsertToolCallMeta(block *model.ContentBlock) {
+	if block.Type != "tool_use" || block.ID == "" {
+		return
+	}
+	meta := ExtractToolCallMetaFromInput(block.Name, block.ID, block.Input)
+	block.Summary = meta.Summary
+	block.DisplayName = meta.DisplayName
+	block.FilePath = meta.FilePath
 }

@@ -374,6 +374,7 @@ func serveTaskExecutions(w http.ResponseWriter, r *http.Request, taskID int64, p
 
 	type Execution struct {
 		ID          int64   `json:"id"`
+		MessageID   int64   `json:"messageId"`
 		SessionID   string  `json:"sessionId"`
 		TriggerType string  `json:"triggerType"`
 		Status      string  `json:"status"`
@@ -384,7 +385,7 @@ func serveTaskExecutions(w http.ResponseWriter, r *http.Request, taskID int64, p
 	}
 
 	query := `
-		SELECT te.id, te.session_id, te.trigger_type, te.status, te.created_at,
+		SELECT te.id, ch.id, te.session_id, te.trigger_type, te.status, te.created_at,
 		       te.read_at, sm.summary,
 		       ch.content AS assistant_content
 		FROM task_executions te
@@ -424,9 +425,13 @@ func serveTaskExecutions(w http.ResponseWriter, r *http.Request, taskID int64, p
 		var content sql.NullString
 		var summary sql.NullString
 		var readAt sql.NullTime
-		if err := rows.Scan(&exec.ID, &exec.SessionID, &exec.TriggerType, &exec.Status, &exec.CreatedAt, &readAt, &summary, &content); err != nil {
+		var messageID sql.NullInt64
+		if err := rows.Scan(&exec.ID, &messageID, &exec.SessionID, &exec.TriggerType, &exec.Status, &exec.CreatedAt, &readAt, &summary, &content); err != nil {
 			model.WriteError(w, model.Internal(fmt.Errorf("failed to scan execution record")))
 			return
+		}
+		if messageID.Valid {
+			exec.MessageID = messageID.Int64
 		}
 		if content.Valid {
 			exec.Content = &content.String
@@ -534,7 +539,7 @@ func serveContinueConversationCreate(w http.ResponseWriter, r *http.Request, tas
 	}
 
 	// Set session cookie for subsequent requests
-	setSessionID(w, sessionID)
+	setSessionID(w, r, sessionID)
 
 	sessionCount, _ := service.GetSessionCount(projectPath)
 	writeJSON(w, http.StatusOK, map[string]any{

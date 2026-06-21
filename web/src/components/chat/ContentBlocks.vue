@@ -40,7 +40,7 @@
       <template v-else-if="block.type === 'tool_use'">
         <div class="chat-tool-call" :class="{ done: block.done }" :data-category="getToolIcon(block.name).category" @click.stop="handleToolClick(block, key(bi), bi)">
           <component :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
-          <span class="tool-name">{{ toolDisplayName(block.name, block.input) }}</span>
+          <span class="tool-name">{{ toolDisplayName(block.name, block.input, block.display_name) }}</span>
           <span v-if="toolCallSummary(block)" class="tool-summary">{{ toolCallSummary(block) }}</span>
           <!-- Loading: spinner -->
           <span v-if="!block.done" class="tool-spinner"></span>
@@ -142,7 +142,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onUnmounted, computed, nextTick } from 'vue'
+import { ref, watch, onUnmounted, computed, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { handleToolAction, shouldAutoExpandTool } from '@/utils/renderToolDetail.ts'
 import { getToolIcon, toolDisplayName } from '@/utils/icons'
@@ -167,6 +167,40 @@ import {
 
 const { t, locale } = useI18n()
 
+// Auto-expand tools (AskUserQuestion, PermissionApproval) need input to render inline.
+// In slim format, input is absent from DB-loaded content — fetch from API automatically.
+const fetchedAutoExpandBlocks = new Set()
+onMounted(() => {
+  for (let i = 0; i < props.blocks.length; i++) {
+    const block = props.blocks[i]
+    if (block.type === 'tool_use' && shouldAutoExpandTool(block.name || '')) {
+      const hasInput = block.input && Object.keys(block.input).length > 0
+      if (!hasInput && block.id && props.msgId) {
+        const cacheKey = `${block.id}:${props.msgId}`
+        if (fetchedAutoExpandBlocks.has(cacheKey)) continue
+        fetchedAutoExpandBlocks.add(cacheKey)
+        fetchToolCallInputForAutoExpand(block, props.msgId)
+      }
+    }
+  }
+})
+async function fetchToolCallInputForAutoExpand(block, msgId) {
+  try {
+    const resp = await fetch(`/api/ai/chat/tool-call?tool_id=${encodeURIComponent(block.id)}&message_id=${encodeURIComponent(msgId)}`)
+    if (!resp.ok) return
+    const data = await resp.json()
+    if (data.input) {
+      const input = typeof data.input === 'string' ? JSON.parse(data.input) : data.input
+      if (input && Object.keys(input).length > 0) {
+        block.input = input
+      }
+    }
+    if (data.output && !block.output) {
+      block.output = data.output
+    }
+  } catch { /* best effort */ }
+}
+
 // Re-export utility functions with i18n context bound
 function getWarningText(block) { return getWarningTextUtil(block, t) }
 function statusClass(task) { return statusClassUtil(task) }
@@ -187,12 +221,16 @@ function handleToolClick(block, blockKeyStr, blockIdx) {
     return
   }
   // All other tools: open the overlay with block data
+  // Slim format: input/output may be absent — overlay will fetch from API if needed
   emit('show-tool-detail', {
     name: block.name,
     input: block.input,
     output: block.output,
     status: block.status,
     done: block.done,
+    display_name: block.display_name,
+    summary: block.summary,
+    tool_id: block.id,
     msgId: props.msgId,
     blockIdx,
   })

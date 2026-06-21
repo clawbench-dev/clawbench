@@ -3,7 +3,7 @@ import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
-import { clearModeState, updateAvailableModes, clearCommandState, updateCommandState, updateAvailableThinkingEfforts, clearThinkingEffortState, currentAgentId as _currentAgentId } from '@/composables/useSessionIdentity.ts'
+import { clearModeState, updateAvailableModes, clearCommandState, updateCommandState, updateAvailableThinkingEfforts, clearThinkingEffortState, clearUsageState, updateUsageState, currentAgentId as _currentAgentId } from '@/composables/useSessionIdentity.ts'
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
 import { useAgents, restoreOriginalModels, populateACPStateFromCache, getAgentThinkingEffortLevels } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
@@ -183,6 +183,13 @@ export function useChatSession(options: UseChatSessionOptions) {
     }
   }
 
+  // Helper: sync usage state from server data
+  function syncUsageFromData(usageStateData?: { used?: number; size?: number; cost?: number; currency?: string }) {
+    if (usageStateData && usageStateData.size > 0) {
+      updateUsageState(usageStateData.used ?? 0, usageStateData.size, usageStateData.cost, usageStateData.currency)
+    }
+  }
+
   // Switching state — true while a session switch is in progress (distinct from
   // "loading" which means "AI is generating"). Used to show a fade/placeholder
   // transition so the user sees immediate feedback instead of a frozen UI.
@@ -290,6 +297,7 @@ export function useChatSession(options: UseChatSessionOptions) {
             syncThinkingEffortFromData(recoverData.thinkingEffortState?.currentId || '')
             syncModeFromData(recoverData.modeState?.currentModeId || '', recoverData.modeState?.availableModes)
             syncTransportFromData(recoverData.transport)
+            syncUsageFromData(recoverData.usageState)
             if (recoverData.autoApprove !== undefined) {
               autoApprove.value = recoverData.autoApprove
             }
@@ -422,7 +430,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
 
       // Preserve pending user messages — they exist in messages.value with `pending: true`
-      // but haven't been persisted to the DB yet (backend persists them during queue_consume).
+      // but haven't been persisted to the DB yet (backend persists them during queue_drain).
       // Without this, loadHistory would replace the array and lose pending messages.
       const localPending = messages.value.filter((m: any) => m.pending)
       const dbIds = new Set(rawMsgs.filter((m: any) => m.id).map((m: any) => m.id))
@@ -431,7 +439,7 @@ export function useChatSession(options: UseChatSessionOptions) {
 
       // Re-append pending messages that aren't yet in the DB.
       // Dedup by content: if the DB already contains the message (persisted by
-      // queue_consume), don't add the local pending version back.
+      // queue_drain), don't add the local pending version back.
       for (const pm of localPending) {
         const alreadyInDB = messages.value.some(
           (m: any) => m.role === 'user' && m.content === pm.content && m.id
@@ -459,6 +467,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       syncThinkingEffortFromData(data.thinkingEffortState?.currentId || '')
       syncModeFromData(data.modeState?.currentModeId || '', data.modeState?.availableModes)
       syncTransportFromData(data.transport)
+      syncUsageFromData(data.usageState)
       // Restore autoApprove from server state (per-session, not global)
       if (data.autoApprove !== undefined) {
         autoApprove.value = data.autoApprove
@@ -591,6 +600,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     clearModeState()
     clearCommandState()
     clearThinkingEffortState()
+    clearUsageState()
     autoApprove.value = false
     // Restore original CLI model list in case ACP had overridden it
     const prevAgentId = _currentAgentId.value
@@ -627,6 +637,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       syncThinkingEffortFromData(data.thinkingEffortState?.currentId || '')
       syncModeFromData(data.modeState?.currentModeId || '', data.modeState?.availableModes)
       syncTransportFromData(data.transport)
+      syncUsageFromData(data.usageState)
       // Restore autoApprove from server state (per-session, not global)
       if (data.autoApprove !== undefined) {
         autoApprove.value = data.autoApprove
@@ -913,6 +924,41 @@ export function useChatSession(options: UseChatSessionOptions) {
     }
   }
 
+  /** Fork the current session — create a new session with copied messages. */
+  async function forkSession(sessionId: string): Promise<boolean> {
+    try {
+      const resp = await fetch('/api/ai/session/fork', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      })
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({}))
+        const msgKey = errData.msgKey || ''
+        if (resp.status === 409 || msgKey === 'SessionLimitReached') {
+          toast.show(gt('chat.session.sessionLimitReached'), { icon: '⚠️', type: 'error' })
+        } else {
+          toast.show(errData.error || gt('chat.session.forkFailed'), { icon: '⚠️', type: 'error' })
+        }
+        return false
+      }
+      const data = await resp.json()
+      if (!data.ok || !data.sessionId) {
+        toast.show(gt('chat.session.forkFailed'), { icon: '⚠️', type: 'error' })
+        return false
+      }
+      const maxCount = store.state.sessionMaxCount
+      if (typeof data.sessionCount === 'number') store.state.sessionCount = data.sessionCount
+      toast.show(gt('chat.session.forked', { count: data.sessionCount ?? '', max: maxCount }), { icon: '🔀', type: 'success', duration: 1500 })
+      await switchSession(data.sessionId)
+      return true
+    } catch (err) {
+      console.error('Failed to fork session:', err)
+      toast.show(gt('chat.session.forkFailed'), { icon: '⚠️', type: 'error' })
+      return false
+    }
+  }
+
   return {
     // Exposed refs (consumed by ChatPanelContent etc.)
     currentSessionId,
@@ -938,6 +984,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     stopMsgCountPolling,
     handleVisibilityChange,
     continueFromExecution,
+    forkSession,
     checkContinueSession,
     // Agent helpers — delegate to singleton
     getAgentIcon,

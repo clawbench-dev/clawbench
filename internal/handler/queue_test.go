@@ -20,6 +20,10 @@ func TestQueueHandler_Enqueue_Success(t *testing.T) {
 	sessionID := "q-enqueue-1"
 	defer service.ClearQueue(sessionID)
 
+	// Mark session as running so the normal enqueue path is taken
+	service.TrySetSessionRunning(sessionID)
+	defer service.SetSessionRunning(sessionID, false)
+
 	body := map[string]any{
 		"message": "hello world",
 	}
@@ -41,6 +45,10 @@ func TestQueueHandler_Enqueue_WithFilePaths(t *testing.T) {
 
 	sessionID := "q-enqueue-paths"
 	defer service.ClearQueue(sessionID)
+
+	// Mark session as running so the normal enqueue path is taken
+	service.TrySetSessionRunning(sessionID)
+	defer service.SetSessionRunning(sessionID, false)
 
 	body := map[string]any{
 		"message":   "check this file",
@@ -68,6 +76,10 @@ func TestQueueHandler_Enqueue_WithFiles(t *testing.T) {
 
 	sessionID := "q-enqueue-files"
 	defer service.ClearQueue(sessionID)
+
+	// Mark session as running so the normal enqueue path is taken
+	service.TrySetSessionRunning(sessionID)
+	defer service.SetSessionRunning(sessionID, false)
 
 	body := map[string]any{
 		"files": []string{"/upload/a.png", "/upload/b.jpg"},
@@ -105,7 +117,7 @@ func TestQueueHandler_Enqueue_InvalidJSON(t *testing.T) {
 	sessionID := "q-enqueue-badjson"
 	req := httptest.NewRequest(http.MethodPost, "/api/ai/queue?session_id="+sessionID, http.NoBody)
 	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(&http.Cookie{Name: "clawbench_project", Value: env.ProjectDir})
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: env.ProjectDir})
 	w := callHandler(QueueHandler, req)
 
 	assertStatus(t, w, http.StatusBadRequest)
@@ -265,6 +277,10 @@ func TestQueueHandler_Enqueue_FilesNoDuplicate(t *testing.T) {
 	sessionID := "q-enqueue-dedup"
 	defer service.ClearQueue(sessionID)
 
+	// Mark session as running so the normal enqueue path is taken
+	service.TrySetSessionRunning(sessionID)
+	defer service.SetSessionRunning(sessionID, false)
+
 	// Simulate frontend: files already includes filePaths
 	body := map[string]any{
 		"message":   "check this file",
@@ -301,6 +317,10 @@ func TestQueueHandler_Enqueue_FilesWithUploads(t *testing.T) {
 
 	sessionID := "q-enqueue-uploads"
 	defer service.ClearQueue(sessionID)
+
+	// Mark session as running so the normal enqueue path is taken
+	service.TrySetSessionRunning(sessionID)
+	defer service.SetSessionRunning(sessionID, false)
 
 	body := map[string]any{
 		"message":   "check these",
@@ -387,6 +407,10 @@ func TestQueueHandler_Enqueue_SessionBelongsToSameProject(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "Same Project Session", "claude", "", "default", "chat")
 	assert.NoError(t, err)
 	defer service.ClearQueue(sessionID)
+
+	// Mark session as running so the normal enqueue path is taken
+	service.TrySetSessionRunning(sessionID)
+	defer service.SetSessionRunning(sessionID, false)
 
 	body := map[string]any{"message": "hello world"}
 	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
@@ -553,4 +577,76 @@ func TestQueueHandler_Delete_MissingProjectCookie(t *testing.T) {
 	w := callHandler(QueueHandler, req)
 
 	assertStatus(t, w, http.StatusForbidden)
+}
+
+// ---------- Stuck-queue race condition fix ----------
+
+// TestQueueHandler_Enqueue_NeedsStartWhenSessionNotRunning verifies that when
+// a message is enqueued to a session that is NOT running, the backend returns
+// needs_start=true and dequeues the message. This prevents the stuck-queue
+// race: user enqueues right as AI finishes, the drain loop has already exited,
+// and no goroutine remains to drain the queue.
+func TestQueueHandler_Enqueue_NeedsStartWhenSessionNotRunning(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-needs-start"
+	defer service.ClearQueue(sessionID)
+
+	// Session is NOT running — no TrySetSessionRunning call
+	body := map[string]any{
+		"message":   "hello world",
+		"filePaths": []string{"/main.go"},
+		"files":     []string{"/main.go"},
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+
+	assertOK(t, w)
+	var result map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &result)
+	assert.Equal(t, true, result["ok"])
+	assert.Equal(t, true, result["needs_start"])
+	assert.Equal(t, "hello world", result["message"])
+	filePaths, _ := result["filePaths"].([]any)
+	assert.Len(t, filePaths, 1)
+	assert.Equal(t, "/main.go", filePaths[0])
+
+	// The message should have been dequeued from the backend queue
+	queue := service.GetQueue(sessionID)
+	assert.Nil(t, queue)
+}
+
+// TestQueueHandler_Enqueue_NoNeedsStartWhenSessionRunning verifies that when
+// a message is enqueued to a session that IS running, the normal enqueue
+// path is taken (no needs_start flag).
+func TestQueueHandler_Enqueue_NoNeedsStartWhenSessionRunning(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-running"
+	defer service.ClearQueue(sessionID)
+
+	// Mark session as running
+	service.TrySetSessionRunning(sessionID)
+	defer service.SetSessionRunning(sessionID, false)
+
+	body := map[string]any{
+		"message": "hello world",
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+
+	assertOK(t, w)
+	var result map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &result)
+	assert.Equal(t, true, result["ok"])
+	assert.Nil(t, result["needs_start"]) // should not be present
+
+	// The message should remain in the backend queue (drain loop will pick it up)
+	queue := service.GetQueue(sessionID)
+	assert.Len(t, queue, 1)
+	assert.Equal(t, "hello world", queue[0].Text)
 }

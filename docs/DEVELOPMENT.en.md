@@ -175,7 +175,7 @@ For full configuration reference, see `config/config.example.yaml`. All items ar
 # Default agent (optional)
 default_agent: "assistant"      # Default agent ID; uses first agent if empty
                                  # Available agents: assistant (all-round assistant), coder (coding expert),
-                                 # gemini (Gemini CLI), handyman (handyman), codebuddy2 (Gemini), gpt54 (GPT)
+                                 # gemini (Gemini ACP), handyman (handyman), codebuddy2 (Gemini), gpt54 (GPT)
 
 # Upload limits (default max_size_mb: 100, max_files: 20)
 upload:
@@ -216,7 +216,7 @@ ClawBench interacts with AI programming tools by calling local CLIs, no extra AP
 
 **OpenCode backend**: Install OpenCode CLI and complete authentication, ensure the `opencode` command is available in PATH.
 
-**Gemini CLI backend**: Install Gemini CLI and complete authentication, ensure the `gemini` command is available in PATH. Supports API-based auto-discovery of available models.
+**Gemini backend**: ACP mode only (via `gemini acp` stdio subprocess). No separate CLI installation needed.
 
 **Codex backend**: Install OpenAI Codex CLI and complete authentication, ensure the `codex` command is available in PATH. Model auto-discovery is implemented via binary strings/state DB scanning.
 
@@ -372,14 +372,14 @@ Development environment variables:
 ClawBench is more than just a "chat shell" — it is a complete agent runtime platform:
 
 - **Agent Database Storage**: Each agent is stored in the database with dedicated system prompt, model, backend, and thinking effort levels — created via setup wizard or auto-discovery
-- **Auto-Discovery**: On first startup, if no agents exist in the database, the system auto-scans for installed AI CLIs (claude, codebuddy, opencode, gemini, codex, qodercli, vecli, deepseek, mimo, pi) and creates agent records in the database for each detected backend. One-time only
+- **Auto-Discovery**: On first startup, if no agents exist in the database, the system auto-scans for installed AI CLIs (claude, codebuddy, opencode, codex, qodercli, vecli, deepseek, mimo, pi) and creates agent records in the database for each detected backend. One-time only
 - **Shared Rules**: Rules template embedded in Go binary (`commonRulesTemplate` in `agent.go`) defines common behaviors and mandatory rules for all agents (media handling), avoiding duplicate configuration. `@chatsearch`/`@task` commands are injected on demand via `processAtCommand()`, replacing old `SCHEDULED_BEGIN/END` markers and static RAG section
 - **Template Placeholder**: `{{AVAILABLE_AGENTS}}` is auto-replaced with the available agent list, facilitating inter-agent dispatching
 - **Multi-Agent Dispatching**: Different tasks match different agents; the all-round assistant handles conversations while specialized agents execute scheduled tasks
 - **Transparent Tool Calls**: AI tool calls (file read/write, Bash commands, code editing) are visualized in real time
 - **Cron Scheduled Execution**: AI creates scheduled tasks via `clawbench task` CLI subcommands; after confirmation, Cron scheduler executes them automatically. Task cards are embedded in chat messages. `list` and `get` subcommands allow inspecting existing tasks; `--prompt` supports `@path` syntax to read prompt text from a file
 - **Cron Governance**: During scheduled execution, the `@task` instructions are never injected (only triggered by explicit user input), preventing AI from recursively creating tasks; CLI layer provides dual-layer protection via `CLAWBENCH_SCHEDULED=1` env var
-- **Multi-Backend Switching**: The same platform simultaneously supports CodeBuddy, Claude Code, OpenCode, Gemini CLI, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, and Pi backends with isolated session data
+- **Multi-Backend Switching**: The same platform simultaneously supports CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, and Pi backends (CLI mode), plus Gemini/Kimi (ACP mode), with isolated session data
 
 ### Project Structure
 
@@ -454,7 +454,7 @@ clawbench/
 │       ├── claude.go / claude_stream.go
 │       ├── codebuddy.go / codebuddy_stream.go
 │       ├── opencode.go / opencode_stream.go
-│       ├── gemini.go / gemini_stream.go
+│       ├── stream_json_parser.go # Gemini/Kimi shared stream parser
 │       ├── codex.go / codex_stream.go
 │       ├── qoder.go / qoder_stream.go
 │       ├── vecli.go / vecli_stream.go
@@ -507,7 +507,7 @@ clawbench/
 | Chart Rendering | Mermaid.js |
 | Math Formulas | KaTeX |
 | HTML Sanitization | DOMPurify |
-| AI Backend | CodeBuddy CLI / Claude Code CLI / OpenCode CLI / Gemini CLI / Codex CLI / Qoder CLI / MiMo-Code CLI / VeCLI (streaming output → SSE push) |
+| AI Backend | CodeBuddy CLI / Claude Code CLI / OpenCode CLI / Codex CLI / Qoder CLI / MiMo-Code CLI / VeCLI (streaming output → SSE push) + Gemini/Kimi (ACP stdio) |
 | TTS Summarization | OpenAI/Anthropic compatible API (local or cloud, e.g. Ollama with `format: "openai"`) |
 | SSH Tunnel | golang.org/x/crypto/ssh (embedded SSH server, direct-tcpip port forwarding) |
 | Scheduled Scheduling | robfig/cron |

@@ -43,7 +43,7 @@ func Auth(next http.HandlerFunc) http.HandlerFunc {
 		if validateToken == "" {
 			validateToken = model.SessionToken
 		}
-		token, err := r.Cookie(model.SessionCookie)
+		token, err := r.Cookie(model.ScopedCookieName(model.SessionCookie))
 		if err == nil && token != nil && subtle.ConstantTimeCompare([]byte(token.Value), []byte(validateToken)) == 1 {
 			next.ServeHTTP(w, r)
 			return
@@ -55,7 +55,7 @@ func Auth(next http.HandlerFunc) http.HandlerFunc {
 
 // GetProjectFromCookie extracts the current project path from cookie.
 func GetProjectFromCookie(r *http.Request) string {
-	cookie, err := r.Cookie("clawbench_project")
+	cookie, err := r.Cookie(model.ScopedCookieName("clawbench_project"))
 	if err != nil || cookie == nil || cookie.Value == "" {
 		return ""
 	}

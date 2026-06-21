@@ -816,6 +816,44 @@ func TestParseDecorateRefs_Tag(t *testing.T) {
 	assert.Equal(t, "tag: v1.0", refs[0])
 }
 
+func TestParseFileCountFromShortstat(t *testing.T) {
+	tests := []struct {
+		input string
+		want  int
+	}{
+		{" 2 files changed, 10 insertions(+), 5 deletions(-)", 2},
+		{" 1 file changed, 3 insertions(+)", 1},
+		{" 15 files changed, 200 insertions(+), 50 deletions(-)", 15},
+		{" 1 file changed, 2 deletions(-)", 1},
+		{"", 0},
+		{"some unrelated text", 0},
+	}
+	for _, tt := range tests {
+		got := parseFileCountFromShortstat(tt.input)
+		assert.Equal(t, tt.want, got, "parseFileCountFromShortstat(%q)", tt.input)
+	}
+}
+
+func TestParseGitLogWithStats(t *testing.T) {
+	// Simulate actual git log output with null byte separator and shortstat
+	output := "abc123|parent1|fix bug|2026-01-01|Author (HEAD -> main)\x00\n\n 2 files changed, 10 insertions(+), 5 deletions(-)\nsha456||initial commit|2026-01-02|Author\x00\n\n 1 file changed, 3 insertions(+)\n"
+	commits := parseGitLogWithStats(output)
+	assert.Len(t, commits, 2)
+	assert.Equal(t, 2, commits[0].FileCount)
+	assert.Equal(t, "fix bug", commits[0].Msg)
+	assert.Equal(t, 1, commits[1].FileCount)
+	assert.Equal(t, "initial commit", commits[1].Msg)
+}
+
+func TestParseGitLogWithStats_NoShortstat(t *testing.T) {
+	// When shortstat is missing (e.g. merge commit with no changes), fileCount should be 0
+	output := "abc123|parent1 parent2|merge commit|2026-01-01|Author\x00\n"
+	commits := parseGitLogWithStats(output)
+	assert.Len(t, commits, 1)
+	assert.Equal(t, 0, commits[0].FileCount)
+	assert.Equal(t, "merge commit", commits[0].Msg)
+}
+
 func TestServeGitProjectHistory_IncludesParents(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
@@ -843,6 +881,11 @@ func TestServeGitProjectHistory_IncludesParents(t *testing.T) {
 	parents, ok := first["parents"].([]interface{})
 	assert.True(t, ok)
 	assert.GreaterOrEqual(t, len(parents), 1)
+
+	// First commit should have fileCount > 0 (it changed README.md)
+	fc, ok := first["fileCount"].(float64)
+	assert.True(t, ok)
+	assert.GreaterOrEqual(t, int(fc), 1)
 }
 
 // --- parseWorktreePorcelain ---
@@ -2421,6 +2464,88 @@ func TestServeGitDeleteWorktree_PathTraversalRejected(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	assert.Equal(t, false, resp["success"])
 	assert.Equal(t, "path_not_allowed", resp["error"])
+}
+
+// Dirty worktree: without force flag, should return dirty_worktree error.
+func TestServeGitDeleteWorktree_DirtyWithoutForce(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	run := func(name string, args ...string) {
+		cmd := exec.Command(name, args...)
+		cmd.Dir = env.ProjectDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("command %s %v failed: %v\n%s", name, args, err, out)
+		}
+	}
+
+	// Create a worktree with uncommitted changes
+	wtPath := filepath.Join(filepath.Dir(env.ProjectDir), "wt-dirty")
+	run("git", "worktree", "add", wtPath, "-b", "wt-dirty-branch")
+	if err := os.WriteFile(filepath.Join(wtPath, "dirty.txt"), []byte("uncommitted"), 0o644); err != nil {
+		t.Fatalf("failed to write dirty file: %v", err)
+	}
+
+	req := newRequest(t, http.MethodDelete, "/api/git/worktrees", map[string]interface{}{
+		"path": wtPath,
+	})
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeGitWorktrees, req)
+	assertOK(t, w)
+
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.Equal(t, false, resp["success"])
+	assert.Equal(t, "dirty_worktree", resp["error"])
+
+	// Worktree should still exist
+	if _, err := os.Stat(wtPath); os.IsNotExist(err) {
+		t.Error("dirty worktree should not be deleted without force flag")
+	}
+}
+
+// Dirty worktree: with force flag, should successfully delete.
+func TestServeGitDeleteWorktree_DirtyWithForce(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	run := func(name string, args ...string) {
+		cmd := exec.Command(name, args...)
+		cmd.Dir = env.ProjectDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("command %s %v failed: %v\n%s", name, args, err, out)
+		}
+	}
+
+	// Create a worktree with uncommitted changes
+	wtPath := filepath.Join(filepath.Dir(env.ProjectDir), "wt-dirty-force")
+	run("git", "worktree", "add", wtPath, "-b", "wt-dirty-force-branch")
+	if err := os.WriteFile(filepath.Join(wtPath, "dirty.txt"), []byte("uncommitted"), 0o644); err != nil {
+		t.Fatalf("failed to write dirty file: %v", err)
+	}
+
+	req := newRequest(t, http.MethodDelete, "/api/git/worktrees", map[string]interface{}{
+		"path":  wtPath,
+		"force": true,
+	})
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeGitWorktrees, req)
+	assertOK(t, w)
+
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.Equal(t, true, resp["success"])
+
+	// Worktree should be deleted
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Error("dirty worktree should be deleted with force flag")
+	}
 }
 
 // --- serveGitDeleteTag ---

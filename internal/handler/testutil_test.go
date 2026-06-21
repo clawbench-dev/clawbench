@@ -277,7 +277,7 @@ func newRequest(t *testing.T, method, path string, body interface{}) *http.Reque
 // withProjectCookie adds the clawbench_project cookie to the request.
 func withProjectCookie(req *http.Request, projectPath string) *http.Request {
 	req.AddCookie(&http.Cookie{
-		Name:  "clawbench_project",
+		Name:  model.ScopedCookieName("clawbench_project"),
 		Value: url.QueryEscape(projectPath),
 	})
 	return req
@@ -286,7 +286,7 @@ func withProjectCookie(req *http.Request, projectPath string) *http.Request {
 // withAuthCookie adds the clawbench_session cookie to the request.
 func withAuthCookie(req *http.Request, token string) *http.Request { //nolint:unparam // test helper: return value unused but signature supports chaining
 	req.AddCookie(&http.Cookie{
-		Name:  model.SessionCookie,
+		Name:  model.ScopedCookieName(model.SessionCookie),
 		Value: token,
 	})
 	return req
@@ -295,7 +295,7 @@ func withAuthCookie(req *http.Request, token string) *http.Request { //nolint:un
 // withSessionCookie adds the chat_session_id cookie to the request.
 func withSessionCookie(req *http.Request, sessionID string) *http.Request {
 	req.AddCookie(&http.Cookie{
-		Name:  "chat_session_id",
+		Name:  model.ScopedCookieName("chat_session_id"),
 		Value: sessionID,
 	})
 	return req

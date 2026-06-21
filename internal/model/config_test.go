@@ -162,3 +162,25 @@ func TestPersistCookieToken_WriteFailure(t *testing.T) {
 	// Should not panic — error is silently ignored
 	PersistCookieToken("some-token")
 }
+
+func TestScopedCookieName_DefaultPort(t *testing.T) {
+	orig := ServerPort
+	defer func() { ServerPort = orig }()
+
+	ServerPort = 0
+	assert.Equal(t, "clawbench_session", ScopedCookieName("clawbench_session"))
+
+	ServerPort = 20000
+	assert.Equal(t, "clawbench_session", ScopedCookieName("clawbench_session"))
+}
+
+func TestScopedCookieName_NonDefaultPort(t *testing.T) {
+	orig := ServerPort
+	defer func() { ServerPort = orig }()
+
+	ServerPort = 20300
+	assert.Equal(t, "cb20300_clawbench_session", ScopedCookieName("clawbench_session"))
+	assert.Equal(t, "cb20300_clawbench_project", ScopedCookieName("clawbench_project"))
+	assert.Equal(t, "cb20300_chat_session_id", ScopedCookieName("chat_session_id"))
+	assert.Equal(t, "cb20300_clawbench-locale", ScopedCookieName("clawbench-locale"))
+}

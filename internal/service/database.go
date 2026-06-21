@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/model"
 
 	_ "modernc.org/sqlite" // register SQLite driver
@@ -45,6 +46,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if _, err := DB.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		return fmt.Errorf("failed to set WAL mode: %w", err)
 	}
+	// Enable foreign key enforcement (required for ON DELETE CASCADE)
+	if _, err := DB.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		return fmt.Errorf("failed to enable foreign keys: %w", err)
+	}
+
 	// Wait up to 5 seconds when database is locked instead of failing immediately
 	if _, err := DB.Exec("PRAGMA busy_timeout=5000"); err != nil {
 		return fmt.Errorf("failed to set busy_timeout: %w", err)
@@ -142,6 +148,24 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		-- Without this, the unread subquery can only use the project_path prefix of idx_history_session,
 		-- requiring a full scan of all messages in the project to filter by role and streaming.
 		CREATE INDEX IF NOT EXISTS idx_history_unread ON chat_history(project_path, role, streaming, created_at);
+
+		-- Tool call detail storage (input/output split from chat_history.content for performance)
+		CREATE TABLE IF NOT EXISTS chat_tool_calls (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			message_id INTEGER NOT NULL REFERENCES chat_history(id) ON DELETE CASCADE,
+			session_id TEXT NOT NULL,
+			tool_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			input TEXT NOT NULL DEFAULT '{}',
+			output TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT '',
+			done INTEGER NOT NULL DEFAULT 0,
+			summary TEXT NOT NULL DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(tool_id, message_id)
+		);
+		CREATE INDEX IF NOT EXISTS idx_tool_calls_message ON chat_tool_calls(message_id);
+		CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON chat_tool_calls(session_id, created_at DESC);
 		-- Covering index for session list ORDER BY + cursor pagination:
 		-- WHERE session_type = 'chat' AND project_path = ? AND deleted = 0 ORDER BY updated_at DESC, id DESC
 		-- Without this, idx_sessions_type covers WHERE but requires a filesort for ORDER BY.
@@ -537,6 +561,10 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// This converts any existing 'task_execution' summaries to the new format.
 	MigrateTaskExecutionSummaries()
 
+	// Migrate: extract tool_use input/output from chat_history.content into
+	// chat_tool_calls table and rewrite content to slim format (no input/output).
+	MigrateToolCallsFromContent()
+
 	return nil
 }
 
@@ -740,6 +768,182 @@ func MigrateTaskExecutionSummaries() {
 	}
 
 	slog.Info("task_execution summary migration complete", slog.Int("migrated", migrated), slog.Int("total", count))
+}
+
+// MigrateToolCallsFromContent scans assistant messages that contain tool_use blocks
+// with input/output still embedded in content JSON, extracts them into chat_tool_calls,
+// and rewrites content to the slim format (no input/output).
+// This is a one-time migration for data created before the tool-call-split feature.
+// Runs in batches to avoid excessive memory usage on large databases.
+func MigrateToolCallsFromContent() {
+	// Find assistant messages that have tool_use blocks with input field in content,
+	// but have no entries in chat_tool_calls yet.
+	// We detect old-format data by checking for "input" key inside tool_use blocks,
+	// which the slim format does not include.
+	var needed int
+	_ = DBRead.QueryRow(`
+		SELECT COUNT(*) FROM chat_history h
+		WHERE h.role = 'assistant'
+		  AND h.content LIKE '%"tool_use"%'
+		  AND h.content LIKE '%"input"%'
+		  AND h.streaming = 0
+		  AND NOT EXISTS (
+		    SELECT 1 FROM chat_tool_calls tc
+		    WHERE tc.message_id = h.id
+		    LIMIT 1
+		  )
+	`).Scan(&needed)
+	if needed == 0 {
+		return
+	}
+	slog.Info("migrating tool_use input/output from chat_history to chat_tool_calls", slog.Int("rows", needed))
+
+	batchSize := 200
+	offset := 0
+	migrated := 0
+	failed := 0
+
+	for {
+		rows, err := DBRead.Query(`
+			SELECT h.id, h.session_id, h.content FROM chat_history h
+			WHERE h.role = 'assistant'
+			  AND h.content LIKE '%"tool_use"%'
+			  AND h.content LIKE '%"input"%'
+			  AND h.streaming = 0
+			  AND NOT EXISTS (
+			    SELECT 1 FROM chat_tool_calls tc
+			    WHERE tc.message_id = h.id
+			    LIMIT 1
+			  )
+			ORDER BY h.id
+			LIMIT ? OFFSET ?`,
+			batchSize, offset,
+		)
+		if err != nil {
+			slog.Error("tool_use migration: query failed", slog.String("err", err.Error()))
+			return
+		}
+
+		type msgRow struct {
+			ID        int64
+			SessionID string
+			Content   string
+		}
+		var batch []msgRow
+		for rows.Next() {
+			var r msgRow
+			if err := rows.Scan(&r.ID, &r.SessionID, &r.Content); err != nil {
+				slog.Error("tool_use migration: scan failed", slog.String("err", err.Error()))
+				continue
+			}
+			batch = append(batch, r)
+		}
+		rows.Close()
+
+		if len(batch) == 0 {
+			break
+		}
+
+		for _, r := range batch {
+			if err := migrateToolCallsForRow(r.ID, r.SessionID, r.Content); err != nil {
+				slog.Error("tool_use migration: row failed",
+					slog.Int64("id", r.ID),
+					slog.String("err", err.Error()))
+				failed++
+				continue
+			}
+			migrated++
+		}
+
+		slog.Info("tool_use migration progress",
+			slog.Int("migrated", migrated),
+			slog.Int("failed", failed),
+			slog.Int("total", needed),
+			slog.Int("remaining", max(0, needed-migrated)))
+
+		if len(batch) < batchSize {
+			break
+		}
+		offset += batchSize
+	}
+
+	slog.Info("tool_use migration complete",
+		slog.Int("migrated", migrated),
+		slog.Int("failed", failed),
+		slog.Int("needed", needed))
+}
+
+// migrateToolCallsForRow processes a single chat_history row:
+// 1. Parse content JSON, find tool_use blocks with input/output
+// 2. Insert into chat_tool_calls
+// 3. Rewrite content to slim format (remove input/output from tool_use blocks)
+func migrateToolCallsForRow(msgID int64, sessionID, content string) error {
+	var contentMap struct {
+		Blocks []model.ContentBlock `json:"blocks"`
+		Meta   any                  `json:"metadata,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(content), &contentMap); err != nil {
+		return fmt.Errorf("unmarshal content: %w", err)
+	}
+
+	hasToolUse := false
+	needsRewrite := false
+	for i := range contentMap.Blocks {
+		b := &contentMap.Blocks[i]
+		if b.Type != "tool_use" || b.ID == "" {
+			continue
+		}
+		hasToolUse = true
+
+		// Check if this block still has input (old format)
+		// Slim format blocks have nil/empty input
+		if b.Input != nil && len(b.Input) > 0 {
+			needsRewrite = true
+
+			// Extract metadata before stripping input/output
+			meta := ai.ExtractToolCallMetaFromInput(b.Name, b.ID, b.Input)
+			b.Summary = meta.Summary
+			b.DisplayName = meta.DisplayName
+			b.FilePath = meta.FilePath
+
+			// Upsert to chat_tool_calls
+			inputJSON, _ := json.Marshal(b.Input)
+			if err := UpsertToolCall(msgID, sessionID, b.ID, b.Name, inputJSON, b.Output, b.Status, b.Summary, b.Done); err != nil {
+				// Log but continue — don't block the whole migration
+				slog.Warn("tool_use migration: upsert failed",
+					slog.String("toolID", b.ID),
+					slog.String("err", err.Error()))
+			}
+		} else if b.Output != "" {
+			// Block has no input but has output — still need to save output and strip it
+			needsRewrite = true
+			meta := ai.ExtractToolCallMetaFromInput(b.Name, b.ID, b.Input)
+			b.Summary = meta.Summary
+			b.DisplayName = meta.DisplayName
+			b.FilePath = meta.FilePath
+			inputJSON, _ := json.Marshal(b.Input)
+			_ = UpsertToolCall(msgID, sessionID, b.ID, b.Name, inputJSON, b.Output, b.Status, b.Summary, b.Done)
+		}
+	}
+
+	if !hasToolUse || !needsRewrite {
+		return nil
+	}
+
+	// Rewrite content: MarshalJSON on each block produces slim format for tool_use
+	newContentMap := map[string]any{
+		"blocks": contentMap.Blocks,
+	}
+	if contentMap.Meta != nil {
+		newContentMap["metadata"] = contentMap.Meta
+	}
+	newContent, err := json.Marshal(newContentMap)
+	if err != nil {
+		return fmt.Errorf("marshal slim content: %w", err)
+	}
+
+	_, err = DB.Exec("UPDATE chat_history SET content = ? WHERE id = ?", string(newContent), msgID)
+	return err
 }
 
 // CloseDB closes both write and read database connections.

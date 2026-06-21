@@ -34,6 +34,7 @@ export interface UseSessionManagerOptions {
   createSessionCore: (agentId?: string) => Promise<void>
   deleteSessionCore: (sessionId: string, backend?: string) => Promise<void>
   continueFromExecutionCore: (taskId: number, execId: number, switchTabFn: (tab: string) => void) => Promise<boolean>
+  forkSessionCore: (sessionId: string) => Promise<boolean>
   checkContinueSessionCore: (taskId: number, execId: number) => Promise<{ exists: boolean; sessionId: string }>
 
   // Stream operations (from useChatStream)
@@ -48,6 +49,9 @@ export interface UseSessionManagerOptions {
 
   // Scroll
   scrollBottom: (force?: boolean) => void
+
+  // Resend a queued message as a new chat (for stuck-queue recovery)
+  sendMessageNow: (text: string, filePaths: string[], files: string[]) => Promise<void>
 }
 
 /** Helper: check if messages.value has any pending items */
@@ -70,12 +74,14 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     createSessionCore,
     deleteSessionCore,
     continueFromExecutionCore,
+    forkSessionCore,
     checkContinueSessionCore,
     disconnectStream,
     stopPolling,
     updateRenderedContents,
     clearInputState,
     scrollBottom,
+    sendMessageNow,
   } = options
 
   const identity = useSessionIdentity()
@@ -100,8 +106,11 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     }
   }
 
-  /** Enqueue a message for later delivery while AI is generating. */
-  async function enqueueMessage(text: string, extraFilePaths: string[] = [], attachedFiles: string[] = [], pendingFilePaths: string[] = []) {
+  /** Enqueue a message for later delivery while AI is generating.
+   *  Returns the enqueue result which may contain `needs_start` if the
+   *  session is no longer running (race condition: user enqueues right
+   *  as AI finishes). The caller should resubmit via sendMessageNow. */
+  async function enqueueMessage(text: string, extraFilePaths: string[] = [], attachedFiles: string[] = [], pendingFilePaths: string[] = []): Promise<{ needsStart: boolean; message?: string; filePaths?: string[]; files?: string[] }> {
     const inputText = text !== undefined ? text : ''
     const filePaths = [...(extraFilePaths || []), ...(attachedFiles.length > 0 ? attachedFiles : [])]
     const allFiles = [...(pendingFilePaths || []), ...filePaths]
@@ -120,6 +129,28 @@ export function useSessionManager(options: UseSessionManagerOptions) {
         }
       )
       const data = await resp.json()
+
+      // Race condition fix: backend detected session is not running and
+      // dequeued the message. The frontend must resubmit as a new chat.
+      if (data.needs_start) {
+        // Remove the pending flag from the local message — it will be
+        // sent as a normal (non-pending) message via sendMessageNow.
+        for (let i = messages.value.length - 1; i >= 0; i--) {
+          if (messages.value[i].pending && messages.value[i].content === (data.message || inputText)) {
+            delete messages.value[i].pending
+            break
+          }
+        }
+        syncPendingFromBackend(messages.value, data.queue || [])
+        scrollBottom(true)
+        return {
+          needsStart: true,
+          message: data.message || inputText,
+          filePaths: data.filePaths || filePaths,
+          files: data.files || allFiles,
+        }
+      }
+
       // Sync pending messages in messages.value with backend queue state
       syncPendingFromBackend(messages.value, data.queue || [])
     } catch (err) {
@@ -134,6 +165,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     }
 
     scrollBottom(true)
+    return { needsStart: false }
   }
 
   /** Remove a pending message by its index in the full messages array.
@@ -232,6 +264,13 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     return await continueFromExecutionCore(taskId, execId, switchTabFn)
   }
 
+  /** Fork the current session — create a new session with copied messages. */
+  async function forkSession(sessionId: string): Promise<boolean> {
+    cleanupActiveStream()
+    clearPendingMessages(messages.value)
+    return await forkSessionCore(sessionId)
+  }
+
   /** Check whether a continued session already exists for a task execution. */
   async function checkContinueSession(taskId: number, execId: number): Promise<{ exists: boolean; sessionId: string }> {
     return await checkContinueSessionCore(taskId, execId)
@@ -251,15 +290,48 @@ export function useSessionManager(options: UseSessionManagerOptions) {
   // When loading transitions from true → false while we still show pending messages,
   // the backend may have finished draining the queue while SSE was disconnected
   // (e.g. user left the page on mobile). Sync queue from backend to clear stale items.
+  // If the backend still has queued items (stuck-queue race: message enqueued after
+  // the drain loop exited), auto-resubmit the first one.
   watch(loading, async (newVal, oldVal) => {
     if (oldVal && !newVal && hasPendingMessages(messages.value) && identity.currentSessionId.value) {
-      await fetchQueue(identity.currentSessionId.value)
+      const sessionId = identity.currentSessionId.value
+      try {
+        const resp = await fetch(`/api/ai/queue?session_id=${encodeURIComponent(sessionId)}`)
+        if (resp.ok) {
+          const data = await resp.json()
+          const queue = data.queue || []
+          syncPendingFromBackend(messages.value, queue)
+          // Stuck-queue recovery: if backend queue still has items after
+          // loading went false, the drain loop missed them. Dequeue and
+          // resubmit the first one.
+          if (queue.length > 0 && !loading.value) {
+            // Remove the pending message locally — sendMessageNow will push its own
+            const firstItem = queue[0]
+            const pIdx = messages.value.findLastIndex(
+              m => m.pending && m.content === (firstItem.text || '')
+            )
+            if (pIdx !== -1) messages.value.splice(pIdx, 1)
+            // Dequeue from backend
+            try {
+              await fetch(`/api/ai/queue?session_id=${encodeURIComponent(sessionId)}&index=0`, { method: 'DELETE' })
+            } catch (_) {}
+            // Resubmit as new chat
+            await sendMessageNow(
+              firstItem.text || '',
+              firstItem.filePaths || [],
+              firstItem.files || []
+            )
+          }
+        }
+      } catch (_) {
+        // Non-critical — queue will be empty until next SSE queue_update
+      }
     }
   })
 
   // When the page becomes visible after being in the background (e.g. mobile screen
-  // unlock), sync pending messages with the backend. SSE events (queue_consume,
-  // queue_update, queue_done) are dropped while the page is hidden, so local
+  // unlock), sync pending messages with the backend. SSE events (queue_drain,
+  // queue_update) are dropped while the page is hidden, so local
   // pending messages may be stale — showing ghost "queuing" items that the backend
   // has already consumed.
   function handleVisibilityChange() {
@@ -284,6 +356,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       sendMessage: extra.sendMessage,
       openChatPanel: extra.openChatPanel,
       continueFromExecution,
+      forkSession,
       checkContinueSession,
     })
   }
@@ -299,6 +372,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     deleteSession,
     deleteCurrentSession,
     continueFromExecution,
+    forkSession,
     checkContinueSession,
     // Cleanup (exposed for onStreamEnd and other edge cases)
     cleanupActiveStream,

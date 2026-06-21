@@ -552,6 +552,9 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		port = cliPort
 	}
 
+	// Set global port for cookie name scoping (multi-instance on same hostname)
+	model.ServerPort = port
+
 	// Load agent configurations (set ClawbenchBin first for placeholder replacement)
 	model.ClawbenchBin = absBinPath
 

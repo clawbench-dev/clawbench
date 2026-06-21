@@ -59,22 +59,75 @@ func parsePiToolExecutionEnd(msg *PiStreamMessage) *ToolCall {
 	}
 }
 
-// normalizePiEditInput is declared in pi_stream.go.
-// It will be moved to this file when pi_stream.go is refactored in a later step.
-
 // normalizePiToolInput normalizes tool input for Pi tool calls.
 // For the edit tool, it uses normalizePiEditInput for nested edits array handling.
+// For read/write tools, it adds path→file_path remapping on top of the base remaps.
 // For all other tools, it uses normalizeToolInput with the provided remap table.
-func normalizePiToolInput(toolName string, rawInput json.RawMessage, remaps map[string]string) string {
+func normalizePiToolInput(toolName string, rawInput json.RawMessage, baseRemaps map[string]string) string {
 	if len(rawInput) == 0 {
 		return "{}"
 	}
 
-	if toolName == "edit" {
+	// Copy base remaps so we don't mutate the caller's map
+	remaps := map[string]string{}
+	for k, v := range baseRemaps {
+		remaps[k] = v
+	}
+
+	switch toolName {
+	case "read", "write":
+		remaps["path"] = "file_path"
+	case "edit":
+		remaps["path"] = "file_path"
 		return normalizePiEditInput(rawInput, remaps)
+	case "bash":
+		// No additional remapping needed
 	}
 
 	normalized, err := normalizeToolInput([]byte(rawInput), remaps)
+	if err != nil {
+		return string(rawInput)
+	}
+	return string(normalized)
+}
+
+// normalizePiEditInput handles the nested edits array in Pi's edit tool input,
+// remapping both top-level fields and nested oldText/newText fields.
+func normalizePiEditInput(rawInput json.RawMessage, topRemaps map[string]string) string {
+	var input map[string]any
+	if err := json.Unmarshal([]byte(rawInput), &input); err != nil {
+		return string(rawInput)
+	}
+
+	// Apply top-level remaps
+	for from, to := range topRemaps {
+		if v, ok := input[from]; ok {
+			delete(input, from)
+			input[to] = v
+		}
+	}
+
+	// Remap fields inside edits array: oldText→old_string, newText→new_string
+	if editsRaw, ok := input["edits"]; ok {
+		if edits, ok := editsRaw.([]any); ok {
+			for i, editRaw := range edits {
+				if edit, ok := editRaw.(map[string]any); ok {
+					if v, ok := edit["oldText"]; ok {
+						delete(edit, "oldText")
+						edit["old_string"] = v
+					}
+					if v, ok := edit["newText"]; ok {
+						delete(edit, "newText")
+						edit["new_string"] = v
+					}
+					edits[i] = edit
+				}
+			}
+			input["edits"] = edits
+		}
+	}
+
+	normalized, err := json.Marshal(input)
 	if err != nil {
 		return string(rawInput)
 	}

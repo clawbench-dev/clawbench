@@ -2334,6 +2334,318 @@ func TestReorderQuickCommands_DBNotInitialized(t *testing.T) {
 
 // ---------- ReorderChatQuickSend: DB.Begin error path ----------
 
+// ---------- Tool call migration from content ----------
+
+// setupTestDBForToolCallMigration creates an in-memory SQLite database with
+// chat_history, chat_tool_calls, and chat_sessions tables for testing
+// MigrateToolCallsFromContent.
+func setupTestDBForToolCallMigration(t *testing.T) func() {
+	t.Helper()
+	origDB := DB
+	origDBRead := DBRead
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("failed to open in-memory db: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	db.Exec("PRAGMA journal_mode=WAL")
+	db.Exec("PRAGMA busy_timeout=5000")
+	db.Exec("PRAGMA foreign_keys = ON")
+
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS chat_sessions (
+			id TEXT PRIMARY KEY,
+			project_path TEXT NOT NULL,
+			backend TEXT NOT NULL,
+			title TEXT NOT NULL,
+			session_type TEXT NOT NULL DEFAULT 'chat',
+			deleted INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(project_path, backend, id)
+		);
+		CREATE TABLE IF NOT EXISTS chat_history (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			project_path TEXT NOT NULL,
+			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+			content TEXT NOT NULL,
+			session_id TEXT,
+			backend TEXT NOT NULL DEFAULT 'claude',
+			streaming INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE IF NOT EXISTS chat_tool_calls (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			message_id INTEGER NOT NULL REFERENCES chat_history(id) ON DELETE CASCADE,
+			session_id TEXT NOT NULL,
+			tool_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			input TEXT NOT NULL DEFAULT '{}',
+			output TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT '',
+			done INTEGER NOT NULL DEFAULT 0,
+			summary TEXT NOT NULL DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(tool_id, message_id)
+		);
+		CREATE INDEX IF NOT EXISTS idx_tool_calls_message ON chat_tool_calls(message_id);
+		CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON chat_tool_calls(session_id, created_at DESC);
+	`)
+	if err != nil {
+		t.Fatalf("failed to create tables: %v", err)
+	}
+
+	DB = db
+	DBRead = db
+	teardown := func() {
+		DB = origDB
+		DBRead = origDBRead
+		db.Close()
+	}
+	return teardown
+}
+
+func TestMigrateToolCallsFromContent_ExtractsToolCalls(t *testing.T) {
+	teardown := setupTestDBForToolCallMigration(t)
+	defer teardown()
+
+	// Insert a session
+	_, err := DB.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-1', '/proj', 'claude', 'Test')")
+	assert.NoError(t, err)
+
+	// Insert assistant message with old-format content: tool_use block with input and output
+	oldContent := `{
+		"blocks": [
+			{"type": "text", "text": "I'll read the file."},
+			{"type": "tool_use", "name": "Read", "id": "toolu_01", "input": {"file_path": "/src/main.go"}, "output": "package main\nfunc main() {}", "status": "success", "done": true},
+			{"type": "text", "text": "Here is the file content."}
+		]
+	}`
+	res, err := DB.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"/proj", oldContent, "sess-1",
+	)
+	assert.NoError(t, err)
+	msgID, _ := res.LastInsertId()
+
+	// Run migration
+	MigrateToolCallsFromContent()
+
+	// Verify chat_tool_calls row was created
+	var count int
+	err = DB.QueryRow("SELECT COUNT(*) FROM chat_tool_calls WHERE message_id = ?", msgID).Scan(&count)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, count, "should have 1 tool call record")
+
+	// Verify tool call fields
+	var toolID, name, input, output, status, summary string
+	var doneInt int
+	err = DB.QueryRow(
+		"SELECT tool_id, name, input, output, status, done, summary FROM chat_tool_calls WHERE message_id = ?",
+		msgID,
+	).Scan(&toolID, &name, &input, &output, &status, &doneInt, &summary)
+	assert.NoError(t, err)
+	assert.Equal(t, "toolu_01", toolID)
+	assert.Equal(t, "Read", name)
+	assert.Contains(t, input, "main.go")
+	assert.Equal(t, "package main\nfunc main() {}", output)
+	assert.Equal(t, "success", status)
+	assert.Equal(t, 1, doneInt, "done should be true")
+	assert.Equal(t, "main.go", summary, "summary should be extracted from file_path")
+
+	// Verify content was rewritten to slim format (no input/output in tool_use)
+	var newContent string
+	err = DB.QueryRow("SELECT content FROM chat_history WHERE id = ?", msgID).Scan(&newContent)
+	assert.NoError(t, err)
+
+	var parsed struct {
+		Blocks []json.RawMessage `json:"blocks"`
+	}
+	json.Unmarshal([]byte(newContent), &parsed)
+	assert.Len(t, parsed.Blocks, 3)
+
+	// tool_use block should NOT have input/output
+	var toolBlock map[string]any
+	json.Unmarshal(parsed.Blocks[1], &toolBlock)
+	assert.Equal(t, "tool_use", toolBlock["type"])
+	assert.Nil(t, toolBlock["input"], "slim format should not have input")
+	_, hasOutput := toolBlock["output"]
+	assert.False(t, hasOutput, "slim format should not have output")
+	assert.Equal(t, "main.go", toolBlock["summary"])
+	assert.Equal(t, "/src/main.go", toolBlock["file_path"])
+}
+
+func TestMigrateToolCallsFromContent_MultipleToolUseBlocks(t *testing.T) {
+	teardown := setupTestDBForToolCallMigration(t)
+	defer teardown()
+
+	_, err := DB.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-2', '/proj', 'claude', 'Test')")
+	assert.NoError(t, err)
+
+	// Message with multiple tool_use blocks
+	oldContent := `{
+		"blocks": [
+			{"type": "tool_use", "name": "Read", "id": "toolu_10", "input": {"file_path": "/a.go"}, "output": "content-a", "status": "success", "done": true},
+			{"type": "tool_use", "name": "Bash", "id": "toolu_11", "input": {"command": "ls -la"}, "output": "total 0", "status": "success", "done": true},
+			{"type": "tool_use", "name": "Agent", "id": "toolu_12", "input": {"subagent_type": "Explore", "prompt": "search code"}, "output": "found 3 files", "status": "success", "done": true}
+		]
+	}`
+	res, err := DB.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"/proj", oldContent, "sess-2",
+	)
+	assert.NoError(t, err)
+	msgID, _ := res.LastInsertId()
+
+	MigrateToolCallsFromContent()
+
+	// Should have 3 tool call records
+	var count int
+	DB.QueryRow("SELECT COUNT(*) FROM chat_tool_calls WHERE message_id = ?", msgID).Scan(&count)
+	assert.Equal(t, 3, count, "should have 3 tool call records")
+
+	// Verify Agent tool has display_name
+	var displayName string
+	DB.QueryRow("SELECT summary FROM chat_tool_calls WHERE tool_id = 'toolu_12' AND message_id = ?", msgID).Scan(&displayName)
+	assert.Equal(t, "search code", displayName, "Agent tool summary should come from prompt field")
+
+	// Verify Read tool has file_path in summary
+	var readSummary string
+	DB.QueryRow("SELECT summary FROM chat_tool_calls WHERE tool_id = 'toolu_10' AND message_id = ?", msgID).Scan(&readSummary)
+	assert.Equal(t, "a.go", readSummary)
+
+	// Verify Bash tool has command in summary
+	var bashSummary string
+	DB.QueryRow("SELECT summary FROM chat_tool_calls WHERE tool_id = 'toolu_11' AND message_id = ?", msgID).Scan(&bashSummary)
+	assert.Equal(t, "ls -la", bashSummary)
+}
+
+func TestMigrateToolCallsFromContent_Idempotent(t *testing.T) {
+	teardown := setupTestDBForToolCallMigration(t)
+	defer teardown()
+
+	_, err := DB.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-3', '/proj', 'claude', 'Test')")
+	assert.NoError(t, err)
+
+	oldContent := `{
+		"blocks": [
+			{"type": "tool_use", "name": "Read", "id": "toolu_20", "input": {"file_path": "/x.go"}, "output": "code", "status": "success", "done": true}
+		]
+	}`
+	_, err = DB.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"/proj", oldContent, "sess-3",
+	)
+	assert.NoError(t, err)
+
+	// Run migration twice
+	MigrateToolCallsFromContent()
+	MigrateToolCallsFromContent()
+
+	// Should still have exactly 1 tool call record (not duplicated)
+	var count int
+	DB.QueryRow("SELECT COUNT(*) FROM chat_tool_calls").Scan(&count)
+	assert.Equal(t, 1, count, "second migration should be a no-op")
+}
+
+func TestMigrateToolCallsFromContent_SkipsSlimFormat(t *testing.T) {
+	teardown := setupTestDBForToolCallMigration(t)
+	defer teardown()
+
+	_, err := DB.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-4', '/proj', 'claude', 'Test')")
+	assert.NoError(t, err)
+
+	// Already slim format content (no input field in tool_use)
+	slimContent := `{
+		"blocks": [
+			{"type": "tool_use", "name": "Read", "id": "toolu_30", "status": "success", "done": true, "summary": "main.go", "file_path": "/main.go"}
+		]
+	}`
+	_, err = DB.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"/proj", slimContent, "sess-4",
+	)
+	assert.NoError(t, err)
+
+	MigrateToolCallsFromContent()
+
+	// Should not create any tool call records (content is already slim)
+	var count int
+	DB.QueryRow("SELECT COUNT(*) FROM chat_tool_calls").Scan(&count)
+	assert.Equal(t, 0, count, "slim format content should not be migrated")
+}
+
+func TestMigrateToolCallsFromContent_SkipsUserMessages(t *testing.T) {
+	teardown := setupTestDBForToolCallMigration(t)
+	defer teardown()
+
+	_, err := DB.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-5', '/proj', 'claude', 'Test')")
+	assert.NoError(t, err)
+
+	// User message with "input" keyword (should not be processed)
+	userContent := `{"blocks": [{"type": "text", "text": "Please check the input validation"}]}`
+	_, err = DB.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+		"/proj", userContent, "sess-5",
+	)
+	assert.NoError(t, err)
+
+	MigrateToolCallsFromContent()
+
+	var count int
+	DB.QueryRow("SELECT COUNT(*) FROM chat_tool_calls").Scan(&count)
+	assert.Equal(t, 0, count, "user messages should be skipped")
+}
+
+func TestMigrateToolCallsFromContent_SkipsStreamingMessages(t *testing.T) {
+	teardown := setupTestDBForToolCallMigration(t)
+	defer teardown()
+
+	_, err := DB.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-6', '/proj', 'claude', 'Test')")
+	assert.NoError(t, err)
+
+	// Streaming message with tool_use (should not be processed — still in progress)
+	streamingContent := `{
+		"blocks": [
+			{"type": "tool_use", "name": "Read", "id": "toolu_40", "input": {"file_path": "/y.go"}, "output": "", "status": "", "done": false}
+		]
+	}`
+	_, err = DB.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 1)",
+		"/proj", streamingContent, "sess-6",
+	)
+	assert.NoError(t, err)
+
+	MigrateToolCallsFromContent()
+
+	var count int
+	DB.QueryRow("SELECT COUNT(*) FROM chat_tool_calls").Scan(&count)
+	assert.Equal(t, 0, count, "streaming messages should be skipped")
+}
+
+func TestMigrateToolCallsFromContent_NoToolUseBlocks(t *testing.T) {
+	teardown := setupTestDBForToolCallMigration(t)
+	defer teardown()
+
+	_, err := DB.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-7', '/proj', 'claude', 'Test')")
+	assert.NoError(t, err)
+
+	// Assistant message with no tool_use blocks
+	textContent := `{"blocks": [{"type": "text", "text": "Hello world"}]}`
+	_, err = DB.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"/proj", textContent, "sess-7",
+	)
+	assert.NoError(t, err)
+
+	MigrateToolCallsFromContent()
+
+	var count int
+	DB.QueryRow("SELECT COUNT(*) FROM chat_tool_calls").Scan(&count)
+	assert.Equal(t, 0, count, "messages without tool_use should not create tool call records")
+}
+
 func TestReorderChatQuickSend_DBNotInitialized(t *testing.T) {
 	origDB := DB
 	origDBRead := DBRead

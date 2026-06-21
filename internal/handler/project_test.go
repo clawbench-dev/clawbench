@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"clawbench/internal/model"
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
@@ -97,12 +98,12 @@ func TestServeProjectSet(t *testing.T) {
 		// Verify project cookie is set
 		var projectCookieFound, sessionCleared bool
 		for _, c := range w.Result().Cookies() {
-			if c.Name == "clawbench_project" {
+			if c.Name == model.ScopedCookieName("clawbench_project") {
 				projectCookieFound = true
 				decoded, _ := url.QueryUnescape(c.Value)
 				assert.Equal(t, projectPath, decoded)
 			}
-			if c.Name == "chat_session_id" {
+			if c.Name == model.ScopedCookieName("chat_session_id") {
 				sessionCleared = true
 				assert.Equal(t, -1, c.MaxAge, "session cookie should be cleared (MaxAge=-1)")
 			}

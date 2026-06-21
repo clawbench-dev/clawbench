@@ -18,6 +18,11 @@
           :title="t('chat.create.selectAgentOrLongPress')">
           <Plus :size="14" />
         </button>
+        <button v-if="isACPTransport" class="chat-action-btn"
+          @click="emit('fork-session')"
+          :title="t('chat.actions.forkSession')">
+          <Split :size="14" />
+        </button>
         <button class="chat-action-btn chat-action-btn-delete" :class="{ disabled: !currentSessionId }"
           @click="handleDelete"
           :title="currentSessionId ? t('chat.actions.deleteCurrentSession') : t('chat.actions.noSessionToDelete')">
@@ -146,7 +151,7 @@
           class="quick-send-item"
           :class="{ 'qs-pressing': quickSendPressingId === item.id }"
           @click="handleQuickSendClick(item)"
-          @touchstart.prevent="onQuickSendTouchStart(item, $event)"
+          @touchstart="onQuickSendTouchStart(item, $event)"
           @touchmove="onQuickSendTouchMove"
           @touchend="onQuickSendTouchEnd"
           @touchcancel="onQuickSendTouchEnd"
@@ -195,9 +200,40 @@
         @close="showAcpSessionDrawer = false"
         @select="handleAcpSessionSelect"
       />
+      <!-- Context usage detail popup -->
+      <PopupMenu v-if="showUsageInfo" v-model:show="showUsagePopup" :target-element="usageElRef" :max-width="220" :max-height="240" :menu-items-count="4">
+        <div class="usage-popup">
+          <div class="usage-popup-header">
+            <Activity :size="14" />
+            <span>{{ t('chat.sessionInfo.contextUsage') }}</span>
+          </div>
+          <div class="usage-popup-bar">
+            <div class="usage-popup-bar-track">
+              <div class="usage-popup-bar-fill" :style="{ width: Math.min(usagePct, 100) + '%', background: usageColor }"></div>
+            </div>
+            <span class="usage-popup-pct" :style="{ color: usageColor }">{{ usagePct }}%</span>
+          </div>
+          <div class="usage-popup-row">
+            <span class="usage-popup-label">{{ t('chat.sessionInfo.used') }}</span>
+            <span class="usage-popup-value">{{ contextUsed.toLocaleString() }}</span>
+          </div>
+          <div class="usage-popup-row">
+            <span class="usage-popup-label">{{ t('chat.sessionInfo.size') }}</span>
+            <span class="usage-popup-value">{{ contextSize.toLocaleString() }}</span>
+          </div>
+          <div class="usage-popup-row">
+            <span class="usage-popup-label">{{ t('chat.sessionInfo.remaining') }}</span>
+            <span class="usage-popup-value">{{ Math.max(contextSize - contextUsed, 0).toLocaleString() }}</span>
+          </div>
+          <div v-if="contextCost > 0" class="usage-popup-row">
+            <span class="usage-popup-label">{{ t('chat.sessionInfo.contextCost') }}</span>
+            <span class="usage-popup-value">${{ contextCost.toFixed(2) }} {{ contextCurrency || 'USD' }}</span>
+          </div>
+        </div>
+      </PopupMenu>
     </div>
     <!-- Session info bar (model + mode + thinking + transport) -->
-    <div class="chat-session-info" v-if="currentModelName || showModeInfo || showThinkingInfo || showTransportInfo || showResumeIcon">
+    <div class="chat-session-info" v-if="currentModelName || showModeInfo || showThinkingInfo || showTransportInfo || showResumeIcon || showUsageInfo">
       <span class="session-info-model" @click.stop="openSettingsModal('model')"><Cpu :size="11" />{{ currentModelName }}</span>
       <template v-if="showModeInfo">
         <span class="session-info-divider"></span>
@@ -209,11 +245,20 @@
       </template>
       <template v-if="showTransportInfo">
         <span class="session-info-divider"></span>
-        <span class="session-info-transport" @click.stop="openSettingsModal('transport')"><Cable :size="11" />{{ currentTransport }}</span>
+        <span class="session-info-transport" @click.stop="openSettingsModal('transport')"><Cable :size="11" />{{ currentTransport === 'acp-stdio' ? 'ACP' : 'CLI' }}</span>
       </template>
       <template v-if="showResumeIcon">
         <span class="session-info-divider"></span>
         <span class="session-info-resume" @click.stop="openResumeDrawer" :title="t('chat.acpSession.title')"><RotateCcw :size="11" /></span>
+      </template>
+      <template v-if="showUsageInfo">
+        <span class="session-info-divider"></span>
+        <span ref="usageElRef" class="session-info-usage" @click.stop="showUsagePopup = !showUsagePopup">
+          <Activity :size="11" />
+          <span class="usage-bar">
+            <span class="usage-bar-fill" :style="{ width: Math.min(usagePct, 100) + '%', background: usageColor }"></span>
+          </span>
+        </span>
       </template>
     </div>
   </div>
@@ -222,7 +267,7 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, FileImage, FileText, Folder, XCircle, Inbox, Send, Square, Settings, Zap, Loader2, Cpu, Compass, Brain, Cable, RotateCcw } from 'lucide-vue-next'
+import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, FileImage, FileText, Folder, XCircle, Inbox, Send, Square, Settings, Zap, Loader2, Cpu, Compass, Brain, Cable, RotateCcw, Activity, Split } from 'lucide-vue-next'
 import { baseName } from '@/utils/path.ts'
 import { computeRecentReferencedFiles, computeHasFileGroups, computeAttachMenuItemCount } from '@/utils/chatInputUtils.ts'
 import PopupMenu from '@/components/common/PopupMenu.vue'
@@ -237,7 +282,7 @@ import { useAgents, agentCanResume } from '@/composables/useAgents'
 import AcpSessionDrawer from '@/components/chat/AcpSessionDrawer.vue'
 
 const { t } = useI18n()
-const { availableCommands, availableModes, availableThinkingEfforts, currentThinkingEffortName, currentTransport: sessionTransport, autoApprove } = useSessionIdentity()
+const { availableCommands, availableModes, availableThinkingEfforts, currentThinkingEffortName, currentTransport: sessionTransport, autoApprove, contextUsed, contextSize, contextCost, contextCurrency } = useSessionIdentity()
 const { supportsDualTransport, hasThinkingEffortLevels } = useAgents()
 
 // isACP: true when the current agent supports ACP (has acpCommand).
@@ -257,6 +302,30 @@ const showModeInfo = computed(() => availableModes.value.length > 0 && isACP.val
 const showThinkingInfo = computed(() => isACP.value && (availableThinkingEfforts.value.length > 0 || hasThinkingEffortLevels(props.currentAgentId || '')))
 const showTransportInfo = computed(() => supportsDualTransport(props.currentAgentId || '') || !isACP.value)
 const showResumeIcon = computed(() => props.currentAgentId && agentCanResume(props.currentAgentId))
+const showUsageInfo = computed(() => contextSize.value > 0)
+const usagePct = computed(() => contextSize.value > 0 ? Math.round((contextUsed.value / contextSize.value) * 100) : 0)
+const usageColor = computed(() => {
+  const pct = usagePct.value
+  if (pct >= 95) return '#ef4444'
+  if (pct >= 90) return '#f97316'
+  if (pct >= 75) return '#eab308'
+  return '#22c55e'
+})
+const usageText = computed(() => {
+  const fmt = (n) => {
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
+    if (n >= 1000) return (n / 1000).toFixed(0) + 'K'
+    return String(n)
+  }
+  return `${fmt(contextUsed.value)}/${fmt(contextSize.value)}`
+})
+const usageTooltip = computed(() => {
+  let tip = `${usageText.value} tokens (${usagePct.value}%)`
+  if (contextCost.value > 0) {
+    tip += ` | $${contextCost.value.toFixed(2)} ${contextCurrency.value || 'USD'}`
+  }
+  return tip
+})
 const dialog = useDialog()
 const quickSendStore = useQuickSend()
 const { items: quickSendItems, fetchItems } = quickSendStore
@@ -346,6 +415,7 @@ const emit = defineEmits([
   'create-session',
   'show-agent-selector',
   'delete-session',
+  'fork-session',
   'switch-model',
   'switch-thinking-effort',
   'switch-mode',
@@ -373,6 +443,8 @@ function openSettingsModal(tab) {
 // ── @ command autocomplete ──
 const showAtMenu = ref(false)
 const showAcpSessionDrawer = ref(false)
+const showUsagePopup = ref(false)
+const usageElRef = ref(null)
 const atCommands = computed(() => {
   return [
     { key: '@chatsearch', label: '@chatsearch', description: t('chat.atCommand.chatsearchDesc') },
@@ -658,7 +730,7 @@ let quickSendCurrentItem = null
 
 function handleQuickSendClick(item) {
   // Desktop: click directly sends
-  // Mobile: click is suppressed by touchstart.prevent; send is handled in onQuickSendTouchEnd
+  // Mobile: touchend handles send and sets quickSendJustTriggered to prevent this click from re-sending
   if (quickSendJustTriggered) {
     quickSendJustTriggered = false
     return
@@ -716,6 +788,7 @@ function onQuickSendTouchEnd() {
     const item = quickSendCurrentItem
     quickSendCurrentItem = null
     quickSendPressingId.value = null
+    quickSendJustTriggered = true // prevent synthetic click from re-sending
     showQuickMenu.value = false
     emit('send', item.command)
   } else {
@@ -754,10 +827,11 @@ function handleSwitchTransport(transport) {
 }
 
 // Menu mutual exclusion: opening one closes the others
-watch(showAttachMenu, (v) => { if (v) { showQuickMenu.value = false; showSettingsModal.value = false; showSlashMenu.value = false } })
-watch(showQuickMenu, (v) => { if (v) { showAttachMenu.value = false; showSettingsModal.value = false; showSlashMenu.value = false } })
-watch(showSettingsModal, (v) => { if (v) { showAttachMenu.value = false; showQuickMenu.value = false; showSlashMenu.value = false } })
-watch(showSlashMenu, (v) => { if (v) { showAttachMenu.value = false; showQuickMenu.value = false; showSettingsModal.value = false } })
+watch(showAttachMenu, (v) => { if (v) { showQuickMenu.value = false; showSettingsModal.value = false; showSlashMenu.value = false; showUsagePopup.value = false } })
+watch(showQuickMenu, (v) => { if (v) { showAttachMenu.value = false; showSettingsModal.value = false; showSlashMenu.value = false; showUsagePopup.value = false } })
+watch(showSettingsModal, (v) => { if (v) { showAttachMenu.value = false; showQuickMenu.value = false; showSlashMenu.value = false; showUsagePopup.value = false } })
+watch(showSlashMenu, (v) => { if (v) { showAttachMenu.value = false; showQuickMenu.value = false; showSettingsModal.value = false; showUsagePopup.value = false } })
+watch(showUsagePopup, (v) => { if (v) { showAttachMenu.value = false; showQuickMenu.value = false; showSettingsModal.value = false; showSlashMenu.value = false } })
 
 onMounted(() => {
   fetchItems()
@@ -871,6 +945,34 @@ defineExpose({
   width: 1px;
   height: 10px;
   background: var(--border-color, #e5e5e5);
+}
+
+.session-info-usage {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 1;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.usage-bar {
+  position: relative;
+  width: 28px;
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--text-primary) 18%, transparent);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.usage-bar-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease, background 0.3s ease;
 }
 
 /* Top action bar (above input box, compact) */
@@ -1613,5 +1715,68 @@ defineExpose({
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Context usage detail popup */
+.usage-popup {
+  padding: 8px 12px;
+  min-width: 180px;
+}
+
+.usage-popup-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.usage-popup-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.usage-popup-bar-track {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text-primary) 15%, transparent);
+  overflow: hidden;
+}
+
+.usage-popup-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease, background 0.3s ease;
+}
+
+.usage-popup-pct {
+  font-size: 14px;
+  font-weight: 700;
+  flex-shrink: 0;
+  min-width: 36px;
+  text-align: right;
+}
+
+.usage-popup-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+  font-size: 12px;
+}
+
+.usage-popup-label {
+  color: var(--text-secondary, #6c757d);
+}
+
+.usage-popup-value {
+  color: var(--text-primary);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 </style>

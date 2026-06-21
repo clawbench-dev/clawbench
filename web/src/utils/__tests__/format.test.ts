@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { formatDuration, stripMarkdownPreview } from '@/utils/format.ts'
+import { formatDuration, stripMarkdownPreview, formatBadgeCount } from '@/utils/format.ts'
 
 // Mock i18n module — factory must not reference external variables (hoisted)
 vi.mock('@/i18n', () => ({
@@ -167,5 +167,20 @@ describe('statusLabel', () => {
 
   it('returns status as-is for unknown status', () => {
     expect(statusLabel('unknown')).toBe('unknown')
+  })
+})
+
+describe('formatBadgeCount', () => {
+  it('returns number as-is when <= 99', () => {
+    expect(formatBadgeCount(0)).toBe(0)
+    expect(formatBadgeCount(1)).toBe(1)
+    expect(formatBadgeCount(50)).toBe(50)
+    expect(formatBadgeCount(99)).toBe(99)
+  })
+
+  it('returns "99+" when > 99', () => {
+    expect(formatBadgeCount(100)).toBe('99+')
+    expect(formatBadgeCount(999)).toBe('99+')
+    expect(formatBadgeCount(10000)).toBe('99+')
   })
 })

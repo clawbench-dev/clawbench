@@ -256,4 +256,19 @@ describe('DialogOverlay', () => {
       expect(wrapper.find('.dlg-title').exists()).toBe(false)
     })
   })
+
+  describe('Long message word-break', () => {
+    it('renders long path without overflow', async () => {
+      const wrapper = mountDialog()
+      const longPath = '/home/user/projects/some-very-long-path-name/.codebuddy/worktrees/fix-lint-v0.48.0'
+      await openDialog({ type: 'alert', message: `fatal: '${longPath}' contains modified or untracked files` })
+
+      const msg = wrapper.find('.dlg-msg')
+      expect(msg.exists()).toBe(true)
+      expect(msg.text()).toContain(longPath)
+      // Verify word-break style is applied
+      const style = getComputedStyle(msg.element)
+      expect(style.wordBreak).toBe('break-word')
+    })
+  })
 })

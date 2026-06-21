@@ -31,8 +31,8 @@
           </div>
           <!-- Entry content -->
           <span class="plan-entry__text" :class="{ 'plan-entry__text--done': entry.status === 'completed' }">{{ entry.content }}</span>
-          <!-- Priority tag -->
-          <span class="plan-entry__priority" :class="'plan-entry__priority--' + entry.priority">{{ priorityLabel(entry.priority) }}</span>
+          <!-- Priority dot -->
+          <span class="plan-entry__priority-dot" :class="'plan-entry__priority-dot--' + entry.priority"></span>
         </div>
       </div>
     </div>
@@ -55,15 +55,6 @@ defineEmits<{
 }>()
 
 const { t } = useI18n()
-
-function priorityLabel(priority: string): string {
-  switch (priority) {
-    case 'high': return t('chat.plan.priorityHigh')
-    case 'medium': return t('chat.plan.priorityMedium')
-    case 'low': return t('chat.plan.priorityLow')
-    default: return ''
-  }
-}
 
 const chipText = computed(() => {
   const inProgress = props.entries.find(e => e.status === 'in_progress')
@@ -275,46 +266,25 @@ const chipText = computed(() => {
   color: var(--text-muted, #6c757d);
 }
 
-/* ── Priority tag ── */
-.plan-entry__priority {
+/* ── Priority dot ── */
+.plan-entry__priority-dot {
   flex-shrink: 0;
-  font-size: 10px;
-  font-weight: 500;
-  padding: 1px 6px;
-  border-radius: 8px;
-  margin-top: 2px;
-  line-height: 1.4;
-  white-space: nowrap;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 5px;
 }
 
-.plan-entry__priority--high {
-  color: #dc2626;
-  background: rgba(239, 68, 68, 0.12);
+.plan-entry__priority-dot--high {
+  background: #ef4444;
 }
 
-.plan-entry__priority--medium {
-  color: #d97706;
-  background: rgba(249, 115, 22, 0.12);
+.plan-entry__priority-dot--medium {
+  background: #eab308;
 }
 
-.plan-entry__priority--low {
-  color: var(--text-muted, #6c757d);
-  background: var(--bg-tertiary, #e9ecef);
-}
-
-:root[data-theme="dark"] .plan-entry__priority--high {
-  color: #fca5a5;
-  background: rgba(239, 68, 68, 0.18);
-}
-
-:root[data-theme="dark"] .plan-entry__priority--medium {
-  color: #fdba74;
-  background: rgba(249, 115, 22, 0.18);
-}
-
-:root[data-theme="dark"] .plan-entry__priority--low {
-  color: #9ca3af;
-  background: rgba(156, 163, 175, 0.14);
+.plan-entry__priority-dot--low {
+  background: #3b82f6;
 }
 
 /* ── Animations ── */

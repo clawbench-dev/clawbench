@@ -152,7 +152,7 @@ func TestAuth_LocalhostWithBadCookie_StillPasses(t *testing.T) {
 func TestGetProjectFromCookie_NormalExtraction(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	req.AddCookie(&http.Cookie{
-		Name:  "clawbench_project",
+		Name:  model.ScopedCookieName("clawbench_project"),
 		Value: "/home/user/myproject",
 	})
 
@@ -164,7 +164,7 @@ func TestGetProjectFromCookie_URLEncodedValueDecoded(t *testing.T) {
 	encoded := url.QueryEscape("/home/user/my project")
 	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	req.AddCookie(&http.Cookie{
-		Name:  "clawbench_project",
+		Name:  model.ScopedCookieName("clawbench_project"),
 		Value: encoded,
 	})
 
@@ -182,7 +182,7 @@ func TestGetProjectFromCookie_NoCookie_ReturnsEmpty(t *testing.T) {
 func TestGetProjectFromCookie_EmptyValue_ReturnsEmpty(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	req.AddCookie(&http.Cookie{
-		Name:  "clawbench_project",
+		Name:  model.ScopedCookieName("clawbench_project"),
 		Value: "",
 	})
 

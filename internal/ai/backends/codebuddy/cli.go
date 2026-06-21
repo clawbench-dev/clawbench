@@ -28,10 +28,10 @@ func init() {
 // newCodebuddyBackend returns a CLIBackend instance configured for Codebuddy CLI.
 func newCodebuddyBackend() ai.AIBackend {
 	return &ai.CLIBackend{
-		BackendName: "codebuddy",
-		Cmd:         "codebuddy",
-		BuildArgsFn: buildCodebuddyStreamArgs,
-		NewParserFn: func() ai.LineParser { return &ai.StreamParser{} },
+		BackendName:   "codebuddy",
+		Cmd:           "codebuddy",
+		BuildArgsFn:   buildCodebuddyStreamArgs,
+		NewParserFn:   func() ai.LineParser { return &ai.StreamParser{} },
 		FilterLineFn: func(line string) (string, bool) {
 			line = strings.TrimPrefix(line, "\xEF\xBB\xBF") // UTF-8 BOM
 			if line == "" {

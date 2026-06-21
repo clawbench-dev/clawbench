@@ -136,5 +136,5 @@
 - **流式渲染全链路容错**：SSE丢失→DB重载兜底，断连→重连/轮询降级，CLI崩溃→recover+DB持久化，tool_use超时→安全网标记done。多层防御确保消息不丢失。
 - **IoC模式的session identity**：useSessionIdentity通过模块级单例+动作注册解决了跨组件会话协调问题，优雅地避免了prop drilling和事件总线。
 - **流式节流+增量渲染**：ContentBlocks的300ms节流+blockHtmlCache避免高频Markdown重渲染，updateRenderedContents的增量Mermaid渲染只处理新消息——在AI高速输出时保持UI流畅。
-- **队列drain循环**：chat.go的for循环自动消费队列消息，配合queue_done/queue_consume/queue_update SSE事件，前端无需手动触发下一条——用户体验接近连续对话。
+- **队列drain循环**：chat.go的for循环自动消费队列消息，配合queue_drain/queue_update SSE事件，前端无需手动触发下一条——用户体验接近连续对话。
 - **tool_result抑制**：StreamParser的activeToolResults机制防止CLI输出的tool_result文本泄露到content事件中，AccumulateBlock的tool_result事件只更新现有tool_use块的Output/Status——前后端协调避免了内容混乱。

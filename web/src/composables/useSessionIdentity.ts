@@ -1,5 +1,5 @@
 import { ref, computed } from 'vue'
-import { useAgents } from '@/composables/useAgents'
+import { useAgents, registerIdentityUpdaters } from '@/composables/useAgents'
 import { gt } from '@/composables/useLocale'
 
 // ───────────────────────────────────────────────────────────
@@ -25,6 +25,10 @@ const autoApprove = ref(false)
 const availableModes = ref<Array<{ id: string; name: string }>>([])
 const availableCommands = ref<Array<{ name: string; description: string; inputHint?: string }>>([])
 const availableThinkingEfforts = ref<Array<{ id: string; name: string }>>([])
+const contextUsed = ref(0)
+const contextSize = ref(0)
+const contextCost = ref(0)
+const contextCurrency = ref('')
 export const runningSessions = ref(new Set<string>())
 // Bumped on every mutation to runningSessions so computed properties
 // that depend on the set's contents re-evaluate correctly.
@@ -34,6 +38,16 @@ const runningSessionsVersion = ref(0)
 // to useSessionIdentity so App.vue can render a single SessionDrawer
 // instance that's accessible from any tab (chat, viewer, QuoteQuestionBar).
 const sessionDrawerOpen = ref(false)
+
+// Register identity updaters in useAgents to break the circular dependency.
+// This must run at module evaluation time so that useAgents can call the
+// updaters during loadAgents() without importing useSessionIdentity.
+registerIdentityUpdaters({
+  updateAvailableModes,
+  updateAvailableThinkingEfforts,
+  updateCommandState,
+  currentAgentId,
+})
 
 /** Reset all module-level singleton refs — used by SPA hot project switch. */
 /** Read-only accessor for the current session ID (no composable setup needed). */
@@ -57,6 +71,10 @@ export function resetIdentity(): void {
   availableModes.value = []
   availableCommands.value = []
   availableThinkingEfforts.value = []
+  contextUsed.value = 0
+  contextSize.value = 0
+  contextCost.value = 0
+  contextCurrency.value = ''
   runningSessions.value = new Set()
   runningSessionsVersion.value = 0
   sessionDrawerOpen.value = false
@@ -209,6 +227,22 @@ export function clearThinkingEffortState() {
   currentThinkingEffortName.value = ''
 }
 
+/** Update context usage state from SSE usage_update event. */
+export function updateUsageState(used: number, size: number, cost?: number, currency?: string) {
+  contextUsed.value = used
+  contextSize.value = size
+  contextCost.value = cost ?? 0
+  contextCurrency.value = currency ?? ''
+}
+
+/** Clear usage state (called on session switch or reset). */
+export function clearUsageState() {
+  contextUsed.value = 0
+  contextSize.value = 0
+  contextCost.value = 0
+  contextCurrency.value = ''
+}
+
 /** Toggle auto-approve mode and persist to server. */
 export function toggleAutoApprove(enabled: boolean) {
   autoApprove.value = enabled
@@ -239,6 +273,7 @@ let _sendMessage: ((text: string, filePaths?: string[]) => Promise<void>) | null
 let _openChatPanel: (() => void) | null = null
 let _continueFromExecution: ((taskId: number, execId: number, switchTabFn: (tab: string) => void) => Promise<boolean>) | null = null
 let _checkContinueSession: ((taskId: number, execId: number) => Promise<{ exists: boolean; sessionId: string }>) | null = null
+let _forkSession: ((sessionId: string) => Promise<boolean>) | null = null
 // SessionDrawer component ref — set by App.vue. Allows any component to
 // trigger openAgentSelector() on the global drawer without coupling.
 let _sessionDrawerRef: any = null
@@ -251,6 +286,7 @@ export interface SessionActions {
   openChatPanel: () => void
   continueFromExecution: (taskId: number, execId: number, switchTabFn: (tab: string) => void) => Promise<boolean>
   checkContinueSession: (taskId: number, execId: number) => Promise<{ exists: boolean; sessionId: string }>
+  forkSession: (sessionId: string) => Promise<boolean>
 }
 
 /**
@@ -270,6 +306,7 @@ export function registerSessionActions(actions: SessionActions) {
   _openChatPanel = actions.openChatPanel
   _continueFromExecution = actions.continueFromExecution
   _checkContinueSession = actions.checkContinueSession
+  _forkSession = actions.forkSession
 
   // Expose E2E test bridge on window for Playwright access.
   // These allow tests to create/switch sessions without page reload,
@@ -394,6 +431,10 @@ export async function initSessionFromAPI() {
               currentThinkingEffortName.value = level?.name || currentThinkingEffort.value
             }
           }
+        }
+        // Initialize usage state from server cached data
+        if (data.usageState && data.usageState.size > 0) {
+          updateUsageState(data.usageState.used ?? 0, data.usageState.size, data.usageState.cost, data.usageState.currency)
         }
       }
     }
@@ -588,6 +629,10 @@ export function useSessionIdentity() {
     availableThinkingEfforts,
     runningSessions,
     runningSessionsVersion,
+    contextUsed,
+    contextSize,
+    contextCost,
+    contextCurrency,
     agentHeaderTitle,
     // Global session drawer state
     sessionDrawerOpen,
@@ -619,5 +664,7 @@ export function useSessionIdentity() {
     clearCommandState,
     updateAvailableThinkingEfforts,
     clearThinkingEffortState,
+    updateUsageState,
+    clearUsageState,
   }
 }

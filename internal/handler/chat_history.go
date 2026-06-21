@@ -44,7 +44,7 @@ func ServeChatHistory(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 				} else {
 					sessionID = sessions[0].ID
 				}
-				setSessionID(w, sessionID)
+				setSessionID(w, r, sessionID)
 			}
 		}
 		// ISS-077: Verify the session belongs to the requesting project
@@ -163,4 +163,42 @@ func ServeChatMessageUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// ServeToolCallDetail handles GET /api/ai/chat/tool-call — returns the full
+// input/output for a single tool call from the chat_tool_calls table.
+func ServeToolCallDetail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+		return
+	}
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+	toolID := r.URL.Query().Get("tool_id")
+	messageIDStr := r.URL.Query().Get("message_id")
+	if toolID == "" || messageIDStr == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "ToolIdAndMessageIdRequired")
+		return
+	}
+	var messageID int64
+	if _, err := fmt.Sscanf(messageIDStr, "%d", &messageID); err != nil || messageID <= 0 {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidMessageId")
+		return
+	}
+
+	record, err := service.GetToolCall(toolID, messageID)
+	if err != nil || record == nil {
+		writeLocalizedError(w, r, model.NotFound(fmt.Errorf("tool call not found"), "ToolCallNotFound"))
+		return
+	}
+
+	// Verify project ownership via session
+	if sessionProject := service.GetSessionProjectPath(record.SessionID); sessionProject != projectPath {
+		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, record)
 }

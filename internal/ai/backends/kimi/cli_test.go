@@ -205,7 +205,7 @@ func TestKimiPlugin_InjectSystemPrompt(t *testing.T) {
 	clib := entry.NewBackend().(*ai.CLIBackend)
 
 	req := ai.ChatRequest{
-		Prompt:       "user question",
+		Prompt:      "user question",
 		SystemPrompt: "you are a helper",
 	}
 	args := clib.BuildArgsFn(req)

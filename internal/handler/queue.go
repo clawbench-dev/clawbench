@@ -70,6 +70,27 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	queue := service.EnqueueMessage(sessionID, qMsg)
+
+	// Race condition fix: if the session is not running when we enqueue, no
+	// goroutine will drain the queue. This happens when the user sends a
+	// message right as the AI finishes — the frontend sees loading=true and
+	// enqueues, but the drain loop has already exited. Dequeue the message
+	// and tell the frontend to resubmit as a new chat request.
+	if !service.IsSessionRunning(sessionID) {
+		dequeued, ok := service.DequeueMessage(sessionID)
+		if ok {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"ok":          true,
+				"needs_start": true,
+				"message":     dequeued.Text,
+				"filePaths":   dequeued.FilePaths,
+				"files":       dequeued.Files,
+				"queue":       service.GetQueue(sessionID),
+			})
+			return
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":    true,
 		"queue": queue,

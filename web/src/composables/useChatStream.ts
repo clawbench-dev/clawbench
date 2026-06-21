@@ -2,10 +2,10 @@ import { onMounted, onUnmounted, type Ref } from 'vue'
 import { cancelChat } from '@/utils/api'
 import { useReconnect } from './useReconnect'
 import { gt } from '@/composables/useLocale'
-import { updateModeState, updateAvailableModes, updateCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, currentAgentId } from './useSessionIdentity'
+import { updateModeState, updateAvailableModes, updateCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, currentAgentId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
-import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, consumePendingMessage, syncPendingFromBackend } from '@/utils/chatStreamUtils.ts'
+import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, drainQueueMessage, syncPendingFromBackend } from '@/utils/chatStreamUtils.ts'
 
 export interface UseChatStreamOptions {
   messages: Ref<any[]>
@@ -294,7 +294,18 @@ export function useChatStream(options: UseChatStreamOptions) {
     // Start stream timeout
     resetStreamTimeout()
 
-    eventSource.addEventListener('resume_split', () => {
+    // Receive streaming message ID from backend for tool call detail API queries
+    eventSource.addEventListener('stream_start', (e) => {
+      if (sessionChanged()) return
+      let data
+      try { data = JSON.parse(e.data) } catch { return }
+      const sm = findStreamingMsg(messages.value)
+      if (sm && data.message_id) {
+        sm.id = data.message_id
+      }
+    })
+
+    eventSource.addEventListener('resume_split', (e) => {
       if (sessionChanged()) return
       const sm = findStreamingMsg(messages.value)
       if (!sm) return
@@ -302,14 +313,21 @@ export function useChatStream(options: UseChatStreamOptions) {
       // Finalize Phase 1 message
       delete sm.streaming
       // Create Phase 2 streaming message
-      messages.value.push({
+      const phase2 = {
         role: 'assistant',
         content: '',
         blocks: [],
         streaming: true,
         createdAt: new Date().toISOString(),
         backend: currentBackend.value
-      })
+      }
+      // Set the new streaming message ID from the resume_split event data
+      let data
+      try { data = JSON.parse(e.data) } catch { /* empty */ }
+      if (data?.message_id) {
+        phase2.id = data.message_id
+      }
+      messages.value.push(phase2)
       onRenderNeeded()
       debouncedRender()
     })
@@ -376,31 +394,52 @@ export function useChatStream(options: UseChatStreamOptions) {
       const existing = blocks.find(b => b.type === 'tool_use' && b.id === data.id)
       if (data.done) {
         if (existing) {
-          existing.input = data.input || existing.input
+          // Slim SSE: only input present for interactive tools
+          if (data.input && Object.keys(data.input).length > 0) {
+            existing.input = data.input
+          }
           existing.done = true
-          if (data.output !== undefined) existing.output = data.output
           if (data.status !== undefined) existing.status = data.status
+          // Slim fields
+          if (data.summary !== undefined) existing.summary = data.summary
+          if (data.display_name !== undefined) existing.display_name = data.display_name
+          if (data.file_path !== undefined) existing.file_path = data.file_path
         }
         const timer = toolUseTimeouts.get(data.id)
         if (timer) { clearTimeout(timer); toolUseTimeouts.delete(data.id) }
 
+        // Use file_path from slim meta (no need to read input)
         if (FILE_MODIFYING_TOOLS.has(data.name) && onFileModified) {
-          const input = data.input || existing?.input
-          const filePath = input?.file_path
+          const filePath = data.file_path || existing?.file_path
           if (filePath) {
             onFileModified(filePath)
           }
         }
       } else {
         if (existing) {
+          // Slim SSE: only input present for interactive tools
           if (data.input && Object.keys(data.input).length > 0) {
             existing.input = data.input
           }
           if (data.name) existing.name = data.name
-          if (data.output !== undefined) existing.output = data.output
           if (data.status !== undefined) existing.status = data.status
+          // Slim fields
+          if (data.summary !== undefined) existing.summary = data.summary
+          if (data.display_name !== undefined) existing.display_name = data.display_name
+          if (data.file_path !== undefined) existing.file_path = data.file_path
         } else {
-          const newBlock = { type: 'tool_use', name: data.name, id: data.id, input: data.input || {}, done: false, output: data.output || '', status: data.status || '' }
+          const newBlock: any = {
+            type: 'tool_use', name: data.name, id: data.id, done: false,
+            status: data.status || '',
+          }
+          // Slim SSE: only input present for interactive tools (AskUserQuestion, PermissionApproval)
+          if (data.input && Object.keys(data.input).length > 0) {
+            newBlock.input = data.input
+          }
+          // Slim fields
+          if (data.summary) newBlock.summary = data.summary
+          if (data.display_name) newBlock.display_name = data.display_name
+          if (data.file_path) newBlock.file_path = data.file_path
           blocks.push(newBlock)
           if (data.name !== 'PermissionApproval') {
             const timer = setTimeout(() => {
@@ -430,11 +469,8 @@ export function useChatStream(options: UseChatStreamOptions) {
       const blocks = sm.blocks
       const existing = blocks.find(b => b.type === 'tool_use' && b.id === data.id)
       if (existing) {
-        if (data.input && Object.keys(data.input).length > 0) {
-          existing.input = data.input
-        }
+        // Slim SSE: no input/output in tool_result events
         if (data.name) existing.name = data.name
-        if (data.output !== undefined) existing.output = data.output
         if (data.status !== undefined) existing.status = data.status
         existing.done = true
       }
@@ -464,6 +500,13 @@ export function useChatStream(options: UseChatStreamOptions) {
       }
       if (streamTimeout) { clearTimeout(streamTimeout); streamTimeout = null }
       clearToolUseTimeouts()
+
+      // Diagnostic: log message state when done event received
+      const doneSummary = messages.value.map((m: any, i: number) =>
+        `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.pending ? ' PENDING' : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
+      ).join(' | ')
+      console.log(`[done] before loadHistory: ${doneSummary}`)
+
       disconnectStream()
       reconnect.reset()
       onLoadHistory().finally(() => {
@@ -587,25 +630,46 @@ export function useChatStream(options: UseChatStreamOptions) {
       }
     })
 
-    // ── Queue events — new architecture ──
-    // queue_consume: find the pending user message and un-mark it, push new streaming assistant
-    eventSource.addEventListener('queue_consume', (e) => {
-      resetStreamTimeout()
+    eventSource.addEventListener('usage_update', (e) => {
       if (sessionChanged()) return
-
       let data: any
-      try { data = JSON.parse(e.data) } catch { console.warn('SSE queue_consume: invalid JSON, skipping'); return }
+      try { data = JSON.parse(e.data) } catch { console.warn('SSE usage_update: invalid JSON, skipping'); return }
+      if (data.size > 0) {
+        updateUsageState(data.used ?? 0, data.size, data.cost, data.currency)
+      }
+    })
+
+    // ── Queue drain — atomic replacement for old queue_done + queue_consume ──
+    // Single event that atomically: finalizes current streaming, un-marks pending
+    // user message, creates new streaming placeholder.
+    eventSource.addEventListener('queue_drain', (e) => {
+      resetStreamTimeout()
+      let data: any
+      try { data = JSON.parse(e.data) } catch { console.warn('SSE queue_drain: invalid JSON, skipping'); return }
 
       const userContent = data.text || ''
       const userFiles = (data.files || []).map((p: string) => p)
 
-      // Use the new consumePendingMessage — it finds the pending user message
-      // in messages.value, removes the pending flag, and pushes a new streaming
-      // assistant placeholder. No more onQueueConsume callback needed.
-      consumePendingMessage(
+      if (sessionChanged()) {
+        // Session changed — still sync pending messages from backend queue
+        // but don't process the drain (a different session owns it now)
+        syncPendingFromBackend(messages.value, data.queue || [])
+        return
+      }
+
+      // Process the drain FIRST: finalize streaming, un-mark pending user msg,
+      // push new streaming placeholder. This must happen before syncPendingFromBackend
+      // because the backend queue no longer contains the drained message — if we
+      // synced first, the pending message would be deleted before we can un-mark it.
+      drainQueueMessage(
         messages.value, userContent, userFiles, currentBackend.value,
         { onRenderNeeded, onExtractScheduledTasks }
       )
+
+      // Now sync pending messages with the backend queue state.
+      // At this point, the drained message's pending flag is already removed,
+      // so syncPendingFromBackend won't touch it.
+      syncPendingFromBackend(messages.value, data.queue || [])
 
       if (isOpen.value) {
         onRenderNeeded()
@@ -613,7 +677,8 @@ export function useChatStream(options: UseChatStreamOptions) {
       }
     })
 
-    // queue_update: sync pending messages with authoritative backend queue state
+    // queue_update: sent when a new message is enqueued while a session is running.
+    // Syncs pending messages with the authoritative backend queue state.
     eventSource.addEventListener('queue_update', (e) => {
       resetStreamTimeout()
       let data: any
@@ -623,16 +688,9 @@ export function useChatStream(options: UseChatStreamOptions) {
       syncPendingFromBackend(messages.value, data.queue || [])
 
       if (sessionChanged()) return
-    })
 
-    // queue_done: finalize the current streaming assistant message
-    eventSource.addEventListener('queue_done', () => {
-      if (sessionChanged()) return
-      resetStreamTimeout()
-      _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
-      if (isOpen.value) {
-        onScrollBottom()
-      }
+      // Trigger render when pending messages are added/removed
+      onRenderNeeded()
     })
 
     eventSource.addEventListener('error', (e) => {

@@ -16,8 +16,8 @@ var (
 )
 
 type BackendFactoryEntry struct {
-	NewBackendFn    func() AIBackend // returns a new backend instance
-	NeedsAutoResume bool             // wrap with AutoResumeBackend?
+	NewBackendFn     func() AIBackend // returns a new backend instance
+	NeedsAutoResume  bool             // wrap with AutoResumeBackend?
 }
 
 // RegisterBackend registers a backend factory function.
@@ -110,3 +110,4 @@ func NewBackendForAgentWithTransport(backendType, agentID, transportOverride str
 	// Fall back to CLI backend (with AutoResumeBackend for ExitPlanMode agents)
 	return NewBackend(backendType)
 }
+

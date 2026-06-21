@@ -2654,6 +2654,61 @@ func TestGetStreamingMessageID_NoAssistantMessage(t *testing.T) {
 	assert.Equal(t, int64(0), id)
 }
 
+func TestGetStreamingMessageID_PrefersStreaming(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Stream Pref")
+
+	// Add a finalized message (streaming=0)
+	finalizedID, err := service.AddChatMessage("/project", "claude", sid, "assistant", "finalized", nil, true, "")
+	assert.NoError(t, err)
+	_, err = service.FinalizeStreamingMessage("/project", "claude", sid, "final content")
+	assert.NoError(t, err)
+
+	// Add a streaming message (streaming=1) — should be preferred
+	streamingID, err := service.AddChatMessage("/project", "claude", sid, "assistant", "streaming...", nil, true, "")
+	assert.NoError(t, err)
+
+	id := service.GetStreamingMessageID(sid)
+	assert.Equal(t, streamingID, id, "should prefer streaming=1 message over streaming=0")
+	assert.NotEqual(t, finalizedID, id, "should NOT return the finalized message")
+}
+
+func TestGetStreamingMessageID_OnlyStreamingNoFinalized(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Only Stream")
+
+	// Add only a streaming message, never finalize it
+	streamingID, err := service.AddChatMessage("/project", "claude", sid, "assistant", "streaming...", nil, true, "")
+	assert.NoError(t, err)
+
+	id := service.GetStreamingMessageID(sid)
+	assert.Equal(t, streamingID, id, "should return streaming=1 message even with no finalized messages")
+}
+
+func TestGetStreamingMessageID_SessionIsolation(t *testing.T) {
+	setupDB(t)
+
+	sid1 := helperCreateSession(t, "/project", "claude", "Session 1")
+	sid2 := helperCreateSession(t, "/project", "claude", "Session 2")
+
+	// Session 1: add a streaming message
+	s1StreamingID, err := service.AddChatMessage("/project", "claude", sid1, "assistant", "s1 streaming", nil, true, "")
+	assert.NoError(t, err)
+
+	// Session 2: add a different streaming message
+	s2StreamingID, err := service.AddChatMessage("/project", "claude", sid2, "assistant", "s2 streaming", nil, true, "")
+	assert.NoError(t, err)
+
+	id1 := service.GetStreamingMessageID(sid1)
+	id2 := service.GetStreamingMessageID(sid2)
+
+	assert.Equal(t, s1StreamingID, id1, "session 1 should return its own streaming message")
+	assert.Equal(t, s2StreamingID, id2, "session 2 should return its own streaming message")
+	assert.NotEqual(t, id1, id2, "different sessions should not return each other's message IDs")
+}
+
 // ---------- SaveRawResponse ----------
 
 func TestSaveRawResponse(t *testing.T) {

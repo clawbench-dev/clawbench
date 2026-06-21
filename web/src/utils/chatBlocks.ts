@@ -73,7 +73,10 @@ export function parseAssistantContent(content: string) {
  * Uses a priority chain: description > file_path > command > pattern > query > url > skill > prompt > path > src_path+dst_path > firstVal
  * Shows full content — no artificial truncation.
  */
-export function toolCallSummary(block: { input?: any; name?: string }): string {
+export function toolCallSummary(block: { input?: any; name?: string; summary?: string }): string {
+  // Prefer pre-extracted summary from slim SSE/DB (avoids reading input)
+  if (block.summary) return block.summary
+  // Fallback: compute from input (old data or interactive tools)
   if (!block.input || typeof block.input !== 'object' || Array.isArray(block.input)) return ''
   const name = (block.name || '').toLowerCase()
   if (name === 'askuserquestion' && Array.isArray(block.input.questions) && block.input.questions.length > 0) {

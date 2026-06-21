@@ -12,8 +12,6 @@
 
 将强大的 AI 编程智能体能力完整移植到浏览器与移动端 App，打造真正的移动端工作环境。文件浏览、代码编辑、AI 对话、Git 操作、定时调度、命令行终端 —— 一个应用，全部搞定。
 
-核心优势：原生透传 AI 能力（工具调用、深度思考、Skill、MCP），零适配成本，完整保留编程智能体的强大功能。不同于其他移动端 AI 工具仅做"遥控器"，ClawBench 是全功能移动端工作台——文件、代码、Git、AI、定时任务、TTS，手机上直接干活，不依赖电脑在线。（[同类项目对比](docs/COMPARISON.md)）
-
 
 - **支持平台**：浏览器（PC / 平板 / 手机）、Android App、PWA
 - **AI 后端**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Cline、Copilot、Kimi
@@ -24,9 +22,9 @@
 
 ### 登录与导航
 
-| 登录 | 首页 | 选择项目 |
-|------|------|----------|
-| ![登录](docs/screenshots/login.png) | ![首页](docs/screenshots/home.png) | ![选择项目](docs/screenshots/project-select.png) |
+| 登录 | 首页 | 选择项目 | 设置面板 |
+|------|------|----------|----------|
+| ![登录](docs/screenshots/login.png) | ![首页](docs/screenshots/home.png) | ![选择项目](docs/screenshots/project-select.png) | ![设置面板](docs/screenshots/settings-panel.png) |
 
 ### 文件浏览与代码编辑
 
@@ -40,11 +38,12 @@
 |---------------|------------|-------------|----------|
 | ![Markdown 渲染](docs/screenshots/markdown-preview.png) | ![LaTeX 公式](docs/screenshots/latex-formula.png) | ![Mermaid 图表](docs/screenshots/mermaid-diagram.png) | ![目录导航](docs/screenshots/toc-drawer.png) |
 
+
 ### AI 智能体
 
-| 智能体选择 | AI 对话 | 结构化提问 | 会话管理 |
-|------------|---------|------------|----------|
-| ![智能体选择](docs/screenshots/agent-selector.png) | ![AI 对话](docs/screenshots/chat-panel.png) | ![结构化提问](docs/screenshots/ask-question.png) | ![会话管理](docs/screenshots/session-manager.png) |
+| 智能体选择 | AI 对话 | ACP 权限审批 | RAG 检索 | 会话管理 |
+|------------|---------|-------------|----------|----------|
+| ![智能体选择](docs/screenshots/agent-selector.png) | ![AI 对话](docs/screenshots/chat-panel.png) | ![ACP 权限审批](docs/screenshots/acp-permission.png) | ![RAG 检索](docs/screenshots/rag-search.png) | ![会话管理](docs/screenshots/session-manager.png) |
 
 | 定时任务 | 创建任务 | 任务卡片 |
 |----------|----------|----------|
@@ -52,9 +51,9 @@
 
 ### Git 集成
 
-| 提交历史与分支图 | 提交详情 | 比较报告 |
-|------------------|----------|----------|
-| ![提交历史与分支图](docs/screenshots/git-history.png) | ![提交详情](docs/screenshots/git-commit-detail.png) | ![比较报告](docs/screenshots/git-comparison-report.png) |
+| 提交历史与分支图 | 分支管理 | 提交详情 | 比较报告 |
+|------------------|----------|----------|----------|
+| ![提交历史与分支图](docs/screenshots/git-history.png) | ![分支管理](docs/screenshots/git-branches.png) | ![提交详情](docs/screenshots/git-commit-detail.png) | ![比较报告](docs/screenshots/git-comparison-report.png) |
 
 ### 媒体预览
 
@@ -64,9 +63,9 @@
 
 ### SSH 隧道与 Web 终端
 
-| 端口转发 | 交互式终端 |
-|---------|-----------|
-| ![端口转发](docs/screenshots/port-forwarding.png) | ![交互式终端](docs/screenshots/terminal.png) |
+| 端口转发 | 交互式终端 | 按键/符号配置 |
+|---------|-----------|--------------|
+| ![端口转发](docs/screenshots/port-forwarding.png) | ![交互式终端](docs/screenshots/terminal.png) | ![按键配置](docs/screenshots/terminal-key-config.png) |
 
 ---
 
@@ -77,9 +76,9 @@
 - **一台 PC（Linux / macOS / Windows）**：用于运行 ClawBench 服务端，需已安装至少一种 AI 编程智能体 CLI（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Cline、Copilot、Kimi 均可）
 - **一台手机**：安装 [ClawBench Android App](https://github.com/xulongzhe/clawbench/releases)，或使用手机浏览器（推荐 Chrome）访问服务端地址
 
-### 下载与启动
+### 安装包部署
 
-从 [GitHub Releases](https://github.com/xulongzhe/clawbench/releases) 下载最新版 ZIP 包，解压即可部署：
+从 [GitHub Releases](https://github.com/xulongzhe/clawbench/releases) 下载最新版 ZIP 包，解压即可运行，无需安装：
 
 ```bash
 wget https://github.com/xulongzhe/clawbench/releases/latest/download/clawbench-linux-amd64.zip
@@ -88,8 +87,20 @@ cd clawbench
 ./clawbench
 ```
 
-就这么简单 —— 每次启动时，ClawBench 会自动扫描系统中已安装的 AI CLI 工具，为每个检测到的后端生成最小化智能体配置，并自动发现可用模型和思考档位。无需手动配置即可开始使用。
 
+
+### Docker 部署
+
+```bash
+docker pull ghcr.io/clawbench-dev/clawbench:latest
+docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawbench:latest
+```
+
+修改 `-p` 可自定义端口（如 `-p 20300:20000`），`clawbench-data` 卷持久化数据。查看自动生成的密码：
+
+```bash
+docker exec $(docker ps -qf ancestor=ghcr.io/clawbench-dev/clawbench) cat /data/.clawbench/auto-password
+```
 
 > 首次启动会自动生成8位随机密码，以字符框突出打印到控制台，请妥善保存。
 

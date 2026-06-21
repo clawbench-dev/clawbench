@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet :open="open" fullscreen :title="t('terminal.keyConfigTitle')" @close="handleClose">
+  <BottomSheet :open="open" :title="t('terminal.keyConfigTitle')" @close="handleClose">
     <template #header>
       <Settings :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ t('terminal.keyConfigTitle') }}</span>

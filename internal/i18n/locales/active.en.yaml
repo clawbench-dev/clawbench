@@ -88,3 +88,5 @@ PushPermissionPending: Approval Required
 NotFound: Not found
 PermissionNotFound: No pending permission request found
 ACPSessionNotFound: ACP session no longer exists on the agent side
+ForkPrefix: "[Fork] "
+Session: Untitled Session

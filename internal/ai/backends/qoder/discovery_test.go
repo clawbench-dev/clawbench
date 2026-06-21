@@ -14,9 +14,9 @@ func TestQoderModelKeyRe(t *testing.T) {
 		{"modelSelector.item.gpt-4.1", true},
 		{"modelSelector.item.claude-sonnet-4-6", true},
 		{"modelSelector.item.o3", true},
-		{"models.gpt-4.1", false},        // missing "modelSelector.item." prefix
-		{"modelSelector.item", false},    // no model ID after prefix
-		{"modelSelector.gpt-4.1", false}, // missing "item."
+		{"models.gpt-4.1", false},              // missing "modelSelector.item." prefix
+		{"modelSelector.item", false},           // no model ID after prefix
+		{"modelSelector.gpt-4.1", false},        // missing "item."
 		{"", false},
 	}
 
@@ -29,8 +29,8 @@ func TestQoderModelKeyRe(t *testing.T) {
 
 func TestQoderModelKeyRe_ExtractsID(t *testing.T) {
 	tests := []struct {
-		input      string
-		expectedID string
+		input       string
+		expectedID  string
 	}{
 		{"modelSelector.item.gpt-4.1", "gpt-4.1"},
 		{"modelSelector.item.claude-opus-4-20250514", "claude-opus-4-20250514"},

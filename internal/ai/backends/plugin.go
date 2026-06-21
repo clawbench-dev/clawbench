@@ -1,10 +1,9 @@
 package backends
 
 import (
-	"os/exec"
-
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
+	"os/exec"
 )
 
 // BackendPlugin is the complete self-describing registration unit for an AI backend.

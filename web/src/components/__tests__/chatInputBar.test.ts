@@ -73,6 +73,7 @@ const i18n = createI18n({
           switchThinkingEffort: '切换思考强度',
           deleteCurrentSession: '删除当前会话',
           noSessionToDelete: '无可删除会话',
+          forkSession: '派生会话',
         },
         create: { selectAgentOrLongPress: '选择Agent' },
         delete: { confirm: '确认删除？' },
@@ -575,5 +576,32 @@ describe('ChatInputBar — quoteData chip', () => {
       quoteData: { text: 'q', filePath: '/a.ts', language: 'ts', startLine: 1, endLine: 1 },
     })
     expect(wrapper.vm.hasInputContent).toBeTruthy()
+  })
+})
+
+describe('ChatInputBar — fork button', () => {
+  it('hides fork button when currentTransport is not acp-stdio', () => {
+    const wrapper = mountInputBar({ currentTransport: '' })
+    // Find all chat-action-btn and check none has the fork tooltip
+    const buttons = wrapper.findAll('.chat-action-btn')
+    const forkBtn = buttons.find(b => b.attributes('title')?.includes('派生会话') || b.attributes('title')?.includes('Fork'))
+    expect(forkBtn).toBeUndefined()
+  })
+
+  it('shows fork button when currentTransport is acp-stdio', () => {
+    const wrapper = mountInputBar({ currentTransport: 'acp-stdio' })
+    const buttons = wrapper.findAll('.chat-action-btn')
+    const forkBtn = buttons.find(b => b.attributes('title')?.includes('派生会话') || b.attributes('title')?.includes('Fork'))
+    expect(forkBtn).toBeDefined()
+  })
+
+  it('emits fork-session when fork button is clicked', async () => {
+    const wrapper = mountInputBar({ currentTransport: 'acp-stdio' })
+    const buttons = wrapper.findAll('.chat-action-btn')
+    const forkBtn = buttons.find(b => b.attributes('title')?.includes('派生会话') || b.attributes('title')?.includes('Fork'))
+    expect(forkBtn).toBeDefined()
+
+    await forkBtn!.trigger('click')
+    expect(wrapper.emitted('fork-session')).toBeTruthy()
   })
 })

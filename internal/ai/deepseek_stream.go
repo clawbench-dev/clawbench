@@ -44,7 +44,7 @@ type DeepSeekStreamParser struct {
 	model     string // captured from metadata event
 
 	// InputRemaps maps input field names for tool input normalization.
-	// When set, normalizeDeepSeekInput uses this as the base remap table.
+	// When set, parseDeepSeekToolUse uses this as the base remap table.
 	InputRemaps map[string]string
 }
 
@@ -77,20 +77,13 @@ func (p *DeepSeekStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 		}
 
 	case "tool_use":
-		ch <- StreamEvent{Type: "tool_use", Tool: &ToolCall{
-			Name:  normalizeToolName(msg.Name),
-			ID:    msg.ID,
-			Input: normalizeDeepSeekInput(msg.Name, msg.Input, p.InputRemaps),
-			Done:  msg.Done,
-		}}
+		if tc := parseDeepSeekToolUse(&msg, p.InputRemaps); tc != nil {
+			ch <- StreamEvent{Type: "tool_use", Tool: tc}
+		}
 
 	case "tool_result":
-		if msg.ID != "" {
-			ch <- StreamEvent{Type: "tool_result", Tool: &ToolCall{
-				ID:     msg.ID,
-				Output: truncateToolOutput(msg.Output),
-				Status: msg.Status,
-			}}
+		if tc := parseDeepSeekToolResult(&msg); tc != nil {
+			ch <- StreamEvent{Type: "tool_result", Tool: tc}
 		}
 
 	case "session_capture":
@@ -122,44 +115,4 @@ func (p *DeepSeekStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 	default:
 		slog.Debug("deepseek stream: skipping unknown message type", "type", msg.Type)
 	}
-}
-
-// normalizeDeepSeekInput normalizes tool input field names from CodeWhale's
-// native names to the canonical names expected by the frontend renderers.
-//
-// CodeWhale uses concise snake_case names that differ from the canonical
-// Claude-style names: path→file_path, search→old_string, replace→new_string,
-// command→command (no change), content→content (no change).
-func normalizeDeepSeekInput(toolName string, rawInput json.RawMessage, baseRemaps map[string]string) string {
-	// Start with base remaps from the sub-package (injected at parser construction)
-	remaps := map[string]string{
-		"filePaths": "file_paths", // camelCase fallback
-		"oldString": "old_string", // camelCase fallback
-		"newString": "new_string", // camelCase fallback
-		"dirPath":   "path",       // camelCase fallback
-	}
-	// Merge base remaps (sub-package overrides take precedence)
-	for k, v := range baseRemaps {
-		remaps[k] = v
-	}
-
-	switch toolName {
-	case "edit_file":
-		// DeepSeek: {path, search, replace} → canonical: {file_path, old_string, new_string}
-		remaps["path"] = "file_path"
-		remaps["search"] = "old_string"
-		remaps["replace"] = "new_string"
-	case "read_file", "write_file", "list_dir":
-		// DeepSeek: {path, ...} → canonical: {file_path, ...}
-		remaps["path"] = "file_path"
-	case "grep_files", "file_search":
-		// DeepSeek: {path, ...} → canonical: {path, ...} (grep uses 'path', not 'file_path')
-		// No remap needed — 'path' is already canonical for Grep/Glob
-	}
-
-	normalized, err := normalizeToolInput(rawInput, remaps)
-	if err != nil {
-		return string(rawInput)
-	}
-	return string(normalized)
 }

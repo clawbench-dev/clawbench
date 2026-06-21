@@ -3,6 +3,7 @@ package model
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"strings"
 )
@@ -179,6 +180,7 @@ var (
 	CookieToken      string   // Cryptographically random session token for cookie validation (ISS-117, ISS-131, ISS-183)
 	PasswordHash     []byte   // bcrypt hash for password verification (ISS-003a)
 	PasswordIsSHA256 bool     // true when config.yaml stores password as sha256:<hex>
+	ServerPort       int      // Server listen port — set once at startup before HTTP listeners start, read-only afterwards. Do NOT modify after server starts; cookie names must be stable.
 	SessionCookie    = "clawbench_session"
 	DefaultAgentID   string // Default agent for new sessions, set from config or first agent
 
@@ -202,6 +204,17 @@ var (
 	// TTS cache limits (set from config, with defaults)
 	TTSMaxCacheFiles int // Default: 100; 0 = unlimited
 )
+
+// ScopedCookieName returns a port-prefixed cookie name when running on a
+// non-default port, so multiple ClawBench instances on the same hostname
+// don't collide. Default port 20000 uses unprefixed names for backward
+// compatibility; other ports get a "cb{port}_" prefix (e.g. "cb20300_").
+func ScopedCookieName(name string) string {
+	if ServerPort != 0 && ServerPort != 20000 {
+		return fmt.Sprintf("cb%d_%s", ServerPort, name)
+	}
+	return name
+}
 
 // GenerateRandomToken creates a cryptographically random hex token of the
 // specified byte length. Used for session cookie tokens to decouple them

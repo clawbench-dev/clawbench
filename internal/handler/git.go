@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -43,12 +44,13 @@ func isValidGitRefName(s string) bool {
 
 // commitInfo represents a git commit in API responses.
 type commitInfo struct {
-	SHA     string   `json:"sha"`
-	Parents []string `json:"parents"` // parent commit SHAs (empty for initial commit, 2+ for merge)
-	Msg     string   `json:"msg"`
-	Date    string   `json:"date"`
-	Author  string   `json:"author"`
-	Refs    []string `json:"refs"` // branch/tag names decorating this commit
+	SHA       string   `json:"sha"`
+	Parents   []string `json:"parents"` // parent commit SHAs (empty for initial commit, 2+ for merge)
+	Msg       string   `json:"msg"`
+	Date      string   `json:"date"`
+	Author    string   `json:"author"`
+	Refs      []string `json:"refs"`      // branch/tag names decorating this commit
+	FileCount int      `json:"fileCount"` // number of files changed in this commit
 }
 
 // parseGitLog parses git log output (format: %H|%P|%s|%ad|%an%d) into commitInfo slice.
@@ -96,7 +98,98 @@ func parseGitLog(output string) []commitInfo {
 	return commits
 }
 
-// parseDecorateRefs parses git decoration string like " (HEAD -> main, origin/main, tag: v1.0)"
+// parseGitLogWithStats parses git log output that includes --shortstat.
+// The format uses a null byte (%x00) after each commit's header line.
+// git appends --shortstat output after the format, so the actual structure is:
+//
+//	header1\x00\n\n  shortstat1\nheader2\x00\n\n  shortstat2\n...
+//
+// When split by \x00, each chunk (except first and last) contains the previous
+// commit's shortstat followed by the current commit's header. We re-associate
+// shortstat with the correct commit.
+func parseGitLogWithStats(output string) []commitInfo {
+	records := strings.Split(output, "\x00")
+	var commits []commitInfo
+
+	for i, rec := range records {
+		rec = strings.TrimSpace(rec)
+		if rec == "" {
+			continue
+		}
+		lines := strings.Split(rec, "\n")
+
+		// Find the header line (the pipe-delimited commit info).
+		// It's the first non-empty line that doesn't look like a shortstat.
+		var headerLine string
+		var shortstatLines []string
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" {
+				continue
+			}
+			// Check if this line looks like a shortstat line
+			if strings.Contains(trimmed, "files changed") || strings.Contains(trimmed, "file changed") {
+				shortstatLines = append(shortstatLines, trimmed)
+				continue
+			}
+			// First non-shortstat, non-empty line is the header
+			if headerLine == "" {
+				headerLine = trimmed
+			}
+		}
+
+		// Apply shortstat to the previous commit (it belongs to the commit before the header)
+		if len(shortstatLines) > 0 && len(commits) > 0 {
+			statStr := strings.Join(shortstatLines, " ")
+			if fc := parseFileCountFromShortstat(statStr); fc > 0 {
+				commits[len(commits)-1].FileCount = fc
+			}
+		}
+
+		if headerLine == "" {
+			continue
+		}
+
+		info := parseGitLog(headerLine)
+		if len(info) == 0 {
+			continue
+		}
+
+		// For the last record, check if there's trailing shortstat after the header
+		commit := info[0]
+		if i == len(records)-1 {
+			// Last chunk: shortstat after header belongs to this commit
+			for _, line := range lines {
+				trimmed := strings.TrimSpace(line)
+				if strings.Contains(trimmed, "files changed") || strings.Contains(trimmed, "file changed") {
+					if fc := parseFileCountFromShortstat(trimmed); fc > 0 {
+						commit.FileCount = fc
+						break
+					}
+				}
+			}
+		}
+
+		commits = append(commits, commit)
+	}
+
+	return commits
+}
+
+// parseFileCountFromShortstat extracts the file count from a git --shortstat line.
+// Example inputs: " 2 files changed, 10 insertions(+), 5 deletions(-)"
+//
+//	" 1 file changed, 3 insertions(+)"
+func parseFileCountFromShortstat(stat string) int {
+	m := shortstatRegex.FindStringSubmatch(stat)
+	if len(m) >= 2 {
+		n, _ := strconv.Atoi(m[1])
+		return n
+	}
+	return 0
+}
+
+var shortstatRegex = regexp.MustCompile(`(\d+) files? changed`)
 // into a clean list of ref names.
 func parseDecorateRefs(s string) []string {
 	s = strings.TrimSpace(s)
@@ -162,10 +255,11 @@ func ServeGitProjectHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// git log for entire project, with optional skip
-	// Format: SHA|parents|subject|date|author+refs
+	// Format: SHA|parents|subject|date|author+refs, followed by --shortstat
+	// Null byte (%x00) separator allows parsing multi-line output per commit
 	// --topo-order ensures branches display contiguously
 	// --decorate-refs-exclude hides remote-tracking refs
-	logArgs := []string{"log", "--format=%H|%P|%s|%ad|%an%d", "--date=iso-strict", "--topo-order", "--decorate-refs-exclude=refs/remotes", "-30"}
+	logArgs := []string{"log", "--format=%H|%P|%s|%ad|%an%d%x00", "--shortstat", "--date=iso-strict", "--topo-order", "--decorate-refs-exclude=refs/remotes", "-30"}
 	if skip > 0 {
 		logArgs = append(logArgs, "--skip", fmt.Sprintf("%d", skip))
 	}
@@ -173,7 +267,7 @@ func ServeGitProjectHistory(w http.ResponseWriter, r *http.Request) {
 	cmd.Dir = projectPath
 	output, _ := cmd.CombinedOutput()
 
-	commits := parseGitLog(string(output))
+	commits := parseGitLogWithStats(string(output))
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"isGit":   true,
@@ -221,19 +315,25 @@ func ServeGitBranch(w http.ResponseWriter, r *http.Request) {
 		headSHA = strings.TrimSpace(string(shaOutput))
 	}
 
-	// git diff --quiet HEAD exits 0 if clean, 1 if dirty, 128 if no commits yet
+	// Use git status --porcelain to get both dirty status and change count
+	// (more efficient than separate git diff --quiet HEAD)
 	dirty := false
-	diffCmd := exec.Command("git", "diff", "--quiet", "HEAD")
-	diffCmd.Dir = projectPath
-	if err := diffCmd.Run(); err != nil {
+	changeCount := 0
+	statusCmd := exec.Command("git", "status", "--porcelain")
+	statusCmd.Dir = projectPath
+	statusOutput, _ := statusCmd.CombinedOutput()
+	trimmed := strings.TrimSpace(string(statusOutput))
+	if trimmed != "" {
 		dirty = true
+		changeCount = strings.Count(trimmed, "\n") + 1
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"isGit":  true,
-		"branch": branch,
-		"head":   headSHA,
-		"dirty":  dirty,
+		"isGit":       true,
+		"branch":      branch,
+		"head":        headSHA,
+		"dirty":       dirty,
+		"changeCount": changeCount,
 	})
 }
 
@@ -1660,7 +1760,8 @@ func serveGitDeleteWorktree(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Path string `json:"path"`
+		Path  string `json:"path"`
+		Force bool   `json:"force"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Path) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
@@ -1709,14 +1810,25 @@ func serveGitDeleteWorktree(w http.ResponseWriter, r *http.Request) {
 
 	// Remove worktree — use resolved deletePath instead of raw body.Path
 	// to prevent command injection via path traversal (ISS-208).
+	forceFlag := body.Force
 	cmd = exec.Command("git", "worktree", "remove", deletePath)
 	cmd.Dir = projectPath
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		errMsg := strings.TrimSpace(string(out))
-		if strings.Contains(errMsg, "dirty") || strings.Contains(errMsg, "modified") || strings.Contains(errMsg, "uncommitted") {
+		isDirty := strings.Contains(errMsg, "modified") || strings.Contains(errMsg, "untracked") || strings.Contains(errMsg, "uncommitted")
+		if isDirty && !forceFlag {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"success": false,
+				"error":   "dirty_worktree",
+			})
+			return
+		}
+		if isDirty && forceFlag {
 			cmd = exec.Command("git", "worktree", "remove", "--force", deletePath)
 			cmd.Dir = projectPath
+			cmd.Env = append(os.Environ(), "LC_ALL=C")
 			out, err = cmd.CombinedOutput()
 		}
 		if err != nil {

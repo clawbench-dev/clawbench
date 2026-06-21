@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -1478,4 +1479,74 @@ func TestMapToolCallName_LowercaseNameGetsOverwritten(t *testing.T) {
 	}
 	mapToolCallName(tcu, tool, "")
 	assert.Equal(t, "Bash", tool.Name, "lowercase name should be overwritten by ToolCallUpdate")
+}
+
+// --- UsageUpdate forwarding tests ---
+
+func TestMapACPSessionUpdate_UsageUpdate(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+	used := 53000
+	size := 200000
+	amount := 0.42
+	currency := "USD"
+	cost := acp.Cost{Amount: amount, Currency: currency}
+
+	update := acp.SessionUpdate{
+		UsageUpdate: &acp.SessionUsageUpdate{
+			Used: used,
+			Size: size,
+			Cost: &cost,
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, context.Background(), nil, nil)
+
+	// Should get 2 events: raw_output + usage_update
+	var foundUsage bool
+	for i := 0; i < 2; i++ {
+		select {
+		case evt := <-ch:
+			if evt.Type == "usage_update" && evt.Usage != nil {
+				foundUsage = true
+				assert.Equal(t, used, evt.Usage.Used)
+				assert.Equal(t, size, evt.Usage.Size)
+				assert.InDelta(t, amount, evt.Usage.Cost, 0.001)
+				assert.Equal(t, currency, evt.Usage.Currency)
+			}
+		default:
+			t.Fatal("expected event in channel")
+		}
+	}
+	assert.True(t, foundUsage, "usage_update event not found")
+}
+
+func TestMapACPSessionUpdate_UsageUpdate_WithoutCost(t *testing.T) {
+	ch := make(chan StreamEvent, 10)
+
+	update := acp.SessionUpdate{
+		UsageUpdate: &acp.SessionUsageUpdate{
+			Used: 1000,
+			Size: 5000,
+			Cost: nil,
+		},
+	}
+
+	mapACPSessionUpdate(update, ch, context.Background(), nil, nil)
+
+	var foundUsage bool
+	for i := 0; i < 2; i++ {
+		select {
+		case evt := <-ch:
+			if evt.Type == "usage_update" && evt.Usage != nil {
+				foundUsage = true
+				assert.Equal(t, 1000, evt.Usage.Used)
+				assert.Equal(t, 5000, evt.Usage.Size)
+				assert.Equal(t, 0.0, evt.Usage.Cost)
+				assert.Equal(t, "", evt.Usage.Currency)
+			}
+		default:
+			t.Fatal("expected event in channel")
+		}
+	}
+	assert.True(t, foundUsage, "usage_update event not found")
 }

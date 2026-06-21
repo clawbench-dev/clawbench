@@ -133,7 +133,7 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			model.WriteError(w, model.Internal(fmt.Errorf("failed to create session")))
 			return
 		}
-		setSessionID(w, sessionID)
+		setSessionID(w, r, sessionID)
 		// Return session count for UI indicator
 		sessionCount, _ := service.GetSessionCount(projectPath)
 		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "sessionId": sessionID, "backend": backend, "agentId": resolvedAgentID, "sessionCount": sessionCount, "title": title})
@@ -198,7 +198,7 @@ func getSessionID(r *http.Request) string {
 	if sessionID := r.URL.Query().Get("session_id"); sessionID != "" {
 		return sessionID
 	}
-	cookie, err := r.Cookie("chat_session_id")
+	cookie, err := r.Cookie(model.ScopedCookieName("chat_session_id"))
 	if err != nil {
 		return ""
 	}
@@ -274,13 +274,70 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 
 // setSessionID sets session ID in cookie.
 // HttpOnly: true prevents JavaScript access, mitigating XSS-based session hijack (ISS-123).
-func setSessionID(w http.ResponseWriter, sessionID string) {
+func setSessionID(w http.ResponseWriter, r *http.Request, sessionID string) {
 	http.SetCookie(w, &http.Cookie{
-		Name:     "chat_session_id",
+		Name:     model.ScopedCookieName("chat_session_id"),
 		Value:    sessionID,
 		Path:     "/",
 		MaxAge:   86400 * 30, // 30 days
 		HttpOnly: true,
+		Secure:   r.TLS != nil,
 		SameSite: http.SameSiteLaxMode,
 	})
+}
+
+// ServeForkSession handles POST /api/ai/session/fork — creates a new chat session
+// by copying all messages from the current session (without external_session_id).
+func ServeForkSession(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+	sessionID, ok := requireSessionID(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		SessionID string `json:"sessionId"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxChatBodySize)
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	// Use body sessionId if provided, otherwise fall back to query/cookie
+	sourceID := req.SessionID
+	if sourceID == "" {
+		sourceID = sessionID
+	}
+	if sourceID == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "SessionIdRequired")
+		return
+	}
+
+	// Build title: localized fork prefix + source session title
+	sourceTitle, _ := service.GetSessionTitle(sourceID)
+	if sourceTitle == "" {
+		sourceTitle = T(r, "Session")
+	}
+	title := T(r, "ForkPrefix") + sourceTitle
+
+	newSessionID, err := service.ForkSession(sourceID, projectPath, title)
+	if err != nil {
+		slog.Error("handler: failed to fork session", "source_session", sourceID, "error", err)
+		if strings.Contains(err.Error(), "session limit") {
+			writeLocalizedErrorf(w, r, http.StatusConflict, "SessionLimitReached", map[string]any{"MaxCount": model.SessionMaxCount})
+		} else if strings.Contains(err.Error(), "not found") {
+			writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
+		} else {
+			model.WriteError(w, model.Internal(err))
+		}
+		return
+	}
+
+	setSessionID(w, r, newSessionID)
+	sessionCount, _ := service.GetSessionCount(projectPath)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "sessionId": newSessionID, "sessionCount": sessionCount})
 }

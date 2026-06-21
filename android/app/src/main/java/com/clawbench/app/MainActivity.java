@@ -90,6 +90,7 @@ public class MainActivity extends AppCompatActivity {
     private static final String PREFS_NAME = "clawbench_prefs";
     private static final String KEY_SERVER_URL = "server_url";
     private static final String KEY_SSH_PASSWORD = "ssh_password";
+    private static final String KEY_SERVER_LIST = "server_list";
     private static final String TAG = "ClawBench";
     private static final String LOGIN_HTML_URL = "file:///android_asset/login.html";
 
@@ -118,6 +119,11 @@ public class MainActivity extends AppCompatActivity {
     // Pending error message to deliver to the login page once it finishes loading.
     // Replaces the old fixed 300ms delay — see showLoginPage() and onPageFinished().
     private String pendingLoginErrorMessage = null;
+
+    // Set to true when the user has confirmed a self-signed SSL certificate at the OkHttp level.
+    // When true, onReceivedSslError will auto-accept SSL errors for the current server,
+    // because the user has already explicitly trusted the certificate.
+    private boolean sslCertTrustedByUser = false;
 
     // File chooser state for WebView <input type="file"> support
     private ValueCallback<Uri[]> filePathCallback;
@@ -249,9 +255,16 @@ public class MainActivity extends AppCompatActivity {
         // Load saved URL or show configuration dialog
         String savedUrl = prefs.getString(KEY_SERVER_URL, null);
         if (savedUrl != null) {
-            webView.setVisibility(View.INVISIBLE);
-            webView.loadUrl(savedUrl);
-            startConnectionTimeout();
+            // Auto-reconnect: use pre-authentication to verify server is reachable
+            // before loading the WebView. This prevents Chrome's built-in error page.
+            String savedPassword = prefs.getString(KEY_SSH_PASSWORD, null);
+            if (savedPassword != null && !savedPassword.isEmpty()) {
+                webView.setVisibility(View.INVISIBLE);
+                authenticateAndNavigate(savedUrl, savedPassword);
+            } else {
+                webView.setVisibility(View.INVISIBLE);
+                checkConnectivityAndNavigate(savedUrl);
+            }
         } else {
             webView.loadUrl(LOGIN_HTML_URL);
         }
@@ -574,6 +587,7 @@ public class MainActivity extends AppCompatActivity {
     private void showLoginPage(String errorMessage) {
         webViewConnected = false;
         loadErrorPending = false;
+        sslCertTrustedByUser = false;
         cancelConnectionTimeout();
         // Store error message for delivery after login page finishes loading.
         // See onPageFinished() where pendingLoginErrorMessage is consumed.
@@ -612,10 +626,15 @@ public class MainActivity extends AppCompatActivity {
      * Attempt to connect to a server URL.
      * Called from the static login page via AndroidNative.connectToServer().
      * Hides WebView content during the connection attempt so error pages don't flash.
+     *
+     * All connection errors are handled at the OkHttp level — the WebView is only
+     * asked to load a URL after pre-authentication succeeds. This prevents Chrome's
+     * built-in error page from appearing when the server is unreachable.
      */
     private void connectToServer(String url, String password) {
         webViewConnected = false;
         loadErrorPending = false;
+        sslCertTrustedByUser = false;
         webView.setVisibility(View.INVISIBLE);
 
         // Save URL and password
@@ -631,15 +650,12 @@ public class MainActivity extends AppCompatActivity {
         }
 
         if (isNetworkAvailable()) {
-            // Pre-authenticate with server before navigating WebView.
-            // This sets the clawbench_session cookie so the Vue app
-            // won't show a second web login page.
             if (password != null && !password.isEmpty()) {
                 authenticateAndNavigate(url, password);
             } else {
-                // No password — navigate directly (server may have no auth)
-                webView.loadUrl(url);
-                startConnectionTimeout();
+                // No password — perform connectivity check first, then navigate WebView.
+                // This avoids loading an unreachable URL into the WebView.
+                checkConnectivityAndNavigate(url);
             }
         } else {
             // No network — go back to login page with error
@@ -651,23 +667,151 @@ public class MainActivity extends AppCompatActivity {
      * Pre-authenticate with the server before navigating the WebView.
      * POSTs /login with the password, extracts the Set-Cookie header,
      * injects it into WebView's CookieManager, then loads the URL.
-     * On failure (wrong password, SSL error, network error), falls back
-     * to direct navigation so WebView can handle it (e.g. SSL confirmation).
+     *
+     * SSL errors are handled at the OkHttp level: a native confirmation dialog
+     * is shown, and if the user trusts the certificate, the request is retried
+     * with a trusting OkHttp client. The WebView is NEVER asked to load a URL
+     * that hasn't been pre-verified, preventing Chrome's built-in error page.
      */
     private void authenticateAndNavigate(String url, String password) {
         new Thread(() -> {
             try {
                 AuthResult result = performLoginRequest(url, password);
-                handleAuthResponse(result.statusCode, url, result.cookies);
+                handleAuthResponse(result.statusCode, url, password, result.cookies);
+            } catch (javax.net.ssl.SSLException e) {
+                // SSL error (self-signed cert, hostname mismatch, etc.)
+                // Show native confirmation dialog on UI thread, then retry with trusting client
+                AppLog.w(TAG, "SSL error during pre-auth, showing confirmation dialog", e);
+                runOnUiThread(() -> showSslConfirmationDialog(() -> {
+                    try {
+                        AuthResult result = performLoginRequestWithClient(buildTrustingOkHttpClient(), url, password);
+                        handleAuthResponse(result.statusCode, url, password, result.cookies);
+                    } catch (Exception retryEx) {
+                        AppLog.w(TAG, "SSL retry failed", retryEx);
+                        runOnUiThread(() -> showLoginPage(getNetworkErrorMessage(retryEx)));
+                    }
+                }));
             } catch (Exception e) {
-                // SSL error (self-signed cert), network error, etc.
-                // Fall back to direct WebView navigation — it may handle
-                // SSL via onReceivedSslError user confirmation.
-                AppLog.w(TAG, "Pre-auth failed, falling back to direct navigation", e);
-                runOnUiThread(() -> {
-                    webView.loadUrl(url);
-                    startConnectionTimeout();
-                });
+                // Network error (DNS failure, connection refused, timeout, etc.)
+                // Go back to login page — never fallback to webView.loadUrl()
+                AppLog.w(TAG, "Pre-auth failed, returning to login page", e);
+                String msg = getNetworkErrorMessage(e);
+                runOnUiThread(() -> showLoginPage(msg));
+            }
+        }).start();
+    }
+
+    /**
+     * Show SSL confirmation dialog. If the user trusts the certificate, runs the provided action
+     * on a background thread. This is used by both the pre-authentication path and the
+     * connectivity-check path to handle self-signed certificates at the OkHttp level.
+     */
+    private void showSslConfirmationDialog(Runnable onTrustAction) {
+        new AlertDialog.Builder(this)
+                .setTitle("SSL 证书验证失败")
+                .setMessage("服务器使用了自签名证书，连接可能不安全。\n\n仅当您信任该服务器时才继续。")
+                .setPositiveButton("信任并继续", (dialog, which) -> {
+                    // Mark that the user has trusted this certificate.
+                    // This allows onReceivedSslError to auto-accept when the WebView
+                    // loads the same URL (since WebView doesn't share OkHttp's trust store).
+                    sslCertTrustedByUser = true;
+                    new Thread(onTrustAction).start();
+                })
+                .setNegativeButton("取消连接", (dialog, which) -> {
+                    showLoginPage(null);
+                })
+                .setCancelable(false)
+                .show();
+    }
+
+    /**
+     * Build an OkHttpClient that trusts all SSL certificates (self-signed, hostname mismatch, etc.).
+     * Used after the user explicitly confirms they trust the server's certificate.
+     */
+    private OkHttpClient buildTrustingOkHttpClient() {
+        TrustManager[] trustAll = { new X509TrustManager() {
+            public void checkClientTrusted(X509Certificate[] c, String a) {}
+            public void checkServerTrusted(X509Certificate[] c, String a) {}
+            public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+        }};
+
+        try {
+            SSLContext sc = SSLContext.getInstance("TLS");
+            sc.init(null, trustAll, new java.security.SecureRandom());
+            return new OkHttpClient.Builder()
+                    .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                    .sslSocketFactory(sc.getSocketFactory(), (X509TrustManager) trustAll[0])
+                    .hostnameVerifier((hostname, session) -> true)
+                    .build();
+        } catch (Exception e) {
+            // Should never happen — TLS is always available
+            throw new RuntimeException("Failed to create trusting OkHttpClient", e);
+        }
+    }
+
+    /**
+     * Extract a user-friendly error message from a network exception.
+     */
+    private String getNetworkErrorMessage(Exception e) {
+        if (e instanceof java.net.UnknownHostException) {
+            return "无法解析服务器地址，请检查域名是否正确。";
+        } else if (e instanceof java.net.ConnectException) {
+            return "无法连接到服务器，请检查地址和端口。";
+        } else if (e instanceof java.net.SocketTimeoutException) {
+            return "连接超时，请检查服务器地址和网络连接。";
+        } else if (e instanceof IOException) {
+            return "网络错误，请检查网络连接。";
+        } else {
+            return "无法连接到服务器，请检查地址和网络连接。";
+        }
+    }
+
+    /**
+     * Perform a lightweight connectivity check (HEAD /) before loading the WebView.
+     * Used when no password is provided (server may have no auth).
+     * Only navigates the WebView if the server is reachable.
+     */
+    private void checkConnectivityAndNavigate(String url) {
+        new Thread(() -> {
+            try {
+                OkHttpClient client = new OkHttpClient.Builder()
+                        .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .build();
+
+                Request request = new Request.Builder()
+                        .url(url)
+                        .head()
+                        .build();
+
+                try (Response ignored = client.newCall(request).execute()) {
+                    // Server is reachable — navigate WebView
+                    runOnUiThread(() -> {
+                        webView.loadUrl(url);
+                        startConnectionTimeout();
+                    });
+                }
+            } catch (javax.net.ssl.SSLException e) {
+                AppLog.w(TAG, "SSL error during connectivity check, showing confirmation dialog", e);
+                runOnUiThread(() -> showSslConfirmationDialog(() -> {
+                    try {
+                        OkHttpClient trustClient = buildTrustingOkHttpClient();
+                        Request req = new Request.Builder().url(url).head().build();
+                        try (Response ignored = trustClient.newCall(req).execute()) {
+                            runOnUiThread(() -> {
+                                webView.loadUrl(url);
+                                startConnectionTimeout();
+                            });
+                        }
+                    } catch (Exception retryEx) {
+                        AppLog.w(TAG, "SSL connectivity retry failed", retryEx);
+                        runOnUiThread(() -> showLoginPage(getNetworkErrorMessage(retryEx)));
+                    }
+                }));
+            } catch (Exception e) {
+                AppLog.w(TAG, "Connectivity check failed", e);
+                runOnUiThread(() -> showLoginPage(getNetworkErrorMessage(e)));
             }
         }).start();
     }
@@ -681,14 +825,22 @@ public class MainActivity extends AppCompatActivity {
      * @return AuthResult with status code and Set-Cookie headers
      */
     AuthResult performLoginRequest(String url, String password) throws Exception {
-        OkHttpClient client = new OkHttpClient.Builder()
-                .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-                .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-                .build();
+        return performLoginRequestWithClient(
+                new OkHttpClient.Builder()
+                        .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .build(),
+                url, password);
+    }
 
-        String escapedPwd = password.replace("\\", "\\\\").replace("\"", "\\\"");
-        String jsonBody = "{\"password\":\"" + escapedPwd + "\"}";
-        RequestBody body = RequestBody.create(jsonBody,
+    /**
+     * Perform the HTTP POST /login request with a pre-built OkHttpClient.
+     * Shared by performLoginRequest (standard client) and the SSL retry path (trusting client).
+     */
+    private AuthResult performLoginRequestWithClient(OkHttpClient client, String url, String password) throws Exception {
+        org.json.JSONObject json = new org.json.JSONObject();
+        json.put("password", password);
+        RequestBody body = RequestBody.create(json.toString(),
                 MediaType.parse("application/json; charset=utf-8"));
 
         Request request = new Request.Builder()
@@ -723,7 +875,7 @@ public class MainActivity extends AppCompatActivity {
      * @param url        the server URL to navigate to on success/fallback
      * @param cookies    Set-Cookie headers from the response (may be empty)
      */
-    void handleAuthResponse(int statusCode, String url, java.util.List<String> cookies) {
+    void handleAuthResponse(int statusCode, String url, String password, java.util.List<String> cookies) {
         if (statusCode == 200) {
             // Extract Set-Cookie and inject into WebView CookieManager
             if (cookies != null && !cookies.isEmpty()) {
@@ -738,8 +890,9 @@ public class MainActivity extends AppCompatActivity {
                     AppLog.w(TAG, "Failed to inject auth cookie", e);
                 }
             }
-            // Auth success — navigate WebView (cookie already set)
+            // Auth success — promote server to head of list, then navigate
             runOnUiThread(() -> {
+                saveServerInternal(url, password);
                 webView.loadUrl(url);
                 startConnectionTimeout();
             });
@@ -749,19 +902,15 @@ public class MainActivity extends AppCompatActivity {
         } else if (statusCode == 429) {
             runOnUiThread(() -> showLoginPage("尝试次数过多，请稍后再试。"));
         } else {
-            // Unexpected status — still try navigating
-            runOnUiThread(() -> {
-                webView.loadUrl(url);
-                startConnectionTimeout();
-            });
-        }
-    }
-
-    private void loadUrl(String url) {
-        if (isNetworkAvailable()) {
-            webView.loadUrl(url);
-        } else {
-            Toast.makeText(this, R.string.error_connection_failed, Toast.LENGTH_LONG).show();
+            // Unexpected status — do not navigate WebView, return to login page
+            String msg;
+            if (statusCode >= 500) {
+                msg = "服务器错误 (" + statusCode + ")，请稍后重试。";
+            } else {
+                msg = "连接失败 (" + statusCode + ")，请检查服务器地址。";
+            }
+            final String errorMsg = msg;
+            runOnUiThread(() -> showLoginPage(errorMsg));
         }
     }
 
@@ -1267,12 +1416,24 @@ public class MainActivity extends AppCompatActivity {
                 handler.proceed();
                 return;
             }
-            String serverUrl = prefs.getString(KEY_SERVER_URL, "");
-            if (serverUrl.startsWith("https://")) {
-                showSslConfirmationDialog(handler);
-            } else {
-                handler.cancel();
+            // Auto-accept SSL errors if the user already confirmed the certificate
+            // at the OkHttp level during pre-authentication.
+            if (sslCertTrustedByUser) {
+                AppLog.i(TAG, "Auto-accepting SSL error: user already confirmed certificate");
+                handler.proceed();
+                return;
             }
+            // Unexpected SSL error — WebView should not encounter this because
+            // all connections are pre-verified at the OkHttp level.
+            AppLog.w(TAG, "Unexpected SSL error in WebView, returning to login");
+            handler.cancel();
+            loadErrorPending = true;
+            view.setVisibility(View.INVISIBLE);
+            view.postDelayed(() -> {
+                if (!isFinishing() && !isDestroyed() && !webViewConnected && loadErrorPending) {
+                    showLoginPage("SSL 连接异常，请重新连接。");
+                }
+            }, 600);
         }
 
         @Override
@@ -1341,33 +1502,6 @@ public class MainActivity extends AppCompatActivity {
             runOnUiThread(() -> recreateWebViewAfterCrash(view));
             return true; // We handled the crash — don't let the default behavior show a blank screen
         }
-    }
-
-    /**
-     * Show SSL confirmation dialog for non-localhost HTTPS servers.
-     * Separated from WebViewClient for testability — the logic branches are tested
-     * in WebViewClient; this method only handles the UI dialog creation.
-     */
-    void showSslConfirmationDialog(SslErrorHandler handler) {
-        final boolean[] handlerUsed = {false};
-        new AlertDialog.Builder(this)
-                .setTitle("SSL 证书验证失败")
-                .setMessage("服务器使用了自签名证书，连接可能不安全。\n\n仅当您信任该服务器时才继续。")
-                .setPositiveButton("信任并继续", (dialog, which) -> {
-                    handlerUsed[0] = true;
-                    handler.proceed();
-                })
-                .setNegativeButton("取消连接", (dialog, which) -> {
-                    handlerUsed[0] = true;
-                    handler.cancel();
-                })
-                .setOnDismissListener(dialog -> {
-                    if (!handlerUsed[0]) {
-                        handler.cancel();
-                    }
-                })
-                .setCancelable(false)
-                .show();
     }
 
     /**
@@ -1851,6 +1985,99 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public void setTerminalSessionCount(int count) {
             BackgroundService.setTerminalSessionCount(count);
+        }
+
+        /**
+         * Get the saved server list as a JSON array.
+         * Each entry: {"url":"https://host:port", "password":"..."}
+         * Returns "[]" when no servers are saved.
+         */
+        @JavascriptInterface
+        public String getServerList() {
+            try {
+                String json = activity.prefs.getString(KEY_SERVER_LIST, "[]");
+                return json;
+            } catch (Exception e) {
+                return "[]";
+            }
+        }
+
+        /**
+         * Save (add or update) a server entry in the server list.
+         * If a server with the same URL already exists, its password is updated
+         * and the entry is moved to the head of the list (most recently used).
+         * @param url      The server URL (e.g. "https://192.168.1.100:20000")
+         * @param password The password for this server
+         */
+        @JavascriptInterface
+        public void saveServer(String url, String password) {
+            activity.saveServerInternal(url, password);
+        }
+
+        /**
+         * Remove a server entry from the server list by URL.
+         * @param url The server URL to remove
+         */
+        @JavascriptInterface
+        public void removeServer(String url) {
+            try {
+                org.json.JSONArray list = new org.json.JSONArray(
+                        activity.prefs.getString(KEY_SERVER_LIST, "[]"));
+                org.json.JSONArray newList = new org.json.JSONArray();
+                for (int i = 0; i < list.length(); i++) {
+                    org.json.JSONObject entry = list.getJSONObject(i);
+                    if (!url.equals(entry.optString("url", ""))) {
+                        newList.put(entry);
+                    }
+                }
+                activity.prefs.edit().putString(KEY_SERVER_LIST, newList.toString()).apply();
+            } catch (Exception e) {
+                android.util.Log.e(TAG, "removeServer failed", e);
+            }
+        }
+    }
+
+    /**
+     * Save (add or update) a server entry in the server list.
+     * If the URL already exists, its password is updated and the entry is
+     * promoted to the head of the list (most recently used).
+     * Thread-safe: only called on the UI thread.
+     */
+    private void saveServerInternal(String url, String password) {
+        try {
+            org.json.JSONArray list = new org.json.JSONArray(
+                    prefs.getString(KEY_SERVER_LIST, "[]"));
+            org.json.JSONArray reordered = new org.json.JSONArray();
+            org.json.JSONObject updated = null;
+
+            // Find and update existing entry
+            for (int i = 0; i < list.length(); i++) {
+                org.json.JSONObject entry = list.getJSONObject(i);
+                if (url.equals(entry.optString("url", ""))) {
+                    entry.put("password", password);
+                    updated = entry;
+                } else {
+                    reordered.put(entry);
+                }
+            }
+
+            // If not found, create new entry
+            if (updated == null) {
+                updated = new org.json.JSONObject();
+                updated.put("url", url);
+                updated.put("password", password);
+            }
+
+            // Insert at head (most recently used)
+            org.json.JSONArray result = new org.json.JSONArray();
+            result.put(updated);
+            for (int i = 0; i < reordered.length(); i++) {
+                result.put(reordered.get(i));
+            }
+
+            prefs.edit().putString(KEY_SERVER_LIST, result.toString()).apply();
+        } catch (Exception e) {
+            AppLog.e(TAG, "saveServerInternal failed", e);
         }
     }
 }

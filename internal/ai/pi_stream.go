@@ -3,7 +3,6 @@ package ai
 import (
 	"encoding/json"
 	"log/slog"
-	"strings"
 )
 
 // PiStreamMessage represents a single JSON line from `pi --mode json`.
@@ -88,7 +87,7 @@ type PiStreamParser struct {
 	sessionID string
 
 	// InputRemaps maps input field names for tool input normalization.
-	// When set, normalizePiInput uses this as the base remap table.
+	// When set, parsePiToolCallEnd uses this as the base remap table.
 	InputRemaps map[string]string
 }
 
@@ -126,7 +125,9 @@ func (p *PiStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 		// No event — tool_use already emitted from toolcall_end
 
 	case "tool_execution_end":
-		p.parseToolExecutionEnd(&msg, ch)
+		if tc := parsePiToolExecutionEnd(&msg); tc != nil {
+			ch <- StreamEvent{Type: "tool_result", Tool: tc}
+		}
 
 	case "agent_end":
 		ch <- StreamEvent{Type: "done"}
@@ -161,14 +162,8 @@ func (p *PiStreamParser) parseMessageUpdate(msg *PiStreamMessage, ch chan<- Stre
 		// partial state during start/delta is unnecessary.
 
 	case "toolcall_end":
-		if evt.ToolCall != nil {
-			normalizedInput := normalizePiInput(evt.ToolCall.Name, evt.ToolCall.Arguments, p.InputRemaps)
-			ch <- StreamEvent{Type: "tool_use", Tool: &ToolCall{
-				Name:  normalizeToolName(evt.ToolCall.Name),
-				ID:    evt.ToolCall.ID,
-				Input: normalizedInput,
-				Done:  true,
-			}}
+		if tc := parsePiToolCallEnd(evt, p.InputRemaps); tc != nil {
+			ch <- StreamEvent{Type: "tool_use", Tool: tc}
 		}
 
 	case "thinking_start", "thinking_end", "text_start", "text_end":
@@ -208,114 +203,3 @@ func (p *PiStreamParser) parseMessageEnd(msg *PiStreamMessage, ch chan<- StreamE
 	}
 }
 
-// parseToolExecutionEnd handles tool_execution_end events — emits tool_result.
-func (p *PiStreamParser) parseToolExecutionEnd(msg *PiStreamMessage, ch chan<- StreamEvent) {
-	if msg.ToolCallID == "" {
-		return
-	}
-
-	// Extract output text from result.content array
-	var outputText string
-	if msg.Result != nil {
-		var parts []string
-		for _, c := range msg.Result.Content {
-			if c.Type == "text" && c.Text != "" {
-				parts = append(parts, c.Text)
-			}
-		}
-		if len(parts) > 0 {
-			outputText = strings.Join(parts, "\n")
-		}
-	}
-
-	status := "success"
-	if msg.IsError {
-		status = "error"
-	}
-
-	ch <- StreamEvent{Type: "tool_result", Tool: &ToolCall{
-		ID:     msg.ToolCallID,
-		Output: truncateToolOutput(outputText),
-		Status: status,
-	}}
-}
-
-// normalizePiInput normalizes tool input field names from Pi's native names
-// to the canonical names expected by the frontend renderers.
-//
-// Pi-specific mappings:
-//   - read: {path, limit} → {file_path, limit}
-//   - write: {path, content} → {file_path, content}
-//   - edit: {path, edits:[{oldText,newText}]} → {file_path, edits:[{old_string,new_string}]}
-//   - bash: {command} → {command} (no change)
-func normalizePiInput(toolName string, rawInput json.RawMessage, baseRemaps map[string]string) string {
-	if len(rawInput) == 0 {
-		return "{}"
-	}
-
-	// Start with base remaps from the sub-package (injected at parser construction)
-	remaps := map[string]string{}
-	for k, v := range baseRemaps {
-		remaps[k] = v
-	}
-
-	switch toolName {
-	case "read", "write":
-		remaps["path"] = "file_path"
-	case "edit":
-		remaps["path"] = "file_path"
-		// Handle edits array: remap oldText→old_string, newText→new_string
-		return normalizePiEditInput(rawInput, remaps)
-	case "bash":
-		// No remapping needed
-	}
-
-	normalized, err := normalizeToolInput([]byte(rawInput), remaps)
-	if err != nil {
-		return string(rawInput)
-	}
-	return string(normalized)
-}
-
-// normalizePiEditInput handles the nested edits array in Pi's edit tool input,
-// remapping both top-level fields and nested oldText/newText fields.
-func normalizePiEditInput(rawInput json.RawMessage, topRemaps map[string]string) string {
-	var input map[string]any
-	if err := json.Unmarshal([]byte(rawInput), &input); err != nil {
-		return string(rawInput)
-	}
-
-	// Apply top-level remaps
-	for from, to := range topRemaps {
-		if v, ok := input[from]; ok {
-			delete(input, from)
-			input[to] = v
-		}
-	}
-
-	// Remap fields inside edits array: oldText→old_string, newText→new_string
-	if editsRaw, ok := input["edits"]; ok {
-		if edits, ok := editsRaw.([]any); ok {
-			for i, editRaw := range edits {
-				if edit, ok := editRaw.(map[string]any); ok {
-					if v, ok := edit["oldText"]; ok {
-						delete(edit, "oldText")
-						edit["old_string"] = v
-					}
-					if v, ok := edit["newText"]; ok {
-						delete(edit, "newText")
-						edit["new_string"] = v
-					}
-					edits[i] = edit
-				}
-			}
-			input["edits"] = edits
-		}
-	}
-
-	normalized, err := json.Marshal(input)
-	if err != nil {
-		return string(rawInput)
-	}
-	return string(normalized)
-}

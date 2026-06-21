@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"clawbench/internal/ai"
@@ -87,7 +88,7 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 	// When the frontend reconnects (page reload, session switch), the previous
 	// SSE handler already consumed mode_update events. Re-emit from cache so
 	// the new SSE client receives state without waiting for a new prompt.
-	if s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID); s.Mode != nil || s.Config != nil || s.Effort != nil || len(s.Commands) > 0 || s.ModelList != nil || s.Plan != nil {
+	if s := ai.GetACPConnManager().GetCachedStateByClawbenchSID(sessionID); s.Mode != nil || s.Config != nil || s.Effort != nil || len(s.Commands) > 0 || s.ModelList != nil || s.Plan != nil || s.Usage != nil {
 		if s.Mode != nil {
 			data, _ := json.Marshal(s.Mode)
 			fmt.Fprintf(w, "event: mode_update\ndata: %s\n\n", data)
@@ -112,10 +113,24 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 			data, _ := json.Marshal(s.Plan)
 			fmt.Fprintf(w, "event: plan_update\ndata: %s\n\n", data)
 		}
+		if s.Usage != nil {
+			data, _ := json.Marshal(s.Usage)
+			fmt.Fprintf(w, "event: usage_update\ndata: %s\n\n", data)
+		}
 		if canFlush {
 			flusher.Flush()
 		}
 		slog.Debug("sse: re-emitted cached ACP state on connect", "session_id", sessionID)
+	}
+
+	// Send stream_start with the streaming assistant message ID so the frontend
+	// can fetch tool call details from the API during streaming.
+	if msgID := service.GetStreamingMessageID(sessionID); msgID > 0 {
+		data, _ := json.Marshal(map[string]int64{"message_id": msgID})
+		fmt.Fprintf(w, "event: stream_start\ndata: %s\n\n", data)
+		if canFlush {
+			flusher.Flush()
+		}
 	}
 
 	// Heartbeat: send SSE comment lines to keep the connection alive through
@@ -150,29 +165,38 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 				fmt.Fprintf(w, "event: thinking_done\ndata: {}\n\n")
 			case "tool_use":
 				if event.Tool != nil {
-					var input any
-					if event.Tool.Input != "" {
-						json.Unmarshal([]byte(event.Tool.Input), &input)
-					}
-					// Ensure input is always a JSON object (map), never a string or
-					// other primitive. Partial JSON streaming may produce string values
-					// (e.g., input_json_delta's first chunk "{") that would be sent as
-					// raw strings to the frontend, causing toolCallSummary to display
-					// "{" as the tool summary instead of the actual tool description.
-					if _, ok := input.(map[string]any); !ok {
-						input = map[string]any{}
-					}
 					payload := map[string]any{
-						"name":  event.Tool.Name,
-						"id":    event.Tool.ID,
-						"input": input,
-						"done":  event.Tool.Done,
-					}
-					if event.Tool.Output != "" {
-						payload["output"] = event.Tool.Output
+						"name": event.Tool.Name,
+						"id":   event.Tool.ID,
+						"done": event.Tool.Done,
 					}
 					if event.Tool.Status != "" {
 						payload["status"] = event.Tool.Status
+					}
+					// Include slim meta fields (extracted before SSE forwarding)
+					if event.ToolMeta != nil {
+						if event.ToolMeta.Summary != "" {
+							payload["summary"] = event.ToolMeta.Summary
+						}
+						if event.ToolMeta.DisplayName != "" {
+							payload["display_name"] = event.ToolMeta.DisplayName
+						}
+						if event.ToolMeta.FilePath != "" {
+							payload["file_path"] = event.ToolMeta.FilePath
+						}
+					}
+					// Interactive tools exception: include input so frontend
+					// can render the question/permission UI without waiting for DB
+					nameLower := strings.ToLower(event.Tool.Name)
+					if nameLower == "askuserquestion" || nameLower == "permissionapproval" {
+						var input any
+						if event.Tool.Input != "" {
+							json.Unmarshal([]byte(event.Tool.Input), &input)
+						}
+						if _, ok := input.(map[string]any); !ok {
+							input = map[string]any{}
+						}
+						payload["input"] = input
 					}
 					data, _ := json.Marshal(payload)
 					fmt.Fprintf(w, "event: tool_use\ndata: %s\n\n", data)
@@ -182,24 +206,23 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 					payload := map[string]any{
 						"id": event.Tool.ID,
 					}
-					// Include input if provided (ACP tool_call_update completed events
-					// may carry rawInput that was missing from earlier tool_use events)
-					if event.Tool.Input != "" {
-						var input any
-						if json.Unmarshal([]byte(event.Tool.Input), &input) == nil {
-							if _, ok := input.(map[string]any); ok {
-								payload["input"] = input
-							}
-						}
-					}
 					if event.Tool.Name != "" {
 						payload["name"] = event.Tool.Name
 					}
-					if event.Tool.Output != "" {
-						payload["output"] = event.Tool.Output
-					}
 					if event.Tool.Status != "" {
 						payload["status"] = event.Tool.Status
+					}
+					// Include slim meta fields
+					if event.ToolMeta != nil {
+						if event.ToolMeta.Summary != "" {
+							payload["summary"] = event.ToolMeta.Summary
+						}
+						if event.ToolMeta.DisplayName != "" {
+							payload["display_name"] = event.ToolMeta.DisplayName
+						}
+						if event.ToolMeta.FilePath != "" {
+							payload["file_path"] = event.ToolMeta.FilePath
+						}
 					}
 					data, _ := json.Marshal(payload)
 					fmt.Fprintf(w, "event: tool_result\ndata: %s\n\n", data)
@@ -238,29 +261,38 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 				}
 				data, _ := json.Marshal(payload)
 				fmt.Fprintf(w, "event: warning\ndata: %s\n\n", data)
-			case "queue_consume":
+			case "queue_drain":
 				if event.QueueEvent != nil {
 					data, _ := json.Marshal(map[string]any{
 						"text":      event.QueueEvent.Text,
 						"filePaths": event.QueueEvent.FilePaths,
 						"files":     event.QueueEvent.Files,
+						"queue":     event.QueueEvent.Queue,
 					})
-					fmt.Fprintf(w, "event: queue_consume\ndata: %s\n\n", data)
+					fmt.Fprintf(w, "event: queue_drain\ndata: %s\n\n", data)
 				}
 			case "queue_update":
+				// Sent when a new message is enqueued while a session is running.
+				// Syncs pending messages with the backend queue state.
 				if event.QueueEvent != nil {
 					data, _ := json.Marshal(map[string]any{
 						"queue": event.QueueEvent.Queue,
 					})
 					fmt.Fprintf(w, "event: queue_update\ndata: %s\n\n", data)
 				}
-			case "queue_done":
-				fmt.Fprintf(w, "event: queue_done\ndata: {}\n\n")
 			case "resume_split":
 				// Internal event from AutoResumeBackend: the AI detected ExitPlanMode
 				// and will auto-resume. Forward to frontend so it can reset streaming
 				// state (clear blocks, prepare for new content after resume).
-				fmt.Fprintf(w, "event: resume_split\ndata: {}\n\n")
+				// Include the new streaming message ID so the frontend can update
+				// the streaming message's id for tool call detail API queries.
+				resumeMsgID := service.GetStreamingMessageID(sessionID)
+				if resumeMsgID > 0 {
+					data, _ := json.Marshal(map[string]int64{"message_id": resumeMsgID})
+					fmt.Fprintf(w, "event: resume_split\ndata: %s\n\n", data)
+				} else {
+					fmt.Fprintf(w, "event: resume_split\ndata: {}\n\n")
+				}
 			case "mode_update":
 				if event.Mode != nil {
 					data, _ := json.Marshal(event.Mode)
@@ -292,6 +324,11 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 				if event.Plan != nil {
 					data, _ := json.Marshal(event.Plan)
 					fmt.Fprintf(w, "event: plan_update\ndata: %s\n\n", data)
+				}
+			case "usage_update":
+				if event.Usage != nil {
+					data, _ := json.Marshal(event.Usage)
+					fmt.Fprintf(w, "event: usage_update\ndata: %s\n\n", data)
 				}
 			}
 

@@ -109,3 +109,8 @@ export function statusLabel(status: string): string {
     if (status === 'completed') return i18n.global.t('task.status.completed')
     return status
 }
+
+/** Format badge count: truncate to "99+" when exceeding 99 */
+export function formatBadgeCount(n: number): string | number {
+    return n > 99 ? '99+' : n
+}

@@ -734,10 +734,19 @@ public class MainActivityConnectionRecoveryTest {
     }
 
     @Test
-    public void onReceivedSslError_httpsServer_showsDialog() throws Exception {
-        // HTTPS server URL → calls showSslConfirmationDialog → AlertDialog.Builder NPE
+    public void onReceivedSslError_httpsServer_cancelsAndSchedulesLogin() throws Exception {
+        // SSL is now handled at the OkHttp level during pre-authentication.
+        // If WebView encounters an SSL error and the user has NOT confirmed the cert,
+        // it cancels and returns to login page.
+        setField(activity, "sslCertTrustedByUser", false);
         when(mockWebView.getUrl()).thenReturn("https://192.168.1.100:20000");
         when(mockPrefs.getString(any(), any())).thenReturn("https://192.168.1.100:20000");
+
+        final Runnable[] capturedRunnable = new Runnable[1];
+        doAnswer(invocation -> {
+            capturedRunnable[0] = invocation.getArgument(0);
+            return true;
+        }).when(mockWebView).postDelayed(any(Runnable.class), any(long.class));
 
         Object client = createWebViewClient();
         Method method = findMethod(client.getClass(), "onReceivedSslError",
@@ -745,31 +754,40 @@ public class MainActivityConnectionRecoveryTest {
         method.setAccessible(true);
 
         android.webkit.SslErrorHandler mockHandler = mock(android.webkit.SslErrorHandler.class);
-        try {
-            method.invoke(client, mockWebView, mockHandler, null);
-        } catch (java.lang.reflect.InvocationTargetException e) {
-            // Expected: showSslConfirmationDialog → AlertDialog.Builder NPE
-            assertNotNull(e.getCause());
-        }
+        method.invoke(client, mockWebView, mockHandler, null);
+
+        // Should cancel the SSL handler (not show dialog)
+        verify(mockHandler).cancel();
+        // Should set loadErrorPending
+        assertTrue(getBooleanField(activity, "loadErrorPending"));
+        // Should hide WebView
+        verify(mockWebView).setVisibility(android.view.View.INVISIBLE);
+
+        // Execute the captured runnable to verify showLoginPage is called
+        assertNotNull(capturedRunnable[0]);
+        capturedRunnable[0].run();
+        verify(mockWebView).loadUrl(LOGIN_HTML_URL);
     }
 
-    // =====================================================
-    // showSslConfirmationDialog: extracted dialog logic
-    // =====================================================
-
     @Test
-    public void showSslConfirmationDialog_requiresActivityUI() throws Exception {
-        // showSslConfirmationDialog creates an AlertDialog — NPE on Unsafe-allocated activity
-        android.webkit.SslErrorHandler mockHandler = mock(android.webkit.SslErrorHandler.class);
-        Method method = findMethod(MainActivity.class, "showSslConfirmationDialog",
-                android.webkit.SslErrorHandler.class);
+    public void onReceivedSslError_sslCertTrustedByUser_autoAccepts() throws Exception {
+        // When the user has already confirmed the SSL certificate at the OkHttp level,
+        // WebView should auto-accept SSL errors for that server.
+        setField(activity, "sslCertTrustedByUser", true);
+        when(mockWebView.getUrl()).thenReturn("https://192.168.1.100:20000");
+
+        Object client = createWebViewClient();
+        Method method = findMethod(client.getClass(), "onReceivedSslError",
+                android.webkit.WebView.class, android.webkit.SslErrorHandler.class, android.net.http.SslError.class);
         method.setAccessible(true);
-        try {
-            method.invoke(activity, mockHandler);
-        } catch (java.lang.reflect.InvocationTargetException e) {
-            // Expected: AlertDialog.Builder NPE
-            assertNotNull(e.getCause());
-        }
+
+        android.webkit.SslErrorHandler mockHandler = mock(android.webkit.SslErrorHandler.class);
+        method.invoke(client, mockWebView, mockHandler, null);
+
+        // Should auto-accept (proceed) because user already confirmed
+        verify(mockHandler).proceed();
+        // Should NOT set loadErrorPending or hide WebView
+        assertFalse(getBooleanField(activity, "loadErrorPending"));
     }
 
     // =====================================================
