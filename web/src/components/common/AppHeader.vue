@@ -62,16 +62,15 @@
     <Teleport to="body">
       <Transition name="dropdown">
         <div v-if="isAppMode && serverDropdownOpen" class="project-dropdown" :style="serverDropdownStyle" ref="serverDropdownPanelRef">
-          <!-- Current server header -->
-          <div class="status-menu-header">
+          <!-- Current server (always first, not clickable) -->
+          <div class="dropdown-item current-server-item">
             <Server :size="14" class="item-icon" />
-            <span class="status-value">{{ currentServerName }}</span>
+            <span class="item-label">{{ currentServerName }}</span>
             <span class="status-indicator" :class="statusDotClass" style="margin-left:auto;"></span>
           </div>
           <div class="dropdown-divider"></div>
-          <!-- Server list (exclude current server — no point switching to yourself) -->
-          <div v-if="otherServers.length === 0" class="dropdown-empty">{{ t('login.addServer') }}</div>
-          <div v-else class="dropdown-scroll-area">
+          <!-- Server list (exclude current server) -->
+          <div v-if="otherServers.length > 0" class="dropdown-scroll-area">
             <div
               v-for="srv in otherServers"
               :key="srv.url"
@@ -630,6 +629,14 @@ onUnmounted(() => {
 
 .project-dropdown .dropdown-item:hover {
     background: var(--bg-tertiary);
+}
+
+.project-dropdown .dropdown-item.current-server-item {
+    cursor: default;
+}
+
+.project-dropdown .dropdown-item.current-server-item:hover {
+    background: transparent;
 }
 
 .project-dropdown .dropdown-item.active {
