@@ -281,18 +281,8 @@ func ForkSession(sourceSessionID, projectPath, title string) (string, error) {
 	}
 
 	// 3. Max session count check
-	if model.SessionMaxCount > 0 {
-		var count int
-		err = DB.QueryRow(
-			"SELECT COUNT(*) FROM chat_sessions WHERE project_path = ? AND deleted = 0 AND session_type = 'chat'",
-			sessProjectPath,
-		).Scan(&count)
-		if err != nil {
-			return "", err
-		}
-		if count >= model.SessionMaxCount {
-			return "", fmt.Errorf("session limit reached (%d/%d)", count, model.SessionMaxCount)
-		}
+	if err := checkSessionLimit(sessProjectPath); err != nil {
+		return "", err
 	}
 
 	// 4. Title is provided by handler (localized prefix + source title)
@@ -312,13 +302,46 @@ func ForkSession(sourceSessionID, projectPath, title string) (string, error) {
 		slog.String("backend", backend),
 		slog.String("agent", agentID))
 
-	// 6. Copy chat_history (only streaming=0), same pattern as ContinueFromExecution
+	// 6. Copy messages and summaries
+	idMap, err := copySessionMessages(sourceSessionID, newSessionID)
+	if err != nil {
+		return "", err
+	}
+	if err := copySessionSummaries(idMap); err != nil {
+		return "", err
+	}
+
+	return newSessionID, nil
+}
+
+// checkSessionLimit returns an error if the session count has reached the maximum.
+func checkSessionLimit(projectPath string) error {
+	if model.SessionMaxCount <= 0 {
+		return nil
+	}
+	var count int
+	err := DB.QueryRow(
+		"SELECT COUNT(*) FROM chat_sessions WHERE project_path = ? AND deleted = 0 AND session_type = 'chat'",
+		projectPath,
+	).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count >= model.SessionMaxCount {
+		return fmt.Errorf("session limit reached (%d/%d)", count, model.SessionMaxCount)
+	}
+	return nil
+}
+
+// copySessionMessages copies all non-streaming messages from sourceSessionID to newSessionID.
+// Returns a map from old message IDs to new message IDs.
+func copySessionMessages(sourceSessionID, newSessionID string) (map[int64]int64, error) {
 	rows, err := DB.Query(
 		"SELECT id, project_path, role, content, files, backend FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id",
 		sourceSessionID,
 	)
 	if err != nil {
-		return "", fmt.Errorf("failed to query source messages: %w", err)
+		return nil, fmt.Errorf("failed to query source messages: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -334,7 +357,7 @@ func ForkSession(sourceSessionID, projectPath, title string) (string, error) {
 	for rows.Next() {
 		var m sourceMsg
 		if err := rows.Scan(&m.id, &m.projectPath, &m.role, &m.content, &m.files, &m.backend); err != nil {
-			return "", fmt.Errorf("failed to scan source message: %w", err)
+			return nil, fmt.Errorf("failed to scan source message: %w", err)
 		}
 		messages = append(messages, m)
 	}
@@ -346,13 +369,16 @@ func ForkSession(sourceSessionID, projectPath, title string) (string, error) {
 			m.projectPath, m.role, m.content, m.files, newSessionID, m.backend,
 		)
 		if err != nil {
-			return "", fmt.Errorf("failed to copy message %d: %w", m.id, err)
+			return nil, fmt.Errorf("failed to copy message %d: %w", m.id, err)
 		}
 		newID, _ := result.LastInsertId()
 		idMap[m.id] = newID
 	}
+	return idMap, nil
+}
 
-	// 7. Copy summaries
+// copySessionSummaries copies summaries from old message IDs to new message IDs.
+func copySessionSummaries(idMap map[int64]int64) error {
 	for oldID, newID := range idMap {
 		var summary string
 		err := DB.QueryRow(
@@ -363,16 +389,15 @@ func ForkSession(sourceSessionID, projectPath, title string) (string, error) {
 			continue
 		}
 		if err != nil {
-			return "", fmt.Errorf("failed to query summary for message %d: %w", oldID, err)
+			return fmt.Errorf("failed to query summary for message %d: %w", oldID, err)
 		}
 		_, err = DB.Exec(
 			"INSERT OR REPLACE INTO summaries (target_type, target_id, summary, created_at) VALUES ('chat_message', ?, ?, CURRENT_TIMESTAMP)",
 			newID, summary,
 		)
 		if err != nil {
-			return "", fmt.Errorf("failed to copy summary for message %d: %w", oldID, err)
+			return fmt.Errorf("failed to copy summary for message %d: %w", oldID, err)
 		}
 	}
-
-	return newSessionID, nil
+	return nil
 }

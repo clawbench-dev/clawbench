@@ -143,15 +143,7 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) bool {
 
 	// SSE forwarding (interactive mode only)
 	if e.cfg.Mode == ModeInteractive && e.cfg.StreamCh != nil {
-		// For tool_use/tool_result events, extract meta before forwarding
-		// so the SSE event includes summary/display_name/file_path.
-		forwardEvent := event
-		if (event.Type == "tool_use" || event.Type == "tool_result") && event.Tool != nil { //nolint:goconst // event type strings
-			meta := ai.ExtractToolCallMeta(event)
-			forwardEvent.ToolMeta = &meta
-		}
-		if !ai.SendStreamEvent(e.ctx, e.cfg.StreamCh, forwardEvent) {
-			// Context cancelled or stream channel closed
+		if e.forwardSSEEvent(event) {
 			return true
 		}
 	}
@@ -171,7 +163,6 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) bool {
 	// metadata capture
 	if event.Type == "metadata" && event.Meta != nil {
 		e.responseMetadata = event.Meta
-		// Capture external session ID from metadata
 		if event.Meta.SessionID != "" {
 			e.captureExternalSessionID(event.Meta.SessionID)
 		}
@@ -184,6 +175,17 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) bool {
 	}
 
 	return false
+}
+
+// forwardSSEEvent forwards an event to the SSE stream channel.
+// Returns true if the event loop should return (send failure).
+func (e *SessionExecutor) forwardSSEEvent(event ai.StreamEvent) bool {
+	forwardEvent := event
+	if (event.Type == "tool_use" || event.Type == "tool_result") && event.Tool != nil { //nolint:goconst // event type strings
+		meta := ai.ExtractToolCallMeta(event)
+		forwardEvent.ToolMeta = &meta
+	}
+	return !ai.SendStreamEvent(e.ctx, e.cfg.StreamCh, forwardEvent)
 }
 
 // RunWithChannel executes the event loop against a pre-built event channel.

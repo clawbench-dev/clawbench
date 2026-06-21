@@ -63,57 +63,24 @@ func ExtractSummary(name string, input map[string]any) string {
 
 	// AskUserQuestion special case
 	if nameLower == "askuserquestion" {
-		questions, ok := input["questions"]
-		if !ok {
-			return ""
-		}
-		qSlice, ok := questions.([]any)
-		if !ok || len(qSlice) == 0 {
-			return ""
-		}
-		first, ok := qSlice[0].(map[string]any)
-		if !ok {
-			return ""
-		}
-		if header, _ := first["header"].(string); header != "" {
-			return truncateStr(header)
-		}
-		if question, _ := first["question"].(string); question != "" {
-			return truncateStr(question)
-		}
-		return ""
+		return extractAskUserQuestionSummary(input)
 	}
 
-	// Priority chain
-	if v, _ := input["description"].(string); v != "" {
-		return truncateStr(v)
+	// Priority chain — check fields in order
+	for _, field := range summaryPriorityFields {
+		if v, _ := input[field.key].(string); v != "" {
+			return field.format(v)
+		}
 	}
-	if v, _ := input["file_path"].(string); v != "" {
-		return truncateStr(baseName(v))
-	}
-	if v, _ := input["command"].(string); v != "" {
-		return truncateStr(v)
-	}
-	if v, _ := input["pattern"].(string); v != "" {
-		return truncateStr(v)
-	}
-	if v, _ := input["query"].(string); v != "" {
-		return truncateStr(v)
-	}
-	if v, _ := input["url"].(string); v != "" {
-		return truncateStr(v)
-	}
-	if v, _ := input["skill"].(string); v != "" {
-		return truncateStr(v)
-	}
+
+	// Agent-only: prompt field
 	if nameLower == "agent" {
 		if v, _ := input["prompt"].(string); v != "" {
 			return truncateStr(v)
 		}
 	}
-	if v, _ := input["path"].(string); v != "" {
-		return truncateStr(baseName(v))
-	}
+
+	// src_path + dst_path pair
 	if src, srcOk := input["src_path"].(string); srcOk {
 		if dst, dstOk := input["dst_path"].(string); dstOk {
 			return truncateStr(baseName(src) + " → " + baseName(dst))
@@ -127,6 +94,47 @@ func ExtractSummary(name string, input map[string]any) string {
 		}
 	}
 
+	return ""
+}
+
+// summaryField defines a priority-ordered field for summary extraction.
+type summaryField struct {
+	key    string
+	format func(string) string
+}
+
+// summaryPriorityFields lists fields checked in order for ExtractSummary.
+var summaryPriorityFields = []summaryField{
+	{key: "description", format: truncateStr},
+	{key: "file_path", format: func(v string) string { return truncateStr(baseName(v)) }},
+	{key: "command", format: truncateStr},
+	{key: "pattern", format: truncateStr},
+	{key: "query", format: truncateStr},
+	{key: "url", format: truncateStr},
+	{key: "skill", format: truncateStr},
+	{key: "path", format: func(v string) string { return truncateStr(baseName(v)) }},
+}
+
+// extractAskUserQuestionSummary extracts summary from AskUserQuestion input.
+func extractAskUserQuestionSummary(input map[string]any) string {
+	questions, ok := input["questions"]
+	if !ok {
+		return ""
+	}
+	qSlice, ok := questions.([]any)
+	if !ok || len(qSlice) == 0 {
+		return ""
+	}
+	first, ok := qSlice[0].(map[string]any)
+	if !ok {
+		return ""
+	}
+	if header, _ := first["header"].(string); header != "" {
+		return truncateStr(header)
+	}
+	if question, _ := first["question"].(string); question != "" {
+		return truncateStr(question)
+	}
 	return ""
 }
 

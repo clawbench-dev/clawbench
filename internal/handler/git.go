@@ -116,27 +116,8 @@ func parseGitLogWithStats(output string) []commitInfo {
 		if rec == "" {
 			continue
 		}
-		lines := strings.Split(rec, "\n")
 
-		// Find the header line (the pipe-delimited commit info).
-		// It's the first non-empty line that doesn't look like a shortstat.
-		var headerLine string
-		var shortstatLines []string
-		for _, line := range lines {
-			trimmed := strings.TrimSpace(line)
-			if trimmed == "" {
-				continue
-			}
-			// Check if this line looks like a shortstat line
-			if strings.Contains(trimmed, "files changed") || strings.Contains(trimmed, "file changed") {
-				shortstatLines = append(shortstatLines, trimmed)
-				continue
-			}
-			// First non-shortstat, non-empty line is the header
-			if headerLine == "" {
-				headerLine = trimmed
-			}
-		}
+		headerLine, shortstatLines := splitHeaderAndShortstat(rec)
 
 		// Apply shortstat to the previous commit (it belongs to the commit before the header)
 		if len(shortstatLines) > 0 && len(commits) > 0 {
@@ -158,22 +139,49 @@ func parseGitLogWithStats(output string) []commitInfo {
 		// For the last record, check if there's trailing shortstat after the header
 		commit := info[0]
 		if i == len(records)-1 {
-			// Last chunk: shortstat after header belongs to this commit
-			for _, line := range lines {
-				trimmed := strings.TrimSpace(line)
-				if strings.Contains(trimmed, "files changed") || strings.Contains(trimmed, "file changed") {
-					if fc := parseFileCountFromShortstat(trimmed); fc > 0 {
-						commit.FileCount = fc
-						break
-					}
-				}
-			}
+			commit.FileCount = extractFileCountFromShortstatLines(shortstatLines)
 		}
 
 		commits = append(commits, commit)
 	}
 
 	return commits
+}
+
+// splitHeaderAndShortstat separates a git log record into its header line
+// and any shortstat lines. The header is the first non-empty, non-shortstat line.
+func splitHeaderAndShortstat(rec string) (headerLine string, shortstatLines []string) {
+	lines := strings.Split(rec, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if isShortstatLine(trimmed) {
+			shortstatLines = append(shortstatLines, trimmed)
+			continue
+		}
+		if headerLine == "" {
+			headerLine = trimmed
+		}
+	}
+	return headerLine, shortstatLines
+}
+
+// isShortstatLine returns true if the line looks like a git --shortstat output.
+func isShortstatLine(line string) bool {
+	return strings.Contains(line, "files changed") || strings.Contains(line, "file changed")
+}
+
+// extractFileCountFromShortstatLines returns the file count from the first
+// shortstat line that contains one.
+func extractFileCountFromShortstatLines(shortstatLines []string) int {
+	for _, line := range shortstatLines {
+		if fc := parseFileCountFromShortstat(line); fc > 0 {
+			return fc
+		}
+	}
+	return 0
 }
 
 // parseFileCountFromShortstat extracts the file count from a git --shortstat line.
@@ -1774,20 +1782,40 @@ func serveGitDeleteWorktree(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve symlinks on body.Path so comparisons work on macOS
 	// where /var is a symlink to /private/var.
-	deletePath := body.Path
-	if resolved, err := filepath.EvalSymlinks(body.Path); err == nil {
-		deletePath = resolved
-	}
+	deletePath := resolveSymlinkPath(body.Path)
 
 	// ISS-208: List worktrees and verify deletePath matches a known worktree.
-	// This prevents passing arbitrary paths to "git worktree remove" — only
-	// paths that git itself reports as worktrees can be deleted.
+	if !validateWorktreePath(w, projectPath, deletePath) {
+		return
+	}
+
+	// Remove worktree — use resolved deletePath instead of raw body.Path
+	// to prevent command injection via path traversal (ISS-208).
+	if !removeWorktree(w, projectPath, deletePath, body.Force) {
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+	})
+}
+
+// resolveSymlinkPath resolves symlinks on the given path.
+func resolveSymlinkPath(p string) string {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return p
+}
+
+// validateWorktreePath checks that deletePath matches a known worktree.
+// Returns true if validation passes (and writes error JSON if not).
+func validateWorktreePath(w http.ResponseWriter, projectPath, deletePath string) bool {
 	cmd := exec.Command("git", "worktree", "list", "--porcelain")
 	cmd.Dir = projectPath
 	output, _ := cmd.CombinedOutput()
 	trees := parseWorktreePorcelain(string(output), projectPath)
 
-	matchedWorktree := false
 	for _, wt := range trees {
 		if wt.Path == deletePath {
 			if wt.IsCurrent {
@@ -1795,57 +1823,72 @@ func serveGitDeleteWorktree(w http.ResponseWriter, r *http.Request) {
 					"success": false,
 					"error":   "cannot_delete_current",
 				})
-				return
+				return false
 			}
-			matchedWorktree = true
-			break
+			return true
 		}
 	}
-	if !matchedWorktree {
-		writeJSON(w, http.StatusForbidden, map[string]interface{}{
-			"success": false,
-			"error":   "path_not_allowed",
-		})
-		return
-	}
+	writeJSON(w, http.StatusForbidden, map[string]interface{}{
+		"success": false,
+		"error":   "path_not_allowed",
+	})
+	return false
+}
 
-	// Remove worktree — use resolved deletePath instead of raw body.Path
-	// to prevent command injection via path traversal (ISS-208).
-	forceFlag := body.Force
-	cmd = exec.Command("git", "worktree", "remove", deletePath)
+// removeWorktree attempts to remove a git worktree, handling dirty worktree cases.
+// Returns true if removal succeeded.
+func removeWorktree(w http.ResponseWriter, projectPath, deletePath string, force bool) bool {
+	cmd := exec.Command("git", "worktree", "remove", deletePath)
 	cmd.Dir = projectPath
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		errMsg := strings.TrimSpace(string(out))
-		isDirty := strings.Contains(errMsg, "modified") || strings.Contains(errMsg, "untracked") || strings.Contains(errMsg, "uncommitted")
-		if isDirty && !forceFlag {
-			writeJSON(w, http.StatusOK, map[string]interface{}{
-				"success": false,
-				"error":   "dirty_worktree",
-			})
-			return
-		}
-		if isDirty && forceFlag {
-			cmd = exec.Command("git", "worktree", "remove", "--force", deletePath)
-			cmd.Dir = projectPath
-			cmd.Env = append(os.Environ(), "LC_ALL=C")
-			out, err = cmd.CombinedOutput()
-		}
-		if err != nil {
-			errMsg = strings.TrimSpace(string(out))
-			writeJSON(w, http.StatusOK, map[string]interface{}{
-				"success":     false,
-				"error":       "delete_failed",
-				"errorDetail": errMsg,
-			})
-			return
-		}
+	if err == nil {
+		return true
+	}
+
+	errMsg := strings.TrimSpace(string(out))
+	isDirty := isDirtyWorktreeError(errMsg)
+
+	if isDirty && !force {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"success": false,
+			"error":   "dirty_worktree",
+		})
+		return false
+	}
+
+	if isDirty {
+		return forceRemoveWorktree(w, projectPath, deletePath)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"success": true,
+		"success":     false,
+		"error":       "delete_failed",
+		"errorDetail": errMsg,
 	})
+	return false
+}
+
+// isDirtyWorktreeError checks if the git error message indicates a dirty worktree.
+func isDirtyWorktreeError(errMsg string) bool {
+	return strings.Contains(errMsg, "modified") || strings.Contains(errMsg, "untracked") || strings.Contains(errMsg, "uncommitted")
+}
+
+// forceRemoveWorktree force-removes a dirty worktree.
+func forceRemoveWorktree(w http.ResponseWriter, projectPath, deletePath string) bool {
+	cmd := exec.Command("git", "worktree", "remove", "--force", deletePath)
+	cmd.Dir = projectPath
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return true
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success":     false,
+		"error":       "delete_failed",
+		"errorDetail": strings.TrimSpace(string(out)),
+	})
+	return false
 }
 
 // serveGitDeleteTag deletes a local tag.

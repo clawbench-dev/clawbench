@@ -57,8 +57,6 @@ func (p *CodexStreamParser) GetCapturedSessionID() string { return p.threadID }
 
 // ParseLine parses a single JSON line from Codex's --json output and sends
 // StreamEvent(s) to the provided channel.
-//
-//nolint:gocyclo // complex stream parsing logic
 func (p *CodexStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 	var msg CodexStreamMessage
 	if err := json.Unmarshal([]byte(line), &msg); err != nil {
@@ -71,74 +69,83 @@ func (p *CodexStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 		if msg.ThreadID != "" {
 			p.threadID = msg.ThreadID
 		}
-
 	case "item.completed":
-		if msg.Item == nil {
-			return
-		}
-		switch msg.Item.Type {
-		case "agent_message":
-			text := msg.Item.Text
-			if text == "" {
-				return
-			}
-			// Split thinking from content. Handles both MiniMax-style tags
-			// and Codex's native \n\n separator.
-			thinking, content := codexSplitThinking(text)
-			if thinking != "" {
-				ch <- StreamEvent{Type: "thinking", Content: thinking}
-			}
-			if content != "" {
-				ch <- StreamEvent{Type: "content", Content: content}
-			}
-
-		case "command_execution":
-			// Emit Bash tool_use event for completed command execution.
-			if tc := parseCodexToolComplete(&msg); tc != nil {
-				ch <- StreamEvent{Type: "tool_use", Tool: tc}
-			}
-		}
-
+		p.handleItemCompleted(&msg, ch)
 	case "item.started":
-		if msg.Item == nil {
-			return
-		}
-		if msg.Item.Type == "command_execution" {
-			if tc := parseCodexToolStart(&msg); tc != nil {
-				ch <- StreamEvent{Type: "tool_use", Tool: tc}
-			}
-		}
-
+		p.handleItemStarted(&msg, ch)
 	case "turn.completed":
-		meta := &Metadata{
-			SessionID: p.threadID,
-		}
-		if msg.Usage != nil {
-			meta.InputTokens = msg.Usage.InputTokens
-			meta.OutputTokens = msg.Usage.OutputTokens
-		}
-		ch <- StreamEvent{Type: "metadata", Meta: meta}
-		ch <- StreamEvent{Type: "done"}
-
+		p.handleTurnCompleted(&msg, ch)
 	case "turn.started":
 		// Structural event — no content
-
 	case "error":
 		if msg.Message != "" {
 			ch <- StreamEvent{Type: "warning", Content: msg.Message, Reason: ReasonRequestFailed}
 		}
-
 	case "turn.failed":
-		errMsg := "AI request failed"
-		if msg.Error != nil && msg.Error.Message != "" {
-			errMsg = msg.Error.Message
-		}
-		ch <- StreamEvent{Type: "error", Error: errMsg, Reason: ReasonRequestFailed}
-		ch <- StreamEvent{Type: "done"}
-
+		p.handleTurnFailed(&msg, ch)
 	default:
 		slog.Debug("codex stream: skipping unknown message type", "type", msg.Type)
 	}
+}
+
+// handleItemCompleted processes item.completed events.
+func (p *CodexStreamParser) handleItemCompleted(msg *CodexStreamMessage, ch chan<- StreamEvent) {
+	if msg.Item == nil {
+		return
+	}
+	switch msg.Item.Type {
+	case "agent_message":
+		text := msg.Item.Text
+		if text == "" {
+			return
+		}
+		thinking, content := codexSplitThinking(text)
+		if thinking != "" {
+			ch <- StreamEvent{Type: "thinking", Content: thinking}
+		}
+		if content != "" {
+			ch <- StreamEvent{Type: "content", Content: content}
+		}
+	case "command_execution":
+		if tc := parseCodexToolComplete(msg); tc != nil {
+			ch <- StreamEvent{Type: "tool_use", Tool: tc}
+		}
+	}
+}
+
+// handleItemStarted processes item.started events.
+func (p *CodexStreamParser) handleItemStarted(msg *CodexStreamMessage, ch chan<- StreamEvent) {
+	if msg.Item == nil {
+		return
+	}
+	if msg.Item.Type == "command_execution" {
+		if tc := parseCodexToolStart(msg); tc != nil {
+			ch <- StreamEvent{Type: "tool_use", Tool: tc}
+		}
+	}
+}
+
+// handleTurnCompleted processes turn.completed events.
+func (p *CodexStreamParser) handleTurnCompleted(msg *CodexStreamMessage, ch chan<- StreamEvent) {
+	meta := &Metadata{
+		SessionID: p.threadID,
+	}
+	if msg.Usage != nil {
+		meta.InputTokens = msg.Usage.InputTokens
+		meta.OutputTokens = msg.Usage.OutputTokens
+	}
+	ch <- StreamEvent{Type: "metadata", Meta: meta}
+	ch <- StreamEvent{Type: "done"}
+}
+
+// handleTurnFailed processes turn.failed events.
+func (p *CodexStreamParser) handleTurnFailed(msg *CodexStreamMessage, ch chan<- StreamEvent) {
+	errMsg := "AI request failed"
+	if msg.Error != nil && msg.Error.Message != "" {
+		errMsg = msg.Error.Message
+	}
+	ch <- StreamEvent{Type: "error", Error: errMsg, Reason: ReasonRequestFailed}
+	ch <- StreamEvent{Type: "done"}
 }
 
 // buildCodexStreamArgs constructs the CLI arguments for Codex streaming.
