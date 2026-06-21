@@ -136,6 +136,7 @@
       :target-element="tabMenuTarget"
       :cwd="tabMenuCwd"
       @close="handleTabMenuClose"
+      @copy-output="handleTabMenuCopyOutput"
       @copy-path="handleTabMenuCopyPath"
       @close-all="handleTabMenuCloseAll"
     />
@@ -149,6 +150,13 @@
       @close="showKeyConfig = false"
       @saved="onKeyConfigSaved"
     />
+
+    <!-- Output text drawer — free text selection and copy -->
+    <OutputDrawer
+      :open="props.active && showOutputDrawer"
+      :output-text="outputDrawerText"
+      @close="showOutputDrawer = false"
+    />
   </div>
 </template>
 
@@ -160,6 +168,7 @@ import '@xterm/xterm/css/xterm.css'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import QuickCommandDialog from '@/components/terminal/QuickCommandDialog.vue'
 import KeyConfigDrawer from '@/components/terminal/KeyConfigDrawer.vue'
+import OutputDrawer from '@/components/terminal/OutputDrawer.vue'
 import TerminalTabMenu from '@/components/terminal/TerminalTabMenu.vue'
 import { useTerminalTabs, type TerminalTab } from '@/composables/useTerminalTabs'
 import { useTerminalViewport } from '@/composables/useTerminalViewport'
@@ -276,6 +285,8 @@ const tabMenuCwd = ref('')
 // Symbol bar — config-driven
 const { selectedKeys, selectedSymbols, fetchConfig: fetchKeyConfig } = useKeyConfig()
 const showKeyConfig = ref(false)
+const showOutputDrawer = ref(false)
+const outputDrawerText = ref('')
 
 /** Keys visible in the toolbar, filtered by gesture mode (Tab/PgUp/PgDn/arrows hidden when gestures on) */
 const GESTURE_HIDDEN_KEYS = new Set(['tab', 'pgup', 'pgdn', 'arrow_up', 'arrow_down', 'arrow_left', 'arrow_right'])
@@ -523,18 +534,6 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
   container.addEventListener('contextmenu', contextMenuHandler)
   ;(container as any).__terminalContextMenuHandler = contextMenuHandler
 
-  // Auto-copy selected text on selection change (long-press select → auto copy)
-  if (tab.xterm) {
-    const selectionDisposable = tab.xterm.onSelectionChange(() => {
-      const selection = tab.xterm?.getSelection()
-      if (selection) {
-        navigator.clipboard.writeText(selection).catch(() => {})
-        toast.show(t('common.copied'), { type: 'success', duration: 1500 })
-      }
-    })
-    ;(tab as any).__selectionDisposable = selectionDisposable
-  }
-
   // Fit the terminal after mounting
   requestAnimationFrame(() => {
     try { tab.fitAddon?.fit() } catch { /* ignore */ }
@@ -614,6 +613,33 @@ function handleTabMenuClose() {
       }
     })
   }
+}
+
+function handleTabMenuCopyOutput() {
+  const tabId = tabMenuTabId.value
+  if (!tabId) return
+  const tab = tabManager.getTab(tabId)
+  const xterm = tab?.xterm
+  if (!xterm) return
+  const buffer = xterm.buffer.active
+  const lines: string[] = []
+  for (let i = 0; i < buffer.length; i++) {
+    const line = buffer.getLine(i)
+    if (!line) continue
+    const text = line.translateToString(true)
+    // isWrapped=true means this line is a soft wrap continuation of the previous line
+    if (line.isWrapped && lines.length > 0) {
+      lines[lines.length - 1] += text
+    } else {
+      lines.push(text)
+    }
+  }
+  // Trim trailing empty lines
+  while (lines.length > 0 && lines[lines.length - 1] === '') {
+    lines.pop()
+  }
+  outputDrawerText.value = lines.join('\n')
+  showOutputDrawer.value = true
 }
 
 function handleTabMenuCopyPath() {
