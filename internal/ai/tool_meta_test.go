@@ -387,6 +387,192 @@ func TestExtractToolCallMeta(t *testing.T) {
 	}
 }
 
+func TestExtractAskUserQuestionSummary(t *testing.T) {
+	tests := []struct {
+		name  string
+		input map[string]any
+		want  string
+	}{
+		{
+			name: "header takes priority over question",
+			input: map[string]any{
+				"questions": []any{
+					map[string]any{"header": "Approach", "question": "Which approach?"},
+				},
+			},
+			want: "Approach",
+		},
+		{
+			name: "question when no header",
+			input: map[string]any{
+				"questions": []any{
+					map[string]any{"question": "Which approach?"},
+				},
+			},
+			want: "Which approach?",
+		},
+		{
+			name: "no questions key",
+			input: map[string]any{
+				"other": "value",
+			},
+			want: "",
+		},
+		{
+			name:  "empty input",
+			input: map[string]any{},
+			want:  "",
+		},
+		{
+			name: "questions is not a slice",
+			input: map[string]any{
+				"questions": "not a slice",
+			},
+			want: "",
+		},
+		{
+			name: "questions is empty slice",
+			input: map[string]any{
+				"questions": []any{},
+			},
+			want: "",
+		},
+		{
+			name: "first question is not a map",
+			input: map[string]any{
+				"questions": []any{"just a string"},
+			},
+			want: "",
+		},
+		{
+			name: "header is empty string, falls to question",
+			input: map[string]any{
+				"questions": []any{
+					map[string]any{"header": "", "question": "Fallback question"},
+				},
+			},
+			want: "Fallback question",
+		},
+		{
+			name: "both header and question empty",
+			input: map[string]any{
+				"questions": []any{
+					map[string]any{"header": "", "question": ""},
+				},
+			},
+			want: "",
+		},
+		{
+			name: "header is non-string type",
+			input: map[string]any{
+				"questions": []any{
+					map[string]any{"header": float64(42), "question": "Numeric header"},
+				},
+			},
+			want: "Numeric header",
+		},
+		{
+			name: "truncation of long header",
+			input: map[string]any{
+				"questions": []any{
+					map[string]any{"header": repeatStr("x", 300)},
+				},
+			},
+			want: repeatStr("x", 200),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractAskUserQuestionSummary(tt.input)
+			if got != tt.want {
+				t.Errorf("extractAskUserQuestionSummary(%v) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSummaryPriorityFields(t *testing.T) {
+	// Verify the priority order and format functions in summaryPriorityFields.
+	// This ensures the table-driven approach matches the documented priority chain:
+	// description > file_path > command > pattern > query > url > skill > path
+	tests := []struct {
+		name  string
+		input map[string]any
+		want  string
+	}{
+		{
+			name:  "description field",
+			input: map[string]any{"description": "do something"},
+			want:  "do something",
+		},
+		{
+			name:  "file_path field uses basename",
+			input: map[string]any{"file_path": "/home/user/project/main.go"},
+			want:  "main.go",
+		},
+		{
+			name:  "command field",
+			input: map[string]any{"command": "npm test"},
+			want:  "npm test",
+		},
+		{
+			name:  "pattern field",
+			input: map[string]any{"pattern": "func Foo"},
+			want:  "func Foo",
+		},
+		{
+			name:  "query field",
+			input: map[string]any{"query": "search term"},
+			want:  "search term",
+		},
+		{
+			name:  "url field",
+			input: map[string]any{"url": "https://example.com"},
+			want:  "https://example.com",
+		},
+		{
+			name:  "skill field",
+			input: map[string]any{"skill": "commit"},
+			want:  "commit",
+		},
+		{
+			name:  "path field uses basename",
+			input: map[string]any{"path": "/home/user/project/src"},
+			want:  "src",
+		},
+		{
+			name:  "description over file_path",
+			input: map[string]any{"description": "read config", "file_path": "/src/config.yaml"},
+			want:  "read config",
+		},
+		{
+			name:  "file_path over command",
+			input: map[string]any{"file_path": "/src/main.go", "command": "cat main.go"},
+			want:  "main.go",
+		},
+		{
+			name:  "empty string field is skipped",
+			input: map[string]any{"description": "", "file_path": "/src/main.go"},
+			want:  "main.go",
+		},
+		{
+			name:  "non-string field value is skipped",
+			input: map[string]any{"description": float64(42), "file_path": "/src/main.go"},
+			want:  "main.go",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ExtractSummary("AnyTool", tt.input)
+			if got != tt.want {
+				t.Errorf("ExtractSummary(%v) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func repeatStr(s string, n int) string {
 	result := make([]byte, 0, len(s)*n)
 	for range n {

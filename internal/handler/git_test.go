@@ -3265,3 +3265,21 @@ func TestResolveSymlinkPath(t *testing.T) {
 	// A regular path should return itself
 	assert.Equal(t, realFile, resolveSymlinkPath(realFile))
 }
+
+// --- forceRemoveWorktree ---
+
+func TestForceRemoveWorktree_Failure(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	// Force remove a non-existent path should fail
+	w := httptest.NewRecorder()
+	result := forceRemoveWorktree(w, env.ProjectDir, "/tmp/nonexistent-wt-force-xyz")
+	assert.False(t, result)
+
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.Equal(t, "delete_failed", resp["error"])
+}
