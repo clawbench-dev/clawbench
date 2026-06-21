@@ -108,7 +108,7 @@ start_dev() {
 
     # Start Vite dev server — proxy to production backend's dev HTTP port
     # Use setsid to create new session so Vite survives parent shell exit
-    VITE_BACKEND_PORT=$DEV_HTTP_PORT VITE_FRONTEND_PORT=$FRONTEND_PORT setsid npx vite --port $FRONTEND_PORT > "$VITE_LOG" 2>&1 &
+    VITE_BACKEND_PORT=$DEV_HTTP_PORT VITE_BACKEND_PROTO=http VITE_FRONTEND_PORT=$FRONTEND_PORT setsid npx vite --port $FRONTEND_PORT > "$VITE_LOG" 2>&1 &
     VITE_PID=$!
     # setsid spawns a new process; find the actual Vite node process
     sleep 1
@@ -181,7 +181,7 @@ case "$ACTION" in
             echo "  Backend:  http://localhost:$DEV_HTTP_PORT (production dev port)"
             echo "  Frontend: http://localhost:$FRONTEND_PORT (Vite HMR)"
             echo ""
-            VITE_BACKEND_PORT=$DEV_HTTP_PORT VITE_FRONTEND_PORT=$FRONTEND_PORT exec npx vite --port $FRONTEND_PORT
+            VITE_BACKEND_PORT=$DEV_HTTP_PORT VITE_BACKEND_PROTO=http VITE_FRONTEND_PORT=$FRONTEND_PORT exec npx vite --port $FRONTEND_PORT
         else
             start_dev
         fi

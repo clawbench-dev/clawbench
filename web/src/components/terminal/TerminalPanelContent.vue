@@ -46,6 +46,7 @@
         v-show="tab.id === activeTabId"
         :ref="(el) => setTabContainer(tab.id, el as HTMLElement | null)"
         class="terminal-container"
+        :class="{ 'selection-mode': selectionMode }"
         @click.self="focusTerminal"
       >
         <!-- Rebuild overlay (per-tab) -->
@@ -64,6 +65,11 @@
         <Transition name="gesture-hint">
           <div v-if="gestureHint" class="gesture-hint">{{ gestureHint }}</div>
         </Transition>
+
+        <!-- Floating copy button for selection mode -->
+        <button v-if="hasSelection && selectionMode && tab.id === activeTabId" class="floating-copy-btn" @click="handleCopySelection">
+          {{ t('common.copy') }}
+        </button>
       </div>
     </div>
 
@@ -82,8 +88,10 @@
 
       <!-- Main toolbar row -->
       <div class="main-toolbar-row">
-        <button class="toolbar-btn modifier gesture-toggle" :class="{ active: gestures.enabled.value }" @click="handleGestureToggle" @contextmenu.prevent :title="t('terminal.gestures')">
-          <HandIcon :size="14" />
+        <button class="toolbar-btn modifier mode-indicator" @click="handleModeToggle" @contextmenu.prevent :title="modeToggleTitle">
+          <TextCursorIcon v-if="selectionMode" :size="14" />
+          <KeyboardIcon v-else-if="!gestures.enabled.value" :size="14" />
+          <HandIcon v-else :size="14" />
         </button>
         <button class="toolbar-btn modifier gesture-toggle" :class="{ active: showSymbolBar }" @click="toggleSymbolBar()" @contextmenu.prevent :title="t('terminal.symbols')">
           <HashIcon :size="14" />
@@ -188,8 +196,9 @@ import {
 } from '@/utils/terminalFontUtils'
 import { localConfig, setLocalConfig, useSettingsConfig } from '@/composables/useSettingsConfig'
 import type { KeyDef } from '@/utils/terminalKeyDefs'
+import { copyText } from '@/utils/clipboard'
 
-import { Zap as ZapIcon, Hand as HandIcon, Hash as HashIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, Terminal as TerminalIcon, Settings } from 'lucide-vue-next'
+import { Zap as ZapIcon, Hand as HandIcon, Hash as HashIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, Terminal as TerminalIcon, Settings, TextCursor as TextCursorIcon, Keyboard as KeyboardIcon } from 'lucide-vue-next'
 const props = defineProps<{
   requestedCwd?: string | null
   active?: boolean
@@ -232,6 +241,8 @@ function applyFontSize(size: number) {
 // Refs
 const gestureHint = ref('')
 let gestureHintTimer: ReturnType<typeof setTimeout> | null = null
+const selectionMode = ref(false)
+const hasSelection = ref(false)
 const showCommands = ref(false)
 const cmdBtnRef = ref<HTMLElement | null>(null)
 const showSymbolBar = ref(false)
@@ -309,9 +320,42 @@ function onKeyConfigSaved() {
   showKeyConfig.value = false
 }
 
-function handleGestureToggle() {
-  gestures.toggle()
-  toast.show(gestures.enabled.value ? t('terminal.gesturesOn') : t('terminal.gesturesOff'), { icon: '✋', type: 'info', duration: 1200 })
+// Three-state mode cycle: gesture → selection → normal → gesture
+type TerminalMode = 'gesture' | 'selection' | 'normal'
+
+function getCurrentMode(): TerminalMode {
+  if (selectionMode.value) return 'selection'
+  if (gestures.enabled.value) return 'gesture'
+  return 'normal'
+}
+
+const modeToggleTitle = computed(() => {
+  const mode = getCurrentMode()
+  if (mode === 'gesture') return t('terminal.gestures')
+  if (mode === 'selection') return t('terminal.selectionMode')
+  return t('terminal.normalMode')
+})
+
+function handleModeToggle() {
+  const mode = getCurrentMode()
+  if (mode === 'gesture') {
+    // gesture → selection
+    gestures.toggle()  // disables gestures (applyState runs, but selectionMode still false)
+    selectionMode.value = true
+    gestures.refresh() // re-apply with selectionMode=true → detach disabledScroll
+    toast.show(t('terminal.selectionModeOn'), { icon: '🖱️', type: 'info', duration: 1200 })
+  } else if (mode === 'selection') {
+    // selection → normal
+    selectionMode.value = false
+    gestures.refresh() // re-apply with selectionMode=false → attach disabledScroll
+    activeTab.value?.xterm?.clearSelection()
+    hasSelection.value = false
+    toast.show(t('terminal.normalModeOn'), { icon: '⌨️', type: 'info', duration: 1200 })
+  } else {
+    // normal → gesture
+    gestures.toggle()
+    toast.show(t('terminal.gesturesOn'), { icon: '✋', type: 'info', duration: 1200 })
+  }
   focusTerminal()
 }
 
@@ -431,6 +475,7 @@ const gestures = useTerminalGestures(
       gestureHintTimer = setTimeout(() => { gestureHint.value = '' }, 600)
     },
   },
+  selectionMode,
 )
 
 // Re-evaluate fade when gesture toggle changes visible buttons
@@ -438,7 +483,11 @@ watch(() => gestures.enabled.value, () => nextTick(refreshToolbarFade))
 
 // Re-bind gesture listeners when switching/creating tabs (container element changes).
 // Use double nextTick to ensure mountTabToContainer has already run.
-watch(activeTabId, () => nextTick(() => nextTick(() => gestures.attach())))
+watch(activeTabId, () => {
+  selectionMode.value = false
+  hasSelection.value = false
+  nextTick(() => nextTick(() => gestures.attach()))
+})
 
 // Volume keys (Android)
 const { isAppMode } = useAppMode()
@@ -512,6 +561,23 @@ function setTabContainer(tabId: string, el: HTMLElement | null) {
 }
 
 function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
+  // Clean up previous handlers from a prior mount on the same container
+  const oldWheel = (container as any).__terminalWheelHandler
+  if (oldWheel) {
+    container.removeEventListener('wheel', oldWheel)
+    delete (container as any).__terminalWheelHandler
+  }
+  const oldCtx = (container as any).__terminalContextMenuHandler
+  if (oldCtx) {
+    container.removeEventListener('contextmenu', oldCtx)
+    delete (container as any).__terminalContextMenuHandler
+  }
+  const oldDisposable = (container as any).__terminalSelectionDisposable
+  if (oldDisposable) {
+    oldDisposable.dispose()
+    delete (container as any).__terminalSelectionDisposable
+  }
+
   tabManager.mountTabXterm(tab, container)
 
   // Add Ctrl+Wheel zoom handler
@@ -533,6 +599,15 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
   }
   container.addEventListener('contextmenu', contextMenuHandler)
   ;(container as any).__terminalContextMenuHandler = contextMenuHandler
+
+  // Selection change handler (for selection mode floating copy button)
+  if (tab.xterm) {
+    const disposable = tab.xterm.onSelectionChange(() => {
+      if (tab.id !== activeTabId.value || !tab.xterm) return
+      hasSelection.value = tab.xterm.hasSelection()
+    })
+    ;(container as any).__terminalSelectionDisposable = disposable
+  }
 
   // Fit the terminal after mounting
   requestAnimationFrame(() => {
@@ -622,12 +697,13 @@ function handleTabMenuCopyOutput() {
   const xterm = tab?.xterm
   if (!xterm) return
   const buffer = xterm.buffer.active
+  const viewportY = buffer.viewportY
+  const rows = xterm.rows
   const lines: string[] = []
-  for (let i = 0; i < buffer.length; i++) {
+  for (let i = viewportY; i < viewportY + rows && i < buffer.length; i++) {
     const line = buffer.getLine(i)
     if (!line) continue
     const text = line.translateToString(true)
-    // isWrapped=true means this line is a soft wrap continuation of the previous line
     if (line.isWrapped && lines.length > 0) {
       lines[lines.length - 1] += text
     } else {
@@ -644,6 +720,19 @@ function handleTabMenuCopyOutput() {
 
 function handleTabMenuCopyPath() {
   // Already handled by TerminalTabMenu
+}
+
+function handleCopySelection() {
+  const xterm = activeTab.value?.xterm
+  if (!xterm) return
+  const text = xterm.getSelection()
+  if (text) {
+    copyText(text, () => {
+      toast.show(t('common.copied'), { type: 'success', duration: 1500 })
+    })
+    xterm.clearSelection()
+    hasSelection.value = false
+  }
 }
 
 async function handleTabMenuCloseAll() {
@@ -1059,6 +1148,39 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
   background: #eff1f5;
 }
 
+.terminal-container.selection-mode :deep(.xterm) {
+  user-select: text;
+  -webkit-user-select: text;
+  touch-action: none;
+}
+
+.terminal-container.selection-mode :deep(.xterm-screen),
+.terminal-container.selection-mode :deep(.xterm-scrollable-element) {
+  touch-action: none;
+}
+
+.floating-copy-btn {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 20px;
+  border: none;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--accent, #4f8ef7);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  z-index: 11;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.floating-copy-btn:active {
+  opacity: 0.7;
+}
+
 .terminal-rebuild-overlay {
   position: absolute;
   inset: 0;
@@ -1235,6 +1357,19 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
 }
 
 .gesture-toggle { flex-shrink: 0; margin-right: 2px; }
+.toolbar-btn.mode-indicator {
+  min-width: 28px;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary, #888);
+}
+.toolbar-btn.mode-indicator:active {
+  background: transparent;
+  transform: none;
+}
+.toolbar-btn.mode-indicator:hover {
+  background: transparent;
+}
 
 .toolbar-scroll {
   display: flex;
@@ -1289,7 +1424,7 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
 .toolbar-btn.shortcut:active { background: var(--toolbar-key-active); }
 .toolbar-btn.danger { color: var(--toolbar-key-text); opacity: 0.78; }
 .toolbar-btn.danger:hover { opacity: 1; background: var(--toolbar-key-hover); }
-.toolbar-btn.gesture-toggle { min-width: 32px; border-radius: 9px; }
+.toolbar-btn.gesture-toggle { min-width: 32px; }
 
 .btn-shift-tab {
   display: flex !important;

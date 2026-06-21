@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet :open="open" :title="t('terminal.copyOutput')" @close="handleClose">
+  <BottomSheet :open="open" auto :title="t('terminal.copyOutput')" @close="handleClose">
     <template #header>
       <FileTextIcon :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ t('terminal.copyOutput') }}</span>
@@ -69,7 +69,7 @@ function handleCopyAll() {
 <style scoped>
 .od-body {
   flex: 1;
-  overflow-y: auto;
+  overflow: auto;
   padding: 4px 0;
   -webkit-overflow-scrolling: touch;
 }
@@ -80,8 +80,7 @@ function handleCopyAll() {
   font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
   font-size: 13px;
   line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-all;
+  white-space: pre;
   background: transparent;
   user-select: text;
   -webkit-user-select: text;
