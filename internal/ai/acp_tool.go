@@ -55,11 +55,11 @@ func parseACPToolCallUpdate(backend string, tcu acp.SessionToolCallUpdate) *Tool
 
 // extractMetaToolName extracts the tool name from a nested _meta namespace.
 // Used by Claude ACP: _meta.claudeCode.toolName → "Edit"
-func extractMetaToolName(meta map[string]any, namespace string) string {
+func extractMetaToolName(meta map[string]any) string {
 	if meta == nil {
 		return ""
 	}
-	ns, ok := meta[namespace]
+	ns, ok := meta["claudeCode"]
 	if !ok {
 		return ""
 	}
@@ -73,11 +73,11 @@ func extractMetaToolName(meta map[string]any, namespace string) string {
 
 // extractMetaToolNameFlat extracts the tool name from a top-level _meta key.
 // Used by CodeBuddy ACP: _meta["codebuddy.ai/toolName"] → "Bash"
-func extractMetaToolNameFlat(meta map[string]any, key string) string {
+func extractMetaToolNameFlat(meta map[string]any) string {
 	if meta == nil {
 		return ""
 	}
-	name, _ := meta[key].(string)
+	name, _ := meta["codebuddy.ai/toolName"].(string)
 	return name
 }
 

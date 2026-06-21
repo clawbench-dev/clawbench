@@ -389,7 +389,7 @@ func TestExtractToolCallMeta(t *testing.T) {
 
 func repeatStr(s string, n int) string {
 	result := make([]byte, 0, len(s)*n)
-	for i := 0; i < n; i++ {
+	for range n {
 		result = append(result, s...)
 	}
 	return string(result)

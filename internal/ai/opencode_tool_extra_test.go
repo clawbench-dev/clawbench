@@ -134,9 +134,9 @@ func TestOpenCodeTool_StateWithNoOutput(t *testing.T) {
 
 func TestOpenCodeTool_ToolNameMapWithMultipleEntries(t *testing.T) {
 	toolNameMap := map[string]string{
-		"custom_read":   "CustomRead",
-		"custom_write":  "CustomWrite",
-		"custom_bash":   "CustomBash",
+		"custom_read":  "CustomRead",
+		"custom_write": "CustomWrite",
+		"custom_bash":  "CustomBash",
 	}
 
 	tests := []struct {

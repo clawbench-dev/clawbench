@@ -1722,7 +1722,7 @@ func TestSessionExecutor_BuildResult_AskUserQuestionToolCallPersisted(t *testing
 	if !strings.HasPrefix(askBlock.ID, "ask-") {
 		t.Fatalf("expected AskUserQuestion block ID to start with 'ask-', got %q", askBlock.ID)
 	}
-	if askBlock.Input == nil || len(askBlock.Input) == 0 {
+	if len(askBlock.Input) == 0 {
 		t.Fatal("expected AskUserQuestion block to have input")
 	}
 

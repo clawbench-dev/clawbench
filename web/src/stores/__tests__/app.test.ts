@@ -582,4 +582,395 @@ describe('store', () => {
             expect(mockDirStack.replaceTopAndLoad).not.toHaveBeenCalled()
         })
     })
+
+    // ── loadGitBranch ──
+
+    describe('loadGitBranch', () => {
+        it('updates git state from API', async () => {
+            mockApiGet.mockResolvedValue({
+                isGit: true,
+                branch: 'feature/test',
+                head: 'abc123def',
+                dirty: true,
+                changeCount: 5,
+            })
+
+            const result = await store.loadGitBranch()
+
+            expect(store.state.gitBranch).toBe('feature/test')
+            expect(store.state.gitHead).toBe('abc123def')
+            expect(store.state.gitDirty).toBe(true)
+            expect(store.state.gitWorkingTreeChangeCount).toBe(5)
+            expect(result.isGit).toBe(true)
+        })
+
+        it('clears git state on API failure', async () => {
+            store.state.gitBranch = 'main'
+            store.state.gitHead = 'abc123'
+            store.state.gitDirty = true
+            store.state.gitWorkingTreeChangeCount = 3
+
+            mockApiGet.mockRejectedValue(new Error('network error'))
+
+            const result = await store.loadGitBranch()
+
+            expect(store.state.gitBranch).toBe('')
+            expect(store.state.gitHead).toBe('')
+            expect(store.state.gitDirty).toBe(false)
+            expect(store.state.gitWorkingTreeChangeCount).toBe(0)
+            expect(result.isGit).toBe(false)
+        })
+
+        it('handles missing fields with defaults', async () => {
+            mockApiGet.mockResolvedValue({})
+
+            const result = await store.loadGitBranch()
+
+            expect(store.state.gitBranch).toBe('')
+            expect(store.state.gitHead).toBe('')
+            expect(store.state.gitDirty).toBe(false)
+            expect(store.state.gitWorkingTreeChangeCount).toBe(0)
+        })
+    })
+
+    // ── loadProject: config fields from /api/roots ──
+
+    describe('loadProject config fields', () => {
+        it('reads uploadMaxSizeMB from roots API', async () => {
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/roots') return { roots: ['/'], uploadMaxSizeMB: 50 }
+                if (url === '/api/project') return { path: '/home/user/project' }
+                return {}
+            })
+
+            await store.loadProject()
+
+            expect(store.state.uploadMaxSizeMB).toBe(50)
+        })
+
+        it('reads uploadMaxFiles from roots API', async () => {
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/roots') return { roots: ['/'], uploadMaxFiles: 5 }
+                if (url === '/api/project') return { path: '/home/user/project' }
+                return {}
+            })
+
+            await store.loadProject()
+
+            expect(store.state.uploadMaxFiles).toBe(5)
+        })
+
+        it('reads chatInitialMessages from roots API', async () => {
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/roots') return { roots: ['/'], chatInitialMessages: 30 }
+                if (url === '/api/project') return { path: '/home/user/project' }
+                return {}
+            })
+
+            await store.loadProject()
+
+            expect(store.state.chatInitialMessages).toBe(30)
+        })
+
+        it('reads chatPageSize from roots API', async () => {
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/roots') return { roots: ['/'], chatPageSize: 50 }
+                if (url === '/api/project') return { path: '/home/user/project' }
+                return {}
+            })
+
+            await store.loadProject()
+
+            expect(store.state.chatPageSize).toBe(50)
+        })
+
+        it('reads chatSessionPageSize from roots API', async () => {
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/roots') return { roots: ['/'], chatSessionPageSize: 20 }
+                if (url === '/api/project') return { path: '/home/user/project' }
+                return {}
+            })
+
+            await store.loadProject()
+
+            expect(store.state.chatSessionPageSize).toBe(20)
+        })
+
+        it('reads chatCollapsedHeight from roots API', async () => {
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/roots') return { roots: ['/'], chatCollapsedHeight: 200 }
+                if (url === '/api/project') return { path: '/home/user/project' }
+                return {}
+            })
+
+            await store.loadProject()
+
+            expect(store.state.chatCollapsedHeight).toBe(200)
+        })
+
+        it('reads sessionMaxCount from roots API', async () => {
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/roots') return { roots: ['/'], sessionMaxCount: 50 }
+                if (url === '/api/project') return { path: '/home/user/project' }
+                return {}
+            })
+
+            await store.loadProject()
+
+            expect(store.state.sessionMaxCount).toBe(50)
+        })
+
+        it('reads homeDir from /api/project', async () => {
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/roots') return { roots: ['/'] }
+                if (url === '/api/project') return { path: '/home/user/project', homeDir: '/home/user' }
+                return {}
+            })
+
+            await store.loadProject()
+
+            expect(store.state.homeDir).toBe('/home/user')
+        })
+    })
+
+    // ── setProject: expanded response fields ──
+
+    describe('setProject expanded response', () => {
+        it('applies homeDir from expanded response', async () => {
+            mockApiPost.mockResolvedValue({
+                ok: 'ok',
+                path: '/new/project',
+                homeDir: '/home/user',
+            })
+
+            await store.setProject('/new/project')
+
+            expect(store.state.homeDir).toBe('/home/user')
+        })
+
+        it('applies roots from expanded response', async () => {
+            mockApiPost.mockResolvedValue({
+                ok: 'ok',
+                path: '/new/project',
+                roots: ['/home/user', '/opt'],
+            })
+
+            await store.setProject('/new/project')
+
+            expect(store.state.rootPaths).toEqual(['/home/user', '/opt'])
+        })
+
+        it('applies config fields from expanded response', async () => {
+            mockApiPost.mockResolvedValue({
+                ok: 'ok',
+                path: '/new/project',
+                uploadMaxSizeMB: 200,
+                uploadMaxFiles: 10,
+                chatInitialMessages: 15,
+                chatPageSize: 30,
+                chatSessionPageSize: 8,
+                chatCollapsedHeight: 100,
+                sessionMaxCount: 20,
+                recentProjectsMaxCount: 5,
+            })
+
+            await store.setProject('/new/project')
+
+            expect(store.state.uploadMaxSizeMB).toBe(200)
+            expect(store.state.uploadMaxFiles).toBe(10)
+            expect(store.state.chatInitialMessages).toBe(15)
+            expect(store.state.chatPageSize).toBe(30)
+            expect(store.state.chatSessionPageSize).toBe(8)
+            expect(store.state.chatCollapsedHeight).toBe(100)
+            expect(store.state.sessionMaxCount).toBe(20)
+            expect(store.state.recentProjectsMaxCount).toBe(5)
+        })
+
+        it('does not apply config fields when values are 0 or missing', async () => {
+            mockApiPost.mockResolvedValue({
+                ok: 'ok',
+                path: '/new/project',
+                uploadMaxSizeMB: 0,
+                uploadMaxFiles: 0,
+            })
+
+            await store.setProject('/new/project')
+
+            // resetProjectState sets these to defaults, and 0 doesn't override
+            expect(store.state.uploadMaxSizeMB).toBe(100)
+            expect(store.state.uploadMaxFiles).toBe(20)
+        })
+    })
+
+    // ── selectFile: HTML detection and relative paths ──
+
+    describe('selectFile advanced', () => {
+        it('detects HTML files for preview mode', async () => {
+            const mockFetch = vi.fn().mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ name: 'page.html', path: 'page.html', content: '<html></html>' }),
+            })
+            vi.stubGlobal('fetch', mockFetch)
+
+            await store.selectFile('page.html')
+
+            expect(store.state.currentFile?.isHtml).toBe(true)
+
+            vi.unstubAllGlobals()
+        })
+
+        it('detects HTM files for preview mode', async () => {
+            const mockFetch = vi.fn().mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ name: 'page.htm', path: 'page.htm', content: '<html></html>' }),
+            })
+            vi.stubGlobal('fetch', mockFetch)
+
+            await store.selectFile('page.htm')
+
+            expect(store.state.currentFile?.isHtml).toBe(true)
+
+            vi.unstubAllGlobals()
+        })
+
+        it('uses relative path URL for non-absolute paths', async () => {
+            const mockFetch = vi.fn().mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ name: 'test.ts', path: 'src/test.ts', content: 'hello' }),
+            })
+            vi.stubGlobal('fetch', mockFetch)
+
+            await store.selectFile('src/test.ts')
+
+            expect(mockFetch).toHaveBeenCalledWith('/api/file/src%2Ftest.ts')
+
+            vi.unstubAllGlobals()
+        })
+
+        it('uses relative path URL with forceText for non-absolute paths', async () => {
+            const mockFetch = vi.fn().mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ name: 'test.ts', path: 'src/test.ts', content: 'hello' }),
+            })
+            vi.stubGlobal('fetch', mockFetch)
+
+            await store.selectFile('src/test.ts', false, false, true, true)
+
+            expect(mockFetch).toHaveBeenCalledWith('/api/file/src%2Ftest.ts?forceText=1')
+
+            vi.unstubAllGlobals()
+        })
+
+        it('updates current file in-place when addToHistory is false and same path', async () => {
+            store.state.currentFile = { name: 'test.ts', path: 'src/test.ts', content: 'old' }
+
+            const mockFetch = vi.fn().mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ name: 'test.ts', path: 'src/test.ts', content: 'new' }),
+            })
+            vi.stubGlobal('fetch', mockFetch)
+
+            await store.selectFile('src/test.ts', false, false, false)
+
+            // Should update in place (same object reference)
+            expect(store.state.currentFile?.content).toBe('new')
+
+            vi.unstubAllGlobals()
+        })
+
+        it('creates new file object when addToHistory is true', async () => {
+            const originalFile = { name: 'test.ts', path: 'src/test.ts', content: 'old' }
+            store.state.currentFile = originalFile
+
+            const mockFetch = vi.fn().mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ name: 'test.ts', path: 'src/test.ts', content: 'new' }),
+            })
+            vi.stubGlobal('fetch', mockFetch)
+
+            await store.selectFile('src/test.ts', false, false, true)
+
+            // Should be a new object
+            expect(store.state.currentFile?.content).toBe('new')
+
+            vi.unstubAllGlobals()
+        })
+
+        it('handles fetch network error', async () => {
+            const mockFetch = vi.fn().mockRejectedValue(new Error('Network error'))
+            vi.stubGlobal('fetch', mockFetch)
+
+            const result = await store.selectFile('test.ts')
+
+            expect(result).toBe(false)
+            expect(store.state.fileLoading).toBe(false)
+
+            vi.unstubAllGlobals()
+        })
+    })
+
+    // ── loadFiles ──
+
+    describe('loadFiles', () => {
+        it('loads directory entries from API', async () => {
+            mockApiGet.mockResolvedValue({
+                items: [
+                    { name: 'src', type: 'dir' },
+                    { name: 'main.go', type: 'file' },
+                ],
+            })
+
+            await store.loadFiles('/project')
+
+            expect(store.state.currentDir).toBe('/project')
+            expect(store.state.dirEntries).toHaveLength(2)
+            expect(store.state.dirLoading).toBe(false)
+        })
+
+        it('sets dirLoading to false after success', async () => {
+            mockApiGet.mockResolvedValue({ items: [] })
+
+            await store.loadFiles('')
+
+            expect(store.state.dirLoading).toBe(false)
+        })
+
+        it('rolls back state on failure', async () => {
+            store.state.currentDir = '/previous'
+            store.state.dirEntries = [{ name: 'old', type: 'file' }]
+
+            mockApiGet.mockRejectedValue(new Error('fail'))
+
+            await store.loadFiles('/new')
+
+            // Should roll back to previous state
+            expect(store.state.currentDir).toBe('/previous')
+            expect(store.state.dirEntries).toEqual([{ name: 'old', type: 'file' }])
+            expect(store.state.dirLoading).toBe(false)
+        })
+
+        it('sets dirLoading to true while fetching', async () => {
+            let resolveApi: (v: any) => void
+            const apiPromise = new Promise(r => { resolveApi = r })
+            mockApiGet.mockReturnValue(apiPromise)
+
+            const loadPromise = store.loadFiles('/project')
+
+            // While loading
+            expect(store.state.dirLoading).toBe(true)
+
+            resolveApi!({ items: [] })
+            await loadPromise
+
+            expect(store.state.dirLoading).toBe(false)
+        })
+
+        it('loads root directory when no path provided', async () => {
+            mockApiGet.mockResolvedValue({ items: [{ name: 'home', type: 'dir' }] })
+
+            await store.loadFiles('')
+
+            expect(mockApiGet).toHaveBeenCalledWith('/api/dir?path=')
+        })
+    })
 })

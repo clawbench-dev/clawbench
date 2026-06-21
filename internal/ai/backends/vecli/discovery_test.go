@@ -15,7 +15,7 @@ func TestVeCLIModelIDRe(t *testing.T) {
 	}{
 		{`id: "minimax-m2.5"`, true},
 		{`id: "model-name"`, true},
-		{`id:"no-space"`, true},  // \s* matches zero spaces
+		{`id:"no-space"`, true}, // \s* matches zero spaces
 		{`name: "something"`, false},
 		{`  id: "indented"`, true},
 	}
@@ -40,7 +40,7 @@ func TestVeCLIModelNameRe(t *testing.T) {
 	}{
 		{`name: "MiniMax M2.5"`, true},
 		{`name: "Model Name"`, true},
-		{`name:"no-space"`, true},  // \s* matches zero spaces
+		{`name:"no-space"`, true}, // \s* matches zero spaces
 		{`id: "something"`, false},
 	}
 
@@ -92,7 +92,7 @@ func TestVeCLIModelParsing_SimulatedRegistry(t *testing.T) {
 ];`
 
 	registryStart := -1
-	for i := 0; i < len(content); i++ {
+	for i := 0; i < len(content); i++ { //nolint:intrange // index used for content slicing
 		if i+17 <= len(content) && content[i:i+17] == "MODEL_REGISTRY = " {
 			registryStart = i
 			break
@@ -101,7 +101,9 @@ func TestVeCLIModelParsing_SimulatedRegistry(t *testing.T) {
 	require.NotEqual(t, -1, registryStart)
 
 	// Extract first model ID using regex
-	entry := content[strings.Index(content, "{"):]
+	idx := strings.Index(content, "{")
+	require.NotEqual(t, -1, idx)
+	entry := content[idx:]
 	m := vecliModelIDRe.FindStringSubmatch(entry)
 	require.Len(t, m, 2)
 	assert.Equal(t, "minimax-m2.5", m[1])
@@ -113,10 +115,10 @@ func TestVeCLIModelParsing_SimulatedRegistry(t *testing.T) {
 
 	// Test third entry (no name) — find the third { block
 	thirdEntryIdx := strings.Index(content, `"no-name-model"`)
-	noNameSection := content[thirdEntryIdx:]
+	require.NotEqual(t, -1, thirdEntryIdx)
 	// Search backwards to find the opening id: for this entry
 	idPrefixIdx := strings.LastIndex(content[:thirdEntryIdx], "id:")
-	noNameSection = content[idPrefixIdx:]
+	noNameSection := content[idPrefixIdx:]
 	mID := vecliModelIDRe.FindStringSubmatch(noNameSection)
 	require.Len(t, mID, 2)
 	assert.Equal(t, "no-name-model", mID[1])

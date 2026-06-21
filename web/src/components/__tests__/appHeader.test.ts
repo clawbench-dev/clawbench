@@ -319,4 +319,197 @@ describe('AppHeader', () => {
 
     vi.unstubAllGlobals()
   })
+
+  // ── loadRecentProjects error handling ──
+
+  it('loadRecentProjects clears items on fetch error', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('network error'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountAndTrack()
+    await (wrapper.vm as any).loadRecentProjects()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    expect(wrapper.vm.recentItems).toEqual([])
+
+    vi.unstubAllGlobals()
+  })
+
+  // ── toggleDropdown ──
+
+  it('toggleDropdown opens dropdown and loads recent projects', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: () => Promise.resolve(['/home/user/proj-a']),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountAndTrack()
+    wrapper.vm.dropdownOpen = false
+
+    await (wrapper.vm as any).toggleDropdown()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    expect(wrapper.vm.dropdownOpen).toBe(true)
+    expect(fetchMock).toHaveBeenCalledWith('/api/recent-projects')
+
+    vi.unstubAllGlobals()
+  })
+
+  it('toggleDropdown closes dropdown when already open', async () => {
+    const wrapper = mountAndTrack()
+    wrapper.vm.dropdownOpen = true
+
+    await (wrapper.vm as any).toggleDropdown()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    expect(wrapper.vm.dropdownOpen).toBe(false)
+  })
+
+  // ── openBrowse ──
+
+  it('openBrowse closes dropdown and emits openProjectDialog', async () => {
+    const wrapper = mountAndTrack()
+    wrapper.vm.dropdownOpen = true
+
+    await (wrapper.vm as any).openBrowse()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    expect(wrapper.vm.dropdownOpen).toBe(false)
+    expect(wrapper.emitted('openProjectDialog')).toBeTruthy()
+  })
+
+  // ── selectRecent ──
+
+  it('selectRecent closes dropdown and does nothing if same project', async () => {
+    const wrapper = mountAndTrack({ projectRoot: '/home/user/my-project' })
+    wrapper.vm.dropdownOpen = true
+
+    await (wrapper.vm as any).selectRecent({ path: '/home/user/my-project', name: 'my-project', displayPath: 'my-project' })
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    expect(wrapper.vm.dropdownOpen).toBe(false)
+  })
+
+  it('selectRecent calls hotSwitchProject for different project', async () => {
+    const hotSwitchMock = vi.fn().mockResolvedValue(undefined)
+    const wrapper = mount(AppHeader, {
+      props: { projectRoot: '/home/user/my-project', hidden: false },
+      global: {
+        plugins: [i18n],
+        stubs: { Teleport: TeleportStub, PopupMenu: PopupMenuStub, 'lucide-vue-next': LucideStub },
+        provide: { switchTab: vi.fn(), toast: { show: vi.fn() }, hotSwitchProject: hotSwitchMock },
+        config: {
+          errorHandler: (err: unknown) => {
+            if (err instanceof Error && err.message.includes('Maximum recursive updates')) return
+            throw err
+          },
+        },
+      },
+    })
+    activeWrapper = wrapper
+
+    await (wrapper.vm as any).selectRecent({ path: '/home/user/other-project', name: 'other-project', displayPath: 'other-project' })
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    expect(wrapper.vm.dropdownOpen).toBe(false)
+    expect(hotSwitchMock).toHaveBeenCalledWith('/home/user/other-project')
+  })
+
+  // ── toggleStatusMenu (web mode) ──
+
+  it('toggleStatusMenu toggles the status menu open state', async () => {
+    const wrapper = mountAndTrack()
+    expect(wrapper.vm.statusMenuOpen).toBe(false)
+
+    await (wrapper.vm as any).toggleStatusMenu()
+    try { await wrapper.vm.$nextTick() } catch {}
+    expect(wrapper.vm.statusMenuOpen).toBe(true)
+
+    await (wrapper.vm as any).toggleStatusMenu()
+    try { await wrapper.vm.$nextTick() } catch {}
+    expect(wrapper.vm.statusMenuOpen).toBe(false)
+  })
+
+  // ── onClickOutside ──
+
+  it('onClickOutside closes dropdown when click is outside', async () => {
+    const wrapper = mountAndTrack()
+    wrapper.vm.dropdownOpen = true
+
+    // Create a mock event with a target not in dropdownRef or dropdownPanelRef
+    const mockEvent = { target: document.createElement('div') }
+    await (wrapper.vm as any).onClickOutside(mockEvent)
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    expect(wrapper.vm.dropdownOpen).toBe(false)
+  })
+
+  // ── serverStatusLabel computed ──
+
+  it('shows correct server status label for connected', () => {
+    wsConfig.value = 'connected'
+    const wrapper = mountAndTrack()
+    expect(wrapper.vm.serverStatusLabel).toBe('Server connected')
+  })
+
+  it('shows correct server status label for reconnecting', () => {
+    wsConfig.value = 'reconnecting'
+    const wrapper = mountAndTrack()
+    expect(wrapper.vm.serverStatusLabel).toBe('Reconnecting...')
+  })
+
+  it('shows correct server status label for disconnected', () => {
+    wsConfig.value = 'disconnected'
+    const wrapper = mountAndTrack()
+    expect(wrapper.vm.serverStatusLabel).toBe('Server disconnected')
+  })
+
+  // ── statusDotClass computed ──
+
+  it('statusDotClass returns correct class for each status', () => {
+    wsConfig.value = 'connected'
+    expect(mountAndTrack().vm.statusDotClass).toBe('status-dot-connected')
+
+    // Need separate instances since we can't change wsConfig after mount
+  })
+
+  it('statusDotClass returns reconnecting class', () => {
+    wsConfig.value = 'reconnecting'
+    expect(mountAndTrack().vm.statusDotClass).toBe('status-dot-reconnecting')
+  })
+
+  it('statusDotClass returns disconnected class', () => {
+    wsConfig.value = 'disconnected'
+    expect(mountAndTrack().vm.statusDotClass).toBe('status-dot-disconnected')
+  })
+
+  // ── loadRecentProjects: loading state ──
+
+  it('loadRecentProjects sets loadingRecent while fetching', async () => {
+    let resolveJson: (v: any) => void
+    const jsonPromise = new Promise(r => { resolveJson = r })
+    const fetchMock = vi.fn().mockResolvedValue({ json: () => jsonPromise })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountAndTrack()
+    const loadPromise = (wrapper.vm as any).loadRecentProjects()
+
+    // While fetch is in flight, loading should be true
+    expect(wrapper.vm.loadingRecent).toBe(true)
+
+    resolveJson!(['/home/user/proj'])
+    await loadPromise
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    expect(wrapper.vm.loadingRecent).toBe(false)
+
+    vi.unstubAllGlobals()
+  })
+
+  // ── hidden prop ──
+
+  it('header has v-show binding for hidden prop', () => {
+    const wrapper = mountAndTrack({ hidden: true })
+    expect(wrapper.find('.header').isVisible()).toBe(false)
+  })
 })

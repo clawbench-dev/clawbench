@@ -281,7 +281,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 	}
 }
 
-	// extractInputFromContent extracts tool input parameters from ACP Content blocks.
+// extractInputFromContent extracts tool input parameters from ACP Content blocks.
 // Terminal content blocks contain the command being executed; text content blocks
 // may contain the description or command text.
 func extractInputFromContent(tc acp.SessionUpdateToolCall) map[string]any {
@@ -696,5 +696,3 @@ func forwardACPEvent(ch chan<- StreamEvent, event StreamEvent) {
 func MapACPSessionUpdateForTest(update acp.SessionUpdate, ch chan<- StreamEvent) {
 	mapACPSessionUpdate(update, ch, nil, nil, nil)
 }
-
-

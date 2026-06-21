@@ -155,7 +155,7 @@ func TestDeepSeekPlugin_BuildArgs_SystemPrompt(t *testing.T) {
 	clib := entry.NewBackend().(*ai.CLIBackend)
 
 	req := ai.ChatRequest{
-		Prompt:      "test",
+		Prompt:       "test",
 		SystemPrompt: "you are a helper",
 	}
 	args := clib.BuildArgsFn(req)

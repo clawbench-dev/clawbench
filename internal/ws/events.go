@@ -1,7 +1,6 @@
 package ws
 
 import (
-	"clawbench/internal/model"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -9,6 +8,8 @@ import (
 	"regexp"
 	"sync"
 	"time"
+
+	"clawbench/internal/model"
 
 	"github.com/coder/websocket"
 )

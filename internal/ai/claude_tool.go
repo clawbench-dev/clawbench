@@ -8,12 +8,12 @@ import (
 // passed as a parameter to tool parsing functions so they remain stateless
 // and testable.
 type ClaudeStreamToolState struct {
-	ActiveTools           map[int]*ToolCall
-	ActiveToolResults     map[int]*toolResultAccum
-	ActiveThinkingBlocks  map[int]bool
-	EmittedToolInputEmpty map[string]bool
-	ReceivedPartialToolUse bool
-	ReceivedPartial        bool
+	ActiveTools             map[int]*ToolCall
+	ActiveToolResults       map[int]*toolResultAccum
+	ActiveThinkingBlocks    map[int]bool
+	EmittedToolInputEmpty   map[string]bool
+	ReceivedPartialToolUse  bool
+	ReceivedPartial         bool
 	ReceivedPartialThinking bool
 }
 
@@ -267,5 +267,3 @@ func parseClaudeUserToolResult(msg *ClaudeStreamMessage) []StreamEvent {
 	}
 	return events
 }
-
-

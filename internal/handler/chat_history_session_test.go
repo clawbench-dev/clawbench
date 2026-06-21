@@ -480,7 +480,7 @@ func TestServeSessions_Get_WithLimitParam(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		_, err := service.CreateSession(env.ProjectDir, "claude", fmt.Sprintf("Session %d", i), "claude", "", "default", "chat")
 		require.NoError(t, err)
 	}

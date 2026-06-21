@@ -1503,7 +1503,7 @@ func TestMapACPSessionUpdate_UsageUpdate(t *testing.T) {
 
 	// Should get 2 events: raw_output + usage_update
 	var foundUsage bool
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		select {
 		case evt := <-ch:
 			if evt.Type == "usage_update" && evt.Usage != nil {
@@ -1534,7 +1534,7 @@ func TestMapACPSessionUpdate_UsageUpdate_WithoutCost(t *testing.T) {
 	mapACPSessionUpdate(update, ch, context.Background(), nil, nil)
 
 	var foundUsage bool
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		select {
 		case evt := <-ch:
 			if evt.Type == "usage_update" && evt.Usage != nil {

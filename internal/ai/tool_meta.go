@@ -76,54 +76,54 @@ func ExtractSummary(name string, input map[string]any) string {
 			return ""
 		}
 		if header, _ := first["header"].(string); header != "" {
-			return truncateStr(header, maxSummaryLen)
+			return truncateStr(header)
 		}
 		if question, _ := first["question"].(string); question != "" {
-			return truncateStr(question, maxSummaryLen)
+			return truncateStr(question)
 		}
 		return ""
 	}
 
 	// Priority chain
 	if v, _ := input["description"].(string); v != "" {
-		return truncateStr(v, maxSummaryLen)
+		return truncateStr(v)
 	}
 	if v, _ := input["file_path"].(string); v != "" {
-		return truncateStr(baseName(v), maxSummaryLen)
+		return truncateStr(baseName(v))
 	}
 	if v, _ := input["command"].(string); v != "" {
-		return truncateStr(v, maxSummaryLen)
+		return truncateStr(v)
 	}
 	if v, _ := input["pattern"].(string); v != "" {
-		return truncateStr(v, maxSummaryLen)
+		return truncateStr(v)
 	}
 	if v, _ := input["query"].(string); v != "" {
-		return truncateStr(v, maxSummaryLen)
+		return truncateStr(v)
 	}
 	if v, _ := input["url"].(string); v != "" {
-		return truncateStr(v, maxSummaryLen)
+		return truncateStr(v)
 	}
 	if v, _ := input["skill"].(string); v != "" {
-		return truncateStr(v, maxSummaryLen)
+		return truncateStr(v)
 	}
 	if nameLower == "agent" {
 		if v, _ := input["prompt"].(string); v != "" {
-			return truncateStr(v, maxSummaryLen)
+			return truncateStr(v)
 		}
 	}
 	if v, _ := input["path"].(string); v != "" {
-		return truncateStr(baseName(v), maxSummaryLen)
+		return truncateStr(baseName(v))
 	}
 	if src, srcOk := input["src_path"].(string); srcOk {
 		if dst, dstOk := input["dst_path"].(string); dstOk {
-			return truncateStr(baseName(src)+" → "+baseName(dst), maxSummaryLen)
+			return truncateStr(baseName(src) + " → " + baseName(dst))
 		}
 	}
 
 	// Fallback: first string value
 	for _, v := range input {
 		if s, ok := v.(string); ok {
-			return truncateStr(s, maxSummaryLen)
+			return truncateStr(s)
 		}
 	}
 
@@ -136,7 +136,7 @@ func ExtractDisplayName(name string, input map[string]any) string {
 	if input == nil {
 		return ""
 	}
-	if strings.ToLower(name) == "agent" {
+	if strings.EqualFold(name, "agent") {
 		if v, _ := input["subagent_type"].(string); v != "" {
 			return v
 		}
@@ -175,11 +175,11 @@ func baseName(p string) string {
 	return p[idx+1:]
 }
 
-// truncateStr truncates a string to maxLen runes and appends "..." if truncated.
-func truncateStr(s string, maxLen int) string {
-	if utf8.RuneCountInString(s) <= maxLen {
+// truncateStr truncates a string to maxSummaryLen runes and appends "..." if truncated.
+func truncateStr(s string) string {
+	if utf8.RuneCountInString(s) <= maxSummaryLen {
 		return s
 	}
 	runes := []rune(s)
-	return string(runes[:maxLen])
+	return string(runes[:maxSummaryLen])
 }

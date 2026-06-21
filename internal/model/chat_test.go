@@ -8,15 +8,15 @@ import (
 func TestContentBlockToolUseMarshalSlim(t *testing.T) {
 	// tool_use blocks should serialize without input/output
 	block := ContentBlock{
-		Type:       "tool_use",
-		Name:       "Read",
-		ID:         "t1",
-		Input:      map[string]any{"file_path": "/a.go", "content": "very long content..."},
-		Output:     "file contents here",
-		Status:     "success",
-		Done:       true,
-		Summary:    "a.go",
-		FilePath:   "/a.go",
+		Type:     "tool_use",
+		Name:     "Read",
+		ID:       "t1",
+		Input:    map[string]any{"file_path": "/a.go", "content": "very long content..."},
+		Output:   "file contents here",
+		Status:   "success",
+		Done:     true,
+		Summary:  "a.go",
+		FilePath: "/a.go",
 	}
 
 	data, err := json.Marshal(block)
@@ -183,12 +183,12 @@ func TestContentBlockPermissionApprovalMarshalWithInput(t *testing.T) {
 func TestContentBlockRegularToolStillSlim(t *testing.T) {
 	// Regular tool_use blocks (not interactive) should still use slim serialization
 	block := ContentBlock{
-		Type:  "tool_use",
-		Name:  "Read",
-		ID:    "t3",
-		Input: map[string]any{"file_path": "/test.go"},
+		Type:   "tool_use",
+		Name:   "Read",
+		ID:     "t3",
+		Input:  map[string]any{"file_path": "/test.go"},
 		Output: "contents",
-		Done:  true,
+		Done:   true,
 	}
 
 	data, err := json.Marshal(block)

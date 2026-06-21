@@ -13,7 +13,7 @@ import (
 //   - Field names may be mixed camelCase/snake_case
 func parseCodeBuddyACPToolCall(tc acp.SessionUpdateToolCall) *ToolCall {
 	// Extract tool name: prefer _meta flat key
-	name := extractMetaToolNameFlat(tc.Meta, "codebuddy.ai/toolName")
+	name := extractMetaToolNameFlat(tc.Meta)
 	if name == "" {
 		name = extractToolName(tc.Title, tc.Kind, "codebuddy", string(tc.ToolCallId))
 	}
@@ -38,7 +38,7 @@ func parseCodeBuddyACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ToolCall {
 	mapToolCallStatus(tcu.Status, tool)
 
 	// Extract tool name: prefer _meta flat key
-	name := extractMetaToolNameFlat(tcu.Meta, "codebuddy.ai/toolName")
+	name := extractMetaToolNameFlat(tcu.Meta)
 	if name != "" {
 		tool.Name = name
 	} else if !tool.Done && tcu.Title != nil && *tcu.Title != "" {

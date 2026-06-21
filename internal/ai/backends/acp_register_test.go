@@ -46,7 +46,7 @@ func TestACPInitRegistration(t *testing.T) {
 		}
 
 		// Kimi ACP has no InputRemaps
-		if p.ACP.InputRemaps != nil && len(p.ACP.InputRemaps) > 0 {
+		if len(p.ACP.InputRemaps) > 0 {
 			t.Errorf("expected empty InputRemaps for kimi ACP, got %v", p.ACP.InputRemaps)
 		}
 	})
@@ -145,7 +145,7 @@ func TestACPInitRegistration(t *testing.T) {
 		}
 		// DeepSeek (CodeWhale) ACP has both InputRemaps and ToolCallIDPrefixes
 		remaps := p.ACP.InputRemaps
-		if remaps == nil || len(remaps) == 0 {
+		if len(remaps) == 0 {
 			t.Fatal("expected non-empty InputRemaps for deepseek ACP")
 		}
 		if remaps["path"] != "file_path" {

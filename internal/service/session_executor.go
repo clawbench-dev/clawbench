@@ -146,7 +146,7 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) bool {
 		// For tool_use/tool_result events, extract meta before forwarding
 		// so the SSE event includes summary/display_name/file_path.
 		forwardEvent := event
-		if (event.Type == "tool_use" || event.Type == "tool_result") && event.Tool != nil {
+		if (event.Type == "tool_use" || event.Type == "tool_result") && event.Tool != nil { //nolint:goconst // event type strings
 			meta := ai.ExtractToolCallMeta(event)
 			forwardEvent.ToolMeta = &meta
 		}

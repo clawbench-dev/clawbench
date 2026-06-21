@@ -11,28 +11,28 @@ func TestExtractMetaToolName(t *testing.T) {
 		meta := map[string]any{
 			"claudeCode": map[string]any{"toolName": "Edit"},
 		}
-		assert.Equal(t, "Edit", extractMetaToolName(meta, "claudeCode"))
+		assert.Equal(t, "Edit", extractMetaToolName(meta))
 	})
 
 	t.Run("flat key not found in nested", func(t *testing.T) {
 		meta := map[string]any{
 			"claudeCode": map[string]any{"other": "value"},
 		}
-		assert.Equal(t, "", extractMetaToolName(meta, "claudeCode"))
+		assert.Equal(t, "", extractMetaToolName(meta))
 	})
 
 	t.Run("namespace not present", func(t *testing.T) {
 		meta := map[string]any{"other": "value"}
-		assert.Equal(t, "", extractMetaToolName(meta, "claudeCode"))
+		assert.Equal(t, "", extractMetaToolName(meta))
 	})
 
 	t.Run("nil meta", func(t *testing.T) {
-		assert.Equal(t, "", extractMetaToolName(nil, "claudeCode"))
+		assert.Equal(t, "", extractMetaToolName(nil))
 	})
 
 	t.Run("namespace is not a map", func(t *testing.T) {
 		meta := map[string]any{"claudeCode": "string-value"}
-		assert.Equal(t, "", extractMetaToolName(meta, "claudeCode"))
+		assert.Equal(t, "", extractMetaToolName(meta))
 	})
 }
 
@@ -41,21 +41,21 @@ func TestExtractMetaToolNameFlat(t *testing.T) {
 		meta := map[string]any{
 			"codebuddy.ai/toolName": "Bash",
 		}
-		assert.Equal(t, "Bash", extractMetaToolNameFlat(meta, "codebuddy.ai/toolName"))
+		assert.Equal(t, "Bash", extractMetaToolNameFlat(meta))
 	})
 
 	t.Run("key not present", func(t *testing.T) {
 		meta := map[string]any{"other": "value"}
-		assert.Equal(t, "", extractMetaToolNameFlat(meta, "codebuddy.ai/toolName"))
+		assert.Equal(t, "", extractMetaToolNameFlat(meta))
 	})
 
 	t.Run("nil meta", func(t *testing.T) {
-		assert.Equal(t, "", extractMetaToolNameFlat(nil, "codebuddy.ai/toolName"))
+		assert.Equal(t, "", extractMetaToolNameFlat(nil))
 	})
 
 	t.Run("value is not string", func(t *testing.T) {
 		meta := map[string]any{"codebuddy.ai/toolName": 42}
-		assert.Equal(t, "", extractMetaToolNameFlat(meta, "codebuddy.ai/toolName"))
+		assert.Equal(t, "", extractMetaToolNameFlat(meta))
 	})
 }
 

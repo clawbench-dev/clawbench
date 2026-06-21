@@ -1,10 +1,11 @@
 package i18n
 
 import (
-	"clawbench/internal/model"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"clawbench/internal/model"
 
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"github.com/stretchr/testify/assert"

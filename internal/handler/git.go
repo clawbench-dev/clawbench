@@ -190,6 +190,7 @@ func parseFileCountFromShortstat(stat string) int {
 }
 
 var shortstatRegex = regexp.MustCompile(`(\d+) files? changed`)
+
 // into a clean list of ref names.
 func parseDecorateRefs(s string) []string {
 	s = strings.TrimSpace(s)

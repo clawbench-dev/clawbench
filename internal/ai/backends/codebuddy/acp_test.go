@@ -78,8 +78,8 @@ func TestCodebuddyBackend_BuildArgsWithModel(t *testing.T) {
 	clib := entry.NewBackend().(*ai.CLIBackend)
 
 	req := ai.ChatRequest{
-		Prompt: "test prompt",
-		Model:  "glm-5.1",
+		Prompt:  "test prompt",
+		Model:   "glm-5.1",
 		WorkDir: "/tmp/test",
 	}
 	args := clib.BuildArgsFn(req)

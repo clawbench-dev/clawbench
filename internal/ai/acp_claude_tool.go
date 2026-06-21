@@ -15,7 +15,7 @@ import (
 //   - _meta.claudeCode.toolResponse contains stdout/stderr/interrupted on completed
 func parseClaudeACPToolCall(tc acp.SessionUpdateToolCall) *ToolCall {
 	// Extract tool name: prefer _meta.claudeCode.toolName
-	name := extractMetaToolName(tc.Meta, "claudeCode")
+	name := extractMetaToolName(tc.Meta)
 	if name == "" {
 		name = extractToolName(tc.Title, tc.Kind, "claude", string(tc.ToolCallId))
 	}
@@ -40,7 +40,7 @@ func parseClaudeACPToolCallUpdate(tcu acp.SessionToolCallUpdate) *ToolCall {
 	mapToolCallStatus(tcu.Status, tool)
 
 	// Extract tool name: prefer _meta.claudeCode.toolName
-	name := extractMetaToolName(tcu.Meta, "claudeCode")
+	name := extractMetaToolName(tcu.Meta)
 	if name != "" {
 		tool.Name = name
 	} else if !tool.Done && tcu.Title != nil && *tcu.Title != "" {

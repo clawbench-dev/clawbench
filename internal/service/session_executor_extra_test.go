@@ -121,7 +121,7 @@ func TestSessionExecutor_HandleNonTerminalEvent_IncrementalPersistence(t *testin
 	executor := NewSessionExecutor(ctx, cfg)
 
 	// Send 5 events to trigger incremental persistence
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		event := ai.StreamEvent{Type: "content", Content: "msg"}
 		executor.handleNonTerminalEvent(event)
 	}
@@ -168,7 +168,7 @@ func TestSessionExecutor_HandleNonTerminalEvent_InteractiveSSEForward(t *testing
 
 func TestSessionExecutor_HandleNonTerminalEvent_SSESendFailure(t *testing.T) {
 	// When SSE channel is full/closed, handleNonTerminalEvent should return true
-	ch := make(chan ai.StreamEvent, 0) // unbuffered, no reader
+	ch := make(chan ai.StreamEvent) // unbuffered, no reader
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

@@ -171,8 +171,8 @@ func TestAIChatStream_ToolUseEvent(t *testing.T) {
 
 	go func() {
 		ch <- ai.StreamEvent{
-			Type: "tool_use",
-			Tool: &ai.ToolCall{Name: "Read", ID: "t1", Input: `{"file_path":"/foo.go"}`, Done: true},
+			Type:     "tool_use",
+			Tool:     &ai.ToolCall{Name: "Read", ID: "t1", Input: `{"file_path":"/foo.go"}`, Done: true},
 			ToolMeta: &ai.ToolCallMeta{ToolID: "t1", Summary: "foo.go", FilePath: "/foo.go"},
 		}
 		ch <- ai.StreamEvent{Type: "done"}
@@ -206,8 +206,8 @@ func TestAIChatStream_ToolUseEventWithOutput(t *testing.T) {
 
 	go func() {
 		ch <- ai.StreamEvent{
-			Type: "tool_use",
-			Tool: &ai.ToolCall{Name: "Bash", ID: "t3", Input: `{"command":"ls"}`, Done: true, Output: "file1.go\nfile2.go", Status: "success"},
+			Type:     "tool_use",
+			Tool:     &ai.ToolCall{Name: "Bash", ID: "t3", Input: `{"command":"ls"}`, Done: true, Output: "file1.go\nfile2.go", Status: "success"},
 			ToolMeta: &ai.ToolCallMeta{ToolID: "t3", Summary: "ls"},
 		}
 		ch <- ai.StreamEvent{Type: "done"}
@@ -416,8 +416,8 @@ func TestAIChatStream_ToolUseEvent_InteractiveToolIncludesInput(t *testing.T) {
 
 	go func() {
 		ch <- ai.StreamEvent{
-			Type: "tool_use",
-			Tool: &ai.ToolCall{Name: "AskUserQuestion", ID: "t4", Input: `{"questions":[{"header":"Choose","question":"A or B?"}]}`, Done: false},
+			Type:     "tool_use",
+			Tool:     &ai.ToolCall{Name: "AskUserQuestion", ID: "t4", Input: `{"questions":[{"header":"Choose","question":"A or B?"}]}`, Done: false},
 			ToolMeta: &ai.ToolCallMeta{ToolID: "t4", Summary: "Choose"},
 		}
 		ch <- ai.StreamEvent{Type: "done"}

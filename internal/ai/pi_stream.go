@@ -202,4 +202,3 @@ func (p *PiStreamParser) parseMessageEnd(msg *PiStreamMessage, ch chan<- StreamE
 		ch <- StreamEvent{Type: "error", Error: errMsg}
 	}
 }
-

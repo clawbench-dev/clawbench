@@ -110,7 +110,7 @@ func TestDiscoverPiModels_NoCLI(t *testing.T) {
 // splitID splits a "provider/model" ID into [provider, model]
 func splitID(id string) [2]string {
 	parts := [2]string{}
-	for i := 0; i < len(id); i++ {
+	for i := 0; i < len(id); i++ { //nolint:intrange // index used for string indexing
 		if id[i] == '/' {
 			parts[0] = id[:i]
 			parts[1] = id[i+1:]

@@ -198,7 +198,7 @@ var perAgentInputRemaps = map[string]map[string]string{
 	"kimi_acp":      {}, // Kimi ACP has no rawInput; remap key exists for completeness only
 	"generic_acp": { // Full remap table for generic fallback — includes defaultMappings overlap as safety net
 		"oldString": "old_string", "newString": "new_string",
-		"dirPath": "path",
+		"dirPath":   "path",
 		"cellIndex": "cell_index", "cellType": "cell_type",
 	},
 }

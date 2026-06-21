@@ -13,7 +13,10 @@ func TestUpsertAndGetToolCall(t *testing.T) {
 	if err := initTestDB(dbDir); err != nil {
 		t.Fatalf("initTestDB: %v", err)
 	}
-	defer DB.Close()
+	defer func() {
+		DB.Close()
+		DBRead.Close()
+	}()
 
 	// Create a session and message first (FK dependency)
 	sessionID := "test-session-001"

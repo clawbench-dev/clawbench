@@ -219,12 +219,12 @@ func (p *StreamParser) GetCapturedSessionID() string { return "" }
 // toolState returns a ClaudeStreamToolState populated from the parser's fields.
 func (p *StreamParser) toolState() ClaudeStreamToolState {
 	return ClaudeStreamToolState{
-		ActiveTools:            p.activeTools,
-		ActiveToolResults:      p.activeToolResults,
-		ActiveThinkingBlocks:   p.activeThinkingBlocks,
-		EmittedToolInputEmpty:  p.emittedToolInputEmpty,
-		ReceivedPartialToolUse: p.receivedPartialToolUse,
-		ReceivedPartial:        p.receivedPartial,
+		ActiveTools:             p.activeTools,
+		ActiveToolResults:       p.activeToolResults,
+		ActiveThinkingBlocks:    p.activeThinkingBlocks,
+		EmittedToolInputEmpty:   p.emittedToolInputEmpty,
+		ReceivedPartialToolUse:  p.receivedPartialToolUse,
+		ReceivedPartial:         p.receivedPartial,
 		ReceivedPartialThinking: p.receivedPartialThinking,
 	}
 }

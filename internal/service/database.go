@@ -804,7 +804,8 @@ func MigrateToolCallsFromContent() {
 	failed := 0
 
 	for {
-		rows, err := DBRead.Query(`
+		rows, err := DBRead.Query(
+			`
 			SELECT h.id, h.session_id, h.content FROM chat_history h
 			WHERE h.role = 'assistant'
 			  AND h.content LIKE '%"tool_use"%'
@@ -838,7 +839,7 @@ func MigrateToolCallsFromContent() {
 			}
 			batch = append(batch, r)
 		}
-		rows.Close()
+		_ = rows.Close() //nolint:sqlclosecheck // batched loop: cannot defer inside for-loop
 
 		if len(batch) == 0 {
 			break
@@ -897,7 +898,7 @@ func migrateToolCallsForRow(msgID int64, sessionID, content string) error {
 
 		// Check if this block still has input (old format)
 		// Slim format blocks have nil/empty input
-		if b.Input != nil && len(b.Input) > 0 {
+		if len(b.Input) > 0 {
 			needsRewrite = true
 
 			// Extract metadata before stripping input/output

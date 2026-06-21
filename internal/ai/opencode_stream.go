@@ -72,7 +72,7 @@ func (p *OpenCodeStreamParser) GetCapturedSessionID() string { return p.sessionI
 // ParseLine parses a single JSON line from OpenCode's stream-json output and sends
 // StreamEvent(s) to the provided channel.
 //
-//nolint:gocognit,gocyclo // complex stream parsing logic
+//nolint:gocyclo // complex stream parsing logic
 func (p *OpenCodeStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 	var msg OpenCodeStreamMessage
 	if err := json.Unmarshal([]byte(line), &msg); err != nil {
@@ -147,43 +147,4 @@ func (p *OpenCodeStreamParser) ParseLine(line string, ch chan<- StreamEvent) {
 	default:
 		slog.Debug("opencode stream: skipping unknown message type", "type", msg.Type)
 	}
-}
-
-// buildOpenCodeStreamArgs constructs the CLI arguments for OpenCode streaming
-func buildOpenCodeStreamArgs(req ChatRequest) []string {
-	// OpenCode CLI has no --system-prompt flag — inject into user prompt.
-	prompt := InjectSystemPrompt(req)
-
-	args := []string{
-		"run",
-		prompt,
-		"--format", "json",
-		"--dangerously-skip-permissions",
-	}
-
-	// Pass OpenCode session ID for continuing conversations.
-	// Only pass --session when resuming an existing OpenCode session
-	// (indicated by Resume=true and a ses_ prefixed session ID).
-	// On first message, SessionID contains ClawBench's UUID which OpenCode
-	// doesn't recognize — let OpenCode create its own session.
-	if req.SessionID != "" && req.Resume {
-		args = append(args, "--session", req.SessionID)
-	}
-
-	// Working directory
-	if req.WorkDir != "" {
-		args = append(args, "--dir", req.WorkDir)
-	}
-
-	// Model override (format: provider/model, e.g., "minimax-cn-coding-plan/MiniMax-M2.7")
-	if req.Model != "" {
-		args = append(args, "--model", req.Model)
-	}
-
-	// Thinking effort level (e.g., --variant high)
-	if req.ThinkingEffort != "" {
-		args = append(args, "--variant", req.ThinkingEffort)
-	}
-
-	return args
 }

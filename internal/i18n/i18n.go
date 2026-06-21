@@ -1,9 +1,10 @@
 package i18n
 
 import (
-	"clawbench/internal/model"
 	"embed"
 	"net/http"
+
+	"clawbench/internal/model"
 
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 	"golang.org/x/text/language"

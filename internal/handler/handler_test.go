@@ -596,7 +596,7 @@ func TestGetSessionID_NoQueryParamNoCookie(t *testing.T) {
 
 func TestSetSessionID_SetsHttpOnlyCookie(t *testing.T) {
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	setSessionID(w, r, "test-session-123")
 
 	cookies := w.Result().Cookies()
@@ -613,7 +613,7 @@ func TestSetSessionID_SetsHttpOnlyCookie(t *testing.T) {
 
 func TestSetSessionID_SetsSecureCookieOverTLS(t *testing.T) {
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
 	r.TLS = &tls.ConnectionState{} // simulate TLS
 	setSessionID(w, r, "test-session-456")
 
