@@ -78,7 +78,7 @@ func ServeProjectSet(w http.ResponseWriter, r *http.Request) { //nolint:gocognit
 		// Always set/re-set the cookie so subsequent requests via requireProject() work.
 		// The cookie is a session cache derived from the DB default, not the source of truth.
 		http.SetCookie(w, &http.Cookie{
-			Name:     "clawbench_project",
+			Name:     model.ScopedCookieName("clawbench_project"),
 			Value:    url.QueryEscape(projectPath),
 			Path:     "/",
 			MaxAge:   7 * 24 * 3600,
@@ -136,16 +136,17 @@ func ServeProjectSet(w http.ResponseWriter, r *http.Request) { //nolint:gocognit
 
 		// Clear chat session cookie when switching project
 		http.SetCookie(w, &http.Cookie{
-			Name:     "chat_session_id",
+			Name:     model.ScopedCookieName("chat_session_id"),
 			Value:    "",
 			Path:     "/",
 			MaxAge:   -1,
-			HttpOnly: false,
+			HttpOnly: true,
+			Secure:   r.TLS != nil,
 			SameSite: http.SameSiteLaxMode,
 		})
 
 		http.SetCookie(w, &http.Cookie{
-			Name:     "clawbench_project",
+			Name:     model.ScopedCookieName("clawbench_project"),
 			Value:    url.QueryEscape(absPath),
 			Path:     "/",
 			MaxAge:   7 * 24 * 3600,

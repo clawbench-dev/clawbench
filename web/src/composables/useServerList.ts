@@ -29,27 +29,21 @@ function parseList(json: string): ServerEntry[] {
 
 /**
  * Composable for managing the multi-server list.
- * In APP mode, reads/writes via AndroidNative bridge.
+ * In APP mode, reads/writes via AndroidNative bridge (synchronous).
  * In web mode, falls back to localStorage.
  */
 export function useServerList() {
   const servers = ref<ServerEntry[]>([])
-  const loading = ref(false)
 
-  async function load() {
-    loading.value = true
-    try {
-      const native = getNative()
-      if (native?.getServerList) {
-        const json = native.getServerList()
-        servers.value = parseList(json)
-      } else {
-        // Fallback: localStorage (web mode, single-origin only)
-        const raw = localStorage.getItem(STORAGE_KEY)
-        servers.value = raw ? parseList(raw) : []
-      }
-    } finally {
-      loading.value = false
+  function load() {
+    const native = getNative()
+    if (native?.getServerList) {
+      // Synchronous JS bridge call — no loading state needed
+      servers.value = parseList(native.getServerList())
+    } else {
+      // Fallback: localStorage (web mode, single-origin only)
+      const raw = localStorage.getItem(STORAGE_KEY)
+      servers.value = raw ? parseList(raw) : []
     }
   }
 
@@ -58,7 +52,6 @@ export function useServerList() {
     if (native?.saveServer) {
       native.saveServer(url, password)
     } else {
-      // Fallback: localStorage
       const list = parseList(localStorage.getItem(STORAGE_KEY) || '[]')
       const idx = list.findIndex(e => e.url === url)
       if (idx >= 0) {
@@ -89,5 +82,5 @@ export function useServerList() {
     return servers.value.find(e => e.url === url)?.password || ''
   }
 
-  return { servers, loading, load, save, remove, getPassword }
+  return { servers, load, save, remove, getPassword }
 }

@@ -25,7 +25,7 @@
               @click="switchServer(srv.url)"
             >
               <Server :size="14" class="item-icon" />
-              <span class="item-label">{{ formatServerUrl(srv.url) }}</span>
+              <span class="item-label">{{ formatServerHost(srv.url) }}</span>
               <button class="server-item-delete" @click.stop="deleteServer(srv.url)" :title="t('login.deleteServer')">
                 <X :size="10" />
               </button>
@@ -99,6 +99,7 @@ import { Projector, ChevronDown, Search, GitBranch, Server, X, LogOut } from 'lu
 import { ref, computed, onMounted, onUnmounted, inject, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
+import { formatServerHost } from '@/utils/url'
 import { useAppMode } from '@/composables/useAppMode'
 import { useServerList } from '@/composables/useServerList'
 import { baseName } from '@/utils/path.ts'
@@ -309,23 +310,7 @@ const serverDropdownStyle = ref({})
 
 const currentServerUrl = computed(() => window.location.origin)
 
-const currentServerName = computed(() => {
-    try {
-        const u = new URL(window.location.origin)
-        return u.host + (u.port && ![80, 443].includes(Number(u.port)) ? ':' + u.port : '')
-    } catch {
-        return window.location.host
-    }
-})
-
-function formatServerUrl(url) {
-    try {
-        const u = new URL(url)
-        return u.host + (u.port && ![80, 443].includes(Number(u.port)) ? ':' + u.port : '')
-    } catch {
-        return url
-    }
-}
+const currentServerName = computed(() => formatServerHost(window.location.origin))
 
 function toggleServerDropdown() {
     if (serverDropdownOpen.value) {
@@ -352,11 +337,17 @@ function updateServerDropdownPosition() {
 function switchServer(url) {
     serverDropdownOpen.value = false
     if (url === currentServerUrl.value) return
-    // Navigate to the new server (full page reload)
-    window.location.href = url + '/'
+    // Use native connectToServer for pre-auth, SSL handling, and error recovery
+    const srv = serverList.value.find(s => s.url === url)
+    if (window.AndroidNative?.connectToServer && srv) {
+        window.AndroidNative.connectToServer(url, srv.password)
+    } else {
+        window.location.href = url + '/'
+    }
 }
 
 function deleteServer(url) {
+    if (!confirm(t('login.deleteServer'))) return
     removeServer(url)
 }
 

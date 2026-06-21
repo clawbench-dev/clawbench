@@ -29,7 +29,7 @@
           >
             <div class="server-info">
               <Server :size="14" class="server-icon" />
-              <span class="server-url">{{ formatUrl(srv.url) }}</span>
+              <span class="server-url">{{ formatServerHost(srv.url) }}</span>
             </div>
             <button class="server-delete" @click.stop="deleteServer(srv.url)" :title="t('login.deleteServer')">
               <X :size="12" />
@@ -118,6 +118,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppMode } from '@/composables/useAppMode'
 import { useServerList } from '@/composables/useServerList'
+import { formatServerHost } from '@/utils/url'
 import { Server, X, Plus } from 'lucide-vue-next'
 
 const { t } = useI18n()
@@ -137,27 +138,19 @@ const newServerPassword = ref('')
 
 const showServerSelector = computed(() => servers.value.length >= 2)
 
-function formatUrl(url) {
-  try {
-    const u = new URL(url)
-    return u.host + (u.port && ![80, 443].includes(Number(u.port)) ? ':' + u.port : '')
-  } catch {
-    return url
-  }
-}
-
 function selectServer(srv) {
   if (srv.url === selectedServerUrl.value) return
-  // Navigate to the selected server
-  window.location.href = srv.url + '/login'
+  // Use native connectToServer for pre-auth, SSL handling, and error recovery
+  if (window.AndroidNative?.connectToServer) {
+    window.AndroidNative.connectToServer(srv.url, srv.password)
+  } else {
+    window.location.href = srv.url + '/login'
+  }
 }
 
 function deleteServer(url) {
+  if (!confirm(t('login.deleteServer'))) return
   removeServer(url)
-  // If we deleted the current server, reload the list
-  if (url === selectedServerUrl.value) {
-    // Stay on current page but the server list is refreshed
-  }
 }
 
 async function handleLogin() {
@@ -204,17 +197,25 @@ async function handleAddServer() {
     url = 'https://' + url
   }
 
+  // Save to native server list first (so it persists even if connection fails later)
+  saveServer(url, newServerPassword.value)
+
+  // Use native connectToServer for pre-auth, CORS bypass, SSL handling, and error recovery
+  if (window.AndroidNative?.connectToServer) {
+    window.AndroidNative.connectToServer(url, newServerPassword.value)
+    // connectToServer handles navigation, cookie injection, and error display
+    // No need to handle response here — the native layer takes over
+    return
+  }
+
+  // Fallback for non-APP mode (same-origin only)
   try {
-    // Try to login to the new server
     const res = await fetch(url + '/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password: newServerPassword.value })
     })
     if (res.ok) {
-      // Save to native server list
-      saveServer(url, newServerPassword.value)
-      // Navigate to the new server
       window.location.href = url + '/'
     } else if (res.status >= 500) {
       error.value = t('login.serverError')
@@ -234,9 +235,9 @@ function handleReconfigure() {
   }
 }
 
-onMounted(async () => {
+onMounted(() => {
   if (isAppMode.value) {
-    await loadServers()
+    loadServers()
     // Set current server URL
     selectedServerUrl.value = window.location.origin
     // Pre-fill password if available
