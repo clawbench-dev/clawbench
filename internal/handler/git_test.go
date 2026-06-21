@@ -3221,3 +3221,47 @@ func TestServeAuthCheck_UsesCookieToken(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, w2.Code,
 		"password hash should NOT be accepted as cookie value (ISS-117, ISS-131, ISS-183)")
 }
+
+// --- isDirtyWorktreeError ---
+
+func TestIsDirtyWorktreeError(t *testing.T) {
+	tests := []struct {
+		name     string
+		errMsg   string
+		expected bool
+	}{
+		{"modified files", "error: Cannot delete worktree with modified files", true},
+		{"untracked files", "error: Cannot delete worktree with untracked files", true},
+		{"uncommitted changes", "error: Cannot delete worktree with uncommitted changes", true},
+		{"no dirty indicators", "fatal: not a git repository", false},
+		{"empty message", "", false},
+		{"other error", "error: unknown option", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, isDirtyWorktreeError(tt.errMsg))
+		})
+	}
+}
+
+// --- resolveSymlinkPath ---
+
+func TestResolveSymlinkPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	realFile := filepath.Join(tmpDir, "real")
+	require.NoError(t, os.WriteFile(realFile, []byte("test"), 0o644))
+
+	linkPath := filepath.Join(tmpDir, "link")
+	require.NoError(t, os.Symlink(realFile, linkPath))
+
+	// Resolving a symlink should return the target
+	result := resolveSymlinkPath(linkPath)
+	assert.Equal(t, realFile, result)
+
+	// Resolving a non-existent path should return the original path
+	nonExistent := filepath.Join(tmpDir, "nonexistent")
+	assert.Equal(t, nonExistent, resolveSymlinkPath(nonExistent))
+
+	// A regular path should return itself
+	assert.Equal(t, realFile, resolveSymlinkPath(realFile))
+}
