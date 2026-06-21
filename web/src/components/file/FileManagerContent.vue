@@ -966,11 +966,11 @@ function doDelete() {
 }
 
 .dir-nav {
-    padding: 6px 8px;
+    padding: 4px 8px;
     display: flex;
     flex-direction: column;
     gap: 4px;
-    min-height: 32px;
+    min-height: 28px;
     border-bottom: 1px solid var(--border-color, #e5e5e5);
     background: var(--bg-tertiary, #f5f5f5);
     flex-shrink: 0;
@@ -1130,8 +1130,8 @@ function doDelete() {
     align-items: center;
     justify-content: center;
     gap: 3px;
-    width: 30px;
-    height: 30px;
+    width: 28px;
+    height: 28px;
     padding: 0;
     border: none;
     border-radius: 50%;
