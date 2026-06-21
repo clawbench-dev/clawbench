@@ -3254,16 +3254,22 @@ func TestResolveSymlinkPath(t *testing.T) {
 	linkPath := filepath.Join(tmpDir, "link")
 	require.NoError(t, os.Symlink(realFile, linkPath))
 
-	// Resolving a symlink should return the target
+	// Resolving a symlink should return the fully resolved target.
+	// On macOS, EvalSymlinks resolves /var → /private/var for symlink targets
+	// but not necessarily for the direct path, so we compare both through EvalSymlinks.
 	result := resolveSymlinkPath(linkPath)
-	assert.Equal(t, realFile, result)
+	resolvedLinkTarget, _ := filepath.EvalSymlinks(result)
+	resolvedReal, _ := filepath.EvalSymlinks(realFile)
+	assert.Equal(t, resolvedReal, resolvedLinkTarget)
 
 	// Resolving a non-existent path should return the original path
 	nonExistent := filepath.Join(tmpDir, "nonexistent")
 	assert.Equal(t, nonExistent, resolveSymlinkPath(nonExistent))
 
-	// A regular path should return itself
-	assert.Equal(t, realFile, resolveSymlinkPath(realFile))
+	// A regular path resolves to its canonical form
+	resultRegular := resolveSymlinkPath(realFile)
+	resolvedResult, _ := filepath.EvalSymlinks(resultRegular)
+	assert.Equal(t, resolvedReal, resolvedResult)
 }
 
 // --- forceRemoveWorktree ---

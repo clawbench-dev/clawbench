@@ -140,9 +140,21 @@ func TestValidateWorktreePath(t *testing.T) {
 
 	initGitRepo(t, env.ProjectDir)
 
+	run := func(name string, args ...string) {
+		cmd := exec.Command(name, args...)
+		cmd.Dir = env.ProjectDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("command %s %v failed: %v\n%s", name, args, err, out)
+		}
+	}
+
 	t.Run("valid worktree path but is current", func(t *testing.T) {
+		// Resolve the project dir path (macOS /var → /private/var)
+		resolved, err := filepath.EvalSymlinks(env.ProjectDir)
+		require.NoError(t, err)
+
 		w := httptest.NewRecorder()
-		result := validateWorktreePath(w, env.ProjectDir, env.ProjectDir)
+		result := validateWorktreePath(w, env.ProjectDir, resolved)
 		assert.False(t, result, "current worktree should fail validation")
 
 		var resp map[string]interface{}
@@ -161,18 +173,15 @@ func TestValidateWorktreePath(t *testing.T) {
 	})
 
 	t.Run("non-current worktree path passes", func(t *testing.T) {
-		run := func(name string, args ...string) {
-			cmd := exec.Command(name, args...)
-			cmd.Dir = env.ProjectDir
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("command %s %v failed: %v\n%s", name, args, err, out)
-			}
-		}
 		wtPath := filepath.Join(filepath.Dir(env.ProjectDir), "wt-validate-ok")
 		run("git", "worktree", "add", wtPath, "-b", "wt-validate-ok-branch")
 
+		// Resolve the worktree path (macOS symlink compatibility)
+		resolved, err := filepath.EvalSymlinks(wtPath)
+		require.NoError(t, err)
+
 		w := httptest.NewRecorder()
-		result := validateWorktreePath(w, env.ProjectDir, wtPath)
+		result := validateWorktreePath(w, env.ProjectDir, resolved)
 		assert.True(t, result, "non-current worktree path should pass validation")
 	})
 }
@@ -191,12 +200,21 @@ func TestRemoveWorktree(t *testing.T) {
 		}
 	}
 
+	// resolvePath resolves symlinks for macOS compatibility (/var → /private/var)
+	resolvePath := func(p string) string {
+		resolved, err := filepath.EvalSymlinks(p)
+		if err != nil {
+			return p
+		}
+		return resolved
+	}
+
 	t.Run("clean worktree removal", func(t *testing.T) {
 		wtPath := filepath.Join(filepath.Dir(env.ProjectDir), "wt-remove-clean")
 		run("git", "worktree", "add", wtPath, "-b", "wt-remove-clean-branch")
 
 		w := httptest.NewRecorder()
-		result := removeWorktree(w, env.ProjectDir, wtPath, false)
+		result := removeWorktree(w, env.ProjectDir, resolvePath(wtPath), false)
 		assert.True(t, result, "clean worktree should be removed successfully")
 
 		if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
@@ -210,7 +228,7 @@ func TestRemoveWorktree(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(wtPath, "dirty.txt"), []byte("uncommitted"), 0o644))
 
 		w := httptest.NewRecorder()
-		result := removeWorktree(w, env.ProjectDir, wtPath, false)
+		result := removeWorktree(w, env.ProjectDir, resolvePath(wtPath), false)
 		assert.False(t, result, "dirty worktree should not be removed without force")
 
 		var resp map[string]interface{}
@@ -224,7 +242,7 @@ func TestRemoveWorktree(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(wtPath, "dirty.txt"), []byte("uncommitted"), 0o644))
 
 		w := httptest.NewRecorder()
-		result := removeWorktree(w, env.ProjectDir, wtPath, true)
+		result := removeWorktree(w, env.ProjectDir, resolvePath(wtPath), true)
 		assert.True(t, result, "dirty worktree should be removed with force")
 
 		if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
