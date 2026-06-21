@@ -395,6 +395,7 @@ onUnmounted(() => {
 
 .project-dropdown-wrapper {
     position: relative;
+    flex: 3;
     flex-shrink: 1;
     min-width: 0;
 }
@@ -411,7 +412,7 @@ onUnmounted(() => {
     border-radius: 999px;
     font-size: 13px;
     font-weight: 500;
-    max-width: 180px;
+    max-width: none;
     width: 100%;
     min-width: 0;
     transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
@@ -466,9 +467,10 @@ onUnmounted(() => {
     font-size: 11px;
     font-weight: 500;
     color: var(--accent-color);
+    flex: 2;
     flex-shrink: 1;
     min-width: 0;
-    max-width: 140px;
+    max-width: none;
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
 }
