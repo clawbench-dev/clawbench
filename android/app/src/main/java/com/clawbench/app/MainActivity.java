@@ -90,6 +90,7 @@ public class MainActivity extends AppCompatActivity {
     private static final String PREFS_NAME = "clawbench_prefs";
     private static final String KEY_SERVER_URL = "server_url";
     private static final String KEY_SSH_PASSWORD = "ssh_password";
+    private static final String KEY_SERVER_LIST = "server_list";
     private static final String TAG = "ClawBench";
     private static final String LOGIN_HTML_URL = "file:///android_asset/login.html";
 
@@ -1851,6 +1852,76 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public void setTerminalSessionCount(int count) {
             BackgroundService.setTerminalSessionCount(count);
+        }
+
+        /**
+         * Get the saved server list as a JSON array.
+         * Each entry: {"url":"https://host:port", "password":"..."}
+         * Returns "[]" when no servers are saved.
+         */
+        @JavascriptInterface
+        public String getServerList() {
+            try {
+                String json = activity.prefs.getString(KEY_SERVER_LIST, "[]");
+                return json;
+            } catch (Exception e) {
+                return "[]";
+            }
+        }
+
+        /**
+         * Save (add or update) a server entry in the server list.
+         * If a server with the same URL already exists, its password is updated.
+         * @param url      The server URL (e.g. "https://192.168.1.100:20000")
+         * @param password The password for this server
+         */
+        @JavascriptInterface
+        public void saveServer(String url, String password) {
+            try {
+                org.json.JSONArray list = new org.json.JSONArray(
+                        activity.prefs.getString(KEY_SERVER_LIST, "[]"));
+                boolean found = false;
+                for (int i = 0; i < list.length(); i++) {
+                    org.json.JSONObject entry = list.getJSONObject(i);
+                    if (url.equals(entry.optString("url", ""))) {
+                        entry.put("password", password);
+                        list.put(i, entry);
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    org.json.JSONObject entry = new org.json.JSONObject();
+                    entry.put("url", url);
+                    entry.put("password", password);
+                    list.put(entry);
+                }
+                activity.prefs.edit().putString(KEY_SERVER_LIST, list.toString()).apply();
+            } catch (Exception e) {
+                android.util.Log.e(TAG, "saveServer failed", e);
+            }
+        }
+
+        /**
+         * Remove a server entry from the server list by URL.
+         * @param url The server URL to remove
+         */
+        @JavascriptInterface
+        public void removeServer(String url) {
+            try {
+                org.json.JSONArray list = new org.json.JSONArray(
+                        activity.prefs.getString(KEY_SERVER_LIST, "[]"));
+                org.json.JSONArray newList = new org.json.JSONArray();
+                for (int i = 0; i < list.length(); i++) {
+                    org.json.JSONObject entry = list.getJSONObject(i);
+                    if (!url.equals(entry.optString("url", ""))) {
+                        newList.put(entry);
+                    }
+                }
+                activity.prefs.edit().putString(KEY_SERVER_LIST, newList.toString()).apply();
+            } catch (Exception e) {
+                android.util.Log.e(TAG, "removeServer failed", e);
+            }
         }
     }
 }

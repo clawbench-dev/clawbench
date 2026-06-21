@@ -1,7 +1,39 @@
 <template>
   <Teleport to="body">
   <header class="header">
-    <img class="header-logo" src="/logo.png" alt="ClawBench">
+    <!-- Logo: hidden in APP mode -->
+    <img v-if="!isAppMode" class="header-logo" src="/logo.png" alt="ClawBench">
+
+    <!-- Server selector (APP mode only) -->
+    <div v-if="isAppMode" class="server-dropdown-wrapper" ref="serverDropdownRef">
+      <button class="server-switch-btn" @click="toggleServerDropdown" :title="t('login.switchServer')">
+        <Server :size="14" />
+        <span class="server-name">{{ currentServerName }}</span>
+        <ChevronDown :size="12" class="switch-chevron" :class="{ open: serverDropdownOpen }" />
+      </button>
+    </div>
+    <Teleport to="body">
+      <Transition name="dropdown">
+        <div v-if="serverDropdownOpen" class="project-dropdown" :style="serverDropdownStyle" ref="serverDropdownPanelRef">
+          <div v-if="serverList.length === 0" class="dropdown-empty">{{ t('login.addServer') }}</div>
+          <div v-else class="dropdown-scroll-area">
+            <div
+              v-for="srv in serverList"
+              :key="srv.url"
+              class="dropdown-item"
+              :class="{ active: srv.url === currentServerUrl }"
+              @click="switchServer(srv.url)"
+            >
+              <Server :size="14" class="item-icon" />
+              <span class="item-label">{{ formatServerUrl(srv.url) }}</span>
+              <button class="server-item-delete" @click.stop="deleteServer(srv.url)" :title="t('login.deleteServer')">
+                <X :size="10" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
 
     <div class="project-dropdown-wrapper" ref="dropdownRef">
       <button class="project-switch-btn" @click="toggleDropdown" :title="t('appHeader.switchProject')">
@@ -44,6 +76,11 @@
       <span class="branch-name">{{ gitBranch }}</span>
     </div>
 
+    <!-- Logout button (APP mode) -->
+    <button v-if="isAppMode" class="logout-btn" @click="handleLogout" :title="t('login.logout')">
+      <LogOut :size="16" />
+    </button>
+
     <button ref="statusBtnRef" class="status-toggle" @click="toggleStatusMenu" :title="t('appHeader.connectionStatus')">
       <span class="status-dot" :class="statusDotClass"></span>
     </button>
@@ -58,10 +95,12 @@
 </template>
 
 <script setup>
-import { Projector, ChevronDown, Search, GitBranch } from 'lucide-vue-next'
+import { Projector, ChevronDown, Search, GitBranch, Server, X, LogOut } from 'lucide-vue-next'
 import { ref, computed, onMounted, onUnmounted, inject, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
+import { useAppMode } from '@/composables/useAppMode'
+import { useServerList } from '@/composables/useServerList'
 import { baseName } from '@/utils/path.ts'
 import { store } from '@/stores/app.ts'
 import { setPendingManageNavigation } from '@/composables/useCommitNavigation.ts'
@@ -69,6 +108,8 @@ import PopupMenu from '@/components/common/PopupMenu.vue'
 
 const { t } = useI18n()
 const { wsStatus } = useGlobalEvents()
+const { isAppMode } = useAppMode()
+const { servers: serverList, load: loadServerList, remove: removeServer } = useServerList()
 const switchTab = inject('switchTab')
 
 const props = defineProps({
@@ -260,12 +301,85 @@ function onPathClick(e) {
     // If not dragged, let the click bubble up to the parent .dropdown-item's selectRecent
 }
 
+// --- Server selector (APP mode) ---
+const serverDropdownOpen = ref(false)
+const serverDropdownRef = ref(null)
+const serverDropdownPanelRef = ref(null)
+const serverDropdownStyle = ref({})
+
+const currentServerUrl = computed(() => window.location.origin)
+
+const currentServerName = computed(() => {
+    try {
+        const u = new URL(window.location.origin)
+        return u.host + (u.port && ![80, 443].includes(Number(u.port)) ? ':' + u.port : '')
+    } catch {
+        return window.location.host
+    }
+})
+
+function formatServerUrl(url) {
+    try {
+        const u = new URL(url)
+        return u.host + (u.port && ![80, 443].includes(Number(u.port)) ? ':' + u.port : '')
+    } catch {
+        return url
+    }
+}
+
+function toggleServerDropdown() {
+    if (serverDropdownOpen.value) {
+        serverDropdownOpen.value = false
+    } else {
+        loadServerList()
+        updateServerDropdownPosition()
+        serverDropdownOpen.value = true
+    }
+}
+
+function updateServerDropdownPosition() {
+    if (!serverDropdownRef.value) return
+    const rect = serverDropdownRef.value.getBoundingClientRect()
+    serverDropdownStyle.value = {
+        position: 'fixed',
+        top: `${rect.bottom + 4}px`,
+        left: `${rect.left}px`,
+        minWidth: `${Math.max(200, rect.width)}px`,
+        maxWidth: '260px',
+    }
+}
+
+function switchServer(url) {
+    serverDropdownOpen.value = false
+    if (url === currentServerUrl.value) return
+    // Navigate to the new server (full page reload)
+    window.location.href = url + '/'
+}
+
+function deleteServer(url) {
+    removeServer(url)
+}
+
+function handleLogout() {
+    // Just navigate to /login which clears the session cookie and shows login page
+    window.location.href = '/login'
+}
+
+// Close server dropdown on outside click
+function onServerClickOutside(e) {
+    if (serverDropdownRef.value && serverDropdownRef.value.contains(e.target)) return
+    if (serverDropdownPanelRef.value && serverDropdownPanelRef.value.contains(e.target)) return
+    serverDropdownOpen.value = false
+}
+
 onMounted(() => {
     document.addEventListener('click', onClickOutside)
+    document.addEventListener('click', onServerClickOutside)
 })
 
 onUnmounted(() => {
     document.removeEventListener('click', onClickOutside)
+    document.removeEventListener('click', onServerClickOutside)
 })
 </script>
 
@@ -275,6 +389,103 @@ onUnmounted(() => {
     height: 28px;
     border-radius: 50%;
     flex-shrink: 0;
+}
+
+/* Server selector (APP mode) */
+.server-dropdown-wrapper {
+    position: relative;
+    flex-shrink: 1;
+    min-width: 0;
+}
+
+.server-switch-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 6px 3px 8px;
+    border: 1px solid color-mix(in srgb, var(--accent-color) 40%, var(--border-color));
+    background: color-mix(in srgb, var(--accent-color) 8%, var(--bg-secondary));
+    cursor: pointer;
+    color: var(--text-primary);
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 500;
+    max-width: 160px;
+    width: 100%;
+    min-width: 0;
+    transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+    line-height: 1.4;
+}
+
+.server-switch-btn:hover {
+    background: color-mix(in srgb, var(--accent-color) 15%, var(--bg-secondary));
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 1px var(--accent-color);
+}
+
+.server-switch-btn:active {
+    transform: scale(0.97);
+}
+
+.server-switch-btn svg:first-child {
+    color: var(--accent-color);
+    flex-shrink: 0;
+}
+
+.server-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.server-item-delete {
+    flex-shrink: 0;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px;
+    border-radius: 3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: auto;
+    transition: background 0.1s, color 0.1s;
+}
+
+.server-item-delete:hover {
+    background: var(--bg-tertiary);
+    color: var(--color-red, #ef4444);
+}
+
+.dropdown-item.active .server-item-delete {
+    color: rgba(255,255,255,0.5);
+}
+
+.dropdown-item.active .server-item-delete:hover {
+    color: #fff;
+    background: rgba(255,255,255,0.15);
+}
+
+/* Logout button (APP mode) */
+.logout-btn {
+    padding: 4px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    transition: background 0.15s, color 0.15s;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.logout-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--color-red, #ef4444);
 }
 
 .project-dropdown-wrapper {

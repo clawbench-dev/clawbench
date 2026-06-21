@@ -52,6 +52,13 @@ export default {
     serverError: 'Server error, please try again later.',
     wrongPassword: 'Wrong password, please try again.',
     networkError: 'Network error, please check if the backend service is running.',
+    addServer: 'Add another server',
+    serverUrlPlaceholder: 'Enter server URL',
+    serverPasswordPlaceholder: 'Enter password',
+    addServerSubmit: 'Add & Login',
+    deleteServer: 'Remove this server',
+    switchServer: 'Switch server',
+    logout: 'Logout',
   },
   welcome: {
     selectFile: 'Select a file to start',

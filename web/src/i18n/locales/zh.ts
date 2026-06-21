@@ -52,6 +52,13 @@ export default {
     serverError: '服务器错误，请稍后重试。',
     wrongPassword: '密码错误，请重试。',
     networkError: '网络错误，请检查后端服务是否启动。',
+    addServer: '添加其他服务端',
+    serverUrlPlaceholder: '输入服务端地址',
+    serverPasswordPlaceholder: '输入密码',
+    addServerSubmit: '添加并登录',
+    deleteServer: '删除此服务端',
+    switchServer: '切换服务端',
+    logout: '登出',
   },
   welcome: {
     selectFile: '选择文件开始对话',
