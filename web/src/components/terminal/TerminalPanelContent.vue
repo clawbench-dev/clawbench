@@ -46,7 +46,7 @@
         v-show="tab.id === activeTabId"
         :ref="(el) => setTabContainer(tab.id, el as HTMLElement | null)"
         class="terminal-container"
-        :class="{ 'selection-mode': selectionMode }"
+        :class="{ 'copy-mode': copyMode }"
         @click.self="focusTerminal"
       >
         <!-- Rebuild overlay (per-tab) -->
@@ -67,7 +67,7 @@
         </Transition>
 
         <!-- Floating copy button for selection mode -->
-        <button v-if="hasSelection && selectionMode && tab.id === activeTabId" class="floating-copy-btn" @click="handleCopySelection">
+        <button v-if="hasSelection && copyMode && tab.id === activeTabId" class="floating-copy-btn" @click="handleCopySelection">
           {{ t('common.copy') }}
         </button>
       </div>
@@ -89,7 +89,7 @@
       <!-- Main toolbar row -->
       <div class="main-toolbar-row">
         <button class="toolbar-btn modifier mode-indicator" @click="handleModeToggle" @contextmenu.prevent :title="modeToggleTitle">
-          <TextCursorIcon v-if="selectionMode" :size="14" />
+          <TextCursorIcon v-if="copyMode" :size="14" />
           <KeyboardIcon v-else-if="!gestures.enabled.value" :size="14" />
           <HandIcon v-else :size="14" />
         </button>
@@ -144,7 +144,6 @@
       :target-element="tabMenuTarget"
       :cwd="tabMenuCwd"
       @close="handleTabMenuClose"
-      @copy-output="handleTabMenuCopyOutput"
       @copy-path="handleTabMenuCopyPath"
       @close-all="handleTabMenuCloseAll"
     />
@@ -158,13 +157,6 @@
       @close="showKeyConfig = false"
       @saved="onKeyConfigSaved"
     />
-
-    <!-- Output text drawer — free text selection and copy -->
-    <OutputDrawer
-      :open="props.active && showOutputDrawer"
-      :output-text="outputDrawerText"
-      @close="showOutputDrawer = false"
-    />
   </div>
 </template>
 
@@ -176,7 +168,6 @@ import '@xterm/xterm/css/xterm.css'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import QuickCommandDialog from '@/components/terminal/QuickCommandDialog.vue'
 import KeyConfigDrawer from '@/components/terminal/KeyConfigDrawer.vue'
-import OutputDrawer from '@/components/terminal/OutputDrawer.vue'
 import TerminalTabMenu from '@/components/terminal/TerminalTabMenu.vue'
 import { useTerminalTabs, type TerminalTab } from '@/composables/useTerminalTabs'
 import { useTerminalViewport } from '@/composables/useTerminalViewport'
@@ -241,7 +232,7 @@ function applyFontSize(size: number) {
 // Refs
 const gestureHint = ref('')
 let gestureHintTimer: ReturnType<typeof setTimeout> | null = null
-const selectionMode = ref(false)
+const copyMode = ref(false)
 const hasSelection = ref(false)
 const showCommands = ref(false)
 const cmdBtnRef = ref<HTMLElement | null>(null)
@@ -296,8 +287,6 @@ const tabMenuCwd = ref('')
 // Symbol bar — config-driven
 const { selectedKeys, selectedSymbols, fetchConfig: fetchKeyConfig } = useKeyConfig()
 const showKeyConfig = ref(false)
-const showOutputDrawer = ref(false)
-const outputDrawerText = ref('')
 
 /** Keys visible in the toolbar, filtered by gesture mode (Tab/PgUp/PgDn/arrows hidden when gestures on) */
 const GESTURE_HIDDEN_KEYS = new Set(['tab', 'pgup', 'pgdn', 'arrow_up', 'arrow_down', 'arrow_left', 'arrow_right'])
@@ -320,11 +309,11 @@ function onKeyConfigSaved() {
   showKeyConfig.value = false
 }
 
-// Three-state mode cycle: gesture → selection → normal → gesture
-type TerminalMode = 'gesture' | 'selection' | 'normal'
+// Three-state mode cycle: gesture → copy → normal → gesture
+type TerminalMode = 'gesture' | 'copy' | 'normal'
 
 function getCurrentMode(): TerminalMode {
-  if (selectionMode.value) return 'selection'
+  if (copyMode.value) return 'copy'
   if (gestures.enabled.value) return 'gesture'
   return 'normal'
 }
@@ -332,22 +321,22 @@ function getCurrentMode(): TerminalMode {
 const modeToggleTitle = computed(() => {
   const mode = getCurrentMode()
   if (mode === 'gesture') return t('terminal.gestures')
-  if (mode === 'selection') return t('terminal.selectionMode')
+  if (mode === 'copy') return t('terminal.copyMode')
   return t('terminal.normalMode')
 })
 
 function handleModeToggle() {
   const mode = getCurrentMode()
   if (mode === 'gesture') {
-    // gesture → selection
-    gestures.toggle()  // disables gestures (applyState runs, but selectionMode still false)
-    selectionMode.value = true
-    gestures.refresh() // re-apply with selectionMode=true → detach disabledScroll
-    toast.show(t('terminal.selectionModeOn'), { icon: '🖱️', type: 'info', duration: 1200 })
-  } else if (mode === 'selection') {
-    // selection → normal
-    selectionMode.value = false
-    gestures.refresh() // re-apply with selectionMode=false → attach disabledScroll
+    // gesture → copy
+    gestures.toggle()  // disables gestures (applyState runs, but copyMode still false)
+    copyMode.value = true
+    gestures.refresh() // re-apply with copyMode=true → detach disabledScroll
+    toast.show(t('terminal.copyModeOn'), { icon: '🖱️', type: 'info', duration: 1500 })
+  } else if (mode === 'copy') {
+    // copy → normal
+    copyMode.value = false
+    gestures.refresh() // re-apply with copyMode=false → attach disabledScroll
     activeTab.value?.xterm?.clearSelection()
     hasSelection.value = false
     toast.show(t('terminal.normalModeOn'), { icon: '⌨️', type: 'info', duration: 1200 })
@@ -475,7 +464,7 @@ const gestures = useTerminalGestures(
       gestureHintTimer = setTimeout(() => { gestureHint.value = '' }, 600)
     },
   },
-  selectionMode,
+  copyMode,
 )
 
 // Re-evaluate fade when gesture toggle changes visible buttons
@@ -484,7 +473,7 @@ watch(() => gestures.enabled.value, () => nextTick(refreshToolbarFade))
 // Re-bind gesture listeners when switching/creating tabs (container element changes).
 // Use double nextTick to ensure mountTabToContainer has already run.
 watch(activeTabId, () => {
-  selectionMode.value = false
+  copyMode.value = false
   hasSelection.value = false
   nextTick(() => nextTick(() => gestures.attach()))
 })
@@ -569,13 +558,18 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
   }
   const oldCtx = (container as any).__terminalContextMenuHandler
   if (oldCtx) {
-    container.removeEventListener('contextmenu', oldCtx)
+    container.removeEventListener('contextmenu', oldCtx, true)
     delete (container as any).__terminalContextMenuHandler
   }
   const oldDisposable = (container as any).__terminalSelectionDisposable
   if (oldDisposable) {
     oldDisposable.dispose()
     delete (container as any).__terminalSelectionDisposable
+  }
+  const oldMouseUp = (container as any).__terminalMouseUpHandler
+  if (oldMouseUp) {
+    container.removeEventListener('mouseup', oldMouseUp)
+    delete (container as any).__terminalMouseUpHandler
   }
 
   tabManager.mountTabXterm(tab, container)
@@ -591,14 +585,25 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
   container.addEventListener('wheel', wheelHandler, { passive: false })
   ;(container as any).__terminalWheelHandler = wheelHandler
 
-  // Context menu handler
+  // Context menu handler — block in all modes to disable long-press behavior
+  // (in copy mode, long-press should start drag selection, not rightClickSelect;
+  //  in gesture/normal modes, long-press should do nothing)
+  // Use capture phase to intercept before xterm's own contextmenu handler
   const contextMenuHandler = (e: Event) => {
-    if (shouldPreventTerminalContextMenu(gestures.enabled.value)) {
-      e.preventDefault()
+    e.preventDefault()
+    e.stopImmediatePropagation()
+  }
+  container.addEventListener('contextmenu', contextMenuHandler, true)
+  ;(container as any).__terminalContextMenuHandler = contextMenuHandler
+
+  // Mouse up handler for selection mode — check if xterm has a selection after drag
+  const mouseUpHandler = () => {
+    if (copyMode.value) {
+      hasSelection.value = tab.xterm?.hasSelection() ?? false
     }
   }
-  container.addEventListener('contextmenu', contextMenuHandler)
-  ;(container as any).__terminalContextMenuHandler = contextMenuHandler
+  container.addEventListener('mouseup', mouseUpHandler)
+  ;(container as any).__terminalMouseUpHandler = mouseUpHandler
 
   // Selection change handler (for selection mode floating copy button)
   if (tab.xterm) {
@@ -688,34 +693,6 @@ function handleTabMenuClose() {
       }
     })
   }
-}
-
-function handleTabMenuCopyOutput() {
-  const tabId = tabMenuTabId.value
-  if (!tabId) return
-  const tab = tabManager.getTab(tabId)
-  const xterm = tab?.xterm
-  if (!xterm) return
-  const buffer = xterm.buffer.active
-  const viewportY = buffer.viewportY
-  const rows = xterm.rows
-  const lines: string[] = []
-  for (let i = viewportY; i < viewportY + rows && i < buffer.length; i++) {
-    const line = buffer.getLine(i)
-    if (!line) continue
-    const text = line.translateToString(true)
-    if (line.isWrapped && lines.length > 0) {
-      lines[lines.length - 1] += text
-    } else {
-      lines.push(text)
-    }
-  }
-  // Trim trailing empty lines
-  while (lines.length > 0 && lines[lines.length - 1] === '') {
-    lines.pop()
-  }
-  outputDrawerText.value = lines.join('\n')
-  showOutputDrawer.value = true
 }
 
 function handleTabMenuCopyPath() {
@@ -1148,14 +1125,14 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
   background: #eff1f5;
 }
 
-.terminal-container.selection-mode :deep(.xterm) {
+.terminal-container.copy-mode :deep(.xterm) {
   user-select: text;
   -webkit-user-select: text;
   touch-action: none;
 }
 
-.terminal-container.selection-mode :deep(.xterm-screen),
-.terminal-container.selection-mode :deep(.xterm-scrollable-element) {
+.terminal-container.copy-mode :deep(.xterm-screen),
+.terminal-container.copy-mode :deep(.xterm-scrollable-element) {
   touch-action: none;
 }
 

@@ -39,7 +39,7 @@ export function shouldPreventTerminalContextMenu(gesturesEnabled: boolean): bool
 export function useTerminalGestures(
   elementRef: Ref<HTMLElement | null>,
   callbacks: GestureCallbacks,
-  selectionMode: Ref<boolean>
+  copyMode: Ref<boolean>
 ) {
   const SWIPE_THRESHOLD = 30 // minimum px for a swipe
   const TWO_FINGER_SWIPE_THRESHOLD = 30 // minimum px for PgUp/PgDn
@@ -442,8 +442,8 @@ export function useTerminalGestures(
       detachDisabledScrollListeners()
       attachListeners()
       if (el) el.style.touchAction = 'manipulation'
-    } else if (selectionMode.value) {
-      // In selection mode, prevent browser from interpreting touch as scroll
+    } else if (copyMode.value) {
+      // In copy mode, prevent browser from interpreting touch as scroll
       // so that compatibility mouse events are synthesized for xterm SelectionService
       detachListeners()
       detachDisabledScrollListeners()

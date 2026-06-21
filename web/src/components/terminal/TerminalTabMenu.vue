@@ -1,9 +1,5 @@
 <template>
-  <PopupMenu :show="show" @update:show="onShowChange" :target-element="targetElement" :max-width="180" :menu-items-count="4" anchor="right">
-    <button class="tab-menu-item" @click="handleCopyOutput">
-      <FileTextIcon :size="14" class="tab-menu-icon" />
-      {{ t('terminal.copyOutput') }}
-    </button>
+  <PopupMenu :show="show" @update:show="onShowChange" :target-element="targetElement" :max-width="180" :menu-items-count="3" anchor="right">
     <button class="tab-menu-item" @click="handleCopyPath">
       <CopyIcon :size="14" class="tab-menu-icon" />
       {{ t('terminal.copyPath') }}
@@ -21,7 +17,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { Copy as CopyIcon, X as XIcon, XCircle as XCircleIcon, FileText as FileTextIcon } from 'lucide-vue-next'
+import { Copy as CopyIcon, X as XIcon, XCircle as XCircleIcon } from 'lucide-vue-next'
 import { useToast } from '@/composables/useToast'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 
@@ -33,7 +29,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:show': [value: boolean]
-  copyOutput: []
   close: []
   copyPath: []
   closeAll: []
@@ -41,11 +36,6 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const toast = useToast()
-
-function handleCopyOutput() {
-  emit('update:show', false)
-  emit('copyOutput')
-}
 
 function handleClose() {
   emit('update:show', false)
