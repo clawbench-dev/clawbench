@@ -419,6 +419,7 @@ const manager = useSessionManager({
     clearPendingFiles()
   },
   scrollBottom: (force) => scrollBottom(force),
+  sendMessageNow: (text, filePaths, files) => sendMessageNow(text, filePaths, files),
 })
 
 // Register identity actions — all paths now go through manager
@@ -638,7 +639,19 @@ async function sendMessage(text, extraFilePaths) {
       render.updateRenderedContents()
       scrollBottom(true)
       // Enqueue to backend (POST /api/ai/queue)
-      manager.enqueueMessage(inputText, extraFilePaths, capturedAttached, capturedPending)
+      const result = await manager.enqueueMessage(inputText, extraFilePaths, capturedAttached, capturedPending)
+      // Race condition: if AI finished right as we enqueued, the backend
+      // dequeued the message and wants us to resubmit as a new chat.
+      if (result.needsStart) {
+        // The pending flag was already removed by enqueueMessage.
+        // The user message is in messages.value without pending flag —
+        // remove it since sendMessageNow will push its own copy.
+        const idx = messages.value.findLastIndex(
+          m => m.role === 'user' && m.content === (result.message || inputText) && !m.pending && !m.id
+        )
+        if (idx !== -1) messages.value.splice(idx, 1)
+        await sendMessageNow(result.message || inputText, result.filePaths || mergedPaths, result.files || allFiles)
+      }
       return
     }
 

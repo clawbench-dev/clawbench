@@ -64,6 +64,7 @@ function createMockOptions() {
         checkContinueSessionCore: vi.fn().mockResolvedValue({ exists: false, sessionId: '' }),
         disconnectStream, stopPolling,
         updateRenderedContents, clearInputState, scrollBottom,
+        sendMessageNow: vi.fn().mockResolvedValue(undefined),
     }
 }
 
@@ -471,6 +472,75 @@ describe('useSessionManager', () => {
             await mgr.enqueueMessage('hello')
 
             expect(opts.scrollBottom).toHaveBeenCalledWith(true)
+
+            fetchSpy.mockRestore()
+        })
+
+        it('returns needsStart=true when backend detects session not running', async () => {
+            const opts = createMockOptions()
+            opts.messages.value = [
+                { role: 'user', content: 'hello', pending: true, blocks: [{ type: 'text', text: 'hello' }] },
+            ]
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({
+                    ok: true,
+                    needs_start: true,
+                    message: 'hello',
+                    filePaths: ['/main.go'],
+                    files: ['/main.go'],
+                    queue: [],
+                }),
+            } as Response)
+            const mgr = useSessionManager(opts)
+
+            const result = await mgr.enqueueMessage('hello', [], [], [])
+
+            expect(result.needsStart).toBe(true)
+            expect(result.message).toBe('hello')
+            expect(result.filePaths).toEqual(['/main.go'])
+            expect(result.files).toEqual(['/main.go'])
+
+            fetchSpy.mockRestore()
+        })
+
+        it('removes pending flag from message when needsStart is true', async () => {
+            const opts = createMockOptions()
+            opts.messages.value = [
+                { role: 'user', content: 'hello', pending: true, blocks: [{ type: 'text', text: 'hello' }] },
+            ]
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({
+                    ok: true,
+                    needs_start: true,
+                    message: 'hello',
+                    filePaths: [],
+                    files: [],
+                    queue: [],
+                }),
+            } as Response)
+            const mgr = useSessionManager(opts)
+
+            await mgr.enqueueMessage('hello')
+
+            // The pending flag should have been removed from the message
+            expect(opts.messages.value[0].pending).toBeUndefined()
+
+            fetchSpy.mockRestore()
+        })
+
+        it('returns needsStart=false on normal enqueue', async () => {
+            const opts = createMockOptions()
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ ok: true, queue: [{ text: 'hello' }] }),
+            } as Response)
+            const mgr = useSessionManager(opts)
+
+            const result = await mgr.enqueueMessage('hello')
+
+            expect(result.needsStart).toBe(false)
 
             fetchSpy.mockRestore()
         })
