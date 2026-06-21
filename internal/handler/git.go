@@ -1760,7 +1760,8 @@ func serveGitDeleteWorktree(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Path string `json:"path"`
+		Path  string `json:"path"`
+		Force bool   `json:"force"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Path) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
@@ -1809,14 +1810,25 @@ func serveGitDeleteWorktree(w http.ResponseWriter, r *http.Request) {
 
 	// Remove worktree — use resolved deletePath instead of raw body.Path
 	// to prevent command injection via path traversal (ISS-208).
+	forceFlag := body.Force
 	cmd = exec.Command("git", "worktree", "remove", deletePath)
 	cmd.Dir = projectPath
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		errMsg := strings.TrimSpace(string(out))
-		if strings.Contains(errMsg, "dirty") || strings.Contains(errMsg, "modified") || strings.Contains(errMsg, "uncommitted") {
+		isDirty := strings.Contains(errMsg, "modified") || strings.Contains(errMsg, "untracked") || strings.Contains(errMsg, "uncommitted")
+		if isDirty && !forceFlag {
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"success": false,
+				"error":   "dirty_worktree",
+			})
+			return
+		}
+		if isDirty && forceFlag {
 			cmd = exec.Command("git", "worktree", "remove", "--force", deletePath)
 			cmd.Dir = projectPath
+			cmd.Env = append(os.Environ(), "LC_ALL=C")
 			out, err = cmd.CombinedOutput()
 		}
 		if err != nil {

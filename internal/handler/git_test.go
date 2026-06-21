@@ -2466,6 +2466,88 @@ func TestServeGitDeleteWorktree_PathTraversalRejected(t *testing.T) {
 	assert.Equal(t, "path_not_allowed", resp["error"])
 }
 
+// Dirty worktree: without force flag, should return dirty_worktree error.
+func TestServeGitDeleteWorktree_DirtyWithoutForce(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	run := func(name string, args ...string) {
+		cmd := exec.Command(name, args...)
+		cmd.Dir = env.ProjectDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("command %s %v failed: %v\n%s", name, args, err, out)
+		}
+	}
+
+	// Create a worktree with uncommitted changes
+	wtPath := filepath.Join(filepath.Dir(env.ProjectDir), "wt-dirty")
+	run("git", "worktree", "add", wtPath, "-b", "wt-dirty-branch")
+	if err := os.WriteFile(filepath.Join(wtPath, "dirty.txt"), []byte("uncommitted"), 0o644); err != nil {
+		t.Fatalf("failed to write dirty file: %v", err)
+	}
+
+	req := newRequest(t, http.MethodDelete, "/api/git/worktrees", map[string]interface{}{
+		"path": wtPath,
+	})
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeGitWorktrees, req)
+	assertOK(t, w)
+
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.Equal(t, false, resp["success"])
+	assert.Equal(t, "dirty_worktree", resp["error"])
+
+	// Worktree should still exist
+	if _, err := os.Stat(wtPath); os.IsNotExist(err) {
+		t.Error("dirty worktree should not be deleted without force flag")
+	}
+}
+
+// Dirty worktree: with force flag, should successfully delete.
+func TestServeGitDeleteWorktree_DirtyWithForce(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	initGitRepo(t, env.ProjectDir)
+
+	run := func(name string, args ...string) {
+		cmd := exec.Command(name, args...)
+		cmd.Dir = env.ProjectDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("command %s %v failed: %v\n%s", name, args, err, out)
+		}
+	}
+
+	// Create a worktree with uncommitted changes
+	wtPath := filepath.Join(filepath.Dir(env.ProjectDir), "wt-dirty-force")
+	run("git", "worktree", "add", wtPath, "-b", "wt-dirty-force-branch")
+	if err := os.WriteFile(filepath.Join(wtPath, "dirty.txt"), []byte("uncommitted"), 0o644); err != nil {
+		t.Fatalf("failed to write dirty file: %v", err)
+	}
+
+	req := newRequest(t, http.MethodDelete, "/api/git/worktrees", map[string]interface{}{
+		"path":  wtPath,
+		"force": true,
+	})
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeGitWorktrees, req)
+	assertOK(t, w)
+
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.Equal(t, true, resp["success"])
+
+	// Worktree should be deleted
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Error("dirty worktree should be deleted with force flag")
+	}
+}
+
 // --- serveGitDeleteTag ---
 
 func TestServeGitDeleteTag_Success(t *testing.T) {
