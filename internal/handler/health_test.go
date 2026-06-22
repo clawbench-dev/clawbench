@@ -10,7 +10,7 @@ import (
 )
 
 func TestServeHealth(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/health", http.NoBody)
 	w := httptest.NewRecorder()
 
 	ServeHealth(w, req)
