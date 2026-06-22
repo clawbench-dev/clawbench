@@ -30,12 +30,7 @@ func Auth(next http.HandlerFunc) http.HandlerFunc {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// Localhost (CLI subcommands) — always allowed
-		if IsLocalhost(r) {
-			next.ServeHTTP(w, r)
-			return
-		}
-		// Remote — cookie-based auth
+		// Require cookie-based auth for all requests (including localhost)
 		// Use CookieToken (cryptographically random) if available; fall back
 		// to SessionToken for backward compatibility during migration.
 		// (ISS-117, ISS-131, ISS-183)
