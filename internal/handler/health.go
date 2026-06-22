@@ -12,7 +12,7 @@ import (
 // to verify that a URL points to a real ClawBench server before loading the WebView.
 func ServeHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(healthResponse{
+	_ = json.NewEncoder(w).Encode(healthResponse{
 		App:     "clawbench",
 		Version: version.Get(),
 	})

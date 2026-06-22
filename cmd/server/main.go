@@ -786,7 +786,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Without this, PrintBanner shows a password for an instance that immediately fails
 	// to bind, confusing users who then see "wrong password" when they connect to
 	// whichever process actually holds the port.
-	mainLn, err := net.Listen("tcp", addr)
+	mainLn, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", addr)
 	if err != nil {
 		slog.Error("failed to listen", slog.String("addr", addr), slog.String("err", err.Error()))
 		os.Exit(1)
@@ -795,9 +795,9 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Start dev HTTP listener before banner (so its slog doesn't disrupt the banner)
 	var devLn net.Listener
 	if devSrv != nil {
-		devLn, err = net.Listen("tcp", devSrv.Addr)
+		devLn, err = (&net.ListenConfig{}).Listen(context.Background(), "tcp", devSrv.Addr)
 		if err != nil {
-			mainLn.Close()
+			_ = mainLn.Close()
 			slog.Error("failed to listen on dev port", slog.String("addr", devSrv.Addr), slog.String("err", err.Error()))
 			os.Exit(1)
 		}
