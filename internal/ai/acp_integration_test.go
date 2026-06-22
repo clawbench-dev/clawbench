@@ -1663,9 +1663,11 @@ func TestACPIntegration_CodeWhale_BasicSession(t *testing.T) {
 	t.Logf("CodeWhale ACP content: %q", truncate(content, 300))
 }
 
-// TestACPIntegration_CodeWhale_SessionCaptureAndResume tests that CodeWhale ACP
-// captures external session IDs and can resume sessions.
-func TestACPIntegration_CodeWhale_SessionCaptureAndResume(t *testing.T) {
+// TestACPIntegration_CodeWhale_MultiTurnContext tests that CodeWhale ACP
+// maintains conversation context across multiple turns.
+// Uses a simple arithmetic chain: "1+1" → 2, "add one" → 3, "add one" → 4.
+// Each turn depends on the accumulated context from all previous turns.
+func TestACPIntegration_CodeWhale_MultiTurnContext(t *testing.T) {
 	requireCodeWhaleACPAvailable(t)
 
 	agent := codeWhaleTestAgent()
@@ -1675,25 +1677,122 @@ func TestACPIntegration_CodeWhale_SessionCaptureAndResume(t *testing.T) {
 	backend, err := NewACPBackend(agent)
 	require.NoError(t, err)
 
-	// Turn 1: Initial prompt
-	events1 := sendACPPrompt(t, backend, sessionID, "记住数字42", 120*time.Second)
+	// Turn 1: 1+1 → expect "2"
+	events1 := sendACPPrompt(t, backend, sessionID, "1+1等于几？只回答数字", 120*time.Second)
 	requireDoneEvent(t, events1)
 
-	// Check for session_capture event
 	captureEvents := findACPEvents(events1, "session_capture")
 	if len(captureEvents) > 0 {
-		acpSID := captureEvents[0].Content
-		env.storeSID(sessionID, acpSID)
-		t.Logf("CodeWhale ACP captured session ID: %s", acpSID)
+		env.storeSID(sessionID, captureEvents[0].Content)
+		t.Logf("CodeWhale ACP captured session ID: %s", captureEvents[0].Content)
 	}
 
 	content1 := concatACPContent(events1)
-	t.Logf("CodeWhale ACP turn 1: %q", truncate(content1, 200))
+	t.Logf("Turn 1 (1+1): %q", truncate(content1, 200))
+	assert.True(t, strings.Contains(content1, "2"),
+		"Turn 1: AI should answer '2' for 1+1, got: %s", content1)
 
-	// Turn 2: Resume — ask about the remembered number
-	events2 := sendACPPrompt(t, backend, sessionID, "我让你记住的数字是什么？只回答数字", 120*time.Second)
+	// Turn 2: add one → expect "3" (requires context: previous answer was 2)
+	events2 := sendACPPrompt(t, backend, sessionID, "再加一等于几？只回答数字", 120*time.Second)
 	requireDoneEvent(t, events2)
 
 	content2 := concatACPContent(events2)
-	t.Logf("CodeWhale ACP turn 2: %q", truncate(content2, 200))
+	t.Logf("Turn 2 (add one): %q", truncate(content2, 200))
+	assert.True(t, strings.Contains(content2, "3"),
+		"Turn 2: AI should answer '3' for (1+1)+1, proving multi-turn context. Got: %s", content2)
+
+	// Turn 3: add one again → expect "4" (requires context: all previous turns)
+	events3 := sendACPPrompt(t, backend, sessionID, "再加一等于几？只回答数字", 120*time.Second)
+	requireDoneEvent(t, events3)
+
+	content3 := concatACPContent(events3)
+	t.Logf("Turn 3 (add one again): %q", truncate(content3, 200))
+	assert.True(t, strings.Contains(content3, "4"),
+		"Turn 3: AI should answer '4' for ((1+1)+1)+1, proving stable multi-turn context. Got: %s", content3)
+}
+
+// TestACPIntegration_CodeWhale_MultiTurnContext_WithResume tests multi-turn conversation
+// with realistic ChatRequest fields (Resume=true, SystemPrompt, AssistantMessageCount)
+// matching the handler's buildChatRequest behavior.
+// Uses a three-turn arithmetic chain: "1+1" → 2, "add one" → 3, "add one" → 4.
+func TestACPIntegration_CodeWhale_MultiTurnContext_WithResume(t *testing.T) {
+	requireCodeWhaleACPAvailable(t)
+
+	agent := codeWhaleTestAgent()
+	env := setupACPTestEnvForAgent(t, agent)
+	sessionID := acpSessionID()
+
+	backend, err := NewACPBackend(agent)
+	require.NoError(t, err)
+
+	// Turn 1: Resume=false, SystemPrompt injected (first message)
+	ctx1, cancel1 := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel1()
+
+	ch1, err := backend.ExecuteStream(ctx1, ChatRequest{
+		Prompt:       "1+1等于几？只回答数字",
+		SessionID:    sessionID,
+		WorkDir:      acpTestWorkDir(),
+		Resume:       false,
+		SystemPrompt: "You are a helpful assistant. Reply concisely.",
+	})
+	require.NoError(t, err)
+
+	events1 := collectACPEvents(t, ch1, 120*time.Second)
+	requireDoneEvent(t, events1)
+
+	captureEvents := findACPEvents(events1, "session_capture")
+	if len(captureEvents) > 0 {
+		env.storeSID(sessionID, captureEvents[0].Content)
+		t.Logf("CodeWhale ACP captured session ID: %s", captureEvents[0].Content)
+	}
+
+	content1 := concatACPContent(events1)
+	t.Logf("Turn 1 (1+1, Resume=false): %q", truncate(content1, 200))
+	assert.True(t, strings.Contains(content1, "2"),
+		"Turn 1: AI should answer '2' for 1+1, got: %s", content1)
+
+	// Turn 2: Resume=true (has 1 assistant message)
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel2()
+
+	ch2, err := backend.ExecuteStream(ctx2, ChatRequest{
+		Prompt:                "再加一等于几？只回答数字",
+		SessionID:             sessionID,
+		WorkDir:               acpTestWorkDir(),
+		Resume:                true,
+		SystemPrompt:          "You are a helpful assistant. Reply concisely.",
+		AssistantMessageCount: 1,
+	})
+	require.NoError(t, err)
+
+	events2 := collectACPEvents(t, ch2, 120*time.Second)
+	requireDoneEvent(t, events2)
+
+	content2 := concatACPContent(events2)
+	t.Logf("Turn 2 (add one, Resume=true): %q", truncate(content2, 200))
+	assert.True(t, strings.Contains(content2, "3"),
+		"Turn 2: AI should answer '3' for (1+1)+1, proving multi-turn context with Resume=true. Got: %s", content2)
+
+	// Turn 3: Resume=true (has 2 assistant messages)
+	ctx3, cancel3 := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel3()
+
+	ch3, err := backend.ExecuteStream(ctx3, ChatRequest{
+		Prompt:                "再加一等于几？只回答数字",
+		SessionID:             sessionID,
+		WorkDir:               acpTestWorkDir(),
+		Resume:                true,
+		SystemPrompt:          "You are a helpful assistant. Reply concisely.",
+		AssistantMessageCount: 2,
+	})
+	require.NoError(t, err)
+
+	events3 := collectACPEvents(t, ch3, 120*time.Second)
+	requireDoneEvent(t, events3)
+
+	content3 := concatACPContent(events3)
+	t.Logf("Turn 3 (add one again, Resume=true): %q", truncate(content3, 200))
+	assert.True(t, strings.Contains(content3, "4"),
+		"Turn 3: AI should answer '4' for ((1+1)+1)+1, proving stable multi-turn context with Resume=true. Got: %s", content3)
 }
