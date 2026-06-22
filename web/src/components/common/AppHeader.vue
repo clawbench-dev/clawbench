@@ -6,9 +6,8 @@
 
     <div class="project-dropdown-wrapper" ref="dropdownRef">
       <button class="project-switch-btn" @click="toggleDropdown" :title="t('appHeader.switchProject')">
-        <Projector :size="16" />
+        <Projector :size="12" />
         <span class="project-name">{{ projectName }}</span>
-        <ChevronDown :size="12" class="switch-chevron" :class="{ open: dropdownOpen }" />
       </button>
     </div>
     <Teleport to="body">
@@ -95,7 +94,7 @@
 </template>
 
 <script setup>
-import { Projector, ChevronDown, Search, GitBranch, Server, LogOut } from 'lucide-vue-next'
+import { Projector, Search, GitBranch, Server, LogOut } from 'lucide-vue-next'
 import { ref, computed, onMounted, onUnmounted, inject, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
@@ -395,25 +394,23 @@ onUnmounted(() => {
 
 .project-dropdown-wrapper {
     position: relative;
-    flex: 3;
-    flex-shrink: 1;
+    flex: 0 1 auto;
     min-width: 0;
 }
 
 .project-switch-btn {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 3px 6px 3px 8px;
+    gap: 4px;
+    padding: 2px 8px;
     border: 1px solid var(--border-color);
     background: var(--bg-secondary);
     cursor: pointer;
     color: var(--text-primary);
     border-radius: 999px;
-    font-size: 13px;
+    font-size: 11px;
     font-weight: 500;
     max-width: none;
-    width: 100%;
     min-width: 0;
     transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
     line-height: 1.4;
@@ -432,20 +429,6 @@ onUnmounted(() => {
 .project-switch-btn svg:first-child {
     color: var(--accent-color);
     flex-shrink: 0;
-}
-
-.switch-chevron {
-    color: var(--text-muted);
-    margin-left: -2px;
-    transition: transform 0.2s;
-}
-
-.switch-chevron.open {
-    transform: rotate(180deg);
-}
-
-.project-switch-btn:hover .switch-chevron {
-    color: var(--accent-color);
 }
 
 .project-name {
@@ -467,8 +450,7 @@ onUnmounted(() => {
     font-size: 11px;
     font-weight: 500;
     color: var(--accent-color);
-    flex: 2;
-    flex-shrink: 1;
+    flex: 0 1 auto;
     min-width: 0;
     max-width: none;
     cursor: pointer;

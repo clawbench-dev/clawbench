@@ -966,10 +966,10 @@ function doDelete() {
 }
 
 .dir-nav {
-    padding: 4px 8px;
+    padding: 3px 8px;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 2px;
     min-height: 28px;
     border-bottom: 1px solid var(--border-color, #e5e5e5);
     background: var(--bg-tertiary, #f5f5f5);
@@ -990,6 +990,7 @@ function doDelete() {
 
 .dir-nav :deep(.dir-breadcrumb) {
     padding: 0 6px;
+    min-height: 0;
 }
 
 /* ── Multi-select info bar ── */
@@ -1130,8 +1131,8 @@ function doDelete() {
     align-items: center;
     justify-content: center;
     gap: 3px;
-    width: 28px;
-    height: 28px;
+    width: 26px;
+    height: 26px;
     padding: 0;
     border: none;
     border-radius: 50%;
