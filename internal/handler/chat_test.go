@@ -1425,7 +1425,7 @@ func TestBuildChatRequest_PiResumeWithExternalSessionID(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Call buildChatRequest — should use the external ID
-	req := buildChatRequest("continue", sessionID, env.ProjectDir, "pi", "codebuddy", "", "", "", "", "")
+	req := buildChatRequest("continue", sessionID, env.ProjectDir, "pi", "codebuddy", "", "", "", "", "", false)
 	assert.True(t, req.Resume, "should be resume since session has assistant messages")
 	assert.Equal(t, "pi-sess-abc123", req.SessionID, "should use external session ID, not ClawBench UUID")
 }
@@ -1452,7 +1452,7 @@ func TestBuildChatRequest_PiResumeWithoutExternalSessionID(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Call buildChatRequest — should clear SessionID to avoid passing invalid UUID
-	req := buildChatRequest("continue", sessionID, env.ProjectDir, "pi", "codebuddy", "", "", "", "", "")
+	req := buildChatRequest("continue", sessionID, env.ProjectDir, "pi", "codebuddy", "", "", "", "", "", false)
 	assert.True(t, req.Resume, "should be resume since session has assistant messages")
 	assert.Equal(t, "", req.SessionID, "should clear SessionID when no external ID available, to avoid 'No session found' error")
 }
@@ -1468,7 +1468,7 @@ func TestBuildChatRequest_PiNewSession(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Call buildChatRequest — new session, no resume
-	req := buildChatRequest("hello", sessionID, env.ProjectDir, "pi", "codebuddy", "", "", "", "", "")
+	req := buildChatRequest("hello", sessionID, env.ProjectDir, "pi", "codebuddy", "", "", "", "", "", false)
 	assert.False(t, req.Resume, "should not be resume for new session")
 	assert.Equal(t, sessionID, req.SessionID, "should pass ClawBench UUID for new session")
 }
@@ -1489,7 +1489,7 @@ func TestBuildChatRequest_ClaudeResumeNoExternalID(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Call buildChatRequest — Claude should get the raw UUID, no external ID resolution
-	req := buildChatRequest("continue", sessionID, env.ProjectDir, "claude", "claude", "", "", "", "", "")
+	req := buildChatRequest("continue", sessionID, env.ProjectDir, "claude", "claude", "", "", "", "", "", false)
 	assert.True(t, req.Resume)
 	assert.Equal(t, sessionID, req.SessionID, "Claude should get the ClawBench UUID directly, no external ID resolution")
 }
@@ -1509,7 +1509,7 @@ func TestBuildChatRequest_OpenCodeResumeWithExternalSessionID(t *testing.T) {
 	_, err = service.AddChatMessage(env.ProjectDir, "opencode", sessionID, "assistant", `{"blocks":[{"type":"text","text":"hello"}]}`, nil, false, "")
 	assert.NoError(t, err)
 
-	req := buildChatRequest("continue", sessionID, env.ProjectDir, "opencode", "codebuddy", "", "", "", "", "")
+	req := buildChatRequest("continue", sessionID, env.ProjectDir, "opencode", "codebuddy", "", "", "", "", "", false)
 	assert.True(t, req.Resume)
 	assert.Equal(t, "ses_oc_xyz789", req.SessionID, "OpenCode should use external session ID")
 }
@@ -1626,7 +1626,7 @@ func TestPiEndToEndResumeChain(t *testing.T) {
 
 	// Step 2: New session → buildChatRequest should return the ClawBench UUID
 	// (Pi will create a persistent session on its own, not using --no-session)
-	newReq := buildChatRequest("hello", sessionID, env.ProjectDir, "pi", "codebuddy", "", "", "", "", "")
+	newReq := buildChatRequest("hello", sessionID, env.ProjectDir, "pi", "codebuddy", "", "", "", "", "", false)
 	assert.False(t, newReq.Resume, "new session should not be resume")
 	// For non-resume, buildChatRequest passes the ClawBench UUID as-is.
 	// buildPiStreamArgs ignores SessionID when Resume=false (uses no session flag).
@@ -1643,7 +1643,7 @@ func TestPiEndToEndResumeChain(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Step 5: Resume → buildChatRequest should resolve external ID
-	resumeReq := buildChatRequest("continue", sessionID, env.ProjectDir, "pi", "codebuddy", "", "", "", "", "")
+	resumeReq := buildChatRequest("continue", sessionID, env.ProjectDir, "pi", "codebuddy", "", "", "", "", "", false)
 	assert.True(t, resumeReq.Resume, "session with assistant messages should be resume")
 	assert.Equal(t, piSessID, resumeReq.SessionID,
 		"resume should use the Pi-assigned external session ID, not the ClawBench UUID")
@@ -1671,7 +1671,7 @@ func TestBuildChatRequest_CodexResumeWithExternalSessionID(t *testing.T) {
 		`{"blocks":[{"type":"text","text":"done"}]}`, nil, false, "")
 	assert.NoError(t, err)
 
-	req := buildChatRequest("continue", sessionID, env.ProjectDir, "codex", "codebuddy", "", "", "", "", "")
+	req := buildChatRequest("continue", sessionID, env.ProjectDir, "codex", "codebuddy", "", "", "", "", "", false)
 	assert.True(t, req.Resume)
 	assert.Equal(t, threadID, req.SessionID, "Codex should use thread_id as external session ID")
 }
@@ -1695,7 +1695,7 @@ func TestBuildChatRequest_CodexResumeWithoutExternalSessionID(t *testing.T) {
 		`{"blocks":[{"type":"text","text":"hello"}]}`, nil, false, "")
 	assert.NoError(t, err)
 
-	req := buildChatRequest("continue", sessionID, env.ProjectDir, "codex", "codebuddy", "", "", "", "", "")
+	req := buildChatRequest("continue", sessionID, env.ProjectDir, "codex", "codebuddy", "", "", "", "", "", false)
 	assert.True(t, req.Resume)
 	assert.Equal(t, "", req.SessionID,
 		"Codex should clear SessionID when no external ID available")
@@ -1742,7 +1742,7 @@ func TestBuildChatRequest_DeepSeekResumeWithExternalSessionID(t *testing.T) {
 		`{"blocks":[{"type":"text","text":"done"}]}`, nil, false, "")
 	assert.NoError(t, err)
 
-	req := buildChatRequest("continue", sessionID, env.ProjectDir, "deepseek", "codebuddy", "", "", "", "", "")
+	req := buildChatRequest("continue", sessionID, env.ProjectDir, "deepseek", "codebuddy", "", "", "", "", "", false)
 	assert.True(t, req.Resume)
 	assert.Equal(t, dsSessionID, req.SessionID, "DeepSeek should use external session ID")
 }
@@ -1766,7 +1766,7 @@ func TestBuildChatRequest_DeepSeekResumeWithoutExternalSessionID(t *testing.T) {
 		`{"blocks":[{"type":"text","text":"hello"}]}`, nil, false, "")
 	assert.NoError(t, err)
 
-	req := buildChatRequest("continue", sessionID, env.ProjectDir, "deepseek", "codebuddy", "", "", "", "", "")
+	req := buildChatRequest("continue", sessionID, env.ProjectDir, "deepseek", "codebuddy", "", "", "", "", "", false)
 	assert.True(t, req.Resume)
 	assert.Equal(t, "", req.SessionID,
 		"DeepSeek should clear SessionID when no external ID available")
@@ -1815,7 +1815,7 @@ func TestBuildChatRequest_OpenCodeResumeWithoutExternalSessionID(t *testing.T) {
 		`{"blocks":[{"type":"text","text":"hello"}]}`, nil, false, "")
 	assert.NoError(t, err)
 
-	req := buildChatRequest("continue", sessionID, env.ProjectDir, "opencode", "codebuddy", "", "", "", "", "")
+	req := buildChatRequest("continue", sessionID, env.ProjectDir, "opencode", "codebuddy", "", "", "", "", "", false)
 	assert.True(t, req.Resume)
 	assert.Equal(t, "", req.SessionID,
 		"OpenCode should clear SessionID when no external ID available")
@@ -1868,7 +1868,7 @@ func TestBuildChatRequest_ThinkingEffort_OverridePriority(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Override should take priority over agent default
-	req := buildChatRequest("hello", sessionID, env.ProjectDir, "codebuddy", "thinking-agent", "", "high", "", "", "")
+	req := buildChatRequest("hello", sessionID, env.ProjectDir, "codebuddy", "thinking-agent", "", "high", "", "", "", false)
 	assert.Equal(t, "high", req.ThinkingEffort, "thinkingEffortOverride='high' should override agent default 'low'")
 }
 
@@ -1892,7 +1892,7 @@ func TestBuildChatRequest_ThinkingEffort_AgentDefault(t *testing.T) {
 	assert.NoError(t, err)
 
 	// No override → agent default should be used
-	req := buildChatRequest("hello", sessionID, env.ProjectDir, "codebuddy", "thinking-agent", "", "", "", "", "")
+	req := buildChatRequest("hello", sessionID, env.ProjectDir, "codebuddy", "thinking-agent", "", "", "", "", "", false)
 	assert.Equal(t, "medium", req.ThinkingEffort, "agent YAML default 'medium' should be used when no override")
 }
 
@@ -1907,7 +1907,7 @@ func TestBuildChatRequest_ThinkingEffort_BothEmpty(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Neither override nor agent default → empty
-	req := buildChatRequest("hello", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "", "")
+	req := buildChatRequest("hello", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "", "", false)
 	assert.Equal(t, "", req.ThinkingEffort, "ThinkingEffort should be empty when both override and agent default are empty")
 }
 
@@ -1925,10 +1925,38 @@ func TestBuildChatRequest_CodebuddyResumeNoExternalID(t *testing.T) {
 		`{"blocks":[{"type":"text","text":"hi"}]}`, nil, false, "")
 	assert.NoError(t, err)
 
-	req := buildChatRequest("continue", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "", "")
+	req := buildChatRequest("continue", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "", "", false)
 	assert.True(t, req.Resume)
 	assert.Equal(t, sessionID, req.SessionID,
 		"Codebuddy should get the ClawBench UUID directly, no external ID resolution")
+}
+
+// ---------- HasAttachments / Media Prompt injection ----------
+
+func TestBuildChatRequest_HasAttachments_True(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "attach-true", "", "", "codebuddy", "chat")
+	assert.NoError(t, err)
+
+	req := buildChatRequest("hello", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "", "", true)
+	assert.True(t, req.HasAttachments)
+	assert.Contains(t, req.SystemPrompt, "Media File Handling",
+		"system prompt should include media rules when hasAttachments=true")
+}
+
+func TestBuildChatRequest_HasAttachments_False(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "attach-false", "", "", "codebuddy", "chat")
+	assert.NoError(t, err)
+
+	req := buildChatRequest("hello", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "", "", false)
+	assert.False(t, req.HasAttachments)
+	assert.NotContains(t, req.SystemPrompt, "Media File Handling",
+		"system prompt should NOT include media rules when hasAttachments=false")
 }
 
 // ---------- ServeSessions pagination ----------
@@ -2128,7 +2156,7 @@ func TestBuildChatRequest_ModelOverride_FromSession(t *testing.T) {
 	// buildChatRequest with no modelOverride should use agent default,
 	// NOT the session model (session model is for frontend display;
 	// buildChatRequest modelOverride comes from req.ModelID)
-	req := buildChatRequest("hello", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "", "")
+	req := buildChatRequest("hello", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "", "", false)
 	// Without modelOverride, agent default is used
 	assert.Equal(t, "glm-5.1", req.Model, "without modelOverride, agent default model should be used")
 }
@@ -2144,7 +2172,7 @@ func TestBuildChatRequest_ModelOverride_ExplicitOverSession(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Frontend sends modelId explicitly
-	req := buildChatRequest("hello", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "claude-sonnet-4-6", "", "", "", "")
+	req := buildChatRequest("hello", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "claude-sonnet-4-6", "", "", "", "", false)
 	assert.Equal(t, "claude-sonnet-4-6", req.Model,
 		"explicit modelOverride should take priority over agent default")
 }
@@ -2168,6 +2196,41 @@ func TestBuildChatRequestFromQueue_UsesSessionModel(t *testing.T) {
 	req := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
 	assert.Equal(t, "claude-sonnet-4-6", req.Model,
 		"queued message should use session-persisted model, not agent default")
+}
+
+func TestBuildChatRequestFromQueue_HasAttachments_WithFiles(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "queue-attach", "", "", "codebuddy", "chat")
+	assert.NoError(t, err)
+
+	// Queued message with files should trigger media prompt
+	qMsg := model.QueuedMessage{
+		Text:      "check this file",
+		Files:     []string{"/some/path/file.go"},
+		CreatedAt: time.Now().Format(time.RFC3339),
+	}
+	req := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	assert.True(t, req.HasAttachments)
+	assert.Contains(t, req.SystemPrompt, "Media File Handling")
+}
+
+func TestBuildChatRequestFromQueue_HasAttachments_NoFiles(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "queue-noattach", "", "", "codebuddy", "chat")
+	assert.NoError(t, err)
+
+	// Queued message without files should NOT include media prompt
+	qMsg := model.QueuedMessage{
+		Text:      "just text",
+		CreatedAt: time.Now().Format(time.RFC3339),
+	}
+	req := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")
+	assert.False(t, req.HasAttachments)
+	assert.NotContains(t, req.SystemPrompt, "Media File Handling")
 }
 
 // TestServeSessions_Post_NewSessionEmptyModel verifies that POST /api/ai/sessions
@@ -2653,7 +2716,7 @@ func TestBuildChatRequest_ContinuedSessionUsesExternalSessionID(t *testing.T) {
 		"continued session should inherit external_session_id from source")
 
 	// buildChatRequest for the continued session should use the inherited external_session_id
-	req := buildChatRequest("follow up", contSessionID, env.ProjectDir, "pi", "codebuddy", "", "", "", "", "")
+	req := buildChatRequest("follow up", contSessionID, env.ProjectDir, "pi", "codebuddy", "", "", "", "", "", false)
 	assert.True(t, req.Resume, "continued session with assistant messages should use --resume")
 	assert.Equal(t, "pi-cli-session-abc", req.SessionID,
 		"continued session should use inherited external_session_id for --resume")
@@ -2795,7 +2858,7 @@ func TestBuildChatRequest_ModeOverride(t *testing.T) {
 
 	model.Agents["claude"] = &model.Agent{ID: "claude", Backend: "cli", Command: "echo"}
 
-	req := buildChatRequest("hello", sessionID, env.ProjectDir, "claude", "claude", "", "", "architect", "", "")
+	req := buildChatRequest("hello", sessionID, env.ProjectDir, "claude", "claude", "", "", "architect", "", "", false)
 	assert.Equal(t, "architect", req.Mode, "modeOverride should be passed to ChatRequest.Mode")
 }
 
@@ -2808,7 +2871,7 @@ func TestBuildChatRequest_ModeEmpty(t *testing.T) {
 
 	model.Agents["claude"] = &model.Agent{ID: "claude", Backend: "cli", Command: "echo"}
 
-	req := buildChatRequest("hello", sessionID, env.ProjectDir, "claude", "claude", "", "", "", "", "")
+	req := buildChatRequest("hello", sessionID, env.ProjectDir, "claude", "claude", "", "", "", "", "", false)
 	assert.Equal(t, "", req.Mode, "empty modeOverride should result in empty Mode")
 }
 
@@ -2901,7 +2964,7 @@ func TestBuildChatRequest_ACPResume_UsesClawBenchUUID(t *testing.T) {
 
 	// buildChatRequest with acp-stdio transport should use the ClawBench UUID,
 	// not the ACP session ID — the pool maps internally
-	req := buildChatRequest("continue", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "acp-stdio", "")
+	req := buildChatRequest("continue", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "acp-stdio", "", false)
 	assert.True(t, req.Resume, "should be resume since session has assistant messages")
 	assert.Equal(t, sessionID, req.SessionID, "ACP resume should use ClawBench UUID, not external_session_id")
 }
@@ -2931,7 +2994,7 @@ func TestBuildChatRequest_ACPResume_AfterServerRestart(t *testing.T) {
 	assert.NoError(t, err)
 
 	// After restart: pool is empty, but handler still works correctly
-	req := buildChatRequest("next message", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "acp-stdio", "")
+	req := buildChatRequest("next message", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "acp-stdio", "", false)
 	assert.True(t, req.Resume, "should be resume after restart since session has assistant messages")
 	assert.Equal(t, sessionID, req.SessionID, "ACP resume after restart should use ClawBench UUID")
 }
@@ -2985,7 +3048,7 @@ func TestBuildChatRequest_NonACPResumeWithExternalSessionID(t *testing.T) {
 	_, err = service.AddChatMessage(env.ProjectDir, "opencode", sessionID, "assistant", `{"blocks":[{"type":"text","text":"hi"}]}`, nil, false, "")
 	assert.NoError(t, err)
 
-	req := buildChatRequest("continue", sessionID, env.ProjectDir, "opencode", "codebuddy", "", "", "", "", "")
+	req := buildChatRequest("continue", sessionID, env.ProjectDir, "opencode", "codebuddy", "", "", "", "", "", false)
 	assert.True(t, req.Resume)
 	assert.Equal(t, extID, req.SessionID, "non-ACP resume should use external_session_id")
 }
@@ -3002,7 +3065,7 @@ func TestBuildChatRequest_ACPNewSession_NoResume(t *testing.T) {
 	err = service.UpdateSessionTransport(sessionID, "acp-stdio")
 	assert.NoError(t, err)
 
-	req := buildChatRequest("hello", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "acp-stdio", "")
+	req := buildChatRequest("hello", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "acp-stdio", "", false)
 	assert.False(t, req.Resume, "new ACP session should not be resume")
 	assert.Equal(t, sessionID, req.SessionID, "new ACP session should use ClawBench UUID")
 }

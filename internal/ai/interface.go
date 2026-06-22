@@ -20,6 +20,7 @@ type ChatRequest struct {
 	Mode                  string // ACP session mode, e.g., "code", "ask", "architect"; empty = use current
 	Resume                bool   // If true, resume an existing session instead of creating new
 	ScheduledExecution    bool   // If true, this is a scheduled task execution — skill-level anti-recursion block
+	HasAttachments        bool   // If true, the user message carries file attachments (triggers media rules injection)
 	AssistantMessageCount int    // Number of finalized assistant messages in the session (0 for new sessions)
 }
 

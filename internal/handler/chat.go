@@ -362,6 +362,9 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	// allFiles already includes filePaths (frontend merges them before sending)
 	allFiles := req.Files
 
+	// Determine if the user message carries file attachments for conditional prompt injection
+	hasAttachments := len(req.FilePaths) > 0 || len(req.Files) > 0
+
 	// Resolve agent config early (needed for both enqueue and execution paths)
 	effectiveAgentID := req.AgentID
 	if effectiveAgentID == "" {
@@ -497,7 +500,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		}()
 
 		// Build the first chat request
-		firstChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir)
+		firstChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, hasAttachments)
 
 		// Execute first message
 		result := executeStreamRun(ctx, r, streamCh, projectPath, sessionID, backendName, effectiveAgentID, firstChatReq, fileDir)
@@ -672,7 +675,7 @@ func executeStreamRun(
 // modelOverride, if non-empty, takes precedence over the agent's default model.
 // thinkingEffortOverride, if non-empty, takes precedence over the agent's YAML default.
 // modeOverride, if non-empty, takes precedence over the current ACP session mode.
-func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir string) ai.ChatRequest {
+func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir string, hasAttachments bool) ai.ChatRequest {
 	systemPrompt := ""
 	agentModel := ""
 	agentCommand := ""
@@ -751,6 +754,19 @@ func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 			slog.String("agent", agentID))
 	}
 
+	// Inject media handling rules only when the user message carries attachments.
+	// These rules are omitted for text-only messages to save tokens.
+	if hasAttachments {
+		mediaPrompt := model.BuildMediaPrompt()
+		if mediaPrompt != "" {
+			if systemPrompt != "" {
+				systemPrompt += "\n\n" + mediaPrompt
+			} else {
+				systemPrompt = mediaPrompt
+			}
+		}
+	}
+
 	return ai.ChatRequest{
 		Prompt:                prompt,
 		SessionID:             effectiveSessionID,
@@ -762,6 +778,7 @@ func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		ThinkingEffort:        effectiveThinkingEffort,
 		Mode:                  effectiveMode,
 		Resume:                resume,
+		HasAttachments:        hasAttachments,
 		AssistantMessageCount: service.GetAssistantMessageCount(sessionID),
 	}
 }
@@ -809,7 +826,8 @@ func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath,
 	// so queued messages respect the user's model choice, not just the agent default.
 	sessionModel := service.GetSessionModel(sessionID)
 	sessionTransport := service.GetSessionTransport(sessionID)
-	return buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, sessionModel, "", "", sessionTransport, fileDir)
+	hasAttachments := len(qMsg.FilePaths) > 0 || len(qMsg.Files) > 0
+	return buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, sessionModel, "", "", sessionTransport, fileDir, hasAttachments)
 }
 
 // CancelChat handles POST to cancel an ongoing AI stream for a session.
