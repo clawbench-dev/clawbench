@@ -264,7 +264,7 @@ async function loadGitBranch(): Promise<{ isGit: boolean; branch: string; head: 
 let loadFilesSeq = 0 // monotonic counter to suppress stale concurrent loads
 let selectFileSeq = 0 // monotonic counter to suppress stale concurrent file loads
 
-async function loadFiles(dir = '', suppressToast = false): Promise<void> {
+async function loadFiles(dir = ''): Promise<void> {
     const seq = ++loadFilesSeq // this call supersedes any earlier in-flight call
     const prevDir = state.currentDir
     const prevEntries = state.dirEntries.slice()
@@ -282,9 +282,7 @@ async function loadFiles(dir = '', suppressToast = false): Promise<void> {
         // Roll back to previous state on failure
         state.currentDir = prevDir
         state.dirEntries = prevEntries
-        if (!suppressToast) {
-            useToast().show(gt('file.toast.dirLoadFailed'), { type: 'error', icon: '⚠️' })
-        }
+        useToast().show(gt('file.toast.dirLoadFailed'), { type: 'error', icon: '⚠️' })
     } finally {
         // Only clear loading if we are still the latest call
         if (seq === loadFilesSeq) {
@@ -293,10 +291,8 @@ async function loadFiles(dir = '', suppressToast = false): Promise<void> {
     }
 }
 
-async function selectFile(path: string, isImageFile = false, isAudioFile = false, addToHistory = true, forceText = false, suppressToast = false): Promise<boolean> {
+async function selectFile(path: string, isImageFile = false, isAudioFile = false, addToHistory = true, forceText = false): Promise<boolean> {
     const seq = ++selectFileSeq // this call supersedes any earlier in-flight call
-    const key = 'clawbenchLastFile_' + state.projectRoot
-    if (key !== 'clawbenchLastFile_') localStorage.setItem(key, path)
 
     // Detect media files by extension (avoids dynamic import)
     const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.ico', '.tiff', '.tif', '.avif']
@@ -382,14 +378,7 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
         return true
     } catch (err) {
         // Don't replace currentFile — keep the previously opened file visible.
-        // Suppress toast for auto-restore (startup/project switch) to avoid
-        // spurious "file not found" bubbles when the last opened file was deleted.
-        if (!suppressToast) {
-            useToast().show((err as Error).message, { type: 'error', icon: '⚠️' })
-        }
-        // Clean up stale localStorage entry so next startup won't retry
-        const key = 'clawbenchLastFile_' + state.projectRoot
-        if (key !== 'clawbenchLastFile_') localStorage.removeItem(key)
+        useToast().show((err as Error).message, { type: 'error', icon: '⚠️' })
         return false
     } finally {
         if (seq === selectFileSeq) {

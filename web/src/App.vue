@@ -349,7 +349,7 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   switchingProject.value = false
 
   // ── Phase 6: Background data loading — all independent, fully parallel, non-blocking ──
-  const bgLoad = Promise.allSettled([
+  Promise.allSettled([
     store.loadFiles(''),
     sessionIdentity.initSessionFromAPI(),
     loadSessionsOnce(),
@@ -361,21 +361,7 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   ])
   if (isAppMode.value) syncToNative().catch(() => {})
 
-  // ── Phase 7: Restore last opened file (non-blocking) ──
-  bgLoad.then(() => {
-    const lastFile = localStorage.getItem('clawbenchLastFile_' + store.state.projectRoot)
-    if (lastFile && lastFile !== store.state.currentFile?.path) {
-      const lastSlash = lastFile.lastIndexOf('/')
-      const targetDir = lastSlash > 0 ? lastFile.slice(0, lastSlash) : ''
-      store.resetDirStack(targetDir)
-      store.loadFiles(targetDir, true)
-        .then(() => store.selectFile(lastFile, false, false, true, false, true))
-        .then(() => { if (store.state.currentFile?.error) store.state.currentFile = null })
-        .catch(() => {})
-    }
-  })
-
-  // ── Phase 8: Handle cross-project pending navigation ──
+  // ── Phase 7: Handle cross-project pending navigation ──
   if (pendingSessionId) {
     // Watch for session identity to be ready instead of polling
     const stopWatch = watch(
@@ -765,6 +751,8 @@ async function handleLoginSuccess() {
     // clawbench_project cookie, session identity, and all infrastructure
     // are ready before ChatPanelContent mounts and calls loadHistory().
     if (!(await initializeApp())) return
+    // Clean up legacy localStorage keys (no longer used)
+    Object.keys(localStorage).filter(k => k.startsWith('clawbenchLastFile_') || k.startsWith('clawbenchLastDir_')).forEach(k => localStorage.removeItem(k))
     isAuthenticated.value = true
 }
 
@@ -1352,17 +1340,6 @@ onMounted(async () => {
         pollCount++
         if (pollCount >= 6) clearInterval(pollInterval) // 3 seconds total
       }, 500)
-    }
-    const lastFile = localStorage.getItem('clawbenchLastFile_' + store.state.projectRoot)
-    if (lastFile && lastFile !== store.state.currentFile?.path) {
-        const lastSlash = lastFile.lastIndexOf('/')
-        const targetDir = lastSlash > 0 ? lastFile.slice(0, lastSlash) : ''
-        store.resetDirStack(targetDir)
-        await store.loadFiles(targetDir, true)
-        await store.selectFile(lastFile, false, false, true, false, true)
-        if (store.state.currentFile?.error) store.state.currentFile = null
-        // 不自动切换 Tab 或打开覆盖层，保持默认 tab（chat）
-        // 用户切到 browse 时可以在 handleBrowseSelectFile 中打开覆盖层
     }
 })
 
