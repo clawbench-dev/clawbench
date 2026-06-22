@@ -274,6 +274,7 @@ func GetFile(w http.ResponseWriter, r *http.Request) {
 // including broken symlink detection.
 func handleStatError(w http.ResponseWriter, r *http.Request, absPath string, err error) {
 	if !os.IsNotExist(err) {
+		slog.Warn("file access error", "path", absPath, "err", err)
 		model.WriteError(w, model.Internal(fmt.Errorf("cannot access file")))
 		return
 	}
@@ -283,9 +284,11 @@ func handleStatError(w http.ResponseWriter, r *http.Request, absPath string, err
 	linfo, lerr := os.Lstat(absPath)
 	if lerr == nil && linfo.Mode()&os.ModeSymlink != 0 {
 		target, _ := os.Readlink(absPath)
+		slog.Warn("broken symlink", "path", absPath, "target", target)
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "BrokenSymlink", map[string]any{"Target": target})
 		return
 	}
+	slog.Warn("file not found", "path", absPath)
 	writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
 }
 

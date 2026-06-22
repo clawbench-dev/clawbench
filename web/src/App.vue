@@ -368,8 +368,8 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
       const lastSlash = lastFile.lastIndexOf('/')
       const targetDir = lastSlash > 0 ? lastFile.slice(0, lastSlash) : ''
       store.resetDirStack(targetDir)
-      store.loadFiles(targetDir)
-        .then(() => store.selectFile(lastFile))
+      store.loadFiles(targetDir, true)
+        .then(() => store.selectFile(lastFile, false, false, true, false, true))
         .then(() => { if (store.state.currentFile?.error) store.state.currentFile = null })
         .catch(() => {})
     }
@@ -1358,8 +1358,8 @@ onMounted(async () => {
         const lastSlash = lastFile.lastIndexOf('/')
         const targetDir = lastSlash > 0 ? lastFile.slice(0, lastSlash) : ''
         store.resetDirStack(targetDir)
-        await store.loadFiles(targetDir)
-        await store.selectFile(lastFile)
+        await store.loadFiles(targetDir, true)
+        await store.selectFile(lastFile, false, false, true, false, true)
         if (store.state.currentFile?.error) store.state.currentFile = null
         // 不自动切换 Tab 或打开覆盖层，保持默认 tab（chat）
         // 用户切到 browse 时可以在 handleBrowseSelectFile 中打开覆盖层
