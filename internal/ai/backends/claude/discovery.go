@@ -45,6 +45,52 @@ var claudeModelNames = map[string]string{
 // Overridable for testing (same pattern as DiscoverModels variable).
 var claudeConfigDir = platform.ClaudeConfigDir
 
+// LoadClaudeEnvModel reads ~/.claude/settings.json env vars for custom model IDs.
+// When ANTHROPIC_MODEL (or any ANTHROPIC_DEFAULT_*_MODEL) is set to a model ID
+// that doesn't match standard Claude model patterns (e.g. "glm-5.2"), it returns
+// those models so they appear in the model selector.
+func LoadClaudeEnvModel() []model.AgentModel {
+	path := filepath.Join(claudeConfigDir(), "settings.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		slog.Debug("claude env model: settings.json not found", "path", path, "error", err)
+		return nil
+	}
+	var cfg struct {
+		Env map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		slog.Debug("claude env model: invalid JSON", "path", path, "error", err)
+		return nil
+	}
+
+	seen := make(map[string]bool)
+	var models []model.AgentModel
+	for key, val := range cfg.Env {
+		val = strings.TrimSpace(val)
+		if val == "" || seen[val] {
+			continue
+		}
+		// Only consider _MODEL env vars
+		if !strings.HasSuffix(key, "_MODEL") {
+			continue
+		}
+		// Skip if it matches standard Claude model pattern
+		if claudeModelRe.MatchString(val) || strings.HasPrefix(val, "claude-") {
+			continue
+		}
+		seen[val] = true
+		models = append(models, model.AgentModel{
+			ID:   val,
+			Name: val,
+		})
+	}
+	if len(models) > 0 {
+		slog.Info("claude env model: loaded custom models from env", "models", len(models))
+	}
+	return models
+}
+
 // LoadClaudeModelOverrides reads ~/.claude/settings.json and returns the
 // modelOverrides map if present. Returns nil on any error (missing file,
 // invalid JSON, no overrides key) — graceful degradation.
@@ -162,6 +208,22 @@ func DiscoverClaudeModels() []model.AgentModel { //nolint:gocyclo,gocognit // bi
 			if name, ok := overrides[models[i].ID]; ok {
 				slog.Debug("claude model override applied", "id", models[i].ID, "name", name)
 				models[i].Name = name
+			}
+		}
+	}
+
+	// Append custom models from env vars (e.g. ANTHROPIC_MODEL=glm-5.2) —
+	// these are non-Claude models configured via third-party proxy endpoints
+	// that don't appear in the claude binary's embedded model list.
+	if envModels := LoadClaudeEnvModel(); len(envModels) > 0 {
+		seen := make(map[string]bool, len(models))
+		for _, m := range models {
+			seen[m.ID] = true
+		}
+		for _, m := range envModels {
+			if !seen[m.ID] {
+				models = append(models, m)
+				seen[m.ID] = true
 			}
 		}
 	}
