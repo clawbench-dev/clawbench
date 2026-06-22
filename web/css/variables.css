@@ -14,7 +14,7 @@
     --accent-color: #4a90d9;
     --accent-hover: #3a7bc8;
     --user-msg-color: #5b8fbf;
-    --header-height: 40px;
+    --header-height: 36px;
     --header-safe-area-top: env(safe-area-inset-top, 0px);
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.1);

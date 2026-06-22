@@ -2,7 +2,7 @@
   <Teleport to="body">
   <header class="header">
     <!-- Logo: hidden in APP mode -->
-    <img v-if="!isAppMode" class="header-logo" src="/logo.png" alt="ClawBench">
+    <img class="header-logo" src="/logo.png" alt="ClawBench">
 
     <div class="project-dropdown-wrapper" ref="dropdownRef">
       <button class="project-switch-btn" @click="toggleDropdown" :title="t('appHeader.switchProject')">
@@ -394,7 +394,7 @@ onUnmounted(() => {
 
 .project-dropdown-wrapper {
     position: relative;
-    flex: 0 1 auto;
+    flex: 3 1 0;
     min-width: 0;
 }
 
@@ -403,7 +403,7 @@ onUnmounted(() => {
     align-items: center;
     gap: 6px;
     padding: 0 10px;
-    height: 30px;
+    height: 28px;
     border: 1px solid var(--border-color);
     background: var(--bg-secondary);
     cursor: pointer;
@@ -411,7 +411,7 @@ onUnmounted(() => {
     border-radius: 999px;
     font-size: 12px;
     font-weight: 500;
-    max-width: none;
+    width: 100%;
     min-width: 0;
     transition: background 0.15s, border-color 0.15s;
     line-height: 1;
@@ -444,14 +444,14 @@ onUnmounted(() => {
     align-items: center;
     gap: 6px;
     padding: 0 10px;
-    height: 30px;
+    height: 28px;
     background: color-mix(in srgb, var(--accent-color) 12%, transparent);
     border: 1px solid color-mix(in srgb, var(--accent-color) 25%, transparent);
     border-radius: 999px;
     font-size: 12px;
     font-weight: 500;
     color: var(--accent-color);
-    flex: 0 1 auto;
+    flex: 2 1 0;
     min-width: 0;
     max-width: none;
     cursor: pointer;
