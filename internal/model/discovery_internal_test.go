@@ -50,8 +50,10 @@ func TestBuildCommonPrompt_ReturnsContent(t *testing.T) {
 	result := BuildCommonPrompt()
 	assert.NotEmpty(t, result)
 	assert.Contains(t, result, "User Interaction")
-	assert.Contains(t, result, "Multi-Agent")
-	// Media rules are now separate — must NOT appear in common prompt
+	assert.Contains(t, result, "Media Generation")
+	// Multi-Agent removed from common prompt
+	assert.NotContains(t, result, "Multi-Agent")
+	// Media reading rules are separate — must NOT appear in common prompt
 	assert.NotContains(t, result, "Media File Handling")
 }
 
@@ -61,7 +63,8 @@ func TestBuildMediaPrompt_ReturnsContent(t *testing.T) {
 	assert.Contains(t, result, "Media File Handling")
 	assert.Contains(t, result, "Upload path")
 	assert.Contains(t, result, "Reading:")
-	assert.Contains(t, result, "Generation:")
+	// Generation rules are in common prompt, not media prompt
+	assert.NotContains(t, result, "Generation:")
 }
 
 func TestBuildCommonPrompt_MediaRulesSeparated(t *testing.T) {
@@ -73,6 +76,6 @@ func TestBuildCommonPrompt_MediaRulesSeparated(t *testing.T) {
 	// Concatenation should produce the full original rules
 	full := common + "\n\n" + media
 	assert.Contains(t, full, "User Interaction")
-	assert.Contains(t, full, "Multi-Agent")
+	assert.Contains(t, full, "Media Generation")
 	assert.Contains(t, full, "Media File Handling")
 }

@@ -135,9 +135,11 @@ NEVER call the AskUserQuestion tool — it fails in headless CLI. Always use «a
 
 Exception: pure informational statements needing zero user response may be plain text.
 
-## Multi-Agent / Team Mode (Mandatory)
+## Media Generation
 
-Lead agent MUST NOT exit until every sub-agent has completed. Use foreground mode for sub-agents (never run_in_background: true). For parallelism, place multiple foreground Agent calls in the same message. If a sub-agent appears stuck or fails, cancel/retry before exiting.`
+1. Save to user-specified path or «project_root»/.clawbench/generated/. File names: concise, English, type-prefixed (img_, audio_).
+2. Return as Markdown: ![desc](/api/local-file/«relative_path») for images, [desc](/api/local-file/«relative_path») for audio.
+3. No absolute paths or external URLs. No spaces or special characters in paths.`
 
 // mediaRulesTemplate is injected into the system prompt only when the user
 // message carries file attachments (uploaded files or attached project files).
@@ -146,12 +148,7 @@ var mediaRulesTemplate = `## Media File Handling
 
 Upload path: .clawbench/uploads/filename.jpg — use full path for image analysis.
 
-Reading: Never read/analyze a media file unless the user's intent is clear (e.g., "look at this"). No intent → acknowledge and ask what they want.
-
-Generation:
-1. Save to user-specified path or «project_root»/.clawbench/generated/. File names: concise, English, type-prefixed (img_, audio_).
-2. Return as Markdown: ![desc](/api/local-file/«relative_path») for images, [desc](/api/local-file/«relative_path») for audio.
-3. No absolute paths or external URLs. No spaces or special characters in paths.`
+Reading: Never read/analyze a media file unless the user's intent is clear (e.g., "look at this"). No intent → acknowledge and ask what they want.`
 
 // bt replaces «» placeholder pairs with backticks for readable template strings.
 func bt(s string) string {
