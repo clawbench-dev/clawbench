@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -745,7 +746,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// after this one exits, then trigger graceful shutdown.
 	handler.SetRestartFunc(makeRestartFunc(selfSignalInterrupt))
 
-	srv := &http.Server{Addr: addr, Handler: mux}
+	srv := &http.Server{Handler: mux}
 
 	// Optional localhost-only HTTP dev listener (for Vite dev proxy)
 	var devSrv *http.Server
@@ -782,13 +783,32 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		slog.Info("starting with HTTP")
 	}
 
+	// Pre-bind the main listener to detect port conflicts BEFORE printing the banner.
+	// Without this, PrintBanner shows a password for an instance that immediately fails
+	// to bind, confusing users who then see "wrong password" when they connect to
+	// whichever process actually holds the port.
+	mainLn, err := net.Listen("tcp", addr)
+	if err != nil {
+		slog.Error("failed to listen", slog.String("addr", addr), slog.String("err", err.Error()))
+		os.Exit(1)
+	}
+
 	// Start dev HTTP listener before banner (so its slog doesn't disrupt the banner)
-	if devSrv != nil && scheme == "https" {
-		go func() {
-			if err := devSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				slog.Error("dev listener failed", slog.String("err", err.Error()))
-			}
-		}()
+	var devLn net.Listener
+	if devSrv != nil {
+		devLn, err = net.Listen("tcp", devSrv.Addr)
+		if err != nil {
+			mainLn.Close()
+			slog.Error("failed to listen on dev port", slog.String("addr", devSrv.Addr), slog.String("err", err.Error()))
+			os.Exit(1)
+		}
+		if scheme == "https" {
+			go func() {
+				if err := devSrv.Serve(devLn); err != nil && err != http.ErrServerClosed {
+					slog.Error("dev listener failed", slog.String("err", err.Error()))
+				}
+			}()
+		}
 	}
 
 	// --- Print startup banner (MUST be the last output before HTTP server starts) ---
@@ -851,14 +871,14 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		}
 	}()
 
-	// Start HTTP server (blocking)
+	// Start HTTP server using the pre-bound listener (blocking)
 	if scheme == "https" {
-		if err := srv.ListenAndServeTLS(tlsCertFile, tlsKeyFile); err != nil && err != http.ErrServerClosed {
+		if err := srv.ServeTLS(mainLn, tlsCertFile, tlsKeyFile); err != nil && err != http.ErrServerClosed {
 			slog.Error("server failed", slog.String("err", err.Error()))
 			os.Exit(1)
 		}
 	} else {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.Serve(mainLn); err != nil && err != http.ErrServerClosed {
 			slog.Error("server failed", slog.String("err", err.Error()))
 			os.Exit(1)
 		}
