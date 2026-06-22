@@ -494,12 +494,20 @@ let longPressMoved = false
 function onLongPressStart(e) {
     longPressMoved = false
     const touch = e.touches[0]
+    // Capture entry data immediately (before the 450ms timer),
+    // because Vue may re-render the file list during the wait
+    // (e.g. SSE dir_change from file watcher), which detaches
+    // the original e.target from the DOM and makes
+    // resolveEntryFromEvent(e) return null.
+    const capturedEntry = resolveEntryFromEvent(e)
     longPressTimer = setTimeout(() => {
         if (!longPressMoved) {
-            const entry = resolveEntryFromEvent(e)
+            if (!capturedEntry) {
+                console.warn('[onLongPressStart] capturedEntry is null — touch target had no file-item?')
+            }
             ctxMenu.x = touch.clientX
             ctxMenu.y = touch.clientY + 10
-            ctxMenu.entry = entry
+            ctxMenu.entry = capturedEntry
             ctxMenu.visible = true
             nextTick(() => clampCtxMenu())
         }
@@ -914,8 +922,12 @@ function toggleAttach(path) {
 }
 
 function doDelete() {
-    if (!ctxMenu.entry) return
+    if (!ctxMenu.entry) {
+        console.warn('[doDelete] ctxMenu.entry is null, ignoring')
+        return
+    }
     const path = ctxMenu.entry.path
+    console.debug('[doDelete] emitting delete for:', path)
     closeCtxMenu()
     emit('delete', path)
 }

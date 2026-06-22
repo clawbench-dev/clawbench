@@ -548,6 +548,7 @@ export default {
       archiveDone: '打包下载完成',
       archiveFailed: '打包失败',
       archiveFailedDetail: '打包失败: {error}',
+      deleteFailed: '删除失败',
     },
     prompt: {
       fileName: '输入文件名：',

@@ -548,6 +548,7 @@ export default {
       archiveDone: 'Download ready',
       archiveFailed: 'Pack failed',
       archiveFailedDetail: 'Pack failed: {error}',
+      deleteFailed: 'Delete failed',
     },
     prompt: {
       fileName: 'Enter file name:',

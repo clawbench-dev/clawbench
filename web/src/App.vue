@@ -959,7 +959,11 @@ async function handleRename({ path, name }) {
 
 async function handleDelete(path) {
     const wasOverlay = fileNav.overlayOpen.value
-    await store.deleteFile(path)
+    try {
+        await store.deleteFile(path)
+    } catch (err) {
+        console.error('[handleDelete] unhandled error:', err)
+    }
     if (wasOverlay) {
         if (fileNav.canGoBack.value) {
             const prevPath = fileNav.goBack()
@@ -973,7 +977,11 @@ async function handleDelete(path) {
 }
 
 async function handleBatchDelete(paths) {
-    await store.deleteFiles(paths)
+    try {
+        await store.deleteFiles(paths)
+    } catch (err) {
+        console.error('[handleBatchDelete] unhandled error:', err)
+    }
 }
 
 async function handleRefresh() {
