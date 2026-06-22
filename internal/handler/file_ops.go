@@ -133,6 +133,7 @@ func ServeFileDelete(w http.ResponseWriter, r *http.Request) {
 
 	info, err := os.Stat(absPath)
 	if err != nil {
+		slog.Warn("delete: file not found", slog.String("requestPath", req.Path), slog.String("absPath", absPath), slog.String("err", err.Error()))
 		writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
 		return
 	}
