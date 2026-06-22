@@ -777,7 +777,7 @@
   function formatHost(url) {
     try {
       var u = new URL(url);
-      return u.host;
+      return u.origin;
     } catch(e) {
       return url;
     }

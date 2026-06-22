@@ -214,6 +214,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/", ServeIndex)
 	register("/login", ServeLogin)
 	register("/dialog/project", middleware.Auth(ServeProjectDialog))
+	register("/api/health", ServeHealth)
 	register("/api/me", ServeAuthCheck)
 	register("/api/roots", middleware.Auth(ServeRoots))
 	register("/api/config", middleware.Auth(ServeConfig))

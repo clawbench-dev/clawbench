@@ -412,18 +412,17 @@ onUnmounted(() => {
     font-weight: 500;
     max-width: none;
     min-width: 0;
-    transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+    transition: background 0.15s, border-color 0.15s;
     line-height: 1.4;
 }
 
 .project-switch-btn:hover {
     background: var(--bg-primary);
-    border-color: var(--accent-color);
-    box-shadow: 0 0 0 1px var(--accent-color);
+    border-color: var(--text-muted);
 }
 
 .project-switch-btn:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
 }
 
 .project-switch-btn svg:first-child {

@@ -371,7 +371,7 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding-right: 28px;
+  padding-right: 18px;
 }
 
 .session-item.active .session-item-title {

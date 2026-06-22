@@ -768,52 +768,72 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * Perform a lightweight connectivity check (HEAD /) before loading the WebView.
+     * Perform a health check (GET /api/health) before loading the WebView.
      * Used when no password is provided (server may have no auth).
-     * Only navigates the WebView if the server is reachable.
+     * Verifies the server is both reachable AND is a ClawBench instance.
      */
     private void checkConnectivityAndNavigate(String url) {
         new Thread(() -> {
             try {
-                OkHttpClient client = new OkHttpClient.Builder()
+                String healthError = performHealthCheck(url, new OkHttpClient.Builder()
                         .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
                         .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-                        .build();
-
-                Request request = new Request.Builder()
-                        .url(url)
-                        .head()
-                        .build();
-
-                try (Response ignored = client.newCall(request).execute()) {
-                    // Server is reachable — navigate WebView
-                    runOnUiThread(() -> {
-                        webView.loadUrl(url);
-                        startConnectionTimeout();
-                    });
+                        .build());
+                if (healthError != null) {
+                    runOnUiThread(() -> showLoginPage(healthError));
+                    return;
                 }
+                runOnUiThread(() -> {
+                    webView.loadUrl(url);
+                    startConnectionTimeout();
+                });
             } catch (javax.net.ssl.SSLException e) {
-                AppLog.w(TAG, "SSL error during connectivity check, showing confirmation dialog", e);
+                AppLog.w(TAG, "SSL error during health check, showing confirmation dialog", e);
                 runOnUiThread(() -> showSslConfirmationDialog(() -> {
                     try {
                         OkHttpClient trustClient = buildTrustingOkHttpClient();
-                        Request req = new Request.Builder().url(url).head().build();
-                        try (Response ignored = trustClient.newCall(req).execute()) {
-                            runOnUiThread(() -> {
-                                webView.loadUrl(url);
-                                startConnectionTimeout();
-                            });
+                        String healthError = performHealthCheck(url, trustClient);
+                        if (healthError != null) {
+                            runOnUiThread(() -> showLoginPage(healthError));
+                            return;
                         }
+                        runOnUiThread(() -> {
+                            webView.loadUrl(url);
+                            startConnectionTimeout();
+                        });
                     } catch (Exception retryEx) {
-                        AppLog.w(TAG, "SSL connectivity retry failed", retryEx);
+                        AppLog.w(TAG, "SSL health check retry failed", retryEx);
                         runOnUiThread(() -> showLoginPage(getNetworkErrorMessage(retryEx)));
                     }
                 }));
             } catch (Exception e) {
-                AppLog.w(TAG, "Connectivity check failed", e);
+                AppLog.w(TAG, "Health check failed", e);
                 runOnUiThread(() -> showLoginPage(getNetworkErrorMessage(e)));
             }
         }).start();
+    }
+
+    /**
+     * Perform GET /api/health and verify the response contains {"app":"clawbench"}.
+     * Returns null on success, or an error message string on failure.
+     */
+    private String performHealthCheck(String url, OkHttpClient client) throws Exception {
+        Request request = new Request.Builder()
+                .url(url + "/api/health")
+                .get()
+                .build();
+        try (Response response = client.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                AppLog.w(TAG, "Health check failed: HTTP " + response.code());
+                return "该地址不是 ClawBench 服务器。";
+            }
+            String body = response.body() != null ? response.body().string() : "";
+            if (!body.contains("\"app\"") || !body.contains("\"clawbench\"")) {
+                AppLog.w(TAG, "Health check failed: response does not identify as clawbench: " + body);
+                return "该地址不是 ClawBench 服务器。";
+            }
+            return null; // success
+        }
     }
 
     /**
@@ -877,20 +897,44 @@ public class MainActivity extends AppCompatActivity {
      */
     void handleAuthResponse(int statusCode, String url, String password, java.util.List<String> cookies) {
         if (statusCode == 200) {
-            // Extract Set-Cookie and inject into WebView CookieManager
-            if (cookies != null && !cookies.isEmpty()) {
-                try {
-                    CookieManager cm = CookieManager.getInstance();
+            // Extract Set-Cookie and inject into WebView CookieManager.
+            // Before injecting, clear all ClawBench cookies for the target domain
+            // to prevent stale cookies from a previous server instance (e.g., switching
+            // from port 20000 which uses unscoped "clawbench_session" to port 20300
+            // which uses "cb20300_clawbench_session"). Without this cleanup, the old
+            // unscoped cookie would be sent alongside the new scoped cookie, causing
+            // confusion on the server side. (Browsers/WebView do not isolate cookies
+            // by port — only by domain + path.)
+            try {
+                CookieManager cm = CookieManager.getInstance();
+                clearClawBenchCookies(cm, url);
+                if (cookies != null) {
                     for (String cookie : cookies) {
                         cm.setCookie(url, cookie);
                     }
-                    cm.flush();
-                } catch (Exception e) {
-                    // CookieManager may be unavailable in test environments
-                    AppLog.w(TAG, "Failed to inject auth cookie", e);
                 }
+                cm.flush();
+            } catch (Exception e) {
+                // CookieManager may be unavailable in test environments
+                AppLog.w(TAG, "Failed to inject auth cookie", e);
             }
-            // Auth success — promote server to head of list, then navigate
+            // Auth success — verify this is a ClawBench server before navigating WebView
+            try {
+                OkHttpClient healthClient = new OkHttpClient.Builder()
+                        .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .build();
+                String healthError = performHealthCheck(url, healthClient);
+                if (healthError != null) {
+                    runOnUiThread(() -> showLoginPage(healthError));
+                    return;
+                }
+            } catch (Exception e) {
+                AppLog.w(TAG, "Health check after auth failed", e);
+                runOnUiThread(() -> showLoginPage(getNetworkErrorMessage(e)));
+                return;
+            }
+            // Health check passed — promote server to head of list, then navigate
             runOnUiThread(() -> {
                 saveServerInternal(url, password);
                 webView.loadUrl(url);
@@ -911,6 +955,54 @@ public class MainActivity extends AppCompatActivity {
             }
             final String errorMsg = msg;
             runOnUiThread(() -> showLoginPage(errorMsg));
+        }
+    }
+
+    /**
+     * Clear all ClawBench-related cookies for the given URL's domain.
+     * This is necessary when switching between server instances on different ports
+     * because browsers/WebView do not isolate cookies by port — only by domain + path.
+     * Without this cleanup, stale cookies from a previous server (e.g., unscoped
+     * "clawbench_session" from port 20000) would be sent alongside the new server's
+     * scoped cookies (e.g., "cb20300_clawbench_session"), causing auth failures or
+     * incorrect behavior on the new server.
+     *
+     * The method parses the cookie string from CookieManager.getCookie(), identifies
+     * all ClawBench cookies (both unscoped and port-scoped variants), and removes
+     * them by setting expired versions.
+     */
+    private void clearClawBenchCookies(CookieManager cm, String url) {
+        String existing = cm.getCookie(url);
+        if (existing == null || existing.isEmpty()) return;
+
+        // Parse the URL to build the cookie removal string with correct attributes
+        String path = "/";
+        boolean secure = url.startsWith("https://");
+        try {
+            android.net.Uri parsed = android.net.Uri.parse(url);
+            String pathPart = parsed.getPath();
+            if (pathPart != null && !pathPart.isEmpty() && !pathPart.equals("/")) {
+                path = pathPart;
+            }
+        } catch (Exception ignored) {}
+
+        // Build removal suffix: expires in the past, correct path, and secure flag if HTTPS
+        String removeSuffix = "=; Path=" + path + "; Max-Age=0" + (secure ? "; Secure" : "");
+
+        // Known ClawBench cookie name patterns (unscoped + cb{port}_ scoped variants)
+        String[] baseNames = {"clawbench_session", "clawbench_project", "clawbench-locale"};
+        for (String pair : existing.split(";")) {
+            String trimmed = pair.trim();
+            int eqIdx = trimmed.indexOf('=');
+            if (eqIdx < 0) continue;
+            String name = trimmed.substring(0, eqIdx).trim();
+            // Remove any ClawBench cookie: unscoped or port-scoped (cb{port}_)
+            for (String base : baseNames) {
+                if (name.equals(base) || name.matches("cb\\d+_" + java.util.regex.Pattern.quote(base))) {
+                    cm.setCookie(url, name + removeSuffix);
+                    break;
+                }
+            }
         }
     }
 

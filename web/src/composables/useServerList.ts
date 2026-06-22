@@ -21,7 +21,10 @@ function parseList(json: string): ServerEntry[] {
   try {
     const arr = JSON.parse(json)
     if (!Array.isArray(arr)) return []
-    return arr.filter((e: any) => e && typeof e.url === 'string')
+    return arr.filter((e: any) => e && typeof e.url === 'string').map((e: any) => ({
+      url: e.url,
+      password: typeof e.password === 'string' ? e.password : '',
+    }))
   } catch {
     return []
   }
