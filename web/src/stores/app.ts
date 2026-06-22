@@ -393,7 +393,7 @@ async function deleteFile(filePath: string): Promise<void> {
     if (state.currentFile?.path === filePath) {
         state.currentFile = null
     }
-    await loadFiles(state.currentDir)
+    await Promise.all([loadFiles(state.currentDir), loadGitBranch()])
 }
 
 async function deleteFiles(paths: string[]): Promise<void> {
@@ -402,11 +402,17 @@ async function deleteFiles(paths: string[]): Promise<void> {
     if (state.currentFile && paths.includes(state.currentFile.path)) {
         state.currentFile = null
     }
-    await loadFiles(state.currentDir)
+    await Promise.all([loadFiles(state.currentDir), loadGitBranch()])
 }
 
 async function renameFile(path: string, newName: string): Promise<void> {
     await apiPost('/api/file/rename', { path, name: newName })
+    // If the renamed file is currently being viewed, re-select it at the new path
+    if (state.currentFile?.path === path) {
+        const dir = dirName(path)
+        const newPath = dir ? `${dir}/${newName}` : newName
+        await selectFile(newPath)
+    }
     await loadFiles(state.currentDir)
 }
 

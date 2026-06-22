@@ -275,6 +275,8 @@ import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTas
 import { resetAgents } from '@/composables/useAgents'
 import { useSessionIdentity, registerSessionDrawerRef, resetIdentity } from './composables/useSessionIdentity.ts'
 import { loadSessionsOnce, resetChatSessionState } from './composables/useChatSession.ts'
+import { resetTaskTabState } from './composables/useTaskTab.ts'
+import { clearPlanState } from './composables/usePlanProgress.ts'
 import { useToast } from './composables/useToast.ts'
 import { gt } from './composables/useLocale'
 import { useAppMode } from './composables/useAppMode.ts'
@@ -335,6 +337,8 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   resetIdentity()
   resetAgents()
   resetChatSessionState()
+  clearPlanState()
+  resetTaskTabState()
   fileNav.closeOverlay()
   store.resetDirStack()
 
@@ -422,6 +426,7 @@ function switchTab(tab) {
     // Only stop dock button flash — don't clear per-task unread badges.
     // Per-task badges are cleared when the user enters that task's execution history.
     store.state.taskUnreadCount = 0
+    loadTasks()
   }
   // Close overflow menu when switching to a main tab
   if (!overflowTabs.value.includes(tab)) {
@@ -567,8 +572,15 @@ const removeTaskHandler = onEvent((event, data) => {
 })
 
 const handleForeground = () => {
-    // Full state pull — 3rd defense layer
+    // Full state pull — refresh everything that may have changed while backgrounded
     loadSessionsOnce()
+    store.loadFiles(store.state.currentDir)
+    store.loadGitBranch()
+    loadTasks()
+    loadTerminalStatus()
+    if (store.state.currentFile?.path) {
+        refreshCurrentFile()
+    }
 }
 
 // Edge swipe back gesture detection (right-edge-left-swipe → go back)
