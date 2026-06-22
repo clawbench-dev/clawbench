@@ -394,7 +394,7 @@ onUnmounted(() => {
 
 .project-dropdown-wrapper {
     position: relative;
-    flex: 3 1 0;
+    flex: 1 1 auto;
     min-width: 0;
 }
 
@@ -451,7 +451,7 @@ onUnmounted(() => {
     font-size: 12px;
     font-weight: 500;
     color: var(--accent-color);
-    flex: 2 1 0;
+    flex: 1 1 auto;
     min-width: 0;
     max-width: none;
     cursor: pointer;
@@ -654,7 +654,7 @@ onUnmounted(() => {
 }
 
 .project-dropdown .item-path {
-    flex: 1;
+    flex: 1 1 auto;
     color: var(--text-muted);
     font-size: 11px;
     overflow-x: auto;
