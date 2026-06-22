@@ -408,6 +408,9 @@ function switchTab(tab) {
     fileHistoryOpen.value = false
     detailsOpen.value = false
   }
+  if (tab === 'browse') {
+    store.loadFiles(store.state.currentDir)
+  }
   if (tab === 'chat') {
     // Recalculate instead of blindly clearing — if the user switches to chat
     // but hasn't opened the unread session, the indicator should keep flashing.
