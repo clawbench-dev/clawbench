@@ -72,7 +72,6 @@
 # chat:
 #   initial_messages: 20    # Number of messages loaded initially (default: 20) / 初始加载的消息条数（默认: 20）
 #   page_size: 20           # Number of messages per lazy-load batch (default: 20) / 每次懒加载追加的消息条数（默认: 20）
-#   collapsed_height: 150   # Collapsed height for historical messages in pixels (default: 150) / 历史消息折叠高度（默认: 150）
 #   system_prompt_interval: 10  # Re-inject system prompt every N assistant turns for CLI backends without --system-prompt (0=never, default: 10) / 每N轮助手回复重新注入系统提示词（0=不重注入，默认: 10）
 
 # Session limit / 会话数量限制

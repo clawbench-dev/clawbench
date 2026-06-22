@@ -16,7 +16,6 @@
         :expandedTools="expandedTools"
         :blockTasks="{}"
         :blockAskQuestions="{}"
-        :shouldCollapse="false"
         @toggle-tool="toggleTool"
         @show-tool-detail="handleShowToolDetail"
         @show-metadata="showMetadata"

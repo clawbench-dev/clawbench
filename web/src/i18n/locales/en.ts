@@ -227,8 +227,6 @@ export default {
       emptyHint: 'No quick sends yet, tap + to add',
     },
     message: {
-      expandFull: 'Show more',
-      collapse: 'Collapse',
       viewDetails: 'View details',
       speaking: 'Speaking',
       readAloud: 'Read',
@@ -982,8 +980,6 @@ export default {
       chatInitialMessagesDesc: 'Number of history messages loaded on first chat open',
       chatPageSize: 'Page Size',
       chatPageSizeDesc: 'Messages loaded per page when scrolling up',
-      chatCollapsedHeight: 'Collapsed Height',
-      chatCollapsedHeightDesc: 'Default display height (px) for collapsed long messages',
       chatSystemPromptInterval: 'System Prompt Interval',
       chatSystemPromptIntervalDesc: 'Insert a system prompt every N messages',
       sessionMaxCount: 'Max Sessions',

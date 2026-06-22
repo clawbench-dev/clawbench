@@ -249,7 +249,6 @@ const serverConfig = ref<Record<string, any>>({})
 const serverDefaults: Record<string, any> = {
   'chat.initial_messages': 20,
   'chat.page_size': 20,
-  'chat.collapsed_height': 150,
   'chat.system_prompt_interval': 10,
   'session.max_count': 10,
   'recent_projects.max_count': 10,
@@ -345,8 +344,8 @@ export function useSettingsConfig() {
   async function patchConfig(changes: Record<string, any>): Promise<{ needsRestart: boolean; changedColdFields: string[] }> {
     const result = await apiPatch<{ needs_restart?: boolean; changed_cold_fields?: string[] }>('/api/config', changes)
     // Deep-merge patched values into local cache after successful response.
-    // Using Object.assign would overwrite nested objects (e.g. {chat: {collapsed_height: 300}}
-    // would lose the existing page_size), so we deep-merge instead.
+    // Using Object.assign would overwrite nested objects (e.g. {chat: {page_size: 50}}
+    // would lose the existing initial_messages), so we deep-merge instead.
     deepAssign(serverConfig.value, changes)
     return {
       needsRestart: result.needs_restart ?? false,

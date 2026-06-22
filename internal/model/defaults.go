@@ -116,9 +116,6 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.Chat.SessionPageSize <= 0 {
 		cfg.Chat.SessionPageSize = 10
 	}
-	if cfg.Chat.CollapsedHeight <= 0 {
-		cfg.Chat.CollapsedHeight = 150
-	}
 	if cfg.Chat.SystemPromptInterval <= 0 {
 		cfg.Chat.SystemPromptInterval = 10
 	}

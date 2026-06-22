@@ -45,7 +45,6 @@ interface AppState {
     chatInitialMessages: number
     chatPageSize: number
     chatSessionPageSize: number
-    chatCollapsedHeight: number
     sessionMaxCount: number
     sessionCount: number
 
@@ -111,7 +110,6 @@ const state = reactive<AppState>({
     chatInitialMessages: 20,
     chatPageSize: 20,
     chatSessionPageSize: 10,
-    chatCollapsedHeight: 150,
     sessionMaxCount: 10,
     sessionCount: 0,
     recentProjectsMaxCount: 10,
@@ -151,14 +149,13 @@ const state = reactive<AppState>({
 async function loadProject(): Promise<void> {
     try {
         try {
-            const wd = await apiGet<{ roots: string[]; uploadMaxSizeMB: number; uploadMaxFiles: number; chatInitialMessages?: number; chatPageSize?: number; chatSessionPageSize?: number; chatCollapsedHeight?: number; sessionMaxCount?: number; recentProjectsMaxCount?: number }>('/api/roots')
+            const wd = await apiGet<{ roots: string[]; uploadMaxSizeMB: number; uploadMaxFiles: number; chatInitialMessages?: number; chatPageSize?: number; chatSessionPageSize?: number; sessionMaxCount?: number; recentProjectsMaxCount?: number }>('/api/roots')
             state.rootPaths = wd.roots || []
             if (wd.uploadMaxSizeMB > 0) state.uploadMaxSizeMB = wd.uploadMaxSizeMB
             if (wd.uploadMaxFiles > 0) state.uploadMaxFiles = wd.uploadMaxFiles
             if (wd.chatInitialMessages > 0) state.chatInitialMessages = wd.chatInitialMessages
             if (wd.chatPageSize > 0) state.chatPageSize = wd.chatPageSize
             if (wd.chatSessionPageSize > 0) state.chatSessionPageSize = wd.chatSessionPageSize
-            if (wd.chatCollapsedHeight > 0) state.chatCollapsedHeight = wd.chatCollapsedHeight
             if (wd.sessionMaxCount > 0) state.sessionMaxCount = wd.sessionMaxCount
             if (wd.recentProjectsMaxCount > 0) state.recentProjectsMaxCount = wd.recentProjectsMaxCount
         } catch (error) {
@@ -180,7 +177,7 @@ async function setProject(path: string): Promise<string> {
         ok: string; path: string; homeDir?: string
         roots?: string[]; uploadMaxSizeMB?: number; uploadMaxFiles?: number
         chatInitialMessages?: number; chatPageSize?: number; chatSessionPageSize?: number
-        chatCollapsedHeight?: number; sessionMaxCount?: number; recentProjectsMaxCount?: number
+        sessionMaxCount?: number; recentProjectsMaxCount?: number
     }>('/api/project', { path })
     resetProjectState()
     // Apply expanded response from POST — eliminates follow-up GET /api/roots + GET /api/project
@@ -196,7 +193,6 @@ async function setProject(path: string): Promise<string> {
     if ((data as any).chatInitialMessages > 0) state.chatInitialMessages = (data as any).chatInitialMessages
     if ((data as any).chatPageSize > 0) state.chatPageSize = (data as any).chatPageSize
     if ((data as any).chatSessionPageSize > 0) state.chatSessionPageSize = (data as any).chatSessionPageSize
-    if ((data as any).chatCollapsedHeight > 0) state.chatCollapsedHeight = (data as any).chatCollapsedHeight
     if ((data as any).sessionMaxCount > 0) state.sessionMaxCount = (data as any).sessionMaxCount
     if ((data as any).recentProjectsMaxCount > 0) state.recentProjectsMaxCount = (data as any).recentProjectsMaxCount
     return data.path || path
@@ -235,7 +231,6 @@ function resetProjectState(): void {
     state.chatInitialMessages = 20
     state.chatPageSize = 20
     state.chatSessionPageSize = 10
-    state.chatCollapsedHeight = 150
     state.sessionMaxCount = 10
     state.sessionCount = 0
     state.recentProjectsMaxCount = 10

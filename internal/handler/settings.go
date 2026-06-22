@@ -34,7 +34,6 @@ var configMutex sync.RWMutex
 // hotReloadFields is the set of config dot-paths that take effect immediately
 // via applyHotReloadGlobals() and do NOT require a server restart.
 var hotReloadFields = map[string]bool{
-	"chat.collapsed_height":       true,
 	"chat.initial_messages":       true,
 	"chat.page_size":              true,
 	"chat.system_prompt_interval": true,
@@ -82,7 +81,6 @@ type configResponse struct {
 type configChat struct {
 	InitialMessages      int `json:"initial_messages"`
 	PageSize             int `json:"page_size"`
-	CollapsedHeight      int `json:"collapsed_height"`
 	SystemPromptInterval int `json:"system_prompt_interval"`
 }
 
@@ -181,7 +179,6 @@ var PatchableConfigPaths = map[string]bool{
 	"default_agent":               true,
 	"chat.initial_messages":       true,
 	"chat.page_size":              true,
-	"chat.collapsed_height":       true,
 	"chat.system_prompt_interval": true,
 	"session.max_count":           true,
 	"recent_projects.max_count":   true,
@@ -299,7 +296,6 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		Chat: configChat{
 			InitialMessages:      cfg.Chat.InitialMessages,
 			PageSize:             cfg.Chat.PageSize,
-			CollapsedHeight:      cfg.Chat.CollapsedHeight,
 			SystemPromptInterval: cfg.Chat.SystemPromptInterval,
 		},
 		Session: configSession{
@@ -660,7 +656,7 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 
 	chat, ok := patch["chat"].(map[string]any)
 	if ok {
-		for _, key := range []string{"collapsed_height", "initial_messages", "page_size", "system_prompt_interval"} {
+		for _, key := range []string{"initial_messages", "page_size", "system_prompt_interval"} {
 			if v, ok := chat[key].(float64); ok && v < 0 {
 				return fmt.Errorf("chat.%s must be non-negative", key)
 			}
@@ -701,9 +697,6 @@ func applyConfigPatch(patch map[string]any) error { //nolint:gocognit,gocyclo //
 	}
 
 	if chat, ok := patch["chat"].(map[string]any); ok {
-		if v, ok := chat["collapsed_height"].(float64); ok {
-			cfg.Chat.CollapsedHeight = int(v)
-		}
 		if v, ok := chat["initial_messages"].(float64); ok {
 			cfg.Chat.InitialMessages = int(v)
 		}
@@ -895,7 +888,6 @@ func applyConfigPatch(patch map[string]any) error { //nolint:gocognit,gocyclo //
 // ConfigInstance. Called after a successful patch (and on rollback).
 func applyHotReloadGlobals() {
 	cfg := model.ConfigInstance
-	model.ChatCollapsedHeight = cfg.Chat.CollapsedHeight
 	model.ChatInitialMessages = cfg.Chat.InitialMessages
 	model.ChatPageSize = cfg.Chat.PageSize
 	model.ChatSystemPromptInterval = cfg.Chat.SystemPromptInterval

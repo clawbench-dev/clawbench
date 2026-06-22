@@ -1,5 +1,4 @@
 chat:
-    collapsed_height: 200
     initial_messages: 0
     page_size: 0
     session_page_size: 0

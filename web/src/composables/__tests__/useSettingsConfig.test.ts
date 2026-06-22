@@ -192,13 +192,13 @@ describe('useSettingsConfig', () => {
 
   describe('concurrent setServerValue', () => {
     it('preserves first optimistic update when second call resolves', async () => {
-      // Simulate: user changes chat.collapsed_height then chat.page_size quickly
+      // Simulate: user changes chat.page_size then chat.initial_messages quickly
       // Both are under the "chat" key in serverConfig
       const { serverConfig, setServerValue, loadConfig } = useSettingsConfig()
 
       // Initialize serverConfig with chat sub-object
       mockedApiGet.mockResolvedValue({
-        chat: { collapsed_height: 150, page_size: 20, initial_messages: 20 },
+        chat: { page_size: 20, initial_messages: 20, system_prompt_interval: 10 },
       })
       await loadConfig()
 
@@ -213,28 +213,28 @@ describe('useSettingsConfig', () => {
       mockedApiPatch.mockImplementationOnce(() => secondPromise)
 
       // Fire both updates concurrently
-      const p1 = setServerValue('chat.collapsed_height', 300)
-      const p2 = setServerValue('chat.page_size', 50)
+      const p1 = setServerValue('chat.page_size', 50)
+      const p2 = setServerValue('chat.initial_messages', 30)
 
       // Before API resolves, both should be optimistically applied
-      expect(serverConfig.value.chat.collapsed_height).toBe(300)
       expect(serverConfig.value.chat.page_size).toBe(50)
+      expect(serverConfig.value.chat.initial_messages).toBe(30)
 
       // Resolve second call first (out of order)
       resolveSecond!({ needs_restart: false, changed_cold_fields: [] })
       await p2
 
-      // page_size should still be 50, collapsed_height should still be 300
-      expect(serverConfig.value.chat.collapsed_height).toBe(300)
+      // page_size should still be 50, initial_messages should still be 30
       expect(serverConfig.value.chat.page_size).toBe(50)
+      expect(serverConfig.value.chat.initial_messages).toBe(30)
 
       // Now resolve first call
       resolveFirst!({ needs_restart: false, changed_cold_fields: [] })
       await p1
 
       // Both values should be preserved
-      expect(serverConfig.value.chat.collapsed_height).toBe(300)
       expect(serverConfig.value.chat.page_size).toBe(50)
+      expect(serverConfig.value.chat.initial_messages).toBe(30)
     })
   })
 

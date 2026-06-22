@@ -118,7 +118,6 @@ describe('store', () => {
             store.state.chatInitialMessages = 999
             store.state.chatPageSize = 999
             store.state.chatSessionPageSize = 999
-            store.state.chatCollapsedHeight = 999
             store.state.sessionMaxCount = 999
             store.state.recentProjectsMaxCount = 999
 
@@ -129,7 +128,6 @@ describe('store', () => {
             expect(store.state.chatInitialMessages).toBe(20)
             expect(store.state.chatPageSize).toBe(20)
             expect(store.state.chatSessionPageSize).toBe(10)
-            expect(store.state.chatCollapsedHeight).toBe(150)
             expect(store.state.sessionMaxCount).toBe(10)
             expect(store.state.recentProjectsMaxCount).toBe(10)
         })
@@ -696,18 +694,6 @@ describe('store', () => {
             expect(store.state.chatSessionPageSize).toBe(20)
         })
 
-        it('reads chatCollapsedHeight from roots API', async () => {
-            mockApiGet.mockImplementation((url: string) => {
-                if (url === '/api/roots') return { roots: ['/'], chatCollapsedHeight: 200 }
-                if (url === '/api/project') return { path: '/home/user/project' }
-                return {}
-            })
-
-            await store.loadProject()
-
-            expect(store.state.chatCollapsedHeight).toBe(200)
-        })
-
         it('reads sessionMaxCount from roots API', async () => {
             mockApiGet.mockImplementation((url: string) => {
                 if (url === '/api/roots') return { roots: ['/'], sessionMaxCount: 50 }
@@ -769,7 +755,6 @@ describe('store', () => {
                 chatInitialMessages: 15,
                 chatPageSize: 30,
                 chatSessionPageSize: 8,
-                chatCollapsedHeight: 100,
                 sessionMaxCount: 20,
                 recentProjectsMaxCount: 5,
             })
@@ -781,7 +766,6 @@ describe('store', () => {
             expect(store.state.chatInitialMessages).toBe(15)
             expect(store.state.chatPageSize).toBe(30)
             expect(store.state.chatSessionPageSize).toBe(8)
-            expect(store.state.chatCollapsedHeight).toBe(100)
             expect(store.state.sessionMaxCount).toBe(20)
             expect(store.state.recentProjectsMaxCount).toBe(5)
         })

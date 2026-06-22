@@ -27,8 +27,6 @@ vi.mock('@/stores/app', () => ({
 
 vi.mock('@/utils/messageListUtils', () => ({
   computeRemainingCount: vi.fn(() => 0),
-  computeLastRoundIndices: vi.fn(() => new Set()),
-  isCollapsed: vi.fn(() => false),
 }))
 
 // ── i18n ─────────────────────────────────────────────────────

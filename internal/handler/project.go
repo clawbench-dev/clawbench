@@ -165,7 +165,6 @@ func ServeProjectSet(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo 
 			"chatInitialMessages":    model.ChatInitialMessages,
 			"chatPageSize":           model.ChatPageSize,
 			"chatSessionPageSize":    model.ChatSessionPageSize,
-			"chatCollapsedHeight":    model.ChatCollapsedHeight,
 			"sessionMaxCount":        model.SessionMaxCount,
 			"recentProjectsMaxCount": model.RecentProjectsMaxCount,
 		})
@@ -196,7 +195,6 @@ func ServeRoots(w http.ResponseWriter, r *http.Request) {
 		"chatInitialMessages":    model.ChatInitialMessages,
 		"chatPageSize":           model.ChatPageSize,
 		"chatSessionPageSize":    model.ChatSessionPageSize,
-		"chatCollapsedHeight":    model.ChatCollapsedHeight,
 		"sessionMaxCount":        model.SessionMaxCount,
 		"recentProjectsMaxCount": model.RecentProjectsMaxCount,
 	})

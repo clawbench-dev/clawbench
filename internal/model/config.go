@@ -51,7 +51,6 @@ type Config struct {
 		InitialMessages      int `yaml:"initial_messages"`       // Number of messages to load initially (default: 20)
 		PageSize             int `yaml:"page_size"`              // Number of messages per lazy-load batch (default: 20)
 		SessionPageSize      int `yaml:"session_page_size"`      // Number of sessions per page in session list (default: 10)
-		CollapsedHeight      int `yaml:"collapsed_height"`       // Collapsed message height in pixels (default: 150)
 		SystemPromptInterval int `yaml:"system_prompt_interval"` // Re-inject system prompt every N assistant turns (0=never, default: 10)
 	} `yaml:"chat"`
 	Session struct {
@@ -192,7 +191,6 @@ var (
 	ChatInitialMessages      int // Default: 20
 	ChatPageSize             int // Default: 20
 	ChatSessionPageSize      int // Default: 10
-	ChatCollapsedHeight      int // Default: 150
 	ChatSystemPromptInterval int // Re-inject system prompt every N assistant turns (0=never, default: 10)
 
 	// Session limits (set from config, with defaults)

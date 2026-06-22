@@ -222,7 +222,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	model.ChatInitialMessages = cfg.Chat.InitialMessages
 	model.ChatPageSize = cfg.Chat.PageSize
 	model.ChatSessionPageSize = cfg.Chat.SessionPageSize
-	model.ChatCollapsedHeight = cfg.Chat.CollapsedHeight
 	model.ChatSystemPromptInterval = cfg.Chat.SystemPromptInterval
 	model.SessionMaxCount = cfg.Session.MaxCount
 	model.RecentProjectsMaxCount = cfg.RecentProjects.MaxCount

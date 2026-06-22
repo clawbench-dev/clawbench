@@ -115,16 +115,6 @@ func TestPersist_ChatPageSize(t *testing.T) {
 	assert.Equal(t, 50, getNestedValue(cfg, "chat.page_size"))
 }
 
-func TestPersist_ChatCollapsedHeight(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-
-	cfg := patchAndReadConfig(t, `{"chat":{"collapsed_height":300}}`)
-	assert.Equal(t, 300, getNestedValue(cfg, "chat.collapsed_height"))
-}
-
 func TestPersist_ChatSystemPromptInterval(t *testing.T) {
 	_, cleanup := setupPersistTestEnv(t)
 	defer cleanup()
@@ -594,7 +584,7 @@ func TestPersist_InMemoryAndDiskMatch(t *testing.T) {
 
 	model.ConfigInstance = model.Config{}
 
-	body := `{"chat":{"collapsed_height":250},"upload":{"max_size_mb":50},"default_agent":"claude"}`
+	body := `{"chat":{"system_prompt_interval":20},"upload":{"max_size_mb":50},"default_agent":"claude"}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
@@ -603,7 +593,7 @@ func TestPersist_InMemoryAndDiskMatch(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	// Verify in-memory
-	assert.Equal(t, 250, model.ConfigInstance.Chat.CollapsedHeight)
+	assert.Equal(t, 20, model.ConfigInstance.Chat.SystemPromptInterval)
 	assert.Equal(t, 50, model.ConfigInstance.Upload.MaxSizeMB)
 	assert.Equal(t, "claude", model.ConfigInstance.DefaultAgent)
 
@@ -615,7 +605,7 @@ func TestPersist_InMemoryAndDiskMatch(t *testing.T) {
 	var cfg map[string]any
 	require.NoError(t, yaml.Unmarshal(data, &cfg))
 
-	assert.Equal(t, 250, getNestedValue(cfg, "chat.collapsed_height"))
+	assert.Equal(t, 20, getNestedValue(cfg, "chat.system_prompt_interval"))
 	assert.Equal(t, 50, getNestedValue(cfg, "upload.max_size_mb"))
 	assert.Equal(t, "claude", getNestedValue(cfg, "default_agent"))
 }
@@ -627,13 +617,13 @@ func TestPersist_CreatesBackup(t *testing.T) {
 	defer cleanup()
 
 	model.ConfigInstance = model.Config{}
-	model.ConfigInstance.Chat.CollapsedHeight = 150
+	model.ConfigInstance.Chat.SystemPromptInterval = 10
 
 	// First PATCH creates config.yaml
-	patchAndReadConfig(t, `{"chat":{"collapsed_height":200}}`)
+	patchAndReadConfig(t, `{"chat":{"system_prompt_interval":15}}`)
 
 	// Second PATCH should create .bak
-	patchAndReadConfig(t, `{"chat":{"collapsed_height":250}}`)
+	patchAndReadConfig(t, `{"chat":{"system_prompt_interval":20}}`)
 
 	bakPath := filepath.Join(model.BinDir, "config", "config.yaml.bak")
 	_, err := os.Stat(bakPath)
@@ -676,10 +666,10 @@ func TestPersist_FreshFileCreation(t *testing.T) {
 
 	// Don't create config.yaml manually — let writeConfigYAML create it from ConfigInstance
 	model.ConfigInstance = model.Config{}
-	model.ConfigInstance.Chat.CollapsedHeight = 200
+	model.ConfigInstance.Chat.SystemPromptInterval = 10
 
-	cfg := patchAndReadConfig(t, `{"chat":{"collapsed_height":300}}`)
-	assert.Equal(t, 300, getNestedValue(cfg, "chat.collapsed_height"))
+	cfg := patchAndReadConfig(t, `{"chat":{"system_prompt_interval":20}}`)
+	assert.Equal(t, 20, getNestedValue(cfg, "chat.system_prompt_interval"))
 }
 
 // --- writeConfigYAML with corrupt existing file ---
@@ -695,11 +685,11 @@ func TestPersist_CorruptYAMLRecovery(t *testing.T) {
 	require.NoError(t, os.WriteFile(configPath, []byte("::invalid yaml::\n  [bad"), 0o644))
 
 	model.ConfigInstance = model.Config{}
-	model.ConfigInstance.Chat.CollapsedHeight = 100
+	model.ConfigInstance.Chat.SystemPromptInterval = 10
 
 	// Should still succeed — corrupt file is overwritten from ConfigInstance
-	cfg := patchAndReadConfig(t, `{"chat":{"collapsed_height":250}}`)
-	assert.Equal(t, 250, getNestedValue(cfg, "chat.collapsed_height"))
+	cfg := patchAndReadConfig(t, `{"chat":{"system_prompt_interval":20}}`)
+	assert.Equal(t, 20, getNestedValue(cfg, "chat.system_prompt_interval"))
 }
 
 // --- writeConfigYAML with empty existing file ---
@@ -715,10 +705,10 @@ func TestPersist_EmptyYAMLRecovery(t *testing.T) {
 	require.NoError(t, os.WriteFile(configPath, []byte(""), 0o644))
 
 	model.ConfigInstance = model.Config{}
-	model.ConfigInstance.Chat.CollapsedHeight = 100
+	model.ConfigInstance.Chat.SystemPromptInterval = 10
 
-	cfg := patchAndReadConfig(t, `{"chat":{"collapsed_height":250}}`)
-	assert.Equal(t, 250, getNestedValue(cfg, "chat.collapsed_height"))
+	cfg := patchAndReadConfig(t, `{"chat":{"system_prompt_interval":20}}`)
+	assert.Equal(t, 20, getNestedValue(cfg, "chat.system_prompt_interval"))
 }
 
 // --- mergePatchIntoRaw creates nested map if missing ---
@@ -733,11 +723,11 @@ func TestPersist_MergeCreatesNestedMap(t *testing.T) {
 	require.NoError(t, os.WriteFile(configPath, []byte("default_agent: claude\n"), 0o644))
 
 	model.ConfigInstance = model.Config{}
-	model.ConfigInstance.Chat.CollapsedHeight = 100
+	model.ConfigInstance.Chat.SystemPromptInterval = 10
 
 	// This should create the "chat" nested map and merge into it
-	cfg := patchAndReadConfig(t, `{"chat":{"collapsed_height":300}}`)
-	assert.Equal(t, 300, getNestedValue(cfg, "chat.collapsed_height"))
+	cfg := patchAndReadConfig(t, `{"chat":{"system_prompt_interval":20}}`)
+	assert.Equal(t, 20, getNestedValue(cfg, "chat.system_prompt_interval"))
 	// Original top-level field should be preserved
 	assert.Equal(t, "claude", getNestedValue(cfg, "default_agent"))
 }
@@ -755,8 +745,8 @@ func TestPersist_CreatesConfigDir(t *testing.T) {
 	model.ConfigInstance = model.Config{}
 
 	// PATCH should re-create the config directory
-	cfg := patchAndReadConfig(t, `{"chat":{"collapsed_height":250}}`)
-	assert.Equal(t, 250, getNestedValue(cfg, "chat.collapsed_height"))
+	cfg := patchAndReadConfig(t, `{"chat":{"system_prompt_interval":20}}`)
+	assert.Equal(t, 20, getNestedValue(cfg, "chat.system_prompt_interval"))
 
 	// Verify the directory and file exist
 	_, err := os.Stat(filepath.Join(configDir, "config.yaml"))
@@ -772,7 +762,7 @@ func TestPersist_IncrementalPatchPreservesFields(t *testing.T) {
 	model.ConfigInstance = model.Config{}
 
 	// First PATCH
-	patchAndReadConfig(t, `{"chat":{"collapsed_height":200}}`)
+	patchAndReadConfig(t, `{"chat":{"system_prompt_interval":20}}`)
 
 	// Second PATCH — should preserve the first change
 	patchAndReadConfig(t, `{"upload":{"max_size_mb":50}}`)
@@ -785,6 +775,6 @@ func TestPersist_IncrementalPatchPreservesFields(t *testing.T) {
 	var cfg map[string]any
 	require.NoError(t, yaml.Unmarshal(data, &cfg))
 
-	assert.Equal(t, 200, getNestedValue(cfg, "chat.collapsed_height"))
+	assert.Equal(t, 20, getNestedValue(cfg, "chat.system_prompt_interval"))
 	assert.Equal(t, 50, getNestedValue(cfg, "upload.max_size_mb"))
 }

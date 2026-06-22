@@ -47,8 +47,6 @@
       :blockAskQuestions="blockAskQuestions"
       :blockRagResults="blockRagResults"
       :agents="agents"
-      :shouldCollapse="isCollapsed(i, msg)"
-      :isLastRound="lastRoundIndices.has(i)"
       :staticBlockCache="staticBlockCache"
       :active="active"
       @toggle-tool="$emit('toggle-tool', $event)"
@@ -58,8 +56,6 @@
       @file-tag-click="$emit('file-tag-click', $event)"
       @task-card-click="$emit('task-card-click', $event)"
       @send-message="$emit('send-message', $event)"
-      @expand="handleExpand"
-      @collapse="handleCollapse"
       @render-flush="emit('render-flush')"
       @toggle-summary="$emit('toggle-summary', $event)"
       @resume-session="$emit('resume-session', $event)"
@@ -105,7 +101,7 @@ import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { useDialog } from '@/composables/useDialog'
 import { store } from '@/stores/app.ts'
-import { computeRemainingCount, computeLastRoundIndices, isCollapsed as isCollapsedUtil } from '@/utils/messageListUtils.ts'
+import { computeRemainingCount } from '@/utils/messageListUtils.ts'
 
 const { t } = useI18n()
 
@@ -151,17 +147,8 @@ watch(() => props.hasMore, (hasMore, prevHasMore) => {
   }
 })
 
-// Track manually expanded/collapsed message indices
-// expandedSet: indices that user manually expanded (should not auto-collapse)
-// collapsedSet: indices that user manually collapsed after expanding (should auto-collapse even if last round)
-const expandedSet = ref(new Set())
-const collapsedSet = ref(new Set())
-
-// Reset expanded/collapsed state when messages change identity (session switch / reload)
-// Also reset isAtBottom so auto-scroll re-engages for the new session
+// Reset isAtBottom so auto-scroll re-engages for the new session
 watch(() => props.messages, () => {
-  expandedSet.value = new Set()
-  collapsedSet.value = new Set()
   isAtBottom.value = true
   scrolledUp.value = false
   scrolledDown.value = false
@@ -170,35 +157,6 @@ watch(() => props.messages, () => {
   clearTimeout(scrollUpTimer)
   clearTimeout(scrollDownTimer)
 })
-
-// Compute the last round: last assistant message + its preceding user message
-const lastRoundIndices = computed(() => {
-  return computeLastRoundIndices(props.messages)
-})
-
-function isCollapsed(index, msg) {
-  return isCollapsedUtil(index, msg, collapsedSet.value, lastRoundIndices.value, expandedSet.value)
-}
-
-function handleExpand(index) {
-  expandedSet.value = new Set([...expandedSet.value, index])
-  // Remove from collapsedSet if it was there
-  if (collapsedSet.value.has(index)) {
-    const newSet = new Set(collapsedSet.value)
-    newSet.delete(index)
-    collapsedSet.value = newSet
-  }
-}
-
-function handleCollapse(index) {
-  collapsedSet.value = new Set([...collapsedSet.value, index])
-  // Remove from expandedSet if it was there
-  if (expandedSet.value.has(index)) {
-    const newSet = new Set(expandedSet.value)
-    newSet.delete(index)
-    expandedSet.value = newSet
-  }
-}
 
 // Inject bottomSheetRef from parent for closing
 const chatUI = inject('chatUI', {})

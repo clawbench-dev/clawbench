@@ -31,7 +31,7 @@ const localConfig = reactive<Record<string, any>>({
 const serverConfig = ref<Record<string, any>>({
   version: 'dev',
   default_agent: '',
-  chat: { initial_messages: 20, page_size: 20, collapsed_height: 150, system_prompt_interval: 10 },
+  chat: { initial_messages: 20, page_size: 20, system_prompt_interval: 10 },
   session: { max_count: 10 },
   upload: { max_size_mb: 100, max_files: 20 },
   terminal: { enabled: true, idle_timeout: '10m', max_sessions: 10, buffer_lines: 2000 },
@@ -119,7 +119,6 @@ const i18n = createI18n({
           swipeSession: '滑动切换会话',
           chatInitialMessages: '初始消息数',
           chatPageSize: '每页消息数',
-          chatCollapsedHeight: '折叠高度',
           chatSystemPromptInterval: '系统提示间隔',
           sessionMaxCount: '最大会话数',
           theme: '主题',

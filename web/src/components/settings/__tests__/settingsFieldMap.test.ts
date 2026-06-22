@@ -14,7 +14,6 @@ describe('settingsFieldMap', () => {
     expect(map['push.jpush.enabled']).toBeTruthy()
 
     // Hot-reload fields (shouldn't normally appear but should still be mapped)
-    expect(map['chat.collapsed_height']).toBeTruthy()
     expect(map['chat.page_size']).toBeTruthy()
     expect(map['upload.max_size_mb']).toBeTruthy()
 

@@ -227,8 +227,6 @@ export default {
       emptyHint: '暂无快捷发送，点击 + 添加',
     },
     message: {
-      expandFull: '展开全文',
-      collapse: '收起',
       viewDetails: '查看详情',
       speaking: '朗读中',
       readAloud: '朗读',
@@ -982,8 +980,6 @@ export default {
       chatInitialMessagesDesc: '首次加载聊天时获取的历史消息数量',
       chatPageSize: '每页消息数',
       chatPageSizeDesc: '向上滚动加载更多消息时的每页数量',
-      chatCollapsedHeight: '折叠高度',
-      chatCollapsedHeightDesc: '长消息默认折叠的显示高度（像素）',
       chatSystemPromptInterval: '系统提示间隔',
       chatSystemPromptIntervalDesc: '每隔多少条消息插入一次系统提示',
       sessionMaxCount: '最大会话数',

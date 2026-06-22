@@ -2,7 +2,7 @@
   <div class="chat-message" :class="[msg.role, { 'has-metadata': msg.role === 'assistant' && msg.metadata, pending: msg.pending }]">
 
     <!-- Collapsible content wrapper -->
-    <div ref="wrapperRef" class="msg-content-wrapper" :class="{ collapsed }" :style="collapsed ? { maxHeight: store.state.chatCollapsedHeight + 'px' } : {}">
+    <div ref="wrapperRef" class="msg-content-wrapper">
       <FileAttachmentList v-if="msg.role === 'user' && msg.files && msg.files.length > 0 && !hasImagesInContent(msg.content)" :files="msg.files" @file-tag-click="$emit('file-tag-click', $event)" />
 
       <!-- Message content — unified ContentBlocks rendering for both user and assistant -->
@@ -39,23 +39,6 @@
         @resume-session="$emit('resume-session', $event)"
         @show-rag-detail="$emit('show-rag-detail', $event)"
       />
-    </div>
-
-    <!-- Collapse overlay + expand button -->
-    <div v-if="collapsed" class="msg-collapse-overlay" @click="handleExpand">
-      <div class="msg-collapse-gradient"></div>
-      <button class="msg-expand-btn">
-        <ChevronDown :size="14" />
-        {{ t('chat.message.expandFull') }}
-      </button>
-    </div>
-
-    <!-- Collapse button (shown when message is expanded and content overflows) -->
-    <div v-if="!collapsed && canCollapse" class="msg-collapse-action">
-      <button class="msg-collapse-btn" @click="handleCollapse">
-        <ChevronUp :size="14" />
-        {{ t('chat.message.collapse') }}
-      </button>
     </div>
 
     <!-- Pending hint for queued user messages -->
@@ -107,11 +90,10 @@
 </template>
 
 <script setup>
-import { ref, inject, computed, watch, nextTick, onMounted } from 'vue'
+import { ref, inject, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, ChevronUp, Clock, Pause, Volume2, Info } from 'lucide-vue-next'
+import { Clock, Pause, Volume2, Info } from 'lucide-vue-next'
 import { formatDuration } from '@/utils/format.ts'
-import { store } from '@/stores/app.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import ContentBlocks from './ContentBlocks.vue'
 import FileAttachmentList from './FileAttachmentList.vue'
@@ -128,31 +110,15 @@ const props = defineProps({
   blockAskQuestions: Object,
   blockRagResults: Object,
   agents: Array,
-  shouldCollapse: Boolean,
-  isLastRound: { type: Boolean, default: false },
   staticBlockCache: Object,
   active: { type: Boolean, default: true },
 })
 
-const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-thinking-detail', 'show-metadata', 'file-tag-click', 'expand', 'collapse', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'resume-session', 'show-rag-detail', 'remove-pending'])
+const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-thinking-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'resume-session', 'show-rag-detail', 'remove-pending'])
 
 const autoSpeech = inject('autoSpeech')
-const layoutRefreshKey = inject('layoutRefreshKey', ref(0))
 const wrapperRef = ref(null)
-const overflows = ref(false)
-const userExpanded = ref(false)  // Whether user manually expanded (true) or is in default/auto-collapsed state (false)
 const speakBtnRef = ref(null)
-
-// Reset internal collapse state when the message identity changes
-// (e.g. loadHistory replaces the messages array, giving same-index
-// messages different ids). Without this, manuallyExpanded can survive
-// across message replacements, causing stale collapse state.
-watch(() => props.msg?.id, (newId, oldId) => {
-  if (oldId !== undefined && newId !== oldId) {
-    userExpanded.value = false
-    overflows.value = false  // Will be recalculated by checkOverflow watchers
-  }
-})
 
 // Extract text content from message blocks for TTS.
 // Uses extractSpeakableText to include AskUserQuestion blocks.
@@ -168,64 +134,6 @@ function handleSpeak() {
   } else if (msgText.value && props.msg?.id) {
     autoSpeech.speakText(props.msg.id, msgText.value)
   }
-}
-
-function checkOverflow() {
-  if (!wrapperRef.value) return
-  // When the chat panel is hidden (display:none via v-show), scrollHeight
-  // returns 0 which makes overflows=false — causing stale collapse state.
-  // Skip the check in that case; the next visible-frame check will fix it.
-  if (!wrapperRef.value.offsetParent) return
-  overflows.value = wrapperRef.value.scrollHeight > store.state.chatCollapsedHeight
-}
-
-// Check overflow after mount and when content changes.
-// Use nextTick for content changes (need DOM update first), but do a
-// synchronous re-check immediately after nextTick resolves to catch
-// cases where Vue batches DOM updates across multiple ticks.
-onMounted(() => nextTick(() => {
-  checkOverflow()
-  // Re-check after one more frame to catch async rendering (Mermaid, KaTeX)
-  requestAnimationFrame(checkOverflow)
-}))
-watch(() => props.msg?.blocks?.length, () => nextTick(() => {
-  checkOverflow()
-  requestAnimationFrame(checkOverflow)
-}))
-watch(() => props.msg?.streaming, () => nextTick(() => {
-  checkOverflow()
-  requestAnimationFrame(checkOverflow)
-}))
-
-// When the chat panel reopens after being hidden, layout measurements
-// (scrollHeight) are now valid again — re-check overflow.
-watch(layoutRefreshKey, () => {
-  nextTick(() => {
-    checkOverflow()
-    requestAnimationFrame(checkOverflow)
-  })
-})
-
-const collapsed = computed(() => {
-  if (!props.shouldCollapse) return false
-  if (props.msg?.streaming) return false
-  if (userExpanded.value) return false
-  return overflows.value
-})
-
-// Whether the message content overflows (used to show collapse/expand buttons)
-const canCollapse = computed(() => {
-  return overflows.value && !props.msg?.streaming
-})
-
-function handleExpand() {
-  userExpanded.value = true
-  emit('expand', props.index)
-}
-
-function handleCollapse() {
-  userExpanded.value = false
-  emit('collapse', props.index)
 }
 
 const chatRender = inject('chatRender', {})
@@ -269,95 +177,9 @@ const { getAgentIcon, getAgentName } = chatSession
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
-/* ── Collapse styles ── */
+/* ── Message content wrapper ── */
 .msg-content-wrapper {
   position: relative;
-}
-
-.msg-content-wrapper.collapsed {
-  overflow: hidden;
-}
-
-.msg-collapse-overlay {
-  position: relative;
-  margin-top: -40px;
-  padding-top: 40px;
-  cursor: pointer;
-}
-
-.msg-collapse-gradient {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(to bottom, transparent 0%, var(--bg-tertiary) 80%);
-  pointer-events: none;
-}
-
-.chat-message.user .msg-collapse-gradient {
-  background: linear-gradient(to bottom, transparent 0%, var(--user-msg-color) 80%);
-}
-
-.msg-expand-btn {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  width: 100%;
-  padding: 6px 0;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-  transition: color 0.2s;
-}
-
-.msg-expand-btn:hover {
-  color: var(--accent-color, #0066cc);
-}
-
-.msg-expand-btn svg {
-  flex-shrink: 0;
-}
-
-/* Collapse button (shown when message is expanded) */
-.msg-collapse-action {
-  display: flex;
-  justify-content: center;
-  margin-top: 2px;
-}
-
-.msg-collapse-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 4px 12px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-  border-radius: 4px;
-  transition: color 0.2s, background 0.2s;
-}
-
-.msg-collapse-btn:hover {
-  color: var(--accent-color, #0066cc);
-  background: var(--bg-tertiary);
-}
-
-.msg-collapse-btn svg {
-  flex-shrink: 0;
-}
-
-.chat-message.user .msg-collapse-btn {
-  color: rgba(255, 255, 255, 0.6);
-}
-
-.chat-message.user .msg-collapse-btn:hover {
-  color: rgba(255, 255, 255, 0.9);
-  background: rgba(255, 255, 255, 0.1);
 }
 
 /* Chat Meta Bar — contains model/duration info + detail button */
