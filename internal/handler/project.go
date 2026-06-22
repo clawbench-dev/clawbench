@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
 	"clawbench/internal/service"
@@ -67,7 +68,14 @@ func ServeRecentProjects(w http.ResponseWriter, r *http.Request) {
 func ServeProjectSet(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // multi-method project handler
 	switch r.Method {
 	case http.MethodGet:
-		projectPath, _ := service.GetDefaultProject()
+		// Prefer the existing cookie over the DB default — the cookie is set
+		// by POST /api/project (user-initiated switch) and is the per-session
+		// source of truth.  Only fall back to the DB default when no cookie
+		// exists (first visit or cookie expired).
+		projectPath := middleware.GetProjectFromCookie(r)
+		if projectPath == "" {
+			projectPath, _ = service.GetDefaultProject()
+		}
 		if projectPath == "" {
 			if homeDir := platform.UserHomeDir(); homeDir != "" {
 				projectPath = homeDir
@@ -75,8 +83,7 @@ func ServeProjectSet(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo 
 				projectPath = model.RootPaths[0]
 			}
 		}
-		// Always set/re-set the cookie so subsequent requests via requireProject() work.
-		// The cookie is a session cache derived from the DB default, not the source of truth.
+		// Refresh the cookie to extend its lifetime, using the resolved path.
 		http.SetCookie(w, &http.Cookie{
 			Name:     model.ScopedCookieName("clawbench_project"),
 			Value:    url.QueryEscape(projectPath),
