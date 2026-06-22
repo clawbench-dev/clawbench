@@ -274,7 +274,7 @@ async function loadFiles(dir = ''): Promise<void> {
         const data = await apiGet<{ items: DirEntry[] }>(url)
         // A newer loadFiles call started while we were awaiting — discard our result
         if (seq !== loadFilesSeq) {
-            console.debug(`[loadFiles] seq=${seq} discarded (current=${loadFilesSeq})`)
+            console.log(`[loadFiles] seq=${seq} discarded (current=${loadFilesSeq})`)
             return
         }
         state.currentDir = dir
@@ -391,14 +391,16 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
 }
 
 async function deleteFile(filePath: string): Promise<void> {
-    console.debug('[deleteFile] start:', filePath)
-    if (!await useDialog().confirm(gt('file.header.confirmDelete', { name: baseName(filePath) }), { dangerous: true })) {
-        console.debug('[deleteFile] user cancelled')
+    console.log('[deleteFile] start:', filePath)
+    const confirmed = await useDialog().confirm(gt('file.header.confirmDelete', { name: baseName(filePath) }), { dangerous: true })
+    console.log('[deleteFile] dialog result:', confirmed)
+    if (!confirmed) {
+        console.log('[deleteFile] user cancelled')
         return
     }
     try {
         await apiPost('/api/file/delete', { path: filePath })
-        console.debug('[deleteFile] API success')
+        console.log('[deleteFile] API success')
     } catch (err) {
         // File not found = already deleted (e.g. concurrent delete), treat as success
         const msgKey = (err as Error & { msgKey?: string })?.msgKey
@@ -406,15 +408,15 @@ async function deleteFile(filePath: string): Promise<void> {
             console.error('[deleteFile] API error:', err)
             useToast().show(gt('file.toast.deleteFailed'), { type: 'error', icon: '⚠️' })
         } else {
-            console.debug('[deleteFile] file already gone (404), treating as success')
+            console.log('[deleteFile] file already gone (404), treating as success')
         }
     }
     if (state.currentFile?.path === filePath) {
         state.currentFile = null
     }
-    console.debug('[deleteFile] refreshing file list, currentDir:', state.currentDir)
+    console.log('[deleteFile] refreshing, currentDir:', state.currentDir, 'loadFilesSeq:', loadFilesSeq)
     await Promise.all([loadFiles(state.currentDir), loadGitBranch()])
-    console.debug('[deleteFile] done, dirEntries count:', state.dirEntries.length)
+    console.log('[deleteFile] done, dirEntries count:', state.dirEntries.length)
 }
 
 async function deleteFiles(paths: string[]): Promise<void> {

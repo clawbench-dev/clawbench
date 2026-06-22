@@ -958,9 +958,11 @@ async function handleRename({ path, name }) {
 }
 
 async function handleDelete(path) {
+    console.log('[handleDelete] called, path:', path)
     const wasOverlay = fileNav.overlayOpen.value
     try {
         await store.deleteFile(path)
+        console.log('[handleDelete] store.deleteFile resolved')
     } catch (err) {
         console.error('[handleDelete] unhandled error:', err)
     }

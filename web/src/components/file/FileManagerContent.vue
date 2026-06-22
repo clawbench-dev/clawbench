@@ -927,7 +927,7 @@ function doDelete() {
         return
     }
     const path = ctxMenu.entry.path
-    console.debug('[doDelete] emitting delete for:', path)
+    console.log('[doDelete] emitting delete for:', path)
     closeCtxMenu()
     emit('delete', path)
 }
