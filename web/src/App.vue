@@ -572,6 +572,10 @@ const removeTaskHandler = onEvent((event, data) => {
 })
 
 const handleForeground = () => {
+    // Only refresh after initialization is complete — during cold start
+    // the onMounted handler loads fresh data; refreshing here with stale
+    // state (e.g. old currentDir from WebView cache) would show wrong dir.
+    if (!isAuthenticated.value) return
     // Full state pull — refresh everything that may have changed while backgrounded
     loadSessionsOnce()
     store.loadFiles(store.state.currentDir)
