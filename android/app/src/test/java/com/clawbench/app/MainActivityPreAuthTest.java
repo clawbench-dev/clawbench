@@ -24,7 +24,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+
+import okhttp3.OkHttpClient;
+
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doCallRealMethod;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
@@ -106,6 +110,9 @@ public class MainActivityPreAuthTest {
         setField(activity, "loadErrorPending", false);
         setField(activity, "connectionTimeoutRunnable", null);
         setField(activity, "pendingLoginErrorMessage", null);
+
+        // Stub performHealthCheck to return null (no error) by default
+        doReturn(null).when(activity).performHealthCheck(anyString(), any(OkHttpClient.class));
     }
 
     @After
@@ -600,6 +607,75 @@ public class MainActivityPreAuthTest {
 
         assertEquals(200, result.statusCode);
         assertTrue(result.cookies.isEmpty());
+
+        server.shutdown();
+    }
+
+    // =====================================================
+    // performHealthCheck: real HTTP via MockWebServer
+    // =====================================================
+
+    @Test
+    public void performHealthCheck_200_clawbenchServer_returnsNull() throws Exception {
+        MockWebServer server = new MockWebServer();
+        server.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setBody("{\"app\":\"clawbench\",\"version\":\"1.0.0\"}"));
+        server.start();
+
+        String url = "http://" + server.getHostName() + ":" + server.getPort();
+        OkHttpClient client = new OkHttpClient.Builder()
+                .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                .build();
+        // Call real method for this test
+        doCallRealMethod().when(activity).performHealthCheck(anyString(), any(OkHttpClient.class));
+        String result = activity.performHealthCheck(url, client);
+
+        assertNull(result);
+
+        RecordedRequest request = server.takeRequest();
+        assertTrue(request.getPath().endsWith("/api/health"));
+
+        server.shutdown();
+    }
+
+    @Test
+    public void performHealthCheck_200_nonClawbenchServer_returnsError() throws Exception {
+        MockWebServer server = new MockWebServer();
+        server.enqueue(new MockResponse()
+                .setResponseCode(200)
+                .setBody("{\"app\":\"other\",\"version\":\"1.0.0\"}"));
+        server.start();
+
+        String url = "http://" + server.getHostName() + ":" + server.getPort();
+        OkHttpClient client = new OkHttpClient.Builder()
+                .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                .build();
+        doCallRealMethod().when(activity).performHealthCheck(anyString(), any(OkHttpClient.class));
+        String result = activity.performHealthCheck(url, client);
+
+        assertNotNull(result);
+
+        server.shutdown();
+    }
+
+    @Test
+    public void performHealthCheck_non200_returnsError() throws Exception {
+        MockWebServer server = new MockWebServer();
+        server.enqueue(new MockResponse().setResponseCode(404));
+        server.start();
+
+        String url = "http://" + server.getHostName() + ":" + server.getPort();
+        OkHttpClient client = new OkHttpClient.Builder()
+                .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                .build();
+        doCallRealMethod().when(activity).performHealthCheck(anyString(), any(OkHttpClient.class));
+        String result = activity.performHealthCheck(url, client);
+
+        assertNotNull(result);
 
         server.shutdown();
     }

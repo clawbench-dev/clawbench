@@ -817,7 +817,7 @@ public class MainActivity extends AppCompatActivity {
      * Perform GET /api/health and verify the response contains {"app":"clawbench"}.
      * Returns null on success, or an error message string on failure.
      */
-    private String performHealthCheck(String url, OkHttpClient client) throws Exception {
+    String performHealthCheck(String url, OkHttpClient client) throws Exception {
         Request request = new Request.Builder()
                 .url(url + "/api/health")
                 .get()
