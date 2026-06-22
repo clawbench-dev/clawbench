@@ -401,19 +401,20 @@ onUnmounted(() => {
 .project-switch-btn {
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 2px 8px;
+    gap: 6px;
+    padding: 0 10px;
+    height: 30px;
     border: 1px solid var(--border-color);
     background: var(--bg-secondary);
     cursor: pointer;
     color: var(--text-primary);
     border-radius: 999px;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 500;
     max-width: none;
     min-width: 0;
     transition: background 0.15s, border-color 0.15s;
-    line-height: 1.4;
+    line-height: 1;
 }
 
 .project-switch-btn:hover {
@@ -441,12 +442,13 @@ onUnmounted(() => {
 .branch-badge {
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 2px 8px;
+    gap: 6px;
+    padding: 0 10px;
+    height: 30px;
     background: color-mix(in srgb, var(--accent-color) 12%, transparent);
     border: 1px solid color-mix(in srgb, var(--accent-color) 25%, transparent);
     border-radius: 999px;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 500;
     color: var(--accent-color);
     flex: 0 1 auto;
@@ -454,6 +456,7 @@ onUnmounted(() => {
     max-width: none;
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
+    line-height: 1;
 }
 
 .branch-badge:hover {
