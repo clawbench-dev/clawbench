@@ -282,6 +282,11 @@ async function loadFiles(dir = ''): Promise<void> {
         }
         state.currentDir = dir
         state.dirEntries = data.items || []
+        // Seed the dir stack base if it's empty (app init or project switch)
+        const dirStack = useDirStack()
+        if (dirStack.dirStack.value.length === 0) {
+            dirStack.pushDir(dir)
+        }
     } catch (err) {
         // A newer loadFiles call started — don't corrupt its state
         if (seq !== loadFilesSeq) return

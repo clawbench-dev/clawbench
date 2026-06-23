@@ -38,6 +38,8 @@ const mockDirStack = {
     truncateToDirAndLoad: vi.fn().mockResolvedValue(undefined),
     replaceTopAndLoad: vi.fn().mockResolvedValue(undefined),
     resetStack: vi.fn(),
+    pushDir: vi.fn(),
+    dirStack: { value: [] },
     currentDir: { value: '/project' },
 }
 vi.mock('@/composables/useDirStack', () => ({
@@ -51,6 +53,8 @@ describe('store', () => {
         vi.clearAllMocks()
         // Reset state to defaults before each test
         store.resetProjectState()
+        // Reset mock dirStack state
+        mockDirStack.dirStack.value = []
     })
 
     // ── resetProjectState ──

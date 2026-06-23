@@ -176,6 +176,22 @@ describe('useDirStack', () => {
     expect(ds.canGoBack.value).toBe(false)
   })
 
+  it('root-seeded stack: pushDir into subdir enables canGoBack', () => {
+    // Simulates app init: loadFiles('') seeds root, then user navigates into a subdir
+    const ds = useDirStack()
+    ds.pushDir('')          // root seeded by loadFiles
+    expect(ds.canGoBack.value).toBe(false)
+    ds.pushDir('src')       // user navigates into subdir
+    expect(ds.dirStack.value).toEqual(['', 'src'])
+    expect(ds.canGoBack.value).toBe(true)
+    expect(ds.currentDir.value).toBe('src')
+    // Swipe back pops to root
+    const back = ds.popDir()
+    expect(back).toBe('')
+    expect(ds.currentDir.value).toBe('')
+    expect(ds.canGoBack.value).toBe(false)
+  })
+
   it('full navigation lifecycle: push, push, truncate, pop, replace', () => {
     const ds = useDirStack()
     ds.pushDir('src')
