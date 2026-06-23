@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 describe('useNotificationSound', () => {
   it('exports play function without throwing', async () => {

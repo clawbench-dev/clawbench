@@ -8,16 +8,16 @@ describe('portForwardUtils', () => {
   describe('hasActivePort', () => {
     it('returns true when at least one port is active', () => {
       const ports: ForwardedPort[] = [
-        { port: 3000, host: '', name: 'A', protocol: 'http', autoDetect: false, active: false },
-        { port: 4000, host: '', name: 'B', protocol: 'http', autoDetect: false, active: true },
+        { port: 3000, host: '', name: 'A', protocol: 'http', autoDetect: false, active: false, localPort: 0 },
+        { port: 4000, host: '', name: 'B', protocol: 'http', autoDetect: false, active: true, localPort: 0 },
       ]
       expect(hasActivePort(ports)).toBe(true)
     })
 
     it('returns false when no ports are active', () => {
       const ports: ForwardedPort[] = [
-        { port: 3000, host: '', name: 'A', protocol: 'http', autoDetect: false, active: false },
-        { port: 4000, host: '', name: 'B', protocol: 'http', autoDetect: false, active: false },
+        { port: 3000, host: '', name: 'A', protocol: 'http', autoDetect: false, active: false, localPort: 0 },
+        { port: 4000, host: '', name: 'B', protocol: 'http', autoDetect: false, active: false, localPort: 0 },
       ]
       expect(hasActivePort(ports)).toBe(false)
     })
@@ -28,8 +28,8 @@ describe('portForwardUtils', () => {
 
     it('returns true when all ports are active', () => {
       const ports: ForwardedPort[] = [
-        { port: 3000, host: '', name: 'A', protocol: 'http', autoDetect: false, active: true },
-        { port: 4000, host: '', name: 'B', protocol: 'http', autoDetect: false, active: true },
+        { port: 3000, host: '', name: 'A', protocol: 'http', autoDetect: false, active: true, localPort: 0 },
+        { port: 4000, host: '', name: 'B', protocol: 'http', autoDetect: false, active: true, localPort: 0 },
       ]
       expect(hasActivePort(ports)).toBe(true)
     })
@@ -44,23 +44,23 @@ describe('portForwardUtils', () => {
 
     it('returns "ok" when there are ports and at least one is active', () => {
       const ports: ForwardedPort[] = [
-        { port: 3000, host: '', name: 'A', protocol: 'http', autoDetect: false, active: true },
-        { port: 4000, host: '', name: 'B', protocol: 'http', autoDetect: false, active: false },
+        { port: 3000, host: '', name: 'A', protocol: 'http', autoDetect: false, active: true, localPort: 0 },
+        { port: 4000, host: '', name: 'B', protocol: 'http', autoDetect: false, active: false, localPort: 0 },
       ]
       expect(tunnelStatusFromPorts(ports)).toBe('ok')
     })
 
     it('returns "degraded" when there are ports but none are active', () => {
       const ports: ForwardedPort[] = [
-        { port: 3000, host: '', name: 'A', protocol: 'http', autoDetect: false, active: false },
-        { port: 4000, host: '', name: 'B', protocol: 'http', autoDetect: false, active: false },
+        { port: 3000, host: '', name: 'A', protocol: 'http', autoDetect: false, active: false, localPort: 0 },
+        { port: 4000, host: '', name: 'B', protocol: 'http', autoDetect: false, active: false, localPort: 0 },
       ]
       expect(tunnelStatusFromPorts(ports)).toBe('degraded')
     })
 
     it('returns "ok" when all ports are active', () => {
       const ports: ForwardedPort[] = [
-        { port: 3000, host: '', name: 'A', protocol: 'http', autoDetect: false, active: true },
+        { port: 3000, host: '', name: 'A', protocol: 'http', autoDetect: false, active: true, localPort: 0 },
       ]
       expect(tunnelStatusFromPorts(ports)).toBe('ok')
     })
@@ -108,8 +108,8 @@ describe('portForwardUtils', () => {
     })
 
     it('defaults to localhost when host is empty', () => {
-      expect(buildPortUrl(3000, 'http', '')).toBe('http://localhost:3000')
-      expect(buildPortUrl(3000, 'http', undefined)).toBe('http://localhost:3000')
+      expect(buildPortUrl(3000, 'http')).toBe('http://localhost:3000')
+      expect(buildPortUrl(3000, 'http')).toBe('http://localhost:3000')
     })
   })
 })

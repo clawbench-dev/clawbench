@@ -122,7 +122,7 @@ function loadModelPref(agentId: string): string | null {
   return agent?.preferredModel || null
 }
 
-async function saveThinkingPref(agentId: string, level: string) {
+async function saveThinkingPref(agentId: string, _level: string) {
   if (!agentId) return
   // No-op: thinking effort selection in chat is session-scoped and does NOT update
   // the agent's default. The agent's preferredThinkingEffort is configured exclusively
@@ -276,7 +276,6 @@ let _sendMessage: ((text: string, filePaths?: string[]) => Promise<void>) | null
 let _openChatPanel: (() => void) | null = null
 let _continueFromExecution: ((taskId: number, execId: number, switchTabFn: (tab: string) => void) => Promise<boolean>) | null = null
 let _checkContinueSession: ((taskId: number, execId: number) => Promise<{ exists: boolean; sessionId: string }>) | null = null
-let _forkSession: ((sessionId: string) => Promise<boolean>) | null = null
 // SessionDrawer component ref — set by App.vue. Allows any component to
 // trigger openAgentSelector() on the global drawer without coupling.
 let _sessionDrawerRef: any = null
@@ -309,7 +308,6 @@ export function registerSessionActions(actions: SessionActions) {
   _openChatPanel = actions.openChatPanel
   _continueFromExecution = actions.continueFromExecution
   _checkContinueSession = actions.checkContinueSession
-  _forkSession = actions.forkSession
 
   // Expose E2E test bridge on window for Playwright access.
   // These allow tests to create/switch sessions without page reload,

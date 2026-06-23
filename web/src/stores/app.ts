@@ -156,11 +156,11 @@ async function loadProject(): Promise<void> {
             state.rootPaths = wd.roots || []
             if (wd.uploadMaxSizeMB > 0) state.uploadMaxSizeMB = wd.uploadMaxSizeMB
             if (wd.uploadMaxFiles > 0) state.uploadMaxFiles = wd.uploadMaxFiles
-            if (wd.chatInitialMessages > 0) state.chatInitialMessages = wd.chatInitialMessages
-            if (wd.chatPageSize > 0) state.chatPageSize = wd.chatPageSize
-            if (wd.chatSessionPageSize > 0) state.chatSessionPageSize = wd.chatSessionPageSize
-            if (wd.sessionMaxCount > 0) state.sessionMaxCount = wd.sessionMaxCount
-            if (wd.recentProjectsMaxCount > 0) state.recentProjectsMaxCount = wd.recentProjectsMaxCount
+            if ((wd.chatInitialMessages ?? 0) > 0) state.chatInitialMessages = wd.chatInitialMessages!
+            if ((wd.chatPageSize ?? 0) > 0) state.chatPageSize = wd.chatPageSize!
+            if ((wd.chatSessionPageSize ?? 0) > 0) state.chatSessionPageSize = wd.chatSessionPageSize!
+            if ((wd.sessionMaxCount ?? 0) > 0) state.sessionMaxCount = wd.sessionMaxCount!
+            if ((wd.recentProjectsMaxCount ?? 0) > 0) state.recentProjectsMaxCount = wd.recentProjectsMaxCount!
         } catch (error) {
             appLog.e(TAG, '[loadProject] roots failed:', error)
         }

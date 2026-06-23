@@ -336,13 +336,13 @@ function customParser(content: string) {
 
 describe('applySummaryUpdate', () => {
   it('stores summary on the message', () => {
-    const msg = { id: '1', showingSummary: undefined }
+    const msg: any = { id: '1', showingSummary: undefined }
     applySummaryUpdate(msg, 'A summary', true)
     expect(msg.summary).toBe('A summary')
   })
 
   it('stores null summary on the message', () => {
-    const msg = { id: '1', showingSummary: true }
+    const msg: any = { id: '1', showingSummary: true }
     applySummaryUpdate(msg, null, true)
     expect(msg.summary).toBeNull()
   })
@@ -372,7 +372,7 @@ describe('applySummaryUpdate', () => {
   })
 
   it('handles undefined summary', () => {
-    const msg = { id: '1', showingSummary: undefined }
+    const msg: any = { id: '1', showingSummary: undefined }
     applySummaryUpdate(msg, undefined, true)
     expect(msg.showingSummary).toBe(false)
     expect(msg.summary).toBeUndefined()

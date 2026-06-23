@@ -159,6 +159,8 @@ function handleSend() {
   expanded.value = false
   inputText.value = ''
 }
+
+defineExpose({ expanded, expand, inputText })
 </script>
 
 <style scoped>

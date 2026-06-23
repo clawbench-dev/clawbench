@@ -462,7 +462,7 @@ describe('humanizeCron', () => {
 
 describe('repeatLabel', () => {
   it('renders "once" mode', () => {
-    const result = repeatLabel('once')
+    const result = repeatLabel('once', 1)
     expect(result).toContain('task.repeat.once')
   })
 
@@ -473,12 +473,12 @@ describe('repeatLabel', () => {
   })
 
   it('renders "unlimited" mode (default)', () => {
-    const result = repeatLabel('unlimited')
+    const result = repeatLabel('unlimited', 0)
     expect(result).toContain('task.repeat.unlimited')
   })
 
   it('renders unknown mode as unlimited fallback', () => {
-    const result = repeatLabel('unknown')
+    const result = repeatLabel('unknown', 0)
     expect(result).toContain('task.repeat.unlimited')
   })
 

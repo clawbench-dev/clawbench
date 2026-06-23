@@ -28,12 +28,12 @@ export interface ToastOptions {
  * @param opts.duration - Auto-dismiss after N ms, 0 = manual only
  * @param opts.onClick - Callback fired when the toast is clicked
  */
-function show(msg: string, { icon: ico = '', type: tp = 'success', duration = 4000, onClick: cb = null }: ToastOptions = {}): void {
+function show(msg: string, { icon: ico = '', type: tp = 'success', duration = 4000, onClick: cb }: ToastOptions = {}): void {
     clearTimeout(timer!)
     message.value = msg
     icon.value = ico
     type.value = tp
-    onClick.value = cb
+    onClick.value = cb ?? null
     visible.value = true
     if (duration > 0) {
         timer = setTimeout(() => { visible.value = false }, duration)

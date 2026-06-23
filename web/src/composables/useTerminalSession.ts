@@ -1,8 +1,6 @@
 import { ref, computed, type Ref } from 'vue'
 import { useReconnect } from './useReconnect'
 import {
-  NO_RECONNECT_CODES,
-  WS_CLOSE_REPLACED,
   processTerminalMessage,
   processWSClose,
   buildWsUrl,

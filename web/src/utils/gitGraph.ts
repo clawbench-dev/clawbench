@@ -15,7 +15,25 @@ const LANE_COLORS = [
 
 
 
-function laneCx(lane) {
+interface GitCommit {
+  sha: string
+  parents: string[]
+  refs?: string[]
+  isWT?: boolean
+}
+
+interface GraphNode {
+  cx: number
+  cy: number
+  color: string
+  isWT: boolean
+  refs: string[]
+  lane: number
+  row: number
+  branchNames: string[]
+}
+
+function laneCx(lane: number): number {
   return lane * LANE_WIDTH + LANE_WIDTH / 2 + GRAPH_LEFT_PADDING
 }
 
@@ -33,12 +51,12 @@ function laneCx(lane) {
  *    - Cross-lane "merge-in" (branch commit whose parent is on another lane) →
  *      vertical line on branch lane + short bezier at merge point
  */
-export function computeGraphData(commits, rowHeight, previousShaToLane) {
+export function computeGraphData(commits: GitCommit[], rowHeight: number, previousShaToLane: Map<string, number> | null) {
   if (!commits || !commits.length) {
     return { nodes: [], lines: [], laneCount: 0, graphWidth: 40, shaToLane: new Map() }
   }
 
-  const laneColor = (lane) => LANE_COLORS[lane % LANE_COLORS.length]
+  const laneColor = (lane: number): string => LANE_COLORS[lane % LANE_COLORS.length]
 
   // ── Pre-build SHA-to-row index (O(1) lookup) ──
   const shaToRow = new Map()
@@ -242,19 +260,19 @@ export function computeGraphData(commits, rowHeight, previousShaToLane) {
   }
 
   // ── Phase 2: Generate nodes and connection lines ──
-  const nodes = []
+  const nodes: GraphNode[] = []
   const lines = []
 
   // Nodes
   for (let row = 0; row < commits.length; row++) {
     const c = commits[row]
     const cy = row * rowHeight + rowHeight / 2
-    const lane = laneOfRow[row]
+    const lane = laneOfRow[row] as number
     const cx = laneCx(lane)
     if (c.isWT) {
-      nodes.push({ cx, cy, color: '#f59e0b', isWT: true, refs: [], lane, row })
+      nodes.push({ cx, cy, color: '#f59e0b', isWT: true, refs: [] as string[], lane, row, branchNames: [] })
     } else {
-      nodes.push({ cx, cy, color: laneColor(lane), isWT: false, refs: c.refs || [], lane, row })
+      nodes.push({ cx, cy, color: laneColor(lane), isWT: false, refs: c.refs || [], lane, row, branchNames: [] })
     }
   }
 
@@ -465,7 +483,7 @@ export function computeGraphData(commits, rowHeight, previousShaToLane) {
   for (const node of nodes) {
     if (node.isWT) continue
     const c = commits[node.row]
-    const branchRefs = (c.refs || []).filter(r => !r.startsWith('HEAD') && !r.startsWith('tag: '))
+    const branchRefs = (c.refs || []).filter((r: string) => !r.startsWith('HEAD') && !r.startsWith('tag: '))
     if (branchRefs.length === 0) continue
 
     for (const ref of branchRefs) {
@@ -526,17 +544,17 @@ export function computeGraphData(commits, rowHeight, previousShaToLane) {
 
 // ─── Ref label helpers ─────────────────────────────────────────────────────
 
-export function refLabelWidth(ref) {
+export function refLabelWidth(ref: string): number {
   const text = ref.startsWith('tag: ') ? ref.slice(5) : ref
   return text.length * 6 + 8
 }
 
-export function refLabelText(ref) {
+export function refLabelText(ref: string): string {
   if (ref.startsWith('tag: ')) return ref.slice(5)
   return ref
 }
 
-export function refLabelBg(ref) {
+export function refLabelBg(ref: string): string {
   if (ref === 'HEAD') return '#1a1a2e'
   if (ref.startsWith('tag: ')) return '#555'
   return '#4a90d9'

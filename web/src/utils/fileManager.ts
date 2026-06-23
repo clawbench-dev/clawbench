@@ -38,11 +38,11 @@ export function isImage(entry: { type: string; name: string }): boolean {
 }
 
 export function isAudio(entry: { type: string; name: string }): boolean {
-  return getFileType(entry.name).isAudio
+  return !!getFileType(entry.name).isAudio
 }
 
 export function isVideo(entry: { type: string; name: string }): boolean {
-  return getFileType(entry.name).isVideo
+  return !!getFileType(entry.name).isVideo
 }
 
 // ── Thumbnail eligibility ──

@@ -12,7 +12,7 @@
       </div>
       <div v-if="localSelected.length > 0" class="kcf-selected-grid">
         <draggable v-model="localSelected" item-key="id" class="kcf-draggable" :animation="200" ghost-class="kcf-ghost" chosen-class="kcf-chosen" drag-class="kcf-drag" @end="onDragEnd">
-          <template #item="{ element, index }">
+          <template #item="{ element }">
             <button
               class="kcf-chip kcf-chip-selected"
             >

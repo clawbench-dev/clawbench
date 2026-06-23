@@ -19,6 +19,7 @@ import (
 const (
 	strBlocks    = "blocks"
 	strUser      = "user"
+	strAssistant = "assistant"
 	strContent   = "content"
 	strSessionID = "sessionId"
 	strError     = "error"
@@ -269,7 +270,7 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 
 		// Accumulate blocks across notifications, splitting on role boundaries.
 		var blocks []model.ContentBlock
-		var currentRole string // "user" or "assistant"
+		var currentRole string // strUser or strAssistant
 
 		flushBlocks := func() {
 			if len(blocks) == 0 || currentRole == "" {
@@ -277,7 +278,7 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 			}
 			blocks = ai.MergeConsecutiveThinkingBlocks(blocks)
 			contentMap := map[string]any{strBlocks: blocks}
-			if currentRole == "assistant" {
+			if currentRole == strAssistant {
 				contentMap["metadata"] = map[string]any{
 					"transport": transportACP,
 				}
@@ -292,7 +293,7 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 
 		for _, n := range buf {
 			// Determine the role of this notification
-			notifRole := "assistant"
+			notifRole := strAssistant
 			if n.Update.UserMessageChunk != nil {
 				notifRole = strUser
 			}

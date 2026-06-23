@@ -3,7 +3,7 @@ import { cancelChat } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
 import { useReconnect } from './useReconnect'
 import { gt } from '@/composables/useLocale'
-import { updateModeState, updateAvailableModes, updateCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, currentAgentId, updateUsageState } from './useSessionIdentity'
+import { updateModeState, updateCommandState, updateAvailableThinkingEfforts, currentAgentId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
 import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, drainQueueMessage, syncPendingFromBackend } from '@/utils/chatStreamUtils.ts'
@@ -51,8 +51,8 @@ export function useChatStream(options: UseChatStreamOptions) {
 
   let eventSource: EventSource | null = null
   let streamTimeout: ReturnType<typeof setTimeout> | null = null
-  let renderTimer: ReturnType<typeof setTimeout> | null = null
-  let pollingInterval: ReturnType<typeof setInterval> | null = null
+  let renderTimer: number | null = null
+  let pollingInterval: number | null = null
   // Flag to indicate the EventSource was closed intentionally by cleanupActiveStream
   // (session switch), so the stale onerror handler should not schedule reconnects.
   let disconnectedByCleanup = false
@@ -157,7 +157,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     stopPolling()
     let jsonParseFailures = 0
     const MAX_JSON_PARSE_FAILURES = 5
-    pollingInterval = setInterval(async () => {
+    pollingInterval = window.setInterval(async () => {
       try {
         const resp = await fetch(`/api/ai/chat?session_id=${encodeURIComponent(currentSessionId.value)}&limit=1`, { credentials: 'same-origin' })
         if (!resp.ok) {
@@ -177,7 +177,7 @@ export function useChatStream(options: UseChatStreamOptions) {
           return
         }
         // Parse messages from server response
-        const latestMsgs = (data.messages || []).map(msg => {
+        const latestMsgs = (data.messages || []).map((msg: any) => {
           if (msg.role === 'assistant') {
             const { blocks, metadata, cancelled } = onParseAssistantContent(msg.content)
             msg.blocks = blocks
@@ -214,7 +214,7 @@ export function useChatStream(options: UseChatStreamOptions) {
           return
         }
         // Session still running — incremental update
-        const lastAssistant = latestMsgs.findLast(m => m.role === 'assistant')
+        const lastAssistant = latestMsgs.findLast((m: any) => m.role === 'assistant')
         const existingStreaming = findStreamingMsg(messages.value)
 
         if (lastAssistant && existingStreaming) {
@@ -328,7 +328,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       let data
       try { data = JSON.parse(e.data) } catch { /* empty */ }
       if (data?.message_id) {
-        phase2.id = data.message_id
+        (phase2 as any).id = data.message_id
       }
       messages.value.push(phase2)
       onRenderNeeded()
@@ -394,7 +394,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       let data: any
       try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE tool_use: invalid JSON, skipping'); return }
       const blocks = sm.blocks
-      const existing = blocks.find(b => b.type === 'tool_use' && b.id === data.id)
+      const existing = blocks.find((b: any) => b.type === 'tool_use' && b.id === data.id)
       if (data.done) {
         if (existing) {
           // Slim SSE: only input present for interactive tools
@@ -470,7 +470,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       let data: any
       try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE tool_result: invalid JSON, skipping'); return }
       const blocks = sm.blocks
-      const existing = blocks.find(b => b.type === 'tool_use' && b.id === data.id)
+      const existing = blocks.find((b: any) => b.type === 'tool_use' && b.id === data.id)
       if (existing) {
         // Slim SSE: no input/output in tool_result events
         if (data.name) existing.name = data.name
@@ -561,7 +561,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         sm.blocks.push({ type: 'text', text: sm.streamingText })
         sm.streamingText = ''
       }
-      const warningBlock = { type: 'warning', text: data.text }
+      const warningBlock: any = { type: 'warning', text: data.text }
       if (data.reason) warningBlock.reason = data.reason
       sm.blocks.push(warningBlock)
       if (isOpen.value) {
@@ -703,7 +703,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       sseErrorHandled = true
       disconnectStream()
       let errorData: any
-      try { errorData = JSON.parse(e.data) } catch { /* ignore parse failure */ }
+      try { errorData = JSON.parse((e as MessageEvent).data) } catch { /* ignore parse failure */ }
       if (errorData?.reason === 'sse_busy') {
         sseErrorHandled = false
         return
@@ -713,7 +713,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (sessionChanged()) return
         const sm = findStreamingMsg(messages.value)
         if (sm) {
-          const errorBlock = { type: 'error', text: errorData?.error || 'Unknown error' }
+          const errorBlock: any = { type: 'error', text: errorData?.error || 'Unknown error' }
           if (errorData?.reason) errorBlock.reason = errorData.reason
           sm.blocks = [errorBlock]
         }

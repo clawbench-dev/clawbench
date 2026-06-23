@@ -101,7 +101,7 @@ watch(ports, () => {
 /**
  * Determines tunnel status from port state (delegates to pure utility).
  */
-function tunnelStatusFromPorts(hasPorts: boolean): 'ok' | 'degraded' {
+function tunnelStatusFromPorts(_hasPorts: boolean): 'ok' | 'degraded' {
   return tunnelStatusFromPortsUtil(ports.value)
 }
 

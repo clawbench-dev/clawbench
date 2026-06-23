@@ -1411,7 +1411,7 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
     event.preventDefault()
     const view = optionEl.closest('.ask-question-view')
     if (view && !view.classList.contains('ask-submitted')) {
-      const multiSelect = optionEl.closest('.ask-question-item')?.dataset.multi === 'true'
+      const multiSelect = (optionEl.closest('.ask-question-item') as HTMLElement | null)?.dataset.multi === 'true'
 
       if (multiSelect) {
         optionEl.classList.toggle('selected')
@@ -1486,7 +1486,7 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
 
 // ── PermissionApproval action handler ──
 
-registerToolActionHandler('PermissionApproval', (event, emit) => {
+registerToolActionHandler('PermissionApproval', (event, _emit) => {
   const target = event.target as HTMLElement
 
   // Button click

@@ -16,7 +16,7 @@ export interface UseCrudListOptions {
 }
 
 type GenericInstance = {
-  items: ReturnType<typeof useCrudList>['items']
+  items: Ref<unknown[]>
   loaded: ReturnType<typeof useCrudList>['loaded']
   showEditDialog: ReturnType<typeof useCrudList>['showEditDialog']
   fetchItems: (force?: boolean) => Promise<void>
@@ -136,7 +136,7 @@ export function useCrudList<T extends CrudItem>(options: UseCrudListOptions) {
   }
 
   return _singletons.get(key)! as {
-    items: { value: T[] }
+    items: Ref<T[]>
     loaded: Ref<boolean>
     showEditDialog: Ref<boolean>
     fetchItems: (force?: boolean) => Promise<void>

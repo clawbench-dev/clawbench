@@ -7,7 +7,7 @@ import { useChatContext } from '@/composables/useChatContext.ts'
 export function useFileUpload() {
   const toast = useToast()
 
-  const pendingFiles = ref([])
+  const pendingFiles = ref<Array<{ path: string; previewUrl: string | null; isImage: boolean; uploading: boolean; progress: number }>>([])
 
   // attachedFiles is managed globally via useChatContext so any tab
   // (file preview, chat input, quote-question) can read/write it.
@@ -19,7 +19,7 @@ export function useFileUpload() {
   const dirUploadTotal = ref(0)
   const dirUploadDone = ref(0)
 
-  function uploadOneFile(file, dir) {
+  function uploadOneFile(file: File, dir?: string) {
     return new Promise((resolve) => {
       const isImage = file.type.startsWith('image/')
       const previewUrl = isImage ? URL.createObjectURL(file) : null
@@ -111,7 +111,7 @@ export function useFileUpload() {
     })
   }
 
-  async function uploadFiles(files, dir) {
+  async function uploadFiles(files: File[], dir?: string) {
     const maxFiles = store.state.uploadMaxFiles
     const currentCount = pendingFiles.value.filter(f => !f.uploading).length
     const remaining = maxFiles - currentCount
@@ -152,33 +152,33 @@ export function useFileUpload() {
     }
   }
 
-  async function handleFileSelect(e) {
-    const files = Array.from(e.target.files || [])
+  async function handleFileSelect(e: Event) {
+    const files = Array.from((e.target as HTMLInputElement).files || [])
     // Reset input immediately to prevent Android WebView from re-firing
     // the change event with stale file data on picker cancellation
-    e.target.value = ''
+    ;(e.target as HTMLInputElement).value = ''
     if (files.length === 0) return
     await uploadFiles(files)
   }
 
-  async function handleFileDrop(files) {
+  async function handleFileDrop(files: File[]) {
     if (files.length === 0) return
     await uploadFiles(files)
   }
 
-  async function handleFileSelectToDir(e, dir) {
-    const files = Array.from(e.target.files || [])
-    e.target.value = ''
+  async function handleFileSelectToDir(e: Event, dir: string) {
+    const files = Array.from((e.target as HTMLInputElement).files || [])
+    ;(e.target as HTMLInputElement).value = ''
     if (files.length === 0) return
     await uploadFiles(files, dir)
   }
 
-  async function handleFileDropToDir(files, dir) {
+  async function handleFileDropToDir(files: File[], dir: string) {
     if (files.length === 0) return
     await uploadFiles(files, dir)
   }
 
-  function removeFile(index) {
+  function removeFile(index: number) {
     const f = pendingFiles.value[index]
     if (f?.previewUrl) {
       URL.revokeObjectURL(f.previewUrl)

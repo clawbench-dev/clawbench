@@ -8,7 +8,7 @@
  * events that start within the edge zones (left 20px and right 20px).
  */
 import { onMounted, onBeforeUnmount } from 'vue'
-import { registerBackHandler, type BackHandler, PRIORITY_PAGE, PRIORITY_OVERLAY } from './useBackHandler'
+import { registerBackHandler, type BackHandler } from './useBackHandler'
 import { useAppMode } from './useAppMode'
 
 const EDGE_ZONE = 20 // px from screen edge to detect edge swipes

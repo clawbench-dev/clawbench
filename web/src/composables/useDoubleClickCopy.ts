@@ -56,11 +56,11 @@ export function useDoubleClickCopy(options?: DoubleClickCopyOptions) {
         let element: HTMLElement | null = null
         let isLineMode = false
         if (options?.lineSelector) {
-            element = (target as HTMLElement | null)?.closest<HTMLElement>(options.lineSelector)
+            element = (target as HTMLElement | null)?.closest<HTMLElement>(options.lineSelector) ?? null
             isLineMode = true
         }
         if (!element) {
-            element = (target as HTMLElement | null)?.closest<HTMLElement>(BLOCK_SELECTORS)
+            element = (target as HTMLElement | null)?.closest<HTMLElement>(BLOCK_SELECTORS) ?? null
             isLineMode = false
         }
         if (!element) return false
@@ -84,7 +84,7 @@ export function useDoubleClickCopy(options?: DoubleClickCopyOptions) {
 
             // 显示 toast 提示
             if (toast) {
-                toast.show(gt('common.copied'), { icon: '📋', type: 'success', duration: 1500 })
+                toast.show(gt('common.copied'), { icon: '📋', duration: 1500 })
             }
         })
 

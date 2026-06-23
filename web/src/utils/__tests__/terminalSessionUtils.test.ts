@@ -6,7 +6,6 @@ import {
   processWSClose,
   buildWsUrl,
   type TerminalSessionState,
-  type TerminalCallbacks,
 } from '@/utils/terminalSessionUtils'
 
 function makeState(overrides?: Partial<TerminalSessionState>): TerminalSessionState {

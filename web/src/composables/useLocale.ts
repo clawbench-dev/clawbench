@@ -26,5 +26,5 @@ export function useLocale() {
 
 /** Global t function for use outside components (composables, utils) */
 export function gt(key: string, params?: Record<string, unknown>): string {
-  return i18n.global.t(key, params)
+  return i18n.global.t(key, params as any)
 }

@@ -19,7 +19,7 @@ export function parseAssistantContent(content: string) {
       return { blocks: [], metadata: parsed.metadata || null, cancelled: parsed.cancelled || false }
     }
     if (parsed.blocks && Array.isArray(parsed.blocks)) {
-      const mapped = parsed.blocks.map(b => {
+      const mapped = parsed.blocks.map((b: any) => {
         if (b.type === 'tool_use') {
           if (!b.name) b.name = ''
           if (b.done === undefined || b.done === false) b.done = true
@@ -116,7 +116,7 @@ export function hasImagesInContent(content: string | null | undefined): boolean 
 export function formatMessageTime(createdAt: string): string {
   const date = new Date(createdAt)
   const now = new Date()
-  const diffMs = now - date
+  const diffMs = now.getTime() - date.getTime()
   const diffMins = Math.floor(diffMs / 60000)
 
   if (diffMins < 1) return gt('time.justNow')

@@ -104,7 +104,7 @@ export function useCommitNavigation(options: {
     async function navigateToCommit(sha: string) {
         // Resolve short SHA to full SHA and get commit info BEFORE switching view
         // to avoid showing an empty files view while the async fetch is in progress.
-        let commitInfo = commits.value.find(c => c.sha === sha || c.sha.startsWith(sha))
+        let commitInfo = commits.value.find((c: any) => c.sha === sha || c.sha.startsWith(sha))
         if (!commitInfo) {
             // Try annotation cache first
             const cached = getCachedCommitInfo(sha)
@@ -116,7 +116,7 @@ export function useCommitNavigation(options: {
                 const fetched = await fetchCommitInfo(sha)
                 if (fetched && fetched.sha) {
                     commitInfo = fetched
-                    if (!commits.value.find(c => c.sha === fetched.sha)) {
+                    if (!commits.value.find((c: any) => c.sha === fetched.sha)) {
                         commits.value.unshift(fetched)
                     }
                 }

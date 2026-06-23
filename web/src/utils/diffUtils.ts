@@ -11,7 +11,6 @@
  */
 
 import { diffLines, diffChars } from 'diff'
-import type { Change } from 'diff'
 
 export interface LineDiff {
     /** Lines deleted in old file (1-based line number in old text) */
@@ -40,7 +39,7 @@ export function computeDiff(oldText: string, newText: string): LineDiff {
     }
 
     // Line-level diff using jsdiff
-    const changes = diffLines(oldText, newText, { timeout: 3 })
+    const changes = diffLines(oldText, newText, { timeout: 3 }) ?? []
 
     // Track line numbers in old and new texts
     let oldLine = 1
@@ -138,7 +137,7 @@ export function charDiff(oldLine: string, newLine: string, oldLineNum: number, n
     // If lines are identical, no char-level diff needed
     if (oldLine === newLine) return
 
-    const changes = diffChars(oldLine, newLine, { timeout: 1 })
+    const changes = diffChars(oldLine, newLine, { timeout: 1 }) ?? []
 
     // Convert char-level changes to offset ranges
     const deletedOffsets: number[] = []

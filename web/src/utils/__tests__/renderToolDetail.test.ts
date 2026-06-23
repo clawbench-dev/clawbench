@@ -364,7 +364,7 @@ describe('shouldAutoExpandTool', () => {
 describe('handleToolAction', () => {
   it('returns false for tools without action handlers', () => {
     const event = new MouseEvent('click')
-    const emit = vi.fn()
+    const emit = vi.fn() as any
     expect(handleToolAction('Grep', event, emit)).toBe(false)
     expect(handleToolAction('Bash', event, emit)).toBe(false)
     expect(handleToolAction('Agent', event, emit)).toBe(false)
@@ -374,7 +374,7 @@ describe('handleToolAction', () => {
 
   it('returns false for unknown tools', () => {
     const event = new MouseEvent('click')
-    const emit = vi.fn()
+    const emit = vi.fn() as any
     expect(handleToolAction('UnknownTool', event, emit)).toBe(false)
   })
 })
@@ -730,8 +730,8 @@ describe('AskUserQuestion renderer (deep)', () => {
 
 describe('AskUserQuestion action handler', () => {
   /** Create a minimal AskUserQuestion DOM structure for testing */
-  function createAskDOM(multiSelect = false): { container: HTMLDivElement; emit: ReturnType<typeof vi.fn> } {
-    const emit = vi.fn()
+  function createAskDOM(multiSelect = false): { container: HTMLDivElement; emit: any } {
+    const emit = vi.fn() as any
     const container = document.createElement('div')
     container.className = 'ask-question-view'
     container.innerHTML = `
@@ -1014,8 +1014,6 @@ describe('AskUserQuestion action handler', () => {
       Object.defineProperty(clickSubmit, 'target', { value: submitBtn, writable: false })
       handleToolAction('AskUserQuestion', clickSubmit, emit)
 
-      const callCount = emit.mock.calls.length
-
       // Try clicking another option after submit — should not change state
       const clickB = new MouseEvent('click', { bubbles: true, cancelable: true })
       Object.defineProperty(clickB, 'target', { value: optB, writable: false })
@@ -1067,7 +1065,7 @@ describe('registerToolActionHandler', () => {
     registerToolActionHandler('TestActionTool', handler)
 
     const event = new MouseEvent('click')
-    const emit = vi.fn()
+    const emit = vi.fn() as any
     const result = handleToolAction('TestActionTool', event, emit)
 
     expect(result).toBe(true)
@@ -1079,7 +1077,7 @@ describe('registerToolActionHandler', () => {
     registerToolActionHandler('CaseTestTool', handler)
 
     const event = new MouseEvent('click')
-    const emit = vi.fn()
+    const emit = vi.fn() as any
     const result = handleToolAction('casetesttool', event, emit)
 
     expect(result).toBe(true)
@@ -1350,8 +1348,8 @@ describe('PermissionApproval renderer', () => {
 })
 
 describe('PermissionApproval action handler', () => {
-  function createPermissionDOM(): { container: HTMLDivElement; emit: ReturnType<typeof vi.fn> } {
-    const emit = vi.fn()
+  function createPermissionDOM(): { container: HTMLDivElement; emit: any } {
+    const emit = vi.fn() as any
     const container = document.createElement('div')
     container.className = 'permission-approval-view'
     container.innerHTML = `
@@ -2622,8 +2620,8 @@ describe('annotateLocalhostInEscapedText (via formatToolOutput)', () => {
 // ────────────────────────────────────────────────────────────
 
 describe('PermissionApproval action handler (uncovered branches)', () => {
-  function createPermissionDOM(opts?: { noToolCallId?: boolean; noSessionId?: boolean }): { container: HTMLDivElement; emit: ReturnType<typeof vi.fn> } {
-    const emit = vi.fn()
+  function createPermissionDOM(opts?: { noToolCallId?: boolean; noSessionId?: boolean }): { container: HTMLDivElement; emit: any } {
+    const emit = vi.fn() as any
     const container = document.createElement('div')
     container.className = 'permission-approval-view'
     container.innerHTML = `
@@ -2687,8 +2685,8 @@ describe('PermissionApproval action handler (uncovered branches)', () => {
 // ────────────────────────────────────────────────────────────
 
 describe('AskUserQuestion action handler (uncovered branches)', () => {
-  function createAskDOM(multiSelect = false): { container: HTMLDivElement; emit: ReturnType<typeof vi.fn> } {
-    const emit = vi.fn()
+  function createAskDOM(multiSelect = false): { container: HTMLDivElement; emit: any } {
+    const emit = vi.fn() as any
     const container = document.createElement('div')
     container.className = 'ask-question-view'
     container.innerHTML = `

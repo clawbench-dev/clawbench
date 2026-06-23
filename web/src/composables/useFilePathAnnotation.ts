@@ -671,7 +671,7 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
             if (isExternal && type === 'dir') {
                 const { useToast } = await import('@/composables/useToast')
                 const { gt } = await import('@/composables/useLocale')
-                useToast().show(gt('file.toast.externalDirNotSupported'), { type: 'warning', icon: '📁', duration: 2000 })
+                useToast().show(gt('file.toast.externalDirNotSupported'), { type: 'info', icon: '📁', duration: 2000 })
                 return false
             }
             if (type === 'dir') {

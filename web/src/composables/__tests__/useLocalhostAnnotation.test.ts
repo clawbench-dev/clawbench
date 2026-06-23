@@ -283,7 +283,7 @@ describe('useLocalhostAnnotation', () => {
       openSpy.mockRestore()
     })
 
-    it('shows warning toast when SSH disabled (anchor click)', async () => {
+    it('shows info toast when SSH disabled (anchor click)', async () => {
       mockSshInfo.value = { enabled: false }
       const anchor = document.createElement('a')
       anchor.setAttribute('href', 'http://localhost:5173')
@@ -291,7 +291,7 @@ describe('useLocalhostAnnotation', () => {
       const event = createClickEvent(anchor)
       handleLocalhostUrlClick(event)
       await vi.waitFor(() => {
-        expect(mockToastShow).toHaveBeenCalledWith('chat.localhost.sshDisabled', { type: 'warning' })
+        expect(mockToastShow).toHaveBeenCalledWith('chat.localhost.sshDisabled', { type: 'info' })
       })
     })
 
@@ -325,7 +325,7 @@ describe('useLocalhostAnnotation', () => {
       const btn = document.createElement('button')
       const result = await openLocalhostUrl(btn, 3000, 'http')
       expect(result).toBe(false)
-      expect(mockToastShow).toHaveBeenCalledWith('chat.localhost.sshDisabled', { type: 'warning' })
+      expect(mockToastShow).toHaveBeenCalledWith('chat.localhost.sshDisabled', { type: 'info' })
     })
 
     it('openLocalhostUrl shows error toast on failure', async () => {

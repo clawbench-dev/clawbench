@@ -82,7 +82,7 @@ export function showBrowserNotification(
   if (options?.onClick) {
     notification.onclick = () => {
       window.focus()
-      options.onClick()
+      options.onClick?.()
       notification.close()
     }
   }

@@ -21,7 +21,6 @@ describe('appLog', () => {
     const w = { top: null as any } as any
     w.top = w // window === window.top (not iframe)
     w.AndroidNative = androidNative
-    // @ts-expect-error test setup
     globalThis.window = w
   }
 
@@ -102,7 +101,6 @@ describe('appLog', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {})
     const w = { top: {} } as any // window.top is different object → iframe
     w.AndroidNative = { log: logSpy, isNativeApp: () => true }
-    // @ts-expect-error test setup
     globalThis.window = w
     const { appLog } = await import('@/utils/appLog')
     appLog.d('Test', 'hello')

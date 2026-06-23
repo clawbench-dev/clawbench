@@ -159,7 +159,7 @@ describe('computeMenuStyle', () => {
     it('direction param is still ignored — uses space comparison', () => {
       // Anchor near bottom → spaceAbove > spaceBelow → goes above (ignores direction="below")
       const rect = mockRect({ top: 600, bottom: 640, left: 100, right: 140 })
-      const style = computeMenuStyle(rect, { direction: 'below', viewportWidth: vw, viewportHeight: vh, menuItemsCount: 2, edgeMargin: 6 })
+      const style = computeMenuStyle(rect, { viewportWidth: vw, viewportHeight: vh, menuItemsCount: 2, edgeMargin: 6 })
       // Auto-detected: above (spaceAbove=594 > spaceBelow=118)
       expect(style.bottom).toBeDefined()
       expect(style.top).toBeUndefined()

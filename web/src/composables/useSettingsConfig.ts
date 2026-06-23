@@ -122,16 +122,20 @@ const legacyKeys: Record<string, {
     format: 'raw',
   },
   androidLogCapture: {
-    // No legacy key — this is a new setting
+    key: '',
+    format: 'raw',
   },
   swipeSession: {
-    // No legacy key — this is a new setting
+    key: '',
+    format: 'raw',
   },
   stickyScroll: {
-    // No legacy key — this is a new setting
+    key: '',
+    format: 'raw',
   },
   pushPersistentNotification: {
-    // No legacy key — this is a new setting
+    key: '',
+    format: 'raw',
     sideEffect(value: boolean) {
       try {
         const native = (window as any).AndroidNative
@@ -140,6 +144,8 @@ const legacyKeys: Record<string, {
     },
   },
   sortField: {
+    key: '',
+    format: 'raw',
     sideEffect(value: string | null) {
       window.dispatchEvent(new CustomEvent('clawbench-sort-change', { detail: { field: value } }))
       // Reset sortDir when sort is cleared
@@ -151,6 +157,8 @@ const legacyKeys: Record<string, {
     },
   },
   sortDir: {
+    key: '',
+    format: 'raw',
     sideEffect(value: string) {
       window.dispatchEvent(new CustomEvent('clawbench-sort-change', { detail: { dir: value } }))
     },

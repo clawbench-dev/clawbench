@@ -1,7 +1,17 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
+
+// ResizeObserver is used by HeaderMarquee but not available in jsdom
+// Must be a class mock because HeaderMarquee uses `new ResizeObserver(callback)`
+class MockResizeObserver {
+  observe = vi.fn()
+  unobserve = vi.fn()
+  disconnect = vi.fn()
+}
+globalThis.ResizeObserver = MockResizeObserver as any
+
 import SearchDrawer from '@/components/common/SearchDrawer.vue'
 import { searchRawContent, BLOCK_TAGS } from '@/utils/searchUtils'
 
@@ -22,7 +32,14 @@ const i18n = createI18n({
   },
 })
 
+// BottomSheet and HeaderMarquee use Teleport to body,
+// so we need attachTo: document.body and search in document
 describe('SearchDrawer', () => {
+  beforeEach(() => {
+    // Clean up teleported content from previous tests
+    document.body.innerHTML = ''
+  })
+
   function mountDrawer(props = {}) {
     return mount(SearchDrawer, {
       props: {
@@ -30,20 +47,10 @@ describe('SearchDrawer', () => {
         file: { path: '/test/file.ts', content: 'line1\nline2 hello\nline3', name: 'file.ts' },
         ...props,
       },
+      attachTo: document.body,
       global: {
         plugins: [i18n],
         stubs: {
-          BottomSheet: {
-            template: '<div class="bs-stub"><slot name="header" /><slot /></div>',
-            props: ['open', 'auto'],
-            emits: ['close'],
-          },
-          HeaderMarquee: true,
-          SearchInput: {
-            template: '<input class="search-input-stub" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" @keydown.enter="$emit(\'enter\')" />',
-            props: ['modelValue', 'placeholder'],
-            emits: ['update:modelValue', 'enter'],
-          },
           'lucide-vue-next': true,
         },
       },
@@ -52,57 +59,53 @@ describe('SearchDrawer', () => {
 
   it('renders search body when open with file content', () => {
     const wrapper = mountDrawer()
-    expect(wrapper.find('.search-body').exists()).toBe(true)
+    expect(document.querySelector('.search-body')).toBeTruthy()
   })
 
   it('shows noContent when file has no content', () => {
-    const wrapper = mountDrawer({ file: { path: '/test/file.ts', content: null, name: 'file.ts' } })
-    expect(wrapper.find('.search-empty').text()).toBe('No content')
+    mountDrawer({ file: { path: '/test/file.ts', content: null, name: 'file.ts' } })
+    const el = document.querySelector('.search-empty')
+    expect(el).toBeTruthy()
+    expect(el!.textContent).toBe('No content')
   })
 
   it('shows enterKeyword when query is empty', () => {
-    const wrapper = mountDrawer()
-    expect(wrapper.find('.search-empty').text()).toBe('Enter keyword')
+    mountDrawer()
+    const el = document.querySelector('.search-empty')
+    expect(el).toBeTruthy()
+    expect(el!.textContent).toBe('Enter keyword')
   })
 
   it('shows notFound when query has no matches', () => {
-    const wrapper = mountDrawer()
-    const input = wrapper.find('.search-input-stub')
-    // Simulate entering a query that doesn't match
-    // Since we can't easily set the internal query ref, we test the computed behavior indirectly
-    // The search-empty message should show when no results found
-    // For raw mode search, we rely on the searchRawContent utility which is already tested
-    expect(wrapper.find('.search-empty').exists() || wrapper.find('.search-results').exists()).toBe(true)
+    mountDrawer()
+    // The initial state shows enterKeyword since query is empty
+    // This test verifies that either search-empty or search-results exists
+    expect(document.querySelector('.search-empty') || document.querySelector('.search-results')).toBeTruthy()
   })
 
   it('emits close when handleClose is triggered', async () => {
-    // Test the close emit path by checking the component's emits definition
-    // and verifying the search-body is rendered (proving the component mounts correctly)
     const wrapper = mountDrawer()
-    expect(wrapper.find('.search-body').exists()).toBe(true)
+    expect(document.querySelector('.search-body')).toBeTruthy()
     // SearchDrawer emits 'close' — verify it's defined
     expect(wrapper.vm.$options.emits).toContain('close')
   })
 
   it('shows file path in header when file has path', () => {
-    const wrapper = mountDrawer()
-    // The HeaderMarquee is stubbed, but the bs-header-description div should exist
-    expect(wrapper.find('.bs-header-description').exists()).toBe(true)
+    mountDrawer()
+    expect(document.querySelector('.bs-header-description')).toBeTruthy()
   })
 
   it('hides file path in header when file has no path', () => {
-    const wrapper = mountDrawer({ file: { path: '', content: 'test', name: 'file.ts' } })
-    expect(wrapper.find('.bs-header-description').exists()).toBe(false)
+    mountDrawer({ file: { path: '', content: 'test', name: 'file.ts' } })
+    expect(document.querySelector('.bs-header-description')).toBeFalsy()
   })
 
   it('clears query when file path changes', async () => {
     const wrapper = mountDrawer()
-    // Internal query is managed by SearchInput's v-model
-    // When file.path changes, query should be reset to ''
     await wrapper.setProps({ file: { path: '/other/file.ts', content: 'other content', name: 'file2.ts' } })
     await nextTick()
     // After path change, the query should be empty → shows enterKeyword
-    expect(wrapper.find('.search-empty').exists()).toBe(true)
+    expect(document.querySelector('.search-empty')).toBeTruthy()
   })
 })
 

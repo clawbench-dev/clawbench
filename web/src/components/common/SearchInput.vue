@@ -39,7 +39,7 @@ function focus() {
   inputRef.value?.focus()
 }
 
-defineExpose({ focus, inputRef })
+defineExpose({ focus, inputRef, focused })
 </script>
 
 <style scoped>

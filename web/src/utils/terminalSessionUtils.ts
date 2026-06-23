@@ -49,7 +49,7 @@ export interface TerminalCallbacks {
  */
 export function processTerminalMessage(
   msg: TerminalMessage,
-  state: TerminalSessionState,
+  _state: TerminalSessionState,
   callbacks: TerminalCallbacks = {}
 ): Partial<TerminalSessionState> {
   switch (msg.type) {

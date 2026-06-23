@@ -95,10 +95,10 @@ export function renderMarkdown(
     } = options
 
     // 1. 解析Markdown
-    let html = marked.parse((content || '').trim())
+    let html = marked.parse((content || '').trim()) as string
 
     // 2. 渲染KaTeX数学公式（字符串级别，不能改用DOM级渲染，见 renderKatexInString 注释）
-    html = renderKatexInString(html)
+    html = renderKatexInString(html) as string
 
     // 3. 净化HTML（防止XSS攻击）
     // 注意：KaTeX渲染后的HTML需要 ADD_TAGS:['math'] 保留 <math> 标签
@@ -142,7 +142,7 @@ export async function renderMermaidInElement(
     if (blocks.length === 0) return
 
     const renderPromises = Array.from(blocks).map(async (block, index) => {
-        block.setAttribute('data-rendered', '1')
+        (block as HTMLElement).setAttribute('data-rendered', '1')
         const id = `${prefix}-${Date.now()}-${index}`
         const source = block.textContent?.trim() || ''
         const container = document.createElement('div')
@@ -153,10 +153,10 @@ export async function renderMermaidInElement(
             const result = await mermaid.render(id, source)
             container.innerHTML = result.svg
             container.dataset.mermaid = source
-            block.replaceWith(container)
+            ;(block as Element).replaceWith(container)
         } catch (err: any) {
             container.innerHTML = `<pre style="padding:12px;background:var(--code-bg);border-radius:6px;font-size:13px;overflow-x:auto;">Mermaid Error: ${escapeHtml(err.message)}</pre>`
-            block.replaceWith(container)
+            ;(block as Element).replaceWith(container)
         }
     })
 

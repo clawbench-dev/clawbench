@@ -1,14 +1,13 @@
 import { ref, computed, type Ref } from 'vue'
 import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
-import { useNotification } from '@/composables/useNotification.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'ChatSession'
 import { clearModeState, updateAvailableModes, clearCommandState, updateCommandState, updateAvailableThinkingEfforts, clearThinkingEffortState, clearUsageState, updateUsageState, currentAgentId as _currentAgentId } from '@/composables/useSessionIdentity.ts'
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
-import { useAgents, restoreOriginalModels, populateACPStateFromCache, getAgentThinkingEffortLevels } from '@/composables/useAgents'
+import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
 import { warmWorktreeCache } from '@/composables/useWorktreeAnnotation.ts'
@@ -97,12 +96,9 @@ export function useChatSession(options: UseChatSessionOptions) {
     onConnectStream,
     onStopPolling,
     onDisconnectStream,
-    onOpen,
-    onStreamDone,
   } = options
 
   const toast = useToast()
-  const notification = useNotification()
 
   // ── Identity refs from singleton ──
   const identity = useSessionIdentity()
@@ -188,8 +184,8 @@ export function useChatSession(options: UseChatSessionOptions) {
 
   // Helper: sync usage state from server data
   function syncUsageFromData(usageStateData?: { used?: number; size?: number; cost?: number; currency?: string }) {
-    if (usageStateData && usageStateData.size > 0) {
-      updateUsageState(usageStateData.used ?? 0, usageStateData.size, usageStateData.cost, usageStateData.currency)
+    if (usageStateData && (usageStateData.size ?? 0) > 0) {
+      updateUsageState(usageStateData.used ?? 0, usageStateData.size ?? 0, usageStateData.cost, usageStateData.currency)
     }
   }
 
@@ -317,14 +313,13 @@ export function useChatSession(options: UseChatSessionOptions) {
               lastMessageSnapshot = newSnapshot
               const prevCount = messages.value.length
               const newCount = recoverMsgs.length
-              const sameCore = prevCount === newCount && prevCount > 0 && recoverMsgs.slice(0, -1).every((m, i) => m.id === messages.value[i]?.id)
+              const sameCore = prevCount === newCount && prevCount > 0 && recoverMsgs.slice(0, -1).every((m: any, i: number) => m.id === messages.value[i]?.id)
               if (!sameCore) {
                 expandedTools.value = {}
               }
               Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
               Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
               const localPending = messages.value.filter((m: any) => m.pending)
-              const dbIds = new Set(recoverMsgs.filter((m: any) => m.id).map((m: any) => m.id))
               messages.value = parseMessages(recoverMsgs, onParseAssistantContent, messages.value)
               for (const pm of localPending) {
                 const alreadyInDB = messages.value.some(
@@ -422,7 +417,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       // Only reset when message count or non-last message identities differ.
       const prevCount = messages.value.length
       const newCount = rawMsgs.length
-      const sameCore = prevCount === newCount && prevCount > 0 && rawMsgs.slice(0, -1).every((m, i) => m.id === messages.value[i]?.id)
+      const sameCore = prevCount === newCount && prevCount > 0 && rawMsgs.slice(0, -1).every((m: any, i: number) => m.id === messages.value[i]?.id)
       if (!sameCore) {
         expandedTools.value = {}
       }
@@ -436,7 +431,6 @@ export function useChatSession(options: UseChatSessionOptions) {
       // but haven't been persisted to the DB yet (backend persists them during queue_drain).
       // Without this, loadHistory would replace the array and lose pending messages.
       const localPending = messages.value.filter((m: any) => m.pending)
-      const dbIds = new Set(rawMsgs.filter((m: any) => m.id).map((m: any) => m.id))
 
       messages.value = parseMessages(rawMsgs, onParseAssistantContent, messages.value)
 
@@ -574,7 +568,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     }
   }
 
-  async function switchSession(sessionId) {
+  async function switchSession(sessionId: string) {
     // Increment sequence counter — if another switch starts before we finish,
     // our results will be discarded (last writer wins)
     const mySeq = ++switchSessionSeq
@@ -693,7 +687,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     }
   }
 
-  async function createSession(agentId) {
+  async function createSession(agentId: string) {
     // Stop msg count polling for the previous session to prevent race
     // conditions — if the polling fires during creation, loadHistory could
     // overwrite the new sessionId and revert to the old session.
@@ -728,7 +722,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     }
   }
 
-  async function deleteSession(sessionId, backend) {
+  async function deleteSession(sessionId: string, backend: string) {
     // Prevent concurrent deletes for the same session
     if (deletingSessionIds.value.has(sessionId)) return
     deletingSessionIds.value.add(sessionId)
@@ -743,10 +737,10 @@ export function useChatSession(options: UseChatSessionOptions) {
           const sessionsResp = await fetch('/api/ai/sessions')
           const sessionsData = await sessionsResp.json()
           if (sessionsData.sessions && sessionsData.sessions.length > 0) {
-            await switchSession(sessionsData.sessions[0].id, sessionsData.sessions[0].backend)
+            await switchSession(sessionsData.sessions[0].id)
           } else {
             // No sessions left, create a default one
-            await createSession()
+            await createSession('')
           }
         } else {
           // Deleted a non-current session — refresh global state (chatUnread, chatRunning, runningSessions)
@@ -837,7 +831,6 @@ export function useChatSession(options: UseChatSessionOptions) {
   // Track which sessions have already had their completion notification fired.
   // Prevents repeated sound/notification if an exception in the callback
   // prevents runningSessions from being updated.
-  const notifiedSessions = new Set<string>()
 
   function handleVisibilityChange() {
     if (document.visibilityState === 'visible' && loading.value) {

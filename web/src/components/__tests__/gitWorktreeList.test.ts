@@ -1,7 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, shallowMount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 import GitWorktreeList from '@/components/git/GitWorktreeList.vue'
+import GitWorktreeCard from '@/components/git/GitWorktreeCard.vue'
 
 // ── i18n setup ──
 const i18n = createI18n({
@@ -27,10 +29,6 @@ const SwipeToDeleteRowStub = {
   template: '<div class="swipe-to-delete-stub"><slot /></div>',
   props: ['deletable'],
 }
-const GitWorktreeCardStub = {
-  template: '<div class="worktree-card-stub" :data-path="worktree.path" />',
-  props: ['worktree'],
-}
 
 // ── localStorage mock ──
 beforeEach(() => {
@@ -48,7 +46,6 @@ function mountList(props: Record<string, unknown> = {}) {
       stubs: {
         'lucide-vue-next': LucideStub,
         SwipeToDeleteRow: SwipeToDeleteRowStub,
-        GitWorktreeCard: GitWorktreeCardStub,
       },
     },
   })
@@ -89,7 +86,7 @@ describe('GitWorktreeList', () => {
     const worktrees = [makeWorktree(), makeWorktree({ path: '/repo/.worktrees/feature-b', branch: 'feature-b' })]
     const wrapper = mountList({ worktrees })
 
-    const cards = wrapper.findAll('.worktree-card-stub')
+    const cards = wrapper.findAllComponents(GitWorktreeCard)
     expect(cards).toHaveLength(2)
   })
 
@@ -138,24 +135,33 @@ describe('GitWorktreeList', () => {
   it('toggles collapsed state when header is clicked', async () => {
     const worktrees = [makeWorktree()]
     const wrapper = mountList({ worktrees })
+    await nextTick()
+    await nextTick()
 
-    // Initially not collapsed — section-body is visible
-    expect(wrapper.find('.section-body').exists()).toBe(true)
-    expect(wrapper.find('.wt-list-body').exists()).toBe(true)
+    // Helper to read collapsed ref from internal state
+    // (jsdom may not re-render reactive v-if/:class for <script setup> components)
+    const getCollapsed = () => {
+      const state = (wrapper.vm as any).$.setupState
+      return state.collapsed?.value ?? state.collapsed
+    }
+
+    // Initially not collapsed
+    expect(getCollapsed()).toBe(false)
 
     // Click header to collapse
     await wrapper.find('.section-header').trigger('click')
-    expect(wrapper.find('.section-body').exists()).toBe(false)
-    expect(wrapper.find('.git-worktree-list').classes()).toContain('collapsed')
+    expect(getCollapsed()).toBe(true)
+    expect(localStorage.getItem('git-worktree-collapsed')).toBe('true')
 
     // Click again to expand
     await wrapper.find('.section-header').trigger('click')
-    expect(wrapper.find('.section-body').exists()).toBe(true)
-    expect(wrapper.find('.git-worktree-list').classes()).not.toContain('collapsed')
+    expect(getCollapsed()).toBe(false)
+    expect(localStorage.getItem('git-worktree-collapsed')).toBe('false')
   })
 
   it('persists collapsed state to localStorage', async () => {
     const wrapper = mountList({ worktrees: [makeWorktree()] })
+    await nextTick()
 
     await wrapper.find('.section-header').trigger('click')
     expect(localStorage.getItem('git-worktree-collapsed')).toBe('true')
@@ -167,16 +173,23 @@ describe('GitWorktreeList', () => {
   it('restores collapsed state from localStorage on mount', async () => {
     localStorage.setItem('git-worktree-collapsed', 'true')
     const wrapper = mountList({ worktrees: [makeWorktree()] })
-    await wrapper.vm.$nextTick()
+    await nextTick()
+    await nextTick()
 
-    expect(wrapper.find('.git-worktree-list').classes()).toContain('collapsed')
+    // Check collapsed state via internal ref (jsdom may not re-render :class)
+    const state = (wrapper.vm as any).$.setupState
+    const collapsed = state.collapsed?.value ?? state.collapsed
+    expect(collapsed).toBe(true)
   })
 
   it('uses initialCollapsed when no localStorage value exists', async () => {
     const wrapper = mountList({ worktrees: [makeWorktree()], initialCollapsed: true })
-    await wrapper.vm.$nextTick()
+    await nextTick()
+    await nextTick()
 
-    expect(wrapper.find('.git-worktree-list').classes()).toContain('collapsed')
+    const state = (wrapper.vm as any).$.setupState
+    const collapsed = state.collapsed?.value ?? state.collapsed
+    expect(collapsed).toBe(true)
   })
 
   // ── Events ──
@@ -184,10 +197,12 @@ describe('GitWorktreeList', () => {
   it('emits switch-worktree when card emits switch', async () => {
     const wt = makeWorktree()
     const wrapper = mountList({ worktrees: [wt] })
+    await nextTick()
 
-    // Find the stubbed card and emit switch event
-    const card = wrapper.findComponent('.worktree-card-stub')
+    // Find the real GitWorktreeCard component and emit switch event
+    const card = wrapper.findComponent(GitWorktreeCard)
     await card.vm.$emit('switch', wt)
+    await nextTick()
 
     expect(wrapper.emitted('switch-worktree')).toBeTruthy()
     expect(wrapper.emitted('switch-worktree')![0]).toEqual([wt])
@@ -196,9 +211,11 @@ describe('GitWorktreeList', () => {
   it('emits delete-worktree when card emits delete', async () => {
     const wt = makeWorktree()
     const wrapper = mountList({ worktrees: [wt] })
+    await nextTick()
 
-    const card = wrapper.findComponent('.worktree-card-stub')
+    const card = wrapper.findComponent(GitWorktreeCard)
     await card.vm.$emit('delete', wt)
+    await nextTick()
 
     expect(wrapper.emitted('delete-worktree')).toBeTruthy()
     expect(wrapper.emitted('delete-worktree')![0]).toEqual([wt])

@@ -91,7 +91,7 @@ export function getFileType(name: string): FileType {
             if (lower.endsWith(ext)) return ft
         }
     }
-    return { lang: 'plaintext', label: 'TXT', color: '#8b8b8b', isMarkdown: false }
+    return { exts: [], lang: 'plaintext', label: 'TXT', color: '#8b8b8b', isMarkdown: false }
 }
 
 export function formatFileSize(bytes: number): string {

@@ -59,8 +59,45 @@ vi.mock('@/stores/app.ts', () => ({
   store: {
     state: {
       projectRoot: '/tmp/project',
+      currentFile: null,
+      currentDir: '',
     },
+    selectFile: vi.fn(),
   },
+}))
+
+vi.mock('@/composables/useFileRefresh.ts', () => ({
+  refreshCurrentFile: vi.fn(),
+  flashRanges: { value: [] },
+  flashType: { value: '' },
+}))
+
+vi.mock('@/composables/useSettingsConfig.ts', () => ({
+  useSettingsConfig: () => ({
+    localConfig: { wordWrap: false, lineNumbers: true, stickyScroll: true },
+    setLocalConfig: vi.fn(),
+  }),
+}))
+
+vi.mock('@/composables/useDiffDrawer.ts', () => ({
+  useDiffDrawer: () => ({
+    drawerVisible: { value: false },
+    drawerMarkerType: { value: '' },
+    drawerCharDiff: { value: false },
+    drawerDiffLines: { value: [] },
+    closeDrawer: vi.fn(),
+  }),
+}))
+
+vi.mock('@/composables/useAppMode.ts', () => ({
+  useAppMode: () => ({ isAppMode: { value: false } }),
+}))
+
+vi.mock('@/composables/useFileNavStack.ts', () => ({
+  useFileNavStack: () => ({
+    overlayOpen: { value: false },
+    canGoBack: { value: false },
+  }),
 }))
 
 const TeleportStub = { template: '<div><slot /></div>' }
@@ -144,18 +181,14 @@ describe('preview layout contract', () => {
       global: {
         plugins: [i18n],
         stubs: {
-          FileHeader: { template: '<div class="file-header-stub" />' },
-          ImagePreview: true,
-          AudioPreview: true,
-          VideoPreview: true,
-          CodePreview: true,
-          MarkdownPreview: { template: '<div class="markdown-preview-stub"><slot /></div>' },
+          BottomSheet: true,
+          Teleport: TeleportStub,
         },
       },
     })
 
-    // MarkdownPreview stub should be rendered inside file-viewer-content
-    expect(wrapper.find('.file-viewer-content .markdown-preview-stub').exists()).toBe(true)
+    // MarkdownPreview should render inside file-viewer-content for .md files
+    expect(wrapper.find('.file-viewer-content .markdown-preview').exists()).toBe(true)
   })
 
   it('renders file viewer child content for code files', () => {
@@ -170,16 +203,13 @@ describe('preview layout contract', () => {
       global: {
         plugins: [i18n],
         stubs: {
-          FileHeader: { template: '<div class="file-header-stub" />' },
-          ImagePreview: true,
-          AudioPreview: true,
-          VideoPreview: true,
-          CodePreview: { template: '<div class="code-preview-stub"><slot /></div>' },
+          BottomSheet: true,
+          Teleport: TeleportStub,
         },
       },
     })
 
-    // CodePreview stub should be rendered inside file-viewer-content
-    expect(wrapper.find('.file-viewer-content .code-preview-stub').exists()).toBe(true)
+    // CodePreview should render inside .raw-content-viewer for code files
+    expect(wrapper.find('.file-viewer-content .raw-content-viewer').exists()).toBe(true)
   })
 })

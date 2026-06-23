@@ -36,7 +36,7 @@ interface Hunk {
  * Parse a unified diff string into structured DiffLine objects.
  * Pure function — no rendering, no syntax highlighting.
  */
-function parseDiffLines(raw: string): DiffLine[] {
+export function parseDiffLines(raw: string): DiffLine[] {
     const lines = raw.split('\n')
     const result: DiffLine[] = []
     let oldLineNum = 0

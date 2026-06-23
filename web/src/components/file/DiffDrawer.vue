@@ -161,7 +161,7 @@ function charDiffHtml(oldText: string, newText: string, side: 'del' | 'add'): st
   const changes = diffChars(oldText, newText, { timeout: 3 })
   const cls = side === 'del' ? 'diff-char-del' : 'diff-char-add'
   let html = ''
-  for (const change of changes) {
+  for (const change of changes!) {
     const escaped = escapeHtml(change.value)
     if (side === 'del' ? change.removed : change.added) {
       html += `<span class="${cls}">${escaped}</span>`

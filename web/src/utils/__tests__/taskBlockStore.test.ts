@@ -27,10 +27,10 @@ describe('taskBlockStore', () => {
       const store = createTaskBlockStore()
 
       // Return a task list
-      mockApiGet.mockResolvedValue({ tasks: [{ id: 't1', name: 'Task 1' }] })
+      mockApiGet.mockResolvedValue({ tasks: [{ id: 1, name: 'Task 1' }] })
 
       const promise = store.fetchBatchData([
-        { key: 'k1', taskId: 't1' },
+        { key: 'k1', taskId: 1 },
       ])
 
       // While loading, entries should be in loading state
@@ -42,13 +42,13 @@ describe('taskBlockStore', () => {
     it('loads task data on success via apiGet', async () => {
       const store = createTaskBlockStore()
 
-      mockApiGet.mockResolvedValue({ tasks: [{ id: 't1', name: 'Task 1' }] })
+      mockApiGet.mockResolvedValue({ tasks: [{ id: 1, name: 'Task 1' }] })
 
       await store.fetchBatchData([
-        { key: 'k1', taskId: 't1' },
+        { key: 'k1', taskId: 1 },
       ])
 
-      expect(store.blocks.k1.task).toEqual({ id: 't1', name: 'Task 1' })
+      expect(store.blocks.k1.task).toEqual({ id: 1, name: 'Task 1' })
       expect(store.blocks.k1.loading).toBe(false)
       expect(store.blocks.k1.deleted).toBe(false)
     })
@@ -60,7 +60,7 @@ describe('taskBlockStore', () => {
       mockApiGet.mockResolvedValue({ tasks: [] })
 
       await store.fetchBatchData([
-        { key: 'k1', taskId: 't1' },
+        { key: 'k1', taskId: 1 },
       ])
 
       expect(store.blocks.k1.deleted).toBe(true)
@@ -73,7 +73,7 @@ describe('taskBlockStore', () => {
       mockApiGet.mockRejectedValue(new Error('Network error'))
 
       await store.fetchBatchData([
-        { key: 'k1', taskId: 't1' },
+        { key: 'k1', taskId: 1 },
       ])
 
       // ISS-013 fix: network error should NOT set deleted=true
@@ -86,15 +86,15 @@ describe('taskBlockStore', () => {
       const store = createTaskBlockStore()
 
       mockApiGet.mockResolvedValue({
-        tasks: [{ id: 't1', name: 'Task 1' }],
+        tasks: [{ id: 1, name: 'Task 1' }],
       })
 
       await store.fetchBatchData([
-        { key: 'k1', taskId: 't1' },
-        { key: 'k2', taskId: 't2' },
+        { key: 'k1', taskId: 1 },
+        { key: 'k2', taskId: 2 },
       ])
 
-      expect(store.blocks.k1.task).toEqual({ id: 't1', name: 'Task 1' })
+      expect(store.blocks.k1.task).toEqual({ id: 1, name: 'Task 1' })
       expect(store.blocks.k1.deleted).toBe(false)
 
       expect(store.blocks.k2.task).toBeNull()
@@ -107,7 +107,7 @@ describe('taskBlockStore', () => {
       mockApiGet.mockResolvedValue({ tasks: [] })
 
       await store.fetchBatchData([
-        { key: 'k1', taskId: 't1' },
+        { key: 'k1', taskId: 1 },
       ])
 
       expect(store.blocks.k1.deleted).toBe(true)
@@ -117,17 +117,17 @@ describe('taskBlockStore', () => {
       const store = createTaskBlockStore()
 
       // Pre-load k1
-      store.blocks.k1 = { taskId: 't1', task: { id: 't1' }, loading: false, deleted: false }
+      store.blocks.k1 = { taskId: 1, task: { id: 1 }, loading: false, deleted: false }
 
       mockApiGet.mockResolvedValue({ tasks: [] })
 
       await store.fetchBatchData([
-        { key: 'k1', taskId: 't1' },
-        { key: 'k2', taskId: 't2' },
+        { key: 'k1', taskId: 1 },
+        { key: 'k2', taskId: 2 },
       ])
 
       // k1 should remain unchanged (not re-fetched)
-      expect(store.blocks.k1.task).toEqual({ id: 't1' })
+      expect(store.blocks.k1.task).toEqual({ id: 1 })
       // k2 was fetched but not found
       expect(store.blocks.k2.deleted).toBe(true)
     })

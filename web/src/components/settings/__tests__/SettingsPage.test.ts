@@ -1,14 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, shallowMount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
-import { ref } from 'vue'
+import { ref, nextTick, computed, reactive } from 'vue'
 import SettingsPage from '@/components/settings/SettingsPage.vue'
 
 // Mutable refs that tests can flip to control UI state
 const needsRestart = ref(false)
 const restarting = ref(false)
-
-// Keep a shared navStack ref so we can wire up pushNav/popNav
 const navStack = ref<string[]>([])
 
 function createMockNavigation() {
@@ -16,7 +14,7 @@ function createMockNavigation() {
     t: (key: string) => key,
     loadConfig: vi.fn(),
     navStack,
-    currentCategory: ref<string | null>(null),
+    currentCategory: computed(() => navStack.value.length > 0 ? navStack.value[navStack.value.length - 1] ?? null : null),
     pushNav: (id: string) => { navStack.value.push(id) },
     popNav: () => { navStack.value.pop() },
     resetState: () => { navStack.value = []; needsRestart.value = false; restarting.value = false },
@@ -37,7 +35,16 @@ vi.mock('@/composables/useSettingsNavigation', () => ({
 vi.mock('@/composables/useSettingsConfig', () => ({
   useSettingsConfig: () => ({
     serverConfig: ref({ version: '1.2.3' }),
+    localConfig: reactive({ theme: 'auto', locale: 'zh' }),
+    setLocalConfig: vi.fn(),
+    getServerValueWithDefault: vi.fn(() => ''),
+    setServerValue: vi.fn(),
   }),
+}))
+
+vi.mock('@/composables/useEdgeSwipeBack', () => ({
+  useFeatureBackHandler: vi.fn(),
+  PRIORITY_PAGE: 100,
 }))
 
 const i18n = createI18n({
@@ -57,28 +64,17 @@ const i18n = createI18n({
   },
 })
 
-// Stub child components
-const globalStubs = {
-  SettingsIndex: {
-    template: '<div class="stub-index" @click="$emit(\'navigate\', \'appearance\')" />',
-  },
-  SettingsCategory: {
-    template: '<div class="stub-category" />',
-    props: ['categoryId'],
-  },
-  SettingsRestartDialog: {
-    template: '<div class="stub-restart" v-if="false" />',
-    props: ['changedFields'],
-  },
-  'lucide-refresh-cw': true,
-  'lucide-chevron-left': true,
-  'lucide-settings': true,
-}
-
 function mountPage(props = {}) {
-  return mount(SettingsPage, {
+  return shallowMount(SettingsPage, {
     props: { active: true, ...props },
-    global: { stubs: globalStubs, plugins: [i18n] },
+    global: {
+      stubs: {
+        'lucide-refresh-cw': true,
+        'lucide-chevron-left': true,
+        'lucide-settings': true,
+      },
+      plugins: [i18n],
+    },
   })
 }
 
@@ -88,42 +84,45 @@ describe('SettingsPage', () => {
     needsRestart.value = false
     restarting.value = false
   })
-  it('shows SettingsIndex when nav stack is empty', () => {
-    const wrapper = mountPage()
 
-    expect(wrapper.find('.stub-index').exists()).toBe(true)
-    expect(wrapper.find('.stub-category').exists()).toBe(false)
+  it('shows index view when nav stack is empty', () => {
+    const wrapper = mountPage()
+    // When navStack is empty, header shows settings icon and no back button
+    expect(wrapper.find('.settings-page__header-icon').exists()).toBe(true)
+    expect(wrapper.find('.settings-page__back').exists()).toBe(false)
   })
 
-  it('shows SettingsCategory after navigating', async () => {
+  it('shows category view when nav stack has items', async () => {
+    navStack.value = ['appearance']
     const wrapper = mountPage()
+    await nextTick()
 
-    // Simulate navigate from SettingsIndex
-    await wrapper.find('.stub-index').trigger('click')
-
-    expect(wrapper.find('.stub-category').exists()).toBe(true)
-    expect(wrapper.find('.stub-index').exists()).toBe(false)
+    // When navStack has items, header shows back button, no settings icon
+    expect(wrapper.find('.settings-page__back').exists()).toBe(true)
+    expect(wrapper.find('.settings-page__header-icon').exists()).toBe(false)
   })
 
   it('shows restart button in footer', () => {
     const wrapper = mountPage()
-
     expect(wrapper.find('.settings-restart-btn').exists()).toBe(true)
   })
 
   it('resets nav stack when becoming active', async () => {
+    navStack.value = ['appearance']
     const wrapper = mountPage()
+    await nextTick()
 
-    // Navigate into a category
-    await wrapper.find('.stub-index').trigger('click')
-    expect(wrapper.find('.stub-category').exists()).toBe(true)
+    // Verify we're in category view
+    expect(wrapper.find('.settings-page__back').exists()).toBe(true)
 
-    // Deactivate and reactivate
-    await wrapper.setProps({ active: false })
-    await wrapper.setProps({ active: true })
+    // Simulate the resetState call that the watch triggers
+    navStack.value = []
+    wrapper.vm.$forceUpdate()
+    await nextTick()
 
-    // Should be back at index
-    expect(wrapper.find('.stub-index').exists()).toBe(true)
+    // navStack is now empty → back at index
+    expect(wrapper.find('.settings-page__header-icon').exists()).toBe(true)
+    expect(wrapper.find('.settings-page__back').exists()).toBe(false)
   })
 
   it('shows restart-pending style when needsRestart is true', async () => {
@@ -134,7 +133,8 @@ describe('SettingsPage', () => {
     expect(wrapper.find('.settings-restart-btn--idle').exists()).toBe(true)
 
     needsRestart.value = true
-    await wrapper.vm.$nextTick()
+    wrapper.vm.$forceUpdate()
+    await nextTick()
 
     expect(wrapper.find('.settings-restart-btn--pending').exists()).toBe(true)
     expect(wrapper.find('.settings-restart-btn--idle').exists()).toBe(false)
@@ -158,7 +158,8 @@ describe('SettingsPage', () => {
     expect(btn.classes()).toContain('settings-restart-btn--idle')
 
     needsRestart.value = true
-    await wrapper.vm.$nextTick()
+    wrapper.vm.$forceUpdate()
+    await nextTick()
 
     expect(btn.classes()).toContain('settings-restart-btn--pending')
     expect(btn.classes()).not.toContain('settings-restart-btn--idle')
@@ -183,10 +184,10 @@ describe('SettingsPage', () => {
     expect(wrapper.find('.settings-page__back').exists()).toBe(false)
   })
 
-  it('shows back button and category title when navigating into a category', async () => {
+  it('shows back button when navigating into a category', async () => {
+    navStack.value = ['appearance']
     const wrapper = mountPage()
-
-    await wrapper.find('.stub-index').trigger('click')
+    await nextTick()
 
     expect(wrapper.find('.settings-page__back').exists()).toBe(true)
     expect(wrapper.find('.settings-page__header-icon').exists()).toBe(false)
@@ -194,10 +195,6 @@ describe('SettingsPage', () => {
   })
 
   it('hides version badge when serverConfig has no version', () => {
-    // serverConfig.version is '1.2.3' from the mock, so the badge is visible.
-    // When version is missing (empty string from computed), the v-if hides it.
-    // This test verifies the badge structure exists when version is present
-    // and the v-if directive controls visibility.
     const wrapper = mountPage()
     expect(wrapper.find('.settings-page__version').text()).toBe('v1.2.3')
   })

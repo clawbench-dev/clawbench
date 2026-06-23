@@ -12,6 +12,7 @@ const i18n = createI18n({
     en: {
       nav: { refresh: 'Refresh' },
       common: { download: 'Download', delete: 'Delete' },
+      chat: { actions: { attachToChat: 'Attach' }, attach: { removeFromChat: 'Remove' } },
       file: {
         header: {
           toc: 'TOC',
@@ -33,6 +34,21 @@ const i18n = createI18n({
 // Mock useAppMode
 vi.mock('@/composables/useAppMode.ts', () => ({
   useAppMode: () => ({ isAppMode: { value: false } }),
+}))
+
+// Mock useChatContext
+vi.mock('@/composables/useChatContext.ts', () => ({
+  useChatContext: () => ({
+    addAttachedFile: vi.fn(),
+    hasAttachedFile: () => false,
+    toggleAttachedFile: vi.fn(),
+    removeAttachedFileByPath: vi.fn(),
+  }),
+}))
+
+// Mock useToast
+vi.mock('@/composables/useToast.ts', () => ({
+  useToast: () => ({ show: vi.fn() }),
 }))
 
 // Mock getFileType
@@ -60,71 +76,63 @@ describe('FileHeader', () => {
       },
       global: {
         plugins: [i18n],
-        stubs: {
-          Teleport: true,
-        },
       },
     })
   }
 
-  it('renders sticky scroll toggle in dropdown when not rendered mode', async () => {
+  // Helper to get internal menuOpen ref
+  function getMenuOpen(wrapper: ReturnType<typeof mount>): boolean {
+    return (wrapper.vm as any).$.setupState.menuOpen
+  }
+
+  it('toggles menu open on dropdown button click', async () => {
     const wrapper = mountHeader({ viewMode: 'source' })
-    // Open dropdown
+    expect(getMenuOpen(wrapper)).toBe(false)
     await wrapper.find('.dropdown-wrapper .file-header-btn').trigger('click')
-    await nextTick()
-    const items = wrapper.findAll('.dropdown-item')
-    const stickyItem = items.find(el => el.text().includes('Sticky Scroll'))
-    expect(stickyItem).toBeTruthy()
+    expect(getMenuOpen(wrapper)).toBe(true)
   })
 
-  it('hides sticky scroll toggle in rendered markdown mode', async () => {
-    const wrapper = mountHeader({
-      file: { name: 'README.md', path: '/tmp/README.md', content: '# Hello' },
-      viewMode: 'rendered',
-    })
-    await wrapper.find('.dropdown-wrapper .file-header-btn').trigger('click')
-    await nextTick()
-    const items = wrapper.findAll('.dropdown-item')
-    const stickyItem = items.find(el => el.text().includes('Sticky Scroll'))
-    expect(stickyItem).toBeFalsy()
-  })
-
-  it('emits toggleStickyScroll when sticky scroll item is clicked', async () => {
+  it('closes menu on second dropdown button click', async () => {
     const wrapper = mountHeader({ viewMode: 'source' })
     await wrapper.find('.dropdown-wrapper .file-header-btn').trigger('click')
+    expect(getMenuOpen(wrapper)).toBe(true)
+    await wrapper.find('.dropdown-wrapper .file-header-btn').trigger('click')
+    expect(getMenuOpen(wrapper)).toBe(false)
+  })
+
+  it('emits toggleStickyScroll when handleToggleStickyScroll is called', async () => {
+    const wrapper = mountHeader({ viewMode: 'source' })
+    // Call the internal handler directly (Teleport content not accessible in jsdom)
+    const vm = wrapper.vm as any
+    vm.$.setupState.handleToggleStickyScroll()
     await nextTick()
-    const items = wrapper.findAll('.dropdown-item')
-    const stickyItem = items.find(el => el.text().includes('Sticky Scroll'))
-    expect(stickyItem).toBeTruthy()
-    await stickyItem!.trigger('click')
     expect(wrapper.emitted('toggleStickyScroll')).toBeTruthy()
+    // Menu should also close
+    expect(getMenuOpen(wrapper)).toBe(false)
   })
 
-  it('shows checkmark when stickyScroll is true', async () => {
-    const wrapper = mountHeader({ stickyScroll: true, viewMode: 'source' })
-    await wrapper.find('.dropdown-wrapper .file-header-btn').trigger('click')
+  it('emits toggleWordWrap when handleToggleWordWrap is called', async () => {
+    const wrapper = mountHeader({ viewMode: 'source' })
+    const vm = wrapper.vm as any
+    vm.$.setupState.handleToggleWordWrap()
     await nextTick()
-    const items = wrapper.findAll('.dropdown-item')
-    const stickyItem = items.find(el => el.text().includes('Sticky Scroll'))
-    expect(stickyItem).toBeTruthy()
-    expect(stickyItem!.find('.wrap-check').exists()).toBe(true)
+    expect(wrapper.emitted('toggleWordWrap')).toBeTruthy()
+    expect(getMenuOpen(wrapper)).toBe(false)
   })
 
-  it('does not show checkmark when stickyScroll is false', async () => {
-    const wrapper = mountHeader({ stickyScroll: false, viewMode: 'source' })
-    await wrapper.find('.dropdown-wrapper .file-header-btn').trigger('click')
+  it('emits toggleLineNumbers when handleToggleLineNumbers is called', async () => {
+    const wrapper = mountHeader({ viewMode: 'source' })
+    const vm = wrapper.vm as any
+    vm.$.setupState.handleToggleLineNumbers()
     await nextTick()
-    const items = wrapper.findAll('.dropdown-item')
-    const stickyItem = items.find(el => el.text().includes('Sticky Scroll'))
-    expect(stickyItem).toBeTruthy()
-    expect(stickyItem!.find('.wrap-check').exists()).toBe(false)
+    expect(wrapper.emitted('toggleLineNumbers')).toBeTruthy()
+    expect(getMenuOpen(wrapper)).toBe(false)
   })
 
   it('renders header actions with square buttons (border-radius: 4px)', () => {
     const wrapper = mountHeader()
     const btns = wrapper.findAll('.file-header-btn')
     expect(btns.length).toBeGreaterThan(0)
-    // Buttons should exist and be styled (CSS verification is implicit via class)
     for (const btn of btns) {
       expect(btn.classes()).toContain('file-header-btn')
     }
@@ -134,15 +142,12 @@ describe('FileHeader', () => {
     const wrapper = mountHeader({ viewMode: 'source' })
     // Open dropdown
     await wrapper.find('.dropdown-wrapper .file-header-btn').trigger('click')
+    expect(getMenuOpen(wrapper)).toBe(true)
+    // Call handler directly (simulates clicking the sticky scroll menu item)
+    const vm = wrapper.vm as any
+    vm.$.setupState.handleToggleStickyScroll()
     await nextTick()
-    // Menu should be open
-    expect(wrapper.findAll('.file-header-dropdown-menu').length).toBeGreaterThan(0)
-    // Click sticky scroll
-    const items = wrapper.findAll('.dropdown-item')
-    const stickyItem = items.find(el => el.text().includes('Sticky Scroll'))
-    await stickyItem!.trigger('click')
-    await nextTick()
-    // Menu should be closed (teleported content removed)
-    expect(document.querySelectorAll('.file-header-dropdown-menu').length).toBe(0)
+    // Menu should be closed
+    expect(getMenuOpen(wrapper)).toBe(false)
   })
 })

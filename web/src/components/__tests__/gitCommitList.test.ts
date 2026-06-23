@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import GitCommitList from '@/components/git/GitCommitList.vue'
@@ -33,7 +33,6 @@ const i18n = createI18n({
 
 // ── Stubs ──
 const LucideStub = { template: '<span class="lucide-stub" />' }
-const GitGraphStub = { template: '<div class="git-graph-stub" />' }
 const SearchInputStub = { template: '<input class="search-input-stub" />' }
 
 // ── Sample data ──
@@ -60,11 +59,16 @@ function mountList(props: Record<string, unknown> = {}) {
       plugins: [i18n],
       stubs: {
         'lucide-vue-next': LucideStub,
-        [GitGraph.name || 'GitGraph']: GitGraphStub,
         [SearchInput.name || 'SearchInput']: SearchInputStub,
       },
     },
   })
+}
+
+// Helper: check if GitGraph is rendered (by its wrapper class or component instance)
+function hasGitGraph(wrapper: ReturnType<typeof mountList>) {
+  // GitGraph renders with class="commit-list-graph" on its root SVG
+  return wrapper.find('.commit-list-graph').exists()
 }
 
 describe('GitCommitList mode behavior', () => {
@@ -72,17 +76,17 @@ describe('GitCommitList mode behavior', () => {
 
   it('shows GitGraph in project mode (default)', () => {
     const wrapper = mountList({ mode: 'project' })
-    expect(wrapper.find('.git-graph-stub').exists()).toBe(true)
+    expect(hasGitGraph(wrapper)).toBe(true)
   })
 
   it('shows GitGraph when mode is not specified (defaults to project)', () => {
     const wrapper = mountList()
-    expect(wrapper.find('.git-graph-stub').exists()).toBe(true)
+    expect(hasGitGraph(wrapper)).toBe(true)
   })
 
   it('hides GitGraph in file mode', () => {
     const wrapper = mountList({ mode: 'file' })
-    expect(wrapper.find('.git-graph-stub').exists()).toBe(false)
+    expect(hasGitGraph(wrapper)).toBe(false)
   })
 
   it('does not show graph hint in file mode when not searching', () => {
@@ -147,6 +151,6 @@ describe('GitCommitList mode behavior', () => {
   it('defaults mode to project when not provided', () => {
     const wrapper = mountList()
     // In project mode, GitGraph is visible
-    expect(wrapper.find('.git-graph-stub').exists()).toBe(true)
+    expect(hasGitGraph(wrapper)).toBe(true)
   })
 })

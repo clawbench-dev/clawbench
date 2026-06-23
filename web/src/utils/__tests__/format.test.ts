@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { formatDuration, stripMarkdownPreview, formatBadgeCount } from '@/utils/format.ts'
 
 // Mock i18n module — factory must not reference external variables (hoisted)

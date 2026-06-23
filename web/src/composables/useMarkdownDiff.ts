@@ -190,7 +190,7 @@ export function isDiffBlock(el: Element): boolean {
     return false
 }
 
-function toBlockInfo(el: Element, selector: string, index: number): BlockInfo {
+function toBlockInfo(el: Element, selector: string, _index: number): BlockInfo {
     const tag = el.tagName
     const info: BlockInfo = {
         tag,
@@ -456,8 +456,6 @@ export function computeCharDiff(oldText: string, newText: string): CharDiff {
 export function charDiffToLines(charDiff: CharDiff): DiffLine[] {
     if (!charDiff.changes || charDiff.changes.length === 0) return []
 
-    const oldLines = charDiff.oldText.split('\n')
-    const newLines = charDiff.newText.split('\n')
     let oldLineNum = 1
     let newLineNum = 1
     const result: DiffLine[] = []

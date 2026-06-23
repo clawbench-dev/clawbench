@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { isValidAskContent, detectAskQuestion, extractScheduledTaskIds, stripScheduledTaskTags, taskChanged, StaticBlockCache, SCHEDULED_TASK_RE } from '../streamPerf'
+import { isValidAskContent, detectAskQuestion, extractScheduledTaskIds, stripScheduledTaskTags, taskChanged, StaticBlockCache } from '../streamPerf'
 
 describe('isValidAskContent', () => {
   it('accepts XML with <item> containing <question> and <option>', () => {

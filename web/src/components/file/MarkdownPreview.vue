@@ -20,9 +20,9 @@
     <!-- Raw markdown -->
     <CodePreview
       v-else
-      :content="file.content"
+      :content="file?.content ?? ''"
       language="markdown"
-      :file-path="file.path"
+      :file-path="file?.path ?? ''"
       :word-wrap="wordWrap"
       :show-line-numbers="showLineNumbers"
       :flash-ranges="flashRanges"
@@ -33,7 +33,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, onBeforeUnmount, computed } from 'vue'
+import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import CodePreview from './CodePreview.vue'
 import { useMarkdownRenderer } from '@/composables/useMarkdownRenderer.ts'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
@@ -47,25 +47,26 @@ import {
   clearDiffMarkers,
   extractBlocks,
   extractBlockElements,
+  type BlockInfo,
 } from '@/composables/useMarkdownDiff.ts'
 import { handleDiffMarkerClick } from '@/composables/useDiffMarkerClick.ts'
 import '@/assets/diff-marker.css'
 
-const props = defineProps({
-    file: Object,
-    viewMode: String,
-    wordWrap: Boolean,
-    showLineNumbers: { type: Boolean, default: true },
-    stickyScroll: { type: Boolean, default: true },
-})
+const props = defineProps<{
+    file?: { content: string; path: string; error?: boolean }
+    viewMode?: string
+    wordWrap?: boolean
+    showLineNumbers?: boolean
+    stickyScroll?: boolean
+}>()
 
 const renderedHtml = ref('')
-const bodyRef = ref(null)
+const bodyRef = ref<HTMLElement | null>(null)
 const imageTimestamp = ref(Date.now())
 let currentRenderId = 0
 
 // ─── Last block list cache (snapshot before Vue update) ───
-const lastBlockList = ref([])
+const lastBlockList = ref<BlockInfo[]>([])
 
 // ─── Positioned markers for v-for rendering ───
 interface PositionedMarker {
@@ -83,7 +84,8 @@ const quoteQuestion = useQuoteQuestion()
 const { handleDblClick } = useDoubleClickCopy({
     lineSelector: '.code-line',
     onCopy(target, text) {
-        const lineEl = target && 'closest' in target ? target.closest('.code-line') : null
+        const el = target as HTMLElement | null
+        const lineEl = el?.closest('.code-line') ?? null
         if (lineEl) {
             const preEl = lineEl.closest('pre')
             const block = lineEl.closest('.markdown-body')
@@ -99,7 +101,7 @@ const { handleDblClick } = useDoubleClickCopy({
             })
             return
         }
-        const block = target && 'closest' in target ? target.closest('.markdown-body') : null
+        const block = el?.closest('.markdown-body') ?? null
         const filePath = block?.getAttribute('data-file-path') || props.file?.path || ''
         quoteQuestion.showBar({
             text,
@@ -113,12 +115,13 @@ const { handleDblClick } = useDoubleClickCopy({
 const { renderMarkdown, renderMermaidInElement } = useMarkdownRenderer()
 const { annotateFilePaths, verifyFilePaths, resolveRelativePath, openFilePath } = useFilePathAnnotation()
 
-function handleClick(event) {
+function handleClick(event: MouseEvent) {
     // Check for diff marker click first
     if (handleDiffMarkerClick(event, '.diff-marker-inline')) return
 
+    const target = event.target as HTMLElement | null
     // Check for commit-hash click
-    const commitEl = event.target.closest('.chat-commit-hash, .chat-commit-open-btn')
+    const commitEl = target?.closest('.chat-commit-hash, .chat-commit-open-btn')
     if (commitEl) {
         event.preventDefault()
         event.stopPropagation()
@@ -129,7 +132,7 @@ function handleClick(event) {
         return
     }
     // Check for file-open button click
-    const btn = event.target.closest('.chat-file-open-btn')
+    const btn = target?.closest('.chat-file-open-btn')
     if (btn) {
         event.preventDefault()
         event.stopPropagation()
@@ -142,7 +145,7 @@ function handleClick(event) {
         return
     }
     // In-page anchor links
-    const linkEl = event.target.closest('a[href^="#"]')
+    const linkEl = target?.closest('a[href^="#"]')
     if (linkEl) {
         const href = linkEl.getAttribute('href') || ''
         if (href.length > 1) {
@@ -165,9 +168,9 @@ function handleClick(event) {
     })
 }
 
-function fixLocalImagePaths(html) {
+function fixLocalImagePaths(html: string): string {
     const currentDir = props.file?.path ? dirName(props.file.path) : ''
-    return html.replace(/<img\s+([^>]*src=[^>]*)>/gi, (match, attrs) => {
+    return html.replace(/<img\s+([^>]*src=[^>]*)>/gi, (match: string, attrs: string) => {
         const srcMatch = attrs.match(/src="([^"]*)"/)
         if (!srcMatch) return match
         const src = srcMatch[1]
@@ -216,10 +219,10 @@ function computeMarkerPositions() {
 
         // Calculate top relative to .markdown-body via offsetTop chain
         let top = 0
-        let el: Element | null = blockEl
+        let el: HTMLElement | null = blockEl as HTMLElement
         while (el && el !== body) {
             top += el.offsetTop
-            el = el.offsetParent as Element | null
+            el = el.offsetParent as HTMLElement | null
         }
 
         markers.push({
@@ -228,14 +231,14 @@ function computeMarkerPositions() {
             label: marker.label,
             ariaLabel: marker.ariaLabel,
             top,
-            height: blockEl.offsetHeight,
+            height: (blockEl as HTMLElement).offsetHeight,
         })
     }
 
     positionedMarkers.value = markers
 }
 
-async function doRender(f) {
+async function doRender(f: { content: string; path?: string; error?: boolean }) {
     const renderId = ++currentRenderId
     imageTimestamp.value = Date.now()
     let html = renderMarkdown(f.content, {

@@ -79,7 +79,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     disconnectStream,
     stopPolling,
     updateRenderedContents,
-    clearInputState,
+    clearInputState: _clearInputState,
     scrollBottom,
     sendMessageNow,
   } = options

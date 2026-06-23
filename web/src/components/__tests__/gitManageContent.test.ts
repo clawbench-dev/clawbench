@@ -3,11 +3,13 @@ import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 
-// --- Mock apiDelete ---
+// --- Mock api ---
+const mockApiGet = vi.fn().mockResolvedValue({ isGit: true, worktrees: [], branches: [], tags: [], stashCount: 0 })
+const mockApiPost = vi.fn().mockResolvedValue({ success: true })
 const mockApiDelete = vi.fn()
 vi.mock('@/utils/api', () => ({
-  apiGet: vi.fn().mockResolvedValue({ isGit: true, worktrees: [], branches: [], tags: [], stashCount: 0 }),
-  apiPost: vi.fn().mockResolvedValue({ success: true }),
+  apiGet: (...args: unknown[]) => mockApiGet(...args),
+  apiPost: (...args: unknown[]) => mockApiPost(...args),
   apiDelete: (...args: unknown[]) => mockApiDelete(...args),
 }))
 
@@ -28,7 +30,19 @@ vi.mock('@/stores/app.ts', () => ({
   store: {
     setProject: vi.fn().mockResolvedValue(undefined),
     loadGitBranch: vi.fn().mockResolvedValue(undefined),
+    loadFiles: vi.fn().mockResolvedValue(undefined),
+    state: {
+      currentFile: null,
+      currentDir: '',
+    },
   },
+}))
+
+// --- Mock useFileRefresh ---
+vi.mock('@/composables/useFileRefresh.ts', () => ({
+  refreshCurrentFile: vi.fn(),
+  flashRanges: { value: [] },
+  flashType: { value: '' },
 }))
 
 // --- i18n ---
@@ -53,33 +67,27 @@ const i18n = createI18n({
           stashSwitch: '暂存并切换',
           forceSwitch: '强制切换（丢弃更改）',
           switchBranch: '切换分支',
+          noWorktrees: '无工作树',
+          loadError: '加载错误',
+          retry: '重试',
         },
       },
     },
   },
 })
 
-// --- Stub child components ---
-const StubComponent = {
-  template: '<div class="stub"><slot /></div>',
-  props: ['worktrees', 'branches', 'tags', 'stashCount', 'loading', 'error', 'checkoutInProgress', 'initialCollapsed', 'hideHeader'],
-  emits: ['switch-worktree', 'delete-worktree', 'switch-branch', 'delete-branch', 'switch-tag', 'delete-tag', 'retry'],
-}
-
 // --- Import after mocks ---
 import GitManageContent from '@/components/git/GitManageContent.vue'
+import GitWorktreeList from '@/components/git/GitWorktreeList.vue'
 
 function mountContent() {
   return mount(GitManageContent, {
     global: {
       plugins: [i18n],
       stubs: {
-        GitWorktreeList: StubComponent,
-        GitBranchList: StubComponent,
-        GitTagList: StubComponent,
+        GitBranchList: true,
+        GitTagList: true,
         FolderTree: { template: '<span />' },
-        GitBranch: { template: '<span />' },
-        Tag: { template: '<span />' },
         Teleport: { template: '<div><slot /></div>' },
       },
     },
@@ -92,9 +100,17 @@ async function flush(ms = 0) {
   await nextTick()
 }
 
+// Helper: find the GitWorktreeList child component and emit from it
+function findWorktreeList(wrapper: ReturnType<typeof mount>) {
+  return wrapper.findComponent(GitWorktreeList)
+}
+
 describe('GitManageContent - onDeleteWorktree dirty_worktree handling', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // Restore API mocks after clearAllMocks resets them
+    mockApiGet.mockResolvedValue({ isGit: true, worktrees: [], branches: [], tags: [], stashCount: 0 })
+    mockApiPost.mockResolvedValue({ success: true })
     // Default: first confirm = true (user confirms initial delete)
     dialogConfirmFn.mockResolvedValue(true)
   })
@@ -112,9 +128,9 @@ describe('GitManageContent - onDeleteWorktree dirty_worktree handling', () => {
     const wrapper = mountContent()
     await flush()
 
-    // Trigger delete-worktree event
+    // Trigger delete-worktree event from the GitWorktreeList child
     const wt = { path: '/repo/.worktrees/fix-lint', branch: 'fix-lint' }
-    wrapper.findComponent('.stub').vm.$emit('delete-worktree', wt)
+    findWorktreeList(wrapper).vm.$emit('delete-worktree', wt)
     await flush(10)
 
     // First apiDelete call (without force)
@@ -149,7 +165,7 @@ describe('GitManageContent - onDeleteWorktree dirty_worktree handling', () => {
     await flush()
 
     const wt = { path: '/repo/.worktrees/fix-lint', branch: 'fix-lint' }
-    wrapper.findComponent('.stub').vm.$emit('delete-worktree', wt)
+    findWorktreeList(wrapper).vm.$emit('delete-worktree', wt)
     await flush(10)
 
     // Only one apiDelete call (without force)
@@ -165,7 +181,7 @@ describe('GitManageContent - onDeleteWorktree dirty_worktree handling', () => {
     await flush()
 
     const wt = { path: '/repo/.worktrees/clean', branch: 'clean' }
-    wrapper.findComponent('.stub').vm.$emit('delete-worktree', wt)
+    findWorktreeList(wrapper).vm.$emit('delete-worktree', wt)
     await flush(10)
 
     // Only one confirm (the initial one) and one apiDelete
@@ -180,7 +196,7 @@ describe('GitManageContent - onDeleteWorktree dirty_worktree handling', () => {
     await flush()
 
     const wt = { path: '/repo/.worktrees/clean', branch: 'clean' }
-    wrapper.findComponent('.stub').vm.$emit('delete-worktree', wt)
+    findWorktreeList(wrapper).vm.$emit('delete-worktree', wt)
     await flush(10)
 
     expect(mockApiDelete).not.toHaveBeenCalled()

@@ -230,7 +230,7 @@ export function useLocalhostUrlClickHandler() {
     async function openLocalhostUrl(element: Element, port: number, protocol: string): Promise<boolean> {
         if (urlOpening.value) return true
         if (sshInfo.value?.enabled === false) {
-            toast.show(gt('chat.localhost.sshDisabled'), { type: 'warning' })
+            toast.show(gt('chat.localhost.sshDisabled'), { type: 'info' })
             return false
         }
         urlOpening.value = true

@@ -251,14 +251,14 @@ describe('forceCleanupStreamingState', () => {
   })
 
   it('handles multiple messages with one streaming', () => {
-    const messages = [
+    const messages: any[] = [
       { role: 'user', content: 'question' },
       { role: 'assistant', content: '', blocks: [{ type: 'tool_use', name: 'Read', id: '1', done: false }], streaming: true },
     ]
     forceCleanupStreamingState(messages, { onRenderNeeded: vi.fn() })
     expect(messages[0].content).toBe('question')  // Unchanged
-    expect(messages[1].streaming).toBeUndefined()
-    expect(messages[1].blocks[0].done).toBe(true)
+    expect(messages[1]!.streaming).toBeUndefined()
+    expect(messages[1]!.blocks[0]!.done).toBe(true)
   })
 
   it('removes empty streaming message (no content, empty blocks)', () => {
@@ -363,9 +363,8 @@ describe('drainQueueMessage', () => {
     ]
     const result = drainQueueMessage(messages, 'hello', [], 'codebuddy', callbacks)
     expect(messages[0].pending).toBeUndefined()
-    expect(result.role).toBe('assistant')
-    expect(result.streaming).toBe(true)
-    expect(result.backend).toBe('codebuddy')
+    expect(result!.streaming).toBe(true)
+    expect(result!.backend).toBe('codebuddy')
     expect(messages).toHaveLength(2)
   })
 
@@ -383,14 +382,14 @@ describe('drainQueueMessage', () => {
     expect(messages).toHaveLength(2)
     expect(messages[0].role).toBe('user')
     expect(messages[0].content).toBe('hello')
-    expect(result.role).toBe('assistant')
+    expect(result!.role).toBe('assistant')
   })
 
   it('skips creating user message when existing non-id user msg matches', () => {
     const messages: any[] = [
       { role: 'user', content: 'hello', id: undefined, blocks: [{ type: 'text', text: 'hello' }] },
     ]
-    const result = drainQueueMessage(messages, 'hello', [], 'codebuddy', callbacks)
+    drainQueueMessage(messages, 'hello', [], 'codebuddy', callbacks)
     // Only the new streaming assistant is pushed, no duplicate user msg
     expect(messages).toHaveLength(2)
     expect(messages[0].content).toBe('hello')

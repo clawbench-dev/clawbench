@@ -24,6 +24,17 @@ vi.mock('@/composables/useDialog', () => ({
   useDialog: () => ({ confirm: vi.fn() }),
 }))
 
+// Mock child components that have complex props/dependencies
+vi.mock('@/components/chat/ContentBlocks.vue', () => ({
+  default: { name: 'ContentBlocks', template: '<div class="content-blocks-stub" />' },
+}))
+vi.mock('@/components/chat/FileAttachmentList.vue', () => ({
+  default: { name: 'FileAttachmentList', template: '<div class="file-attachment-list-stub" />' },
+}))
+vi.mock('@/components/common/SummaryToggle.vue', () => ({
+  default: { name: 'SummaryToggle', template: '<span class="summary-toggle-stub" />' },
+}))
+
 const i18n = createI18n({
   legacy: false,
   locale: 'zh',
@@ -58,11 +69,6 @@ function createWrapper(props = {}) {
           getAgentIcon: vi.fn(() => ''),
           getAgentName: vi.fn(() => ''),
         },
-      },
-      stubs: {
-        ContentBlocks: true,
-        FileAttachmentList: true,
-        SummaryToggle: true,
       },
     },
     props: {

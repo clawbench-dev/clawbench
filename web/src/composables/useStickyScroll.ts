@@ -19,13 +19,13 @@ import { fetchCodeSymbols } from '@/composables/useCodeSymbols'
  */
 export function useStickyScroll() {
   /** Reactive array of { lineNum, kind, top, height } for lines that should be sticky */
-  const stickyLines = ref([])
+  const stickyLines = ref<Array<{ lineNum: number; kind: string; top: number; height: number }>>([])
 
-  let symbols = []
-  let scrollEl = null
-  let scrollHandler = null
-  let rafId = null
-  let lineEls = []  // cached .code-line elements
+  let symbols: Array<{ line: number; endLine: number; kind: string; lineNum: number }> = []
+  let scrollEl: HTMLElement | null = null
+  let scrollHandler: (() => void) | null = null
+  let rafId: number | null = null
+  let lineEls: Element[] = []  // cached .code-line elements
 
   const MAX_STICKY = 5  // max sticky lines to show at once
 
@@ -127,8 +127,8 @@ export function useStickyScroll() {
     // Update each sticky line's code-text element to follow horizontal scroll
     const codeTextEls = scrollEl.querySelectorAll('.sticky-line .sticky-code-text')
     const scrollLeft = scrollEl.scrollLeft
-    codeTextEls.forEach(el => {
-      el.style.transform = `translateX(${-scrollLeft}px)`
+    codeTextEls.forEach((el: Element) => {
+      (el as HTMLElement).style.transform = `translateX(${-scrollLeft}px)`
     })
   }
 
@@ -168,7 +168,7 @@ export function useStickyScroll() {
    * @param filePath - file path for backend API
    * @param el - the scroll container (<pre class="raw-content-pre">)
    */
-  function initSticky(filePath, el) {
+  function initSticky(filePath: string, el: HTMLElement) {
     detachScroll()
     symbols = []
     stickyLines.value = []
@@ -180,7 +180,7 @@ export function useStickyScroll() {
     fetchCodeSymbols(filePath).then(result => {
       if (result && result.symbols.length > 0) {
         // Sort by line ascending
-        symbols = [...result.symbols].sort((a, b) => a.line - b.line)
+        symbols = [...result.symbols].sort((a, b) => a.line - b.line) as unknown as typeof symbols
         attachScroll()
       }
     }).catch(() => {})

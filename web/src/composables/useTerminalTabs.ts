@@ -224,7 +224,7 @@ export function useTerminalTabs(
   function syncTabSessionId(id: string) {
     const tab = tabs.value.find((t) => t.id === id)
     if (tab) {
-      tab.sessionId = tab.session.sessionId
+      tab.sessionId = tab.session.sessionId as unknown as string
     }
   }
 
@@ -257,7 +257,7 @@ export function useTerminalTabs(
 
     syncTabSessionId(tab.id)
 
-    if (tab.session.connectionState === 'disconnected') {
+    if ((tab.session.connectionState as unknown as string) === 'disconnected') {
       try {
         await tab.session.connect()
         syncTabSessionId(tab.id)

@@ -192,7 +192,6 @@ import {
 } from '@/utils/terminalFontUtils'
 import { localConfig, setLocalConfig, useSettingsConfig } from '@/composables/useSettingsConfig'
 import type { KeyDef } from '@/utils/terminalKeyDefs'
-import { copyText } from '@/utils/clipboard'
 
 import { Zap as ZapIcon, Hand as HandIcon, Hash as HashIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, Terminal as TerminalIcon, Settings, Copy as CopyIcon } from 'lucide-vue-next'
 const props = defineProps<{
@@ -272,7 +271,6 @@ function updateSymbolBarScrollFade(e: Event) {
 
 // Refs for scroll containers
 const toolbarScrollRef = ref<HTMLElement | null>(null)
-// @ts-expect-error template ref
 const symbolBarScrollRef = ref<HTMLElement | null>(null)
 
 function refreshToolbarFade() {
@@ -491,17 +489,17 @@ const panelStyle = computed(() => ({
 // doesn't model reactive() auto-unwrapping, but using .value would
 // read the .value property of the already-unwrapped string (undefined).
 function isTabError(tab: TerminalTab): boolean {
-  return showErrorOverlayUtil(tab.session.connectionState)
+  return showErrorOverlayUtil(tab.session.connectionState as unknown as string)
 }
 
 function isTabCanReconnect(tab: TerminalTab): boolean {
-  return canReconnectUtil(tab.session.errorCode)
+  return canReconnectUtil(tab.session.errorCode as unknown as string)
 }
 
 function getTabErrorMessage(tab: TerminalTab): string {
   return errorDisplayMessageUtil(
-    tab.session.errorCode,
-    tab.session.errorMessage,
+    tab.session.errorCode as unknown as string,
+    tab.session.errorMessage as unknown as string,
     t('terminal.websocketFailed'),
   )
 }
@@ -570,7 +568,7 @@ function handleTabClick(tabId: string) {
 
   // Connect the newly active tab if it's disconnected (e.g. after panel reactivation)
   const tab = tabManager.getTab(tabId)
-  if (tab && tab.session.connectionState === 'disconnected') {
+  if (tab && (tab.session.connectionState as unknown as string) === 'disconnected') {
     tab.session.connect().then(() => {
       tabManager.syncTabSessionId(tabId)
       requestAnimationFrame(() => {
@@ -591,7 +589,7 @@ function handleCreateTab() {
       mountTabToContainer(tab, container)
     }
     // Connect the new tab
-    if (props.active && tab.session.connectionState === 'disconnected') {
+    if (props.active && (tab.session.connectionState as unknown as string) === 'disconnected') {
       tab.session.connect().then(() => {
         tabManager.syncTabSessionId(tab.id)
         requestAnimationFrame(() => {
@@ -622,7 +620,7 @@ function handleTabMenuClose() {
       if (container && tab && !tab.container) {
         mountTabToContainer(tab, container)
       }
-      if (props.active && tab && tab.session.connectionState === 'disconnected') {
+      if (props.active && tab && (tab.session.connectionState as unknown as string) === 'disconnected') {
         tab.session.connect().then(() => {
           tabManager.syncTabSessionId(tab.id)
           requestAnimationFrame(() => {
@@ -744,7 +742,7 @@ watch(() => props.active, async (isActive) => {
       if (container && !tab.container) {
         mountTabToContainer(tab, container)
       }
-      if (tab.session.connectionState === 'disconnected') {
+      if ((tab.session.connectionState as unknown as string) === 'disconnected') {
         try {
           await tab.session.connect()
           tabManager.syncTabSessionId(tab.id)
@@ -780,7 +778,7 @@ watch(() => props.requestedCwd, async (cwd) => {
   if (container && !tab.container) {
     mountTabToContainer(tab, container)
   }
-  if (tab.session.connectionState === 'disconnected') {
+  if ((tab.session.connectionState as unknown as string) === 'disconnected') {
     tab.session.connect().then(() => {
       tabManager.syncTabSessionId(tab.id)
       requestAnimationFrame(() => {
@@ -827,7 +825,7 @@ onMounted(async () => {
       if (container && !tab.container) {
         mountTabToContainer(tab, container)
       }
-      if (tab.session.connectionState === 'disconnected') {
+      if ((tab.session.connectionState as unknown as string) === 'disconnected') {
         try {
           await tab.session.connect()
           tabManager.syncTabSessionId(tab.id)

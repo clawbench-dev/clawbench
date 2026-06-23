@@ -36,7 +36,6 @@ export function computeMenuStyle(
     maxWidth = 220,
     maxHeight = 320,
     edgeMargin = 6,
-    menuItemsCount = 10,
     viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1024,
     viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 768,
     anchor = 'auto',

@@ -178,7 +178,7 @@ function connect() {
                 }
 
                 // Dispatch summary_update as a custom event for ChatPanelContent
-                if (msg.event === 'summary_update' && msg.data?.targetType === 'chat_message') {
+                if (msg.event === 'summary_update' && (msg.data as any)?.targetType === 'chat_message') {
                     window.dispatchEvent(new CustomEvent('clawbench-summary-update', { detail: msg.data }))
                 }
 

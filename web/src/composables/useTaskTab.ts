@@ -63,7 +63,6 @@ function onTaskCompleted(task: any) {
 
     // Navigate to task history on click
     const navigateToHistory = () => {
-        navigateToTaskHistory(task.id)
         if (switchTabCallback) switchTabCallback('tasks')
     }
 
