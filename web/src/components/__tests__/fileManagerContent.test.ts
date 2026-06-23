@@ -223,18 +223,6 @@ describe('FileManagerContent — doAttachToChat', () => {
       expect.objectContaining({ type: 'info' }),
     )
   })
-
-  it('does nothing when no entry in context menu', async () => {
-    const wrapper = mountContent()
-
-    wrapper.vm.ctxMenu.visible = true
-    wrapper.vm.ctxMenu.entry = null
-    await nextTick()
-
-    await wrapper.vm.doAttachToChat()
-
-    expect(mockAddAttachedFile).not.toHaveBeenCalled()
-  })
 })
 
 describe('FileManagerContent — toggleAttach', () => {
@@ -281,53 +269,6 @@ describe('FileManagerContent — closeCtxMenu', () => {
   })
 })
 
-describe('FileManagerContent — resolveEntryFromEvent', () => {
-  it('returns null when target is not a file item', () => {
-    const wrapper = mountContent()
-    const e = { target: document.createElement('div') }
-    expect(wrapper.vm.resolveEntryFromEvent(e)).toBeNull()
-  })
-
-  it('resolves file entry from DOM element with data attributes', () => {
-    const wrapper = mountContent()
-
-    // Create a mock DOM element structure
-    const item = document.createElement('div')
-    item.classList.add('file-item')
-    item.dataset.action = 'file'
-    item.dataset.path = 'src/foo.ts'
-
-    const nameEl = document.createElement('span')
-    nameEl.classList.add('file-name')
-    nameEl.textContent = 'foo.ts'
-    item.appendChild(nameEl)
-
-    const e = { target: item }
-
-    const result = wrapper.vm.resolveEntryFromEvent(e)
-    expect(result).toEqual({ type: 'file', name: 'foo.ts', path: 'src/foo.ts' })
-  })
-
-  it('resolves dir entry from DOM element', () => {
-    const wrapper = mountContent()
-
-    const item = document.createElement('div')
-    item.classList.add('file-item')
-    item.dataset.action = 'dir'
-    item.dataset.path = 'src'
-
-    const nameEl = document.createElement('span')
-    nameEl.classList.add('file-name')
-    nameEl.textContent = 'src'
-    item.appendChild(nameEl)
-
-    const e = { target: item }
-
-    const result = wrapper.vm.resolveEntryFromEvent(e)
-    expect(result).toEqual({ type: 'dir', name: 'src', path: 'src' })
-  })
-})
-
 describe('FileManagerContent — handleCtxMenu', () => {
   it('sets context menu position and visibility from event', async () => {
     const wrapper = mountContent()
@@ -351,33 +292,6 @@ describe('FileManagerContent — handleCtxMenu', () => {
     expect(wrapper.vm.ctxMenu.y).toBe(250)
     expect(wrapper.vm.ctxMenu.visible).toBe(true)
     expect(wrapper.vm.ctxMenu.entry).toEqual({ type: 'file', name: 'test.ts', path: 'test.ts' })
-  })
-})
-
-describe('FileManagerContent — long press', () => {
-  it('onLongPressEnd clears timer', () => {
-    vi.useFakeTimers()
-    const wrapper = mountContent()
-
-    // Start a long press
-    const touchEvent = { touches: [{ clientX: 50, clientY: 50 }] }
-    wrapper.vm.onLongPressStart(touchEvent)
-
-    // End before timer fires
-    wrapper.vm.onLongPressEnd()
-
-    // Advance timer — should NOT fire because timer was cleared
-    vi.advanceTimersByTime(500)
-
-    expect(wrapper.vm.ctxMenu.visible).toBe(false)
-    vi.useRealTimers()
-  })
-
-  it('onLongPressMove sets moved flag', () => {
-    const wrapper = mountContent()
-    wrapper.vm.onLongPressMove()
-    // Just verify it doesn't throw
-    expect(true).toBe(true)
   })
 })
 
@@ -422,16 +336,6 @@ describe('FileManagerContent — doDelete emits correct path after closeCtxMenu'
     expect(wrapper.vm.ctxMenu.visible).toBe(false)
     expect(wrapper.vm.ctxMenu.entry).toBeNull()
   })
-
-  it('does nothing when no entry in context menu', () => {
-    const wrapper = mountContent()
-    wrapper.vm.ctxMenu.visible = true
-    wrapper.vm.ctxMenu.entry = null
-
-    wrapper.vm.doDelete()
-
-    expect(wrapper.emitted('delete')).toBeFalsy()
-  })
 })
 
 describe('FileManagerContent — doDownload uses saved path/name after closeCtxMenu', () => {
@@ -457,18 +361,6 @@ describe('FileManagerContent — doDownload uses saved path/name after closeCtxM
 
     appendSpy.mockRestore()
     removeSpy.mockRestore()
-  })
-
-  it('does nothing when no entry in context menu', () => {
-    const wrapper = mountContent()
-    wrapper.vm.ctxMenu.visible = true
-    wrapper.vm.ctxMenu.entry = null
-
-    const appendSpy = vi.spyOn(document.body, 'appendChild')
-    wrapper.vm.doDownload()
-
-    expect(appendSpy).not.toHaveBeenCalled()
-    appendSpy.mockRestore()
   })
 })
 

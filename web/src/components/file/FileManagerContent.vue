@@ -98,10 +98,6 @@
     <div v-if="viewMode === 'list'" class="file-list" id="fileList"
       @click="handleItemClick"
       @contextmenu.prevent="handleCtxMenu"
-      @touchstart="onLongPressStart"
-      @touchmove="onLongPressMove"
-      @touchend="onLongPressEnd"
-      @touchcancel="onLongPressEnd"
     >
       <Transition name="loading-fade">
         <div v-if="dirLoading" class="loading-mask">
@@ -116,6 +112,7 @@
       <template v-for="entry in visibleEntries" :key="entry.name">
         <!-- Directory -->
         <div v-if="entry.type === 'dir'"
+          v-long-press="(e) => onLongPress(entry, e)"
           class="file-item dir-item"
           :class="{
             'ms-selected': multiSelect.active && multiSelect.selected.has(itemPath(entry.name)),
@@ -137,6 +134,7 @@
 
         <!-- File -->
         <div v-else
+          v-long-press="(e) => onLongPress(entry, e)"
           class="file-item"
           :class="{
             active: !multiSelect.active && currentFile?.path === itemPath(entry.name),
@@ -169,10 +167,6 @@
     <div v-else class="file-grid" id="fileList"
       @click="handleItemClick"
       @contextmenu.prevent="handleCtxMenu"
-      @touchstart="onLongPressStart"
-      @touchmove="onLongPressMove"
-      @touchend="onLongPressEnd"
-      @touchcancel="onLongPressEnd"
     >
       <Transition name="loading-fade">
         <div v-if="dirLoading" class="loading-mask">
@@ -185,6 +179,7 @@
       </div>
 
       <div v-for="entry in visibleEntries" :key="entry.name"
+        v-long-press="(e) => onLongPress(entry, e)"
         class="grid-item"
         :class="{
           'grid-dir': entry.type === 'dir',
@@ -285,7 +280,7 @@
           </div>
         </template>
       </div>
-      <div v-if="ctxMenu.visible" class="ctx-overlay" @click="closeCtxMenu" @touchstart="closeCtxMenu" />
+      <div v-if="ctxMenu.visible" class="ctx-overlay" @click="closeCtxMenu" />
     </Teleport>
   </div>
 </template>
@@ -469,62 +464,26 @@ function closeCtxMenu() {
 
 // ── Unified context menu trigger (right-click + long-press) ──
 
-function resolveEntryFromEvent(e) {
-    const item = e.target?.closest('.file-item, .grid-item')
-    if (!item) return null
-    const action = item.dataset.action
-    const path = item.dataset.path
-    const name = item.querySelector('.file-name, .grid-name')?.textContent || ''
-    return { type: action === 'dir' ? 'dir' : 'file', name, path }
-}
-
-function handleCtxMenu(e) {
-    const entry = resolveEntryFromEvent(e)
-    ctxMenu.x = e.clientX
-    ctxMenu.y = e.clientY
-    ctxMenu.entry = entry
+function onLongPress(entry, e) {
+    const touch = e.touches[0]
+    ctxMenu.x = touch.clientX
+    ctxMenu.y = touch.clientY + 10
+    ctxMenu.entry = entry  // entry from v-for data — never stale, never null
     ctxMenu.visible = true
     nextTick(() => clampCtxMenu())
 }
 
-// Long-press (mobile): single timer, entry resolved on trigger
-let longPressTimer = null
-let longPressMoved = false
-let longPressFired = false // true after long-press triggers context menu (prevent click-through)
-
-function onLongPressStart(e) {
-    longPressMoved = false
-    longPressFired = false
-    const touch = e.touches[0]
-    // Capture entry data immediately (before the 450ms timer),
-    // because Vue may re-render the file list during the wait
-    // (e.g. SSE dir_change from file watcher), which detaches
-    // the original e.target from the DOM and makes
-    // resolveEntryFromEvent(e) return null.
-    const capturedEntry = resolveEntryFromEvent(e)
-    longPressTimer = setTimeout(() => {
-        if (!longPressMoved) {
-            longPressFired = true
-            if (!capturedEntry) {
-                console.warn('[onLongPressStart] capturedEntry is null — touch target had no file-item?')
-            }
-            ctxMenu.x = touch.clientX
-            ctxMenu.y = touch.clientY + 10
-            ctxMenu.entry = capturedEntry
-            ctxMenu.visible = true
-            nextTick(() => clampCtxMenu())
-        }
-        longPressTimer = null
-    }, 450)
-}
-
-function onLongPressMove() { longPressMoved = true }
-
-function onLongPressEnd() {
-    if (longPressTimer) {
-        clearTimeout(longPressTimer)
-        longPressTimer = null
-    }
+function handleCtxMenu(e) {
+    const item = e.target?.closest('.file-item, .grid-item')
+    if (!item) return
+    const action = item.dataset.action
+    const path = item.dataset.path
+    const name = item.querySelector('.file-name, .grid-name')?.textContent || ''
+    ctxMenu.x = e.clientX
+    ctxMenu.y = e.clientY
+    ctxMenu.entry = { type: action === 'dir' ? 'dir' : 'file', name, path }
+    ctxMenu.visible = true
+    nextTick(() => clampCtxMenu())
 }
 
 // Clipboard now supports multiple entries
@@ -538,7 +497,6 @@ function getDestDir(entry) {
 }
 
 async function doCopy() {
-    if (!ctxMenu.entry) return
     clipboard.entries = [ctxMenu.entry]
     clipboard.isCut = false
     closeCtxMenu()
@@ -546,7 +504,6 @@ async function doCopy() {
 }
 
 async function doCut() {
-    if (!ctxMenu.entry) return
     clipboard.entries = [ctxMenu.entry]
     clipboard.isCut = true
     closeCtxMenu()
@@ -717,13 +674,6 @@ const visibleEntries = computed(() => filteredEntries.value.slice(0, MAX_VISIBLE
 
 function handleItemClick(e) {
     if (props.dirLoading) return
-    // Prevent click-through after long-press: when the context menu opens
-    // via long-press, the subsequent touchend synthesizes a click event
-    // that would穿透 to the file list and open the file.
-    if (longPressFired) {
-        longPressFired = false
-        return
-    }
     const item = e.target.closest('.file-item, .grid-item')
     if (!item) return
     const action = item.dataset.action
@@ -807,7 +757,6 @@ function doOpenTerminal() {
 }
 
 async function doRename() {
-    if (!ctxMenu.entry) return
     const newName = await dialog.prompt(t('file.prompt.newName'), { value: ctxMenu.entry.name })
     if (!newName || newName === ctxMenu.entry.name) { closeCtxMenu(); return }
     emit('rename', { path: ctxMenu.entry.path, name: newName })
@@ -815,7 +764,6 @@ async function doRename() {
 }
 
 function doDownload() {
-    if (!ctxMenu.entry) return
     const path = ctxMenu.entry.path
     const name = ctxMenu.entry.name
     closeCtxMenu()
@@ -897,7 +845,6 @@ function doBatchArchive() {
 }
 
 function doAttachToChat() {
-    if (!ctxMenu.entry) return
     const path = ctxMenu.entry.path
     closeCtxMenu()
     if (hasAttachedFile(path)) {
@@ -932,10 +879,6 @@ function toggleAttach(path) {
 }
 
 function doDelete() {
-    if (!ctxMenu.entry) {
-        console.warn('[doDelete] ctxMenu.entry is null, ignoring')
-        return
-    }
     const path = ctxMenu.entry.path
     console.log('[doDelete] emitting delete for:', path)
     closeCtxMenu()

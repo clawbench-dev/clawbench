@@ -1,6 +1,7 @@
 import { createApp } from 'vue'
 import App from './App.vue'
 import i18n from './i18n'
+import { LongPressDirective } from './directives/longPress.ts'
 import { marked, hljs } from './utils/globals.ts'
 import { slugify } from './utils/toc.ts'
 import { escapeHtml } from './utils/html.ts'
@@ -40,4 +41,4 @@ marked.use({
     },
 })
 
-createApp(App).use(i18n).mount('#app')
+createApp(App).use(i18n).directive('long-press', LongPressDirective).mount('#app')
