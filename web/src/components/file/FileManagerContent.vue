@@ -501,6 +501,7 @@ function getDestDir(entry) {
 async function doCopy() {
     clipboard.entries = [ctxMenu.entry]
     clipboard.isCut = false
+    appLog.d(TAG, '[doCopy] entry:', ctxMenu.entry?.path)
     closeCtxMenu()
     if (toast) toast.show(t('common.copied'), { icon: '📋', type: 'success', duration: 1500 })
 }
@@ -508,6 +509,7 @@ async function doCopy() {
 async function doCut() {
     clipboard.entries = [ctxMenu.entry]
     clipboard.isCut = true
+    appLog.d(TAG, '[doCut] entry:', ctxMenu.entry?.path)
     closeCtxMenu()
     if (toast) toast.show(t('file.toast.cutDone'), { icon: '✂️', type: 'success', duration: 1500 })
 }
@@ -518,27 +520,34 @@ async function doPaste() {
     closeCtxMenu()
     const destDir = getDestDir(entry)
     const api = clipboard.isCut ? '/api/file/move' : '/api/file/copy'
+    appLog.d(TAG, '[doPaste] api:', api, 'destDir:', destDir, 'entries:', clipboard.entries.map(e => e.path))
     let allOk = true
-    for (const entry of clipboard.entries) {
+    for (const srcEntry of clipboard.entries) {
         try {
-            let destPath = (destDir ? destDir + '/' : '') + entry.name
+            let destPath = (destDir ? destDir + '/' : '') + srcEntry.name
+            appLog.d(TAG, '[doPaste] moving:', srcEntry.path, '→', destPath)
             let resp = await fetch(api, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: entry.path, dest: destPath }),
+                body: JSON.stringify({ path: srcEntry.path, dest: destPath }),
             })
             if (resp.status === 409) {
-                const newName = await dialog.prompt(t('file.prompt.pasteNewName', { name: entry.name }), { value: entry.name })
+                const newName = await dialog.prompt(t('file.prompt.pasteNewName', { name: srcEntry.name }), { value: srcEntry.name })
                 if (!newName || !newName.trim()) continue
                 destPath = (destDir ? destDir + '/' : '') + newName.trim()
                 resp = await fetch(api, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ path: entry.path, dest: destPath }),
+                    body: JSON.stringify({ path: srcEntry.path, dest: destPath }),
                 })
             }
-            if (!resp.ok) allOk = false
-        } catch {
+            if (!resp.ok) {
+                const errBody = await resp.text().catch(() => '')
+                appLog.e(TAG, '[doPaste] API error:', resp.status, errBody, 'src:', srcEntry.path, 'dest:', destPath)
+                allOk = false
+            }
+        } catch (err) {
+            appLog.e(TAG, '[doPaste] exception:', err, 'src:', srcEntry.path)
             allOk = false
         }
     }
