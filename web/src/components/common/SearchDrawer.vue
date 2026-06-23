@@ -21,11 +21,11 @@
           <div class="search-results-count">{{ t('search.matchCount', { count: results.length }) }}</div>
           <div
             v-for="(r, idx) in results"
-            :key="viewMode === 'rendered' ? idx : r.line"
+            :key="isRenderedView ? idx : r.line"
             class="search-result-item"
             @click="jumpTo(r)"
           >
-            <span class="search-result-lnum">{{ viewMode === 'rendered' ? idx + 1 : r.line }}</span>
+            <span class="search-result-lnum">{{ isRenderedView ? idx + 1 : r.line }}</span>
             <span class="search-result-text" v-html="r.highlighted" />
           </div>
         </div>
@@ -42,6 +42,7 @@ import BottomSheet from './BottomSheet.vue'
 import HeaderMarquee from './HeaderMarquee.vue'
 import SearchInput from './SearchInput.vue'
 import { escapeHtml } from '@/utils/html.ts'
+import { getFileType } from '@/utils/fileType.ts'
 import { searchRawContent, highlightText, BLOCK_TAGS } from '@/utils/searchUtils.ts'
 
 const { t } = useI18n()
@@ -55,6 +56,13 @@ const emit = defineEmits(['close', 'jump'])
 
 const query = ref('')
 const inputRef = ref(null)
+
+// Whether the current file is rendered as markdown/HTML (has .markdown-body DOM)
+const isRenderedView = computed(() => {
+  if (!props.file?.name) return false
+  const ft = getFileType(props.file.name)
+  return (ft.isMarkdown || ft.isHtml) && props.viewMode === 'rendered'
+})
 
 watch(() => props.open, async (val) => {
   if (val) {
@@ -91,6 +99,7 @@ function searchRenderedContent(q) {
   const container = document.querySelector('.markdown-body')
   if (!container) return []
 
+  const lowerQ = q.toLowerCase()
   const out = []
   const seen = new Set()
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null)
@@ -98,14 +107,14 @@ function searchRenderedContent(q) {
   while (walker.nextNode()) {
     const textNode = walker.currentNode
     const text = textNode.textContent
-    if (!text || !text.includes(q)) continue
+    if (!text || !text.toLowerCase().includes(lowerQ)) continue
 
     const block = findBlockAncestor(textNode)
     if (!block || seen.has(block)) continue
     seen.add(block)
 
     const fullText = block.textContent.trim()
-    const idx = fullText.indexOf(q)
+    const idx = fullText.toLowerCase().indexOf(lowerQ)
     const start = Math.max(0, idx - 30)
     const end = Math.min(fullText.length, idx + q.length + 30)
     const snippet = (start > 0 ? '...' : '') + fullText.slice(start, end) + (end < fullText.length ? '...' : '')
@@ -126,14 +135,14 @@ function searchRenderedContent(q) {
 const results = computed(() => {
   if (!props.file?.content || !query.value.trim()) return []
   const q = query.value.trim()
-  if (props.viewMode === 'rendered') {
+  if (isRenderedView.value) {
     return searchRenderedContent(q)
   }
   return searchRawContent(q, props.file.content, props.file.name || '')
 })
 
 function jumpTo(result) {
-  if (props.viewMode === 'rendered') {
+  if (isRenderedView.value) {
     scrollToRenderedMatch(result)
     emit('close')
   } else {

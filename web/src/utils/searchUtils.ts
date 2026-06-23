@@ -17,11 +17,12 @@ export const BLOCK_TAGS = new Set([
 /**
  * Highlight a query string within plain text.
  * Escapes HTML first, then wraps matches with <mark> tags.
+ * Case-insensitive: "Error" query will match "error", "ERROR", etc.
  */
 export function highlightText(text: string, q: string): string {
   if (!q) return escapeHtml(text)
   const escaped = escapeHtml(text)
-  const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')
+  const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
   return escaped.replace(re, '<mark>$&</mark>')
 }
 
@@ -42,12 +43,13 @@ export function highlightLineSyntax(line: string, lang: string): string {
 /**
  * Highlight query matches inside syntax-highlighted HTML.
  * Only marks text outside of HTML tags to avoid breaking tag structure.
+ * Case-insensitive: matches regardless of letter case.
  */
 export function markInHighlighted(highlightedHtml: string, q: string): string {
   if (!q) return highlightedHtml
   const segments = highlightedHtml.split(/(<[^>]+>)/)
   const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const re = new RegExp(escaped, 'g')
+  const re = new RegExp(escaped, 'gi')
   return segments
     .map((seg) => {
       if (seg.startsWith('<')) return seg // HTML tag, leave as-is
@@ -68,9 +70,10 @@ export function searchRawContent(
   if (!content || !q) return []
   const lang = getFileType(fileName)?.lang || 'plaintext'
   const lines = content.split('\n')
+  const lowerQ = q.toLowerCase()
   const out = []
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i].includes(q)) {
+    if (lines[i].toLowerCase().includes(lowerQ)) {
       const highlighted = markInHighlighted(highlightLineSyntax(lines[i], lang), q)
       out.push({
         line: i + 1,

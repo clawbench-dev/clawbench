@@ -41,6 +41,16 @@ describe('highlightText', () => {
     expect(result).toBe('hello world')
   })
 
+  it('highlights case-insensitively preserving original case', () => {
+    const result = highlightText('Hello World', 'hello')
+    expect(result).toBe('<mark>Hello</mark> World')
+  })
+
+  it('highlights all case variants', () => {
+    const result = highlightText('Error error ERROR', 'error')
+    expect(result).toBe('<mark>Error</mark> <mark>error</mark> <mark>ERROR</mark>')
+  })
+
   it('escapes HTML entities in text', () => {
     const result = highlightText('a & b < c', '')
     expect(result).toBe('a &amp; b &lt; c')
@@ -121,6 +131,12 @@ describe('markInHighlighted', () => {
     const html = '<b>hello</b> world'
     expect(markInHighlighted(html, 'xyz')).toBe(html)
   })
+
+  it('marks case-insensitively preserving original case', () => {
+    const html = '<span class="hljs-keyword">Const</span> x = 1'
+    const result = markInHighlighted(html, 'const')
+    expect(result).toContain('<mark>Const</mark>')
+  })
 })
 
 describe('searchRawContent', () => {
@@ -162,6 +178,24 @@ describe('searchRawContent', () => {
     const results = searchRawContent('xyz', content, 'test.txt')
 
     expect(results).toHaveLength(0)
+  })
+
+  it('finds matches case-insensitively', () => {
+    const content = 'Hello World\nhello world\nHELLO WORLD'
+    const results = searchRawContent('hello', content, 'test.txt')
+
+    expect(results).toHaveLength(3)
+    expect(results[0].line).toBe(1)
+    expect(results[1].line).toBe(2)
+    expect(results[2].line).toBe(3)
+  })
+
+  it('highlights case-insensitively preserving original case', () => {
+    const content = 'Hello World'
+    const results = searchRawContent('hello', content, 'test.txt')
+
+    expect(results).toHaveLength(1)
+    expect(results[0].highlighted).toContain('<mark>Hello</mark>')
   })
 
   it('handles single-line content with match', () => {
