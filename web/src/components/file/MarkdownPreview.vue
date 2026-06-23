@@ -40,7 +40,7 @@ import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { store } from '@/stores/app.ts'
-import { dirName, splitPath } from '@/utils/path.ts'
+import { dirName, splitPath, joinPath } from '@/utils/path.ts'
 import { flashRanges, flashType } from '@/composables/useFileRefresh.ts'
 import {
   diffMarkers,
@@ -172,7 +172,7 @@ function fixLocalImagePaths(html) {
         if (!srcMatch) return match
         const src = srcMatch[1]
         if (/^(https?:|\/\/|^\/)/i.test(src)) return match
-        let resolved = currentDir ? currentDir + '/' + src : src
+        let resolved = joinPath(currentDir, src)
         try {
             resolved = decodeURIComponent(resolved)
         } catch { /* malformed encoding, use as-is */ }

@@ -1,5 +1,16 @@
 // Cross-platform path utilities
 
+/**
+ * Join a directory path with a file/directory name.
+ * Normalizes currentDir === "/" to "" (root) to avoid generating
+ * absolute-looking paths like "/.clawbench/file" which the Go backend
+ * would interpret as absolute paths and reject with 500.
+ */
+export function joinPath(dir: string, name: string): string {
+    const normalizedDir = dir === '/' ? '' : dir
+    return normalizedDir ? normalizedDir + '/' + name : name
+}
+
 // Split a path into segments, handling both / and \ separators
 export function splitPath(path: string): string[] {
     return path.split(/[/\\]/)

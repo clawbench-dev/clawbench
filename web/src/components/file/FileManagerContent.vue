@@ -290,6 +290,7 @@ import '@/assets/loading-mask.css'
 import { ref, computed, reactive, inject, nextTick, onMounted, onUnmounted, Teleport, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
+import { joinPath } from '@/utils/path'
 import { Folder, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, FileText, HardDrive, Eye, EyeOff, FileImage, FileMusic, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, FileVideo, Package, Upload, MoreHorizontal, Paperclip } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import {
@@ -425,11 +426,7 @@ onUnmounted(() => document.removeEventListener('click', closeDropdowns))
 
 // Helper: build item path from entry name
 function itemPath(name) {
-    // currentDir can be '/' on some platforms — treat as root (empty string)
-    // to avoid generating paths like '/.clawbench' which the backend
-    // would interpret as absolute paths and reject with 500.
-    const dir = props.currentDir === '/' ? '' : props.currentDir
-    return (dir ? dir + '/' : '') + name
+    return joinPath(props.currentDir, name)
 }
 
 // ── Multi-select ──
@@ -497,7 +494,7 @@ function handleCtxMenu(e) {
 const { clipboard, clear: clearClipboard } = _createClipboard()
 
 function getDestDir(entry) {
-    if (!entry) return props.currentDir
+    if (!entry) return props.currentDir === '/' ? '' : props.currentDir
     if (entry.type === 'dir') return entry.path
     const idx = entry.path.lastIndexOf('/')
     return idx > 0 ? entry.path.slice(0, idx) : ''

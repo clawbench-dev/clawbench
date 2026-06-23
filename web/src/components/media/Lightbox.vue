@@ -60,7 +60,7 @@
 import { RotateCcw, X, Loader, ChevronLeft, ChevronRight, Download } from 'lucide-vue-next'
 import { ref, computed, provide, onMounted, onUnmounted } from 'vue'
 import { store } from '@/stores/app.ts'
-import { baseName } from '@/utils/path.ts'
+import { baseName, joinPath } from '@/utils/path.ts'
 import { getFileType } from '@/utils/fileType.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 
@@ -187,8 +187,7 @@ function navigateToIndex(newIdx, direction) {
     const entry = siblingFiles.value[newIdx]
     if (!entry) return
 
-    const currentDir = store.state.currentDir || ''
-    const entryPath = currentDir ? currentDir + '/' + entry.name : entry.name
+    const entryPath = joinPath(store.state.currentDir || '', entry.name)
 
     // Show loading immediately, hide old image
     imageLoading.value = true

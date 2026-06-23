@@ -29,7 +29,7 @@
 import { ChevronLeft, ChevronRight } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { store } from '@/stores/app.ts'
-import { baseName } from '@/utils/path.ts'
+import { baseName, joinPath } from '@/utils/path.ts'
 import { getFileType } from '@/utils/fileType.ts'
 
 const props = defineProps({
@@ -74,16 +74,14 @@ const hasNext = computed(() => currentIndex.value >= 0 && currentIndex.value < i
 function goPrev() {
     if (!hasPrev.value) return
     const prev = siblingImages.value[currentIndex.value - 1]
-    const dir = store.state.currentDir || ''
-    const path = dir ? dir + '/' + prev.name : prev.name
+    const path = joinPath(store.state.currentDir || '', prev.name)
     store.selectFile(path, true)
 }
 
 function goNext() {
     if (!hasNext.value) return
     const next = siblingImages.value[currentIndex.value + 1]
-    const dir = store.state.currentDir || ''
-    const path = dir ? dir + '/' + next.name : next.name
+    const path = joinPath(store.state.currentDir || '', next.name)
     store.selectFile(path, true)
 }
 

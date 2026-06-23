@@ -5,6 +5,7 @@
 
 import { reactive } from 'vue'
 import { getFileType } from './fileType'
+import { joinPath } from './path'
 
 // ── View mode persistence ──
 
@@ -26,7 +27,7 @@ export { VIEW_MODE_KEY }
 // ── Thumbnail URL generation ──
 
 export function buildThumbUrl(currentDir: string, entryName: string, width = 200): string {
-  const path = (currentDir ? currentDir + '/' : '') + entryName
+  const path = joinPath(currentDir, entryName)
   return `/api/file/thumb?path=${encodeURIComponent(path)}&w=${width}`
 }
 

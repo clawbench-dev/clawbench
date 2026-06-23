@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { splitPath, baseName, dirName, toRelativePath } from '@/utils/path.ts'
+import { splitPath, baseName, dirName, toRelativePath, joinPath } from '@/utils/path.ts'
 
 describe('splitPath', () => {
   it('splits on forward slashes', () => {
@@ -84,5 +84,23 @@ describe('toRelativePath', () => {
 
   it('strips leading slash from relative part', () => {
     expect(toRelativePath('/home/user/project/sub/file.txt', '/home/user/project')).toBe('sub/file.txt')
+  })
+})
+
+describe('joinPath', () => {
+  it('joins dir and name', () => {
+    expect(joinPath('docs', 'file.txt')).toBe('docs/file.txt')
+  })
+
+  it('returns name only when dir is empty', () => {
+    expect(joinPath('', 'file.txt')).toBe('file.txt')
+  })
+
+  it('normalizes "/" to root (empty string)', () => {
+    expect(joinPath('/', 'file.txt')).toBe('file.txt')
+  })
+
+  it('handles subdirectory paths', () => {
+    expect(joinPath('.clawbench/tmp', 'data.json')).toBe('.clawbench/tmp/data.json')
   })
 })
