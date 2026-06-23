@@ -26,6 +26,7 @@ import android.webkit.DownloadListener;
 import android.webkit.JavascriptInterface;
 import android.webkit.SslErrorHandler;
 import android.webkit.ValueCallback;
+import android.webkit.ConsoleMessage;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
@@ -309,6 +310,13 @@ public class MainActivity extends AppCompatActivity {
 
         // Chrome client for progress and file chooser
         webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onConsoleMessage(ConsoleMessage consoleMessage) {
+                android.util.Log.d("WebView:" + consoleMessage.messageLevel(),
+                        consoleMessage.message() + " (" + consoleMessage.sourceId() + ":" + consoleMessage.lineNumber() + ")");
+                return true;
+            }
+
             @Override
             public void onProgressChanged(WebView view, int newProgress) {
                 if (newProgress < 100) {
