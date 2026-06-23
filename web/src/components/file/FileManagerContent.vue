@@ -470,7 +470,8 @@ function onLongPress(entry, e) {
     const touch = e.touches[0]
     ctxMenu.x = touch.clientX
     ctxMenu.y = touch.clientY + 10
-    ctxMenu.entry = entry  // entry from v-for data — never stale, never null
+    // DirEntry from v-for has no .path — compute it like handleCtxMenu does
+    ctxMenu.entry = { type: entry.type, name: entry.name, path: itemPath(entry.name) }
     ctxMenu.visible = true
     nextTick(() => clampCtxMenu())
 }
