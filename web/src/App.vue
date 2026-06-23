@@ -244,6 +244,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, provide, nextTick } from 'vue'
+import { appLog } from '@/utils/appLog'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { MessageSquare, FolderOpen, GitBranch, EthernetPort, Terminal as TerminalIcon, CalendarClock, MoreHorizontal, Settings } from 'lucide-vue-next'
@@ -437,25 +438,25 @@ function switchTab(tab) {
 /** Handle clawbench-open-session event from Android push notification tap */
 function handleOpenSession(e) {
   const detail = e?.detail
-  console.log('[ClawBench] clawbench-open-session event received, detail=', detail)
+  appLog.d('ClawBench', 'clawbench-open-session event received, detail=', detail)
   if (!detail?.sessionId) {
-    console.warn('[ClawBench] clawbench-open-session: no sessionId in detail, ignoring')
+    appLog.w('ClawBench', 'clawbench-open-session: no sessionId in detail, ignoring')
     return
   }
   const { sessionId, projectPath } = detail
-  console.log('[ClawBench] clawbench-open-session: sessionId=', sessionId, 'projectPath=', projectPath, 'currentProject=', store.state.projectRoot)
+  appLog.d('ClawBench', 'clawbench-open-session: sessionId=', sessionId, 'projectPath=', projectPath, 'currentProject=', store.state.projectRoot)
   if (projectPath && projectPath !== store.state.projectRoot) {
     // Cross-project: hot switch without page reload
-    console.log('[ClawBench] cross-project navigation, switching to', projectPath)
+    appLog.d('ClawBench', 'cross-project navigation, switching to', projectPath)
     hotSwitchProject(projectPath, sessionId).catch(() => {
       // If project switch fails, try same-project switch as fallback
-      console.warn('[ClawBench] project switch failed, falling back to same-project switch')
+      appLog.w('ClawBench', 'project switch failed, falling back to same-project switch')
       switchTab('chat')
       sessionIdentity.switchSession(sessionId)
     })
   } else {
     // Same project: lightweight switch
-    console.log('[ClawBench] same-project navigation, switching to session', sessionId)
+    appLog.d('ClawBench', 'same-project navigation, switching to session', sessionId)
     switchTab('chat')
     sessionIdentity.switchSession(sessionId)
   }
@@ -464,13 +465,13 @@ function handleOpenSession(e) {
 /** Handle clawbench-open-task event from Android push notification tap (task execution) */
 function handleOpenTask(e) {
   const detail = e?.detail
-  console.log('[ClawBench] clawbench-open-task event received, detail=', detail)
+  appLog.d('ClawBench', 'clawbench-open-task event received, detail=', detail)
   if (!detail?.taskId) {
-    console.warn('[ClawBench] clawbench-open-task: no taskId in detail, ignoring')
+    appLog.w('ClawBench', 'clawbench-open-task: no taskId in detail, ignoring')
     return
   }
   const { taskId, executionId, projectPath } = detail
-  console.log('[ClawBench] clawbench-open-task: taskId=', taskId, 'executionId=', executionId, 'currentProject=', store.state.projectRoot)
+  appLog.d('ClawBench', 'clawbench-open-task: taskId=', taskId, 'executionId=', executionId, 'currentProject=', store.state.projectRoot)
 
   const navigateToTask = () => {
     switchTab('tasks')
@@ -483,7 +484,7 @@ function handleOpenTask(e) {
 
   if (projectPath && projectPath !== store.state.projectRoot) {
     // Cross-project: switch project, store pending task navigation, then reload
-    console.log('[ClawBench] cross-project navigation, switching to', projectPath)
+    appLog.d('ClawBench', 'cross-project navigation, switching to', projectPath)
     localStorage.setItem('clawbenchPendingNav', JSON.stringify({ taskId, executionId }))
     fetch('/api/project', {
       method: 'POST',
@@ -492,12 +493,12 @@ function handleOpenTask(e) {
     }).then(() => {
       window.location.reload()
     }).catch(() => {
-      console.warn('[ClawBench] project switch failed, falling back to same-project switch')
+      appLog.w('ClawBench', 'project switch failed, falling back to same-project switch')
       navigateToTask()
     })
   } else {
     // Same project: lightweight switch
-    console.log('[ClawBench] same-project navigation, switching to task', taskId)
+    appLog.d('ClawBench', 'same-project navigation, switching to task', taskId)
     navigateToTask()
   }
 }
@@ -954,17 +955,21 @@ function onTaskCardClick(taskId) {
 }
 
 async function handleRename({ path, name }) {
-    await store.renameFile(path, name)
+    try {
+        await store.renameFile(path, name)
+    } catch (err) {
+        appLog.e('ClawBench', '[handleRename] error:', err)
+    }
 }
 
 async function handleDelete(path) {
-    console.log('[handleDelete] called, path:', path)
+    appLog.d('ClawBench', '[handleDelete] called, path:', path)
     const wasOverlay = fileNav.overlayOpen.value
     try {
         await store.deleteFile(path)
-        console.log('[handleDelete] store.deleteFile resolved')
+        appLog.d('ClawBench', '[handleDelete] store.deleteFile resolved')
     } catch (err) {
-        console.error('[handleDelete] unhandled error:', err)
+        appLog.e('ClawBench', '[handleDelete] unhandled error:', err)
     }
     if (wasOverlay) {
         if (fileNav.canGoBack.value) {
@@ -982,7 +987,7 @@ async function handleBatchDelete(paths) {
     try {
         await store.deleteFiles(paths)
     } catch (err) {
-        console.error('[handleBatchDelete] unhandled error:', err)
+        appLog.e('ClawBench', '[handleBatchDelete] unhandled error:', err)
     }
 }
 
@@ -1329,7 +1334,7 @@ onMounted(async () => {
       const pollPendingNav = () => {
         try {
           const nav = window.AndroidNative.getPendingNavigation()
-          console.log('[ClawBench] getPendingNavigation poll result:', nav)
+          appLog.d('ClawBench', 'getPendingNavigation poll result:', nav)
           if (nav) {
             const parsed = JSON.parse(nav)
             const { sessionId, taskId, executionId, projectPath } = parsed

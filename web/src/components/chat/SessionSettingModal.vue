@@ -385,8 +385,10 @@ async function setDefaultTransport(transport) {
 
 function onTouchStart(model, event) {
   longPressTriggered.value = false
-  const el = event.target.closest('.model-item, .thinking-item')
   longPressTimer = setTimeout(() => {
+    // Resolve element at callback time, not at touchstart time,
+    // to avoid stale DOM reference if Vue re-renders during the delay.
+    const el = event.target.closest('.model-item, .thinking-item')
     longPressTriggered.value = true
     pendingDefaultModel.value = model.id
     pendingDefaultThinking.value = null
@@ -397,8 +399,8 @@ function onTouchStart(model, event) {
 
 function onTouchStartThinking(level, event) {
   longPressTriggered.value = false
-  const el = event.target.closest('.model-item, .thinking-item')
   longPressTimer = setTimeout(() => {
+    const el = event.target.closest('.model-item, .thinking-item')
     longPressTriggered.value = true
     pendingDefaultThinking.value = level
     pendingDefaultModel.value = null
@@ -436,6 +438,7 @@ function showThinkingDefaultMenu(level) {
 
 async function setAsDefault() {
   showDefaultPopupMenu.value = false
+  longPressTarget.value = null
   try {
     if (pendingDefaultModel.value !== null) {
       await patchAgentPref(props.agentId, 'preferred_model', pendingDefaultModel.value)

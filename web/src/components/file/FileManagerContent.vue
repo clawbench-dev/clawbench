@@ -289,6 +289,7 @@
 import '@/assets/loading-mask.css'
 import { ref, computed, reactive, inject, nextTick, onMounted, onUnmounted, Teleport, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { appLog } from '@/utils/appLog'
 import { Folder, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, FileText, HardDrive, Eye, EyeOff, FileImage, FileMusic, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, FileVideo, Package, Upload, MoreHorizontal, Paperclip } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import {
@@ -315,6 +316,7 @@ import DirBreadcrumb from './DirBreadcrumb.vue'
 const toast = inject('toast', null)
 const { isAppMode } = useAppMode()
 const { t, locale } = useI18n()
+const TAG = 'FileManager'
 
 // File upload to current directory
 const { dirUploading, dirUploadProgress, dirUploadTotal, dirUploadDone, handleFileSelectToDir } = useFileUpload()
@@ -512,8 +514,9 @@ async function doCut() {
 
 async function doPaste() {
     if (!clipboard.entries.length) return
+    const entry = ctxMenu.entry
     closeCtxMenu()
-    const destDir = getDestDir(ctxMenu.entry)
+    const destDir = getDestDir(entry)
     const api = clipboard.isCut ? '/api/file/move' : '/api/file/copy'
     let allOk = true
     for (const entry of clipboard.entries) {
@@ -549,11 +552,12 @@ async function doPaste() {
 }
 
 async function doNewFile() {
+    const entry = ctxMenu.entry
     closeCtxMenu()
     moreMenuOpen.value = false
     const name = await dialog.prompt(t('file.prompt.fileName'))
     if (!name || !name.trim()) return
-    const dir = getDestDir(ctxMenu.entry)
+    const dir = getDestDir(entry)
     try {
         const resp = await fetch('/api/file/create', {
             method: 'POST',
@@ -573,11 +577,12 @@ async function doNewFile() {
 }
 
 async function doNewFolder() {
+    const entry = ctxMenu.entry
     closeCtxMenu()
     moreMenuOpen.value = false
     const name = await dialog.prompt(t('file.prompt.folderName'))
     if (!name || !name.trim()) return
-    const dir = getDestDir(ctxMenu.entry)
+    const dir = getDestDir(entry)
     try {
         const resp = await fetch('/api/dir/create', {
             method: 'POST',
@@ -880,7 +885,7 @@ function toggleAttach(path) {
 
 function doDelete() {
     const path = ctxMenu.entry.path
-    console.debug('[doDelete] emitting delete for:', path)
+    appLog.d(TAG, '[doDelete] emitting delete for:', path)
     closeCtxMenu()
     emit('delete', path)
 }

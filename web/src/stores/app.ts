@@ -1,6 +1,7 @@
 // Global application state (singleton reactive store)
 import { reactive } from 'vue'
 import { apiGet, apiPost } from '@/utils/api'
+import { appLog } from '@/utils/appLog'
 import { baseName, dirName } from '@/utils/path.ts'
 import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast'
@@ -159,7 +160,7 @@ async function loadProject(): Promise<void> {
             if (wd.sessionMaxCount > 0) state.sessionMaxCount = wd.sessionMaxCount
             if (wd.recentProjectsMaxCount > 0) state.recentProjectsMaxCount = wd.recentProjectsMaxCount
         } catch (error) {
-            console.error('[loadProject] roots failed:', error)
+            appLog.e('Store', '[loadProject] roots failed:', error)
         }
         const data = await apiGet<{ path: string; homeDir?: string }>('/api/project')
         if (!data.path) return
@@ -168,7 +169,7 @@ async function loadProject(): Promise<void> {
         state.homeDir = data.homeDir || ''
         localStorage.setItem('currentProjectPath', data.path)
     } catch (error) {
-        console.error('[loadProject] failed:', error)
+        appLog.e('Store', '[loadProject] failed:', error)
     }
 }
 
@@ -274,7 +275,7 @@ async function loadFiles(dir = ''): Promise<void> {
         const data = await apiGet<{ items: DirEntry[] }>(url)
         // A newer loadFiles call started while we were awaiting — discard our result
         if (seq !== loadFilesSeq) {
-            console.log(`[loadFiles] seq=${seq} discarded (current=${loadFilesSeq})`)
+            appLog.d('Store', `[loadFiles] seq=${seq} discarded (current=${loadFilesSeq})`)
             return
         }
         state.currentDir = dir
@@ -391,37 +392,37 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
 }
 
 async function deleteFile(filePath: string): Promise<void> {
-    console.log('[deleteFile] start:', filePath)
+    appLog.d('Store', '[deleteFile] start:', filePath)
     const confirmed = await useDialog().confirm(gt('file.header.confirmDelete', { name: baseName(filePath) }), { dangerous: true })
-    console.log('[deleteFile] dialog result:', confirmed)
+    appLog.d('Store', '[deleteFile] dialog result:', confirmed)
     if (!confirmed) {
-        console.log('[deleteFile] user cancelled')
+        appLog.d('Store', '[deleteFile] user cancelled')
         return
     }
     try {
         await apiPost('/api/file/delete', { path: filePath })
-        console.log('[deleteFile] API success')
+        appLog.d('Store', '[deleteFile] API success')
     } catch (err) {
         // File not found = already deleted (e.g. concurrent delete), treat as success
         const msgKey = (err as Error & { msgKey?: string })?.msgKey
         if (msgKey !== 'FileNotFoundShort') {
-            console.error('[deleteFile] API error:', err)
+            appLog.e('Store', '[deleteFile] API error:', err)
             useToast().show(gt('file.toast.deleteFailed'), { type: 'error', icon: '⚠️' })
         } else {
-            console.log('[deleteFile] file already gone (404), treating as success')
+            appLog.d('Store', '[deleteFile] file already gone (404), treating as success')
         }
     }
     if (state.currentFile?.path === filePath) {
         state.currentFile = null
     }
-    console.log('[deleteFile] refreshing, currentDir:', state.currentDir, 'loadFilesSeq:', loadFilesSeq)
+    appLog.d('Store', '[deleteFile] refreshing, currentDir:', state.currentDir, 'loadFilesSeq:', loadFilesSeq)
     await Promise.all([loadFiles(state.currentDir), loadGitBranch()])
-    console.log('[deleteFile] done, dirEntries count:', state.dirEntries.length)
+    appLog.d('Store', '[deleteFile] done, dirEntries count:', state.dirEntries.length)
 }
 
 async function deleteFiles(paths: string[]): Promise<void> {
     if (!paths.length) return
-    console.debug('[deleteFiles] start:', paths.length, 'files')
+    appLog.d('Store', '[deleteFiles] start:', paths.length, 'files')
     const results = await Promise.allSettled(paths.map(p => apiPost('/api/file/delete', { path: p })))
     const realFailures = results.filter(r => {
         if (r.status !== 'rejected') return false
@@ -429,18 +430,29 @@ async function deleteFiles(paths: string[]): Promise<void> {
         return msgKey !== 'FileNotFoundShort' // already deleted = not a real failure
     })
     if (realFailures.length) {
-        console.error('[deleteFiles] some deletes failed:', realFailures.map(r => (r as PromiseRejectedResult).reason))
+        appLog.e('Store', '[deleteFiles] some deletes failed:', realFailures.map(r => (r as PromiseRejectedResult).reason))
         useToast().show(gt('file.toast.deleteFailed'), { type: 'error', icon: '⚠️' })
     }
     if (state.currentFile && paths.includes(state.currentFile.path)) {
         state.currentFile = null
     }
     await Promise.all([loadFiles(state.currentDir), loadGitBranch()])
-    console.debug('[deleteFiles] done, dirEntries count:', state.dirEntries.length)
+    appLog.d('Store', '[deleteFiles] done, dirEntries count:', state.dirEntries.length)
 }
 
 async function renameFile(path: string, newName: string): Promise<void> {
-    await apiPost('/api/file/rename', { path, name: newName })
+    try {
+        await apiPost('/api/file/rename', { path, name: newName })
+    } catch (err) {
+        const msgKey = (err as Error & { msgKey?: string })?.msgKey
+        if (msgKey === 'FileNotFoundShort') {
+            // File already gone — treat as success
+        } else {
+            const toast = useToast()
+            toast.show(gt('file.toast.renameFailed') || 'Rename failed', { icon: '❌', type: 'error', duration: 2000 })
+            throw err
+        }
+    }
     // If the renamed file is currently being viewed, re-select it at the new path
     if (state.currentFile?.path === path) {
         const dir = dirName(path)
