@@ -302,7 +302,7 @@ const isACPTransport = computed(() => {
 const showModeInfo = computed(() => availableModes.value.length > 0 && isACP.value)
 const showThinkingInfo = computed(() => isACP.value && (availableThinkingEfforts.value.length > 0 || hasThinkingEffortLevels(props.currentAgentId || '')))
 const showTransportInfo = computed(() => supportsDualTransport(props.currentAgentId || '') || !isACP.value)
-const showResumeIcon = computed(() => props.currentAgentId && agentCanResume(props.currentAgentId))
+const showResumeIcon = computed(() => isACPTransport.value && props.currentAgentId && agentCanResume(props.currentAgentId))
 const showUsageInfo = computed(() => contextSize.value > 0)
 const usagePct = computed(() => contextSize.value > 0 ? Math.round((contextUsed.value / contextSize.value) * 100) : 0)
 const usageColor = computed(() => {
