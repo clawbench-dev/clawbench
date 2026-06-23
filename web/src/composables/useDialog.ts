@@ -1,4 +1,7 @@
 import { ref } from 'vue'
+import { appLog } from '@/utils/appLog'
+
+const TAG = 'useDialog'
 
 // Singleton dialog state — shared across the whole app
 
@@ -41,12 +44,13 @@ function open(type: DialogState['type'], message: string, opts: {
     // so its awaiter doesn't hang forever.
     const prev = state.value
     if (prev.visible && prev.resolve) {
-      console.warn(
-        '[useDialog] resolve overwritten while previous dialog is still open!',
+      appLog.w(
+        TAG,
+        'resolve overwritten while previous dialog is still open!',
         '\n  Previous:', prev.type, prev.message?.slice(0, 60),
         '\n  New:     ', type, message?.slice(0, 60),
       )
-      console.trace('[useDialog] overwrite call stack')
+      appLog.d(TAG, 'overwrite call stack:', new Error().stack)
       prev.resolve(null)
     }
     state.value = {
@@ -78,7 +82,7 @@ function alert(message: string, opts?: { title?: string; confirmText?: string })
 
 function resolve(result: string | boolean | null) {
   if (!state.value.resolve) {
-    console.warn('[useDialog] resolve() called but no pending dialog')
+    appLog.w(TAG, 'resolve() called but no pending dialog')
   }
   state.value.resolve?.(result)
   state.value.visible = false

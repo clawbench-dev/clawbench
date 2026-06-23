@@ -762,9 +762,10 @@ function doOpenTerminal() {
 }
 
 async function doRename() {
-    const newName = await dialog.prompt(t('file.prompt.newName'), { value: ctxMenu.entry.name })
-    if (!newName || newName === ctxMenu.entry.name) { closeCtxMenu(); return }
-    emit('rename', { path: ctxMenu.entry.path, name: newName })
+    const entry = ctxMenu.entry
+    const newName = await dialog.prompt(t('file.prompt.newName'), { value: entry.name })
+    if (!newName || newName === entry.name) { closeCtxMenu(); return }
+    emit('rename', { path: entry.path, name: newName })
     closeCtxMenu()
 }
 

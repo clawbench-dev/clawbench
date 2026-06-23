@@ -112,6 +112,8 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 
 ## Development Rules
 
+- **Mandatory appLog for all frontend logging:** All frontend code MUST use `appLog.d/i/w/e()` from `@/utils/appLog` instead of raw `console.log/debug/warn/error/info`. `appLog` prints to browser console AND relays to Android `AppLog` via the `AndroidNative.log()` JS bridge, ensuring logs are visible in Android WebView and persisted to `.clawbench/logs/android.log` through the server's `/api/android-log` endpoint. Raw `console.*` calls are only allowed in test files (`*.test.ts`). Tag convention: short PascalCase module name (e.g., `'ClawBench'`, `'ChatStream'`, `'Store'`, `'FileManager'`).
+- **Mandatory AppLog for all Android logging:** All Android Java/Kotlin code MUST use `AppLog.d/i/w/e()` instead of raw `android.util.Log`. `AppLog` writes to logcat AND posts to the backend `/api/android-log` endpoint for centralized log persistence. Raw `android.util.Log` calls are only allowed in `AppLog.java` itself (to avoid recursion) and test code.
 - **Mandatory unit tests for features and bug fixes:** Every new feature and bug fix MUST include targeted unit tests. Go: `*_test.go` next to the code; Frontend: `.test.ts` next to the composable/component. Tests must verify the specific behavior/fix, not just generic happy paths.
 - **Local CI validation before push/PR:** Before pushing code or creating a PR to remote, MUST run and pass the coverage gate locally:
   ```bash
