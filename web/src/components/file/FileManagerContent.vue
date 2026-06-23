@@ -490,9 +490,11 @@ function handleCtxMenu(e) {
 // Long-press (mobile): single timer, entry resolved on trigger
 let longPressTimer = null
 let longPressMoved = false
+let longPressFired = false // true after long-press triggers context menu (prevent click-through)
 
 function onLongPressStart(e) {
     longPressMoved = false
+    longPressFired = false
     const touch = e.touches[0]
     // Capture entry data immediately (before the 450ms timer),
     // because Vue may re-render the file list during the wait
@@ -502,6 +504,7 @@ function onLongPressStart(e) {
     const capturedEntry = resolveEntryFromEvent(e)
     longPressTimer = setTimeout(() => {
         if (!longPressMoved) {
+            longPressFired = true
             if (!capturedEntry) {
                 console.warn('[onLongPressStart] capturedEntry is null — touch target had no file-item?')
             }
@@ -714,6 +717,13 @@ const visibleEntries = computed(() => filteredEntries.value.slice(0, MAX_VISIBLE
 
 function handleItemClick(e) {
     if (props.dirLoading) return
+    // Prevent click-through after long-press: when the context menu opens
+    // via long-press, the subsequent touchend synthesizes a click event
+    // that would穿透 to the file list and open the file.
+    if (longPressFired) {
+        longPressFired = false
+        return
+    }
     const item = e.target.closest('.file-item, .grid-item')
     if (!item) return
     const action = item.dataset.action
