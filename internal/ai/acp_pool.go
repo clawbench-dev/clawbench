@@ -516,6 +516,7 @@ func (m *ACPConnManager) GetPendingApprovalSessionIDs() map[string]bool {
 type ACPConn struct {
 	agent        *model.Agent
 	clawbenchSID string
+	cwd          string // project working directory, set on first ensureAliveWithSession
 	mu           sync.Mutex
 
 	cmd    *exec.Cmd
