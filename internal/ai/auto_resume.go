@@ -148,6 +148,7 @@ phase1Done:
 		ScheduledExecution:    origReq.ScheduledExecution,
 		Resume:                true,
 		AssistantMessageCount: origReq.AssistantMessageCount,
+		ForkContext:           origReq.ForkContext,
 	}
 
 	slog.Info("auto-resume: starting phase 2 (resume with 'continue')",

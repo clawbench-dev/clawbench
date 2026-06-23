@@ -428,6 +428,11 @@ func buildCodexResumeArgs(req ChatRequest, threadID string) []string {
 //
 //nolint:gocognit,gocyclo // complex stream parsing logic
 func (c *CodexBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) {
+	// Prepend fork context to prompt if present (fork session first message).
+	if req.ForkContext != "" {
+		req.Prompt = req.ForkContext + req.Prompt
+	}
+
 	// Parse command field: "codex --profile m27" -> binary="codex", baseArgs=["--profile","m27"]
 	cmdBinary := "codex"
 	var baseArgs []string

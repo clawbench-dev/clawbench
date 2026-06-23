@@ -25,6 +25,17 @@ type CLIBackend struct {
 	PreExecHookFn func(cmd *exec.Cmd, req ChatRequest) // optional, e.g. Pi API key injection
 }
 
+// truncatePrompt returns a truncated version of the prompt for logging.
+// When fork context is prepended, the prompt can be very long.
+func truncatePrompt(req ChatRequest) string {
+	const maxPromptLog = 200
+	p := req.Prompt
+	if len(p) > maxPromptLog {
+		return p[:maxPromptLog] + "..."
+	}
+	return p
+}
+
 // Name returns the backend identifier (implements AIBackend).
 func (b *CLIBackend) Name() string {
 	return b.BackendName
@@ -34,6 +45,13 @@ func (b *CLIBackend) Name() string {
 //
 //nolint:gocognit,gocyclo // complex stream parsing logic
 func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) {
+	// Prepend fork context to prompt if present (fork session first message).
+	// This must happen before BuildArgsFn and PreStartFn so the AI receives
+	// the full context via stdin.
+	if req.ForkContext != "" {
+		req.Prompt = req.ForkContext + req.Prompt
+	}
+
 	args := b.BuildArgsFn(req)
 
 	cmdName := req.Command
@@ -75,7 +93,8 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		slog.String("backend", b.BackendName),
 		slog.String("work_dir", req.WorkDir),
 		slog.String("session_id", req.SessionID),
-		slog.String("prompt", req.Prompt),
+		slog.String("prompt", truncatePrompt(req)),
+		slog.Bool("has_fork_context", req.ForkContext != ""),
 		slog.Any("args", args),
 	)
 

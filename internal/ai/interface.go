@@ -22,6 +22,7 @@ type ChatRequest struct {
 	ScheduledExecution    bool   // If true, this is a scheduled task execution — skill-level anti-recursion block
 	HasAttachments        bool   // If true, the user message carries file attachments (triggers media rules injection)
 	AssistantMessageCount int    // Number of finalized assistant messages in the session (0 for new sessions)
+	ForkContext           string // Formatted history from parent session, injected on fork's first message so the AI has context
 }
 
 // ShouldInjectSystemPrompt determines whether the system prompt should be injected

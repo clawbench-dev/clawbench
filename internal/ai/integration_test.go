@@ -4,6 +4,7 @@ package ai
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1421,4 +1422,272 @@ func TestIntegration_CLI_ResumeMetadataCapture(t *testing.T) {
 			}
 		})
 	}
+}
+
+// --- 12. Fork Session Amnesia Detection ---
+//
+// ForkSession does NOT copy external_session_id. When the forked session
+// receives its first prompt, the CLI backend starts a brand-new process
+// (Resume=false, no --resume flag). The AI has no prior conversation context,
+// even though messages were copied in the DB.
+//
+// We use a "记住 X, then 回想 X" pattern with a distinctive secret number
+// to reliably detect amnesia. The secret is generated at test runtime to
+// prevent the AI from finding it in the source code via --add-dir.
+
+// forkAmnesiaSecret generates a random 4-digit secret for fork amnesia tests.
+// Must be called at test runtime (not init) to ensure the AI cannot find it
+// in source code via --add-dir file reading.
+func forkAmnesiaSecret() string {
+	return fmt.Sprintf("%04d", time.Now().UnixNano()%10000)
+}
+
+// TestIntegration_CLI_ForkSessionAmnesia detects whether a forked session is
+// "amnesiac" using Claude as the anchor backend.
+func TestIntegration_CLI_ForkSessionAmnesia(t *testing.T) {
+	anchorCfg := cliTestConfig{
+		Backend:            "claude",
+		CLIName:            "claude",
+		Timeout:            60 * time.Second,
+		CollectTimeout:     90 * time.Second,
+		HasModelInMeta:     true,
+		HasSessionIDInMeta: true,
+		HasTokenUsageInMeta: true,
+		SupportsResume:     true,
+	}
+
+	t.Run("claude_anchor", func(t *testing.T) {
+		requireCLIAvailable(t, anchorCfg.CLIName)
+		backend, err := NewBackend(anchorCfg.Backend)
+		require.NoError(t, err)
+
+		secret := forkAmnesiaSecret()
+		parentSessionID := newSessionID()
+
+		// --- Parent Turn 1: establish a fact ---
+		req1 := ChatRequest{
+			Prompt:    fmt.Sprintf("记住密码是%s，只回复好的", secret),
+			SessionID: parentSessionID,
+			WorkDir:   testWorkDir(),
+		}
+		events1 := cliExecPrompt(t, anchorCfg, backend, req1)
+		meta1 := findEvents(events1, "metadata")
+		require.NotEmpty(t, meta1, "parent turn 1 should complete with metadata")
+
+		content1 := concatContent(events1)
+		t.Logf("Parent turn 1 (establish fact '%s'): %q", secret, truncate(content1, 200))
+
+		// --- Parent Turn 2: recall the fact → proves context works ---
+		req2 := ChatRequest{
+			Prompt:    "密码是什么？只回答数字",
+			SessionID: parentSessionID,
+			WorkDir:   testWorkDir(),
+			Resume:    true,
+		}
+		events2 := cliExecPrompt(t, anchorCfg, backend, req2)
+		meta2 := findEvents(events2, "metadata")
+		require.NotEmpty(t, meta2, "parent turn 2 should complete with metadata")
+
+		content2 := concatContent(events2)
+		t.Logf("Parent turn 2 (recall with Resume=true): %q", truncate(content2, 200))
+		assert.True(t, strings.Contains(content2, secret),
+			"Parent turn 2: AI should recall password '%s' with resume, got: %s", secret, content2)
+
+		// --- Fork Session: new SessionID, Resume=false (simulates ForkSession) ---
+		forkSessionID := newSessionID()
+		req3 := ChatRequest{
+			Prompt:    "密码是什么？只回答数字",
+			SessionID: forkSessionID,
+			WorkDir:   testWorkDir(),
+			Resume:    false, // ForkSession starts fresh — no resume
+		}
+		events3 := cliExecPrompt(t, anchorCfg, backend, req3)
+		meta3 := findEvents(events3, "metadata")
+		require.NotEmpty(t, meta3, "fork session should complete with metadata")
+
+		content3 := concatContent(events3)
+		t.Logf("Fork session (recall, Resume=false, NEW SessionID): %q", truncate(content3, 200))
+
+		// --- Amnesia Detection ---
+		if strings.Contains(content3, secret) {
+			t.Logf("FORK AMNESIA FIXED: AI recalled '%s' in forked session — context was preserved!", secret)
+		} else {
+			t.Logf("FORK AMNESIA CONFIRMED: AI answered %q in forked session — context was LOST", truncate(content3, 50))
+			t.Logf("Root cause: ForkSession does not copy external_session_id. The CLI starts")
+			t.Logf("a brand-new session (no --resume), so the AI has no conversation context.")
+		}
+		// The key assertion: forked session does NOT recall the secret (amnesia)
+		assert.NotContains(t, content3, secret,
+			"AMNESIA: forked session should NOT recall password '%s' because it has no context from parent session. "+
+				"If this assertion FAILS, the amnesia has been fixed!", secret)
+	})
+}
+
+// TestIntegration_CLI_ForkSessionAmnesia_AcrossBackends tests fork session
+// amnesia across all resume-capable backends.
+func TestIntegration_CLI_ForkSessionAmnesia_AcrossBackends(t *testing.T) {
+	for _, cfg := range resumeBackends {
+		t.Run(cfg.Backend, func(t *testing.T) {
+			backend := cliSetupAndCreate(t, cfg)
+			secret := forkAmnesiaSecret()
+
+			// Parent Turn 1: establish fact
+			req1 := cliNewSessionRequest(cfg, fmt.Sprintf("记住密码是%s，只回复好的", secret))
+			events1 := cliExecPrompt(t, cfg, backend, req1)
+			meta1 := findEvents(events1, "metadata")
+			require.NotEmpty(t, meta1, "parent turn 1 should complete with metadata")
+
+			sessionID := cliResolveSessionID(cfg, req1, events1)
+			require.NotEmpty(t, sessionID, "should capture parent session ID")
+
+			// Parent Turn 2: recall (resume) → should recall the secret
+			req2 := ChatRequest{
+				Prompt:    "密码是什么？只回答数字",
+				SessionID: sessionID,
+				WorkDir:   testWorkDir(),
+				Resume:    true,
+			}
+			events2 := cliExecPrompt(t, cfg, backend, req2)
+			meta2 := findEvents(events2, "metadata")
+			require.NotEmpty(t, meta2, "parent turn 2 should complete with metadata")
+
+			content2 := concatContent(events2)
+			t.Logf("Parent turn 2 (recall, Resume=true): %q", truncate(content2, 200))
+
+			// Fork: new session ID, Resume=false
+			forkSessionID := newSessionID()
+			req3 := ChatRequest{
+				Prompt:    "密码是什么？只回答数字",
+				SessionID: forkSessionID,
+				WorkDir:   testWorkDir(),
+				Resume:    false,
+			}
+			events3 := cliExecPrompt(t, cfg, backend, req3)
+			meta3 := findEvents(events3, "metadata")
+			require.NotEmpty(t, meta3, "fork session should complete with metadata")
+
+			content3 := concatContent(events3)
+			t.Logf("Fork session (recall, Resume=false, NEW SessionID): %q", truncate(content3, 200))
+
+			// Report amnesia status
+			if strings.Contains(content3, secret) {
+				t.Logf("FORK AMNESIA FIXED for %s: AI recalled '%s'", cfg.Backend, secret)
+			} else {
+				t.Logf("FORK AMNESIA CONFIRMED for %s: AI answered %q (cannot recall '%s' without context)",
+					cfg.Backend, truncate(content3, 50), secret)
+			}
+		})
+	}
+}
+
+// TestIntegration_CLI_ForkSessionAmnesia_ResumeVsNewSession explicitly compares
+// three approaches to fix fork amnesia, using Claude as the diagnostic backend:
+//
+//   - Fork A: new SessionID + Resume=false (current behavior → amnesiac)
+//   - Fork B: new SessionID + Resume=true (unknown session → likely amnesiac)
+//   - Fork C: parent SessionID + Resume=true (ContinueFromExecution pattern → should work)
+//
+// If Fork C recalls the secret, the fix is: ForkSession should copy
+// external_session_id and send Resume=true with the parent's session ID.
+func TestIntegration_CLI_ForkSessionAmnesia_ResumeVsNewSession(t *testing.T) {
+	requireCLIAvailable(t, "claude")
+	backend, err := NewBackend("claude")
+	require.NoError(t, err)
+
+	cfg := cliTestConfig{
+		Backend: "claude", CLIName: "claude",
+		Timeout: 60 * time.Second, CollectTimeout: 90 * time.Second,
+	}
+
+	secret := forkAmnesiaSecret()
+	parentSessionID := newSessionID()
+
+	// Parent Turn 1: establish fact
+	events1 := cliExecPrompt(t, cfg, backend, ChatRequest{
+		Prompt:    fmt.Sprintf("记住密码是%s，只回复好的", secret),
+		SessionID: parentSessionID,
+		WorkDir:   testWorkDir(),
+	})
+	meta1 := findEvents(events1, "metadata")
+	require.NotEmpty(t, meta1, "parent turn 1 should complete")
+	t.Logf("Parent turn 1 (establish fact '%s'): %q", secret, truncate(concatContent(events1), 200))
+
+	// Parent Turn 2: recall with resume → proves context works
+	events2 := cliExecPrompt(t, cfg, backend, ChatRequest{
+		Prompt:    "密码是什么？只回答数字",
+		SessionID: parentSessionID,
+		WorkDir:   testWorkDir(),
+		Resume:    true,
+	})
+	meta2 := findEvents(events2, "metadata")
+	require.NotEmpty(t, meta2, "parent turn 2 should complete")
+	content2 := concatContent(events2)
+	t.Logf("Parent turn 2 (Resume=true): %q", truncate(content2, 200))
+	assert.True(t, strings.Contains(content2, secret),
+		"Parent turn 2: should recall '%s' with resume, got: %s", secret, content2)
+
+	// --- Fork scenario A: new SessionID + Resume=false (current behavior) ---
+	forkA := newSessionID()
+	eventsA := cliExecPrompt(t, cfg, backend, ChatRequest{
+		Prompt:    "密码是什么？只回答数字",
+		SessionID: forkA,
+		WorkDir:   testWorkDir(),
+		Resume:    false,
+	})
+	contentA := concatContent(eventsA)
+	t.Logf("Fork A (NEW SessionID, Resume=false): %q", truncate(contentA, 200))
+
+	// --- Fork scenario B: new SessionID + Resume=true ---
+	forkB := newSessionID()
+	eventsB := cliExecPrompt(t, cfg, backend, ChatRequest{
+		Prompt:    "密码是什么？只回答数字",
+		SessionID: forkB,
+		WorkDir:   testWorkDir(),
+		Resume:    true,
+	})
+	contentB := concatContent(eventsB)
+	t.Logf("Fork B (NEW SessionID, Resume=true): %q", truncate(contentB, 200))
+
+	// --- Fork scenario C: parent SessionID + Resume=true (the fix) ---
+	eventsC := cliExecPrompt(t, cfg, backend, ChatRequest{
+		Prompt:    "密码是什么？只回答数字",
+		SessionID: parentSessionID,
+		WorkDir:   testWorkDir(),
+		Resume:    true,
+	})
+	contentC := concatContent(eventsC)
+	t.Logf("Fork C (PARENT SessionID, Resume=true): %q", truncate(contentC, 200))
+
+	// Summary
+	t.Log("")
+	t.Log("=== Fork Session Amnesia Diagnosis ===")
+	t.Logf("Fork A (new SID, Resume=false):     %s", amnesiaStatus(contentA, secret))
+	t.Logf("Fork B (new SID, Resume=true):      %s", amnesiaStatus(contentB, secret))
+	t.Logf("Fork C (parent SID, Resume=true):   %s", amnesiaStatus(contentC, secret))
+	t.Log("")
+	t.Log("Fix analysis:")
+	if strings.Contains(contentC, secret) {
+		t.Logf("  ✓ Using parent's SessionID + Resume=true FIXES amnesia (recalled '%s')", secret)
+		t.Log("  → Fix: ForkSession should copy external_session_id and use Resume=true")
+	} else {
+		t.Log("  ✗ Even parent's SessionID + Resume=true doesn't fix amnesia")
+		t.Log("  → The AI session may have been finalized or the context window was lost")
+	}
+	if !strings.Contains(contentA, secret) {
+		t.Log("  ✓ Fork A (new SID, Resume=false) is amnesiac — this is the current bug")
+	}
+
+	// Key assertion: Fork C should recall the secret (using parent's session with resume)
+	assert.True(t, strings.Contains(contentC, secret),
+		"Fork C (parent SessionID + Resume=true) should recall '%s' — this is the fix path. Got: %s",
+		secret, contentC)
+}
+
+// amnesiaStatus returns a human-readable string indicating whether the AI
+// recalled the secret number or not.
+func amnesiaStatus(content, secret string) string {
+	if strings.Contains(content, secret) {
+		return "NOT AMNESIAC (recalled " + secret + ")"
+	}
+	return "AMNESIAC (cannot recall " + secret + ")"
 }

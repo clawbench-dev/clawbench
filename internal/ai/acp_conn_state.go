@@ -274,8 +274,14 @@ func IsACPResourceNotFound(err error) bool {
 func (b *ACPBackend) buildPromptBlocks(req ChatRequest) []acp.ContentBlock {
 	prompt := req.Prompt
 
+	// Prepend fork context (fork session first message) so the AI has
+	// conversation history from the parent session.
+	if req.ForkContext != "" {
+		prompt = req.ForkContext + prompt
+	}
+
 	if req.ShouldInjectSystemPrompt() {
-		prompt = fmt.Sprintf("[System Instructions: %s]\n\n%s", req.SystemPrompt, req.Prompt)
+		prompt = fmt.Sprintf("[System Instructions: %s]\n\n%s", req.SystemPrompt, prompt)
 	}
 
 	return []acp.ContentBlock{acp.TextBlock(prompt)}
