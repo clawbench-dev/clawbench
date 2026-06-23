@@ -425,7 +425,11 @@ onUnmounted(() => document.removeEventListener('click', closeDropdowns))
 
 // Helper: build item path from entry name
 function itemPath(name) {
-    return (props.currentDir ? props.currentDir + '/' : '') + name
+    // currentDir can be '/' on some platforms — treat as root (empty string)
+    // to avoid generating paths like '/.clawbench' which the backend
+    // would interpret as absolute paths and reject with 500.
+    const dir = props.currentDir === '/' ? '' : props.currentDir
+    return (dir ? dir + '/' : '') + name
 }
 
 // ── Multi-select ──
