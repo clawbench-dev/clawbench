@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.net.Uri;
 import android.net.http.SslError;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import android.webkit.CookieManager;
@@ -162,13 +163,13 @@ public class BrowserActivity extends AppCompatActivity {
                 String msg = consoleMessage.message() + " (" + consoleMessage.sourceId() + ":" + consoleMessage.lineNumber() + ")";
                 switch (consoleMessage.messageLevel()) {
                     case ERROR:
-                        AppLog.e(tag, msg);
+                        Log.e(tag, msg);
                         break;
                     case WARNING:
-                        AppLog.w(tag, msg);
+                        Log.w(tag, msg);
                         break;
                     default:
-                        AppLog.d(tag, msg);
+                        Log.d(tag, msg);
                         break;
                 }
                 return true;

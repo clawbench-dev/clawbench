@@ -3613,6 +3613,7 @@ describe('loadHistory session_id recovery', () => {
 
     // Should have logged a warning about mismatch
     expect(warnSpy).toHaveBeenCalledWith(
+      '[ChatSession]',
       expect.stringContaining('session ID mismatch')
     )
   })

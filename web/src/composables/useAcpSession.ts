@@ -1,6 +1,9 @@
 import { ref, type Ref } from 'vue'
 import { useToast } from '@/composables/useToast'
 import { gt } from '@/composables/useLocale'
+import { appLog } from '@/utils/appLog'
+
+const TAG = 'useAcpSession'
 
 export interface AcpSessionInfo {
   sessionId: string
@@ -67,7 +70,7 @@ export function useAcpSession(options: UseAcpSessionOptions) {
       }
       nextCursor.value = data.nextCursor || null
     } catch (err) {
-      console.error('[useAcpSession] loadAcpSessions failed:', err)
+      appLog.e(TAG, 'loadAcpSessions failed:', err)
     } finally {
       acpSessionsLoading.value = false
     }
@@ -105,7 +108,7 @@ export function useAcpSession(options: UseAcpSessionOptions) {
       const data = await resp.json()
       return data.sessionId || ''
     } catch (err) {
-      console.error('[useAcpSession] acpLoadSession failed:', err)
+      appLog.e(TAG, 'acpLoadSession failed:', err)
       toast.show(gt('chat.acpSession.loadFailed'), { type: 'error', icon: '⚠️' })
       return null
     } finally {

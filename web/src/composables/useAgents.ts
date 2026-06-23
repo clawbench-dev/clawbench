@@ -2,6 +2,9 @@ import { ref } from 'vue'
 import { apiGet, apiPatch } from '@/utils/api'
 import { gt } from '@/composables/useLocale'
 import { updatePlanEntries } from '@/composables/usePlanProgress'
+import { appLog } from '@/utils/appLog'
+
+const TAG = 'Agents'
 
 // ───────────────────────────────────────────────────────────
 // Break circular dependency with useSessionIdentity:
@@ -110,7 +113,7 @@ async function loadAgents(force = false): Promise<void> {
                 }
             }
         } catch (err) {
-            console.error('Failed to load agents:', err)
+            appLog.e(TAG, 'Failed to load agents:', err)
         } finally {
             loadPromise = null
         }

@@ -165,6 +165,7 @@
 <script setup>
 import { ref, computed, watch, onUnmounted, onMounted, inject, provide, toRef, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { appLog } from '@/utils/appLog'
 import { gt } from '@/composables/useLocale'
 import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
@@ -201,6 +202,7 @@ import { syncPendingFromBackend } from '@/utils/chatStreamUtils.ts'
 import { useToolDetailOverlay } from '@/composables/useToolDetailOverlay.ts'
 
 const { t } = useI18n()
+const TAG = 'ChatPanel'
 
 const props = defineProps({
     active: Boolean,
@@ -918,7 +920,7 @@ async function handleResumeSession({ sessionId, sessionTitle }) {
 onMounted(() => {
     // Request notification permission on mount
     notification.requestPermission().catch(err => {
-        console.warn('Failed to request notification permission:', err)
+        appLog.w(TAG, 'Failed to request notification permission:', err)
     })
 
     session.loadSessionsOnce()

@@ -9,6 +9,10 @@
  * browser autoplay policies (requires user gesture before first use).
  */
 
+import { appLog } from '@/utils/appLog'
+
+const TAG = 'NotificationSound'
+
 let audioCtx: AudioContext | null = null
 
 function getAudioContext(): AudioContext {
@@ -75,7 +79,7 @@ export function playNotificationSound() {
     vibrateNotification()
   } catch (err) {
     // Silently fail — sound is non-critical
-    console.warn('Failed to play notification sound:', err)
+    appLog.w(TAG, 'Failed to play notification sound:', err)
   }
 }
 

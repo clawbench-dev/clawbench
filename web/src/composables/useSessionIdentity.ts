@@ -1,6 +1,9 @@
 import { ref, computed } from 'vue'
 import { useAgents, registerIdentityUpdaters } from '@/composables/useAgents'
 import { gt } from '@/composables/useLocale'
+import { appLog } from '@/utils/appLog'
+
+const TAG = 'SessionIdentity'
 
 // ───────────────────────────────────────────────────────────
 // Module-level singleton state — shared across the whole app.
@@ -253,7 +256,7 @@ export function toggleAutoApprove(enabled: boolean) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sessionId: sid, autoApprove: enabled }),
     }).catch(err => {
-      console.error('Failed to update autoApprove:', err)
+      appLog.e(TAG, 'Failed to update autoApprove:', err)
     })
   }
 }
@@ -514,7 +517,7 @@ export function useSessionIdentity() {
         currentThinkingEffort.value = loadThinkingPref(currentAgentId.value) || ''
       }
     } catch (err) {
-      console.error('Failed to create session:', err)
+      appLog.e(TAG, 'Failed to create session:', err)
     }
   }
 
@@ -555,7 +558,7 @@ export function useSessionIdentity() {
         ? `/api/ai/chat?session_id=${encodeURIComponent(sid)}`
         : null
       if (!url) {
-        console.error('sendMessage: no session ID available, cannot send')
+        appLog.e(TAG, 'sendMessage: no session ID available, cannot send')
         return
       }
       await fetch(url, {
@@ -564,7 +567,7 @@ export function useSessionIdentity() {
         body: JSON.stringify({ message: text, filePaths: filePaths || [], modelId: currentModelId.value || undefined, thinkingEffort: currentThinkingEffort.value || undefined, transport: currentTransport.value || undefined }),
       })
     } catch (err) {
-      console.error('Failed to send message:', err)
+      appLog.e(TAG, 'Failed to send message:', err)
     }
   }
 

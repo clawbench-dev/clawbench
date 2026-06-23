@@ -2,6 +2,9 @@ import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { shouldRetryToolFetch, resolveEffectiveMsgId } from '@/utils/chatStreamUtils.ts'
 import { formatToolOutput } from '@/utils/renderToolDetail.ts'
+import { appLog } from '@/utils/appLog'
+
+const TAG = 'ToolDetailOverlay'
 
 interface ToolDetailOverlayOptions {
   chatRender: any
@@ -117,7 +120,7 @@ export function useToolDetailOverlay(options: ToolDetailOverlayOptions) {
         toolDetailOverlay.value.outputHtml = formatToolOutput(data.output, block.name || data.name)
       }
     } catch (e) {
-      console.warn('Failed to fetch tool call detail:', e)
+      appLog.w(TAG, 'Failed to fetch tool call detail:', e)
       toolDetailOverlay.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsLoadFailed'))
     }
   }

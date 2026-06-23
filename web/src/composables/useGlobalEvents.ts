@@ -1,6 +1,9 @@
 import { ref, computed } from 'vue'
+import { appLog } from '@/utils/appLog'
 import { useReconnect } from './useReconnect'
 import { useAppMode } from './useAppMode'
+
+const TAG = 'GlobalEvents'
 
 // Event types from server
 interface ServerEvent {
@@ -118,12 +121,12 @@ function registerPushId() {
     if (!isAppMode.value) return
     const regId = (window as any).AndroidNative?.getPushRegistrationId?.()
     if (!regId) {
-        console.log('[useGlobalEvents] registerPushId: no registration ID available yet (JPush SDK may still be initializing)')
+        appLog.d(TAG, 'registerPushId: no registration ID available yet (JPush SDK may still be initializing)')
         return
     }
     send({ type: 'register', push_reg_id: regId })
     pushRegistered.value = true
-    console.log('[useGlobalEvents] registerPushId: sent via WS, regId:', regId)
+    appLog.d(TAG, 'registerPushId: sent via WS, regId:', regId)
 }
 
 function connect() {
@@ -288,7 +291,7 @@ export function useGlobalEvents() {
         const regId = detail?.registrationId
         if (!regId) return
 
-        console.log('[useGlobalEvents] JPush registration ID received from native:', regId)
+        appLog.d(TAG, 'JPush registration ID received from native:', regId)
         // Update push availability state
         pushAvailable.value = true
         // Register via WS — this is the primary registration path now.

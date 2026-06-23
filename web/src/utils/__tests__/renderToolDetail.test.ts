@@ -2663,7 +2663,7 @@ describe('PermissionApproval action handler (uncovered branches)', () => {
     Object.defineProperty(clickEvent, 'target', { value: allowBtn, writable: false })
     const result = handleToolAction('PermissionApproval', clickEvent, emit)
     expect(result).toBe(true)
-    expect(warnSpy).toHaveBeenCalledWith('PermissionApproval: no toolCallId found')
+    expect(warnSpy).toHaveBeenCalledWith('[renderToolDetail]', 'PermissionApproval: no toolCallId found')
     // View should NOT be marked as responded (early return before that)
     expect(container.classList.contains('permission-responded')).toBe(false)
     warnSpy.mockRestore()

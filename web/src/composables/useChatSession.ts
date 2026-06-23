@@ -3,6 +3,9 @@ import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
+import { appLog } from '@/utils/appLog'
+
+const TAG = 'ChatSession'
 import { clearModeState, updateAvailableModes, clearCommandState, updateCommandState, updateAvailableThinkingEfforts, clearThinkingEffortState, clearUsageState, updateUsageState, currentAgentId as _currentAgentId } from '@/composables/useSessionIdentity.ts'
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
 import { useAgents, restoreOriginalModels, populateACPStateFromCache, getAgentThinkingEffortLevels } from '@/composables/useAgents'
@@ -365,7 +368,7 @@ export function useChatSession(options: UseChatSessionOptions) {
           // clawbench_project cookie is missing). Don't silently bail —
           // log the error so it's visible in devtools. If initSessionFromAPI
           // sets currentSessionId later, the normal path below will fetch messages.
-          console.warn('loadHistory recovery failed:', recoverResp.status, recoverResp.statusText)
+          appLog.w(TAG, 'loadHistory recovery failed:', recoverResp.status, recoverResp.statusText)
         }
         // If recovery still yields no session, bail — createSession will handle it
         if (!currentSessionId.value) {
@@ -457,7 +460,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       const requestedId = currentSessionId.value
       const returnedId = data.sessionId || ''
       if (returnedId && requestedId && returnedId !== requestedId) {
-        console.warn(`loadHistory: session ID mismatch (requested=${requestedId}, returned=${returnedId})`)
+        appLog.w(TAG, `loadHistory: session ID mismatch (requested=${requestedId}, returned=${returnedId})`)
       }
       currentSessionId.value = returnedId
       currentSessionTitle.value = data.sessionTitle || ''
@@ -521,7 +524,7 @@ export function useChatSession(options: UseChatSessionOptions) {
         loadHistoryDeferred = null
       }
     } catch (err) {
-      console.error('Failed to load chat history:', err)
+      appLog.e(TAG, 'Failed to load chat history:', err)
       const _msg = err instanceof Error ? err.message : ''
       toast.show(_msg ? gt('chat.session.loadHistoryFailedDetail', { error: _msg }) : gt('chat.session.loadHistoryFailed'), { icon: '⚠️', type: 'error' })
       loadHistoryInProgress = false
@@ -565,7 +568,7 @@ export function useChatSession(options: UseChatSessionOptions) {
         onRenderUpdate(true)
       }
     } catch (err) {
-      console.error('Failed to load more messages:', err)
+      appLog.e(TAG, 'Failed to load more messages:', err)
     } finally {
       loadingMore.value = false
     }
@@ -679,7 +682,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     } catch (err) {
       // If another switch happened, don't touch state
       if (switchSessionSeq !== mySeq) return
-      console.error('Failed to switch session:', err)
+      appLog.e(TAG, 'Failed to switch session:', err)
       toast.show(gt('chat.session.switchFailed'), { icon: '⚠️', type: 'error' })
     } finally {
       // Always restore input — switchSession is the only place that locks it,
@@ -719,7 +722,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (typeof data.sessionCount === 'number') store.state.sessionCount = data.sessionCount
       toast.show(gt('chat.session.created', { count: data.sessionCount ?? '', max: maxCount }), { icon: '✨', type: 'success', duration: 1500 })
     } catch (err) {
-      console.error('Failed to create session:', err)
+      appLog.e(TAG, 'Failed to create session:', err)
       const _msg = err instanceof Error ? err.message : ''
       toast.show(_msg ? gt('chat.session.createSessionFailedDetail', { error: _msg }) : gt('chat.session.createSessionFailed'), { icon: '⚠️', type: 'error' })
     }
@@ -756,7 +759,7 @@ export function useChatSession(options: UseChatSessionOptions) {
         toast.show(gt('chat.session.deleteFailed'), { icon: '⚠️', type: 'error' })
       }
     } catch (err) {
-      console.error('Failed to delete session:', err)
+      appLog.e(TAG, 'Failed to delete session:', err)
       toast.show(gt('chat.session.deleteFailed'), { icon: '⚠️', type: 'error' })
     } finally {
       deletingSessionIds.value.delete(sessionId)
@@ -918,7 +921,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       switchTabFn('chat')
       return true
     } catch (err) {
-      console.error('Failed to continue from execution:', err)
+      appLog.e(TAG, 'Failed to continue from execution:', err)
       toast.show(gt('chat.session.continueFailed'), { icon: '⚠️', type: 'error' })
       return false
     }
@@ -953,7 +956,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       await switchSession(data.sessionId)
       return true
     } catch (err) {
-      console.error('Failed to fork session:', err)
+      appLog.e(TAG, 'Failed to fork session:', err)
       toast.show(gt('chat.session.forkFailed'), { icon: '⚠️', type: 'error' })
       return false
     }

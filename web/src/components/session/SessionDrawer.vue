@@ -86,6 +86,7 @@
 
 <script setup>
 import { useI18n } from 'vue-i18n'
+import { appLog } from '@/utils/appLog'
 import { Bot, Plus, Star } from 'lucide-vue-next'
 import { ref, watch, computed, onUnmounted, nextTick } from 'vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
@@ -98,6 +99,7 @@ import { formatRelativeTime } from '@/utils/format.ts'
 import { store } from '@/stores/app.ts'
 
 const { t } = useI18n()
+const TAG = 'SessionDrawer'
 const props = defineProps({
   open: Boolean,
   currentSessionId: String,
@@ -192,7 +194,7 @@ async function loadSessions() {
     hasMore.value = !!data.hasMore
     if (typeof data.totalCount === 'number') store.state.sessionCount = data.totalCount
   } catch (err) {
-    console.error('Failed to load sessions:', err)
+    appLog.e(TAG, 'Failed to load sessions:', err)
     sessions.value = []
   } finally {
     loading.value = false
@@ -217,7 +219,7 @@ async function loadMoreSessions() {
     }
     hasMore.value = !!data.hasMore
   } catch (err) {
-    console.error('Failed to load more sessions:', err)
+    appLog.e(TAG, 'Failed to load more sessions:', err)
   } finally {
     loadingMore.value = false
   }

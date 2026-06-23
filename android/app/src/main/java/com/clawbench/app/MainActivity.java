@@ -316,13 +316,13 @@ public class MainActivity extends AppCompatActivity {
                 String msg = consoleMessage.message() + " (" + consoleMessage.sourceId() + ":" + consoleMessage.lineNumber() + ")";
                 switch (consoleMessage.messageLevel()) {
                     case ERROR:
-                        AppLog.e(tag, msg);
+                        Log.e(tag, msg);
                         break;
                     case WARNING:
-                        AppLog.w(tag, msg);
+                        Log.w(tag, msg);
                         break;
                     default:
-                        AppLog.d(tag, msg);
+                        Log.d(tag, msg);
                         break;
                 }
                 return true;
@@ -2143,7 +2143,7 @@ public class MainActivity extends AppCompatActivity {
                 }
                 activity.prefs.edit().putString(KEY_SERVER_LIST, newList.toString()).apply();
             } catch (Exception e) {
-                android.util.Log.e(TAG, "removeServer failed", e);
+                AppLog.e(TAG, "removeServer failed", e);
             }
         }
     }
@@ -2189,6 +2189,24 @@ public class MainActivity extends AppCompatActivity {
             prefs.edit().putString(KEY_SERVER_LIST, result.toString()).apply();
         } catch (Exception e) {
             AppLog.e(TAG, "saveServerInternal failed", e);
+        }
+    }
+
+    /**
+     * Log a message from the WebView JS layer through AppLog.
+     * This gives frontend code explicit control over log relay to the server,
+     * independent of the implicit onConsoleMessage capture.
+     * @param level One of "D", "I", "W", "E"
+     * @param tag   Log tag (e.g. "ChatStream", "PortForward")
+     * @param msg   Log message
+     */
+    @JavascriptInterface
+    public void log(String level, String tag, String msg) {
+        switch (level) {
+            case "E": AppLog.e(tag, msg); break;
+            case "W": AppLog.w(tag, msg); break;
+            case "I": AppLog.i(tag, msg); break;
+            default:  AppLog.d(tag, msg); break;
         }
     }
 }

@@ -1,11 +1,14 @@
 import { onMounted, onUnmounted, type Ref } from 'vue'
 import { cancelChat } from '@/utils/api'
+import { appLog } from '@/utils/appLog'
 import { useReconnect } from './useReconnect'
 import { gt } from '@/composables/useLocale'
 import { updateModeState, updateAvailableModes, updateCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, currentAgentId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
 import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, drainQueueMessage, syncPendingFromBackend } from '@/utils/chatStreamUtils.ts'
+
+const TAG = 'ChatStream'
 
 export interface UseChatStreamOptions {
   messages: Ref<any[]>
@@ -98,7 +101,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     // Extend timeout when a permission approval is pending — the user needs time to decide
     const timeoutMs = hasPendingPermissionApproval() ? PERMISSION_STREAM_TIMEOUT_MS : STREAM_TIMEOUT_MS
     streamTimeout = setTimeout(() => {
-      console.warn('SSE stream timeout - no events received, reconnecting')
+      appLog.w(TAG, 'SSE stream timeout - no events received, reconnecting')
       // No SSE event received for too long — reconnect instead of killing the session
       disconnectStream()
       // The AI session continues on the backend; just reconnect SSE
@@ -167,10 +170,10 @@ export function useChatStream(options: UseChatStreamOptions) {
         } catch {
           jsonParseFailures++
           if (jsonParseFailures >= MAX_JSON_PARSE_FAILURES) {
-            console.error('Polling: too many invalid JSON responses, giving up')
+            appLog.e(TAG, 'Polling: too many invalid JSON responses, giving up')
             throw new Error('Invalid JSON response')
           }
-          console.error('Polling: invalid JSON response')
+          appLog.e(TAG, 'Polling: invalid JSON response')
           return
         }
         // Parse messages from server response
@@ -238,7 +241,7 @@ export function useChatStream(options: UseChatStreamOptions) {
           debouncedRender()
         }
       } catch (err) {
-        console.error('Polling error:', err)
+        appLog.e(TAG, 'Polling error:', err)
         stopPolling()
         const sm = findStreamingMsg(messages.value)
         if (sm) {
@@ -338,7 +341,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       if (!sm) return
       resetStreamTimeout()
       let data: any
-      try { data = JSON.parse(e.data) } catch { console.warn('SSE content: invalid JSON, skipping'); return }
+      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE content: invalid JSON, skipping'); return }
       const blocks = sm.blocks
       const existingText = findLastBlockOfType(blocks, 'text')
       if (existingText) {
@@ -355,7 +358,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       if (!sm) return
       resetStreamTimeout()
       let data: any
-      try { data = JSON.parse(e.data) } catch { console.warn('SSE thinking: invalid JSON, skipping'); return }
+      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE thinking: invalid JSON, skipping'); return }
       const blocks = sm.blocks
       const existingThinking = findLastBlockOfType(blocks, 'thinking')
       if (existingThinking) {
@@ -389,7 +392,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       if (!sm) return
       resetStreamTimeout()
       let data: any
-      try { data = JSON.parse(e.data) } catch { console.warn('SSE tool_use: invalid JSON, skipping'); return }
+      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE tool_use: invalid JSON, skipping'); return }
       const blocks = sm.blocks
       const existing = blocks.find(b => b.type === 'tool_use' && b.id === data.id)
       if (data.done) {
@@ -444,7 +447,7 @@ export function useChatStream(options: UseChatStreamOptions) {
           if (data.name !== 'PermissionApproval') {
             const timer = setTimeout(() => {
               if (!newBlock.done) {
-                console.warn(`tool_use block ${data.id} timed out without 'done', marking as done`)
+                appLog.w(TAG, `tool_use block ${data.id} timed out without 'done', marking as done`)
                 newBlock.done = true
                 onRenderNeeded()
               }
@@ -465,7 +468,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       if (!sm) return
       resetStreamTimeout()
       let data: any
-      try { data = JSON.parse(e.data) } catch { console.warn('SSE tool_result: invalid JSON, skipping'); return }
+      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE tool_result: invalid JSON, skipping'); return }
       const blocks = sm.blocks
       const existing = blocks.find(b => b.type === 'tool_use' && b.id === data.id)
       if (existing) {
@@ -488,7 +491,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       if (!sm) return
       resetStreamTimeout()
       let data: any
-      try { data = JSON.parse(e.data) } catch { console.warn('SSE metadata: invalid JSON, skipping'); return }
+      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE metadata: invalid JSON, skipping'); return }
       sm.metadata = data
     })
 
@@ -505,7 +508,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       const doneSummary = messages.value.map((m: any, i: number) =>
         `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.pending ? ' PENDING' : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
       ).join(' | ')
-      console.log(`[done] before loadHistory: ${doneSummary}`)
+      appLog.d(TAG, `[done] before loadHistory: ${doneSummary}`)
 
       disconnectStream()
       reconnect.reset()
@@ -553,7 +556,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       if (!sm) return
       resetStreamTimeout()
       let data: any
-      try { data = JSON.parse(e.data) } catch { console.warn('SSE warning: invalid JSON, skipping'); return }
+      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE warning: invalid JSON, skipping'); return }
       if (sm.streamingText) {
         sm.blocks.push({ type: 'text', text: sm.streamingText })
         sm.streamingText = ''
@@ -569,7 +572,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     eventSource.addEventListener('mode_update', (e) => {
       if (sessionChanged()) return
       let data: any
-      try { data = JSON.parse(e.data) } catch { console.warn('SSE mode_update: invalid JSON, skipping'); return }
+      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE mode_update: invalid JSON, skipping'); return }
       if (data.currentModeId || data.availableModes?.length > 0) {
         updateModeState(data.currentModeId || '', data.availableModes || [])
       }
@@ -578,7 +581,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     eventSource.addEventListener('config_update', (e) => {
       if (sessionChanged()) return
       let data: any
-      try { data = JSON.parse(e.data) } catch { console.warn('SSE config_update: invalid JSON, skipping'); return }
+      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE config_update: invalid JSON, skipping'); return }
       for (const opt of (data.options || [])) {
         if (opt.category === 'mode' || opt.id === 'mode') {
           const modes = (opt.values || []).map((v: any) => ({ id: v.id, name: v.name || v.id }))
@@ -593,7 +596,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     eventSource.addEventListener('thinking_effort_update', (e) => {
       if (sessionChanged()) return
       let data: any
-      try { data = JSON.parse(e.data) } catch { console.warn('SSE thinking_effort_update: invalid JSON, skipping'); return }
+      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE thinking_effort_update: invalid JSON, skipping'); return }
       if (data.availableLevels?.length > 0) {
         const levels = (data.availableLevels || []).map((l: any) => ({ id: l.id, name: l.name || l.id }))
         updateAvailableThinkingEfforts(levels)
@@ -603,7 +606,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     eventSource.addEventListener('commands_update', (e) => {
       if (sessionChanged()) return
       let data: any
-      try { data = JSON.parse(e.data) } catch { console.warn('SSE commands_update: invalid JSON, skipping'); return }
+      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE commands_update: invalid JSON, skipping'); return }
       if (Array.isArray(data.commands)) {
         updateCommandState(data.commands)
       }
@@ -612,7 +615,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     eventSource.addEventListener('model_list_update', (e) => {
       if (sessionChanged()) return
       let data: any
-      try { data = JSON.parse(e.data) } catch { console.warn('SSE model_list_update: invalid JSON, skipping'); return }
+      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE model_list_update: invalid JSON, skipping'); return }
       if (Array.isArray(data.models) && data.models.length > 0) {
         const aid = currentAgentId.value
         if (aid) {
@@ -624,7 +627,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     eventSource.addEventListener('plan_update', (e) => {
       if (sessionChanged()) return
       let data: any
-      try { data = JSON.parse(e.data) } catch { console.warn('SSE plan_update: invalid JSON, skipping'); return }
+      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE plan_update: invalid JSON, skipping'); return }
       if (Array.isArray(data.entries)) {
         updatePlanEntries(data.entries)
       }
@@ -633,7 +636,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     eventSource.addEventListener('usage_update', (e) => {
       if (sessionChanged()) return
       let data: any
-      try { data = JSON.parse(e.data) } catch { console.warn('SSE usage_update: invalid JSON, skipping'); return }
+      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE usage_update: invalid JSON, skipping'); return }
       if (data.size > 0) {
         updateUsageState(data.used ?? 0, data.size, data.cost, data.currency)
       }
@@ -645,7 +648,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     eventSource.addEventListener('queue_drain', (e) => {
       resetStreamTimeout()
       let data: any
-      try { data = JSON.parse(e.data) } catch { console.warn('SSE queue_drain: invalid JSON, skipping'); return }
+      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE queue_drain: invalid JSON, skipping'); return }
 
       const userContent = data.text || ''
       const userFiles = (data.files || []).map((p: string) => p)
@@ -682,7 +685,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     eventSource.addEventListener('queue_update', (e) => {
       resetStreamTimeout()
       let data: any
-      try { data = JSON.parse(e.data) } catch { console.warn('SSE queue_update: invalid JSON, skipping'); return }
+      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE queue_update: invalid JSON, skipping'); return }
 
       // Sync pending messages in messages.value with the backend queue
       syncPendingFromBackend(messages.value, data.queue || [])
@@ -752,7 +755,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     try {
       await cancelChat(currentSessionId.value)
     } catch (err) {
-      console.error('Failed to cancel:', err)
+      appLog.e(TAG, 'Failed to cancel:', err)
       disconnectStream()
       forceCleanupStreamingState()
       onStreamEnd?.('cancelled')
@@ -762,7 +765,7 @@ export function useChatStream(options: UseChatStreamOptions) {
   function handleOnline() {
     if (!loading.value || !currentSessionId.value) return
     if (eventSource) {
-      console.info('Network recovered, reconnecting SSE stream')
+      appLog.i(TAG, 'Network recovered, reconnecting SSE stream')
       disconnectStream()
       connectStream(currentSessionId.value)
     }

@@ -358,7 +358,7 @@ describe('useTerminalSession', () => {
       const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
       mockWebSocketInstance!.onmessage?.({ data: 'not json' })
 
-      expect(consoleSpy).toHaveBeenCalledWith('terminal: invalid message', 'not json')
+      expect(consoleSpy).toHaveBeenCalledWith('[TerminalSession]', 'invalid message', 'not json')
       consoleSpy.mockRestore()
     })
 

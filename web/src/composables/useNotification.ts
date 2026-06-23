@@ -1,4 +1,7 @@
 import { ref } from 'vue'
+import { appLog } from '@/utils/appLog'
+
+const TAG = 'Notification'
 
 // Browser notification permission state
 const permission = ref<NotificationPermission>('default')
@@ -11,7 +14,7 @@ const activeNotifications = new Set<Notification>()
  */
 export async function requestNotificationPermission(): Promise<NotificationPermission> {
   if (!('Notification' in window)) {
-    console.warn('This browser does not support desktop notifications')
+    appLog.w(TAG, 'This browser does not support desktop notifications')
     return 'denied'
   }
 
@@ -50,12 +53,12 @@ export function showBrowserNotification(
 
   // Check permission
   if (!('Notification' in window)) {
-    console.warn('Notifications not supported')
+    appLog.w(TAG, 'Notifications not supported')
     return
   }
 
   if (Notification.permission !== 'granted') {
-    console.warn('Notification permission not granted')
+    appLog.w(TAG, 'Notification permission not granted')
     return
   }
 

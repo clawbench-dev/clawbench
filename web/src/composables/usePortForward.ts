@@ -5,6 +5,9 @@ import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
 import { tunnelStatusFromPorts as tunnelStatusFromPortsUtil, buildPortUrl } from '@/utils/portForwardUtils.ts'
 import { store } from '@/stores/app'
+import { appLog } from '@/utils/appLog'
+
+const TAG = 'PortForward'
 
 interface ForwardedPort {
   port: number        // Target port on remote host
@@ -172,7 +175,7 @@ export function usePortForward() {
     connectingPorts.value = new Set(connectingPorts.value)
     // Register with Android native layer: pass localPort, targetPort, host
     if (isAppMode.value) {
-      console.log('[PortForward] registerPort: localPort=' + localPort + ', targetPort=' + port + ', host=' + (host || ''))
+      appLog.d(TAG, 'registerPort: localPort=' + localPort + ', targetPort=' + port + ', host=' + (host || ''))
       ;(window as any).AndroidNative?.addForwardedPort(localPort, port, host || '')
     }
     // Silent refresh: don't flicker the port list with loading state
@@ -435,7 +438,7 @@ export function usePortForward() {
    *  then attempts SSH tunnel reconnect if still unreachable.
    *  Shows toast on success or failure after reconnection attempt. */
   async function openPort(localPort: number, protocol?: string, host?: string) {
-    console.log('[PortForward] openPort: localPort=' + localPort + ', protocol=' + protocol + ', host=' + (host || ''))
+    appLog.d(TAG, 'openPort: localPort=' + localPort + ', protocol=' + protocol + ', host=' + (host || ''))
 
     if (isAppMode.value) {
       const native = (window as any).AndroidNative
@@ -444,25 +447,25 @@ export function usePortForward() {
       if (native?.testPortReachable) {
         // Test if the local port is reachable
         const reachable = native.testPortReachable(localPort)
-        console.log('[PortForward] openPort: testPortReachable(' + localPort + ') = ' + reachable)
+        appLog.d(TAG, 'openPort: testPortReachable(' + localPort + ') = ' + reachable)
         if (reachable) {
           doOpen(native, localPort, protocol, hostArg)
           return
         }
 
         // Port unreachable — attempt SSH tunnel reconnect.
-        console.log('[PortForward] openPort: port ' + localPort + ' unreachable, attempting tunnel reconnect')
+        appLog.d(TAG, 'openPort: port ' + localPort + ' unreachable, attempting tunnel reconnect')
         let reconnected = false
         if (native?.reconnectTunnel) {
           reconnected = native.reconnectTunnel()
-          console.log('[PortForward] openPort: reconnectTunnel() = ' + reconnected)
+          appLog.d(TAG, 'openPort: reconnectTunnel() = ' + reconnected)
         }
 
         const toast = useToast()
         if (reconnected) {
           // reconnectTunnel is blocking — after it returns, try once more
           const reachableAfter = native.testPortReachable(localPort)
-          console.log('[PortForward] openPort: after reconnect, testPortReachable(' + localPort + ') = ' + reachableAfter)
+          appLog.d(TAG, 'openPort: after reconnect, testPortReachable(' + localPort + ') = ' + reachableAfter)
           if (reachableAfter) {
             toast.show(gt('portForward.tunnelReconnected'), { type: 'success' })
             doOpen(native, localPort, protocol, hostArg)
