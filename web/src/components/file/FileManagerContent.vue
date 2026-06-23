@@ -880,7 +880,7 @@ function toggleAttach(path) {
 
 function doDelete() {
     const path = ctxMenu.entry.path
-    console.log('[doDelete] emitting delete for:', path)
+    console.debug('[doDelete] emitting delete for:', path)
     closeCtxMenu()
     emit('delete', path)
 }

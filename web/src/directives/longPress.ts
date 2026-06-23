@@ -14,12 +14,6 @@ import type { DirectiveBinding } from 'vue'
 const LONG_PRESS_MS = 450
 const MOVE_THRESHOLD_PX = 10
 
-interface LongPressRef {
-  timer: number | null
-  fired: boolean
-  cleanup: () => void
-}
-
 function mounted(el: HTMLElement, binding: DirectiveBinding) {
   let timer: number | null = null
   let fired = false
@@ -61,6 +55,15 @@ function mounted(el: HTMLElement, binding: DirectiveBinding) {
     if (fired) {
       e.preventDefault()
     }
+    fired = false
+  }
+
+  function onTouchCancel() {
+    if (timer) {
+      clearTimeout(timer)
+      timer = null
+    }
+    fired = false
   }
 
   // touchstart/touchmove can be passive (no preventDefault needed)
@@ -68,25 +71,21 @@ function mounted(el: HTMLElement, binding: DirectiveBinding) {
   el.addEventListener('touchmove', onTouchMove, { passive: true })
   // touchend needs preventDefault to block click synthesis
   el.addEventListener('touchend', onTouchEnd, { passive: false })
-  el.addEventListener('touchcancel', onTouchEnd, { passive: false })
+  // touchcancel just cleans up — no preventDefault needed
+  el.addEventListener('touchcancel', onTouchCancel, { passive: true })
 
-  const ref: LongPressRef = {
-    get timer() { return timer },
-    fired,
-    cleanup: () => {
-      el.removeEventListener('touchstart', onTouchStart)
-      el.removeEventListener('touchmove', onTouchMove)
-      el.removeEventListener('touchend', onTouchEnd)
-      el.removeEventListener('touchcancel', onTouchEnd)
-      if (timer) clearTimeout(timer)
-    },
+  ;(el as any)._longPress_cleanup = () => {
+    el.removeEventListener('touchstart', onTouchStart)
+    el.removeEventListener('touchmove', onTouchMove)
+    el.removeEventListener('touchend', onTouchEnd)
+    el.removeEventListener('touchcancel', onTouchCancel)
+    if (timer) clearTimeout(timer)
   }
-  ;(el as any)._longPress = ref
 }
 
 function unmounted(el: HTMLElement) {
-  ;((el as any)._longPress as LongPressRef)?.cleanup()
-  delete (el as any)._longPress
+  ;(el as any)._longPress_cleanup?.()
+  delete (el as any)._longPress_cleanup
 }
 
 export const LongPressDirective = { mounted, unmounted }
