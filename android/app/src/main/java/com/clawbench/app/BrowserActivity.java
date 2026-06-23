@@ -158,8 +158,19 @@ public class BrowserActivity extends AppCompatActivity {
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onConsoleMessage(ConsoleMessage consoleMessage) {
-                android.util.Log.d("WebView:" + consoleMessage.messageLevel(),
-                        consoleMessage.message() + " (" + consoleMessage.sourceId() + ":" + consoleMessage.lineNumber() + ")");
+                String tag = "WebView:" + consoleMessage.messageLevel();
+                String msg = consoleMessage.message() + " (" + consoleMessage.sourceId() + ":" + consoleMessage.lineNumber() + ")";
+                switch (consoleMessage.messageLevel()) {
+                    case ERROR:
+                        AppLog.e(tag, msg);
+                        break;
+                    case WARNING:
+                        AppLog.w(tag, msg);
+                        break;
+                    default:
+                        AppLog.d(tag, msg);
+                        break;
+                }
                 return true;
             }
 
