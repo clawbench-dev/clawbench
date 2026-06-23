@@ -203,7 +203,10 @@ function computeMarkerPositions() {
 
     const markers: PositionedMarker[] = []
     for (const marker of diffMarkers.value) {
-        // Marker id format: "{type}-{blockIndex}-{tag}"
+        // Marker id formats:
+        //   "{type}-{blockIndex}-{tag}"          (modified, added)
+        //   "{type}-{blockIndex}-old{idx}-{tag}" (deleted, merged blocks)
+        // blockIndex is always the first number after the type prefix
         const idParts = marker.id.split('-')
         const blockIndex = parseInt(idParts[1], 10)
 

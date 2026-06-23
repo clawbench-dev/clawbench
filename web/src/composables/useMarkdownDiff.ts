@@ -313,17 +313,18 @@ export function computeMarkdownDiff(
                     markers.push(toMarker('modified', newBlock, newIdx + i, charDiff, oldBlock.textContent))
                 }
 
-                // Extra removed blocks: deleted
-                for (let i = pairCount; i < removedCount; i++) {
-                    const oldBlock = oldBlocks[oldIdx + i]
+                // Extra removed blocks: deleted — merge consecutive into one marker
+                if (removedCount > pairCount) {
+                    const extraRemovedBlocks = oldBlocks.slice(oldIdx + pairCount, oldIdx + removedCount)
                     const prevNewIdx = newIdx + pairCount - 1
                     const targetBlock = prevNewIdx >= 0 ? newBlocks[prevNewIdx] : newBlocks[0]
+                    const mergedText = extraRemovedBlocks.map(b => b.textContent).join('\n')
                     const charDiff: CharDiff = {
-                        oldText: oldBlock.textContent,
+                        oldText: mergedText,
                         newText: '',
-                        changes: [{ value: oldBlock.textContent, removed: true, added: false, count: 1 }],
+                        changes: [{ value: mergedText, removed: true, added: false, count: 1 }],
                     }
-                    markers.push(toMarker('deleted', targetBlock, prevNewIdx, charDiff))
+                    markers.push(toMarker('deleted', targetBlock, prevNewIdx, charDiff, undefined, oldIdx + pairCount, extraRemovedBlocks.length))
                 }
 
                 // Extra added blocks: added
@@ -336,19 +337,17 @@ export function computeMarkdownDiff(
                 newIdx += addedCount
                 skipNext = true  // Skip the paired addition in the next iteration
             } else {
-                // Pure deletion: no following addition
-                for (let i = 0; i < removedCount; i++) {
-                    const oldBlock = oldBlocks[oldIdx + i]
-                    // Attach to previous new block
-                    const prevNewIdx = Math.max(0, newIdx - 1)
-                    const targetBlock = newBlocks[prevNewIdx]
-                    const charDiff: CharDiff = {
-                        oldText: oldBlock.textContent,
-                        newText: '',
-                        changes: [{ value: oldBlock.textContent, removed: true, added: false, count: 1 }],
-                    }
-                    markers.push(toMarker('deleted', targetBlock, prevNewIdx, charDiff))
+                // Pure deletion: no following addition — merge consecutive into one marker
+                const removedBlocks = oldBlocks.slice(oldIdx, oldIdx + removedCount)
+                const prevNewIdx = Math.max(0, newIdx - 1)
+                const targetBlock = newBlocks[prevNewIdx]
+                const mergedText = removedBlocks.map(b => b.textContent).join('\n')
+                const charDiff: CharDiff = {
+                    oldText: mergedText,
+                    newText: '',
+                    changes: [{ value: mergedText, removed: true, added: false, count: 1 }],
                 }
+                markers.push(toMarker('deleted', targetBlock, prevNewIdx, charDiff, undefined, oldIdx, removedBlocks.length))
                 oldIdx += removedCount
             }
         } else if (change.added) {
@@ -401,8 +400,9 @@ function buildDiffMarker(opts: {
     }
 }
 
-function toMarker(type: MarkerType, block: BlockInfo, blockIndex: number, charDiff: CharDiff | null, oldBlockText?: string): DiffMarker {
-    const ariaLabel = `${type.charAt(0).toUpperCase() + type.slice(1)}: ${block.tag}`
+function toMarker(type: MarkerType, block: BlockInfo, blockIndex: number, charDiff: CharDiff | null, oldBlockText?: string, oldBlockStartIdx?: number, blockCount?: number): DiffMarker {
+    const countLabel = blockCount && blockCount > 1 ? ` (${blockCount} blocks)` : ''
+    const ariaLabel = `${type.charAt(0).toUpperCase() + type.slice(1)}: ${block.tag}${countLabel}`
     // For modified/deleted blocks with old content, use line-level diff
     let diffLines: DiffLine[] | undefined
     if (type === 'modified' && oldBlockText !== undefined && oldBlockText !== block.textContent) {
@@ -416,8 +416,13 @@ function toMarker(type: MarkerType, block: BlockInfo, blockIndex: number, charDi
     } else if (charDiff) {
         diffLines = charDiffToLines(charDiff)
     }
+    // Use oldBlockStartIdx to make deleted marker IDs unique when multiple
+    // old blocks are merged into one marker (avoids duplicate keys in v-for)
+    const idSuffix = type === 'deleted' && oldBlockStartIdx !== undefined
+        ? `${blockIndex}-old${oldBlockStartIdx}-${block.tag}`
+        : `${blockIndex}-${block.tag}`
     return buildDiffMarker({
-        id: `${type}-${blockIndex}-${block.tag}`,
+        id: `${type}-${idSuffix}`,
         type,
         blockSelector: block.selector,
         charDiff,

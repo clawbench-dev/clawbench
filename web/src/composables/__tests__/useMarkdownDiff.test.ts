@@ -141,6 +141,71 @@ describe('computeMarkdownDiff', () => {
     expect(result.markers[0].type).toBe('deleted')
   })
 
+  it('merges multiple consecutive deleted blocks into one marker', () => {
+    const oldBlocks = [
+      { tag: 'H1', textContent: 'Title', innerHTML: 'Title', selector: ':scope' },
+      { tag: 'P', textContent: 'Para 1', innerHTML: 'Para 1', selector: ':scope' },
+      { tag: 'P', textContent: 'Para 2', innerHTML: 'Para 2', selector: ':scope' },
+      { tag: 'P', textContent: 'Para 3', innerHTML: 'Para 3', selector: ':scope' },
+    ]
+    const newBlocks = [
+      { tag: 'H1', textContent: 'Title', innerHTML: 'Title', selector: ':scope' },
+    ]
+    const result = computeMarkdownDiff(oldBlocks, newBlocks)
+    expect(result.hasChanges).toBe(true)
+    // Should produce ONE merged deleted marker, not three
+    expect(result.markers).toHaveLength(1)
+    expect(result.markers[0].type).toBe('deleted')
+    // The merged marker should contain all three paragraphs in diffLines
+    const marker = result.markers[0]
+    expect(marker.diffLines).toBeTruthy()
+    const delLines = marker.diffLines!.filter(l => l.type === 'del')
+    expect(delLines.length).toBe(3)
+    expect(delLines[0].content).toBe('Para 1')
+    expect(delLines[1].content).toBe('Para 2')
+    expect(delLines[2].content).toBe('Para 3')
+  })
+
+  it('merges extra deleted blocks in modified pair into one marker', () => {
+    // 3 old blocks replaced by 1 new block → 1 modified + 2 merged deleted
+    const oldBlocks = [
+      { tag: 'P', textContent: 'Line 1', innerHTML: 'Line 1', selector: ':scope' },
+      { tag: 'P', textContent: 'Line 2', innerHTML: 'Line 2', selector: ':scope' },
+      { tag: 'P', textContent: 'Line 3', innerHTML: 'Line 3', selector: ':scope' },
+    ]
+    const newBlocks = [
+      { tag: 'P', textContent: 'Line 1 changed', innerHTML: 'Line 1 changed', selector: ':scope' },
+    ]
+    const result = computeMarkdownDiff(oldBlocks, newBlocks)
+    expect(result.hasChanges).toBe(true)
+    const modified = result.markers.filter(m => m.type === 'modified')
+    const deleted = result.markers.filter(m => m.type === 'deleted')
+    expect(modified).toHaveLength(1)
+    expect(deleted).toHaveLength(1)
+    // The merged deleted marker should contain Line 2 and Line 3
+    const delMarker = deleted[0]
+    expect(delMarker.diffLines).toBeTruthy()
+    const delLines = delMarker.diffLines!.filter(l => l.type === 'del')
+    expect(delLines.length).toBe(2)
+    expect(delLines[0].content).toBe('Line 2')
+    expect(delLines[1].content).toBe('Line 3')
+  })
+
+  it('gives unique IDs to deleted markers from different positions', () => {
+    const oldBlocks = [
+      { tag: 'H1', textContent: 'Title', innerHTML: 'Title', selector: ':scope' },
+      { tag: 'P', textContent: 'Para A', innerHTML: 'Para A', selector: ':scope' },
+      { tag: 'P', textContent: 'Para B', innerHTML: 'Para B', selector: ':scope' },
+    ]
+    const newBlocks = [
+      { tag: 'H1', textContent: 'Title', innerHTML: 'Title', selector: ':scope' },
+    ]
+    const result = computeMarkdownDiff(oldBlocks, newBlocks)
+    // One merged marker, but its ID should be unique (contain old index)
+    expect(result.markers).toHaveLength(1)
+    expect(result.markers[0].id).toContain('old')
+  })
+
   it('detects modified blocks', () => {
     const oldBlocks = [
       { tag: 'P', textContent: 'Hello world', innerHTML: 'Hello world', selector: ':scope' },
