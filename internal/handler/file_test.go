@@ -1293,14 +1293,14 @@ func TestGetFile_BrokenSymlink(t *testing.T) {
 func TestHandleStatError(t *testing.T) {
 	t.Run("permission_error_returns_500", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/api/file/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/file/test", http.NoBody)
 		handleStatError(w, req, "/some/path", fmt.Errorf("permission denied"))
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 	})
 
 	t.Run("not_found_error_returns_404", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/api/file/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/file/test", http.NoBody)
 		handleStatError(w, req, "/some/nonexistent", os.ErrNotExist)
 		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
@@ -1315,7 +1315,7 @@ func TestHandleStatError(t *testing.T) {
 		require.NoError(t, err)
 
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/api/file/test", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/file/test", http.NoBody)
 		handleStatError(w, req, brokenLink, os.ErrNotExist)
 		assert.Equal(t, http.StatusNotFound, w.Code)
 		// Response should mention the broken symlink target

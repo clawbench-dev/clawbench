@@ -2550,7 +2550,7 @@ func TestRefactor_ACPBackend_BuildPromptBlocks_Extended(t *testing.T) {
 	t.Run("fork_context_with_system_prompt", func(t *testing.T) {
 		req := ChatRequest{
 			Prompt:       "continue",
-			ForkContext:   "[Fork history]\n",
+			ForkContext:  "[Fork history]\n",
 			SystemPrompt: "You are a helpful assistant",
 		}
 		blocks := backend.buildPromptBlocks(req)

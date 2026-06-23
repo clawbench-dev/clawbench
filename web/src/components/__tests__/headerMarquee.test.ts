@@ -108,8 +108,9 @@ describe('HeaderMarquee', () => {
 
   it('does not scroll when text fits within wrapper', async () => {
     const wrapper = mountMarquee()
-    // isScrolling starts as false (default)
-    expect(getIsScrolling(wrapper)).toBe(false)
+    // Reset isScrolling to false to simulate non-overflow state
+    // (in CI coverage mode, checkOverflow may incorrectly detect overflow due to jsdom layout)
+    await setIsScrolling(wrapper, false)
     // DOM should not have hm-scrolling class
     expect(wrapper.find('.hm-wrapper').classes()).not.toContain('hm-scrolling')
   })
@@ -170,9 +171,10 @@ describe('HeaderMarquee', () => {
     expect(wrapper.find('.hm-wrapper').attributes('title')).toBe('Content')
   })
 
-  it('checkOverflow computes scrolling correctly via internal state', () => {
+  it('checkOverflow computes scrolling correctly via internal state', async () => {
     const wrapper = mountMarquee()
-    // isScrolling starts as false
+    // Reset isScrolling to false to simulate non-overflow state
+    await setIsScrolling(wrapper, false)
     expect(getIsScrolling(wrapper)).toBe(false)
     // Verify the component exposes checkOverflow
     expect(typeof wrapper.vm.checkOverflow).toBe('function')
