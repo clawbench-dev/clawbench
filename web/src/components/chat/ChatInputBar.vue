@@ -908,7 +908,7 @@ defineExpose({
   flex-shrink: 1;
   overflow: hidden;
   text-overflow: ellipsis;
-  min-width: 0;
+  min-width: 14px;
   cursor: pointer;
   transition: color 0.15s;
 }
@@ -940,7 +940,7 @@ defineExpose({
 }
 
 .session-info-divider {
-  flex-shrink: 0;
+  flex-shrink: 1;
   width: 1px;
   height: 10px;
   background: var(--border-color, #e5e5e5);
@@ -950,8 +950,7 @@ defineExpose({
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  flex-shrink: 1;
-  overflow: hidden;
+  flex-shrink: 0;
   cursor: pointer;
 }
 
