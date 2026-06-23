@@ -20,11 +20,17 @@ async function flushDom() {
  */
 function getIsScrolling(wrapper: ReturnType<typeof mount>) {
   const instance = (wrapper.vm as any).$
+  // Try devtoolsRawSetupState first (unwrapped Ref), then setupState (auto-unwrapped)
   const rawState = instance.devtoolsRawSetupState
-  if (rawState && rawState.isScrolling && rawState.isScrolling.__v_isRef) {
-    return rawState.isScrolling.value
+  if (rawState && rawState.isScrolling) {
+    if (rawState.isScrolling.__v_isRef) return rawState.isScrolling.value
+    return rawState.isScrolling
   }
-  return instance.setupState.isScrolling
+  if (instance.setupState && instance.setupState.isScrolling !== undefined) {
+    return instance.setupState.isScrolling
+  }
+  // Fallback: check if the DOM has hm-scrolling class (which is set by isScrolling)
+  return wrapper.find('.hm-wrapper').classes().includes('hm-scrolling')
 }
 
 /**
@@ -37,9 +43,13 @@ function getIsScrolling(wrapper: ReturnType<typeof mount>) {
 async function setIsScrolling(wrapper: ReturnType<typeof mount>, value: boolean) {
   const instance = (wrapper.vm as any).$
   const rawState = instance.devtoolsRawSetupState
-  if (rawState && rawState.isScrolling && rawState.isScrolling.__v_isRef) {
-    rawState.isScrolling.value = value
-  } else {
+  if (rawState && rawState.isScrolling) {
+    if (rawState.isScrolling.__v_isRef) {
+      rawState.isScrolling.value = value
+    } else {
+      rawState.isScrolling = value
+    }
+  } else if (instance.setupState) {
     instance.setupState.isScrolling = value
   }
   // Force component re-render to pick up the ref change

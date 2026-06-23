@@ -2,7 +2,9 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
@@ -1285,5 +1287,38 @@ func TestGetFile_BrokenSymlink(t *testing.T) {
 
 		w := callHandler(GetFile, req)
 		assert.Equal(t, http.StatusOK, w.Code)
+	})
+}
+
+func TestHandleStatError(t *testing.T) {
+	t.Run("permission_error_returns_500", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/file/test", nil)
+		handleStatError(w, req, "/some/path", fmt.Errorf("permission denied"))
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+
+	t.Run("not_found_error_returns_404", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/file/test", nil)
+		handleStatError(w, req, "/some/nonexistent", os.ErrNotExist)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("broken_symlink_returns_404_with_target", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		// Create a broken symlink
+		brokenLink := filepath.Join(env.ProjectDir, "broken_link")
+		err := os.Symlink("/nonexistent/target", brokenLink)
+		require.NoError(t, err)
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/file/test", nil)
+		handleStatError(w, req, brokenLink, os.ErrNotExist)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		// Response should mention the broken symlink target
+		assert.Contains(t, w.Body.String(), "/nonexistent/target")
 	})
 }

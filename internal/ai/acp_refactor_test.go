@@ -2532,6 +2532,35 @@ func TestRefactor_ACPBackend_BuildPromptBlocks_Extended(t *testing.T) {
 		require.NotNil(t, blocks[0].Text)
 		assert.Equal(t, "hello", blocks[0].Text.Text)
 	})
+
+	t.Run("with_fork_context", func(t *testing.T) {
+		req := ChatRequest{
+			Prompt:      "fix the bug",
+			ForkContext: "[Previous context]\n",
+		}
+		blocks := backend.buildPromptBlocks(req)
+		require.Len(t, blocks, 1)
+		require.NotNil(t, blocks[0].Text)
+		text := blocks[0].Text.Text
+		assert.Contains(t, text, "[Previous context]")
+		assert.Contains(t, text, "fix the bug")
+		assert.True(t, strings.HasPrefix(text, "[Previous context]\n"))
+	})
+
+	t.Run("fork_context_with_system_prompt", func(t *testing.T) {
+		req := ChatRequest{
+			Prompt:       "continue",
+			ForkContext:   "[Fork history]\n",
+			SystemPrompt: "You are a helpful assistant",
+		}
+		blocks := backend.buildPromptBlocks(req)
+		require.Len(t, blocks, 1)
+		require.NotNil(t, blocks[0].Text)
+		text := blocks[0].Text.Text
+		assert.Contains(t, text, "[Fork history]")
+		assert.Contains(t, text, "[System Instructions:")
+		assert.Contains(t, text, "continue")
+	})
 }
 
 // ---------------------------------------------------------------------------
