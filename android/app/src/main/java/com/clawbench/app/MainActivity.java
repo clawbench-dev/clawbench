@@ -15,6 +15,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.PowerManager;
+import android.util.Log;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.view.KeyEvent;
