@@ -23,6 +23,11 @@
           :title="t('chat.actions.forkSession')">
           <Split :size="14" />
         </button>
+        <button v-if="showResumeIcon" class="chat-action-btn"
+          @click.stop="openResumeDrawer"
+          :title="t('chat.acpSession.title')">
+          <RotateCcw :size="14" />
+        </button>
         <button class="chat-action-btn chat-action-btn-delete" :class="{ disabled: !currentSessionId }"
           @click="handleDelete"
           :title="currentSessionId ? t('chat.actions.deleteCurrentSession') : t('chat.actions.noSessionToDelete')">
@@ -233,7 +238,7 @@
       </PopupMenu>
     </div>
     <!-- Session info bar (model + mode + thinking + transport) -->
-    <div class="chat-session-info" v-if="currentModelName || showModeInfo || showThinkingInfo || showTransportInfo || showResumeIcon || showUsageInfo">
+    <div class="chat-session-info" v-if="currentModelName || showModeInfo || showThinkingInfo || showTransportInfo || showUsageInfo">
       <span class="session-info-model" @click.stop="openSettingsModal('model')"><Cpu :size="11" />{{ currentModelName }}</span>
       <template v-if="showModeInfo">
         <span class="session-info-divider"></span>
@@ -246,10 +251,6 @@
       <template v-if="showTransportInfo">
         <span class="session-info-divider"></span>
         <span class="session-info-transport" @click.stop="openSettingsModal('transport')"><Cable :size="11" />{{ currentTransport === 'acp-stdio' ? 'ACP' : 'CLI' }}</span>
-      </template>
-      <template v-if="showResumeIcon">
-        <span class="session-info-divider"></span>
-        <span class="session-info-resume" @click.stop="openResumeDrawer" :title="t('chat.acpSession.title')"><RotateCcw :size="11" /></span>
       </template>
       <template v-if="showUsageInfo">
         <span class="session-info-divider"></span>
@@ -900,8 +901,7 @@ defineExpose({
 .session-info-model,
 .session-info-mode,
 .session-info-thinking,
-.session-info-transport,
-.session-info-resume {
+.session-info-transport {
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -915,8 +915,7 @@ defineExpose({
 
 .session-info-model:active,
 .session-info-thinking:active,
-.session-info-transport:active,
-.session-info-resume:active {
+.session-info-transport:active {
   color: var(--accent-color, #0066cc);
 }
 
@@ -936,7 +935,7 @@ defineExpose({
 .session-info-mode svg,
 .session-info-thinking svg,
 .session-info-transport svg,
-.session-info-resume svg {
+.session-info-usage svg {
   flex-shrink: 0;
 }
 
