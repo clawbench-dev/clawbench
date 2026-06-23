@@ -553,7 +553,15 @@ async function doPaste() {
             allOk = false
         }
     }
-    if (clipboard.isCut) clipboard.entries = []
+    if (clipboard.isCut) {
+        // If the currently viewed file was moved, clear it to avoid
+        // refreshCurrentFile hitting 404 and showing "file not found"
+        const currentFilePath = store.state.currentFile?.path
+        if (currentFilePath && clipboard.entries.some(e => e.path === currentFilePath)) {
+            store.state.currentFile = null
+        }
+        clipboard.entries = []
+    }
     emit('refresh')
     if (allOk) {
         if (toast) toast.show(clipboard.isCut ? t('file.toast.moved') : t('common.copied'), { icon: '✅', type: 'success', duration: 1500 })
