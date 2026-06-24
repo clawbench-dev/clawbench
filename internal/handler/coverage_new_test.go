@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -692,6 +693,27 @@ func TestServeGitBranch_NotGitRepo(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
 	assert.Equal(t, false, result["isGit"])
 	assert.Equal(t, "", result["branch"])
+}
+
+func TestServeGitBranch_OrphanBranch(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Init a git repo but do NOT make any commit — orphan branch state
+	cmd := exec.Command("git", "init", env.ProjectDir)
+	require.NoError(t, cmd.Run())
+
+	req := newRequest(t, http.MethodGet, "/api/git/branch", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeGitBranch, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, true, result["isGit"])
+	// Orphan branch name should still be resolved (e.g. "master" or "main")
+	assert.NotEmpty(t, result["branch"])
 }
 
 func TestServeGitBranch_WrongMethod(t *testing.T) {

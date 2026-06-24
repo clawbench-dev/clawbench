@@ -317,6 +317,16 @@ func ServeGitBranch(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		branch = strings.TrimSpace(string(output))
 	}
+	// Orphan branch (no commits): rev-parse --abbrev-ref HEAD fails,
+	// but symbolic-ref --short HEAD can still read the branch name.
+	if branch == "" {
+		srCmd := exec.Command("git", "symbolic-ref", "--short", "HEAD")
+		srCmd.Dir = projectPath
+		srOutput, srErr := srCmd.Output()
+		if srErr == nil {
+			branch = strings.TrimSpace(string(srOutput))
+		}
+	}
 
 	headSHA := ""
 	shaOutput, shaErr := exec.Command("git", "rev-parse", "HEAD").Output()
