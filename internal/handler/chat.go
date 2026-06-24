@@ -736,7 +736,8 @@ func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 				slog.String("session", sessionID),
 				slog.String("external_session_id", resolvedExtID),
 				slog.String("backend", backendName),
-				slog.String("agent", agentID))
+				slog.String("agent", agentID),
+				slog.Bool("ext_id_is_clawbench_uuid", resolvedExtID == sessionID))
 		} else {
 			// No external session ID available — the CLI cannot resume a session
 			// it has never seen. Clear effectiveSessionID so the backend does not

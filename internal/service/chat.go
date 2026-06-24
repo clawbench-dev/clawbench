@@ -945,6 +945,14 @@ func UpdateExternalSessionID(sessionID, externalID string) error {
 	return nil
 }
 
+// ClearExternalSessionID clears the external session ID for a ClawBench session.
+// Called when transport switches from CLI to ACP — ACP manages its own session
+// mapping internally, so the CLI's external_session_id must not leak into the
+// ACP connection pool's GetOrCreateConn pre-population logic.
+func ClearExternalSessionID(sessionID string) {
+	_, _ = DB.Exec("UPDATE chat_sessions SET external_session_id = '' WHERE id = ?", sessionID)
+}
+
 // GetExternalSessionID returns the external session ID for a ClawBench session.
 func GetExternalSessionID(sessionID string) string {
 	var externalID string
