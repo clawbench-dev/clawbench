@@ -498,4 +498,52 @@ describe('AppHeader', () => {
   })
 
   // ── hidden prop removed (component no longer has hidden prop) ──
+
+  // ── Regression: descender characters (p, g, y) must not be clipped ──
+  // In jsdom, unitless line-height (e.g. 1.4) is returned as-is by getComputedStyle,
+  // not resolved to px. So we check the raw parseFloat value directly.
+
+  it('project-name has sufficient line-height for descender characters', () => {
+    mountAndTrack({ projectRoot: '/home/user/p' })
+    const el = $('.project-name')
+    expect(el).toBeTruthy()
+    const style = getComputedStyle(el!)
+    // line-height must be >= 1.2 to avoid clipping descenders like p/g/y
+    // jsdom returns unitless values as-is (e.g. "1.4"), px values as "Npx"
+    const raw = parseFloat(style.lineHeight)
+    expect(raw).toBeGreaterThanOrEqual(1.2)
+  })
+
+  it('branch-name has sufficient line-height for descender characters', () => {
+    mockState.gitBranch = 'feature/login-page'
+    mountAndTrack()
+    const el = $('.branch-name')
+    expect(el).toBeTruthy()
+    const style = getComputedStyle(el!)
+    const raw = parseFloat(style.lineHeight)
+    expect(raw).toBeGreaterThanOrEqual(1.2)
+  })
+
+  it('project-name renders single-char project name with descender-safe overflow', () => {
+    mountAndTrack({ projectRoot: '/home/user/g' })
+    const el = $('.project-name')
+    expect(el).toBeTruthy()
+    expect(el?.textContent).toBe('g')
+    // overflow:hidden is needed for text-overflow:ellipsis, but line-height must
+    // be sufficient so descenders are not clipped by the overflow boundary
+    const style = getComputedStyle(el!)
+    expect(style.overflow).toBe('hidden')
+    expect(parseFloat(style.lineHeight)).toBeGreaterThanOrEqual(1.2)
+  })
+
+  it('branch-name renders short branch with descender-safe overflow', () => {
+    mockState.gitBranch = 'p'
+    mountAndTrack()
+    const el = $('.branch-name')
+    expect(el).toBeTruthy()
+    expect(el?.textContent).toBe('p')
+    const style = getComputedStyle(el!)
+    expect(style.overflow).toBe('hidden')
+    expect(parseFloat(style.lineHeight)).toBeGreaterThanOrEqual(1.2)
+  })
 })

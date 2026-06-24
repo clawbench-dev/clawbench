@@ -39,7 +39,7 @@
       </Transition>
     </Teleport>
 
-    <div v-if="gitBranch" class="branch-badge" :title="gitBranch" @click="openHistory">
+    <div v-if="gitBranch" class="branch-badge" :class="{ 'branch-switch': branchAnimating }" :title="gitBranch" @click="openHistory" @animationend="branchAnimating = false">
       <GitBranch :size="12" class="branch-icon" />
       <span class="branch-name">{{ gitBranch }}</span>
     </div>
@@ -95,7 +95,7 @@
 
 <script setup>
 import { Projector, Search, GitBranch, Server, LogOut } from 'lucide-vue-next'
-import { ref, computed, onMounted, onUnmounted, inject, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, inject, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { formatServerHost } from '@/utils/url'
@@ -146,6 +146,19 @@ const projectName = computed(() => {
 
 // Git branch
 const gitBranch = computed(() => store.state.gitBranch)
+const branchAnimating = ref(false)
+const branchAnimReady = ref(false)
+
+// Trigger animation when branch changes (skip initial value + page load)
+watch(gitBranch, (newVal, oldVal) => {
+    if (branchAnimReady.value && oldVal !== undefined && newVal !== oldVal) {
+        branchAnimating.value = false
+        nextTick(() => { branchAnimating.value = true })
+    }
+})
+
+// Enable branch animation after initial mount
+onMounted(() => { branchAnimReady.value = true })
 
 function openHistory() {
     setPendingManageNavigation()
@@ -403,7 +416,7 @@ onUnmounted(() => {
     align-items: center;
     gap: 6px;
     padding: 0 10px;
-    height: 28px;
+    height: 24px;
     border: 1px solid var(--border-color);
     background: var(--bg-secondary);
     cursor: pointer;
@@ -435,6 +448,7 @@ onUnmounted(() => {
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
+    line-height: 1.4;
 }
 
 /* Branch badge */
@@ -443,7 +457,7 @@ onUnmounted(() => {
     align-items: center;
     gap: 6px;
     padding: 0 10px;
-    height: 28px;
+    height: 24px;
     background: color-mix(in srgb, var(--accent-color) 12%, transparent);
     border: 1px solid color-mix(in srgb, var(--accent-color) 25%, transparent);
     border-radius: 999px;
@@ -467,6 +481,32 @@ onUnmounted(() => {
     transform: scale(0.96);
 }
 
+/* Branch switch animation — pulse + glow + color flash */
+.branch-switch {
+    animation: branch-pulse 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes branch-pulse {
+    0% {
+        transform: scale(1);
+        box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-color) 50%, transparent);
+    }
+    30% {
+        transform: scale(1.18);
+        box-shadow: 0 0 12px 3px color-mix(in srgb, var(--accent-color) 40%, transparent);
+        background: color-mix(in srgb, var(--accent-color) 30%, transparent);
+        border-color: var(--accent-color);
+    }
+    60% {
+        transform: scale(0.95);
+        box-shadow: 0 0 6px 1px color-mix(in srgb, var(--accent-color) 20%, transparent);
+    }
+    100% {
+        transform: scale(1);
+        box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-color) 0%, transparent);
+    }
+}
+
 .branch-icon {
     flex-shrink: 0;
 }
@@ -476,6 +516,7 @@ onUnmounted(() => {
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
+    line-height: 1.4;
 }
 
 /* Connection status button / server switcher dot */
