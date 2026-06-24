@@ -158,10 +158,10 @@ const renderedRows = computed<RenderedRow[]>(() => {
  * Unchanged regions are plain escaped text.
  */
 function charDiffHtml(oldText: string, newText: string, side: 'del' | 'add'): string {
-  const changes = diffChars(oldText, newText, { timeout: 3 })
+  const changes = diffChars(oldText, newText, { timeout: 3 }) ?? []
   const cls = side === 'del' ? 'diff-char-del' : 'diff-char-add'
   let html = ''
-  for (const change of changes!) {
+  for (const change of changes) {
     const escaped = escapeHtml(change.value)
     if (side === 'del' ? change.removed : change.added) {
       html += `<span class="${cls}">${escaped}</span>`
