@@ -115,12 +115,23 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 - **Mandatory appLog for all frontend logging:** All frontend code MUST use `appLog.d/i/w/e()` from `@/utils/appLog` instead of raw `console.log/debug/warn/error/info`. `appLog` prints to browser console AND relays to Android `AppLog` via the `AndroidNative.log()` JS bridge, ensuring logs are visible in Android WebView and persisted to `.clawbench/logs/android.log` through the server's `/api/android-log` endpoint. Raw `console.*` calls are only allowed in test files (`*.test.ts`). Tag convention: short PascalCase module name (e.g., `'ClawBench'`, `'ChatStream'`, `'Store'`, `'FileManager'`).
 - **Mandatory AppLog for all Android logging:** All Android Java/Kotlin code MUST use `AppLog.d/i/w/e()` instead of raw `android.util.Log`. `AppLog` writes to logcat AND posts to the backend `/api/android-log` endpoint for centralized log persistence. Raw `android.util.Log` calls are only allowed in `AppLog.java` itself (to avoid recursion) and test code.
 - **Mandatory unit tests for features and bug fixes:** Every new feature and bug fix MUST include targeted unit tests. Go: `*_test.go` next to the code; Frontend: `.test.ts` next to the composable/component. Tests must verify the specific behavior/fix, not just generic happy paths.
-- **Local CI validation before push/PR:** Before pushing code or creating a PR to remote, MUST run and pass the coverage gate locally:
+- **Local pre-push validation (mandatory before push/PR):** Before pushing or creating a PR, MUST run the local pre-check script that replicates all CI checks:
   ```bash
-  ./scripts/check-go-coverage.sh       # Go coverage gate
-  ./scripts/check-frontend-coverage.sh # Frontend coverage gate
+  ./scripts/pre-push-checks.sh              # 全量检查（lint + test + build + typecheck + 覆盖率）
+  ./scripts/pre-push-checks.sh --skip-coverage  # 跳过覆盖率门槛
+  ./scripts/pre-push-checks.sh --skip-android   # 跳过 Android 覆盖率
+  ./scripts/pre-push-checks.sh --fix            # golangci-lint 自动修复
   ```
-  Ensure all tests pass and coverage meets CI requirements (Tier 1: per-package >= baseline-1.5%; Tier 2: changed lines >= 80%).
+  This script runs all CI checks locally in sequence:
+  1. `lint-go.sh` — golangci-lint (v2.12.2, 5m timeout)
+  2. `go test ./...` — Go unit tests
+  3. `go build ./cmd/server` — Go binary build
+  4. `npm run typecheck` — Vue TypeScript type check
+  5. `check-go-coverage.sh` — Go coverage gate (Tier 1: per-pkg >= baseline-1.5%; Tier 2: changed lines >= 80%)
+  6. `check-frontend-coverage.sh` — Frontend coverage gate
+  7. `check-android-coverage.sh` — Android coverage gate (auto-skipped if no JDK)
+  8. `npm run build` — Frontend production build
+  All checks must pass. Fix failures before pushing — this avoids round-trips on remote CI errors.
 
 ## Configuration
 
