@@ -645,7 +645,7 @@ async function sendMessage(text, extraFilePaths) {
         // The user message is in messages.value without pending flag —
         // remove it since sendMessageNow will push its own copy.
         const idx = messages.value.findLastIndex(
-          m => m.role === 'user' && m.content === (result.message || inputText) && !m.pending && !m.id
+          m => m.role === 'user' && m.content === (result.message || inputText) && !m.pending && typeof m.id === 'string' && m.id.startsWith('local-')
         )
         if (idx !== -1) messages.value.splice(idx, 1)
         await sendMessageNow(result.message || inputText, result.filePaths || mergedPaths, result.files || allFiles)
@@ -672,6 +672,7 @@ async function sendMessage(text, extraFilePaths) {
 async function sendMessageNow(text, filePaths, files) {
     messages.value.push({
         role: 'user',
+        id: `local-${Date.now()}`,
         content: text || '',
         blocks: text ? [{ type: 'text', text: text || '' }] : [],
         filePath: filePaths.length > 0 ? filePaths[0] : '',
@@ -717,7 +718,7 @@ async function sendMessageNow(text, filePaths, files) {
             // Move the optimistically pushed user message from messages.value
             // to pendingStore, since it's now a queued/pending message.
             const localIdx = messages.value.findLastIndex(
-                (m) => m.role === 'user' && m.content === (text || '') && !m.id
+                (m) => m.role === 'user' && m.content === (text || '') && typeof m.id === 'string' && m.id.startsWith('local-')
             )
             if (localIdx !== -1) {
                 messages.value.splice(localIdx, 1)
@@ -745,7 +746,7 @@ async function sendMessageNow(text, filePaths, files) {
     } catch (err) {
         // Remove the optimistically pushed local user message on failure
         const localIdx = messages.value.findLastIndex(
-            (m) => m.role === 'user' && m.content === (text || '') && !m.id
+            (m) => m.role === 'user' && m.content === (text || '') && typeof m.id === 'string' && m.id.startsWith('local-')
         )
         if (localIdx !== -1) {
             messages.value.splice(localIdx, 1)

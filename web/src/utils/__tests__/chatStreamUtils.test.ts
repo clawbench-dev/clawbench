@@ -5,6 +5,7 @@ import {
   forceCleanupStreamingState,
   findStreamingMsg,
   drainQueueMessage,
+  generateDrainId,
   shouldRetryToolFetch,
   resolveEffectiveMsgId,
 } from '@/utils/chatStreamUtils.ts'
@@ -355,18 +356,31 @@ describe('drainQueueMessage', () => {
     expect(result).toBe(messages[1])
   })
 
-  it('deduplicates user message when existing non-pending msg has same content', () => {
+  it('deduplicates user message by drain ID (not content text)', () => {
+    const drainId = 'drain-1234567890-abc123'
     const messages: any[] = [
-      { role: 'user', id: 1, content: 'existing user msg', blocks: [{ type: 'text', text: 'existing user msg' }] },
+      { role: 'user', id: drainId, _drain: true, content: 'existing user msg', blocks: [{ type: 'text', text: 'existing user msg' }] },
       { role: 'assistant', content: '', blocks: [], streaming: true },
     ]
-    const result = drainQueueMessage(messages, 'existing user msg', [], 'codebuddy', callbacks)
-    // No duplicate user message
+    const result = drainQueueMessage(messages, 'existing user msg', [], 'codebuddy', callbacks, drainId)
+    // No duplicate user message — dedup by drain ID
     const userMsgs = messages.filter(m => m.role === 'user')
     expect(userMsgs).toHaveLength(1)
     // Old assistant (finalized) + new streaming
     expect(messages).toHaveLength(3)
     expect(result!.streaming).toBe(true)
+  })
+
+  it('does NOT deduplicate by content text — same content with different drain IDs is allowed', () => {
+    const messages: any[] = [
+      { role: 'user', id: 'drain-111-first', _drain: true, content: 'same text', blocks: [{ type: 'text', text: 'same text' }] },
+      { role: 'assistant', content: '', blocks: [], streaming: true },
+    ]
+    // drainQueueMessage generates a NEW drain ID, different from 'drain-111-first'
+    drainQueueMessage(messages, 'same text', [], 'codebuddy', callbacks)
+    const userMsgs = messages.filter(m => m.role === 'user')
+    // Both user messages kept — they have different drain IDs
+    expect(userMsgs).toHaveLength(2)
   })
 
   it('finalizes streaming message and preserves it (never deletes, avoids key shifts)', () => {
@@ -570,6 +584,112 @@ describe('drainQueueMessage', () => {
     expect(result!.backend).toBe('claude')
     expect(result!.createdAt >= before).toBe(true)
     expect(result!.createdAt <= after).toBe(true)
+  })
+
+  it('assigns drain ID to the pushed user message', () => {
+    const messages: any[] = []
+    drainQueueMessage(messages, 'hello', [], 'codebuddy', callbacks, 'drain-test-123')
+    expect(messages[0].id).toBe('drain-test-123')
+    expect(messages[0]._drain).toBe(true)
+  })
+
+  it('auto-generates drain ID when not provided', () => {
+    const messages: any[] = []
+    drainQueueMessage(messages, 'hello', [], 'codebuddy', callbacks)
+    expect(messages[0].id).toMatch(/^drain-\d+-[a-z0-9]+$/)
+    expect(messages[0]._drain).toBe(true)
+  })
+
+  it('drain ID does not collide with DB numeric IDs', () => {
+    const messages: any[] = [
+      { role: 'user', id: 42, content: 'DB user msg', blocks: [{ type: 'text', text: 'DB user msg' }] },
+    ]
+    drainQueueMessage(messages, 'new msg', [], 'codebuddy', callbacks)
+    const drainMsg = messages.find((m: any) => m._drain === true)
+    expect(drainMsg).toBeDefined()
+    expect(typeof drainMsg.id).toBe('string')
+    expect(drainMsg.id.startsWith('drain-')).toBe(true)
+    // Numeric DB IDs (42) and string drain IDs can never collide
+    expect(drainMsg.id).not.toBe(42)
+  })
+
+  it('drain ID does not collide with optimistic push local- IDs', () => {
+    const messages: any[] = [
+      { role: 'user', id: 'local-1700000000000', content: 'optimistic msg', blocks: [{ type: 'text', text: 'optimistic msg' }] },
+    ]
+    drainQueueMessage(messages, 'drained msg', [], 'codebuddy', callbacks)
+    const drainMsg = messages.find((m: any) => m._drain === true)
+    expect(drainMsg.id.startsWith('drain-')).toBe(true)
+    expect(drainMsg.id.startsWith('local-')).toBe(false)
+  })
+
+  it('_drain marker enables loadHistory self-cleaning', () => {
+    // Simulate: drain pushes message with _drain=true and drain- ID.
+    // Then loadHistory replaces messages with DB data (numeric IDs).
+    const messages: any[] = []
+    drainQueueMessage(messages, 'hello', [], 'codebuddy', callbacks)
+    expect(messages[0]._drain).toBe(true)
+    expect(messages[0].id.startsWith('drain-')).toBe(true)
+
+    // Simulate loadHistory: replace with DB messages (numeric IDs, no _drain)
+    const dbMessages = [
+      { role: 'user', id: 1, content: 'hello', blocks: [{ type: 'text', text: 'hello' }] },
+      { role: 'assistant', id: 2, content: 'response', blocks: [{ type: 'text', text: 'response' }] },
+    ]
+    messages.length = 0
+    messages.push(...dbMessages)
+
+    // _drain marker and drain- ID are gone — self-cleaning
+    expect(messages.every(m => !m._drain)).toBe(true)
+    expect(messages.every(m => typeof m.id === 'number')).toBe(true)
+  })
+
+  it('loadHistory race: alreadyExists returns false for DB message with different ID', () => {
+    // Scenario: loadHistory fetched the user message from DB before queue_drain.
+    // The DB message has numeric id=42. The drain message gets drain- ID.
+    // They are DIFFERENT messages (different IDs), so alreadyExists=false.
+    const drainId = 'drain-1700000000000-abc123'
+    const messages: any[] = [
+      { role: 'user', id: 42, content: 'hello', blocks: [{ type: 'text', text: 'hello' }] },
+      { role: 'assistant', content: '', blocks: [], streaming: true },
+    ]
+    drainQueueMessage(messages, 'hello', [], 'codebuddy', callbacks, drainId)
+    // Both messages exist — the DB one and the drain one
+    const userMsgs = messages.filter(m => m.role === 'user')
+    expect(userMsgs).toHaveLength(2)
+    expect(userMsgs[0].id).toBe(42)           // DB
+    expect(userMsgs[1].id).toBe(drainId)      // drain
+    expect(userMsgs[1]._drain).toBe(true)
+  })
+
+  it('skips push when same drainId already exists (idempotent)', () => {
+    const drainId = 'drain-1700000000000-xyz789'
+    const messages: any[] = [
+      { role: 'user', id: drainId, _drain: true, content: 'hello', blocks: [{ type: 'text', text: 'hello' }] },
+    ]
+    drainQueueMessage(messages, 'hello', [], 'codebuddy', callbacks, drainId)
+    const userMsgs = messages.filter(m => m.role === 'user')
+    expect(userMsgs).toHaveLength(1)
+  })
+})
+
+describe('generateDrainId', () => {
+  it('returns a string matching drain-* format', () => {
+    const id = generateDrainId()
+    expect(id).toMatch(/^drain-\d+-[a-z0-9]+$/)
+  })
+
+  it('starts with drain- prefix', () => {
+    const id = generateDrainId()
+    expect(id.startsWith('drain-')).toBe(true)
+  })
+
+  it('generates unique IDs on successive calls', () => {
+    const ids = new Set<string>()
+    for (let i = 0; i < 100; i++) {
+      ids.add(generateDrainId())
+    }
+    expect(ids.size).toBe(100)
   })
 })
 

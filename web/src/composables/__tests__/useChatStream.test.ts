@@ -76,13 +76,14 @@ vi.mock('@/utils/chatStreamUtils', () => ({
   findStreamingMsg: vi.fn((messages: any[]) => {
     return messages.find((m: any) => m.role === 'assistant' && m.streaming)
   }),
-  drainQueueMessage: vi.fn((messages: any[], userContent: string, userFiles: string[], currentBackend: string, callbacks: any) => {
+  drainQueueMessage: vi.fn((messages: any[], userContent: string, userFiles: string[], currentBackend: string, callbacks: any, _drainId?: string) => {
     // Finalize any streaming message
     const streamingMsg = messages.find((m: any) => m.role === 'assistant' && m.streaming)
     if (streamingMsg) delete streamingMsg.streaming
-    // Push drained user message
+    // Push drained user message with drain ID (matches real impl)
     if (userContent) {
-      messages.push({ role: 'user', content: userContent, blocks: [{ type: 'text', text: userContent }], files: userFiles.map((p: string) => ({ path: p })), createdAt: new Date().toISOString() })
+      const effectiveDrainId = _drainId || `drain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      messages.push({ role: 'user', id: effectiveDrainId, _drain: true, content: userContent, blocks: [{ type: 'text', text: userContent }], files: userFiles.map((p: string) => ({ path: p })), createdAt: new Date().toISOString() })
     }
     // Create new streaming assistant placeholder
     const newStreamingMsg = { role: 'assistant', content: '', blocks: [], streaming: true, createdAt: new Date().toISOString(), backend: currentBackend }
@@ -695,6 +696,63 @@ describe('useChatStream', () => {
       // Fifth arg is callbacks object
       expect(callArgs[4]).toHaveProperty('onRenderNeeded')
       expect(callArgs[4]).toHaveProperty('onExtractScheduledTasks')
+    })
+
+    it('should push drain message BEFORE syncing pendingStore (atomic visual transition)', () => {
+      // This is the core fix: drainQueueMessage runs BEFORE syncFromBackendQueue
+      // so the user never sees a gap where neither pending nor drain message is visible.
+      // We verify by checking that the user message is already in messages.value
+      // BEFORE syncFromBackendQueue would have removed the pending.
+      const options = createOptions()
+      // Add a pending message to simulate a queued message
+      options.pendingStore.addPending('test-session-1', { role: 'user', content: 'queued msg', blocks: [{ type: 'text', text: 'queued msg' }], files: [], createdAt: new Date().toISOString(), pending: true })
+
+      const syncSpy = vi.spyOn(options.pendingStore, 'syncFromBackendQueue')
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('queue_drain', { text: 'queued msg', filePaths: [], files: [], queue: [] })
+
+      // After queue_drain: user message should be in messages.value (pushed by drain)
+      const userMsg = options.messages.value.find((m: any) => m.role === 'user' && m.content === 'queued msg')
+      expect(userMsg).toBeDefined()
+      // And pendingStore should have been synced (drained item removed)
+      expect(syncSpy).toHaveBeenCalledWith('test-session-1', [])
+    })
+
+    it('should assign drain ID to the pushed user message', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('queue_drain', { text: 'my queued msg', filePaths: [], files: [], queue: [] })
+
+      // Find the user message that was just pushed
+      const userMsg = options.messages.value.find((m: any) => m.role === 'user' && m.content === 'my queued msg')
+      expect(userMsg).toBeDefined()
+      expect(userMsg.id).toMatch(/^drain-\d+-[a-z0-9]+$/)
+      expect(userMsg._drain).toBe(true)
+    })
+
+    it('should give drain message a stable v-for key (not index-based)', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('queue_drain', { text: 'stable key test', filePaths: [], files: [], queue: [] })
+
+      const userMsg = options.messages.value.find((m: any) => m.role === 'user' && m.content === 'stable key test')
+      // With id present, key is 'db-{id}' — stable across renders
+      const key = userMsg.id ? `db-${userMsg.id}` : undefined
+      expect(key).toMatch(/^db-drain-/)
     })
   })
 

@@ -37,6 +37,12 @@
       <span v-else>{{ t('chat.messageList.startConversationAI') }}</span>
     </div>
 
+    <!-- Key strategy:
+      - DB messages: 'db-{numericId}' (stable, never changes)
+      - Drain messages: 'db-drain-{ts}-{suffix}' (stable, self-cleaning on loadHistory)
+      - Optimistic push: 'db-local-{ts}' (stable, replaced by DB ID on loadHistory)
+      - Pending messages (no id): 'local-{index}' (unstable, but temporary)
+    -->
     <ChatMessageItem
       v-for="(msg, i) in messages"
       :key="msg.id ? 'db-' + msg.id : 'local-' + i"

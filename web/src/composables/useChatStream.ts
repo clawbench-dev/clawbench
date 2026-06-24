@@ -653,30 +653,29 @@ export function useChatStream(options: UseChatStreamOptions) {
       let data: any
       try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE queue_drain: invalid JSON, skipping'); return }
 
-      // Always update pendingStore — this is per-session so no cross-session contamination.
+      if (!sessionChanged()) {
+        // Push the drain message to messages.value BEFORE removing from pendingStore.
+        // This ensures the formal user message is already rendered when the
+        // pending message disappears, making the transition atomic — the user
+        // never sees a gap where neither is visible.
+        const drainText = data.text || ''
+        const drainFiles = [...(data.filePaths || []), ...(data.files || [])]
+        drainQueueMessage(
+          messages.value, drainText, drainFiles, currentBackend.value,
+          { onRenderNeeded, onExtractScheduledTasks }
+        )
+
+        if (isOpen.value) {
+          onRenderNeeded()
+          onScrollBottom(true)
+        }
+      }
+
+      // After pushing the drain message, sync pendingStore.
       // The drained message is removed from the backend queue, so syncFromBackendQueue
       // will remove it from pendingStore[sessionId].
+      // Always update pendingStore — this is per-session so no cross-session contamination.
       pendingStore.syncFromBackendQueue(sessionId, data.queue || [])
-
-      if (sessionChanged()) {
-        // Session changed — pendingStore is already updated above.
-        // Don't modify messages.value or render — that belongs to the new session.
-        return
-      }
-
-      // Process the drain on the current session's messages:
-      // finalize streaming, push drained user message, push new streaming placeholder.
-      const drainText = data.text || ''
-      const drainFiles = [...(data.filePaths || []), ...(data.files || [])]
-      drainQueueMessage(
-        messages.value, drainText, drainFiles, currentBackend.value,
-        { onRenderNeeded, onExtractScheduledTasks }
-      )
-
-      if (isOpen.value) {
-        onRenderNeeded()
-        onScrollBottom(true)
-      }
     })
 
     // queue_update: sent when a new message is enqueued while a session is running.

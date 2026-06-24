@@ -101,6 +101,22 @@ export function findStreamingMsg(messages: any[]): any | undefined {
 }
 
 /**
+ * Generate a unique temporary ID for a drain-pushed user message.
+ * Format: `drain-{timestamp}-{randomSuffix}`
+ *
+ * These IDs are:
+ * - Stable: never change after creation
+ * - Unique: never collide (timestamp + random suffix)
+ * - Distinguishable: `drain-` prefix separates them from DB IDs (integers)
+ *   and optimistic push IDs (`local-` prefix)
+ * - Self-cleaning: loadHistory replaces messages.value with DB-loaded
+ *   messages (numeric IDs), automatically removing drain IDs
+ */
+export function generateDrainId(): string {
+  return `drain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+/**
  * Atomically process a queue_drain event on the messages array.
  *
  * 1. Finalizes the current streaming assistant message (removes streaming flag,
@@ -110,6 +126,7 @@ export function findStreamingMsg(messages: any[]): any | undefined {
  *    the backend via AddChatMessage before the queue_drain SSE event, but
  *    loadHistory hasn't run yet so it's not in messages). This makes the user
  *    message immediately visible instead of waiting until the stream ends.
+ *    The message gets a stable drain ID for Vue v-for key stability.
  * 3. Pushes a new streaming assistant placeholder for the next message.
  *
  * Returns the new streaming assistant message.
@@ -122,7 +139,8 @@ export function drainQueueMessage(
   callbacks: {
     onRenderNeeded: (forceFull?: boolean) => void
     onExtractScheduledTasks?: (msgs: any[]) => void
-  }
+  },
+  drainId?: string
 ): any {
   // 1. Finalize any streaming assistant message — never delete to avoid key shifts
   const streamingMsg = messages.find((m: any) => m.role === 'assistant' && m.streaming)
@@ -142,16 +160,19 @@ export function drainQueueMessage(
     callbacks.onExtractScheduledTasks?.(messages)
   }
 
-  // 2. Push the drained user message — it's already in DB but not yet in
-  //    messages.value (loadHistory hasn't run). Without this, the user message
-  //    is invisible between drain and stream-end.
-  //    Avoid duplicate if an identical non-pending user message already exists.
+  // 2. Push the drained user message with a stable drain ID.
+  //    It's already in DB but not yet in messages.value (loadHistory hasn't run).
+  //    Without this, the user message is invisible between drain and stream-end.
+  //    Deduplicate by drain ID (not content text) to avoid race with loadHistory.
+  const effectiveDrainId = drainId || generateDrainId()
   const alreadyExists = messages.some(
-    (m: any) => m.role === 'user' && m.content === userContent && !m.pending
+    (m: any) => m.id === effectiveDrainId
   )
   if (!alreadyExists && userContent) {
     messages.push({
       role: 'user',
+      id: effectiveDrainId,
+      _drain: true,
       content: userContent,
       blocks: userContent ? [{ type: 'text', text: userContent }] : [],
       files: userFiles.map((p: string) => ({ path: p })),

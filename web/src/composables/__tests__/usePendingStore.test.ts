@@ -299,6 +299,123 @@ describe('usePendingStore', () => {
     })
   })
 
+  // ── Immutable updates (new array references) ──────────────
+  describe('immutable updates', () => {
+    it('addPending creates a new array reference', () => {
+      const store = usePendingStore()
+      store.addPending('s1', createPendingMessage('first'))
+      const ref1 = store.getPending('s1')
+      store.addPending('s1', createPendingMessage('second'))
+      const ref2 = store.getPending('s1')
+      expect(ref1).not.toBe(ref2)
+    })
+
+    it('removePending creates a new array reference', () => {
+      const store = usePendingStore()
+      store.addPending('s1', createPendingMessage('a'))
+      store.addPending('s1', createPendingMessage('b'))
+      const ref1 = store.getPending('s1')
+      store.removePending('s1', 'a')
+      const ref2 = store.getPending('s1')
+      expect(ref1).not.toBe(ref2)
+    })
+
+    it('removePendingAt creates a new array reference', () => {
+      const store = usePendingStore()
+      store.addPending('s1', createPendingMessage('a'))
+      store.addPending('s1', createPendingMessage('b'))
+      const ref1 = store.getPending('s1')
+      store.removePendingAt('s1', 0)
+      const ref2 = store.getPending('s1')
+      expect(ref1).not.toBe(ref2)
+    })
+
+    it('syncFromBackendQueue creates a new array reference', () => {
+      const store = usePendingStore()
+      store.addPending('s1', createPendingMessage('a'))
+      const ref1 = store.getPending('s1')
+      store.syncFromBackendQueue('s1', [{ text: 'a' }])
+      const ref2 = store.getPending('s1')
+      expect(ref1).not.toBe(ref2)
+    })
+
+    it('syncFromBackendQueue creates new array even when content unchanged', () => {
+      const store = usePendingStore()
+      store.addPending('s1', createPendingMessage('a'))
+      const ref1 = store.getPending('s1')
+      // Same content, but still creates new array for Vue reactivity guarantee
+      store.syncFromBackendQueue('s1', [{ text: 'a' }])
+      const ref2 = store.getPending('s1')
+      expect(ref1).not.toBe(ref2)
+      expect(ref2).toHaveLength(1)
+      expect(ref2[0].content).toBe('a')
+    })
+
+    it('syncFromBackendQueue drain scenario: removing pending creates new array', () => {
+      // Simulates the queue_drain flow: pending 'hello' is drained (removed from backend queue)
+      const store = usePendingStore()
+      store.addPending('s1', createPendingMessage('hello'))
+      store.addPending('s1', createPendingMessage('world'))
+      const ref1 = store.getPending('s1')
+
+      // Backend drains 'hello' — only 'world' remains in queue
+      store.syncFromBackendQueue('s1', [{ text: 'world' }])
+      const ref2 = store.getPending('s1')
+
+      expect(ref1).not.toBe(ref2)
+      expect(ref2).toHaveLength(1)
+      expect(ref2[0].content).toBe('world')
+    })
+
+    it('addPending then removePending produces yet another new array', () => {
+      const store = usePendingStore()
+      store.addPending('s1', createPendingMessage('x'))
+      const ref1 = store.getPending('s1')
+      store.removePending('s1', 'x')
+      const ref2 = store.getPending('s1')
+      expect(ref1).not.toBe(ref2)
+      expect(ref2).toHaveLength(0)
+    })
+  })
+
+  // ── drain transition sequence ──────────────────────────────
+  describe('drain transition sequence', () => {
+    it('addPending → syncFromBackendQueue(drain) removes drained item', () => {
+      // Simulates: user sends msg while AI running (addPending),
+      // then queue_drain arrives (syncFromBackendQueue with drained item removed)
+      const store = usePendingStore()
+      store.addPending('s1', createPendingMessage('question A'))
+      store.addPending('s1', createPendingMessage('question B'))
+      expect(store.getPending('s1')).toHaveLength(2)
+
+      // 'question A' is drained — backend queue only has 'question B'
+      store.syncFromBackendQueue('s1', [{ text: 'question B' }])
+      const pending = store.getPending('s1')
+      expect(pending).toHaveLength(1)
+      expect(pending[0].content).toBe('question B')
+    })
+
+    it('addPending → addPending → syncFromBackendQueue drains first, keeps second', () => {
+      const store = usePendingStore()
+      store.addPending('s1', createPendingMessage('first'))
+      store.addPending('s1', createPendingMessage('second'))
+
+      // Drain 'first' — only 'second' remains
+      store.syncFromBackendQueue('s1', [{ text: 'second' }])
+      const pending = store.getPending('s1')
+      expect(pending).toHaveLength(1)
+      expect(pending[0].content).toBe('second')
+    })
+
+    it('addPending → syncFromBackendQueue(empty) clears all pending', () => {
+      // All drained or cancelled
+      const store = usePendingStore()
+      store.addPending('s1', createPendingMessage('orphan'))
+      store.syncFromBackendQueue('s1', [])
+      expect(store.getPending('s1')).toHaveLength(0)
+    })
+  })
+
   // ── Cross-session isolation ─────────────────────────────────
   describe('cross-session isolation', () => {
     it('adding to session A never affects session B', () => {
