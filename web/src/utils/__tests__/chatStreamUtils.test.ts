@@ -739,6 +739,42 @@ describe('syncPendingFromBackend', () => {
     expect(messages[0].content).toBe('new')
     expect(messages[0].pending).toBe(true)
   })
+
+  it('never touches non-pending messages (cross-session safety)', () => {
+    // Regression: syncPendingFromBackend must never modify or remove
+    // messages that are NOT pending — this is critical for cross-session
+    // safety. If called on the wrong session's messages array (which
+    // shouldn't happen after the session guard fix), non-pending messages
+    // from other sessions must be preserved.
+    const messages: any[] = [
+      { role: 'user', content: 'persisted msg from session A', id: 1 },
+      { role: 'assistant', content: 'reply', id: 2 },
+      { role: 'user', content: 'another persisted msg', id: 3 },
+    ]
+    syncPendingFromBackend(messages, [{ text: 'queued in session B' }])
+    // All original non-pending messages preserved
+    expect(messages).toHaveLength(4)
+    expect(messages[0].content).toBe('persisted msg from session A')
+    expect(messages[1].content).toBe('reply')
+    expect(messages[2].content).toBe('another persisted msg')
+    // Pending message from backend queue added
+    expect(messages[3].content).toBe('queued in session B')
+    expect(messages[3].pending).toBe(true)
+  })
+
+  it('removes pending messages but never removes non-pending messages with same content', () => {
+    // Edge case: a non-pending user message and a pending message have
+    // the same content text. Only the pending one should be removed.
+    const messages: any[] = [
+      { role: 'user', content: 'hello', id: 1 },       // non-pending, persisted
+      { role: 'user', content: 'hello', pending: true }, // pending, from queue
+    ]
+    // Backend queue is empty — pending should be removed, non-pending preserved
+    syncPendingFromBackend(messages, [])
+    expect(messages).toHaveLength(1)
+    expect(messages[0].id).toBe(1)
+    expect(messages[0].pending).toBeUndefined()
+  })
 })
 
 describe('shouldRetryToolFetch', () => {

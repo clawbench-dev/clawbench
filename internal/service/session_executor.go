@@ -302,7 +302,7 @@ func (e *SessionExecutor) captureExternalSessionID(externalID string) {
 		return
 	}
 	existingExtID := GetExternalSessionID(e.cfg.SessionID)
-	if existingExtID == "" || existingExtID == e.cfg.SessionID {
+	if existingExtID == "" {
 		if err := UpdateExternalSessionID(e.cfg.SessionID, externalID); err != nil {
 			slog.Error("failed to save external session ID",
 				slog.String("session", e.cfg.SessionID),

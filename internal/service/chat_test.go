@@ -1259,10 +1259,10 @@ func TestUpdateAndGetExternalSessionID(t *testing.T) {
 
 	sid := helperCreateSession(t, "/project", "opencode", "Test")
 
-	// Initially set to ClawBench UUID (id) by CreateSession
-	assert.Equal(t, sid, service.GetExternalSessionID(sid))
+	// Initially empty (populated later by session_capture)
+	assert.Equal(t, "", service.GetExternalSessionID(sid))
 
-	// Set external ID (overwrites the default ClawBench UUID)
+	// Set external ID
 	err := service.UpdateExternalSessionID(sid, "ext-session-123")
 	assert.NoError(t, err)
 
@@ -1275,17 +1275,6 @@ func TestGetExternalSessionID_NonExistent(t *testing.T) {
 	assert.Equal(t, "", service.GetExternalSessionID("non-existent"))
 }
 
-func TestClearExternalSessionID(t *testing.T) {
-	setupDB(t)
-	sid := helperCreateSession(t, "/project", "pi", "ClearExtID")
-	// Set external session ID
-	err := service.UpdateExternalSessionID(sid, "cli-sess-123")
-	assert.NoError(t, err)
-	assert.Equal(t, "cli-sess-123", service.GetExternalSessionID(sid))
-	// Clear it
-	service.ClearExternalSessionID(sid)
-	assert.Equal(t, "", service.GetExternalSessionID(sid))
-}
 
 // ---------- GetExpiredDeletedSessions ----------
 
@@ -2431,29 +2420,26 @@ func TestGetRunningSessionIDs_AfterClearAll(t *testing.T) {
 
 // ========== CreateSession: external_session_id initialization ==========
 
-// TestCreateSession_ExternalSessionIDInitialized verifies that CreateSession
-// sets external_session_id = sessionID at creation time for all backends.
-// This is critical for --resume to work with codebuddy/claude/qoder backends
-// where the ClawBench UUID IS the CLI session ID.
-func TestCreateSession_ExternalSessionIDInitialized(t *testing.T) {
+// TestCreateSession_ExternalSessionIDEmpty verifies that CreateSession
+// initializes external_session_id to empty string. The real external ID is
+// populated later via session_capture events from the AI backend.
+func TestCreateSession_ExternalSessionIDEmpty(t *testing.T) {
 	setupDB(t)
 
-	// Test with multiple backends
 	for _, backend := range []string{"codebuddy", "claude", "opencode", "pi"} {
 		t.Run(backend, func(t *testing.T) {
 			sid, err := service.CreateSession("/project", backend, "Test "+backend, "", "", "default", "chat")
 			assert.NoError(t, err)
 			assert.NotEmpty(t, sid)
 
-			// external_session_id should be initialized to the session ID
 			extID := service.GetExternalSessionID(sid)
-			assert.Equal(t, sid, extID, "external_session_id should be initialized to sessionID for backend %s", backend)
+			assert.Equal(t, "", extID, "external_session_id should be empty for backend %s", backend)
 		})
 	}
 }
 
 // TestCreateSession_ExternalSessionIDPersistedInDB explicitly verifies
-// that the INSERT statement in CreateSession writes external_session_id = sessionID.
+// that the INSERT statement in CreateSession writes external_session_id = ''.
 func TestCreateSession_ExternalSessionIDPersistedInDB(t *testing.T) {
 	setupDB(t)
 
@@ -2463,7 +2449,7 @@ func TestCreateSession_ExternalSessionIDPersistedInDB(t *testing.T) {
 	var extID string
 	err = service.DB.QueryRow("SELECT external_session_id FROM chat_sessions WHERE id = ?", sid).Scan(&extID)
 	assert.NoError(t, err)
-	assert.Equal(t, sid, extID, "external_session_id column should equal session ID in DB")
+	assert.Equal(t, "", extID, "external_session_id column should be empty in DB")
 }
 
 // ========== DeleteSession: does NOT modify chat_history ==========

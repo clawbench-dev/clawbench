@@ -717,7 +717,7 @@ describe('useChatStream', () => {
       expect(syncPendingFromBackend).toHaveBeenCalledWith(options.messages.value, [{ id: 'q1' }, { id: 'q2' }])
     })
 
-    it('still syncs pending messages even when session changed (queue update is session-independent)', () => {
+    it('should NOT sync pending messages when session changed (prevents cross-session contamination)', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
@@ -728,10 +728,40 @@ describe('useChatStream', () => {
       // Change session to fail guard
       options.currentSessionId.value = 'different-session'
 
+      ;(syncPendingFromBackend as any).mockClear()
       es.simulate('queue_drain', { text: 'Hello', queue: [{ id: 'q1' }] })
 
-      // syncPendingFromBackend IS still called because queue sync is independent of streaming session
-      expect(syncPendingFromBackend).toHaveBeenCalledWith(options.messages.value, [{ id: 'q1' }])
+      // syncPendingFromBackend should NOT be called — prevents pending messages
+      // from one session leaking into another session's messages array
+      expect(syncPendingFromBackend).not.toHaveBeenCalled()
+    })
+
+    it('should not modify messages array when session changed (prevents cross-session contamination)', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      // Add an existing user message to simulate a populated chat
+      options.messages.value.push({
+        role: 'user',
+        content: 'existing msg in session B',
+        blocks: [{ type: 'text', text: 'existing msg in session B' }],
+        createdAt: new Date().toISOString(),
+      })
+
+      // Change to a different session
+      options.currentSessionId.value = 'different-session'
+
+      const msgCountBefore = options.messages.value.length
+      es.simulate('queue_drain', { text: 'Hello from session A', queue: [{ id: 'q1', text: 'another queued msg' }] })
+
+      // Messages array must NOT be modified — no drain, no sync
+      expect(options.messages.value.length).toBe(msgCountBefore)
+      expect(options.messages.value.some((m: any) => m.content === 'Hello from session A')).toBe(false)
+      expect(options.messages.value.some((m: any) => m.pending)).toBe(false)
     })
   })
 
@@ -749,7 +779,7 @@ describe('useChatStream', () => {
       expect(syncPendingFromBackend).toHaveBeenCalledWith(options.messages.value, [{ id: 'q1' }, { id: 'q2' }])
     })
 
-    it('still syncs pending messages even when session changed (queue update is session-independent)', () => {
+    it('should NOT sync pending messages when session changed (prevents cross-session contamination)', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
@@ -760,10 +790,41 @@ describe('useChatStream', () => {
       // Change session to fail guard
       options.currentSessionId.value = 'different-session'
 
+      ;(syncPendingFromBackend as any).mockClear()
       es.simulate('queue_update', { queue: [{ id: 'q1' }] })
 
-      // syncPendingFromBackend IS still called because queue update is independent of streaming session
-      expect(syncPendingFromBackend).toHaveBeenCalledWith(options.messages.value, [{ id: 'q1' }])
+      // syncPendingFromBackend should NOT be called — prevents pending messages
+      // from one session leaking into another session's messages array
+      expect(syncPendingFromBackend).not.toHaveBeenCalled()
+    })
+
+    it('should not modify messages array when session changed (prevents cross-session contamination)', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      // Add an existing user message to simulate a populated chat
+      options.messages.value.push({
+        role: 'user',
+        content: 'existing msg in session B',
+        blocks: [{ type: 'text', text: 'existing msg in session B' }],
+        createdAt: new Date().toISOString(),
+      })
+
+      // Change to a different session
+      options.currentSessionId.value = 'different-session'
+
+      const msgCountBefore = options.messages.value.length
+      ;(syncPendingFromBackend as any).mockClear()
+      es.simulate('queue_update', { queue: [{ id: 'q1', text: 'queued in session A' }] })
+
+      // Messages array must NOT be modified — no pending messages from session A
+      expect(options.messages.value.length).toBe(msgCountBefore)
+      expect(options.messages.value.some((m: any) => m.pending)).toBe(false)
+      expect(syncPendingFromBackend).not.toHaveBeenCalled()
     })
   })
 

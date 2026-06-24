@@ -405,9 +405,6 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		}
 		queueState := service.EnqueueMessage(sessionID, qMsg)
 
-		// Persist user message to DB immediately
-		service.AddChatMessage(projectPath, backendName, sessionID, "user", req.Message, allFiles, false, T(r, "FileMessage"))
-
 		// Notify the running goroutine via SSE
 		service.SendSessionEvent(sessionID, ai.StreamEvent{
 			Type:       "queue_update",
@@ -739,8 +736,7 @@ func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 				slog.String("session", sessionID),
 				slog.String("external_session_id", resolvedExtID),
 				slog.String("backend", backendName),
-				slog.String("agent", agentID),
-				slog.Bool("ext_id_is_clawbench_uuid", resolvedExtID == sessionID))
+				slog.String("agent", agentID))
 		} else {
 			// No external session ID available — the CLI cannot resume a session
 			// it has never seen. Clear effectiveSessionID so the backend does not

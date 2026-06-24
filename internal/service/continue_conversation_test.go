@@ -339,8 +339,8 @@ func TestContinueFromExecution_FieldInheritance(t *testing.T) {
 	assert.Equal(t, "/project", projPath)
 
 	// External session ID should be inherited from source session
-	// (codebuddy now stores its ClawBench UUID as external_session_id)
-	assert.Equal(t, sessID, service.GetExternalSessionID(newSessID))
+	// (source session's external_session_id is empty — not yet captured)
+	assert.Equal(t, "", service.GetExternalSessionID(newSessID))
 }
 
 // ---------- ContinueFromExecution: original session unaffected ----------

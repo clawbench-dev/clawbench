@@ -282,19 +282,6 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
-	// Migrate: backfill external_session_id for sessions where it's empty.
-	// NOTE: This must run AFTER the transport column migration below.
-	// We moved it here for schema compatibility; the actual backfill happens
-	// after the transport column is guaranteed to exist.
-	var needBackfillExternalID bool
-	var backfillErr error
-	// Check if external_session_id needs backfilling (any empty rows exist).
-	var emptyExtIDCount int
-	_ = DB.QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE (external_session_id = '' OR external_session_id IS NULL) AND id != ''").Scan(&emptyExtIDCount)
-	if emptyExtIDCount > 0 {
-		needBackfillExternalID = true
-	}
-
 	// Migrate: add source_session_id column for "continue conversation" feature
 	var hasTransport int
 	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='transport'").Scan(&hasTransport)
@@ -302,35 +289,6 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		if _, err := DB.Exec("ALTER TABLE chat_sessions ADD COLUMN transport TEXT DEFAULT ''"); err != nil {
 			return fmt.Errorf("failed to add transport column: %w", err)
 		}
-	}
-
-	// Now that transport column exists, run the external_session_id backfill
-	// and cleanup that we deferred from earlier in this function.
-	if needBackfillExternalID {
-		// Only backfill for CLI sessions (transport != 'acp-stdio') — ACP sessions
-		// get their external_session_id from session_capture events, and pre-filling
-		// it with the ClawBench UUID causes ResumeSession to fail.
-		result, err := DB.Exec("UPDATE chat_sessions SET external_session_id = id WHERE (external_session_id = '' OR external_session_id IS NULL) AND id != '' AND COALESCE(transport, '') != 'acp-stdio'")
-		if err != nil {
-			backfillErr = err
-		} else if rowsAffected, _ := result.RowsAffected(); rowsAffected > 0 {
-			slog.Info("backfilled external_session_id for existing CLI sessions", slog.Int64("rows", rowsAffected))
-		}
-	}
-	if backfillErr != nil {
-		return fmt.Errorf("failed to backfill external_session_id: %w", backfillErr)
-	}
-
-	// Clear incorrectly backfilled external_session_id for ACP sessions.
-	// The original migration unconditionally set external_session_id = id for all
-	// sessions, but ACP sessions get their external_session_id from session_capture.
-	// The backfilled ClawBench UUID is not a valid ACP session ID, causing
-	// ResumeSession to fail with "Resource not found".
-	cleanResult, cleanErr := DB.Exec("UPDATE chat_sessions SET external_session_id = '' WHERE transport = 'acp-stdio' AND external_session_id = id")
-	if cleanErr != nil {
-		slog.Warn("failed to clean external_session_id for ACP sessions", "error", cleanErr)
-	} else if rows, _ := cleanResult.RowsAffected(); rows > 0 {
-		slog.Info("cleaned incorrectly backfilled external_session_id for ACP sessions", slog.Int64("rows", rows))
 	}
 
 	// Migrate: add auto_approve column for per-session auto-approve (甩手掌柜) mode

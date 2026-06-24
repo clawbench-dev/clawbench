@@ -1282,11 +1282,129 @@ func TestAIChat_EnqueuePath_FilesNoDuplicate(t *testing.T) {
 	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
 	assert.Equal(t, true, result["queued"])
 
-	// Verify DB has no duplicate files
+	// Verify DB has no message — enqueue path no longer persists to DB
+	// (persistence happens at drain time when the message is actually processed)
 	messages, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionID)
 	assert.NoError(t, err)
-	assert.Len(t, messages, 1, "should have 1 user message")
-	assert.Len(t, messages[0].Files, 1, "files should have exactly 1 entry (no duplicate), got %v", messages[0].Files)
+	assert.Len(t, messages, 0, "enqueue path should not persist user message to DB")
+
+	// Verify the message is in the in-memory queue instead
+	queue := service.GetQueue(sessionID)
+	assert.Len(t, queue, 1, "should have 1 queued message in memory")
+	assert.Equal(t, "check this", queue[0].Text)
+	// Verify no duplicate files in the queued message
+	assert.Len(t, queue[0].Files, 1, "files should have exactly 1 entry (no duplicate), got %v", queue[0].Files)
+}
+
+// TestAIChat_EnqueuePath_NoDBPersist verifies that when a session is already
+// running and a message is enqueued via POST /api/ai/chat, the user message
+// is NOT persisted to the database. This prevents orphan "queued" messages
+// from appearing after page refresh (regression: messages persisted at enqueue
+// time appeared as unanswered user messages with no assistant response).
+func TestAIChat_EnqueuePath_NoDBPersist(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "enqueue-no-persist", "", "", "default", "chat")
+	assert.NoError(t, err)
+	service.TrySetSessionRunning(sessionID)
+	defer func() {
+		service.SetSessionRunning(sessionID, false)
+		service.ClearQueue(sessionID)
+	}()
+
+	body := map[string]any{
+		"message": "queued msg",
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	assertOK(t, w)
+
+	var result map[string]any
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, true, result["queued"])
+	assert.Equal(t, true, result["running"])
+
+	// DB must have ZERO messages — enqueue path must not persist
+	messages, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionID)
+	assert.NoError(t, err)
+	assert.Len(t, messages, 0, "enqueue path must not persist user message to DB")
+
+	// Message should be in the in-memory queue
+	queue := service.GetQueue(sessionID)
+	assert.Len(t, queue, 1)
+	assert.Equal(t, "queued msg", queue[0].Text)
+}
+
+// TestAIChat_EnqueuePath_MultipleSessionsNoCrossContamination verifies that
+// enqueuing a message in one session does NOT create a database record that
+// would appear in another session's chat history. This is a regression test
+// for the bug where queued messages persisted to DB appeared in other sessions
+// after page refresh.
+func TestAIChat_EnqueuePath_MultipleSessionsNoCrossContamination(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Create two sessions for the same project+backend
+	sessionA, err := service.CreateSession(env.ProjectDir, "codebuddy", "session A", "", "", "default", "chat")
+	assert.NoError(t, err)
+	sessionB, err := service.CreateSession(env.ProjectDir, "codebuddy", "session B", "", "", "default", "chat")
+	assert.NoError(t, err)
+
+	// Mark session A as running, enqueue a message
+	service.TrySetSessionRunning(sessionA)
+	defer func() {
+		service.SetSessionRunning(sessionA, false)
+		service.ClearQueue(sessionA)
+	}()
+
+	body := map[string]any{
+		"message": "msg for session A",
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionA, body)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	assertOK(t, w)
+
+	var result map[string]any
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, true, result["queued"])
+
+	// Session B's DB history must be empty — no cross-contamination
+	messagesB, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionB)
+	assert.NoError(t, err)
+	assert.Len(t, messagesB, 0, "session B must have no messages from session A's enqueue")
+
+	// Session A's DB history must also be empty (enqueue does not persist)
+	messagesA, err := service.GetChatHistory(env.ProjectDir, "codebuddy", sessionA)
+	assert.NoError(t, err)
+	assert.Len(t, messagesA, 0, "session A enqueue must not persist to DB")
+}
+
+// TestAIChat_EnqueueThenDrain_SinglePersist verifies that when a queued
+// message is eventually drained and processed, it is persisted exactly once
+// (no double-persist from both enqueue and drain paths).
+func TestAIChat_EnqueueThenDrain_SinglePersist(t *testing.T) {
+	sessionID := "drain-single-persist"
+	defer service.ClearQueue(sessionID)
+
+	// Simulate: enqueue a message, then dequeue it
+	service.EnqueueMessage(sessionID, model.QueuedMessage{
+		Text:      "will be drained",
+		CreatedAt: time.Now().Format(time.RFC3339),
+	})
+
+	// Dequeue should return the message exactly once
+	msg, ok := service.DequeueMessage(sessionID)
+	assert.True(t, ok)
+	assert.Equal(t, "will be drained", msg.Text)
+
+	// Second dequeue should return nothing (no double)
+	_, ok = service.DequeueMessage(sessionID)
+	assert.False(t, ok, "message should not be dequeued twice")
 }
 
 func TestAccumulateBlock_InterleavedToolUse(t *testing.T) {
@@ -1441,10 +1559,7 @@ func TestBuildChatRequest_PiResumeWithoutExternalSessionID(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "pi", "test-pi-noext", "", "", "default", "chat")
 	assert.NoError(t, err)
 
-	// CreateSession pre-fills external_session_id = sessionID; clear it to simulate
-	// the "no external session ID captured" scenario (e.g. session_capture event was missed)
-	err = service.UpdateExternalSessionID(sessionID, "")
-	assert.NoError(t, err)
+	// CreateSession initializes external_session_id to empty (no session_capture yet)
 
 	// Add an assistant message so SessionHasAssistant returns true
 	// (simulates a successful first message where session_capture was missed)
@@ -1473,25 +1588,24 @@ func TestBuildChatRequest_PiNewSession(t *testing.T) {
 	assert.Equal(t, sessionID, req.SessionID, "should pass ClawBench UUID for new session")
 }
 
-// TestBuildChatRequest_ClaudeResumeNoExternalID verifies that Claude/Codebuddy
-// backends (which natively use ClawBench UUID) are NOT affected by the
-// external session ID resolution logic — they should always get the UUID.
+// TestBuildChatRequest_ClaudeResumeNoExternalID verifies that when
+// external_session_id is empty (not yet captured from stream), Claude falls
+// back to empty effectiveSessionID — the CLI will start a new session.
+// After session_capture fires, subsequent messages will use the captured ID.
 func TestBuildChatRequest_ClaudeResumeNoExternalID(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// Create a session for claude backend
 	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "test-claude", "", "", "claude", "chat")
 	assert.NoError(t, err)
 
-	// Add an assistant message
 	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessionID, "assistant", `{"blocks":[{"type":"text","text":"hi"}]}`, nil, false, "")
 	assert.NoError(t, err)
 
-	// Call buildChatRequest — Claude should get the raw UUID, no external ID resolution
+	// external_session_id is empty (not yet captured)
 	req := buildChatRequest("continue", sessionID, env.ProjectDir, "claude", "claude", "", "", "", "", "", false)
 	assert.True(t, req.Resume)
-	assert.Equal(t, sessionID, req.SessionID, "Claude should get the ClawBench UUID directly, no external ID resolution")
+	assert.Equal(t, "", req.SessionID, "Claude should get empty SessionID when external_session_id is not yet captured")
 }
 
 // TestBuildChatRequest_OpenCodeResumeWithExternalSessionID verifies that
@@ -1530,8 +1644,8 @@ func TestPiSessionCapture_PersistedToDB(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "pi", "test-capture", "", "", "default", "chat")
 	assert.NoError(t, err)
 
-	// Verify external ID is pre-filled by CreateSession (same as sessionID)
-	assert.Equal(t, sessionID, service.GetExternalSessionID(sessionID))
+	// Verify external ID is empty initially (populated by session_capture)
+	assert.Equal(t, "", service.GetExternalSessionID(sessionID))
 
 	// Simulate what the handler does on session_capture event for Pi:
 	// The handler checks `backendName == "pi"` && event.Content != ""
@@ -1560,12 +1674,12 @@ func TestPiSessionCapture_NotOverwritten(t *testing.T) {
 	err = service.UpdateExternalSessionID(sessionID, "pi-sess-first")
 	assert.NoError(t, err)
 
-	// Attempt to overwrite (handler skips this because existingExtID != "" && existingExtID != sessionID)
+	// Attempt to overwrite (handler skips this because existingExtID != "")
 	// Simulate by checking the condition the handler uses
 	existingExtID := service.GetExternalSessionID(sessionID)
 	assert.Equal(t, "pi-sess-first", existingExtID)
 	// The handler would NOT call UpdateExternalSessionID again — the condition
-	// `if existingExtID == "" || existingExtID == sessionID` is false.
+	// `if existingExtID == ""` is false.
 	// We verify the current value is intact.
 	assert.Equal(t, "pi-sess-first", service.GetExternalSessionID(sessionID))
 }
@@ -1580,8 +1694,8 @@ func TestPiMetadataSessionID_PersistedToDB(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "pi", "test-metadata", "", "", "default", "chat")
 	assert.NoError(t, err)
 
-	// CreateSession pre-fills external_session_id with sessionID
-	assert.Equal(t, sessionID, service.GetExternalSessionID(sessionID))
+	// CreateSession initializes external_session_id to empty
+	assert.Equal(t, "", service.GetExternalSessionID(sessionID))
 
 	// Simulate what the handler does on metadata event for Pi:
 	// The handler checks `backendName == "pi"` && event.Meta.SessionID != ""
@@ -1686,10 +1800,7 @@ func TestBuildChatRequest_CodexResumeWithoutExternalSessionID(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "codex", "test-codex-noext", "", "", "default", "chat")
 	assert.NoError(t, err)
 
-	// CreateSession pre-fills external_session_id = sessionID; clear it to simulate
-	// the "no external session ID captured" scenario
-	err = service.UpdateExternalSessionID(sessionID, "")
-	assert.NoError(t, err)
+	// CreateSession initializes external_session_id to empty (no session_capture yet)
 
 	_, err = service.AddChatMessage(env.ProjectDir, "codex", sessionID, "assistant",
 		`{"blocks":[{"type":"text","text":"hello"}]}`, nil, false, "")
@@ -1710,8 +1821,8 @@ func TestCodexSessionCapture_PersistedToDB(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "codex", "test-codex-capture", "", "", "default", "chat")
 	assert.NoError(t, err)
 
-	// CreateSession pre-fills external_session_id with sessionID
-	assert.Equal(t, sessionID, service.GetExternalSessionID(sessionID))
+	// CreateSession initializes external_session_id to empty
+	assert.Equal(t, "", service.GetExternalSessionID(sessionID))
 
 	threadID := "thread_xyz789"
 	err = service.UpdateExternalSessionID(sessionID, threadID)
@@ -1757,10 +1868,7 @@ func TestBuildChatRequest_DeepSeekResumeWithoutExternalSessionID(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "deepseek", "test-deepseek-noext", "", "", "default", "chat")
 	assert.NoError(t, err)
 
-	// CreateSession pre-fills external_session_id = sessionID; clear it to simulate
-	// the "no external session ID captured" scenario
-	err = service.UpdateExternalSessionID(sessionID, "")
-	assert.NoError(t, err)
+	// CreateSession initializes external_session_id to empty (no session_capture yet)
 
 	_, err = service.AddChatMessage(env.ProjectDir, "deepseek", sessionID, "assistant",
 		`{"blocks":[{"type":"text","text":"hello"}]}`, nil, false, "")
@@ -1781,8 +1889,8 @@ func TestDeepSeekSessionCapture_PersistedToDB(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "deepseek", "test-deepseek-capture", "", "", "default", "chat")
 	assert.NoError(t, err)
 
-	// CreateSession pre-fills external_session_id with sessionID
-	assert.Equal(t, sessionID, service.GetExternalSessionID(sessionID))
+	// CreateSession initializes external_session_id to empty
+	assert.Equal(t, "", service.GetExternalSessionID(sessionID))
 
 	dsSessionID := "ds-captured-abc"
 	err = service.UpdateExternalSessionID(sessionID, dsSessionID)
@@ -1805,10 +1913,7 @@ func TestBuildChatRequest_OpenCodeResumeWithoutExternalSessionID(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "opencode", "test-oc-noext", "", "", "default", "chat")
 	assert.NoError(t, err)
 
-	// CreateSession pre-fills external_session_id = sessionID; clear it to simulate
-	// the "no external session ID captured" scenario
-	err = service.UpdateExternalSessionID(sessionID, "")
-	assert.NoError(t, err)
+	// CreateSession initializes external_session_id to empty (no session_capture yet)
 
 	// No external session ID set
 	_, err = service.AddChatMessage(env.ProjectDir, "opencode", sessionID, "assistant",
@@ -1830,8 +1935,8 @@ func TestOpenCodeSessionCapture_PersistedToDB(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "opencode", "test-oc-capture", "", "", "default", "chat")
 	assert.NoError(t, err)
 
-	// CreateSession pre-fills external_session_id with sessionID
-	assert.Equal(t, sessionID, service.GetExternalSessionID(sessionID))
+	// CreateSession initializes external_session_id to empty
+	assert.Equal(t, "", service.GetExternalSessionID(sessionID))
 
 	sesID := "ses_oc_abc123"
 	err = service.UpdateExternalSessionID(sessionID, sesID)
@@ -1911,9 +2016,9 @@ func TestBuildChatRequest_ThinkingEffort_BothEmpty(t *testing.T) {
 	assert.Equal(t, "", req.ThinkingEffort, "ThinkingEffort should be empty when both override and agent default are empty")
 }
 
-// TestBuildChatRequest_CodebuddyResumeNoExternalID verifies that Codebuddy
-// backend (which natively uses ClawBench UUID) is NOT affected by the
-// external session ID resolution logic — it should always get the UUID.
+// TestBuildChatRequest_CodebuddyResumeNoExternalID verifies that when
+// external_session_id is empty (not yet captured), Codebuddy falls back
+// to empty effectiveSessionID — same behavior as Claude.
 func TestBuildChatRequest_CodebuddyResumeNoExternalID(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
@@ -1927,8 +2032,8 @@ func TestBuildChatRequest_CodebuddyResumeNoExternalID(t *testing.T) {
 
 	req := buildChatRequest("continue", sessionID, env.ProjectDir, "codebuddy", "codebuddy", "", "", "", "", "", false)
 	assert.True(t, req.Resume)
-	assert.Equal(t, sessionID, req.SessionID,
-		"Codebuddy should get the ClawBench UUID directly, no external ID resolution")
+	assert.Equal(t, "", req.SessionID,
+		"Codebuddy should get empty SessionID when external_session_id is not yet captured")
 }
 
 // ---------- HasAttachments / Media Prompt injection ----------
@@ -2525,10 +2630,10 @@ func TestFinalizeStreamRun_CtxCancelled(t *testing.T) {
 
 // TestSessionCapture_OverwritesDefault tests the handler condition:
 //
-//	if existingExtID == "" || existingExtID == sessionID { UpdateExternalSessionID }
+//	if existingExtID == "" { UpdateExternalSessionID }
 //
-// When external_session_id is the default (== sessionID), a session_capture
-// event should overwrite it with the real CLI-assigned ID.
+// When external_session_id is empty (not yet captured), a session_capture
+// event should set it with the real CLI-assigned ID.
 func TestSessionCapture_OverwritesDefault(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
@@ -2536,12 +2641,12 @@ func TestSessionCapture_OverwritesDefault(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "pi", "test-overwrite-default", "", "", "default", "chat")
 	assert.NoError(t, err)
 
-	// CreateSession pre-fills external_session_id = sessionID (the default)
-	assert.Equal(t, sessionID, service.GetExternalSessionID(sessionID))
+	// CreateSession initializes external_session_id to empty string
+	assert.Equal(t, "", service.GetExternalSessionID(sessionID))
 
-	// Simulate handler condition: existingExtID == sessionID → overwrite
+	// Simulate handler condition: existingExtID == "" → overwrite
 	existingExtID := service.GetExternalSessionID(sessionID)
-	assert.Equal(t, sessionID, existingExtID, "default should equal sessionID")
+	assert.Equal(t, "", existingExtID)
 
 	// Handler would call UpdateExternalSessionID because condition is true
 	piExtID := "019e2172-aaaa-bbbb-cccc-dddddddddddd"
@@ -2549,13 +2654,12 @@ func TestSessionCapture_OverwritesDefault(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.Equal(t, piExtID, service.GetExternalSessionID(sessionID),
-		"session_capture should overwrite the default ClawBench UUID")
+		"session_capture should set the CLI-assigned ID")
 }
 
 // TestSessionCapture_DoesNotOverwriteCLIAssignedID tests the handler condition:
-// When external_session_id has already been set to a CLI-assigned ID
-// (different from sessionID), a subsequent session_capture event should
-// NOT overwrite it.
+// When external_session_id has already been set to a CLI-assigned ID,
+// a subsequent session_capture event should NOT overwrite it.
 func TestSessionCapture_DoesNotOverwriteCLIAssignedID(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
@@ -2570,10 +2674,8 @@ func TestSessionCapture_DoesNotOverwriteCLIAssignedID(t *testing.T) {
 
 	// Now simulate a second session_capture: handler checks condition
 	existingExtID := service.GetExternalSessionID(sessionID)
-	// Condition: existingExtID == "" || existingExtID == sessionID
-	// Both are false → handler skips the update
+	// Condition: existingExtID == "" → false → handler skips the update
 	assert.NotEqual(t, "", existingExtID)
-	assert.NotEqual(t, sessionID, existingExtID)
 
 	// The handler would NOT call UpdateExternalSessionID — verify value is unchanged
 	assert.Equal(t, firstID, service.GetExternalSessionID(sessionID),
@@ -2590,18 +2692,18 @@ func TestSessionCapture_EmptyContentSkipped(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "pi", "test-empty-capture", "", "", "default", "chat")
 	assert.NoError(t, err)
 
-	// Verify default value before
-	assert.Equal(t, sessionID, service.GetExternalSessionID(sessionID))
+	// external_session_id is empty initially
+	assert.Equal(t, "", service.GetExternalSessionID(sessionID))
 
 	// Simulate: handler sees event.Content == "" → skips UpdateExternalSessionID
-	// (We verify by checking the value is still the default)
-	assert.Equal(t, sessionID, service.GetExternalSessionID(sessionID),
+	// (We verify by checking the value is still empty)
+	assert.Equal(t, "", service.GetExternalSessionID(sessionID),
 		"empty Content should not trigger update")
 }
 
 // TestMetadataEvent_OverwritesDefault tests the metadata event handler condition:
-// Same as session_capture — when existingExtID is the default (== sessionID),
-// a metadata event with SessionID should overwrite it.
+// Same as session_capture — when existingExtID is empty, a metadata event
+// with SessionID should set it.
 func TestMetadataEvent_OverwritesDefault(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
@@ -2609,12 +2711,12 @@ func TestMetadataEvent_OverwritesDefault(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "opencode", "test-meta-default", "", "", "default", "chat")
 	assert.NoError(t, err)
 
-	// Default: external_session_id == sessionID
-	assert.Equal(t, sessionID, service.GetExternalSessionID(sessionID))
+	// external_session_id is empty initially
+	assert.Equal(t, "", service.GetExternalSessionID(sessionID))
 
-	// Simulate metadata event: handler checks condition (same as session_capture)
+	// Simulate metadata event: handler checks condition (existingExtID == "")
 	existingExtID := service.GetExternalSessionID(sessionID)
-	assert.Equal(t, sessionID, existingExtID)
+	assert.Equal(t, "", existingExtID)
 
 	// Condition is true → handler calls UpdateExternalSessionID
 	metaSessionID := "ses_oc_meta_123"
@@ -2643,8 +2745,7 @@ func TestMetadataEvent_DoesNotOverwriteSessionCaptureID(t *testing.T) {
 	// Simulate metadata event: handler checks condition
 	existingExtID := service.GetExternalSessionID(sessionID)
 	assert.NotEqual(t, "", existingExtID)
-	assert.NotEqual(t, sessionID, existingExtID)
-	// Condition: existingExtID == "" || existingExtID == sessionID → FALSE
+	// Condition: existingExtID == "" → FALSE
 	// → handler skips UpdateExternalSessionID
 
 	// Verify the session_capture value is preserved
@@ -2662,8 +2763,8 @@ func TestMetadataEvent_EmptySessionIDSkipped(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Handler has `if event.Meta.SessionID != ""` — empty → skip
-	// Verify default value is preserved
-	assert.Equal(t, sessionID, service.GetExternalSessionID(sessionID),
+	// Verify external_session_id remains empty
+	assert.Equal(t, "", service.GetExternalSessionID(sessionID),
 		"empty Meta.SessionID should not trigger update")
 }
 
@@ -3001,12 +3102,12 @@ func TestBuildChatRequest_ACPResume_AfterServerRestart(t *testing.T) {
 
 // TestGetExternalSessionID_ACPVsCLI verifies the DB query behavior for
 // external_session_id: ACP sessions have the real ACP session ID stored,
-// while CLI sessions (claude/codebuddy without ACP) have the ClawBench UUID.
+// while CLI sessions start with empty and get populated via session_capture.
 func TestGetExternalSessionID_ACPVsCLI(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// ACP session: external_session_id = ACP session ID (different from clawbench UUID)
+	// ACP session: external_session_id = ACP session ID (set by session_capture)
 	acpSessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "test-ext-acp", "codebuddy", "", "default", "chat")
 	assert.NoError(t, err)
 	err = service.UpdateSessionTransport(acpSessionID, "acp-stdio")
@@ -3020,13 +3121,13 @@ func TestGetExternalSessionID_ACPVsCLI(t *testing.T) {
 	assert.Equal(t, acpExtID, gotACP, "ACP session external_session_id should be the ACP session ID")
 	assert.NotEqual(t, acpSessionID, gotACP, "ACP session external_session_id should differ from clawbench UUID")
 
-	// CLI session: external_session_id = clawbench UUID (same, from CreateSession)
+	// CLI session: external_session_id starts empty (populated later by session_capture)
 	cliSessionID, err := service.CreateSession(env.ProjectDir, "claude", "test-ext-cli", "claude", "", "default", "chat")
 	assert.NoError(t, err)
 
-	// Verify: CLI session's external_session_id equals clawbench UUID (initial value)
+	// Verify: CLI session's external_session_id is empty initially
 	gotCLI := service.GetExternalSessionID(cliSessionID)
-	assert.Equal(t, cliSessionID, gotCLI, "CLI session external_session_id should initially equal clawbench UUID")
+	assert.Equal(t, "", gotCLI, "CLI session external_session_id should be empty initially")
 }
 
 // TestBuildChatRequest_NonACPResumeWithExternalSessionID verifies that

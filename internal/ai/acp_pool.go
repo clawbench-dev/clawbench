@@ -259,7 +259,7 @@ func (m *ACPConnManager) GetOrCreateConn(ctx context.Context, agent *model.Agent
 		conn = newACPConn(agent, clawbenchSID)
 		// Pre-populate acpSID from DB so ensureAliveWithSession can attempt
 		// ResumeSession after a server restart.
-		if extID := getExternalSessionID(clawbenchSID); extID != "" && extID != clawbenchSID {
+		if extID := getExternalSessionID(clawbenchSID); extID != "" {
 			conn.acpSID = extID
 			slog.Info("acp conn: pre-populated acpSID from DB for ResumeSession",
 				"clawbench_sid", clawbenchSID, "acp_sid", extID)

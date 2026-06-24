@@ -123,15 +123,9 @@ func TestACPInitRegistration(t *testing.T) {
 		if p == nil {
 			t.Fatal("expected pi plugin to be registered after init")
 		}
-		if p.ACP == nil {
-			t.Fatal("expected pi ACP to be registered after init")
-		}
-		// Pi ACP uses standard ACP field names — InputRemaps is empty (falls back to generic)
-		if len(p.ACP.InputRemaps) != 0 {
-			t.Errorf("expected empty InputRemaps for pi ACP, got %v", p.ACP.InputRemaps)
-		}
-		if p.ACP.ToolCallIDPrefixes != nil {
-			t.Errorf("expected nil ToolCallIDPrefixes for pi, got %v", p.ACP.ToolCallIDPrefixes)
+		// Pi does not support ACP — ACP plugin should be nil
+		if p.ACP != nil {
+			t.Fatal("expected pi ACP to be nil (ACP support removed)")
 		}
 	})
 

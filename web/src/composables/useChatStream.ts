@@ -654,9 +654,8 @@ export function useChatStream(options: UseChatStreamOptions) {
       const userFiles = (data.files || []).map((p: string) => p)
 
       if (sessionChanged()) {
-        // Session changed — still sync pending messages from backend queue
-        // but don't process the drain (a different session owns it now)
-        syncPendingFromBackend(messages.value, data.queue || [])
+        // Session changed — ignore drain events from the old session
+        // to prevent pending messages from leaking into the new session.
         return
       }
 
@@ -687,10 +686,13 @@ export function useChatStream(options: UseChatStreamOptions) {
       let data: any
       try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE queue_update: invalid JSON, skipping'); return }
 
+      // Guard against stale events from a previous session before syncing
+      // pending messages — otherwise messages from the old session's queue
+      // leak into the new session's messages array.
+      if (sessionChanged()) return
+
       // Sync pending messages in messages.value with the backend queue
       syncPendingFromBackend(messages.value, data.queue || [])
-
-      if (sessionChanged()) return
 
       // Trigger render when pending messages are added/removed
       onRenderNeeded()

@@ -384,7 +384,9 @@ func SyncDiscoverAgentsDB(db *sql.DB) map[string]bool { //nolint:gocognit,gocycl
 			if r.spec.DefaultCmd != "" && existingCommand != "" && existingCommand != r.spec.DefaultCmd && CheckCLIExists(r.spec.DefaultCmd) {
 				updates["command"] = r.spec.DefaultCmd
 			}
-			if r.spec.AcpCommand != "" && existingAcpCommand != r.spec.AcpCommand {
+			// Sync acp_command: update when spec changes (including clearing
+			// stale values when ACP support is removed from a backend).
+			if r.spec.AcpCommand != existingAcpCommand {
 				updates["acp_command"] = r.spec.AcpCommand
 			}
 

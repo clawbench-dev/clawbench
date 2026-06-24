@@ -661,7 +661,7 @@ func CreateSession(projectPath, backend, title, agentID, modelName, agentSource,
 	}
 	_, err := DB.Exec(
 		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, external_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		sessionID, projectPath, backend, title, agentID, agentSource, modelName, sessionType, sessionID,
+		sessionID, projectPath, backend, title, agentID, agentSource, modelName, sessionType, "",
 	)
 	if err != nil {
 		return "", err
@@ -943,14 +943,6 @@ func UpdateExternalSessionID(sessionID, externalID string) error {
 		slog.String("session", sessionID),
 		slog.String("external_session_id", externalID))
 	return nil
-}
-
-// ClearExternalSessionID clears the external session ID for a ClawBench session.
-// Called when transport switches from CLI to ACP — ACP manages its own session
-// mapping internally, so the CLI's external_session_id must not leak into the
-// ACP connection pool's GetOrCreateConn pre-population logic.
-func ClearExternalSessionID(sessionID string) {
-	_, _ = DB.Exec("UPDATE chat_sessions SET external_session_id = '' WHERE id = ?", sessionID)
 }
 
 // GetExternalSessionID returns the external session ID for a ClawBench session.

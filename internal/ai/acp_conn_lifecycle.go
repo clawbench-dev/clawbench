@@ -129,15 +129,17 @@ func (c *ACPConn) ensureAliveWithSession(ctx context.Context, cwd string) (bool,
 		if err == nil {
 			return false, nil // recovered successfully
 		}
-		slog.Warn("acp conn: ResumeSession failed, falling back to NewSession",
+		// ResumeSession failed — the session is unrecoverable.
+		// Do NOT silently fall back to NewSession (amnesia): the user
+		// would lose all conversation context without any indication.
+		// Surface the error so the user knows the session needs a fresh start.
+		slog.Error("acp conn: ResumeSession failed, session is unrecoverable",
 			"clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "error", err)
 		c.killProcessLocked()
-		if err := c.spawnLocked(ctx); err != nil {
-			return false, err
-		}
+		return false, fmt.Errorf("acp: session %s ResumeSession failed: %w", acpSID, err)
 	}
 
-	// No prior session (or ResumeSession failed) — create new session.
+	// No prior session — create new session.
 	newSessCtx, newSessCancel := context.WithTimeout(ctx, 15*time.Second)
 	defer newSessCancel()
 
