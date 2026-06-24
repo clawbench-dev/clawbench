@@ -88,8 +88,32 @@ var httpClient = &http.Client{
 	},
 }
 
+// loadSessionCookie reads the cookie token from .clawbench/cookie-token.
+// Returns empty string if the file doesn't exist (no password configured or
+// server hasn't generated a token yet).
+func loadSessionCookie() string {
+	tokenPath := filepath.Join(model.BinDir, ".clawbench", "cookie-token")
+	data, err := os.ReadFile(tokenPath)
+	if err != nil {
+		return ""
+	}
+	return string(bytes.TrimSpace(data))
+}
+
+// setAuthCookie attaches the session cookie to req if a cookie token file exists.
+// This allows CLI tools to work when require_auth_for_localhost is enabled.
+func setAuthCookie(req *http.Request) {
+	if token := loadSessionCookie(); token != "" {
+		req.AddCookie(&http.Cookie{
+			Name:  model.ScopedCookieName(model.SessionCookie),
+			Value: token,
+		})
+	}
+}
+
 // httpDo performs an HTTP request to the server API.
-// No auth needed — CLI runs on localhost which is auto-trusted by the server.
+// If a cookie token file exists (require_auth_for_localhost is enabled),
+// the session cookie is attached automatically.
 func httpDo(method, path string, body any) (map[string]any, int, error) {
 	var reqBody io.Reader
 	if body != nil {
@@ -105,6 +129,7 @@ func httpDo(method, path string, body any) (map[string]any, int, error) {
 		return nil, 0, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	setAuthCookie(req)
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -142,6 +167,7 @@ func httpDoWithProject(method, path string, body any, projectPath string) (map[s
 		return nil, 0, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	setAuthCookie(req)
 
 	// Set project cookie so server's requireProject() can extract it
 	if projectPath != "" {

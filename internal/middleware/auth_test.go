@@ -21,9 +21,11 @@ func okHandler(w http.ResponseWriter, r *http.Request) {
 func withSavedToken(f func()) {
 	origSession := model.SessionToken
 	origCookie := model.CookieToken
+	origRequireAuth := model.RequireAuthForLocalhost
 	defer func() {
 		model.SessionToken = origSession
 		model.CookieToken = origCookie
+		model.RequireAuthForLocalhost = origRequireAuth
 	}()
 	f()
 }
@@ -140,6 +142,72 @@ func TestAuth_LocalhostWithBadCookie_StillPasses(t *testing.T) {
 			Name:  model.SessionCookie,
 			Value: "wrong-token",
 		})
+
+		middleware.Auth(okHandler).ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+}
+
+// --- Auth: RequireAuthForLocalhost ---
+
+func TestAuth_RequireAuthForLocalhost_LocalhostIPv4_Returns401(t *testing.T) {
+	withSavedToken(func() {
+		model.SessionToken = "valid-token"
+		model.RequireAuthForLocalhost = true
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		req.RemoteAddr = "127.0.0.1:12345"
+
+		middleware.Auth(okHandler).ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	})
+}
+
+func TestAuth_RequireAuthForLocalhost_LocalhostIPv6_Returns401(t *testing.T) {
+	withSavedToken(func() {
+		model.SessionToken = "valid-token"
+		model.RequireAuthForLocalhost = true
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		req.RemoteAddr = "[::1]:12345"
+
+		middleware.Auth(okHandler).ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	})
+}
+
+func TestAuth_RequireAuthForLocalhost_WithValidCookie_PassThrough(t *testing.T) {
+	withSavedToken(func() {
+		model.SessionToken = "valid-token"
+		model.RequireAuthForLocalhost = true
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		req.RemoteAddr = "127.0.0.1:12345"
+		req.AddCookie(&http.Cookie{
+			Name:  model.SessionCookie,
+			Value: "valid-token",
+		})
+
+		middleware.Auth(okHandler).ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+}
+
+func TestAuth_RequireAuthForLocalhost_False_LocalhostStillBypasses(t *testing.T) {
+	withSavedToken(func() {
+		model.SessionToken = "valid-token"
+		model.RequireAuthForLocalhost = false
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		req.RemoteAddr = "127.0.0.1:12345"
 
 		middleware.Auth(okHandler).ServeHTTP(rec, req)
 

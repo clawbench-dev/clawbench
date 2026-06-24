@@ -194,6 +194,7 @@ export const categoryItems: Record<string, ItemSpec[]> = {
     { labelKey: 'settings.items.reconfigureServer', descriptionKey: 'settings.items.reconfigureServerDesc', key: 'reconfigureServer', type: 'action', source: 'local' },
   ],
   security: [
+    { labelKey: 'settings.items.requireAuthForLocalhost', descriptionKey: 'settings.items.requireAuthForLocalhostDesc', key: 'require_auth_for_localhost', type: 'switch', source: 'server' },
     { labelKey: 'settings.items.changePassword', descriptionKey: 'settings.items.changePasswordDesc', key: 'changePassword', type: 'action', source: 'local' },
   ],
   about: [

@@ -36,6 +36,7 @@ type Config struct {
 	Password     string `yaml:"password"`
 	DefaultAgent string `yaml:"default_agent"`
 	LogDir       string `yaml:"log_dir"`
+	RequireAuthForLocalhost bool `yaml:"require_auth_for_localhost"`
 	LogMaxDays   int    `yaml:"log_max_days"`
 	TLS          struct {
 		Enabled  bool   `yaml:"enabled"`
@@ -181,7 +182,8 @@ var (
 	PasswordIsSHA256 bool     // true when config.yaml stores password as sha256:<hex>
 	ServerPort       int      // Server listen port — set once at startup before HTTP listeners start, read-only afterwards. Do NOT modify after server starts; cookie names must be stable.
 	SessionCookie    = "clawbench_session"
-	DefaultAgentID   string // Default agent for new sessions, set from config or first agent
+	DefaultAgentID          string // Default agent for new sessions, set from config or first agent
+	RequireAuthForLocalhost bool   // When true, localhost requests must also authenticate
 
 	// Upload limits (set from config, with defaults)
 	UploadMaxSizeMB int // Default: 100

@@ -48,6 +48,7 @@ import SettingsAgentDetail from './SettingsAgentDetail.vue'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useAgents } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast'
+import { useDialog } from '@/composables/useDialog'
 import { useAppMode } from '@/composables/useAppMode'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { categoryItems, engineVoiceOptions, type ItemSpec, type DependsOn } from './settingsFieldMap'
@@ -63,6 +64,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const toast = useToast()
+const dialog = useDialog()
 const { localConfig, serverConfig, setLocalConfig, getServerValueWithDefault, setServerValue } = useSettingsConfig()
 const { agents, loadAgents } = useAgents()
 const { isAppMode } = useAppMode()
@@ -194,6 +196,14 @@ async function handleUpdate(item: any, value: any) {
   // Password type: skip if empty or still masked (contains bullet chars)
   if (item.type === 'password') {
     if (!value || value.includes('•')) return
+  }
+  // Confirm before enabling localhost auth (CLI tools will be affected)
+  if (item.key === 'require_auth_for_localhost' && value === true) {
+    const confirmed = await dialog.confirm(
+      t('settings.items.requireAuthForLocalhostConfirm'),
+      { title: t('settings.items.requireAuthForLocalhost'), dangerous: true }
+    )
+    if (!confirmed) return
   }
   if (item.source === 'local') {
     setLocalConfig(item.key, value)

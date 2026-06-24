@@ -267,6 +267,7 @@ const serverDefaults: Record<string, any> = {
   'terminal.max_sessions': 10,
   'terminal.buffer_lines': 2000,
   'default_agent': '',
+  'require_auth_for_localhost': false,
   'tts.engine': 'edge',
   'tts.format': '',
   'tts.speed': 1.0,
