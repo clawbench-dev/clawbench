@@ -147,18 +147,14 @@ const projectName = computed(() => {
 // Git branch
 const gitBranch = computed(() => store.state.gitBranch)
 const branchAnimating = ref(false)
-const branchAnimReady = ref(false)
 
-// Trigger animation when branch changes (skip initial value + page load)
+// Trigger animation when branch changes (skip initial value)
 watch(gitBranch, (newVal, oldVal) => {
-    if (branchAnimReady.value && oldVal !== undefined && newVal !== oldVal) {
+    if (oldVal !== undefined && newVal !== oldVal) {
         branchAnimating.value = false
         nextTick(() => { branchAnimating.value = true })
     }
 })
-
-// Enable branch animation after initial mount
-onMounted(() => { branchAnimReady.value = true })
 
 function openHistory() {
     setPendingManageNavigation()
