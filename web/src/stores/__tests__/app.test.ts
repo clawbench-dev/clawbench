@@ -511,6 +511,37 @@ describe('store', () => {
 
             expect(mockApiPost).toHaveBeenCalledWith('/api/file/rename', { path: '/project/old.txt', name: 'new.txt' })
         })
+
+        it('shows error toast on rename failure', async () => {
+            const err = Object.assign(new Error('rename failed'), { msgKey: 'InternalError' })
+            mockApiPost.mockRejectedValue(err)
+            mockToastShow.mockClear()
+
+            await expect(store.renameFile('/project/old.txt', 'new.txt')).rejects.toThrow('rename failed')
+            expect(mockToastShow).toHaveBeenCalled()
+        })
+
+        it('treats FileNotFoundShort as success', async () => {
+            const err = Object.assign(new Error('not found'), { msgKey: 'FileNotFoundShort' })
+            mockApiPost.mockRejectedValue(err)
+            mockApiGet.mockResolvedValue({ entries: [] })
+            mockToastShow.mockClear()
+
+            await store.renameFile('/project/old.txt', 'new.txt')
+            expect(mockToastShow).not.toHaveBeenCalled()
+        })
+
+        it('re-selects current file at new path after rename', async () => {
+            store.state.currentDir = '/project'
+            store.state.currentFile = { path: '/project/old.txt', name: 'old.txt' }
+            mockApiPost.mockResolvedValue({})
+            mockApiGet.mockResolvedValue({ entries: [] })
+
+            await store.renameFile('/project/old.txt', 'new.txt')
+
+            // Should have called selectFile with the new path
+            expect(mockApiGet).toHaveBeenCalled()
+        })
     })
 
     // ── Directory stack navigation ──
@@ -548,6 +579,18 @@ describe('store', () => {
             await store.popDir()
 
             expect(mockDirStack.popDirAndLoad).not.toHaveBeenCalled()
+        })
+    })
+
+    describe('resetDirStack', () => {
+        it('calls dirStack.resetStack', () => {
+            store.resetDirStack('/project')
+            expect(mockDirStack.resetStack).toHaveBeenCalledWith('/project')
+        })
+
+        it('calls resetStack without path', () => {
+            store.resetDirStack()
+            expect(mockDirStack.resetStack).toHaveBeenCalledWith(undefined)
         })
     })
 
