@@ -76,10 +76,14 @@ vi.mock('@/utils/chatStreamUtils', () => ({
   findStreamingMsg: vi.fn((messages: any[]) => {
     return messages.find((m: any) => m.role === 'assistant' && m.streaming)
   }),
-  drainQueueMessage: vi.fn((messages: any[], currentBackend: string, callbacks: any) => {
+  drainQueueMessage: vi.fn((messages: any[], userContent: string, userFiles: string[], currentBackend: string, callbacks: any) => {
     // Finalize any streaming message
     const streamingMsg = messages.find((m: any) => m.role === 'assistant' && m.streaming)
     if (streamingMsg) delete streamingMsg.streaming
+    // Push drained user message
+    if (userContent) {
+      messages.push({ role: 'user', content: userContent, blocks: [{ type: 'text', text: userContent }], files: userFiles.map((p: string) => ({ path: p })), createdAt: new Date().toISOString() })
+    }
     // Create new streaming assistant placeholder
     const newStreamingMsg = { role: 'assistant', content: '', blocks: [], streaming: true, createdAt: new Date().toISOString(), backend: currentBackend }
     messages.push(newStreamingMsg)
@@ -679,16 +683,18 @@ describe('useChatStream', () => {
       const es = getLatestEs()
       es.simulateOpen()
 
-      es.simulate('queue_drain', { queue: [] })
+      es.simulate('queue_drain', { text: 'hello', filePaths: [], files: [], queue: [] })
 
-      // drainQueueMessage should be called with (messages.value, currentBackend.value, callbacks)
+      // drainQueueMessage should be called with (messages.value, text, files, currentBackend.value, callbacks)
       expect(drainQueueMessage).toHaveBeenCalled()
       const callArgs = (drainQueueMessage as any).mock.calls[0]
       expect(callArgs[0]).toBe(options.messages.value)
-      expect(callArgs[1]).toBe('test-backend')
-      // Third arg is callbacks object with onRenderNeeded and onExtractScheduledTasks
-      expect(callArgs[2]).toHaveProperty('onRenderNeeded')
-      expect(callArgs[2]).toHaveProperty('onExtractScheduledTasks')
+      expect(callArgs[1]).toBe('hello')  // userContent
+      expect(callArgs[2]).toEqual([])    // userFiles
+      expect(callArgs[3]).toBe('test-backend')
+      // Fifth arg is callbacks object
+      expect(callArgs[4]).toHaveProperty('onRenderNeeded')
+      expect(callArgs[4]).toHaveProperty('onExtractScheduledTasks')
     })
   })
 

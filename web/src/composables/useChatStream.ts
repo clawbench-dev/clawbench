@@ -665,9 +665,11 @@ export function useChatStream(options: UseChatStreamOptions) {
       }
 
       // Process the drain on the current session's messages:
-      // finalize streaming, push new streaming placeholder.
+      // finalize streaming, push drained user message, push new streaming placeholder.
+      const drainText = data.text || ''
+      const drainFiles = [...(data.filePaths || []), ...(data.files || [])]
       drainQueueMessage(
-        messages.value, currentBackend.value,
+        messages.value, drainText, drainFiles, currentBackend.value,
         { onRenderNeeded, onExtractScheduledTasks }
       )
 

@@ -329,41 +329,42 @@ describe('drainQueueMessage', () => {
     const messages: any[] = [
       { role: 'assistant', content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }], streaming: true },
     ]
-    const result = drainQueueMessage(messages, 'codebuddy', callbacks)
+    const result = drainQueueMessage(messages, 'B msg', [], 'codebuddy', callbacks)
     // Old streaming is finalized (flag removed)
     expect(messages[0].streaming).toBeUndefined()
+    // Drained user message pushed
+    expect(messages[1].role).toBe('user')
+    expect(messages[1].content).toBe('B msg')
     // New streaming placeholder pushed
     expect(result!.streaming).toBe(true)
     expect(result!.backend).toBe('codebuddy')
     expect(result!.role).toBe('assistant')
-    expect(result!.content).toBe('')
-    expect(result!.blocks).toEqual([])
-    expect(messages).toHaveLength(2)
+    expect(messages).toHaveLength(3)
   })
 
   it('pushes new streaming placeholder even when no existing streaming message', () => {
     const messages: any[] = []
-    const result = drainQueueMessage(messages, 'codebuddy', callbacks)
-    expect(messages).toHaveLength(1)
-    expect(messages[0].role).toBe('assistant')
-    expect(messages[0].streaming).toBe(true)
-    expect(messages[0].backend).toBe('codebuddy')
-    expect(result).toBe(messages[0])
+    const result = drainQueueMessage(messages, 'hello', [], 'codebuddy', callbacks)
+    // User msg + streaming placeholder
+    expect(messages).toHaveLength(2)
+    expect(messages[0].role).toBe('user')
+    expect(messages[0].content).toBe('hello')
+    expect(messages[1].role).toBe('assistant')
+    expect(messages[1].streaming).toBe(true)
+    expect(messages[1].backend).toBe('codebuddy')
+    expect(result).toBe(messages[1])
   })
 
-  it('never modifies or adds user messages — pending is handled by pendingStore', () => {
+  it('deduplicates user message when existing non-pending msg has same content', () => {
     const messages: any[] = [
       { role: 'user', id: 1, content: 'existing user msg', blocks: [{ type: 'text', text: 'existing user msg' }] },
       { role: 'assistant', content: '', blocks: [], streaming: true },
     ]
-    const result = drainQueueMessage(messages, 'codebuddy', callbacks)
-    // User message untouched
-    expect(messages[0].role).toBe('user')
-    expect(messages[0].content).toBe('existing user msg')
-    // No new user message added
+    const result = drainQueueMessage(messages, 'existing user msg', [], 'codebuddy', callbacks)
+    // No duplicate user message
     const userMsgs = messages.filter(m => m.role === 'user')
     expect(userMsgs).toHaveLength(1)
-    // Only old assistant (finalized) + new streaming
+    // Old assistant (finalized) + new streaming
     expect(messages).toHaveLength(3)
     expect(result!.streaming).toBe(true)
   })
@@ -372,14 +373,18 @@ describe('drainQueueMessage', () => {
     const messages: any[] = [
       { role: 'assistant', content: '', blocks: [], streaming: true },
     ]
-    drainQueueMessage(messages, 'codebuddy', callbacks)
+    drainQueueMessage(messages, 'hello', [], 'codebuddy', callbacks)
     // Old empty streaming is kept (not deleted) to avoid v-for key shifts
-    expect(messages).toHaveLength(2)
+    // Messages: old assistant(finalized) + user msg + new streaming
+    expect(messages).toHaveLength(3)
     expect(messages[0].streaming).toBeUndefined()
     expect(messages[0].content).toBe('')
     expect(messages[0].blocks).toEqual([])
+    // User message
+    expect(messages[1].role).toBe('user')
+    expect(messages[1].content).toBe('hello')
     // New streaming placeholder
-    expect(messages[1].streaming).toBe(true)
+    expect(messages[2].streaming).toBe(true)
   })
 
   it('finalizes unfinished tool_use blocks in streaming message', () => {
@@ -394,7 +399,7 @@ describe('drainQueueMessage', () => {
         streaming: true,
       },
     ]
-    drainQueueMessage(messages, 'codebuddy', callbacks)
+    drainQueueMessage(messages, 'hello', [], 'codebuddy', callbacks)
     expect(messages[0].blocks[0].done).toBe(true)
     expect(messages[0].blocks[1].done).toBe(true) // already was done
     expect(messages[0].streaming).toBeUndefined()
@@ -412,7 +417,7 @@ describe('drainQueueMessage', () => {
         streaming: true,
       },
     ]
-    drainQueueMessage(messages, 'codebuddy', callbacks)
+    drainQueueMessage(messages, 'hello', [], 'codebuddy', callbacks)
     expect(messages[0].blocks[0].done).toBe(true) // Normal tool finalized
     expect(messages[0].blocks[1].done).toBe(false) // PermissionApproval left alone
   })
@@ -429,7 +434,7 @@ describe('drainQueueMessage', () => {
         streaming: true,
       },
     ]
-    drainQueueMessage(messages, 'codebuddy', callbacks)
+    drainQueueMessage(messages, 'hello', [], 'codebuddy', callbacks)
     expect(messages[0].blocks[0].output).toBe('') // garbage cleared
     expect(messages[0].blocks[1].output).toBe('real output') // meaningful output kept
   })
@@ -439,14 +444,14 @@ describe('drainQueueMessage', () => {
     const messages: any[] = [
       { role: 'assistant', content: 'has content', blocks: [], streaming: true },
     ]
-    drainQueueMessage(messages, 'codebuddy', { onRenderNeeded: vi.fn(), onExtractScheduledTasks })
+    drainQueueMessage(messages, 'hello', [], 'codebuddy', { onRenderNeeded: vi.fn(), onExtractScheduledTasks })
     expect(onExtractScheduledTasks).toHaveBeenCalledWith(messages)
   })
 
   it('does not call onExtractScheduledTasks when no stale streaming message exists', () => {
     const onExtractScheduledTasks = vi.fn()
     const messages: any[] = []
-    drainQueueMessage(messages, 'codebuddy', { onRenderNeeded: vi.fn(), onExtractScheduledTasks })
+    drainQueueMessage(messages, 'hello', [], 'codebuddy', { onRenderNeeded: vi.fn(), onExtractScheduledTasks })
     expect(onExtractScheduledTasks).not.toHaveBeenCalled()
   })
 
@@ -458,7 +463,7 @@ describe('drainQueueMessage', () => {
     const messages: any[] = [
       { role: 'assistant', content: '', blocks: [{ type: 'text', text: 'stale' }], streaming: true },
     ]
-    drainQueueMessage(messages, 'codebuddy', { onRenderNeeded, onExtractScheduledTasks })
+    drainQueueMessage(messages, 'hello', [], 'codebuddy', { onRenderNeeded, onExtractScheduledTasks })
     expect(onRenderNeeded).not.toHaveBeenCalled()
     // But onExtractScheduledTasks should be called when a stale streaming msg was found
     expect(onExtractScheduledTasks).toHaveBeenCalled()
@@ -477,20 +482,24 @@ describe('drainQueueMessage', () => {
       { role: 'assistant', id: 2, content: '', blocks: [{ type: 'text', text: 'A reply' }], streaming: true },
     ]
 
-    // queue_drain event
-    const result = drainQueueMessage(messages, 'codebuddy', callbacks)
+    // queue_drain event with B's user content
+    const result = drainQueueMessage(messages, 'B msg', [], 'codebuddy', callbacks)
 
     // A's assistant message is finalized but still present
-    expect(messages).toHaveLength(3)
+    // Messages: A user, A assistant(finalized), B user, B streaming
+    expect(messages).toHaveLength(4)
     expect(messages[0].role).toBe('user')
     expect(messages[0].content).toBe('A msg')
     expect(messages[1].role).toBe('assistant')
     expect(messages[1].blocks).toEqual([{ type: 'text', text: 'A reply' }])
     expect(messages[1].streaming).toBeUndefined()
+    // B's user message pushed
+    expect(messages[2].role).toBe('user')
+    expect(messages[2].content).toBe('B msg')
     // New streaming assistant for B
-    expect(messages[2].role).toBe('assistant')
-    expect(messages[2].streaming).toBe(true)
-    expect(result).toBe(messages[2])
+    expect(messages[3].role).toBe('assistant')
+    expect(messages[3].streaming).toBe(true)
+    expect(result).toBe(messages[3])
   })
 
   it('preserves A reply with tool_use blocks during drain', () => {
@@ -512,17 +521,20 @@ describe('drainQueueMessage', () => {
       },
     ]
 
-    drainQueueMessage(messages, 'codebuddy', { onRenderNeeded, onExtractScheduledTasks })
+    drainQueueMessage(messages, 'B msg', [], 'codebuddy', { onRenderNeeded, onExtractScheduledTasks })
 
-    expect(messages).toHaveLength(3)
+    expect(messages).toHaveLength(4)
     // A's reply preserved with tool_use + text blocks
     expect(messages[1].role).toBe('assistant')
     expect(messages[1].blocks).toHaveLength(2)
     expect(messages[1].blocks[0].name).toBe('Read')
     expect(messages[1].blocks[1].text).toBe('A summary')
     expect(messages[1].streaming).toBeUndefined()
+    // B's user message
+    expect(messages[2].role).toBe('user')
+    expect(messages[2].content).toBe('B msg')
     // New streaming for B
-    expect(messages[2].streaming).toBe(true)
+    expect(messages[3].streaming).toBe(true)
   })
 
   it('handles multiple messages in array during queue drain', () => {
@@ -533,9 +545,9 @@ describe('drainQueueMessage', () => {
       { role: 'assistant', id: 4, content: '', blocks: [{ type: 'text', text: 'A reply' }], streaming: true },
     ]
 
-    drainQueueMessage(messages, 'codebuddy', { onRenderNeeded: vi.fn(), onExtractScheduledTasks: vi.fn() })
+    drainQueueMessage(messages, 'B msg', [], 'codebuddy', { onRenderNeeded: vi.fn(), onExtractScheduledTasks: vi.fn() })
 
-    expect(messages).toHaveLength(5)
+    expect(messages).toHaveLength(6)
     // All earlier messages intact
     expect(messages[0].content).toBe('round 1')
     expect(messages[1].content).toBe('r1 reply')
@@ -543,14 +555,17 @@ describe('drainQueueMessage', () => {
     // A's reply still there
     expect(messages[3].blocks).toEqual([{ type: 'text', text: 'A reply' }])
     expect(messages[3].streaming).toBeUndefined()
+    // B's user message
+    expect(messages[4].role).toBe('user')
+    expect(messages[4].content).toBe('B msg')
     // New streaming
-    expect(messages[4].streaming).toBe(true)
+    expect(messages[5].streaming).toBe(true)
   })
 
   it('new streaming placeholder has correct createdAt and backend', () => {
     const before = new Date().toISOString()
     const messages: any[] = []
-    const result = drainQueueMessage(messages, 'claude', callbacks)
+    const result = drainQueueMessage(messages, 'hello', [], 'claude', callbacks)
     const after = new Date().toISOString()
     expect(result!.backend).toBe('claude')
     expect(result!.createdAt >= before).toBe(true)

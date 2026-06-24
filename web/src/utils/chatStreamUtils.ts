@@ -103,21 +103,21 @@ export function findStreamingMsg(messages: any[]): any | undefined {
 /**
  * Atomically process a queue_drain event on the messages array.
  *
- * With the pendingStore redesign, pending messages are NOT in the messages
- * array. This function only handles the messages array:
- *
  * 1. Finalizes the current streaming assistant message (removes streaming flag,
  *    marks unfinished tool_use blocks as done) — WITHOUT deleting it, even if
  *    it appears empty. This prevents v-for key shifts from index-based keys.
- * 2. The drained user message has already been persisted to DB by the backend
- *    (AddChatMessage before queue_drain SSE event). It will appear in messages
- *    after the next loadHistory. We do NOT push it here.
+ * 2. Pushes the drained user message into messages (it was persisted to DB by
+ *    the backend via AddChatMessage before the queue_drain SSE event, but
+ *    loadHistory hasn't run yet so it's not in messages). This makes the user
+ *    message immediately visible instead of waiting until the stream ends.
  * 3. Pushes a new streaming assistant placeholder for the next message.
  *
  * Returns the new streaming assistant message.
  */
 export function drainQueueMessage(
   messages: any[],
+  userContent: string,
+  userFiles: string[],
   currentBackend: string,
   callbacks: {
     onRenderNeeded: (forceFull?: boolean) => void
@@ -142,7 +142,24 @@ export function drainQueueMessage(
     callbacks.onExtractScheduledTasks?.(messages)
   }
 
-  // 2. Push new streaming assistant placeholder for the next message
+  // 2. Push the drained user message — it's already in DB but not yet in
+  //    messages.value (loadHistory hasn't run). Without this, the user message
+  //    is invisible between drain and stream-end.
+  //    Avoid duplicate if an identical non-pending user message already exists.
+  const alreadyExists = messages.some(
+    (m: any) => m.role === 'user' && m.content === userContent && !m.pending
+  )
+  if (!alreadyExists && userContent) {
+    messages.push({
+      role: 'user',
+      content: userContent,
+      blocks: userContent ? [{ type: 'text', text: userContent }] : [],
+      files: userFiles.map((p: string) => ({ path: p })),
+      createdAt: new Date().toISOString(),
+    })
+  }
+
+  // 3. Push new streaming assistant placeholder for the next message
   const newStreamingMsg = {
     role: 'assistant' as const,
     content: '',
