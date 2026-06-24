@@ -18,7 +18,7 @@ function isRecursiveUpdateError(reason: unknown): boolean {
 }
 
 // Catch unhandled rejections from Vue's scheduler
-process.on('unhandledRejection', (reason) => {
+process.on('unhandledRejection', (reason: unknown) => {
   if (isRecursiveUpdateError(reason)) return
   // Re-throw as async to preserve default behavior
   Promise.reject(reason)
