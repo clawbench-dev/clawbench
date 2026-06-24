@@ -3,7 +3,7 @@
     <!-- Messages -->
     <ChatMessageList
       ref="messageListRef"
-      :messages="messages"
+      :messages="renderedMessages"
       :expandedTools="render.expandedTools.value"
       :blockTasks="render.blockTasks"
       :blockAskQuestions="render.blockAskQuestions"
@@ -25,7 +25,7 @@
       @load-more="handleLoadMore"
       @task-card-click="(taskId) => $emit('task-card-click', taskId)"
       @send-message="handleToolSendMessage"
-      @remove-pending="manager.handleRemovePending"
+      @remove-pending="handleRemovePending"
       @render-flush="scrollBottom()"
       @toggle-summary="handleToggleSummary"
       @resume-session="handleResumeSession"
@@ -78,7 +78,7 @@
       :pendingFiles="pendingFiles"
       :attachedFiles="attachedFiles"
       :quoteData="quoteData"
-      :messages="messages"
+      :messages="renderedMessages"
       :autoSpeechEnabled="autoSpeech.enabled.value"
       :currentSessionId="identity.currentSessionId.value"
       :chatUnreadCount="store.state.chatUnreadCount"
@@ -181,6 +181,7 @@ import { useChatStream } from '@/composables/useChatStream.ts'
 import { useChatSession, loadSessionsOnce } from '@/composables/useChatSession.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useSessionManager } from '@/composables/useSessionManager.ts'
+import { usePendingStore, createPendingMessage } from '@/composables/usePendingStore.ts'
 import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
@@ -198,7 +199,6 @@ import { renderMarkdown } from '@/composables/useMarkdownRenderer.ts'
 import { useDialog } from '@/composables/useDialog'
 import { ChevronRight } from 'lucide-vue-next'
 import '@/assets/loading-mask.css'
-import { syncPendingFromBackend } from '@/utils/chatStreamUtils.ts'
 import { useToolDetailOverlay } from '@/composables/useToolDetailOverlay.ts'
 
 const { t } = useI18n()
@@ -219,6 +219,12 @@ const { agents: agentsList, getAgent, getAgentIcon, getAgentName, getAgentModels
 const agents = agentsComposable
 
 const messages = ref([])
+const pendingStore = usePendingStore()
+/** Rendered messages = persisted messages + pending messages for current session */
+const renderedMessages = computed(() => [
+  ...messages.value,
+  ...pendingStore.getPending(identity.currentSessionId.value),
+])
 const inputDisabled = ref(false)
 const loading = ref(false)
 // Incremented when the panel reopens, so ChatMessageItem can re-check
@@ -347,12 +353,7 @@ function onStreamEnd(reason) {
     store.loadGitBranch().catch(() => {})
   } else if (reason === 'cancelled') {
     // Backend already cleared queue; clear locally for immediate UI response
-    // Remove pending messages from messages.value
-    for (let i = messages.value.length - 1; i >= 0; i--) {
-      if (messages.value[i].pending) {
-        messages.value.splice(i, 1)
-      }
-    }
+    pendingStore.clearPending(identity.currentSessionId.value)
   }
   // 'error': don't touch pending messages — backend preserves queue
 }
@@ -362,6 +363,7 @@ const stream = useChatStream({
   currentSessionId: identity.currentSessionId,
   currentBackend: identity.currentBackend,
   loading,
+  pendingStore,
   onRenderNeeded: (forceFull) => render.updateRenderedContents(forceFull),
   onScrollBottom: (force) => scrollBottom(force),
   onLoadHistory: () => session.loadHistory(),
@@ -406,6 +408,7 @@ const { quoteData, setQuoteData, clearAll } = useChatContext()
 const manager = useSessionManager({
   messages,
   loading,
+  pendingStore,
   switchSessionCore: session.switchSession,
   createSessionCore: session.createSession,
   deleteSessionCore: session.deleteSession,
@@ -629,15 +632,8 @@ async function sendMessage(text, extraFilePaths) {
       clearAll()
       inputBarRef.value?.clearInput()
       clearPendingFiles()
-      // Push a pending user message into messages.value — single source of truth
-      messages.value.push({
-        role: 'user',
-        content: inputText || '',
-        blocks: inputText ? [{ type: 'text', text: inputText }] : [],
-        files: allFiles.map(p => ({ path: p })),
-        createdAt: new Date().toISOString(),
-        pending: true,
-      })
+      // Push a pending user message into pendingStore (per-session)
+      pendingStore.addPending(identity.currentSessionId.value, createPendingMessage(inputText || '', allFiles))
       render.updateRenderedContents()
       scrollBottom(true)
       // Enqueue to backend (POST /api/ai/queue)
@@ -717,17 +713,18 @@ async function sendMessageNow(text, filePaths, files) {
         }
         // Session already running — another request is in progress
         if (data.running) {
-            // Mark the optimistically pushed local user message as pending
-            // instead of removing it — the single-array architecture keeps
-            // pending messages in messages.value with a `pending: true` flag.
+            // Session already running — the message was enqueued.
+            // Move the optimistically pushed user message from messages.value
+            // to pendingStore, since it's now a queued/pending message.
             const localIdx = messages.value.findLastIndex(
                 (m) => m.role === 'user' && m.content === (text || '') && !m.id
             )
             if (localIdx !== -1) {
-                messages.value[localIdx].pending = true
+                messages.value.splice(localIdx, 1)
             }
+            pendingStore.addPending(identity.currentSessionId.value, createPendingMessage(text || '', files || []))
             if (data.queued && data.queue) {
-                syncPendingFromBackend(messages.value, data.queue)
+                pendingStore.syncFromBackendQueue(identity.currentSessionId.value, data.queue)
             }
             stream.connectStream(identity.currentSessionId.value)
             // Proactively sync ACP state for the running session
@@ -769,15 +766,8 @@ async function sendMessageNow(text, filePaths, files) {
 async function handleToolSendMessage(text) {
     if (!text) return
     if (loading.value) {
-      // Push a pending user message into messages.value so the user sees
-      // immediate feedback and queue_drain can find and un-mark it.
-      messages.value.push({
-        role: 'user',
-        content: text,
-        blocks: [{ type: 'text', text }],
-        createdAt: new Date().toISOString(),
-        pending: true,
-      })
+      // Push a pending user message into pendingStore (per-session)
+      pendingStore.addPending(identity.currentSessionId.value, createPendingMessage(text))
       render.updateRenderedContents()
       scrollBottom(true)
       manager.enqueueMessage(text)
@@ -800,6 +790,18 @@ async function handleLoadMore() {
     await new Promise(resolve => requestAnimationFrame(resolve))
     const newScrollHeight = el.scrollHeight
     el.scrollTop = newScrollHeight - oldScrollHeight
+}
+
+/** Handle remove-pending event from ChatMessageItem.
+ *  The event passes the pending message's content text (not index).
+ *  We look up the pendingIndex by content in the pendingStore for the
+ *  backend API, and also remove from pendingStore optimistically. */
+function handleRemovePending(content) {
+    const sessionId = identity.currentSessionId.value
+    const pending = pendingStore.getPending(sessionId)
+    const pendingIndex = pending.findIndex(m => m.content === content)
+    if (pendingIndex < 0) return
+    manager.handleRemovePending(pendingIndex)
 }
 
 function showMetadata(msg) {

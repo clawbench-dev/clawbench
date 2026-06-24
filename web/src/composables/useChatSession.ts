@@ -319,16 +319,8 @@ export function useChatSession(options: UseChatSessionOptions) {
               }
               Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
               Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
-              const localPending = messages.value.filter((m: any) => m.pending)
+              // Replace messages — pending messages are in pendingStore, not messages.value
               messages.value = parseMessages(recoverMsgs, onParseAssistantContent, messages.value)
-              for (const pm of localPending) {
-                const alreadyInDB = messages.value.some(
-                  (m: any) => m.role === 'user' && m.content === pm.content && m.id
-                )
-                if (!alreadyInDB) {
-                  messages.value.push(pm)
-                }
-              }
               totalMessages.value = recoverData.total || messages.value.length
               // Sync remaining session metadata from recovery response
               if (recoverData.modeState && recoverData.modeState?.availableModes?.length > 0) {
@@ -427,24 +419,11 @@ export function useChatSession(options: UseChatSessionOptions) {
       Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
       Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
 
-      // Preserve pending user messages — they exist in messages.value with `pending: true`
-      // but haven't been persisted to the DB yet (backend persists them during queue_drain).
-      // Without this, loadHistory would replace the array and lose pending messages.
-      const localPending = messages.value.filter((m: any) => m.pending)
-
+      // Replace messages with server data. Pending messages are NOT in
+      // messages.value — they live in a separate per-session pendingStore.
+      // No need to preserve/re-append pending messages here.
       messages.value = parseMessages(rawMsgs, onParseAssistantContent, messages.value)
 
-      // Re-append pending messages that aren't yet in the DB.
-      // Dedup by content: if the DB already contains the message (persisted by
-      // queue_drain), don't add the local pending version back.
-      for (const pm of localPending) {
-        const alreadyInDB = messages.value.some(
-          (m: any) => m.role === 'user' && m.content === pm.content && m.id
-        )
-        if (!alreadyInDB) {
-          messages.value.push(pm)
-        }
-      }
       totalMessages.value = data.total || messages.value.length
       // Sanity check: if the backend returned a different sessionId than what we
       // requested, log a warning — this indicates a potential issue (e.g. session

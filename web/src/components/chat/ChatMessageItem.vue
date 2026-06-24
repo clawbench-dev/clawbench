@@ -45,7 +45,7 @@
     <div v-if="msg.pending" class="pending-hint">
       <span class="pending-spinner"></span>
       {{ t('chat.pending.queuing') }}
-      <button class="pending-remove" @click="$emit('remove-pending', index)" :title="t('common.remove')">×</button>
+      <button class="pending-remove" @click="$emit('remove-pending', msg.content)" :title="t('common.remove')">×</button>
     </div>
 
     <!-- Bottom bar for assistant messages -->

@@ -6,7 +6,7 @@ import { gt } from '@/composables/useLocale'
 import { updateModeState, updateCommandState, updateAvailableThinkingEfforts, currentAgentId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
-import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, drainQueueMessage, syncPendingFromBackend } from '@/utils/chatStreamUtils.ts'
+import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, drainQueueMessage } from '@/utils/chatStreamUtils.ts'
 
 const TAG = 'ChatStream'
 
@@ -15,6 +15,7 @@ export interface UseChatStreamOptions {
   currentSessionId: Ref<string>
   currentBackend: Ref<string>
   loading: Ref<boolean>
+  pendingStore: ReturnType<typeof import('@/composables/usePendingStore').usePendingStore>
   onRenderNeeded: (forceFull?: boolean) => void
   onScrollBottom: (force?: boolean) => void
   onLoadHistory: () => Promise<void>
@@ -35,6 +36,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     currentSessionId,
     currentBackend,
     loading,
+    pendingStore,
     onRenderNeeded,
     onScrollBottom,
     onLoadHistory,
@@ -506,9 +508,10 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       // Diagnostic: log message state when done event received
       const doneSummary = messages.value.map((m: any, i: number) =>
-        `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.pending ? ' PENDING' : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
+        `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
       ).join(' | ')
-      appLog.d(TAG, `[done] before loadHistory: ${doneSummary}`)
+      const pendingCount = pendingStore.getPending(currentSessionId.value).length
+      appLog.d(TAG, `[done] pendingStore has ${pendingCount} item(s); messages: ${doneSummary}`)
 
       disconnectStream()
       reconnect.reset()
@@ -643,35 +646,30 @@ export function useChatStream(options: UseChatStreamOptions) {
     })
 
     // ── Queue drain — atomic replacement for old queue_done + queue_consume ──
-    // Single event that atomically: finalizes current streaming, un-marks pending
-    // user message, creates new streaming placeholder.
+    // Single event that atomically: finalizes current streaming, creates new
+    // streaming placeholder. Pending messages are handled by pendingStore.
     eventSource.addEventListener('queue_drain', (e) => {
       resetStreamTimeout()
       let data: any
       try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE queue_drain: invalid JSON, skipping'); return }
 
-      const userContent = data.text || ''
-      const userFiles = (data.files || []).map((p: string) => p)
+      // Always update pendingStore — this is per-session so no cross-session contamination.
+      // The drained message is removed from the backend queue, so syncFromBackendQueue
+      // will remove it from pendingStore[sessionId].
+      pendingStore.syncFromBackendQueue(sessionId, data.queue || [])
 
       if (sessionChanged()) {
-        // Session changed — ignore drain events from the old session
-        // to prevent pending messages from leaking into the new session.
+        // Session changed — pendingStore is already updated above.
+        // Don't modify messages.value or render — that belongs to the new session.
         return
       }
 
-      // Process the drain FIRST: finalize streaming, un-mark pending user msg,
-      // push new streaming placeholder. This must happen before syncPendingFromBackend
-      // because the backend queue no longer contains the drained message — if we
-      // synced first, the pending message would be deleted before we can un-mark it.
+      // Process the drain on the current session's messages:
+      // finalize streaming, push new streaming placeholder.
       drainQueueMessage(
-        messages.value, userContent, userFiles, currentBackend.value,
+        messages.value, currentBackend.value,
         { onRenderNeeded, onExtractScheduledTasks }
       )
-
-      // Now sync pending messages with the backend queue state.
-      // At this point, the drained message's pending flag is already removed,
-      // so syncPendingFromBackend won't touch it.
-      syncPendingFromBackend(messages.value, data.queue || [])
 
       if (isOpen.value) {
         onRenderNeeded()
@@ -680,21 +678,18 @@ export function useChatStream(options: UseChatStreamOptions) {
     })
 
     // queue_update: sent when a new message is enqueued while a session is running.
-    // Syncs pending messages with the authoritative backend queue state.
+    // Syncs pendingStore with the authoritative backend queue state.
     eventSource.addEventListener('queue_update', (e) => {
       resetStreamTimeout()
       let data: any
       try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE queue_update: invalid JSON, skipping'); return }
 
-      // Guard against stale events from a previous session before syncing
-      // pending messages — otherwise messages from the old session's queue
-      // leak into the new session's messages array.
+      // Always update pendingStore — per-session, no contamination possible.
+      pendingStore.syncFromBackendQueue(sessionId, data.queue || [])
+
       if (sessionChanged()) return
 
-      // Sync pending messages in messages.value with the backend queue
-      syncPendingFromBackend(messages.value, data.queue || [])
-
-      // Trigger render when pending messages are added/removed
+      // Trigger render when pending messages are added/removed for the current session
       onRenderNeeded()
     })
 
