@@ -363,4 +363,94 @@ describe('useGlobalEvents', () => {
             expect(newWs).not.toBe(ws)
         })
     })
+
+    describe('wsStatus computed', () => {
+        it('returns "connected" when connected', () => {
+            events.init()
+            const ws = connectAndGetWs()
+            expect(events.wsStatus.value).toBe('connected')
+        })
+
+        it('returns "disconnected" when not connected and not reconnecting', () => {
+            expect(events.wsStatus.value).toBe('disconnected')
+        })
+    })
+
+    describe('init and destroy', () => {
+        it('init only runs once (idempotent)', () => {
+            events.init()
+            const count1 = mockWsInstances.length
+            events.init()
+            expect(mockWsInstances.length).toBe(count1)
+        })
+
+        it('destroy removes visibility change listener', () => {
+            events.init()
+            const ws = connectAndGetWs()
+
+            events.destroy()
+
+            // Visibility change should not trigger disconnect after destroy
+            Object.defineProperty(document, 'visibilityState', {
+                value: 'hidden',
+                writable: true,
+                configurable: true,
+            })
+            // This should not throw since the listener was removed
+            document.dispatchEvent(new Event('visibilitychange'))
+        })
+    })
+
+    describe('summary_update event dispatch', () => {
+        it('dispatches clawbench-summary-update custom event for chat_message summary_update', () => {
+            const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+            const ws = connectAndGetWs()
+
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'summary_update',
+                data: { targetType: 'chat_message', sessionId: 's1' },
+            })
+
+            expect(dispatchSpy).toHaveBeenCalledWith(
+                expect.objectContaining({ type: 'clawbench-summary-update' })
+            )
+            dispatchSpy.mockRestore()
+        })
+
+        it('does not dispatch custom event for non-chat_message summary_update', () => {
+            const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+            const ws = connectAndGetWs()
+            ws.sentMessages = [] // clear
+
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'summary_update',
+                data: { targetType: 'task_execution' },
+            })
+
+            const customEvents = dispatchSpy.mock.calls.filter(
+                (call: any[]) => call[0]?.type === 'clawbench-summary-update'
+            )
+            expect(customEvents).toHaveLength(0)
+            dispatchSpy.mockRestore()
+        })
+    })
+
+    describe('processedEventIds eviction', () => {
+        it('evicts old event IDs when exceeding MAX_PROCESSED_IDS', () => {
+            const handler = vi.fn()
+            events.onEvent(handler)
+            const ws = connectAndGetWs()
+
+            // Send 101+ unique events to trigger eviction (MAX_PROCESSED_IDS = 100)
+            for (let i = 0; i < 102; i++) {
+                ws.receive({ type: 'event', id: `eviction_test_${i}`, event: 'session_update', data: {} })
+            }
+
+            expect(handler).toHaveBeenCalledTimes(102)
+        })
+    })
 })

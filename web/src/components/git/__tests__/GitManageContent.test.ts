@@ -1,201 +1,367 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
-import { nextTick, defineComponent } from 'vue'
+import { mount, flushPromises } from '@vue/test-utils'
+import { ref, nextTick } from 'vue'
 import GitManageContent from '@/components/git/GitManageContent.vue'
 
-// ── Mocks ──
-
+// ── Mocks ────────────────────────────────────────────────────
 vi.mock('vue-i18n', () => ({
-  useI18n: () => ({
-    t: (key: string, params?: Record<string, any>) => {
-      const map: Record<string, string> = {
-        'git.manage.tabWorktrees': 'Worktrees',
-        'git.manage.tabBranches': 'Branches',
-        'git.manage.tabTags': 'Tags',
-        'git.manage.switchBranch': 'Switch Branch',
-        'git.manage.dirty': `Dirty: ${params?.count || 0} untracked`,
-        'git.manage.stashSwitch': 'Stash & Switch',
-        'git.manage.forceSwitch': 'Force Switch',
-        'common.cancel': 'Cancel',
-      }
-      return map[key] ?? key
-    },
+  useI18n: () => ({ t: (key: string) => key }),
+}))
+
+const mockApiGet = vi.fn()
+const mockApiPost = vi.fn()
+const mockApiDelete = vi.fn()
+vi.mock('@/utils/api', () => ({
+  apiGet: (...args: any[]) => mockApiGet(...args),
+  apiPost: (...args: any[]) => mockApiPost(...args),
+  apiDelete: (...args: any[]) => mockApiDelete(...args),
+}))
+
+const mockDialogConfirm = vi.fn().mockResolvedValue(true)
+const mockDialogAlert = vi.fn().mockResolvedValue(undefined)
+vi.mock('@/composables/useDialog', () => ({
+  useDialog: () => ({
+    confirm: mockDialogConfirm,
+    alert: mockDialogAlert,
   }),
 }))
 
-vi.mock('@/stores/app.ts', () => ({
+vi.mock('@/composables/useFileRefresh', () => ({
+  refreshCurrentFile: vi.fn(),
+}))
+
+vi.mock('@/stores/app', () => ({
   store: {
-    state: { projectRoot: '/project', currentDir: '' },
+    state: { currentDir: '', projectRoot: '/project' },
     loadGitBranch: vi.fn().mockResolvedValue(undefined),
     loadFiles: vi.fn().mockResolvedValue(undefined),
     setProject: vi.fn().mockResolvedValue(undefined),
   },
 }))
 
-vi.mock('@/utils/api', () => ({
-  apiGet: vi.fn().mockResolvedValue({ isGit: true, worktrees: [], branches: [], tags: [], stashCount: 0 }),
-  apiPost: vi.fn().mockResolvedValue({ success: true }),
-  apiDelete: vi.fn().mockResolvedValue({ success: true }),
-}))
-
-vi.mock('@/composables/useDialog.ts', () => ({
-  useDialog: () => ({
-    confirm: vi.fn().mockResolvedValue(true),
-    alert: vi.fn().mockResolvedValue(undefined),
-    prompt: vi.fn().mockResolvedValue(''),
-  }),
-}))
-
-vi.mock('@/composables/useFileRefresh.ts', () => ({
-  refreshCurrentFile: vi.fn(),
-}))
-
+// Stub child components
 vi.mock('@/components/git/GitWorktreeList.vue', () => ({
-  default: defineComponent({
-    props: ['worktrees', 'loading', 'error', 'initialCollapsed', 'hideHeader'],
-    emits: ['switch-worktree', 'delete-worktree', 'retry'],
-    template: '<div class="git-worktree-list-stub" />',
-  }),
+  default: { template: '<div class="worktree-list-stub"><slot /></div>' },
 }))
-
 vi.mock('@/components/git/GitBranchList.vue', () => ({
-  default: defineComponent({
-    props: ['branches', 'stashCount', 'loading', 'error', 'checkoutInProgress', 'initialCollapsed', 'hideHeader'],
-    emits: ['switch-branch', 'delete-branch', 'retry'],
-    template: '<div class="git-branch-list-stub" />',
-  }),
+  default: { template: '<div class="branch-list-stub"><slot /></div>' },
+}))
+vi.mock('@/components/git/GitTagList.vue', () => ({
+  default: { template: '<div class="tag-list-stub"><slot /></div>' },
 }))
 
-vi.mock('@/components/git/GitTagList.vue', () => ({
-  default: defineComponent({
-    props: ['tags', 'loading', 'error'],
-    emits: ['retry', 'switch-tag', 'delete-tag'],
-    template: '<div class="git-tag-list-stub" />',
-  }),
-}))
+function mountContent(props = {}) {
+  return mount(GitManageContent, {
+    props,
+    global: {
+      stubs: { Teleport: { template: '<div><slot /></div>' } },
+      provide: {
+        hotSwitchProject: null,
+      },
+    },
+  })
+}
 
 describe('GitManageContent', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    localStorage.clear()
-  })
-
-  function mountContent(props = {}) {
-    return mount(GitManageContent, {
-      props: { ...props },
-      global: {
-        stubs: { Teleport: { template: '<div><slot /></div>' } },
-        provide: {
-          hotSwitchProject: null,
-        },
-      },
+    mockApiGet.mockReset()
+    mockApiPost.mockReset()
+    mockApiDelete.mockReset()
+    // Default: all load endpoints succeed
+    mockApiGet.mockImplementation((url: string) => {
+      if (url.includes('worktrees')) return Promise.resolve({ isGit: true, worktrees: [] })
+      if (url.includes('branches')) return Promise.resolve({ isGit: true, branches: [], stashCount: 0 })
+      if (url.includes('tags')) return Promise.resolve({ isGit: true, tags: [] })
+      return Promise.resolve({})
     })
-  }
-
-  // ── Basic mount ──
-
-  it('mounts without errors', () => {
-    const wrapper = mountContent()
-    expect(wrapper.exists()).toBe(true)
   })
 
-  it('renders the tab bar', () => {
-    const wrapper = mountContent()
-    expect(wrapper.find('.manage-tabs').exists()).toBe(true)
+  describe('tab switching', () => {
+    it('renders worktree tab by default', async () => {
+      const wrapper = mountContent()
+      await flushPromises()
+      expect(wrapper.vm.activeTab).toBe('worktrees')
+    })
+
+    it('switches to branches tab', async () => {
+      const wrapper = mountContent()
+      await flushPromises()
+      wrapper.vm._setActiveTab('branches')
+      await nextTick()
+      expect(wrapper.vm._getActiveTab()).toBe('branches')
+    })
+
+    it('switches to tags tab', async () => {
+      const wrapper = mountContent()
+      await flushPromises()
+      wrapper.vm._setActiveTab('tags')
+      await nextTick()
+      expect(wrapper.vm._getActiveTab()).toBe('tags')
+    })
+
+    it('persists active tab to localStorage', async () => {
+      const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+      const wrapper = mountContent()
+      await flushPromises()
+      wrapper.vm._setActiveTab('branches')
+      await nextTick()
+      expect(setItemSpy).toHaveBeenCalledWith('git-manage-active-tab', 'branches')
+      setItemSpy.mockRestore()
+    })
+
+    it('restores tab from localStorage on mount', async () => {
+      vi.spyOn(Storage.prototype, 'getItem').mockReturnValue('tags')
+      const wrapper = mountContent()
+      await flushPromises()
+      expect(wrapper.vm.activeTab).toBe('tags')
+      vi.restoreAllMocks()
+    })
   })
 
-  it('renders three tab buttons', () => {
-    const wrapper = mountContent()
-    const tabs = wrapper.findAll('.manage-tab')
-    expect(tabs.length).toBe(3)
+  describe('tab counts', () => {
+    it('shows count badges on tabs', async () => {
+      mockApiGet.mockImplementation((url: string) => {
+        if (url.includes('worktrees')) return Promise.resolve({ isGit: true, worktrees: [{ path: '/w1' }] })
+        if (url.includes('branches')) return Promise.resolve({ isGit: true, branches: [{ name: 'main' }, { name: 'dev' }], stashCount: 0 })
+        if (url.includes('tags')) return Promise.resolve({ isGit: true, tags: [{ name: 'v1' }] })
+        return Promise.resolve({})
+      })
+
+      const wrapper = mountContent()
+      await flushPromises()
+      await nextTick()
+
+      const counts = wrapper.findAll('.tab-count')
+      // worktrees: 1, branches: 2, tags: 1
+      expect(counts.length).toBeGreaterThanOrEqual(1)
+    })
   })
 
-  it('renders tab labels in order', () => {
-    const wrapper = mountContent()
-    const tabs = wrapper.findAll('.manage-tab')
-    expect(tabs[0].text()).toContain('Worktrees')
-    expect(tabs[1].text()).toContain('Branches')
-    expect(tabs[2].text()).toContain('Tags')
+  describe('onSwitchWorktree', () => {
+    it('calls store.setProject when no hotSwitchProject', async () => {
+      const wrapper = mountContent()
+      await flushPromises()
+
+      await wrapper.vm.onSwitchWorktree({ path: '/worktree/path' })
+
+      const { store } = await import('@/stores/app')
+      expect(store.setProject).toHaveBeenCalledWith('/worktree/path')
+    })
+
+    it('calls hotSwitchProject when injected', async () => {
+      const mockHotSwitch = vi.fn().mockResolvedValue(undefined)
+      const wrapper = mount(GitManageContent, {
+        global: {
+          stubs: { Teleport: { template: '<div><slot /></div>' } },
+          provide: {
+            hotSwitchProject: mockHotSwitch,
+          },
+        },
+      })
+      await flushPromises()
+
+      await wrapper.vm.onSwitchWorktree({ path: '/worktree/path' })
+
+      expect(mockHotSwitch).toHaveBeenCalledWith('/worktree/path')
+    })
   })
 
-  // ── Active tab ──
+  describe('onSwitchBranch', () => {
+    it('calls checkout API and refreshes on success', async () => {
+      mockApiPost.mockResolvedValue({ success: true })
+      const wrapper = mountContent()
+      await flushPromises()
 
-  it('defaults to worktrees tab as active', () => {
-    const wrapper = mountContent()
-    const tabs = wrapper.findAll('.manage-tab')
-    expect(tabs[0].classes()).toContain('active')
+      await wrapper.vm.onSwitchBranch({ name: 'feature' })
+
+      expect(mockApiPost).toHaveBeenCalledWith('/api/git/checkout', { branch: 'feature' })
+      const { store } = await import('@/stores/app')
+      expect(store.loadGitBranch).toHaveBeenCalled()
+    })
+
+    it('shows dirty checkout modal on dirty_worktree error', async () => {
+      mockApiPost.mockResolvedValue({ success: false, error: 'dirty_worktree', untrackedCount: 3 })
+
+      const wrapper = mountContent()
+      await flushPromises()
+
+      await wrapper.vm.onSwitchBranch({ name: 'feature' })
+
+      expect(wrapper.vm.showDirtyModal).toBe(true)
+      expect(wrapper.vm.dirtyCount).toBe(3)
+    })
+
+    it('shows alert on checkout error', async () => {
+      mockApiPost.mockResolvedValue({ success: false, error: 'checkout_conflict' })
+
+      const wrapper = mountContent()
+      await flushPromises()
+
+      await wrapper.vm.onSwitchBranch({ name: 'feature' })
+
+      expect(mockDialogAlert).toHaveBeenCalled()
+    })
   })
 
-  it('switches to branches tab on click', async () => {
-    const wrapper = mountContent()
-    const tabs = wrapper.findAll('.manage-tab')
-    await tabs[1].trigger('click')
-    await nextTick()
-    // Verify via VM (DOM class update may be stale in test env)
-    expect(wrapper.vm._getActiveTab()).toBe('branches')
+  describe('onSwitchTag', () => {
+    it('calls checkout API and refreshes on success', async () => {
+      mockApiPost.mockResolvedValue({ success: true })
+      const wrapper = mountContent()
+      await flushPromises()
+
+      await wrapper.vm.onSwitchTag({ name: 'v1.0' })
+
+      expect(mockApiPost).toHaveBeenCalledWith('/api/git/checkout', { branch: 'v1.0' })
+    })
+
+    it('shows dirty checkout modal on dirty_worktree error', async () => {
+      mockApiPost.mockResolvedValue({ success: false, error: 'dirty_worktree', untrackedCount: 2 })
+
+      const wrapper = mountContent()
+      await flushPromises()
+
+      await wrapper.vm.onSwitchTag({ name: 'v1.0' })
+
+      expect(wrapper.vm.showDirtyModal).toBe(true)
+    })
   })
 
-  it('switches to tags tab on click', async () => {
-    const wrapper = mountContent()
-    const tabs = wrapper.findAll('.manage-tab')
-    await tabs[2].trigger('click')
-    await nextTick()
-    expect(wrapper.vm._getActiveTab()).toBe('tags')
+  describe('onDeleteBranch', () => {
+    it('deletes branch after confirmation', async () => {
+      mockDialogConfirm.mockResolvedValue(true)
+      mockApiDelete.mockResolvedValue({ success: true })
+
+      const wrapper = mountContent()
+      await flushPromises()
+
+      await wrapper.vm.onDeleteBranch({ name: 'old-branch' })
+
+      expect(mockApiDelete).toHaveBeenCalledWith('/api/git/branch', expect.objectContaining({
+        body: { name: 'old-branch' },
+      }))
+    })
+
+    it('cancels deletion when not confirmed', async () => {
+      mockDialogConfirm.mockResolvedValue(false)
+
+      const wrapper = mountContent()
+      await flushPromises()
+
+      await wrapper.vm.onDeleteBranch({ name: 'old-branch' })
+
+      expect(mockApiDelete).not.toHaveBeenCalled()
+    })
+
+    it('shows alert on delete error', async () => {
+      mockDialogConfirm.mockResolvedValue(true)
+      mockApiDelete.mockResolvedValue({ success: false, error: 'cannot_delete_current' })
+
+      const wrapper = mountContent()
+      await flushPromises()
+
+      await wrapper.vm.onDeleteBranch({ name: 'main' })
+
+      expect(mockDialogAlert).toHaveBeenCalled()
+    })
   })
 
-  // ── Tab persistence ──
+  describe('onDeleteTag', () => {
+    it('deletes tag after confirmation', async () => {
+      mockDialogConfirm.mockResolvedValue(true)
+      mockApiDelete.mockResolvedValue({ success: true })
 
-  it('persists active tab to localStorage', async () => {
-    const wrapper = mountContent()
-    const tabs = wrapper.findAll('.manage-tab')
-    await tabs[1].trigger('click')
+      const wrapper = mountContent()
+      await flushPromises()
 
-    expect(localStorage.getItem('git-manage-active-tab')).toBe('branches')
+      await wrapper.vm.onDeleteTag({ name: 'v0.1' })
+
+      expect(mockApiDelete).toHaveBeenCalledWith('/api/git/tags', expect.objectContaining({
+        body: { name: 'v0.1' },
+      }))
+    })
+
+    it('cancels tag deletion when not confirmed', async () => {
+      mockDialogConfirm.mockResolvedValue(false)
+
+      const wrapper = mountContent()
+      await flushPromises()
+
+      await wrapper.vm.onDeleteTag({ name: 'v0.1' })
+
+      expect(mockApiDelete).not.toHaveBeenCalled()
+    })
   })
 
-  it('restores active tab from localStorage on mount', async () => {
-    localStorage.setItem('git-manage-active-tab', 'tags')
-    const wrapper = mountContent()
-    await nextTick()
-    expect(wrapper.vm._getActiveTab()).toBe('tags')
+  describe('doDirtyCheckout', () => {
+    it('calls checkout with stash flag', async () => {
+      mockApiPost.mockResolvedValue({ success: true })
+
+      const wrapper = mountContent()
+      await flushPromises()
+      wrapper.vm._setShowDirtyModal(true)
+      wrapper.vm._setDirtyCount(2)
+      // Set pending ref
+      wrapper.vm.pendingRef = 'feature'
+      await nextTick()
+
+      await wrapper.vm.doDirtyCheckout('stash')
+
+      expect(mockApiPost).toHaveBeenCalledWith('/api/git/checkout', expect.objectContaining({
+        stash: true,
+        force: false,
+      }))
+    })
+
+    it('calls checkout with force flag', async () => {
+      mockApiPost.mockResolvedValue({ success: true })
+
+      const wrapper = mountContent()
+      await flushPromises()
+      wrapper.vm.pendingRef = 'feature'
+
+      await wrapper.vm.doDirtyCheckout('force')
+
+      expect(mockApiPost).toHaveBeenCalledWith('/api/git/checkout', expect.objectContaining({
+        stash: false,
+        force: true,
+      }))
+    })
   })
 
-  // ── API calls on mount ──
+  describe('load errors', () => {
+    it('sets error flags on load failure', async () => {
+      mockApiGet.mockRejectedValue(new Error('fail'))
 
-  it('calls apiGet for git data on mount', async () => {
-    const { apiGet } = await import('@/utils/api')
-    mountContent()
-    await nextTick()
-    await new Promise(r => setTimeout(r, 50))
+      const wrapper = mountContent()
+      await flushPromises()
 
-    expect(apiGet).toHaveBeenCalledWith('/api/git/worktrees')
-    expect(apiGet).toHaveBeenCalledWith('/api/git/branches')
-    expect(apiGet).toHaveBeenCalledWith('/api/git/tags')
+      expect(wrapper.vm.worktreesError).toBe(true)
+      expect(wrapper.vm.branchesError).toBe(true)
+      expect(wrapper.vm.tagsError).toBe(true)
+    })
   })
 
-  // ── Internal state ──
+  describe('dirty modal', () => {
+    it('renders dirty modal when showDirtyModal is true', async () => {
+      const wrapper = mountContent()
+      await flushPromises()
+      wrapper.vm._setShowDirtyModal(true)
+      await nextTick()
 
-  it('starts with checkoutInProgress false', () => {
-    const wrapper = mountContent()
-    expect(wrapper.vm.checkoutInProgress).toBe(false)
-  })
+      expect(wrapper.find('.modal-overlay').exists()).toBe(true)
+    })
 
-  it('starts with showDirtyModal false', () => {
-    const wrapper = mountContent()
-    expect(wrapper.vm.showDirtyModal).toBe(false)
-  })
+    it('closes modal on cancel click', async () => {
+      const wrapper = mountContent()
+      await flushPromises()
+      wrapper.vm._setShowDirtyModal(true)
+      await nextTick()
 
-  // ── Dirty modal via VM ──
+      const cancelBtn = wrapper.find('.modal-cancel-btn')
+      await cancelBtn.trigger('click')
 
-  it('can set and clear dirty modal via VM', async () => {
-    const wrapper = mountContent()
-    wrapper.vm._setShowDirtyModal(true)
-    wrapper.vm._setDirtyCount(3)
-    await nextTick()
-    expect(wrapper.vm._getShowDirtyModal()).toBe(true)
-
-    wrapper.vm._setShowDirtyModal(false)
-    await nextTick()
-    expect(wrapper.vm._getShowDirtyModal()).toBe(false)
+      expect(wrapper.vm._getShowDirtyModal()).toBe(false)
+    })
   })
 })

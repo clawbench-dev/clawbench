@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { renderKatexInString, renderMarkdown } from '@/composables/useMarkdownRenderer'
+import { renderKatexInString, renderMarkdown, renderMermaidInElement, useMarkdownRenderer } from '@/composables/useMarkdownRenderer'
 
 // Mock globals
 const mockMarkedParse = vi.fn((s: string) => `<p>${s}</p>`)
@@ -8,11 +8,12 @@ const mockKatexRenderToString = vi.fn((math: string, opts: any) => {
   return `<span class="katex">${opts.displayMode ? 'display' : 'inline'}:${math}</span>`
 })
 const mockDOMPurifySanitize = vi.fn((html: string) => html)
+const mermaidRender = vi.fn()
 
 vi.mock('@/utils/globals', () => ({
   marked: { parse: (...args: any[]) => mockMarkedParse(...args) },
   katex: { renderToString: (...args: any[]) => mockKatexRenderToString(...args) },
-  mermaid: { render: vi.fn() },
+  mermaid: { render: (...args: any[]) => mermaidRender(...args) },
   DOMPurify: { sanitize: (...args: any[]) => mockDOMPurifySanitize(...args) },
 }))
 
@@ -200,5 +201,101 @@ describe('renderMarkdown', () => {
 
     const result = renderMarkdown('img', { fixImagePaths: fixFn })
     expect(fixFn).toHaveBeenCalled()
+  })
+})
+
+// --- renderMermaidInElement ---
+
+describe('renderMermaidInElement', () => {
+  beforeEach(() => {
+    vi.mocked(mermaidRender).mockReset()
+    mermaidRender.mockResolvedValue({ svg: '<svg>diagram</svg>' })
+  })
+
+  it('renders mermaid blocks and replaces with SVG', async () => {
+    const el = document.createElement('div')
+    const pre = document.createElement('pre')
+    pre.className = 'mermaid'
+    pre.textContent = 'graph TD; A-->B'
+    el.appendChild(pre)
+
+    await renderMermaidInElement(el)
+
+    // The pre should be replaced by a div.mermaid
+    expect(el.querySelector('pre.mermaid')).toBeNull()
+    expect(el.querySelector('div.mermaid')).toBeTruthy()
+  })
+
+  it('does nothing when no mermaid blocks', async () => {
+    const el = document.createElement('div')
+    el.innerHTML = '<p>no mermaid here</p>'
+
+    await renderMermaidInElement(el)
+
+    expect(mermaidRender).not.toHaveBeenCalled()
+  })
+
+  it('skips already-rendered blocks (data-rendered)', async () => {
+    const el = document.createElement('div')
+    const pre = document.createElement('pre')
+    pre.className = 'mermaid'
+    pre.setAttribute('data-rendered', '1')
+    pre.textContent = 'graph TD; A-->B'
+    el.appendChild(pre)
+
+    await renderMermaidInElement(el)
+
+    expect(mermaidRender).not.toHaveBeenCalled()
+  })
+
+  it('handles mermaid render error gracefully', async () => {
+    mermaidRender.mockRejectedValue(new Error('mermaid syntax error'))
+
+    const el = document.createElement('div')
+    const pre = document.createElement('pre')
+    pre.className = 'mermaid'
+    pre.textContent = 'invalid mermaid'
+    el.appendChild(pre)
+
+    await renderMermaidInElement(el)
+
+    // Should replace with error pre, not throw
+    expect(el.querySelector('pre.mermaid')).toBeNull()
+    expect(el.querySelector('div.mermaid')).toBeTruthy()
+  })
+
+  it('supports specificBlocks parameter', async () => {
+    const el = document.createElement('div')
+    const pre = document.createElement('pre')
+    pre.className = 'mermaid'
+    pre.textContent = 'graph TD; A-->B'
+    el.appendChild(pre)
+
+    const nodeList = el.querySelectorAll('pre.mermaid')
+    await renderMermaidInElement(el, 'mermaid', nodeList)
+
+    expect(mermaidRender).toHaveBeenCalled()
+  })
+})
+
+// --- useMarkdownRenderer composable ---
+
+describe('useMarkdownRenderer', () => {
+  beforeEach(() => {
+    mockMarkedParse.mockClear()
+    mockDOMPurifySanitize.mockImplementation((s: string) => s)
+  })
+
+  it('exposes renderMarkdown and renderMermaidInElement', () => {
+    const { renderMarkdown: rm, renderMermaidInElement: rme } = useMarkdownRenderer()
+    expect(typeof rm).toBe('function')
+    expect(typeof rme).toBe('function')
+  })
+
+  it('renderMarkdown works through composable', () => {
+    mockMarkedParse.mockReturnValue('<p>test</p>')
+    const { renderMarkdown: rm } = useMarkdownRenderer()
+    const result = rm('test')
+    expect(result).toBeDefined()
   })
 })

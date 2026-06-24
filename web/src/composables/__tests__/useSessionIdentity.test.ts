@@ -51,7 +51,7 @@ vi.mock('@/utils/chatSessionUtils', () => ({
     parseMessages: vi.fn().mockReturnValue([]),
 }))
 
-import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState } from '@/composables/useSessionIdentity'
+import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, toggleAutoApprove } from '@/composables/useSessionIdentity'
 
 describe('useSessionIdentity', () => {
     beforeEach(() => {
@@ -1118,6 +1118,149 @@ describe('useSessionIdentity', () => {
             )
 
             vi.unstubAllGlobals()
+        })
+    })
+
+    // ── usage state ──
+
+    describe('updateUsageState / clearUsageState', () => {
+        it('sets usage state from SSE event', () => {
+            const identity = useSessionIdentity()
+            updateUsageState(5000, 200000, 0.05, 'USD')
+
+            expect(identity.contextUsed.value).toBe(5000)
+            expect(identity.contextSize.value).toBe(200000)
+            expect(identity.contextCost.value).toBe(0.05)
+            expect(identity.contextCurrency.value).toBe('USD')
+        })
+
+        it('defaults cost and currency when not provided', () => {
+            const identity = useSessionIdentity()
+            updateUsageState(1000, 100000)
+
+            expect(identity.contextCost.value).toBe(0)
+            expect(identity.contextCurrency.value).toBe('')
+        })
+
+        it('clearUsageState resets all usage refs', () => {
+            const identity = useSessionIdentity()
+            updateUsageState(5000, 200000, 0.05, 'USD')
+            clearUsageState()
+
+            expect(identity.contextUsed.value).toBe(0)
+            expect(identity.contextSize.value).toBe(0)
+            expect(identity.contextCost.value).toBe(0)
+            expect(identity.contextCurrency.value).toBe('')
+        })
+    })
+
+    // ── toggleAutoApprove ──
+
+    describe('toggleAutoApprove', () => {
+        it('sets autoApprove ref and persists to server', async () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-1'
+
+            const mockFetch = vi.fn().mockResolvedValue({ ok: true })
+            vi.stubGlobal('fetch', mockFetch)
+
+            toggleAutoApprove(true)
+
+            expect(identity.autoApprove.value).toBe(true)
+            expect(mockFetch).toHaveBeenCalledWith('/api/ai/session/update', expect.objectContaining({
+                method: 'PATCH',
+            }))
+
+            vi.unstubAllGlobals()
+        })
+
+        it('does not persist when no session ID', () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = ''
+
+            const mockFetch = vi.fn()
+            vi.stubGlobal('fetch', mockFetch)
+
+            toggleAutoApprove(true)
+
+            expect(identity.autoApprove.value).toBe(true)
+            expect(mockFetch).not.toHaveBeenCalled()
+
+            vi.unstubAllGlobals()
+        })
+    })
+
+    // ── continueFromExecution / checkContinueSession ──
+
+    describe('continueFromExecution', () => {
+        it('returns false when no callback registered', async () => {
+            resetIdentity()
+            const identity = useSessionIdentity()
+
+            const result = await identity.continueFromExecution(1, 2, () => {})
+            expect(result).toBe(false)
+        })
+
+        it('delegates to registered callback', async () => {
+            const mockContinue = vi.fn().mockResolvedValue(true)
+            registerSessionActions({
+                switchSession: vi.fn(),
+                createSession: vi.fn(),
+                deleteSession: vi.fn(),
+                sendMessage: vi.fn(),
+                openChatPanel: vi.fn(),
+                continueFromExecution: mockContinue,
+                checkContinueSession: vi.fn().mockResolvedValue({ exists: false, sessionId: '' }),
+            })
+
+            const identity = useSessionIdentity()
+            const switchTab = vi.fn()
+            const result = await identity.continueFromExecution(1, 2, switchTab)
+
+            expect(result).toBe(true)
+            expect(mockContinue).toHaveBeenCalledWith(1, 2, switchTab)
+        })
+    })
+
+    describe('checkContinueSession', () => {
+        it('returns default when no callback registered', async () => {
+            resetIdentity()
+            const identity = useSessionIdentity()
+
+            const result = await identity.checkContinueSession(1, 2)
+            expect(result).toEqual({ exists: false, sessionId: '' })
+        })
+
+        it('delegates to registered callback', async () => {
+            const mockCheck = vi.fn().mockResolvedValue({ exists: true, sessionId: 'existing-s' })
+            registerSessionActions({
+                switchSession: vi.fn(),
+                createSession: vi.fn(),
+                deleteSession: vi.fn(),
+                sendMessage: vi.fn(),
+                openChatPanel: vi.fn(),
+                continueFromExecution: vi.fn().mockResolvedValue(false),
+                checkContinueSession: mockCheck,
+            })
+
+            const identity = useSessionIdentity()
+            const result = await identity.checkContinueSession(1, 2)
+
+            expect(result).toEqual({ exists: true, sessionId: 'existing-s' })
+        })
+    })
+
+    // ── clearThinkingEffortState ──
+
+    describe('clearThinkingEffortState', () => {
+        it('clears both availableThinkingEfforts and currentThinkingEffortName', () => {
+            const identity = useSessionIdentity()
+            updateThinkingEffortState('high', [{ id: 'high', name: 'High' }])
+
+            clearThinkingEffortState()
+
+            expect(identity.availableThinkingEfforts.value).toEqual([])
+            expect(identity.currentThinkingEffortName.value).toBe('')
         })
     })
 })

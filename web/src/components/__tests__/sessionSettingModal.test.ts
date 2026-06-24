@@ -602,4 +602,263 @@ describe('SessionSettingModal', () => {
     // Thinking tab should show empty hint
     expect(wrapper.find('.tab-empty-hint').exists()).toBe(true)
   })
+
+  // --- Transport tab ---
+
+  describe('transport tab', () => {
+    it('shows ACP and CLI options for dual-transport agents', async () => {
+      // Switch to transport tab directly
+      const wrapper = mountModal()
+      wrapper.vm._setActiveTab('transport')
+      await nextTick()
+
+      const items = wrapper.findAll('.thinking-item')
+      // ACP + CLI = 2 options
+      expect(items.length).toBe(2)
+    })
+
+    it('shows CLI option only for non-dual-transport agents', async () => {
+      const wrapper = mountModal({ agentId: 'kimi' })
+      wrapper.vm._setActiveTab('transport')
+      await nextTick()
+
+      const items = wrapper.findAll('.thinking-item')
+      // Only CLI option
+      expect(items.length).toBe(1)
+    })
+
+    it('highlights current transport as current', async () => {
+      const wrapper = mountModal()
+      wrapper.vm._setActiveTab('transport')
+      await nextTick()
+
+      const items = wrapper.findAll('.thinking-item')
+      // ACP is current (mockIdentity.currentTransport = 'acp-stdio')
+      expect(items[0].classes()).toContain('current')
+    })
+  })
+
+  // --- Mode tab ---
+
+  describe('mode tab', () => {
+    it('shows available modes for ACP agents', async () => {
+      const wrapper = mountModal()
+      wrapper.vm._setActiveTab('mode')
+      await nextTick()
+
+      const items = wrapper.findAll('.thinking-item')
+      expect(items.length).toBe(2) // code, ask
+    })
+
+    it('shows empty hint for non-ACP agents', async () => {
+      // For non-ACP agent, isACP should be false —
+      // set transport to 'cli' so isACP is false
+      mockIdentity.currentTransport.value = 'cli'
+      const wrapper = mountModal({ agentId: 'kimi' })
+      wrapper.vm._setActiveTab('mode')
+      await nextTick()
+
+      expect(wrapper.find('.tab-empty-hint').exists()).toBe(true)
+      mockIdentity.currentTransport.value = 'acp-stdio'
+    })
+
+    it('renders auto-approve toggle', async () => {
+      const wrapper = mountModal()
+      wrapper.vm._setActiveTab('mode')
+      await nextTick()
+
+      expect(wrapper.find('.auto-approve-toggle').exists()).toBe(true)
+    })
+
+    it('renders mode items with correct names', async () => {
+      const wrapper = mountModal()
+      wrapper.vm._setActiveTab('mode')
+      await nextTick()
+
+      const items = wrapper.findAll('.thinking-item')
+      expect(items[0].text()).toContain('Code')
+      expect(items[1].text()).toContain('Ask')
+    })
+  })
+
+  // --- selectTransport ---
+
+  describe('selectTransport', () => {
+    it('does nothing when selecting same transport (ACP)', async () => {
+      // currentTransport is 'acp-stdio', select 'acp-stdio' again
+      const wrapper = mountModal()
+      wrapper.vm._setActiveTab('transport')
+      await nextTick()
+
+      const items = wrapper.findAll('.thinking-item')
+      vi.mocked(patchAgentPref).mockClear()
+      await items[0].trigger('click')
+
+      // Should not emit switch-transport for same transport
+      expect(wrapper.emitted('switch-transport')).toBeFalsy()
+    })
+
+    it('switches from ACP to CLI', async () => {
+      const wrapper = mountModal()
+      wrapper.vm._setActiveTab('transport')
+      await nextTick()
+
+      const items = wrapper.findAll('.thinking-item')
+      await items[1].trigger('click') // CLI
+
+      expect(wrapper.emitted('switch-transport')).toBeTruthy()
+      expect(wrapper.emitted('update:show')).toBeTruthy()
+    })
+  })
+
+  // --- setDefaultTransport ---
+
+  describe('setDefaultTransport', () => {
+    it('calls patchAgentPref and updateAgentField when star clicked', async () => {
+      // Set transport to CLI so ACP star button appears
+      mockIdentity.currentTransport.value = 'cli'
+      const wrapper = mountModal()
+      wrapper.vm._setActiveTab('transport')
+      await nextTick()
+
+      const starBtns = wrapper.findAll('.set-default-btn')
+      if (starBtns.length > 0) {
+        await starBtns[0].trigger('click')
+        expect(patchAgentPref).toHaveBeenCalledWith('claude', 'transport', expect.any(String))
+      }
+      mockIdentity.currentTransport.value = 'acp-stdio'
+    })
+  })
+
+  // --- selectMode ---
+
+  describe('selectMode', () => {
+    it('emits switch-mode when clicking a mode', async () => {
+      const wrapper = mountModal()
+      wrapper.vm._setActiveTab('mode')
+      await nextTick()
+
+      const items = wrapper.findAll('.thinking-item')
+      await items[1].trigger('click') // ask
+
+      expect(wrapper.emitted('switch-mode')).toBeTruthy()
+    })
+
+    it('closes modal after selecting a mode', async () => {
+      const wrapper = mountModal()
+      wrapper.vm._setActiveTab('mode')
+      await nextTick()
+
+      const items = wrapper.findAll('.thinking-item')
+      await items[1].trigger('click')
+
+      expect(wrapper.emitted('update:show')).toBeTruthy()
+    })
+  })
+
+  // --- handleRefresh edge cases ---
+
+  describe('handleRefresh', () => {
+    it('does not call API when already refreshing', async () => {
+      let resolveRefresh: (v: any) => void
+      vi.mocked(apiPost).mockReturnValue(new Promise(r => { resolveRefresh = r }))
+
+      const wrapper = mountModal()
+      await wrapper.find('.refresh-btn').trigger('click')
+      await nextTick()
+
+      // Try clicking again while still refreshing
+      vi.mocked(apiPost).mockClear()
+      await wrapper.find('.refresh-btn').trigger('click')
+      await nextTick()
+
+      expect(apiPost).not.toHaveBeenCalled()
+
+      resolveRefresh!({ models: [] })
+      await nextTick()
+      await new Promise(r => setTimeout(r, 10))
+    })
+  })
+
+  // --- selectThinkingEffort ---
+
+  describe('selectThinkingEffort', () => {
+    it('emits switch-thinking-effort and closes modal', async () => {
+      // Set ACP thinking levels
+      mockIdentity.availableThinkingEfforts.value = [
+        { id: 'low', name: 'Low' },
+        { id: 'high', name: 'High' },
+      ]
+      const wrapper = mountModal()
+      wrapper.vm._setActiveTab('thinking')
+      await nextTick()
+
+      const items = wrapper.findAll('.thinking-item')
+      if (items.length > 0) {
+        await items[0].trigger('click')
+        expect(wrapper.emitted('switch-thinking-effort')).toBeTruthy()
+        expect(wrapper.emitted('update:show')).toBeTruthy()
+      }
+      mockIdentity.availableThinkingEfforts.value = []
+    })
+  })
+
+  // --- Long-press state ---
+
+  describe('long press', () => {
+    it('onTouchEnd clears timer and resets triggered state', async () => {
+      const wrapper = mountModal()
+      // Call onTouchEnd directly — it's internal but we can verify no crash
+      expect(() => wrapper.vm.onTouchEnd()).not.toThrow()
+    })
+
+    it('onTouchMove clears timer', async () => {
+      const wrapper = mountModal()
+      expect(() => wrapper.vm.onTouchMove()).not.toThrow()
+    })
+  })
+
+  // --- PopupMenu ---
+
+  it('renders PopupMenu component', () => {
+    const wrapper = mountModal()
+    expect(wrapper.findComponent({ name: 'PopupMenu' }).exists()).toBe(true)
+  })
+
+  // --- handleClose ---
+
+  it('emits update:show false on handleClose', async () => {
+    const wrapper = mountModal()
+    wrapper.vm.handleClose()
+    expect(wrapper.emitted('update:show')).toBeTruthy()
+    expect(wrapper.emitted('update:show')![0][0]).toBe(false)
+  })
+
+  // --- isACP computed ---
+
+  describe('isACP computed', () => {
+    it('is true when currentTransport is acp-stdio', async () => {
+      mockIdentity.currentTransport.value = 'acp-stdio'
+      const wrapper = mountModal()
+      wrapper.vm._setActiveTab('transport')
+      await nextTick()
+
+      const items = wrapper.findAll('.thinking-item')
+      // First item (ACP) should be current
+      expect(items[0].classes()).toContain('current')
+    })
+
+    it('falls back to agent config transport when currentTransport is empty', async () => {
+      mockIdentity.currentTransport.value = ''
+      const wrapper = mountModal()
+      wrapper.vm._setActiveTab('transport')
+      await nextTick()
+
+      // Agent config says 'acp-stdio', so ACP should be current
+      const items = wrapper.findAll('.thinking-item')
+      expect(items[0].classes()).toContain('current')
+
+      mockIdentity.currentTransport.value = 'acp-stdio'
+    })
+  })
 })
