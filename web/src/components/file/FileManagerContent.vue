@@ -434,6 +434,12 @@ const { state: multiSelect, enterMultiSelect, exitMultiSelect, toggleSelect } = 
 
 defineExpose({
     multiSelectState: multiSelect,
+    searchQuery,
+    viewMode,
+    // Test helper: set searchQuery and trigger reactivity
+    _setSearchQuery(val) { searchQuery.value = val },
+    _setViewMode(val) { viewMode.value = val },
+    _getFilteredEntries() { return filteredEntries.value },
 })
 
 const isAllSelected = computed(() => {

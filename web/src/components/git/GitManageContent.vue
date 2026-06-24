@@ -374,6 +374,22 @@ async function onDeleteTag(tag: any) {
     await dialog.alert(t('git.manage.deleteFailed'))
   }
 }
+
+defineExpose({
+  activeTab,
+  showDirtyModal,
+  dirtyCount,
+  checkoutInProgress,
+  worktrees,
+  branches,
+  tags,
+  doDirtyCheckout,
+  _setActiveTab(val) { activeTab.value = val },
+  _setShowDirtyModal(val) { showDirtyModal.value = val },
+  _setDirtyCount(val) { dirtyCount.value = val },
+  _getActiveTab() { return activeTab.value },
+  _getShowDirtyModal() { return showDirtyModal.value },
+})
 </script>
 
 <style scoped>

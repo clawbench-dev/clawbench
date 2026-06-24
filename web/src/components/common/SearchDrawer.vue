@@ -164,6 +164,17 @@ function jumpToFirst() {
     jumpTo(results.value[0])
   }
 }
+
+defineExpose({
+  query,
+  results,
+  isRenderedView,
+  _setQuery(val) { query.value = val },
+  _getQuery() { return query.value },
+  _getResults() { return results.value },
+  _jumpTo(result) { jumpTo(result) },
+  _jumpToFirst() { jumpToFirst() },
+})
 </script>
 
 <style scoped>

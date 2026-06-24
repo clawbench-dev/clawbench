@@ -455,6 +455,18 @@ async function setAsDefault() {
 function handleClose() {
   emit('update:show', false)
 }
+
+defineExpose({
+  activeTab,
+  searchQuery,
+  showDefaultPopupMenu,
+  refreshing,
+  _setActiveTab(val) { activeTab.value = val },
+  _setSearchQuery(val) { searchQuery.value = val },
+  _getActiveTab() { return activeTab.value },
+  _getFilteredModels() { return filteredModels.value },
+  _getSearchQuery() { return searchQuery.value },
+})
 </script>
 
 <style scoped>
