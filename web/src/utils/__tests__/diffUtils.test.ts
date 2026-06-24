@@ -104,10 +104,10 @@ describe('computeDiff LCS behavior', () => {
 
     it('identifies completely different lines', () => {
         const result = computeDiff('a\nb', 'c\nd')
-        // No common lines → all deleted/added
-        const totalChanges = result.deletedInOld.length + result.addedInNew.length +
-            result.deletedChars.size + result.addedChars.size
-        expect(totalChanges).toBeGreaterThan(0)
+        // No common lines → all deleted/added (via char diffs or line diffs)
+        const hasAnyDiff = result.deletedInOld.length > 0 || result.addedInNew.length > 0 ||
+            result.deletedChars.size > 0 || result.addedChars.size > 0
+        expect(hasAnyDiff).toBe(true)
     })
 
     it('handles one line changed in the middle', () => {

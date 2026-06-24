@@ -1275,6 +1275,18 @@ func TestGetExternalSessionID_NonExistent(t *testing.T) {
 	assert.Equal(t, "", service.GetExternalSessionID("non-existent"))
 }
 
+func TestClearExternalSessionID(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "pi", "ClearExtID")
+	// Set external session ID
+	err := service.UpdateExternalSessionID(sid, "cli-sess-123")
+	assert.NoError(t, err)
+	assert.Equal(t, "cli-sess-123", service.GetExternalSessionID(sid))
+	// Clear it
+	service.ClearExternalSessionID(sid)
+	assert.Equal(t, "", service.GetExternalSessionID(sid))
+}
+
 // ---------- GetExpiredDeletedSessions ----------
 
 func TestGetExpiredDeletedSessions_NoExpired(t *testing.T) {
