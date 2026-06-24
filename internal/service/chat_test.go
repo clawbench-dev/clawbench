@@ -1275,7 +1275,6 @@ func TestGetExternalSessionID_NonExistent(t *testing.T) {
 	assert.Equal(t, "", service.GetExternalSessionID("non-existent"))
 }
 
-
 // ---------- GetExpiredDeletedSessions ----------
 
 func TestGetExpiredDeletedSessions_NoExpired(t *testing.T) {
@@ -2439,7 +2438,7 @@ func TestCreateSession_ExternalSessionIDEmpty(t *testing.T) {
 }
 
 // TestCreateSession_ExternalSessionIDPersistedInDB explicitly verifies
-// that the INSERT statement in CreateSession writes external_session_id = ''.
+// that the INSERT statement in CreateSession writes external_session_id = ”.
 func TestCreateSession_ExternalSessionIDPersistedInDB(t *testing.T) {
 	setupDB(t)
 

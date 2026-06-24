@@ -23,9 +23,9 @@ func init() {
 		Spec: model.BackendSpec{
 			ID: "pi", Backend: "pi", DefaultCmd: "pi", Name: "Pi", Icon: "🥧", Specialty: "极简编程智能体",
 			ThinkingEffortLevels: []string{"off", "minimal", "low", "medium", "high", "xhigh"},
-			EmbeddedSubDir:      "pi",
-			EmbeddedVersionFile: "VERSION",
-			SortOrder:           8,
+			EmbeddedSubDir:       "pi",
+			EmbeddedVersionFile:  "VERSION",
+			SortOrder:            8,
 		},
 	})
 }

@@ -891,4 +891,3 @@ func TestGetOrCreateConn_DoesNotPrePopulateAcpSID_WhenEmpty(t *testing.T) {
 	// Cleanup
 	mgr.CloseConn(clawbenchSID)
 }
-
