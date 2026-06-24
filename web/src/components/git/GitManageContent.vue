@@ -384,9 +384,9 @@ defineExpose({
   branches,
   tags,
   doDirtyCheckout,
-  _setActiveTab(val) { activeTab.value = val },
-  _setShowDirtyModal(val) { showDirtyModal.value = val },
-  _setDirtyCount(val) { dirtyCount.value = val },
+  _setActiveTab(val: 'branches' | 'worktrees' | 'tags') { activeTab.value = val },
+  _setShowDirtyModal(val: boolean) { showDirtyModal.value = val },
+  _setDirtyCount(val: number) { dirtyCount.value = val },
   _getActiveTab() { return activeTab.value },
   _getShowDirtyModal() { return showDirtyModal.value },
 })
