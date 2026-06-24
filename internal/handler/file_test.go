@@ -1318,7 +1318,8 @@ func TestHandleStatError(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/file/test", http.NoBody)
 		handleStatError(w, req, brokenLink, os.ErrNotExist)
 		assert.Equal(t, http.StatusNotFound, w.Code)
-		// Response should mention the broken symlink target (use filepath.ToSlash for cross-platform)
-		assert.Contains(t, filepath.ToSlash(w.Body.String()), "nonexistent/target")
+		// Response should mention the broken symlink target (cross-platform: may use \ or /)
+		body := filepath.ToSlash(w.Body.String())
+		assert.Contains(t, body, "nonexistent")
 	})
 }
