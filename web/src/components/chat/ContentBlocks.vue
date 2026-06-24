@@ -328,44 +328,6 @@ function setThinkingRef(bi, el) {
   }
 }
 
-/** Trigger collapse animation for all streaming thinking blocks when streaming ends. */
-function startThinkingCollapse() {
-  const newCollapsing = {}
-  const newMaxHeights = {}
-
-  // Find all thinking blocks that were streaming and measure their height
-  for (const idxStr of Object.keys(_collapseElRefs)) {
-    const el = _collapseElRefs[idxStr]
-    if (el && el.scrollHeight) {
-      const fullHeight = el.scrollHeight
-      newCollapsing[idxStr] = true
-      newMaxHeights[idxStr] = fullHeight
-    }
-  }
-  _collapseElRefs = {}
-
-  if (Object.keys(newCollapsing).length > 0) {
-    collapsingThinking.value = newCollapsing
-    collapsingMaxHeight.value = newMaxHeights
-
-    // Delay before starting collapse animation so user can read the thinking output
-    setTimeout(() => {
-      const updatedMaxHeights = {}
-      Object.keys(newCollapsing).forEach(idx => {
-        updatedMaxHeights[idx] = 28 // header-only height
-      })
-      collapsingMaxHeight.value = updatedMaxHeights
-
-      // After transition completes, clean up animation state
-      setTimeout(() => {
-        collapsingThinking.value = {}
-        collapsingMaxHeight.value = {}
-      }, 400) // match CSS transition duration
-    }, 3000)
-  }
-}
-
-
 /** Click inside expanded tool-detail: dispatch to tool action handlers first, then fall through to generic behavior. */
 function handleToolDetailClick(event) {
   // Try tool-specific action handler first (via data-tool-name on the .tool-detail container)
@@ -482,8 +444,38 @@ watch(() => props.streaming, (streaming, wasStreaming) => {
     if (_throttleTimer) { clearTimeout(_throttleTimer); _throttleTimer = null }
     _throttlePending = false
     blockHtmlCache.value = {}
-    // Trigger collapse animation for thinking blocks that were streaming
-    nextTick(() => startThinkingCollapse())
+    // Snapshot element refs and measure heights before Vue clears them
+    // (isThinkingStreaming becomes false → :ref becomes undefined → ref cleared).
+    // Set collapsing state immediately so the template renders with maxHeight override
+    // instead of the 28px collapsed CSS, preventing a flash.
+    const refSnapshot = { ..._collapseElRefs }
+    const newCollapsing = {}
+    const newMaxHeights = {}
+    for (const idxStr of Object.keys(refSnapshot)) {
+      const el = refSnapshot[idxStr]
+      if (el && el.scrollHeight) {
+        newCollapsing[idxStr] = true
+        newMaxHeights[idxStr] = el.scrollHeight
+      }
+    }
+    _collapseElRefs = {}
+    if (Object.keys(newCollapsing).length > 0) {
+      collapsingThinking.value = newCollapsing
+      collapsingMaxHeight.value = newMaxHeights
+      // Delay before starting collapse animation so user can read the thinking output
+      setTimeout(() => {
+        const updatedMaxHeights = {}
+        Object.keys(newCollapsing).forEach(idx => {
+          updatedMaxHeights[idx] = 28 // header-only height
+        })
+        collapsingMaxHeight.value = updatedMaxHeights
+        // After transition completes, clean up animation state
+        setTimeout(() => {
+          collapsingThinking.value = {}
+          collapsingMaxHeight.value = {}
+        }, 400) // match CSS transition duration
+      }, 3000)
+    }
   }
 })
 
