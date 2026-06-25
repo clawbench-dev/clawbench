@@ -202,7 +202,7 @@
               >
                 <component :is="overflowButtonIcon" />
               </button>
-              <span v-if="overflowHasBadge" class="dock-badge" :class="{ 'dock-badge-pop': overflowBadgeAnim }" @animationend="overflowBadgeAnim = false"></span>
+              <span v-if="overflowBadgeCount > 0 && !isOverflowTabActive" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': overflowBadgeAnim }" @animationend="overflowBadgeAnim = false">{{ formatBadgeCount(overflowBadgeCount) }}</span>
             </div>
           </div>
         </div>
@@ -228,8 +228,7 @@
             <span>{{ t('terminal.title') }}</span>
             <span v-if="store.state.terminalSessionCount > 0" class="dock-overflow-count" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
           </button>
-          <div class="dock-overflow-divider"></div>
-          <button class="dock-overflow-item" @click.stop="handleOverflowSettings">
+          <button class="dock-overflow-item" :class="{ active: activeTab === 'settings' }" @click.stop="handleOverflowSelect('settings')">
             <Settings :size="16" />
             <span>{{ t('nav.settings') }}</span>
           </button>
@@ -1098,8 +1097,8 @@ watch(() => store.state.portForwardActiveCount, (n, o) => {
   }
 })
 
-const overflowHasBadge = computed(() => {
-  return store.state.taskUnreadCount > 0 || store.state.portForwardActiveCount > 0 || store.state.terminalSessionCount > 0
+const overflowBadgeCount = computed(() => {
+  return store.state.taskUnreadCount + store.state.portForwardActiveCount + store.state.terminalSessionCount
 })
 
 const overflowButtonTitle = computed(() => {
@@ -1125,20 +1124,13 @@ function handleOverflowSelect(tab) {
     return
   }
   overflowMenuOpen.value = false
-  // Remember this tab as the dock slot 4 shortcut (except settings)
-  if (tab !== 'settings') {
-    setDockSlot4(tab)
-  }
+  // Remember this tab as the dock slot 4 shortcut
+  setDockSlot4(tab)
   if (tab === 'terminal') {
     handleDockTerminal()
   } else {
     switchTab(tab)
   }
-}
-
-function handleOverflowSettings() {
-  overflowMenuOpen.value = false
-  switchTab('settings')
 }
 
 // Close overflow menu on outside click
@@ -1731,11 +1723,6 @@ onUnmounted(() => {
     flex-shrink: 0;
 }
 
-.dock-overflow-divider {
-    height: 1px;
-    background: var(--border-color);
-    margin: 4px 8px;
-}
 
 /* Popup transition */
 .dock-popup-enter-active {
