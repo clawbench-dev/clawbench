@@ -473,4 +473,194 @@ describe('useTaskTab', () => {
       vi.useRealTimers()
     })
   })
+
+  describe('navigation', () => {
+    it('navigateToTaskSettings sets selectedTaskId and currentView', () => {
+      const { navigateToTaskSettings, selectedTaskId, currentView } = useTaskTab()
+      navigateToTaskSettings(42)
+      expect(selectedTaskId.value).toBe(42)
+      expect(currentView.value).toBe('settings')
+    })
+
+    it('navigateToTaskHistory sets currentView to history and clears unread', async () => {
+      const { navigateToTaskHistory, currentView, selectedTaskId } = useTaskTab()
+      // Set up a task with unread count
+      store.state.tasks = [{ id: 1, unreadCount: 2, name: 'Task 1' }]
+      mockFetch.mockResolvedValue({ ok: true })
+
+      navigateToTaskHistory(1)
+      expect(currentView.value).toBe('history')
+      expect(selectedTaskId.value).toBe(1)
+    })
+
+    it('goBack navigates from settings to list', () => {
+      const { navigateToTaskSettings, goBack, currentView, selectedTaskId } = useTaskTab()
+      navigateToTaskSettings(5)
+      expect(currentView.value).toBe('settings')
+
+      goBack()
+      expect(currentView.value).toBe('list')
+      expect(selectedTaskId.value).toBeNull()
+    })
+
+    it('goBack navigates from history to settings', () => {
+      const { navigateToTaskSettings, navigateToTaskHistory, goBack, currentView } = useTaskTab()
+      navigateToTaskSettings(5)
+      navigateToTaskHistory(5)
+      expect(currentView.value).toBe('history')
+
+      goBack()
+      expect(currentView.value).toBe('settings')
+    })
+
+    it('goBack closes exec detail first', () => {
+      const { navigateToTaskSettings, openExecDetail, goBack, execDetailOpen } = useTaskTab()
+      navigateToTaskSettings(5)
+      openExecDetail('exec-1', { id: 'exec-1' })
+      expect(execDetailOpen.value).toBe(true)
+
+      goBack()
+      expect(execDetailOpen.value).toBe(false)
+    })
+
+    it('goBack closes form first', () => {
+      const { openCreateForm, goBack, formViewOpen } = useTaskTab()
+      openCreateForm()
+      expect(formViewOpen.value).toBe(true)
+
+      goBack()
+      expect(formViewOpen.value).toBe(false)
+    })
+
+    it('navigateToList resets all navigation state', () => {
+      const { navigateToTaskSettings, navigateToList, currentView, selectedTaskId, formViewOpen, openCreateForm } = useTaskTab()
+      navigateToTaskSettings(5)
+      openCreateForm()
+
+      navigateToList()
+      expect(currentView.value).toBe('list')
+      expect(selectedTaskId.value).toBeNull()
+      expect(formViewOpen.value).toBe(false)
+    })
+
+    it('openExecDetail sets exec state', () => {
+      const { navigateToTaskSettings, openExecDetail, execDetailOpen, selectedExecId, selectedExecData } = useTaskTab()
+      navigateToTaskSettings(5)
+
+      openExecDetail('exec-1', { id: 'exec-1', status: 'running' })
+      expect(execDetailOpen.value).toBe(true)
+      expect(selectedExecId.value).toBe('exec-1')
+      expect(selectedExecData.value).toEqual({ id: 'exec-1', status: 'running' })
+    })
+
+    it('closeExecDetail clears exec state', () => {
+      const { navigateToTaskSettings, openExecDetail, closeExecDetail, execDetailOpen, selectedExecId } = useTaskTab()
+      navigateToTaskSettings(5)
+      openExecDetail('exec-1', { id: 'exec-1' })
+
+      closeExecDetail()
+      expect(execDetailOpen.value).toBe(false)
+      expect(selectedExecId.value).toBeNull()
+    })
+
+    it('openCreateForm and openEditForm set form mode', () => {
+      const { openCreateForm, openEditForm, formMode, formViewOpen } = useTaskTab()
+
+      openCreateForm()
+      expect(formMode.value).toBe('create')
+      expect(formViewOpen.value).toBe(true)
+
+      openEditForm()
+      expect(formMode.value).toBe('edit')
+    })
+
+    it('closeForm closes the form', () => {
+      const { openCreateForm, closeForm, formViewOpen } = useTaskTab()
+      openCreateForm()
+      expect(formViewOpen.value).toBe(true)
+
+      closeForm()
+      expect(formViewOpen.value).toBe(false)
+    })
+  })
+
+  describe('resetTaskTabState', () => {
+    it('resets all navigation state', async () => {
+      const { resetTaskTabState } = await import('@/composables/useTaskTab.ts')
+      const { currentView, selectedTaskId, formViewOpen, execDetailOpen } = useTaskTab()
+
+      // Set some state first
+      const { navigateToTaskSettings } = useTaskTab()
+      navigateToTaskSettings(10)
+
+      resetTaskTabState()
+      expect(currentView.value).toBe('list')
+      expect(selectedTaskId.value).toBeNull()
+      expect(formViewOpen.value).toBe(false)
+      expect(execDetailOpen.value).toBe(false)
+    })
+  })
+
+  describe('markAllTasksRead', () => {
+    it('sends read action for all unread tasks', async () => {
+      const { markAllTasksRead } = useTaskTab()
+      store.state.tasks = [
+        { id: 1, unreadCount: 2 },
+        { id: 2, unreadCount: 0 },
+        { id: 3, unreadCount: 1 },
+      ]
+      mockFetch.mockResolvedValue({ ok: true })
+
+      await markAllTasksRead()
+
+      // Should call fetch for tasks with unreadCount > 0
+      expect(mockFetch).toHaveBeenCalledWith('/api/tasks/1', expect.objectContaining({ method: 'PUT' }))
+      expect(mockFetch).toHaveBeenCalledWith('/api/tasks/3', expect.objectContaining({ method: 'PUT' }))
+      expect(store.state.taskUnreadCount).toBe(0)
+    })
+
+    it('skips when no unread tasks', async () => {
+      const { markAllTasksRead } = useTaskTab()
+      store.state.tasks = [{ id: 1, unreadCount: 0 }]
+      mockFetch.mockResolvedValue({ ok: true })
+
+      await markAllTasksRead()
+      expect(mockFetch).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('markTaskRead', () => {
+    it('marks a single task as read', async () => {
+      const { markTaskRead } = useTaskTab()
+      store.state.tasks = [
+        { id: 1, unreadCount: 2 },
+        { id: 2, unreadCount: 3 },
+      ]
+      mockFetch.mockResolvedValue({ ok: true })
+
+      await markTaskRead(1)
+
+      expect(mockFetch).toHaveBeenCalledWith('/api/tasks/1', expect.objectContaining({ method: 'PUT' }))
+      // Task 1's unreadCount should be cleared
+      expect(store.state.tasks[0].unreadCount).toBe(0)
+      // taskUnreadCount should be re-derived (only task 2's 3 remains)
+      expect(store.state.taskUnreadCount).toBe(3)
+    })
+
+    it('skips when task has no unreadCount', async () => {
+      const { markTaskRead } = useTaskTab()
+      store.state.tasks = [{ id: 1, unreadCount: 0 }]
+      mockFetch.mockResolvedValue({ ok: true })
+
+      await markTaskRead(1)
+      expect(mockFetch).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('onTaskEvent', () => {
+    it('ignores undefined data', () => {
+      onTaskEvent(undefined)
+      // Should not throw
+    })
+  })
 })

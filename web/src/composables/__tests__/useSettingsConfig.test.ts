@@ -11,10 +11,12 @@ vi.mock('@/utils/api', () => ({
 // Mock useAgents
 const mockGetAgent = vi.fn().mockReturnValue(null)
 const mockUpdateAgentField = vi.fn()
+const mockLoadAgents = vi.fn().mockResolvedValue(undefined)
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({
     getAgent: mockGetAgent,
     updateAgentField: mockUpdateAgentField,
+    loadAgents: mockLoadAgents,
   }),
 }))
 
@@ -238,89 +240,177 @@ describe('useSettingsConfig', () => {
     })
   })
 
-  describe('pushPersistentNotification setting', () => {
-    it('defaults to true', () => {
-      const { localConfig } = useSettingsConfig()
-      expect(localConfig.pushPersistentNotification).toBe(true)
-    })
-
-    it('setLocalConfig updates pushPersistentNotification and calls sideEffect', () => {
-      const { localConfig, setLocalConfig } = useSettingsConfig()
-
-      // Mock AndroidNative bridge
-      const mockSetPushPersistentNotification = vi.fn()
-      const originalAndroidNative = (window as any).AndroidNative
-      ;(window as any).AndroidNative = {
-        setPushPersistentNotification: mockSetPushPersistentNotification,
-      }
-
-      setLocalConfig('pushPersistentNotification', false)
-
-      expect(localConfig.pushPersistentNotification).toBe(false)
-      expect(localStorage.getItem('clawbench-settings-pushPersistentNotification')).toBe('false')
-      expect(mockSetPushPersistentNotification).toHaveBeenCalledWith(false)
-
-      // Restore and clean up
-      ;(window as any).AndroidNative = originalAndroidNative
-      localStorage.removeItem('clawbench-settings-pushPersistentNotification')
-    })
-
-    it('sideEffect handles missing AndroidNative gracefully', () => {
+  describe('sortField and sortDir side effects', () => {
+    it('setLocalConfig for sortField dispatches clawbench-sort-change event', () => {
       const { setLocalConfig } = useSettingsConfig()
+      const listener = vi.fn()
+      window.addEventListener('clawbench-sort-change', listener)
 
-      // Remove AndroidNative
-      const originalAndroidNative = (window as any).AndroidNative
-      delete (window as any).AndroidNative
+      setLocalConfig('sortField', 'name')
 
-      // Should not throw
-      expect(() => setLocalConfig('pushPersistentNotification', true)).not.toThrow()
+      expect(listener).toHaveBeenCalledWith(expect.objectContaining({
+        detail: { field: 'name' },
+      }))
 
-      // Restore
-      ;(window as any).AndroidNative = originalAndroidNative
-      localStorage.removeItem('clawbench-settings-pushPersistentNotification')
+      window.removeEventListener('clawbench-sort-change', listener)
+      // Clean up
+      localStorage.removeItem('clawbench-settings-sortField')
     })
 
-    it('loadConfig syncs pushPersistentNotification from native', async () => {
-      mockedApiGet.mockResolvedValue({})
+    it('setLocalConfig for sortField=null resets sortDir to asc', () => {
+      const { localConfig, setLocalConfig } = useSettingsConfig()
+      const listener = vi.fn()
+      window.addEventListener('clawbench-sort-change', listener)
 
-      // Mock AndroidNative bridge returning false (native has it disabled)
-      const mockIsPushPersistentNotification = vi.fn().mockReturnValue(false)
-      const originalAndroidNative = (window as any).AndroidNative
-      ;(window as any).AndroidNative = {
-        isPushPersistentNotification: mockIsPushPersistentNotification,
-      }
+      // Set sortDir to something other than asc first
+      setLocalConfig('sortDir', 'desc')
 
-      const { localConfig, loadConfig } = useSettingsConfig()
-      await loadConfig()
+      // Now clear sortField → sortDir should reset to 'asc'
+      setLocalConfig('sortField', null)
 
-      expect(mockIsPushPersistentNotification).toHaveBeenCalled()
-      expect(localConfig.pushPersistentNotification).toBe(false)
+      expect(localConfig.sortDir).toBe('asc')
 
-      // Restore
-      ;(window as any).AndroidNative = originalAndroidNative
-      localStorage.removeItem('clawbench-settings-pushPersistentNotification')
+      window.removeEventListener('clawbench-sort-change', listener)
+      localStorage.removeItem('clawbench-settings-sortField')
+      localStorage.removeItem('clawbench-settings-sortDir')
     })
 
-    it('loadConfig does not override if native matches local', async () => {
-      mockedApiGet.mockResolvedValue({})
+    it('setLocalConfig for sortDir dispatches sort-change event with dir', () => {
+      const { setLocalConfig } = useSettingsConfig()
+      const listener = vi.fn()
+      window.addEventListener('clawbench-sort-change', listener)
 
-      // Mock AndroidNative bridge returning true (matches default)
-      const mockIsPushPersistentNotification = vi.fn().mockReturnValue(true)
-      const originalAndroidNative = (window as any).AndroidNative
-      ;(window as any).AndroidNative = {
-        isPushPersistentNotification: mockIsPushPersistentNotification,
-      }
+      setLocalConfig('sortDir', 'desc')
 
-      const { localConfig, loadConfig } = useSettingsConfig()
+      expect(listener).toHaveBeenCalledWith(expect.objectContaining({
+        detail: { dir: 'desc' },
+      }))
+
+      window.removeEventListener('clawbench-sort-change', listener)
+      localStorage.removeItem('clawbench-settings-sortDir')
+    })
+  })
+
+  describe('patchAgentField', () => {
+    it('patches agent field and updates local agent data', async () => {
+      const { patchAgentField } = useSettingsConfig()
+      mockedApiPatch.mockResolvedValue({})
+
+      await patchAgentField('test-agent', 'name', 'New Name')
+
+      expect(mockedApiPatch).toHaveBeenCalledWith('/api/agents', { id: 'test-agent', name: 'New Name' })
+      expect(mockUpdateAgentField).toHaveBeenCalledWith('test-agent', 'name', 'New Name')
+    })
+
+    it('maps custom_system_prompt to customSystemPrompt', async () => {
+      const { patchAgentField } = useSettingsConfig()
+      mockedApiPatch.mockResolvedValue({})
+
+      await patchAgentField('test-agent', 'custom_system_prompt', 'My custom prompt')
+
+      expect(mockUpdateAgentField).toHaveBeenCalledWith('test-agent', 'customSystemPrompt', 'My custom prompt')
+    })
+
+    it('maps sort_order to sortOrder', async () => {
+      const { patchAgentField } = useSettingsConfig()
+      mockedApiPatch.mockResolvedValue({})
+
+      await patchAgentField('test-agent', 'sort_order', 5)
+
+      expect(mockUpdateAgentField).toHaveBeenCalledWith('test-agent', 'sortOrder', 5)
+    })
+
+    it('maps transport field', async () => {
+      const { patchAgentField } = useSettingsConfig()
+      mockedApiPatch.mockResolvedValue({})
+
+      await patchAgentField('test-agent', 'transport', 'acp-stdio')
+
+      expect(mockUpdateAgentField).toHaveBeenCalledWith('test-agent', 'transport', 'acp-stdio')
+    })
+  })
+
+  describe('setServerValue — rollback', () => {
+    it('rolls back local cache on patch failure', async () => {
+      const { serverConfig, setServerValue, loadConfig } = useSettingsConfig()
+
+      mockedApiGet.mockResolvedValue({ server: { port: 20000 } })
       await loadConfig()
 
-      expect(localConfig.pushPersistentNotification).toBe(true)
-      // localStorage should not have been overwritten since values match
-      // (the value was already true from defaults)
+      mockedApiPatch.mockRejectedValue(new Error('Network error'))
 
-      // Restore
-      ;(window as any).AndroidNative = originalAndroidNative
-      localStorage.removeItem('clawbench-settings-pushPersistentNotification')
+      await expect(setServerValue('server.port', 30000)).rejects.toThrow('Network error')
+
+      // Value should be rolled back to original
+      expect(serverConfig.value.server.port).toBe(20000)
+    })
+  })
+
+  describe('deepAssign', () => {
+    it('deep-merges nested objects without losing siblings', async () => {
+      const { patchConfig, loadConfig, serverConfig } = useSettingsConfig()
+
+      mockedApiGet.mockResolvedValue({
+        chat: { page_size: 20, initial_messages: 20 },
+      })
+      await loadConfig()
+
+      mockedApiPatch.mockResolvedValue({ needs_restart: false, changed_cold_fields: [] })
+      await patchConfig({ chat: { page_size: 50 } })
+
+      // page_size should be updated, initial_messages should be preserved
+      expect(serverConfig.value.chat.page_size).toBe(50)
+      expect(serverConfig.value.chat.initial_messages).toBe(20)
+    })
+  })
+
+  describe('loadConfig — error handling', () => {
+    it('keeps existing cached values when API fails', async () => {
+      const { loadConfig, serverConfig } = useSettingsConfig()
+
+      // First load succeeds
+      mockedApiGet.mockResolvedValue({ server: { port: 20000 } })
+      await loadConfig()
+      expect(serverConfig.value.server.port).toBe(20000)
+
+      // Second load fails
+      mockedApiGet.mockRejectedValue(new Error('Server unreachable'))
+      await loadConfig()
+
+      // Existing cached values should still be there
+      expect(serverConfig.value.server.port).toBe(20000)
+    })
+  })
+
+  describe('theme side effect', () => {
+    it('setLocalConfig for theme dispatches clawbench-theme-change', () => {
+      const { setLocalConfig } = useSettingsConfig()
+      const listener = vi.fn()
+      window.addEventListener('clawbench-theme-change', listener)
+
+      setLocalConfig('theme', 'dark')
+
+      expect(listener).toHaveBeenCalled()
+      const detail = listener.mock.calls[0][0].detail
+      expect(detail).toBe('dark')
+
+      window.removeEventListener('clawbench-theme-change', listener)
+      localStorage.removeItem('clawbench-settings-theme')
+    })
+  })
+
+  describe('autoSpeech side effect', () => {
+    it('setLocalConfig for autoSpeech dispatches clawbench-autospeech-change', () => {
+      const { setLocalConfig } = useSettingsConfig()
+      const listener = vi.fn()
+      window.addEventListener('clawbench-autospeech-change', listener)
+
+      setLocalConfig('autoSpeech', true)
+
+      expect(listener).toHaveBeenCalledWith(expect.objectContaining({ detail: true }))
+
+      window.removeEventListener('clawbench-autospeech-change', listener)
+      localStorage.removeItem('clawbench-settings-autoSpeech')
     })
   })
 })
