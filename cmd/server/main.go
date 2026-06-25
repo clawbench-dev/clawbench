@@ -567,6 +567,11 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// 2. Synchronous model discovery (run when agents may have empty model lists)
 	discoveredModels := model.SyncDiscoverModels()
 
+	// 2a. Migrate custom_system_prompt BEFORE LoadAgentsIntoMemory so the
+	// composition logic (commonPrompt + customSystemPrompt) works correctly
+	// on first startup with legacy system_prompt data.
+	service.MigrateCustomSystemPrompt(service.DB)
+
 	// 3. Merge runtime data: fill models/levels from discovery results/registry, delete missing CLIs, reload memory
 	model.MergeDiscoveredDataDB(service.DB, discoveredModels, present)
 

@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
+	"strings"
 
 	"clawbench/internal/model"
 )
@@ -26,6 +28,7 @@ CREATE TABLE IF NOT EXISTS agents (
 	preferred_model TEXT NOT NULL DEFAULT '',
 	preferred_thinking_effort TEXT NOT NULL DEFAULT '',
 	system_prompt TEXT NOT NULL DEFAULT '',
+	custom_system_prompt TEXT NOT NULL DEFAULT '',
 	models TEXT NOT NULL DEFAULT '[]',
 	models_auto_detected INTEGER NOT NULL DEFAULT 0,
 	source TEXT NOT NULL DEFAULT 'auto',
@@ -64,7 +67,7 @@ func LoadAgentsFromDB(db *sql.DB) ([]*model.Agent, error) {
 		SELECT id, name, icon, specialty, backend, command,
 			thinking_effort, thinking_effort_levels,
 			preferred_model, preferred_thinking_effort,
-			system_prompt, models, models_auto_detected,
+			system_prompt, custom_system_prompt, models, models_auto_detected,
 			source, sort_order,
 			transport, acp_command
 		FROM agents ORDER BY id
@@ -84,7 +87,7 @@ func LoadAgentsFromDB(db *sql.DB) ([]*model.Agent, error) {
 			&a.ID, &a.Name, &a.Icon, &a.Specialty, &a.Backend, &a.Command,
 			&a.ThinkingEffort, &levelsJSON,
 			&a.PreferredModel, &a.PreferredThinkingEffort,
-			&a.SystemPrompt, &modelsJSON, &modelsAutoDetected,
+			&a.SystemPrompt, &a.CustomSystemPrompt, &modelsJSON, &modelsAutoDetected,
 			&a.Source, &a.SortOrder,
 			&a.Transport, &a.AcpCommand,
 		)
@@ -152,10 +155,10 @@ func SaveAgent(db DBExec, agent *model.Agent) error {
 		INSERT INTO agents (id, name, icon, specialty, backend, command,
 			thinking_effort, thinking_effort_levels,
 			preferred_model, preferred_thinking_effort,
-			system_prompt, models, models_auto_detected,
+			system_prompt, custom_system_prompt, models, models_auto_detected,
 			source, sort_order,
 			transport, acp_command)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			icon = excluded.icon,
@@ -167,6 +170,7 @@ func SaveAgent(db DBExec, agent *model.Agent) error {
 			preferred_model = excluded.preferred_model,
 			preferred_thinking_effort = excluded.preferred_thinking_effort,
 			system_prompt = excluded.system_prompt,
+			custom_system_prompt = excluded.custom_system_prompt,
 			models = excluded.models,
 			models_auto_detected = excluded.models_auto_detected,
 			source = excluded.source,
@@ -177,7 +181,7 @@ func SaveAgent(db DBExec, agent *model.Agent) error {
 	`, agent.ID, agent.Name, agent.Icon, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON),
 		agent.PreferredModel, agent.PreferredThinkingEffort,
-		agent.SystemPrompt, string(modelsJSON), modelsAutoDetected,
+		agent.SystemPrompt, agent.CustomSystemPrompt, string(modelsJSON), modelsAutoDetected,
 		agent.Source, sortOrder,
 		transport, agent.AcpCommand)
 	if err != nil {
@@ -198,17 +202,98 @@ func DeleteAgent(db *sql.DB, id string) error {
 	return nil
 }
 
-// PatchAgent updates only the user-editable fields (preferred_model, preferred_thinking_effort, transport).
+// PatchAgent updates only the original user-editable fields (preferred_model, preferred_thinking_effort, transport).
 // Returns nil even if the agent doesn't exist (no rows affected).
+// Kept for backward compatibility — delegates to PatchAgentFields.
 func PatchAgent(db *sql.DB, id, preferredModel, preferredThinkingEffort, transport string) error {
-	if transport == "" {
-		transport = "cli"
+	patch := AgentPatch{
+		PreferredModel:          &preferredModel,
+		PreferredThinkingEffort: &preferredThinkingEffort,
+		Transport:               &transport,
 	}
-	_, err := db.Exec(`
-		UPDATE agents
-		SET preferred_model = ?, preferred_thinking_effort = ?, transport = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?`,
-		preferredModel, preferredThinkingEffort, transport, id)
+	return PatchAgentFields(db, id, patch)
+}
+
+// AgentPatch holds optional fields for partial agent updates.
+// Pointer fields distinguish "not provided" (nil) from "set to empty/zero".
+type AgentPatch struct {
+	PreferredModel          *string
+	PreferredThinkingEffort *string
+	Transport               *string
+	Name                    *string
+	Icon                    *string
+	Specialty               *string
+	CustomSystemPrompt      *string
+	SortOrder               *int
+}
+
+// PatchAgentFields updates only the non-nil fields in the AgentPatch struct.
+// Returns nil even if the agent doesn't exist (no rows affected).
+func PatchAgentFields(db *sql.DB, id string, patch AgentPatch) error {
+	// Build dynamic SET clause
+	setClauses := []string{}
+	args := []any{}
+
+	if patch.PreferredModel != nil {
+		setClauses = append(setClauses, "preferred_model = ?")
+		args = append(args, *patch.PreferredModel)
+	}
+	if patch.PreferredThinkingEffort != nil {
+		setClauses = append(setClauses, "preferred_thinking_effort = ?")
+		args = append(args, *patch.PreferredThinkingEffort)
+	}
+	if patch.Transport != nil {
+		transport := *patch.Transport
+		if transport == "" {
+			transport = "cli"
+		}
+		setClauses = append(setClauses, "transport = ?")
+		args = append(args, transport)
+	}
+	if patch.Name != nil {
+		setClauses = append(setClauses, "name = ?")
+		args = append(args, *patch.Name)
+	}
+	if patch.Icon != nil {
+		setClauses = append(setClauses, "icon = ?")
+		args = append(args, *patch.Icon)
+	}
+	if patch.Specialty != nil {
+		setClauses = append(setClauses, "specialty = ?")
+		args = append(args, *patch.Specialty)
+	}
+	if patch.CustomSystemPrompt != nil {
+		setClauses = append(setClauses, "custom_system_prompt = ?")
+		// Also update system_prompt to keep it in sync for backward compat
+		setClauses = append(setClauses, "system_prompt = ?")
+		// Compose system_prompt from common prompt + custom_system_prompt
+		commonPrompt := model.BuildCommonPrompt()
+		custom := *patch.CustomSystemPrompt
+		if commonPrompt != "" && custom != "" {
+			args = append(args, custom)
+			args = append(args, commonPrompt+"\n\n"+custom)
+		} else if commonPrompt != "" {
+			args = append(args, custom)
+			args = append(args, commonPrompt)
+		} else {
+			args = append(args, custom)
+			args = append(args, custom)
+		}
+	}
+	if patch.SortOrder != nil {
+		setClauses = append(setClauses, "sort_order = ?")
+		args = append(args, *patch.SortOrder)
+	}
+
+	if len(setClauses) == 0 {
+		return nil // nothing to update
+	}
+
+	setClauses = append(setClauses, "updated_at = CURRENT_TIMESTAMP")
+	args = append(args, id)
+
+	query := "UPDATE agents SET " + strings.Join(setClauses, ", ") + " WHERE id = ?"
+	_, err := db.Exec(query, args...)
 	if err != nil {
 		return fmt.Errorf("patch agent %s: %w", id, err)
 	}
@@ -264,13 +349,17 @@ func LoadAgentsIntoMemory(db *sql.DB) error {
 	// Build common prompt from embedded rules
 	commonPrompt := model.BuildCommonPrompt()
 
-	// Prepend common prompt to each agent's system prompt
+	// Compose SystemPrompt from commonPrompt + CustomSystemPrompt for each agent.
+	// This ensures SystemPrompt is always the full composed prompt at runtime,
+	// while the DB stores only the user-editable CustomSystemPrompt portion.
 	for _, agent := range model.Agents {
-		if commonPrompt != "" && agent.SystemPrompt != "" {
-			agent.SystemPrompt = commonPrompt + "\n\n" + agent.SystemPrompt
+		if commonPrompt != "" && agent.CustomSystemPrompt != "" {
+			agent.SystemPrompt = commonPrompt + "\n\n" + agent.CustomSystemPrompt
 		} else if commonPrompt != "" {
 			agent.SystemPrompt = commonPrompt
 		}
+		// If CustomSystemPrompt is empty but SystemPrompt has content (legacy data),
+		// keep SystemPrompt as-is so existing agents don't lose their prompts.
 	}
 
 	return nil
@@ -305,4 +394,61 @@ func findProviderSpecForAgent(agentID string) *model.ProviderSpec {
 		return nil
 	}
 	return model.FindProviderSpec(providerID)
+}
+
+// MigrateCustomSystemPrompt backfills the custom_system_prompt column for agents
+// that have a system_prompt but an empty custom_system_prompt. It strips the
+// common prompt prefix from the stored system_prompt and stores the remainder
+// as custom_system_prompt.
+func MigrateCustomSystemPrompt(db *sql.DB) {
+	commonPrompt := model.BuildCommonPrompt()
+	if commonPrompt == "" {
+		return
+	}
+
+	rows, err := db.Query("SELECT id, system_prompt, custom_system_prompt FROM agents WHERE custom_system_prompt = '' AND system_prompt != ''")
+	if err != nil {
+		slog.Error("migrate custom_system_prompt: query failed", "error", err)
+		return
+	}
+
+	// Collect all rows first to release the DB connection before executing UPDATEs.
+	// This avoids deadlocking with MaxOpenConns=1 (SQLite single-writer).
+	type migRow struct {
+		id           string
+		systemPrompt string
+	}
+	var toMigrate []migRow
+	for rows.Next() {
+		var id, systemPrompt, customPrompt string
+		if err := rows.Scan(&id, &systemPrompt, &customPrompt); err != nil {
+			slog.Warn("migrate custom_system_prompt: scan failed", "error", err)
+			continue
+		}
+		toMigrate = append(toMigrate, migRow{id: id, systemPrompt: systemPrompt})
+	}
+	if err := rows.Err(); err != nil {
+		slog.Warn("migrate custom_system_prompt: row iteration error", "error", err)
+	}
+	_ = rows.Close()
+
+	migrated := 0
+	for _, row := range toMigrate {
+		// Strip common prompt prefix
+		custom := row.systemPrompt
+		if strings.HasPrefix(row.systemPrompt, commonPrompt+"\n\n") {
+			custom = strings.TrimPrefix(row.systemPrompt, commonPrompt+"\n\n")
+		} else if row.systemPrompt == commonPrompt {
+			custom = ""
+		}
+
+		if _, err := db.Exec("UPDATE agents SET custom_system_prompt = ? WHERE id = ?", custom, row.id); err != nil {
+			slog.Warn("migrate custom_system_prompt: update failed", "agent", row.id, "error", err)
+			continue
+		}
+		migrated++
+	}
+	if migrated > 0 {
+		slog.Info("migrated custom_system_prompt", slog.Int("count", migrated))
+	}
 }

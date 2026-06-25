@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	acp "github.com/coder/acp-go-sdk"
 
@@ -16,6 +17,10 @@ import (
 // ServeAgentSubRoutes handles /api/agents/* sub-routes (e.g. /api/agents/{id}/refresh-models).
 func ServeAgentSubRoutes(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
+	if strings.HasSuffix(path, "/common-prompt") && r.Method == http.MethodGet {
+		ServeAgentCommonPrompt(w, r)
+		return
+	}
 	if strings.HasSuffix(path, "/refresh-models") && r.Method == http.MethodPost {
 		ServeAgentRefreshModels(w, r)
 		return
@@ -25,6 +30,16 @@ func ServeAgentSubRoutes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeLocalizedErrorf(w, r, http.StatusNotFound, "NotFound")
+}
+
+// ServeAgentCommonPrompt handles GET /api/agents/common-prompt — returns the
+// built-in common prompt that is prepended to all agents' system prompts.
+// The frontend uses this to strip the common prefix when displaying the
+// user-editable custom system prompt in the settings panel.
+func ServeAgentCommonPrompt(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"commonPrompt": model.BuildCommonPrompt(),
+	})
 }
 
 // ServeAgents returns the list of configured AI agents.
@@ -115,10 +130,10 @@ func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-// serveAgentsPatch handles PATCH /api/agents — updates an agent's preferred_model and/or preferred_thinking_effort.
-// Expects: {"id": "claude", "preferred_model": "claude-opus-4-5", "preferred_thinking_effort": "high"}
-// Only preferred_model and preferred_thinking_effort are patchable (whitelist).
-// The original thinking_effort (agent default) is never modified — scheduled tasks use it.
+// serveAgentsPatch handles PATCH /api/agents — updates an agent's configurable fields.
+// Expects: {"id": "claude", "preferred_model": "claude-opus-4-5", "preferred_thinking_effort": "high", ...}
+// Patchable fields: preferred_model, preferred_thinking_effort, transport,
+// name, icon, specialty, custom_system_prompt, sort_order.
 func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,gocyclo // multi-field agent patch logic
 	var patch map[string]any
 	if !decodeJSON(w, r, &patch) {
@@ -140,6 +155,8 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		return
 	}
 
+	ap := service.AgentPatch{}
+
 	// Validate and apply preferred_model
 	if v, exists := patch["preferred_model"]; exists {
 		modelID, _ := v.(string)
@@ -156,7 +173,7 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 				return
 			}
 		}
-		agent.PreferredModel = modelID
+		ap.PreferredModel = &modelID
 	}
 
 	// Validate and apply preferred_thinking_effort
@@ -175,7 +192,7 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 				return
 			}
 		}
-		agent.PreferredThinkingEffort = level
+		ap.PreferredThinkingEffort = &level
 	}
 
 	// Validate and apply transport (only for agents that support ACP)
@@ -193,6 +210,7 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidTransport")
 			return
 		}
+		ap.Transport = &agent.Transport
 		// When switching from ACP to CLI, close all ACP connections for this agent
 		if oldTransport == "acp-stdio" && agent.Transport == "cli" {
 			mgr := ai.GetACPConnManager()
@@ -201,13 +219,136 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		}
 	}
 
+	// Validate and apply name
+	if v, exists := patch["name"]; exists {
+		name, _ := v.(string)
+		if name == "" || utf8.RuneCountInString(name) > 64 {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentName")
+			return
+		}
+		ap.Name = &name
+	}
+
+	// Validate and apply icon
+	if v, exists := patch["icon"]; exists {
+		icon, _ := v.(string)
+		if utf8.RuneCountInString(icon) > 8 {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentIcon")
+			return
+		}
+		ap.Icon = &icon
+	}
+
+	// Validate and apply specialty
+	if v, exists := patch["specialty"]; exists {
+		specialty, _ := v.(string)
+		if utf8.RuneCountInString(specialty) > 128 {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentSpecialty")
+			return
+		}
+		ap.Specialty = &specialty
+	}
+
+	// Validate and apply custom_system_prompt
+	if v, exists := patch["custom_system_prompt"]; exists {
+		customPrompt, _ := v.(string)
+		if len(customPrompt) > 32*1024 {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidSystemPrompt")
+			return
+		}
+		if containsPromptOverride(customPrompt) {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "SystemPromptOverride")
+			return
+		}
+		ap.CustomSystemPrompt = &customPrompt
+	}
+
+	// Validate and apply sort_order
+	if v, exists := patch["sort_order"]; exists {
+		switch n := v.(type) {
+		case float64:
+			order := int(n)
+			if order < 0 {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidSortOrder")
+				return
+			}
+			ap.SortOrder = &order
+		case int:
+			if n < 0 {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidSortOrder")
+				return
+			}
+			ap.SortOrder = &n
+		default:
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidSortOrder")
+			return
+		}
+	}
+
 	// Persist to database
-	if err := service.PatchAgent(service.DB, agentID, agent.PreferredModel, agent.PreferredThinkingEffort, agent.Transport); err != nil {
+	if err := service.PatchAgentFields(service.DB, agentID, ap); err != nil {
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
 
+	// Update in-memory agent for immediate reflection
+	if ap.PreferredModel != nil {
+		agent.PreferredModel = *ap.PreferredModel
+	}
+	if ap.PreferredThinkingEffort != nil {
+		agent.PreferredThinkingEffort = *ap.PreferredThinkingEffort
+	}
+	if ap.Transport != nil {
+		agent.Transport = *ap.Transport
+	}
+	if ap.Name != nil {
+		agent.Name = *ap.Name
+	}
+	if ap.Icon != nil {
+		agent.Icon = *ap.Icon
+	}
+	if ap.Specialty != nil {
+		agent.Specialty = *ap.Specialty
+	}
+	if ap.CustomSystemPrompt != nil {
+		agent.CustomSystemPrompt = *ap.CustomSystemPrompt
+		// Recompose SystemPrompt
+		commonPrompt := model.BuildCommonPrompt()
+		if commonPrompt != "" && agent.CustomSystemPrompt != "" {
+			agent.SystemPrompt = commonPrompt + "\n\n" + agent.CustomSystemPrompt
+		} else if commonPrompt != "" {
+			agent.SystemPrompt = commonPrompt
+		} else {
+			agent.SystemPrompt = agent.CustomSystemPrompt
+		}
+	}
+	if ap.SortOrder != nil {
+		agent.SortOrder = *ap.SortOrder
+	}
+
 	writeJSON(w, http.StatusOK, agent)
+}
+
+// containsPromptOverride checks for common prompt injection patterns that attempt
+// to override built-in safety rules. This is a best-effort heuristic, not a
+// comprehensive security boundary — the actual safety boundary is enforced by
+// the AI model itself at inference time.
+func containsPromptOverride(prompt string) bool {
+	lower := strings.ToLower(prompt)
+	overridePatterns := []string{
+		"ignore previous instructions",
+		"ignore all previous",
+		"ignore above instructions",
+		"disregard all previous",
+		"disregard all above",
+		"forget all previous instructions",
+	}
+	for _, pattern := range overridePatterns {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 // ServeAgentRefreshModels handles POST /api/agents/{id}/refresh-models — triggers model re-discovery

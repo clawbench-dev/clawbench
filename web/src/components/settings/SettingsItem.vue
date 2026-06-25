@@ -42,6 +42,10 @@
         <span class="settings-item__value">{{ displayValue }}</span>
         <span class="settings-item__arrow" :class="{ 'settings-item__arrow--open': editing }">›</span>
       </template>
+      <template v-else-if="type === 'textarea'">
+        <span class="settings-item__value">{{ displayValue }}</span>
+        <span class="settings-item__arrow" :class="{ 'settings-item__arrow--open': editing }">›</span>
+      </template>
       <template v-else-if="type === 'action'">
         <span class="settings-item__arrow">›</span>
       </template>
@@ -119,6 +123,22 @@
         <button class="settings-item__editor-confirm" @click="confirmEdit">{{ t('common.ok') }}</button>
       </div>
     </template>
+    <!-- Textarea editor -->
+    <template v-else-if="type === 'textarea'">
+      <div class="settings-item__textarea-row">
+        <textarea
+          class="settings-item__textarea-input"
+          :value="editValue"
+          :placeholder="placeholder"
+          rows="6"
+          @input="editValue = ($event.target as HTMLTextAreaElement).value"
+        ></textarea>
+        <div class="settings-item__textarea-actions">
+          <button class="settings-item__editor-confirm" @click="confirmEdit">{{ t('common.ok') }}</button>
+        </div>
+      </div>
+      <div v-if="warning" class="settings-item__textarea-warning">{{ warning }}</div>
+    </template>
   </div>
 </template>
 
@@ -132,7 +152,7 @@ const { t } = useI18n()
 interface Props {
   label: string
   description?: string
-  type: 'switch' | 'select' | 'number' | 'text' | 'slider' | 'action' | 'info' | 'header' | 'password'
+  type: 'switch' | 'select' | 'number' | 'text' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea'
   modelValue?: any
   options?: { label: string; value: any }[]
   min?: number
@@ -142,6 +162,7 @@ interface Props {
   needsRestart?: boolean
   disabled?: boolean
   forceClose?: boolean
+  warning?: string
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -155,6 +176,7 @@ const props = withDefaults(defineProps<Props>(), {
   needsRestart: false,
   disabled: false,
   forceClose: false,
+  warning: '',
 })
 
 const emit = defineEmits<{
@@ -203,6 +225,12 @@ const displayValue = computed(() => {
       return '••••••'
     }
     return props.placeholder
+  }
+  if (props.type === 'textarea') {
+    if (props.modelValue && String(props.modelValue).length > 50) {
+      return String(props.modelValue).substring(0, 50) + '…'
+    }
+    return props.modelValue ? String(props.modelValue) : props.placeholder
   }
   if (props.type === 'select' && props.options?.length) {
     const opt = props.options.find(o => o.value === props.modelValue)
@@ -543,5 +571,44 @@ function confirmEdit() {
 
 .settings-item__editor-confirm:active {
   background: var(--accent-hover);
+}
+
+/* Textarea editor */
+.settings-item__textarea-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 16px;
+}
+
+.settings-item__textarea-input {
+  width: 100%;
+  min-height: 120px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.5;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  outline: none;
+  resize: vertical;
+}
+
+.settings-item__textarea-input:focus {
+  border-color: var(--accent-color);
+}
+
+.settings-item__textarea-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.settings-item__textarea-warning {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 4px 16px 8px;
+  line-height: 1.4;
 }
 </style>

@@ -70,6 +70,12 @@ JobNotFound: job not found
 AgentNotFound: Agent not found
 InvalidModelForAgent: Invalid model for this agent
 InvalidThinkingEffort: Invalid thinking effort level for this agent
+InvalidAgentName: Invalid agent name
+InvalidAgentIcon: Invalid icon
+InvalidAgentSpecialty: Invalid description
+InvalidSystemPrompt: System prompt too long
+SystemPromptOverride: System prompt contains unsafe override instructions
+InvalidSortOrder: Invalid sort order
 InvalidSHA: Invalid commit SHA format
 InvalidBranchName: Invalid branch name
 ModelDiscoveryNotSupported: This agent does not support model discovery

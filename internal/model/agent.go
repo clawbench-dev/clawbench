@@ -30,6 +30,11 @@ type Agent struct {
 	Transport  string `json:"transport"`            // "cli"(default) | "acp-stdio"
 	AcpCommand string `json:"acpCommand,omitempty"` // acp-stdio: spawn command, e.g. "kimi --acp"
 
+	// CustomSystemPrompt is the user-editable portion of the system prompt.
+	// At runtime, LoadAgentsIntoMemory composes: SystemPrompt = commonPrompt + customSystemPrompt.
+	// This separation ensures upgrades that change commonPrompt don't corrupt the stored prompt.
+	CustomSystemPrompt string `json:"customSystemPrompt"`
+
 	// ModelsAutoDetected indicates whether Models were filled by auto-discovery
 	// (from cache) rather than user-defined. Used by AsyncRefreshModelCache
 	// to know which agents should have their models updated.

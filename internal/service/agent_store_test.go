@@ -33,6 +33,7 @@ func setupTestDBForAgents(t *testing.T) *sql.DB {
 			preferred_model TEXT NOT NULL DEFAULT '',
 			preferred_thinking_effort TEXT NOT NULL DEFAULT '',
 			system_prompt TEXT NOT NULL DEFAULT '',
+			custom_system_prompt TEXT NOT NULL DEFAULT '',
 			models TEXT NOT NULL DEFAULT '[]',
 			models_auto_detected INTEGER NOT NULL DEFAULT 0,
 			source TEXT NOT NULL DEFAULT 'auto',
@@ -392,6 +393,7 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		"id": true, "name": true, "icon": true, "specialty": true, "backend": true,
 		"command": true, "thinking_effort": true, "thinking_effort_levels": true,
 		"preferred_model": true, "preferred_thinking_effort": true, "system_prompt": true,
+		"custom_system_prompt": true,
 		"models": true, "models_auto_detected": true, "source": true, "sort_order": true,
 		"transport": true, "acp_command": true,
 		"created_at": true, "updated_at": true,
@@ -554,4 +556,189 @@ func TestAgentModelsJSON_Serialization(t *testing.T) {
 	err = json.Unmarshal(data, &got)
 	require.NoError(t, err)
 	assert.Equal(t, models, got)
+}
+
+// ── PatchAgentFields tests ──
+
+func TestPatchAgentFields_Name(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "auto"}))
+
+	name := "Pi Updated"
+	err := service.PatchAgentFields(db, "pi", service.AgentPatch{Name: &name})
+	require.NoError(t, err)
+
+	agents, err := service.LoadAgentsFromDB(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, "Pi Updated", agents[0].Name)
+}
+
+func TestPatchAgentFields_Icon(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "auto"}))
+
+	icon := "🥧"
+	err := service.PatchAgentFields(db, "pi", service.AgentPatch{Icon: &icon})
+	require.NoError(t, err)
+
+	agents, err := service.LoadAgentsFromDB(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, "🥧", agents[0].Icon)
+}
+
+func TestPatchAgentFields_Specialty(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "auto"}))
+
+	specialty := "极简编程"
+	err := service.PatchAgentFields(db, "pi", service.AgentPatch{Specialty: &specialty})
+	require.NoError(t, err)
+
+	agents, err := service.LoadAgentsFromDB(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, "极简编程", agents[0].Specialty)
+}
+
+func TestPatchAgentFields_CustomSystemPrompt(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "auto"}))
+
+	custom := "You are a helpful math tutor."
+	err := service.PatchAgentFields(db, "pi", service.AgentPatch{CustomSystemPrompt: &custom})
+	require.NoError(t, err)
+
+	agents, err := service.LoadAgentsFromDB(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, custom, agents[0].CustomSystemPrompt)
+	// system_prompt should be composed: commonPrompt + customSystemPrompt
+	commonPrompt := model.BuildCommonPrompt()
+	if commonPrompt != "" {
+		assert.Equal(t, commonPrompt+"\n\n"+custom, agents[0].SystemPrompt)
+	}
+}
+
+func TestPatchAgentFields_SortOrder(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "auto"}))
+
+	order := 5
+	err := service.PatchAgentFields(db, "pi", service.AgentPatch{SortOrder: &order})
+	require.NoError(t, err)
+
+	agents, err := service.LoadAgentsFromDB(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, 5, agents[0].SortOrder)
+}
+
+func TestPatchAgentFields_PartialPatch(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Icon: "🤖", Specialty: "old", Backend: "pi", Source: "auto"}))
+
+	// Only patch name, verify other fields unchanged
+	name := "Pi New"
+	err := service.PatchAgentFields(db, "pi", service.AgentPatch{Name: &name})
+	require.NoError(t, err)
+
+	agents, err := service.LoadAgentsFromDB(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, "Pi New", agents[0].Name)
+	assert.Equal(t, "🤖", agents[0].Icon)       // unchanged
+	assert.Equal(t, "old", agents[0].Specialty) // unchanged
+}
+
+func TestPatchAgentFields_NilFieldsSkipped(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "auto"}))
+
+	// Empty patch — should be a no-op
+	err := service.PatchAgentFields(db, "pi", service.AgentPatch{})
+	require.NoError(t, err)
+
+	agents, err := service.LoadAgentsFromDB(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, "Pi", agents[0].Name)
+}
+
+// ── MigrateCustomSystemPrompt tests ──
+
+func TestMigrateCustomSystemPrompt(t *testing.T) {
+	db := setupTestDBForAgents(t)
+
+	commonPrompt := model.BuildCommonPrompt()
+	require.NotEmpty(t, commonPrompt, "common prompt should not be empty for migration test")
+
+	// Insert agent with system_prompt = commonPrompt + custom, but empty custom_system_prompt
+	custom := "You are a helpful assistant."
+	fullPrompt := commonPrompt + "\n\n" + custom
+	agent := &model.Agent{
+		ID:                 "pi",
+		Name:               "Pi",
+		Backend:            "pi",
+		Source:             "auto",
+		SystemPrompt:       fullPrompt,
+		CustomSystemPrompt: "", // not yet migrated
+	}
+	require.NoError(t, service.SaveAgent(db, agent))
+
+	// Run migration
+	service.MigrateCustomSystemPrompt(db)
+
+	// Verify custom_system_prompt was backfilled
+	agents, err := service.LoadAgentsFromDB(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, custom, agents[0].CustomSystemPrompt)
+}
+
+func TestMigrateCustomSystemPrompt_CommonOnly(t *testing.T) {
+	db := setupTestDBForAgents(t)
+
+	commonPrompt := model.BuildCommonPrompt()
+	// Insert agent with system_prompt = commonPrompt only (no custom portion)
+	agent := &model.Agent{
+		ID:                 "pi",
+		Name:               "Pi",
+		Backend:            "pi",
+		Source:             "auto",
+		SystemPrompt:       commonPrompt,
+		CustomSystemPrompt: "",
+	}
+	require.NoError(t, service.SaveAgent(db, agent))
+
+	service.MigrateCustomSystemPrompt(db)
+
+	agents, err := service.LoadAgentsFromDB(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, "", agents[0].CustomSystemPrompt)
+}
+
+func TestMigrateCustomSystemPrompt_AlreadyMigrated(t *testing.T) {
+	db := setupTestDBForAgents(t)
+
+	// Insert agent that already has custom_system_prompt set
+	custom := "Already done"
+	agent := &model.Agent{
+		ID:                 "pi",
+		Name:               "Pi",
+		Backend:            "pi",
+		Source:             "auto",
+		SystemPrompt:       "some prompt",
+		CustomSystemPrompt: custom,
+	}
+	require.NoError(t, service.SaveAgent(db, agent))
+
+	service.MigrateCustomSystemPrompt(db)
+
+	agents, err := service.LoadAgentsFromDB(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, custom, agents[0].CustomSystemPrompt) // unchanged
 }

@@ -307,6 +307,31 @@ export async function patchAgentPref(agentId: string, field: 'preferred_model' |
   updateAgentField(agentId, fieldMap[field] || field, value)
 }
 
+/**
+ * Patch an agent's settings-panel configurable field on the server.
+ * Supports: name, icon, specialty, custom_system_prompt, sort_order,
+ * plus the original preferred_model/preferred_thinking_effort/transport.
+ */
+export async function patchAgentField(agentId: string, field: string, value: any): Promise<void> {
+  await apiPatch('/api/agents', { id: agentId, [field]: value })
+  const { updateAgentField } = useAgents()
+  const fieldMap: Record<string, string> = {
+    preferred_model: 'preferredModel',
+    preferred_thinking_effort: 'preferredThinkingEffort',
+    transport: 'transport',
+    custom_system_prompt: 'customSystemPrompt',
+    sort_order: 'sortOrder',
+    // name, icon, specialty map to themselves
+  }
+  updateAgentField(agentId, fieldMap[field] || field, value)
+  // When custom_system_prompt changes, reload agents to get the server-composed
+  // systemPrompt (commonPrompt + customSystemPrompt) into the reactive store.
+  if (field === 'custom_system_prompt') {
+    const { loadAgents } = useAgents()
+    await loadAgents(true)
+  }
+}
+
 /** Read the preferred model ID for an agent from the server-side agent data. */
 function getAgentModelPref(agentId: string): string | null {
   const { getAgent } = useAgents()
@@ -433,6 +458,7 @@ export function useSettingsConfig() {
     getServerValueWithDefault,
     setServerValue,
     patchAgentPref,
+    patchAgentField,
     getAgentModelPref,
     getAgentThinkingPref,
   }

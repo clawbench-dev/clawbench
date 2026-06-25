@@ -18,6 +18,7 @@
       <SettingsCategory
         v-else
         :category-id="currentCategory!"
+        @navigate="pushNav"
         @restart-needed="handleRestartNeeded"
       />
       <SettingsRestartDialog
@@ -53,6 +54,7 @@ import SettingsCategory from './SettingsCategory.vue'
 import SettingsRestartDialog from './SettingsRestartDialog.vue'
 import { useSettingsNavigation } from '@/composables/useSettingsNavigation'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
+import { useAgents } from '@/composables/useAgents'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 
 const props = defineProps<{
@@ -78,7 +80,16 @@ useFeatureBackHandler(
 )
 
 const currentCategoryTitle = computed(() => {
-  return currentCategory.value ? t(`settings.categories.${currentCategory.value}`) : ''
+  const cat = currentCategory.value
+  if (!cat) return ''
+  // For agent detail pages (agents:{id}), show the agent name as title
+  if (cat.startsWith('agents:')) {
+    const { getAgent } = useAgents()
+    const agentId = cat.slice(7)
+    const agent = getAgent(agentId)
+    return agent ? `${agent.icon} ${agent.name}` : t('settings.categories.agents')
+  }
+  return t(`settings.categories.${cat}`)
 })
 
 const serverVersion = computed(() => serverConfig.value?.version ?? '')
