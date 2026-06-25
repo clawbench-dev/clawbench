@@ -11,7 +11,7 @@ vi.mock('@/utils/api', () => ({
 // Mock path utils
 vi.mock('@/utils/path.ts', () => ({
     baseName: (p: string) => p.split('/').pop() || '',
-    dirName: (p: string) => p.split('/').slice(0, -1).join('/') || '/',
+    dirName: (p: string) => { const parts = p.split('/'); parts.pop(); return parts.join('/') },
 }))
 
 // Mock useLocale
@@ -31,21 +31,6 @@ vi.mock('@/composables/useDialog', () => ({
     useDialog: () => ({ confirm: mockDialogConfirm }),
 }))
 
-// Mock useDirStack
-const mockDirStack = {
-    pushDirAndLoad: vi.fn().mockResolvedValue(undefined),
-    popDirAndLoad: vi.fn().mockResolvedValue(undefined),
-    truncateToDirAndLoad: vi.fn().mockResolvedValue(undefined),
-    replaceTopAndLoad: vi.fn().mockResolvedValue(undefined),
-    resetStack: vi.fn(),
-    pushDir: vi.fn(),
-    dirStack: { value: [] },
-    currentDir: { value: '/project' },
-}
-vi.mock('@/composables/useDirStack', () => ({
-    useDirStack: () => mockDirStack,
-}))
-
 import { store } from '@/stores/app'
 
 describe('store', () => {
@@ -53,8 +38,6 @@ describe('store', () => {
         vi.clearAllMocks()
         // Reset state to defaults before each test
         store.resetProjectState()
-        // Reset mock dirStack state
-        mockDirStack.dirStack.value = []
     })
 
     // ── resetProjectState ──
@@ -544,89 +527,67 @@ describe('store', () => {
         })
     })
 
-    // ── Directory stack navigation ──
+    // ── Directory navigation ──
 
-    describe('pushDir', () => {
-        it('calls dirStack.pushDirAndLoad', async () => {
+    describe('navigateToDir', () => {
+        it('calls loadFiles with the given path', async () => {
             store.state.dirLoading = false
+            mockApiGet.mockResolvedValue({ items: [] })
 
-            await store.pushDir('/project/sub')
+            await store.navigateToDir('/project/sub')
 
-            expect(mockDirStack.pushDirAndLoad).toHaveBeenCalledWith('/project/sub', expect.any(Function))
+            expect(mockApiGet).toHaveBeenCalledWith('/api/dir?path=%2Fproject%2Fsub')
         })
 
         it('skips if dirLoading is true', async () => {
             store.state.dirLoading = true
 
-            await store.pushDir('/project/sub')
+            await store.navigateToDir('/project/sub')
 
-            expect(mockDirStack.pushDirAndLoad).not.toHaveBeenCalled()
+            // loadFiles should not have been called (apiGet not called for dir)
+            expect(mockApiGet).not.toHaveBeenCalled()
         })
     })
 
-    describe('popDir', () => {
-        it('calls dirStack.popDirAndLoad', async () => {
+    describe('navigateToParentDir', () => {
+        it('navigates to parent directory using dirName', async () => {
             store.state.dirLoading = false
+            store.state.currentDir = 'src/composables'
+            mockApiGet.mockResolvedValue({ items: [] })
 
-            await store.popDir()
+            await store.navigateToParentDir()
 
-            expect(mockDirStack.popDirAndLoad).toHaveBeenCalledWith(expect.any(Function))
+            // dirName('src/composables') = 'src'
+            expect(mockApiGet).toHaveBeenCalledWith('/api/dir?path=src')
         })
 
         it('skips if dirLoading is true', async () => {
             store.state.dirLoading = true
+            store.state.currentDir = 'src/composables'
 
-            await store.popDir()
+            await store.navigateToParentDir()
 
-            expect(mockDirStack.popDirAndLoad).not.toHaveBeenCalled()
-        })
-    })
-
-    describe('resetDirStack', () => {
-        it('calls dirStack.resetStack', () => {
-            store.resetDirStack('/project')
-            expect(mockDirStack.resetStack).toHaveBeenCalledWith('/project')
+            expect(mockApiGet).not.toHaveBeenCalled()
         })
 
-        it('calls resetStack without path', () => {
-            store.resetDirStack()
-            expect(mockDirStack.resetStack).toHaveBeenCalledWith(undefined)
-        })
-    })
-
-    describe('truncateToDir', () => {
-        it('calls dirStack.truncateToDirAndLoad', async () => {
+        it('navigates to root from one-level-deep directory', async () => {
             store.state.dirLoading = false
+            store.state.currentDir = 'src'
+            mockApiGet.mockResolvedValue({ items: [] })
 
-            await store.truncateToDir('/project')
+            await store.navigateToParentDir()
 
-            expect(mockDirStack.truncateToDirAndLoad).toHaveBeenCalledWith('/project', expect.any(Function))
+            // dirName('src') = ''
+            expect(mockApiGet).toHaveBeenCalledWith('/api/dir?path=')
         })
 
-        it('skips if dirLoading is true', async () => {
-            store.state.dirLoading = true
-
-            await store.truncateToDir('/project')
-
-            expect(mockDirStack.truncateToDirAndLoad).not.toHaveBeenCalled()
-        })
-    })
-
-    describe('replaceDirTop', () => {
-        it('calls dirStack.replaceTopAndLoad', async () => {
+        it('no-op when already at project root', async () => {
             store.state.dirLoading = false
+            store.state.currentDir = ''
 
-            await store.replaceDirTop('/project/other')
+            await store.navigateToParentDir()
 
-            expect(mockDirStack.replaceTopAndLoad).toHaveBeenCalledWith('/project/other', expect.any(Function))
-        })
-
-        it('skips if dirLoading is true', async () => {
-            store.state.dirLoading = true
-
-            await store.replaceDirTop('/project/other')
-
-            expect(mockDirStack.replaceTopAndLoad).not.toHaveBeenCalled()
+            expect(mockApiGet).not.toHaveBeenCalled()
         })
     })
 

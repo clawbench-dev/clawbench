@@ -66,13 +66,6 @@ vi.mock('@/composables/useFileUpload', () => ({
   }),
 }))
 
-vi.mock('@/composables/useDirStack', () => ({
-  useDirStack: () => ({
-    canGoBack: { value: false },
-    goBack: vi.fn(),
-  }),
-}))
-
 vi.mock('@/composables/useFileNavStack', () => ({
   useFileNavStack: () => ({
     overlayOpen: { value: false },

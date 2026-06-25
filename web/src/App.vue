@@ -341,7 +341,6 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   clearPlanState()
   resetTaskTabState()
   fileNav.closeOverlay()
-  store.resetDirStack()
 
   // ── Phase 4: Change key → Vue destroys old component tree & builds new one ──
   projectKey.value = newProjectPath
@@ -859,18 +858,12 @@ function handleToggleSort(field) {
     setSetting('sortDir', sortDir.value)
 }
 
-async function handleNavigateDir(path, mode = 'push') {
-    if (mode === 'truncate') {
-        await store.truncateToDir(path)
-    } else if (mode === 'replace') {
-        await store.replaceDirTop(path)
-    } else {
-        await store.pushDir(path)
-    }
+async function handleNavigateDir(path) {
+    await store.navigateToDir(path)
 }
 
 async function handleNavigateBack() {
-    await store.popDir()
+    await store.navigateToParentDir()
 }
 
 async function handleSelectFile(path) {
@@ -920,7 +913,7 @@ async function handleOverlayOpenFile(payload) {
         try {
             const resp = await fetch(`/api/dir?path=${encodeURIComponent(path)}`)
             if (resp.ok) {
-                await store.pushDir(path)
+                await store.navigateToDir(path)
                 window.dispatchEvent(new CustomEvent('close-file-overlay'))
                 window.dispatchEvent(new CustomEvent('open-file-manager'))
                 return

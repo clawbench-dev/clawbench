@@ -309,7 +309,6 @@ import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipe
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { useToast } from '@/composables/useToast.ts'
-import { useDirStack } from '@/composables/useDirStack'
 import { useFileNavStack } from '@/composables/useFileNavStack'
 import SearchInput from '@/components/common/SearchInput.vue'
 import DirBreadcrumb from './DirBreadcrumb.vue'
@@ -339,15 +338,15 @@ const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
 
 const activeTab = inject('activeTab', ref(''))
 
-const dirStack = useDirStack()
 const fileNav = useFileNavStack()
 
 // Register back handler for file browser directory navigation
 // PRIORITY_PAGE < PRIORITY_OVERLAY, so file-overlay always wins when open.
 // The !overlayOpen guard is redundant with priority but makes intent explicit.
+// canGoBack: true when not at project root (currentDir !== '')
 useFeatureBackHandler(
   'browse',
-  () => activeTab.value === 'browse' && !fileNav.overlayOpen.value && dirStack.canGoBack.value,
+  () => activeTab.value === 'browse' && !fileNav.overlayOpen.value && props.currentDir !== '',
   () => emit('navigateBack'),
   PRIORITY_PAGE,
 )

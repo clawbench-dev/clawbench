@@ -26,7 +26,7 @@ vi.mock('@/stores/app', () => ({
   store: {
     state: { projectRoot: '/home/user/project' },
     selectFile: vi.fn(),
-    pushDir: vi.fn(),
+    navigateToDir: vi.fn(),
   },
 }))
 
@@ -1454,15 +1454,15 @@ describe('verifyFilePaths', () => {
 
 describe('openFilePath', () => {
   let mockSelectFile: ReturnType<typeof vi.fn>
-  let mockPushDir: ReturnType<typeof vi.fn>
+  let mockNavigateToDir: ReturnType<typeof vi.fn>
 
   beforeEach(async () => {
     clearVerifiedCache()
     const { store } = await import('@/stores/app')
     mockSelectFile = store.selectFile as ReturnType<typeof vi.fn>
-    mockPushDir = store.pushDir as ReturnType<typeof vi.fn>
+    mockNavigateToDir = store.navigateToDir as ReturnType<typeof vi.fn>
     mockSelectFile.mockClear()
-    mockPushDir.mockClear()
+    mockNavigateToDir.mockClear()
   })
 
   afterEach(() => {
@@ -1481,7 +1481,7 @@ describe('openFilePath', () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(1)
     expect(mockFetch.mock.calls[0][0]).toContain('/api/dir?path=')
-    expect(mockPushDir).toHaveBeenCalledWith('src')
+    expect(mockNavigateToDir).toHaveBeenCalledWith('src')
     expect(mockDispatchEvent).toHaveBeenCalled()
 
     window.dispatchEvent = origDispatch
@@ -1628,7 +1628,7 @@ describe('openFilePath', () => {
     await openFilePath('internal/rag/')
 
     // Should navigate to directory, NOT call selectFile
-    expect(mockPushDir).toHaveBeenCalledWith('internal/rag/')
+    expect(mockNavigateToDir).toHaveBeenCalledWith('internal/rag/')
     expect(mockSelectFile).not.toHaveBeenCalled()
     // Should close file overlay and open file manager
     const eventTypes = mockDispatchEvent.mock.calls.map(call => call[0].type)
@@ -1656,7 +1656,7 @@ describe('openFilePath', () => {
     await openFilePath('/external/dir')
 
     // Should NOT navigate to directory for external paths
-    expect(mockPushDir).not.toHaveBeenCalled()
+    expect(mockNavigateToDir).not.toHaveBeenCalled()
     expect(mockSelectFile).not.toHaveBeenCalled()
 
     vi.unstubAllGlobals()

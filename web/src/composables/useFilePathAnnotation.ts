@@ -643,7 +643,7 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
         try {
             const resp = await fetch(`/api/dir?path=${encodeURIComponent(resolvedPath)}`)
             if (resp.ok) {
-                await store.pushDir(resolvedPath)
+                await store.navigateToDir(resolvedPath)
                 window.dispatchEvent(new CustomEvent('close-file-overlay'))
                 window.dispatchEvent(new CustomEvent('open-file-manager'))
                 return true
@@ -676,7 +676,7 @@ export async function openFilePath(resolvedPath: string, lineStart?: number, lin
             }
             if (type === 'dir') {
                 // Path is a directory — navigate into it instead of opening as file
-                await store.pushDir(resolvedPath)
+                await store.navigateToDir(resolvedPath)
                 window.dispatchEvent(new CustomEvent('close-file-overlay'))
                 window.dispatchEvent(new CustomEvent('open-file-manager'))
                 return true
