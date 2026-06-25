@@ -401,7 +401,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	}
 
 	// Initialize read connection pool for concurrent reads (WAL mode).
-	// WAL contract: DB (MaxOpenConns=1) serializes writes; DBRead (MaxOpenConns=2)
+	// WAL contract: DB (MaxOpenConns=2) serializes writes + avoids deadlocks; DBRead (MaxOpenConns=2)
 	// allows concurrent reads that never block writes and vice versa.
 	// Both pools must use WAL mode + busy_timeout for this to work correctly.
 	DBRead, err = sql.Open("sqlite", dbPath)

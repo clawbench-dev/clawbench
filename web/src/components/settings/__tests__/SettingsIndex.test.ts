@@ -41,6 +41,7 @@ const globalStubs = {
   'lucide-folder-open': true,
   'lucide-terminal': true,
   'lucide-volume2': true,
+  'lucide-sparkles': true,
   'lucide-brain': true,
   'lucide-arrow-left-right': true,
   'lucide-bell': true,
@@ -62,12 +63,12 @@ function mountIndex() {
 }
 
 describe('SettingsIndex', () => {
-  it('renders 12 category rows in web mode (no Android)', () => {
+  it('renders 13 category rows in web mode (no Android)', () => {
     isAppModeRef.value = false
     const wrapper = mountIndex()
 
     const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(12)
+    expect(rows.length).toBe(13)
   })
 
   it('renders category labels in web mode', () => {
@@ -101,7 +102,7 @@ describe('SettingsIndex', () => {
     const wrapper = mountIndex()
 
     const expectedIds = [
-      'appearance', 'project', 'chat', 'files', 'terminal',
+      'appearance', 'project', 'chat', 'agents', 'files', 'terminal',
       'tts', 'summarization', 'rag', 'portForward', 'push', 'security', 'about',
     ]
 
@@ -117,7 +118,7 @@ describe('SettingsIndex', () => {
     const wrapper = mountIndex()
 
     const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(13)
+    expect(rows.length).toBe(14)
 
     const labels = wrapper.findAll('.settings-index__label').map(el => el.text())
     expect(labels).toContain('Android')

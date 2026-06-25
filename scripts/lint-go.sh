@@ -56,8 +56,8 @@ done
 # 检测/安装 golangci-lint
 ensure_golangci_lint() {
     if command -v golangci-lint >/dev/null 2>&1; then
-        LOCAL_VERSION="$(golangci-lint version --format short 2>/dev/null || echo "unknown")"
-        if [ -n "$LINT_VERSION" ] && [ "$LOCAL_VERSION" != "$LINT_VERSION" ]; then
+        LOCAL_VERSION="$(golangci-lint version --short 2>/dev/null || echo "unknown")"
+        if [ -n "$LINT_VERSION" ] && [ "v$LOCAL_VERSION" != "$LINT_VERSION" ] && [ "$LOCAL_VERSION" != "$LINT_VERSION" ]; then
             echo "⚠️  golangci-lint 版本不匹配: 本地=$LOCAL_VERSION, 要求=$LINT_VERSION"
             echo "   正在安装正确版本..."
             install_golangci_lint
@@ -105,7 +105,7 @@ if [ "$DIFF_MODE" = true ]; then
 fi
 
 # 运行 lint
-echo "🔍 运行 golangci-lint ($(golangci-lint version --format short 2>/dev/null || echo "unknown"))..."
+echo "🔍 运行 golangci-lint ($(golangci-lint version --short 2>/dev/null || echo "unknown"))..."
 echo ""
 
 if golangci-lint run $LINT_ARGS ./...; then

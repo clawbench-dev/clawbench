@@ -213,6 +213,46 @@ describe('useDirStack', () => {
     expect(ds.dirStack.value).toEqual(['lib'])
   })
 
+  it('breadcrumb push: navigating to ancestor via pushDir preserves stack depth', () => {
+    // Breadcrumb clicks should push onto the stack (not truncate),
+    // so canGoBack remains true and swipe-back works correctly.
+    const ds = useDirStack()
+    ds.pushDir('src')
+    ds.pushDir('src/composables')
+    ds.pushDir('src/composables/useDirStack')
+
+    // User clicks breadcrumb to go to 'src' — should push, not truncate
+    ds.pushDir('src')
+    expect(ds.dirStack.value).toEqual(['src', 'src/composables', 'src/composables/useDirStack', 'src'])
+    expect(ds.currentDir.value).toBe('src')
+    expect(ds.canGoBack.value).toBe(true)
+
+    // Swipe back should return to the deepest directory the user was in
+    const back = ds.popDir()
+    expect(back).toBe('src/composables/useDirStack')
+    expect(ds.canGoBack.value).toBe(true)
+  })
+
+  it('breadcrumb push to parent: preserves intermediate navigation history', () => {
+    const ds = useDirStack()
+    ds.pushDir('')
+    ds.pushDir('src')
+    ds.pushDir('src/composables')
+
+    // Click breadcrumb 'src' — push, don't truncate
+    ds.pushDir('src')
+    expect(ds.dirStack.value).toEqual(['', 'src', 'src/composables', 'src'])
+    expect(ds.canGoBack.value).toBe(true)
+
+    // First back: go to composables
+    expect(ds.popDir()).toBe('src/composables')
+    // Second back: go to src
+    expect(ds.popDir()).toBe('src')
+    // Third back: go to root
+    expect(ds.popDir()).toBe('')
+    expect(ds.canGoBack.value).toBe(false)
+  })
+
   // ─── *AndLoad async methods with rollback ───
 
   it('pushDirAndLoad: pushes and calls loadFn', async () => {

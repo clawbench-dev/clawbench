@@ -394,7 +394,7 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		"command": true, "thinking_effort": true, "thinking_effort_levels": true,
 		"preferred_model": true, "preferred_thinking_effort": true, "system_prompt": true,
 		"custom_system_prompt": true,
-		"models": true, "models_auto_detected": true, "source": true, "sort_order": true,
+		"models":               true, "models_auto_detected": true, "source": true, "sort_order": true,
 		"transport": true, "acp_command": true,
 		"created_at": true, "updated_at": true,
 	}
@@ -648,7 +648,7 @@ func TestPatchAgentFields_PartialPatch(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.Equal(t, "Pi New", agents[0].Name)
-	assert.Equal(t, "🤖", agents[0].Icon)       // unchanged
+	assert.Equal(t, "🤖", agents[0].Icon)        // unchanged
 	assert.Equal(t, "old", agents[0].Specialty) // unchanged
 }
 

@@ -263,21 +263,16 @@ func PatchAgentFields(db *sql.DB, id string, patch AgentPatch) error {
 		args = append(args, *patch.Specialty)
 	}
 	if patch.CustomSystemPrompt != nil {
-		setClauses = append(setClauses, "custom_system_prompt = ?")
-		// Also update system_prompt to keep it in sync for backward compat
-		setClauses = append(setClauses, "system_prompt = ?")
+		setClauses = append(setClauses, "custom_system_prompt = ?", "system_prompt = ?")
 		// Compose system_prompt from common prompt + custom_system_prompt
 		commonPrompt := model.BuildCommonPrompt()
 		custom := *patch.CustomSystemPrompt
 		if commonPrompt != "" && custom != "" {
-			args = append(args, custom)
-			args = append(args, commonPrompt+"\n\n"+custom)
+			args = append(args, custom, commonPrompt+"\n\n"+custom)
 		} else if commonPrompt != "" {
-			args = append(args, custom)
-			args = append(args, commonPrompt)
+			args = append(args, custom, commonPrompt)
 		} else {
-			args = append(args, custom)
-			args = append(args, custom)
+			args = append(args, custom, custom)
 		}
 	}
 	if patch.SortOrder != nil {
@@ -430,7 +425,10 @@ func MigrateCustomSystemPrompt(db *sql.DB) {
 	if err := rows.Err(); err != nil {
 		slog.Warn("migrate custom_system_prompt: row iteration error", "error", err)
 	}
-	_ = rows.Close()
+	//nolint:sqlclosecheck // must close before UPDATE loop to release DB connection early
+	if err := rows.Close(); err != nil {
+		slog.Warn("migrate custom_system_prompt: close rows failed", "error", err)
+	}
 
 	migrated := 0
 	for _, row := range toMigrate {

@@ -290,9 +290,9 @@ func TestInitDB_ReadWriteSeparation(t *testing.T) {
 	// Both should be different instances
 	assert.NotEqual(t, DB, DBRead, "DB and DBRead should be separate connections")
 
-	// Verify write pool has MaxOpenConns=1
+	// Verify write pool has MaxOpenConns=2 (must be >1 to avoid deadlocks in SELECT+UPDATE loops)
 	stats := DB.Stats()
-	assert.Equal(t, 1, stats.MaxOpenConnections, "DB write pool should have MaxOpenConns=1")
+	assert.Equal(t, 2, stats.MaxOpenConnections, "DB write pool should have MaxOpenConns=2")
 
 	// Verify read pool has MaxOpenConns=2
 	statsRead := DBRead.Stats()

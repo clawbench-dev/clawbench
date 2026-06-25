@@ -82,7 +82,7 @@
           {{ isAllSelected ? t('file.multiSelect.deselectAll') : t('file.multiSelect.selectAll') }}
         </button>
       </div>
-      <DirBreadcrumb v-else :path="currentDir" @navigate="$emit('navigateDir', $event, 'truncate')" />
+      <DirBreadcrumb v-else :path="currentDir" @navigate="$emit('navigateDir', $event)" />
     </div>
 
     <!-- Hidden file input for upload -->
