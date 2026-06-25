@@ -874,7 +874,7 @@ func TestServeAgentSubRoutes(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(tc.method, tc.path, nil)
+			req := httptest.NewRequest(tc.method, tc.path, http.NoBody)
 			w := httptest.NewRecorder()
 			ServeAgentSubRoutes(w, req)
 			assert.Equal(t, tc.wantStatus, w.Code)
@@ -883,7 +883,7 @@ func TestServeAgentSubRoutes(t *testing.T) {
 }
 
 func TestServeAgentCommonPrompt(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/agents/common-prompt", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/agents/common-prompt", http.NoBody)
 	w := httptest.NewRecorder()
 	ServeAgentCommonPrompt(w, req)
 
