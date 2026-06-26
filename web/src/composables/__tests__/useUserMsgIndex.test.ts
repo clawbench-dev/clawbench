@@ -330,7 +330,7 @@ describe('useUserMsgIndex — jumpToUserMessage', () => {
     hasMore.value = true
 
     // Start jump — target ID 5 not in messages
-    const jumpPromise = vm.jumpToUserMessage({ id: 5 })
+    vm.jumpToUserMessage({ id: 5 })
 
     // Let microtasks run
     await nextTick()
@@ -345,14 +345,14 @@ describe('useUserMsgIndex — jumpToUserMessage', () => {
   })
 
   it('scrolls to message after load-more finds it', async () => {
-    const { vm, messages, messagesRef, hasMore, loadingMore, hideScrollFab, setProgrammaticScrolling, emitLoadMore } = createComposable()
+    const { vm, messages, messagesRef, hasMore, emitLoadMore } = createComposable()
     const el = document.createElement('div')
     el.querySelectorAll = vi.fn().mockReturnValue([])
     messagesRef.value = el
     hasMore.value = true
 
     // Start jump for message id=5 (not in list yet)
-    const jumpPromise = vm.jumpToUserMessage({ id: 5 })
+    vm.jumpToUserMessage({ id: 5 })
 
     // Advance past the initial setTimeout (500ms timeout for loadingMore watcher)
     await vi.advanceTimersByTimeAsync(600)
@@ -382,14 +382,14 @@ describe('useUserMsgIndex — jumpToUserMessage', () => {
 
   it('breaks when message found but DOM element missing after load', async () => {
     // Covers line 99: the break when idx >= 0 but items[idx] is null
-    const { vm, messages, messagesRef, hasMore, emitLoadMore } = createComposable()
+    const { vm, messages, messagesRef, hasMore } = createComposable()
     const el = document.createElement('div')
     // querySelectorAll returns empty so items[idx] is undefined
     el.querySelectorAll = vi.fn().mockReturnValue([])
     messagesRef.value = el
     hasMore.value = true
 
-    const jumpPromise = vm.jumpToUserMessage({ id: 5 })
+    vm.jumpToUserMessage({ id: 5 })
 
     // Advance timers to trigger the 500ms timeout
     await vi.advanceTimersByTimeAsync(600)
@@ -409,14 +409,14 @@ describe('useUserMsgIndex — jumpToUserMessage', () => {
 
   it('handles loadingMore watcher with loadingMore flipping to true then false', async () => {
     // Covers lines 105, 110-114: the loadingMore watcher paths
-    const { vm, messages, messagesRef, hasMore, loadingMore, emitLoadMore, setProgrammaticScrolling } = createComposable()
+    const { vm, messages, messagesRef, hasMore, loadingMore } = createComposable()
     const el = document.createElement('div')
     el.querySelectorAll = vi.fn().mockReturnValue([])
     messagesRef.value = el
     hasMore.value = true
 
     // Start jump
-    const jumpPromise = vm.jumpToUserMessage({ id: 5 })
+    vm.jumpToUserMessage({ id: 5 })
 
     // After emitLoadMore is called, simulate loadingMore going true
     await nextTick()
