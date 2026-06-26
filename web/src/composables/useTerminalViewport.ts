@@ -57,7 +57,7 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
   function fitTerminal() {
     if (!terminal.value || !containerRef.value) return
     try {
-      // @ts-ignore — FitAddon is loaded dynamically
+      // @ts-expect-error — FitAddon is loaded dynamically
       terminal.value.fitAddon?.fit()
     } catch {
       // fit() can fail if terminal is not visible

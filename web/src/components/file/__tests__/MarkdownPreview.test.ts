@@ -46,6 +46,7 @@ vi.mock('@/composables/useDiffMarkerClick.ts', () => ({
 
 // Mock useMarkdownDiff (diff markers + drawer state)
 vi.mock('@/composables/useMarkdownDiff.ts', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { ref, shallowRef } = require('vue')
   return {
     diffMarkers: ref([]),

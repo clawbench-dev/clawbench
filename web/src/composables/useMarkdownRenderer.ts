@@ -59,7 +59,7 @@ export function renderKatexInString(html: string): string {
 
     // Inline math: $...$  和  \(...\)
     // 注意：$ 必须匹配非空内容，且左右不能是数字或字母（避免误匹配价格等）
-    html = html.replace(/(?<!\$)\$(?!\$)([^\$\n]+?)\$(?!\$)/g, (_, math) => {
+    html = html.replace(/(?<!\$)\$(?!\$)([^$\n]+?)\$(?!\$)/g, (_, math) => {
         try {
             return katex.renderToString(math.trim(), { displayMode: false, throwOnError: false })
         } catch {

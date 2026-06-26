@@ -22,7 +22,7 @@ if (typeof (globalThis as any).CSS === 'undefined') {
     ;(globalThis as any).CSS = {}
 }
 if (typeof (globalThis as any).CSS.escape === 'undefined') {
-    ;(globalThis as any).CSS.escape = (s: string) => s.replace(/[!"#$%&'()*+,.\/:;<=>?@[\\\]^`{|}~]/g, '\\$&')
+    ;(globalThis as any).CSS.escape = (s: string) => s.replace(/[!"#$%&'()*+,./:;<=>?@[\\\]^`{|}~]/g, '\\$&')
 }
 
 const PROJECT_ROOT = '/home/user/project'

@@ -130,7 +130,7 @@ function extractTocGeneric(content: string): TocItem[] {
         const indent = line.search(/\S/)
         if (trimmed.endsWith(':') || trimmed.endsWith(',') || trimmed.endsWith('{') || trimmed.endsWith('[') || trimmed.endsWith('(')) {
             // Extract key name
-            const keyMatch = trimmed.match(/^["']?([^"':{\[\s,]+)["']?\s*[:{[\(,]/)
+            const keyMatch = trimmed.match(/^["']?([^"':{[\s,]+)["']?\s*[:{[(,]/)
             if (keyMatch) {
                 const key = keyMatch[1].trim()
                 if (key.length < 2 || key === '{' || key === '[') continue

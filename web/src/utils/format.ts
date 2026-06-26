@@ -89,7 +89,7 @@ export function stripMarkdownPreview(text: string, maxLen: number = 100): string
         .replace(/_([^_]+)_/g, '$1')       // italic
         .replace(/~~([^~]+)~~/g, '$1')     // strikethrough
         .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links
-        .replace(/[#*`_~\[\]()>|]/g, '')   // remaining syntax chars
+        .replace(/[#*`_~[\]()>|]/g, '')   // remaining syntax chars
         .replace(/\n+/g, ' ')             // newlines → space
         .trim()
     return clean.length > maxLen ? clean.substring(0, maxLen) + '...' : clean

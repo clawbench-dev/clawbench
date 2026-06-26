@@ -67,8 +67,8 @@ vi.mock('@xterm/xterm', () => {
   class MockTerminal {
     options: Record<string, unknown> = {}
     element: HTMLElement | null = null
-    private _dataCallbacks: Function[] = []
-    private _resizeCallbacks: Function[] = []
+    private _dataCallbacks: ((data: string) => void)[] = []
+    private _resizeCallbacks: (() => void)[] = []
 
     loadAddon() {}
     open(el: HTMLElement) { this.element = el }
@@ -77,8 +77,8 @@ vi.mock('@xterm/xterm', () => {
     clear() {}
     reset() {}
     focus() {}
-    onData(cb: Function) { this._dataCallbacks.push(cb) }
-    onResize(cb: Function) { this._resizeCallbacks.push(cb) }
+    onData(cb: (data: string) => void) { this._dataCallbacks.push(cb) }
+    onResize(cb: () => void) { this._resizeCallbacks.push(cb) }
   }
   return { Terminal: MockTerminal }
 })

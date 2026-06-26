@@ -184,6 +184,7 @@ describe('useFileRefresh modified-line flash', () => {
     // Use real computeDiff for these tests
     vi.mocked(computeDiff).mockImplementation(
       (oldText: string, newText: string) => {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { diffLines, diffChars } = require('diff')
         const result = {
           deletedInOld: [] as number[],

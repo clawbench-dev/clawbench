@@ -44,7 +44,7 @@ export function splitHighlightedHtml(html: string): string[] {
         }
 
         // Walk through the line tracking open spans
-        let tempSpans = [...openSpans]
+        const tempSpans = [...openSpans]
         let pos = 0
 
         while (pos < line.length) {

@@ -261,7 +261,7 @@ function getScrollEl() {
     if (isMarkdown.value) {
         return el.querySelector('.markdown-body')
     }
-    if (isHtml.value && markdownViewMode.value === 'rendered') {
+    if (isHtml.value && props.markdownViewMode === 'rendered') {
         return null // iframe handles its own scrolling
     }
     return el.querySelector('.raw-content-pre')

@@ -92,7 +92,7 @@ export function parseAskQuestionXML(rawContent: string): AskQuestionData | null 
  */
 function parseAskQuestionXMLOnly(rawContent: string): AskQuestionData | null {
   try {
-    let xmlStr = rawContent.trim()
+    const xmlStr = rawContent.trim()
     const parser = new DOMParser()
 
     // Try parsing as-is first (content may already include <ask-question> wrapper)

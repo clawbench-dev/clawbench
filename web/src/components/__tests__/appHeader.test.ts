@@ -20,6 +20,7 @@ vi.mock('@/stores/app.ts', () => ({
   store: { state: mockState, loadGitBranch: loadGitBranchFn },
 }))
 vi.mock('@/composables/useGlobalEvents', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const vue = require('vue')
   return {
     useGlobalEvents: () => ({

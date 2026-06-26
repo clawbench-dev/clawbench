@@ -148,7 +148,7 @@ export function resolveFilePathDual(path: string, projectRoot: string, homeDir?:
 
     // ── Relative path without any root ──
     if (!projectRoot && !baseDir) {
-        let clean = path.replace(/^\.\//, '')
+        const clean = path.replace(/^\.\//, '')
         if (clean.startsWith('../')) return null
         return { primary: clean, fallback: clean }
     }

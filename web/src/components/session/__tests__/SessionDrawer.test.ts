@@ -82,8 +82,8 @@ vi.mock('@/components/git/SwipeToDeleteRow.vue', () => ({
 
 // ── Mock IntersectionObserver ──
 class MockIntersectionObserver {
-  callback: Function
-  constructor(cb: Function) { this.callback = cb }
+  callback: (entries: IntersectionObserverEntry[], observer: IntersectionObserver) => void
+  constructor(cb: (entries: IntersectionObserverEntry[], observer: IntersectionObserver) => void) { this.callback = cb }
   observe() {}
   disconnect() {}
   unobserve() {}

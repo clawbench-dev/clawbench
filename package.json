@@ -11,7 +11,10 @@
     "test:e2e": "playwright test --config e2e/playwright.config.ts",
     "test:e2e:ui": "playwright test --config e2e/playwright.config.ts --ui",
     "test:e2e:debug": "playwright test --config e2e/playwright.config.ts --debug",
-    "typecheck": "vue-tsc --noEmit -p web/tsconfig.json"
+    "typecheck": "vue-tsc --noEmit -p web/tsconfig.json",
+    "lint": "cd web && npx eslint src/",
+    "lint:fix": "cd web && npx eslint src/ --fix",
+    "prepare": "node scripts/install-hooks.mjs"
   },
   "dependencies": {
     "@intlify/unplugin-vue-i18n": "^6.0.8",

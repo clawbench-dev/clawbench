@@ -12,7 +12,7 @@ vi.mock('@/utils/doubleClickUtils', () => ({
   isExternalLink: (href: string) => href.startsWith('http://') || href.startsWith('https://'),
   isAnchorLink: (href: string) => href.startsWith('#'),
   slugifyForHeading: (s: string) => s.toLowerCase().replace(/\s+/g, '-'),
-  stripLeadingNumbering: (s: string) => s.replace(/^\d+[\.\s]+/, ''),
+  stripLeadingNumbering: (s: string) => s.replace(/^\d+[.\s]+/, ''),
 }))
 
 // Mock useLocale
@@ -25,7 +25,7 @@ if (typeof (globalThis as any).CSS === 'undefined') {
   ;(globalThis as any).CSS = {}
 }
 if (typeof (globalThis as any).CSS.escape === 'undefined') {
-  ;(globalThis as any).CSS.escape = (s: string) => s.replace(/[!"#$%&'()*+,.\/:;<=>?@[\\\]^`{|}~]/g, '\\$&')
+  ;(globalThis as any).CSS.escape = (s: string) => s.replace(/[!"#$%&'()*+,./:;<=>?@[\\\]^`{|}~]/g, '\\$&')
 }
 
 describe('useDoubleClickCopy', () => {

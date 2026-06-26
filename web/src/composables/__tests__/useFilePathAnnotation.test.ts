@@ -1205,7 +1205,7 @@ describe('verifyFilePaths', () => {
     ;(globalThis as any).CSS = {}
   }
   if (typeof (globalThis as any).CSS.escape === 'undefined') {
-    ;(globalThis as any).CSS.escape = (s: string) => s.replace(/[!"#$%&'()*+,.\/:;<=>?@[\\\]^`{|}~]/g, '\\$&')
+    ;(globalThis as any).CSS.escape = (s: string) => s.replace(/[!"#$%&'()*+,./:;<=>?@[\\\]^`{|}~]/g, '\\$&')
   }
 
   it('removes buttons for non-existent paths (batch API returns none)', async () => {

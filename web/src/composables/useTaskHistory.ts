@@ -287,7 +287,7 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
       if (block.type === 'text' && block.text) {
         const clean = block.text
           .replace(/<scheduled-task\s+id="[^"]+"\s*\/>/g, '')
-          .replace(/[#*`_~\[\]()]/g, '')
+          .replace(/[#*`_~[\]()]/g, '')
           .trim()
         if (clean) {
           return clean.length > 120 ? clean.substring(0, 120) + '...' : clean

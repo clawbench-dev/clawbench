@@ -8,6 +8,7 @@ const {
   mockIsAppMode,
   mockGitBranch,
 } = vi.hoisted(() => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { ref } = require('vue')
   return {
     mockWsStatus: ref<'connected' | 'reconnecting' | 'disconnected'>('connected'),

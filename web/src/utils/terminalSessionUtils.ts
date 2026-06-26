@@ -172,5 +172,6 @@ export function buildWsUrl(baseUrl: string, sessionId: string): string {
  */
 export function stripSyncOutput(data: string): string {
   if (!data.includes('\x1b[?2026')) return data
+  // eslint-disable-next-line no-control-regex
   return data.replace(/\x1b\[\?2026[hl]/g, '')
 }

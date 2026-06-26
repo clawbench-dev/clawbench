@@ -18,7 +18,7 @@ function isGarbageOutput(output: string | undefined): boolean {
   // Single character or just braces/brackets — not meaningful output
   if (trimmed.length <= 1) return true
   // Very short strings that are just JSON delimiters
-  if (/^[{}\[\],:]+$/.test(trimmed)) return true
+  if (/^[{}[\],:]+$/.test(trimmed)) return true
   return false
 }
 
