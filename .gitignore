@@ -83,6 +83,9 @@ clawbench-test
 .codebuddy/worktrees/
 .codebuddy/scheduled_tasks.lock
 
+# Agent skills (local only)
+.agents/
+
 # Compiled test binaries
 *.test
 .bin/

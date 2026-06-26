@@ -123,6 +123,11 @@ func ServeChatCount(w http.ResponseWriter, r *http.Request) {
 		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 		return
 	}
+	// Verify session is not soft-deleted (GetSessionBackend filters deleted=0)
+	if service.GetSessionBackend(sessionID) == "" {
+		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
+		return
+	}
 	count := service.GetChatMessageCount(sessionID)
 	writeJSON(w, http.StatusOK, map[string]any{"count": count})
 }

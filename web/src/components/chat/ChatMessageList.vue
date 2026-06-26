@@ -100,8 +100,8 @@
 
   <!-- User message index overlay -->
   <Transition name="user-msg-overlay">
-    <div v-if="showUserMsgIndex" class="user-msg-overlay" @click.self="closeUserMsgIndex">
-      <div ref="popoverRef" class="user-msg-panel">
+    <div v-if="showUserMsgIndex" class="user-msg-overlay" @click.self="closeUserMsgIndex" @keydown.escape="closeUserMsgIndex">
+      <div ref="popoverRef" class="user-msg-panel" role="dialog" :aria-label="t('chat.messageList.userMsgIndexTitle')">
         <div class="user-msg-panel-header">
           <MessageSquare :size="16" class="user-msg-panel-icon" />
           <span>{{ t('chat.messageList.userMsgIndexTitle') }}</span>
@@ -120,7 +120,10 @@
             v-for="(um, idx) in userMsgIndexList"
             :key="um.id || idx"
             class="user-msg-item"
+            tabindex="0"
+            role="button"
             @click="jumpToUserMessage(um)"
+            @keydown.enter="jumpToUserMessage(um)"
           >
             <span class="user-msg-item-node">
               <span class="user-msg-item-index">{{ idx + 1 }}</span>
@@ -200,6 +203,12 @@ watch(() => props.messages, () => {
   programmaticScrolling = false
   clearTimeout(scrollUpTimer)
   clearTimeout(scrollDownTimer)
+})
+
+// Clear user message index on session switch
+watch(() => props.currentSessionId, () => {
+  showUserMsgIndex.value = false
+  userMsgIndexList.value = []
 })
 
 // Inject bottomSheetRef from parent for closing
@@ -502,8 +511,24 @@ const loadingIndex = ref(false)
 
 const USER_MSG_TRUNCATE_LEN = 40
 
+function extractPlainText(content) {
+  if (!content) return ''
+  if (content.startsWith('{"blocks":')) {
+    try {
+      const parsed = JSON.parse(content)
+      if (parsed.blocks && Array.isArray(parsed.blocks)) {
+        return parsed.blocks
+          .filter(b => b.type === 'text' && b.text)
+          .map(b => b.text)
+          .join(' ')
+      }
+    } catch { /* ignore parse error, fall through */ }
+  }
+  return content
+}
+
 function truncateUserMsg(msg) {
-  const text = msg.content || ''
+  const text = extractPlainText(msg.content || '')
   if (!text && msg.files && msg.files.length > 0) {
     return `[${t('chat.messageList.userMsgIndexAttachment')}]`
   }
@@ -597,6 +622,8 @@ async function jumpToUserMessage(msg) {
           const unwatch = watch(() => props.loadingMore, (val) => {
             if (!val) { unwatch(); resolve() }
           })
+          // Safety timeout: if loadingMore never flips back, unwatch to prevent leak
+          setTimeout(() => { unwatch(); resolve() }, 5000)
         })
       }
       // Wait for scroll position adjust in parent + DOM update
@@ -1079,9 +1106,9 @@ defineExpose({
 }
 
 @keyframes msg-highlight-flash {
-  0%, 15% { box-shadow: inset 0 0 0 2px #3b82f6; }
+  0%, 15% { box-shadow: inset 0 0 0 2px var(--accent-color); }
   30%, 45% { box-shadow: inset 0 0 0 2px transparent; }
-  60%, 75% { box-shadow: inset 0 0 0 2px #3b82f6; }
+  60%, 75% { box-shadow: inset 0 0 0 2px var(--accent-color); }
   90%, 100% { box-shadow: inset 0 0 0 2px transparent; }
 }
 </style>
