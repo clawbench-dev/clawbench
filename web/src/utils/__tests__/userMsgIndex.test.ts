@@ -1,31 +1,5 @@
 import { describe, expect, it } from 'vitest'
-
-// Inline extractPlainText logic (same as in ChatMessageList.vue)
-function extractPlainText(content: string): string {
-  if (!content) return ''
-  if (content.startsWith('{"blocks":')) {
-    try {
-      const parsed = JSON.parse(content)
-      if (parsed.blocks && Array.isArray(parsed.blocks)) {
-        return parsed.blocks
-          .filter((b: { type: string; text?: string }) => b.type === 'text' && b.text)
-          .map((b: { type: string; text?: string }) => b.text)
-          .join(' ')
-      }
-    } catch { /* ignore parse error */ }
-  }
-  return content
-}
-
-function truncateUserMsg(msg: { content?: string; files?: string[] }, t: (key: string) => string, maxLen = 40): string {
-  const text = extractPlainText(msg.content || '')
-  if (!text && msg.files && msg.files.length > 0) {
-    return `[${t('chat.messageList.userMsgIndexAttachment')}]`
-  }
-  return text.length > maxLen ? text.slice(0, maxLen) + '…' : text
-}
-
-const mockT = (key: string) => key === 'chat.messageList.userMsgIndexAttachment' ? 'Attachment' : key
+import { extractPlainText, truncateUserMsg } from '@/utils/userMsgIndexUtils.ts'
 
 describe('extractPlainText', () => {
   it('returns empty string for empty content', () => {
@@ -77,36 +51,34 @@ describe('extractPlainText', () => {
 })
 
 describe('truncateUserMsg', () => {
+  const attachmentLabel = 'Attachment'
+
   it('truncates long text', () => {
-    expect(truncateUserMsg({ content: 'a'.repeat(50) }, mockT)).toBe('a'.repeat(40) + '…')
+    expect(truncateUserMsg({ content: 'a'.repeat(50) }, attachmentLabel)).toBe('a'.repeat(40) + '…')
   })
 
   it('keeps short text as-is', () => {
-    expect(truncateUserMsg({ content: 'Short message' }, mockT)).toBe('Short message')
+    expect(truncateUserMsg({ content: 'Short message' }, attachmentLabel)).toBe('Short message')
   })
 
   it('handles block-format JSON content', () => {
     const content = JSON.stringify({ blocks: [{ type: 'text', text: 'Hello from blocks' }] })
-    expect(truncateUserMsg({ content }, mockT)).toBe('Hello from blocks')
+    expect(truncateUserMsg({ content }, attachmentLabel)).toBe('Hello from blocks')
   })
 
   it('shows attachment label for empty content with files', () => {
-    expect(truncateUserMsg({ content: '', files: ['file.go'] }, mockT)).toBe('[Attachment]')
+    expect(truncateUserMsg({ content: '', files: ['file.go'] }, attachmentLabel)).toBe('[Attachment]')
   })
 
   it('shows attachment label for no content with files', () => {
-    expect(truncateUserMsg({ files: ['file.go'] }, mockT)).toBe('[Attachment]')
+    expect(truncateUserMsg({ files: ['file.go'] }, attachmentLabel)).toBe('[Attachment]')
   })
 
   it('prefers text over attachment label', () => {
-    expect(truncateUserMsg({ content: 'Has text', files: ['file.go'] }, mockT)).toBe('Has text')
+    expect(truncateUserMsg({ content: 'Has text', files: ['file.go'] }, attachmentLabel)).toBe('Has text')
   })
 
   it('shows empty string for empty content without files', () => {
-    expect(truncateUserMsg({ content: '' }, mockT)).toBe('')
-  })
-
-  it('respects custom maxLen', () => {
-    expect(truncateUserMsg({ content: 'Hello world' }, mockT, 5)).toBe('Hello…')
+    expect(truncateUserMsg({ content: '' }, attachmentLabel)).toBe('')
   })
 })

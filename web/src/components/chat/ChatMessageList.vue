@@ -128,7 +128,7 @@
             <span class="user-msg-item-node">
               <span class="user-msg-item-index">{{ idx + 1 }}</span>
             </span>
-            <span class="user-msg-item-text">{{ truncateUserMsg(um) }}</span>
+            <span class="user-msg-item-text">{{ formatTruncateUserMsg(um) }}</span>
           </div>
         </div>
       </div>
@@ -149,6 +149,7 @@ import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotatio
 import { useDialog } from '@/composables/useDialog'
 import { store } from '@/stores/app.ts'
 import { computeRemainingCount } from '@/utils/messageListUtils.ts'
+import { extractPlainText, truncateUserMsg } from '@/utils/userMsgIndexUtils.ts'
 
 const { t } = useI18n()
 
@@ -509,30 +510,8 @@ const popoverRef = ref(null)
 const loadingTarget = ref(false)
 const loadingIndex = ref(false)
 
-const USER_MSG_TRUNCATE_LEN = 40
-
-function extractPlainText(content) {
-  if (!content) return ''
-  if (content.startsWith('{"blocks":')) {
-    try {
-      const parsed = JSON.parse(content)
-      if (parsed.blocks && Array.isArray(parsed.blocks)) {
-        return parsed.blocks
-          .filter(b => b.type === 'text' && b.text)
-          .map(b => b.text)
-          .join(' ')
-      }
-    } catch { /* ignore parse error, fall through */ }
-  }
-  return content
-}
-
-function truncateUserMsg(msg) {
-  const text = extractPlainText(msg.content || '')
-  if (!text && msg.files && msg.files.length > 0) {
-    return `[${t('chat.messageList.userMsgIndexAttachment')}]`
-  }
-  return text.length > USER_MSG_TRUNCATE_LEN ? text.slice(0, USER_MSG_TRUNCATE_LEN) + '…' : text
+function formatTruncateUserMsg(msg) {
+  return truncateUserMsg(msg, t('chat.messageList.userMsgIndexAttachment'))
 }
 
 async function toggleUserMsgIndex() {
