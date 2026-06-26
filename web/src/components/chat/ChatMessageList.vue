@@ -147,9 +147,9 @@ import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { useDialog } from '@/composables/useDialog'
+import { useUserMsgIndex } from '@/composables/useUserMsgIndex.ts'
 import { store } from '@/stores/app.ts'
 import { computeRemainingCount } from '@/utils/messageListUtils.ts'
-import { truncateUserMsg } from '@/utils/userMsgIndexUtils.ts'
 
 const { t } = useI18n()
 
@@ -206,11 +206,7 @@ watch(() => props.messages, () => {
   clearTimeout(scrollDownTimer)
 })
 
-// Clear user message index on session switch
-watch(() => props.currentSessionId, () => {
-  showUserMsgIndex.value = false
-  userMsgIndexList.value = []
-})
+// Clear user message index on session switch — handled by useUserMsgIndex
 
 // Inject bottomSheetRef from parent for closing
 const chatUI = inject('chatUI', {})
@@ -503,135 +499,33 @@ function scrollToBottomSmooth() {
 }
 
 // ── User message index ──
-const hasUserMessages = computed(() => props.messages.some(m => m.role === 'user'))
-const userMsgIndexList = ref([])
-const showUserMsgIndex = ref(false)
-const popoverRef = ref(null)
-const loadingTarget = ref(false)
-const loadingIndex = ref(false)
-
-function formatTruncateUserMsg(msg) {
-  return truncateUserMsg(msg, t('chat.messageList.userMsgIndexAttachment'))
-}
-
-async function toggleUserMsgIndex() {
-  if (showUserMsgIndex.value) {
-    showUserMsgIndex.value = false
-    return
-  }
-  showUserMsgIndex.value = true
-  // Fetch all user message index from API
-  if (!props.currentSessionId) return
-  loadingIndex.value = true
-  try {
-    const resp = await fetch(`/api/ai/chat/user-messages?session_id=${encodeURIComponent(props.currentSessionId)}`)
-    if (!resp.ok) return
-    const data = await resp.json()
-    userMsgIndexList.value = data.messages || []
-  } catch {
-    // Fallback: use loaded messages
-    userMsgIndexList.value = props.messages.filter(m => m.role === 'user')
-  } finally {
-    loadingIndex.value = false
-  }
-}
-
-function closeUserMsgIndex() {
+const {
+  hasUserMessages,
+  userMsgIndexList,
+  showUserMsgIndex,
+  loadingTarget,
+  loadingIndex,
+  formatTruncateUserMsg,
+  toggleUserMsgIndex,
+  closeUserMsgIndex,
+  jumpToUserMessage,
+  scrollToMessage: scrollToMessageUserMsg,
+} = useUserMsgIndex({
+  getMessages: () => props.messages,
+  getCurrentSessionId: () => props.currentSessionId || '',
+  getHasMore: () => props.hasMore,
+  getLoadingMore: () => props.loadingMore,
+  emitLoadMore: () => emit('load-more'),
+  getMessagesRef: () => messagesRef.value,
+  hideScrollFab,
+  setProgrammaticScrolling: (val) => { programmaticScrolling = val },
+})
+// Watch session switch to reset user msg index
+watch(() => props.currentSessionId, () => {
   showUserMsgIndex.value = false
-}
-
-async function jumpToUserMessage(msg) {
-  const targetId = msg.id
-  const el = messagesRef.value
-  if (!el) return
-
-  // Try to find in current messages array
-  const msgIndex = props.messages.findIndex(m => m.id === targetId)
-  if (msgIndex >= 0) {
-    await nextTick()
-    const items = el.querySelectorAll('.chat-messages-list > .chat-message')
-    if (items[msgIndex]) {
-      closeUserMsgIndex()
-      hideScrollFab()
-      programmaticScrolling = true
-      items[msgIndex].scrollIntoView({ behavior: 'smooth', block: 'center' })
-      highlightMessage(items[msgIndex])
-      setTimeout(() => { programmaticScrolling = false }, 600)
-      return
-    }
-  }
-
-  // Message not loaded — need to load more pages
-  if (!props.hasMore) return
-  loadingTarget.value = true
-  try {
-    const maxRounds = 50
-    for (let round = 0; round < maxRounds; round++) {
-      // Check if already loaded
-      const idx = props.messages.findIndex(m => m.id === targetId)
-      if (idx >= 0) {
-        await nextTick()
-        await new Promise(resolve => requestAnimationFrame(resolve))
-        const items = el.querySelectorAll('.chat-messages-list > .chat-message')
-        if (items[idx]) {
-          closeUserMsgIndex()
-          hideScrollFab()
-          programmaticScrolling = true
-          items[idx].scrollIntoView({ behavior: 'smooth', block: 'center' })
-          highlightMessage(items[idx])
-          setTimeout(() => { programmaticScrolling = false }, 600)
-          return
-        }
-        break
-      }
-      // Not found — load one more page
-      emit('load-more')
-      // Wait for loadingMore to become true (parent starts loading)
-      await new Promise(resolve => {
-        let timer = null
-        const unwatch = watch(() => props.loadingMore, (val) => {
-          if (val) { clearTimeout(timer); unwatch(); resolve() }
-        })
-        // Timeout: if loadingMore never flips to true (already loaded or no more), move on
-        timer = setTimeout(() => { unwatch(); resolve() }, 500)
-      })
-      // Wait for loadingMore to flip back to false (loading complete)
-      if (props.loadingMore) {
-        await new Promise(resolve => {
-          const unwatch = watch(() => props.loadingMore, (val) => {
-            if (!val) { unwatch(); resolve() }
-          })
-          // Safety timeout: if loadingMore never flips back, unwatch to prevent leak
-          setTimeout(() => { unwatch(); resolve() }, 5000)
-        })
-      }
-      // Wait for scroll position adjust in parent + DOM update
-      await nextTick()
-      await new Promise(resolve => requestAnimationFrame(resolve))
-    }
-  } finally {
-    loadingTarget.value = false
-  }
-}
-
-function highlightMessage(el) {
-  el.classList.add('chat-message-highlight')
-  setTimeout(() => el.classList.remove('chat-message-highlight'), 1500)
-}
-
-function scrollToMessage(msgId) {
-  const el = messagesRef.value
-  if (!el) return
-  const msgIndex = props.messages.findIndex(m => m.id === msgId)
-  if (msgIndex < 0) return
-  const items = el.querySelectorAll('.chat-messages-list > .chat-message')
-  if (items[msgIndex]) {
-    programmaticScrolling = true
-    items[msgIndex].scrollIntoView({ behavior: 'smooth', block: 'center' })
-    highlightMessage(items[msgIndex])
-    setTimeout(() => { programmaticScrolling = false }, 600)
-  }
-}
+  userMsgIndexList.value = []
+})
+const popoverRef = ref(null)
 
 defineExpose({
   scrollToBottom,
@@ -639,7 +533,7 @@ defineExpose({
   scrollToPreviousMessage,
   scrollToNextMessage,
   scrollToBottomSmooth,
-  scrollToMessage,
+  scrollToMessage: scrollToMessageUserMsg,
   messagesRef,
   isAtBottom: () => isAtBottom.value,
   scrolledUp,
