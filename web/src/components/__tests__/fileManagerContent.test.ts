@@ -754,7 +754,7 @@ describe('FileManagerContent — doPaste', () => {
     vi.stubGlobal('fetch', fetchSpy)
 
     const wrapper = mountContent()
-    wrapper.vm.clipboard.entries = [{ type: 'file', name: 'file.txt', path: 'file.txt' }]
+    wrapper.vm.clipboard.entries = [{ type: 'file', name: 'file.txt', path: 'src/file.txt' }]
     wrapper.vm.clipboard.isCut = true
     await nextTick()
 
