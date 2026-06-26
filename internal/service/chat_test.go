@@ -3000,7 +3000,7 @@ func TestGetUserMessageIndex_OrderPreserved(t *testing.T) {
 
 	sid := helperCreateSession(t, "/project", "claude", "Order Test")
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		_, err := service.AddChatMessage("/project", "claude", sid, "user", fmt.Sprintf("Question %d", i+1), nil, false, "NewSession")
 		assert.NoError(t, err)
 		_, err = service.AddChatMessage("/project", "claude", sid, "assistant", fmt.Sprintf("Answer %d", i+1), nil, false, "NewSession")
