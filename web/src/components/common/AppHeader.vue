@@ -424,7 +424,7 @@ onUnmounted(() => {
 /* Divider between project and branch inside capsule */
 .badge-capsule-divider {
     width: 1px;
-    height: 14px;
+    align-self: stretch;
     background: var(--border-color);
     flex-shrink: 0;
 }
