@@ -16,6 +16,7 @@ import (
 
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
+	"clawbench/internal/speech"
 	"clawbench/internal/version"
 
 	"github.com/stretchr/testify/assert"
@@ -2134,4 +2135,89 @@ func TestServeConfigPatch_WithExistingConfigBackup(t *testing.T) {
 
 	_, err := os.Stat(filepath.Join(configDir, "config.yaml.bak"))
 	assert.NoError(t, err, "backup file should exist")
+}
+
+func TestApplyHotReloadGlobals_TTSVoice_EdgeTTS(t *testing.T) {
+	origProvider := speechProvider
+	defer func() { speechProvider = origProvider }()
+
+	speechProvider = &speech.EdgeTTSProvider{Voice: "original-voice", Rate: "+0%"}
+	model.ConfigInstance.TTS.Voice = "new-voice"
+	model.ConfigInstance.TTS.Speed = 0 // don't trigger speed logic
+
+	applyHotReloadGlobals()
+
+	p := speechProvider.(*speech.EdgeTTSProvider)
+	assert.Equal(t, "new-voice", p.Voice)
+}
+
+func TestApplyHotReloadGlobals_TTSVoice_Kokoro(t *testing.T) {
+	origProvider := speechProvider
+	defer func() { speechProvider = origProvider }()
+
+	speechProvider = &speech.KokoroProvider{Voice: "original-voice"}
+	model.ConfigInstance.TTS.Voice = "new-kokoro-voice"
+	model.ConfigInstance.TTS.Speed = 0
+
+	applyHotReloadGlobals()
+
+	p := speechProvider.(*speech.KokoroProvider)
+	assert.Equal(t, "new-kokoro-voice", p.Voice)
+}
+
+func TestApplyHotReloadGlobals_TTSSpeed_EdgeTTS(t *testing.T) {
+	origProvider := speechProvider
+	defer func() { speechProvider = origProvider }()
+
+	speechProvider = &speech.EdgeTTSProvider{Rate: "+0%"}
+	model.ConfigInstance.TTS.Voice = ""
+	model.ConfigInstance.TTS.Speed = 1.5 // 50% faster
+
+	applyHotReloadGlobals()
+
+	p := speechProvider.(*speech.EdgeTTSProvider)
+	assert.Equal(t, "+50%", p.Rate)
+}
+
+func TestApplyHotReloadGlobals_TTSSlow_EdgeTTS(t *testing.T) {
+	origProvider := speechProvider
+	defer func() { speechProvider = origProvider }()
+
+	speechProvider = &speech.EdgeTTSProvider{Rate: "+0%"}
+	model.ConfigInstance.TTS.Voice = ""
+	model.ConfigInstance.TTS.Speed = 0.5 // 50% slower => -50%
+
+	applyHotReloadGlobals()
+
+	p := speechProvider.(*speech.EdgeTTSProvider)
+	assert.Equal(t, "-50%", p.Rate)
+}
+
+func TestApplyHotReloadGlobals_TTSSpeed_Kokoro(t *testing.T) {
+	origProvider := speechProvider
+	defer func() { speechProvider = origProvider }()
+
+	speechProvider = &speech.KokoroProvider{Speed: 1.0}
+	model.ConfigInstance.TTS.Voice = ""
+	model.ConfigInstance.TTS.Speed = 1.2
+
+	applyHotReloadGlobals()
+
+	p := speechProvider.(*speech.KokoroProvider)
+	assert.Equal(t, 1.2, p.Speed)
+}
+
+func TestApplyHotReloadGlobals_TTSSpeed_Piper(t *testing.T) {
+	origProvider := speechProvider
+	defer func() { speechProvider = origProvider }()
+
+	speechProvider = &speech.PiperProvider{LengthScale: 1.0}
+	model.ConfigInstance.TTS.Voice = ""
+	model.ConfigInstance.TTS.Speed = 2.0
+	model.ConfigInstance.TTS.Piper.LengthScale = 0 // not explicitly set
+
+	applyHotReloadGlobals()
+
+	p := speechProvider.(*speech.PiperProvider)
+	assert.InDelta(t, 0.5, p.LengthScale, 0.01)
 }
