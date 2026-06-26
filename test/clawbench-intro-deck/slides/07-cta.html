@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1920px; height: 1080px; overflow: hidden;
+    background: #0f0d0a;
+    font-family: -apple-system, "PingFang SC", "Noto Sans SC", sans-serif;
+    color: #f0eae0;
+  }
+  .bg {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(ellipse 80% 60% at 40% 60%, rgba(243,101,79,0.1) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 50% at 65% 40%, rgba(254,203,112,0.06) 0%, transparent 50%);
+  }
+  .content {
+    position: relative; z-index: 2;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    height: 100%; text-align: center; padding: 80px;
+  }
+  .accent-line {
+    width: 60px; height: 4px;
+    background: #f3654f; border-radius: 2px;
+    margin-bottom: 48px;
+  }
+  h2 {
+    font-size: 72px; font-weight: 700; line-height: 1.2;
+    color: #f0eae0; margin-bottom: 24px;
+  }
+  h2 span { color: #f3654f; }
+  .tagline {
+    font-size: 28px; color: #a09888; margin-bottom: 64px;
+    letter-spacing: 0.04em; max-width: 700px; line-height: 1.5;
+  }
+  .cta-row {
+    display: flex; gap: 32px; margin-bottom: 72px;
+  }
+  .cta-btn {
+    padding: 18px 40px; border-radius: 12px;
+    font-size: 20px; font-weight: 600; letter-spacing: 0.03em;
+    text-decoration: none; display: flex; align-items: center; gap: 12px;
+    transition: transform 0.2s;
+  }
+  .cta-btn:hover { transform: translateY(-2px); }
+  .cta-btn.primary {
+    background: #f3654f; color: #fff;
+  }
+  .cta-btn.secondary {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: #f0eae0;
+  }
+  .info-row {
+    display: flex; gap: 56px;
+    font-size: 18px; color: #706858;
+  }
+  .info-row a {
+    color: #fecb70; text-decoration: none;
+    letter-spacing: 0.03em;
+  }
+</style>
+</head>
+<body>
+  <div class="bg"></div>
+  <div class="content">
+    <div class="accent-line"></div>
+    <h2>从终端<span>到掌心</span></h2>
+    <p class="tagline">
+      ClawBench 让 AI 编程不再绑定桌面。
+      <br/>通勤路上、咖啡馆里、沙发角落——随时写代码，随地调 AI。
+    </p>
+    <div class="cta-row">
+      <a class="cta-btn primary" href="https://github.com/xulongzhe/clawbench">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.385-1.335-1.755-1.335-1.755-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 21.795 24 17.295 24 12 24 5.37 18.63 0 12 0z"/></svg>
+        GitHub
+      </a>
+      <a class="cta-btn secondary" href="https://b23.tv/ewACF0h">
+        Bilibili 演示视频
+      </a>
+    </div>
+    <div class="info-row">
+      <span>github.com/<a href="https://github.com/xulongzhe/clawbench">xulongzhe/clawbench</a></span>
+      <span>MIT License</span>
+      <span>Go · TypeScript · Android</span>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1920px; height: 1080px; overflow: hidden;
+    background: #0f0d0a;
+    font-family: -apple-system, "PingFang SC", "Noto Sans SC", sans-serif;
+    color: #f0eae0;
+  }
+  .bg {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(ellipse 60% 50% at 25% 50%, rgba(254,203,112,0.05) 0%, transparent 50%),
+      radial-gradient(ellipse 50% 40% at 75% 50%, rgba(243,101,79,0.05) 0%, transparent 50%);
+  }
+  .section-num {
+    position: absolute; top: 80px; left: 120px;
+    font-size: 18px; color: #f3654f; letter-spacing: 0.12em; font-weight: 600;
+  }
+  .content {
+    position: relative; z-index: 2;
+    display: flex; height: 100%; padding: 120px;
+    align-items: center;
+  }
+  .col { flex: 1; }
+  .col:first-child { padding-right: 60px; }
+  .col:last-child { padding-left: 60px; }
+  .col h2 {
+    font-size: 52px; font-weight: 700; line-height: 1.2;
+    color: #f0eae0; margin-bottom: 28px;
+  }
+  .col h2 .accent { color: #f3654f; }
+  .col .subtitle {
+    font-size: 20px; color: #a09888; margin-bottom: 48px;
+    letter-spacing: 0.04em;
+  }
+  .branch-viz {
+    height: 240px;
+    background: rgba(255,255,255,0.025);
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 18px;
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 28px;
+    overflow: hidden;
+  }
+  .branch-viz svg { width: 100%; height: 100%; }
+  .bullet {
+    display: flex; align-items: flex-start; gap: 16px;
+    margin-bottom: 20px;
+  }
+  .bullet .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #f3654f; margin-top: 8px; flex-shrink: 0;
+  }
+  .bullet p { font-size: 18px; color: #a09888; line-height: 1.5; }
+  .bullet p strong { color: #f0eae0; }
+  .divider {
+    height: 1px; background: rgba(255,255,255,0.06);
+    margin: 32px 0;
+  }
+  .tunnel-diagram {
+    height: 140px;
+    background: rgba(255,255,255,0.025);
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 18px;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  .tunnel-diagram svg { width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+  <div class="bg"></div>
+  <div class="section-num">06 · Git &amp; SSH</div>
+  <div class="content">
+    <div class="col">
+      <h2><span class="accent">Git</span> 集成</h2>
+      <p class="subtitle">手机上也能管分支、看 diff、回代码</p>
+      <div class="branch-viz">
+        <svg viewBox="0 0 600 240">
+          <line x1="100" y1="60" x2="500" y2="60" stroke="rgba(255,255,255,0.15)" stroke-width="2"/>
+          <circle cx="100" cy="60" r="6" fill="#f3654f"/>
+          <circle cx="220" cy="60" r="6" fill="#fecb70"/>
+          <circle cx="340" cy="60" r="6" fill="#f3654f"/>
+          <circle cx="460" cy="60" r="6" fill="#fecb70"/>
+          <line x1="220" y1="60" x2="220" y2="130" stroke="rgba(255,255,255,0.15)" stroke-width="2"/>
+          <circle cx="220" cy="130" r="6" fill="#f3654f"/>
+          <line x1="100" y1="60" x2="100" y2="200" stroke="rgba(254,203,112,0.2)" stroke-width="2"/>
+          <circle cx="100" cy="200" r="6" fill="#fecb70"/>
+          <text x="80" y="225" fill="#706858" font-size="13">main</text>
+          <text x="200" y="155" fill="#706858" font-size="13">feature</text>
+          <text x="375" y="80" fill="#706858" font-size="13">release</text>
+        </svg>
+      </div>
+      <div class="bullet">
+        <span class="dot"></span>
+        <p><strong>提交历史 + 分支图</strong> &mdash; 纵向拓扑图直观展示分支关系，项目级/文件级历史浏览</p>
+      </div>
+      <div class="bullet">
+        <span class="dot"></span>
+        <p><strong>Git Diff 视图</strong> &mdash; 字符级变更高亮，工作树三标签页（工作树/分支/标签）统一管理</p>
+      </div>
+      <div class="bullet">
+        <span class="dot"></span>
+        <p><strong>滑动删除 + 标签管理</strong> &mdash; 左滑删除分支/标签，脏工作树自动弹窗处理</p>
+      </div>
+    </div>
+    <div class="col">
+      <h2><span class="accent">SSH</span> 隧道</h2>
+      <p class="subtitle">手机直连服务器端口，远程开发零门槛</p>
+      <div class="tunnel-diagram">
+        <svg viewBox="0 0 600 100">
+          <rect x="30" y="25" width="100" height="50" rx="12" fill="rgba(243,101,79,0.12)" stroke="rgba(243,101,79,0.25)" stroke-width="1"/>
+          <text x="80" y="55" text-anchor="middle" fill="#f3654f" font-size="14" font-weight="600">Mobile</text>
+          <line x1="130" y1="50" x2="250" y2="50" stroke="rgba(254,203,112,0.3)" stroke-width="2" stroke-dasharray="6,4"/>
+          <text x="190" y="40" text-anchor="middle" fill="rgba(254,203,112,0.5)" font-size="11">SSH Tunnel</text>
+          <rect x="250" y="15" width="120" height="70" rx="12" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+          <text x="310" y="55" text-anchor="middle" fill="#a09888" font-size="13" font-weight="600">ClawBench</text>
+          <line x1="370" y1="50" x2="470" y2="50" stroke="rgba(254,203,112,0.3)" stroke-width="2" stroke-dasharray="6,4"/>
+          <rect x="470" y="20" width="100" height="60" rx="12" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+          <text x="520" y="55" text-anchor="middle" fill="#a09888" font-size="13" font-weight="600">:3000</text>
+        </svg>
+      </div>
+      <div class="bullet">
+        <span class="dot"></span>
+        <p><strong>全协议透明转发</strong> &mdash; HTTP / HTTPS / WebSocket / SSE / gRPC 无改写</p>
+      </div>
+      <div class="bullet">
+        <span class="dot"></span>
+        <p><strong>Localhost URL 自动打开</strong> &mdash; AI 启动服务时自动注册隧道 + WebView 打开</p>
+      </div>
+      <div class="bullet">
+        <span class="dot"></span>
+        <p><strong>健康检测 + 自动重连</strong> &mdash; 隧道断开自动检测，一键重连恢复</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1920px; height: 1080px; overflow: hidden;
+    background: #0f0d0a;
+    font-family: -apple-system, "PingFang SC", "Noto Sans SC", sans-serif;
+    color: #f0eae0;
+  }
+  .bg {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(ellipse 80% 60% at 30% 70%, rgba(243,101,79,0.12) 0%, transparent 70%),
+      radial-gradient(ellipse 60% 50% at 75% 30%, rgba(254,203,112,0.08) 0%, transparent 60%);
+  }
+  .grid-line {
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+    background-size: 80px 80px;
+    mask-image: radial-gradient(ellipse 70% 60% at 50% 50%, black 30%, transparent 70%);
+  }
+  .content {
+    position: relative; z-index: 2;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    height: 100%; text-align: center;
+  }
+  .logo-img {
+    width: 120px; height: 120px;
+    margin-bottom: 48px;
+    filter: drop-shadow(0 8px 32px rgba(243,101,79,0.25));
+  }
+  h1 {
+    font-size: 96px; font-weight: 700;
+    letter-spacing: 0.02em;
+    line-height: 1.15;
+    color: #f0eae0;
+    margin-bottom: 24px;
+  }
+  h1 span { color: #f3654f; }
+  .tagline {
+    font-size: 36px; font-weight: 400;
+    color: #a09888;
+    letter-spacing: 0.08em;
+    margin-bottom: 64px;
+  }
+  .meta {
+    font-size: 20px; color: #706858;
+    letter-spacing: 0.06em;
+    display: flex; gap: 48px;
+  }
+  .meta span { display: flex; align-items: center; gap: 8px; }
+  .accent-dot {
+    display: inline-block; width: 6px; height: 6px;
+    background: #fecb70; border-radius: 50%;
+  }
+</style>
+</head>
+<body>
+  <div class="bg"></div>
+  <div class="grid-line"></div>
+  <div class="content">
+    <!-- Logo as base64 placeholder — replace with real logo -->
+    <img class="logo-img" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%23f3654f'/%3E%3Cstop offset='100%25' style='stop-color:%23fecb70'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='120' height='120' rx='28' fill='url(%23g)'/%3E%3Cpath d='M50 30 L85 60 L50 90 Z' fill='%23f0eae0' transform='translate(55,60) scale(0.45) translate(-60,-60)'/%3E%3Crect x='31' y='48' width='4' height='24' rx='2' fill='%23f0eae0'/%3E%3C/svg%3E" alt="ClawBench" />
+    <h1><span>ClawBench</span> &mdash; 从终端到掌心</h1>
+    <p class="tagline">为移动端打造的 AI 工作台</p>
+    <div class="meta">
+      <span><i class="accent-dot"></i> Go + TypeScript</span>
+      <span><i class="accent-dot"></i> Android · PWA · Web</span>
+      <span><i class="accent-dot"></i> 12 AI 后端</span>
+      <span><i class="accent-dot"></i> MIT 开源</span>
+    </div>
+  </div>
+</body>
+</html>

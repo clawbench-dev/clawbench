@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1920px; height: 1080px; overflow: hidden;
+    background: #0f0d0a;
+    font-family: -apple-system, "PingFang SC", "Noto Sans SC", sans-serif;
+    color: #f0eae0;
+  }
+  .bg {
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse 60% 50% at 50% 80%, rgba(254,203,112,0.06) 0%, transparent 60%);
+  }
+  .section-num {
+    position: absolute; top: 80px; left: 120px;
+    font-size: 18px; color: #f3654f; letter-spacing: 0.12em; font-weight: 600;
+  }
+  .content {
+    position: relative; z-index: 2;
+    display: flex; height: 100%; padding: 120px;
+    align-items: center;
+  }
+  .left { flex: 1; }
+  .left h2 {
+    font-size: 72px; font-weight: 700; line-height: 1.15;
+    color: #f0eae0; margin-bottom: 32px;
+  }
+  .left h2 span { color: #f3654f; }
+  .left .desc {
+    font-size: 24px; color: #a09888; line-height: 1.6; max-width: 640px;
+  }
+  .right {
+    flex: 1; display: flex; flex-direction: column; gap: 28px;
+    padding-left: 120px;
+  }
+  .feature-pill {
+    display: flex; align-items: center; gap: 24px;
+    padding: 24px 32px;
+    background: rgba(255,255,255,0.025);
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 14px;
+    border-left: 3px solid #f3654f;
+  }
+  .feature-pill .num {
+    font-size: 28px; font-weight: 700; color: #fecb70;
+    font-variant-numeric: tabular-nums; min-width: 48px;
+  }
+  .feature-pill h4 {
+    font-size: 22px; font-weight: 600; color: #f0eae0;
+  }
+  .feature-pill p {
+    font-size: 16px; color: #706858; margin-top: 4px;
+  }
+</style>
+</head>
+<body>
+  <div class="bg"></div>
+  <div class="section-num">03 · 解决方案</div>
+  <div class="content">
+    <div class="left">
+      <h2>一个应用<span><br/>全部搞定</span></h2>
+      <p class="desc">
+        ClawBench 将完整的 AI 编程工作台搬进手机浏览器和 Android App
+        ——文件浏览、代码编辑、AI 对话、Git 操作、定时调度、命令行终端。无需桌面，无需多个工具。
+      </p>
+    </div>
+    <div class="right">
+      <div class="feature-pill">
+        <span class="num">01</span>
+        <div><h4>文件浏览 &amp; 代码编辑</h4><p>120+ 文件类型语法高亮、Sticky Scroll、引用提问</p></div>
+      </div>
+      <div class="feature-pill">
+        <span class="num">02</span>
+        <div><h4>AI 多智能体对话</h4><p>12 种 AI 后端、流式响应、会话管理、图片上传</p></div>
+      </div>
+      <div class="feature-pill">
+        <span class="num">03</span>
+        <div><h4>Git 集成 &amp; 终端</h4><p>完整 Git 提交/分支/差异 + 交互式 Web 终端</p></div>
+      </div>
+      <div class="feature-pill">
+        <span class="num">04</span>
+        <div><h4>定时任务 &amp; 推送</h4><p>Cron 定时调度 AI 自动执行，结果通知推送</p></div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1920px; height: 1080px; overflow: hidden;
+    background: #0f0d0a;
+    font-family: -apple-system, "PingFang SC", "Noto Sans SC", sans-serif;
+    color: #f0eae0;
+  }
+  .bg {
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse 70% 60% at 20% 30%, rgba(254,203,112,0.06) 0%, transparent 50%);
+  }
+  .section-num {
+    position: absolute; top: 80px; left: 120px;
+    font-size: 18px; color: #f3654f; letter-spacing: 0.12em; font-weight: 600;
+  }
+  .content {
+    position: relative; z-index: 2;
+    display: flex; flex-direction: column;
+    height: 100%; padding: 140px 120px 100px;
+  }
+  h2 {
+    font-size: 64px; font-weight: 700; line-height: 1.2;
+    color: #f0eae0; margin-bottom: 64px;
+  }
+  h2 span { color: #f3654f; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 28px;
+    flex: 1;
+  }
+  .card {
+    background: rgba(255,255,255,0.025);
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 18px;
+    padding: 36px;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .card .tag {
+    font-size: 13px; font-weight: 700; color: #f3654f;
+    text-transform: uppercase; letter-spacing: 0.1em;
+  }
+  .card h3 {
+    font-size: 26px; font-weight: 600; color: #f0eae0; line-height: 1.3;
+  }
+  .card p {
+    font-size: 16px; color: #706858; line-height: 1.55;
+    flex: 1;
+  }
+  .card .backends {
+    display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;
+  }
+  .card .backends span {
+    font-size: 12px; padding: 4px 10px;
+    background: rgba(243,101,79,0.12);
+    color: #f3654f; border-radius: 6px;
+    font-weight: 600; letter-spacing: 0.03em;
+  }
+</style>
+</head>
+<body>
+  <div class="bg"></div>
+  <div class="section-num">04 · AI 智能体</div>
+  <div class="content">
+    <h2>12 种 AI 后端<span> · 一站调度</span></h2>
+    <div class="grid">
+      <div class="card">
+        <span class="tag">多后端</span>
+        <h3>12 种 AI CLI 即插即用</h3>
+        <p>Claude Code、CodeBuddy、Pi、Cline、Copilot、Kimi、OpenCode、Codex 等——会话级隔离，随时切换。</p>
+        <div class="backends">
+          <span>Claude</span><span>CodeBuddy</span><span>Pi</span>
+          <span>Copilot</span><span>Kimi</span><span>Cline</span>
+        </div>
+      </div>
+      <div class="card">
+        <span class="tag">思考深度</span>
+        <h3>4 档深度思考 · 9 后端支持</h3>
+        <p>Auto / Low / Medium / High 四档可选，自动持久化。Claude / CodeBuddy / Pi / Cline 等全支持。</p>
+      </div>
+      <div class="card">
+        <span class="tag">定时任务</span>
+        <h3>Cron 定时调度 AI</h3>
+        <p>AI 通过 CLI 子命令创建 Cron 定时任务，自动执行并推送结果通知。频率预设 + 自定义表达式。</p>
+      </div>
+      <div class="card">
+        <span class="tag">RAG 检索</span>
+        <h3>历史对话智能检索</h3>
+        <p>紫色结果卡片、详情抽屉、一键恢复对话。让 AI 拥有跨会话的记忆力。</p>
+      </div>
+      <div class="card">
+        <span class="tag">流式响应</span>
+        <h3>SSE 实时推送全程可见</h3>
+        <p>思维过程流式内联展示，工具调用名称/参数/结果实时可见，思维流完成后自动折叠。</p>
+      </div>
+      <div class="card">
+        <span class="tag">消息队列</span>
+        <h3>断连保护 + 自动恢复</h3>
+        <p>消息立即落库不丢失，AI 忙碌时排队依次发送。15 秒心跳保活 + 30 秒超时自动重连。</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

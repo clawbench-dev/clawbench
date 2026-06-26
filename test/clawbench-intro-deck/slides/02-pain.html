@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1920px; height: 1080px; overflow: hidden;
+    background: #0f0d0a;
+    font-family: -apple-system, "PingFang SC", "Noto Sans SC", sans-serif;
+    color: #f0eae0;
+  }
+  .bg {
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse 50% 40% at 80% 60%, rgba(243,101,79,0.07) 0%, transparent 60%);
+  }
+  .section-num {
+    position: absolute; top: 80px; left: 120px;
+    font-size: 18px; color: #f3654f; letter-spacing: 0.12em; font-weight: 600;
+  }
+  .content {
+    position: relative; z-index: 2;
+    display: flex; height: 100%; padding: 160px 120px 120px;
+  }
+  .left { flex: 0 0 580px; padding-top: 40px; }
+  .left h2 {
+    font-size: 56px; font-weight: 700; line-height: 1.2;
+    color: #f0eae0; margin-bottom: 32px;
+  }
+  .left h2 span { color: #f3654f; }
+  .left .desc {
+    font-size: 24px; color: #a09888; line-height: 1.6; max-width: 520px;
+  }
+  .right {
+    flex: 1; display: flex; flex-wrap: wrap; gap: 32px;
+    align-content: flex-start; padding-left: 80px;
+  }
+  .pain-card {
+    width: 320px; height: 200px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 16px;
+    padding: 32px;
+    display: flex; flex-direction: column; gap: 12px;
+    position: relative;
+  }
+  .pain-card .num {
+    font-size: 14px; font-weight: 700; color: #f3654f;
+    letter-spacing: 0.06em;
+    position: absolute; top: 28px; right: 28px;
+  }
+  .pain-card h3 {
+    font-size: 22px; font-weight: 600; color: #f0eae0;
+  }
+  .pain-card p {
+    font-size: 16px; color: #706858; line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+  <div class="bg"></div>
+  <div class="section-num">02 · 痛点</div>
+  <div class="content">
+    <div class="left">
+      <h2>移动端编码<span><br/>为什么这么痛苦</span></h2>
+      <p class="desc">
+        AI 编程工具爆发增长，但几乎都绑在桌面端。开发者在通勤、会议间隙、甚至睡前想改一行代码——却发现只能等回到电脑前。
+      </p>
+    </div>
+    <div class="right">
+      <div class="pain-card">
+        <span class="num">01</span>
+        <h3>桌面端独占</h3>
+        <p>所有主流 AI 编程助手都只能在 PC 上使用，移动端形同虚设。</p>
+      </div>
+      <div class="pain-card">
+        <span class="num">02</span>
+        <h3>手机体验割裂</h3>
+        <p>用手机浏览器 SSH 到服务器 coding——界面小、没法看 diff、不能编辑文件。</p>
+      </div>
+      <div class="pain-card">
+        <span class="num">03</span>
+        <h3>灵感转瞬即逝</h3>
+        <p>想到一个 bug fix 或功能 idea，但身边没电脑，第二天就忘了。</p>
+      </div>
+      <div class="pain-card">
+        <span class="num">04</span>
+        <h3>工具链碎片化</h3>
+        <p>文件管理用 FTP、Git 用另一个 App、终端还要另开——没有一个统一的移动工作环境。</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

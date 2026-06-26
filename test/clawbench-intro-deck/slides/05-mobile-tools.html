@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1920px; height: 1080px; overflow: hidden;
+    background: #0f0d0a;
+    font-family: -apple-system, "PingFang SC", "Noto Sans SC", sans-serif;
+    color: #f0eae0;
+  }
+  .bg {
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse 70% 60% at 80% 60%, rgba(243,101,79,0.07) 0%, transparent 50%);
+  }
+  .section-num {
+    position: absolute; top: 80px; left: 120px;
+    font-size: 18px; color: #f3654f; letter-spacing: 0.12em; font-weight: 600;
+  }
+  .content {
+    position: relative; z-index: 2;
+    display: flex; flex-direction: column;
+    height: 100%; padding: 140px 120px 100px;
+  }
+  h2 {
+    font-size: 56px; font-weight: 700; line-height: 1.2;
+    color: #f0eae0; margin-bottom: 56px;
+  }
+  h2 span { color: #f3654f; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    grid-template-rows: auto auto;
+    gap: 28px;
+    flex: 1;
+  }
+  .card {
+    background: rgba(255,255,255,0.025);
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 18px;
+    padding: 36px 40px;
+    display: flex; gap: 32px;
+  }
+  .card .icon-slot {
+    width: 56px; height: 56px;
+    background: rgba(243,101,79,0.1);
+    border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .card .icon-slot svg { width: 28px; height: 28px; }
+  .card .body h3 {
+    font-size: 24px; font-weight: 600; color: #f0eae0; margin-bottom: 10px;
+  }
+  .card .body p {
+    font-size: 16px; color: #706858; line-height: 1.55;
+    margin-bottom: 14px;
+  }
+  .card .body .tags {
+    display: flex; flex-wrap: wrap; gap: 6px;
+  }
+  .card .body .tags span {
+    font-size: 12px; padding: 3px 10px;
+    background: rgba(254,203,112,0.08);
+    color: #fecb70; border-radius: 5px;
+    font-weight: 600; letter-spacing: 0.03em;
+  }
+</style>
+</head>
+<body>
+  <div class="bg"></div>
+  <div class="section-num">05 · 移动端工具链</div>
+  <div class="content">
+    <h2>手机上的<span>完整开发环境</span></h2>
+    <div class="grid">
+      <div class="card">
+        <div class="icon-slot">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#f3654f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
+          </svg>
+        </div>
+        <div class="body">
+          <h3>文件浏览 &amp; 代码编辑</h3>
+          <p>递归目录浏览、120+ 语法高亮、Sticky Scroll、改动闪烁高亮、引用提问、滑动切换文件。</p>
+          <div class="tags">
+            <span>列表/网格视图</span><span>多选操作</span><span>下钻浏览</span>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="icon-slot">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#f3654f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+          </svg>
+        </div>
+        <div class="body">
+          <h3>交互式 Web 终端</h3>
+          <p>PTY + WebSocket + xterm.js，多标签管理、虚拟按键栏、Termius 风格手势、快捷命令。</p>
+          <div class="tags">
+            <span>音量键映射</span><span>自动复制</span><span>手势模式</span>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="icon-slot">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#f3654f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+          </svg>
+        </div>
+        <div class="body">
+          <h3>媒体预览</h3>
+          <p>图片灯箱放大缩放、视频/音频应用内播放、PDF 预览、图片缩略图快速浏览。</p>
+          <div class="tags">
+            <span>灯箱查看</span><span>视频播放</span><span>PDF 预览</span>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="icon-slot">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#f3654f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>
+          </svg>
+        </div>
+        <div class="body">
+          <h3>Markdown &amp; 文档</h3>
+          <p>渲染/源码一键切换、LaTeX 公式、Mermaid 图表、智能目录、图片灯箱、文件路径跳转。</p>
+          <div class="tags">
+            <span>LaTeX</span><span>Mermaid</span><span>TOC 导航</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
