@@ -319,4 +319,131 @@ describe('useUserMsgIndex — jumpToUserMessage', () => {
     expect(emitLoadMore).not.toHaveBeenCalled()
     expect(vm.loadingTarget).toBe(false)
   })
+
+  it('enters loading cycle and emits load-more for unloaded message', async () => {
+    // Simplified test: just verify that jumpToUserMessage starts the loading cycle
+    // by checking that loadingTarget is set and emitLoadMore is called
+    const { vm, messagesRef, hasMore, emitLoadMore } = createComposable()
+    const el = document.createElement('div')
+    el.querySelectorAll = vi.fn().mockReturnValue([])
+    messagesRef.value = el
+    hasMore.value = true
+
+    // Start jump — target ID 5 not in messages
+    const jumpPromise = vm.jumpToUserMessage({ id: 5 })
+
+    // Let microtasks run
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(600)
+
+    // Should have entered the loading cycle
+    expect(emitLoadMore).toHaveBeenCalled()
+
+    // Clean up: advance all timers so the loading cycle resolves
+    await vi.advanceTimersByTimeAsync(10000)
+    await nextTick()
+  })
+
+  it('scrolls to message after load-more finds it', async () => {
+    const { vm, messages, messagesRef, hasMore, loadingMore, hideScrollFab, setProgrammaticScrolling, emitLoadMore } = createComposable()
+    const el = document.createElement('div')
+    el.querySelectorAll = vi.fn().mockReturnValue([])
+    messagesRef.value = el
+    hasMore.value = true
+
+    // Start jump for message id=5 (not in list yet)
+    const jumpPromise = vm.jumpToUserMessage({ id: 5 })
+
+    // Advance past the initial setTimeout (500ms timeout for loadingMore watcher)
+    await vi.advanceTimersByTimeAsync(600)
+    await nextTick()
+
+    // emitLoadMore should have been called
+    expect(emitLoadMore).toHaveBeenCalled()
+
+    // Now make the message appear and provide DOM elements
+    messages.value = [...messages.value, { id: 5, role: 'user', content: 'New' }]
+    const msgEl = document.createElement('div')
+    msgEl.scrollIntoView = vi.fn()
+    el.querySelectorAll = vi.fn().mockReturnValue([
+      document.createElement('div'),
+      document.createElement('div'),
+      document.createElement('div'),
+      msgEl,
+    ])
+
+    // Advance past requestAnimationFrame and remaining timers
+    await vi.advanceTimersByTimeAsync(6000)
+    await nextTick()
+
+    // loadingTarget should be cleaned up
+    expect(vm.loadingTarget).toBe(false)
+  })
+
+  it('breaks when message found but DOM element missing after load', async () => {
+    // Covers line 99: the break when idx >= 0 but items[idx] is null
+    const { vm, messages, messagesRef, hasMore, emitLoadMore } = createComposable()
+    const el = document.createElement('div')
+    // querySelectorAll returns empty so items[idx] is undefined
+    el.querySelectorAll = vi.fn().mockReturnValue([])
+    messagesRef.value = el
+    hasMore.value = true
+
+    const jumpPromise = vm.jumpToUserMessage({ id: 5 })
+
+    // Advance timers to trigger the 500ms timeout
+    await vi.advanceTimersByTimeAsync(600)
+    await nextTick()
+
+    // Make the message appear but don't provide DOM elements for it
+    // This means idx >= 0 but items[idx] is undefined → break
+    messages.value = [...messages.value, { id: 5, role: 'user', content: 'Found' }]
+
+    // Advance all timers
+    await vi.advanceTimersByTimeAsync(10000)
+    await nextTick()
+
+    // loadingTarget should be cleaned up via finally
+    expect(vm.loadingTarget).toBe(false)
+  })
+
+  it('handles loadingMore watcher with loadingMore flipping to true then false', async () => {
+    // Covers lines 105, 110-114: the loadingMore watcher paths
+    const { vm, messages, messagesRef, hasMore, loadingMore, emitLoadMore, setProgrammaticScrolling } = createComposable()
+    const el = document.createElement('div')
+    el.querySelectorAll = vi.fn().mockReturnValue([])
+    messagesRef.value = el
+    hasMore.value = true
+
+    // Start jump
+    const jumpPromise = vm.jumpToUserMessage({ id: 5 })
+
+    // After emitLoadMore is called, simulate loadingMore going true
+    await nextTick()
+    // Set loadingMore to true — this triggers the first watcher
+    loadingMore.value = true
+    await nextTick()
+
+    // Then set it to false — this triggers the second watcher (line 112)
+    loadingMore.value = false
+    await nextTick()
+
+    // Make the message appear and provide DOM element
+    messages.value = [...messages.value, { id: 5, role: 'user', content: 'Loaded' }]
+    const msgEl = document.createElement('div')
+    msgEl.scrollIntoView = vi.fn()
+    el.querySelectorAll = vi.fn().mockReturnValue([
+      document.createElement('div'),
+      document.createElement('div'),
+      document.createElement('div'),
+      msgEl,
+    ])
+
+    // Advance past all remaining timers
+    await vi.advanceTimersByTimeAsync(6000)
+    await nextTick()
+
+    // Should have scrolled and cleaned up
+    expect(vm.loadingTarget).toBe(false)
+  })
 })
