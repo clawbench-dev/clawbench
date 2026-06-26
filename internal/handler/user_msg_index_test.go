@@ -138,6 +138,20 @@ func TestServeUserMessageIndex_WithFiles(t *testing.T) {
 	assert.Equal(t, 1, len(messages))
 }
 
+func TestServeUserMessageIndex_NoProject(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "Test", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat/user-messages?session_id="+sessionID, nil)
+	// No project cookie
+
+	w := callHandler(ServeUserMessageIndex, req)
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
 // --- ServeChatCount deleted session (GetSessionBackend guard) ---
 
 func TestServeChatCount_DeletedSession(t *testing.T) {
