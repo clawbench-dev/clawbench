@@ -117,7 +117,8 @@
           class="file-item dir-item"
           :class="{
             'ms-selected': multiSelect.active && multiSelect.selected.has(itemPath(entry.name)),
-            'ctx-highlight': ctxMenu.visible && ctxMenu.entry?.path === itemPath(entry.name)
+            'ctx-highlight': ctxMenu.visible && ctxMenu.entry?.path === itemPath(entry.name),
+            'cut-item': isCutItem(itemPath(entry.name))
           }"
           :data-action="'dir'"
           :data-path="itemPath(entry.name)"
@@ -140,7 +141,8 @@
           :class="{
             active: !multiSelect.active && currentFile?.path === itemPath(entry.name),
             'ms-selected': multiSelect.active && multiSelect.selected.has(itemPath(entry.name)),
-            'ctx-highlight': ctxMenu.visible && ctxMenu.entry?.path === itemPath(entry.name)
+            'ctx-highlight': ctxMenu.visible && ctxMenu.entry?.path === itemPath(entry.name),
+            'cut-item': isCutItem(itemPath(entry.name))
           }"
           :data-action="'file'"
           :data-path="itemPath(entry.name)"
@@ -187,7 +189,8 @@
           'grid-dir': entry.type === 'dir',
           'grid-active': !multiSelect.active && entry.type !== 'dir' && currentFile?.path === itemPath(entry.name),
           'ms-selected': multiSelect.active && multiSelect.selected.has(itemPath(entry.name)),
-          'ctx-highlight': ctxMenu.visible && ctxMenu.entry?.path === itemPath(entry.name)
+          'ctx-highlight': ctxMenu.visible && ctxMenu.entry?.path === itemPath(entry.name),
+          'cut-item': isCutItem(itemPath(entry.name))
         }"
         :data-action="entry.type === 'dir' ? 'dir' : 'file'"
         :data-path="itemPath(entry.name)"
@@ -434,8 +437,14 @@ function closeDropdowns(e) {
   }
 }
 
-onMounted(() => document.addEventListener('click', closeDropdowns))
-onUnmounted(() => document.removeEventListener('click', closeDropdowns))
+onMounted(() => {
+  document.addEventListener('click', closeDropdowns)
+  document.addEventListener('keydown', handleKeydown)
+})
+onUnmounted(() => {
+  document.removeEventListener('click', closeDropdowns)
+  document.removeEventListener('keydown', handleKeydown)
+})
 
 // Helper: build item path from entry name
 function itemPath(name) {
@@ -528,6 +537,15 @@ function handleCtxMenu(e) {
 
 // Clipboard now supports multiple entries
 const { clipboard, clear: clearClipboard } = _createClipboard()
+
+// Check if a given path is in clipboard as cut (for visual half-transparent effect)
+const cutPaths = computed(() => {
+  if (!clipboard.isCut || !clipboard.entries.length) return null
+  return new Set(clipboard.entries.map(e => e.path))
+})
+function isCutItem(path) {
+  return cutPaths.value?.has(path) ?? false
+}
 
 function getDestDir(entry) {
     if (!entry) return props.currentDir.replace(/^\/+/, '')
@@ -952,6 +970,91 @@ function doDelete() {
     emit('delete', path)
 }
 
+// ── PC keyboard shortcuts (Ctrl+C/X/V, Delete) ──
+function handleKeydown(e) {
+    // Only active when browse tab is focused
+    if (activeTab.value !== 'browse') return
+    // Skip in Android app mode
+    if (isAppMode.value) return
+    // Skip if a dialog/prompt is open (don't interfere with input fields)
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
+
+    const isCtrl = e.ctrlKey || e.metaKey
+
+    // Ctrl+C — copy
+    if (isCtrl && e.key === 'c') {
+        if (multiSelect.active && multiSelect.selected.size > 0) {
+            e.preventDefault()
+            doBatchCopy()
+        } else if (currentFileForClipboard()) {
+            e.preventDefault()
+            clipboard.entries = [currentFileForClipboard()]
+            clipboard.isCut = false
+            if (toast) toast.show(t('common.copied'), { icon: '📋', type: 'success', duration: 1500 })
+        }
+        return
+    }
+
+    // Ctrl+X — cut
+    if (isCtrl && e.key === 'x') {
+        if (multiSelect.active && multiSelect.selected.size > 0) {
+            e.preventDefault()
+            doBatchCut()
+        } else if (currentFileForClipboard()) {
+            e.preventDefault()
+            clipboard.entries = [currentFileForClipboard()]
+            clipboard.isCut = true
+            if (toast) toast.show(t('file.toast.cutDone'), { icon: '✂️', type: 'success', duration: 1500 })
+        }
+        return
+    }
+
+    // Ctrl+V — paste
+    if (isCtrl && e.key === 'v') {
+        if (clipboard.entries.length) {
+            e.preventDefault()
+            // Paste into current directory
+            const fakeEntry = { type: 'dir', name: '', path: props.currentDir }
+            const savedEntry = ctxMenu.entry
+            ctxMenu.entry = fakeEntry
+            doPaste().then(() => { ctxMenu.entry = savedEntry })
+        }
+        return
+    }
+
+    // Delete — delete
+    if (e.key === 'Delete') {
+        if (multiSelect.active && multiSelect.selected.size > 0) {
+            e.preventDefault()
+            doBatchDelete()
+        } else if (props.currentFile) {
+            e.preventDefault()
+            appLog.d(TAG, '[kbd:Delete] emitting delete for:', props.currentFile.path)
+            emit('delete', props.currentFile.path)
+        }
+        return
+    }
+
+    // Ctrl+A — select all
+    if (isCtrl && e.key === 'a') {
+        if (!multiSelect.active) {
+            e.preventDefault()
+            enterMultiSelect()
+        }
+        toggleSelectAll()
+        return
+    }
+}
+
+// Build a clipboard entry from the currently viewed/selected file
+function currentFileForClipboard() {
+    if (!props.currentFile) return null
+    const path = props.currentFile.path
+    const name = path.split('/').pop() || ''
+    const entry = props.entries.find(e => e.name === name)
+    return { type: entry?.type || 'file', name, path }
+}
+
 </script>
 
 <style scoped>
@@ -1098,6 +1201,12 @@ function doDelete() {
 
 .file-item.ctx-highlight {
     background: color-mix(in srgb, var(--accent-color, #4a90d9) 12%, transparent);
+}
+
+/* ── Cut item half-transparent effect ── */
+.file-item.cut-item,
+.grid-item.cut-item {
+    opacity: 0.5;
 }
 
 /* ── Multi-select bottom action bar ── */
