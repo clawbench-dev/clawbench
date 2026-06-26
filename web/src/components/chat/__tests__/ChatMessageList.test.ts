@@ -471,10 +471,6 @@ describe('ChatMessageList — user message index', () => {
       ],
     })
 
-    // The List button should be in the template when hasUserMessages is true
-    // Since we can't access internal computed directly, verify the HTML contains the button
-    const html = wrapper.html()
-    // The button is inside a v-if block, so it may not be rendered until scroll
     // Just verify that the component mounts and the messages prop is correct
     expect(wrapper.props('messages').length).toBe(2)
     expect(wrapper.props('messages').some(m => m.role === 'user')).toBe(true)
