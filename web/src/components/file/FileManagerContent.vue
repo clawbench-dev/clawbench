@@ -98,6 +98,7 @@
     <div v-if="viewMode === 'list'" class="file-list" id="fileList"
       @click="handleItemClick"
       @contextmenu.prevent="handleCtxMenu"
+      v-long-press="onContainerLongPress"
     >
       <Transition name="loading-fade">
         <div v-if="dirLoading" class="loading-mask">
@@ -167,6 +168,7 @@
     <div v-else class="file-grid" id="fileList"
       @click="handleItemClick"
       @contextmenu.prevent="handleCtxMenu"
+      v-long-press="onContainerLongPress"
     >
       <Transition name="loading-fade">
         <div v-if="dirLoading" class="loading-mask">
@@ -243,6 +245,18 @@
           <ClipboardPaste :size="14" />
           {{ t('file.context.paste') }}
         </div>
+        <!-- New file/folder when no entry selected (empty area) -->
+        <template v-if="!ctxMenu.entry">
+          <div class="context-menu-divider" />
+          <div class="context-menu-item" @click.stop="doNewFile">
+            <FilePlus :size="14" />
+            {{ t('file.context.newFile') }}
+          </div>
+          <div class="context-menu-item" @click.stop="doNewFolder">
+            <FolderPlus :size="14" />
+            {{ t('file.context.newFolder') }}
+          </div>
+        </template>
         <!-- Group 2: Entry actions -->
         <template v-if="ctxMenu.entry">
           <div class="context-menu-divider" />
@@ -482,14 +496,31 @@ function onLongPress(entry, e) {
     nextTick(() => clampCtxMenu())
 }
 
+function onContainerLongPress(e) {
+    // Ignore if touch originated on a file/dir item — child v-long-press handles it
+    if (e.target?.closest('.file-item, .grid-item')) return
+    // Long-press on empty area — show menu without entry (paste, new file/folder, terminal)
+    const touch = e.touches[0]
+    ctxMenu.x = touch.clientX
+    ctxMenu.y = touch.clientY + 10
+    ctxMenu.entry = null
+    ctxMenu.visible = true
+    nextTick(() => clampCtxMenu())
+}
+
 function handleCtxMenu(e) {
     const item = e.target?.closest('.file-item, .grid-item')
-    if (!item) return
+    ctxMenu.x = e.clientX
+    ctxMenu.y = e.clientY
+    if (!item) {
+        ctxMenu.entry = null
+        ctxMenu.visible = true
+        nextTick(() => clampCtxMenu())
+        return
+    }
     const action = item.dataset.action
     const path = item.dataset.path
     const name = item.querySelector('.file-name, .grid-name')?.textContent || ''
-    ctxMenu.x = e.clientX
-    ctxMenu.y = e.clientY
     ctxMenu.entry = { type: action === 'dir' ? 'dir' : 'file', name, path }
     ctxMenu.visible = true
     nextTick(() => clampCtxMenu())
@@ -499,7 +530,7 @@ function handleCtxMenu(e) {
 const { clipboard, clear: clearClipboard } = _createClipboard()
 
 function getDestDir(entry) {
-    if (!entry) return props.currentDir === '/' ? '' : props.currentDir
+    if (!entry) return props.currentDir.replace(/^\/+/, '')
     if (entry.type === 'dir') return entry.path
     const idx = entry.path.lastIndexOf('/')
     return idx > 0 ? entry.path.slice(0, idx) : ''
@@ -532,6 +563,11 @@ async function doPaste() {
     for (const srcEntry of clipboard.entries) {
         try {
             let destPath = (destDir ? destDir + '/' : '') + srcEntry.name
+            // Cut to same location is a no-op — skip the API call
+            if (clipboard.isCut && srcEntry.path === destPath) {
+                appLog.d(TAG, '[doPaste] same-path no-op, skipping:', srcEntry.path)
+                continue
+            }
             appLog.d(TAG, '[doPaste] moving:', srcEntry.path, '→', destPath)
             let resp = await fetch(api, {
                 method: 'POST',
@@ -558,7 +594,8 @@ async function doPaste() {
             allOk = false
         }
     }
-    if (clipboard.isCut) {
+    // Only clear clipboard on successful cut-paste; on failure keep entries so user can retry
+    if (clipboard.isCut && allOk) {
         // If the currently viewed file was moved, clear it to avoid
         // refreshCurrentFile hitting 404 and showing "file not found"
         const currentFilePath = store.state.currentFile?.path

@@ -378,6 +378,12 @@ func ServeFileMove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if source and destination are the same (no-op move).
+	if srcAbsPath == destAbsPath {
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		return
+	}
+
 	// Check if destination already exists (ISS-041).
 	// os.Rename atomically replaces the destination on Unix, silently
 	// destroying the target file. This check prevents accidental data loss.
@@ -418,6 +424,12 @@ func ServeFileCopy(w http.ResponseWriter, r *http.Request) {
 	}
 	destAbsPath, ok := resolveAbsPath(w, r, req.Dest)
 	if !ok {
+		return
+	}
+
+	// Check if source and destination are the same (no-op copy).
+	if srcAbsPath == destAbsPath {
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		return
 	}
 

@@ -118,8 +118,8 @@ function onBreadcrumbNavigate(path) {
     // Windows path from breadcrumb — normalize forward slashes to backslashes
     browseNavigate(path.replace(/\//g, '\\'))
   } else {
-    // Unix: reconstruct absolute path by prepending "/"
-    browseNavigate('/' + path)
+    // Unix: reconstruct absolute path by prepending "/" (guard against double slash)
+    browseNavigate(path.startsWith('/') ? path : '/' + path)
   }
 }
 

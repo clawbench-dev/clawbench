@@ -530,13 +530,14 @@ describe('store', () => {
     // ── Directory navigation ──
 
     describe('navigateToDir', () => {
-        it('calls loadFiles with the given path', async () => {
+        it('calls loadFiles with the given path (normalized)', async () => {
             store.state.dirLoading = false
             mockApiGet.mockResolvedValue({ items: [] })
 
             await store.navigateToDir('/project/sub')
 
-            expect(mockApiGet).toHaveBeenCalledWith('/api/dir?path=%2Fproject%2Fsub')
+            // Leading slashes are stripped so the backend receives a relative path
+            expect(mockApiGet).toHaveBeenCalledWith('/api/dir?path=project%2Fsub')
         })
 
         it('skips if dirLoading is true', async () => {
@@ -916,7 +917,8 @@ describe('store', () => {
 
             await store.loadFiles('/project')
 
-            expect(store.state.currentDir).toBe('/project')
+            // Leading slashes are stripped: /project → project
+            expect(store.state.currentDir).toBe('project')
             expect(store.state.dirEntries).toHaveLength(2)
             expect(store.state.dirLoading).toBe(false)
         })

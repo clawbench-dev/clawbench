@@ -267,6 +267,10 @@ let selectFileSeq = 0 // monotonic counter to suppress stale concurrent file loa
 
 async function loadFiles(dir = ''): Promise<void> {
     const seq = ++loadFilesSeq // this call supersedes any earlier in-flight call
+    // Defensive: strip leading slashes so currentDir is always a project-relative path.
+    // The Go backend treats paths starting with "/" as absolute filesystem paths,
+    // which causes 500 errors when they're not under configured root paths.
+    dir = dir.replace(/^\/+/, '')
     const prevDir = state.currentDir
     const prevEntries = state.dirEntries.slice()
     state.dirLoading = true

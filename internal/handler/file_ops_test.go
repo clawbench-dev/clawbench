@@ -764,6 +764,28 @@ func TestServeFileMove(t *testing.T) {
 		w := callHandler(ServeFileMove, req)
 		assertStatus(t, w, http.StatusForbidden)
 	})
+
+	t.Run("SameSourceAndDest_ReturnsOK_NoOp", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		createTestFile(t, env.ProjectDir, "same.txt", "don't lose me")
+
+		req := newRequest(t, http.MethodPost, "/api/file/move", map[string]string{
+			"path": "same.txt",
+			"dest": "same.txt",
+		})
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ServeFileMove, req)
+		assertOK(t, w)
+		assertJSONField(t, w, "ok", true)
+
+		// File must still exist with original content
+		data, err := os.ReadFile(filepath.Join(env.ProjectDir, "same.txt"))
+		assert.NoError(t, err)
+		assert.Equal(t, "don't lose me", string(data))
+	})
 }
 
 func TestServeFileCopy(t *testing.T) {
@@ -841,7 +863,7 @@ func TestServeFileCopy(t *testing.T) {
 
 		req := newRequest(t, http.MethodPost, "/api/file/copy", map[string]string{
 			"path": "original.txt",
-			"dest": "original.txt",
+			"dest": "original (1).txt",
 		})
 		withProjectCookie(req, env.ProjectDir)
 
@@ -869,6 +891,28 @@ func TestServeFileCopy(t *testing.T) {
 
 		w := callHandler(ServeFileCopy, req)
 		assertStatus(t, w, http.StatusConflict)
+	})
+
+	t.Run("SameSourceAndDest_ReturnsOK_NoOp", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		createTestFile(t, env.ProjectDir, "same.txt", "don't lose me")
+
+		req := newRequest(t, http.MethodPost, "/api/file/copy", map[string]string{
+			"path": "same.txt",
+			"dest": "same.txt",
+		})
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ServeFileCopy, req)
+		assertOK(t, w)
+		assertJSONField(t, w, "ok", true)
+
+		// File must still exist with original content
+		data, err := os.ReadFile(filepath.Join(env.ProjectDir, "same.txt"))
+		assert.NoError(t, err)
+		assert.Equal(t, "don't lose me", string(data))
 	})
 
 	t.Run("CopyToDifferentDir_NoConflict_Succeeds", func(t *testing.T) {

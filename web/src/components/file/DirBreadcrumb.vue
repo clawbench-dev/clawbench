@@ -25,7 +25,7 @@ const props = defineProps({
 
 defineEmits(['navigate'])
 
-// Reconstruct an absolute path from breadcrumb segments,
+// Reconstruct a path from breadcrumb segments,
 // using the appropriate separator for the platform.
 function reconstructPath(segments) {
   if (segments.length === 0) return ''
@@ -33,8 +33,8 @@ function reconstructPath(segments) {
   if (/^[A-Za-z]:\\$/.test(segments[0])) {
     return segments[0] + segments.slice(1).join('\\')
   }
-  // Unix: prepend "/" and join with "/"
-  return '/' + segments.join('/')
+  // Join with "/" (relative path, no leading slash)
+  return segments.join('/')
 }
 
 const parts = computed(() => {

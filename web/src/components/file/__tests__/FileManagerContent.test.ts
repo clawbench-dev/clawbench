@@ -400,6 +400,28 @@ describe('FileManagerContent — context menu', () => {
     expect(wrapper.vm.ctxMenu.visible).toBe(true)
   })
 
+  it('opens context menu on right-click empty area', async () => {
+    const wrapper = mountContent()
+    const fileList = wrapper.find('.file-list')
+    // Trigger contextmenu directly on the container (not on a file item)
+    await fileList.trigger('contextmenu')
+    await nextTick()
+
+    expect(wrapper.vm.ctxMenu.visible).toBe(true)
+    expect(wrapper.vm.ctxMenu.entry).toBeNull()
+  })
+
+  it('sets entry to null for empty area context menu', async () => {
+    const wrapper = mountContent()
+    const fileList = wrapper.find('.file-list')
+    // Trigger contextmenu directly on the container (not on a file item)
+    await fileList.trigger('contextmenu')
+    await nextTick()
+
+    expect(wrapper.vm.ctxMenu.visible).toBe(true)
+    expect(wrapper.vm.ctxMenu.entry).toBeNull()
+  })
+
   it('closes context menu on overlay click', async () => {
     const wrapper = mountContent()
     wrapper.vm.ctxMenu.visible = true
