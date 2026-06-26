@@ -72,25 +72,63 @@
   </div>
 
   <!-- Floating scroll buttons — outside scroll container, inside relative wrapper -->
-  <!-- Floating scroll buttons — always at bottom -->
   <Transition name="scroll-fab">
     <div v-if="scrolledUp || scrolledDown" ref="scrollFabRef" class="scroll-fab-group scroll-fab-bottom">
-      <template v-if="scrolledUp">
-        <button class="scroll-fab-btn" @click="scrollToTop" :title="t('chat.messageList.scrollToTop')">
-          <ChevronsUp :size="18" />
-        </button>
-        <button class="scroll-fab-btn" @click="scrollToPreviousMessage" :title="t('chat.messageList.scrollToPrev')">
-          <ArrowUp :size="18" />
-        </button>
-      </template>
-      <template v-if="scrolledDown">
-        <button class="scroll-fab-btn" @click="scrollToBottomSmooth" :title="t('chat.messageList.scrollToBottom')">
-          <ChevronsDown :size="18" />
-        </button>
-        <button class="scroll-fab-btn" @click="scrollToNextMessage" :title="t('chat.messageList.scrollToNext')">
-          <ArrowDown :size="18" />
-        </button>
-      </template>
+      <Transition name="scroll-fab-swap" mode="out-in">
+        <div v-if="scrolledUp" key="up" class="scroll-fab-dir">
+          <button class="scroll-fab-round" @click="scrollToTop" :title="t('chat.messageList.scrollToTop')">
+            <ChevronsUp :size="18" />
+          </button>
+          <button class="scroll-fab-round" @click="scrollToPreviousMessage" :title="t('chat.messageList.scrollToPrev')">
+            <ArrowUp :size="18" />
+          </button>
+        </div>
+        <div v-else key="down" class="scroll-fab-dir">
+          <button class="scroll-fab-round" @click="scrollToBottomSmooth" :title="t('chat.messageList.scrollToBottom')">
+            <ChevronsDown :size="18" />
+          </button>
+          <button class="scroll-fab-round" @click="scrollToNextMessage" :title="t('chat.messageList.scrollToNext')">
+            <ArrowDown :size="18" />
+          </button>
+        </div>
+      </Transition>
+      <button v-if="hasUserMessages" class="scroll-fab-round" @click="toggleUserMsgIndex" :title="t('chat.messageList.userMsgIndex')">
+        <List :size="18" />
+      </button>
+    </div>
+  </Transition>
+
+  <!-- User message index overlay -->
+  <Transition name="user-msg-overlay">
+    <div v-if="showUserMsgIndex" class="user-msg-overlay" @click.self="closeUserMsgIndex">
+      <div ref="popoverRef" class="user-msg-panel">
+        <div class="user-msg-panel-header">
+          <MessageSquare :size="16" class="user-msg-panel-icon" />
+          <span>{{ t('chat.messageList.userMsgIndexTitle') }}</span>
+          <span class="user-msg-panel-count">{{ userMsgIndexList.length }}</span>
+        </div>
+        <div v-if="loadingIndex" class="user-msg-panel-loading">
+          <span class="chat-load-spinner"></span>
+          <span>{{ t('chat.messageList.loadingMore') }}</span>
+        </div>
+        <div v-else-if="loadingTarget" class="user-msg-panel-loading">
+          <span class="chat-load-spinner"></span>
+          <span>{{ t('chat.messageList.loadingMore') }}</span>
+        </div>
+        <div class="user-msg-panel-list">
+          <div
+            v-for="(um, idx) in userMsgIndexList"
+            :key="um.id || idx"
+            class="user-msg-item"
+            @click="jumpToUserMessage(um)"
+          >
+            <span class="user-msg-item-node">
+              <span class="user-msg-item-index">{{ idx + 1 }}</span>
+            </span>
+            <span class="user-msg-item-text">{{ truncateUserMsg(um) }}</span>
+          </div>
+        </div>
+      </div>
     </div>
   </Transition>
 
@@ -100,7 +138,7 @@
 <script setup>
 import { ref, nextTick, inject, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown } from 'lucide-vue-next'
+import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown, List, MessageSquare } from 'lucide-vue-next'
 import ChatMessageItem from './ChatMessageItem.vue'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
@@ -454,12 +492,148 @@ function scrollToBottomSmooth() {
   setTimeout(() => { programmaticScrolling = false }, 600)
 }
 
+// ── User message index ──
+const hasUserMessages = computed(() => props.messages.some(m => m.role === 'user'))
+const userMsgIndexList = ref([])
+const showUserMsgIndex = ref(false)
+const popoverRef = ref(null)
+const loadingTarget = ref(false)
+const loadingIndex = ref(false)
+
+const USER_MSG_TRUNCATE_LEN = 40
+
+function truncateUserMsg(msg) {
+  const text = msg.content || ''
+  if (!text && msg.files && msg.files.length > 0) {
+    return `[${t('chat.messageList.userMsgIndexAttachment')}]`
+  }
+  return text.length > USER_MSG_TRUNCATE_LEN ? text.slice(0, USER_MSG_TRUNCATE_LEN) + '…' : text
+}
+
+async function toggleUserMsgIndex() {
+  if (showUserMsgIndex.value) {
+    showUserMsgIndex.value = false
+    return
+  }
+  showUserMsgIndex.value = true
+  // Fetch all user message index from API
+  if (!props.currentSessionId) return
+  loadingIndex.value = true
+  try {
+    const resp = await fetch(`/api/ai/chat/user-messages?session_id=${encodeURIComponent(props.currentSessionId)}`)
+    if (!resp.ok) return
+    const data = await resp.json()
+    userMsgIndexList.value = data.messages || []
+  } catch {
+    // Fallback: use loaded messages
+    userMsgIndexList.value = props.messages.filter(m => m.role === 'user')
+  } finally {
+    loadingIndex.value = false
+  }
+}
+
+function closeUserMsgIndex() {
+  showUserMsgIndex.value = false
+}
+
+async function jumpToUserMessage(msg) {
+  const targetId = msg.id
+  const el = messagesRef.value
+  if (!el) return
+
+  // Try to find in current messages array
+  const msgIndex = props.messages.findIndex(m => m.id === targetId)
+  if (msgIndex >= 0) {
+    await nextTick()
+    const items = el.querySelectorAll('.chat-messages-list > .chat-message')
+    if (items[msgIndex]) {
+      closeUserMsgIndex()
+      hideScrollFab()
+      programmaticScrolling = true
+      items[msgIndex].scrollIntoView({ behavior: 'smooth', block: 'center' })
+      highlightMessage(items[msgIndex])
+      setTimeout(() => { programmaticScrolling = false }, 600)
+      return
+    }
+  }
+
+  // Message not loaded — need to load more pages
+  if (!props.hasMore) return
+  loadingTarget.value = true
+  try {
+    const maxRounds = 50
+    for (let round = 0; round < maxRounds; round++) {
+      // Check if already loaded
+      const idx = props.messages.findIndex(m => m.id === targetId)
+      if (idx >= 0) {
+        await nextTick()
+        await new Promise(resolve => requestAnimationFrame(resolve))
+        const items = el.querySelectorAll('.chat-messages-list > .chat-message')
+        if (items[idx]) {
+          closeUserMsgIndex()
+          hideScrollFab()
+          programmaticScrolling = true
+          items[idx].scrollIntoView({ behavior: 'smooth', block: 'center' })
+          highlightMessage(items[idx])
+          setTimeout(() => { programmaticScrolling = false }, 600)
+          return
+        }
+        break
+      }
+      // Not found — load one more page
+      emit('load-more')
+      // Wait for loadingMore to become true (parent starts loading)
+      await new Promise(resolve => {
+        let timer = null
+        const unwatch = watch(() => props.loadingMore, (val) => {
+          if (val) { clearTimeout(timer); unwatch(); resolve() }
+        })
+        // Timeout: if loadingMore never flips to true (already loaded or no more), move on
+        timer = setTimeout(() => { unwatch(); resolve() }, 500)
+      })
+      // Wait for loadingMore to flip back to false (loading complete)
+      if (props.loadingMore) {
+        await new Promise(resolve => {
+          const unwatch = watch(() => props.loadingMore, (val) => {
+            if (!val) { unwatch(); resolve() }
+          })
+        })
+      }
+      // Wait for scroll position adjust in parent + DOM update
+      await nextTick()
+      await new Promise(resolve => requestAnimationFrame(resolve))
+    }
+  } finally {
+    loadingTarget.value = false
+  }
+}
+
+function highlightMessage(el) {
+  el.classList.add('chat-message-highlight')
+  setTimeout(() => el.classList.remove('chat-message-highlight'), 1500)
+}
+
+function scrollToMessage(msgId) {
+  const el = messagesRef.value
+  if (!el) return
+  const msgIndex = props.messages.findIndex(m => m.id === msgId)
+  if (msgIndex < 0) return
+  const items = el.querySelectorAll('.chat-messages-list > .chat-message')
+  if (items[msgIndex]) {
+    programmaticScrolling = true
+    items[msgIndex].scrollIntoView({ behavior: 'smooth', block: 'center' })
+    highlightMessage(items[msgIndex])
+    setTimeout(() => { programmaticScrolling = false }, 600)
+  }
+}
+
 defineExpose({
   scrollToBottom,
   scrollToTop,
   scrollToPreviousMessage,
   scrollToNextMessage,
   scrollToBottomSmooth,
+  scrollToMessage,
   messagesRef,
   isAtBottom: () => isAtBottom.value,
   scrolledUp,
@@ -653,13 +827,15 @@ defineExpose({
 }
 
 
-/* ── Floating scroll buttons (capsule) ── */
+/* ── Floating scroll buttons ── */
 .scroll-fab-group {
   position: absolute;
   left: 0;
   right: 0;
   display: flex;
   justify-content: center;
+  align-items: center;
+  gap: 6px;
   z-index: 3;
   pointer-events: none;
   padding: 6px 0;
@@ -669,56 +845,243 @@ defineExpose({
   bottom: 0;
 }
 
-.scroll-fab-btn {
+.scroll-fab-dir {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Direction swap transition (out-in) */
+.scroll-fab-swap-enter-active {
+  transition: opacity 0.15s ease-out, transform 0.15s ease-out;
+}
+
+.scroll-fab-swap-leave-active {
+  transition: opacity 0.1s ease-in, transform 0.1s ease-in;
+}
+
+.scroll-fab-swap-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.scroll-fab-swap-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+.scroll-fab-round {
   pointer-events: auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
+  width: 28px;
   height: 28px;
-  background: var(--bg-secondary);
+  background: var(--bg-primary);
   color: var(--text-secondary);
-  box-shadow: var(--shadow-md);
-  border: 1px solid var(--border-color);
+  border: 1.5px solid var(--border-color);
+  border-radius: 14px;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, transform 0.15s;
+  transition: background 0.15s, color 0.15s, transform 0.15s, border-color 0.15s;
   -webkit-tap-highlight-color: transparent;
-  margin: 0 -0.5px;
 }
 
-/* Left button: rounded on left, flat on right */
-.scroll-fab-btn:first-child {
-  border-radius: 14px 0 0 14px;
-}
-
-/* Right button: flat on left, rounded on right */
-.scroll-fab-btn:last-child {
-  border-radius: 0 14px 14px 0;
-}
-
-.scroll-fab-btn:active {
+.scroll-fab-round:active {
   transform: scale(0.93);
 }
 
 @media (hover: hover) {
-  .scroll-fab-btn:hover {
+  .scroll-fab-round:hover {
     background: var(--bg-tertiary);
     color: var(--accent-color);
+    border-color: var(--accent-color);
   }
 }
 
 .scroll-fab-enter-active {
-  transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+  transition: opacity 0.25s ease-out, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 .scroll-fab-leave-active {
-  transition: opacity 0.15s ease-in, transform 0.15s ease-in;
+  transition: opacity 0.2s ease-in, transform 0.2s ease-in;
 }
 .scroll-fab-bottom.scroll-fab-enter-from {
   opacity: 0;
-  transform: translateY(12px);
+  transform: translateY(16px) scale(0.9);
 }
 .scroll-fab-bottom.scroll-fab-leave-to {
   opacity: 0;
-  transform: translateY(8px);
+  transform: translateY(10px) scale(0.9);
+}
+
+/* ── User message index overlay ── */
+.user-msg-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.user-msg-panel {
+  min-width: 260px;
+  max-width: 360px;
+  max-height: 70vh;
+  width: 90vw;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.user-msg-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 18px 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.user-msg-panel-icon {
+  color: var(--accent-color);
+  flex-shrink: 0;
+}
+
+.user-msg-panel-count {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  padding: 2px 10px;
+}
+
+.user-msg-panel-loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 18px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.user-msg-panel-list {
+  overflow-y: auto;
+  padding: 4px 8px 12px 4px;
+}
+
+.user-msg-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 4px 8px 4px 4px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+  -webkit-tap-highlight-color: transparent;
+  position: relative;
+}
+
+.user-msg-item:active {
+  opacity: 0.7;
+}
+
+@media (hover: hover) {
+  .user-msg-item:hover {
+    background: var(--bg-tertiary);
+  }
+}
+
+/* Timeline connector line: full height of item, passing through node center */
+.user-msg-item::before {
+  content: '';
+  position: absolute;
+  left: 16px; /* center of 24px node + 4px item padding-left */
+  top: 0;
+  bottom: 0;
+  width: 1.5px;
+  background: var(--border-color);
+}
+
+/* First item: line starts from node center, not from top */
+.user-msg-item:first-child::before {
+  top: 16px; /* node center: 4px padding + 12px half node */
+}
+
+/* Last item: no connector line */
+.user-msg-item:last-child::before {
+  display: none;
+}
+
+/* Timeline node: circle with number */
+.user-msg-item-node {
+  position: relative;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  z-index: 1;
+}
+
+.user-msg-item-index {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent-color);
+  line-height: 1;
+}
+
+.user-msg-item-text {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.4;
+  word-break: break-word;
+  /* Separator line below text */
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Last item: no separator */
+.user-msg-item:last-child .user-msg-item-text {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+/* Overlay transition */
+.user-msg-overlay-enter-active {
+  transition: opacity 0.2s ease-out;
+}
+
+.user-msg-overlay-leave-active {
+  transition: opacity 0.15s ease-in;
+}
+
+.user-msg-overlay-enter-from,
+.user-msg-overlay-leave-to {
+  opacity: 0;
+}
+
+/* ── Message highlight flash ── */
+:deep(.chat-message-highlight) {
+  animation: msg-highlight-flash 1.5s ease-out;
+}
+
+@keyframes msg-highlight-flash {
+  0%, 15% { box-shadow: inset 0 0 0 2px #3b82f6; }
+  30%, 45% { box-shadow: inset 0 0 0 2px transparent; }
+  60%, 75% { box-shadow: inset 0 0 0 2px #3b82f6; }
+  90%, 100% { box-shadow: inset 0 0 0 2px transparent; }
 }
 </style>

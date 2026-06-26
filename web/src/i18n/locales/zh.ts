@@ -282,6 +282,9 @@ export default {
       scrollToPrev: '上一条消息',
       scrollToNext: '下一条消息',
       scrollToBottom: '回到底部',
+      userMsgIndex: '用户消息索引',
+      userMsgIndexTitle: '用户消息',
+      userMsgIndexAttachment: '附件',
     },
     pending: {
       uploadedAttachment: '上传附件',

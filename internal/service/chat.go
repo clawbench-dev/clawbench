@@ -109,6 +109,36 @@ func GetChatMessageCount(sessionID string) int {
 	return count
 }
 
+// GetUserMessageIndex returns lightweight {id, content, files} for all user messages
+// in a session, ordered by id ASC. Used for the user message index navigation feature.
+func GetUserMessageIndex(sessionID string) ([]model.ChatMessage, error) {
+	rows, err := DBRead.Query(
+		"SELECT id, content, files FROM chat_history WHERE session_id = ? AND role = 'user' AND streaming = 0 ORDER BY id ASC",
+		sessionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	messages := []model.ChatMessage{}
+	for rows.Next() {
+		var msg model.ChatMessage
+		var filesJSON sql.NullString
+		if err := rows.Scan(&msg.ID, &msg.Content, &filesJSON); err != nil {
+			return nil, err
+		}
+		msg.Role = "user"
+		if filesJSON.Valid && filesJSON.String != "" {
+			json.Unmarshal([]byte(filesJSON.String), &msg.Files)
+		}
+		messages = append(messages, msg)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
 // GetMessageByID fetches a single chat message by its database ID.
 // Returns the complete message including all content blocks (text, thinking, tool_use).
 func GetMessageByID(id int64) (*model.ChatMessage, error) {

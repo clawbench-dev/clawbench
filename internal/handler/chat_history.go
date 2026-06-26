@@ -127,6 +127,33 @@ func ServeChatCount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"count": count})
 }
 
+// ServeUserMessageIndex returns lightweight {id, content, files} for all user messages
+// in a session. Used for the user message index navigation feature.
+func ServeUserMessageIndex(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+	sessionID, ok := requireSessionID(w, r)
+	if !ok {
+		return
+	}
+	// Verify the session belongs to the requesting project
+	if sessionProject := service.GetSessionProjectPath(sessionID); sessionProject != projectPath {
+		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+		return
+	}
+	messages, err := service.GetUserMessageIndex(sessionID)
+	if err != nil {
+		model.WriteError(w, model.Internal(fmt.Errorf("failed to load user message index")))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"messages": messages})
+}
+
 // ServeChatMessageUpdate handles PUT to update a specific message's content.
 func ServeChatMessageUpdate(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPut) {

@@ -282,6 +282,9 @@ export default {
       scrollToPrev: 'Previous message',
       scrollToNext: 'Next message',
       scrollToBottom: 'Scroll to bottom',
+      userMsgIndex: 'User message index',
+      userMsgIndexTitle: 'User messages',
+      userMsgIndexAttachment: 'Attachment',
     },
     pending: {
       uploadedAttachment: 'Upload',
