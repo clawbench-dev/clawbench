@@ -96,12 +96,15 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
+          cache-dependency-path: web/package-lock.json
 
       - name: Install dependencies
+        working-directory: web
         run: npm ci
 
       - name: ESLint
-        run: npm run lint
+        working-directory: web
+        run: npx eslint src/
 
   typecheck-frontend:
     name: Typecheck (Frontend)
