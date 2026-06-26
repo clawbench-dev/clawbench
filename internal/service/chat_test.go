@@ -2926,3 +2926,91 @@ func TestCreateSession_EmptySessionTypeDefaultsToChat(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "chat", sessionType)
 }
+
+// ---------- GetUserMessageIndex ----------
+
+func TestGetUserMessageIndex_Basic(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Index Test")
+
+	_, err := service.AddChatMessage("/project", "claude", sid, "user", "First question", nil, false, "NewSession")
+	assert.NoError(t, err)
+	_, err = service.AddChatMessage("/project", "claude", sid, "assistant", `{"blocks":[{"type":"text","text":"Answer"}]}`, nil, false, "NewSession")
+	assert.NoError(t, err)
+	_, err = service.AddChatMessage("/project", "claude", sid, "user", "Second question", []string{"file1.go"}, false, "NewSession")
+	assert.NoError(t, err)
+
+	msgs, err := service.GetUserMessageIndex(sid)
+	assert.NoError(t, err)
+	assert.Len(t, msgs, 2)
+
+	assert.Equal(t, "user", msgs[0].Role)
+	assert.Equal(t, "First question", msgs[0].Content)
+	assert.Equal(t, "user", msgs[1].Role)
+	assert.Equal(t, "Second question", msgs[1].Content)
+	assert.Equal(t, []string{"file1.go"}, msgs[1].Files)
+}
+
+func TestGetUserMessageIndex_Empty(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Empty Index")
+
+	msgs, err := service.GetUserMessageIndex(sid)
+	assert.NoError(t, err)
+	assert.Empty(t, msgs)
+}
+
+func TestGetUserMessageIndex_OnlyAssistantMessages(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "No User Msgs")
+
+	_, err := service.AddChatMessage("/project", "claude", sid, "assistant", "Hello", nil, false, "NewSession")
+	assert.NoError(t, err)
+	_, err = service.AddChatMessage("/project", "claude", sid, "assistant", "World", nil, false, "NewSession")
+	assert.NoError(t, err)
+
+	msgs, err := service.GetUserMessageIndex(sid)
+	assert.NoError(t, err)
+	assert.Empty(t, msgs)
+}
+
+func TestGetUserMessageIndex_SkipsStreaming(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Streaming Test")
+
+	// Add a streaming user message (streaming=1) — should be excluded
+	_, err := service.AddChatMessage("/project", "claude", sid, "user", "Streaming msg", nil, true, "NewSession")
+	assert.NoError(t, err)
+	// Add a non-streaming user message — should be included
+	_, err = service.AddChatMessage("/project", "claude", sid, "user", "Done msg", nil, false, "NewSession")
+	assert.NoError(t, err)
+
+	msgs, err := service.GetUserMessageIndex(sid)
+	assert.NoError(t, err)
+	assert.Len(t, msgs, 1)
+	assert.Equal(t, "Done msg", msgs[0].Content)
+}
+
+func TestGetUserMessageIndex_OrderPreserved(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Order Test")
+
+	for i := 0; i < 5; i++ {
+		_, err := service.AddChatMessage("/project", "claude", sid, "user", fmt.Sprintf("Question %d", i+1), nil, false, "NewSession")
+		assert.NoError(t, err)
+		_, err = service.AddChatMessage("/project", "claude", sid, "assistant", fmt.Sprintf("Answer %d", i+1), nil, false, "NewSession")
+		assert.NoError(t, err)
+	}
+
+	msgs, err := service.GetUserMessageIndex(sid)
+	assert.NoError(t, err)
+	assert.Len(t, msgs, 5)
+	for i, msg := range msgs {
+		assert.Equal(t, fmt.Sprintf("Question %d", i+1), msg.Content)
+	}
+}
