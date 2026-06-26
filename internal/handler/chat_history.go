@@ -151,6 +151,11 @@ func ServeUserMessageIndex(w http.ResponseWriter, r *http.Request) {
 		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 		return
 	}
+	// Verify session is not soft-deleted (GetSessionBackend filters deleted=0)
+	if service.GetSessionBackend(sessionID) == "" {
+		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
+		return
+	}
 	messages, err := service.GetUserMessageIndex(sessionID)
 	if err != nil {
 		model.WriteError(w, model.Internal(fmt.Errorf("failed to load user message index")))
