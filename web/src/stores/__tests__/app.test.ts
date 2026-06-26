@@ -931,6 +931,15 @@ describe('store', () => {
             expect(store.state.dirLoading).toBe(false)
         })
 
+        it('strips leading slashes from directory path', async () => {
+            mockApiGet.mockResolvedValue({ items: [] })
+
+            await store.loadFiles('///deeply/nested')
+
+            expect(mockApiGet).toHaveBeenCalledWith('/api/dir?path=deeply%2Fnested')
+            expect(store.state.currentDir).toBe('deeply/nested')
+        })
+
         it('rolls back state on failure', async () => {
             store.state.currentDir = '/previous'
             store.state.dirEntries = [{ name: 'old', type: 'file' }]

@@ -103,4 +103,20 @@ describe('joinPath', () => {
   it('handles subdirectory paths', () => {
     expect(joinPath('.clawbench/tmp', 'data.json')).toBe('.clawbench/tmp/data.json')
   })
+
+  it('strips leading slash from dir', () => {
+    expect(joinPath('/src', 'file.ts')).toBe('src/file.ts')
+  })
+
+  it('strips multiple leading slashes', () => {
+    expect(joinPath('///deep', 'file.ts')).toBe('deep/file.ts')
+  })
+
+  it('strips trailing slash from dir', () => {
+    expect(joinPath('src/', 'file.ts')).toBe('src/file.ts')
+  })
+
+  it('strips leading and trailing slashes together', () => {
+    expect(joinPath('/src/', 'file.ts')).toBe('src/file.ts')
+  })
 })
