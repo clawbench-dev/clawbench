@@ -44,18 +44,8 @@ done
 
 echo "=== Building $NAME ==="
 
-# 0. Generate provider models from models.dev API
-if command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
-    echo "[0/5] Generating provider models..."
-    mkdir -p .clawbench
-    if scripts/fetch-provider-models.sh --output .clawbench/provider_models.json; then
-        echo "  .clawbench/provider_models.json updated"
-    else
-        echo "  WARNING: Failed to fetch provider models (using existing file if any)"
-    fi
-else
-    echo "[0/5] Provider models skipped (requires curl and jq)"
-fi
+# 0. Provider models generation is done by CI only (see .github/workflows/ci.yml and release.yml).
+# Local builds use the existing .clawbench/provider_models.json if present.
 
 # Derive version from git (e.g. v1.0.0, v0.30.0-30-g830bb6c, or short SHA)
 VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
