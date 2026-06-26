@@ -21,6 +21,7 @@ import (
 
 	"clawbench/internal/model"
 	"clawbench/internal/service"
+	"clawbench/internal/speech"
 	"clawbench/internal/version"
 
 	"golang.org/x/crypto/bcrypt"
@@ -42,6 +43,8 @@ var hotReloadFields = map[string]bool{
 	"upload.max_size_mb":          true,
 	"upload.max_files":            true,
 	"tts.max_cache_files":         true,
+	"tts.voice":                   true,
+	"tts.speed":                   true,
 	"default_agent":               true,
 }
 
@@ -897,6 +900,40 @@ func applyHotReloadGlobals() {
 	model.UploadMaxFiles = cfg.Upload.MaxFiles
 	model.TTSMaxCacheFiles = cfg.TTS.MaxCacheFiles
 	model.DefaultAgentID = cfg.DefaultAgent
+
+	// Hot-reload TTS voice and speed on the existing speech provider
+	if cfg.TTS.Voice != "" {
+		if p, ok := speechProvider.(*speech.EdgeTTSProvider); ok {
+			p.Voice = cfg.TTS.Voice
+		}
+		if p, ok := speechProvider.(*speech.KokoroProvider); ok {
+			p.Voice = cfg.TTS.Voice
+		}
+		// Piper: voice is embedded in model_path, not a standalone field
+		// MOSS-Nano: uses moss_nano.voice, not tts.voice
+	}
+	if cfg.TTS.Speed > 0 {
+		if p, ok := speechProvider.(*speech.EdgeTTSProvider); ok {
+			ratePercent := int((cfg.TTS.Speed - 1.0) * 100)
+			if ratePercent > 0 {
+				p.Rate = fmt.Sprintf("+%d%%", ratePercent)
+			} else if ratePercent < 0 {
+				p.Rate = fmt.Sprintf("%d%%", ratePercent)
+			} else {
+				p.Rate = "+0%"
+			}
+		}
+		if p, ok := speechProvider.(*speech.KokoroProvider); ok {
+			p.Speed = cfg.TTS.Speed
+		}
+		if p, ok := speechProvider.(*speech.PiperProvider); ok {
+			// Only update if no explicit length_scale is set
+			if cfg.TTS.Piper.LengthScale <= 0 {
+				p.LengthScale = 1.0 / cfg.TTS.Speed
+			}
+		}
+		// MOSS-Nano: speed not supported
+	}
 }
 
 // writeConfigYAML writes the patched fields back to config/config.yaml atomically.

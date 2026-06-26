@@ -50,7 +50,7 @@ import { useAgents } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast'
 import { useAppMode } from '@/composables/useAppMode'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
-import { categoryItems, type ItemSpec, type DependsOn } from './settingsFieldMap'
+import { categoryItems, engineVoiceOptions, type ItemSpec, type DependsOn } from './settingsFieldMap'
 
 const props = defineProps<{
   categoryId: string
@@ -136,6 +136,11 @@ const items = computed(() => {
         value: a.id,
         label: `${a.icon} ${a.name}`,
       }))
+    }
+    // Dynamically build options for tts.voice based on current engine
+    if (item.key === 'tts.voice') {
+      const engine = resolveConfigValue('tts.engine') || 'edge'
+      resolvedOptions = engineVoiceOptions[engine] ?? []
     }
 
     return {
