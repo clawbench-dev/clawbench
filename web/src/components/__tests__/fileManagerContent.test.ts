@@ -766,6 +766,56 @@ describe('FileManagerContent — doPaste', () => {
 
     vi.unstubAllGlobals()
   })
+
+  it('skips API call for same-path cut (no-op)', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const wrapper = mountContent({ currentDir: 'src' })
+    wrapper.vm.clipboard.entries = [{ type: 'file', name: 'file.txt', path: 'src/file.txt' }]
+    wrapper.vm.clipboard.isCut = true
+    wrapper.vm.ctxMenu.entry = null
+    await nextTick()
+
+    await wrapper.vm.doPaste()
+
+    expect(fetchSpy).not.toHaveBeenCalled()
+
+    vi.unstubAllGlobals()
+  })
+
+  it('preserves clipboard on cut-paste failure', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: false, status: 500, text: () => Promise.resolve('error') })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const wrapper = mountContent()
+    wrapper.vm.clipboard.entries = [{ type: 'file', name: 'file.txt', path: 'src/file.txt' }]
+    wrapper.vm.clipboard.isCut = true
+    await nextTick()
+
+    await wrapper.vm.doPaste()
+
+    // Clipboard should be preserved on failure so user can retry
+    expect(wrapper.vm.clipboard.entries.length).toBe(1)
+
+    vi.unstubAllGlobals()
+  })
+
+  it('clears clipboard on successful cut-paste', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const wrapper = mountContent()
+    wrapper.vm.clipboard.entries = [{ type: 'file', name: 'file.txt', path: 'src/file.txt' }]
+    wrapper.vm.clipboard.isCut = true
+    await nextTick()
+
+    await wrapper.vm.doPaste()
+
+    expect(wrapper.vm.clipboard.entries.length).toBe(0)
+
+    vi.unstubAllGlobals()
+  })
 })
 
 describe('FileManagerContent — doNewFile / doNewFolder', () => {
