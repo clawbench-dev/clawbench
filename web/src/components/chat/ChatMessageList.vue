@@ -149,7 +149,7 @@ import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotatio
 import { useDialog } from '@/composables/useDialog'
 import { store } from '@/stores/app.ts'
 import { computeRemainingCount } from '@/utils/messageListUtils.ts'
-import { extractPlainText, truncateUserMsg } from '@/utils/userMsgIndexUtils.ts'
+import { truncateUserMsg } from '@/utils/userMsgIndexUtils.ts'
 
 const { t } = useI18n()
 
