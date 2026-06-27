@@ -17,7 +17,7 @@ FROM ubuntu:24.04
 # - ca-certificates: HTTPS (LLM provider APIs, Edge TTS WebSocket)
 # Edge TTS is compiled into the Go binary (github.com/lib-x/edgetts) — no Python needed.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates curl && \
+    apt-get install -y --no-install-recommends ca-certificates curl bash && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -41,12 +41,14 @@ ARG EMBEDDED_AGENT_VERSION=""
 # If both OPENCODE_VERSION and EMBEDDED_AGENT_* are set, EMBEDDED_AGENT_* takes precedence.
 ARG OPENCODE_VERSION=""
 
-# If EMBEDDED_AGENT_VERSION is set (CI), download the correct agent binary for this architecture.
+# Use bash for RUN commands (download-embedded-agent.sh requires bash features)
+SHELL ["/bin/bash", "-c"]
+
 RUN if [ -n "$EMBEDDED_AGENT_ID" ] && [ -n "$EMBEDDED_AGENT_VERSION" ]; then \
-      . ./scripts/download-embedded-agent.sh && \
+      source ./scripts/download-embedded-agent.sh && \
       download_embedded_agent_for_docker "$EMBEDDED_AGENT_ID" "$EMBEDDED_AGENT_VERSION"; \
     elif [ -n "$OPENCODE_VERSION" ]; then \
-      . ./scripts/download-embedded-agent.sh && \
+      source ./scripts/download-embedded-agent.sh && \
       download_embedded_agent_for_docker opencode "$OPENCODE_VERSION"; \
     else \
       mkdir -p .clawbench; \
