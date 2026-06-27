@@ -98,42 +98,16 @@
     </div>
   </Transition>
 
-  <!-- User message index overlay -->
-  <Transition name="user-msg-overlay">
-    <div v-if="showUserMsgIndex" class="user-msg-overlay" @click.self="closeUserMsgIndex" @keydown.escape="closeUserMsgIndex">
-      <div ref="popoverRef" class="user-msg-panel" role="dialog" :aria-label="t('chat.messageList.userMsgIndexTitle')">
-        <div class="user-msg-panel-header">
-          <MessageSquare :size="16" class="user-msg-panel-icon" />
-          <span>{{ t('chat.messageList.userMsgIndexTitle') }}</span>
-          <span class="user-msg-panel-count">{{ userMsgIndexList.length }}</span>
-        </div>
-        <div v-if="loadingIndex" class="user-msg-panel-loading">
-          <span class="chat-load-spinner"></span>
-          <span>{{ t('chat.messageList.loadingMore') }}</span>
-        </div>
-        <div v-else-if="loadingTarget" class="user-msg-panel-loading">
-          <span class="chat-load-spinner"></span>
-          <span>{{ t('chat.messageList.loadingMore') }}</span>
-        </div>
-        <div class="user-msg-panel-list">
-          <div
-            v-for="(um, idx) in userMsgIndexList"
-            :key="um.id || idx"
-            class="user-msg-item"
-            tabindex="0"
-            role="button"
-            @click="jumpToUserMessage(um)"
-            @keydown.enter="jumpToUserMessage(um)"
-          >
-            <span class="user-msg-item-node">
-              <span class="user-msg-item-index">{{ idx + 1 }}</span>
-            </span>
-            <span class="user-msg-item-text">{{ formatTruncateUserMsg(um) }}</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  </Transition>
+  <!-- User message index drawer -->
+  <UserMsgIndexSheet
+    :open="showUserMsgIndex"
+    :messages="userMsgIndexList"
+    :active-id="nearestUserMsgId"
+    :loading="loadingIndex"
+    :jumping="loadingTarget"
+    @close="closeUserMsgIndex"
+    @select="jumpToUserMessage"
+  />
 
   </div>
 </template>
@@ -141,8 +115,9 @@
 <script setup>
 import { ref, nextTick, inject, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown, List, MessageSquare } from 'lucide-vue-next'
+import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown, List } from 'lucide-vue-next'
 import ChatMessageItem from './ChatMessageItem.vue'
+import UserMsgIndexSheet from './UserMsgIndexSheet.vue'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
@@ -312,7 +287,13 @@ const SCROLL_DELTA_THRESHOLD = 10
 // Flag to suppress handleScroll button logic during programmatic smooth scroll
 let programmaticScrolling = false
 
+// Throttle scrollTick for nearestUserMsgId recomputation
+let scrollTickTimer = null
+
 function handleScroll() {
+  if (!scrollTickTimer) {
+    scrollTickTimer = setTimeout(() => { scrollTick.value++; scrollTickTimer = null }, 100)
+  }
   if (!messagesRef.value) return
   const el = messagesRef.value
 
@@ -516,7 +497,6 @@ const {
   showUserMsgIndex,
   loadingTarget,
   loadingIndex,
-  formatTruncateUserMsg,
   toggleUserMsgIndex,
   closeUserMsgIndex,
   jumpToUserMessage,
@@ -531,12 +511,37 @@ const {
   hideScrollFab,
   setProgrammaticScrolling: (val) => { programmaticScrolling = val },
 })
+
+// Nearest user message to viewport center — used for activeId highlight in index
+const scrollTick = ref(0)
+const nearestUserMsgId = computed(() => {
+  void scrollTick.value // dependency trigger
+  const el = messagesRef.value
+  if (!el) return null
+  const items = el.querySelectorAll('.chat-messages-list > .chat-message')
+  const containerRect = el.getBoundingClientRect()
+  const center = containerRect.top + containerRect.height / 2
+  let nearestUserIdx = null
+  let minDist = Infinity
+  for (let i = 0; i < items.length; i++) {
+    const msg = props.messages[i]
+    if (!msg || msg.role !== 'user') continue
+    const rect = items[i].getBoundingClientRect()
+    const dist = Math.abs(rect.top + rect.height / 2 - center)
+    if (dist < minDist) {
+      minDist = dist
+      nearestUserIdx = i
+    }
+  }
+  if (nearestUserIdx === null) return null
+  return props.messages[nearestUserIdx].id
+})
+
 // Watch session switch to reset user msg index
 watch(() => props.currentSessionId, () => {
   showUserMsgIndex.value = false
   userMsgIndexList.value = []
 })
-const popoverRef = ref(null)
 
 defineExpose({
   scrollToBottom,
