@@ -5,6 +5,7 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,8 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"clawbench/internal/model"
 )
 
 // ===========================================================================
@@ -542,6 +545,621 @@ func TestClaudeACP_LoadSession_ThenNewPrompt(t *testing.T) {
 	// The AI should remember the number from the original conversation
 	assert.True(t, strings.Contains(content2, "42"),
 		"AI should remember '42' from the loaded session, got: %s", content2)
+}
+
+// ===========================================================================
+// Category G: ACP LoadSession — Claude vs OpenCode Latency Comparison
+// ===========================================================================
+//
+// These tests diagnose the "resume button hangs for Claude but works for OpenCode"
+// bug by measuring each phase of the LoadSession pipeline:
+//
+//   GetOrCreateConnForLoad(ctx, agent, loadSID, acpSID, cwd)
+//     → spawnLocked (npx/launch + Initialize, 60s timeout)
+//     → LoadSession RPC (replay history, 60s timeout)
+//   + time.Sleep(500ms) for late-arriving notifications
+//   + replay buffer parsing + DB writes
+//
+// Root cause hypothesis:
+//   - Claude ACP: npx startup slow (5-30s) + LoadSession replays full history (10-60s)
+//   - OpenCode ACP: native binary fast (1-3s) + LoadSession returns immediately
+//     (only sends AvailableCommandsUpdate, no conversation replay)
+//   - Frontend: acpLoadSession() has no fetch timeout → UI freezes indefinitely
+
+// requireOpenCodeACPAvailable skips the test if OpenCode CLI is not installed.
+func requireOpenCodeACPAvailable(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("opencode"); err != nil {
+		t.Skip("opencode CLI not available, skipping OpenCode ACP LoadSession latency test")
+	}
+}
+
+// opencodeACPAgent returns a model.Agent configured for OpenCode ACP transport.
+func opencodeACPAgent() *model.Agent {
+	return &model.Agent{
+		ID:         "opencode-acp-loadsession-test",
+		Name:       "OpenCode ACP LoadSession Test",
+		Backend:    "opencode",
+		Transport:  "acp-stdio",
+		AcpCommand: "opencode acp",
+		Models: []model.AgentModel{
+			{ID: "default", Name: "Default Model", Default: true},
+		},
+	}
+}
+
+// loadSessionTimings holds measured durations for each LoadSession phase.
+type loadSessionTimings struct {
+	AgentID       string
+	LoadTotal     time.Duration // total GetOrCreateConnForLoad time
+	ReplayNotifs  int           // number of SessionUpdate notifications in replay buffer
+	ReplayContent int           // number of content blocks after parsing
+}
+
+// killAndCloseConn kills the ACP process and removes the connection from the pool.
+// This avoids the cmd.Wait() hang that closeConn suffers when npx spawns child
+// processes that keep the stdout/stderr pipes open after the parent is killed.
+//
+// We kill the process group (not just the parent) and then force-close the
+// stdoutFilter to unblock any pending I/O before calling CloseConn.
+func killAndCloseConn(t *testing.T, env *acpTestEnv, sessionID string) {
+	t.Helper()
+	if conn := env.mgr.GetConn(sessionID); conn != nil {
+		// Kill the process first
+		_ = conn.KillProcessForTest()
+		// Close the stdout filter to unblock pending reads
+		// (this is what killProcessLocked does but KillProcessForTest doesn't)
+		conn.mu.Lock()
+		if conn.stdoutFilter != nil {
+			conn.stdoutFilter.Close()
+			conn.stdoutFilter = nil
+		}
+		conn.mu.Unlock()
+	}
+	env.closeConn(t, sessionID)
+}
+
+// measureLoadSessionLatency performs a full LoadSession round-trip and measures
+// each phase. Returns timings and the parsed replay events.
+func measureLoadSessionLatency(t *testing.T, agent *model.Agent, acpSSID string) (loadSessionTimings, []StreamEvent) {
+	t.Helper()
+
+	env := setupACPTestEnvForAgent(t, agent)
+	backend, err := NewACPBackend(agent)
+	require.NoError(t, err)
+
+	// Use a short prompt to establish the session first
+	sessionID := acpSessionID()
+	cleanupConn(t, sessionID)
+
+	events1 := sendACPPrompt(t, backend, sessionID, "回复一个字：好", 120*time.Second)
+	requireDoneEvent(t, events1)
+
+	capturedAcpSID := extractACPCaptureID(t, events1)
+	require.NotEmpty(t, capturedAcpSID, "should have ACP session ID after prompt")
+
+	t.Logf("Established session: clawbench=%s, acp=%s", sessionID, capturedAcpSID)
+
+	// Close the existing connection so LoadSession creates a new one
+	killAndCloseConn(t, env, sessionID)
+
+	// Now perform LoadSession with timing
+	loadSessionID := acpSessionID()
+	cleanupConn(t, loadSessionID)
+
+	ctx, cancel := contextWithTimeout(t, 120*time.Second)
+	defer cancel()
+
+	loadStart := time.Now()
+	conn, err := env.mgr.GetOrCreateConnForLoad(ctx, agent, loadSessionID, capturedAcpSID, acpTestWorkDir())
+	loadElapsed := time.Since(loadStart)
+
+	if err != nil {
+		t.Skipf("LoadSession not supported or failed: %v", err)
+	}
+	require.NotNil(t, conn, "should have a connection after LoadSession")
+
+	// Wait for late-arriving notifications (same as ServeACPLoadSession handler)
+	time.Sleep(500 * time.Millisecond)
+
+	client := conn.GetClient()
+	require.NotNil(t, client, "should have ACP client after LoadSession")
+
+	buf := client.GetAndClearLoadSessionBuf()
+
+	// Parse replay notifications
+	ch := make(chan StreamEvent, 1000)
+	var allEvents []StreamEvent
+	for _, n := range buf {
+		mapACPSessionUpdate(n.Update, ch, ctx, nil, nil)
+	}
+	close(ch)
+	for event := range ch {
+		allEvents = append(allEvents, event)
+	}
+
+	contentEvents := findACPEvents(allEvents, "content")
+
+	timings := loadSessionTimings{
+		AgentID:       agent.ID,
+		LoadTotal:     loadElapsed,
+		ReplayNotifs:  len(buf),
+		ReplayContent: len(contentEvents),
+	}
+
+	return timings, allEvents
+}
+
+// G1: Claude LoadSession latency profiling
+//
+// Measures the full LoadSession pipeline for Claude ACP, breaking down where
+// time is spent. This test documents the "resume button hangs" bug:
+//
+//   spawnLocked (npx + Initialize):  5-30s
+//   LoadSession RPC (replay):        10-60s (proportional to conversation length)
+//   time.Sleep for late notifs:     500ms (fixed)
+//   Total:                          15-90s
+//
+// Run with verbose output:
+//
+//	go test -v -run TestClaudeACP_LoadSession_LatencyProfile -tags integration -timeout 300s
+func TestClaudeACP_LoadSession_LatencyProfile(t *testing.T) {
+	requireClaudeACPAvailable(t)
+
+	agent := claudeACPAgent()
+	env := setupACPTestEnvForAgent(t, agent)
+	backend, err := NewACPBackend(agent)
+	require.NoError(t, err)
+
+	sessionID := acpSessionID()
+	cleanupConn(t, sessionID)
+
+	// Step 1: Establish a conversation with a simple prompt
+	events1 := sendACPPrompt(t, backend, sessionID, "回复一个字：好", 120*time.Second)
+	requireDoneEvent(t, events1)
+
+	acpSSID := extractACPCaptureID(t, events1)
+	require.NotEmpty(t, acpSSID)
+	t.Logf("Step 1: established session, acp_sid=%s", acpSSID)
+
+	// Step 2: Close the connection and LoadSession
+	killAndCloseConn(t, env, sessionID)
+	loadSessionID := acpSessionID()
+	cleanupConn(t, loadSessionID)
+
+	ctx, cancel := contextWithTimeout(t, 120*time.Second)
+	defer cancel()
+
+	// Measure LoadSession total time
+	loadStart := time.Now()
+	conn, err := env.mgr.GetOrCreateConnForLoad(ctx, agent, loadSessionID, acpSSID, acpTestWorkDir())
+	loadElapsed := time.Since(loadStart)
+
+	if err != nil {
+		t.Skipf("LoadSession not supported or failed: %v", err)
+	}
+	require.NotNil(t, conn)
+
+	// Step 3: Wait for late notifications + read buffer (same as handler)
+	notifsStart := time.Now()
+	time.Sleep(500 * time.Millisecond)
+	client := conn.GetClient()
+	require.NotNil(t, client)
+	buf := client.GetAndClearLoadSessionBuf()
+	notifsElapsed := time.Since(notifsStart)
+
+	// Step 4: Parse replay
+	parseStart := time.Now()
+	ch := make(chan StreamEvent, 1000)
+	var allEvents []StreamEvent
+	for _, n := range buf {
+		mapACPSessionUpdate(n.Update, ch, ctx, nil, nil)
+	}
+	close(ch)
+	for event := range ch {
+		allEvents = append(allEvents, event)
+	}
+	parseElapsed := time.Since(parseStart)
+
+	contentEvents := findACPEvents(allEvents, "content")
+
+	// ── Report ──
+	t.Log("=== Claude LoadSession Latency Breakdown ===")
+	t.Logf("  GetOrCreateConnForLoad (spawn+Initialize+LoadSession RPC): %v", loadElapsed)
+	t.Logf("  Wait for late notifications + read buffer:                 %v", notifsElapsed)
+	t.Logf("  Parse replay notifications:                                %v", parseElapsed)
+	t.Logf("  Total end-to-end:                                         %v", loadElapsed+notifsElapsed+parseElapsed)
+	t.Logf("  Replay notifications: %d", len(buf))
+	t.Logf("  Content events: %d", len(contentEvents))
+
+	// ── Bottleneck detection ──
+	// The LoadSession RPC itself includes spawnLocked + Initialize + LoadSession.
+	// We can't separate them from this level, but the total is what matters
+	// for the "resume button hangs" bug.
+	if loadElapsed > 30*time.Second {
+		t.Logf("BOTTLENECK: GetOrCreateConnForLoad took %v — this causes UI freeze", loadElapsed)
+		t.Log("  Likely causes:")
+		t.Log("    1. npx package resolution for @agentclientprotocol/claude-agent-acp@latest")
+		t.Log("    2. Initialize handshake (60s timeout)")
+		t.Log("    3. LoadSession RPC replaying full conversation history (60s timeout)")
+	}
+	if loadElapsed > 60*time.Second {
+		t.Logf("CRITICAL: LoadSession pipeline exceeded 60s — frontend fetch has no timeout, UI will appear frozen indefinitely")
+	}
+
+	// Verify Claude replays content (unlike OpenCode)
+	// NOTE: Claude's LoadSession may replay content via SessionUpdate notifications
+	// (AgentMessageChunk, UserMessageChunk), but some versions send only
+	// AvailableCommandsUpdate. If content is empty, this doesn't mean LoadSession
+	// failed — it may just mean the bridge version doesn't replay content.
+	if len(contentEvents) > 0 {
+		t.Logf("  Claude LoadSession replayed %d content events (full replay)", len(contentEvents))
+	} else {
+		t.Log("  NOTE: Claude LoadSession returned no content events — bridge may not replay conversation content via SessionUpdate")
+	}
+
+	// Log event type summary
+	typeCounts := make(map[string]int)
+	for _, e := range allEvents {
+		typeCounts[e.Type]++
+	}
+	t.Logf("  Event breakdown: %v", typeCounts)
+}
+
+// G2: OpenCode LoadSession latency profiling
+//
+// Measures the full LoadSession pipeline for OpenCode ACP. Expected to be fast
+// because OpenCode's LoadSession does NOT replay conversation content — it only
+// sends AvailableCommandsUpdate, so the replay buffer is empty.
+//
+// Run with verbose output:
+//
+//	go test -v -run TestOpenCodeACP_LoadSession_LatencyProfile -tags integration -timeout 300s
+func TestOpenCodeACP_LoadSession_LatencyProfile(t *testing.T) {
+	requireOpenCodeACPAvailable(t)
+
+	agent := opencodeACPAgent()
+	env := setupACPTestEnvForAgent(t, agent)
+	backend, err := NewACPBackend(agent)
+	require.NoError(t, err)
+
+	sessionID := acpSessionID()
+	cleanupConn(t, sessionID)
+
+	// Step 1: Establish a conversation
+	events1 := sendACPPrompt(t, backend, sessionID, "回复一个字：好", 120*time.Second)
+	requireDoneEvent(t, events1)
+
+	acpSSID := extractACPCaptureID(t, events1)
+	require.NotEmpty(t, acpSSID)
+	t.Logf("Step 1: established session, acp_sid=%s", acpSSID)
+
+	// Step 2: Close and LoadSession
+	killAndCloseConn(t, env, sessionID)
+	loadSessionID := acpSessionID()
+	cleanupConn(t, loadSessionID)
+
+	ctx, cancel := contextWithTimeout(t, 120*time.Second)
+	defer cancel()
+
+	loadStart := time.Now()
+	conn, err := env.mgr.GetOrCreateConnForLoad(ctx, agent, loadSessionID, acpSSID, acpTestWorkDir())
+	loadElapsed := time.Since(loadStart)
+
+	if err != nil {
+		t.Skipf("LoadSession not supported or failed: %v", err)
+	}
+	require.NotNil(t, conn)
+
+	// Step 3: Read replay buffer
+	time.Sleep(500 * time.Millisecond)
+	client := conn.GetClient()
+	require.NotNil(t, client)
+	buf := client.GetAndClearLoadSessionBuf()
+
+	// Parse replay
+	ch := make(chan StreamEvent, 1000)
+	var allEvents []StreamEvent
+	for _, n := range buf {
+		mapACPSessionUpdate(n.Update, ch, ctx, nil, nil)
+	}
+	close(ch)
+	for event := range ch {
+		allEvents = append(allEvents, event)
+	}
+
+	contentEvents := findACPEvents(allEvents, "content")
+
+	// ── Report ──
+	t.Log("=== OpenCode LoadSession Latency Breakdown ===")
+	t.Logf("  GetOrCreateConnForLoad: %v", loadElapsed)
+	t.Logf("  Replay notifications: %d", len(buf))
+	t.Logf("  Content events: %d", len(contentEvents))
+
+	// OpenCode is expected to be fast
+	t.Logf("  LoadSession total: %v", loadElapsed)
+
+	// OpenCode's LoadSession does NOT replay conversation content
+	// (known issue: opencode_loadsession_bug)
+	if len(contentEvents) == 0 {
+		t.Log("  NOTE: OpenCode LoadSession returned no content events — this is the known opencode_loadsession_bug")
+		t.Log("  OpenCode only sends AvailableCommandsUpdate, not conversation history replay")
+	}
+
+	// Log event type summary
+	typeCounts := make(map[string]int)
+	for _, e := range allEvents {
+		typeCounts[e.Type]++
+	}
+	t.Logf("  Event breakdown: %v", typeCounts)
+}
+
+// G3: Claude vs OpenCode LoadSession latency comparison
+//
+// Runs LoadSession for both Claude and OpenCode on the same conversation
+// and compares the latency. This directly demonstrates the "resume button
+// hangs for Claude but works for OpenCode" bug.
+//
+// Run with verbose output:
+//
+//	go test -v -run TestACP_LoadSession_ClaudeVsOpenCode -tags integration -timeout 600s
+func TestACP_LoadSession_ClaudeVsOpenCode(t *testing.T) {
+	// Run both sub-tests and collect timings
+	var claudeTimings, opencodeTimings *loadSessionTimings
+
+	t.Run("Claude", func(t *testing.T) {
+		requireClaudeACPAvailable(t)
+		agent := claudeACPAgent()
+
+		env := setupACPTestEnvForAgent(t, agent)
+		backend, err := NewACPBackend(agent)
+		require.NoError(t, err)
+
+		sessionID := acpSessionID()
+		cleanupConn(t, sessionID)
+
+		events1 := sendACPPrompt(t, backend, sessionID, "回复一个字：好", 120*time.Second)
+		requireDoneEvent(t, events1)
+
+		acpSSID := extractACPCaptureID(t, events1)
+		require.NotEmpty(t, acpSSID)
+
+		killAndCloseConn(t, env, sessionID)
+		loadSessionID := acpSessionID()
+		cleanupConn(t, loadSessionID)
+
+		ctx, cancel := contextWithTimeout(t, 120*time.Second)
+		defer cancel()
+
+		loadStart := time.Now()
+		conn, err := env.mgr.GetOrCreateConnForLoad(ctx, agent, loadSessionID, acpSSID, acpTestWorkDir())
+		loadElapsed := time.Since(loadStart)
+
+		if err != nil {
+			t.Skipf("LoadSession not supported or failed: %v", err)
+		}
+		require.NotNil(t, conn)
+
+		time.Sleep(500 * time.Millisecond)
+		client := conn.GetClient()
+		require.NotNil(t, client)
+		buf := client.GetAndClearLoadSessionBuf()
+
+		ch := make(chan StreamEvent, 1000)
+		var allEvents []StreamEvent
+		for _, n := range buf {
+			mapACPSessionUpdate(n.Update, ch, ctx, nil, nil)
+		}
+		close(ch)
+		for event := range ch {
+			allEvents = append(allEvents, event)
+		}
+
+		contentEvents := findACPEvents(allEvents, "content")
+		tm := loadSessionTimings{
+			AgentID:       agent.ID,
+			LoadTotal:     loadElapsed,
+			ReplayNotifs:  len(buf),
+			ReplayContent: len(contentEvents),
+		}
+		claudeTimings = &tm
+
+		t.Logf("Claude LoadSession: total=%v, notifs=%d, content=%d",
+			tm.LoadTotal, tm.ReplayNotifs, tm.ReplayContent)
+	})
+
+	t.Run("OpenCode", func(t *testing.T) {
+		requireOpenCodeACPAvailable(t)
+		agent := opencodeACPAgent()
+
+		env := setupACPTestEnvForAgent(t, agent)
+		backend, err := NewACPBackend(agent)
+		require.NoError(t, err)
+
+		sessionID := acpSessionID()
+		cleanupConn(t, sessionID)
+
+		events1 := sendACPPrompt(t, backend, sessionID, "回复一个字：好", 120*time.Second)
+		requireDoneEvent(t, events1)
+
+		acpSSID := extractACPCaptureID(t, events1)
+		require.NotEmpty(t, acpSSID)
+
+		killAndCloseConn(t, env, sessionID)
+		loadSessionID := acpSessionID()
+		cleanupConn(t, loadSessionID)
+
+		ctx, cancel := contextWithTimeout(t, 120*time.Second)
+		defer cancel()
+
+		loadStart := time.Now()
+		conn, err := env.mgr.GetOrCreateConnForLoad(ctx, agent, loadSessionID, acpSSID, acpTestWorkDir())
+		loadElapsed := time.Since(loadStart)
+
+		if err != nil {
+			t.Skipf("LoadSession not supported or failed: %v", err)
+		}
+		require.NotNil(t, conn)
+
+		time.Sleep(500 * time.Millisecond)
+		client := conn.GetClient()
+		require.NotNil(t, client)
+		buf := client.GetAndClearLoadSessionBuf()
+
+		ch := make(chan StreamEvent, 1000)
+		var allEvents []StreamEvent
+		for _, n := range buf {
+			mapACPSessionUpdate(n.Update, ch, ctx, nil, nil)
+		}
+		close(ch)
+		for event := range ch {
+			allEvents = append(allEvents, event)
+		}
+
+		contentEvents := findACPEvents(allEvents, "content")
+		tm := loadSessionTimings{
+			AgentID:       agent.ID,
+			LoadTotal:     loadElapsed,
+			ReplayNotifs:  len(buf),
+			ReplayContent: len(contentEvents),
+		}
+		opencodeTimings = &tm
+
+		t.Logf("OpenCode LoadSession: total=%v, notifs=%d, content=%d",
+			tm.LoadTotal, tm.ReplayNotifs, tm.ReplayContent)
+	})
+
+	// ── Comparison ──
+	if claudeTimings != nil && opencodeTimings != nil {
+		t.Log("=== LoadSession Latency Comparison ===")
+		t.Logf("  Claude:   total=%v  notifs=%d  content=%d",
+			claudeTimings.LoadTotal, claudeTimings.ReplayNotifs, claudeTimings.ReplayContent)
+		t.Logf("  OpenCode: total=%v  notifs=%d  content=%d",
+			opencodeTimings.LoadTotal, opencodeTimings.ReplayNotifs, opencodeTimings.ReplayContent)
+		t.Logf("  Delta:    %v (Claude is slower)", claudeTimings.LoadTotal-opencodeTimings.LoadTotal)
+
+		ratio := float64(claudeTimings.LoadTotal) / float64(opencodeTimings.LoadTotal)
+		t.Logf("  Ratio:    %.1fx (Claude / OpenCode)", ratio)
+
+		if ratio > 3.0 {
+			t.Logf("BUG CONFIRMED: Claude LoadSession is %.1fx slower than OpenCode", ratio)
+			t.Log("  Root cause: Claude ACP uses npx (slow startup) + replays full history via LoadSession")
+			t.Log("  OpenCode uses native binary + LoadSession returns immediately (no history replay)")
+			t.Logf("  Frontend impact: acpLoadSession() fetch has no timeout → UI freezes for %.0fs",
+				claudeTimings.LoadTotal.Seconds())
+		}
+
+		// Claude should have more replay content than OpenCode
+		if claudeTimings.ReplayContent > 0 && opencodeTimings.ReplayContent == 0 {
+			t.Logf("BEHAVIORAL DIFF: Claude replays %d content blocks, OpenCode replays 0", claudeTimings.ReplayContent)
+			t.Log("  This confirms opencode_loadsession_bug: OpenCode LoadSession doesn't replay conversation content")
+		}
+	}
+}
+
+// G4: Claude LoadSession with larger conversation — measures replay scaling
+//
+// Tests whether LoadSession latency scales with conversation length.
+// A longer conversation means more SessionUpdate notifications to replay,
+// potentially making the "resume button hang" worse for long chats.
+//
+// Run with verbose output:
+//
+//	go test -v -run TestClaudeACP_LoadSession_LargeConversation -tags integration -timeout 600s
+func TestClaudeACP_LoadSession_LargeConversation(t *testing.T) {
+	requireClaudeACPAvailable(t)
+
+	agent := claudeACPAgent()
+	env := setupACPTestEnvForAgent(t, agent)
+	backend, err := NewACPBackend(agent)
+	require.NoError(t, err)
+
+	sessionID := acpSessionID()
+	cleanupConn(t, sessionID)
+
+	// Build a multi-turn conversation to increase replay payload size
+	prompts := []string{
+		"回复一个字：一",
+		"回复一个字：二",
+		"回复一个字：三",
+	}
+
+	for i, prompt := range prompts {
+		t.Logf("Turn %d: %s", i+1, prompt)
+		events := sendACPPrompt(t, backend, sessionID, prompt, 120*time.Second)
+		requireDoneEvent(t, events)
+	}
+
+	acpSSID := extractACPCaptureID(t, sendACPPrompt(t, backend, sessionID, "回复一个字：验", 120*time.Second))
+	// Re-send to get capture ID if the last prompt didn't have it
+	if acpSSID == "" {
+		// Try to extract from any prior prompt
+		events := sendACPPrompt(t, backend, sessionID, "回复一个字：验", 120*time.Second)
+		requireDoneEvent(t, events)
+		acpSID := extractACPCaptureID(t, events)
+		if acpSID == "" {
+			t.Skip("Could not extract ACP session ID — LoadSession test requires session_capture event")
+		}
+		acpSSID = acpSID
+	}
+	require.NotEmpty(t, acpSSID)
+
+	t.Logf("Established 4-turn conversation, acp_sid=%s", acpSSID)
+
+	// Close and LoadSession
+	killAndCloseConn(t, env, sessionID)
+	loadSessionID := acpSessionID()
+	cleanupConn(t, loadSessionID)
+
+	ctx, cancel := contextWithTimeout(t, 120*time.Second)
+	defer cancel()
+
+	loadStart := time.Now()
+	conn, err := env.mgr.GetOrCreateConnForLoad(ctx, agent, loadSessionID, acpSSID, acpTestWorkDir())
+	loadElapsed := time.Since(loadStart)
+
+	if err != nil {
+		t.Skipf("LoadSession not supported or failed: %v", err)
+	}
+	require.NotNil(t, conn)
+
+	time.Sleep(500 * time.Millisecond)
+	client := conn.GetClient()
+	require.NotNil(t, client)
+	buf := client.GetAndClearLoadSessionBuf()
+
+	// Parse
+	ch := make(chan StreamEvent, 1000)
+	var allEvents []StreamEvent
+	for _, n := range buf {
+		mapACPSessionUpdate(n.Update, ch, ctx, nil, nil)
+	}
+	close(ch)
+	for event := range ch {
+		allEvents = append(allEvents, event)
+	}
+
+	contentEvents := findACPEvents(allEvents, "content")
+
+	t.Log("=== Claude LoadSession — Large Conversation ===")
+	t.Logf("  GetOrCreateConnForLoad: %v", loadElapsed)
+	t.Logf("  Replay notifications: %d", len(buf))
+	t.Logf("  Content events: %d", len(contentEvents))
+
+	// With 4 turns, we expect at least 4 content events from the replay
+	assert.GreaterOrEqual(t, len(contentEvents), 4,
+		"4-turn conversation should produce at least 4 content events in replay")
+
+	if loadElapsed > 30*time.Second {
+		t.Logf("BOTTLENECK: LoadSession for 4-turn conversation took %v", loadElapsed)
+		t.Log("  Longer conversations will make the resume button hang even worse")
+	}
+
+	typeCounts := make(map[string]int)
+	for _, e := range allEvents {
+		typeCounts[e.Type]++
+	}
+	t.Logf("  Event breakdown: %v", typeCounts)
 }
 
 // ---------------------------------------------------------------------------

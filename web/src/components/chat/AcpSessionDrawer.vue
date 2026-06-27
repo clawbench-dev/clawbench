@@ -103,7 +103,7 @@ async function handleSelect(session: AcpSessionInfo) {
   resumingId.value = session.sessionId
   const sessionId = await acpLoadSession(session.sessionId)
   resumingId.value = ''
-  if (sessionId) {
+  if (sessionId && sessionId !== 'not-found') {
     emit('select', sessionId)
     emit('close')
   }

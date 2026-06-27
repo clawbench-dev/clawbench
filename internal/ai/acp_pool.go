@@ -995,17 +995,37 @@ func (c *ACPConn) ProcessPID() int {
 // close kills the agent process and marks the connection as dead.
 func (c *ACPConn) close() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	if c.cmd != nil && c.cmd.Process != nil {
-		_ = c.cmd.Process.Kill()
-		_ = c.cmd.Wait()
+		// Close the stdout filter first to unblock pending reads on the pipe.
+		// Without this, cmd.Wait() hangs when the process is killed but
+		// stdout hasn't been closed yet (same pattern as killProcessLocked).
+		if c.stdoutFilter != nil {
+			c.stdoutFilter.Close()
+			c.stdoutFilter = nil
+		}
+
+		// Kill the entire process group (not just the parent process).
+		// ACP agents like Claude are spawned via npx, which creates a child
+		// process (claude). Killing only npx leaves the child alive, which
+		// holds the stderr pipe open and causes cmd.Wait() to hang.
+		killProcessGroup(c.cmd.Process)
+
+		oldCmd := c.cmd
+		c.mu.Unlock()
+		_ = oldCmd.Wait()
+		c.mu.Lock()
+		if c.cmd == oldCmd {
+			c.cmd = nil
+		}
 	}
+
 	c.cmd = nil
 	c.conn = nil
 	c.client = nil
 	c.alive = false
 	c.acpSID = ""
+	c.mu.Unlock()
 }
 
 // Close kills the agent process and marks the connection as dead.
