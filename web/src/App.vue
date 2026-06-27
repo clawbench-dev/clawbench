@@ -211,22 +211,22 @@
     <Teleport to="body">
       <Transition name="dock-popup">
         <div v-if="overflowMenuOpen" class="dock-overflow-popup" :style="overflowPopupStyle" @keydown.escape="overflowMenuOpen = false">
-          <button class="dock-overflow-item" :class="{ active: activeTab === 'tasks' }" @click.stop="handleOverflowSelect('tasks')">
+          <button v-if="dockSlot4Tab !== 'tasks'" class="dock-overflow-item" :class="{ active: activeTab === 'tasks' }" @click.stop="handleOverflowSelect('tasks')">
             <CalendarClock :size="16" />
             <span>{{ t('nav.tasks') }}</span>
             <span v-if="store.state.taskUnreadCount > 0" class="dock-overflow-count" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
           </button>
-          <button v-if="!isSSHDisabled" class="dock-overflow-item" :class="{ active: activeTab === 'proxy' }" @click.stop="handleOverflowSelect('proxy')">
+          <button v-if="!isSSHDisabled && dockSlot4Tab !== 'proxy'" class="dock-overflow-item" :class="{ active: activeTab === 'proxy' }" @click.stop="handleOverflowSelect('proxy')">
             <EthernetPort :size="16" />
             <span>{{ t('nav.portForward') }}</span>
             <span v-if="store.state.portForwardActiveCount > 0" class="dock-overflow-count" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardActiveCount) }}</span>
           </button>
-          <button v-if="!isTerminalDisabled" class="dock-overflow-item" :class="{ active: activeTab === 'terminal' }" @click.stop="handleOverflowSelect('terminal')">
+          <button v-if="!isTerminalDisabled && dockSlot4Tab !== 'terminal'" class="dock-overflow-item" :class="{ active: activeTab === 'terminal' }" @click.stop="handleOverflowSelect('terminal')">
             <TerminalIcon :size="16" />
             <span>{{ t('terminal.title') }}</span>
             <span v-if="store.state.terminalSessionCount > 0" class="dock-overflow-count" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
           </button>
-          <button class="dock-overflow-item" :class="{ active: activeTab === 'settings' }" @click.stop="handleOverflowSelect('settings')">
+          <button v-if="dockSlot4Tab !== 'settings'" class="dock-overflow-item" :class="{ active: activeTab === 'settings' }" @click.stop="handleOverflowSelect('settings')">
             <Settings :size="16" />
             <span>{{ t('nav.settings') }}</span>
           </button>
@@ -1048,24 +1048,29 @@ watch(() => store.state.gitWorkingTreeChangeCount, (n, o) => { if (o !== undefin
 watch(() => store.state.taskUnreadCount, (n, o) => {
   if (o !== undefined && n !== o) {
     triggerBadgeAnim(taskBadgeAnim)
-    triggerBadgeAnim(overflowBadgeAnim)
+    if (dockSlot4Tab.value !== 'tasks') triggerBadgeAnim(overflowBadgeAnim)
   }
 })
 watch(() => store.state.terminalSessionCount, (n, o) => {
   if (o !== undefined && n !== o) {
     triggerBadgeAnim(terminalBadgeAnim)
-    triggerBadgeAnim(overflowBadgeAnim)
+    if (dockSlot4Tab.value !== 'terminal') triggerBadgeAnim(overflowBadgeAnim)
   }
 })
 watch(() => store.state.portForwardActiveCount, (n, o) => {
   if (o !== undefined && n !== o) {
     triggerBadgeAnim(proxyBadgeAnim)
-    triggerBadgeAnim(overflowBadgeAnim)
+    if (dockSlot4Tab.value !== 'proxy') triggerBadgeAnim(overflowBadgeAnim)
   }
 })
 
 const overflowBadgeCount = computed(() => {
-  return store.state.taskUnreadCount + store.state.portForwardActiveCount + store.state.terminalSessionCount
+  let count = store.state.taskUnreadCount + store.state.portForwardActiveCount + store.state.terminalSessionCount
+  // Subtract the count shown on slot4 to avoid double-counting
+  if (dockSlot4Tab.value === 'tasks') count -= store.state.taskUnreadCount
+  else if (dockSlot4Tab.value === 'proxy') count -= store.state.portForwardActiveCount
+  else if (dockSlot4Tab.value === 'terminal') count -= store.state.terminalSessionCount
+  return count
 })
 
 const overflowButtonTitle = computed(() => {
