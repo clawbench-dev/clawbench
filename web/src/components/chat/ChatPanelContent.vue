@@ -145,21 +145,7 @@
     @click="handleOverlayRetryClick"
   />
   <!-- RAG search result detail drawer -->
-  <BottomSheet :open="!!ragDetailItem" handleOnly auto @close="ragDetailItem = null">
-    <template v-if="ragDetailItem">
-      <div class="rag-detail-content">
-        <div class="rag-detail-title">{{ ragDetailItem.sessionTitle || t('chat.contentBlocks.ragUntitled') }}</div>
-        <div v-if="ragDetailItem.createdAt" class="rag-detail-time">{{ render.formatDetailTime(ragDetailItem.createdAt) }}</div>
-        <div v-if="ragDetailItem.summary" class="rag-detail-summary">{{ ragDetailItem.summary }}</div>
-      </div>
-      <div class="rag-detail-footer">
-        <button class="rag-detail-resume-btn" @click="handleResumeFromDetail">
-          {{ t('chat.contentBlocks.ragResume') }}
-          <ChevronRight :size="14" />
-        </button>
-      </div>
-    </template>
-  </BottomSheet>
+  <RagDetailSheet :item="ragDetailItem" @close="ragDetailItem = null" @resume="handleResumeFromDetail" />
 </template>
 
 <script setup>
@@ -168,7 +154,7 @@ import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { gt } from '@/composables/useLocale'
 import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
-import BottomSheet from '@/components/common/BottomSheet.vue'
+import RagDetailSheet from './RagDetailSheet.vue'
 import ChatMetadataModal from './ChatMetadataModal.vue'
 import ToolDetailOverlay from './ToolDetailOverlay.vue'
 import ChatInputBar from './ChatInputBar.vue'
@@ -197,7 +183,7 @@ import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { store } from '@/stores/app.ts'
 import { renderMarkdown } from '@/composables/useMarkdownRenderer.ts'
 import { useDialog } from '@/composables/useDialog'
-import { ChevronRight } from 'lucide-vue-next'
+
 import '@/assets/loading-mask.css'
 import { useToolDetailOverlay } from '@/composables/useToolDetailOverlay.ts'
 
@@ -871,8 +857,7 @@ function handleRagDetail(ragItem) {
     ragDetailItem.value = ragItem
 }
 
-async function handleResumeFromDetail() {
-    const item = ragDetailItem.value
+async function handleResumeFromDetail(item) {
     ragDetailItem.value = null
     if (!item?.sessionId) return
     const confirmed = await dialog.confirm(
@@ -1110,68 +1095,6 @@ onUnmounted(() => {
 .session-indicator-leave-to {
   opacity: 0;
   transform: scale(0.95);
-}
-
-/* RAG detail drawer */
-.rag-detail-content {
-  padding: 8px 16px 16px;
-}
-
-.rag-detail-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-  line-height: 1.4;
-  margin-bottom: 8px;
-  word-break: break-word;
-}
-
-.rag-detail-time {
-  font-size: 12px;
-  color: var(--text-muted, #999);
-  margin-bottom: 12px;
-}
-
-.rag-detail-summary {
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text-secondary, #495057);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.rag-detail-footer {
-  padding: 12px 16px;
-  border-top: 1px solid var(--border-color, #e5e5e5);
-}
-
-.rag-detail-resume-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  width: 100%;
-  padding: 10px 0;
-  border: none;
-  border-radius: 8px;
-  background: #8b5cf6;
-  color: #fff;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: opacity 0.15s;
-}
-
-:root[data-theme="dark"] .rag-detail-resume-btn {
-  background: #7c3aed;
-}
-
-.rag-detail-resume-btn:hover {
-  opacity: 0.85;
-}
-
-.rag-detail-resume-btn:active {
-  opacity: 0.7;
 }
 </style>
 
