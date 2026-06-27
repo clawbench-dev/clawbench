@@ -31,18 +31,25 @@ if [ "$1" = "--clean" ]; then
 fi
 
 # Build binary (always rebuild to pick up latest code)
-echo "Building binary..."
-./build.sh --with-opencode
+EMBEDDED_AGENT_ID="${EMBEDDED_AGENT_ID:-opencode}"
+echo "Building binary with embedded agent: $EMBEDDED_AGENT_ID"
+./build.sh --embed-agent="$EMBEDDED_AGENT_ID"
+
+# Source download helper to read agent config
+# shellcheck source=scripts/download-embedded-agent.sh
+. ./scripts/download-embedded-agent.sh
 
 # Prepare staging directory for embedded binary
 rm -rf docker-staging
-mkdir -p docker-staging/opencode
-if [ -d ".clawbench/opencode" ] && [ -f ".clawbench/opencode/opencode" ]; then
-    cp -r .clawbench/opencode/* docker-staging/opencode/
-    echo "OpenCode binary included in image (with dependencies)"
+AGENT_SUBDIR=$(parse_embedded_agent_config "$EMBEDDED_AGENT_ID" subdir)
+AGENT_CMD=$(parse_embedded_agent_config "$EMBEDDED_AGENT_ID" cmd)
+mkdir -p "docker-staging/$AGENT_SUBDIR"
+if [ -d ".clawbench/$AGENT_SUBDIR" ] && [ -f ".clawbench/$AGENT_SUBDIR/$AGENT_CMD" ]; then
+    cp -r ".clawbench/$AGENT_SUBDIR/"* "docker-staging/$AGENT_SUBDIR/"
+    echo "$EMBEDDED_AGENT_ID binary included in image (with dependencies)"
 else
-    echo "OpenCode binary not found"
-    echo "  (Run ./build.sh --with-opencode to download it)"
+    echo "$EMBEDDED_AGENT_ID binary not found"
+    echo "  (Run ./build.sh --embed-agent=$EMBEDDED_AGENT_ID to download it)"
 fi
 
 # Build and run via docker compose (staging dir must exist during build)

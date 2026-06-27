@@ -44,6 +44,8 @@ func init() {
 			AcpCommand:           "opencode acp",
 			EmbeddedSubDir:       "opencode",
 			EmbeddedVersionFile:  "VERSION",
+			EmbeddedGitHubRepo:   "anomalyco/opencode",
+			EmbeddedArchMapping:  "amd64=x64",
 			SortOrder:            3,
 		},
 		ACP: &backends.ACPPlugin{

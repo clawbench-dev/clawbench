@@ -178,6 +178,8 @@ summarize:
 
 # Default agent (optional; leave empty to use the first agent in database)
 # 默认智能体（可选，留空则使用数据库中的第一个智能体）
+# The default embedded agent (bundled with the installer) is opencode when --embed-agent=opencode is used.
+# 默认嵌入式智能体（随安装包附带）在使用 --embed-agent=opencode 时为 opencode。
 # Available agents depend on your database / 可用智能体取决于数据库
 default_agent: "codebuddy"
 

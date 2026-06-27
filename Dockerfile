@@ -26,29 +26,34 @@ WORKDIR /app
 COPY clawbench .
 COPY public/ ./public/
 
-# Copy OpenCode binary — multi-arch aware
+# Copy embedded agent download helper and config
+COPY scripts/download-embedded-agent.sh ./scripts/download-embedded-agent.sh
+COPY embedded-agents.yaml ./embedded-agents.yaml
+
+# Copy embedded agent binary — multi-arch aware
 # Local build: scripts/docker-build.sh populates docker-staging/
-# CI build: release workflow passes OPENCODE_VERSION build arg; the RUN step
-# below downloads the correct OpenCode binary for each target architecture.
+# CI build: passes EMBEDDED_AGENT_ID + EMBEDDED_AGENT_VERSION build args; the RUN step
+# below downloads the correct agent binary for each target architecture.
 ARG TARGETARCH
+ARG EMBEDDED_AGENT_ID=""
+ARG EMBEDDED_AGENT_VERSION=""
+# Backward compat: OPENCODE_VERSION maps to EMBEDDED_AGENT_ID=opencode
+# If both OPENCODE_VERSION and EMBEDDED_AGENT_* are set, EMBEDDED_AGENT_* takes precedence.
 ARG OPENCODE_VERSION=""
 
-# If OPENCODE_VERSION is set (CI), download the correct OpenCode binary for this architecture.
-RUN if [ -n "$OPENCODE_VERSION" ]; then \
-      OC_ARCH="x64"; \
-      if [ "$TARGETARCH" = "arm64" ]; then OC_ARCH="arm64"; fi; \
-      OC_URL="https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-${OC_ARCH}.tar.gz"; \
-      mkdir -p .clawbench/opencode && \
-      curl -sL "$OC_URL" | tar xzf - -C .clawbench/opencode && \
-      chmod +x .clawbench/opencode/opencode && \
-      echo "$OPENCODE_VERSION" > .clawbench/opencode/VERSION && \
-      echo "OpenCode v${OPENCODE_VERSION} (${OC_ARCH}) downloaded"; \
+# If EMBEDDED_AGENT_VERSION is set (CI), download the correct agent binary for this architecture.
+RUN if [ -n "$EMBEDDED_AGENT_ID" ] && [ -n "$EMBEDDED_AGENT_VERSION" ]; then \
+      . ./scripts/download-embedded-agent.sh && \
+      download_embedded_agent_for_docker "$EMBEDDED_AGENT_ID" "$EMBEDDED_AGENT_VERSION"; \
+    elif [ -n "$OPENCODE_VERSION" ]; then \
+      . ./scripts/download-embedded-agent.sh && \
+      download_embedded_agent_for_docker opencode "$OPENCODE_VERSION"; \
     else \
       mkdir -p .clawbench; \
     fi
 
-# Copy local docker-staging/ as fallback (local builds only; no-op in CI since OPENCODE_VERSION is set).
-# When OPENCODE_VERSION is set above, the RUN step already populated .clawbench/opencode/,
+# Copy local docker-staging/ as fallback (local builds only; no-op in CI when version is set).
+# When a version is set above, the RUN step already populated .clawbench/,
 # and this COPY overlays an empty directory (harmless).
 COPY docker-staging/ .clawbench/
 

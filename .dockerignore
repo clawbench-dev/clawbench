@@ -37,8 +37,9 @@ coverage.html
 # Docker build files (avoid recursion)
 Dockerfile.build
 
-# Scripts (not needed in runtime image)
+# Scripts (not needed in runtime image, except embedded agent download helper)
 scripts/
+!scripts/download-embedded-agent.sh
 
 # Config (runtime generates defaults)
 config/config.yaml

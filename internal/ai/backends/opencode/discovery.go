@@ -54,8 +54,10 @@ func parseOpenCodeModels(output string) []model.AgentModel {
 func DiscoverOpenCodeModels() []model.AgentModel {
 	// Try embedded binary first, fall back to PATH
 	opencodeCmd := "opencode"
-	if p := model.EmbeddedBinaryPath("opencode"); p != "" {
-		opencodeCmd = p
+	if spec := model.FindSpecByBackend("opencode"); spec != nil && spec.EmbeddedSubDir != "" {
+		if p := model.EmbeddedBinaryPath(spec.EmbeddedSubDir); p != "" {
+			opencodeCmd = p
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

@@ -1,0 +1,104 @@
+name: 'Download Embedded Agent'
+description: 'Downloads an embedded agent binary for packaging into release artifacts'
+
+inputs:
+  agent-id:
+    description: 'Agent ID from embedded-agents.yaml (e.g., opencode)'
+    required: true
+  platform:
+    description: 'Target platform: linux-x64, linux-arm64, darwin-arm64, darwin-x64, windows-x64'
+    required: true
+  github-token:
+    description: 'GitHub token for API access'
+    required: true
+  version:
+    description: 'Explicit version override (empty = auto-detect latest)'
+    required: false
+    default: ''
+
+outputs:
+  version:
+    description: 'Resolved agent version'
+    value: ${{ steps.resolve.outputs.version }}
+  subdir:
+    description: 'Agent subdir under .clawbench/'
+    value: ${{ steps.resolve.outputs.subdir }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Resolve agent version
+      id: resolve
+      shell: bash
+      env:
+        _AGENT_ID: ${{ inputs.agent-id }}
+        _AGENT_VERSION: ${{ inputs.version }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        # Source the download helper
+        # shellcheck source=scripts/download-embedded-agent.sh
+        . ./scripts/download-embedded-agent.sh
+
+        SUBDIR=$(parse_embedded_agent_config "$_AGENT_ID" subdir)
+
+        # Resolve version: explicit input > env var > GitHub API
+        if [ -n "$_AGENT_VERSION" ]; then
+          VERSION="$_AGENT_VERSION"
+        else
+          VERSION=$(resolve_agent_version_gh "$_AGENT_ID" "$GH_TOKEN")
+        fi
+
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        echo "subdir=$SUBDIR" >> "$GITHUB_OUTPUT"
+        echo "Resolved ${_AGENT_ID}: version=${VERSION}, subdir=${SUBDIR}"
+
+    - name: Download agent binary
+      shell: bash
+      env:
+        _AGENT_ID: ${{ inputs.agent-id }}
+        _AGENT_VERSION: ${{ steps.resolve.outputs.version }}
+        _AGENT_SUBDIR: ${{ steps.resolve.outputs.subdir }}
+        _AGENT_PLATFORM: ${{ inputs.platform }}
+      run: |
+        # Source the download helper
+        # shellcheck source=scripts/download-embedded-agent.sh
+        . ./scripts/download-embedded-agent.sh
+
+        GITHUB_REPO=$(parse_embedded_agent_config "$_AGENT_ID" github_repo)
+        CMD=$(parse_embedded_agent_config "$_AGENT_ID" cmd)
+        VERSION_FILE=$(parse_embedded_agent_config "$_AGENT_ID" version_file)
+
+        # Parse platform into os and arch
+        OS="${_AGENT_PLATFORM%%-*}"
+        ARCH="${_AGENT_PLATFORM#*-}"
+
+        # Apply arch mapping
+        MAPPED_ARCH=$(parse_arch_mapping "$_AGENT_ID" "$ARCH")
+        [ -z "$MAPPED_ARCH" ] && MAPPED_ARCH="$ARCH"
+
+        # Get archive pattern and substitute {arch}
+        ARCHIVE_PATTERN=$(parse_archive_naming "$_AGENT_ID" "$OS")
+        ARCHIVE_NAME="${ARCHIVE_PATTERN//\{arch\}/$MAPPED_ARCH}"
+
+        URL="https://github.com/${GITHUB_REPO}/releases/download/v${_AGENT_VERSION}/${ARCHIVE_NAME}"
+
+        AGENT_DIR=".clawbench/${_AGENT_SUBDIR}"
+        mkdir -p "$AGENT_DIR"
+
+        # Download (use temp file + curl --fail to catch HTTP errors)
+        EXT="${ARCHIVE_NAME##*.}"
+        echo "Downloading ${_AGENT_ID} v${_AGENT_VERSION} for ${_AGENT_PLATFORM}..."
+        if [ "$EXT" = "zip" ]; then
+          TMP="/tmp/${_AGENT_ID}-download.zip"
+          curl -sL --fail "$URL" -o "$TMP"
+          unzip -qo "$TMP" -d "$AGENT_DIR"
+          rm -f "$TMP"
+        else
+          TMP="/tmp/${_AGENT_ID}-download.tar.gz"
+          curl -sL --fail "$URL" -o "$TMP"
+          tar xzf "$TMP" -C "$AGENT_DIR"
+          rm -f "$TMP"
+        fi
+        chmod +x "$AGENT_DIR/$CMD" 2>/dev/null || true
+        echo -n "$_AGENT_VERSION" > "$AGENT_DIR/${VERSION_FILE}"
+        echo "${_AGENT_ID} v${_AGENT_VERSION} downloaded to ${AGENT_DIR}/"

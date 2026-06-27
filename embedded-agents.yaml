@@ -1,0 +1,23 @@
+# Embedded agents bundled with the installer.
+# Download metadata for build/packaging scripts and CI.
+# Go runtime uses BackendSpec.Embedded* fields; this file is for shell/CI only.
+#
+# To add a new embedded agent:
+#   1. Add a BackendSpec with EmbeddedSubDir/EmbeddedGitHubRepo/etc. in the Go backend package
+#   2. Add an entry here with matching id and download metadata
+#   3. No other code changes needed
+
+agents:
+  - id: opencode
+    github_repo: anomalyco/opencode
+    subdir: opencode
+    version_env: OPENCODE_VERSION
+    cmd: opencode
+    archive_naming:
+      linux:   "opencode-linux-{arch}.tar.gz"
+      darwin:  "opencode-darwin-{arch}.zip"
+      windows: "opencode-windows-{arch}.zip"
+    arch_mapping:
+      amd64: x64
+      arm64: arm64
+    version_file: VERSION

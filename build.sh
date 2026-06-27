@@ -9,7 +9,7 @@ ASSETS="assets"
 TARGET_OS=""
 TARGET_ARCH=""
 BUILD_ANDROID=""
-DOWNLOAD_OPENCODE=""
+EMBED_AGENTS=()
 for arg in "$@"; do
     case "$arg" in
         --windows)
@@ -36,8 +36,12 @@ for arg in "$@"; do
         --android)
             BUILD_ANDROID=1
             ;;
+        --embed-agent=*)
+            EMBED_AGENTS+=("${arg#--embed-agent=}")
+            ;;
         --with-opencode)
-            DOWNLOAD_OPENCODE=1
+            # Backward-compatible alias for --embed-agent=opencode
+            EMBED_AGENTS+=("opencode")
             ;;
     esac
 done
@@ -88,63 +92,19 @@ else
     echo "  Go not found, skipping backend build"
 fi
 
-# 1.5 Download OpenCode binary (embedded agent)
-# Default: skip. Use --with-opencode to download, or set OPENCODE_VERSION to pin a version.
-# Without OPENCODE_VERSION, the latest release is fetched from GitHub API automatically.
-OC_DIR=".clawbench/opencode"
-if [ -n "$DOWNLOAD_OPENCODE" ]; then
-    # Resolve OpenCode version: env var override > auto-detect latest from GitHub
-    if [ -z "$OPENCODE_VERSION" ]; then
-        OPENCODE_VERSION=$(curl -sI https://github.com/anomalyco/opencode/releases/latest 2>/dev/null | grep -i "^location:" | sed 's|.*/tag/v||' | tr -d '[:space:]')
-        if [ -z "$OPENCODE_VERSION" ]; then
-            echo "  ERROR: Could not detect latest OpenCode version. Set OPENCODE_VERSION manually."
-            exit 1
-        fi
-        echo "  Auto-detected latest OpenCode version: v${OPENCODE_VERSION}"
-    fi
-    echo "[3/5] Downloading OpenCode v${OPENCODE_VERSION}..."
-    # Determine platform for OpenCode binary
-    if [ -n "$TARGET_OS" ] && [ -n "$TARGET_ARCH" ]; then
-        case "$TARGET_OS" in
-            linux)   OC_PLATFORM="linux-$TARGET_ARCH" ;;
-            darwin)  OC_PLATFORM="darwin-$TARGET_ARCH" ;;
-            windows) OC_PLATFORM="windows-$TARGET_ARCH" ;;
-            *)       OC_PLATFORM="" ;;
-        esac
-        # OpenCode uses "x64" not "amd64" in its archive names
-        OC_PLATFORM="${OC_PLATFORM/amd64/x64}"
-    else
-        OC_PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
-        OC_PLATFORM="${OC_PLATFORM/x86_64/x64}"
-        OC_PLATFORM="${OC_PLATFORM/aarch64/arm64}"
-    fi
-
-    if [ -n "$OC_PLATFORM" ]; then
-        OC_EXT="tar.gz"
-        [ "${TARGET_OS:-}" = "windows" ] && OC_EXT="zip"
-        [ "${TARGET_OS:-}" = "darwin" ] && OC_EXT="zip"
-        OC_ARCHIVE="opencode-${OC_PLATFORM}.${OC_EXT}"
-        OC_URL="https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/${OC_ARCHIVE}"
-
-        mkdir -p "$OC_DIR"
-        if [ -f "$OC_DIR/VERSION" ] && [ "$(cat "$OC_DIR/VERSION")" = "$OPENCODE_VERSION" ] && [ -f "$OC_DIR/opencode" -o -f "$OC_DIR/opencode.exe" ]; then
-            echo "  OpenCode v${OPENCODE_VERSION} already cached in $OC_DIR/"
-        else
-            echo "  Downloading $OC_URL ..."
-            if [ "$OC_EXT" = "zip" ]; then
-                curl -sL "$OC_URL" -o /tmp/opencode-download.zip && unzip -qo /tmp/opencode-download.zip -d "$OC_DIR" && rm -f /tmp/opencode-download.zip
-            else
-                curl -sL "$OC_URL" | tar xzf - -C "$OC_DIR"
-            fi
-            chmod +x "$OC_DIR/opencode" 2>/dev/null || true
-            echo -n "$OPENCODE_VERSION" > "$OC_DIR/VERSION"
-            echo "  OpenCode v${OPENCODE_VERSION} downloaded to $OC_DIR/"
-        fi
-    else
-        echo "  Unknown platform, skipping OpenCode download"
-    fi
+# 1.5 Download embedded agent binaries
+# Use --embed-agent=<id> to download (e.g., --embed-agent=opencode).
+# --with-opencode is a backward-compatible alias for --embed-agent=opencode.
+# Version can be pinned via the version_env variable defined in embedded-agents.yaml.
+if [ ${#EMBED_AGENTS[@]} -gt 0 ]; then
+    # Source the shared download helper
+    # shellcheck source=scripts/download-embedded-agent.sh
+    . ./scripts/download-embedded-agent.sh
+    for _agent_id in "${EMBED_AGENTS[@]}"; do
+        download_embedded_agent "$_agent_id"
+    done
 else
-    echo "[3/5] OpenCode download skipped (use --with-opencode to download embedded agent)"
+    echo "[3/5] Embedded agent download skipped (use --embed-agent=<id> or --with-opencode)"
 fi
 
 # 2. Build Vue frontend
@@ -186,7 +146,7 @@ else
     echo "  ./$NAME              # Go binary"
 fi
 echo "  public/              # Frontend (if built)"
-echo "  .clawbench/opencode/ # OpenCode agent binary (if --with-opencode)"
+echo "  .clawbench/          # Embedded agent binaries (if --embed-agent=<id>)"
 echo ""
 echo "Run with: ./$NAME"
 echo ""
@@ -199,5 +159,6 @@ echo "  ./build.sh --target=darwin/arm64"
 echo "  ./build.sh --android          # Android APK (release)"
 echo ""
 echo "Embedded agent:"
-echo "  ./build.sh --linux --with-opencode  # Linux + OpenCode (CI release)"
-echo "  OPENCODE_VERSION=1.17.10 ./build.sh --with-opencode  # Pin a specific OpenCode version"
+echo "  ./build.sh --linux --embed-agent=opencode   # Linux + OpenCode (CI release)"
+echo "  ./build.sh --linux --with-opencode          # Backward-compatible alias"
+echo "  OPENCODE_VERSION=1.17.10 ./build.sh --embed-agent=opencode  # Pin a specific version"

@@ -100,24 +100,13 @@ jobs:
           file clawbench-linux
           ldd clawbench-linux
 
-      - name: Resolve latest OpenCode version
-        id: opencode-version
-        run: |
-          OPENCODE_VERSION=$(gh api repos/anomalyco/opencode/releases/latest --jq '.tag_name' | sed 's/^v//')
-          echo "version=$OPENCODE_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Latest OpenCode version: v${OPENCODE_VERSION}"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Download OpenCode binary (embedded agent)
-        run: |
-          OPENCODE_VERSION="${{ steps.opencode-version.outputs.version }}"
-          OC_URL="https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-x64.tar.gz"
-          mkdir -p .clawbench/opencode
-          curl -sL "$OC_URL" | tar xzf - -C .clawbench/opencode
-          chmod +x .clawbench/opencode/opencode
-          echo "$OPENCODE_VERSION" > .clawbench/opencode/VERSION
-          echo "OpenCode v${OPENCODE_VERSION} downloaded"
+      - name: Download embedded agent
+        uses: ./.github/actions/download-embedded-agent
+        id: embedded-agent
+        with:
+          agent-id: opencode
+          platform: linux-x64
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Package Linux
         run: |
@@ -126,7 +115,7 @@ jobs:
           cp -r public pkg-linux/clawbench/public
           cp -r config pkg-linux/clawbench/config
           mkdir -p pkg-linux/clawbench/.clawbench
-          cp -r .clawbench/opencode pkg-linux/clawbench/.clawbench/opencode
+          cp -r .clawbench/${{ steps.embedded-agent.outputs.subdir }} pkg-linux/clawbench/.clawbench/${{ steps.embedded-agent.outputs.subdir }}
           chmod +x pkg-linux/clawbench/clawbench
           cd pkg-linux && zip -r clawbench-linux-amd64.zip clawbench/
 
@@ -172,24 +161,13 @@ jobs:
           file clawbench-linux-arm64
           ldd clawbench-linux-arm64
 
-      - name: Resolve latest OpenCode version
-        id: opencode-version
-        run: |
-          OPENCODE_VERSION=$(gh api repos/anomalyco/opencode/releases/latest --jq '.tag_name' | sed 's/^v//')
-          echo "version=$OPENCODE_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Latest OpenCode version: v${OPENCODE_VERSION}"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Download OpenCode binary (embedded agent)
-        run: |
-          OPENCODE_VERSION="${{ steps.opencode-version.outputs.version }}"
-          OC_URL="https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-arm64.tar.gz"
-          mkdir -p .clawbench/opencode
-          curl -sL "$OC_URL" | tar xzf - -C .clawbench/opencode
-          chmod +x .clawbench/opencode/opencode
-          echo "$OPENCODE_VERSION" > .clawbench/opencode/VERSION
-          echo "OpenCode v${OPENCODE_VERSION} downloaded"
+      - name: Download embedded agent
+        uses: ./.github/actions/download-embedded-agent
+        id: embedded-agent
+        with:
+          agent-id: opencode
+          platform: linux-arm64
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Package Linux arm64
         run: |
@@ -198,7 +176,7 @@ jobs:
           cp -r public pkg-linux-arm64/clawbench/public
           cp -r config pkg-linux-arm64/clawbench/config
           mkdir -p pkg-linux-arm64/clawbench/.clawbench
-          cp -r .clawbench/opencode pkg-linux-arm64/clawbench/.clawbench/opencode
+          cp -r .clawbench/${{ steps.embedded-agent.outputs.subdir }} pkg-linux-arm64/clawbench/.clawbench/${{ steps.embedded-agent.outputs.subdir }}
           chmod +x pkg-linux-arm64/clawbench/clawbench
           cd pkg-linux-arm64 && zip -r clawbench-linux-arm64.zip clawbench/
 
@@ -238,29 +216,13 @@ jobs:
           $VERSION = if (git describe --tags --always 2>$null) { git describe --tags --always } else { "dev" }
           go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION" -o clawbench.exe ./cmd/server
 
-      - name: Resolve latest OpenCode version
-        id: opencode-version
-        shell: pwsh
-        run: |
-          $resp = Invoke-RestMethod -Uri "https://api.github.com/repos/anomalyco/opencode/releases/latest" -Headers @{ Authorization = "token $env:GITHUB_TOKEN" }
-          $OPENCODE_VERSION = $resp.tag_name -replace '^v',''
-          "version=$OPENCODE_VERSION" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
-          Write-Host "Latest OpenCode version: v${OPENCODE_VERSION}"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Download OpenCode binary (embedded agent)
-        shell: pwsh
-        run: |
-          $OPENCODE_VERSION = "${{ steps.opencode-version.outputs.version }}"
-          $OC_URL = "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-windows-x64.zip"
-          New-Item -ItemType Directory -Force -Path .clawbench\opencode
-          $tmpZip = "$env:TEMP\opencode-download.zip"
-          Invoke-WebRequest -Uri $OC_URL -OutFile $tmpZip
-          Expand-Archive -Path $tmpZip -DestinationPath .clawbench\opencode -Force
-          Remove-Item $tmpZip -Force
-          Set-Content -Path ".clawbench\opencode\VERSION" -Value $OPENCODE_VERSION
-          Write-Host "OpenCode v${OPENCODE_VERSION} downloaded"
+      - name: Download embedded agent
+        uses: ./.github/actions/download-embedded-agent
+        id: embedded-agent
+        with:
+          agent-id: opencode
+          platform: windows-x64
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Package Windows
         shell: pwsh
@@ -270,7 +232,7 @@ jobs:
           Copy-Item -Recurse public pkg-windows/clawbench/public
           Copy-Item -Recurse config pkg-windows/clawbench/config
           New-Item -ItemType Directory -Force -Path pkg-windows/clawbench/.clawbench
-          Copy-Item -Recurse .clawbench/opencode pkg-windows/clawbench/.clawbench/opencode
+          Copy-Item -Recurse .clawbench/${{ steps.embedded-agent.outputs.subdir }} pkg-windows/clawbench/.clawbench/${{ steps.embedded-agent.outputs.subdir }}
           Compress-Archive -Path pkg-windows/clawbench -DestinationPath pkg-windows/clawbench-windows-amd64.zip
 
       - uses: softprops/action-gh-release@v2
@@ -303,26 +265,13 @@ jobs:
           VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
           go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION" -o clawbench-darwin-arm64 ./cmd/server
 
-      - name: Resolve latest OpenCode version
-        id: opencode-version
-        run: |
-          OPENCODE_VERSION=$(gh api repos/anomalyco/opencode/releases/latest --jq '.tag_name' | sed 's/^v//')
-          echo "version=$OPENCODE_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Latest OpenCode version: v${OPENCODE_VERSION}"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Download OpenCode binary (embedded agent)
-        run: |
-          OPENCODE_VERSION="${{ steps.opencode-version.outputs.version }}"
-          OC_URL="https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-darwin-arm64.zip"
-          mkdir -p .clawbench/opencode
-          curl -sL "$OC_URL" -o /tmp/opencode-darwin.zip
-          unzip -qo /tmp/opencode-darwin.zip -d .clawbench/opencode
-          rm -f /tmp/opencode-darwin.zip
-          chmod +x .clawbench/opencode/opencode
-          echo "$OPENCODE_VERSION" > .clawbench/opencode/VERSION
-          echo "OpenCode v${OPENCODE_VERSION} downloaded"
+      - name: Download embedded agent
+        uses: ./.github/actions/download-embedded-agent
+        id: embedded-agent
+        with:
+          agent-id: opencode
+          platform: darwin-arm64
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Package macOS arm64
         run: |
@@ -331,7 +280,7 @@ jobs:
           cp -r public pkg-mac-arm64/clawbench/public
           cp -r config pkg-mac-arm64/clawbench/config
           mkdir -p pkg-mac-arm64/clawbench/.clawbench
-          cp -r .clawbench/opencode pkg-mac-arm64/clawbench/.clawbench/opencode
+          cp -r .clawbench/${{ steps.embedded-agent.outputs.subdir }} pkg-mac-arm64/clawbench/.clawbench/${{ steps.embedded-agent.outputs.subdir }}
           chmod +x pkg-mac-arm64/clawbench/clawbench
           cd pkg-mac-arm64 && zip -r clawbench-darwin-arm64.zip clawbench/
 
@@ -368,26 +317,13 @@ jobs:
           VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
           go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION" -o clawbench-darwin-amd64 ./cmd/server
 
-      - name: Resolve latest OpenCode version
-        id: opencode-version
-        run: |
-          OPENCODE_VERSION=$(gh api repos/anomalyco/opencode/releases/latest --jq '.tag_name' | sed 's/^v//')
-          echo "version=$OPENCODE_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Latest OpenCode version: v${OPENCODE_VERSION}"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Download OpenCode binary (embedded agent)
-        run: |
-          OPENCODE_VERSION="${{ steps.opencode-version.outputs.version }}"
-          OC_URL="https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-darwin-x64.zip"
-          mkdir -p .clawbench/opencode
-          curl -sL "$OC_URL" -o /tmp/opencode-darwin.zip
-          unzip -qo /tmp/opencode-darwin.zip -d .clawbench/opencode
-          rm -f /tmp/opencode-darwin.zip
-          chmod +x .clawbench/opencode/opencode
-          echo "$OPENCODE_VERSION" > .clawbench/opencode/VERSION
-          echo "OpenCode v${OPENCODE_VERSION} downloaded"
+      - name: Download embedded agent
+        uses: ./.github/actions/download-embedded-agent
+        id: embedded-agent
+        with:
+          agent-id: opencode
+          platform: darwin-x64
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Package macOS amd64
         run: |
@@ -396,7 +332,7 @@ jobs:
           cp -r public pkg-mac-amd64/clawbench/public
           cp -r config pkg-mac-amd64/clawbench/config
           mkdir -p pkg-mac-amd64/clawbench/.clawbench
-          cp -r .clawbench/opencode pkg-mac-amd64/clawbench/.clawbench/opencode
+          cp -r .clawbench/${{ steps.embedded-agent.outputs.subdir }} pkg-mac-amd64/clawbench/.clawbench/${{ steps.embedded-agent.outputs.subdir }}
           chmod +x pkg-mac-amd64/clawbench/clawbench
           cd pkg-mac-amd64 && zip -r clawbench-darwin-amd64.zip clawbench/
 
@@ -465,17 +401,21 @@ jobs:
         run: |
           cp pkg-linux/clawbench/clawbench .
           cp -r pkg-linux/clawbench/public .
-          mkdir -p docker-staging/opencode
           chmod +x ./clawbench
 
-      - name: Resolve latest OpenCode version
-        id: opencode-version
+      - name: Resolve embedded agent version for Docker
+        id: embedded-agent
+        shell: bash
         run: |
-          OPENCODE_VERSION=$(gh api repos/anomalyco/opencode/releases/latest --jq '.tag_name' | sed 's/^v//')
-          echo "version=$OPENCODE_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Latest OpenCode version: v${OPENCODE_VERSION}"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Source the download helper to parse embedded-agents.yaml
+          # shellcheck source=scripts/download-embedded-agent.sh
+          . ./scripts/download-embedded-agent.sh
+          AGENT_ID="opencode"
+          VERSION=$(resolve_agent_version_gh "$AGENT_ID" "${{ secrets.GITHUB_TOKEN }}")
+          SUBDIR=$(parse_embedded_agent_config "$AGENT_ID" subdir)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "subdir=$SUBDIR" >> "$GITHUB_OUTPUT"
+          mkdir -p "docker-staging/$SUBDIR"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -500,7 +440,9 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          build-args: OPENCODE_VERSION=${{ steps.opencode-version.outputs.version }}
+          build-args: |
+            EMBEDDED_AGENT_ID=opencode
+            EMBEDDED_AGENT_VERSION=${{ steps.embedded-agent.outputs.version }}
           tags: |
             ghcr.io/${{ github.repository }}:latest
             ghcr.io/${{ github.repository }}:${{ steps.version.outputs.VERSION }}
