@@ -130,7 +130,7 @@ function mountComponent(props = {}) {
         ArrowDown: { template: '<span />' },
         ChevronUp: { template: '<span />' },
         List: { template: '<span class="list-icon-stub" />' },
-        MessageSquare: { template: '<span />' },
+        UserMsgIndexSheet: { template: '<div class="user-msg-index-sheet-stub" />' },
       },
       plugins: [i18n],
     },
@@ -754,7 +754,7 @@ describe('ChatMessageList — highlightMessage', () => {
   })
 })
 
-describe('ChatMessageList — formatTruncateUserMsg', () => {
+describe('userMsgIndexUtils — truncateUserMsg', () => {
   it('formats user message with text content', () => {
     expect(truncateUserMsg({ content: 'Hello world' }, 'Attachment')).toBe('Hello world')
   })

@@ -376,7 +376,10 @@ function onDocumentClick(e) {
 }
 
 onMounted(() => document.addEventListener('click', onDocumentClick, true))
-onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick, true))
+onBeforeUnmount(() => {
+  document.removeEventListener('click', onDocumentClick, true)
+  clearTimeout(scrollTickTimer)
+})
 
 function scrollToBottom(force = false) {
   nextTick(() => {
@@ -539,6 +542,9 @@ const nearestUserMsgId = computed(() => {
 
 // Watch session switch to reset user msg index
 watch(() => props.currentSessionId, () => {
+  clearTimeout(scrollTickTimer)
+  scrollTickTimer = null
+  scrollTick.value = 0
   showUserMsgIndex.value = false
   userMsgIndexList.value = []
 })

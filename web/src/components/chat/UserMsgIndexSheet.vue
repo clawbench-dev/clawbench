@@ -40,6 +40,7 @@
 <script setup>
 import { useI18n } from 'vue-i18n'
 import { MessageSquare } from 'lucide-vue-next'
+import { truncateUserMsg } from '@/utils/userMsgIndexUtils.ts'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import { formatRelativeTime } from '@/utils/format.ts'
 
@@ -48,37 +49,15 @@ const { t } = useI18n()
 defineProps({
   open: Boolean,
   messages: { type: Array, default: () => [] },
-  activeId: { type: Number, default: null, required: false },
+  activeId: { type: [Number, String], default: null, required: false },
   loading: Boolean,
   jumping: Boolean,
 })
 
 defineEmits(['close', 'select'])
 
-const TRUNCATE_LEN = 40
-
-function extractPlainText(content) {
-  if (!content) return ''
-  if (content.startsWith('{"blocks":')) {
-    try {
-      const parsed = JSON.parse(content)
-      if (parsed.blocks && Array.isArray(parsed.blocks)) {
-        return parsed.blocks
-          .filter(b => b.type === 'text' && b.text)
-          .map(b => b.text)
-          .join(' ')
-      }
-    } catch { /* ignore */ }
-  }
-  return content
-}
-
 function truncateText(msg) {
-  const text = extractPlainText(msg.content || '')
-  if (!text && msg.files && msg.files.length > 0) {
-    return `[${t('chat.messageList.userMsgIndexAttachment')}]`
-  }
-  return text.length > TRUNCATE_LEN ? text.slice(0, TRUNCATE_LEN) + '…' : text
+  return truncateUserMsg(msg, t('chat.messageList.userMsgIndexAttachment'))
 }
 </script>
 
