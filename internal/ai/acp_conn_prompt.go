@@ -68,9 +68,22 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 	}
 
 	// Send prompt. DO NOT add a hard timeout here — see acp_pool.go for rationale.
+	// Create a derived context that can be cancelled when the process dies,
+	// so conn.Prompt doesn't hang indefinitely if the agent is killed.
+	promptCtx, promptCancel := context.WithCancel(ctx)
+	c.mu.Lock()
+	c.promptCancel = promptCancel
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		c.promptCancel = nil
+		c.mu.Unlock()
+		promptCancel()
+	}()
+
 	promptStart := time.Now()
 	slog.Info("acp conn: conn.Prompt starting", "clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
-	_, err := conn.Prompt(ctx, acp.PromptRequest{
+	_, err := conn.Prompt(promptCtx, acp.PromptRequest{
 		SessionId: acp.SessionId(acpSID),
 		Prompt:    prompt,
 	})

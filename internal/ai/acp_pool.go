@@ -578,6 +578,10 @@ type ACPConn struct {
 	// automatically approved with the first allow_* option.
 	autoApprove bool
 
+	// promptCancel is called when the agent process dies to unblock any
+	// pending conn.Prompt call that would otherwise hang indefinitely.
+	promptCancel context.CancelFunc
+
 	// unsupportedConfigs tracks config IDs that the agent reported as unknown.
 	unsupportedConfigs map[string]bool
 

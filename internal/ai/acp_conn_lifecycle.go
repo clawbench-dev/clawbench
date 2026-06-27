@@ -442,6 +442,11 @@ func (c *ACPConn) watchProcessDeath() {
 			GetAgentCapabilityRegistry().MarkStale(c.agent.ID)
 		}
 	}
+	// Cancel any pending prompt to unblock conn.Prompt call
+	if c.promptCancel != nil {
+		c.promptCancel()
+		c.promptCancel = nil
+	}
 	agentID := ""
 	if c.agent != nil {
 		agentID = c.agent.ID
