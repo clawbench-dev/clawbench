@@ -258,6 +258,25 @@ func TestDiscoverModels_RegistryPath(t *testing.T) {
 	assert.True(t, called, "registry function should have been called")
 }
 
+// --- Test 9: FindBackendSpecByDefaultCmd ---
+
+func TestFindBackendSpecByDefaultCmd_Found(t *testing.T) {
+	spec := model.FindBackendSpecByDefaultCmd("opencode")
+	require.NotNil(t, spec)
+	assert.Equal(t, "opencode", spec.ID)
+	assert.Equal(t, "opencode", spec.DefaultCmd)
+}
+
+func TestFindBackendSpecByDefaultCmd_NotFound(t *testing.T) {
+	spec := model.FindBackendSpecByDefaultCmd("nonexistent_cmd_xyz")
+	assert.Nil(t, spec)
+}
+
+func TestFindBackendSpecByDefaultCmd_Empty(t *testing.T) {
+	spec := model.FindBackendSpecByDefaultCmd("")
+	assert.Nil(t, spec)
+}
+
 // --- Test 10: AsyncRefreshModelCache ---
 
 func TestAsyncRefreshModelCache_DoesNotPanic(t *testing.T) {

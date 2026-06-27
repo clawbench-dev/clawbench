@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { ref, nextTick } from 'vue'
+import { ref } from 'vue'
 
 // Mock fetch globally
 const mockFetch = vi.fn()
@@ -111,7 +111,7 @@ describe('useAcpSession', () => {
     it('handles fetch exception gracefully', async () => {
       mockFetch.mockRejectedValue(new Error('network error'))
 
-      const { acpSessions, acpSessionsLoading, loadAcpSessions } = useAcpSession({ currentAgentId })
+      const { acpSessionsLoading, loadAcpSessions } = useAcpSession({ currentAgentId })
       await loadAcpSessions()
 
       expect(acpSessionsLoading.value).toBe(false)
@@ -156,11 +156,16 @@ describe('useAcpSession', () => {
         json: () => Promise.resolve({ msgKey: 'ACPSessionNotFound' }),
       })
 
-      const { acpLoadSession } = useAcpSession({ currentAgentId })
+      const { acpLoadSession, acpSessions } = useAcpSession({ currentAgentId })
+      // Pre-populate sessions list so we can verify removal
+      acpSessions.value = [{ sessionId: 'acp-s1', title: 'Test', createdAt: '', updatedAt: '' }]
+
       const result = await acpLoadSession('acp-s1')
 
-      expect(result).toBeNull()
+      expect(result).toBe('not-found')
       expect(mockToastShow).toHaveBeenCalledWith('chat.acpSession.sessionNotFound', expect.objectContaining({ type: 'error' }))
+      // The stale session should be removed from the list
+      expect(acpSessions.value).not.toContainEqual(expect.objectContaining({ sessionId: 'acp-s1' }))
     })
 
     it('shows generic error toast for other errors', async () => {
