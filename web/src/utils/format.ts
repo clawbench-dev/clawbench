@@ -5,6 +5,8 @@ import i18n from '@/i18n'
 export function formatRelativeTime(date: string | Date): string {
     if (!date) return ''
     const d = new Date(date)
+    // Guard against Go zero-value time.Time (year 0001)
+    if (d.getFullYear() < 2000) return ''
     const now = new Date()
     const diff = now.getTime() - d.getTime()
     const minutes = Math.floor(diff / 60000)

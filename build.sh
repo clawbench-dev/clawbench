@@ -9,7 +9,7 @@ ASSETS="assets"
 TARGET_OS=""
 TARGET_ARCH=""
 BUILD_ANDROID=""
-DOWNLOAD_PI=""
+DOWNLOAD_OPENCODE=""
 for arg in "$@"; do
     case "$arg" in
         --windows)
@@ -36,16 +36,13 @@ for arg in "$@"; do
         --android)
             BUILD_ANDROID=1
             ;;
-        --with-pi)
-            DOWNLOAD_PI=1
+        --with-opencode)
+            DOWNLOAD_OPENCODE=1
             ;;
     esac
 done
 
 echo "=== Building $NAME ==="
-
-# 0. Provider models generation is done by CI only (see .github/workflows/ci.yml and release.yml).
-# Local builds use the existing .clawbench/provider_models.json if present.
 
 # Derive version from git (e.g. v1.0.0, v0.30.0-30-g830bb6c, or short SHA)
 VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
@@ -91,62 +88,63 @@ else
     echo "  Go not found, skipping backend build"
 fi
 
-# 1.5 Download Pi binary (embedded agent for setup wizard)
-# Default: skip. Use --with-pi to download, or set PI_VERSION to pin a version.
-# Without PI_VERSION, the latest release is fetched from GitHub API automatically.
-PI_DIR=".clawbench/pi"
-if [ -n "$DOWNLOAD_PI" ]; then
-    # Resolve Pi version: env var override > auto-detect latest from GitHub
-    if [ -z "$PI_VERSION" ]; then
-        PI_VERSION=$(curl -sI https://github.com/earendil-works/pi/releases/latest 2>/dev/null | grep -i "^location:" | sed 's|.*/tag/v||' | tr -d '[:space:]')
-        if [ -z "$PI_VERSION" ]; then
-            echo "  ERROR: Could not detect latest Pi version. Set PI_VERSION manually."
+# 1.5 Download OpenCode binary (embedded agent)
+# Default: skip. Use --with-opencode to download, or set OPENCODE_VERSION to pin a version.
+# Without OPENCODE_VERSION, the latest release is fetched from GitHub API automatically.
+OC_DIR=".clawbench/opencode"
+if [ -n "$DOWNLOAD_OPENCODE" ]; then
+    # Resolve OpenCode version: env var override > auto-detect latest from GitHub
+    if [ -z "$OPENCODE_VERSION" ]; then
+        OPENCODE_VERSION=$(curl -sI https://github.com/anomalyco/opencode/releases/latest 2>/dev/null | grep -i "^location:" | sed 's|.*/tag/v||' | tr -d '[:space:]')
+        if [ -z "$OPENCODE_VERSION" ]; then
+            echo "  ERROR: Could not detect latest OpenCode version. Set OPENCODE_VERSION manually."
             exit 1
         fi
-        echo "  Auto-detected latest Pi version: v${PI_VERSION}"
+        echo "  Auto-detected latest OpenCode version: v${OPENCODE_VERSION}"
     fi
-    echo "[3/5] Downloading Pi v${PI_VERSION}..."
-    # Determine platform for Pi binary
+    echo "[3/5] Downloading OpenCode v${OPENCODE_VERSION}..."
+    # Determine platform for OpenCode binary
     if [ -n "$TARGET_OS" ] && [ -n "$TARGET_ARCH" ]; then
         case "$TARGET_OS" in
-            linux)   PI_PLATFORM="linux-$TARGET_ARCH" ;;
-            darwin)  PI_PLATFORM="darwin-$TARGET_ARCH" ;;
-            windows) PI_PLATFORM="windows-$TARGET_ARCH" ;;
-            *)       PI_PLATFORM="" ;;
+            linux)   OC_PLATFORM="linux-$TARGET_ARCH" ;;
+            darwin)  OC_PLATFORM="darwin-$TARGET_ARCH" ;;
+            windows) OC_PLATFORM="windows-$TARGET_ARCH" ;;
+            *)       OC_PLATFORM="" ;;
         esac
-        # Pi uses "x64" not "amd64" in its archive names
-        PI_PLATFORM="${PI_PLATFORM/amd64/x64}"
+        # OpenCode uses "x64" not "amd64" in its archive names
+        OC_PLATFORM="${OC_PLATFORM/amd64/x64}"
     else
-        PI_PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
-        PI_PLATFORM="${PI_PLATFORM/x86_64/x64}"
-        PI_PLATFORM="${PI_PLATFORM/aarch64/arm64}"
+        OC_PLATFORM="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
+        OC_PLATFORM="${OC_PLATFORM/x86_64/x64}"
+        OC_PLATFORM="${OC_PLATFORM/aarch64/arm64}"
     fi
 
-    if [ -n "$PI_PLATFORM" ]; then
-        PI_EXT="tar.gz"
-        [ "${TARGET_OS:-}" = "windows" ] && PI_EXT="zip"
-        PI_ARCHIVE="pi-${PI_PLATFORM}.${PI_EXT}"
-        PI_URL="https://github.com/earendil-works/pi/releases/download/v${PI_VERSION}/${PI_ARCHIVE}"
+    if [ -n "$OC_PLATFORM" ]; then
+        OC_EXT="tar.gz"
+        [ "${TARGET_OS:-}" = "windows" ] && OC_EXT="zip"
+        [ "${TARGET_OS:-}" = "darwin" ] && OC_EXT="zip"
+        OC_ARCHIVE="opencode-${OC_PLATFORM}.${OC_EXT}"
+        OC_URL="https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/${OC_ARCHIVE}"
 
-        mkdir -p "$PI_DIR"
-        if [ -f "$PI_DIR/VERSION" ] && [ "$(cat "$PI_DIR/VERSION")" = "$PI_VERSION" ] && [ -f "$PI_DIR/pi" -o -f "$PI_DIR/pi.exe" ]; then
-            echo "  Pi v${PI_VERSION} already cached in $PI_DIR/"
+        mkdir -p "$OC_DIR"
+        if [ -f "$OC_DIR/VERSION" ] && [ "$(cat "$OC_DIR/VERSION")" = "$OPENCODE_VERSION" ] && [ -f "$OC_DIR/opencode" -o -f "$OC_DIR/opencode.exe" ]; then
+            echo "  OpenCode v${OPENCODE_VERSION} already cached in $OC_DIR/"
         else
-            echo "  Downloading $PI_URL ..."
-            if [ "$PI_EXT" = "zip" ]; then
-                curl -sL "$PI_URL" -o /tmp/pi-download.zip && unzip -qo /tmp/pi-download.zip -d /tmp/pi-download && cp -r /tmp/pi-download/pi/* "$PI_DIR/" && rm -rf /tmp/pi-download /tmp/pi-download.zip
+            echo "  Downloading $OC_URL ..."
+            if [ "$OC_EXT" = "zip" ]; then
+                curl -sL "$OC_URL" -o /tmp/opencode-download.zip && unzip -qo /tmp/opencode-download.zip -d "$OC_DIR" && rm -f /tmp/opencode-download.zip
             else
-                curl -sL "$PI_URL" | tar xzf - -C "$PI_DIR" --strip-components=1
+                curl -sL "$OC_URL" | tar xzf - -C "$OC_DIR"
             fi
-            chmod +x "$PI_DIR/pi" 2>/dev/null || true
-            echo -n "$PI_VERSION" > "$PI_DIR/VERSION"
-            echo "  Pi v${PI_VERSION} downloaded to $PI_DIR/"
+            chmod +x "$OC_DIR/opencode" 2>/dev/null || true
+            echo -n "$OPENCODE_VERSION" > "$OC_DIR/VERSION"
+            echo "  OpenCode v${OPENCODE_VERSION} downloaded to $OC_DIR/"
         fi
     else
-        echo "  Unknown platform, skipping Pi download"
+        echo "  Unknown platform, skipping OpenCode download"
     fi
 else
-    echo "[3/5] Pi download skipped (use --with-pi to download embedded agent)"
+    echo "[3/5] OpenCode download skipped (use --with-opencode to download embedded agent)"
 fi
 
 # 2. Build Vue frontend
@@ -188,7 +186,7 @@ else
     echo "  ./$NAME              # Go binary"
 fi
 echo "  public/              # Frontend (if built)"
-echo "  .clawbench/pi/       # Pi agent binary (if --with-pi)"
+echo "  .clawbench/opencode/ # OpenCode agent binary (if --with-opencode)"
 echo ""
 echo "Run with: ./$NAME"
 echo ""
@@ -201,5 +199,5 @@ echo "  ./build.sh --target=darwin/arm64"
 echo "  ./build.sh --android          # Android APK (release)"
 echo ""
 echo "Embedded agent:"
-echo "  ./build.sh --linux --with-pi  # Linux + Pi binary (CI release)"
-echo "  PI_VERSION=0.79.0 ./build.sh --with-pi  # Pin a specific Pi version"
+echo "  ./build.sh --linux --with-opencode  # Linux + OpenCode (CI release)"
+echo "  OPENCODE_VERSION=1.17.10 ./build.sh --with-opencode  # Pin a specific OpenCode version"

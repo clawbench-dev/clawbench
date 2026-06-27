@@ -278,11 +278,6 @@ jobs:
       - name: Build Go binary
         run: go build -o clawbench ./cmd/server
 
-      - name: Generate provider models
-        run: |
-          mkdir -p .clawbench
-          scripts/fetch-provider-models.sh --output .clawbench/provider_models.json
-
       - name: Build ACP mock agent
         run: go build -o acp-mock ./cmd/acp-mock
 

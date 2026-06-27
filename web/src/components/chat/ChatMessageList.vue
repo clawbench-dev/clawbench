@@ -141,8 +141,9 @@
 <script setup>
 import { ref, nextTick, inject, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown, List, MessageSquare } from 'lucide-vue-next'
+import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown, List } from 'lucide-vue-next'
 import ChatMessageItem from './ChatMessageItem.vue'
+import UserMsgIndexSheet from './UserMsgIndexSheet.vue'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
@@ -313,6 +314,10 @@ const SCROLL_DELTA_THRESHOLD = 10
 let programmaticScrolling = false
 
 function handleScroll() {
+  // Throttle scrollTick to ~100ms to avoid excessive DOM queries in nearestUserMsgId
+  if (!scrollTickTimer) {
+    scrollTickTimer = setTimeout(() => { scrollTick.value++; scrollTickTimer = null }, 100)
+  }
   if (!messagesRef.value) return
   const el = messagesRef.value
 
@@ -351,9 +356,9 @@ function handleScroll() {
   // Ignore tiny scroll movements (e.g. finger tremor on mobile) to prevent accidental FAB appearance
   if (Math.abs(scrollDelta) < SCROLL_DELTA_THRESHOLD) return
 
-  // Scrolled up (toward top): show top buttons, hide bottom — but not if already near top
+  // Scrolled up (toward top): show up buttons, hide down — but not if already near top
   const shouldShowUp = scrollDelta < 0 && distFromBottom > SCROLL_BUTTON_TRIGGER && !nearTop
-  // Scrolled down (toward bottom): show bottom buttons, hide top — but not if already near bottom
+  // Scrolled down (toward bottom): show down buttons, hide up — but not if already near bottom
   const shouldShowDown = scrollDelta > 0 && !nearBottom && distFromBottom > SCROLL_BUTTON_TRIGGER
 
   if (shouldShowUp) {
@@ -455,8 +460,7 @@ function scrollToPreviousMessage() {
     const rect = items[i].getBoundingClientRect()
     const containerRect = el.getBoundingClientRect()
     if (rect.bottom < containerRect.top + 8) {
-      items[i].scrollIntoView({ behavior: 'smooth', block: 'start' })
-      setTimeout(() => { programmaticScrolling = false }, 600)
+      scrollAndHighlight(items[i])
       return
     }
   }
@@ -478,8 +482,7 @@ function scrollToNextMessage() {
     const rect = items[i].getBoundingClientRect()
     const containerRect = el.getBoundingClientRect()
     if (rect.top > containerRect.bottom - 8) {
-      items[i].scrollIntoView({ behavior: 'smooth', block: 'start' })
-      setTimeout(() => { programmaticScrolling = false }, 600)
+      scrollAndHighlight(items[i])
       return
     }
   }
@@ -811,166 +814,6 @@ defineExpose({
 .scroll-fab-bottom.scroll-fab-leave-to {
   opacity: 0;
   transform: translateY(10px) scale(0.9);
-}
-
-/* ── User message index overlay ── */
-.user-msg-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.user-msg-panel {
-  min-width: 260px;
-  max-width: 360px;
-  max-height: 70vh;
-  width: 90vw;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 16px;
-  box-shadow: var(--shadow-lg);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.user-msg-panel-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 14px 18px 8px;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.user-msg-panel-icon {
-  color: var(--accent-color);
-  flex-shrink: 0;
-}
-
-.user-msg-panel-count {
-  margin-left: auto;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-muted);
-  background: var(--bg-tertiary);
-  border-radius: 8px;
-  padding: 2px 10px;
-}
-
-.user-msg-panel-loading {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 18px;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.user-msg-panel-list {
-  overflow-y: auto;
-  padding: 4px 8px 12px 4px;
-}
-
-.user-msg-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 4px 8px 4px 4px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.15s;
-  -webkit-tap-highlight-color: transparent;
-  position: relative;
-}
-
-.user-msg-item:active {
-  opacity: 0.7;
-}
-
-@media (hover: hover) {
-  .user-msg-item:hover {
-    background: var(--bg-tertiary);
-  }
-}
-
-/* Timeline connector line: full height of item, passing through node center */
-.user-msg-item::before {
-  content: '';
-  position: absolute;
-  left: 16px; /* center of 24px node + 4px item padding-left */
-  top: 0;
-  bottom: 0;
-  width: 1.5px;
-  background: var(--border-color);
-}
-
-/* First item: line starts from node center, not from top */
-.user-msg-item:first-child::before {
-  top: 16px; /* node center: 4px padding + 12px half node */
-}
-
-/* Last item: no connector line */
-.user-msg-item:last-child::before {
-  display: none;
-}
-
-/* Timeline node: circle with number */
-.user-msg-item-node {
-  position: relative;
-  flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: var(--bg-tertiary);
-  z-index: 1;
-}
-
-.user-msg-item-index {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--accent-color);
-  line-height: 1;
-}
-
-.user-msg-item-text {
-  font-size: 13px;
-  color: var(--text-primary);
-  line-height: 1.4;
-  word-break: break-word;
-  /* Separator line below text */
-  border-bottom: 1px solid var(--border-color);
-  padding-bottom: 6px;
-  flex: 1;
-  min-width: 0;
-}
-
-/* Last item: no separator */
-.user-msg-item:last-child .user-msg-item-text {
-  border-bottom: none;
-  padding-bottom: 0;
-}
-
-/* Overlay transition */
-.user-msg-overlay-enter-active {
-  transition: opacity 0.2s ease-out;
-}
-
-.user-msg-overlay-leave-active {
-  transition: opacity 0.15s ease-in;
-}
-
-.user-msg-overlay-enter-from,
-.user-msg-overlay-leave-to {
-  opacity: 0;
 }
 
 /* ── Message highlight flash ── */

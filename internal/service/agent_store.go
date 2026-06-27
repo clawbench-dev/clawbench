@@ -320,17 +320,6 @@ func LoadAgentsIntoMemory(db *sql.DB) error {
 				agent.ThinkingEffortLevels = spec.ThinkingEffortLevels
 			}
 		}
-		// Also allow refresh if agent has a provider with KnownModels
-		if !agent.CanRefreshModels {
-			if providerSpec := findProviderSpecForAgent(agent.ID); providerSpec != nil && len(providerSpec.KnownModels) > 0 {
-				agent.CanRefreshModels = true
-			}
-		}
-		// Populate Models from provider KnownModels if agent has no models
-		// and the agent was created via setup wizard with a known provider
-		if len(agent.Models) == 0 {
-			populateModelsFromProvider(agent)
-		}
 	}
 
 	// Atomically assign the fully-built map so concurrent readers never see an empty map.
@@ -358,37 +347,6 @@ func LoadAgentsIntoMemory(db *sql.DB) error {
 	}
 
 	return nil
-}
-
-// populateModelsFromProvider fills an agent's Models from the ProviderRegistry's
-// KnownModels if the agent has no models. It looks up the agent's provider from
-// the agent_api_keys table. This is used after setup wizard creates an agent
-// (which stores no models) and on subsequent server restarts.
-func populateModelsFromProvider(agent *model.Agent) {
-	spec := findProviderSpecForAgent(agent.ID)
-	if spec == nil || len(spec.KnownModels) == 0 {
-		return
-	}
-	agent.Models = model.KnownModelsToAgentModels(spec.KnownModels)
-	agent.ModelsAutoDetected = true
-}
-
-// FindProviderSpecForAgent looks up the provider for an agent from the agent_api_keys table
-// and returns the corresponding ProviderSpec. Exported so handler can use it for model refresh.
-func FindProviderSpecForAgent(agentID string) *model.ProviderSpec {
-	return findProviderSpecForAgent(agentID)
-}
-
-// findProviderSpecForAgent looks up the provider for an agent from the agent_api_keys table.
-func findProviderSpecForAgent(agentID string) *model.ProviderSpec {
-	if DB == nil {
-		return nil
-	}
-	var providerID string
-	if err := DB.QueryRow("SELECT provider FROM agent_api_keys WHERE agent_id = ?", agentID).Scan(&providerID); err != nil {
-		return nil
-	}
-	return model.FindProviderSpec(providerID)
 }
 
 // MigrateCustomSystemPrompt backfills the custom_system_prompt column for agents

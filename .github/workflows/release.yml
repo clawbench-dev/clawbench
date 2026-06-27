@@ -100,29 +100,24 @@ jobs:
           file clawbench-linux
           ldd clawbench-linux
 
-      - name: Generate provider models
+      - name: Resolve latest OpenCode version
+        id: opencode-version
         run: |
-          mkdir -p .clawbench
-          scripts/fetch-provider-models.sh --output .clawbench/provider_models.json
-
-      - name: Resolve latest Pi version
-        id: pi-version
-        run: |
-          PI_VERSION=$(gh api repos/earendil-works/pi/releases/latest --jq '.tag_name' | sed 's/^v//')
-          echo "version=$PI_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Latest Pi version: v${PI_VERSION}"
+          OPENCODE_VERSION=$(gh api repos/anomalyco/opencode/releases/latest --jq '.tag_name' | sed 's/^v//')
+          echo "version=$OPENCODE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Latest OpenCode version: v${OPENCODE_VERSION}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download Pi binary (embedded agent for setup wizard)
+      - name: Download OpenCode binary (embedded agent)
         run: |
-          PI_VERSION="${{ steps.pi-version.outputs.version }}"
-          PI_URL="https://github.com/earendil-works/pi/releases/download/v${PI_VERSION}/pi-linux-x64.tar.gz"
-          mkdir -p .clawbench/pi
-          curl -sL "$PI_URL" | tar xzf - -C .clawbench/pi --strip-components=1
-          chmod +x .clawbench/pi/pi
-          echo "$PI_VERSION" > .clawbench/pi/VERSION
-          echo "Pi v${PI_VERSION} downloaded"
+          OPENCODE_VERSION="${{ steps.opencode-version.outputs.version }}"
+          OC_URL="https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-x64.tar.gz"
+          mkdir -p .clawbench/opencode
+          curl -sL "$OC_URL" | tar xzf - -C .clawbench/opencode
+          chmod +x .clawbench/opencode/opencode
+          echo "$OPENCODE_VERSION" > .clawbench/opencode/VERSION
+          echo "OpenCode v${OPENCODE_VERSION} downloaded"
 
       - name: Package Linux
         run: |
@@ -131,8 +126,7 @@ jobs:
           cp -r public pkg-linux/clawbench/public
           cp -r config pkg-linux/clawbench/config
           mkdir -p pkg-linux/clawbench/.clawbench
-          cp -r .clawbench/pi pkg-linux/clawbench/.clawbench/pi
-          cp .clawbench/provider_models.json pkg-linux/clawbench/.clawbench/provider_models.json
+          cp -r .clawbench/opencode pkg-linux/clawbench/.clawbench/opencode
           chmod +x pkg-linux/clawbench/clawbench
           cd pkg-linux && zip -r clawbench-linux-amd64.zip clawbench/
 
@@ -145,6 +139,78 @@ jobs:
         with:
           name: linux-package
           path: pkg-linux/clawbench/
+          include-hidden-files: true
+
+  build-linux-arm64:
+    name: Build Linux arm64
+    needs: build-frontend
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: public
+          path: public/
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Build Linux arm64 binary
+        env:
+          CGO_ENABLED: 1
+        run: |
+          VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
+          go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION" -o clawbench-linux-arm64 ./cmd/server
+          echo "Built with CGO_ENABLED=1: dynamically linked, SQLite FTS5/RAG enabled"
+
+      - name: Verify Linux arm64 binary
+        run: |
+          file clawbench-linux-arm64
+          ldd clawbench-linux-arm64
+
+      - name: Resolve latest OpenCode version
+        id: opencode-version
+        run: |
+          OPENCODE_VERSION=$(gh api repos/anomalyco/opencode/releases/latest --jq '.tag_name' | sed 's/^v//')
+          echo "version=$OPENCODE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Latest OpenCode version: v${OPENCODE_VERSION}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download OpenCode binary (embedded agent)
+        run: |
+          OPENCODE_VERSION="${{ steps.opencode-version.outputs.version }}"
+          OC_URL="https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-arm64.tar.gz"
+          mkdir -p .clawbench/opencode
+          curl -sL "$OC_URL" | tar xzf - -C .clawbench/opencode
+          chmod +x .clawbench/opencode/opencode
+          echo "$OPENCODE_VERSION" > .clawbench/opencode/VERSION
+          echo "OpenCode v${OPENCODE_VERSION} downloaded"
+
+      - name: Package Linux arm64
+        run: |
+          mkdir -p pkg-linux-arm64/clawbench
+          cp clawbench-linux-arm64 pkg-linux-arm64/clawbench/clawbench
+          cp -r public pkg-linux-arm64/clawbench/public
+          cp -r config pkg-linux-arm64/clawbench/config
+          mkdir -p pkg-linux-arm64/clawbench/.clawbench
+          cp -r .clawbench/opencode pkg-linux-arm64/clawbench/.clawbench/opencode
+          chmod +x pkg-linux-arm64/clawbench/clawbench
+          cd pkg-linux-arm64 && zip -r clawbench-linux-arm64.zip clawbench/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: false
+          files: pkg-linux-arm64/clawbench-linux-arm64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64-package
+          path: pkg-linux-arm64/clawbench/
           include-hidden-files: true
 
   build-windows:
@@ -172,35 +238,29 @@ jobs:
           $VERSION = if (git describe --tags --always 2>$null) { git describe --tags --always } else { "dev" }
           go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION" -o clawbench.exe ./cmd/server
 
-      - name: Generate provider models
-        shell: bash
-        run: |
-          mkdir -p .clawbench
-          scripts/fetch-provider-models.sh --output .clawbench/provider_models.json
-
-      - name: Resolve latest Pi version
-        id: pi-version
+      - name: Resolve latest OpenCode version
+        id: opencode-version
         shell: pwsh
         run: |
-          $resp = Invoke-RestMethod -Uri "https://api.github.com/repos/earendil-works/pi/releases/latest" -Headers @{ Authorization = "token $env:GITHUB_TOKEN" }
-          $PI_VERSION = $resp.tag_name -replace '^v',''
-          "version=$PI_VERSION" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
-          Write-Host "Latest Pi version: v${PI_VERSION}"
+          $resp = Invoke-RestMethod -Uri "https://api.github.com/repos/anomalyco/opencode/releases/latest" -Headers @{ Authorization = "token $env:GITHUB_TOKEN" }
+          $OPENCODE_VERSION = $resp.tag_name -replace '^v',''
+          "version=$OPENCODE_VERSION" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+          Write-Host "Latest OpenCode version: v${OPENCODE_VERSION}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download Pi binary (embedded agent for setup wizard)
+      - name: Download OpenCode binary (embedded agent)
         shell: pwsh
         run: |
-          $PI_VERSION = "${{ steps.pi-version.outputs.version }}"
-          $PI_URL = "https://github.com/earendil-works/pi/releases/download/v${PI_VERSION}/pi-windows-x64.zip"
-          New-Item -ItemType Directory -Force -Path .clawbench\pi
-          $tmpZip = "$env:TEMP\pi-download.zip"
-          Invoke-WebRequest -Uri $PI_URL -OutFile $tmpZip
-          Expand-Archive -Path $tmpZip -DestinationPath .clawbench\pi -Force
+          $OPENCODE_VERSION = "${{ steps.opencode-version.outputs.version }}"
+          $OC_URL = "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-windows-x64.zip"
+          New-Item -ItemType Directory -Force -Path .clawbench\opencode
+          $tmpZip = "$env:TEMP\opencode-download.zip"
+          Invoke-WebRequest -Uri $OC_URL -OutFile $tmpZip
+          Expand-Archive -Path $tmpZip -DestinationPath .clawbench\opencode -Force
           Remove-Item $tmpZip -Force
-          Set-Content -Path ".clawbench\pi\VERSION" -Value $PI_VERSION
-          Write-Host "Pi v${PI_VERSION} downloaded"
+          Set-Content -Path ".clawbench\opencode\VERSION" -Value $OPENCODE_VERSION
+          Write-Host "OpenCode v${OPENCODE_VERSION} downloaded"
 
       - name: Package Windows
         shell: pwsh
@@ -210,8 +270,7 @@ jobs:
           Copy-Item -Recurse public pkg-windows/clawbench/public
           Copy-Item -Recurse config pkg-windows/clawbench/config
           New-Item -ItemType Directory -Force -Path pkg-windows/clawbench/.clawbench
-          Copy-Item -Recurse .clawbench/pi pkg-windows/clawbench/.clawbench/pi
-          Copy-Item .clawbench/provider_models.json pkg-windows/clawbench/.clawbench/provider_models.json
+          Copy-Item -Recurse .clawbench/opencode pkg-windows/clawbench/.clawbench/opencode
           Compress-Archive -Path pkg-windows/clawbench -DestinationPath pkg-windows/clawbench-windows-amd64.zip
 
       - uses: softprops/action-gh-release@v2
@@ -244,29 +303,26 @@ jobs:
           VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
           go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION" -o clawbench-darwin-arm64 ./cmd/server
 
-      - name: Generate provider models
+      - name: Resolve latest OpenCode version
+        id: opencode-version
         run: |
-          mkdir -p .clawbench
-          scripts/fetch-provider-models.sh --output .clawbench/provider_models.json
-
-      - name: Resolve latest Pi version
-        id: pi-version
-        run: |
-          PI_VERSION=$(gh api repos/earendil-works/pi/releases/latest --jq '.tag_name' | sed 's/^v//')
-          echo "version=$PI_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Latest Pi version: v${PI_VERSION}"
+          OPENCODE_VERSION=$(gh api repos/anomalyco/opencode/releases/latest --jq '.tag_name' | sed 's/^v//')
+          echo "version=$OPENCODE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Latest OpenCode version: v${OPENCODE_VERSION}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download Pi binary (embedded agent for setup wizard)
+      - name: Download OpenCode binary (embedded agent)
         run: |
-          PI_VERSION="${{ steps.pi-version.outputs.version }}"
-          PI_URL="https://github.com/earendil-works/pi/releases/download/v${PI_VERSION}/pi-darwin-arm64.tar.gz"
-          mkdir -p .clawbench/pi
-          curl -sL "$PI_URL" | tar xzf - -C .clawbench/pi --strip-components=1
-          chmod +x .clawbench/pi/pi
-          echo "$PI_VERSION" > .clawbench/pi/VERSION
-          echo "Pi v${PI_VERSION} downloaded"
+          OPENCODE_VERSION="${{ steps.opencode-version.outputs.version }}"
+          OC_URL="https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-darwin-arm64.zip"
+          mkdir -p .clawbench/opencode
+          curl -sL "$OC_URL" -o /tmp/opencode-darwin.zip
+          unzip -qo /tmp/opencode-darwin.zip -d .clawbench/opencode
+          rm -f /tmp/opencode-darwin.zip
+          chmod +x .clawbench/opencode/opencode
+          echo "$OPENCODE_VERSION" > .clawbench/opencode/VERSION
+          echo "OpenCode v${OPENCODE_VERSION} downloaded"
 
       - name: Package macOS arm64
         run: |
@@ -275,8 +331,7 @@ jobs:
           cp -r public pkg-mac-arm64/clawbench/public
           cp -r config pkg-mac-arm64/clawbench/config
           mkdir -p pkg-mac-arm64/clawbench/.clawbench
-          cp -r .clawbench/pi pkg-mac-arm64/clawbench/.clawbench/pi
-          cp .clawbench/provider_models.json pkg-mac-arm64/clawbench/.clawbench/provider_models.json
+          cp -r .clawbench/opencode pkg-mac-arm64/clawbench/.clawbench/opencode
           chmod +x pkg-mac-arm64/clawbench/clawbench
           cd pkg-mac-arm64 && zip -r clawbench-darwin-arm64.zip clawbench/
 
@@ -313,29 +368,26 @@ jobs:
           VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
           go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION" -o clawbench-darwin-amd64 ./cmd/server
 
-      - name: Generate provider models
+      - name: Resolve latest OpenCode version
+        id: opencode-version
         run: |
-          mkdir -p .clawbench
-          scripts/fetch-provider-models.sh --output .clawbench/provider_models.json
-
-      - name: Resolve latest Pi version
-        id: pi-version
-        run: |
-          PI_VERSION=$(gh api repos/earendil-works/pi/releases/latest --jq '.tag_name' | sed 's/^v//')
-          echo "version=$PI_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Latest Pi version: v${PI_VERSION}"
+          OPENCODE_VERSION=$(gh api repos/anomalyco/opencode/releases/latest --jq '.tag_name' | sed 's/^v//')
+          echo "version=$OPENCODE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Latest OpenCode version: v${OPENCODE_VERSION}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download Pi binary (embedded agent for setup wizard)
+      - name: Download OpenCode binary (embedded agent)
         run: |
-          PI_VERSION="${{ steps.pi-version.outputs.version }}"
-          PI_URL="https://github.com/earendil-works/pi/releases/download/v${PI_VERSION}/pi-darwin-x64.tar.gz"
-          mkdir -p .clawbench/pi
-          curl -sL "$PI_URL" | tar xzf - -C .clawbench/pi --strip-components=1
-          chmod +x .clawbench/pi/pi
-          echo "$PI_VERSION" > .clawbench/pi/VERSION
-          echo "Pi v${PI_VERSION} downloaded"
+          OPENCODE_VERSION="${{ steps.opencode-version.outputs.version }}"
+          OC_URL="https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-darwin-x64.zip"
+          mkdir -p .clawbench/opencode
+          curl -sL "$OC_URL" -o /tmp/opencode-darwin.zip
+          unzip -qo /tmp/opencode-darwin.zip -d .clawbench/opencode
+          rm -f /tmp/opencode-darwin.zip
+          chmod +x .clawbench/opencode/opencode
+          echo "$OPENCODE_VERSION" > .clawbench/opencode/VERSION
+          echo "OpenCode v${OPENCODE_VERSION} downloaded"
 
       - name: Package macOS amd64
         run: |
@@ -344,8 +396,7 @@ jobs:
           cp -r public pkg-mac-amd64/clawbench/public
           cp -r config pkg-mac-amd64/clawbench/config
           mkdir -p pkg-mac-amd64/clawbench/.clawbench
-          cp -r .clawbench/pi pkg-mac-amd64/clawbench/.clawbench/pi
-          cp .clawbench/provider_models.json pkg-mac-amd64/clawbench/.clawbench/provider_models.json
+          cp -r .clawbench/opencode pkg-mac-amd64/clawbench/.clawbench/opencode
           chmod +x pkg-mac-amd64/clawbench/clawbench
           cd pkg-mac-amd64 && zip -r clawbench-darwin-amd64.zip clawbench/
 
@@ -397,7 +448,7 @@ jobs:
 
   docker:
     name: Build & Push Docker Image
-    needs: build-linux
+    needs: [build-linux, build-linux-arm64]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -414,18 +465,15 @@ jobs:
         run: |
           cp pkg-linux/clawbench/clawbench .
           cp -r pkg-linux/clawbench/public .
-          mkdir -p docker-staging/pi
+          mkdir -p docker-staging/opencode
           chmod +x ./clawbench
-          # Copy provider_models.json so Anthropic-format providers have KnownModels
-          mkdir -p docker-staging
-          cp pkg-linux/clawbench/.clawbench/provider_models.json docker-staging/provider_models.json
 
-      - name: Resolve latest Pi version
-        id: pi-version
+      - name: Resolve latest OpenCode version
+        id: opencode-version
         run: |
-          PI_VERSION=$(gh api repos/earendil-works/pi/releases/latest --jq '.tag_name' | sed 's/^v//')
-          echo "version=$PI_VERSION" >> "$GITHUB_OUTPUT"
-          echo "Latest Pi version: v${PI_VERSION}"
+          OPENCODE_VERSION=$(gh api repos/anomalyco/opencode/releases/latest --jq '.tag_name' | sed 's/^v//')
+          echo "version=$OPENCODE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Latest OpenCode version: v${OPENCODE_VERSION}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -452,7 +500,7 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          build-args: PI_VERSION=${{ steps.pi-version.outputs.version }}
+          build-args: OPENCODE_VERSION=${{ steps.opencode-version.outputs.version }}
           tags: |
             ghcr.io/${{ github.repository }}:latest
             ghcr.io/${{ github.repository }}:${{ steps.version.outputs.VERSION }}
@@ -484,7 +532,7 @@ jobs:
 
   release-notes:
     name: Generate Release Notes
-    needs: [build-linux, build-windows, build-macos-arm64, build-macos-amd64, build-android, docker]
+    needs: [build-linux, build-linux-arm64, build-windows, build-macos-arm64, build-macos-amd64, build-android, docker]
     runs-on: ubuntu-latest
     permissions:
       contents: write

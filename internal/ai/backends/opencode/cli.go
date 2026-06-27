@@ -42,6 +42,8 @@ func init() {
 			ID: "opencode", Backend: "opencode", DefaultCmd: "opencode", Name: "OpenCode", Icon: "📟", Specialty: "终端编码工具",
 			ThinkingEffortLevels: []string{"minimal", "high", "max"},
 			AcpCommand:           "opencode acp",
+			EmbeddedSubDir:       "opencode",
+			EmbeddedVersionFile:  "VERSION",
 			SortOrder:            3,
 		},
 		ACP: &backends.ACPPlugin{

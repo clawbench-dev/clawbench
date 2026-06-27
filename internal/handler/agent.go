@@ -355,9 +355,7 @@ func containsPromptOverride(prompt string) bool {
 // for the specified agent and returns the updated model list. The discovered models completely replace
 // the agent's current model list (both in memory and in the cache file).
 //
-// Refresh strategy (in priority order):
-// 1. CLI model discovery via BackendSpec (e.g., pi --list-models)
-// 2. Fallback: re-read models from ProviderSpec.KnownModels (runtime provider_models.json)
+// Refresh strategy: CLI model discovery via BackendSpec (e.g., pi --list-models)
 //
 //nolint:gocognit,gocyclo // refresh logic has multiple discovery paths, each with error handling
 func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
@@ -387,10 +385,10 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 	var models []model.AgentModel
 	canDiscover := false // whether any discovery method is available
 
-	// Find provider spec early — used for filtering and fallback
+	// Find provider spec early — used for filtering
 	providerSpec := findProviderSpecForAgent(agentID)
 
-	// Strategy 1: CLI model discovery via BackendSpec
+	// CLI model discovery via BackendSpec
 	spec := model.FindSpecByBackend(agent.Backend)
 	if spec != nil && model.CanDiscoverModels(*spec) {
 		canDiscover = true
@@ -414,14 +412,6 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 		} else {
 			models = discovered
 		}
-	}
-
-	// Strategy 2: Fallback to ProviderSpec.KnownModels from agent_api_keys
-	// Shows ALL models for that provider (not just the ones user configured)
-	if len(models) == 0 && providerSpec != nil && len(providerSpec.KnownModels) > 0 {
-		canDiscover = true
-		slog.Info("model refresh: CLI discovery failed, using KnownModels from provider", "agent", agentID, "provider", providerSpec.ID)
-		models = model.KnownModelsToAgentModels(providerSpec.KnownModels)
 	}
 
 	if len(models) == 0 {
@@ -458,9 +448,16 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 }
 
 // findProviderSpecForAgent looks up the provider for an agent from the agent_api_keys table
-// and returns the corresponding ProviderSpec.
+// and returns the corresponding ProviderSpec. Used for provider prefix filtering during model refresh.
 func findProviderSpecForAgent(agentID string) *model.ProviderSpec {
-	return service.FindProviderSpecForAgent(agentID)
+	if service.DB == nil {
+		return nil
+	}
+	var providerID string
+	if err := service.DB.QueryRow("SELECT provider FROM agent_api_keys WHERE agent_id = ?", agentID).Scan(&providerID); err != nil {
+		return nil
+	}
+	return model.FindProviderSpec(providerID)
 }
 
 // ServeACPSessions handles GET /api/agents/{id}/acp-sessions — lists ACP sessions
@@ -611,4 +608,41 @@ func findExistingACPSessions(acpSessionIDs []string) map[string]bool {
 		slog.Warn("handler: error iterating ACP session rows", "error", err)
 	}
 	return result
+}
+
+// ServeBackends returns the list of AI backends supported by ClawBench.
+// Used by the welcome overlay to show users what CLI agents can be auto-detected.
+func ServeBackends(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+		return
+	}
+
+	type backendInfo struct {
+		ID                   string   `json:"id"`
+		Name                 string   `json:"name"`
+		Icon                 string   `json:"icon"`
+		Specialty            string   `json:"specialty"`
+		DefaultCmd           string   `json:"default_cmd"`
+		ThinkingEffortLevels []string `json:"thinking_effort_levels,omitempty"`
+	}
+
+	backends := make([]backendInfo, 0, len(model.GetBackendRegistry()))
+	for _, spec := range model.GetBackendRegistry() {
+		if spec.NoCLI {
+			continue // skip non-CLI backends (e.g. mock)
+		}
+		backends = append(backends, backendInfo{
+			ID:                   spec.ID,
+			Name:                 spec.Name,
+			Icon:                 spec.Icon,
+			Specialty:            spec.Specialty,
+			DefaultCmd:           spec.DefaultCmd,
+			ThinkingEffortLevels: spec.ThinkingEffortLevels,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"backends": backends,
+	})
 }

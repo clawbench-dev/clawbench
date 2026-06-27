@@ -132,7 +132,7 @@ func ServeChatCount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"count": count})
 }
 
-// ServeUserMessageIndex returns lightweight {id, content, files} for all user messages
+// ServeUserMessageIndex returns lightweight {id, content, files, createdAt} for all user messages
 // in a session. Used for the user message index navigation feature.
 func ServeUserMessageIndex(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {

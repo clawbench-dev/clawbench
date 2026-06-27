@@ -761,37 +761,6 @@ func TestServeAgentRefreshModels_ProviderFilterNoMatch(t *testing.T) {
 	assert.Len(t, models, 2, "should return all models when no prefix matches")
 }
 
-func TestServeAgentRefreshModels_KnownModelsFallback(t *testing.T) {
-	defer setupAgentTestEnv(t)()
-	setupTestProviderModels(t)
-
-	// Set up agent_api_keys entry for a provider with KnownModels (e.g., anthropic)
-	require.NoError(t, service.SaveAgentAPIKey(service.DB, "codebuddy", "anthropic", "", "test-api-key"))
-
-	// Make the agent's backend have NO discovery support by temporarily changing it
-	origBackend := model.Agents["codebuddy"].Backend
-	origModels := model.Agents["codebuddy"].Models
-	model.Agents["codebuddy"].Backend = "nondiscoverable"
-	model.Agents["codebuddy"].Models = nil
-	defer func() {
-		model.Agents["codebuddy"].Backend = origBackend
-		model.Agents["codebuddy"].Models = origModels
-	}()
-
-	req := newRequest(t, http.MethodPost, "/api/agents/codebuddy/refresh-models", nil)
-	withAuthCookie(req, model.SessionToken)
-	req.URL.Path = "/api/agents/codebuddy/refresh-models"
-	w := callHandler(ServeAgentRefreshModels, req)
-
-	// Should fall back to KnownModels from anthropic provider
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	models := resp["models"].([]any)
-	assert.NotEmpty(t, models, "should have KnownModels from anthropic provider")
-}
-
 // ---------- serveAgentsGet ACP state tests ----------
 
 func TestServeAgentsGet_ACPStateFromPoolCache(t *testing.T) {

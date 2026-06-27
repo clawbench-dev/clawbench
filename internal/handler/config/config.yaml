@@ -3,7 +3,7 @@ chat:
     page_size: 0
     session_page_size: 0
     system_prompt_interval: 0
-default_agent: claude
+default_agent: opencode
 dev_port: 0
 host: ""
 log_dir: ""

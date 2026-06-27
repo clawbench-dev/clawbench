@@ -32,17 +32,17 @@ fi
 
 # Build binary (always rebuild to pick up latest code)
 echo "Building binary..."
-./build.sh --with-pi
+./build.sh --with-opencode
 
-# Prepare staging directory for Pi binary
+# Prepare staging directory for embedded binary
 rm -rf docker-staging
-mkdir -p docker-staging/pi
-if [ -d ".clawbench/pi" ] && [ -f ".clawbench/pi/pi" ]; then
-    cp -r .clawbench/pi/* docker-staging/pi/
-    echo "Pi binary included in image (with dependencies)"
+mkdir -p docker-staging/opencode
+if [ -d ".clawbench/opencode" ] && [ -f ".clawbench/opencode/opencode" ]; then
+    cp -r .clawbench/opencode/* docker-staging/opencode/
+    echo "OpenCode binary included in image (with dependencies)"
 else
-    echo "Pi binary not found — setup wizard will not be available"
-    echo "  (Run ./build.sh --with-pi to download it)"
+    echo "OpenCode binary not found"
+    echo "  (Run ./build.sh --with-opencode to download it)"
 fi
 
 # Build and run via docker compose (staging dir must exist during build)

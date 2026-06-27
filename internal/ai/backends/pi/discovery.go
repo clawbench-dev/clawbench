@@ -54,21 +54,15 @@ func ParsePiModels(output string) []model.AgentModel {
 
 // DiscoverPiModels discovers Pi model IDs by running `pi --list-models` and parsing the output.
 // Pi outputs the model table to stderr (not stdout), so we must capture both streams.
-// It first tries the embedded Pi binary at .clawbench/pi/pi, then falls back to PATH.
 func DiscoverPiModels() []model.AgentModel {
-	piPath := model.EmbeddedBinaryPath("pi")
-	if piPath == "" {
-		piPath = "pi" // fallback to PATH
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, piPath, "--list-models")
+	cmd := exec.CommandContext(ctx, "pi", "--list-models")
 	// Pi outputs the model table to stderr; use CombinedOutput to capture both.
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		slog.Debug("pi model discovery: command failed", "path", piPath, "error", err)
+		slog.Debug("pi model discovery: command failed", "error", err)
 		return nil
 	}
 

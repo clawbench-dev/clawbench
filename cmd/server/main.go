@@ -177,9 +177,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	absBinPath, _ := filepath.Abs(os.Args[0])
 	model.BinDir = filepath.Dir(absBinPath)
 
-	// Load provider models from runtime file (BinDir/.clawbench/provider_models.json)
-	model.LoadProviderModelsFromFile(filepath.Join(model.BinDir, ".clawbench"))
-
 	// Load configuration — config/config.yaml is optional
 	var cfg model.Config
 	var presence map[string]bool

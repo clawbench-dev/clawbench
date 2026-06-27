@@ -6,11 +6,9 @@
     <!-- Login -->
     <LoginView v-else-if="!isAuthenticated" @login-success="handleLoginSuccess" />
 
-    <!-- Setup wizard (after login, before main UI) -->
-    <SetupWizard v-else-if="needsSetup" @complete="handleSetupComplete" />
-
     <!-- Main app -->
     <div v-else class="app-container" :class="{ 'chat-keyboard-open': chatKeyboardActive, 'project-switching': switchingProject }" :key="projectKey">
+      <WelcomeOverlay ref="welcomeOverlay" />
       <AppHeader
         :project-root="projectRoot"
         :home-dir="homeDir"
@@ -258,7 +256,7 @@ import ProxyPanelContent from './components/proxy/ProxyPanelContent.vue'
 import TerminalPanelContent from './components/terminal/TerminalPanelContent.vue'
 import ProjectDialog from './components/ProjectDialog.vue'
 import LoginView from './components/LoginView.vue'
-import SetupWizard from './components/setup/SetupWizard.vue'
+import WelcomeOverlay from './components/WelcomeOverlay.vue'
 import TocDrawer from './components/TocDrawer.vue'
 import FileDetailsDialog from './components/file/FileDetailsDialog.vue'
 import GitHistoryDrawer from './components/git/GitHistoryDrawer.vue'
@@ -300,7 +298,6 @@ import 'highlight.js/styles/github-dark.css'
 import './assets/hljs-light-override.css'
 
 const isAuthenticated = ref(null)
-const needsSetup = ref(false)
 const { t } = useI18n()
 const TAG = 'ClawBench'
 
@@ -754,18 +751,6 @@ async function initializeApp() {
 }
 
 async function handleLoginSuccess() {
-    // Check if setup wizard is needed (no agents + embedded Pi binary)
-    try {
-      const resp = await fetch('/api/setup/status')
-      if (resp.ok) {
-        const data = await resp.json()
-        if (data.needs_setup) {
-          isAuthenticated.value = true
-          needsSetup.value = true
-          return
-        }
-      }
-    } catch { /* proceed to normal app if check fails */ }
     // Full initialization BEFORE setting isAuthenticated — ensures
     // clawbench_project cookie, session identity, and all infrastructure
     // are ready before ChatPanelContent mounts and calls loadHistory().
@@ -773,23 +758,12 @@ async function handleLoginSuccess() {
     // Clean up legacy localStorage keys (no longer used)
     Object.keys(localStorage).filter(k => k.startsWith('clawbenchLastFile_') || k.startsWith('clawbenchLastDir_')).forEach(k => localStorage.removeItem(k))
     isAuthenticated.value = true
-}
-
-async function handleSetupComplete() {
-    // Reset cached agents so fresh data is loaded
-    resetAgents()
-
-    // Full initialization BEFORE switching to main UI — ensures all
-    // prerequisites (cookie, session, agents) are ready before
-    // ChatPanelContent mounts. initGlobalEvents is guarded against
-    // duplicate calls (already called during setup wizard phase).
-    if (!(await initializeApp())) return
-
-    // Now switch to main UI — agents and session are loaded
-    needsSetup.value = false
+    await nextTick()
+    welcomeOverlay.value?.show()
 }
 
 const projectDialogOpen = ref(false)
+const welcomeOverlay = ref(null)
 
 function handleOpenProjectDialog() {
     projectDialogOpen.value = true
@@ -1277,29 +1251,16 @@ onMounted(async () => {
         }
         return
     }
-    // Check if setup wizard is needed BEFORE any main app initialization.
-    // If needs_setup, show wizard and skip all main UI loading to prevent
-    // error flashes (e.g., "no agent configured", "failed to load chat history").
-    try {
-      const setupResp = await fetch('/api/setup/status')
-      if (setupResp.ok) {
-        const setupData = await setupResp.json()
-        if (setupData.needs_setup) {
-          isAuthenticated.value = true
-          needsSetup.value = true
-          initGlobalEvents() // Needed for WS connection (setup wizard uses API)
-          return  // Skip ALL main app initialization — wizard will handle it
-        }
-      }
-    } catch { /* proceed to normal app if check fails */ }
 
-    // ── Main app initialization (only when setup is NOT needed) ──
+    // ── Main app initialization ──
     // Complete ALL initialization BEFORE setting isAuthenticated = true,
     // so that ChatPanelContent mounts only when the clawbench_project cookie
     // and session identity are already available. This prevents loadHistory()
     // from firing with missing cookies (Android first-login bug).
     if (!(await initializeApp())) return
     isAuthenticated.value = true
+    await nextTick()
+    welcomeOverlay.value?.show()
 
     // Handle pending navigation from push notification deep link
     // (cross-project reload or cold start via AndroidNative bridge)
