@@ -30,15 +30,15 @@ func ParseSHA256Hash(password string) string {
 
 // Config holds the application configuration.
 type Config struct {
-	Port         int    `yaml:"port"`
-	Host         string `yaml:"host"`      // Bind address (empty = 0.0.0.0, "localhost" = 127.0.0.1 only)
-	LogLevel     string `yaml:"log_level"` // Log level: "debug", "info", "warn", "error" (default: "info")
-	Password     string `yaml:"password"`
-	DefaultAgent string `yaml:"default_agent"`
-	LogDir       string `yaml:"log_dir"`
-	RequireAuthForLocalhost bool `yaml:"require_auth_for_localhost"`
-	LogMaxDays   int    `yaml:"log_max_days"`
-	TLS          struct {
+	Port                    int    `yaml:"port"`
+	Host                    string `yaml:"host"`      // Bind address (empty = 0.0.0.0, "localhost" = 127.0.0.1 only)
+	LogLevel                string `yaml:"log_level"` // Log level: "debug", "info", "warn", "error" (default: "info")
+	Password                string `yaml:"password"`
+	DefaultAgent            string `yaml:"default_agent"`
+	LogDir                  string `yaml:"log_dir"`
+	RequireAuthForLocalhost bool   `yaml:"require_auth_for_localhost"`
+	LogMaxDays              int    `yaml:"log_max_days"`
+	TLS                     struct {
 		Enabled  bool   `yaml:"enabled"`
 		CertFile string `yaml:"cert_file"`
 		KeyFile  string `yaml:"key_file"`
@@ -174,14 +174,14 @@ var ConfigInstance Config
 
 // Global application state
 var (
-	BinDir           string   // Directory of the running binary
-	RootPaths        []string // Filesystem root paths (Linux/macOS: ["/"], Windows: drive list)
-	SessionToken     string   // Legacy: stores the password-derived token for "has password" check; NOT used for cookie validation when CookieToken is set
-	CookieToken      string   // Cryptographically random session token for cookie validation (ISS-117, ISS-131, ISS-183)
-	PasswordHash     []byte   // bcrypt hash for password verification (ISS-003a)
-	PasswordIsSHA256 bool     // true when config.yaml stores password as sha256:<hex>
-	ServerPort       int      // Server listen port — set once at startup before HTTP listeners start, read-only afterwards. Do NOT modify after server starts; cookie names must be stable.
-	SessionCookie    = "clawbench_session"
+	BinDir                  string   // Directory of the running binary
+	RootPaths               []string // Filesystem root paths (Linux/macOS: ["/"], Windows: drive list)
+	SessionToken            string   // Legacy: stores the password-derived token for "has password" check; NOT used for cookie validation when CookieToken is set
+	CookieToken             string   // Cryptographically random session token for cookie validation (ISS-117, ISS-131, ISS-183)
+	PasswordHash            []byte   // bcrypt hash for password verification (ISS-003a)
+	PasswordIsSHA256        bool     // true when config.yaml stores password as sha256:<hex>
+	ServerPort              int      // Server listen port — set once at startup before HTTP listeners start, read-only afterwards. Do NOT modify after server starts; cookie names must be stable.
+	SessionCookie           = "clawbench_session"
 	DefaultAgentID          string // Default agent for new sessions, set from config or first agent
 	RequireAuthForLocalhost bool   // When true, localhost requests must also authenticate
 

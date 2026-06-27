@@ -67,20 +67,20 @@ func SetRestartFunc(f func()) {
 // It only contains fields safe for frontend display — no passwords, keys, or
 // internal paths.
 type configResponse struct {
-	Version              string               `json:"version"`
-	HasPassword          bool                 `json:"has_password"` // true when a password is configured
-	RequireAuthForLocalhost bool                `json:"require_auth_for_localhost"` // true = localhost also requires password
-	DefaultAgent         string               `json:"default_agent"`
-	Chat           configChat           `json:"chat"`
-	Session        configSession        `json:"session"`
-	RecentProjects configRecentProjects `json:"recent_projects"`
-	Upload         configUpload         `json:"upload"`
-	Terminal       configTerminal       `json:"terminal"`
-	TTS            configTTS            `json:"tts"`
-	RAG            configRAG            `json:"rag"`
-	PortForward    configPortForward    `json:"port_forward"`
-	Push           configPush           `json:"push"`
-	Summarize      configSummarize      `json:"summarize"`
+	Version                 string               `json:"version"`
+	HasPassword             bool                 `json:"has_password"`               // true when a password is configured
+	RequireAuthForLocalhost bool                 `json:"require_auth_for_localhost"` // true = localhost also requires password
+	DefaultAgent            string               `json:"default_agent"`
+	Chat                    configChat           `json:"chat"`
+	Session                 configSession        `json:"session"`
+	RecentProjects          configRecentProjects `json:"recent_projects"`
+	Upload                  configUpload         `json:"upload"`
+	Terminal                configTerminal       `json:"terminal"`
+	TTS                     configTTS            `json:"tts"`
+	RAG                     configRAG            `json:"rag"`
+	PortForward             configPortForward    `json:"port_forward"`
+	Push                    configPush           `json:"push"`
+	Summarize               configSummarize      `json:"summarize"`
 }
 
 type configChat struct {
@@ -296,10 +296,10 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 	configMutex.RUnlock()
 
 	resp := configResponse{
-		Version:              getBuildVersion(),
-		HasPassword:          model.SessionToken != "",
+		Version:                 getBuildVersion(),
+		HasPassword:             model.SessionToken != "",
 		RequireAuthForLocalhost: cfg.RequireAuthForLocalhost,
-		DefaultAgent:         cfg.DefaultAgent,
+		DefaultAgent:            cfg.DefaultAgent,
 		Chat: configChat{
 			InitialMessages:      cfg.Chat.InitialMessages,
 			PageSize:             cfg.Chat.PageSize,
