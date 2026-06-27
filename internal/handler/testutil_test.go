@@ -389,5 +389,3 @@ func assertJSONField(t *testing.T, w *httptest.ResponseRecorder, field string, e
 		t.Errorf("field %q: expected %v, got %v", field, expected, val)
 	}
 }
-
-

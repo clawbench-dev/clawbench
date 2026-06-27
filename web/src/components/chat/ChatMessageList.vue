@@ -141,9 +141,8 @@
 <script setup>
 import { ref, nextTick, inject, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown, List } from 'lucide-vue-next'
+import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown, List, MessageSquare } from 'lucide-vue-next'
 import ChatMessageItem from './ChatMessageItem.vue'
-import UserMsgIndexSheet from './UserMsgIndexSheet.vue'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
@@ -314,10 +313,6 @@ const SCROLL_DELTA_THRESHOLD = 10
 let programmaticScrolling = false
 
 function handleScroll() {
-  // Throttle scrollTick to ~100ms to avoid excessive DOM queries in nearestUserMsgId
-  if (!scrollTickTimer) {
-    scrollTickTimer = setTimeout(() => { scrollTick.value++; scrollTickTimer = null }, 100)
-  }
   if (!messagesRef.value) return
   const el = messagesRef.value
 
@@ -444,6 +439,19 @@ function scrollToTop() {
   programmaticScrolling = true
   messagesRef.value.scrollTo({ top: 0, behavior: 'smooth' })
   // Smooth scroll takes ~300-500ms; clear flag after settling
+  setTimeout(() => { programmaticScrolling = false }, 600)
+}
+
+function highlightMessage(el) {
+  el.classList.add('chat-message-highlight')
+  setTimeout(() => el.classList.remove('chat-message-highlight'), 1500)
+}
+
+/** Scroll a message element into view at the top of the viewport, with highlight animation. */
+function scrollAndHighlight(itemEl) {
+  programmaticScrolling = true
+  highlightMessage(itemEl)
+  itemEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
   setTimeout(() => { programmaticScrolling = false }, 600)
 }
 

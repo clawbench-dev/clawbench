@@ -2,6 +2,7 @@
 package handler
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -357,7 +358,7 @@ func containsPromptOverride(prompt string) bool {
 //
 // Refresh strategy: CLI model discovery via BackendSpec (e.g., pi --list-models)
 //
-//nolint:gocognit,gocyclo // refresh logic has multiple discovery paths, each with error handling
+//nolint:gocyclo // refresh logic has multiple discovery paths, each with error handling
 func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
@@ -386,7 +387,7 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 	canDiscover := false // whether any discovery method is available
 
 	// Find provider spec early — used for filtering
-	providerSpec := findProviderSpecForAgent(agentID)
+	providerSpec := findProviderSpecForAgent(r.Context(), agentID)
 
 	// CLI model discovery via BackendSpec
 	spec := model.FindSpecByBackend(agent.Backend)
@@ -449,12 +450,12 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 
 // findProviderSpecForAgent looks up the provider for an agent from the agent_api_keys table
 // and returns the corresponding ProviderSpec. Used for provider prefix filtering during model refresh.
-func findProviderSpecForAgent(agentID string) *model.ProviderSpec {
+func findProviderSpecForAgent(ctx context.Context, agentID string) *model.ProviderSpec {
 	if service.DB == nil {
 		return nil
 	}
 	var providerID string
-	if err := service.DB.QueryRow("SELECT provider FROM agent_api_keys WHERE agent_id = ?", agentID).Scan(&providerID); err != nil {
+	if err := service.DB.QueryRowContext(ctx, "SELECT provider FROM agent_api_keys WHERE agent_id = ?", agentID).Scan(&providerID); err != nil {
 		return nil
 	}
 	return model.FindProviderSpec(providerID)

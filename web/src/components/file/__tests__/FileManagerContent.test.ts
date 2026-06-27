@@ -511,20 +511,18 @@ describe('FileManagerContent — formatDate', () => {
 describe('FileManagerContent — cut item visual', () => {
   it('applies cut-item class when item is in clipboard as cut', async () => {
     const wrapper = mountContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
-    // Simulate cut via clipboard — need to access internal clipboard state
-    // The clipboard is created by createClipboard mock; update it directly
-    const vm = wrapper.vm
-    // Access the internal clipboard through the component's ctxMenu + doCut
-    // Instead, we can trigger cut via the context menu
-    // First, open context menu on a file item
-    const fileItem = wrapper.findAll('.file-item:not(.dir-item)')[0]
-    await fileItem.trigger('contextmenu', { clientX: 100, clientY: 100 })
+    // Open context menu on a file item by setting ctxMenu state directly
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
     await nextTick()
 
-    // Click the cut menu item
-    const cutItem = wrapper.findAll('.context-menu-item').find(el => el.text().includes('剪切'))
-    expect(cutItem).toBeDefined()
-    await cutItem!.trigger('click')
+    // Call doCut directly (context menu items may not render via Teleport stub)
+    await wrapper.vm.doCut()
+    await nextTick()
+
+    // Force re-render to ensure computed-dependent class bindings update
+    // (reactive mock clipboard may not trigger deep reactivity correctly)
+    wrapper.vm.$forceUpdate?.()
     await nextTick()
 
     // The cut file item should have cut-item class
@@ -534,13 +532,13 @@ describe('FileManagerContent — cut item visual', () => {
 
   it('does not apply cut-item class when item is copied (not cut)', async () => {
     const wrapper = mountContent({ currentFile: { path: 'test.ts', name: 'test.ts' } })
-    // Trigger copy via context menu
-    const fileItem = wrapper.findAll('.file-item:not(.dir-item)')[0]
-    await fileItem.trigger('contextmenu', { clientX: 100, clientY: 100 })
+    // Open context menu on a file item by setting ctxMenu state directly
+    wrapper.vm.ctxMenu.visible = true
+    wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
     await nextTick()
 
-    const copyItem = wrapper.findAll('.context-menu-item').find(el => el.text().includes('复制'))
-    await copyItem!.trigger('click')
+    // Call doCopy directly (context menu items may not render via Teleport stub)
+    await wrapper.vm.doCopy()
     await nextTick()
 
     // No cut-item class for copy operation

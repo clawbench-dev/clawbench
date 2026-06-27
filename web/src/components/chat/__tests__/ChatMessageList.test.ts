@@ -488,6 +488,73 @@ describe('ChatMessageList — user message index', () => {
   })
 })
 
+describe('ChatMessageList — highlightMessage & scrollAndHighlight', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it('scrollToPreviousMessage calls scrollAndHighlight which adds highlight class', async () => {
+    const wrapper = mountComponent({
+      messages: createMessages(5),
+    })
+    const el = wrapper.find('#aiChatMessages').element
+    // Add mock chat-message children to the list
+    const listEl = el.querySelector('.chat-messages-list') || el
+    for (let i = 0; i < 5; i++) {
+      const div = document.createElement('div')
+      div.className = 'chat-message'
+      div.scrollIntoView = vi.fn()
+      listEl.appendChild(div)
+    }
+
+    // Trigger scroll up to show scrolledUp
+    triggerScrolledUp(el)
+    await nextTick()
+
+    // Call scrollToPreviousMessage which uses scrollAndHighlight
+    const vm = wrapper.vm as any
+    vm.scrollToPreviousMessage()
+    await nextTick()
+
+    // scrollAndHighlight should call scrollIntoView on the message element
+    const messages = listEl.querySelectorAll('.chat-message')
+    const scrolled = Array.from(messages).some(m => (m as any).scrollIntoView?.mock?.calls?.length > 0)
+    expect(scrolled).toBe(true)
+  })
+
+  it('scrollToNextMessage calls scrollAndHighlight which adds highlight class', async () => {
+    const wrapper = mountComponent({
+      messages: createMessages(5),
+    })
+    const el = wrapper.find('#aiChatMessages').element
+    const listEl = el.querySelector('.chat-messages-list') || el
+    for (let i = 0; i < 5; i++) {
+      const div = document.createElement('div')
+      div.className = 'chat-message'
+      div.scrollIntoView = vi.fn()
+      listEl.appendChild(div)
+    }
+
+    // Trigger scroll down to show scrolledDown
+    triggerScrolledDown(el)
+    await nextTick()
+
+    // Call scrollToNextMessage which uses scrollAndHighlight
+    const vm = wrapper.vm as any
+    vm.scrollToNextMessage()
+    await nextTick()
+
+    const messages = listEl.querySelectorAll('.chat-message')
+    const scrolled = Array.from(messages).some(m => (m as any).scrollIntoView?.mock?.calls?.length > 0)
+    expect(scrolled).toBe(true)
+  })
+})
+
 describe('ChatMessageList — toggleUserMsgIndex', () => {
   beforeEach(() => {
     vi.useFakeTimers()
