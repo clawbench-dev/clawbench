@@ -318,6 +318,13 @@ const isLastBlockThinking = computed(() => {
 const collapsingThinking = ref({})   // { [blockIndex]: true } for blocks mid-collapse
 const collapsingMaxHeight = ref({})  // { [blockIndex]: maxHeightPx } for animation
 let _collapseElRefs = {}             // { [blockIndex]: HTMLElement } tracked during streaming
+let _collapseTimers = []             // setTimeout IDs for collapse animation (cleaned up on unmount)
+
+// Collapse animation constants — must stay in sync with CSS
+const COLLAPSED_CHIP_HEIGHT = 28     // px — matches .thinking-collapsed { max-height: 28px }
+const COLLAPSE_READ_DELAY = 3000     // ms — time to read thinking output before collapsing
+const COLLAPSE_TRANSITION_MS = 400   // ms — must match CSS transition-duration + buffer
+const COLLAPSE_PLACEHOLDER_MAX = 99999 // large sentinel to keep content visible during nextTick
 
 /** Track thinking block element refs during streaming for collapse animation. */
 function setThinkingRef(bi, el) {
@@ -443,83 +450,142 @@ watch(() => props.streaming, (streaming, wasStreaming) => {
   if (wasStreaming && !streaming) {
     if (_throttleTimer) { clearTimeout(_throttleTimer); _throttleTimer = null }
     _throttlePending = false
-    blockHtmlCache.value = {}
-    // Snapshot element refs and measure heights before Vue clears them
+    // Snapshot element refs before Vue clears them
     // (isThinkingStreaming becomes false → :ref becomes undefined → ref cleared).
-    // Set collapsing state immediately so the template renders with maxHeight override
-    // instead of the 28px collapsed CSS, preventing a flash.
     const refSnapshot = { ..._collapseElRefs }
-    const newCollapsing = {}
-    const newMaxHeights = {}
-    for (const idxStr of Object.keys(refSnapshot)) {
-      const el = refSnapshot[idxStr]
-      if (el && el.scrollHeight) {
-        newCollapsing[idxStr] = true
-        newMaxHeights[idxStr] = el.scrollHeight
-      }
-    }
     _collapseElRefs = {}
-    if (Object.keys(newCollapsing).length > 0) {
-      collapsingThinking.value = newCollapsing
-      collapsingMaxHeight.value = newMaxHeights
-      // Delay before starting collapse animation so user can read the thinking output
-      setTimeout(() => {
-        const updatedMaxHeights = {}
-        Object.keys(newCollapsing).forEach(idx => {
-          updatedMaxHeights[idx] = 28 // header-only height
-        })
-        collapsingMaxHeight.value = updatedMaxHeights
-        // After transition completes, clean up animation state
-        setTimeout(() => {
-          collapsingThinking.value = {}
-          collapsingMaxHeight.value = {}
-        }, 400) // match CSS transition duration
-      }, 3000)
+    // Only process blocks not already being collapsed by Trigger B (thinking_done)
+    const collapsingKeys = Object.keys(refSnapshot).filter(
+      idxStr => !collapsingThinking.value[idxStr]
+    )
+    if (collapsingKeys.length > 0) {
+      // Immediately mark as "collapsing" with a large maxHeight so the template
+      // keeps showing inline content and doesn't flash to the 28px collapsed chip.
+      const placeholderCollapsing = {}
+      const placeholderMaxHeight = {}
+      for (const idxStr of collapsingKeys) {
+        placeholderCollapsing[idxStr] = true
+        placeholderMaxHeight[idxStr] = COLLAPSE_PLACEHOLDER_MAX
+      }
+      Object.assign(collapsingThinking.value, placeholderCollapsing)
+      Object.assign(collapsingMaxHeight.value, placeholderMaxHeight)
     }
+    // Clear throttle cache and force a full re-render of thinking HTML
+    // so the DOM reflects the complete block.text before we measure scrollHeight.
+    // Without this, scrollHeight may reflect stale throttled HTML (up to 300ms old),
+    // causing the collapse animation to clip the bottom of the content.
+    blockHtmlCache.value = {}
+    // Wait for Vue to flush the DOM with complete content, then measure heights.
+    nextTick(() => {
+      const newCollapsing = {}
+      const newMaxHeights = {}
+      for (const idxStr of collapsingKeys) {
+        const el = refSnapshot[idxStr]
+        // el.isConnected: defensive check — element must still be in the document
+        if (el && el.isConnected && el.scrollHeight) {
+          newCollapsing[idxStr] = true
+          newMaxHeights[idxStr] = el.scrollHeight
+        }
+      }
+      if (Object.keys(newCollapsing).length > 0) {
+        Object.assign(collapsingThinking.value, newCollapsing)
+        Object.assign(collapsingMaxHeight.value, newMaxHeights)
+        // Delay before starting collapse animation so user can read the thinking output
+        const t1 = setTimeout(() => {
+          const updatedMaxHeights = {}
+          Object.keys(newCollapsing).forEach(idx => {
+            updatedMaxHeights[idx] = COLLAPSED_CHIP_HEIGHT
+          })
+          Object.assign(collapsingMaxHeight.value, updatedMaxHeights)
+          // After transition completes, clean up animation state
+          const t2 = setTimeout(() => {
+            for (const idx of Object.keys(newCollapsing)) {
+              delete collapsingThinking.value[idx]
+              delete collapsingMaxHeight.value[idx]
+            }
+          }, COLLAPSE_TRANSITION_MS)
+          _collapseTimers.push(t2)
+        }, COLLAPSE_READ_DELAY)
+        _collapseTimers.push(t1)
+      } else {
+        // No measurable elements — clean up placeholder state
+        for (const idxStr of collapsingKeys) {
+          delete collapsingThinking.value[idxStr]
+          delete collapsingMaxHeight.value[idxStr]
+        }
+      }
+    })
   }
 })
 
 // Watch for thinking blocks that become "done" mid-stream (via thinking_done SSE event).
 // This triggers the collapse animation immediately instead of waiting for streaming to end.
-watch(() => props.blocks.filter(b => b.type === 'thinking' && b.done).map(b => b.done), (newDones, oldDones) => {
+watch(() => props.blocks.filter(b => b.type === 'thinking' && b.done).map(b => b.done), (_newDones, _oldDones) => {
   if (!props.streaming) return // Only relevant during streaming
-  // Find thinking blocks that just became done (newly true)
-  const newCollapsing = {}
-  const newMaxHeights = {}
-  let changed = false
+  // Find thinking blocks that just became done (newly true), not already collapsing
+  const refSnapshot = {}
   for (let i = 0; i < props.blocks.length; i++) {
     const block = props.blocks[i]
     if (block.type === 'thinking' && block.done) {
       const el = _collapseElRefs[i]
-      if (el && el.scrollHeight && !collapsingThinking.value[i]) {
-        newCollapsing[i] = true
-        newMaxHeights[i] = el.scrollHeight
-        changed = true
+      if (el && !collapsingThinking.value[i]) {
+        refSnapshot[i] = el
+        delete _collapseElRefs[i]
       }
     }
   }
-  if (changed) {
-    // Remove from refs so they don't get double-collapsed
-    for (const idx of Object.keys(newCollapsing)) {
-      delete _collapseElRefs[idx]
-    }
-    Object.assign(collapsingThinking.value, newCollapsing)
-    Object.assign(collapsingMaxHeight.value, newMaxHeights)
-    // Delay before starting collapse animation so user can read the thinking output
-    setTimeout(() => {
-      const updatedMaxHeights = {}
-      Object.keys(newCollapsing).forEach(idx => {
-        updatedMaxHeights[idx] = 28
-      })
-      Object.assign(collapsingMaxHeight.value, updatedMaxHeights)
-      setTimeout(() => {
-        for (const idx of Object.keys(newCollapsing)) {
-          delete collapsingThinking.value[idx]
-          delete collapsingMaxHeight.value[idx]
-        }
-      }, 400)
-    }, 3000)
+  const collapsingKeys = Object.keys(refSnapshot)
+  if (collapsingKeys.length === 0) return
+  // Immediately mark as collapsing with placeholder maxHeight to prevent
+  // flash to 28px collapsed chip while we wait for nextTick.
+  const placeholderCollapsing = {}
+  const placeholderMaxHeight = {}
+  for (const idxStr of collapsingKeys) {
+    placeholderCollapsing[idxStr] = true
+    placeholderMaxHeight[idxStr] = COLLAPSE_PLACEHOLDER_MAX
   }
+  Object.assign(collapsingThinking.value, placeholderCollapsing)
+  Object.assign(collapsingMaxHeight.value, placeholderMaxHeight)
+  // Clear throttle cache so DOM re-renders with complete thinking content
+  blockHtmlCache.value = {}
+  // Wait for Vue to flush DOM, then measure scrollHeight of complete content
+  nextTick(() => {
+    const newCollapsing = {}
+    const newMaxHeights = {}
+    for (const idxStr of collapsingKeys) {
+      const el = refSnapshot[idxStr]
+      if (el && el.isConnected && el.scrollHeight) {
+        newCollapsing[idxStr] = true
+        newMaxHeights[idxStr] = el.scrollHeight
+      }
+    }
+    if (Object.keys(newCollapsing).length > 0) {
+      Object.assign(collapsingThinking.value, newCollapsing)
+      Object.assign(collapsingMaxHeight.value, newMaxHeights)
+      // Delay before starting collapse animation so user can read the thinking output
+      const t1 = setTimeout(() => {
+        const updatedMaxHeights = {}
+        Object.keys(newCollapsing).forEach(idx => {
+          updatedMaxHeights[idx] = COLLAPSED_CHIP_HEIGHT
+        })
+        Object.assign(collapsingMaxHeight.value, updatedMaxHeights)
+        const t2 = setTimeout(() => {
+          for (const idx of Object.keys(newCollapsing)) {
+            delete collapsingThinking.value[idx]
+            delete collapsingMaxHeight.value[idx]
+          }
+        }, COLLAPSE_TRANSITION_MS)
+        _collapseTimers.push(t2)
+      }, COLLAPSE_READ_DELAY)
+      _collapseTimers.push(t1)
+    } else {
+      // No measurable elements — clean up placeholder state
+      for (const idxStr of collapsingKeys) {
+        delete collapsingThinking.value[idxStr]
+        delete collapsingMaxHeight.value[idxStr]
+      }
+    }
+  })
 })
 
 // Reset cache when panel becomes active — allows re-render with fresh markdown
@@ -533,6 +599,8 @@ watch(() => props.active, (active) => {
 
 onUnmounted(() => {
   if (_throttleTimer) { clearTimeout(_throttleTimer); _throttleTimer = null }
+  _collapseTimers.forEach(t => clearTimeout(t))
+  _collapseTimers = []
 })
 </script>
 

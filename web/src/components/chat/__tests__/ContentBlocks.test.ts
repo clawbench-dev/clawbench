@@ -1,5 +1,6 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 import ContentBlocks from '@/components/chat/ContentBlocks.vue'
 
@@ -361,6 +362,102 @@ describe('ContentBlocks', () => {
       const summaryDiv = wrapper.find('[v-show]')
       // The original content should be visible
       expect(wrapper.html()).toContain('Original content')
+    })
+  })
+
+  // ── Thinking block collapse animation ──
+
+  describe('thinking block collapse animation', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('does not set collapse state when streaming ends with no thinking blocks', async () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'text', text: 'Hello' }],
+        streaming: true,
+      })
+
+      await wrapper.setProps({ streaming: false })
+      await nextTick()
+
+      const thinking = wrapper.find('.chat-thinking')
+      expect(thinking.exists()).toBe(false)
+    })
+
+    it('transitions from streaming to collapsed when streaming ends', async () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'thinking', text: 'Deep thought content', done: false }],
+        streaming: true,
+      })
+
+      // The thinking block should have streaming class
+      expect(wrapper.find('.chat-thinking').classes()).toContain('thinking-streaming')
+
+      // End streaming — triggers collapse animation
+      await wrapper.setProps({ streaming: false })
+      await nextTick()
+
+      // After streaming ends, block should NOT have thinking-streaming anymore
+      const thinking = wrapper.find('.chat-thinking')
+      expect(thinking.classes()).not.toContain('thinking-streaming')
+      // Should have thinking-collapsed (CSS class when not streaming)
+      expect(thinking.classes()).toContain('thinking-collapsed')
+    })
+
+    it('transitions to collapsed chip when thinking_done fires mid-stream', async () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'thinking', text: 'Thinking...', done: false }],
+        streaming: true,
+      })
+
+      expect(wrapper.find('.chat-thinking').classes()).toContain('thinking-streaming')
+
+      // Simulate thinking_done: set block.done = true
+      await wrapper.setProps({
+        blocks: [{ type: 'thinking', text: 'Thinking complete', done: true }],
+      })
+      await nextTick()
+
+      // Should no longer be streaming (done=true overrides streaming prop)
+      const thinking = wrapper.find('.chat-thinking')
+      expect(thinking.classes()).not.toContain('thinking-streaming')
+      // Should have thinking-collapsed or thinking-collapsing
+      expect(
+        thinking.classes().includes('thinking-collapsed') ||
+        thinking.classes().includes('thinking-collapsing')
+      ).toBe(true)
+    })
+
+    it('cleans up timers on unmount to prevent leaks', async () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'thinking', text: 'Deep thought', done: false }],
+        streaming: true,
+      })
+
+      await wrapper.setProps({ streaming: false })
+      await nextTick()
+
+      // Unmount before timers fire — should not throw
+      wrapper.unmount()
+
+      // Advance all timers — should not cause Vue warnings or errors
+      vi.advanceTimersByTime(10000)
+    })
+
+    it('shows thinking-collapsed class when not streaming and done', () => {
+      // Static state: not streaming, block done — should show collapsed chip
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'thinking', text: 'Final thought', done: true }],
+        streaming: false,
+      })
+      const thinking = wrapper.find('.chat-thinking')
+      expect(thinking.classes()).toContain('thinking-collapsed')
+      expect(thinking.classes()).not.toContain('thinking-streaming')
     })
   })
 })
