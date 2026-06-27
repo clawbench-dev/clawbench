@@ -2221,3 +2221,40 @@ func TestApplyHotReloadGlobals_TTSSpeed_Piper(t *testing.T) {
 	p := speechProvider.(*speech.PiperProvider)
 	assert.InDelta(t, 0.5, p.LengthScale, 0.01)
 }
+
+func TestServeConfig_Get_RequireAuthForLocalhost(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.RequireAuthForLocalhost = true
+
+	req := newRequest(t, http.MethodGet, "/api/config", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.NoError(t, err)
+	assert.Equal(t, true, resp["require_auth_for_localhost"])
+}
+
+func TestServeConfig_Patch_RequireAuthForLocalhost(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.RequireAuthForLocalhost = false
+
+	body := `{"require_auth_for_localhost":true}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, model.ConfigInstance.RequireAuthForLocalhost)
+	assert.True(t, model.RequireAuthForLocalhost)
+}
