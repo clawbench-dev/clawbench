@@ -869,6 +869,7 @@ defineExpose({
   onQuickSendTouchEnd,
   cancelQuickSendPress,
   quickSendPressingId,
+  closeAcpSessionDrawer: () => { showAcpSessionDrawer.value = false },
 })
 </script>
 

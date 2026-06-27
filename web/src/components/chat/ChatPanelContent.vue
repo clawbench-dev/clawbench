@@ -477,6 +477,9 @@ watch(() => props.active, async (val) => {
   if (!val) {
     identity.sessionDrawerOpen.value = false
     toolDetailOverlay.value.show = false
+    messageListRef.value?.closeUserMsgIndex()
+    inputBarRef.value?.closeAcpSessionDrawer()
+    ragDetailItem.value = null
   } else {
     // Open/Re-open: load history (with overlay) and fix stale layout state from v-show display:none
     await session.loadHistory(false, true)

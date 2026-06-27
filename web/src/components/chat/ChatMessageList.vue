@@ -560,6 +560,7 @@ defineExpose({
   isAtBottom: () => isAtBottom.value,
   scrolledUp,
   scrolledDown,
+  closeUserMsgIndex,
 })
 </script>
 
