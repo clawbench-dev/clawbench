@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"clawbench/internal/model"
 )
 
 // CLIBackend is a generic AI backend that shells out to a CLI tool and streams
@@ -57,6 +59,15 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 	cmdName := req.Command
 	if cmdName == "" {
 		cmdName = b.Cmd
+	}
+	// Resolve embedded binary path for bare command names (e.g. "opencode")
+	// that aren't found in $PATH but exist under .clawbench/{subDir}/.
+	if !strings.Contains(cmdName, "/") {
+		if spec := model.FindBackendSpecByDefaultCmd(cmdName); spec != nil && spec.EmbeddedSubDir != "" {
+			if p := model.EmbeddedBinaryPath(spec.EmbeddedSubDir); p != "" {
+				cmdName = p
+			}
+		}
 	}
 	cmd := exec.CommandContext(ctx, cmdName, args...)
 	cmd.Dir = req.WorkDir

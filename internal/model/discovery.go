@@ -94,7 +94,7 @@ func CheckCLIExists(cmd string) bool {
 	}
 
 	// Check for embedded binary (e.g. .clawbench/pi/pi)
-	if spec := findSpecByDefaultCmd(cmd); spec != nil && spec.EmbeddedSubDir != "" {
+	if spec := FindBackendSpecByDefaultCmd(cmd); spec != nil && spec.EmbeddedSubDir != "" {
 		if EmbeddedBinaryPath(spec.EmbeddedSubDir) != "" {
 			return true
 		}
@@ -131,7 +131,7 @@ func CheckCLIExistsErr(cmd string) error {
 	}
 
 	// Check for embedded binary
-	if spec := findSpecByDefaultCmd(cmd); spec != nil && spec.EmbeddedSubDir != "" {
+	if spec := FindBackendSpecByDefaultCmd(cmd); spec != nil && spec.EmbeddedSubDir != "" {
 		if EmbeddedBinaryPath(spec.EmbeddedSubDir) != "" {
 			return nil
 		}
@@ -182,8 +182,8 @@ func FindSpecByBackend(backend string) *BackendSpec {
 	return nil
 }
 
-// findSpecByDefaultCmd returns the BackendSpec whose DefaultCmd matches, or nil.
-func findSpecByDefaultCmd(cmd string) *BackendSpec {
+// FindBackendSpecByDefaultCmd returns the BackendSpec whose DefaultCmd matches, or nil.
+func FindBackendSpecByDefaultCmd(cmd string) *BackendSpec {
 	registry := GetBackendRegistry()
 	for i := range registry {
 		if registry[i].DefaultCmd == cmd {

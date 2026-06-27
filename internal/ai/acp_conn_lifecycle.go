@@ -11,6 +11,8 @@ import (
 	"time"
 
 	acp "github.com/coder/acp-go-sdk"
+
+	"clawbench/internal/model"
 )
 
 // ---------------------------------------------------------------------------
@@ -278,6 +280,8 @@ func (c *ACPConn) killProcessLocked() {
 }
 
 // spawnLocked spawns the agent process and initializes the connection (must hold c.mu).
+//
+//nolint:gocyclo // complex spawn logic with multiple sequential setup steps
 func (c *ACPConn) spawnLocked(ctx context.Context) error {
 	// Kill any existing process first
 	if c.cmd != nil && c.cmd.Process != nil {
@@ -312,6 +316,15 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 
 	cmdName := cmdParts[0]
 	cmdArgs := cmdParts[1:]
+
+	// Resolve embedded binary path for bare command names (e.g. "opencode acp" → use embedded opencode binary).
+	if !strings.Contains(cmdName, "/") {
+		if spec := model.FindBackendSpecByDefaultCmd(cmdName); spec != nil && spec.EmbeddedSubDir != "" {
+			if p := model.EmbeddedBinaryPath(spec.EmbeddedSubDir); p != "" {
+				cmdName = p
+			}
+		}
+	}
 
 	cmd := exec.CommandContext(context.Background(), cmdName, cmdArgs...)
 	cmd.Dir = c.cwd // project working directory for this ACP session
