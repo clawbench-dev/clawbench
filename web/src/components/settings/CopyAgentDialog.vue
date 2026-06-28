@@ -18,15 +18,15 @@
       <div v-if="error" class="copy-agent-dialog__error">{{ error }}</div>
 
       <div class="copy-agent-dialog__actions">
-        <button class="copy-agent-dialog__btn copy-agent-dialog__btn--cancel" @click="handleClose" :disabled="submitting">
+        <button class="copy-agent-dialog__btn copy-agent-dialog__btn--cancel" @click="handleClose">
           {{ t('common.cancel') }}
         </button>
         <button
           class="copy-agent-dialog__btn copy-agent-dialog__btn--submit"
-          :disabled="!newName.trim() || submitting"
+          :disabled="!newName.trim()"
           @click="submit"
         >
-          {{ submitting ? '…' : t('settings.items.agentCopyConfirm') }}
+          {{ t('settings.items.agentCopyConfirm') }}
         </button>
       </div>
     </div>
@@ -49,7 +49,6 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 const newName = ref('')
-const submitting = ref(false)
 const error = ref('')
 const nameInputRef = ref<HTMLInputElement | null>(null)
 
@@ -58,21 +57,17 @@ onMounted(() => {
   nextTick(() => nameInputRef.value?.focus())
 })
 
-async function submit() {
+function submit() {
   const trimmed = newName.value.trim()
   if (!trimmed) {
     error.value = t('settings.items.agentCopyEmptyName')
     return
   }
   error.value = ''
-  submitting.value = true
   emit('confirmed', trimmed)
-  // Parent will call handleClose after API succeeds/fails
-  submitting.value = false
 }
 
 function handleClose() {
-  if (submitting.value) return
   emit('close')
 }
 </script>

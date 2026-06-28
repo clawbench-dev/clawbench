@@ -232,14 +232,14 @@ func serveAgentsDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	configMutex.Lock()
+	defer configMutex.Unlock()
+
 	// Cannot delete the default agent
 	if req.ID == model.GetDefaultAgentID() {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "CannotDeleteDefaultAgent")
 		return
 	}
-
-	configMutex.Lock()
-	defer configMutex.Unlock()
 
 	agent, ok := model.Agents[req.ID]
 	if !ok {

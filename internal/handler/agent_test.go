@@ -284,7 +284,7 @@ func TestAgentPatch_NoID(t *testing.T) {
 func TestAgentPatch_MethodNotAllowed(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
-	req := newRequest(t, http.MethodDelete, "/api/agents", nil)
+	req := newRequest(t, http.MethodPut, "/api/agents", nil)
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeAgents, req)
 
