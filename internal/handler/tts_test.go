@@ -89,14 +89,14 @@ func setupTTSTest(t *testing.T, mockProvider *mockSpeechProvider, mockSum *mockS
 	env, envTeardown := setupTestEnv(t)
 
 	// Save and replace the global speech provider and summarizer
-	origProvider := speechProvider
-	origSummarizer := summarizer
-	speechProvider = mockProvider
-	summarizer = mockSum
+	origProvider := GetSpeechProvider()
+	origSummarizer := GetSummarizer()
+	SetSpeechProvider(mockProvider)
+	SetSummarizer(mockSum)
 
 	teardown := func() {
-		speechProvider = origProvider
-		summarizer = origSummarizer
+		SetSpeechProvider(origProvider)
+		SetSummarizer(origSummarizer)
 		envTeardown()
 	}
 
@@ -346,25 +346,25 @@ func TestTTSGenerate_CacheKeyDeterministic(t *testing.T) {
 // --- SetSpeechProvider and SetSummarizer ---
 
 func TestSetSpeechProvider(t *testing.T) {
-	origProvider := speechProvider
-	defer func() { speechProvider = origProvider }()
+	origProvider := GetSpeechProvider()
+	defer SetSpeechProvider(origProvider)
 
 	mock := &mockSpeechProvider{}
 	SetSpeechProvider(mock)
 
 	// Verify the global was replaced
-	assert.Equal(t, speechProvider, mock)
+	assert.Equal(t, GetSpeechProvider(), mock)
 }
 
 func TestSetSummarizer(t *testing.T) {
-	origSum := summarizer
-	defer func() { summarizer = origSum }()
+	origSum := GetSummarizer()
+	defer SetSummarizer(origSum)
 
 	mock := &mockSummarizer{}
 	SetSummarizer(mock)
 
 	// Verify the global was replaced
-	assert.Equal(t, summarizer, mock)
+	assert.Equal(t, GetSummarizer(), mock)
 }
 
 // --- ensure mockSummarizer satisfies Summarizer interface ---

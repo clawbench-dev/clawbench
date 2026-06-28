@@ -102,9 +102,9 @@ describe('SettingsPage', () => {
     expect(wrapper.find('.settings-page__header-icon').exists()).toBe(false)
   })
 
-  it('shows restart button in footer', () => {
+  it('does not show restart button when no restart is needed', () => {
     const wrapper = mountPage()
-    expect(wrapper.find('.settings-restart-btn').exists()).toBe(true)
+    expect(wrapper.find('.settings-restart-btn').exists()).toBe(false)
   })
 
   it('resets nav stack when becoming active', async () => {
@@ -125,44 +125,29 @@ describe('SettingsPage', () => {
     expect(wrapper.find('.settings-page__back').exists()).toBe(false)
   })
 
-  it('shows restart-pending style when needsRestart is true', async () => {
+  it('shows restart button only when needsRestart is true', async () => {
     needsRestart.value = false
     const wrapper = mountPage()
 
-    expect(wrapper.find('.settings-restart-btn--pending').exists()).toBe(false)
-    expect(wrapper.find('.settings-restart-btn--idle').exists()).toBe(true)
+    // Footer should not render when no restart needed
+    expect(wrapper.find('.settings-page__footer').exists()).toBe(false)
+    expect(wrapper.find('.settings-restart-btn').exists()).toBe(false)
 
     needsRestart.value = true
     wrapper.vm.$forceUpdate()
     await nextTick()
 
+    // Footer and pending button should appear
+    expect(wrapper.find('.settings-page__footer').exists()).toBe(true)
     expect(wrapper.find('.settings-restart-btn--pending').exists()).toBe(true)
-    expect(wrapper.find('.settings-restart-btn--idle').exists()).toBe(false)
   })
 
-  it('shows idle class on restart button when no changes need restart', () => {
-    needsRestart.value = false
-    restarting.value = false
-    const wrapper = mountPage()
-
-    const btn = wrapper.find('.settings-restart-btn')
-    expect(btn.classes()).toContain('settings-restart-btn--idle')
-    expect(btn.classes()).not.toContain('settings-restart-btn--pending')
-  })
-
-  it('removes idle class and adds pending class when needsRestart becomes true', async () => {
-    needsRestart.value = false
-    const wrapper = mountPage()
-
-    const btn = wrapper.find('.settings-restart-btn')
-    expect(btn.classes()).toContain('settings-restart-btn--idle')
-
+  it('shows pending class on restart button when needsRestart is true', async () => {
     needsRestart.value = true
-    wrapper.vm.$forceUpdate()
-    await nextTick()
+    const wrapper = mountPage()
 
+    const btn = wrapper.find('.settings-restart-btn')
     expect(btn.classes()).toContain('settings-restart-btn--pending')
-    expect(btn.classes()).not.toContain('settings-restart-btn--idle')
   })
 
   it('renders as a full page layout', () => {
@@ -171,7 +156,8 @@ describe('SettingsPage', () => {
     expect(wrapper.find('.settings-page').exists()).toBe(true)
     expect(wrapper.find('.settings-page__header').exists()).toBe(true)
     expect(wrapper.find('.settings-page__body').exists()).toBe(true)
-    expect(wrapper.find('.settings-page__footer').exists()).toBe(true)
+    // Footer only renders when needsRestart is true
+    expect(wrapper.find('.settings-page__footer').exists()).toBe(false)
   })
 
   it('shows header with title and version on index page', () => {

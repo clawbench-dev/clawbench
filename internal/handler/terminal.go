@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
@@ -14,16 +15,31 @@ import (
 )
 
 // terminalMgr is set via SetTerminalManager during startup.
+// Access is protected by terminalMgrMu for hot-reload safety.
 var terminalMgr *terminal.Manager
+var terminalMgrMu sync.RWMutex
 
 // SetTerminalManager sets the terminal manager for handlers.
+// Goroutine-safe: concurrent handler reads are protected by RWMutex.
 func SetTerminalManager(m *terminal.Manager) {
+	terminalMgrMu.Lock()
 	terminalMgr = m
+	terminalMgrMu.Unlock()
+}
+
+// GetTerminalManager returns the current terminal manager (may be nil if disabled).
+// Goroutine-safe for concurrent reads.
+func GetTerminalManager() *terminal.Manager {
+	terminalMgrMu.RLock()
+	m := terminalMgr
+	terminalMgrMu.RUnlock()
+	return m
 }
 
 // TerminalWebSocket handles WebSocket connections for the interactive terminal.
 func TerminalWebSocket(w http.ResponseWriter, r *http.Request) {
-	if terminalMgr == nil || !terminalMgr.IsEnabled() {
+	mgr := GetTerminalManager()
+	if mgr == nil || !mgr.IsEnabled() {
 		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "TerminalDisabled")
 		return
 	}
@@ -49,7 +65,7 @@ func TerminalWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Get optional session ID for reconnect
 	sessionID := r.URL.Query().Get("session")
 
-	if err := terminalMgr.HandleWebSocket(w, r, projectPath, cwd, sessionID); err != nil {
+	if err := mgr.HandleWebSocket(w, r, projectPath, cwd, sessionID); err != nil {
 		slog.Error("terminal: websocket handler error", slog.String("error", err.Error()))
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "TerminalError")
 	}
@@ -57,7 +73,8 @@ func TerminalWebSocket(w http.ResponseWriter, r *http.Request) {
 
 // TerminalStatus returns the current terminal session status.
 func TerminalStatus(w http.ResponseWriter, r *http.Request) {
-	if terminalMgr == nil {
+	mgr := GetTerminalManager()
+	if mgr == nil {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"enabled": false,
 		})
@@ -66,9 +83,9 @@ func TerminalStatus(w http.ResponseWriter, r *http.Request) {
 
 	// If session ID is specified, return that session's status
 	if sessionID := r.URL.Query().Get("session"); sessionID != "" {
-		found, cwd, running := terminalMgr.SessionStatus(sessionID)
+		found, cwd, running := mgr.SessionStatus(sessionID)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"enabled":    terminalMgr.IsEnabled(),
+			"enabled":    mgr.IsEnabled(),
 			"hasSession": found,
 			"sessionId":  sessionID,
 			"cwd":        cwd,
@@ -78,26 +95,27 @@ func TerminalStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// No session ID — return all sessions
-	sessions := terminalMgr.AllSessionStatus()
+	sessions := mgr.AllSessionStatus()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled":       terminalMgr.IsEnabled(),
+		"enabled":       mgr.IsEnabled(),
 		"sessions":      sessions,
-		"session_count": terminalMgr.SessionCount(),
+		"session_count": mgr.SessionCount(),
 	})
 }
 
 // TerminalClose closes the current terminal session.
 func TerminalClose(w http.ResponseWriter, r *http.Request) {
-	if terminalMgr == nil || !terminalMgr.IsEnabled() {
+	mgr := GetTerminalManager()
+	if mgr == nil || !mgr.IsEnabled() {
 		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "TerminalDisabled")
 		return
 	}
 
 	// If session ID is specified, close only that session
 	if sessionID := r.URL.Query().Get("session"); sessionID != "" {
-		terminalMgr.CloseSessionByID(sessionID)
+		mgr.CloseSessionByID(sessionID)
 	} else {
-		terminalMgr.CloseAllSessions()
+		mgr.CloseAllSessions()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"success": true,
@@ -106,14 +124,15 @@ func TerminalClose(w http.ResponseWriter, r *http.Request) {
 
 // TerminalConfigHandler returns the terminal configuration for the frontend.
 func TerminalConfigHandler(w http.ResponseWriter, r *http.Request) {
-	if terminalMgr == nil {
+	mgr := GetTerminalManager()
+	if mgr == nil {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"enabled": false,
 		})
 		return
 	}
 
-	cfg := terminalMgr.Config()
+	cfg := mgr.Config()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"enabled": cfg.Enabled,
 	})

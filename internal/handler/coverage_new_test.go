@@ -834,10 +834,10 @@ func TestServeGitVerifyCommits_WrongMethod(t *testing.T) {
 // TestSetPushClient_SetsRef removed — trivial setter test that only verifies Go assignment syntax
 
 func TestServePushConfig_NoClient(t *testing.T) {
-	origRef := pushClientRef
-	defer func() { pushClientRef = origRef }()
+	origRef := GetPushClient()
+	defer SetPushClient(origRef)
 
-	pushClientRef = nil
+	SetPushClient(nil)
 
 	req := newRequest(t, http.MethodGet, "/api/push/config", nil)
 	w := callHandler(ServePushConfig, req)
@@ -850,14 +850,14 @@ func TestServePushConfig_NoClient(t *testing.T) {
 }
 
 func TestServePushConfig_DisabledClient(t *testing.T) {
-	origRef := pushClientRef
-	defer func() { pushClientRef = origRef }()
+	origRef := GetPushClient()
+	defer SetPushClient(origRef)
 
-	pushClientRef = push.NewJPushClient(model.JPushConfig{
+	SetPushClient(push.NewJPushClient(model.JPushConfig{
 		Enabled:      false,
 		AppKey:       "test-key",
 		MasterSecret: "test-secret",
-	})
+	}))
 
 	req := newRequest(t, http.MethodGet, "/api/push/config", nil)
 	w := callHandler(ServePushConfig, req)
@@ -869,14 +869,14 @@ func TestServePushConfig_DisabledClient(t *testing.T) {
 }
 
 func TestServePushConfig_EnabledClient(t *testing.T) {
-	origRef := pushClientRef
-	defer func() { pushClientRef = origRef }()
+	origRef := GetPushClient()
+	defer SetPushClient(origRef)
 
-	pushClientRef = push.NewJPushClient(model.JPushConfig{
+	SetPushClient(push.NewJPushClient(model.JPushConfig{
 		Enabled:      true,
 		AppKey:       "test-app-key-123",
 		MasterSecret: "test-master-secret",
-	})
+	}))
 
 	req := newRequest(t, http.MethodGet, "/api/push/config", nil)
 	w := callHandler(ServePushConfig, req)
@@ -1666,9 +1666,9 @@ func TestWriteDiffResponse_WithGitError(t *testing.T) {
 // ============================================================================
 
 func TestTerminalWebSocket_NilManager(t *testing.T) {
-	origMgr := terminalMgr
-	defer func() { terminalMgr = origMgr }()
-	terminalMgr = nil
+	origMgr := GetTerminalManager()
+	defer SetTerminalManager(origMgr)
+	SetTerminalManager(nil)
 
 	req := newRequest(t, http.MethodGet, "/api/terminal/ws", nil)
 	w := callHandler(TerminalWebSocket, req)
@@ -1676,12 +1676,13 @@ func TestTerminalWebSocket_NilManager(t *testing.T) {
 }
 
 func TestTerminalWebSocket_NoProjectCookie(t *testing.T) {
-	origMgr := terminalMgr
+	origMgr := GetTerminalManager()
 	defer func() {
-		if terminalMgr != nil && terminalMgr != origMgr {
-			terminalMgr.Close()
+		curMgr := GetTerminalManager()
+		if curMgr != nil && curMgr != origMgr {
+			curMgr.Close()
 		}
-		terminalMgr = origMgr
+		SetTerminalManager(origMgr)
 	}()
 
 	SetTerminalManager(terminal.NewManager(model.TerminalConfig{

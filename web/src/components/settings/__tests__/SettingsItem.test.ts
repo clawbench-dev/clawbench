@@ -58,14 +58,12 @@ describe('SettingsItem', () => {
     })
 
     expect(wrapper.find('.settings-item__value').text()).toBe('Dark')
-    expect(wrapper.find('.settings-item__arrow').exists()).toBe(true)
   })
 
   it('renders number type with value displayed', () => {
     const wrapper = mountItem({ type: 'number', modelValue: 42 })
 
     expect(wrapper.find('.settings-item__value').text()).toBe('42')
-    expect(wrapper.find('.settings-item__arrow').exists()).toBe(true)
   })
 
   it('renders needsRestart badge when true', () => {

@@ -20,10 +20,10 @@ var _ = json.Marshal // ensure json is used
 
 func TestTerminalConfigRouteRequiresAuth(t *testing.T) {
 	origToken := model.SessionToken
-	origMgr := terminalMgr
+	origMgr := GetTerminalManager()
 	t.Cleanup(func() {
 		model.SessionToken = origToken
-		terminalMgr = origMgr
+		SetTerminalManager(origMgr)
 	})
 
 	model.SessionToken = "test-token"
@@ -43,12 +43,13 @@ func TestTerminalConfigRouteRequiresAuth(t *testing.T) {
 }
 
 func TestTerminalWebSocketRejectsInvalidCwdBeforeUpgrade(t *testing.T) {
-	origMgr := terminalMgr
+	origMgr := GetTerminalManager()
 	t.Cleanup(func() {
-		if terminalMgr != nil && terminalMgr != origMgr {
-			terminalMgr.Close()
+		curMgr := GetTerminalManager()
+		if curMgr != nil && curMgr != origMgr {
+			curMgr.Close()
 		}
-		terminalMgr = origMgr
+		SetTerminalManager(origMgr)
 	})
 
 	projectDir := t.TempDir()
@@ -72,8 +73,8 @@ func TestTerminalWebSocketRejectsInvalidCwdBeforeUpgrade(t *testing.T) {
 // ---------- TerminalConfigHandler ----------
 
 func TestTerminalConfig_NilManager(t *testing.T) {
-	origMgr := terminalMgr
-	t.Cleanup(func() { terminalMgr = origMgr })
+	origMgr := GetTerminalManager()
+	t.Cleanup(func() { SetTerminalManager(origMgr) })
 	SetTerminalManager(nil)
 
 	req := newRequest(t, http.MethodGet, "/api/terminal/config", nil)
@@ -86,12 +87,13 @@ func TestTerminalConfig_NilManager(t *testing.T) {
 }
 
 func TestTerminalConfig_EnabledManager(t *testing.T) {
-	origMgr := terminalMgr
+	origMgr := GetTerminalManager()
 	t.Cleanup(func() {
-		if terminalMgr != nil && terminalMgr != origMgr {
-			terminalMgr.Close()
+		curMgr := GetTerminalManager()
+		if curMgr != nil && curMgr != origMgr {
+			curMgr.Close()
 		}
-		terminalMgr = origMgr
+		SetTerminalManager(origMgr)
 	})
 
 	SetTerminalManager(terminal.NewManager(model.TerminalConfig{
@@ -114,8 +116,8 @@ func TestTerminalConfig_EnabledManager(t *testing.T) {
 // ---------- TerminalStatus ----------
 
 func TestTerminalStatus_NilManager(t *testing.T) {
-	origMgr := terminalMgr
-	t.Cleanup(func() { terminalMgr = origMgr })
+	origMgr := GetTerminalManager()
+	t.Cleanup(func() { SetTerminalManager(origMgr) })
 	SetTerminalManager(nil)
 
 	req := newRequest(t, http.MethodGet, "/api/terminal/status", nil)
@@ -128,12 +130,13 @@ func TestTerminalStatus_NilManager(t *testing.T) {
 }
 
 func TestTerminalStatus_AllSessions(t *testing.T) {
-	origMgr := terminalMgr
+	origMgr := GetTerminalManager()
 	t.Cleanup(func() {
-		if terminalMgr != nil && terminalMgr != origMgr {
-			terminalMgr.Close()
+		curMgr := GetTerminalManager()
+		if curMgr != nil && curMgr != origMgr {
+			curMgr.Close()
 		}
-		terminalMgr = origMgr
+		SetTerminalManager(origMgr)
 	})
 
 	SetTerminalManager(terminal.NewManager(model.TerminalConfig{
@@ -162,8 +165,8 @@ func TestTerminalStatus_AllSessions(t *testing.T) {
 // ---------- TerminalClose ----------
 
 func TestTerminalClose_NilManager(t *testing.T) {
-	origMgr := terminalMgr
-	t.Cleanup(func() { terminalMgr = origMgr })
+	origMgr := GetTerminalManager()
+	t.Cleanup(func() { SetTerminalManager(origMgr) })
 	SetTerminalManager(nil)
 
 	req := newRequest(t, http.MethodPost, "/api/terminal/close", nil)
@@ -172,12 +175,13 @@ func TestTerminalClose_NilManager(t *testing.T) {
 }
 
 func TestTerminalClose_DisabledManager(t *testing.T) {
-	origMgr := terminalMgr
+	origMgr := GetTerminalManager()
 	t.Cleanup(func() {
-		if terminalMgr != nil && terminalMgr != origMgr {
-			terminalMgr.Close()
+		curMgr := GetTerminalManager()
+		if curMgr != nil && curMgr != origMgr {
+			curMgr.Close()
 		}
-		terminalMgr = origMgr
+		SetTerminalManager(origMgr)
 	})
 
 	SetTerminalManager(terminal.NewManager(model.TerminalConfig{
@@ -190,12 +194,13 @@ func TestTerminalClose_DisabledManager(t *testing.T) {
 }
 
 func TestTerminalClose_AllSessions(t *testing.T) {
-	origMgr := terminalMgr
+	origMgr := GetTerminalManager()
 	t.Cleanup(func() {
-		if terminalMgr != nil && terminalMgr != origMgr {
-			terminalMgr.Close()
+		curMgr := GetTerminalManager()
+		if curMgr != nil && curMgr != origMgr {
+			curMgr.Close()
 		}
-		terminalMgr = origMgr
+		SetTerminalManager(origMgr)
 	})
 
 	SetTerminalManager(terminal.NewManager(model.TerminalConfig{

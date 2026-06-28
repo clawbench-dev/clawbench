@@ -748,6 +748,10 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// after this one exits, then trigger graceful shutdown.
 	handler.SetRestartFunc(makeRestartFunc(selfSignalInterrupt))
 
+	// Wire up the hot-reload reconfigure function for config PATCH.
+	// Called by applyHotReloadGlobals() after each successful patch.
+	handler.SetReconfigureFunc(func() { hotReloadReconfigure(port) })
+
 	srv := &http.Server{Handler: mux}
 
 	// Optional localhost-only HTTP dev listener (for Vite dev proxy)
@@ -932,5 +936,169 @@ func initTaskSummarizer(cfg model.Config) (*summarize.TaskSummarizer, error) {
 	default:
 		// AI CLI backends (claude/codebuddy/kimi/opencode/codex/qoder/vecli/deepseek)
 		return summarize.NewTaskSummarizer(backend, modelName)
+	}
+}
+
+// hotReloadReconfigure is called by applyHotReloadGlobals() after a successful
+// config PATCH to reconfigure subsystems that support hot-reload.
+// It recreates TTS provider, TTS/task summarizers, and reconfigures terminal + push.
+func hotReloadReconfigure(port int) {
+	cfg := model.ConfigInstance
+
+	// --- TTS: recreate speech provider if engine or sub-config changed ---
+	var ttsProvider speech.SpeechProvider
+	switch cfg.TTS.Engine {
+	case "edge":
+		p := speech.NewEdgeTTSProvider()
+		if cfg.TTS.Voice != "" {
+			p.Voice = cfg.TTS.Voice
+		}
+		if cfg.TTS.Speed > 0 {
+			ratePercent := int((cfg.TTS.Speed - 1.0) * 100)
+			if ratePercent > 0 {
+				p.Rate = fmt.Sprintf("+%d%%", ratePercent)
+			} else if ratePercent < 0 {
+				p.Rate = fmt.Sprintf("%d%%", ratePercent)
+			}
+		}
+		ttsProvider = p
+	case "piper":
+		p := speech.NewPiperProvider()
+		p.ModelPath = speech.ResolveModelPath(cfg.TTS.Voice, cfg.TTS.Piper.ModelPath)
+		if cfg.TTS.Piper.NoiseScale > 0 {
+			p.NoiseScale = cfg.TTS.Piper.NoiseScale
+		}
+		if cfg.TTS.Piper.LengthScale > 0 {
+			p.LengthScale = cfg.TTS.Piper.LengthScale
+		} else if cfg.TTS.Speed > 0 {
+			p.LengthScale = 1.0 / cfg.TTS.Speed
+		}
+		if cfg.TTS.Piper.SentenceSilence > 0 {
+			p.SentenceSilence = cfg.TTS.Piper.SentenceSilence
+		}
+		ttsProvider = p
+	case "kokoro":
+		k := speech.NewKokoroProvider()
+		if cfg.TTS.Voice != "" {
+			k.Voice = cfg.TTS.Voice
+		}
+		if cfg.TTS.Speed > 0 {
+			k.Speed = cfg.TTS.Speed
+		}
+		if cfg.TTS.Kokoro.Lang != "" {
+			k.Lang = cfg.TTS.Kokoro.Lang
+		}
+		k.ModelPath, k.VoicesPath = speech.ResolveKokoroPaths(cfg.TTS.Kokoro.ModelPath, cfg.TTS.Kokoro.VoicesPath)
+		ttsProvider = k
+	case "moss-nano":
+		m := speech.NewMossNanoProvider()
+		if cfg.TTS.MossNano.Backend != "" {
+			m.Backend = cfg.TTS.MossNano.Backend
+		}
+		m.ModelDir = speech.ResolveMossNanoModelDir(cfg.TTS.MossNano.ModelDir)
+		if cfg.TTS.MossNano.PromptSpeech != "" {
+			m.PromptSpeech = cfg.TTS.MossNano.PromptSpeech
+		}
+		if cfg.TTS.MossNano.Voice != "" {
+			m.Voice = cfg.TTS.MossNano.Voice
+		}
+		ttsProvider = m
+	default:
+		p := speech.NewEdgeTTSProvider()
+		if cfg.TTS.Voice != "" {
+			p.Voice = cfg.TTS.Voice
+		}
+		if cfg.TTS.Speed > 0 {
+			ratePercent := int((cfg.TTS.Speed - 1.0) * 100)
+			if ratePercent > 0 {
+				p.Rate = fmt.Sprintf("+%d%%", ratePercent)
+			} else if ratePercent < 0 {
+				p.Rate = fmt.Sprintf("%d%%", ratePercent)
+			}
+		}
+		ttsProvider = p
+	}
+	handler.SetSpeechProvider(ttsProvider)
+	slog.Info("hot-reload: TTS provider reconfigured", slog.String("engine", cfg.TTS.Engine))
+
+	// --- Summarize: reconstruct TTS summarizer ---
+	var ttsSummarizer summarize.Summarizer
+	switch cfg.Summarize.Backend {
+	case "", "simple":
+		ttsSummarizer = summarize.NewSimple()
+	case "api":
+		if cfg.Summarize.API.BaseURL == "" {
+			slog.Warn("hot-reload: summarize.backend is \"api\" but base_url is empty, falling back to simple")
+			ttsSummarizer = summarize.NewSimple()
+		} else if cfg.Summarize.API.Format == "anthropic" {
+			ttsSummarizer = summarize.NewAnthropic(cfg.Summarize.API.BaseURL, cfg.Summarize.API.Key, cfg.Summarize.Model)
+		} else {
+			ttsSummarizer = summarize.NewOpenAI(cfg.Summarize.API.BaseURL, cfg.Summarize.API.Key, cfg.Summarize.Model)
+		}
+	default:
+		s, err := summarize.NewAIBackendSummarizer(cfg.Summarize.Backend)
+		if err != nil {
+			slog.Warn("hot-reload: failed to create AI backend summarizer, falling back to simple",
+				slog.String("backend", cfg.Summarize.Backend), slog.String("error", err.Error()))
+			ttsSummarizer = summarize.NewSimple()
+		} else {
+			s.Model = cfg.Summarize.Model
+			ttsSummarizer = s
+		}
+	}
+	handler.SetSummarizer(ttsSummarizer)
+
+	// --- Summarize: reconstruct task summarizer ---
+	if cfg.Summarize.Backend != "" {
+		taskSummarizer, err := initTaskSummarizer(cfg)
+		if err != nil {
+			slog.Warn("hot-reload: failed to recreate task summarizer",
+				slog.String("backend", cfg.Summarize.Backend), slog.String("error", err.Error()))
+		} else {
+			if sched := service.GlobalScheduler; sched != nil {
+				sched.SetTaskSummarizer(taskSummarizer)
+			}
+			service.SetTaskSummarizerInstance(taskSummarizer)
+			if cfg.Summarize.Backend == "simple" {
+				service.SetChatSummaryMode("simple")
+			} else {
+				service.SetChatSummaryMode("ai")
+			}
+			service.SetChatSummaryEnabled(cfg.Summarize.IsChatSummaryEnabled())
+			slog.Info("hot-reload: summarizer reconfigured", slog.String("backend", cfg.Summarize.Backend))
+		}
+	} else {
+		// Disabled
+		service.SetTaskSummarizerInstance(nil)
+		service.SetChatSummaryMode("")
+		service.SetChatSummaryEnabled(false)
+		slog.Info("hot-reload: summarizer disabled")
+	}
+
+	// --- Terminal: reconfigure or toggle enabled ---
+	if cfg.Terminal.Enabled {
+		mgr := handler.GetTerminalManager()
+		if mgr != nil {
+			mgr.Reconfigure(cfg.Terminal)
+			slog.Info("hot-reload: terminal reconfigured")
+		} else {
+			// Terminal was disabled, now enabled — create new Manager
+			terminalMgr := terminal.NewManager(cfg.Terminal, port)
+			handler.SetTerminalManager(terminalMgr)
+			slog.Info("hot-reload: terminal enabled")
+		}
+	} else {
+		mgr := handler.GetTerminalManager()
+		if mgr != nil {
+			mgr.CloseAllSessions()
+			handler.SetTerminalManager(nil)
+			slog.Info("hot-reload: terminal disabled")
+		}
+	}
+
+	// --- Push/JPush: reconfigure ---
+	if client := handler.GetPushClient(); client != nil {
+		client.Reconfigure(cfg.Push.JPush)
+		slog.Info("hot-reload: push reconfigured", slog.Bool("enabled", client.Enabled()))
 	}
 }

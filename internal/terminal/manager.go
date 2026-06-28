@@ -311,13 +311,36 @@ type SessionInfo struct {
 }
 
 // Config returns the terminal configuration for the frontend.
+// Thread-safe: acquires read lock since Reconfigure writes m.cfg.
 func (m *Manager) Config() TerminalConfig {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.cfg
 }
 
 // IsEnabled returns whether the terminal feature is enabled.
+// Thread-safe: acquires read lock since Reconfigure writes m.cfg.
 func (m *Manager) IsEnabled() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.cfg.Enabled
+}
+
+// Reconfigure updates the terminal configuration at runtime.
+// Existing sessions keep their original config; only new sessions
+// will use the updated settings.
+func (m *Manager) Reconfigure(cfg model.TerminalConfig) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cfg = TerminalConfig{
+		Enabled:      cfg.Enabled,
+		IdleTimeout:  cfg.IdleTimeout,
+		BufferLines:  cfg.BufferLines,
+		MaxLineBytes: cfg.MaxLineBytes,
+		MaxBufferMB:  cfg.MaxBufferMB,
+		MaxSessions:  cfg.MaxSessions,
+	}
+	m.maxSessions = cfg.MaxSessions
 }
 
 // SessionCount returns the number of active terminal sessions.

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"clawbench/internal/model"
@@ -32,21 +33,46 @@ const (
 )
 
 // speechProvider is the global speech provider instance.
+// Access is protected by speechProviderMu for hot-reload safety.
 var speechProvider speech.SpeechProvider = speech.NewEdgeTTSProvider()
+var speechProviderMu sync.RWMutex
 
 // SetSpeechProvider replaces the global speech provider.
-// Must be called before the HTTP server starts; not goroutine-safe.
+// Goroutine-safe: concurrent Synthesize calls are protected by RWMutex.
 func SetSpeechProvider(p speech.SpeechProvider) {
+	speechProviderMu.Lock()
 	speechProvider = p
+	speechProviderMu.Unlock()
+}
+
+// GetSpeechProvider returns the current speech provider.
+// Goroutine-safe for concurrent reads.
+func GetSpeechProvider() speech.SpeechProvider {
+	speechProviderMu.RLock()
+	p := speechProvider
+	speechProviderMu.RUnlock()
+	return p
 }
 
 // summarizer is the global text summarizer instance.
+// Access is protected by summarizerMu for hot-reload safety.
 var summarizer summarize.Summarizer = summarize.NewSimple()
+var summarizerMu sync.RWMutex
 
 // SetSummarizer replaces the global text summarizer.
-// Must be called before the HTTP server starts; not goroutine-safe.
+// Goroutine-safe for concurrent access.
 func SetSummarizer(s summarize.Summarizer) {
+	summarizerMu.Lock()
 	summarizer = s
+	summarizerMu.Unlock()
+}
+
+// GetSummarizer returns the current text summarizer.
+func GetSummarizer() summarize.Summarizer {
+	summarizerMu.RLock()
+	s := summarizer
+	summarizerMu.RUnlock()
+	return s
 }
 
 // ttsGenerateRequest is the request body for POST /api/tts/generate.
@@ -96,15 +122,19 @@ func TTSGenerate(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // m
 	hash := sha256.Sum256([]byte(req.Text))
 	cacheKey := hex.EncodeToString(hash[:])[:summarize.CacheKeyHexLen]
 
+	// Snapshot current providers for consistency within this request
+	curProvider := GetSpeechProvider()
+	curSummarizer := GetSummarizer()
+
 	// Determine audio file extension based on TTS engine
 	audioExt := ".mp3"
-	if _, ok := speechProvider.(*speech.PiperProvider); ok { //nolint:govet // shadowed ok is standard type-assertion idiom
+	if _, ok := curProvider.(*speech.PiperProvider); ok { //nolint:govet // shadowed ok is standard type-assertion idiom
 		audioExt = ".wav"
 	}
-	if _, ok := speechProvider.(*speech.KokoroProvider); ok { //nolint:govet // shadowed ok is standard type-assertion idiom
+	if _, ok := curProvider.(*speech.KokoroProvider); ok { //nolint:govet // shadowed ok is standard type-assertion idiom
 		audioExt = ".wav"
 	}
-	if _, ok := speechProvider.(*speech.MossNanoProvider); ok { //nolint:govet // shadowed ok is standard type-assertion idiom
+	if _, ok := curProvider.(*speech.MossNanoProvider); ok { //nolint:govet // shadowed ok is standard type-assertion idiom
 		audioExt = ".wav"
 	}
 	relAudioPath := filepath.Join(".clawbench", "generated", "tts", cacheKey+audioExt)
@@ -159,7 +189,7 @@ func TTSGenerate(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // m
 
 			summarizeCtx, summarizeCancel := context.WithTimeout(ctx, ttsSummarizeTimeout)
 			var err error
-			summary, err = summarizer.Summarize(summarizeCtx, req.Text, req.Language)
+			summary, err = curSummarizer.Summarize(summarizeCtx, req.Text, req.Language)
 			summarizeCancel()
 			if err != nil {
 				slog.Warn(
@@ -196,7 +226,7 @@ func TTSGenerate(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // m
 		service.SendTTSEvent(cacheKey, service.TTSEvent{Type: "phase", Phase: "synthesizing"})
 
 		synthesizeCtx, synthesizeCancel := context.WithTimeout(ctx, ttsSynthesizeTimeout)
-		err := speechProvider.Synthesize(synthesizeCtx, summary, absAudioPath, req.Language)
+		err := curProvider.Synthesize(synthesizeCtx, summary, absAudioPath, req.Language)
 		synthesizeCancel()
 		if err != nil {
 			slog.Error(

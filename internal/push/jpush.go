@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"clawbench/internal/model"
@@ -16,6 +17,7 @@ import (
 type JPushConfig = model.JPushConfig
 
 type JPushClient struct {
+	mu           sync.Mutex
 	enabled      bool
 	appKey       string
 	masterSecret string
@@ -38,17 +40,37 @@ func (c *JPushClient) SetBaseURL(url string) {
 	c.baseURL = url
 }
 
+// Reconfigure updates the JPush client configuration at runtime.
+// Goroutine-safe: concurrent SendNotification calls are protected by mutex.
+func (c *JPushClient) Reconfigure(cfg JPushConfig) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.enabled = cfg.Enabled
+	c.appKey = cfg.AppKey
+	c.masterSecret = cfg.MasterSecret
+}
+
 func (c *JPushClient) Enabled() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.enabled && c.appKey != "" && c.masterSecret != ""
 }
 
 // AppKey returns the configured JPush AppKey (may be empty if push is not configured).
 func (c *JPushClient) AppKey() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.appKey
 }
 
 func (c *JPushClient) SendNotification(registrationID, title, alert string, extras map[string]string) error {
-	if !c.Enabled() {
+	c.mu.Lock()
+	enabled := c.enabled && c.appKey != "" && c.masterSecret != ""
+	appKey := c.appKey
+	masterSecret := c.masterSecret
+	c.mu.Unlock()
+
+	if !enabled {
 		return nil
 	}
 	if registrationID == "" {
@@ -82,7 +104,7 @@ func (c *JPushClient) SendNotification(registrationID, title, alert string, extr
 		return fmt.Errorf("jpush: create request: %w", err)
 	}
 
-	auth := base64.StdEncoding.EncodeToString([]byte(c.appKey + ":" + c.masterSecret))
+	auth := base64.StdEncoding.EncodeToString([]byte(appKey + ":" + masterSecret))
 	req.Header.Set("Authorization", "Basic "+auth)
 	req.Header.Set("Content-Type", "application/json")
 

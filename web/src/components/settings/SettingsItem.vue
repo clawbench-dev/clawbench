@@ -36,18 +36,14 @@
       </template>
       <template v-else-if="type === 'password'">
         <span class="settings-item__value">{{ displayValue }}</span>
-        <span class="settings-item__arrow" :class="{ 'settings-item__arrow--open': editing }">›</span>
       </template>
       <template v-else-if="type === 'select' || type === 'number' || type === 'text'">
         <span class="settings-item__value">{{ displayValue }}</span>
-        <span class="settings-item__arrow" :class="{ 'settings-item__arrow--open': editing }">›</span>
       </template>
       <template v-else-if="type === 'textarea'">
         <span class="settings-item__value">{{ displayValue }}</span>
-        <span class="settings-item__arrow" :class="{ 'settings-item__arrow--open': editing }">›</span>
       </template>
       <template v-else-if="type === 'action'">
-        <span class="settings-item__arrow">›</span>
       </template>
       <template v-else-if="type === 'info'">
         <!-- info value shown in description area below, nothing on the right -->
@@ -396,17 +392,6 @@ function confirmEdit() {
   padding: 0 16px 10px;
   word-break: break-all;
   line-height: 1.4;
-}
-
-.settings-item__arrow {
-  font-size: 20px;
-  color: var(--text-muted);
-  line-height: 1;
-  transition: transform 0.2s ease;
-}
-
-.settings-item__arrow--open {
-  transform: rotate(90deg);
 }
 
 /* Section header */
