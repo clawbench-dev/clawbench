@@ -23,11 +23,6 @@
           :title="t('chat.actions.userMsgIndex')">
           <MessagesSquare :size="14" />
         </button>
-        <button v-if="showResumeIcon" class="chat-action-btn"
-          @click.stop="openResumeDrawer"
-          :title="t('chat.acpSession.title')">
-          <RotateCcw :size="14" />
-        </button>
         <button class="chat-action-btn chat-action-btn-delete" :class="{ disabled: !currentSessionId }"
           @click="handleDelete"
           :title="currentSessionId ? t('chat.actions.deleteCurrentSession') : t('chat.actions.noSessionToDelete')">
@@ -198,13 +193,6 @@
           <span class="at-menu-desc">{{ cmd.description }}</span>
         </button>
       </PopupMenu>
-      <!-- ACP session resume drawer -->
-      <AcpSessionDrawer
-        :open="showAcpSessionDrawer"
-        :agent-id="currentAgentId"
-        @close="showAcpSessionDrawer = false"
-        @select="handleAcpSessionSelect"
-      />
       <!-- Context usage detail popup -->
       <PopupMenu v-if="showUsageInfo" v-model:show="showUsagePopup" :target-element="usageElRef" :max-width="220" :max-height="240" :menu-items-count="4">
         <div class="usage-popup">
@@ -268,7 +256,7 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, FileImage, FileText, Folder, XCircle, Inbox, Send, Square, Settings, Zap, Loader2, Cpu, Compass, Brain, Cable, RotateCcw, Activity, MessagesSquare } from 'lucide-vue-next'
+import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, FileImage, FileText, Folder, XCircle, Inbox, Send, Square, Settings, Zap, Loader2, Cpu, Compass, Brain, Cable, Activity, MessagesSquare } from 'lucide-vue-next'
 import { baseName } from '@/utils/path.ts'
 import { computeRecentReferencedFiles, computeHasFileGroups, computeAttachMenuItemCount } from '@/utils/chatInputUtils.ts'
 import PopupMenu from '@/components/common/PopupMenu.vue'
@@ -279,8 +267,7 @@ import { useDialog } from '@/composables/useDialog.ts'
 import { useQuickSend } from '@/composables/useQuickSend'
 import { useChatKeyboard } from '@/composables/useChatKeyboard'
 import { useSessionIdentity } from '@/composables/useSessionIdentity'
-import { useAgents, agentCanResume } from '@/composables/useAgents'
-import AcpSessionDrawer from '@/components/chat/AcpSessionDrawer.vue'
+import { useAgents } from '@/composables/useAgents'
 
 const { t } = useI18n()
 const { availableCommands, availableModes, availableThinkingEfforts, currentThinkingEffortName, currentTransport: sessionTransport, autoApprove, contextUsed, contextSize, contextCost, contextCurrency } = useSessionIdentity()
@@ -302,7 +289,6 @@ const isACPTransport = computed(() => {
 const showModeInfo = computed(() => availableModes.value.length > 0 && isACP.value)
 const showThinkingInfo = computed(() => isACP.value && (availableThinkingEfforts.value.length > 0 || hasThinkingEffortLevels(props.currentAgentId || '')))
 const showTransportInfo = computed(() => supportsDualTransport(props.currentAgentId || '') || !isACP.value)
-const showResumeIcon = computed(() => isACPTransport.value && props.currentAgentId && agentCanResume(props.currentAgentId))
 const showUsageInfo = computed(() => contextSize.value > 0)
 const usagePct = computed(() => contextSize.value > 0 ? Math.round((contextUsed.value / contextSize.value) * 100) : 0)
 const usageColor = computed(() => {
@@ -421,7 +407,6 @@ const emit = defineEmits([
   'switch-thinking-effort',
   'switch-mode',
   'switch-transport',
-  'acp-session-loaded',
 ])
 
 const inputText = ref('')
@@ -443,7 +428,6 @@ function openSettingsModal(tab) {
 
 // ── @ command autocomplete ──
 const showAtMenu = ref(false)
-const showAcpSessionDrawer = ref(false)
 const showUsagePopup = ref(false)
 const usageElRef = ref(null)
 const atCommands = computed(() => {
@@ -516,14 +500,6 @@ function handleSlashSelect(cmd) {
     const el = textareaRef.value
     if (el) el.focus()
   })
-}
-
-function openResumeDrawer() {
-  showAcpSessionDrawer.value = true
-}
-
-function handleAcpSessionSelect(sessionId) {
-  emit('acp-session-loaded', sessionId)
 }
 
 // Keyboard detection for iOS (no adjustResize) — activates visualViewport monitoring
@@ -869,7 +845,6 @@ defineExpose({
   onQuickSendTouchEnd,
   cancelQuickSendPress,
   quickSendPressingId,
-  closeAcpSessionDrawer: () => { showAcpSessionDrawer.value = false },
 })
 </script>
 

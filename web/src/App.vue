@@ -154,10 +154,21 @@
         :open="sessionIdentity.sessionDrawerOpen.value"
         :currentSessionId="sessionIdentity.currentSessionId.value"
         :runningSessionIds="sessionIdentity.runningSessions.value"
+        :isACPTransport="sessionIdentity.currentTransport.value === 'acp-stdio'"
+        :currentAgentId="sessionIdentity.currentAgentId.value"
         @close="sessionIdentity.sessionDrawerOpen.value = false"
         @select="handleSessionSelect"
         @create="handleSessionCreate"
         @delete="handleSessionDelete"
+        @open-acp-sessions="showAcpSessionDrawer = true"
+      />
+
+      <!-- ACP session resume drawer -->
+      <AcpSessionDrawer
+        :open="showAcpSessionDrawer"
+        :agentId="sessionIdentity.currentAgentId.value"
+        @close="showAcpSessionDrawer = false"
+        @select="handleAcpSessionSelect"
       />
 
       <!-- Bottom dock (tab bar) -->
@@ -264,6 +275,7 @@ import SearchDrawer from './components/common/SearchDrawer.vue'
 import ToastNotification from './components/common/ToastNotification.vue'
 import DialogOverlay from './components/common/DialogOverlay.vue'
 import SessionDrawer from './components/session/SessionDrawer.vue'
+import AcpSessionDrawer from './components/chat/AcpSessionDrawer.vue'
 import QuoteQuestionBar from './components/common/QuoteQuestionBar.vue'
 import HeaderMarquee from './components/common/HeaderMarquee.vue'
 import SettingsPage from './components/settings/SettingsPage.vue'
@@ -685,6 +697,14 @@ async function handleSessionCreate(agentId) {
 
 function handleSessionDelete(sessionId, backend) {
   sessionIdentity.deleteSession(sessionId, backend)
+}
+
+// ── ACP Session Resume ──
+const showAcpSessionDrawer = ref(false)
+
+async function handleAcpSessionSelect(sessionId) {
+  await sessionIdentity.switchSession(sessionId)
+  showAcpSessionDrawer.value = false
 }
 
 /** Register global DOM event listeners (idempotent — safe to call multiple times). */

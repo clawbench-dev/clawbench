@@ -109,6 +109,7 @@ export default {
     },
     acpSession: {
       title: 'ACP Sessions',
+      resumeTitle: 'Resume {agent} Session',
       loading: 'Loading sessions...',
       empty: 'No sessions found',
       notSupported: 'This agent does not support listing sessions',
@@ -1141,6 +1142,7 @@ export default {
       aboutAppVersionDesc: 'Current installed Android app version number',
       restartServer: 'Restart Server',
       restartServerDesc: 'Restart the server process; all connections will be dropped',
+      restartServerConfirm: 'Are you sure you want to restart the server? All connections will be dropped.',
       aboutVersion: 'Version',
       serverRestart: 'Restart Server',
       serverRestartDesc: 'Restart the server to apply configuration changes',

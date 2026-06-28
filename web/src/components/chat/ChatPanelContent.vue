@@ -111,7 +111,6 @@
       @switch-thinking-effort="handleSwitchThinkingEffort"
       @switch-mode="handleSwitchMode"
       @switch-transport="handleSwitchTransport"
-      @acp-session-loaded="handleAcpSessionLoaded"
     />
 
   </div>
@@ -478,7 +477,6 @@ watch(() => props.active, async (val) => {
     identity.sessionDrawerOpen.value = false
     toolDetailOverlay.value.show = false
     messageListRef.value?.closeUserMsgIndex()
-    inputBarRef.value?.closeAcpSessionDrawer()
     ragDetailItem.value = null
   } else {
     // Open/Re-open: load history (with overlay) and fix stale layout state from v-show display:none
@@ -649,11 +647,6 @@ function handleSwitchTransport(transport) {
     identity.clearCommandState()
     identity.clearThinkingEffortState()
   }
-}
-
-async function handleAcpSessionLoaded(sessionId) {
-  // After ACP LoadSession, switch to the new session (reuse existing switchSession logic)
-  await manager.switchSession(sessionId)
 }
 
 function handleOpenUserMsgIndex() {

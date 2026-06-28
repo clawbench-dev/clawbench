@@ -9,6 +9,9 @@
           <span class="session-counter-text">{{ sessionCount }}/{{ sessionMaxCount }}</span>
         </div>
       </div>
+      <button v-if="showResumeIcon" class="create-btn" @click.stop="$emit('open-acp-sessions')" :title="t('chat.acpSession.resumeTitle', { agent: currentAgentName })">
+        <RotateCcw :size="16" />
+      </button>
       <button class="create-btn" @click.stop="handleCreateClick" :title="t('session.newSession')">
         <Plus :size="16" />
       </button>
@@ -87,12 +90,12 @@
 <script setup>
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
-import { Bot, Plus, Star } from 'lucide-vue-next'
+import { Bot, Plus, Star, RotateCcw } from 'lucide-vue-next'
 import { ref, watch, computed, onUnmounted, nextTick } from 'vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import SwipeToDeleteRow from '@/components/git/SwipeToDeleteRow.vue'
-import { useAgents } from '@/composables/useAgents'
+import { useAgents, agentCanResume } from '@/composables/useAgents'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { formatRelativeTime } from '@/utils/format.ts'
@@ -104,9 +107,11 @@ const props = defineProps({
   open: Boolean,
   currentSessionId: String,
   runningSessionIds: { type: Set, default: () => new Set() },
+  isACPTransport: Boolean,
+  currentAgentId: String,
 })
 
-const emit = defineEmits(['close', 'select', 'create', 'delete'])
+const emit = defineEmits(['close', 'select', 'create', 'delete', 'open-acp-sessions'])
 
 const bottomSheetRef = ref(null)
 const sessions = ref([])
@@ -120,6 +125,9 @@ const pageSize = computed(() => store.state.chatSessionPageSize || 10)
 const { agents, loadAgents, getAgentIcon, getAgentName, isDefaultAgent, getAgentDefaultModelName, setDefaultAgent } = useAgents()
 const dialog = useDialog()
 const { runningSessionsVersion } = useSessionIdentity()
+
+const showResumeIcon = computed(() => props.isACPTransport && props.currentAgentId && agentCanResume(props.currentAgentId))
+const currentAgentName = computed(() => props.currentAgentId ? getAgentName(props.currentAgentId) : '')
 
 // Session count indicator
 const sessionCount = computed(() => store.state.sessionCount)

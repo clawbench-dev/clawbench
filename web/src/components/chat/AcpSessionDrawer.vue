@@ -1,9 +1,9 @@
 <template>
-  <BottomSheet :open="open" auto :title="t('chat.acpSession.title')" @close="$emit('close')">
+  <BottomSheet :open="open" auto :title="drawerTitle" @close="$emit('close')">
     <template #header>
       <RotateCwIcon v-if="acpSessionsLoading" :size="16" class="bs-header-icon spin" />
       <HistoryIcon v-else :size="16" class="bs-header-icon" />
-      <span class="bs-header-title">{{ t('chat.acpSession.title') }}</span>
+      <span class="bs-header-title">{{ drawerTitle }}</span>
     </template>
     <div class="acp-session-list">
       <div v-if="acpSessionsLoading && acpSessions.length === 0" class="acp-session-empty">
@@ -61,12 +61,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, computed, toRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { History as HistoryIcon, RotateCw as RotateCwIcon, Loader2 as Loader2Icon } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import { useAcpSession, type AcpSessionInfo } from '@/composables/useAcpSession'
-import { currentAgentId } from '@/composables/useSessionIdentity'
+import { useAgents } from '@/composables/useAgents'
 
 const props = defineProps<{
   open: boolean
@@ -79,7 +79,9 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const { getAgentName } = useAgents()
 const resumingId = ref('')
+const drawerTitle = computed(() => t('chat.acpSession.resumeTitle', { agent: getAgentName(props.agentId) }))
 
 const {
   acpSessions,
@@ -89,7 +91,7 @@ const {
   nextCursor,
   loadAcpSessions,
   acpLoadSession,
-} = useAcpSession({ currentAgentId })
+} = useAcpSession({ currentAgentId: toRef(props, 'agentId') })
 
 // Load sessions when drawer opens
 watch(() => props.open, (val) => {
