@@ -18,9 +18,6 @@
             <component :is="showCurrent ? EyeOff : Eye" :size="18" />
           </button>
         </div>
-        <div v-if="currentPasswordError" class="password-dialog__hint password-dialog__hint--error">
-          {{ currentPasswordError }}
-        </div>
       </div>
 
       <div class="password-dialog__field">
@@ -76,6 +73,7 @@
         </div>
       </div>
 
+      <div v-if="localError" class="password-dialog__error">{{ localError }}</div>
       <div v-if="serverError" class="password-dialog__error">{{ serverError }}</div>
 
       <div class="password-dialog__actions">
@@ -111,6 +109,7 @@ const currentPassword = ref('')
 const newPassword = ref('')
 const confirmPassword = ref('')
 const submitting = ref(false)
+const localError = ref('')
 const serverError = ref('')
 
 const showCurrent = ref(false)
@@ -139,11 +138,6 @@ function hasDigit(s: string): boolean {
 }
 
 // --- Real-time per-field validation ---
-
-const currentPasswordError = computed(() => {
-  if (currentPassword.value === '') return ''
-  return '' // non-empty is the only rule for current password
-})
 
 const newPasswordErrors = computed(() => {
   if (newPassword.value === '') return []
@@ -214,11 +208,12 @@ function validate(): string | null {
 }
 
 async function submit() {
+  localError.value = ''
   serverError.value = ''
 
   const validationError = validate()
   if (validationError) {
-    serverError.value = validationError
+    localError.value = validationError
     return
   }
 
@@ -348,7 +343,7 @@ function handleClose() {
 }
 
 .password-dialog__hint--error {
-  color: #e74c3c;
+  color: var(--color-red, #e74c3c);
 }
 
 .password-dialog__strength {
@@ -374,17 +369,17 @@ function handleClose() {
 
 .password-dialog__strength-fill--weak {
   width: 33%;
-  background: #e74c3c;
+  background: var(--color-red, #e74c3c);
 }
 
 .password-dialog__strength-fill--medium {
   width: 66%;
-  background: #f39c12;
+  background: var(--color-orange, #f39c12);
 }
 
 .password-dialog__strength-fill--strong {
   width: 100%;
-  background: #27ae60;
+  background: var(--color-green, #27ae60);
 }
 
 .password-dialog__strength-label {
@@ -395,10 +390,10 @@ function handleClose() {
 
 .password-dialog__error {
   font-size: 13px;
-  color: #e74c3c;
+  color: var(--color-red, #e74c3c);
   margin-bottom: 12px;
   padding: 8px 12px;
-  background: rgba(231, 76, 60, 0.1);
+  background: color-mix(in srgb, var(--color-red, #e74c3c) 10%, transparent);
   border-radius: 8px;
 }
 

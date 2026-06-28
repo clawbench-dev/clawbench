@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"clawbench/internal/model"
 	"clawbench/internal/service"
@@ -1070,14 +1071,14 @@ func ServeConfigPassword(w http.ResponseWriter, r *http.Request) { //nolint:gocy
 		})
 		return
 	}
-	if len(req.NewPassword) < 8 {
+	if utf8.RuneCountInString(req.NewPassword) < 8 {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error":   "password_too_short",
 			"message": "new password must be at least 8 characters",
 		})
 		return
 	}
-	if len(req.NewPassword) > 32 {
+	if utf8.RuneCountInString(req.NewPassword) > 32 {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error":   "password_too_long",
 			"message": "new password must be at most 32 characters",
