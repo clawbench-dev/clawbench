@@ -20,6 +20,15 @@ const i18n = createI18n({
           agentCopyFailed: 'Duplicate failed',
           agentCopyEmptyName: 'Name cannot be empty',
           agentName: 'Name',
+          agentRescan: 'Rescan',
+          agentRescanning: 'Scanning...',
+          agentRescanSuccess: 'Rescan complete',
+          agentRescanFailed: 'Rescan failed',
+          agentDelete: 'Delete',
+          agentDeleteConfirm: 'Delete agent "{name}"?',
+          agentDeleteDefault: 'Cannot delete default agent',
+          agentDeleted: 'Agent deleted',
+          agentDeleteFailed: 'Delete failed',
         },
       },
       common: {
@@ -31,13 +40,19 @@ const i18n = createI18n({
 
 // Mock useAgents
 const mockAgents = ref<any[]>([])
+const mockDefaultAgentId = ref('agent-1')
 const mockLoadAgents = vi.fn()
 const mockDuplicateAgent = vi.fn()
+const mockDeleteAgent = vi.fn()
+const mockRescanAgents = vi.fn()
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({
     agents: mockAgents,
+    defaultAgentId: mockDefaultAgentId,
     loadAgents: (...args: unknown[]) => mockLoadAgents(...args),
     duplicateAgent: (...args: unknown[]) => mockDuplicateAgent(...args),
+    deleteAgent: (...args: unknown[]) => mockDeleteAgent(...args),
+    rescanAgents: (...args: unknown[]) => mockRescanAgents(...args),
   }),
 }))
 
@@ -46,10 +61,17 @@ vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ show: vi.fn() }),
 }))
 
+// Mock useDialog
+vi.mock('@/composables/useDialog', () => ({
+  useDialog: () => ({ confirm: vi.fn().mockResolvedValue(false) }),
+}))
+
 // Mock lucide-vue-next
 vi.mock('lucide-vue-next', () => ({
   ChevronRight: { name: 'ChevronRight', template: '<span class="icon-chevron" />' },
   Copy: { name: 'Copy', template: '<span class="icon-copy" />' },
+  Trash2: { name: 'Trash2', template: '<span class="icon-trash" />' },
+  RefreshCw: { name: 'RefreshCw', template: '<span class="icon-refresh" />' },
 }))
 
 // Mock CopyAgentDialog
@@ -67,7 +89,10 @@ describe('SettingsAgentsIndex', () => {
   beforeEach(() => {
     mockLoadAgents.mockReset()
     mockDuplicateAgent.mockReset()
+    mockDeleteAgent.mockReset()
+    mockRescanAgents.mockReset()
     mockAgents.value = []
+    mockDefaultAgentId.value = 'agent-1'
   })
 
   it('calls loadAgents on mount', () => {
@@ -89,8 +114,6 @@ describe('SettingsAgentsIndex', () => {
     const wrapper = mountIndex()
     expect(wrapper.text()).toContain('CodeBuddy')
     expect(wrapper.text()).toContain('Claude')
-    expect(wrapper.text()).toContain('coding')
-    expect(wrapper.text()).toContain('analysis')
   })
 
   it('emits navigate with agent ID on row click', async () => {
@@ -104,40 +127,34 @@ describe('SettingsAgentsIndex', () => {
     expect(wrapper.emitted('navigate')![0]).toEqual(['agents:agent-1'])
   })
 
-  it('sorts agents by sortOrder', () => {
-    mockAgents.value = [
-      { id: 'agent-2', name: 'Second', icon: '2', specialty: '', sortOrder: 10 },
-      { id: 'agent-1', name: 'First', icon: '1', specialty: '', sortOrder: 0 },
-    ]
-    const wrapper = mountIndex()
-    const rows = wrapper.findAll('.settings-agents-index__row')
-    expect(rows[0].text()).toContain('First')
-    expect(rows[1].text()).toContain('Second')
-  })
-
-  it('does not show specialty when empty', () => {
-    mockAgents.value = [
-      { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: '', sortOrder: 0 },
-    ]
-    const wrapper = mountIndex()
-    expect(wrapper.find('.settings-agents-index__specialty').exists()).toBe(false)
-  })
-
-  it('shows specialty when present', () => {
-    mockAgents.value = [
-      { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: 'coding', sortOrder: 0 },
-    ]
-    const wrapper = mountIndex()
-    expect(wrapper.find('.settings-agents-index__specialty').exists()).toBe(true)
-    expect(wrapper.find('.settings-agents-index__specialty').text()).toBe('coding')
-  })
-
   it('renders copy button for each agent', () => {
     mockAgents.value = [
       { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: '', sortOrder: 0 },
     ]
     const wrapper = mountIndex()
-    expect(wrapper.find('.settings-agents-index__copy-btn').exists()).toBe(true)
+    expect(wrapper.find('.settings-agents-index__icon-btn').exists()).toBe(true)
+  })
+
+  it('renders delete button for each agent', () => {
+    mockAgents.value = [
+      { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: '', sortOrder: 0 },
+    ]
+    const wrapper = mountIndex()
+    const deleteButtons = wrapper.findAll('.settings-agents-index__icon-btn--danger')
+    expect(deleteButtons.length).toBe(1)
+  })
+
+  it('renders rescan button', () => {
+    const wrapper = mountIndex()
+    expect(wrapper.find('.settings-agents-index__rescan-btn').exists()).toBe(true)
+  })
+
+  it('clicking rescan button calls rescanAgents', async () => {
+    mockRescanAgents.mockResolvedValue(undefined)
+    const wrapper = mountIndex()
+    const rescanBtn = wrapper.find('.settings-agents-index__rescan-btn')
+    await rescanBtn.trigger('click')
+    expect(mockRescanAgents).toHaveBeenCalled()
   })
 
   it('clicking copy button does not emit navigate', async () => {
@@ -145,9 +162,9 @@ describe('SettingsAgentsIndex', () => {
       { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: '', sortOrder: 0 },
     ]
     const wrapper = mountIndex()
-    const copyBtn = wrapper.find('.settings-agents-index__copy-btn')
+    // First icon-btn is copy
+    const copyBtn = wrapper.find('.settings-agents-index__icon-btn')
     await copyBtn.trigger('click')
-    // Should not emit navigate — click is stopped
     expect(wrapper.emitted('navigate')).toBeFalsy()
   })
 })

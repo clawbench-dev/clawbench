@@ -1161,3 +1161,83 @@ func TestAgentDuplicate_EmptySourceID(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
+
+// ── Rescan agent tests ──
+
+func TestAgentRescan_Success(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	req := newRequest(t, http.MethodPost, "/api/agents/rescan", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgentSubRoutes, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	err := json.NewDecoder(w.Body).Decode(&resp)
+	require.NoError(t, err)
+
+	agents, ok := resp["agents"].([]any)
+	require.True(t, ok)
+	assert.GreaterOrEqual(t, len(agents), 2) // codebuddy + claude
+}
+
+// ── Delete agent tests ──
+
+func TestAgentDelete_Success(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// Make sure the agent to delete is NOT the default agent
+	// (default is typically the first agent, which is "codebuddy")
+	model.DefaultAgentID = "codebuddy"
+
+	body := map[string]any{"id": "claude"}
+	req := newRequest(t, http.MethodDelete, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	err := json.NewDecoder(w.Body).Decode(&resp)
+	require.NoError(t, err)
+	assert.Equal(t, "claude", resp["deleted"])
+
+	// Verify removed from in-memory maps
+	assert.NotContains(t, model.Agents, "claude")
+}
+
+func TestAgentDelete_NotFound(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	body := map[string]any{"id": "nonexistent"}
+	req := newRequest(t, http.MethodDelete, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestAgentDelete_DefaultAgent(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	model.DefaultAgentID = "claude"
+
+	body := map[string]any{"id": "claude"}
+	req := newRequest(t, http.MethodDelete, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestAgentDelete_EmptyID(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	body := map[string]any{"id": ""}
+	req := newRequest(t, http.MethodDelete, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}

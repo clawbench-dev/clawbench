@@ -1,5 +1,16 @@
 <template>
   <div class="settings-agents-index">
+    <!-- Rescan button -->
+    <div class="settings-agents-index__rescan-row">
+      <button
+        class="settings-agents-index__rescan-btn"
+        :disabled="rescanning"
+        @click="handleRescan"
+      >
+        <RefreshCw :size="16" :class="{ 'spin': rescanning }" />
+        <span>{{ rescanning ? t('settings.items.agentRescanning') : t('settings.items.agentRescan') }}</span>
+      </button>
+    </div>
     <div
       v-for="agent in agentList"
       :key="agent.id"
@@ -15,11 +26,18 @@
       </div>
       <div class="settings-agents-index__actions">
         <button
-          class="settings-agents-index__copy-btn"
+          class="settings-agents-index__icon-btn"
           :title="t('settings.items.agentCopy')"
           @click.stop="startCopy(agent)"
         >
           <Copy :size="16" />
+        </button>
+        <button
+          class="settings-agents-index__icon-btn settings-agents-index__icon-btn--danger"
+          :title="t('settings.items.agentDelete')"
+          @click.stop="handleDelete(agent)"
+        >
+          <Trash2 :size="16" />
         </button>
         <ChevronRight class="settings-agents-index__arrow" :size="18" />
       </div>
@@ -38,10 +56,11 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ChevronRight, Copy } from 'lucide-vue-next'
+import { ChevronRight, Copy, Trash2, RefreshCw } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useAgents } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast'
+import { useDialog } from '@/composables/useDialog'
 import CopyAgentDialog from './CopyAgentDialog.vue'
 
 defineEmits<{
@@ -50,7 +69,8 @@ defineEmits<{
 
 const { t } = useI18n()
 const toast = useToast()
-const { agents, loadAgents, duplicateAgent } = useAgents()
+const dialog = useDialog()
+const { agents, defaultAgentId, loadAgents, duplicateAgent, deleteAgent, rescanAgents } = useAgents()
 
 onMounted(() => {
   loadAgents(true)
@@ -61,6 +81,7 @@ const agentList = computed(() =>
 )
 
 const copyingAgent = ref<{ id: string; name: string } | null>(null)
+const rescanning = ref(false)
 
 function startCopy(agent: { id: string; name: string }) {
   copyingAgent.value = { id: agent.id, name: agent.name }
@@ -77,6 +98,36 @@ async function handleCopyConfirmed(newName: string) {
     toast.show(t('settings.items.agentCopyFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
   }
 }
+
+async function handleDelete(agent: { id: string; name: string }) {
+  if (agent.id === defaultAgentId.value) {
+    toast.show(t('settings.items.agentDeleteDefault'), { icon: '⚠️', type: 'error', duration: 3000 })
+    return
+  }
+  const confirmed = await dialog.confirm(
+    t('settings.items.agentDeleteConfirm', { name: agent.name }),
+    { title: t('settings.items.agentDelete'), dangerous: true }
+  )
+  if (!confirmed) return
+  try {
+    await deleteAgent(agent.id)
+    toast.show(t('settings.items.agentDeleted'), { icon: '✓', type: 'success', duration: 3000 })
+  } catch {
+    toast.show(t('settings.items.agentDeleteFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+  }
+}
+
+async function handleRescan() {
+  rescanning.value = true
+  try {
+    await rescanAgents()
+    toast.show(t('settings.items.agentRescanSuccess'), { icon: '✓', type: 'success', duration: 3000 })
+  } catch {
+    toast.show(t('settings.items.agentRescanFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+  } finally {
+    rescanning.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -84,6 +135,45 @@ async function handleCopyConfirmed(newName: string) {
   padding: 8px 0;
   background: var(--bg-secondary);
   min-height: 100%;
+}
+
+.settings-agents-index__rescan-row {
+  padding: 8px 16px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.settings-agents-index__rescan-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.settings-agents-index__rescan-btn:hover:not(:disabled) {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.settings-agents-index__rescan-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .settings-agents-index__row {
@@ -158,11 +248,11 @@ async function handleCopyConfirmed(newName: string) {
 .settings-agents-index__actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   flex-shrink: 0;
 }
 
-.settings-agents-index__copy-btn {
+.settings-agents-index__icon-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -176,18 +266,23 @@ async function handleCopyConfirmed(newName: string) {
   padding: 0;
 }
 
-.settings-agents-index__copy-btn:hover {
+.settings-agents-index__icon-btn:hover {
   background: var(--bg-tertiary);
   color: var(--text-secondary);
 }
 
-.settings-agents-index__copy-btn:active {
+.settings-agents-index__icon-btn:active {
   background: var(--bg-secondary);
+}
+
+.settings-agents-index__icon-btn--danger:hover {
+  color: #e74c3c;
 }
 
 .settings-agents-index__arrow {
   flex-shrink: 0;
   color: var(--text-muted);
+  margin-left: 4px;
 }
 
 .settings-agents-index__empty {
