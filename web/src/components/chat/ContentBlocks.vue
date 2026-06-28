@@ -850,6 +850,19 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--text-secondary) 8%, transparent);
   font-weight: 600;
 }
+.thinking-inline-content strong {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.thinking-inline-content em {
+  font-style: italic;
+}
+.thinking-inline-content mark {
+  background: rgba(245, 158, 11, 0.2);
+  color: inherit;
+  padding: 1px 2px;
+  border-radius: 2px;
+}
 
 /* Tool calls display */
 .chat-tool-call {

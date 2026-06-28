@@ -293,6 +293,7 @@ const {
 // Active thinking overlay: tracks which block is being shown so we can reactively update
 const activeThinkingOverlay = ref(null) // { msgId, blockIdx } or null
 let thinkingRenderTimer = null
+let streamingRefreshTimer = null
 
 const session = useChatSession({
   currentSessionId: identity.currentSessionId,
@@ -328,7 +329,13 @@ function onStreamEnd(reason) {
         const fullText = extractSpeakableText(lastMsg.blocks || [])
         if (fullText && lastMsg.id) {
           autoSpeech.speakMessage(lastMsg.id, fullText)
+        } else {
+          // Streaming ended but no speakable text — release wake lock
+          // (was acquired at streaming start)
+          autoSpeech.onStreamingEndNoSpeech()
         }
+      } else {
+        autoSpeech.onStreamingEndNoSpeech()
       }
     }
     // Recalculate chatUnread after stream completes — the current session's
@@ -528,8 +535,68 @@ watch(() => toolDetailOverlay.value.show, (show) => {
     activeThinkingOverlay.value = null
     activeToolOverlay.value = null
     if (thinkingRenderTimer) { clearTimeout(thinkingRenderTimer); thinkingRenderTimer = null }
+    if (streamingRefreshTimer) { clearInterval(streamingRefreshTimer); streamingRefreshTimer = null }
+    if (streamingRefreshTimer) { clearInterval(streamingRefreshTimer); streamingRefreshTimer = null }
   }
 })
+
+// Streaming refresh: when overlay is open and streaming is not done, poll every 1s
+// to refresh content. This supplements the passive watch — SSE doesn't push tool output,
+// and thinking text updates may be missed during SSE reconnection/buffering.
+function startStreamingRefresh() {
+  if (streamingRefreshTimer) clearInterval(streamingRefreshTimer)
+  streamingRefreshTimer = setInterval(() => {
+    if (!toolDetailOverlay.value.show) {
+      clearInterval(streamingRefreshTimer)
+      streamingRefreshTimer = null
+      return
+    }
+    // Thinking overlay: re-render from live block text
+    if (activeThinkingOverlay.value) {
+      const block = findThinkingBlock(activeThinkingOverlay.value)
+      if (block) {
+        toolDetailOverlay.value = {
+          ...toolDetailOverlay.value,
+          inputHtml: `<div class="thinking-overlay-md">${renderMarkdown(block.text)}</div>`,
+          done: !loading.value,
+        }
+      }
+      if (!loading.value) {
+        clearInterval(streamingRefreshTimer)
+        streamingRefreshTimer = null
+      }
+      return
+    }
+    // Tool overlay: fetch output from API if not done
+    if (activeToolOverlay.value) {
+      const block = findToolBlock(activeToolOverlay.value)
+      if (block && block.done) {
+        clearInterval(streamingRefreshTimer)
+        streamingRefreshTimer = null
+        return
+      }
+      if (block && block.tool_id && block.msgId) {
+        fetchToolCallDetail(block.tool_id, block.msgId, block)
+      }
+      if (!loading.value && block && block.done) {
+        clearInterval(streamingRefreshTimer)
+        streamingRefreshTimer = null
+      }
+    }
+  }, 1000)
+}
+
+watch(
+  () => ({ show: toolDetailOverlay.value.show, done: toolDetailOverlay.value.done }),
+  ({ show, done }) => {
+    if (show && !done) {
+      startStreamingRefresh()
+    } else if (streamingRefreshTimer) {
+      clearInterval(streamingRefreshTimer)
+      streamingRefreshTimer = null
+    }
+  }
+)
 
 async function handleShowAgentSelector() {
   await agentsComposable.loadAgents()
@@ -673,6 +740,10 @@ async function sendMessageNow(text, filePaths, files) {
     loading.value = true
     scrollBottom(true)
 
+    // Acquire screen wake lock when auto-speech is enabled — keeps screen on
+    // during streaming + TTS playback cycle. Released when audio ends or on error.
+    autoSpeech.onStreamingStart()
+
     try {
         const effectiveAgentId = identity.currentAgentId.value
 
@@ -815,7 +886,7 @@ function handleShowThinkingDetail({ text, msgId, blockIdx }) {
 
   toolDetailOverlay.value = {
     show: true,
-    name: 'DeepThink',
+    name: t('chat.message.deepThinking'),
     summary: '',
     inputHtml: `<div class="thinking-overlay-md">${renderMarkdown(currentText)}</div>`,
     outputHtml: '',

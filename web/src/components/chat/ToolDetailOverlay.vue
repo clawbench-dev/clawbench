@@ -908,6 +908,19 @@ function handleBodyClick(event) {
   background: var(--bg-tertiary, rgba(0,0,0,0.04));
   font-weight: 600;
 }
+.tool-detail-body .thinking-overlay-md strong {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.tool-detail-body .thinking-overlay-md em {
+  font-style: italic;
+}
+.tool-detail-body .thinking-overlay-md mark {
+  background: rgba(245, 158, 11, 0.2);
+  color: inherit;
+  padding: 1px 2px;
+  border-radius: 2px;
+}
 
 /* ── Localhost URL open button in tool output (same pattern as ChatMessageItem) ── */
 .tool-detail-body .chat-url-open-btn {
