@@ -18,6 +18,8 @@ import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
 import i18n from '@/i18n'
 import { localConfig, setLocalConfig } from '@/composables/useSettingsConfig'
+import { useWakeLock } from '@/composables/useWakeLock'
+import { appLog } from '@/utils/appLog'
 
 /**
  * Extract speakable text from chat message blocks.
@@ -69,6 +71,15 @@ enabled.value = !!localConfig.autoSpeech
 // Module-level toast instance (shared, not per-component)
 const toast = useToast()
 
+// Wake lock singleton — acquired when streaming + auto-speech starts, released when TTS ends
+const wakeLock = useWakeLock()
+
+/** Track whether we acquired the wake lock for the current streaming+speech cycle.
+ *  Used to avoid releasing a wake lock we didn't acquire (e.g. auto-speech was off). */
+let wakeLockAcquiredForSpeech = false
+
+const TAG = 'AutoSpeech'
+
 // Sync from Settings page changes
 if (typeof window !== 'undefined') {
   window.addEventListener('clawbench-autospeech-change', (e: Event) => {
@@ -96,7 +107,13 @@ export function useAutoSpeech() {
   }
 
   // --- Audio Playback ---
-  function stopAudio() {
+  /**
+   * Stop current audio/TTS playback.
+   * @param releaseWakeLock If true (default), release the screen wake lock.
+   *   Pass false when stopping previous audio to start a new TTS in the same
+   *   streaming cycle (e.g. inside _speak), so the wake lock stays held.
+   */
+  function stopAudio(releaseWakeLock = true) {
     abortController?.abort()
     abortController = null
     if (currentEventSource) {
@@ -113,6 +130,11 @@ export function useAutoSpeech() {
     activeId.value = ''
     playingSummary.value = ''
     state.value = 'idle'
+    // Release wake lock if we acquired it for this speech cycle
+    if (releaseWakeLock && wakeLockAcquiredForSpeech) {
+      wakeLock.release()
+      wakeLockAcquiredForSpeech = false
+    }
   }
 
   function reportError(message: string) {
@@ -133,6 +155,11 @@ export function useAutoSpeech() {
         activeId.value = ''
         playingSummary.value = ''
         state.value = 'idle'
+        // Release wake lock after TTS playback ends
+        if (wakeLockAcquiredForSpeech) {
+          wakeLock.release()
+          wakeLockAcquiredForSpeech = false
+        }
       }
     }
     audio.onerror = () => {
@@ -142,6 +169,11 @@ export function useAutoSpeech() {
         playingSummary.value = ''
         state.value = 'idle'
         reportError(gt('autoSpeech.playbackFailed'))
+        // Release wake lock on playback error
+        if (wakeLockAcquiredForSpeech) {
+          wakeLock.release()
+          wakeLockAcquiredForSpeech = false
+        }
       }
     }
 
@@ -155,14 +187,26 @@ export function useAutoSpeech() {
       activeId.value = ''
       playingSummary.value = ''
       state.value = 'idle'
+      // Release wake lock on play failure
+      if (wakeLockAcquiredForSpeech) {
+        wakeLock.release()
+        wakeLockAcquiredForSpeech = false
+      }
     })
   }
 
   // --- Internal: generate and play TTS for text ---
   async function _speak(id: string, text: string) {
-    if (!text) return
+    if (!text) {
+      // No speakable text — release wake lock since TTS won't play
+      if (wakeLockAcquiredForSpeech) {
+        wakeLock.release()
+        wakeLockAcquiredForSpeech = false
+      }
+      return
+    }
 
-    stopAudio()
+    stopAudio(false)
     lastError.value = ''
 
     const controller = new AbortController()
@@ -250,6 +294,11 @@ export function useAutoSpeech() {
         activeId.value = ''
         playingSummary.value = ''
         state.value = 'idle'
+        // Release wake lock on TTS error
+        if (wakeLockAcquiredForSpeech) {
+          wakeLock.release()
+          wakeLockAcquiredForSpeech = false
+        }
       }
 
       function handleResult(result: any) {
@@ -258,6 +307,7 @@ export function useAutoSpeech() {
           activeId.value = ''
           playingSummary.value = ''
           state.value = 'idle'
+          releaseWakeLockOnError()
           return
         }
 
@@ -267,6 +317,7 @@ export function useAutoSpeech() {
           activeId.value = ''
           playingSummary.value = ''
           state.value = 'idle'
+          releaseWakeLockOnError()
           return
         }
 
@@ -275,6 +326,7 @@ export function useAutoSpeech() {
           activeId.value = ''
           playingSummary.value = ''
           state.value = 'idle'
+          releaseWakeLockOnError()
           return
         }
 
@@ -304,6 +356,7 @@ export function useAutoSpeech() {
       activeId.value = ''
       playingSummary.value = ''
       state.value = 'idle'
+      releaseWakeLockOnError()
     } finally {
       if (abortController === controller) {
         abortController = null
@@ -347,6 +400,44 @@ export function useAutoSpeech() {
     return activeId.value === id && state.value === 'playing'
   }
 
+  // --- Wake Lock ---
+
+  /** Release wake lock on TTS error paths */
+  function releaseWakeLockOnError() {
+    if (wakeLockAcquiredForSpeech) {
+      wakeLock.release()
+      wakeLockAcquiredForSpeech = false
+    }
+  }
+
+  /**
+   * Called when streaming starts and auto-speech is enabled.
+   * Acquires a screen wake lock so the display stays on during
+   * the entire streaming + TTS playback cycle.
+   * Only acquires if the wakeLockOnSpeech setting is enabled.
+   */
+  function onStreamingStart() {
+    if (!enabled.value) return
+    if (!localConfig.wakeLockOnSpeech) return
+    if (wakeLockAcquiredForSpeech) return
+    wakeLock.acquire()
+    wakeLockAcquiredForSpeech = true
+    appLog.i(TAG, 'Wake lock acquired for streaming + auto-speech')
+  }
+
+  /**
+   * Called when streaming ends but auto-speech did not start TTS
+   * (e.g. no speakable text). Releases the wake lock that was
+   * acquired at streaming start.
+   */
+  function onStreamingEndNoSpeech() {
+    if (wakeLockAcquiredForSpeech && state.value === 'idle') {
+      wakeLock.release()
+      wakeLockAcquiredForSpeech = false
+      appLog.i(TAG, 'Wake lock released: streaming ended without TTS')
+    }
+  }
+
   return {
     enabled,
     state,
@@ -360,5 +451,7 @@ export function useAutoSpeech() {
     getPhaseLabel,
     isGeneratingText,
     isPlayingAudio,
+    onStreamingStart,
+    onStreamingEndNoSpeech,
   }
 }

@@ -2147,6 +2147,27 @@ public class MainActivity extends AppCompatActivity {
                 AppLog.e(TAG, "removeServer failed", e);
             }
         }
+
+        /**
+         * Set or clear the FLAG_KEEP_SCREEN_ON flag on the activity window.
+         * When true, prevents the screen from turning off due to inactivity.
+         * Used when auto-speech is enabled and AI is streaming/reading aloud,
+         * so the user can watch the output without the screen locking.
+         * The flag is automatically cleared if the activity goes to background.
+         * @param keepOn true to keep screen on, false to allow normal screen timeout
+         */
+        @JavascriptInterface
+        public void setKeepScreenOn(boolean keepOn) {
+            activity.runOnUiThread(() -> {
+                if (keepOn) {
+                    activity.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                    AppLog.i(TAG, "setKeepScreenOn: FLAG_KEEP_SCREEN_ON added");
+                } else {
+                    activity.getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                    AppLog.i(TAG, "setKeepScreenOn: FLAG_KEEP_SCREEN_ON cleared");
+                }
+            });
+        }
     }
 
     /**
