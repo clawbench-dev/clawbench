@@ -1101,3 +1101,63 @@ func TestServeAgentsGet_ACPModelListOverridesModels(t *testing.T) {
 		}
 	}
 }
+
+// ── Duplicate agent tests ──
+
+func TestAgentDuplicate_Success(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	body := map[string]any{"source_id": "claude", "name": "My Custom Claude"}
+	req := newRequest(t, http.MethodPost, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	err := json.NewDecoder(w.Body).Decode(&resp)
+	require.NoError(t, err)
+
+	assert.Contains(t, resp, "id")
+	assert.Equal(t, "My Custom Claude", resp["name"])
+	assert.Equal(t, "🧠", resp["icon"])
+	assert.Equal(t, "claude", resp["backend"])
+	assert.Equal(t, "manual", resp["source"])
+
+	// Verify the new agent was added to in-memory maps
+	newID, _ := resp["id"].(string)
+	assert.Contains(t, model.Agents, newID)
+}
+
+func TestAgentDuplicate_SourceNotFound(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	body := map[string]any{"source_id": "nonexistent", "name": "Test"}
+	req := newRequest(t, http.MethodPost, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestAgentDuplicate_EmptyName(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	body := map[string]any{"source_id": "claude", "name": ""}
+	req := newRequest(t, http.MethodPost, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestAgentDuplicate_EmptySourceID(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	body := map[string]any{"source_id": "", "name": "Test"}
+	req := newRequest(t, http.MethodPost, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}

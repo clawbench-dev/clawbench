@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"time"
 
 	"clawbench/internal/model"
 )
@@ -347,6 +348,57 @@ func LoadAgentsIntoMemory(db *sql.DB) error {
 	}
 
 	return nil
+}
+
+// DuplicateAgent creates a new agent by cloning an existing one.
+// It generates a unique ID (sourceID-copy-timestamp), copies all configuration
+// fields from the source, sets source="manual", and saves to DB.
+func DuplicateAgent(db *sql.DB, sourceID, newName string) (*model.Agent, error) {
+	source, ok := model.Agents[sourceID]
+	if !ok {
+		return nil, fmt.Errorf("source agent %s not found", sourceID)
+	}
+
+	newID := fmt.Sprintf("%s-copy-%d", sourceID, time.Now().UnixMilli())
+
+	clone := &model.Agent{
+		ID:                      newID,
+		Name:                    newName,
+		Icon:                    source.Icon,
+		Specialty:               source.Specialty,
+		Backend:                 source.Backend,
+		Command:                 source.Command,
+		ThinkingEffort:          source.ThinkingEffort,
+		ThinkingEffortLevels:    make([]string, len(source.ThinkingEffortLevels)),
+		PreferredModel:          source.PreferredModel,
+		PreferredThinkingEffort: source.PreferredThinkingEffort,
+		CustomSystemPrompt:      source.CustomSystemPrompt,
+		Transport:               source.Transport,
+		AcpCommand:              source.AcpCommand,
+		Source:                  "manual",
+		SortOrder:               source.SortOrder,
+	}
+	copy(clone.ThinkingEffortLevels, source.ThinkingEffortLevels)
+	if len(source.Models) > 0 {
+		clone.Models = make([]model.AgentModel, len(source.Models))
+		copy(clone.Models, source.Models)
+	}
+
+	// Compose SystemPrompt from common prompt + custom
+	commonPrompt := model.BuildCommonPrompt()
+	if commonPrompt != "" && clone.CustomSystemPrompt != "" {
+		clone.SystemPrompt = commonPrompt + "\n\n" + clone.CustomSystemPrompt
+	} else if commonPrompt != "" {
+		clone.SystemPrompt = commonPrompt
+	} else {
+		clone.SystemPrompt = clone.CustomSystemPrompt
+	}
+
+	if err := SaveAgent(db, clone); err != nil {
+		return nil, fmt.Errorf("save duplicated agent: %w", err)
+	}
+
+	return clone, nil
 }
 
 // MigrateCustomSystemPrompt backfills the custom_system_prompt column for agents

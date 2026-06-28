@@ -12,7 +12,18 @@ const i18n = createI18n({
       settings: {
         items: {
           agentNoAgents: 'No agents available',
+          agentCopy: 'Copy',
+          agentCopyTitle: 'Duplicate Agent',
+          agentCopyPlaceholder: 'Enter new agent name',
+          agentCopyConfirm: 'Duplicate',
+          agentCopied: 'Agent duplicated',
+          agentCopyFailed: 'Duplicate failed',
+          agentCopyEmptyName: 'Name cannot be empty',
+          agentName: 'Name',
         },
+      },
+      common: {
+        cancel: 'Cancel',
       },
     },
   },
@@ -21,16 +32,29 @@ const i18n = createI18n({
 // Mock useAgents
 const mockAgents = ref<any[]>([])
 const mockLoadAgents = vi.fn()
+const mockDuplicateAgent = vi.fn()
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({
     agents: mockAgents,
     loadAgents: (...args: unknown[]) => mockLoadAgents(...args),
+    duplicateAgent: (...args: unknown[]) => mockDuplicateAgent(...args),
   }),
+}))
+
+// Mock useToast
+vi.mock('@/composables/useToast', () => ({
+  useToast: () => ({ show: vi.fn() }),
 }))
 
 // Mock lucide-vue-next
 vi.mock('lucide-vue-next', () => ({
   ChevronRight: { name: 'ChevronRight', template: '<span class="icon-chevron" />' },
+  Copy: { name: 'Copy', template: '<span class="icon-copy" />' },
+}))
+
+// Mock CopyAgentDialog
+vi.mock('@/components/settings/CopyAgentDialog.vue', () => ({
+  default: { name: 'CopyAgentDialog', template: '<div class="mock-copy-agent-dialog" />' },
 }))
 
 function mountIndex() {
@@ -42,6 +66,7 @@ function mountIndex() {
 describe('SettingsAgentsIndex', () => {
   beforeEach(() => {
     mockLoadAgents.mockReset()
+    mockDuplicateAgent.mockReset()
     mockAgents.value = []
   })
 
@@ -95,7 +120,6 @@ describe('SettingsAgentsIndex', () => {
       { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: '', sortOrder: 0 },
     ]
     const wrapper = mountIndex()
-    // The specialty span should not be rendered (v-if)
     expect(wrapper.find('.settings-agents-index__specialty').exists()).toBe(false)
   })
 
@@ -106,5 +130,24 @@ describe('SettingsAgentsIndex', () => {
     const wrapper = mountIndex()
     expect(wrapper.find('.settings-agents-index__specialty').exists()).toBe(true)
     expect(wrapper.find('.settings-agents-index__specialty').text()).toBe('coding')
+  })
+
+  it('renders copy button for each agent', () => {
+    mockAgents.value = [
+      { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: '', sortOrder: 0 },
+    ]
+    const wrapper = mountIndex()
+    expect(wrapper.find('.settings-agents-index__copy-btn').exists()).toBe(true)
+  })
+
+  it('clicking copy button does not emit navigate', async () => {
+    mockAgents.value = [
+      { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: '', sortOrder: 0 },
+    ]
+    const wrapper = mountIndex()
+    const copyBtn = wrapper.find('.settings-agents-index__copy-btn')
+    await copyBtn.trigger('click')
+    // Should not emit navigate — click is stopped
+    expect(wrapper.emitted('navigate')).toBeFalsy()
   })
 })

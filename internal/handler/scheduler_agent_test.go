@@ -38,9 +38,11 @@ func TestServeAgents_Get(t *testing.T) {
 }
 
 func TestServeAgents_PostNotAllowed(t *testing.T) {
+	// POST /api/agents is now used for agent duplication;
+	// without a valid JSON body it returns 400 (bad request), not 405.
 	req := newRequest(t, http.MethodPost, "/api/agents", nil)
 	w := callHandler(ServeAgents, req)
-	assertStatus(t, w, http.StatusMethodNotAllowed)
+	assertStatus(t, w, http.StatusBadRequest)
 }
 
 // ---------- ServeChatCount ----------

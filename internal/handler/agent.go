@@ -53,6 +53,10 @@ func ServeAgents(w http.ResponseWriter, r *http.Request) {
 		serveAgentsPatch(w, r)
 		return
 	}
+	if r.Method == http.MethodPost {
+		serveAgentsDuplicate(w, r)
+		return
+	}
 	writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
 }
 
@@ -129,6 +133,58 @@ func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 		"defaultAgent": defaultAgent,
 		"acpStates":    states,
 	})
+}
+
+// serveAgentsDuplicate handles POST /api/agents — duplicates an existing agent.
+// Expects: {"source_id": "claude", "name": "My Custom Claude"}
+// Returns the newly created agent.
+func serveAgentsDuplicate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SourceID string `json:"source_id"`
+		Name     string `json:"name"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	if req.SourceID == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+		return
+	}
+	if req.Name == "" || utf8.RuneCountInString(req.Name) > 64 {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentName")
+		return
+	}
+
+	configMutex.Lock()
+	defer configMutex.Unlock()
+
+	clone, err := service.DuplicateAgent(service.DB, req.SourceID, req.Name)
+	if err != nil {
+		slog.Error("failed to duplicate agent", "source", req.SourceID, "error", err)
+		if strings.Contains(err.Error(), "not found") {
+			writeLocalizedErrorf(w, r, http.StatusNotFound, "AgentNotFound")
+			return
+		}
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+		return
+	}
+
+	// Add to in-memory maps for immediate reflection
+	model.Agents[clone.ID] = clone
+	model.AgentList = append(model.AgentList, clone)
+
+	// Populate runtime-only fields
+	if spec := model.FindSpecByBackend(clone.Backend); spec != nil {
+		if model.CanDiscoverModels(*spec) {
+			clone.CanRefreshModels = true
+		}
+		if len(clone.ThinkingEffortLevels) == 0 && len(spec.ThinkingEffortLevels) > 0 {
+			clone.ThinkingEffortLevels = spec.ThinkingEffortLevels
+		}
+	}
+
+	writeJSON(w, http.StatusOK, clone)
 }
 
 // serveAgentsPatch handles PATCH /api/agents — updates an agent's configurable fields.
