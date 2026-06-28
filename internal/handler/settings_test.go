@@ -905,12 +905,12 @@ func TestServeConfig_Patch_ColdFields_NeedRestart(t *testing.T) {
 	defer teardown()
 
 	cfg := model.Config{}
-	cfg.Terminal.Enabled = true
-	cfg.TTS.Engine = "edge"
+	cfg.PortForward.Enabled = false
+	cfg.RAG.BaseURL = "http://localhost:11434"
 	model.ConfigInstance = cfg
 
-	// terminal.enabled is a cold field — restart should be needed
-	body := `{"terminal":{"enabled":false},"tts":{"engine":"piper","piper":{"model_path":"/tmp/test.onnx"}}}`
+	// port_forward.enabled and rag.base_url are cold fields — restart should be needed
+	body := `{"port_forward":{"enabled":true},"rag":{"base_url":"http://other:11434"}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
@@ -930,8 +930,8 @@ func TestServeConfig_Patch_ColdFields_NeedRestart(t *testing.T) {
 	for i, v := range changed {
 		changedStr[i] = fmt.Sprint(v)
 	}
-	assert.Contains(t, changedStr, "terminal.enabled")
-	assert.Contains(t, changedStr, "tts.engine")
+	assert.Contains(t, changedStr, "port_forward.enabled")
+	assert.Contains(t, changedStr, "rag.base_url")
 }
 
 func TestServeConfig_Patch_MixedHotAndColdFields(t *testing.T) {
@@ -940,11 +940,11 @@ func TestServeConfig_Patch_MixedHotAndColdFields(t *testing.T) {
 
 	cfg := model.Config{}
 	cfg.Chat.SystemPromptInterval = 10
-	cfg.Terminal.Enabled = true
+	cfg.PortForward.Enabled = false
 	model.ConfigInstance = cfg
 
-	// Mix of hot (chat.system_prompt_interval) and cold (terminal.enabled) fields
-	body := `{"chat":{"system_prompt_interval":20},"terminal":{"enabled":false}}`
+	// Mix of hot (chat.system_prompt_interval) and cold (port_forward.enabled) fields
+	body := `{"chat":{"system_prompt_interval":20},"port_forward":{"enabled":true}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
@@ -959,7 +959,7 @@ func TestServeConfig_Patch_MixedHotAndColdFields(t *testing.T) {
 	changed, ok := resp["changed_cold_fields"].([]any)
 	assert.True(t, ok)
 	assert.Equal(t, 1, len(changed), "only cold fields should appear in changed_cold_fields")
-	assert.Equal(t, "terminal.enabled", fmt.Sprint(changed[0]))
+	assert.Equal(t, "port_forward.enabled", fmt.Sprint(changed[0]))
 }
 
 func TestServeConfig_Patch_SessionMaxCount_IsHotField(t *testing.T) {
@@ -2138,96 +2138,96 @@ func TestServeConfigPatch_WithExistingConfigBackup(t *testing.T) {
 }
 
 func TestApplyHotReloadGlobals_TTSVoice_EdgeTTS(t *testing.T) {
-	origProvider := speechProvider
-	defer func() { speechProvider = origProvider }()
+	origProvider := GetSpeechProvider()
+	defer SetSpeechProvider(origProvider)
 
-	speechProvider = &speech.EdgeTTSProvider{Voice: "original-voice", Rate: "+0%"}
+	SetSpeechProvider(&speech.EdgeTTSProvider{Voice: "original-voice", Rate: "+0%"})
 	model.ConfigInstance.TTS.Voice = "new-voice"
 	model.ConfigInstance.TTS.Speed = 0 // don't trigger speed logic
 
 	applyHotReloadGlobals()
 
-	p := speechProvider.(*speech.EdgeTTSProvider)
+	p := GetSpeechProvider().(*speech.EdgeTTSProvider)
 	assert.Equal(t, "new-voice", p.Voice)
 }
 
 func TestApplyHotReloadGlobals_TTSVoice_Kokoro(t *testing.T) {
-	origProvider := speechProvider
-	defer func() { speechProvider = origProvider }()
+	origProvider := GetSpeechProvider()
+	defer SetSpeechProvider(origProvider)
 
-	speechProvider = &speech.KokoroProvider{Voice: "original-voice"}
+	SetSpeechProvider(&speech.KokoroProvider{Voice: "original-voice"})
 	model.ConfigInstance.TTS.Voice = "new-kokoro-voice"
 	model.ConfigInstance.TTS.Speed = 0
 
 	applyHotReloadGlobals()
 
-	p := speechProvider.(*speech.KokoroProvider)
+	p := GetSpeechProvider().(*speech.KokoroProvider)
 	assert.Equal(t, "new-kokoro-voice", p.Voice)
 }
 
 func TestApplyHotReloadGlobals_TTSSpeed_EdgeTTS(t *testing.T) {
-	origProvider := speechProvider
-	defer func() { speechProvider = origProvider }()
+	origProvider := GetSpeechProvider()
+	defer SetSpeechProvider(origProvider)
 
-	speechProvider = &speech.EdgeTTSProvider{Rate: "+0%"}
+	SetSpeechProvider(&speech.EdgeTTSProvider{Rate: "+0%"})
 	model.ConfigInstance.TTS.Voice = ""
 	model.ConfigInstance.TTS.Speed = 1.5 // 50% faster
 
 	applyHotReloadGlobals()
 
-	p := speechProvider.(*speech.EdgeTTSProvider)
+	p := GetSpeechProvider().(*speech.EdgeTTSProvider)
 	assert.Equal(t, "+50%", p.Rate)
 }
 
 func TestApplyHotReloadGlobals_TTSSlow_EdgeTTS(t *testing.T) {
-	origProvider := speechProvider
-	defer func() { speechProvider = origProvider }()
+	origProvider := GetSpeechProvider()
+	defer SetSpeechProvider(origProvider)
 
-	speechProvider = &speech.EdgeTTSProvider{Rate: "+0%"}
+	SetSpeechProvider(&speech.EdgeTTSProvider{Rate: "+0%"})
 	model.ConfigInstance.TTS.Voice = ""
 	model.ConfigInstance.TTS.Speed = 0.5 // 50% slower => -50%
 
 	applyHotReloadGlobals()
 
-	p := speechProvider.(*speech.EdgeTTSProvider)
+	p := GetSpeechProvider().(*speech.EdgeTTSProvider)
 	assert.Equal(t, "-50%", p.Rate)
 }
 
 func TestApplyHotReloadGlobals_TTSSpeed_Kokoro(t *testing.T) {
-	origProvider := speechProvider
-	defer func() { speechProvider = origProvider }()
+	origProvider := GetSpeechProvider()
+	defer SetSpeechProvider(origProvider)
 
-	speechProvider = &speech.KokoroProvider{Speed: 1.0}
+	SetSpeechProvider(&speech.KokoroProvider{Speed: 1.0})
 	model.ConfigInstance.TTS.Voice = ""
 	model.ConfigInstance.TTS.Speed = 1.2
 
 	applyHotReloadGlobals()
 
-	p := speechProvider.(*speech.KokoroProvider)
+	p := GetSpeechProvider().(*speech.KokoroProvider)
 	assert.Equal(t, 1.2, p.Speed)
 }
 
 func TestApplyHotReloadGlobals_TTSSpeed_Piper(t *testing.T) {
-	origProvider := speechProvider
-	defer func() { speechProvider = origProvider }()
+	origProvider := GetSpeechProvider()
+	defer SetSpeechProvider(origProvider)
 
-	speechProvider = &speech.PiperProvider{LengthScale: 1.0}
+	SetSpeechProvider(&speech.PiperProvider{LengthScale: 1.0})
 	model.ConfigInstance.TTS.Voice = ""
 	model.ConfigInstance.TTS.Speed = 2.0
 	model.ConfigInstance.TTS.Piper.LengthScale = 0 // not explicitly set
 
 	applyHotReloadGlobals()
 
-	p := speechProvider.(*speech.PiperProvider)
+	p := GetSpeechProvider().(*speech.PiperProvider)
 	assert.InDelta(t, 0.5, p.LengthScale, 0.01)
 }
 
-func TestServeConfig_Get_RequireAuthForLocalhost(t *testing.T) {
+func TestServeConfig_Get_LocalhostAuthExempt(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
 	model.ConfigInstance = model.Config{}
-	model.ConfigInstance.RequireAuthForLocalhost = true
+	model.ConfigInstance.LocalhostAuthExempt = true
 
 	req := newRequest(t, http.MethodGet, "/api/config", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -2238,23 +2238,23 @@ func TestServeConfig_Get_RequireAuthForLocalhost(t *testing.T) {
 	var resp map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	assert.NoError(t, err)
-	assert.Equal(t, true, resp["require_auth_for_localhost"])
+	assert.Equal(t, true, resp["localhost_auth_exempt"])
 }
 
-func TestServeConfig_Patch_RequireAuthForLocalhost(t *testing.T) {
+func TestServeConfig_Patch_LocalhostAuthExempt(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
 	model.ConfigInstance = model.Config{}
-	model.ConfigInstance.RequireAuthForLocalhost = false
+	model.ConfigInstance.LocalhostAuthExempt = false
 
-	body := `{"require_auth_for_localhost":true}`
+	body := `{"localhost_auth_exempt":true}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.True(t, model.ConfigInstance.RequireAuthForLocalhost)
-	assert.True(t, model.RequireAuthForLocalhost)
+	assert.True(t, model.ConfigInstance.LocalhostAuthExempt)
+	assert.True(t, model.LocalhostAuthExempt)
 }

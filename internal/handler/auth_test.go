@@ -103,13 +103,13 @@ func TestServeAuthCheck(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
-	t.Run("RequireAuthForLocalhost_LocalhostNoCookie_Returns401", func(t *testing.T) {
+	t.Run("LocalhostAuthExempt_LocalhostNoCookie_Returns401", func(t *testing.T) {
 		_, teardown := setupTestEnv(t)
 		defer teardown()
 
 		model.SessionToken = hashPassword("testpass")
-		model.RequireAuthForLocalhost = true
-		defer func() { model.RequireAuthForLocalhost = false }()
+		model.LocalhostAuthExempt = false
+		defer func() { model.LocalhostAuthExempt = true }()
 
 		req := newRequest(t, http.MethodGet, "/api/auth/check", nil)
 		req.RemoteAddr = "127.0.0.1:54321"
@@ -119,13 +119,13 @@ func TestServeAuthCheck(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
 	})
 
-	t.Run("RequireAuthForLocalhost_LocalhostWithCookie_Returns200", func(t *testing.T) {
+	t.Run("LocalhostAuthExempt_LocalhostWithCookie_Returns200", func(t *testing.T) {
 		_, teardown := setupTestEnv(t)
 		defer teardown()
 
 		model.SessionToken = hashPassword("testpass")
-		model.RequireAuthForLocalhost = true
-		defer func() { model.RequireAuthForLocalhost = false }()
+		model.LocalhostAuthExempt = false
+		defer func() { model.LocalhostAuthExempt = true }()
 
 		req := newRequest(t, http.MethodGet, "/api/auth/check", nil)
 		req.RemoteAddr = "127.0.0.1:54321"

@@ -21,11 +21,11 @@ func okHandler(w http.ResponseWriter, r *http.Request) {
 func withSavedToken(f func()) {
 	origSession := model.SessionToken
 	origCookie := model.CookieToken
-	origRequireAuth := model.RequireAuthForLocalhost
+	origRequireAuth := model.LocalhostAuthExempt
 	defer func() {
 		model.SessionToken = origSession
 		model.CookieToken = origCookie
-		model.RequireAuthForLocalhost = origRequireAuth
+		model.LocalhostAuthExempt = origRequireAuth
 	}()
 	f()
 }
@@ -50,6 +50,7 @@ func TestAuth_NoPassword_PassThrough(t *testing.T) {
 func TestAuth_Localhost_IPv4_BypassesAuth(t *testing.T) {
 	withSavedToken(func() {
 		model.SessionToken = "valid-token"
+		model.LocalhostAuthExempt = true
 
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
@@ -64,6 +65,7 @@ func TestAuth_Localhost_IPv4_BypassesAuth(t *testing.T) {
 func TestAuth_Localhost_IPv6_BypassesAuth(t *testing.T) {
 	withSavedToken(func() {
 		model.SessionToken = "valid-token"
+		model.LocalhostAuthExempt = true
 
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
@@ -134,6 +136,7 @@ func TestAuth_MissingCookie_Returns401(t *testing.T) {
 func TestAuth_LocalhostWithBadCookie_StillPasses(t *testing.T) {
 	withSavedToken(func() {
 		model.SessionToken = "valid-token"
+		model.LocalhostAuthExempt = true
 
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
@@ -149,12 +152,12 @@ func TestAuth_LocalhostWithBadCookie_StillPasses(t *testing.T) {
 	})
 }
 
-// --- Auth: RequireAuthForLocalhost ---
+// --- Auth: LocalhostAuthExempt ---
 
-func TestAuth_RequireAuthForLocalhost_LocalhostIPv4_Returns401(t *testing.T) {
+func TestAuth_LocalhostAuthExempt_LocalhostIPv4_Returns401(t *testing.T) {
 	withSavedToken(func() {
 		model.SessionToken = "valid-token"
-		model.RequireAuthForLocalhost = true
+		model.LocalhostAuthExempt = false
 
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
@@ -166,10 +169,10 @@ func TestAuth_RequireAuthForLocalhost_LocalhostIPv4_Returns401(t *testing.T) {
 	})
 }
 
-func TestAuth_RequireAuthForLocalhost_LocalhostIPv6_Returns401(t *testing.T) {
+func TestAuth_LocalhostAuthExempt_LocalhostIPv6_Returns401(t *testing.T) {
 	withSavedToken(func() {
 		model.SessionToken = "valid-token"
-		model.RequireAuthForLocalhost = true
+		model.LocalhostAuthExempt = false
 
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
@@ -181,10 +184,10 @@ func TestAuth_RequireAuthForLocalhost_LocalhostIPv6_Returns401(t *testing.T) {
 	})
 }
 
-func TestAuth_RequireAuthForLocalhost_WithValidCookie_PassThrough(t *testing.T) {
+func TestAuth_LocalhostAuthExempt_WithValidCookie_PassThrough(t *testing.T) {
 	withSavedToken(func() {
 		model.SessionToken = "valid-token"
-		model.RequireAuthForLocalhost = true
+		model.LocalhostAuthExempt = false
 
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
@@ -200,10 +203,10 @@ func TestAuth_RequireAuthForLocalhost_WithValidCookie_PassThrough(t *testing.T) 
 	})
 }
 
-func TestAuth_RequireAuthForLocalhost_False_LocalhostStillBypasses(t *testing.T) {
+func TestAuth_LocalhostAuthExempt_True_LocalhostStillBypasses(t *testing.T) {
 	withSavedToken(func() {
 		model.SessionToken = "valid-token"
-		model.RequireAuthForLocalhost = false
+		model.LocalhostAuthExempt = true
 
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)

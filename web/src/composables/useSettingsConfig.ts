@@ -133,6 +133,10 @@ const legacyKeys: Record<string, {
     key: '',
     format: 'raw',
   },
+  wakeLockOnSpeech: {
+    key: '',
+    format: 'raw',
+  },
   pushPersistentNotification: {
     key: '',
     format: 'raw',
@@ -208,6 +212,7 @@ const localDefaults: Record<string, any> = {
   terminalFontSize: 12,
   androidLogCapture: false,
   swipeSession: false,
+  wakeLockOnSpeech: true,
   pushPersistentNotification: true,
   sortField: null,
   sortDir: 'asc',
@@ -267,7 +272,7 @@ const serverDefaults: Record<string, any> = {
   'terminal.max_sessions': 10,
   'terminal.buffer_lines': 2000,
   'default_agent': '',
-  'require_auth_for_localhost': false,
+  'localhost_auth_exempt': true,
   'tts.engine': 'edge',
   'tts.format': '',
   'tts.speed': 1.0,

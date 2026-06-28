@@ -47,7 +47,37 @@ var hotReloadFields = map[string]bool{
 	"tts.voice":                   true,
 	"tts.speed":                   true,
 	"default_agent":               true,
-	"require_auth_for_localhost":  true,
+	"localhost_auth_exempt":       true,
+	// Terminal — reconfigure Manager or toggle enabled
+	"terminal.enabled":      true,
+	"terminal.idle_timeout": true,
+	"terminal.max_sessions": true,
+	"terminal.buffer_lines": true,
+	// TTS engine + sub-configs — recreate provider
+	"tts.engine":               true,
+	"tts.tts_model":            true, // forward-compatible: MiniMax TTS model name (no-op until MiniMax provider is wired)
+	"tts.format":               true, // forward-compatible: audio format override (no-op, inferred from engine)
+	"tts.piper.model_path":     true,
+	"tts.piper.noise_scale":    true,
+	"tts.piper.length_scale":   true,
+	"tts.piper.sentence_silence": true,
+	"tts.kokoro.model_path":    true,
+	"tts.kokoro.voices_path":   true,
+	"tts.kokoro.lang":          true,
+	"tts.moss_nano.model_dir":  true,
+	"tts.moss_nano.prompt_speech": true,
+	"tts.moss_nano.voice":      true,
+	"tts.moss_nano.backend":    true,
+	// Summarize — reconstruct summarizer
+	"summarize.backend":      true,
+	"summarize.model":        true,
+	"summarize.api.base_url": true,
+	"summarize.api.key":      true,
+	"summarize.api.format":   true,
+	// Push/JPush — stateless client, just update fields
+	"push.jpush.enabled":       true,
+	"push.jpush.app_key":       true,
+	"push.jpush.master_secret": true,
 }
 
 // restartGracePeriod is the delay before shutting down the server after a restart
@@ -64,13 +94,25 @@ func SetRestartFunc(f func()) {
 	restartFunc = f
 }
 
+// reconfigureOnHotReload is called by applyHotReloadGlobals() to apply
+// hot-reload changes that require subsystem reconfiguration (TTS engine swap,
+// summarize reconstruction, terminal reconfigure, push reconfigure).
+// Set by main.go via SetReconfigureFunc(). Defaults to a no-op for tests.
+var reconfigureOnHotReload func()
+
+// SetReconfigureFunc sets the function called after a hot-reload patch
+// to reconfigure subsystems. main.go calls this to wire up the actual logic.
+func SetReconfigureFunc(f func()) {
+	reconfigureOnHotReload = f
+}
+
 // configResponse is the sanitized config returned to clients via GET /api/config.
 // It only contains fields safe for frontend display — no passwords, keys, or
 // internal paths.
 type configResponse struct {
 	Version                 string               `json:"version"`
 	HasPassword             bool                 `json:"has_password"`               // true when a password is configured
-	RequireAuthForLocalhost bool                 `json:"require_auth_for_localhost"` // true = localhost also requires password
+	LocalhostAuthExempt     bool                 `json:"localhost_auth_exempt"`       // true = localhost bypasses auth (default)
 	DefaultAgent            string               `json:"default_agent"`
 	Chat                    configChat           `json:"chat"`
 	Session                 configSession        `json:"session"`
@@ -228,7 +270,7 @@ var PatchableConfigPaths = map[string]bool{
 	"summarize.api.base_url":      true,
 	"summarize.api.key":           true,
 	"summarize.api.format":        true,
-	"require_auth_for_localhost":  true,
+	"localhost_auth_exempt":       true,
 }
 
 // validTTSEngines is the set of valid TTS engine values.
@@ -299,7 +341,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 	resp := configResponse{
 		Version:                 getBuildVersion(),
 		HasPassword:             model.SessionToken != "",
-		RequireAuthForLocalhost: cfg.RequireAuthForLocalhost,
+		LocalhostAuthExempt:     cfg.LocalhostAuthExempt,
 		DefaultAgent:            cfg.DefaultAgent,
 		Chat: configChat{
 			InitialMessages:      cfg.Chat.InitialMessages,
@@ -704,8 +746,8 @@ func applyConfigPatch(patch map[string]any) error { //nolint:gocognit,gocyclo //
 		model.DefaultAgentID = v
 	}
 
-	if v, ok := patch["require_auth_for_localhost"].(bool); ok {
-		cfg.RequireAuthForLocalhost = v
+	if v, ok := patch["localhost_auth_exempt"].(bool); ok {
+		cfg.LocalhostAuthExempt = v
 	}
 
 	if chat, ok := patch["chat"].(map[string]any); ok {
@@ -909,21 +951,26 @@ func applyHotReloadGlobals() {
 	model.UploadMaxFiles = cfg.Upload.MaxFiles
 	model.TTSMaxCacheFiles = cfg.TTS.MaxCacheFiles
 	model.DefaultAgentID = cfg.DefaultAgent
-	model.RequireAuthForLocalhost = cfg.RequireAuthForLocalhost
+	model.LocalhostAuthExempt = cfg.LocalhostAuthExempt
 
-	// Hot-reload TTS voice and speed on the existing speech provider
+	// Hot-reload TTS voice and speed on the existing speech provider.
+	// This is a defensive fallback for when reconfigureOnHotReload is nil
+	// (e.g., in tests). When reconfigureOnHotReload is set (production),
+	// it recreates the entire provider from the full config, making these
+	// mutations redundant. Kept for test compatibility.
+	curProvider := GetSpeechProvider()
 	if cfg.TTS.Voice != "" {
-		if p, ok := speechProvider.(*speech.EdgeTTSProvider); ok {
+		if p, ok := curProvider.(*speech.EdgeTTSProvider); ok {
 			p.Voice = cfg.TTS.Voice
 		}
-		if p, ok := speechProvider.(*speech.KokoroProvider); ok {
+		if p, ok := curProvider.(*speech.KokoroProvider); ok {
 			p.Voice = cfg.TTS.Voice
 		}
 		// Piper: voice is embedded in model_path, not a standalone field
 		// MOSS-Nano: uses moss_nano.voice, not tts.voice
 	}
 	if cfg.TTS.Speed > 0 {
-		if p, ok := speechProvider.(*speech.EdgeTTSProvider); ok {
+		if p, ok := curProvider.(*speech.EdgeTTSProvider); ok {
 			ratePercent := int((cfg.TTS.Speed - 1.0) * 100)
 			if ratePercent > 0 {
 				p.Rate = fmt.Sprintf("+%d%%", ratePercent)
@@ -933,16 +980,22 @@ func applyHotReloadGlobals() {
 				p.Rate = "+0%"
 			}
 		}
-		if p, ok := speechProvider.(*speech.KokoroProvider); ok {
+		if p, ok := curProvider.(*speech.KokoroProvider); ok {
 			p.Speed = cfg.TTS.Speed
 		}
-		if p, ok := speechProvider.(*speech.PiperProvider); ok {
+		if p, ok := curProvider.(*speech.PiperProvider); ok {
 			// Only update if no explicit length_scale is set
 			if cfg.TTS.Piper.LengthScale <= 0 {
 				p.LengthScale = 1.0 / cfg.TTS.Speed
 			}
 		}
 		// MOSS-Nano: speed not supported
+	}
+
+	// Reconfigure subsystems (TTS engine swap, summarize reconstruction,
+	// terminal reconfigure, push reconfigure). Set by main.go.
+	if reconfigureOnHotReload != nil {
+		reconfigureOnHotReload()
 	}
 }
 

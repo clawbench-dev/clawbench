@@ -49,6 +49,7 @@ export const categoryItems: Record<string, ItemSpec[]> = {
   chat: [
     { labelKey: 'settings.items.defaultAgent', descriptionKey: 'settings.items.defaultAgentDesc', key: 'default_agent', type: 'select', source: 'server', needsRestart: false },
     { labelKey: 'settings.items.autoSpeech', descriptionKey: 'settings.items.autoSpeechDesc', key: 'autoSpeech', type: 'switch', source: 'local' },
+    { labelKey: 'settings.items.wakeLockOnSpeech', descriptionKey: 'settings.items.wakeLockOnSpeechDesc', key: 'wakeLockOnSpeech', type: 'switch', source: 'local' },
     { labelKey: 'settings.items.swipeSession', descriptionKey: 'settings.items.swipeSessionDesc', key: 'swipeSession', type: 'switch', source: 'local' },
     { labelKey: 'settings.items.chatInitialMessages', descriptionKey: 'settings.items.chatInitialMessagesDesc', key: 'chat.initial_messages', type: 'number', source: 'server' },
     { labelKey: 'settings.items.chatPageSize', descriptionKey: 'settings.items.chatPageSizeDesc', key: 'chat.page_size', type: 'number', source: 'server' },
@@ -83,14 +84,14 @@ export const categoryItems: Record<string, ItemSpec[]> = {
   ],
   terminal: [
     { labelKey: 'settings.items.terminalFontSize', descriptionKey: 'settings.items.terminalFontSizeDesc', key: 'terminalFontSize', type: 'slider', source: 'local', min: 10, max: 24, step: 1 },
-    { labelKey: 'settings.items.terminalEnabled', descriptionKey: 'settings.items.terminalEnabledDesc', key: 'terminal.enabled', type: 'switch', source: 'server', needsRestart: true },
+    { labelKey: 'settings.items.terminalEnabled', descriptionKey: 'settings.items.terminalEnabledDesc', key: 'terminal.enabled', type: 'switch', source: 'server' },
     { labelKey: 'settings.items.terminalIdleTimeout', descriptionKey: 'settings.items.terminalIdleTimeoutDesc', key: 'terminal.idle_timeout', type: 'text', source: 'server' },
     { labelKey: 'settings.items.terminalMaxSessions', descriptionKey: 'settings.items.terminalMaxSessionsDesc', key: 'terminal.max_sessions', type: 'number', source: 'server' },
     { labelKey: 'settings.items.terminalBufferLines', descriptionKey: 'settings.items.terminalBufferLinesDesc', key: 'terminal.buffer_lines', type: 'number', source: 'server' },
   ],
   tts: [
     // Engine selection (always shown)
-    { labelKey: 'settings.items.ttsEngine', descriptionKey: 'settings.items.ttsEngineDesc', key: 'tts.engine', type: 'select', source: 'server', needsRestart: true, options: [
+    { labelKey: 'settings.items.ttsEngine', descriptionKey: 'settings.items.ttsEngineDesc', key: 'tts.engine', type: 'select', source: 'server', options: [
       { labelKey: 'settings.items.ttsEngineEdge', value: 'edge' },
       { labelKey: 'settings.items.ttsEnginePiper', value: 'piper' },
       { labelKey: 'settings.items.ttsEngineKokoro', value: 'kokoro' },
@@ -184,7 +185,7 @@ export const categoryItems: Record<string, ItemSpec[]> = {
     { labelKey: 'settings.items.portForwardPort', descriptionKey: 'settings.items.portForwardPortDesc', key: 'port_forward.port', type: 'number', source: 'server', needsRestart: true },
   ],
   push: [
-    { labelKey: 'settings.items.pushEnabled', descriptionKey: 'settings.items.pushEnabledDesc', key: 'push.jpush.enabled', type: 'switch', source: 'server', needsRestart: true },
+    { labelKey: 'settings.items.pushEnabled', descriptionKey: 'settings.items.pushEnabledDesc', key: 'push.jpush.enabled', type: 'switch', source: 'server' },
     { labelKey: 'settings.items.pushPersistentNotification', descriptionKey: 'settings.items.pushPersistentNotificationDesc', key: 'pushPersistentNotification', type: 'switch', source: 'local' },
     { labelKey: 'settings.items.pushAppKey', descriptionKey: 'settings.items.pushAppKeyDesc', key: 'push.jpush.app_key', type: 'text', source: 'server' },
     { labelKey: 'settings.items.pushMasterSecret', descriptionKey: 'settings.items.pushMasterSecretDesc', key: 'push.jpush.master_secret', type: 'password', source: 'server' },
@@ -194,12 +195,13 @@ export const categoryItems: Record<string, ItemSpec[]> = {
     { labelKey: 'settings.items.reconfigureServer', descriptionKey: 'settings.items.reconfigureServerDesc', key: 'reconfigureServer', type: 'action', source: 'local' },
   ],
   security: [
-    { labelKey: 'settings.items.requireAuthForLocalhost', descriptionKey: 'settings.items.requireAuthForLocalhostDesc', key: 'require_auth_for_localhost', type: 'switch', source: 'server' },
+    { labelKey: 'settings.items.localhostAuthExempt', descriptionKey: 'settings.items.localhostAuthExemptDesc', key: 'localhost_auth_exempt', type: 'switch', source: 'server' },
     { labelKey: 'settings.items.changePassword', descriptionKey: 'settings.items.changePasswordDesc', key: 'changePassword', type: 'action', source: 'local' },
   ],
   about: [
     { labelKey: 'settings.items.aboutServerVersion', descriptionKey: 'settings.items.aboutServerVersionDesc', key: 'serverVersion', type: 'info', source: 'server' },
     { labelKey: 'settings.items.aboutAppVersion', descriptionKey: 'settings.items.aboutAppVersionDesc', key: 'appVersion', type: 'info', source: 'local' },
+    { labelKey: 'settings.items.restartServer', descriptionKey: 'settings.items.restartServerDesc', key: 'restartServer', type: 'action', source: 'local' },
   ],
 }
 

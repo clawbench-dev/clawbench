@@ -98,6 +98,13 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		cfg.LogMaxDays = 7
 	}
 
+	// --- LocalhostAuthExempt ---
+	// Default: true (localhost bypasses auth). Only set to false when explicitly
+	// configured. Use presence map to detect explicit setting.
+	if !presence["localhost_auth_exempt"] {
+		cfg.LocalhostAuthExempt = true
+	}
+
 	// --- Upload ---
 	if cfg.Upload.MaxSizeMB <= 0 {
 		cfg.Upload.MaxSizeMB = 100

@@ -124,7 +124,7 @@ func ServeAuthCheck(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	// Localhost bypass (respects require_auth_for_localhost setting)
+	// Localhost bypass (respects localhost_auth_exempt setting)
 	if middleware.ShouldBypassAuth(r) {
 		w.WriteHeader(http.StatusOK)
 		return

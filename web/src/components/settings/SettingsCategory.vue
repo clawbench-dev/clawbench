@@ -60,6 +60,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   navigate: [categoryId: string]
   restartNeeded: [changedFields: string[]]
+  restartRequested: []
 }>()
 
 const { t } = useI18n()
@@ -197,11 +198,11 @@ async function handleUpdate(item: any, value: any) {
   if (item.type === 'password') {
     if (!value || value.includes('•')) return
   }
-  // Confirm before enabling localhost auth (CLI tools will be affected)
-  if (item.key === 'require_auth_for_localhost' && value === true) {
+  // Confirm before disabling localhost auth exempt (CLI tools will be affected)
+  if (item.key === 'localhost_auth_exempt' && value === false) {
     const confirmed = await dialog.confirm(
-      t('settings.items.requireAuthForLocalhostConfirm'),
-      { title: t('settings.items.requireAuthForLocalhost'), dangerous: true }
+      t('settings.items.localhostAuthExemptConfirm'),
+      { title: t('settings.items.localhostAuthExempt'), dangerous: true }
     )
     if (!confirmed) return
   }
@@ -238,6 +239,9 @@ function handleClick(item: any) {
   }
   if (item.key === 'changePassword') {
     showPasswordDialog.value = true
+  }
+  if (item.key === 'restartServer') {
+    emit('restartRequested')
   }
 }
 

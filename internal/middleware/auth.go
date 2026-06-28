@@ -21,15 +21,15 @@ func IsLocalhost(r *http.Request) bool {
 }
 
 // ShouldBypassAuth returns true if the request should skip authentication.
-// Localhost requests are trusted by default unless require_auth_for_localhost
-// is enabled in the server configuration.
+// Localhost requests are trusted when localhost_auth_exempt is enabled
+// (the default).
 func ShouldBypassAuth(r *http.Request) bool {
-	return IsLocalhost(r) && !model.RequireAuthForLocalhost
+	return IsLocalhost(r) && model.LocalhostAuthExempt
 }
 
 // Auth wraps a handler with password auth if configured.
-// Localhost requests (CLI subcommands) are always allowed unless
-// require_auth_for_localhost is enabled.
+// Localhost requests (CLI subcommands) bypass auth when localhost_auth_exempt
+// is enabled (the default).
 // Remote requests require a valid "clawbench_session" cookie.
 func Auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -38,7 +38,7 @@ func Auth(next http.HandlerFunc) http.HandlerFunc {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// Localhost bypass (respects require_auth_for_localhost setting)
+		// Localhost bypass (respects localhost_auth_exempt setting)
 		if ShouldBypassAuth(r) {
 			next.ServeHTTP(w, r)
 			return

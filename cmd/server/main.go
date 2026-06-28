@@ -223,7 +223,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	model.SessionMaxCount = cfg.Session.MaxCount
 	model.RecentProjectsMaxCount = cfg.RecentProjects.MaxCount
 	model.TTSMaxCacheFiles = cfg.TTS.MaxCacheFiles
-	model.RequireAuthForLocalhost = cfg.RequireAuthForLocalhost
+	model.LocalhostAuthExempt = cfg.LocalhostAuthExempt
 
 	// Apply TTS text processing config (defaults applied in ApplyDefaults)
 	summarize.InlineCodeMaxLen = cfg.TTS.InlineCodeMaxLen
