@@ -1070,17 +1070,34 @@ func ServeConfigPassword(w http.ResponseWriter, r *http.Request) { //nolint:gocy
 		})
 		return
 	}
-	if len(req.NewPassword) < 6 {
+	if len(req.NewPassword) < 8 {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error":   "password_too_short",
-			"message": "new password must be at least 6 characters",
+			"message": "new password must be at least 8 characters",
 		})
 		return
 	}
-	if len(req.NewPassword) > 72 {
+	if len(req.NewPassword) > 32 {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error":   "password_too_long",
-			"message": "new password must be at most 72 characters",
+			"message": "new password must be at most 32 characters",
+		})
+		return
+	}
+	hasLetter := false
+	hasDigit := false
+	for _, ch := range req.NewPassword {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') {
+			hasLetter = true
+		}
+		if ch >= '0' && ch <= '9' {
+			hasDigit = true
+		}
+	}
+	if !hasLetter || !hasDigit {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error":   "password_no_letter_digit",
+			"message": "new password must contain both letters and digits",
 		})
 		return
 	}

@@ -1789,7 +1789,7 @@ func TestServeConfigPassword_WithAutoPasswordFile(t *testing.T) {
 
 	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
 		"current_password": password,
-		"new_password":     "brand-new-password",
+		"new_password":     "brand-new1",
 	})
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfigPassword, req)
@@ -1842,7 +1842,7 @@ func TestServeConfigPassword_RemoteAddrNoPort(t *testing.T) {
 
 	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
 		"current_password": password,
-		"new_password":     "brand-new-password",
+		"new_password":     "brand-new1",
 	})
 	req.RemoteAddr = "192.0.2.1"
 	withAuthCookie(req, model.SessionToken)

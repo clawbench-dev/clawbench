@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"clawbench/internal/model"
@@ -35,7 +36,7 @@ func TestServeConfigPassword_Success(t *testing.T) {
 
 	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
 		"current_password": password,
-		"new_password":     "new-password-123",
+		"new_password":     "newpass1",
 	})
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfigPassword, req)
@@ -69,7 +70,7 @@ func TestServeConfigPassword_WrongCurrentPassword(t *testing.T) {
 
 	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
 		"current_password": "wrong-password",
-		"new_password":     "new-password-123",
+		"new_password":     "newpass1",
 	})
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfigPassword, req)
@@ -116,7 +117,7 @@ func TestServeConfigPassword_TooShort(t *testing.T) {
 
 	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
 		"current_password": password,
-		"new_password":     "abc",
+		"new_password":     "abc1234", // 7 chars — below new min of 8
 	})
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfigPassword, req)
@@ -145,7 +146,7 @@ func TestServeConfigPassword_SHA256StoredPassword(t *testing.T) {
 
 	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
 		"current_password": password,
-		"new_password":     "brand-new-password",
+		"new_password":     "brand-new1",
 	})
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfigPassword, req)
@@ -176,7 +177,7 @@ func TestServeConfigPassword_SHA256StoredPassword_WrongCurrent(t *testing.T) {
 
 	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
 		"current_password": "wrong-password",
-		"new_password":     "brand-new-password",
+		"new_password":     "brand-new1",
 	})
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfigPassword, req)
@@ -226,7 +227,7 @@ func TestServeConfigPassword_RateLimited(t *testing.T) {
 	for range 10 {
 		req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
 			"current_password": "wrong-password",
-			"new_password":     "new-password-123",
+			"new_password":     "newpass1",
 		})
 		withAuthCookie(req, model.SessionToken)
 		w := callHandler(ServeConfigPassword, req)
@@ -282,10 +283,8 @@ func TestServeConfigPassword_TooLong(t *testing.T) {
 	model.PasswordHash = bcryptHash
 	model.ConfigInstance = model.Config{}
 
-	longPassword := ""
-	for range 73 {
-		longPassword += "a"
-	}
+	// 33 chars with letter+digit — exceeds new max of 32
+	longPassword := "a1" + strings.Repeat("a", 31)
 
 	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
 		"current_password": password,
@@ -316,7 +315,7 @@ func TestServeConfigPassword_NoPasswordHash(t *testing.T) {
 
 	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
 		"current_password": "any-password",
-		"new_password":     "new-password-123",
+		"new_password":     "newpass1",
 	})
 	// No auth cookie needed when no password is set, but require one for auth middleware
 	withAuthCookie(req, "")
@@ -367,7 +366,7 @@ func TestServeConfigPassword_WriteFailure(t *testing.T) {
 
 	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
 		"current_password": password,
-		"new_password":     "new-password-123",
+		"new_password":     "newpass1",
 	})
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfigPassword, req)
@@ -380,4 +379,85 @@ func TestServeConfigPassword_WriteFailure(t *testing.T) {
 
 	// Verify in-memory config was rolled back
 	assert.Equal(t, password, model.ConfigInstance.Password)
+}
+
+func TestServeConfigPassword_NoLetter(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	globalLoginLimiter = &loginLimiter{records: make(map[string]*ipRecord)}
+	defer teardown()
+
+	password := "test-password"
+	hash := sha256.Sum256([]byte(password + "clawbench-salt"))
+	model.SessionToken = hex.EncodeToString(hash[:])
+	model.PasswordIsSHA256 = false
+	bcryptHash, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	model.PasswordHash = bcryptHash
+	model.ConfigInstance = model.Config{}
+
+	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
+		"current_password": password,
+		"new_password":     "12345678", // all digits, no letter
+	})
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfigPassword, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.Equal(t, "password_no_letter_digit", resp["error"])
+}
+
+func TestServeConfigPassword_NoDigit(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	globalLoginLimiter = &loginLimiter{records: make(map[string]*ipRecord)}
+	defer teardown()
+
+	password := "test-password"
+	hash := sha256.Sum256([]byte(password + "clawbench-salt"))
+	model.SessionToken = hex.EncodeToString(hash[:])
+	model.PasswordIsSHA256 = false
+	bcryptHash, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	model.PasswordHash = bcryptHash
+	model.ConfigInstance = model.Config{}
+
+	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
+		"current_password": password,
+		"new_password":     "abcdefgh", // all letters, no digit
+	})
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfigPassword, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	var resp map[string]interface{}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.Equal(t, "password_no_letter_digit", resp["error"])
+}
+
+func TestServeConfigPassword_Boundary32(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	globalLoginLimiter = &loginLimiter{records: make(map[string]*ipRecord)}
+	defer teardown()
+
+	password := "test-password"
+	hash := sha256.Sum256([]byte(password + "clawbench-salt"))
+	model.SessionToken = hex.EncodeToString(hash[:])
+	model.PasswordIsSHA256 = false
+	bcryptHash, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	model.PasswordHash = bcryptHash
+	model.ConfigInstance = model.Config{}
+	model.BinDir = t.TempDir()
+	_ = os.MkdirAll(filepath.Join(model.BinDir, "config"), 0o755)
+
+	// Exactly 32 chars with letter+digit — should succeed
+	boundaryPassword := "a1" + strings.Repeat("a", 30) // 32 chars
+	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
+		"current_password": password,
+		"new_password":     boundaryPassword,
+	})
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfigPassword, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
 }

@@ -7,13 +7,19 @@
         <label class="password-dialog__label">{{ t('settings.currentPassword') }}</label>
         <div class="password-dialog__input-row">
           <input
-            type="password"
+            :type="showCurrent ? 'text' : 'password'"
             class="password-dialog__input"
             v-model="currentPassword"
             :placeholder="t('settings.currentPasswordPlaceholder')"
             @keydown.enter="focusNew"
             autocomplete="current-password"
           />
+          <button class="password-dialog__eye" @click="showCurrent = !showCurrent" type="button" tabindex="-1">
+            <component :is="showCurrent ? EyeOff : Eye" :size="18" />
+          </button>
+        </div>
+        <div v-if="currentPasswordError" class="password-dialog__hint password-dialog__hint--error">
+          {{ currentPasswordError }}
         </div>
       </div>
 
@@ -22,13 +28,30 @@
         <div class="password-dialog__input-row">
           <input
             ref="newPasswordRef"
-            type="password"
+            :type="showNew ? 'text' : 'password'"
             class="password-dialog__input"
             v-model="newPassword"
             :placeholder="t('settings.newPasswordPlaceholder')"
             @keydown.enter="focusConfirm"
             autocomplete="new-password"
           />
+          <button class="password-dialog__eye" @click="showNew = !showNew" type="button" tabindex="-1">
+            <component :is="showNew ? EyeOff : Eye" :size="18" />
+          </button>
+        </div>
+        <div v-if="newPasswordErrors.length" class="password-dialog__hints">
+          <div v-for="err in newPasswordErrors" :key="err" class="password-dialog__hint password-dialog__hint--error">
+            {{ err }}
+          </div>
+        </div>
+        <div v-if="newPasswordStrength" class="password-dialog__strength">
+          <div class="password-dialog__strength-bar">
+            <div
+              class="password-dialog__strength-fill"
+              :class="`password-dialog__strength-fill--${newPasswordStrength}`"
+            ></div>
+          </div>
+          <span class="password-dialog__strength-label">{{ strengthLabel }}</span>
         </div>
       </div>
 
@@ -37,17 +60,22 @@
         <div class="password-dialog__input-row">
           <input
             ref="confirmPasswordRef"
-            type="password"
+            :type="showConfirm ? 'text' : 'password'"
             class="password-dialog__input"
             v-model="confirmPassword"
             :placeholder="t('settings.confirmPasswordPlaceholder')"
             @keydown.enter="submit"
             autocomplete="new-password"
           />
+          <button class="password-dialog__eye" @click="showConfirm = !showConfirm" type="button" tabindex="-1">
+            <component :is="showConfirm ? EyeOff : Eye" :size="18" />
+          </button>
+        </div>
+        <div v-if="confirmPasswordError" class="password-dialog__hint password-dialog__hint--error">
+          {{ confirmPasswordError }}
         </div>
       </div>
 
-      <div v-if="localError" class="password-dialog__error">{{ localError }}</div>
       <div v-if="serverError" class="password-dialog__error">{{ serverError }}</div>
 
       <div class="password-dialog__actions">
@@ -70,6 +98,7 @@
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { apiPost } from '@/utils/api'
+import { Eye, EyeOff } from 'lucide-vue-next'
 
 const emit = defineEmits<{
   close: []
@@ -82,8 +111,11 @@ const currentPassword = ref('')
 const newPassword = ref('')
 const confirmPassword = ref('')
 const submitting = ref(false)
-const localError = ref('')
 const serverError = ref('')
+
+const showCurrent = ref(false)
+const showNew = ref(false)
+const showConfirm = ref(false)
 
 const newPasswordRef = ref<HTMLInputElement | null>(null)
 const confirmPasswordRef = ref<HTMLInputElement | null>(null)
@@ -96,10 +128,70 @@ function focusConfirm() {
   confirmPasswordRef.value?.focus()
 }
 
+// --- Validation helpers ---
+
+function hasLetter(s: string): boolean {
+  return /[a-zA-Z]/.test(s)
+}
+
+function hasDigit(s: string): boolean {
+  return /[0-9]/.test(s)
+}
+
+// --- Real-time per-field validation ---
+
+const currentPasswordError = computed(() => {
+  if (currentPassword.value === '') return ''
+  return '' // non-empty is the only rule for current password
+})
+
+const newPasswordErrors = computed(() => {
+  if (newPassword.value === '') return []
+  const errors: string[] = []
+  if (newPassword.value.length < 8) errors.push(t('settings.passwordTooShort'))
+  if (newPassword.value.length > 32) errors.push(t('settings.passwordTooLong'))
+  if (!hasLetter(newPassword.value) || !hasDigit(newPassword.value)) errors.push(t('settings.passwordNoLetterDigit'))
+  return errors
+})
+
+const confirmPasswordError = computed(() => {
+  if (confirmPassword.value === '') return ''
+  if (newPassword.value !== confirmPassword.value) return t('settings.passwordMismatch')
+  return ''
+})
+
+// --- Password strength indicator ---
+
+const newPasswordStrength = computed<'weak' | 'medium' | 'strong' | null>(() => {
+  if (newPasswordErrors.value.length > 0 || newPassword.value === '') return null
+  const len = newPassword.value.length
+  if (len >= 20) return 'strong'
+  if (len >= 12) return 'medium'
+  return 'weak'
+})
+
+const strengthLabel = computed(() => {
+  switch (newPasswordStrength.value) {
+    case 'weak': return t('settings.passwordStrengthWeak')
+    case 'medium': return t('settings.passwordStrengthMedium')
+    case 'strong': return t('settings.passwordStrengthStrong')
+    default: return ''
+  }
+})
+
+// --- Submit logic ---
+
+const newPasswordValid = computed(() => {
+  return newPassword.value.length >= 8 &&
+    newPassword.value.length <= 32 &&
+    hasLetter(newPassword.value) &&
+    hasDigit(newPassword.value)
+})
+
 const canSubmit = computed(() => {
   return (
     currentPassword.value !== '' &&
-    newPassword.value.length >= 6 &&
+    newPasswordValid.value &&
     confirmPassword.value !== '' &&
     newPassword.value === confirmPassword.value
   )
@@ -109,8 +201,8 @@ function validate(): string | null {
   if (!currentPassword.value) {
     return t('settings.currentPasswordRequired')
   }
-  if (newPassword.value.length < 6) {
-    return t('settings.passwordTooShort')
+  if (newPasswordErrors.value.length > 0) {
+    return newPasswordErrors.value[0]
   }
   if (newPassword.value !== confirmPassword.value) {
     return t('settings.passwordMismatch')
@@ -122,12 +214,11 @@ function validate(): string | null {
 }
 
 async function submit() {
-  localError.value = ''
   serverError.value = ''
 
   const validationError = validate()
   if (validationError) {
-    localError.value = validationError
+    serverError.value = validationError
     return
   }
 
@@ -144,6 +235,10 @@ async function submit() {
       serverError.value = t('settings.wrongCurrentPassword')
     } else if (errorCode === 'password_too_short') {
       serverError.value = t('settings.passwordTooShort')
+    } else if (errorCode === 'password_too_long') {
+      serverError.value = t('settings.passwordTooLong')
+    } else if (errorCode === 'password_no_letter_digit') {
+      serverError.value = t('settings.passwordNoLetterDigit')
     } else if (errorCode === 'empty_password') {
       serverError.value = t('settings.currentPasswordRequired')
     } else if (err?.message?.includes('Too Many Requests') || errorCode === 'TooManyLoginAttempts') {
@@ -202,10 +297,16 @@ function handleClose() {
   margin-bottom: 4px;
 }
 
+.password-dialog__input-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
 .password-dialog__input {
   width: 100%;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 10px 40px 10px 12px;
   font-size: 15px;
   border: 1px solid var(--border-color);
   border-radius: 10px;
@@ -217,6 +318,79 @@ function handleClose() {
 
 .password-dialog__input:focus {
   border-color: var(--accent-color);
+}
+
+.password-dialog__eye {
+  position: absolute;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 2px;
+}
+
+.password-dialog__eye:hover {
+  color: var(--text-secondary);
+}
+
+.password-dialog__hints {
+  margin-top: 4px;
+}
+
+.password-dialog__hint {
+  font-size: 12px;
+  margin-top: 2px;
+  padding-left: 2px;
+}
+
+.password-dialog__hint--error {
+  color: #e74c3c;
+}
+
+.password-dialog__strength {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.password-dialog__strength-bar {
+  flex: 1;
+  height: 4px;
+  background: var(--bg-tertiary);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.password-dialog__strength-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.2s, background 0.2s;
+}
+
+.password-dialog__strength-fill--weak {
+  width: 33%;
+  background: #e74c3c;
+}
+
+.password-dialog__strength-fill--medium {
+  width: 66%;
+  background: #f39c12;
+}
+
+.password-dialog__strength-fill--strong {
+  width: 100%;
+  background: #27ae60;
+}
+
+.password-dialog__strength-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
 }
 
 .password-dialog__error {
