@@ -24,6 +24,9 @@
           </div>
         </div>
         <div class="welcome-footer">
+          <button class="btn-ok" @click="close">
+            {{ t('welcomeInfo.ok') }}
+          </button>
           <button class="btn-dont-show" @click="dontShowAgain">
             {{ t('welcomeInfo.dontShowAgain') }}
           </button>
@@ -244,7 +247,7 @@ onMounted(loadBackends)
   align-items: center;
 }
 
-.btn-dont-show {
+.btn-ok {
   width: 100%;
   padding: 8px 16px;
   border: none;
@@ -257,8 +260,22 @@ onMounted(loadBackends)
   transition: opacity 0.2s;
 }
 
-.btn-dont-show:hover {
+.btn-ok:hover {
   opacity: 0.9;
+}
+
+.btn-dont-show {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 8px;
+  transition: color 0.2s;
+}
+
+.btn-dont-show:hover {
+  color: var(--text-secondary);
 }
 
 /* ── Transition ── */

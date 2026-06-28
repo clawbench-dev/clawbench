@@ -1319,5 +1319,6 @@ export default {
     detected: '已安装',
     notDetected: '未安装',
     dontShowAgain: '不再提示',
+    ok: '确定',
   },
 } as const

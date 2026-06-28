@@ -1319,5 +1319,6 @@ export default {
     detected: 'Installed',
     notDetected: 'Not installed',
     dontShowAgain: "Don't show again",
+    ok: 'OK',
   },
 } as const
