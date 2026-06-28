@@ -74,6 +74,7 @@ const i18n = createI18n({
           deleteCurrentSession: '删除当前会话',
           noSessionToDelete: '无可删除会话',
           forkSession: '派生会话',
+          userMsgIndex: '消息索引',
         },
         create: { selectAgentOrLongPress: '选择Agent' },
         delete: { confirm: '确认删除？' },
@@ -592,29 +593,28 @@ describe('ChatInputBar — quoteData chip', () => {
   })
 })
 
-describe('ChatInputBar — fork button', () => {
-  it('hides fork button when currentTransport is not acp-stdio', () => {
+describe('ChatInputBar — user message index button', () => {
+  it('shows user message index button regardless of transport', () => {
     const wrapper = mountInputBar({ currentTransport: '' })
-    // Find all chat-action-btn and check none has the fork tooltip
     const buttons = wrapper.findAll('.chat-action-btn')
-    const forkBtn = buttons.find(b => b.attributes('title')?.includes('派生会话') || b.attributes('title')?.includes('Fork'))
-    expect(forkBtn).toBeUndefined()
+    const indexBtn = buttons.find(b => b.attributes('title')?.includes('消息索引') || b.attributes('title')?.includes('Message index'))
+    expect(indexBtn).toBeDefined()
   })
 
-  it('shows fork button when currentTransport is acp-stdio', () => {
+  it('shows user message index button for acp-stdio transport too', () => {
     const wrapper = mountInputBar({ currentTransport: 'acp-stdio' })
     const buttons = wrapper.findAll('.chat-action-btn')
-    const forkBtn = buttons.find(b => b.attributes('title')?.includes('派生会话') || b.attributes('title')?.includes('Fork'))
-    expect(forkBtn).toBeDefined()
+    const indexBtn = buttons.find(b => b.attributes('title')?.includes('消息索引') || b.attributes('title')?.includes('Message index'))
+    expect(indexBtn).toBeDefined()
   })
 
-  it('emits fork-session when fork button is clicked', async () => {
-    const wrapper = mountInputBar({ currentTransport: 'acp-stdio' })
+  it('emits open-user-msg-index when index button is clicked', async () => {
+    const wrapper = mountInputBar({})
     const buttons = wrapper.findAll('.chat-action-btn')
-    const forkBtn = buttons.find(b => b.attributes('title')?.includes('派生会话') || b.attributes('title')?.includes('Fork'))
-    expect(forkBtn).toBeDefined()
+    const indexBtn = buttons.find(b => b.attributes('title')?.includes('消息索引') || b.attributes('title')?.includes('Message index'))
+    expect(indexBtn).toBeDefined()
 
-    await forkBtn!.trigger('click')
-    expect(wrapper.emitted('fork-session')).toBeTruthy()
+    await indexBtn!.trigger('click')
+    expect(wrapper.emitted('open-user-msg-index')).toBeTruthy()
   })
 })

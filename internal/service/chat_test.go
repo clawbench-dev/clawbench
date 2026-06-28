@@ -3014,3 +3014,55 @@ func TestGetUserMessageIndex_OrderPreserved(t *testing.T) {
 		assert.Equal(t, fmt.Sprintf("Question %d", i+1), msg.Content)
 	}
 }
+
+// ---------- GetMessageContent ----------
+
+func TestGetMessageContent_NormalLookup(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Test")
+	msgID, err := service.AddChatMessage("/project", "claude", sid, "user", "Hello world", nil, false, "")
+	assert.NoError(t, err)
+
+	content, err := service.GetMessageContent(msgID, sid)
+	assert.NoError(t, err)
+	assert.Equal(t, "Hello world", content)
+}
+
+func TestGetMessageContent_BlockJSONExtracted(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Test")
+	// Add a message with block-format JSON content
+	blockJSON := `{"blocks":[{"type":"text","text":"Plain text here"}]}`
+	msgID, err := service.AddChatMessage("/project", "claude", sid, "assistant", blockJSON, nil, false, "")
+	assert.NoError(t, err)
+
+	content, err := service.GetMessageContent(msgID, sid)
+	assert.NoError(t, err)
+	assert.Equal(t, "Plain text here", content)
+}
+
+func TestGetMessageContent_CrossSessionReturnsEmpty(t *testing.T) {
+	setupDB(t)
+
+	sid1 := helperCreateSession(t, "/project", "claude", "Session 1")
+	sid2 := helperCreateSession(t, "/project", "claude", "Session 2")
+	msgID, err := service.AddChatMessage("/project", "claude", sid1, "user", "Secret content", nil, false, "")
+	assert.NoError(t, err)
+
+	// Query with wrong session — should return empty string, not the content
+	content, err := service.GetMessageContent(msgID, sid2)
+	assert.NoError(t, err)
+	assert.Equal(t, "", content)
+}
+
+func TestGetMessageContent_NonExistentID(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Test")
+
+	content, err := service.GetMessageContent(99999, sid)
+	assert.NoError(t, err)
+	assert.Equal(t, "", content)
+}

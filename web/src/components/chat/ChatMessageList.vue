@@ -92,9 +92,6 @@
           </button>
         </div>
       </Transition>
-      <button v-if="hasUserMessages" class="scroll-fab-round" @click="toggleUserMsgIndex" :title="t('chat.messageList.userMsgIndex')">
-        <List :size="18" />
-      </button>
     </div>
   </Transition>
 
@@ -107,6 +104,7 @@
     :jumping="loadingTarget"
     @close="closeUserMsgIndex"
     @select="jumpToUserMessage"
+    @fork="$emit('fork-from-message', $event)"
   />
 
   </div>
@@ -115,7 +113,7 @@
 <script setup>
 import { ref, nextTick, inject, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown, List } from 'lucide-vue-next'
+import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown } from 'lucide-vue-next'
 import ChatMessageItem from './ChatMessageItem.vue'
 import UserMsgIndexSheet from './UserMsgIndexSheet.vue'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
@@ -144,7 +142,7 @@ const props = defineProps({
   active: { type: Boolean, default: true },
 })
 
-const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-thinking-detail', 'show-metadata', 'file-tag-click', 'file-open', 'load-more', 'task-card-click', 'send-message', 'remove-pending', 'render-flush', 'toggle-summary', 'resume-session', 'show-rag-detail'])
+const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-thinking-detail', 'show-metadata', 'file-tag-click', 'file-open', 'load-more', 'task-card-click', 'send-message', 'remove-pending', 'render-flush', 'toggle-summary', 'resume-session', 'show-rag-detail', 'fork-from-message'])
 
 const messagesRef = ref(null)
 const { handleDblClick } = useDoubleClickCopy()
@@ -561,6 +559,7 @@ defineExpose({
   scrolledUp,
   scrolledDown,
   closeUserMsgIndex,
+  toggleUserMsgIndex,
 })
 </script>
 

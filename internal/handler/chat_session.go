@@ -301,7 +301,8 @@ func ServeForkSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		SessionID string `json:"sessionId"`
+		SessionID        string `json:"sessionId"`
+		BeforeMessageID  int64  `json:"beforeMessageId"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxChatBodySize)
 	if !decodeJSON(w, r, &req) {
@@ -317,19 +318,45 @@ func ServeForkSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build title: localized fork prefix + source session title
-	sourceTitle, _ := service.GetSessionTitle(sourceID)
-	if sourceTitle == "" {
-		sourceTitle = T(r, "Session")
+	// Build title: if beforeMessageId is provided, use the user message content;
+	// otherwise use the source session title.
+	var title string
+	if req.BeforeMessageID > 0 {
+		msgContent, err := service.GetMessageContent(req.BeforeMessageID, sourceID)
+		if err != nil {
+			slog.Warn("handler: failed to get message content for fork title", "message_id", req.BeforeMessageID, "error", err)
+		}
+		if err != nil || msgContent == "" {
+			sourceTitle, _ := service.GetSessionTitle(sourceID)
+			if sourceTitle == "" {
+				sourceTitle = T(r, "Session")
+			}
+			title = T(r, "ForkPrefix") + sourceTitle
+		} else {
+			// Truncate long message content for title
+			runes := []rune(msgContent)
+			if len(runes) > 50 {
+				msgContent = string(runes[:50]) + "..."
+			}
+			title = T(r, "ForkPrefix") + msgContent
+		}
+	} else {
+		sourceTitle, _ := service.GetSessionTitle(sourceID)
+		if sourceTitle == "" {
+			sourceTitle = T(r, "Session")
+		}
+		title = T(r, "ForkPrefix") + sourceTitle
 	}
-	title := T(r, "ForkPrefix") + sourceTitle
 
-	newSessionID, err := service.ForkSession(sourceID, projectPath, title)
+	newSessionID, err := service.ForkSession(sourceID, projectPath, title, req.BeforeMessageID)
 	if err != nil {
 		slog.Error("handler: failed to fork session", "source_session", sourceID, "error", err)
-		if strings.Contains(err.Error(), "session limit") {
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "session limit") {
 			writeLocalizedErrorf(w, r, http.StatusConflict, "SessionLimitReached", map[string]any{"MaxCount": model.SessionMaxCount})
-		} else if strings.Contains(err.Error(), "not found") {
+		} else if strings.Contains(errMsg, "not found in session") || strings.Contains(errMsg, "must be a user message") {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidForkPoint")
+		} else if strings.Contains(errMsg, "not found") {
 			writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
 		} else {
 			model.WriteError(w, model.Internal(err))

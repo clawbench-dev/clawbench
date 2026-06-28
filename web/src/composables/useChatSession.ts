@@ -899,13 +899,18 @@ export function useChatSession(options: UseChatSessionOptions) {
     }
   }
 
-  /** Fork the current session — create a new session with copied messages. */
-  async function forkSession(sessionId: string): Promise<boolean> {
+  /** Fork the current session — create a new session with copied messages.
+   *  If beforeMessageId is provided, only messages up to and including that message are copied. */
+  async function forkSession(sessionId: string, beforeMessageId?: number): Promise<boolean> {
     try {
+      const body: Record<string, unknown> = { sessionId }
+      if (beforeMessageId && beforeMessageId > 0) {
+        body.beforeMessageId = beforeMessageId
+      }
       const resp = await fetch('/api/ai/session/fork', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId }),
+        body: JSON.stringify(body),
       })
       if (!resp.ok) {
         const errData = await resp.json().catch(() => ({}))

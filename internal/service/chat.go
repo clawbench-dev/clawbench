@@ -4,6 +4,7 @@ package service
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -137,6 +138,20 @@ func GetUserMessageIndex(sessionID string) ([]model.ChatMessage, error) {
 		return nil, err
 	}
 	return messages, nil
+}
+
+// GetMessageContent returns the plain text content of a message by its ID,
+// scoped to the specified session. Returns empty string if not found.
+func GetMessageContent(id int64, sessionID string) (string, error) {
+	var content string
+	err := DBRead.QueryRow("SELECT content FROM chat_history WHERE id = ? AND session_id = ?", id, sessionID).Scan(&content)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return ExtractPlainText(content), nil
 }
 
 // GetMessageByID fetches a single chat message by its database ID.

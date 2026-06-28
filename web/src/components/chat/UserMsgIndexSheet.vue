@@ -1,8 +1,8 @@
 <template>
   <BottomSheet :open="open" auto @close="$emit('close')">
     <template #header>
-      <MessageSquare :size="16" class="panel-icon" />
-      <span>{{ t('chat.messageList.userMsgIndexTitle') }}</span>
+      <MessagesSquare :size="16" class="panel-icon" />
+      <span>{{ t('chat.messageList.conversationIndexTitle') }}</span>
       <span class="panel-count">{{ messages.length }}</span>
     </template>
     <div v-if="loading" class="panel-loading">
@@ -32,6 +32,9 @@
           <span class="msg-text">{{ truncateText(msg) }}</span>
           <span v-if="msg.createdAt" class="msg-time">{{ formatRelativeTime(msg.createdAt) }}</span>
         </div>
+        <button class="msg-fork-btn" @click.stop="$emit('fork', msg)" :title="t('chat.actions.forkSession')">
+          <Split :size="14" />
+        </button>
       </div>
     </div>
   </BottomSheet>
@@ -39,7 +42,7 @@
 
 <script setup>
 import { useI18n } from 'vue-i18n'
-import { MessageSquare } from 'lucide-vue-next'
+import { MessagesSquare, Split } from 'lucide-vue-next'
 import { truncateUserMsg } from '@/utils/userMsgIndexUtils.ts'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import { formatRelativeTime } from '@/utils/format.ts'
@@ -54,7 +57,7 @@ defineProps({
   jumping: Boolean,
 })
 
-defineEmits(['close', 'select'])
+defineEmits(['close', 'select', 'fork'])
 
 function truncateText(msg) {
   return truncateUserMsg(msg, t('chat.messageList.userMsgIndexAttachment'))
@@ -202,5 +205,40 @@ function truncateText(msg) {
   color: var(--text-muted, #999);
   line-height: 1;
   letter-spacing: 0.2px;
+}
+
+.msg-fork-btn {
+  flex-shrink: 0;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.4;
+  transition: opacity 0.2s, background 0.2s, color 0.2s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media (hover: hover) {
+  .msg-item:hover .msg-fork-btn {
+    opacity: 0.8;
+  }
+  .msg-fork-btn:hover {
+    opacity: 1 !important;
+    background: var(--bg-tertiary);
+    color: var(--accent-color);
+  }
+}
+
+.msg-fork-btn:active {
+  opacity: 1;
+  color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 15%, transparent);
 }
 </style>

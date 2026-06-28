@@ -18,10 +18,10 @@
           :title="t('chat.create.selectAgentOrLongPress')">
           <Plus :size="14" />
         </button>
-        <button v-if="isACPTransport" class="chat-action-btn"
-          @click="emit('fork-session')"
-          :title="t('chat.actions.forkSession')">
-          <Split :size="14" />
+        <button class="chat-action-btn"
+          @click="$emit('open-user-msg-index')"
+          :title="t('chat.actions.userMsgIndex')">
+          <MessagesSquare :size="14" />
         </button>
         <button v-if="showResumeIcon" class="chat-action-btn"
           @click.stop="openResumeDrawer"
@@ -268,7 +268,7 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, FileImage, FileText, Folder, XCircle, Inbox, Send, Square, Settings, Zap, Loader2, Cpu, Compass, Brain, Cable, RotateCcw, Activity, Split } from 'lucide-vue-next'
+import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, FileImage, FileText, Folder, XCircle, Inbox, Send, Square, Settings, Zap, Loader2, Cpu, Compass, Brain, Cable, RotateCcw, Activity, MessagesSquare } from 'lucide-vue-next'
 import { baseName } from '@/utils/path.ts'
 import { computeRecentReferencedFiles, computeHasFileGroups, computeAttachMenuItemCount } from '@/utils/chatInputUtils.ts'
 import PopupMenu from '@/components/common/PopupMenu.vue'
@@ -416,7 +416,7 @@ const emit = defineEmits([
   'create-session',
   'show-agent-selector',
   'delete-session',
-  'fork-session',
+  'open-user-msg-index',
   'switch-model',
   'switch-thinking-effort',
   'switch-mode',

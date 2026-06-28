@@ -30,6 +30,7 @@
       @toggle-summary="handleToggleSummary"
       @resume-session="handleResumeSession"
       @show-rag-detail="handleRagDetail"
+      @fork-from-message="handleForkFromMessage"
     />
 
     <!-- Session switching overlay — placed here to cover the entire message area -->
@@ -105,7 +106,7 @@
       @create-session="() => manager.createSession()"
       @show-agent-selector="handleShowAgentSelector"
       @delete-session="() => manager.deleteCurrentSession((draftId) => inputBarRef.value?.deleteDraft(draftId))"
-      @fork-session="handleForkSession"
+      @open-user-msg-index="handleOpenUserMsgIndex"
       @switch-model="handleSwitchModel"
       @switch-thinking-effort="handleSwitchThinkingEffort"
       @switch-mode="handleSwitchMode"
@@ -347,8 +348,14 @@ function onStreamEnd(reason) {
   } else if (reason === 'cancelled') {
     // Backend already cleared queue; clear locally for immediate UI response
     pendingStore.clearPending(identity.currentSessionId.value)
+    // Release wake lock — streaming was cancelled, no TTS will play
+    autoSpeech.onStreamingEndNoSpeech()
   }
   // 'error': don't touch pending messages — backend preserves queue
+  if (reason === 'error') {
+    // Release wake lock — streaming errored, no TTS will play
+    autoSpeech.onStreamingEndNoSpeech()
+  }
 }
 
 const stream = useChatStream({
@@ -649,11 +656,16 @@ async function handleAcpSessionLoaded(sessionId) {
   await manager.switchSession(sessionId)
 }
 
-async function handleForkSession() {
+function handleOpenUserMsgIndex() {
+  messageListRef.value?.toggleUserMsgIndex()
+}
+
+async function handleForkFromMessage(msg) {
   const sid = identity.currentSessionId.value
   if (!sid) return
-  if (await dialog.confirm(t('chat.session.forkConfirm'))) {
-    await manager.forkSession(sid)
+  if (await dialog.confirm(t('chat.session.forkFromMessageConfirm'))) {
+    messageListRef.value?.closeUserMsgIndex()
+    await manager.forkSession(sid, msg.id)
   }
 }
 

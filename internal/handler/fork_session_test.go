@@ -184,3 +184,64 @@ func TestServeForkSession_BodySessionIdOverridesCookie(t *testing.T) {
 	assert.Len(t, msgs, 1)
 	assert.Contains(t, msgs[0].Content, "From session 2")
 }
+
+func TestServeForkSession_WithBeforeMessageID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessID, err := service.CreateSession(env.ProjectDir, "claude", "Original", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	user1ID, err := service.AddChatMessage(env.ProjectDir, "claude", sessID, "user", "First", nil, false, "")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessID, "assistant", "Answer 1", nil, false, "")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessID, "user", "Second", nil, false, "")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessID, "assistant", "Answer 2", nil, false, "")
+	require.NoError(t, err)
+
+	// Fork with beforeMessageId = first user message
+	req := newRequest(t, http.MethodPost, "/api/ai/session/fork", map[string]any{"sessionId": sessID, "beforeMessageId": user1ID})
+	req = withProjectCookie(req, env.ProjectDir)
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("chat_session_id"), Value: sessID})
+
+	w := callHandler(ServeForkSession, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.True(t, result["ok"].(bool))
+
+	newSessID := result["sessionId"].(string)
+	msgs, err := service.GetChatHistory(env.ProjectDir, "claude", newSessID)
+	require.NoError(t, err)
+	assert.Len(t, msgs, 2) // first user message + its assistant reply
+	assert.Equal(t, "First", msgs[0].Content)
+	assert.Equal(t, "Answer 1", msgs[1].Content)
+
+	// Title should be based on the user message content
+	title, err := service.GetSessionTitle(newSessID)
+	require.NoError(t, err)
+	assert.Contains(t, title, "First")
+	assert.Equal(t, "First", msgs[0].Content)
+}
+
+func TestServeForkSession_BeforeMessageIDNotUserMessage(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessID, err := service.CreateSession(env.ProjectDir, "claude", "Original", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sessID, "user", "Hello", nil, false, "")
+	require.NoError(t, err)
+	asstID, err := service.AddChatMessage(env.ProjectDir, "claude", sessID, "assistant", "World", nil, false, "")
+	require.NoError(t, err)
+
+	// Fork from an assistant message should return 400
+	req := newRequest(t, http.MethodPost, "/api/ai/session/fork", map[string]any{"sessionId": sessID, "beforeMessageId": asstID})
+	req = withProjectCookie(req, env.ProjectDir)
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("chat_session_id"), Value: sessID})
+
+	w := callHandler(ServeForkSession, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}

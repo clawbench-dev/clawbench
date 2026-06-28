@@ -95,4 +95,5 @@ NotFound: Not found
 PermissionNotFound: No pending permission request found
 ACPSessionNotFound: ACP session no longer exists on the agent side
 ForkPrefix: "[Fork] "
+InvalidForkPoint: Invalid fork point — message not found or not a user message
 Session: Untitled Session

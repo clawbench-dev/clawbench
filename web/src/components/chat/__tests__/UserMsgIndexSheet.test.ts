@@ -3,7 +3,8 @@ import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 
 vi.mock('lucide-vue-next', () => ({
-  MessageSquare: { name: 'MessageSquareIcon', render: () => null },
+  MessagesSquare: { name: 'MessagesSquareIcon', render: () => null },
+  Split: { name: 'SplitIcon', render: () => null },
 }))
 
 vi.mock('@/components/common/BottomSheet.vue', () => ({
@@ -77,6 +78,19 @@ describe('UserMsgIndexSheet', () => {
       await wrapper.find('.msg-item').trigger('click')
       expect(wrapper.emitted('select')).toBeTruthy()
       expect(wrapper.emitted('select')![0]).toEqual([messages[0]])
+    })
+
+    it('emits fork on fork button click', async () => {
+      const messages = [
+        { id: 1, content: 'Hello', role: 'user' },
+        { id: 2, content: 'World', role: 'user' },
+      ]
+      const wrapper = mountSheet({ messages })
+      const forkBtns = wrapper.findAll('.msg-fork-btn')
+      expect(forkBtns).toHaveLength(2)
+      await forkBtns[0].trigger('click')
+      expect(wrapper.emitted('fork')).toBeTruthy()
+      expect(wrapper.emitted('fork')![0]).toEqual([messages[0]])
     })
 
     it('shows loading state', () => {

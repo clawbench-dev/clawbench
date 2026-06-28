@@ -257,11 +257,12 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	return newSessionID, false, nil
 }
 
-// ForkSession creates a new chat session by copying all non-streaming messages
+// ForkSession creates a new chat session by copying non-streaming messages
 // and summaries from the source session. Unlike ContinueFromExecution, this
 // does NOT copy external_session_id — the forked session starts fresh.
-// The title is prefix + source title (handler provides the localized prefix).
-func ForkSession(sourceSessionID, projectPath, title string) (string, error) {
+// If beforeMessageID > 0, only messages up to and including the assistant reply
+// following the specified user message are copied. The title is provided by the caller.
+func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int64) (string, error) {
 	// 1. Get source session metadata
 	var backend, agentID, agentSource, modelName, sessProjectPath string
 	err := DB.QueryRow(
@@ -278,6 +279,36 @@ func ForkSession(sourceSessionID, projectPath, title string) (string, error) {
 	// 2. Validate project ownership
 	if sessProjectPath != projectPath {
 		return "", fmt.Errorf("session %s does not belong to project %q", sourceSessionID, projectPath)
+	}
+
+	// 2b. Validate beforeMessageID if provided, and resolve to include the assistant reply
+	cutBeforeID := beforeMessageID
+	if beforeMessageID > 0 {
+		var role string
+		err = DB.QueryRow(
+			"SELECT role FROM chat_history WHERE id = ? AND session_id = ?",
+			beforeMessageID, sourceSessionID,
+		).Scan(&role)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("message %d not found in session %s", beforeMessageID, sourceSessionID)
+		}
+		if err != nil {
+			return "", err
+		}
+		if role != "user" {
+			return "", fmt.Errorf("fork point must be a user message, message %d is role %q", beforeMessageID, role)
+		}
+		// Find the next non-streaming assistant message after this user message
+		var asstID int64
+		err = DB.QueryRow(
+			"SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0 AND id > ? ORDER BY id LIMIT 1",
+			sourceSessionID, beforeMessageID,
+		).Scan(&asstID)
+		if err == nil {
+			// Include the assistant reply in the fork
+			cutBeforeID = asstID
+		}
+		// If no assistant reply found (e.g. last message is user), cut at the user message
 	}
 
 	// 3. Max session count check
@@ -303,7 +334,7 @@ func ForkSession(sourceSessionID, projectPath, title string) (string, error) {
 		slog.String("agent", agentID))
 
 	// 6. Copy messages and summaries
-	idMap, err := copySessionMessages(sourceSessionID, newSessionID)
+	idMap, err := copySessionMessages(sourceSessionID, newSessionID, cutBeforeID)
 	if err != nil {
 		return "", err
 	}
@@ -333,13 +364,18 @@ func checkSessionLimit(projectPath string) error {
 	return nil
 }
 
-// copySessionMessages copies all non-streaming messages from sourceSessionID to newSessionID.
+// copySessionMessages copies non-streaming messages from sourceSessionID to newSessionID.
+// If beforeMessageID > 0, only messages with id <= beforeMessageID are copied.
 // Returns a map from old message IDs to new message IDs.
-func copySessionMessages(sourceSessionID, newSessionID string) (map[int64]int64, error) {
-	rows, err := DB.Query(
-		"SELECT id, project_path, role, content, files, backend FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id",
-		sourceSessionID,
-	)
+func copySessionMessages(sourceSessionID, newSessionID string, beforeMessageID int64) (map[int64]int64, error) {
+	query := "SELECT id, project_path, role, content, files, backend FROM chat_history WHERE session_id = ? AND streaming = 0"
+	args := []any{sourceSessionID}
+	if beforeMessageID > 0 {
+		query += " AND id <= ?"
+		args = append(args, beforeMessageID)
+	}
+	query += " ORDER BY id"
+	rows, err := DB.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query source messages: %w", err)
 	}
