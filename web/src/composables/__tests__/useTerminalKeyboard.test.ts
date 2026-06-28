@@ -75,4 +75,34 @@ describe('useTerminalKeyboard', () => {
     // Cleanup
     setKeyboardHeight(0)
   })
+
+  it('exposes isAdjustResize as a reactive ref starting at false', async () => {
+    const { useTerminalKeyboard } = await import('@/composables/useTerminalKeyboard')
+    const { isAdjustResize } = useTerminalKeyboard()
+
+    expect(isAdjustResize.value).toBe(false)
+  })
+
+  it('setAdjustResize updates the reactive isAdjustResize', async () => {
+    const { useTerminalKeyboard } = await import('@/composables/useTerminalKeyboard')
+    const { isAdjustResize, setAdjustResize } = useTerminalKeyboard()
+
+    setAdjustResize(true)
+    expect(isAdjustResize.value).toBe(true)
+
+    setAdjustResize(false)
+    expect(isAdjustResize.value).toBe(false)
+  })
+
+  it('shares isAdjustResize across multiple useTerminalKeyboard calls', async () => {
+    const { useTerminalKeyboard } = await import('@/composables/useTerminalKeyboard')
+    const instance1 = useTerminalKeyboard()
+    const instance2 = useTerminalKeyboard()
+
+    instance1.setAdjustResize(true)
+    expect(instance2.isAdjustResize.value).toBe(true)
+
+    // Cleanup
+    instance1.setAdjustResize(false)
+  })
 })

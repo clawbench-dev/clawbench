@@ -220,7 +220,7 @@ func ServeFileBatchDelete(w http.ResponseWriter, r *http.Request) { //nolint:goc
 		deleted++
 	}
 
-	result := map[string]interface{}{"ok": true, "deleted": deleted}
+	result := map[string]interface{}{"ok": true, "deleted": deleted} //nolint:goconst // response key
 	if len(errs) > 0 {
 		result["errors"] = errs
 	}

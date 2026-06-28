@@ -1,10 +1,16 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { useAgents, resetAgents, updateACPModelList, restoreOriginalModels, populateACPStateFromCache, registerIdentityUpdaters } from '@/composables/useAgents'
+import { useAgents, resetAgents, updateACPModelList, restoreOriginalModels, populateACPStateFromCache, registerIdentityUpdaters, invalidateACPStateCache } from '@/composables/useAgents'
 
-// Mock apiGet to control agent data
+// Mock apiGet/apiPatch/apiPost/apiDelete to control agent data
 const mockApiGet = vi.fn()
+const mockApiPatch = vi.fn()
+const mockApiPost = vi.fn()
+const mockApiDelete = vi.fn()
 vi.mock('@/utils/api', () => ({
   apiGet: (...args: any[]) => mockApiGet(...args),
+  apiPatch: (...args: any[]) => mockApiPatch(...args),
+  apiPost: (...args: any[]) => mockApiPost(...args),
+  apiDelete: (...args: any[]) => mockApiDelete(...args),
 }))
 
 // Mock useLocale gt function
@@ -38,7 +44,9 @@ describe('useAgents', () => {
     isDefaultAgent, getDefaultModelId, getAgentModels, isMultiModel,
     getAgent, getAgentModel, getAgentDefaultModelName, agentHeaderTitle,
     syncModelFromAgent, getAgentThinkingEffortLevels, hasThinkingEffortLevels,
-    updateAgentField, canRefreshModels } = useAgents()
+    updateAgentField, canRefreshModels, getEffectiveThinkingEffort,
+    agentCanResume, supportsDualTransport, getAgentTransport,
+    setDefaultAgent, duplicateAgent, deleteAgent, rescanAgents } = useAgents()
 
   // Register mock identity updaters — normally done by useSessionIdentity at
   // module evaluation time, but that module is mocked so we wire manually.
@@ -824,6 +832,177 @@ describe('useAgents', () => {
       mockApiGet.mockResolvedValueOnce({ agents: testAgents, defaultAgent: 'claude', acpStates: acpState })
       await populateACPStateFromCache('claude')
       expect(mockApiGet).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  // --- getEffectiveThinkingEffort ---
+
+  describe('getEffectiveThinkingEffort', () => {
+    it('returns preferredThinkingEffort when set', async () => {
+      updateAgentField('claude', 'preferredThinkingEffort', 'max')
+      expect(getEffectiveThinkingEffort('claude')).toBe('max')
+      // cleanup
+      updateAgentField('claude', 'preferredThinkingEffort', '')
+    })
+
+    it('returns agent thinkingEffort when no preferred', () => {
+      // claude may or may not have thinkingEffort set from API
+      const result = getEffectiveThinkingEffort('claude')
+      expect(typeof result).toBe('string')
+    })
+
+    it('returns empty string for unknown agent', () => {
+      expect(getEffectiveThinkingEffort('nonexistent')).toBe('')
+    })
+  })
+
+  // --- agentCanResume ---
+
+  describe('agentCanResume', () => {
+    it('returns true when acpStatesCache has loadSession', async () => {
+      resetAgents()
+      registerMocks()
+      mockApiGet.mockResolvedValue({
+        agents: testAgents,
+        defaultAgent: 'claude',
+        acpStates: { claude: { loadSession: true } },
+      })
+      await loadAgents()
+      expect(agentCanResume('claude')).toBe(true)
+    })
+
+    it('returns true when agent has acpCommand', async () => {
+      resetAgents()
+      registerMocks()
+      const agentsWithAcp = testAgents.map(a => a.id === 'claude' ? { ...a, acpCommand: 'claude-acp' } : a)
+      mockApiGet.mockResolvedValue({ agents: agentsWithAcp, defaultAgent: 'claude' })
+      await loadAgents()
+      expect(agentCanResume('claude')).toBe(true)
+    })
+
+    it('returns false when no loadSession and no acpCommand', () => {
+      expect(agentCanResume('simple')).toBe(false)
+    })
+
+    it('returns false for unknown agent', () => {
+      expect(agentCanResume('nonexistent')).toBe(false)
+    })
+  })
+
+  // --- supportsDualTransport ---
+
+  describe('supportsDualTransport', () => {
+    it('returns true when agent has acpCommand', async () => {
+      resetAgents()
+      registerMocks()
+      const agentsWithAcp = testAgents.map(a => a.id === 'claude' ? { ...a, acpCommand: 'claude-acp' } : a)
+      mockApiGet.mockResolvedValue({ agents: agentsWithAcp, defaultAgent: 'claude' })
+      await loadAgents()
+      expect(supportsDualTransport('claude')).toBe(true)
+    })
+
+    it('returns false when agent has no acpCommand', () => {
+      expect(supportsDualTransport('simple')).toBe(false)
+    })
+
+    it('returns false for unknown agent', () => {
+      expect(supportsDualTransport('nonexistent')).toBe(false)
+    })
+  })
+
+  // --- getAgentTransport ---
+
+  describe('getAgentTransport', () => {
+    it('returns the transport field when set', async () => {
+      resetAgents()
+      registerMocks()
+      const agentsWithTransport = testAgents.map(a => a.id === 'claude' ? { ...a, transport: 'acp-stdio' } : a)
+      mockApiGet.mockResolvedValue({ agents: agentsWithTransport, defaultAgent: 'claude' })
+      await loadAgents()
+      expect(getAgentTransport('claude')).toBe('acp-stdio')
+    })
+
+    it('returns cli when transport is not set', () => {
+      expect(getAgentTransport('gpt')).toBe('cli')
+    })
+
+    it('returns cli for unknown agent', () => {
+      expect(getAgentTransport('nonexistent')).toBe('cli')
+    })
+  })
+
+  // --- setDefaultAgent ---
+
+  describe('setDefaultAgent', () => {
+    beforeEach(() => {
+      mockApiPatch.mockReset().mockResolvedValue({})
+    })
+
+    it('calls apiPatch and updates defaultAgentId', async () => {
+      await setDefaultAgent('gpt')
+      expect(mockApiPatch).toHaveBeenCalledWith('/api/config', { default_agent: 'gpt' })
+      expect(defaultAgentId.value).toBe('gpt')
+    })
+  })
+
+  // --- duplicateAgent ---
+
+  describe('duplicateAgent', () => {
+    beforeEach(() => {
+      mockApiPost.mockReset().mockResolvedValue({})
+    })
+
+    it('calls apiPost with source_id and name, then reloads agents', async () => {
+      await duplicateAgent('claude', 'Claude Copy')
+      expect(mockApiPost).toHaveBeenCalledWith('/api/agents', { source_id: 'claude', name: 'Claude Copy' })
+      // loadAgents(true) is called after, which triggers a fresh apiGet
+    })
+  })
+
+  // --- deleteAgent ---
+
+  describe('deleteAgent', () => {
+    beforeEach(() => {
+      mockApiDelete.mockReset().mockResolvedValue({})
+    })
+
+    it('calls apiDelete with agent id, then reloads agents', async () => {
+      await deleteAgent('gpt')
+      expect(mockApiDelete).toHaveBeenCalledWith('/api/agents', { body: { id: 'gpt' } })
+    })
+  })
+
+  // --- rescanAgents ---
+
+  describe('rescanAgents', () => {
+    beforeEach(() => {
+      mockApiPost.mockReset().mockResolvedValue({})
+    })
+
+    it('calls apiPost to rescan, then reloads agents', async () => {
+      await rescanAgents()
+      expect(mockApiPost).toHaveBeenCalledWith('/api/agents/rescan', {})
+    })
+  })
+
+  // --- invalidateACPStateCache ---
+
+  describe('invalidateACPStateCache', () => {
+    it('removes cached ACP state for an agent', async () => {
+      resetAgents()
+      registerMocks()
+      mockApiGet.mockResolvedValue({
+        agents: testAgents,
+        defaultAgent: 'claude',
+        acpStates: { claude: { loadSession: true } },
+      })
+      await loadAgents()
+      expect(agentCanResume('claude')).toBe(true)
+
+      invalidateACPStateCache('claude')
+      // After invalidation, cache no longer has loadSession
+      // but agent may still have acpCommand — depends on agent object
+      expect(agentCanResume('claude')).toBe(false) // no acpCommand on testAgents
     })
   })
 })

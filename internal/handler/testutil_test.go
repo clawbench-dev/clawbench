@@ -56,6 +56,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 	origDBRead := service.DBRead
 	origAgents := model.Agents
 	origAgentList := model.AgentList
+	origDefaultAgentID := model.DefaultAgentID
 
 	// Set test globals
 	model.SessionToken = ""
@@ -248,6 +249,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		"claude":    {ID: "claude", Name: "Claude", Backend: "claude", Models: []model.AgentModel{{ID: "claude-sonnet-4-6", Name: "Claude Sonnet", Default: true}}},
 	}
 	model.AgentList = []*model.Agent{model.Agents["codebuddy"], model.Agents["claude"]}
+	model.DefaultAgentID = ""
 
 	env := &testEnv{
 		ProjectDir:      projectDir,
@@ -264,6 +266,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		model.RootPaths = origRootPaths
 		model.Agents = origAgents
 		model.AgentList = origAgentList
+		model.DefaultAgentID = origDefaultAgentID
 		service.DB = origDB
 		service.DBRead = origDBRead
 		_ = db.Close()
