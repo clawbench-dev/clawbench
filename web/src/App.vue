@@ -7,7 +7,7 @@
     <LoginView v-else-if="!isAuthenticated" @login-success="handleLoginSuccess" />
 
     <!-- Main app -->
-    <div v-else class="app-container" :class="{ 'chat-keyboard-open': chatKeyboardActive, 'project-switching': switchingProject }" :key="projectKey">
+    <div v-else class="app-container" :class="{ 'chat-keyboard-open': chatKeyboardActive, 'terminal-keyboard-open': terminalKeyboardNeedsShrink, 'project-switching': switchingProject }" :key="projectKey">
       <WelcomeOverlay ref="welcomeOverlay" />
       <AppHeader
         :project-root="projectRoot"
@@ -626,8 +626,13 @@ const terminalRequestedCwd = ref(null)
 // Terminal keyboard height for detecting when soft keyboard is open in terminal tab.
 // Dock is hidden only when keyboard is open.
 const terminalActive = computed(() => activeTab.value === 'terminal')
-const { keyboardHeight: terminalKeyboardHeight } = useTerminalKeyboard()
+const { keyboardHeight: terminalKeyboardHeight, isAdjustResize: terminalIsAdjustResize } = useTerminalKeyboard()
 const terminalKeyboardActive = computed(() => terminalActive.value && terminalKeyboardHeight.value > 0)
+// In PWA standalone / iOS (no adjustResize), position:fixed app-container doesn't
+// auto-shrink when keyboard opens. We must compensate with CSS bottom shrink,
+// same as the chat-keyboard-open mechanism. On Android native (adjustResize),
+// innerHeight shrinks so the fixed container auto-adjusts — no CSS needed.
+const terminalKeyboardNeedsShrink = computed(() => terminalKeyboardActive.value && !terminalIsAdjustResize.value)
 
 // Chat keyboard — on iOS WKWebView there's no adjustResize, so we detect
 // keyboard via visualViewport and compensate in the web layer.
@@ -1397,10 +1402,18 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-/* When chat keyboard is open on iOS (no adjustResize), shrink the app container
+/* When chat keyboard is open on iOS/PWA (no adjustResize), shrink the app container
    from the bottom so content stays above the keyboard. */
 .chat-keyboard-open {
     bottom: v-bind(chatKeyboardHeight + 'px') !important;
+}
+
+/* When terminal keyboard is open in PWA standalone / iOS (no adjustResize),
+   shrink the app container from the bottom so the terminal content stays
+   above the keyboard. On Android native (adjustResize), innerHeight shrinks
+   automatically so this class is not applied. */
+.terminal-keyboard-open {
+    bottom: v-bind(terminalKeyboardHeight + 'px') !important;
 }
 
 .bottom-dock-wrapper {

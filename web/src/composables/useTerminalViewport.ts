@@ -11,7 +11,7 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
 
   // Use the full-screen height captured at app startup (before any keyboard)
   // as the baseline for detecting keyboard appearance on Android adjustResize.
-  const { fullScreenHeight, setKeyboardHeight: setSharedKeyboardHeight } = useTerminalKeyboard()
+  const { fullScreenHeight, setKeyboardHeight: setSharedKeyboardHeight, setAdjustResize } = useTerminalKeyboard()
 
   function updateViewport() {
     if (!containerRef.value) return
@@ -27,6 +27,11 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
       // Method 2 (works in Android adjustResize where innerHeight shrinks):
       // keyboardHeight = fullScreenHeight - currentInnerHeight
       const resizeKeyboard = fullScreenHeight - currentInnerHeight
+
+      // Detect adjustResize: if innerHeight actually shrunk, the browser
+      // is in adjustResize mode (Android native WebView). In this mode
+      // position:fixed containers auto-adjust, so no CSS compensation needed.
+      setAdjustResize(resizeKeyboard > 0)
 
       // Use whichever gives a larger value — covers both scenarios
       keyboardHeight.value = Math.max(vvKeyboard, resizeKeyboard, 0)
@@ -96,6 +101,9 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
     if (window.visualViewport) {
       window.visualViewport.removeEventListener('resize', updateViewport)
     }
+
+    // Reset adjustResize flag when keyboard closes
+    setAdjustResize(false)
   }
 
   return {

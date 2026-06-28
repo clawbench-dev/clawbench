@@ -3,12 +3,15 @@ import { ref, nextTick } from 'vue'
 import { useTerminalViewport } from '@/composables/useTerminalViewport'
 
 // Mock useTerminalKeyboard to avoid module-level side effects
+const mockIsAdjustResize = ref(false)
 vi.mock('@/composables/useTerminalKeyboard', () => {
   const keyboardHeight = ref(0)
   return {
     useTerminalKeyboard: () => ({
       keyboardHeight,
       setKeyboardHeight: (h: number) => { keyboardHeight.value = h },
+      isAdjustResize: mockIsAdjustResize,
+      setAdjustResize: (v: boolean) => { mockIsAdjustResize.value = v },
       fullScreenHeight: 800,
     }),
   }
@@ -44,6 +47,9 @@ describe('useTerminalViewport', () => {
   beforeEach(() => {
     container = document.createElement('div')
     document.body.appendChild(container)
+
+    // Reset mock state
+    mockIsAdjustResize.value = false
 
     // Save originals
     originalInnerHeight = window.innerHeight
@@ -382,5 +388,65 @@ describe('useTerminalViewport', () => {
     expect(mockTerminal.fitAddon.fit).not.toHaveBeenCalled()
 
     vi.useRealTimers()
+  })
+
+  it('detects adjustResize when innerHeight shrinks (Android native)', () => {
+    const terminal = ref(null)
+    const containerRef = ref<HTMLElement | null>(container)
+    const viewport = useTerminalViewport(terminal, containerRef)
+
+    // Android adjustResize: innerHeight shrinks when keyboard opens
+    Object.defineProperty(window, 'visualViewport', {
+      value: {
+        height: 500,
+        offsetTop: 0,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
+      writable: true,
+      configurable: true,
+    })
+    Object.defineProperty(window, 'innerHeight', {
+      value: 500, // shrunk from 800 → adjustResize
+      writable: true,
+      configurable: true,
+    })
+
+    viewport.startWatching()
+    expect(mockIsAdjustResize.value).toBe(true)
+
+    viewport.stopWatching()
+    // Reset on stop
+    expect(mockIsAdjustResize.value).toBe(false)
+  })
+
+  it('does not detect adjustResize when innerHeight stays same (PWA/iOS)', () => {
+    const terminal = ref(null)
+    const containerRef = ref<HTMLElement | null>(container)
+    const viewport = useTerminalViewport(terminal, containerRef)
+
+    // PWA standalone / iOS: innerHeight stays 800, visualViewport shrinks
+    Object.defineProperty(window, 'visualViewport', {
+      value: {
+        height: 550,
+        offsetTop: 0,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
+      writable: true,
+      configurable: true,
+    })
+    Object.defineProperty(window, 'innerHeight', {
+      value: 800, // unchanged — NOT adjustResize
+      writable: true,
+      configurable: true,
+    })
+
+    viewport.startWatching()
+    expect(mockIsAdjustResize.value).toBe(false)
+    // keyboardHeight from visualViewport: 800 - 550 - 0 = 250
+    expect(viewport.keyboardHeight.value).toBe(250)
+
+    viewport.stopWatching()
   })
 })
