@@ -1,0 +1,40 @@
+/* Shared action button style for chat meta bar — icon + label.
+   Used by: SummaryToggle, file changes button, speak button, info button, etc. */
+.chat-action-btn {
+  flex-shrink: 0;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  opacity: 1;
+  transition: background 0.2s;
+  font-size: 11px;
+}
+
+.chat-action-btn:hover {
+  background: var(--bg-tertiary);
+}
+
+.chat-action-btn svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.chat-action-btn span {
+  white-space: nowrap;
+}
+
+/* Wide variant for buttons with text labels (speak, summary toggle, file changes) */
+.chat-action-btn--wide {
+  min-width: auto;
+  padding: 0 8px;
+}

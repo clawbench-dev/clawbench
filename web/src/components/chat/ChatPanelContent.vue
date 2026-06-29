@@ -499,8 +499,9 @@ watch(() => props.active, async (val) => {
     ragDetailItem.value = null
     ragDetailShow.value = false
   } else {
-    // Open/Re-open: load history (with overlay) and fix stale layout state from v-show display:none
-    await session.loadHistory(false, true)
+    // Open/Re-open: load history (with overlay, skip if unchanged) and fix stale layout state from v-show display:none
+    // skipIfUnchanged=true preserves scroll position when no new messages arrived while tab was hidden
+    await session.loadHistory(false, true, true)
     // Bump layoutRefreshKey AFTER loadHistory so ChatMessageItem re-checks
     // collapse state with the fresh messages and valid scrollHeight.
     nextTick(() => {

@@ -54,8 +54,12 @@
         <span v-if="msg.metadata?.wallMs" class="chat-meta-duration">{{ formatDuration(msg.metadata.wallMs) }}</span>
       </span>
       <div class="chat-meta-actions">
+        <button v-if="hasFileChanges" class="chat-action-btn chat-action-btn--wide" @click="fileChangesOpen = true" :title="t('chat.fileChanges.title')">
+          <FileDiff :size="14" />
+          <span>{{ t('chat.fileChanges.title') }}</span>
+        </button>
         <SummaryToggle v-if="msg.summary && !msg.streaming" mode="button" :showing-summary="msg.showingSummary" i18n-prefix="chat.message" @toggle="$emit('toggle-summary', msg.id)" />
-        <button v-if="msgText" ref="speakBtnRef" class="chat-info-btn chat-speak-btn" :class="{ active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" @click.stop="handleSpeak">
+        <button v-if="msgText" ref="speakBtnRef" class="chat-action-btn chat-action-btn--wide" :class="{ active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" @click.stop="handleSpeak">
           <!-- Generating states: summarizing / synthesizing -->
           <template v-if="autoSpeech.isGeneratingText(msg.id)">
             <Clock :size="14" class="speak-spinner" />
@@ -72,11 +76,8 @@
             <span>{{ t('chat.message.readAloud') }}</span>
           </template>
         </button>
-        <button v-if="!msg.streaming" class="chat-info-btn" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
+        <button v-if="!msg.streaming" class="chat-action-btn" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
           <Info :size="14" />
-        </button>
-        <button v-if="hasFileChanges" class="chat-info-btn" @click="fileChangesOpen = true" :title="t('chat.fileChanges.title')">
-          <FileDiff :size="14" />
         </button>
       </div>
     </div>
@@ -93,7 +94,7 @@
     <div v-if="msg.role === 'user' && !msg.pending" class="chat-meta-bar chat-meta-bar-user">
       <span class="chat-meta-info">
       </span>
-      <button class="chat-info-btn chat-info-btn-user" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
+      <button class="chat-action-btn chat-info-btn-user" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
         <Info :size="14" />
       </button>
     </div>
@@ -245,53 +246,13 @@ function handleOpenFile(path) {
     font-variant-numeric: tabular-nums;
 }
 
-/* Chat Info Button */
-.chat-info-btn {
-    flex-shrink: 0;
-    min-width: 22px;
-    height: 22px;
-    padding: 0 6px;
-    border: none;
-    background: transparent;
-    color: var(--text-secondary);
-    cursor: pointer;
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    opacity: 0.5;
-    transition: opacity 0.2s, background 0.2s;
-    font-size: 11px;
-}
-
-.chat-info-btn:hover {
-    opacity: 1;
-    background: var(--bg-tertiary);
-}
-
-.chat-info-btn svg {
-    width: 14px;
-    height: 14px;
-    flex-shrink: 0;
-}
-
-.chat-info-btn span {
-    white-space: nowrap;
-}
-
-/* Speak button specific styles */
-.chat-speak-btn {
-    min-width: auto;
-    padding: 0 8px;
-}
-
-.chat-speak-btn.active {
+/* Speak button active state */
+.chat-action-btn.active {
     opacity: 1;
     color: var(--accent-color, #0066cc);
 }
 
-.chat-speak-btn.active:hover {
+.chat-action-btn.active:hover {
     background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent);
 }
 

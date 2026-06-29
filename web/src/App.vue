@@ -306,6 +306,7 @@ import 'highlight.js/styles/github.css'
 import 'highlight.js/styles/github-dark.css'
 import './assets/hljs-light-override.css'
 import './assets/annotation-buttons.css'
+import './assets/chat-actions.css'
 
 const isAuthenticated = ref(null)
 const { t } = useI18n()

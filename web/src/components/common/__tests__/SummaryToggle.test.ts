@@ -34,7 +34,7 @@ describe('SummaryToggle', () => {
   describe('button mode', () => {
     it('renders a button element', () => {
       const wrapper = mountToggle({ mode: 'button' })
-      expect(wrapper.find('.summary-toggle-btn').exists()).toBe(true)
+      expect(wrapper.find('.chat-action-btn').exists()).toBe(true)
     })
 
     it('shows "View Summary" label when showingSummary is false', () => {
@@ -49,14 +49,14 @@ describe('SummaryToggle', () => {
 
     it('emits toggle when clicked', async () => {
       const wrapper = mountToggle({ mode: 'button' })
-      await wrapper.find('.summary-toggle-btn').trigger('click')
+      await wrapper.find('.chat-action-btn').trigger('click')
       expect(wrapper.emitted('toggle')).toHaveLength(1)
     })
 
     it('click propagation is stopped', async () => {
       const wrapper = mountToggle({ mode: 'button' })
       // The @click.stop modifier should be on the button
-      const btn = wrapper.find('.summary-toggle-btn')
+      const btn = wrapper.find('.chat-action-btn')
       expect(btn.exists()).toBe(true)
       await btn.trigger('click')
       expect(wrapper.emitted('toggle')).toHaveLength(1)
@@ -159,7 +159,7 @@ describe('SummaryToggle', () => {
   describe('default props', () => {
     it('defaults mode to button', () => {
       const wrapper = mount(SummaryToggle)
-      expect(wrapper.find('.summary-toggle-btn').exists()).toBe(true)
+      expect(wrapper.find('.chat-action-btn').exists()).toBe(true)
     })
 
     it('defaults showingSummary to false', () => {

@@ -1,6 +1,6 @@
 <template>
   <!-- Button mode: inline toggle in chat meta bar -->
-  <button v-if="mode === 'button'" class="summary-toggle-btn" @click.stop="$emit('toggle')">
+  <button v-if="mode === 'button'" class="chat-action-btn chat-action-btn--wide" @click.stop="$emit('toggle')">
     <Sparkles v-if="!showingSummary" :size="14" />
     <FileText v-else :size="14" />
     <span>{{ showingSummary ? labelOriginal : labelSummary }}</span>
@@ -42,30 +42,6 @@ const labelOriginal = computed(() => t(`${props.i18nPrefix}.${props.mode === 'ta
 </script>
 
 <style scoped>
-/* ── Button mode ── */
-.summary-toggle-btn {
-  flex-shrink: 0;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 8px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  opacity: 1;
-  transition: opacity 0.2s, background 0.2s;
-  font-size: 11px;
-}
-
-.summary-toggle-btn:hover {
-  background: var(--bg-tertiary);
-}
-
 /* ── Tab mode ── */
 .summary-toggle-bar {
   display: flex;
