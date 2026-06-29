@@ -24,7 +24,7 @@ import ModalDialog from '@/components/common/ModalDialog.vue'
 import { copyText } from '@/utils/clipboard.ts'
 import { gt } from '@/composables/useLocale'
 
-const props = defineProps({
+defineProps({
   data: Object,  // { headers: string[], rows: string[][], currentIndex: number } | null
 })
 
