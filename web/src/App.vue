@@ -308,6 +308,7 @@ import { formatBadgeCount } from './utils/format.ts'
 import 'highlight.js/styles/github.css'
 import 'highlight.js/styles/github-dark.css'
 import './assets/hljs-light-override.css'
+import './assets/annotation-buttons.css'
 
 const isAuthenticated = ref(null)
 const { t } = useI18n()

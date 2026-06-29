@@ -83,7 +83,7 @@
 
     <!-- File changes sheet -->
     <FileChangesSheet
-      :open="fileChangesOpen"
+      :open="fileChangesDrawer.effectiveOpen.value"
       :created="fileChanges.created"
       :modified="fileChanges.modified"
       @close="fileChangesOpen = false"
@@ -112,6 +112,7 @@ import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
 import ContentBlocks from './ContentBlocks.vue'
 import FileAttachmentList from './FileAttachmentList.vue'
 import FileChangesSheet from './FileChangesSheet.vue'
+import { useTabDrawer } from '@/composables/useTabDrawer'
 import SummaryToggle from '@/components/common/SummaryToggle.vue'
 
 
@@ -165,6 +166,7 @@ const fileChanges = computed(() => {
 const hasFileChanges = computed(() => fileChanges.value.created.length > 0 || fileChanges.value.modified.length > 0)
 
 const fileChangesOpen = ref(false)
+const fileChangesDrawer = useTabDrawer('chat', fileChangesOpen)
 
 function handleOpenFile(path) {
   openFilePath(path)
@@ -790,48 +792,5 @@ function handleOpenFile(path) {
   max-width: 100%;
   max-height: 184px;
   height: auto;
-}
-
-/* ── Localhost URL open button (🌐, same pattern as file-open button) ── */
-.content-blocks .chat-url-open-btn {
-  background: none;
-  border: none;
-  padding: 2px;
-  cursor: pointer;
-  color: var(--text-muted, #999);
-  border-radius: 3px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: color 0.15s, background 0.15s;
-  font-size: 12px;
-  line-height: 1;
-  vertical-align: baseline;
-}
-
-.content-blocks .chat-url-open-btn:hover {
-  color: var(--accent-color, #4a90d9);
-  background: var(--bg-tertiary, #f0f0f0);
-}
-
-.content-blocks .chat-url-open-btn.loading {
-  opacity: 0.5;
-  pointer-events: none;
-}
-
-.content-blocks .chat-url-open-btn.loading::after {
-  content: '';
-  width: 8px;
-  height: 8px;
-  border: 1.5px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: url-btn-spin 0.6s linear infinite;
-  margin-left: 2px;
-  display: inline-block;
-}
-
-@keyframes url-btn-spin {
-  to { transform: rotate(360deg); }
 }
 </style>

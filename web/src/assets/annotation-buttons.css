@@ -1,0 +1,150 @@
+/* ── Shared annotation button styles ── */
+/* Used by ContentBlocks, ChatMessageItem, ToolDetailOverlay, TableRowModal, etc. */
+/* These classes are injected by useFilePathAnnotation, useCommitHashAnnotation, */
+/* useLocalhostAnnotation, and useWorktreeAnnotation composables into v-html content. */
+/* NOTE: These are global (non-scoped) styles. Context-specific overrides MUST use */
+/* higher-specificity selectors (e.g., .chat-message.user .chat-file-open-btn).   */
+
+/* ── File path annotation ── */
+
+.chat-file-path {
+  font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
+  font-size: 0.95em;
+  background: color-mix(in srgb, var(--text-muted, #999) 8%, transparent);
+  padding: 1px 4px;
+  border-radius: 3px;
+  word-break: break-all;
+}
+
+/* ── File open button ── */
+
+.chat-file-open-btn {
+  background: none;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+  color: var(--text-muted, #999);
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.15s;
+  font-size: 12px;
+  line-height: 1;
+  vertical-align: baseline;
+}
+
+.chat-file-open-btn:hover {
+  color: var(--accent-color, #4a90d9);
+  background: var(--bg-tertiary, #f0f0f0);
+}
+
+/* Project-external file open button — orange icon */
+.chat-file-open-btn.external {
+  color: #e67e22;
+}
+
+.chat-file-open-btn.external:hover {
+  color: #d35400;
+}
+
+/* ── Commit hash annotation ── */
+
+.chat-commit-hash {
+  font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
+  font-size: 0.95em;
+  color: var(--accent-color, #4a90d9);
+  cursor: pointer;
+}
+
+/* ── Commit open button ── */
+
+.chat-commit-open-btn {
+  background: none;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+  color: var(--text-muted, #999);
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.15s;
+  font-size: 12px;
+  line-height: 1;
+  vertical-align: baseline;
+}
+
+.chat-commit-open-btn:hover {
+  color: var(--accent-color, #4a90d9);
+  background: var(--bg-tertiary, #f0f0f0);
+}
+
+/* ── Localhost URL open button ── */
+
+.chat-url-open-btn {
+  background: none;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+  color: var(--text-muted, #999);
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.15s;
+  font-size: 12px;
+  line-height: 1;
+  vertical-align: baseline;
+}
+
+.chat-url-open-btn:hover {
+  color: var(--accent-color, #4a90d9);
+  background: var(--bg-tertiary, #f0f0f0);
+}
+
+.chat-url-open-btn.loading {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.chat-url-open-btn.loading::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--border-color);
+  border-top-color: var(--accent-color);
+  border-radius: 50%;
+  animation: url-btn-spin 0.6s linear infinite;
+  margin-left: 2px;
+  display: inline-block;
+}
+
+@keyframes url-btn-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Worktree button ── */
+
+.chat-worktree-btn {
+  background: none;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+  color: var(--text-muted, #999);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  font-size: 12px;
+  line-height: 1;
+  vertical-align: baseline;
+  transition: color 0.15s, background 0.15s;
+}
+
+.chat-worktree-btn:hover {
+  color: var(--accent-color, #4a90d9);
+  background: var(--bg-tertiary, #f0f0f0);
+}

@@ -300,25 +300,6 @@ function handleBodyClick(event) {
   flex-shrink: 0;
 }
 
-/* Base style for file-open buttons in tool detail */
-.tool-detail-body .chat-file-open-btn {
-  background: none;
-  border: none;
-  padding: 2px;
-  cursor: pointer;
-  color: var(--text-muted, #999);
-  border-radius: 3px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: color 0.15s, background 0.15s;
-}
-
-.tool-detail-body .chat-file-open-btn:hover {
-  color: var(--accent-color, #4a90d9);
-  background: var(--bg-tertiary, #f0f0f0);
-}
-
 .tool-detail-body .tool-file-path {
   font-family: 'SF Mono', 'Fira Code', Menlo, monospace;
   font-size: 12px;
@@ -938,68 +919,6 @@ function handleBodyClick(event) {
   color: inherit;
   padding: 1px 2px;
   border-radius: 2px;
-}
-
-/* ── Localhost URL open button in tool output (same pattern as ChatMessageItem) ── */
-.tool-detail-body .chat-url-open-btn {
-  background: none;
-  border: none;
-  padding: 2px;
-  cursor: pointer;
-  color: var(--text-muted, #999);
-  border-radius: 3px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: color 0.15s, background 0.15s;
-  font-size: 12px;
-  line-height: 1;
-  vertical-align: baseline;
-}
-
-.tool-detail-body .chat-url-open-btn:hover {
-  color: var(--accent-color, #4a90d9);
-  background: var(--bg-tertiary, #f0f0f0);
-}
-
-.tool-detail-body .chat-worktree-btn {
-  background: none;
-  border: none;
-  padding: 2px;
-  cursor: pointer;
-  color: var(--text-muted, #999);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 3px;
-  font-size: 12px;
-  line-height: 1;
-  vertical-align: baseline;
-  transition: color 0.15s, background 0.15s;
-}
-
-.tool-detail-body .chat-worktree-switch-btn:hover {
-  color: var(--accent-color, #4a90d9);
-  background: var(--bg-tertiary, #f0f0f0);
-}
-
-.tool-detail-body .chat-url-open-btn.loading {
-  opacity: 0.5;
-  pointer-events: none;
-}
-
-.tool-detail-body .chat-url-open-btn.loading::after {
-  content: '';
-  width: 8px;
-  height: 8px;
-  border: 1.5px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: url-btn-spin 0.6s linear infinite;
-  margin-left: 2px;
-  display: inline-block;
 }
 
 /* Localhost <a> links in tool output pre blocks */

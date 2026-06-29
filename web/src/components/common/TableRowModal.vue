@@ -7,7 +7,7 @@
     <div v-if="data" class="table-row-form" aria-live="polite">
       <div v-for="(header, hi) in data.headers" :key="hi" class="table-row-field">
         <div class="table-row-label">{{ header }}</div>
-        <div class="table-row-value" v-html="data.rows[data.currentIndex]?.[hi] || ''" @dblclick="handleValueDblClick"></div>
+        <div class="table-row-value" v-html="data.rows[data.currentIndex]?.[hi] || ''" @dblclick="handleValueDblClick" @click="handleValueClick"></div>
       </div>
     </div>
     <template #footer>
@@ -23,15 +23,19 @@ import { useI18n } from 'vue-i18n'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import { copyText } from '@/utils/clipboard.ts'
 import { gt } from '@/composables/useLocale'
+import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
+import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
+import { store } from '@/stores/app.ts'
 
 defineProps({
   data: Object,  // { headers: string[], rows: string[][], currentIndex: number } | null
 })
 
-defineEmits(['close', 'prev', 'next'])
+const emit = defineEmits(['close', 'prev', 'next'])
 
 const { t } = useI18n()
 const toast = inject('toast', null)
+const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 
 function handleValueDblClick(event) {
   const el = event.target
@@ -48,5 +52,58 @@ function handleValueDblClick(event) {
       toast.show(gt('common.copied'), { icon: '📋', duration: 1500 })
     }
   })
+}
+
+async function handleValueClick(event) {
+  const target = event.target
+
+  // 1. Localhost URL button
+  if (handleLocalhostUrlClick(event)) return
+
+  // 2. Worktree button
+  const wtBtn = target.closest('.chat-worktree-btn')
+  if (wtBtn) {
+    event.preventDefault()
+    event.stopPropagation()
+    const wtPath = wtBtn.getAttribute('data-worktree-path')
+    if (wtPath) store.setProject(wtPath)
+    emit('close')
+    return
+  }
+
+  // 3. Commit hash
+  const commitEl = target.closest('.chat-commit-hash, .chat-commit-open-btn')
+  if (commitEl) {
+    event.preventDefault()
+    event.stopPropagation()
+    const sha = commitEl.getAttribute('data-commit-sha')
+    if (sha) {
+      window.dispatchEvent(new CustomEvent('navigate-to-commit', { detail: { sha } }))
+    }
+    emit('close')
+    return
+  }
+
+  // 4. File-open button
+  const fileBtn = target.closest('.chat-file-open-btn')
+  if (fileBtn) {
+    event.preventDefault()
+    event.stopPropagation()
+    const filePath = fileBtn.getAttribute('data-file-path')
+    const lineStart = fileBtn.getAttribute('data-line-start')
+    const lineEnd = fileBtn.getAttribute('data-line-end')
+    if (filePath) {
+      const ok = await openFilePath(
+        filePath,
+        lineStart ? parseInt(lineStart, 10) : undefined,
+        lineEnd ? parseInt(lineEnd, 10) : undefined,
+      )
+      if (ok) {
+        store.activeTab = 'browse'
+        emit('close')
+      }
+    }
+    return
+  }
 }
 </script>
