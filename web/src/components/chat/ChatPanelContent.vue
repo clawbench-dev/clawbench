@@ -502,10 +502,11 @@ watch(
     // Debounce: avoid re-rendering markdown on every SSE event
     if (thinkingRenderTimer) clearTimeout(thinkingRenderTimer)
     thinkingRenderTimer = setTimeout(() => {
+      const b = findThinkingBlock(activeThinkingOverlay.value)
       toolDetailOverlay.value = {
         ...toolDetailOverlay.value,
         inputHtml: `<div class="thinking-overlay-md">${renderMarkdown(text)}</div>`,
-        done: !loading.value, // Mark done when session completes
+        done: b ? !!b.done : !loading.value,
       }
     }, 300)
   }
@@ -564,7 +565,13 @@ function startStreamingRefresh() {
         toolDetailOverlay.value = {
           ...toolDetailOverlay.value,
           inputHtml: `<div class="thinking-overlay-md">${renderMarkdown(block.text)}</div>`,
-          done: !loading.value,
+          done: !!block.done,
+        }
+        // Block is done — no further updates needed
+        if (block.done) {
+          clearInterval(streamingRefreshTimer)
+          streamingRefreshTimer = null
+          return
         }
       }
       if (!loading.value) {
@@ -898,7 +905,7 @@ function handleShowThinkingDetail({ text, msgId, blockIdx }) {
     inputHtml: `<div class="thinking-overlay-md">${renderMarkdown(currentText)}</div>`,
     outputHtml: '',
     status: '',
-    done: !loading.value, // Will update to true when streaming ends
+    done: block ? !!block.done : !loading.value,
   }
 }
 
