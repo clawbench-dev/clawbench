@@ -63,10 +63,10 @@
                 :overlay-open="fileNav.overlayOpen.value"
                 :current-file="currentFile"
                 :file-loading="store.state.fileLoading"
-                :toc-open="tocOpen"
-                :search-open="searchOpen"
+                :toc-open="tocDrawer.effectiveOpen.value"
+                :search-open="searchDrawer.effectiveOpen.value"
                 :markdown-view-mode="markdownViewMode"
-                :file-history-open="fileHistoryOpen"
+                :file-history-open="fileHistoryDrawer.effectiveOpen.value"
                 :toc-file="tocFile"
                 :pdf-outline="pdfOutline"
                 @delete="handleDelete($event)"
@@ -130,7 +130,7 @@
 
       <FileDetailsDialog
         :file="currentFile"
-        :open="activeTab === 'browse' && fileNav.overlayOpen.value && detailsOpen"
+        :open="detailsDrawer.effectiveOpen.value && fileNav.overlayOpen.value"
         @close="detailsOpen = false"
       />
 
@@ -138,20 +138,16 @@
       <QuoteQuestionBar
         :visible="quoteQuestion.visible.value"
         :quoteData="quoteQuestion.quoteData.value"
-        :sessionLabel="sessionIdentity.agentHeaderTitle.value"
-        :sessionTitle="sessionIdentity.currentSessionTitle.value"
-        :currentSessionId="sessionIdentity.currentSessionId.value"
         @send="quoteQuestion.sendMessage($event)"
         @close="quoteQuestion.closeSheet()"
         @pin="quoteQuestion.pinBar()"
         @unpin="quoteQuestion.unpinBar()"
-        @open-sessions="handleQuoteOpenSessions"
       />
 
-      <!-- Global session drawer — accessible from any tab -->
+      <!-- Session drawer — bound to chat tab, auto-closes when leaving chat -->
       <SessionDrawer
         ref="sessionDrawerRef"
-        :open="sessionIdentity.sessionDrawerOpen.value"
+        :open="sessionDrawer.effectiveOpen.value"
         :currentSessionId="sessionIdentity.currentSessionId.value"
         :runningSessionIds="sessionIdentity.runningSessions.value"
         :isACPTransport="sessionIdentity.currentTransport.value === 'acp-stdio'"
@@ -165,7 +161,7 @@
 
       <!-- ACP session resume drawer -->
       <AcpSessionDrawer
-        :open="showAcpSessionDrawer"
+        :open="acpSessionDrawer.effectiveOpen.value"
         :agentId="sessionIdentity.currentAgentId.value"
         @close="showAcpSessionDrawer = false"
         @select="handleAcpSessionSelect"
@@ -282,6 +278,7 @@ import SettingsPage from './components/settings/SettingsPage.vue'
 import TaskTab from '@/components/task/TaskTab.vue'
 import { useQuoteQuestion } from './composables/useQuoteQuestion.ts'
 import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTaskTab.ts'
+import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
 import { resetAgents } from '@/composables/useAgents'
 import { useSessionIdentity, registerSessionDrawerRef, resetIdentity } from './composables/useSessionIdentity.ts'
 import { loadSessionsOnce, resetChatSessionState } from './composables/useChatSession.ts'
@@ -350,6 +347,7 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   resetChatSessionState()
   clearPlanState()
   resetTaskTabState()
+  resetTabDrawerState()
   fileNav.closeOverlay()
 
   // ── Phase 4: Change key → Vue destroys old component tree & builds new one ──
@@ -414,14 +412,8 @@ const dockIndicatorStyle = computed(() => ({
 function switchTab(tab) {
   if (activeTab.value === tab) return
   activeTab.value = tab
-  // Close file browser panels when leaving browse tab — they are teleported
-  // to <body> via BottomSheet so v-show hiding the tab-panel doesn't affect them.
-  if (activeTab.value !== 'browse') {
-    tocOpen.value = false
-    searchOpen.value = false
-    fileHistoryOpen.value = false
-    detailsOpen.value = false
-  }
+  // Auto-close all drawers not belonging to the new tab
+  onTabSwitch(tab)
   if (tab === 'browse') {
     store.loadFiles(store.state.currentDir)
   }
@@ -517,6 +509,12 @@ const tocOpen = ref(false)
 const searchOpen = ref(false)
 const fileHistoryOpen = ref(false)
 
+// Register browse-scoped drawers with tab-drawer binding
+const detailsDrawer = useTabDrawer('browse', detailsOpen)
+const tocDrawer = useTabDrawer('browse', tocOpen)
+const searchDrawer = useTabDrawer('browse', searchOpen)
+const fileHistoryDrawer = useTabDrawer('browse', fileHistoryOpen)
+
 function openFileHistory() {
   fileHistoryOpen.value = true
 }
@@ -527,6 +525,9 @@ const toast = useToast()
 provide('toast', toast)
 
 const sessionIdentity = useSessionIdentity()
+
+// Register chat-scoped drawers with tab-drawer binding
+const sessionDrawer = useTabDrawer('chat', sessionIdentity.sessionDrawerOpen)
 
 const showHidden = ref(false)
 const { localConfig, setLocalConfig: setSetting, loadConfig, getServerValueWithDefault } = useSettingsConfig()
@@ -667,9 +668,6 @@ watch(sessionDrawerRef, (ref) => {
 // These will be overwritten by ChatPanelContent when it mounts, but
 // openAgentSelector is NOT registered here — it's handled via
 // registerSessionDrawerRef above, which is independent.
-function handleQuoteOpenSessions() {
-  sessionIdentity.openSessionTab()
-}
 
 function handleSessionSelect(sessionId, backend) {
   sessionIdentity.switchSession(sessionId)
@@ -702,6 +700,7 @@ function handleSessionDelete(sessionId, backend) {
 
 // ── ACP Session Resume ──
 const showAcpSessionDrawer = ref(false)
+const acpSessionDrawer = useTabDrawer('chat', showAcpSessionDrawer)
 
 async function handleAcpSessionSelect(sessionId) {
   await sessionIdentity.switchSession(sessionId)

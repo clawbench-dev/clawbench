@@ -1,5 +1,9 @@
 <template>
   <BottomSheet :open="open" auto @close="$emit('close')">
+    <template #header>
+      <FileDiff :size="16" class="bs-header-icon" />
+      <span class="bs-header-title">{{ t('chat.fileChanges.title') }}</span>
+    </template>
     <div class="fc-content">
       <!-- Created section -->
       <div v-if="created.length" class="fc-section">
@@ -27,7 +31,7 @@
 
 <script setup>
 import { useI18n } from 'vue-i18n'
-import { FileText } from 'lucide-vue-next'
+import { FileText, FileDiff } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import { getFileType } from '@/utils/fileType.ts'
 
