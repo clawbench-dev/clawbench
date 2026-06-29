@@ -32,7 +32,8 @@ export interface ItemSpec {
 
 /**
  * Complete category → items mapping.
- * The `agents` category is built dynamically at runtime, so it's an empty array here.
+ * The `agents` category has a static `default_agent` entry here;
+ * the agent list is rendered dynamically by SettingsAgentsIndex.vue.
  */
 export const categoryItems: Record<string, ItemSpec[]> = {
   appearance: [
@@ -46,8 +47,10 @@ export const categoryItems: Record<string, ItemSpec[]> = {
       { labelKey: 'settings.items.localeEn', value: 'en' },
     ]},
   ],
-  chat: [
+  agents: [
     { labelKey: 'settings.items.defaultAgent', descriptionKey: 'settings.items.defaultAgentDesc', key: 'default_agent', type: 'select', source: 'server', needsRestart: false },
+  ],
+  chat: [
     { labelKey: 'settings.items.autoSpeech', descriptionKey: 'settings.items.autoSpeechDesc', key: 'autoSpeech', type: 'switch', source: 'local' },
     { labelKey: 'settings.items.wakeLockOnSpeech', descriptionKey: 'settings.items.wakeLockOnSpeechDesc', key: 'wakeLockOnSpeech', type: 'switch', source: 'local' },
     { labelKey: 'settings.items.swipeSession', descriptionKey: 'settings.items.swipeSessionDesc', key: 'swipeSession', type: 'switch', source: 'local' },

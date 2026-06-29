@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"encoding/json"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -320,6 +322,23 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 	cmdName := cmdParts[0]
 	cmdArgs := cmdParts[1:]
 
+	// Workaround for https://github.com/clawbench-dev/clawbench/issues/270:
+	// When Codebuddy starts with --acp, it sets strictDynamic=true which causes
+	// McpConfigManager.shouldLoadFromFilesystem() to return false for ALL
+	// filesystem scopes (user/project/local), resulting in 0 MCP servers loaded.
+	// User's MCP services (websearch, tavily, chrome-devtools, etc.) configured
+	// in ~/.codebuddy/.mcp.json become completely unavailable.
+	//
+	// We read ~/.codebuddy/.mcp.json and inject it via --mcp-config so the ACP
+	// process can still load MCP tools. Only applied to the codebuddy backend
+	// since other ACP agents may not recognize this flag.
+	if cmdName == "codebuddy" {
+		if mcpConfigJSON := readUserMcpConfig(); mcpConfigJSON != "" {
+			cmdArgs = append(cmdArgs, "--mcp-config", mcpConfigJSON)
+			slog.Info("acp conn: injecting user MCP config via --mcp-config (workaround for issue #270)")
+		}
+	}
+
 	// Resolve embedded binary path for bare command names (e.g. "opencode acp" → use embedded opencode binary).
 	if !strings.Contains(cmdName, "/") {
 		if spec := model.FindBackendSpecByDefaultCmd(cmdName); spec != nil && spec.EmbeddedSubDir != "" {
@@ -425,6 +444,36 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 
 	go c.watchProcessDeath()
 	return nil
+}
+
+// readUserMcpConfig reads ~/.codebuddy/.mcp.json and returns the mcpServers
+// JSON string if non-empty, suitable for --mcp-config CLI injection.
+// Returns "" on any error or if no servers configured.
+func readUserMcpConfig() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	path := filepath.Join(home, ".codebuddy", ".mcp.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		McpServers map[string]any `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return ""
+	}
+	if len(cfg.McpServers) == 0 {
+		return ""
+	}
+	// Re-marshal just the mcpServers object as --mcp-config expects
+	serversJSON, err := json.Marshal(cfg.McpServers)
+	if err != nil {
+		return ""
+	}
+	return string(serversJSON)
 }
 
 // watchProcessDeath monitors the ACP connection and marks it as dead

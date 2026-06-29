@@ -7,11 +7,12 @@
   <SettingsAgentDetail
     v-else-if="categoryId.startsWith('agents:')"
     :agent-id="categoryId.slice(7)"
+    @deleted="$emit('navigate', 'agents')"
   />
   <!-- Standard settings category -->
   <div v-else class="settings-category">
     <SettingsItem
-      v-for="item in items"
+      v-for="(item, index) in items"
       :key="item.key"
       :label="item.label"
       :description="item.description"
@@ -23,6 +24,7 @@
       :step="item.step"
       :needs-restart="item.needsRestart"
       :force-close="activeKey !== null && activeKey !== item.key"
+      :no-divider="isLastInSection(items, index)"
       @update:model-value="(v: any) => handleUpdate(item, v)"
       @click="handleClick(item)"
       @edit-toggle="(open: boolean) => handleEditToggle(item.key, open)"
@@ -241,6 +243,16 @@ function handleClick(item: any) {
     showPasswordDialog.value = true
   }
   if (item.key === 'restartServer') {
+    handleRestartServer()
+  }
+}
+
+async function handleRestartServer() {
+  const confirmed = await dialog.confirm(
+    t('settings.items.restartServerConfirm'),
+    { title: t('settings.items.restartServer'), dangerous: true }
+  )
+  if (confirmed) {
     emit('restartRequested')
   }
 }
@@ -271,6 +283,13 @@ function handleDescToggle(key: string, open: boolean) {
 
 function handleDiscard() {
   toast.show(t('settings.passwordDiscarded'), { icon: 'ℹ️', type: 'info', duration: 3000 })
+}
+
+/** Check if item at index is the last in its section (last item overall, or next item is a header). */
+function isLastInSection(items: any[], index: number): boolean {
+  if (index >= items.length - 1) return true
+  const nextItem = items[index + 1]
+  return nextItem?.type === 'header'
 }
 </script>
 

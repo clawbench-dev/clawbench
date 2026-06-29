@@ -11,6 +11,8 @@ const i18n = createI18n({
     zh: {
       settings: {
         items: {
+          defaultAgent: 'Default Agent',
+          defaultAgentDesc: 'Default agent description',
           agentNoAgents: 'No agents available',
           agentCopy: 'Copy',
           agentCopyTitle: 'Duplicate Agent',
@@ -24,14 +26,11 @@ const i18n = createI18n({
           agentRescanning: 'Scanning...',
           agentRescanSuccess: 'Rescan complete',
           agentRescanFailed: 'Rescan failed',
-          agentDelete: 'Delete',
-          agentDeleteConfirm: 'Delete agent "{name}"?',
-          agentDeleteDefault: 'Cannot delete default agent',
-          agentDeleted: 'Agent deleted',
-          agentDeleteFailed: 'Delete failed',
         },
+        saveFailed: 'Save failed',
       },
       common: {
+        ok: 'OK',
         cancel: 'Cancel',
       },
     },
@@ -43,16 +42,16 @@ const mockAgents = ref<any[]>([])
 const mockDefaultAgentId = ref('agent-1')
 const mockLoadAgents = vi.fn()
 const mockDuplicateAgent = vi.fn()
-const mockDeleteAgent = vi.fn()
 const mockRescanAgents = vi.fn()
+const mockSetDefaultAgent = vi.fn()
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({
     agents: mockAgents,
     defaultAgentId: mockDefaultAgentId,
     loadAgents: (...args: unknown[]) => mockLoadAgents(...args),
     duplicateAgent: (...args: unknown[]) => mockDuplicateAgent(...args),
-    deleteAgent: (...args: unknown[]) => mockDeleteAgent(...args),
     rescanAgents: (...args: unknown[]) => mockRescanAgents(...args),
+    setDefaultAgent: (...args: unknown[]) => mockSetDefaultAgent(...args),
   }),
 }))
 
@@ -62,23 +61,21 @@ vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ show: (...args: any[]) => mockToastShow(...args) }),
 }))
 
-// Mock useDialog
-const mockConfirm = vi.fn().mockResolvedValue(false)
-vi.mock('@/composables/useDialog', () => ({
-  useDialog: () => ({ confirm: (...args: any[]) => mockConfirm(...args) }),
-}))
-
 // Mock lucide-vue-next
 vi.mock('lucide-vue-next', () => ({
   ChevronRight: { name: 'ChevronRight', template: '<span class="icon-chevron" />' },
   Copy: { name: 'Copy', template: '<span class="icon-copy" />' },
-  Trash2: { name: 'Trash2', template: '<span class="icon-trash" />' },
   RefreshCw: { name: 'RefreshCw', template: '<span class="icon-refresh" />' },
 }))
 
 // Mock CopyAgentDialog
 vi.mock('@/components/settings/CopyAgentDialog.vue', () => ({
   default: { name: 'CopyAgentDialog', template: '<div class="mock-copy-agent-dialog" />' },
+}))
+
+// Mock SettingsItem
+vi.mock('@/components/settings/SettingsItem.vue', () => ({
+  default: { name: 'SettingsItem', template: '<div class="mock-settings-item" />' },
 }))
 
 function mountIndex() {
@@ -91,10 +88,9 @@ describe('SettingsAgentsIndex', () => {
   beforeEach(() => {
     mockLoadAgents.mockReset()
     mockDuplicateAgent.mockReset()
-    mockDeleteAgent.mockReset()
     mockRescanAgents.mockReset()
+    mockSetDefaultAgent.mockReset()
     mockToastShow.mockReset()
-    mockConfirm.mockReset().mockResolvedValue(false)
     mockAgents.value = []
     mockDefaultAgentId.value = 'agent-1'
   })
@@ -139,25 +135,16 @@ describe('SettingsAgentsIndex', () => {
     expect(wrapper.find('.settings-agents-index__icon-btn').exists()).toBe(true)
   })
 
-  it('renders delete button for each agent', () => {
-    mockAgents.value = [
-      { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: '', sortOrder: 0 },
-    ]
+  it('renders rescan row', () => {
     const wrapper = mountIndex()
-    const deleteButtons = wrapper.findAll('.settings-agents-index__icon-btn--danger')
-    expect(deleteButtons.length).toBe(1)
+    expect(wrapper.find('.settings-agents-index__rescan-row').exists()).toBe(true)
   })
 
-  it('renders rescan button', () => {
-    const wrapper = mountIndex()
-    expect(wrapper.find('.settings-agents-index__rescan-btn').exists()).toBe(true)
-  })
-
-  it('clicking rescan button calls rescanAgents', async () => {
+  it('clicking rescan row calls rescanAgents', async () => {
     mockRescanAgents.mockResolvedValue(undefined)
     const wrapper = mountIndex()
-    const rescanBtn = wrapper.find('.settings-agents-index__rescan-btn')
-    await rescanBtn.trigger('click')
+    const rescanRow = wrapper.find('.settings-agents-index__rescan-row')
+    await rescanRow.trigger('click')
     expect(mockRescanAgents).toHaveBeenCalled()
   })
 
@@ -166,7 +153,6 @@ describe('SettingsAgentsIndex', () => {
       { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: '', sortOrder: 0 },
     ]
     const wrapper = mountIndex()
-    // First icon-btn is copy
     const copyBtn = wrapper.find('.settings-agents-index__icon-btn')
     await copyBtn.trigger('click')
     expect(wrapper.emitted('navigate')).toBeFalsy()
@@ -181,78 +167,15 @@ describe('SettingsAgentsIndex', () => {
     await copyBtn.trigger('click')
     await wrapper.vm.$nextTick()
 
-    // CopyAgentDialog should be shown (copyingAgent is set)
     const vm = wrapper.vm as any
     expect(vm.$.setupState.copyingAgent).toEqual({ id: 'agent-1', name: 'CodeBuddy' })
-  })
-
-  it('clicking delete on default agent shows error toast', async () => {
-    mockAgents.value = [
-      { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: '', sortOrder: 0 },
-    ]
-    mockDefaultAgentId.value = 'agent-1'
-    const wrapper = mountIndex()
-    const deleteBtn = wrapper.find('.settings-agents-index__icon-btn--danger')
-    await deleteBtn.trigger('click')
-
-    expect(mockToastShow).toHaveBeenCalledWith('Cannot delete default agent', expect.any(Object))
-    expect(mockDeleteAgent).not.toHaveBeenCalled()
-  })
-
-  it('clicking delete on non-default agent shows confirm dialog', async () => {
-    mockAgents.value = [
-      { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: '', sortOrder: 0 },
-      { id: 'agent-2', name: 'Claude', icon: '🧠', specialty: '', sortOrder: 1 },
-    ]
-    mockDefaultAgentId.value = 'agent-1'
-    const wrapper = mountIndex()
-    // Second row's delete button
-    const deleteButtons = wrapper.findAll('.settings-agents-index__icon-btn--danger')
-    await deleteButtons[1].trigger('click')
-
-    expect(mockConfirm).toHaveBeenCalled()
-  })
-
-  it('confirmed delete calls deleteAgent and shows success toast', async () => {
-    mockAgents.value = [
-      { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: '', sortOrder: 0 },
-      { id: 'agent-2', name: 'Claude', icon: '🧠', specialty: '', sortOrder: 1 },
-    ]
-    mockDefaultAgentId.value = 'agent-1'
-    mockConfirm.mockResolvedValueOnce(true)
-    mockDeleteAgent.mockResolvedValueOnce(undefined)
-
-    const wrapper = mountIndex()
-    const deleteButtons = wrapper.findAll('.settings-agents-index__icon-btn--danger')
-    await deleteButtons[1].trigger('click')
-    await wrapper.vm.$nextTick()
-
-    expect(mockDeleteAgent).toHaveBeenCalledWith('agent-2')
-    expect(mockToastShow).toHaveBeenCalledWith('Agent deleted', expect.any(Object))
-  })
-
-  it('failed delete shows error toast', async () => {
-    mockAgents.value = [
-      { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: '', sortOrder: 0 },
-      { id: 'agent-2', name: 'Claude', icon: '🧠', specialty: '', sortOrder: 1 },
-    ]
-    mockDefaultAgentId.value = 'agent-1'
-    mockConfirm.mockResolvedValueOnce(true)
-    mockDeleteAgent.mockRejectedValueOnce(new Error('fail'))
-
-    const wrapper = mountIndex()
-    const deleteButtons = wrapper.findAll('.settings-agents-index__icon-btn--danger')
-    await deleteButtons[1].trigger('click')
-    await wrapper.vm.$nextTick()
-
-    expect(mockToastShow).toHaveBeenCalledWith('Delete failed', expect.any(Object))
   })
 
   it('rescan failure shows error toast', async () => {
     mockRescanAgents.mockRejectedValueOnce(new Error('fail'))
     const wrapper = mountIndex()
-    const rescanBtn = wrapper.find('.settings-agents-index__rescan-btn')
-    await rescanBtn.trigger('click')
+    const rescanRow = wrapper.find('.settings-agents-index__rescan-row')
+    await rescanRow.trigger('click')
     await wrapper.vm.$nextTick()
 
     expect(mockToastShow).toHaveBeenCalledWith('Rescan failed', expect.any(Object))
@@ -261,8 +184,8 @@ describe('SettingsAgentsIndex', () => {
   it('rescan success shows success toast', async () => {
     mockRescanAgents.mockResolvedValueOnce(undefined)
     const wrapper = mountIndex()
-    const rescanBtn = wrapper.find('.settings-agents-index__rescan-btn')
-    await rescanBtn.trigger('click')
+    const rescanRow = wrapper.find('.settings-agents-index__rescan-row')
+    await rescanRow.trigger('click')
     await wrapper.vm.$nextTick()
 
     expect(mockToastShow).toHaveBeenCalledWith('Rescan complete', expect.any(Object))
@@ -272,14 +195,12 @@ describe('SettingsAgentsIndex', () => {
     const wrapper = mountIndex()
     const vm = wrapper.vm as any
 
-    // Verify rescanning starts as false
     expect(vm.$.setupState.rescanning).toBe(false)
 
     mockRescanAgents.mockResolvedValueOnce(undefined)
     await vm.$.setupState.handleRescan()
     await wrapper.vm.$nextTick()
 
-    // After completion, rescanning is false again
     expect(vm.$.setupState.rescanning).toBe(false)
   })
 
@@ -294,17 +215,6 @@ describe('SettingsAgentsIndex', () => {
     expect(names[1].text()).toBe('Claude')
   })
 
-  it('clicking delete button does not emit navigate', async () => {
-    mockAgents.value = [
-      { id: 'agent-2', name: 'Claude', icon: '🧠', specialty: '', sortOrder: 0 },
-    ]
-    mockDefaultAgentId.value = 'agent-1' // different, so not default
-    const wrapper = mountIndex()
-    const deleteBtn = wrapper.find('.settings-agents-index__icon-btn--danger')
-    await deleteBtn.trigger('click')
-    expect(wrapper.emitted('navigate')).toBeFalsy()
-  })
-
   it('copy confirmed calls duplicateAgent and shows success toast', async () => {
     mockAgents.value = [
       { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: '', sortOrder: 0 },
@@ -313,7 +223,6 @@ describe('SettingsAgentsIndex', () => {
 
     const wrapper = mountIndex()
     const vm = wrapper.vm as any
-    // Simulate: open copy dialog, then confirm
     vm.$.setupState.copyingAgent = { id: 'agent-1', name: 'CodeBuddy' }
     await vm.$.setupState.handleCopyConfirmed('CodeBuddy Copy')
     await wrapper.vm.$nextTick()
@@ -345,5 +254,13 @@ describe('SettingsAgentsIndex', () => {
     await wrapper.vm.$nextTick()
 
     expect(mockDuplicateAgent).not.toHaveBeenCalled()
+  })
+
+  it('does not render delete button in agent rows', () => {
+    mockAgents.value = [
+      { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: '', sortOrder: 0 },
+    ]
+    const wrapper = mountIndex()
+    expect(wrapper.find('.settings-agents-index__icon-btn--danger').exists()).toBe(false)
   })
 })

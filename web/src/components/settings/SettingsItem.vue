@@ -1,6 +1,6 @@
 <template>
   <div v-if="type === 'header'" class="settings-item__header">{{ label }}</div>
-  <div v-else class="settings-item" :class="{ 'settings-item--disabled': disabled }" @click="handleClick">
+  <div v-else class="settings-item" :class="{ 'settings-item--disabled': disabled, 'settings-item--no-divider': noDivider }" @click="handleClick">
     <div class="settings-item__left">
       <div class="settings-item__text">
         <span class="settings-item__label">{{ label }}</span>
@@ -159,6 +159,7 @@ interface Props {
   disabled?: boolean
   forceClose?: boolean
   warning?: string
+  noDivider?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -173,6 +174,7 @@ const props = withDefaults(defineProps<Props>(), {
   disabled: false,
   forceClose: false,
   warning: '',
+  noDivider: false,
 })
 
 const emit = defineEmits<{
@@ -314,6 +316,20 @@ function confirmEdit() {
   gap: 12px;
   background: var(--bg-primary);
   position: relative;
+}
+
+.settings-item::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 0.5px;
+  background: var(--border-color);
+}
+
+.settings-item--no-divider::after {
+  display: none;
 }
 
 .settings-item--disabled {

@@ -1,7 +1,7 @@
 <template>
   <div class="settings-agent-detail">
     <SettingsItem
-      v-for="item in items"
+      v-for="(item, index) in items"
       :key="item.key"
       :label="item.label"
       :description="item.description"
@@ -10,28 +10,41 @@
       :options="item.options"
       :warning="item.warning"
       :force-close="activeKey !== null && activeKey !== item.key"
+      :no-divider="isLastInSection(items, index)"
       @update:model-value="(v: any) => handleUpdate(item, v)"
       @edit-toggle="(open: boolean) => handleEditToggle(item.key, open)"
     />
+    <!-- Delete agent -->
+    <div class="settings-agent-detail__delete-row" @click="handleDelete">
+      <Trash2 :size="16" class="settings-agent-detail__delete-icon" />
+      <span class="settings-agent-detail__delete-label">{{ t('settings.items.agentDelete') }}</span>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
+import { Trash2 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
 import { useAgents } from '@/composables/useAgents'
 import { patchAgentField } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
+import { useDialog } from '@/composables/useDialog'
 import { apiGet } from '@/utils/api'
 
 const props = defineProps<{
   agentId: string
 }>()
 
+const emit = defineEmits<{
+  deleted: []
+}>()
+
 const { t } = useI18n()
 const toast = useToast()
-const { loadAgents, getAgent } = useAgents()
+const dialog = useDialog()
+const { loadAgents, getAgent, deleteAgent, defaultAgentId } = useAgents()
 
 const activeKey = ref<string | null>(null)
 const commonPrompt = ref('')
@@ -272,6 +285,34 @@ function handleEditToggle(key: string, open: boolean) {
     activeKey.value = null
   }
 }
+
+/** Check if item at index is the last in its section (last item overall, or next item is a header). */
+function isLastInSection(items: AgentItem[], index: number): boolean {
+  if (index >= items.length - 1) return true
+  const nextItem = items[index + 1]
+  return nextItem?.type === 'header'
+}
+
+async function handleDelete() {
+  const a = agent.value
+  if (!a) return
+  if (a.id === defaultAgentId.value) {
+    toast.show(t('settings.items.agentDeleteDefault'), { icon: '⚠️', type: 'error', duration: 3000 })
+    return
+  }
+  const confirmed = await dialog.confirm(
+    t('settings.items.agentDeleteConfirm', { name: a.name }),
+    { title: t('settings.items.agentDelete'), dangerous: true }
+  )
+  if (!confirmed) return
+  try {
+    await deleteAgent(a.id)
+    toast.show(t('settings.items.agentDeleted'), { icon: '✓', type: 'success', duration: 3000 })
+    emit('deleted')
+  } catch {
+    toast.show(t('settings.items.agentDeleteFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+  }
+}
 </script>
 
 <style scoped>
@@ -279,5 +320,33 @@ function handleEditToggle(key: string, open: boolean) {
   padding: 8px 0;
   background: var(--bg-secondary);
   min-height: 100%;
+}
+
+.settings-agent-detail__delete-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 48px;
+  padding: 8px 16px;
+  cursor: pointer;
+  background: var(--bg-primary);
+  color: #e74c3c;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+@media (hover: hover) {
+  .settings-agent-detail__delete-row:hover {
+    background: var(--bg-secondary);
+  }
+}
+
+.settings-agent-detail__delete-row:active {
+  background: var(--bg-tertiary);
+}
+
+.settings-agent-detail__delete-icon {
+  flex-shrink: 0;
 }
 </style>

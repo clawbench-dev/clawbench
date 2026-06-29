@@ -235,33 +235,12 @@ describe('SettingsCategory', () => {
 
   // ─── Chat category ──────────────────────────────
   describe('chat category', () => {
-    it('renders default_agent as select item', () => {
-      const wrapper = mountCategory('chat')
-      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const defaultAgentItem = allItems.find(i => i.props().label === '默认智能体')
-      expect(defaultAgentItem).toBeTruthy()
-      expect(defaultAgentItem!.props().type).toBe('select')
-    })
-
     it('renders autoSpeech as switch item', () => {
       const wrapper = mountCategory('chat')
       const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
       const autoSpeechItem = allItems.find(i => i.props().label === '自动语音')
       expect(autoSpeechItem).toBeTruthy()
       expect(autoSpeechItem!.props().type).toBe('switch')
-    })
-
-    it('PATCHes default_agent when user selects a value', async () => {
-      const wrapper = mountCategory('chat')
-      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const defaultAgentItem = allItems.find(i => i.props().label === '默认智能体')
-      expect(defaultAgentItem).toBeTruthy()
-
-      // Simulate user selecting a value
-      await defaultAgentItem!.vm.$emit('update:modelValue', 'codebuddy')
-      await wrapper.vm.$nextTick()
-
-      expect(mockSetServerValue).toHaveBeenCalledWith('default_agent', 'codebuddy')
     })
 
     it('saves autoSpeech locally when toggled', async () => {

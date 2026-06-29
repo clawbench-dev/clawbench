@@ -1,15 +1,22 @@
 <template>
   <div class="settings-agents-index">
-    <!-- Rescan button -->
-    <div class="settings-agents-index__rescan-row">
-      <button
-        class="settings-agents-index__rescan-btn"
-        :disabled="rescanning"
-        @click="handleRescan"
-      >
-        <RefreshCw :size="16" :class="{ 'spin': rescanning }" />
-        <span>{{ rescanning ? t('settings.items.agentRescanning') : t('settings.items.agentRescan') }}</span>
-      </button>
+    <!-- Default agent select -->
+    <SettingsItem
+      label-key="settings.items.defaultAgent"
+      :label="t('settings.items.defaultAgent')"
+      :description="t('settings.items.defaultAgentDesc')"
+      type="select"
+      :model-value="defaultAgentId"
+      :options="defaultAgentOptions"
+      :force-close="activeKey !== null && activeKey !== 'default_agent'"
+      no-divider
+      @update:model-value="handleDefaultAgentChange"
+      @edit-toggle="(open: boolean) => handleEditToggle('default_agent', open)"
+    />
+    <!-- Rescan row -->
+    <div class="settings-agents-index__rescan-row" :class="{ 'settings-agents-index__rescan-row--disabled': rescanning }" @click="handleRescan">
+      <span class="settings-agents-index__rescan-label">{{ rescanning ? t('settings.items.agentRescanning') : t('settings.items.agentRescan') }}</span>
+      <RefreshCw :size="16" :class="{ 'spin': rescanning }" class="settings-agents-index__rescan-icon" />
     </div>
     <div
       v-for="agent in agentList"
@@ -32,13 +39,6 @@
         >
           <Copy :size="16" />
         </button>
-        <button
-          class="settings-agents-index__icon-btn settings-agents-index__icon-btn--danger"
-          :title="t('settings.items.agentDelete')"
-          @click.stop="handleDelete(agent)"
-        >
-          <Trash2 :size="16" />
-        </button>
         <ChevronRight class="settings-agents-index__arrow" :size="18" />
       </div>
     </div>
@@ -56,11 +56,11 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ChevronRight, Copy, Trash2, RefreshCw } from 'lucide-vue-next'
+import { ChevronRight, Copy, RefreshCw } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useAgents } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast'
-import { useDialog } from '@/composables/useDialog'
+import SettingsItem from './SettingsItem.vue'
 import CopyAgentDialog from './CopyAgentDialog.vue'
 
 defineEmits<{
@@ -69,8 +69,9 @@ defineEmits<{
 
 const { t } = useI18n()
 const toast = useToast()
-const dialog = useDialog()
-const { agents, defaultAgentId, loadAgents, duplicateAgent, deleteAgent, rescanAgents } = useAgents()
+const { agents, defaultAgentId, loadAgents, duplicateAgent, rescanAgents, setDefaultAgent } = useAgents()
+
+const activeKey = ref<string | null>(null)
 
 onMounted(() => {
   loadAgents(true)
@@ -78,6 +79,13 @@ onMounted(() => {
 
 const agentList = computed(() =>
   [...agents.value].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+)
+
+const defaultAgentOptions = computed(() =>
+  agents.value.map(a => ({
+    label: `${a.icon} ${a.name}`,
+    value: a.id,
+  }))
 )
 
 const copyingAgent = ref<{ id: string; name: string } | null>(null)
@@ -99,21 +107,19 @@ async function handleCopyConfirmed(newName: string) {
   }
 }
 
-async function handleDelete(agent: { id: string; name: string }) {
-  if (agent.id === defaultAgentId.value) {
-    toast.show(t('settings.items.agentDeleteDefault'), { icon: '⚠️', type: 'error', duration: 3000 })
-    return
-  }
-  const confirmed = await dialog.confirm(
-    t('settings.items.agentDeleteConfirm', { name: agent.name }),
-    { title: t('settings.items.agentDelete'), dangerous: true }
-  )
-  if (!confirmed) return
+async function handleDefaultAgentChange(agentId: string) {
   try {
-    await deleteAgent(agent.id)
-    toast.show(t('settings.items.agentDeleted'), { icon: '✓', type: 'success', duration: 3000 })
+    await setDefaultAgent(agentId)
   } catch {
-    toast.show(t('settings.items.agentDeleteFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+    toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+  }
+}
+
+function handleEditToggle(key: string, open: boolean) {
+  if (open) {
+    activeKey.value = key
+  } else if (activeKey.value === key) {
+    activeKey.value = null
   }
 }
 
@@ -138,33 +144,50 @@ async function handleRescan() {
 }
 
 .settings-agents-index__rescan-row {
-  padding: 8px 16px;
-  display: flex;
-  justify-content: flex-end;
-}
-
-.settings-agents-index__rescan-btn {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border: none;
-  border-radius: 8px;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: 13px;
+  justify-content: space-between;
+  min-height: 48px;
+  padding: 8px 16px;
   cursor: pointer;
-  font-weight: 500;
+  background: var(--bg-primary);
+  position: relative;
 }
 
-.settings-agents-index__rescan-btn:hover:not(:disabled) {
-  background: var(--bg-secondary);
+.settings-agents-index__rescan-row::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 0.5px;
+  background: var(--border-color);
+}
+
+@media (hover: hover) {
+  .settings-agents-index__rescan-row:hover {
+    background: var(--bg-secondary);
+  }
+}
+
+.settings-agents-index__rescan-row:active {
+  background: var(--bg-tertiary);
+}
+
+.settings-agents-index__rescan-label {
+  font-size: 15px;
   color: var(--text-primary);
 }
 
-.settings-agents-index__rescan-btn:disabled {
+.settings-agents-index__rescan-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.settings-agents-index__rescan-row--disabled {
   opacity: 0.6;
   cursor: not-allowed;
+  pointer-events: none;
 }
 
 .spin {
@@ -273,10 +296,6 @@ async function handleRescan() {
 
 .settings-agents-index__icon-btn:active {
   background: var(--bg-secondary);
-}
-
-.settings-agents-index__icon-btn--danger:hover {
-  color: #e74c3c;
 }
 
 .settings-agents-index__arrow {
