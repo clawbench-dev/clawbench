@@ -2,9 +2,9 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -462,7 +462,7 @@ func readUserMcpConfig() string {
 	var cfg struct {
 		McpServers map[string]any `json:"mcpServers"`
 	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	if unmarshalErr := json.Unmarshal(data, &cfg); unmarshalErr != nil {
 		return ""
 	}
 	if len(cfg.McpServers) == 0 {

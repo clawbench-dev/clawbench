@@ -9,8 +9,10 @@ import (
 
 // pushClientRef holds a reference to the JPush client, set from main.go.
 // Access is protected by pushClientMu for hot-reload safety.
-var pushClientRef *push.JPushClient
-var pushClientMu sync.RWMutex
+var (
+	pushClientRef *push.JPushClient
+	pushClientMu  sync.RWMutex
+)
 
 // SetPushClient stores a reference to the JPush client for handler access.
 // Goroutine-safe: concurrent reads are protected by RWMutex.

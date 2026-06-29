@@ -2258,3 +2258,85 @@ func TestServeConfig_Patch_LocalhostAuthExempt(t *testing.T) {
 	assert.True(t, model.ConfigInstance.LocalhostAuthExempt)
 	assert.True(t, model.LocalhostAuthExempt)
 }
+
+// --- SetReconfigureFunc and reconfigureOnHotReload ---
+
+func TestSetReconfigureFunc(t *testing.T) {
+	called := false
+	SetReconfigureFunc(func() {
+		called = true
+	})
+	defer func() { reconfigureOnHotReload = nil }()
+
+	// Invoke the set function directly
+	reconfigureOnHotReload()
+	assert.True(t, called, "reconfigureOnHotReload should call the function set by SetReconfigureFunc")
+}
+
+func TestReconfigureOnHotReload_CalledDuringPatch(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	reconfigureCalled := false
+	SetReconfigureFunc(func() {
+		reconfigureCalled = true
+	})
+	defer func() { reconfigureOnHotReload = nil }()
+
+	cfg := model.Config{}
+	cfg.Chat.SystemPromptInterval = 10
+	model.ConfigInstance = cfg
+
+	// Patch a hot-reload field — should trigger reconfigureOnHotReload
+	body := `{"chat":{"system_prompt_interval":20}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, reconfigureCalled, "reconfigureOnHotReload should be called when hot-reload fields are patched")
+}
+
+func TestReconfigureOnHotReload_NilDoesNotPanic(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Ensure reconfigureOnHotReload is nil (default in tests)
+	reconfigureOnHotReload = nil
+
+	cfg := model.Config{}
+	cfg.Chat.SystemPromptInterval = 10
+	model.ConfigInstance = cfg
+
+	// Patch should succeed without panicking even when reconfigureOnHotReload is nil
+	body := `{"chat":{"system_prompt_interval":20}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestServeConfig_Patch_LocalhostAuthExempt_IsHotField(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.LocalhostAuthExempt = false
+
+	// localhost_auth_exempt is a hot-reload field — no restart should be needed
+	body := `{"localhost_auth_exempt":true}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.NoError(t, err)
+	assert.False(t, resp["needs_restart"].(bool), "localhost_auth_exempt is hot-reloadable, should not need restart")
+}

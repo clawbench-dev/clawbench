@@ -54,20 +54,20 @@ var hotReloadFields = map[string]bool{
 	"terminal.max_sessions": true,
 	"terminal.buffer_lines": true,
 	// TTS engine + sub-configs — recreate provider
-	"tts.engine":               true,
-	"tts.tts_model":            true, // forward-compatible: MiniMax TTS model name (no-op until MiniMax provider is wired)
-	"tts.format":               true, // forward-compatible: audio format override (no-op, inferred from engine)
-	"tts.piper.model_path":     true,
-	"tts.piper.noise_scale":    true,
-	"tts.piper.length_scale":   true,
-	"tts.piper.sentence_silence": true,
-	"tts.kokoro.model_path":    true,
-	"tts.kokoro.voices_path":   true,
-	"tts.kokoro.lang":          true,
-	"tts.moss_nano.model_dir":  true,
+	"tts.engine":                  true,
+	"tts.tts_model":               true, // forward-compatible: MiniMax TTS model name (no-op until MiniMax provider is wired)
+	"tts.format":                  true, // forward-compatible: audio format override (no-op, inferred from engine)
+	"tts.piper.model_path":        true,
+	"tts.piper.noise_scale":       true,
+	"tts.piper.length_scale":      true,
+	"tts.piper.sentence_silence":  true,
+	"tts.kokoro.model_path":       true,
+	"tts.kokoro.voices_path":      true,
+	"tts.kokoro.lang":             true,
+	"tts.moss_nano.model_dir":     true,
 	"tts.moss_nano.prompt_speech": true,
-	"tts.moss_nano.voice":      true,
-	"tts.moss_nano.backend":    true,
+	"tts.moss_nano.voice":         true,
+	"tts.moss_nano.backend":       true,
 	// Summarize — reconstruct summarizer
 	"summarize.backend":      true,
 	"summarize.model":        true,
@@ -110,20 +110,20 @@ func SetReconfigureFunc(f func()) {
 // It only contains fields safe for frontend display — no passwords, keys, or
 // internal paths.
 type configResponse struct {
-	Version                 string               `json:"version"`
-	HasPassword             bool                 `json:"has_password"`               // true when a password is configured
-	LocalhostAuthExempt     bool                 `json:"localhost_auth_exempt"`       // true = localhost bypasses auth (default)
-	DefaultAgent            string               `json:"default_agent"`
-	Chat                    configChat           `json:"chat"`
-	Session                 configSession        `json:"session"`
-	RecentProjects          configRecentProjects `json:"recent_projects"`
-	Upload                  configUpload         `json:"upload"`
-	Terminal                configTerminal       `json:"terminal"`
-	TTS                     configTTS            `json:"tts"`
-	RAG                     configRAG            `json:"rag"`
-	PortForward             configPortForward    `json:"port_forward"`
-	Push                    configPush           `json:"push"`
-	Summarize               configSummarize      `json:"summarize"`
+	Version             string               `json:"version"`
+	HasPassword         bool                 `json:"has_password"`          // true when a password is configured
+	LocalhostAuthExempt bool                 `json:"localhost_auth_exempt"` // true = localhost bypasses auth (default)
+	DefaultAgent        string               `json:"default_agent"`
+	Chat                configChat           `json:"chat"`
+	Session             configSession        `json:"session"`
+	RecentProjects      configRecentProjects `json:"recent_projects"`
+	Upload              configUpload         `json:"upload"`
+	Terminal            configTerminal       `json:"terminal"`
+	TTS                 configTTS            `json:"tts"`
+	RAG                 configRAG            `json:"rag"`
+	PortForward         configPortForward    `json:"port_forward"`
+	Push                configPush           `json:"push"`
+	Summarize           configSummarize      `json:"summarize"`
 }
 
 type configChat struct {
@@ -339,10 +339,10 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 	configMutex.RUnlock()
 
 	resp := configResponse{
-		Version:                 getBuildVersion(),
-		HasPassword:             model.SessionToken != "",
-		LocalhostAuthExempt:     cfg.LocalhostAuthExempt,
-		DefaultAgent:            cfg.DefaultAgent,
+		Version:             getBuildVersion(),
+		HasPassword:         model.SessionToken != "",
+		LocalhostAuthExempt: cfg.LocalhostAuthExempt,
+		DefaultAgent:        cfg.DefaultAgent,
 		Chat: configChat{
 			InitialMessages:      cfg.Chat.InitialMessages,
 			PageSize:             cfg.Chat.PageSize,

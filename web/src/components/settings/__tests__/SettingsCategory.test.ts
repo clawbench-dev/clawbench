@@ -104,6 +104,11 @@ vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ show: mockToastShow }),
 }))
 
+const mockDialogConfirm = vi.fn().mockResolvedValue(false)
+vi.mock('@/composables/useDialog.ts', () => ({
+  useDialog: () => ({ confirm: mockDialogConfirm }),
+}))
+
 const i18n = createI18n({
   legacy: false,
   locale: 'zh',
@@ -221,6 +226,7 @@ function mountCategory(categoryId: string) {
 describe('SettingsCategory', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockDialogConfirm.mockResolvedValue(false)
     mockGetServerValueWithDefault.mockImplementation((key: string) => {
       // Simple flat-dot-path resolver against serverConfig
       const parts = key.split('.')
@@ -739,6 +745,208 @@ describe('SettingsCategory', () => {
       expect(mockToastShow).toHaveBeenCalled()
       // restartNeeded should be emitted
       expect(wrapper.emitted('restartNeeded')).toBeTruthy()
+    })
+  })
+
+  // ─── handleEditToggle / handleDescToggle / handleDiscard ──────────
+  describe('toggle and discard handlers', () => {
+    it('handleEditToggle sets activeKey on open', async () => {
+      const wrapper = mountCategory('chat')
+      const vm = wrapper.vm as any
+      vm.$.setupState.handleEditToggle('autoSpeech', true)
+      expect(vm.$.setupState.activeKey).toBe('autoSpeech')
+    })
+
+    it('handleEditToggle clears activeKey on close when key matches', async () => {
+      const wrapper = mountCategory('chat')
+      const vm = wrapper.vm as any
+      vm.$.setupState.activeKey = 'autoSpeech'
+      vm.$.setupState.handleEditToggle('autoSpeech', false)
+      expect(vm.$.setupState.activeKey).toBeNull()
+    })
+
+    it('handleEditToggle does not clear activeKey when key does not match', async () => {
+      const wrapper = mountCategory('chat')
+      const vm = wrapper.vm as any
+      vm.$.setupState.activeKey = 'autoSpeech'
+      vm.$.setupState.handleEditToggle('other', false)
+      expect(vm.$.setupState.activeKey).toBe('autoSpeech')
+    })
+
+    it('handleDescToggle sets activeKey on open', async () => {
+      const wrapper = mountCategory('chat')
+      const vm = wrapper.vm as any
+      vm.$.setupState.handleDescToggle('autoSpeech', true)
+      expect(vm.$.setupState.activeKey).toBe('autoSpeech')
+    })
+
+    it('handleDescToggle clears activeKey on close when key matches', async () => {
+      const wrapper = mountCategory('chat')
+      const vm = wrapper.vm as any
+      vm.$.setupState.activeKey = 'autoSpeech'
+      vm.$.setupState.handleDescToggle('autoSpeech', false)
+      expect(vm.$.setupState.activeKey).toBeNull()
+    })
+
+    it('handleDiscard shows info toast', async () => {
+      const wrapper = mountCategory('chat')
+      const vm = wrapper.vm as any
+      vm.$.setupState.handleDiscard()
+      expect(mockToastShow).toHaveBeenCalled()
+    })
+  })
+
+  // ─── handleClick ──────────────────────────────
+  describe('handleClick', () => {
+    it('opens password dialog when changePassword is clicked', async () => {
+      const wrapper = mountCategory('security')
+      const vm = wrapper.vm as any
+      vm.$.setupState.handleClick({ key: 'changePassword' })
+      expect(vm.$.setupState.showPasswordDialog).toBe(true)
+    })
+
+    it('calls AndroidNative.showServerDialog when reconfigureServer is clicked', async () => {
+      const mockShowServerDialog = vi.fn()
+      ;(window as any).AndroidNative = { showServerDialog: mockShowServerDialog }
+      const wrapper = mountCategory('about')
+      const vm = wrapper.vm as any
+      vm.$.setupState.handleClick({ key: 'reconfigureServer' })
+      expect(mockShowServerDialog).toHaveBeenCalled()
+      delete (window as any).AndroidNative
+    })
+  })
+
+  // ─── handleUpdate edge cases ──────────────────
+  describe('handleUpdate edge cases', () => {
+    it('skips password update when value is empty', async () => {
+      const wrapper = mountCategory('security')
+      const vm = wrapper.vm as any
+      await vm.$.setupState.handleUpdate({ key: 'password', type: 'password', source: 'server' }, '')
+      expect(mockSetServerValue).not.toHaveBeenCalled()
+    })
+
+    it('skips password update when value contains bullet chars (masked)', async () => {
+      const wrapper = mountCategory('security')
+      const vm = wrapper.vm as any
+      await vm.$.setupState.handleUpdate({ key: 'password', type: 'password', source: 'server' }, '••••')
+      expect(mockSetServerValue).not.toHaveBeenCalled()
+    })
+
+    it('shows toast on server save failure', async () => {
+      mockSetServerValue.mockRejectedValueOnce(new Error('fail'))
+      const wrapper = mountCategory('chat')
+      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
+      const item = allItems.find(i => i.props().label === '初始消息数')
+      if (item) {
+        await item.vm.$emit('update:modelValue', 99)
+        await wrapper.vm.$nextTick()
+        await vi.waitFor(() => {
+          expect(mockToastShow).toHaveBeenCalled()
+        })
+      }
+    })
+  })
+
+  // ─── Agents category routing ──────────────────
+  describe('agents category routing', () => {
+    it('renders SettingsAgentsIndex when categoryId is agents', async () => {
+      const wrapper = mount(SettingsCategory, {
+        props: { categoryId: 'agents' },
+        global: {
+          plugins: [i18n],
+          stubs: {
+            SettingsAgentsIndex: true,
+            SettingsAgentDetail: true,
+          },
+        },
+      })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.findComponent({ name: 'SettingsAgentsIndex' }).exists()).toBe(true)
+    })
+
+    it('renders SettingsAgentDetail when categoryId starts with agents:', async () => {
+      const wrapper = mount(SettingsCategory, {
+        props: { categoryId: 'agents:test-agent' },
+        global: {
+          plugins: [i18n],
+          stubs: {
+            SettingsAgentsIndex: true,
+            SettingsAgentDetail: true,
+          },
+        },
+      })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.findComponent({ name: 'SettingsAgentDetail' }).exists()).toBe(true)
+    })
+
+    it('emits navigate agents when SettingsAgentDetail emits deleted', async () => {
+      const wrapper = mount(SettingsCategory, {
+        props: { categoryId: 'agents:test-agent' },
+        global: {
+          plugins: [i18n],
+          stubs: {
+            SettingsAgentsIndex: true,
+            SettingsAgentDetail: { template: '<div data-test="agent-detail" @click="$emit(\'deleted\')"></div>' },
+          },
+        },
+      })
+      await wrapper.vm.$nextTick()
+      const detail = wrapper.find('[data-test="agent-detail"]')
+      if (detail.exists()) {
+        await detail.trigger('click')
+        expect(wrapper.emitted('navigate')).toBeTruthy()
+        expect(wrapper.emitted('navigate')![0]).toEqual(['agents'])
+      }
+    })
+  })
+
+  // ─── handleRestartServer ──────────────────
+  describe('handleRestartServer', () => {
+    it('clicks restartServer action and confirms', async () => {
+      mockDialogConfirm.mockResolvedValue(true)
+      const wrapper = mountCategory('about')
+      const vm = wrapper.vm as any
+      vm.$.setupState.handleClick({ key: 'restartServer' })
+      await wrapper.vm.$nextTick()
+      expect(mockDialogConfirm).toHaveBeenCalled()
+      await vi.waitFor(() => {
+        expect(wrapper.emitted('restartRequested')).toBeTruthy()
+      })
+    })
+
+    it('clicks restartServer action and cancels', async () => {
+      mockDialogConfirm.mockResolvedValue(false)
+      const wrapper = mountCategory('about')
+      const vm = wrapper.vm as any
+      vm.$.setupState.handleClick({ key: 'restartServer' })
+      await wrapper.vm.$nextTick()
+      expect(mockDialogConfirm).toHaveBeenCalled()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.emitted('restartRequested')).toBeFalsy()
+    })
+  })
+
+  // ─── isLastInSection ──────────────────
+  describe('isLastInSection', () => {
+    it('returns true for last item', async () => {
+      const wrapper = mountCategory('chat')
+      const vm = wrapper.vm as any
+      const items = [{ key: 'a' }, { key: 'b' }, { key: 'c' }]
+      expect(vm.$.setupState.isLastInSection(items, 2)).toBe(true)
+    })
+
+    it('returns true when next item is header', async () => {
+      const wrapper = mountCategory('chat')
+      const vm = wrapper.vm as any
+      const items = [{ key: 'a' }, { key: 'b', type: 'header' }, { key: 'c' }]
+      expect(vm.$.setupState.isLastInSection(items, 0)).toBe(true)
+    })
+
+    it('returns false when next item is not header', async () => {
+      const wrapper = mountCategory('chat')
+      const vm = wrapper.vm as any
+      const items = [{ key: 'a' }, { key: 'b' }, { key: 'c' }]
+      expect(vm.$.setupState.isLastInSection(items, 0)).toBe(false)
     })
   })
 })

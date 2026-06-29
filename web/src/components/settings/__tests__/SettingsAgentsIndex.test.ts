@@ -263,4 +263,76 @@ describe('SettingsAgentsIndex', () => {
     const wrapper = mountIndex()
     expect(wrapper.find('.settings-agents-index__icon-btn--danger').exists()).toBe(false)
   })
+
+  it('handleDefaultAgentChange calls setDefaultAgent', async () => {
+    mockSetDefaultAgent.mockResolvedValueOnce(undefined)
+    const wrapper = mountIndex()
+    const vm = wrapper.vm as any
+    await vm.$.setupState.handleDefaultAgentChange('agent-2')
+    expect(mockSetDefaultAgent).toHaveBeenCalledWith('agent-2')
+  })
+
+  it('handleDefaultAgentChange shows error toast on failure', async () => {
+    mockSetDefaultAgent.mockRejectedValueOnce(new Error('fail'))
+    const wrapper = mountIndex()
+    const vm = wrapper.vm as any
+    await vm.$.setupState.handleDefaultAgentChange('agent-2')
+    await wrapper.vm.$nextTick()
+    expect(mockToastShow).toHaveBeenCalledWith('Save failed', expect.any(Object))
+  })
+
+  it('handleEditToggle sets activeKey on open', async () => {
+    const wrapper = mountIndex()
+    const vm = wrapper.vm as any
+    vm.$.setupState.handleEditToggle('default_agent', true)
+    expect(vm.$.setupState.activeKey).toBe('default_agent')
+  })
+
+  it('handleEditToggle clears activeKey on close when key matches', async () => {
+    const wrapper = mountIndex()
+    const vm = wrapper.vm as any
+    vm.$.setupState.activeKey = 'default_agent'
+    vm.$.setupState.handleEditToggle('default_agent', false)
+    expect(vm.$.setupState.activeKey).toBeNull()
+  })
+
+  it('renders default agent select item', () => {
+    const wrapper = mountIndex()
+    const item = wrapper.findComponent({ name: 'SettingsItem' })
+    expect(item.exists()).toBe(true)
+  })
+
+  it('renders specialty text when agent has specialty', () => {
+    mockAgents.value = [
+      { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: 'coding', sortOrder: 0 },
+    ]
+    const wrapper = mountIndex()
+    expect(wrapper.find('.settings-agents-index__specialty').exists()).toBe(true)
+    expect(wrapper.find('.settings-agents-index__specialty').text()).toBe('coding')
+  })
+
+  it('does not render specialty element when agent has no specialty', () => {
+    mockAgents.value = [
+      { id: 'agent-1', name: 'CodeBuddy', icon: '🤖', specialty: '', sortOrder: 0 },
+    ]
+    const wrapper = mountIndex()
+    // v-if="agent.specialty" should not render the span
+    expect(wrapper.find('.settings-agents-index__specialty').exists()).toBe(false)
+  })
+
+  it('disables rescan row while scanning', async () => {
+    let resolveRescan: () => void
+    mockRescanAgents.mockReturnValueOnce(new Promise<void>(r => { resolveRescan = r }))
+    const wrapper = mountIndex()
+    const rescanRow = wrapper.find('.settings-agents-index__rescan-row')
+    await rescanRow.trigger('click')
+
+    const vm = wrapper.vm as any
+    expect(vm.$.setupState.rescanning).toBe(true)
+    expect(rescanRow.classes()).toContain('settings-agents-index__rescan-row--disabled')
+
+    resolveRescan!()
+    await wrapper.vm.$nextTick()
+    expect(vm.$.setupState.rescanning).toBe(false)
+  })
 })

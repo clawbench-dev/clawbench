@@ -355,3 +355,46 @@ func TestServeQuickCommandByID_MethodNotAllowed(t *testing.T) {
 	w := callHandler(ServeQuickCommandByID, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
+
+// ---------- GetTerminalManager / SetTerminalManager concurrent access ----------
+
+func TestGetTerminalManager_ConcurrentAccess(t *testing.T) {
+	origMgr := GetTerminalManager()
+	t.Cleanup(func() { SetTerminalManager(origMgr) })
+
+	// Create a test manager
+	mgr := terminal.NewManager(model.TerminalConfig{
+		Enabled:      true,
+		IdleTimeout:  "1m",
+		BufferLines:  100,
+		MaxLineBytes: 65536,
+		MaxBufferMB:  4,
+	}, 20000)
+	t.Cleanup(func() { mgr.Close() })
+
+	done := make(chan struct{})
+
+	// Concurrent setter goroutine
+	go func() {
+		defer func() { done <- struct{}{} }()
+		for range 100 {
+			SetTerminalManager(mgr)
+		}
+	}()
+
+	// Concurrent reader goroutine
+	go func() {
+		defer func() { done <- struct{}{} }()
+		for range 100 {
+			_ = GetTerminalManager()
+		}
+	}()
+
+	// Wait for both goroutines to finish (no data race = test passes under -race)
+	<-done
+	<-done
+
+	// Verify we can still get a valid manager after concurrent access
+	result := GetTerminalManager()
+	assert.NotNil(t, result)
+}

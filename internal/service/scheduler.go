@@ -593,7 +593,9 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 			// Finalize the streaming placeholder message to prevent streaming=1 leak
 			errMsg := "Scheduled task internal error, please retry"
 			errContent, _ := json.Marshal(map[string]any{"blocks": []any{map[string]string{"type": "error", "text": errMsg}}})
-			FinalizeStreamingMessage(projectPath, backendName, sessionID, string(errContent))
+			if _, finalizeErr := FinalizeStreamingMessage(projectPath, backendName, sessionID, string(errContent)); finalizeErr != nil {
+				slog.Warn("failed to finalize streaming message on panic", slog.String("error", finalizeErr.Error()))
+			}
 			// Mark execution as failed
 			_ = UpdateExecutionStatus(sessionID, "failed")
 			emitTaskEvent(fmt.Sprintf("%d", task.ID), "failed", "", sessionID, projectPath, task.Name)

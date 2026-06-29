@@ -1,13 +1,14 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { nextTick } from 'vue'
 
-const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockApiGet, mockToastShow } = vi.hoisted(() => ({
+const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockApiGet, mockToastShow, mockDeleteAgent, mockDefaultAgentId } = vi.hoisted(() => ({
   mockGetAgent: vi.fn(),
   mockLoadAgents: vi.fn().mockResolvedValue(undefined),
   mockPatchAgentField: vi.fn().mockResolvedValue(undefined),
   mockApiGet: vi.fn().mockResolvedValue({ commonPrompt: '' }),
   mockToastShow: vi.fn(),
+  mockDeleteAgent: vi.fn().mockResolvedValue(undefined),
+  mockDefaultAgentId: { value: 'other-agent' },
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -34,15 +35,26 @@ vi.mock('vue-i18n', () => ({
         'settings.items.agentModelCount': `${params?.count ?? 0} models`,
         'settings.items.agentAcpCommand': 'ACP Command',
         'settings.saveFailed': 'Save failed',
+        'settings.items.agentDelete': 'Delete',
+        'settings.items.agentDeleteConfirm': `Delete ${params?.name ?? ''}?`,
+        'settings.items.agentDeleteDefault': 'Cannot delete default agent',
+        'settings.items.agentDeleted': 'Deleted',
+        'settings.items.agentDeleteFailed': 'Delete failed',
       }
       if (key === 'settings.items.agentModelCount' && params) return `${params.count} models`
+      if (key === 'settings.items.agentDeleteConfirm' && params) return `Delete ${params.name}?`
       return map[key] ?? key
     },
   }),
 }))
 
 vi.mock('@/composables/useAgents', () => ({
-  useAgents: () => ({ getAgent: mockGetAgent, loadAgents: mockLoadAgents }),
+  useAgents: () => ({
+    getAgent: mockGetAgent,
+    loadAgents: mockLoadAgents,
+    deleteAgent: mockDeleteAgent,
+    defaultAgentId: mockDefaultAgentId,
+  }),
 }))
 
 vi.mock('@/composables/useSettingsConfig', () => ({
@@ -55,6 +67,11 @@ vi.mock('@/composables/useToast', () => ({
 
 vi.mock('@/utils/api', () => ({
   apiGet: mockApiGet,
+}))
+
+const mockDialogConfirm = vi.fn().mockResolvedValue(false)
+vi.mock('@/composables/useDialog', () => ({
+  useDialog: () => ({ confirm: mockDialogConfirm }),
 }))
 
 import SettingsAgentDetail from '@/components/settings/SettingsAgentDetail.vue'
@@ -156,5 +173,93 @@ describe('SettingsAgentDetail', () => {
   it('renders container div', () => {
     const wrapper = mountDetail()
     expect(wrapper.find('.settings-agent-detail').exists()).toBe(true)
+  })
+
+  // ─── Delete agent ──────────────────────────────
+  describe('delete agent', () => {
+    it('renders delete row', () => {
+      const wrapper = mountDetail()
+      expect(wrapper.find('.settings-agent-detail__delete-row').exists()).toBe(true)
+    })
+
+    it('shows error toast when trying to delete default agent', async () => {
+      mockDefaultAgentId.value = 'test-agent'
+      const wrapper = mountDetail()
+      const deleteRow = wrapper.find('.settings-agent-detail__delete-row')
+      await deleteRow.trigger('click')
+      expect(mockToastShow).toHaveBeenCalledWith('Cannot delete default agent', expect.any(Object))
+      expect(mockDeleteAgent).not.toHaveBeenCalled()
+    })
+
+    it('shows confirmation dialog when deleting non-default agent', async () => {
+      mockDefaultAgentId.value = 'other-agent'
+      mockDialogConfirm.mockResolvedValueOnce(false)
+      const wrapper = mountDetail()
+      const deleteRow = wrapper.find('.settings-agent-detail__delete-row')
+      await deleteRow.trigger('click')
+      expect(mockDialogConfirm).toHaveBeenCalled()
+    })
+
+    it('deletes agent when confirmed', async () => {
+      mockDefaultAgentId.value = 'other-agent'
+      mockDialogConfirm.mockResolvedValueOnce(true)
+      const wrapper = mountDetail()
+      const deleteRow = wrapper.find('.settings-agent-detail__delete-row')
+      await deleteRow.trigger('click')
+      expect(mockDeleteAgent).toHaveBeenCalledWith('test-agent')
+      expect(mockToastShow).toHaveBeenCalledWith('Deleted', expect.any(Object))
+      expect(wrapper.emitted('deleted')).toBeTruthy()
+    })
+
+    it('does not delete when confirmation is cancelled', async () => {
+      mockDefaultAgentId.value = 'other-agent'
+      mockDialogConfirm.mockResolvedValueOnce(false)
+      const wrapper = mountDetail()
+      const deleteRow = wrapper.find('.settings-agent-detail__delete-row')
+      await deleteRow.trigger('click')
+      expect(mockDeleteAgent).not.toHaveBeenCalled()
+    })
+
+    it('shows error toast when delete fails', async () => {
+      mockDefaultAgentId.value = 'other-agent'
+      mockDialogConfirm.mockResolvedValueOnce(true)
+      mockDeleteAgent.mockRejectedValueOnce(new Error('fail'))
+      const wrapper = mountDetail()
+      const deleteRow = wrapper.find('.settings-agent-detail__delete-row')
+      await deleteRow.trigger('click')
+      expect(mockToastShow).toHaveBeenCalledWith('Delete failed', expect.any(Object))
+    })
+  })
+
+  // ─── Edit toggle ──────────────────────────────
+  describe('edit toggle', () => {
+    it('handleUpdate calls patchAgentField', async () => {
+      const wrapper = mountDetail()
+      const vm = wrapper.vm as any
+      await vm.$.setupState.handleUpdate({ key: 'name', patchField: 'name' }, 'New Name')
+      expect(mockPatchAgentField).toHaveBeenCalledWith('test-agent', 'name', 'New Name')
+    })
+
+    it('handleUpdate skips items without patchField', async () => {
+      const wrapper = mountDetail()
+      const vm = wrapper.vm as any
+      await vm.$.setupState.handleUpdate({ key: 'backend', type: 'info' }, 'value')
+      expect(mockPatchAgentField).not.toHaveBeenCalled()
+    })
+
+    it('handleEditToggle sets activeKey when open', async () => {
+      const wrapper = mountDetail()
+      const vm = wrapper.vm as any
+      vm.$.setupState.handleEditToggle('name', true)
+      expect(vm.$.setupState.activeKey).toBe('name')
+    })
+
+    it('handleEditToggle clears activeKey when closed and key matches', async () => {
+      const wrapper = mountDetail()
+      const vm = wrapper.vm as any
+      vm.$.setupState.activeKey = 'name'
+      vm.$.setupState.handleEditToggle('name', false)
+      expect(vm.$.setupState.activeKey).toBeNull()
+    })
   })
 })

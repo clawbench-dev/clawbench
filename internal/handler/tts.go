@@ -34,8 +34,10 @@ const (
 
 // speechProvider is the global speech provider instance.
 // Access is protected by speechProviderMu for hot-reload safety.
-var speechProvider speech.SpeechProvider = speech.NewEdgeTTSProvider()
-var speechProviderMu sync.RWMutex
+var (
+	speechProvider   speech.SpeechProvider = speech.NewEdgeTTSProvider()
+	speechProviderMu sync.RWMutex
+)
 
 // SetSpeechProvider replaces the global speech provider.
 // Goroutine-safe: concurrent Synthesize calls are protected by RWMutex.
@@ -56,8 +58,10 @@ func GetSpeechProvider() speech.SpeechProvider {
 
 // summarizer is the global text summarizer instance.
 // Access is protected by summarizerMu for hot-reload safety.
-var summarizer summarize.Summarizer = summarize.NewSimple()
-var summarizerMu sync.RWMutex
+var (
+	summarizer   summarize.Summarizer = summarize.NewSimple()
+	summarizerMu sync.RWMutex
+)
 
 // SetSummarizer replaces the global text summarizer.
 // Goroutine-safe for concurrent access.

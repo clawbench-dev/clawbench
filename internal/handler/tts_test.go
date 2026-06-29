@@ -373,6 +373,68 @@ var _ summarize.Summarizer = (*mockSummarizer)(nil)
 // --- ensure mockSpeechProvider satisfies SpeechProvider interface ---
 var _ speech.SpeechProvider = (*mockSpeechProvider)(nil)
 
+// --- GetSpeechProvider / SetSpeechProvider concurrent access ---
+
+func TestGetSpeechProvider_ConcurrentAccess(t *testing.T) {
+	origProvider := GetSpeechProvider()
+	defer SetSpeechProvider(origProvider)
+
+	altProvider := &mockSpeechProvider{}
+	done := make(chan struct{})
+
+	// Concurrent setter goroutine
+	go func() {
+		defer func() { done <- struct{}{} }()
+		for range 100 {
+			SetSpeechProvider(altProvider)
+			SetSpeechProvider(origProvider)
+		}
+	}()
+
+	// Concurrent reader goroutine
+	go func() {
+		defer func() { done <- struct{}{} }()
+		for range 100 {
+			_ = GetSpeechProvider()
+		}
+	}()
+
+	// Wait for both goroutines (no data race = test passes under -race)
+	<-done
+	<-done
+}
+
+// --- GetSummarizer / SetSummarizer concurrent access ---
+
+func TestGetSummarizer_ConcurrentAccess(t *testing.T) {
+	origSum := GetSummarizer()
+	defer SetSummarizer(origSum)
+
+	altSum := &mockSummarizer{}
+	done := make(chan struct{})
+
+	// Concurrent setter goroutine
+	go func() {
+		defer func() { done <- struct{}{} }()
+		for range 100 {
+			SetSummarizer(altSum)
+			SetSummarizer(origSum)
+		}
+	}()
+
+	// Concurrent reader goroutine
+	go func() {
+		defer func() { done <- struct{}{} }()
+		for range 100 {
+			_ = GetSummarizer()
+		}
+	}()
+
+	// Wait for both goroutines (no data race = test passes under -race)
+	<-done
+	<-done
+}
+
 // --- TTSGenerate: language propagation ---
 
 func TestTTSGenerate_LanguageDefaultToZh(t *testing.T) {

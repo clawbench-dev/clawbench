@@ -93,3 +93,83 @@ func TestJPushClient_SendNotification_ServerError(t *testing.T) {
 		t.Error("expected error for server error response")
 	}
 }
+
+func TestJPushClient_Reconfigure(t *testing.T) {
+	client := NewJPushClient(JPushConfig{Enabled: false, AppKey: "", MasterSecret: ""})
+
+	// Reconfigure to enable
+	client.Reconfigure(JPushConfig{Enabled: true, AppKey: "new-key", MasterSecret: "new-secret"})
+	if !client.Enabled() {
+		t.Error("client should be enabled after Reconfigure with valid config")
+	}
+
+	// Reconfigure to disable
+	client.Reconfigure(JPushConfig{Enabled: false, AppKey: "new-key", MasterSecret: "new-secret"})
+	if client.Enabled() {
+		t.Error("client should be disabled when Enabled=false")
+	}
+
+	// Reconfigure with missing appKey
+	client.Reconfigure(JPushConfig{Enabled: true, AppKey: "", MasterSecret: "secret"})
+	if client.Enabled() {
+		t.Error("client should be disabled when AppKey is empty")
+	}
+
+	// Reconfigure with missing masterSecret
+	client.Reconfigure(JPushConfig{Enabled: true, AppKey: "key", MasterSecret: ""})
+	if client.Enabled() {
+		t.Error("client should be disabled when MasterSecret is empty")
+	}
+}
+
+func TestJPushClient_Enabled(t *testing.T) {
+	// All three conditions must be true: enabled=true, appKey!="", masterSecret!=""
+	client := NewJPushClient(JPushConfig{Enabled: true, AppKey: "key", MasterSecret: "secret"})
+	if !client.Enabled() {
+		t.Error("fully configured client should be enabled")
+	}
+
+	// Missing appKey
+	client2 := NewJPushClient(JPushConfig{Enabled: true, AppKey: "", MasterSecret: "secret"})
+	if client2.Enabled() {
+		t.Error("client with empty AppKey should not be enabled")
+	}
+
+	// Missing masterSecret
+	client3 := NewJPushClient(JPushConfig{Enabled: true, AppKey: "key", MasterSecret: ""})
+	if client3.Enabled() {
+		t.Error("client with empty MasterSecret should not be enabled")
+	}
+
+	// Disabled
+	client4 := NewJPushClient(JPushConfig{Enabled: false, AppKey: "key", MasterSecret: "secret"})
+	if client4.Enabled() {
+		t.Error("disabled client should not be enabled")
+	}
+}
+
+func TestJPushClient_Reconfigure_ConcurrentAccess(t *testing.T) {
+	client := NewJPushClient(JPushConfig{Enabled: true, AppKey: "key", MasterSecret: "secret"})
+	done := make(chan struct{})
+
+	// Concurrent Reconfigure goroutine
+	go func() {
+		defer func() { done <- struct{}{} }()
+		for range 100 {
+			client.Reconfigure(JPushConfig{Enabled: true, AppKey: "key", MasterSecret: "secret"})
+			client.Reconfigure(JPushConfig{Enabled: false, AppKey: "", MasterSecret: ""})
+		}
+	}()
+
+	// Concurrent Enabled() reader goroutine
+	go func() {
+		defer func() { done <- struct{}{} }()
+		for range 100 {
+			_ = client.Enabled()
+		}
+	}()
+
+	// Wait for both goroutines (no data race = test passes under -race)
+	<-done
+	<-done
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { nextTick, ref } from 'vue'
 import { createI18n } from 'vue-i18n'
 import MarkdownPreview from '../MarkdownPreview.vue'
 
@@ -37,6 +37,19 @@ vi.mock('@/composables/useFilePathAnnotation.ts', () => ({
 vi.mock('@/composables/useQuoteQuestion.ts', () => ({
   useQuoteQuestion: () => ({
     showBar: vi.fn(),
+  }),
+}))
+
+const mockHandleTableRowClick = vi.fn(() => false)
+vi.mock('@/composables/useTableRowExpand.ts', () => ({
+  useTableRowExpand: () => ({
+    tableRowModal: ref(null),
+    closeTableRowModal: vi.fn(),
+    tableRowPrev: vi.fn(),
+    tableRowNext: vi.fn(),
+    handleTableRowClick: mockHandleTableRowClick,
+    onTableMouseDown: vi.fn(),
+    onTableTouchStart: vi.fn(),
   }),
 }))
 
@@ -214,6 +227,45 @@ describe('MarkdownPreview', () => {
     if (codePreview.exists()) {
       expect(codePreview.props('wordWrap')).toBe(true)
       expect(codePreview.props('showLineNumbers')).toBe(false)
+    }
+  })
+
+  it('renders TableRowModal component', async () => {
+    const wrapper = mountPreview({ viewMode: 'rendered' })
+    await nextTick()
+    await nextTick()
+    // TableRowModal should be present in the template
+    expect(wrapper.findComponent({ name: 'TableRowModal' }).exists()).toBe(true)
+  })
+
+  it('clears diff markers on unmount', async () => {
+    const { clearDiffMarkers } = await import('@/composables/useMarkdownDiff.ts')
+    const wrapper = mountPreview({ viewMode: 'rendered' })
+    await nextTick()
+    await nextTick()
+    wrapper.unmount()
+    expect(clearDiffMarkers).toHaveBeenCalled()
+  })
+
+  it('renders file path as data attribute on markdown body', async () => {
+    const wrapper = mountPreview({ viewMode: 'rendered' })
+    await nextTick()
+    await nextTick()
+    const body = wrapper.find('.markdown-body')
+    if (body.exists()) {
+      expect(body.attributes('data-file-path')).toBe('/tmp/README.md')
+    }
+  })
+
+  it('calls handleTableRowClick on click in markdown body', async () => {
+    mockHandleTableRowClick.mockReturnValue(false)
+    const wrapper = mountPreview({ viewMode: 'rendered' })
+    await nextTick()
+    await nextTick()
+    const body = wrapper.find('.markdown-body')
+    if (body.exists()) {
+      await body.trigger('click')
+      expect(mockHandleTableRowClick).toHaveBeenCalled()
     }
   })
 })

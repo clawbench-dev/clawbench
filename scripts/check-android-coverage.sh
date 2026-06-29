@@ -38,7 +38,7 @@ cd "$ROOT_DIR"
 if [ "$SKIP_TEST" = false ]; then
   echo "==> Running Android tests with coverage..."
   cd "$ANDROID_DIR"
-  JAVA_HOME=${JAVA_HOME:-/usr/lib/jvm/jdk-17.0.12} ./gradlew jacocoTestReport 2>&1
+  JAVA_HOME=${JAVA_HOME:-/usr/lib/jvm/java-17-openjdk-amd64} ./gradlew jacocoTestReport 2>&1
   cd "$ROOT_DIR"
   echo ""
 else

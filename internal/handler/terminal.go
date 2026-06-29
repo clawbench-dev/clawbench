@@ -16,8 +16,10 @@ import (
 
 // terminalMgr is set via SetTerminalManager during startup.
 // Access is protected by terminalMgrMu for hot-reload safety.
-var terminalMgr *terminal.Manager
-var terminalMgrMu sync.RWMutex
+var (
+	terminalMgr   *terminal.Manager
+	terminalMgrMu sync.RWMutex
+)
 
 // SetTerminalManager sets the terminal manager for handlers.
 // Goroutine-safe: concurrent handler reads are protected by RWMutex.
