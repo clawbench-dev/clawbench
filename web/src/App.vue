@@ -868,7 +868,7 @@ async function handleNavigateBack() {
 async function handleSelectFile(path) {
     const ok = await store.selectFile(path)
     if (ok) {
-        activeTab.value = 'browse'
+        switchTab('browse')
         fileNav.openFile(path)
     }
 }
@@ -884,7 +884,7 @@ async function handleBrowseSelectFile(path) {
 async function handleTaskOpenFile(filePath, lineStart) {
     const ok = await store.selectFile(filePath)
     if (ok) {
-        activeTab.value = 'browse'
+        switchTab('browse')
         fileNav.openFile(filePath)
         if (lineStart) scrollToLine(lineStart)
     }
@@ -936,7 +936,7 @@ async function handleOverlayOpenFile(payload) {
 function handleOpenFileOverlay(e) {
     const { path, lineStart, lineEnd } = e.detail || {}
     if (!path) return
-    activeTab.value = 'browse'
+    switchTab('browse')
     fileNav.openFile(path)
     if (lineStart) scrollToLine(lineStart, lineEnd)
 }
@@ -1193,7 +1193,7 @@ provide('switchTab', switchTab)
 provide('hotSwitchProject', hotSwitchProject)
 
 function handleOpenFileManager() {
-    activeTab.value = 'browse'
+    switchTab('browse')
 }
 
 function handleNavigateToCommit(e) {
@@ -1201,7 +1201,7 @@ function handleNavigateToCommit(e) {
     if (sha) {
         setPendingCommitNavigation(sha)
     }
-    activeTab.value = 'history'
+    switchTab('history')
 }
 
 function playQuoteEmitAnimation(e) {

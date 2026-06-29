@@ -35,6 +35,7 @@ const emit = defineEmits(['close', 'prev', 'next'])
 
 const { t } = useI18n()
 const toast = inject('toast', null)
+const switchTab = inject('switchTab', null)
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 
 function handleValueDblClick(event) {
@@ -99,7 +100,7 @@ async function handleValueClick(event) {
         lineEnd ? parseInt(lineEnd, 10) : undefined,
       )
       if (ok) {
-        store.activeTab = 'browse'
+        switchTab?.('browse')
         emit('close')
       }
     }
