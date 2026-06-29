@@ -332,7 +332,7 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 	// We read ~/.codebuddy/.mcp.json and inject it via --mcp-config so the ACP
 	// process can still load MCP tools. Only applied to the codebuddy backend
 	// since other ACP agents may not recognize this flag.
-	if cmdName == "codebuddy" {
+	if cmdParts[0] == "codebuddy" {
 		if mcpConfigJSON := readUserMcpConfig(); mcpConfigJSON != "" {
 			cmdArgs = append(cmdArgs, "--mcp-config", mcpConfigJSON)
 			slog.Info("acp conn: injecting user MCP config via --mcp-config (workaround for issue #270)")
