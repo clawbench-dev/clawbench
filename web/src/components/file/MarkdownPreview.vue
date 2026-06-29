@@ -1,7 +1,7 @@
 <template>
   <div class="markdown-preview">
     <!-- Rendered markdown -->
-    <div v-if="viewMode === 'rendered'" class="markdown-body" ref="bodyRef" :data-file-path="file?.path || ''" @click="handleClick">
+    <div v-if="viewMode === 'rendered'" class="markdown-body" ref="bodyRef" :data-file-path="file?.path || ''" @click="handleClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart">
       <div class="markdown-content" v-html="renderedHtml" />
       <!-- Diff markers: declarative v-for, positioned absolutely inside .markdown-body -->
       <button
@@ -30,6 +30,14 @@
       :sticky-scroll="stickyScroll"
     />
   </div>
+
+  <!-- Table row expand modal -->
+  <TableRowModal
+    :data="tableRowModal"
+    @close="closeTableRowModal"
+    @prev="tableRowPrev"
+    @next="tableRowNext"
+  />
 </template>
 
 <script setup lang="ts">
@@ -42,6 +50,8 @@ import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { store } from '@/stores/app.ts'
 import { dirName, splitPath, joinPath } from '@/utils/path.ts'
 import { flashRanges, flashType } from '@/composables/useFileRefresh.ts'
+import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
+import TableRowModal from '@/components/common/TableRowModal.vue'
 import {
   diffMarkers,
   clearDiffMarkers,
@@ -80,6 +90,7 @@ interface PositionedMarker {
 const positionedMarkers = ref<PositionedMarker[]>([])
 
 const quoteQuestion = useQuoteQuestion()
+const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTableRowClick, onTableMouseDown, onTableTouchStart } = useTableRowExpand()
 
 const { handleDblClick } = useDoubleClickCopy({
     lineSelector: '.code-line',
@@ -120,6 +131,10 @@ function handleClick(event: MouseEvent) {
     if (handleDiffMarkerClick(event, '.diff-marker-inline')) return
 
     const target = event.target as HTMLElement | null
+
+    // Check for table row click — open row-form modal
+    if (handleTableRowClick(event)) return
+
     // Check for commit-hash click
     const commitEl = target?.closest('.chat-commit-hash, .chat-commit-open-btn')
     if (commitEl) {

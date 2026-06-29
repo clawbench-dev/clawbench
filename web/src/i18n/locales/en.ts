@@ -379,6 +379,11 @@ export default {
       openFailed: 'Failed to open localhost URL',
       sshDisabled: 'SSH tunnel is disabled, cannot open localhost URL',
     },
+    table: {
+      row: 'Row',
+      prevRow: 'Previous',
+      nextRow: 'Next',
+    },
   },
   session: {
     title: 'Sessions',
@@ -467,6 +472,9 @@ export default {
       title: 'Execution log',
       noExecutions: 'No executions',
       noTextOutput: 'No text output',
+      livePreview: 'Live Preview',
+      previewPolling: 'Polling',
+      startingPreview: 'Connecting preview…',
       manual: 'Manual',
       auto: 'Auto',
       running: 'Running',

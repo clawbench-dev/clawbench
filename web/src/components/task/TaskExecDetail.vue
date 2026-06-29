@@ -6,9 +6,15 @@
     </div>
 
     <!-- Scrollable message content -->
-    <div class="exec-detail-content" ref="contentRef" @click="handleContentClick">
-      <!-- Summary / Original tab bar -->
-      <SummaryToggle v-if="hasSummary" mode="tab" :showing-summary="activeTab === 'summary'" i18n-prefix="task.exec" @toggle="setTab(activeTab === 'summary' ? 'original' : 'summary')" />
+    <div class="exec-detail-content" ref="contentRef" @click="handleContentClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart">
+      <!-- Live preview indicator -->
+      <div v-if="execStream.isStreaming.value" class="exec-live-bar">
+        <span class="exec-live-dot"></span>
+        <span class="exec-live-text">{{ t('task.exec.livePreview') }}</span>
+        <span v-if="execStream.isPolling.value" class="exec-live-polling">{{ t('task.exec.previewPolling') }}</span>
+      </div>
+      <!-- Summary / Original tab bar (hidden during live streaming) -->
+      <SummaryToggle v-if="hasSummary && !execStream.isStreaming.value" mode="tab" :showing-summary="activeTab === 'summary'" i18n-prefix="task.exec" @toggle="setTab(activeTab === 'summary' ? 'original' : 'summary')" />
       <ChatMessageItem
         v-if="activeMsgData"
         :msg="activeMsgData"
@@ -22,7 +28,7 @@
         @task-card-click="() => {}"
       />
       <div v-else-if="execDetail?.status === 'cancelled'" class="exec-cancelled-notice">{{ t('task.exec.cancelledNotice') }}</div>
-      <div v-else class="exec-detail-empty">{{ t('task.exec.noTextOutput') }}</div>
+      <div v-else class="exec-detail-empty">{{ isRunning ? t('task.exec.startingPreview') : t('task.exec.noTextOutput') }}</div>
     </div>
 
     <!-- Fixed bottom action bar -->
@@ -47,6 +53,7 @@
       :toolOutputHtml="toolDetailOverlay.outputHtml"
       :toolStatus="toolDetailOverlay.status"
       :toolDone="toolDetailOverlay.done"
+      :displayNameOverride="toolDetailOverlay.displayNameOverride"
       @close="toolDetailOverlay.show = false"
       @file-open="handleFileOpenInOverlay"
       @click="handleOverlayRetryClick"
@@ -64,6 +71,14 @@
       :indexed="metadataModal.indexed"
       :formatDetailTime="chatRender.formatDetailTime"
       @close="metadataModal.show = false"
+    />
+
+    <!-- Table row expand modal -->
+    <TableRowModal
+      :data="tableRowModal"
+      @close="closeTableRowModal"
+      @prev="tableRowPrev"
+      @next="tableRowNext"
     />
   </div>
 </template>
@@ -86,6 +101,9 @@ import { useAutoSpeech } from '@/composables/useAutoSpeech.ts'
 import { useTaskTab } from '@/composables/useTaskTab.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useToolDetailOverlay } from '@/composables/useToolDetailOverlay.ts'
+import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
+import { useTaskExecStream } from '@/composables/useTaskExecStream.ts'
+import TableRowModal from '@/components/common/TableRowModal.vue'
 
 const props = defineProps({
   execDetail: Object,
@@ -102,10 +120,24 @@ const theme = inject('theme', ref('light'))
 const { openFilePath, verifyFilePaths } = useFilePathAnnotation()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 const switchTab = inject('switchTab', () => {})
+const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTableRowClick, onTableMouseDown, onTableTouchStart } = useTableRowExpand()
 
 // ── Continue conversation logic ──
 const continueLoading = ref(false)
 const isRunning = computed(() => props.execDetail?.status === 'running')
+
+// ── Live preview stream ──
+const execStatusRef = computed(() => props.execDetail?.status || '')
+const execSessionIdRef = computed(() => props.execDetail?.sessionId || null)
+const execStream = useTaskExecStream({
+  sessionId: execSessionIdRef,
+  status: execStatusRef,
+  onRefresh: refreshExecDetail,
+  onComplete: () => {
+    // Execution completed while previewing — do a final refresh
+    refreshExecDetail()
+  },
+})
 const showContinueBtn = computed(() => {
   // Show button for completed or cancelled executions, not for running ones
   const status = props.execDetail?.status
@@ -202,6 +234,12 @@ const summaryMsgData = computed(() => {
 
 // ── Active message data based on tab ──
 const activeMsgData = computed(() => {
+  // When live streaming is active, prefer the streaming message
+  if (execStream.isStreaming.value && execStream.streamingMsg.value) {
+    const sm = execStream.streamingMsg.value
+    // Only show if there are blocks (don't show empty streaming placeholder)
+    if (sm.blocks && sm.blocks.length > 0) return sm
+  }
   if (activeTab.value === 'summary' && summaryMsgData.value) return summaryMsgData.value
   return msgData.value
 })
@@ -259,7 +297,10 @@ function handleContentClick(event) {
   // 1. Handle localhost URL clicks (icon button or <a> tag) — App mode only
   if (handleLocalhostUrlClick(event)) return
 
-  // 2. Handle commit-hash clicks (span or button)
+  // 2. Handle table row click — open row-form modal
+  if (handleTableRowClick(event)) return
+
+  // 3. Handle commit-hash clicks (span or button)
   const commitEl = event.target.closest('.chat-commit-hash, .chat-commit-open-btn')
   if (commitEl) {
     event.preventDefault()
@@ -271,7 +312,7 @@ function handleContentClick(event) {
     return
   }
 
-  // 3. Handle worktree action buttons
+  // 4. Handle worktree action buttons
   const wtBtn = event.target.closest('.chat-worktree-btn')
   if (wtBtn) {
     event.preventDefault()
@@ -283,7 +324,7 @@ function handleContentClick(event) {
     return
   }
 
-  // 4. Handle file-open buttons
+  // 5. Handle file-open buttons
   const btn = event.target.closest('.chat-file-open-btn')
   if (!btn) return
   event.preventDefault()
@@ -298,11 +339,21 @@ function handleContentClick(event) {
 }
 
 // ── Reset state when exec detail changes ──
-watch(() => props.execDetail, () => {
+watch(() => props.execDetail, (newVal, oldVal) => {
   expandedTools.value = {}
   toolDetailOverlay.value.show = false
   metadataModal.value.show = false
   activeTab.value = hasSummary.value ? 'summary' : 'original'
+
+  // Start live preview when execution becomes running
+  if (newVal?.status === 'running' && newVal?.sessionId) {
+    execStream.startPreview()
+  }
+  // Stop preview when execution is no longer running
+  if (oldVal?.status === 'running' && newVal?.status !== 'running') {
+    execStream.stopPreview()
+  }
+
   // Verify file path annotations after content re-renders.
   // ChatRender.renderMarkdown calls verifyFilePaths targeting #aiChatMessages,
   // but this component renders outside that container, so non-existent file
@@ -315,10 +366,10 @@ watch(() => props.execDetail, () => {
       if (paths.length > 0) verifyFilePaths([...new Set(paths)], contentRef.value)
     }
   })
-})
+}, { immediate: true })
 
 onUnmounted(() => {
-  // Cleanup is handled by Vue's component unmounting
+  execStream.stopPreview()
 })
 </script>
 
@@ -430,5 +481,40 @@ onUnmounted(() => {
   color: var(--text-muted, #999);
   font-style: italic;
   font-size: 14px;
+}
+
+/* Live preview indicator */
+.exec-live-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  margin-bottom: 8px;
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 8%, transparent);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--accent-color, #0066cc);
+}
+
+.exec-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-color, #0066cc);
+  animation: exec-live-pulse 1.5s ease-in-out infinite;
+}
+
+.exec-live-text {
+  font-weight: 500;
+}
+
+.exec-live-polling {
+  color: var(--text-muted, #999);
+  font-size: 11px;
+}
+
+@keyframes exec-live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 </style>

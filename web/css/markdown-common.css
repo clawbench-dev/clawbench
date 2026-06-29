@@ -171,6 +171,90 @@
     background: rgba(0, 0, 0, 0.15);
 }
 
+/* ── Table row click-to-expand ── */
+.markdown-body tbody tr[data-row-idx],
+.chat-message.assistant tbody tr[data-row-idx],
+.chat-message.user tbody tr[data-row-idx] {
+    cursor: pointer;
+    transition: background 0.1s;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.markdown-body tbody tr[data-row-idx]:hover,
+.chat-message.assistant tbody tr[data-row-idx]:hover {
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 8%, transparent);
+}
+
+.markdown-body tbody tr[data-row-idx]:active,
+.chat-message.assistant tbody tr[data-row-idx]:active {
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);
+}
+
+.chat-message.user tbody tr[data-row-idx]:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.chat-message.user tbody tr[data-row-idx]:active {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+/* ── Table row form modal ── */
+.table-row-form {
+    padding: 4px 0;
+}
+
+.table-row-field {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border-color, #e0e0e0);
+}
+
+.table-row-field:last-child {
+    border-bottom: none;
+}
+
+.table-row-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted, #888);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.table-row-value {
+    font-size: 14px;
+    color: var(--text-primary, #1a1a1a);
+    word-break: break-word;
+    overflow-wrap: break-word;
+    cursor: text;
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+.table-row-value code {
+    font-size: 13px;
+}
+
+.table-row-nav-btn {
+    padding: 6px 16px;
+    border: 1px solid var(--border-color, #e0e0e0);
+    border-radius: 6px;
+    background: var(--bg-tertiary, #f0f0f0);
+    color: var(--text-primary, #1a1a1a);
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
+}
+
+.table-row-nav-btn:hover:not(:disabled) {
+    background: var(--border-color, #ddd);
+}
+
+.table-row-nav-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
 /* Image */
 .markdown-body img,
 .chat-message.assistant img,

@@ -379,6 +379,11 @@ export default {
       openFailed: '打开本地地址失败',
       sshDisabled: 'SSH 隧道已禁用，无法打开本地地址',
     },
+    table: {
+      row: '行',
+      prevRow: '上一行',
+      nextRow: '下一行',
+    },
   },
   session: {
     title: '会话',
@@ -467,6 +472,9 @@ export default {
       title: '执行记录',
       noExecutions: '暂无执行记录',
       noTextOutput: '无文本输出',
+      livePreview: '实时预览',
+      previewPolling: '轮询中',
+      startingPreview: '正在连接预览…',
       manual: '手动',
       auto: '自动',
       running: '执行中',

@@ -1,5 +1,6 @@
 import { marked, katex, mermaid, DOMPurify } from '@/utils/globals.ts'
 import { escapeHtml } from '@/utils/html.ts'
+import { injectTableRowAttrs } from '@/utils/tableRowExpand.ts'
 
 /**
  * Markdown渲染选项
@@ -117,7 +118,10 @@ export function renderMarkdown(
                    .replace(/<\/table>/g, '</table></div>')
     }
 
-    // 6. 自定义后处理
+    // 6. 注入表格行属性标识
+    html = injectTableRowAttrs(html)
+
+    // 7. 自定义后处理
     if (postProcess) {
         html = postProcess(html)
     }

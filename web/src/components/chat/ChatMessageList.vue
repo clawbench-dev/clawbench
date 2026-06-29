@@ -1,6 +1,6 @@
 <template>
   <div class="chat-messages-wrapper">
-  <div class="chat-messages" id="aiChatMessages" ref="messagesRef" @click="handleChatClick" @scroll="handleScroll">
+  <div class="chat-messages" id="aiChatMessages" ref="messagesRef" @click="handleChatClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart" @scroll="handleScroll">
     <!-- Lazy load feedback -->
     <div class="chat-load-area">
       <Transition name="load-hint-fade">
@@ -107,6 +107,14 @@
     @fork="$emit('fork-from-message', $event)"
   />
 
+  <!-- Table row expand modal -->
+  <TableRowModal
+    :data="tableRowModal"
+    @close="closeTableRowModal"
+    @prev="tableRowPrev"
+    @next="tableRowNext"
+  />
+
   </div>
 </template>
 
@@ -116,11 +124,13 @@ import { useI18n } from 'vue-i18n'
 import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown } from 'lucide-vue-next'
 import ChatMessageItem from './ChatMessageItem.vue'
 import UserMsgIndexSheet from './UserMsgIndexSheet.vue'
+import TableRowModal from '@/components/common/TableRowModal.vue'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { useDialog } from '@/composables/useDialog'
 import { useUserMsgIndex } from '@/composables/useUserMsgIndex.ts'
+import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import { store } from '@/stores/app.ts'
 import { computeRemainingCount } from '@/utils/messageListUtils.ts'
 
@@ -149,6 +159,8 @@ const { handleDblClick } = useDoubleClickCopy()
 const { openFilePath } = useFilePathAnnotation()
 const dialog = useDialog()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
+
+const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTableRowClick, onTableMouseDown, onTableTouchStart } = useTableRowExpand()
 
 // How many older messages are not yet loaded
 const remainingCount = computed(() => {
@@ -189,7 +201,10 @@ async function handleChatClick(event) {
   // 1. Handle localhost URL clicks (icon button or <a> tag) — App mode only
   if (handleLocalhostUrlClick(event)) return
 
-  // 2. Worktree action button — show modal with "Switch" or "Open directory"
+  // 2. Table row click — open row-form modal
+  if (handleTableRowClick(event)) return
+
+  // 3. Worktree action button — show modal with "Switch" or "Open directory"
   const wtBtn = (event.target).closest('.chat-worktree-btn')
   if (wtBtn) {
     event.preventDefault()
@@ -225,7 +240,7 @@ async function handleChatClick(event) {
     return
   }
 
-  // 3. Commit hash click (span or button) — check before file-path to prevent
+  // 4. Commit hash click (span or button) — check before file-path to prevent
   //    7-char hex hashes from being misinterpreted as file paths.
   //    Note: do NOT call navigateToFileViewer() here — handleNavigateToCommit
   //    in App.vue switches to the history tab which hides the chat panel.
@@ -240,7 +255,7 @@ async function handleChatClick(event) {
     return
   }
 
-  // 4. File-path button handler
+  // 5. File-path button handler
   const btn = (event.target).closest('.chat-file-open-btn')
   if (btn) {
     event.preventDefault()
