@@ -320,7 +320,7 @@ export function useChatSession(options: UseChatSessionOptions) {
               Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
               Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
               // Replace messages — pending messages are in pendingStore, not messages.value
-              messages.value = parseMessages(recoverMsgs, onParseAssistantContent, messages.value)
+              messages.value = parseMessages(recoverMsgs, onParseAssistantContent, messages.value, recoverData.running)
               totalMessages.value = recoverData.total || messages.value.length
               // Sync remaining session metadata from recovery response
               if (recoverData.modeState && recoverData.modeState?.availableModes?.length > 0) {
@@ -422,7 +422,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       // Replace messages with server data. Pending messages are NOT in
       // messages.value — they live in a separate per-session pendingStore.
       // No need to preserve/re-append pending messages here.
-      messages.value = parseMessages(rawMsgs, onParseAssistantContent, messages.value)
+      messages.value = parseMessages(rawMsgs, onParseAssistantContent, messages.value, data.running)
 
       totalMessages.value = data.total || messages.value.length
       // Sanity check: if the backend returned a different sessionId than what we
@@ -533,7 +533,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       const resp = await fetch(`/api/ai/chat?session_id=${encodeURIComponent(currentSessionId.value)}&limit=${pageSize}&before_id=${encodeURIComponent(beforeId)}`)
       if (!resp.ok) return
       const data = await resp.json()
-      const olderMsgs = parseMessages(data.messages || [], onParseAssistantContent)
+      const olderMsgs = parseMessages(data.messages || [], onParseAssistantContent, undefined, data.running)
       if (olderMsgs.length > 0) {
         messages.value = [...olderMsgs, ...messages.value]
         totalMessages.value = data.total || totalMessages.value
@@ -603,7 +603,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       // (the newer switch will set switching=false when it completes)
       if (switchSessionSeq !== mySeq) return
 
-      messages.value = parseMessages(data.messages || [], onParseAssistantContent)
+      messages.value = parseMessages(data.messages || [], onParseAssistantContent, undefined, data.running)
       totalMessages.value = data.total || messages.value.length
       currentSessionId.value = data.sessionId || sessionId
       currentSessionTitle.value = data.sessionTitle || ''

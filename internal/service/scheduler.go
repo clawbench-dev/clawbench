@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -576,13 +577,49 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		return
 	}
 
+	// Panic recovery: if the task execution panics after the streaming placeholder
+	// is created (line AddChatMessage streaming=true), the message stays streaming=1
+	// in DB forever. This handler finalizes it with an error, matching the pattern
+	// in handler/chat.go:443-461 for interactive sessions.
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error(
+				"scheduled task execution panicked",
+				slog.Int64("task_id", task.ID),
+				slog.String("session_id", sessionID),
+				slog.Any("panic", r),
+				slog.String("stack", string(debug.Stack())),
+			)
+			// Finalize the streaming placeholder message to prevent streaming=1 leak
+			errMsg := "Scheduled task internal error, please retry"
+			errContent, _ := json.Marshal(map[string]any{"blocks": []any{map[string]string{"type": "error", "text": errMsg}}})
+			FinalizeStreamingMessage(projectPath, backendName, sessionID, string(errContent))
+			// Mark execution as failed
+			_ = UpdateExecutionStatus(sessionID, "failed")
+			emitTaskEvent(fmt.Sprintf("%d", task.ID), "failed", "", sessionID, projectPath, task.Name)
+		}
+	}()
+
 	// Mark session as running so ACP idle sweep does not close the connection
 	// while the scheduled task is still executing. Without this, the 5-minute
 	// idle timeout kills the ACP agent process mid-task (see log: "acp: idle
 	// sweep closing connection" after ~5m, causing "peer disconnected").
 	// skipEvent=true because the scheduler emits its own task events.
 	SetSessionRunning(sessionID, true, true)
-	defer SetSessionRunning(sessionID, false, true)
+
+	// Register SSE stream channel so live preview can connect via /api/ai/chat/stream.
+	// The channel is consumed by the SessionExecutor event loop (via RunConfig.StreamCh)
+	// and by the SSE handler (via GetSessionStream). Multiple preview clients
+	// use HTTP polling fallback (same as multi-client interactive sessions).
+	streamCh := RegisterSessionStream(sessionID)
+
+	// Deferred cleanup: must set session not-running BEFORE unregistering the stream.
+	// If we unregister the stream first, there's a window where IsSessionRunning=true
+	// but GetSessionStream=false, causing SSE reconnects to fail with "stream not found".
+	defer func() {
+		SetSessionRunning(sessionID, false, true)
+		UnregisterSessionStream(sessionID)
+	}()
 
 	slog.Info(
 		"executing scheduled task",
@@ -691,8 +728,8 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
 	_, _ = AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, "")
 
-	// Delegate event loop to SessionExecutor (scheduled mode — no SSE forwarding,
-	// no ask-question conversion, no cancel-reason tracking)
+	// Delegate event loop to SessionExecutor (scheduled mode — no ask-question
+	// conversion, no cancel-reason tracking; SSE forwarding via StreamCh)
 	executor := NewSessionExecutor(ctx, RunConfig{
 		Mode:        ModeScheduled,
 		ProjectPath: projectPath,
@@ -700,6 +737,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		SessionID:   sessionID,
 		AgentID:     task.AgentID,
 		ChatRequest: chatReq,
+		StreamCh:    streamCh,
 		TaskID:      task.ID,
 		ExecutionID: executionID,
 		TriggerType: triggerType,

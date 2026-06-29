@@ -325,6 +325,63 @@ describe('parseMessages', () => {
     expect(result[1].showingSummary).toBe(true)   // Preserved
     expect(result[2].showingSummary).toBe(true)   // Default for new message with summary
   })
+
+  // ── sessionRunning parameter: strip stale streaming for completed sessions ──
+
+  it('strips streaming from assistant message when sessionRunning=false', () => {
+    const msgs = [
+      { role: 'assistant', content: '', streaming: true },
+    ]
+    const result = parseMessages(msgs, mockParser, undefined, false)
+    expect(result[0].streaming).toBeUndefined()
+    expect(result[0].fromDB).toBeUndefined()
+  })
+
+  it('preserves streaming on assistant message when sessionRunning=true', () => {
+    const msgs = [
+      { role: 'assistant', content: '', streaming: true },
+    ]
+    const result = parseMessages(msgs, mockParser, undefined, true)
+    expect(result[0].streaming).toBe(true)
+    expect(result[0].fromDB).toBe(true)
+  })
+
+  it('preserves streaming on assistant message when sessionRunning is undefined (backward compat)', () => {
+    const msgs = [
+      { role: 'assistant', content: '', streaming: true },
+    ]
+    const result = parseMessages(msgs, mockParser)
+    expect(result[0].streaming).toBe(true)
+    expect(result[0].fromDB).toBe(true)
+  })
+
+  it('always strips streaming from user messages', () => {
+    const msgs = [
+      { role: 'user', content: 'Hello', streaming: true },
+    ]
+    const result = parseMessages(msgs, mockParser)
+    expect(result[0].streaming).toBeUndefined()
+  })
+
+  it('strips streaming from user messages even when sessionRunning=true', () => {
+    const msgs = [
+      { role: 'user', content: 'Hello', streaming: true },
+    ]
+    const result = parseMessages(msgs, mockParser, undefined, true)
+    expect(result[0].streaming).toBeUndefined()
+  })
+
+  it('handles mixed messages with sessionRunning=false', () => {
+    const msgs = [
+      { role: 'user', content: 'Question' },
+      { role: 'assistant', content: '', streaming: true },  // stale streaming from crash
+      { role: 'user', content: 'Follow up', streaming: true },  // user msg with stale streaming
+    ]
+    const result = parseMessages(msgs, mockParser, undefined, false)
+    expect(result[0].blocks).toEqual([{ type: 'text', text: 'Question' }])
+    expect(result[1].streaming).toBeUndefined()  // stripped for completed session
+    expect(result[2].streaming).toBeUndefined()  // always stripped for user messages
+  })
 })
 
 function customParser(content: string) {

@@ -23,11 +23,15 @@ export function buildMessageSnapshot(rawMsgs: any[]): string {
  *   user-set showingSummary state across loadHistory refreshes. Without this,
  *   every loadHistory call would reset showingSummary to true for messages
  *   with summaries, discarding the user's explicit toggle to view original content.
+ * @param sessionRunning - Whether the session is currently running. When false,
+ *   stale streaming flags from DB (e.g. orphaned streaming=1 from a crash) are
+ *   stripped so the loading indicator doesn't appear on completed sessions.
  */
 export function parseMessages(
   rawMsgs: any[],
   onParseAssistantContent: (content: string) => any,
-  existingMessages?: any[]
+  existingMessages?: any[],
+  sessionRunning?: boolean
 ): any[] {
   // Build lookup of existing showingSummary state by message ID
   const existingSummaryState = existingMessages
@@ -40,7 +44,18 @@ export function parseMessages(
       msg.blocks = blocks
       if (metadata) msg.metadata = metadata
       if (cancelled) msg.cancelled = cancelled
-      if (msg.streaming) { msg.streaming = true; msg.fromDB = true }
+      if (msg.streaming) {
+        if (sessionRunning === false) {
+          // Session is not running — strip stale streaming flag from DB.
+          // This prevents the loading indicator (three dots) from appearing
+          // on messages from a completed/crashed session where FinalizeStreamingMessage
+          // never ran (e.g. server crash, kill -9, or orphaned before cleanup).
+          delete msg.streaming
+        } else {
+          msg.streaming = true
+          msg.fromDB = true
+        }
+      }
       // Preserve existing showingSummary state if the user explicitly toggled it.
       // Only set the default (true when summary exists) for messages not yet seen.
       const existingState = existingSummaryState?.get(msg.id)
@@ -52,15 +67,19 @@ export function parseMessages(
       } else {
         msg.showingSummary = false
       }
-    } else if (msg.role === 'user' && !msg.blocks) {
-      // User messages may be plain text or block-format JSON (e.g. from ACP LoadSession).
-      // If content starts with {"blocks":, parse it the same way as assistant messages.
-      const contentStr = typeof msg.content === 'string' ? msg.content : null
-      if (contentStr && contentStr.startsWith('{"blocks":')) {
-        const { blocks } = onParseAssistantContent(contentStr)
-        msg.blocks = blocks
-      } else {
-        msg.blocks = msg.content ? [{ type: 'text', text: msg.content }] : []
+    } else if (msg.role === 'user') {
+      // User messages should never have streaming flag — strip if present
+      if (msg.streaming) delete msg.streaming
+      if (!msg.blocks) {
+        // User messages may be plain text or block-format JSON (e.g. from ACP LoadSession).
+        // If content starts with {"blocks":, parse it the same way as assistant messages.
+        const contentStr = typeof msg.content === 'string' ? msg.content : null
+        if (contentStr && contentStr.startsWith('{"blocks":')) {
+          const { blocks } = onParseAssistantContent(contentStr)
+          msg.blocks = blocks
+        } else {
+          msg.blocks = msg.content ? [{ type: 'text', text: msg.content }] : []
+        }
       }
     }
     return msg
