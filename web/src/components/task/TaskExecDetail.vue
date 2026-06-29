@@ -201,7 +201,23 @@ function setTab(tab) {
 const msgData = computed(() => {
   if (!props.execDetail?.content && props.execDetail?.status !== 'cancelled') return null
   const { blocks } = chatRender.parseAssistantContent(props.execDetail.content || '{}')
-  if (!blocks || blocks.length === 0) return null
+  if (!blocks || blocks.length === 0) {
+    // For running executions with empty content, return a streaming placeholder
+    // so the live indicator bar is shown instead of "no text output"
+    if (isRunning.value) {
+      return {
+        id: props.execDetail.messageId || props.execDetail.id || 'exec',
+        role: 'assistant',
+        content: '',
+        blocks: [],
+        metadata: null,
+        createdAt: props.execDetail.createdAt || '',
+        streaming: true,
+        cancelled: false,
+      }
+    }
+    return null
+  }
   return {
     id: props.execDetail.messageId || props.execDetail.id || 'exec',
     role: 'assistant',
@@ -234,12 +250,15 @@ const summaryMsgData = computed(() => {
 
 // ── Active message data based on tab ──
 const activeMsgData = computed(() => {
-  // When live streaming is active, prefer the streaming message
-  if (execStream.isStreaming.value && execStream.streamingMsg.value) {
+  // When live streaming via SSE, prefer the streaming message (has real-time blocks)
+  if (execStream.isStreaming.value && !execStream.isPolling.value && execStream.streamingMsg.value) {
     const sm = execStream.streamingMsg.value
-    // Only show if there are blocks (don't show empty streaming placeholder)
+    // Show streaming message if it has blocks (real-time content)
     if (sm.blocks && sm.blocks.length > 0) return sm
   }
+  // For polling mode, or when SSE hasn't produced blocks yet,
+  // use the DB content (refreshed by onRefresh/polling) — this ensures
+  // we always show whatever partial content is available rather than "connecting..."
   if (activeTab.value === 'summary' && summaryMsgData.value) return summaryMsgData.value
   return msgData.value
 })

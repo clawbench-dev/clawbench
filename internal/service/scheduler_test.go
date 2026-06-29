@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 	"clawbench/internal/summarize"
@@ -1781,4 +1782,64 @@ func TestAddRemoveRunningExecution(t *testing.T) {
 	// Remove
 	s.RemoveRunningExecution("test-exec")
 	assert.False(t, s.HasRunningExecutions(42))
+}
+
+// ---------- Scheduled Session Stream Registration ----------
+
+func TestScheduledSessionStreamRegistration(t *testing.T) {
+	// Verify that when a scheduled session is marked running and its stream
+	// channel is registered (as executeTask now does), the stream is
+	// accessible via GetSessionStream for live preview.
+	sessionID := "sched-stream-test-session"
+
+	// Simulate what executeTask does: mark running, register stream
+	service.SetSessionRunning(sessionID, true, true)
+	streamCh := service.RegisterSessionStream(sessionID)
+
+	// Stream should be retrievable
+	gotCh, ok := service.GetSessionStream(sessionID)
+	assert.True(t, ok, "stream should be registered for scheduled session")
+	assert.NotNil(t, gotCh, "stream channel should not be nil")
+
+	// Events written to the channel should be readable
+	go func() {
+		streamCh <- ai.StreamEvent{Type: "content", Content: "hello from scheduled task"}
+	}()
+	select {
+	case event := <-gotCh:
+		assert.Equal(t, "content", event.Type)
+		assert.Equal(t, "hello from scheduled task", event.Content)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for event from scheduled session stream")
+	}
+
+	// Cleanup (simulates deferred cleanup in executeTask)
+	service.UnregisterSessionStream(sessionID)
+	service.SetSessionRunning(sessionID, false, true)
+
+	// Stream should no longer be available
+	_, ok = service.GetSessionStream(sessionID)
+	assert.False(t, ok, "stream should be unregistered after cleanup")
+}
+
+func TestScheduledSessionStreamSSEClaim(t *testing.T) {
+	// Verify that a live preview client can claim the SSE stream of a
+	// scheduled session (same mechanism as interactive sessions).
+	sessionID := "sched-claim-test-session"
+
+	service.SetSessionRunning(sessionID, true, true)
+	service.RegisterSessionStream(sessionID)
+	defer func() {
+		service.UnregisterSessionStream(sessionID)
+		service.SetSessionRunning(sessionID, false, true)
+	}()
+
+	// Live preview client claims the stream
+	assert.True(t, service.TryClaimSSEStream(sessionID), "first SSE claim should succeed")
+
+	// Second client should be rejected (same as interactive multi-client)
+	assert.False(t, service.TryClaimSSEStream(sessionID), "second SSE claim should fail")
+
+	// Release — second client would fall back to HTTP polling
+	service.ReleaseSSEStream(sessionID)
 }

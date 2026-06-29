@@ -39,6 +39,7 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
       ...exec,
       status: 'running',
       createdAt: exec.startedAt,
+      sessionId: exec.id, // RunningExecutionView.id is the session ID
     }))
     const completed = executions.value.filter(exec => exec.status !== 'running')
     return [...running, ...completed]

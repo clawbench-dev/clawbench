@@ -389,9 +389,11 @@ func serveTaskExecutions(w http.ResponseWriter, r *http.Request, taskID int64, p
 		       te.read_at, sm.summary,
 		       ch.content AS assistant_content
 		FROM task_executions te
-		LEFT JOIN chat_history ch ON ch.session_id = te.session_id
-		    AND ch.role = 'assistant'
-		    AND ch.streaming = 0
+		LEFT JOIN chat_history ch ON ch.id = (
+		    SELECT ch2.id FROM chat_history ch2
+		    WHERE ch2.session_id = te.session_id AND ch2.role = 'assistant'
+		    ORDER BY ch2.streaming ASC, ch2.id DESC LIMIT 1
+		)
 		LEFT JOIN summaries sm ON sm.target_type = 'chat_message' AND sm.target_id = ch.id
 		WHERE te.task_id = ?`
 	args := []any{taskID}

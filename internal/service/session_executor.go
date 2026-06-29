@@ -47,7 +47,8 @@ type RunConfig struct {
 
 	// --- ModeInteractive only ---
 	// StreamCh is the SSE channel for forwarding events to the frontend.
-	// Nil for scheduled mode.
+	// Non-nil for interactive sessions and scheduled tasks with live preview.
+	// Nil when no SSE forwarding is needed.
 	StreamCh chan<- ai.StreamEvent
 	// LocalizeError formats error messages for display.
 	// If nil, err.Error() is used. The handler provides an i18n implementation;
@@ -141,8 +142,8 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) bool {
 		return false
 	}
 
-	// SSE forwarding (interactive mode only)
-	if e.cfg.Mode == ModeInteractive && e.cfg.StreamCh != nil {
+	// SSE forwarding (when stream channel is available)
+	if e.cfg.StreamCh != nil {
 		if e.forwardSSEEvent(event) {
 			return true
 		}

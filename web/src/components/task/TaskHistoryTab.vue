@@ -21,7 +21,7 @@
       <div v-if="executions.length > 0" class="clear-all-row">
         <button class="clear-all-btn" @click="deleteAllExecutions">{{ t('task.exec.clearAll') }}</button>
       </div>
-      <div v-for="exec in allExecutions" :key="exec.id" class="execution-item" :class="{ running: isRunning(exec), unread: !isRunning(exec) && isUnreadDisplay(exec), 'just-completed': isJustCompleted(exec) }" @click="!isRunning(exec) && openDetail(exec)">
+      <div v-for="exec in allExecutions" :key="exec.id" class="execution-item" :class="{ running: isRunning(exec), unread: !isRunning(exec) && isUnreadDisplay(exec), 'just-completed': isJustCompleted(exec) }" @click="openDetail(exec)">
         <div class="execution-row">
           <div class="execution-info">
             <div class="execution-time-row">
@@ -321,7 +321,7 @@ onUnmounted(() => {
 }
 
 .execution-item.running .execution-row {
-  cursor: default;
+  cursor: pointer;
 }
 
 .execution-info {
