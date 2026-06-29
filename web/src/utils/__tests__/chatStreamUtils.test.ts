@@ -8,6 +8,7 @@ import {
   generateDrainId,
   shouldRetryToolFetch,
   resolveEffectiveMsgId,
+  extractFileChanges,
 } from '@/utils/chatStreamUtils.ts'
 
 describe('FILE_MODIFYING_TOOLS', () => {
@@ -769,5 +770,90 @@ describe('resolveEffectiveMsgId', () => {
     // If overlayMsgId is 0, it's used as-is (not falsy fallback)
     const liveBlock = { type: 'tool_use', name: 'Read' }
     expect(resolveEffectiveMsgId(liveBlock, 0, 100)).toBe(0)
+  })
+})
+
+describe('extractFileChanges', () => {
+  it('classifies Write as created and Edit as modified', () => {
+    const blocks = [
+      { type: 'tool_use', name: 'Write', done: true, file_path: 'web/src/foo.ts' },
+      { type: 'tool_use', name: 'Edit', done: true, file_path: 'web/src/bar.ts' },
+    ]
+    expect(extractFileChanges(blocks)).toEqual({
+      created: ['web/src/foo.ts'],
+      modified: ['web/src/bar.ts'],
+    })
+  })
+
+  it('deduplicates by file path', () => {
+    const blocks = [
+      { type: 'tool_use', name: 'Write', done: true, file_path: 'web/src/foo.ts' },
+      { type: 'tool_use', name: 'Write', done: true, file_path: 'web/src/foo.ts' },
+      { type: 'tool_use', name: 'Edit', done: true, file_path: 'web/src/bar.ts' },
+      { type: 'tool_use', name: 'Edit', done: true, file_path: 'web/src/bar.ts' },
+    ]
+    expect(extractFileChanges(blocks)).toEqual({
+      created: ['web/src/foo.ts'],
+      modified: ['web/src/bar.ts'],
+    })
+  })
+
+  it('only considers done blocks', () => {
+    const blocks = [
+      { type: 'tool_use', name: 'Write', done: false, file_path: 'web/src/pending.ts' },
+      { type: 'tool_use', name: 'Edit', done: true, file_path: 'web/src/done.ts' },
+    ]
+    expect(extractFileChanges(blocks)).toEqual({
+      created: [],
+      modified: ['web/src/done.ts'],
+    })
+  })
+
+  it('falls back to input.file_path when file_path is absent', () => {
+    const blocks = [
+      { type: 'tool_use', name: 'Write', done: true, input: { file_path: 'web/src/via-input.ts' } },
+    ]
+    expect(extractFileChanges(blocks)).toEqual({
+      created: ['web/src/via-input.ts'],
+      modified: [],
+    })
+  })
+
+  it('prefers top-level file_path over input.file_path', () => {
+    const blocks = [
+      { type: 'tool_use', name: 'Edit', done: true, file_path: 'web/src/top.ts', input: { file_path: 'web/src/input.ts' } },
+    ]
+    expect(extractFileChanges(blocks)).toEqual({
+      created: [],
+      modified: ['web/src/top.ts'],
+    })
+  })
+
+  it('ignores non-Write/Edit tool_use blocks', () => {
+    const blocks = [
+      { type: 'tool_use', name: 'Read', done: true, file_path: 'web/src/read.ts' },
+      { type: 'tool_use', name: 'Bash', done: true, input: { command: 'rm foo' } },
+    ]
+    expect(extractFileChanges(blocks)).toEqual({ created: [], modified: [] })
+  })
+
+  it('ignores non-tool_use blocks', () => {
+    const blocks = [
+      { type: 'text', text: 'some text' },
+      { type: 'thinking', text: 'thinking...' },
+    ]
+    expect(extractFileChanges(blocks)).toEqual({ created: [], modified: [] })
+  })
+
+  it('returns empty arrays for empty blocks', () => {
+    expect(extractFileChanges([])).toEqual({ created: [], modified: [] })
+  })
+
+  it('skips blocks without file_path', () => {
+    const blocks = [
+      { type: 'tool_use', name: 'Write', done: true, input: {} },
+      { type: 'tool_use', name: 'Edit', done: true },
+    ]
+    expect(extractFileChanges(blocks)).toEqual({ created: [], modified: [] })
   })
 })

@@ -29,6 +29,27 @@ function isGarbageOutput(output: string | undefined): boolean {
 export const FILE_MODIFYING_TOOLS = new Set(['Write', 'Edit'])
 
 /**
+ * Extract file changes (created/modified) from tool_use blocks.
+ * Write → created, Edit → modified. Deduplicates by file path.
+ * Only considers blocks where done=true.
+ */
+export function extractFileChanges(blocks: any[]): { created: string[]; modified: string[] } {
+  const createdSet = new Set<string>()
+  const modifiedSet = new Set<string>()
+  for (const block of blocks) {
+    if (block.type !== 'tool_use' || !block.done) continue
+    const filePath = block.file_path || block.input?.file_path
+    if (!filePath) continue
+    if (block.name === 'Write') {
+      createdSet.add(filePath)
+    } else if (block.name === 'Edit') {
+      modifiedSet.add(filePath)
+    }
+  }
+  return { created: [...createdSet], modified: [...modifiedSet] }
+}
+
+/**
  * Find the most recent block of a given type by searching backward.
  * tool_use blocks act as natural boundaries — text/thinking after a tool_use
  * should not be merged with text/thinking before it.

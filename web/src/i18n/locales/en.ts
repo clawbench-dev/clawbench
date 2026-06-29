@@ -236,6 +236,11 @@ export default {
       summaryViewSummary: 'View Summary',
       deepThinking: 'Thinking',
     },
+    fileChanges: {
+      title: 'File changes',
+      created: 'Created',
+      modified: 'Modified',
+    },
     speech: {
       summarizing: 'Summarizing',
       synthesizing: 'Synthesizing',

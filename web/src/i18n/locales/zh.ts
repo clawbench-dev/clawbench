@@ -236,6 +236,11 @@ export default {
       summaryViewSummary: '查看摘要',
       deepThinking: '深度思考',
     },
+    fileChanges: {
+      title: '文件变更',
+      created: '创建',
+      modified: '修改',
+    },
     speech: {
       summarizing: '摘要中',
       synthesizing: '合成中',

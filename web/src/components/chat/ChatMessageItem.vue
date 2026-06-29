@@ -75,8 +75,20 @@
         <button v-if="!msg.streaming" class="chat-info-btn" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
           <Info :size="14" />
         </button>
+        <button v-if="hasFileChanges" class="chat-info-btn" @click="fileChangesOpen = true" :title="t('chat.fileChanges.title')">
+          <FileDiff :size="14" />
+        </button>
       </div>
     </div>
+
+    <!-- File changes sheet -->
+    <FileChangesSheet
+      :open="fileChangesOpen"
+      :created="fileChanges.created"
+      :modified="fileChanges.modified"
+      @close="fileChangesOpen = false"
+      @open-file="handleOpenFile"
+    />
     <!-- Bottom bar for user messages -->
     <div v-if="msg.role === 'user' && !msg.pending" class="chat-meta-bar chat-meta-bar-user">
       <span class="chat-meta-info">
@@ -92,11 +104,14 @@
 <script setup>
 import { ref, inject, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Pause, Volume2, Info } from 'lucide-vue-next'
+import { Clock, Pause, Volume2, Info, FileDiff } from 'lucide-vue-next'
 import { formatDuration } from '@/utils/format.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
+import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
+import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
 import ContentBlocks from './ContentBlocks.vue'
 import FileAttachmentList from './FileAttachmentList.vue'
+import FileChangesSheet from './FileChangesSheet.vue'
 import SummaryToggle from '@/components/common/SummaryToggle.vue'
 
 
@@ -141,6 +156,19 @@ const chatSession = inject('chatSession', {})
 
 const { renderTextBlock, toolCallSummary, formatToolInput, humanizeCron, repeatLabel, truncate, hasImagesInContent } = chatRender
 const { getAgentIcon, getAgentName } = chatSession
+
+// File changes extraction (Write → created, Edit → modified)
+const fileChanges = computed(() => {
+  if (props.msg?.role !== 'assistant' || props.msg.streaming) return { created: [], modified: [] }
+  return extractFileChanges(props.msg?.blocks || [])
+})
+const hasFileChanges = computed(() => fileChanges.value.created.length > 0 || fileChanges.value.modified.length > 0)
+
+const fileChangesOpen = ref(false)
+
+function handleOpenFile(path) {
+  openFilePath(path)
+}
 </script>
 
 <style scoped>
