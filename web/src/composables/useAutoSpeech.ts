@@ -71,12 +71,12 @@ enabled.value = !!localConfig.autoSpeech
 // Module-level toast instance (shared, not per-component)
 const toast = useToast()
 
-// Wake lock singleton — acquired when streaming + auto-speech starts, released when TTS ends
+// Wake lock singleton — acquired when output starts (if auto-speech on), released when TTS ends
 const wakeLock = useWakeLock()
 
-/** Track whether we acquired the wake lock for the current streaming+speech cycle.
- *  Used to avoid releasing a wake lock we didn't acquire (e.g. auto-speech was off). */
-let wakeLockAcquiredForSpeech = false
+/** Track whether screen lock is currently suppressed for the output+speech cycle.
+ *  Used to avoid releasing when we didn't acquire (e.g. auto-speech was off). */
+let screenLockSuppressed = false
 
 const TAG = 'AutoSpeech'
 
@@ -109,11 +109,11 @@ export function useAutoSpeech() {
   // --- Audio Playback ---
   /**
    * Stop current audio/TTS playback.
-   * @param releaseWakeLock If true (default), release the screen wake lock.
+   * @param releaseScreenLock If true (default), release the screen wake lock.
    *   Pass false when stopping previous audio to start a new TTS in the same
-   *   streaming cycle (e.g. inside _speak), so the wake lock stays held.
+   *   output cycle (e.g. inside _speak), so the screen lock stays suppressed.
    */
-  function stopAudio(releaseWakeLock = true) {
+  function stopAudio(releaseScreenLock = true) {
     abortController?.abort()
     abortController = null
     if (currentEventSource) {
@@ -130,10 +130,10 @@ export function useAutoSpeech() {
     activeId.value = ''
     playingSummary.value = ''
     state.value = 'idle'
-    // Release wake lock if we acquired it for this speech cycle
-    if (releaseWakeLock && wakeLockAcquiredForSpeech) {
+    // Release screen lock if suppressed for this output cycle
+    if (releaseScreenLock && screenLockSuppressed) {
       wakeLock.release()
-      wakeLockAcquiredForSpeech = false
+      screenLockSuppressed = false
     }
   }
 
@@ -155,10 +155,10 @@ export function useAutoSpeech() {
         activeId.value = ''
         playingSummary.value = ''
         state.value = 'idle'
-        // Release wake lock after TTS playback ends
-        if (wakeLockAcquiredForSpeech) {
+        // Release screen lock after TTS playback ends
+        if (screenLockSuppressed) {
           wakeLock.release()
-          wakeLockAcquiredForSpeech = false
+          screenLockSuppressed = false
         }
       }
     }
@@ -169,10 +169,10 @@ export function useAutoSpeech() {
         playingSummary.value = ''
         state.value = 'idle'
         reportError(gt('autoSpeech.playbackFailed'))
-        // Release wake lock on playback error
-        if (wakeLockAcquiredForSpeech) {
+        // Release screen lock on playback error
+        if (screenLockSuppressed) {
           wakeLock.release()
-          wakeLockAcquiredForSpeech = false
+          screenLockSuppressed = false
         }
       }
     }
@@ -187,10 +187,10 @@ export function useAutoSpeech() {
       activeId.value = ''
       playingSummary.value = ''
       state.value = 'idle'
-      // Release wake lock on play failure
-      if (wakeLockAcquiredForSpeech) {
+      // Release screen lock on play failure
+      if (screenLockSuppressed) {
         wakeLock.release()
-        wakeLockAcquiredForSpeech = false
+        screenLockSuppressed = false
       }
     })
   }
@@ -198,10 +198,10 @@ export function useAutoSpeech() {
   // --- Internal: generate and play TTS for text ---
   async function _speak(id: string, text: string) {
     if (!text) {
-      // No speakable text — release wake lock since TTS won't play
-      if (wakeLockAcquiredForSpeech) {
+      // No speakable text — release screen lock since TTS won't play
+      if (screenLockSuppressed) {
         wakeLock.release()
-        wakeLockAcquiredForSpeech = false
+        screenLockSuppressed = false
       }
       return
     }
@@ -294,10 +294,10 @@ export function useAutoSpeech() {
         activeId.value = ''
         playingSummary.value = ''
         state.value = 'idle'
-        // Release wake lock on TTS error
-        if (wakeLockAcquiredForSpeech) {
+        // Release screen lock on TTS error
+        if (screenLockSuppressed) {
           wakeLock.release()
-          wakeLockAcquiredForSpeech = false
+          screenLockSuppressed = false
         }
       }
 
@@ -307,7 +307,7 @@ export function useAutoSpeech() {
           activeId.value = ''
           playingSummary.value = ''
           state.value = 'idle'
-          releaseWakeLockOnError()
+          releaseScreenLockOnError()
           return
         }
 
@@ -317,7 +317,7 @@ export function useAutoSpeech() {
           activeId.value = ''
           playingSummary.value = ''
           state.value = 'idle'
-          releaseWakeLockOnError()
+          releaseScreenLockOnError()
           return
         }
 
@@ -326,7 +326,7 @@ export function useAutoSpeech() {
           activeId.value = ''
           playingSummary.value = ''
           state.value = 'idle'
-          releaseWakeLockOnError()
+          releaseScreenLockOnError()
           return
         }
 
@@ -356,7 +356,7 @@ export function useAutoSpeech() {
       activeId.value = ''
       playingSummary.value = ''
       state.value = 'idle'
-      releaseWakeLockOnError()
+      releaseScreenLockOnError()
     } finally {
       if (abortController === controller) {
         abortController = null
@@ -400,41 +400,41 @@ export function useAutoSpeech() {
     return activeId.value === id && state.value === 'playing'
   }
 
-  // --- Wake Lock ---
+  // --- Screen Lock ---
 
-  /** Release wake lock on TTS error paths */
-  function releaseWakeLockOnError() {
-    if (wakeLockAcquiredForSpeech) {
+  /** Release screen lock on TTS error paths */
+  function releaseScreenLockOnError() {
+    if (screenLockSuppressed) {
       wakeLock.release()
-      wakeLockAcquiredForSpeech = false
+      screenLockSuppressed = false
     }
   }
 
   /**
-   * Called when streaming starts and auto-speech is enabled.
-   * Acquires a screen wake lock so the display stays on during
-   * the entire streaming + TTS playback cycle.
-   * Only acquires if the wakeLockOnSpeech setting is enabled.
+   * Called when AI output starts and auto-speech is enabled.
+   * Suppresses screen lock so the display stays on during
+   * the entire output + TTS playback cycle.
+   * Only activates if the preventScreenLock setting is enabled.
    */
-  function onStreamingStart() {
+  function onOutputStart() {
     if (!enabled.value) return
-    if (!localConfig.wakeLockOnSpeech) return
-    if (wakeLockAcquiredForSpeech) return
+    if (!localConfig.preventScreenLock) return
+    if (screenLockSuppressed) return
     wakeLock.acquire()
-    wakeLockAcquiredForSpeech = true
-    appLog.i(TAG, 'Wake lock acquired for streaming + auto-speech')
+    screenLockSuppressed = true
+    appLog.i(TAG, 'Screen lock suppressed for output + auto-speech')
   }
 
   /**
-   * Called when streaming ends but auto-speech did not start TTS
-   * (e.g. no speakable text). Releases the wake lock that was
-   * acquired at streaming start.
+   * Called when output ends but auto-speech did not start TTS
+   * (e.g. no speakable text). Releases the screen lock that was
+   * suppressed at output start.
    */
-  function onStreamingEndNoSpeech() {
-    if (wakeLockAcquiredForSpeech && state.value === 'idle') {
+  function onOutputEndNoSpeech() {
+    if (screenLockSuppressed && state.value === 'idle') {
       wakeLock.release()
-      wakeLockAcquiredForSpeech = false
-      appLog.i(TAG, 'Wake lock released: streaming ended without TTS')
+      screenLockSuppressed = false
+      appLog.i(TAG, 'Screen lock restored: output ended without TTS')
     }
   }
 
@@ -451,7 +451,7 @@ export function useAutoSpeech() {
     getPhaseLabel,
     isGeneratingText,
     isPlayingAudio,
-    onStreamingStart,
-    onStreamingEndNoSpeech,
+    onOutputStart,
+    onOutputEndNoSpeech,
   }
 }

@@ -133,7 +133,7 @@ const legacyKeys: Record<string, {
     key: '',
     format: 'raw',
   },
-  wakeLockOnSpeech: {
+  preventScreenLock: {
     key: '',
     format: 'raw',
   },
@@ -212,7 +212,7 @@ const localDefaults: Record<string, any> = {
   terminalFontSize: 12,
   androidLogCapture: false,
   swipeSession: false,
-  wakeLockOnSpeech: true,
+  preventScreenLock: true,
   pushPersistentNotification: true,
   sortField: null,
   sortDir: 'asc',

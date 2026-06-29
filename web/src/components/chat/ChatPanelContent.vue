@@ -331,12 +331,11 @@ function onStreamEnd(reason) {
         if (fullText && lastMsg.id) {
           autoSpeech.speakMessage(lastMsg.id, fullText)
         } else {
-          // Streaming ended but no speakable text — release wake lock
-          // (was acquired at streaming start)
-          autoSpeech.onStreamingEndNoSpeech()
+          // Output ended but no speakable text — restore screen lock
+          autoSpeech.onOutputEndNoSpeech()
         }
       } else {
-        autoSpeech.onStreamingEndNoSpeech()
+        autoSpeech.onOutputEndNoSpeech()
       }
     }
     // Recalculate chatUnread after stream completes — the current session's
@@ -348,23 +347,23 @@ function onStreamEnd(reason) {
   } else if (reason === 'cancelled') {
     // Backend already cleared queue; clear locally for immediate UI response
     pendingStore.clearPending(identity.currentSessionId.value)
-    // Release wake lock — streaming was cancelled, no TTS will play
-    autoSpeech.onStreamingEndNoSpeech()
+    // Restore screen lock — output was cancelled, no TTS will play
+    autoSpeech.onOutputEndNoSpeech()
   }
   // 'error': don't touch pending messages — backend preserves queue
   if (reason === 'error') {
-    // Release wake lock — streaming errored, no TTS will play
-    autoSpeech.onStreamingEndNoSpeech()
+    // Restore screen lock — output errored, no TTS will play
+    autoSpeech.onOutputEndNoSpeech()
   }
 }
 
-// Acquire screen wake lock when streaming starts with auto-speech enabled.
-// Using watch instead of calling onStreamingStart() at each loading=true site
-// ensures all streaming entry points are covered (sendMessage, switchSession,
+// Suppress screen lock when AI output starts with auto-speech enabled.
+// Using watch instead of calling onOutputStart() at each loading=true site
+// ensures all output entry points are covered (sendMessage, switchSession,
 // loadHistory for running session, etc.).
 watch(loading, (newVal, oldVal) => {
   if (newVal && !oldVal) {
-    autoSpeech.onStreamingStart()
+    autoSpeech.onOutputStart()
   }
 })
 
@@ -833,8 +832,8 @@ async function sendMessageNow(text, filePaths, files) {
         stream.stopPolling()
         stream.disconnectStream()
         loading.value = false
-        // Release wake lock on send failure — streaming won't proceed
-        autoSpeech.onStreamingEndNoSpeech()
+        // Restore screen lock on send failure — output won't proceed
+        autoSpeech.onOutputEndNoSpeech()
         toast.show(t('toast.sendFailed'), { icon: '⚠️', type: 'error' })
         // Clear session ID on error to prevent using invalid session
         if (err.msgKey === 'SessionBackendNotFound' || err.msgKey === 'SessionNotFound') {
