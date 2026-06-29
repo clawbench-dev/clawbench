@@ -358,6 +358,16 @@ function onStreamEnd(reason) {
   }
 }
 
+// Acquire screen wake lock when streaming starts with auto-speech enabled.
+// Using watch instead of calling onStreamingStart() at each loading=true site
+// ensures all streaming entry points are covered (sendMessage, switchSession,
+// loadHistory for running session, etc.).
+watch(loading, (newVal, oldVal) => {
+  if (newVal && !oldVal) {
+    autoSpeech.onStreamingStart()
+  }
+})
+
 const stream = useChatStream({
   messages,
   currentSessionId: identity.currentSessionId,
@@ -753,10 +763,6 @@ async function sendMessageNow(text, filePaths, files) {
     loading.value = true
     scrollBottom(true)
 
-    // Acquire screen wake lock when auto-speech is enabled — keeps screen on
-    // during streaming + TTS playback cycle. Released when audio ends or on error.
-    autoSpeech.onStreamingStart()
-
     try {
         const effectiveAgentId = identity.currentAgentId.value
 
@@ -827,6 +833,8 @@ async function sendMessageNow(text, filePaths, files) {
         stream.stopPolling()
         stream.disconnectStream()
         loading.value = false
+        // Release wake lock on send failure — streaming won't proceed
+        autoSpeech.onStreamingEndNoSpeech()
         toast.show(t('toast.sendFailed'), { icon: '⚠️', type: 'error' })
         // Clear session ID on error to prevent using invalid session
         if (err.msgKey === 'SessionBackendNotFound' || err.msgKey === 'SessionNotFound') {

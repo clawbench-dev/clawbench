@@ -46,6 +46,8 @@ async function _doAcquire() {
       }
       held.value = true
       appLog.i(TAG, 'Web Wake Lock acquired')
+    } else {
+      appLog.d(TAG, 'Web Wake Lock API not available')
     }
   } catch (e) {
     appLog.w(TAG, 'Web Wake Lock acquire failed:', e)
@@ -59,6 +61,8 @@ async function _doAcquire() {
       appLog.i(TAG, 'Android setKeepScreenOn(true)')
       // Even if Web API failed, Android bridge may succeed
       if (!held.value) held.value = true
+    } else if (native) {
+      appLog.w(TAG, 'Android bridge exists but setKeepScreenOn method missing — APP needs update')
     }
   } catch { /* not in app mode */ }
 }
@@ -94,6 +98,9 @@ function release() {
     }
   } catch { /* not in app mode */ }
 
+  if (held.value) {
+    appLog.i(TAG, 'Wake lock released')
+  }
   held.value = false
 }
 
