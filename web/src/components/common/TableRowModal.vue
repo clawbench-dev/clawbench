@@ -25,6 +25,7 @@ import { copyText } from '@/utils/clipboard.ts'
 import { gt } from '@/composables/useLocale'
 import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
+import { useDialog } from '@/composables/useDialog.ts'
 import { store } from '@/stores/app.ts'
 
 defineProps({
@@ -36,6 +37,8 @@ const emit = defineEmits(['close', 'prev', 'next'])
 const { t } = useI18n()
 const toast = inject('toast', null)
 const switchTab = inject('switchTab', null)
+const hotSwitchProject = inject('hotSwitchProject', null)
+const dialog = useDialog()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 
 function handleValueDblClick(event) {
@@ -67,7 +70,29 @@ async function handleValueClick(event) {
     event.preventDefault()
     event.stopPropagation()
     const wtPath = wtBtn.getAttribute('data-worktree-path')
-    if (wtPath) store.setProject(wtPath)
+    const filePath = wtBtn.getAttribute('data-file-path')
+    if (wtPath) {
+      const switchLabel = t('chat.attach.switchWorktree')
+      const openLabel = t('chat.attach.openDirectory')
+      const result = await dialog.confirm(
+        filePath ? `${switchLabel}\n${openLabel}` : switchLabel,
+        {
+          title: t('chat.attach.openWorktree'),
+          confirmText: switchLabel,
+          cancelText: filePath ? openLabel : t('common.cancel'),
+        }
+      )
+      if (result) {
+        if (hotSwitchProject) {
+          await hotSwitchProject(wtPath)
+        } else {
+          await store.setProject(wtPath)
+        }
+      } else if (filePath) {
+        const ok = await openFilePath(filePath)
+        if (ok) switchTab?.('browse')
+      }
+    }
     emit('close')
     return
   }
