@@ -987,7 +987,7 @@ export default {
       autoSpeech: '自动语音',
       autoSpeechDesc: 'AI 回复完成后自动朗读',
       preventScreenLock: '输出期间不锁屏',
-      preventScreenLockDesc: 'AI 输出和朗读期间抑制屏幕休眠，防止黑屏错过内容',
+      preventScreenLockDesc: 'AI 输出期间抑制屏幕休眠，防止黑屏错过内容',
       swipeSession: '滑动切换会话',
       swipeSessionDesc: '在聊天区域左右滑动切换到上/下一个会话',
       defaultAgent: '默认智能体',

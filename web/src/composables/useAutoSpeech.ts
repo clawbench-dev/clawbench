@@ -411,18 +411,17 @@ export function useAutoSpeech() {
   }
 
   /**
-   * Called when AI output starts and auto-speech is enabled.
+   * Called when AI output starts.
    * Suppresses screen lock so the display stays on during
    * the entire output + TTS playback cycle.
    * Only activates if the preventScreenLock setting is enabled.
    */
   function onOutputStart() {
-    if (!enabled.value) return
     if (!localConfig.preventScreenLock) return
     if (screenLockSuppressed) return
     wakeLock.acquire()
     screenLockSuppressed = true
-    appLog.i(TAG, 'Screen lock suppressed for output + auto-speech')
+    appLog.i(TAG, 'Screen lock suppressed for output')
   }
 
   /**

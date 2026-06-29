@@ -987,7 +987,7 @@ export default {
       autoSpeech: 'Auto Speech',
       autoSpeechDesc: 'Automatically read aloud AI responses',
       preventScreenLock: 'No Screen Lock During Output',
-      preventScreenLockDesc: 'Prevent the screen from turning off during AI output and TTS playback',
+      preventScreenLockDesc: 'Prevent the screen from turning off during AI output',
       swipeSession: 'Swipe to Switch Session',
       swipeSessionDesc: 'Swipe left/right in the chat area to switch to the previous/next session',
       defaultAgent: 'Default Agent',
