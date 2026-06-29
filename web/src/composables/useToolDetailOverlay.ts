@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { shouldRetryToolFetch, resolveEffectiveMsgId } from '@/utils/chatStreamUtils.ts'
 import { formatToolOutput } from '@/utils/renderToolDetail.ts'
@@ -19,8 +19,8 @@ export function useToolDetailOverlay(options: ToolDetailOverlayOptions) {
   const { chatRender, onFileOpen, findLiveBlock } = options
   const { t } = useI18n()
 
-  const toolDetailOverlay = ref({
-    show: false as boolean,
+  const show = ref(false)
+  const toolDetailData = ref({
     name: '' as string,
     subagentType: '' as string,
     summary: '' as string,
@@ -50,8 +50,8 @@ export function useToolDetailOverlay(options: ToolDetailOverlayOptions) {
     const hasInput = block.input && Object.keys(block.input).length > 0
     const hasOutput = !!block.output
 
-    toolDetailOverlay.value = {
-      show: true,
+    show.value = true
+    toolDetailData.value = {
       name: block.name || '',
       subagentType: block.display_name || block.input?.subagent_type || '',
       summary: block.summary || toolCallSummary(block),
@@ -67,7 +67,7 @@ export function useToolDetailOverlay(options: ToolDetailOverlayOptions) {
     if ((!hasInput || !hasOutput) && block.tool_id && block.msgId) {
       const toolId = block.tool_id
       const msgId = block.msgId
-      toolDetailOverlay.value._fetchIds = { toolId, msgId }
+      toolDetailData.value._fetchIds = { toolId, msgId }
       fetchToolCallDetail(toolId, msgId, block)
     }
   }
@@ -76,26 +76,26 @@ export function useToolDetailOverlay(options: ToolDetailOverlayOptions) {
     const empty = (e.target as HTMLElement).closest('.tool-call-empty') as HTMLElement | null
     if (!empty || empty.dataset.retry !== '1') return
     empty.dataset.retry = ''
-    const ids = toolDetailOverlay.value._fetchIds
+    const ids = toolDetailData.value._fetchIds
     if (!ids) return
     let block = null as any
     if (findLiveBlock && activeToolOverlay.value) {
       block = findLiveBlock(activeToolOverlay.value)
     }
-    fetchToolCallDetail(ids.toolId, ids.msgId, block || { name: toolDetailOverlay.value.name })
+    fetchToolCallDetail(ids.toolId, ids.msgId, block || { name: toolDetailData.value.name })
   }
 
   async function fetchToolCallDetail(toolId: string | number, msgId: string | number, block: any, _retryCount = 0) {
-    if (!toolDetailOverlay.value.inputHtml) {
-      toolDetailOverlay.value.inputHtml = '<div class="tool-call-loading"></div>'
+    if (!toolDetailData.value.inputHtml) {
+      toolDetailData.value.inputHtml = '<div class="tool-call-loading"></div>'
     }
     try {
       const resp = await fetch(`/api/ai/chat/tool-call?tool_id=${encodeURIComponent(toolId)}&message_id=${encodeURIComponent(msgId)}`)
       if (!resp.ok) {
         // Retry on 404 (tool call may not yet be persisted during streaming)
-        if (shouldRetryToolFetch(resp.status, _retryCount, toolDetailOverlay.value.show)) {
+        if (shouldRetryToolFetch(resp.status, _retryCount, show.value)) {
           setTimeout(() => {
-            if (!toolDetailOverlay.value.show) return
+            if (!show.value) return
             let liveBlock = null as any
             if (findLiveBlock && activeToolOverlay.value) {
               liveBlock = findLiveBlock(activeToolOverlay.value)
@@ -106,7 +106,7 @@ export function useToolDetailOverlay(options: ToolDetailOverlayOptions) {
           return
         }
         if (resp.status !== 404) {
-          toolDetailOverlay.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsUnavailable'))
+          toolDetailData.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsUnavailable'))
         }
         return
       }
@@ -114,32 +114,37 @@ export function useToolDetailOverlay(options: ToolDetailOverlayOptions) {
       const { formatToolInput } = chatRender
       if (data.input) {
         const input = typeof data.input === 'string' ? JSON.parse(data.input) : data.input
-        toolDetailOverlay.value.inputHtml = formatToolInput(input, block.name || data.name, { done: block.done, status: block.status, output: data.output || '' })
+        toolDetailData.value.inputHtml = formatToolInput(input, block.name || data.name, { done: block.done, status: block.status, output: data.output || '' })
       } else {
-        toolDetailOverlay.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsUnavailable'))
+        toolDetailData.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsUnavailable'))
       }
       if (data.output) {
-        toolDetailOverlay.value.outputHtml = formatToolOutput(data.output, block.name || data.name)
+        toolDetailData.value.outputHtml = formatToolOutput(data.output, block.name || data.name)
       }
     } catch (e) {
       appLog.w(TAG, 'Failed to fetch tool call detail:', e)
-      toolDetailOverlay.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsLoadFailed'))
+      toolDetailData.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsLoadFailed'))
     }
   }
 
   function handleFileOpenInOverlay(payload: string | { path: string; lineStart?: number; lineEnd?: number }) {
     const { path, lineStart, lineEnd } = typeof payload === 'string' ? { path: payload } : payload
-    toolDetailOverlay.value.show = false
+    show.value = false
     if (onFileOpen) {
       onFileOpen(path, lineStart, lineEnd)
     }
   }
 
   function closeOverlay() {
-    toolDetailOverlay.value.show = false
+    show.value = false
   }
 
+  // Backward-compatible computed that merges show + data (consumers that read .show/.name etc still work)
+  const toolDetailOverlay = computed(() => ({ show: show.value, ...toolDetailData.value }))
+
   return {
+    show,
+    toolDetailData,
     toolDetailOverlay,
     activeToolOverlay,
     handleShowToolDetail,

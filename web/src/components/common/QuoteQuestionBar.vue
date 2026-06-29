@@ -13,19 +13,8 @@
         </button>
       </div>
 
-      <!-- Expanded: session selector (top) + quoted snippet + input -->
+      <!-- Expanded: quoted snippet + input -->
       <div v-else class="quote-bar-expanded">
-        <!-- Top: session selector -->
-        <div class="qq-top-row">
-          <div class="qq-session" @click="openSessionDrawer">
-            <span class="qq-session-label">{{ displaySessionLabel }}</span>
-            <div class="qq-session-title">
-              <HeaderMarquee :text="displaySessionTitle">{{ displaySessionTitle }}</HeaderMarquee>
-            </div>
-            <ChevronDown :size="12" class="qq-session-arrow" />
-          </div>
-        </div>
-
         <!-- Quoted snippet -->
         <div class="qq-quoted-snippet">
           <MessageSquare :size="12" class="qq-quoted-icon" />
@@ -59,10 +48,9 @@
 </template>
 
 <script setup>
-import { MessageSquare, ChevronDown, XCircle, Send } from 'lucide-vue-next'
+import { MessageSquare, XCircle, Send } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import { truncateQuoteText, canSendInput } from '@/utils/quoteQuestionUtils'
 
 const { t } = useI18n()
@@ -70,11 +58,8 @@ const { t } = useI18n()
 const props = defineProps({
   visible: Boolean,
   quoteData: Object,
-  sessionLabel: { type: String, default: '' },
-  sessionTitle: { type: String, default: '' },
-  currentSessionId: { type: String, default: '' },
 })
-const emit = defineEmits(['send', 'close', 'pin', 'unpin', 'open-sessions'])
+const emit = defineEmits(['send', 'close', 'pin', 'unpin'])
 
 const expanded = ref(false)
 const inputText = ref('')
@@ -87,10 +72,6 @@ const fullQuoteText = computed(() => {
 })
 
 const canSend = computed(() => canSendInput(inputText.value))
-
-const displaySessionTitle = computed(() => props.sessionTitle || t('quoteBar.newSession'))
-
-const displaySessionLabel = computed(() => props.sessionLabel || t('quoteBar.aiChat'))
 
 // Reset when bar hides
 watch(() => props.visible, (val) => {
@@ -148,10 +129,6 @@ function autoResizeTextarea() {
 // Watch inputText changes (both user input and programmatic changes)
 // to ensure textarea height stays in sync with content
 watch(inputText, () => nextTick(() => autoResizeTextarea()))
-
-function openSessionDrawer() {
-  emit('open-sessions')
-}
 
 function handleSend() {
   if (!canSend.value) return
@@ -217,50 +194,6 @@ defineExpose({ expanded, expand, inputText })
   flex-direction: column;
   gap: 6px;
   padding: 8px 10px;
-}
-
-/* Top row: session selector */
-.qq-top-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.qq-session {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 8px;
-  background: var(--bg-tertiary);
-  border-radius: 0;
-  cursor: pointer;
-  transition: background 0.15s;
-  flex: 1;
-  min-width: 0;
-}
-
-.qq-session:active {
-  background: var(--bg-primary);
-}
-
-.qq-session-label {
-  flex-shrink: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-  white-space: nowrap;
-}
-
-.qq-session-title {
-  flex: 1;
-  min-width: 0;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.qq-session-arrow {
-  flex-shrink: 0;
-  color: var(--text-muted);
 }
 
 /* Quoted snippet block */

@@ -176,7 +176,7 @@
         @switch-mode="handleSwitchMode"
         @switch-transport="handleSwitchTransport"
       />
-      <QuickSendDialog :open="props.active && quickSendStore.showEditDialog.value" @close="quickSendStore.showEditDialog.value = false" />
+      <QuickSendDialog :open="quickSendDrawer.effectiveOpen.value" @close="quickSendStore.showEditDialog.value = false" />
       <!-- @ command autocomplete menu (ClawBench built-in) -->
       <PopupMenu v-model:show="showAtMenu" :target-element="textareaRef" anchor="left" :max-width="260" :max-height="200" :menu-items-count="atMenuItems.length">
         <div class="at-menu-title">{{ t('chat.atCommand.title') }}</div>
@@ -265,6 +265,7 @@ import SessionSettingModal from '@/components/chat/SessionSettingModal.vue'
 import { createStopButtonMachine } from '@/utils/stopButtonMachine.ts'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useQuickSend } from '@/composables/useQuickSend'
+import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useChatKeyboard } from '@/composables/useChatKeyboard'
 import { useSessionIdentity } from '@/composables/useSessionIdentity'
 import { useAgents } from '@/composables/useAgents'
@@ -316,6 +317,7 @@ const usageTooltip = computed(() => {
 const dialog = useDialog()
 const quickSendStore = useQuickSend()
 const { items: quickSendItems, fetchItems } = quickSendStore
+const quickSendDrawer = useTabDrawer('chat', quickSendStore.showEditDialog)
 
 // ── Rotating placeholder ──
 const placeholderIndex = ref(0)

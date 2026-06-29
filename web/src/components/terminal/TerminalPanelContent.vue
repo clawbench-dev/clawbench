@@ -145,18 +145,18 @@
     />
 
     <!-- Quick command edit dialog — only open when terminal tab is active -->
-    <QuickCommandDialog :open="props.active && showEditDialog" @close="showEditDialog = false" />
+    <QuickCommandDialog :open="quickCmdDrawer.effectiveOpen.value" @close="showEditDialog = false" />
 
     <!-- Key config drawer — only open when terminal tab is active -->
     <KeyConfigDrawer
-      :open="props.active && showKeyConfig"
+      :open="keyConfigDrawer.effectiveOpen.value"
       @close="showKeyConfig = false"
       @saved="onKeyConfigSaved"
     />
 
     <!-- Output text drawer — copy visible terminal output -->
     <OutputDrawer
-      :open="props.active && showOutputDrawer"
+      :open="outputDrawer.effectiveOpen.value"
       :output-text="outputDrawerText"
       :font-size="fontSize"
       @close="showOutputDrawer = false"
@@ -175,6 +175,7 @@ import KeyConfigDrawer from '@/components/terminal/KeyConfigDrawer.vue'
 import OutputDrawer from '@/components/terminal/OutputDrawer.vue'
 import TerminalTabMenu from '@/components/terminal/TerminalTabMenu.vue'
 import { useTerminalTabs, type TerminalTab } from '@/composables/useTerminalTabs'
+import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useTerminalViewport } from '@/composables/useTerminalViewport'
 import { useTerminalKeys, type ModifierKey } from '@/composables/useTerminalKeys'
 import { shouldPreventTerminalContextMenu, useTerminalGestures } from '@/composables/useTerminalGestures'
@@ -237,6 +238,7 @@ function applyFontSize(size: number) {
 const gestureHint = ref('')
 let gestureHintTimer: ReturnType<typeof setTimeout> | null = null
 const showOutputDrawer = ref(false)
+const outputDrawer = useTabDrawer('terminal', showOutputDrawer)
 const outputDrawerText = ref('')
 const showCommands = ref(false)
 const cmdBtnRef = ref<HTMLElement | null>(null)
@@ -290,6 +292,7 @@ const tabMenuCwd = ref('')
 // Symbol bar — config-driven
 const { selectedKeys, selectedSymbols, fetchConfig: fetchKeyConfig } = useKeyConfig()
 const showKeyConfig = ref(false)
+const keyConfigDrawer = useTabDrawer('terminal', showKeyConfig)
 
 /** Keys visible in the toolbar, filtered by gesture mode (Tab/PgUp/PgDn/arrows hidden when gestures on) */
 const GESTURE_HIDDEN_KEYS = new Set(['tab', 'pgup', 'pgdn', 'arrow_up', 'arrow_down', 'arrow_left', 'arrow_right'])
@@ -392,6 +395,7 @@ const {
   fetchCommands,
   showEditDialog,
 } = useQuickCommands()
+const quickCmdDrawer = useTabDrawer('terminal', showEditDialog)
 
 // Terminal viewport — uses the active tab's xterm and container
 const viewport = useTerminalViewport(
@@ -761,7 +765,6 @@ watch(() => props.active, async (isActive) => {
     terminalKeys.reset()
     showCommands.value = false
     showTabMenu.value = false
-    showKeyConfig.value = false
     viewport.stopWatching()
     gestures.detach()
   }

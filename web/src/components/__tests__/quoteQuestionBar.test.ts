@@ -125,9 +125,7 @@ describe('QuoteQuestionBar component', () => {
       global: {
         plugins: [i18n],
         stubs: {
-          HeaderMarquee: true,
           MessageSquare: true,
-          ChevronDown: true,
           XCircle: true,
           Send: true,
         },
@@ -165,14 +163,6 @@ describe('QuoteQuestionBar component', () => {
     // Pin is emitted synchronously in expand()
     expect(wrapper.emitted('pin')).toBeTruthy()
     expect(vm.expanded).toBe(true)
-  })
-
-  it('exposes session label via computed in expanded mode', async () => {
-    const wrapper = mountBar({ sessionLabel: 'GPT-4', sessionTitle: 'Chat Session' })
-    const vm = wrapper.vm as any
-    // displaySessionLabel is computed from props
-    await vm.expand()
-    expect(vm.displaySessionLabel).toBe('GPT-4')
   })
 
   it('send button is disabled when input is empty', async () => {
@@ -253,13 +243,5 @@ describe('QuoteQuestionBar component', () => {
     vm.inputText = ''
     await nextTick()
     expect(vm.canSend).toBe(false)
-  })
-
-  it('emits open-sessions when openSessionDrawer is called', async () => {
-    const wrapper = mountBar()
-    const vm = wrapper.vm as any
-    await vm.expand()
-    vm.openSessionDrawer()
-    expect(wrapper.emitted('open-sessions')).toBeTruthy()
   })
 })

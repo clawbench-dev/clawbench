@@ -54,7 +54,7 @@
       :toolStatus="toolDetailOverlay.status"
       :toolDone="toolDetailOverlay.done"
       :displayNameOverride="toolDetailOverlay.displayNameOverride"
-      @close="toolDetailOverlay.show = false"
+      @close="toolDetailShow = false"
       @file-open="handleFileOpenInOverlay"
       @click="handleOverlayRetryClick"
     />
@@ -272,6 +272,7 @@ function toggleTool(key) {
 
 // ── Tool Detail Overlay ──
 const {
+  show: toolDetailShow,
   toolDetailOverlay,
   handleShowToolDetail,
   handleOverlayRetryClick,
@@ -360,7 +361,7 @@ function handleContentClick(event) {
 // ── Reset state when exec detail changes ──
 watch(() => props.execDetail, (newVal, oldVal) => {
   expandedTools.value = {}
-  toolDetailOverlay.value.show = false
+  toolDetailShow.value = false
   metadataModal.value.show = false
   activeTab.value = hasSummary.value ? 'summary' : 'original'
 

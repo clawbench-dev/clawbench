@@ -97,7 +97,7 @@
 
   <!-- User message index drawer -->
   <UserMsgIndexSheet
-    :open="showUserMsgIndex"
+    :open="userMsgIndexDrawer.effectiveOpen.value"
     :messages="userMsgIndexList"
     :active-id="nearestUserMsgId"
     :loading="loadingIndex"
@@ -130,6 +130,7 @@ import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { useDialog } from '@/composables/useDialog'
 import { useUserMsgIndex } from '@/composables/useUserMsgIndex.ts'
+import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import { store } from '@/stores/app.ts'
 import { computeRemainingCount } from '@/utils/messageListUtils.ts'
@@ -527,6 +528,7 @@ const {
   hideScrollFab,
   setProgrammaticScrolling: (val) => { programmaticScrolling = val },
 })
+const userMsgIndexDrawer = useTabDrawer('chat', showUserMsgIndex)
 
 // Nearest user message to viewport center — used for activeId highlight in index
 const scrollTick = ref(0)

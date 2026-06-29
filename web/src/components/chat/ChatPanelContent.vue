@@ -115,9 +115,9 @@
 
   </div>
 
-  <!-- Metadata Modal — only open when chat tab is active -->
+  <!-- Metadata Modal -->
   <ChatMetadataModal
-    :show="props.active && metadataModal.show"
+    :show="metadataDrawer.effectiveOpen.value"
     :data="metadataModal.data"
     :backend="metadataModal.backend"
     :createdAt="metadataModal.createdAt"
@@ -126,12 +126,12 @@
     :sessionId="metadataModal.sessionId"
     :indexed="metadataModal.indexed"
     :formatDetailTime="render.formatDetailTime"
-    @close="metadataModal.show = false"
+    @close="metadataShow = false"
   />
 
   <!-- Tool Detail Overlay -->
   <ToolDetailOverlay
-    :show="toolDetailOverlay.show"
+    :show="toolDetailDrawer.effectiveOpen.value"
     :toolName="toolDetailOverlay.name"
     :toolSubagentType="toolDetailOverlay.subagentType"
     :toolSummary="toolDetailOverlay.summary"
@@ -140,13 +140,13 @@
     :toolStatus="toolDetailOverlay.status"
     :toolDone="toolDetailOverlay.done"
     :displayNameOverride="toolDetailOverlay.displayNameOverride"
-    @close="toolDetailOverlay.show = false"
+    @close="toolDetailShow = false"
     @file-open="handleFileOpenInOverlay"
     @send-message="handleToolSendMessage"
     @click="handleOverlayRetryClick"
   />
   <!-- RAG search result detail drawer -->
-  <RagDetailSheet :item="ragDetailItem" @close="ragDetailItem = null" @resume="handleResumeFromDetail" />
+  <RagDetailSheet :item="ragDetailDrawer.effectiveOpen.value ? ragDetailItem : null" @close="ragDetailShow = false; ragDetailItem.value = null" @resume="handleResumeFromDetail" />
 </template>
 
 <script setup>
@@ -154,6 +154,7 @@ import { ref, computed, watch, onUnmounted, onMounted, inject, provide, toRef, n
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { gt } from '@/composables/useLocale'
+import { useTabDrawer } from '@/composables/useTabDrawer'
 import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import RagDetailSheet from './RagDetailSheet.vue'
 import ChatMetadataModal from './ChatMetadataModal.vue'
@@ -221,7 +222,6 @@ const currentAgent = computed(() => getAgent(identity.currentAgentId.value) || n
 const inputBarRef = ref(null)
 const messageListRef = ref(null)
 const metadataModal = ref({
-  show: false,
   data: {},
   backend: '',
   createdAt: '',
@@ -230,6 +230,8 @@ const metadataModal = ref({
   sessionId: '',
   indexed: false
 })
+const metadataShow = ref(false)
+const metadataDrawer = useTabDrawer('chat', metadataShow)
 const toast = useToast()
 const dialog = useDialog()
 const notification = useNotification()
@@ -276,6 +278,8 @@ function findToolBlock({ msgId, blockIdx }) {
 }
 
 const {
+  show: toolDetailShow,
+  toolDetailData,
   toolDetailOverlay,
   activeToolOverlay,
   handleShowToolDetail,
@@ -291,6 +295,7 @@ const {
   },
   findLiveBlock: (ids) => findToolBlock(ids),
 })
+const toolDetailDrawer = useTabDrawer('chat', toolDetailShow)
 
 // Active thinking overlay: tracks which block is being shown so we can reactively update
 const activeThinkingOverlay = ref(null) // { msgId, blockKey } or null
@@ -489,9 +494,10 @@ provide('layoutRefreshKey', layoutRefreshKey)
 watch(() => props.active, async (val) => {
   if (!val) {
     identity.sessionDrawerOpen.value = false
-    toolDetailOverlay.value.show = false
+    toolDetailShow.value = false
     messageListRef.value?.closeUserMsgIndex()
     ragDetailItem.value = null
+    ragDetailShow.value = false
   } else {
     // Open/Re-open: load history (with overlay) and fix stale layout state from v-show display:none
     await session.loadHistory(false, true)
@@ -516,11 +522,8 @@ watch(
     if (thinkingRenderTimer) clearTimeout(thinkingRenderTimer)
     thinkingRenderTimer = setTimeout(() => {
       const b = findThinkingBlock(activeThinkingOverlay.value)
-      toolDetailOverlay.value = {
-        ...toolDetailOverlay.value,
-        inputHtml: `<div class="thinking-overlay-md">${renderMarkdown(text)}</div>`,
-        done: b ? !!b.done : !loading.value,
-      }
+      toolDetailData.value.inputHtml = `<div class="thinking-overlay-md">${renderMarkdown(text)}</div>`
+      toolDetailData.value.done = b ? !!b.done : !loading.value
     }, 300)
   }
 )
@@ -534,23 +537,19 @@ watch(
     return { output: block.output, done: block.done, status: block.status, input: block.input, name: block.name, summary: block.summary, display_name: block.display_name }
   },
   (data) => {
-    if (data === null || !toolDetailOverlay.value.show) return
+    if (data === null || !toolDetailShow.value) return
     const { formatToolInput } = render
     const hasInput = data.input && Object.keys(data.input).length > 0
-    toolDetailOverlay.value = {
-      ...toolDetailOverlay.value,
-      outputHtml: data.output ? formatToolOutput(data.output, data.name) : toolDetailOverlay.value.outputHtml,
-      status: data.status || '',
-      done: !!data.done,
-      // Only update input if it's available (slim format may not have it)
-      inputHtml: hasInput ? formatToolInput(data.input, data.name, { done: data.done, status: data.status, output: data.output }) : toolDetailOverlay.value.inputHtml,
-      summary: data.summary || toolDetailOverlay.value.summary,
-    }
+    toolDetailData.value.outputHtml = data.output ? formatToolOutput(data.output, data.name) : toolDetailData.value.outputHtml
+    toolDetailData.value.status = data.status || ''
+    toolDetailData.value.done = !!data.done
+    toolDetailData.value.inputHtml = hasInput ? formatToolInput(data.input, data.name, { done: data.done, status: data.status, output: data.output }) : toolDetailData.value.inputHtml
+    toolDetailData.value.summary = data.summary || toolDetailData.value.summary
   }
 )
 
 // Clean up overlay state when overlay closes
-watch(() => toolDetailOverlay.value.show, (show) => {
+watch(() => toolDetailShow.value, (show) => {
   if (!show) {
     activeThinkingOverlay.value = null
     activeToolOverlay.value = null
@@ -565,7 +564,7 @@ watch(() => toolDetailOverlay.value.show, (show) => {
 function startStreamingRefresh() {
   if (streamingRefreshTimer) clearInterval(streamingRefreshTimer)
   streamingRefreshTimer = setInterval(() => {
-    if (!toolDetailOverlay.value.show) {
+    if (!toolDetailShow.value) {
       clearInterval(streamingRefreshTimer)
       streamingRefreshTimer = null
       return
@@ -574,11 +573,8 @@ function startStreamingRefresh() {
     if (activeThinkingOverlay.value) {
       const block = findThinkingBlock(activeThinkingOverlay.value)
       if (block) {
-        toolDetailOverlay.value = {
-          ...toolDetailOverlay.value,
-          inputHtml: `<div class="thinking-overlay-md">${renderMarkdown(block.text)}</div>`,
-          done: !!block.done,
-        }
+        toolDetailData.value.inputHtml = `<div class="thinking-overlay-md">${renderMarkdown(block.text)}</div>`
+        toolDetailData.value.done = !!block.done
         // Block is done — no further updates needed
         if (block.done) {
           clearInterval(streamingRefreshTimer)
@@ -896,7 +892,7 @@ function showMetadata(msg) {
     metadataModal.value.messageId = msg.id || null
     metadataModal.value.sessionId = msg.sessionId || ''
     metadataModal.value.indexed = !!msg.indexed
-    metadataModal.value.show = true
+    metadataShow.value = true
 }
 
 function handleShowThinkingDetail({ text, msgId, blockKey }) {
@@ -907,8 +903,8 @@ function handleShowThinkingDetail({ text, msgId, blockKey }) {
   const block = findThinkingBlock(activeThinkingOverlay.value)
   const currentText = block ? block.text : text // fallback to snapshot if lookup fails
 
-  toolDetailOverlay.value = {
-    show: true,
+  toolDetailShow.value = true
+  toolDetailData.value = {
     name: 'DeepThink',
     displayNameOverride: t('chat.message.deepThinking'),
     summary: '',
@@ -916,6 +912,7 @@ function handleShowThinkingDetail({ text, msgId, blockKey }) {
     outputHtml: '',
     status: '',
     done: block ? !!block.done : !loading.value,
+    _fetchIds: toolDetailData.value._fetchIds,
   }
 }
 
@@ -947,13 +944,17 @@ function handleToggleSummary(msgId) {
 
 // RAG detail drawer
 const ragDetailItem = ref(null)
+const ragDetailShow = ref(false)
+const ragDetailDrawer = useTabDrawer('chat', ragDetailShow)
 
 function handleRagDetail(ragItem) {
     ragDetailItem.value = ragItem
+    ragDetailShow.value = true
 }
 
 async function handleResumeFromDetail(item) {
     ragDetailItem.value = null
+    ragDetailShow.value = false
     if (!item?.sessionId) return
     const confirmed = await dialog.confirm(
         t('chat.contentBlocks.ragResumeConfirm', { title: item.sessionTitle || t('chat.contentBlocks.ragUntitled') }),
