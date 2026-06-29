@@ -148,11 +148,6 @@ func DiscoverClaudeModels() []model.AgentModel { //nolint:gocyclo,gocognit // bi
 		return models[i].ID > models[j].ID
 	})
 
-	// Mark first model as default
-	if len(models) > 0 {
-		models[0].Default = true
-	}
-
 	// Apply model name overrides from ~/.claude/settings.json
 	// When modelOverrides maps a Claude model ID to another name (e.g. "MiniMax-M2.7"),
 	// we replace the display name so the user sees which underlying model is actually used.
@@ -164,6 +159,24 @@ func DiscoverClaudeModels() []model.AgentModel { //nolint:gocyclo,gocognit // bi
 				models[i].Name = name
 			}
 		}
+		// Deduplicate by Name: when multiple IDs override to the same name,
+		// keep only the first occurrence (highest priority by sort order) and drop the rest.
+		seenNames := make(map[string]bool)
+		deduped := make([]model.AgentModel, 0, len(models))
+		for i := range models {
+			if seenNames[models[i].Name] {
+				slog.Debug("claude model override dedup: dropping duplicate name", "id", models[i].ID, "name", models[i].Name)
+				continue
+			}
+			seenNames[models[i].Name] = true
+			deduped = append(deduped, models[i])
+		}
+		models = deduped
+	}
+
+	// Mark first model as default (after dedup so the flag is on the actual first entry)
+	if len(models) > 0 {
+		models[0].Default = true
 	}
 
 	// If binary scanning found no models, fall back to known defaults
