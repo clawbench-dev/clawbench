@@ -258,11 +258,12 @@ const { planEntries, planCollapsed, planHasUpdate, hasPlan, togglePlanCollapse, 
 
 const render = useChatRender({ messages, theme, currentSessionId: identity.currentSessionId })
 
-/** Look up the thinking block from the live messages array by msgId + blockIdx */
-function findThinkingBlock({ msgId, blockIdx }) {
+/** Look up the thinking block from the live messages array by msgId + blockKey */
+function findThinkingBlock({ msgId, blockKey }) {
+  if (!blockKey) return null
   const msg = messages.value.find(m => String(m.id) === msgId)
   if (!msg || !msg.blocks) return null
-  const block = msg.blocks[blockIdx]
+  const block = msg.blocks.find(b => b._key === blockKey)
   return (block && block.type === 'thinking') ? block : null
 }
 
@@ -292,7 +293,7 @@ const {
 })
 
 // Active thinking overlay: tracks which block is being shown so we can reactively update
-const activeThinkingOverlay = ref(null) // { msgId, blockIdx } or null
+const activeThinkingOverlay = ref(null) // { msgId, blockKey } or null
 let thinkingRenderTimer = null
 let streamingRefreshTimer = null
 
@@ -551,7 +552,6 @@ watch(() => toolDetailOverlay.value.show, (show) => {
     activeThinkingOverlay.value = null
     activeToolOverlay.value = null
     if (thinkingRenderTimer) { clearTimeout(thinkingRenderTimer); thinkingRenderTimer = null }
-    if (streamingRefreshTimer) { clearInterval(streamingRefreshTimer); streamingRefreshTimer = null }
     if (streamingRefreshTimer) { clearInterval(streamingRefreshTimer); streamingRefreshTimer = null }
   }
 })
@@ -896,9 +896,9 @@ function showMetadata(msg) {
     metadataModal.value.show = true
 }
 
-function handleShowThinkingDetail({ text, msgId, blockIdx }) {
+function handleShowThinkingDetail({ text, msgId, blockKey }) {
   // Store identifiers for reactive lookup (survives messages array replacement on loadHistory)
-  activeThinkingOverlay.value = { msgId: String(msgId), blockIdx }
+  activeThinkingOverlay.value = { msgId: String(msgId), blockKey }
 
   // Initial render
   const block = findThinkingBlock(activeThinkingOverlay.value)

@@ -700,3 +700,86 @@ describe('streamingMsg reactivity: raw reference vs reactive proxy', () => {
     expect(isReactive(rawObj)).toBe(false)
   })
 })
+
+// Test tool_use event with done=true and no existing block (Pi backend pattern)
+describe('tool_use event with done=true and no existing block', () => {
+  it('creates new block when done=true and no existing block', () => {
+    // This is the Pi backend pattern: toolcall_end sends tool_use with done=true
+    // Previously, the handler only updated existing blocks in the done=true branch,
+    // so Pi's tool calls were invisible until loadHistory reloaded from DB.
+    const blocks: any[] = []
+    const data = { name: 'Read', id: 'tc-1', done: true, status: 'success',
+      input: { file_path: '/test.go' }, summary: 'test.go' }
+    const existing = blocks.find(b => b.type === 'tool_use' && b.id === data.id)
+    if (data.done) {
+      if (existing) {
+        existing.done = true
+        if (data.input) existing.input = data.input
+      } else {
+        // No existing block — create a new done tool_use block
+        const newBlock: any = {
+          type: 'tool_use', name: data.name, id: data.id, done: true,
+          status: data.status || '',
+        }
+        if (data.input && Object.keys(data.input).length > 0) {
+          newBlock.input = data.input
+        }
+        if (data.summary) newBlock.summary = data.summary
+        blocks.push(newBlock)
+      }
+    }
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].name).toBe('Read')
+    expect(blocks[0].id).toBe('tc-1')
+    expect(blocks[0].done).toBe(true)
+    expect(blocks[0].status).toBe('success')
+    expect(blocks[0].input).toEqual({ file_path: '/test.go' })
+    expect(blocks[0].summary).toBe('test.go')
+  })
+
+  it('updates existing block when done=true and block exists', () => {
+    const blocks: any[] = [
+      { type: 'tool_use', name: 'Read', id: 'tc-1', done: false, status: '' },
+    ]
+    const data = { name: 'Read', id: 'tc-1', done: true, status: 'success' }
+    const existing = blocks.find(b => b.type === 'tool_use' && b.id === data.id)
+    if (data.done) {
+      if (existing) {
+        existing.done = true
+        if (data.status !== undefined) existing.status = data.status
+      } else {
+        blocks.push({ type: 'tool_use', name: data.name, id: data.id, done: true, status: data.status || '' })
+      }
+    }
+    expect(blocks).toHaveLength(1) // No duplicate
+    expect(blocks[0].done).toBe(true)
+    expect(blocks[0].status).toBe('success')
+  })
+
+  it('creates multiple tool_use blocks with done=true (Pi streaming pattern)', () => {
+    const blocks: any[] = []
+    // Simulate Pi's streaming: thinking → tool_use(done) → thinking → tool_use(done)
+    blocks.push({ type: 'thinking', text: 'first thought', _key: 'thinking-0', done: true })
+    // First tool call arrives with done=true
+    const data1 = { name: 'Read', id: 'tc-1', done: true, summary: 'file.go' }
+    const existing1 = blocks.find(b => b.type === 'tool_use' && b.id === data1.id)
+    if (!existing1) {
+      blocks.push({ type: 'tool_use', name: data1.name, id: data1.id, done: true, status: '' })
+    }
+    // Second thinking phase
+    blocks.push({ type: 'thinking', text: 'second thought', _key: 'thinking-1', done: true })
+    // Second tool call arrives with done=true
+    const data2 = { name: 'Write', id: 'tc-2', done: true, summary: 'output.go' }
+    const existing2 = blocks.find(b => b.type === 'tool_use' && b.id === data2.id)
+    if (!existing2) {
+      blocks.push({ type: 'tool_use', name: data2.name, id: data2.id, done: true, status: '' })
+    }
+    expect(blocks).toHaveLength(4)
+    expect(blocks[0].type).toBe('thinking')
+    expect(blocks[1].type).toBe('tool_use')
+    expect(blocks[1].name).toBe('Read')
+    expect(blocks[2].type).toBe('thinking')
+    expect(blocks[3].type).toBe('tool_use')
+    expect(blocks[3].name).toBe('Write')
+  })
+})

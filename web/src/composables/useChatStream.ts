@@ -60,6 +60,8 @@ export function useChatStream(options: UseChatStreamOptions) {
   let disconnectedByCleanup = false
   // Track tool_use timeout timers so we can clean them up
   const toolUseTimeouts: Map<string, ReturnType<typeof setTimeout>> = new Map()
+  // Counter for assigning stable _key to thinking blocks during streaming
+  let thinkingBlockCounter = 0
 
   const STREAM_TIMEOUT_MS = 30000 // 30 seconds without any SSE event = try reconnect
   const PERMISSION_STREAM_TIMEOUT_MS = 300000 // 5 min when permission approval is pending (user deciding)
@@ -281,6 +283,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         createdAt: new Date().toISOString(),
         backend: currentBackend.value
       })
+      thinkingBlockCounter = 0
       onRenderNeeded()
     }
     onScrollBottom()
@@ -333,6 +336,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         (phase2 as any).id = data.message_id
       }
       messages.value.push(phase2)
+      thinkingBlockCounter = 0
       onRenderNeeded()
       debouncedRender()
     })
@@ -366,7 +370,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       if (existingThinking) {
         existingThinking.text += data.text
       } else {
-        blocks.push({ type: 'thinking', text: data.text })
+        blocks.push({ type: 'thinking', text: data.text, _key: `thinking-${thinkingBlockCounter++}` })
       }
       debouncedRender()
       if (isOpen.value) {
@@ -409,6 +413,21 @@ export function useChatStream(options: UseChatStreamOptions) {
           if (data.summary !== undefined) existing.summary = data.summary
           if (data.display_name !== undefined) existing.display_name = data.display_name
           if (data.file_path !== undefined) existing.file_path = data.file_path
+        } else {
+          // No existing block — create a new done tool_use block.
+          // This happens when the backend sends tool_use with done=true
+          // (e.g. Pi's toolcall_end provides complete arguments in one event).
+          const newBlock: any = {
+            type: 'tool_use', name: data.name, id: data.id, done: true,
+            status: data.status || '',
+          }
+          if (data.input && Object.keys(data.input).length > 0) {
+            newBlock.input = data.input
+          }
+          if (data.summary) newBlock.summary = data.summary
+          if (data.display_name) newBlock.display_name = data.display_name
+          if (data.file_path) newBlock.file_path = data.file_path
+          blocks.push(newBlock)
         }
         const timer = toolUseTimeouts.get(data.id)
         if (timer) { clearTimeout(timer); toolUseTimeouts.delete(data.id) }
@@ -505,6 +524,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       }
       if (streamTimeout) { clearTimeout(streamTimeout); streamTimeout = null }
       clearToolUseTimeouts()
+      thinkingBlockCounter = 0
 
       // Diagnostic: log message state when done event received
       const doneSummary = messages.value.map((m: any, i: number) =>

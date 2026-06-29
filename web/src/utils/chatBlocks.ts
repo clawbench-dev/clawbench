@@ -32,6 +32,7 @@ export function parseAssistantContent(content: string) {
       })
       const result: any[] = []
       const toolIndex = new Map()
+      let thinkingIdx = 0
       for (const b of mapped) {
         if (b.type === 'tool_use' && b.id) {
           const prevIdx = toolIndex.get(b.id)
@@ -55,6 +56,9 @@ export function parseAssistantContent(content: string) {
             continue
           }
           toolIndex.set(b.id, result.length)
+        } else if (b.type === 'thinking' && !b._key) {
+          // Assign stable _key to thinking blocks parsed from DB
+          b._key = `thinking-${thinkingIdx++}`
         }
         result.push(b)
       }

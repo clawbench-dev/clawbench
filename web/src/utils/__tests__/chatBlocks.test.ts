@@ -227,6 +227,59 @@ describe('parseAssistantContent', () => {
     expect(result.metadata).toEqual({ wallMs: 100 })
     expect(result.cancelled).toBe(true)
   })
+
+  // ── Thinking block _key assignment ──
+
+  it('assigns _key to thinking blocks parsed from DB', () => {
+    const content = JSON.stringify({
+      blocks: [
+        { type: 'thinking', text: 'first thought' },
+        { type: 'tool_use', name: 'Read', id: '1', input: {} },
+        { type: 'thinking', text: 'second thought' },
+      ],
+    })
+    const result = parseAssistantContent(content)
+    expect(result.blocks[0]._key).toBe('thinking-0')
+    expect(result.blocks[2]._key).toBe('thinking-1')
+  })
+
+  it('does not overwrite existing _key on thinking blocks', () => {
+    const content = JSON.stringify({
+      blocks: [
+        { type: 'thinking', text: 'thought', _key: 'thinking-5' },
+      ],
+    })
+    const result = parseAssistantContent(content)
+    expect(result.blocks[0]._key).toBe('thinking-5')
+  })
+
+  it('does not assign _key to non-thinking blocks', () => {
+    const content = JSON.stringify({
+      blocks: [
+        { type: 'text', text: 'hello' },
+        { type: 'tool_use', name: 'Read', id: '1', input: {} },
+      ],
+    })
+    const result = parseAssistantContent(content)
+    expect(result.blocks[0]._key).toBeUndefined()
+    expect(result.blocks[1]._key).toBeUndefined()
+  })
+
+  it('assigns sequential _key across multiple thinking blocks with interleaved tools', () => {
+    const content = JSON.stringify({
+      blocks: [
+        { type: 'thinking', text: 'think1' },
+        { type: 'tool_use', name: 'Read', id: 'r1', input: {} },
+        { type: 'thinking', text: 'think2' },
+        { type: 'tool_use', name: 'Write', id: 'w1', input: {} },
+        { type: 'thinking', text: 'think3' },
+      ],
+    })
+    const result = parseAssistantContent(content)
+    expect(result.blocks[0]._key).toBe('thinking-0')
+    expect(result.blocks[2]._key).toBe('thinking-1')
+    expect(result.blocks[4]._key).toBe('thinking-2')
+  })
 })
 
 // ── toolCallSummary ──
