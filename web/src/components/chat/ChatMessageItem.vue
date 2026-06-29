@@ -109,6 +109,7 @@ import { formatDuration } from '@/utils/format.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
 import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
+import { store } from '@/stores/app.ts'
 import ContentBlocks from './ContentBlocks.vue'
 import FileAttachmentList from './FileAttachmentList.vue'
 import FileChangesSheet from './FileChangesSheet.vue'
@@ -169,7 +170,11 @@ const fileChangesOpen = ref(false)
 const fileChangesDrawer = useTabDrawer('chat', fileChangesOpen)
 
 function handleOpenFile(path) {
-  openFilePath(path)
+  // AI may return absolute paths (e.g. /home/user/project/src/foo.ts).
+  // Strip projectRoot prefix so openFilePath doesn't treat them as external.
+  const root = store.state.projectRoot
+  const relPath = root && path.startsWith(root + '/') ? path.slice(root.length + 1) : path
+  openFilePath(relPath)
 }
 </script>
 
