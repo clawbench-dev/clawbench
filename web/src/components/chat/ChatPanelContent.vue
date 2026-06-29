@@ -338,6 +338,9 @@ function onStreamEnd(reason) {
       } else {
         autoSpeech.onOutputEndNoSpeech()
       }
+    } else {
+      // Auto-speech off — restore screen lock since no TTS will play
+      autoSpeech.onOutputEndNoSpeech()
     }
     // Recalculate chatUnread after stream completes — the current session's
     // unreadCount is now 0 (UpdateLastRead called by loadHistory), so

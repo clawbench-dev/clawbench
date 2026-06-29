@@ -2151,8 +2151,8 @@ public class MainActivity extends AppCompatActivity {
         /**
          * Set or clear the FLAG_KEEP_SCREEN_ON flag on the activity window.
          * When true, prevents the screen from turning off due to inactivity.
-         * Used when auto-speech is enabled and AI is streaming/reading aloud,
-         * so the user can watch the output without the screen locking.
+         * Used when preventScreenLock is enabled and AI is streaming or TTS
+         * is playing, so the user can watch the output without the screen locking.
          * The flag is automatically cleared if the activity goes to background.
          * @param keepOn true to keep screen on, false to allow normal screen timeout
          */
