@@ -139,6 +139,7 @@
     :toolOutputHtml="toolDetailOverlay.outputHtml"
     :toolStatus="toolDetailOverlay.status"
     :toolDone="toolDetailOverlay.done"
+    :displayNameOverride="toolDetailOverlay.displayNameOverride"
     @close="toolDetailOverlay.show = false"
     @file-open="handleFileOpenInOverlay"
     @send-message="handleToolSendMessage"
@@ -891,7 +892,8 @@ function handleShowThinkingDetail({ text, msgId, blockIdx }) {
 
   toolDetailOverlay.value = {
     show: true,
-    name: t('chat.message.deepThinking'),
+    name: 'DeepThink',
+    displayNameOverride: t('chat.message.deepThinking'),
     summary: '',
     inputHtml: `<div class="thinking-overlay-md">${renderMarkdown(currentText)}</div>`,
     outputHtml: '',

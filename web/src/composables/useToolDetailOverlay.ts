@@ -28,6 +28,7 @@ export function useToolDetailOverlay(options: ToolDetailOverlayOptions) {
     outputHtml: '' as string,
     status: '' as string,
     done: true as boolean,
+    displayNameOverride: '' as string,
     _fetchIds: null as { toolId: string | number; msgId: string | number } | null,
   })
 
@@ -58,6 +59,7 @@ export function useToolDetailOverlay(options: ToolDetailOverlayOptions) {
       outputHtml: hasOutput ? formatToolOutput(block.output, block.name) : '',
       status: block.status || '',
       done: !!block.done,
+      displayNameOverride: block.name === 'DeepThink' ? t('chat.message.deepThinking') : '',
       _fetchIds: null,
     }
 
