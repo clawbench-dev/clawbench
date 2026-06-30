@@ -37,6 +37,8 @@
       @close="showPasswordDialog = false"
       @changed="handlePasswordChanged"
     />
+    <!-- iOS install instructions sheet -->
+    <IosInstallSheet :open="showIosSheet" @close="showIosSheet = false" />
   </div>
 </template>
 
@@ -47,11 +49,13 @@ import SettingsItem from './SettingsItem.vue'
 import PasswordChangeDialog from './PasswordChangeDialog.vue'
 import SettingsAgentsIndex from './SettingsAgentsIndex.vue'
 import SettingsAgentDetail from './SettingsAgentDetail.vue'
+import IosInstallSheet from '@/components/common/IosInstallSheet.vue'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useAgents } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
 import { useAppMode } from '@/composables/useAppMode'
+import { usePwaInstall } from '@/composables/usePwaInstall'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { categoryItems, engineVoiceOptions, type ItemSpec, type DependsOn } from './settingsFieldMap'
 
@@ -71,10 +75,12 @@ const dialog = useDialog()
 const { localConfig, serverConfig, setLocalConfig, getServerValueWithDefault, setServerValue } = useSettingsConfig()
 const { agents, loadAgents } = useAgents()
 const { isAppMode } = useAppMode()
+const pwaInstall = usePwaInstall()
 const { pushRegistered } = useGlobalEvents()
 
 const activeKey = ref<string | null>(null)
 const showPasswordDialog = ref(false)
+const showIosSheet = ref(false)
 
 // Load agents when chat or agents category is shown
 watch(() => props.categoryId, (id) => {
@@ -110,6 +116,10 @@ const items = computed(() => {
     if (!isDependsOnMet(item.dependsOn)) continue
     // Hide appVersion row when not in Android App mode (no AndroidNative bridge)
     if (item.key === 'appVersion' && !isAppMode.value) continue
+    // Hide PWA install action when not available
+    if (item.key === 'addToHomeScreen' && !pwaInstall.showPwaInstall.value) continue
+    // Hide APK download action when not available
+    if (item.key === 'downloadAndroidApp' && !pwaInstall.showApkDownload.value) continue
     // Inject push registration status as a standalone info row at the top of push category
     if (item.key === 'push.jpush.enabled') {
       expanded.push({
@@ -244,6 +254,20 @@ function handleClick(item: any) {
   }
   if (item.key === 'restartServer') {
     handleRestartServer()
+  }
+  if (item.key === 'addToHomeScreen') {
+    handleAddToHomeScreen()
+  }
+  if (item.key === 'downloadAndroidApp') {
+    window.location.href = '/api/apk'
+  }
+}
+
+async function handleAddToHomeScreen() {
+  if (pwaInstall.canInstallPwa.value) {
+    await pwaInstall.installPwa()
+  } else if (pwaInstall.isIOS.value) {
+    showIosSheet.value = true
   }
 }
 

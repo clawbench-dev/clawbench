@@ -109,7 +109,30 @@
           <span>{{ t('login.addServer') }}</span>
         </button>
       </div>
+
+      <!-- Install banner (mobile web only) -->
+      <div v-if="showInstallBanner" class="install-banner">
+        <div v-if="pwaInstall.showPwaInstall.value" class="install-row" role="button" tabindex="0" @click="handlePwaInstall" @keydown.enter="handlePwaInstall">
+          <MonitorSmartphone :size="18" class="install-icon" />
+          <div class="install-info">
+            <span class="install-label">{{ t('pwa.addToHomeScreen') }}</span>
+            <span class="install-desc">{{ t('pwa.installDescription') }}</span>
+          </div>
+          <ChevronRight :size="16" class="install-arrow" />
+        </div>
+        <div v-if="pwaInstall.showApkDownload.value" class="install-row" role="button" tabindex="0" @click="handleApkDownload" @keydown.enter="handleApkDownload">
+          <Smartphone :size="18" class="install-icon" />
+          <div class="install-info">
+            <span class="install-label">{{ t('pwa.downloadAndroidApp') }}</span>
+            <span class="install-desc">{{ t('pwa.downloadAndroidAppDesc') }}</span>
+          </div>
+          <ChevronRight :size="16" class="install-arrow" />
+        </div>
+      </div>
     </div>
+
+    <!-- iOS install instructions sheet -->
+    <IosInstallSheet :open="showIosSheet" @close="showIosSheet = false" />
   </div>
 </template>
 
@@ -117,12 +140,15 @@
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppMode } from '@/composables/useAppMode'
+import { usePwaInstall } from '@/composables/usePwaInstall'
 import { useServerList } from '@/composables/useServerList'
 import { formatServerHost } from '@/utils/url'
-import { Server, X, Plus } from 'lucide-vue-next'
+import { Server, X, Plus, MonitorSmartphone, Smartphone, ChevronRight } from 'lucide-vue-next'
+import IosInstallSheet from './common/IosInstallSheet.vue'
 
 const { t } = useI18n()
 const { isAppMode } = useAppMode()
+const pwaInstall = usePwaInstall()
 const emit = defineEmits(['loginSuccess'])
 
 const { servers, load: loadServers, save: saveServer, remove: removeServer, getPassword } = useServerList()
@@ -135,8 +161,10 @@ const selectedServerUrl = ref('')
 const showAddForm = ref(false)
 const newServerUrl = ref('')
 const newServerPassword = ref('')
+const showIosSheet = ref(false)
 
 const showServerSelector = computed(() => servers.value.length >= 1)
+const showInstallBanner = computed(() => pwaInstall.showPwaInstall.value || pwaInstall.showApkDownload.value)
 
 function selectServer(srv) {
   if (srv.url === selectedServerUrl.value) return
@@ -233,6 +261,18 @@ function handleReconfigure() {
   if (window.AndroidNative?.showServerDialog) {
     window.AndroidNative.showServerDialog()
   }
+}
+
+async function handlePwaInstall() {
+  if (pwaInstall.canInstallPwa.value) {
+    await pwaInstall.installPwa()
+  } else if (pwaInstall.isIOS.value) {
+    showIosSheet.value = true
+  }
+}
+
+function handleApkDownload() {
+  window.location.href = '/api/apk'
 }
 
 onMounted(() => {
@@ -605,5 +645,59 @@ input:focus {
     background: var(--bg-tertiary);
     color: var(--accent-color);
     border-color: var(--accent-color);
+}
+
+/* Install banner */
+.install-banner {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.install-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.install-row:hover {
+    background: var(--bg-tertiary);
+    border-color: var(--accent-color);
+}
+
+.install-icon {
+    color: var(--accent-color);
+    flex-shrink: 0;
+}
+
+.install-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.install-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.install-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.install-arrow {
+    color: var(--text-muted);
+    flex-shrink: 0;
 }
 </style>

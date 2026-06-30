@@ -12,15 +12,38 @@
         </div>
         <p class="welcome-desc">{{ t('welcomeInfo.desc') }}<span class="desc-highlight">{{ t('welcomeInfo.descHighlight') }}</span></p>
         <div class="backends-list">
-          <div v-for="b in backends" :key="b.id" class="backend-item">
+          <div
+            v-for="b in sortedBackends"
+            :key="b.id"
+            class="backend-item"
+            :class="{ 'backend-not-detected': !detectedBackends.has(b.id) }"
+          >
             <div class="backend-icon">{{ b.icon }}</div>
             <div class="backend-info">
               <div class="backend-name">{{ b.name }}</div>
               <div class="backend-specialty">{{ b.specialty }}</div>
             </div>
-            <span :class="['backend-badge', detectedBackends.has(b.id) ? 'badge-installed' : 'badge-not-installed']">
+            <span
+              v-if="detectedBackends.has(b.id) && b.embedded"
+              class="backend-badge badge-builtin"
+            >{{ t('welcomeInfo.builtin') }}</span>
+            <span
+              v-else
+              :class="['backend-badge', detectedBackends.has(b.id) ? 'badge-installed' : 'badge-not-installed']"
+            >
               {{ detectedBackends.has(b.id) ? t('welcomeInfo.detected') : t('welcomeInfo.notDetected') }}
             </span>
+          </div>
+        </div>
+        <!-- Install section (mobile web only) -->
+        <div v-if="showInstallSection" class="welcome-install">
+          <div v-if="pwaInstall.showPwaInstall.value" class="welcome-install-row" role="button" tabindex="0" @click="handlePwaInstall" @keydown.enter="handlePwaInstall">
+            <MonitorSmartphone :size="16" />
+            <span>{{ t('pwa.addToHomeScreen') }}</span>
+          </div>
+          <div v-if="pwaInstall.showApkDownload.value" class="welcome-install-row" role="button" tabindex="0" @click="handleApkDownload" @keydown.enter="handleApkDownload">
+            <Smartphone :size="16" />
+            <span>{{ t('pwa.downloadAndroidApp') }}</span>
           </div>
         </div>
         <div class="welcome-footer">
@@ -34,11 +57,17 @@
       </div>
     </div>
   </Transition>
+
+  <!-- iOS install instructions sheet -->
+  <IosInstallSheet :open="showIosSheet" @close="showIosSheet = false" />
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { usePwaInstall } from '@/composables/usePwaInstall'
+import { MonitorSmartphone, Smartphone } from 'lucide-vue-next'
+import IosInstallSheet from './common/IosInstallSheet.vue'
 
 interface BackendInfo {
   id: string
@@ -47,6 +76,7 @@ interface BackendInfo {
   specialty: string
   default_cmd: string
   thinking_effort_levels?: string[]
+  embedded?: boolean
 }
 
 const STORAGE_KEY = 'clawbench_welcome_dismissed'
@@ -58,9 +88,23 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const pwaInstall = usePwaInstall()
 const visible = ref(false)
 const backends = ref<BackendInfo[]>([])
 const detectedBackends = ref<Set<string>>(new Set())
+const showIosSheet = ref(false)
+
+// Sort: installed/built-in first, not-installed last
+const sortedBackends = computed(() => {
+  return [...backends.value].sort((a, b) => {
+    const aDetected = detectedBackends.value.has(a.id)
+    const bDetected = detectedBackends.value.has(b.id)
+    if (aDetected !== bDetected) return aDetected ? -1 : 1
+    return 0
+  })
+})
+
+const showInstallSection = computed(() => pwaInstall.showPwaInstall.value || pwaInstall.showApkDownload.value)
 
 async function loadBackends() {
   try {
@@ -94,6 +138,18 @@ function dontShowAgain() {
   localStorage.setItem(STORAGE_KEY, 'true')
   visible.value = false
   emit('dismissed')
+}
+
+async function handlePwaInstall() {
+  if (pwaInstall.canInstallPwa.value) {
+    await pwaInstall.installPwa()
+  } else if (pwaInstall.isIOS.value) {
+    showIosSheet.value = true
+  }
+}
+
+function handleApkDownload() {
+  window.location.href = '/api/apk'
 }
 
 onMounted(loadBackends)
@@ -172,6 +228,7 @@ onMounted(loadBackends)
 
 .backends-list {
   flex: 1;
+  max-height: 40vh;
   overflow-y: auto;
   padding: 0 12px;
   display: flex;
@@ -189,6 +246,10 @@ onMounted(loadBackends)
   border: 1px solid var(--border-color);
   text-align: left;
   align-items: center;
+}
+
+.backend-not-detected {
+  opacity: 0.5;
 }
 
 .backend-icon {
@@ -234,9 +295,41 @@ onMounted(loadBackends)
   color: var(--accent-color);
 }
 
+.badge-builtin {
+  background: color-mix(in srgb, var(--accent-color) 20%, transparent);
+  color: var(--accent-color);
+}
+
 .badge-not-installed {
   background: var(--bg-tertiary);
   color: var(--text-muted);
+}
+
+/* Install section */
+.welcome-install {
+  padding: 8px 12px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.welcome-install-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-color) 8%, var(--bg-primary));
+  border: 1px solid color-mix(in srgb, var(--accent-color) 20%, var(--border-color));
+  color: var(--accent-color);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.welcome-install-row:hover {
+  background: color-mix(in srgb, var(--accent-color) 15%, var(--bg-primary));
 }
 
 .welcome-footer {

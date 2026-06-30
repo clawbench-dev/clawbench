@@ -289,6 +289,10 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// non-sensitive debug logs. Auth is unnecessary and would block the feature.
 	register("/api/android-log", ServeAndroidLog)
 
+	// Android APK download — intentionally unauthenticated:
+	// APK is a public resource; users need to download it before they can even log in.
+	register("/api/apk", ServeAPK)
+
 	// File watch SSE (auto-refresh on file changes)
 	register("/api/file/watch", middleware.Auth(FileWatchSSE))
 	register("/api/file/watch/update", middleware.Auth(FileWatchUpdate))

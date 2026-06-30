@@ -129,6 +129,13 @@ if [ -n "$BUILD_ANDROID" ]; then
         (cd android && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew assembleRelease \
             -PversionCode=$VERSION_CODE -PversionName="$FULL_VERSION")
         echo "  APK: android/app/build/outputs/apk/release/clawbench-android.apk"
+        if [ -f android/app/build/outputs/apk/release/clawbench-android.apk ]; then
+            mkdir -p public/assets
+            cp android/app/build/outputs/apk/release/clawbench-android.apk public/assets/
+            echo "  APK copied to public/assets/"
+        else
+            echo "  Warning: APK not found at expected path, skipping copy"
+        fi
     else
         echo "  Android project not found, skipping APK build"
     fi
