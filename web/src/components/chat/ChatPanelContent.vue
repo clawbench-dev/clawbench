@@ -940,7 +940,32 @@ function handleSummaryUpdate(e) {
 function handleToggleSummary(msgId) {
     const msg = messages.value.find(m => m.id === msgId)
     if (!msg) return
+    // Pin the toggle button's viewport position so it doesn't jump when
+    // the message content height changes (summary → original or vice versa).
+    const scrollEl = messageListRef.value?.messagesRef
+    let btnTop = null
+    if (scrollEl) {
+        // Find the SummaryToggle button inside this message's meta bar
+        const msgKey = msg.id ? 'db-' + msg.id : null
+        if (msgKey) {
+            const msgEl = scrollEl.querySelector(`[data-msg-key="${msgKey}"] .chat-meta-bar`)
+            if (msgEl) btnTop = msgEl.getBoundingClientRect().top
+        }
+    }
     msg.showingSummary = !msg.showingSummary
+    if (btnTop !== null && scrollEl) {
+        nextTick(() => {
+            const msgKey = msg.id ? 'db-' + msg.id : null
+            if (!msgKey) return
+            const msgEl = scrollEl.querySelector(`[data-msg-key="${msgKey}"] .chat-meta-bar`)
+            if (!msgEl) return
+            const newTop = msgEl.getBoundingClientRect().top
+            const delta = newTop - btnTop
+            if (Math.abs(delta) > 1) {
+                scrollEl.scrollTop += delta
+            }
+        })
+    }
 }
 
 // RAG detail drawer
