@@ -120,7 +120,6 @@ export function handleCodeBlockClick(event: MouseEvent): boolean {
         const text = (code || pre).textContent || ''
         copyText(text)
         // Show "Copied!" on the button briefly
-        const originalHTML = btn.innerHTML
         const originalTitle = btn.getAttribute('title') || ''
         const originalAriaLabel = btn.getAttribute('aria-label') || ''
         btn.innerHTML = `<span class="code-block-copied-text">${gt('common.copied')}</span>`
@@ -128,7 +127,7 @@ export function handleCodeBlockClick(event: MouseEvent): boolean {
         btn.setAttribute('title', gt('common.copied'))
         btn.setAttribute('aria-label', gt('common.copied'))
         setTimeout(() => {
-            btn.innerHTML = originalHTML
+            btn.innerHTML = COPY_ICON_SVG // restore from constant to avoid race condition
             btn.classList.remove('is-copied')
             btn.setAttribute('title', originalTitle)
             btn.setAttribute('aria-label', originalAriaLabel)
