@@ -157,8 +157,9 @@ describe('handleCodeBlockClick', () => {
     wrapper.remove()
   })
 
-  it('skips copy when already showing "is-copied" feedback', () => {
-    const { copyText } = require('@/utils/clipboard.ts')
+  it('skips copy when already showing "is-copied" feedback', async () => {
+    const { copyText } = await import('@/utils/clipboard.ts')
+    vi.mocked(copyText).mockClear()
     const wrapper = document.createElement('div')
     wrapper.className = 'code-block-wrapper'
     const header = document.createElement('div')
