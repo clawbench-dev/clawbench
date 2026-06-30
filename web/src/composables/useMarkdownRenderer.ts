@@ -104,7 +104,7 @@ export function renderMarkdown(
     // 3. 净化HTML（防止XSS攻击）
     // 注意：KaTeX渲染后的HTML需要 ADD_TAGS:['math'] 保留 <math> 标签
     if (sanitize) {
-        html = DOMPurify.sanitize(html, { ADD_TAGS: ['math'] })
+        html = DOMPurify.sanitize(html, { ADD_TAGS: ['math', 'button'], ADD_ATTR: ['data-action', 'aria-label', 'title', 'data-file-path', 'data-line-start', 'data-line-end', 'data-fallback-path', 'data-commit-sha', 'data-worktree-path'] })
     }
 
     // 4. 修复图片路径

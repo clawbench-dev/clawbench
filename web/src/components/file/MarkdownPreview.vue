@@ -47,6 +47,7 @@ import { useMarkdownRenderer } from '@/composables/useMarkdownRenderer.ts'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
+import { annotateCodeBlockHeaders, handleCodeBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { store } from '@/stores/app.ts'
 import { dirName, splitPath, joinPath } from '@/utils/path.ts'
 import { flashRanges, flashType } from '@/composables/useFileRefresh.ts'
@@ -127,6 +128,9 @@ const { renderMarkdown, renderMermaidInElement } = useMarkdownRenderer()
 const { annotateFilePaths, verifyFilePaths, resolveRelativePath, openFilePath } = useFilePathAnnotation()
 
 function handleClick(event: MouseEvent) {
+    // Code block header buttons (copy/wrap)
+    if (handleCodeBlockClick(event)) return
+
     // Check for diff marker click first
     if (handleDiffMarkerClick(event, '.diff-marker-inline')) return
 
@@ -260,6 +264,9 @@ async function doRender(f: { content: string; path?: string; error?: boolean }) 
         sanitize: false,
         fixImagePaths: fixLocalImagePaths
     })
+
+    // Add code block headers (language label + copy/wrap buttons)
+    html = annotateCodeBlockHeaders(html)
 
     const currentDir = f?.path ? dirName(f.path) : ''
     const { html: annotatedHtml, detectedPaths } = annotateFilePaths(html, {

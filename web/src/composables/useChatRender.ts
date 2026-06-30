@@ -19,6 +19,7 @@ import {
   taskChanged,
   StaticBlockCache,
 } from '@/utils/streamPerf.ts'
+import { annotateCodeBlockHeaders } from '@/composables/useCodeBlockHeader.ts'
 import {
   rewriteImageUrls,
   convertAudioLinks,
@@ -174,9 +175,11 @@ export function useChatRender(options: { messages: any; theme: any; currentSessi
       html = renderKatexInString(html)
     }
 
-    html = DOMPurify.sanitize(html, { ADD_TAGS: ['math', 'button', 'rag-results', 'rag-item', 'session-id', 'session-title', 'created-at', 'summary'], ADD_ATTR: ['data-file-path', 'data-fallback-path', 'data-line-start', 'data-line-end', 'data-commit-sha', 'data-worktree-path', 'data-url', 'data-port', 'data-protocol', 'data-table-idx', 'data-row-idx', 'title'] })
+    html = DOMPurify.sanitize(html, { ADD_TAGS: ['math', 'button', 'rag-results', 'rag-item', 'session-id', 'session-title', 'created-at', 'summary'], ADD_ATTR: ['data-file-path', 'data-fallback-path', 'data-line-start', 'data-line-end', 'data-commit-sha', 'data-worktree-path', 'data-url', 'data-port', 'data-protocol', 'data-table-idx', 'data-row-idx', 'data-action', 'aria-label', 'title'] })
     html = html.replace(/<table>/g, '<div class="table-wrap"><table>').replace(/<\/table>/g, '</table></div>')
     html = injectTableRowAttrs(html)
+    // Code block headers: add language label + copy/wrap buttons
+    html = annotateCodeBlockHeaders(html)
 
     if (!skipEnhancements) {
       // Image styling, audio links, annotations: deferred to post-streaming

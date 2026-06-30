@@ -127,6 +127,7 @@ import UserMsgIndexSheet from './UserMsgIndexSheet.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
+import { handleCodeBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { useDialog } from '@/composables/useDialog'
 import { useUserMsgIndex } from '@/composables/useUserMsgIndex.ts'
@@ -199,6 +200,9 @@ const chatUI = inject('chatUI', {})
 const hotSwitchProject = inject('hotSwitchProject', null)
 
 async function handleChatClick(event) {
+  // 0. Code block header buttons (copy/wrap)
+  if (handleCodeBlockClick(event)) return
+
   // 1. Handle localhost URL clicks (icon button or <a> tag) — App mode only
   if (handleLocalhostUrlClick(event)) return
 
