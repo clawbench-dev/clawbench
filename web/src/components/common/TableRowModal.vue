@@ -24,6 +24,7 @@ import ModalDialog from '@/components/common/ModalDialog.vue'
 import { copyText } from '@/utils/clipboard.ts'
 import { gt } from '@/composables/useLocale'
 import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
+import { handleCodeBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { useDialog } from '@/composables/useDialog.ts'
 import { store } from '@/stores/app.ts'
@@ -60,6 +61,9 @@ function handleValueDblClick(event) {
 
 async function handleValueClick(event) {
   const target = event.target
+
+  // 0. Code block copy/wrap button
+  if (handleCodeBlockClick(event)) return
 
   // 1. Localhost URL button
   if (handleLocalhostUrlClick(event)) return

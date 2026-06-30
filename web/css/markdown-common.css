@@ -1,6 +1,6 @@
 /* ==========================================================================
    Common Markdown Styles
-   Shared by: .markdown-body (file preview), .chat-message.assistant and .chat-message.user (chat)
+   Shared by: .markdown-body (file preview), .chat-message.assistant and .chat-message.user (chat), .table-row-value (table row modal)
    ========================================================================== */
 
 /* Strong / Bold — font-weight + text-shadow for cross-device consistency
@@ -36,6 +36,11 @@
 .chat-message.assistant a:hover,
 .table-row-value a:hover {
     text-decoration: underline;
+}
+
+.table-row-value a {
+    word-break: break-all;
+    overflow-wrap: break-word;
 }
 
 /* User message links use lighter blue for readability on blue background */
@@ -312,12 +317,41 @@
 .table-row-value pre {
     margin: 6px 0;
     padding: 8px;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-sm); /* overridden to 0 by .code-block-wrapper pre when wrapped */
 }
 
 .table-row-value blockquote {
     margin: 6px 0;
     padding: 4px 12px;
+}
+
+/* ── Table row modal layout overrides ── */
+.table-row-value p {
+    margin: 3px 0;
+}
+
+.table-row-value h1,
+.table-row-value h2,
+.table-row-value h3 {
+    margin: 6px 0 3px;
+    font-weight: 600;
+}
+
+.table-row-value h1 { font-size: 16px; }
+.table-row-value h2 { font-size: 14px; }
+.table-row-value h3 { font-size: 13px; }
+
+.table-row-value img {
+    margin: 6px 0;
+}
+
+.table-row-value hr {
+    margin: 8px 0;
+}
+
+.table-row-value ul,
+.table-row-value ol {
+    margin: 6px 0;
 }
 
 .table-row-nav-btn {
@@ -396,16 +430,16 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
+    width: 18px;
+    height: 18px;
+    border-radius: 3px;
     border: none;
     background: transparent;
     color: var(--text-secondary);
     cursor: pointer;
     vertical-align: middle;
     margin-left: 1px;
-    padding: 0;
+    padding: 2px;
     line-height: 1;
     opacity: 0.5;
     transition: opacity 0.15s, color 0.15s;
