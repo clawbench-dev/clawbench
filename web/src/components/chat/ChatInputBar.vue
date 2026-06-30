@@ -4,7 +4,6 @@
     <div class="chat-top-actions">
       <div class="chat-action-group">
         <span class="chat-group-label" :title="t('chat.actions.session')">
-          <MessageSquare :size="12" />
           {{ t('chat.actions.session') }}
         </span>
         <button class="chat-action-btn" :class="{ 'has-unread': chatUnreadCount > 0, 'has-running': chatRunning }"
@@ -977,19 +976,19 @@ defineExpose({
 
 .chat-action-group .chat-action-btn {
     border-radius: 0;
+    height: auto;
 }
 
 .chat-action-group .chat-action-btn:first-child {
     border-radius: 0;
 }
 
-/* Group label: subtle icon identifying the button group */
+/* Group label: subtle text identifying the button group */
 .chat-group-label {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 3px;
-    padding: 5px 6px 5px 8px;
+    padding: 5px 6px;
     color: var(--text-muted, #999);
     background: var(--bg-tertiary, #f0f0f0);
     pointer-events: none;
