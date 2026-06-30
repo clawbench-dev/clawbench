@@ -318,7 +318,7 @@ func TestAddChatMessage_AutoTitleFromFiles_LongNamesTruncated(t *testing.T) {
 	title, err := service.GetSessionTitle(sid)
 	assert.NoError(t, err)
 	// Title should be truncated to 50 runes + "..."
-	assert.Equal(t, string([]rune(longName1+", "+longName2)[:50])+"...", title)
+	assert.Equal(t, string([]rune(longName1 + ", " + longName2)[:50])+"...", title)
 }
 
 func TestAddChatMessage_AutoTitleFromFiles_WithPathStripsToBasename(t *testing.T) {
