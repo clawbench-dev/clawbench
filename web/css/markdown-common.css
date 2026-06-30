@@ -9,7 +9,9 @@
 .markdown-body strong,
 .markdown-body b,
 .chat-message.assistant strong,
-.chat-message.assistant b {
+.chat-message.assistant b,
+.table-row-value strong,
+.table-row-value b {
     font-weight: bold;
     text-shadow: 0 0 1px currentColor;
     color: var(--text-bold);
@@ -24,13 +26,15 @@
 
 /* Links */
 .markdown-body a,
-.chat-message.assistant a {
+.chat-message.assistant a,
+.table-row-value a {
     color: var(--accent-color);
     text-decoration: none;
 }
 
 .markdown-body a:hover,
-.chat-message.assistant a:hover {
+.chat-message.assistant a:hover,
+.table-row-value a:hover {
     text-decoration: underline;
 }
 
@@ -47,7 +51,8 @@
 
 /* Blockquote */
 .markdown-body blockquote,
-.chat-message.assistant blockquote {
+.chat-message.assistant blockquote,
+.table-row-value blockquote {
     border-left: 3px solid var(--border-color);
     background: var(--bg-secondary);
     border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
@@ -61,7 +66,8 @@
 
 /* Inline Code */
 .markdown-body code,
-.chat-message.assistant code {
+.chat-message.assistant code,
+.table-row-value code {
     background: var(--bg-tertiary);
     border-radius: 4px;
 }
@@ -74,14 +80,32 @@
 
 /* Code Block */
 .markdown-body pre,
-.chat-message.assistant pre {
+.chat-message.assistant pre,
+.table-row-value pre {
     background: var(--bg-tertiary);
     overflow-x: auto;
 }
 
+/* Code block wrapper: unified rounded container for header + code */
+.markdown-body .code-block-wrapper,
+.chat-message.assistant .code-block-wrapper,
+.table-row-value .code-block-wrapper {
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.markdown-body .code-block-wrapper pre,
+.chat-message.assistant .code-block-wrapper pre,
+.table-row-value .code-block-wrapper pre {
+    background: var(--code-bg, var(--bg-tertiary));
+    border-radius: 0; /* wrapper handles border-radius */
+    margin: 0;
+}
+
 /* Per-line code block uses --code-bg to match CodePreview */
 .markdown-body pre.code-block-pre,
-.chat-message.assistant pre.code-block-pre {
+.chat-message.assistant pre.code-block-pre,
+.table-row-value pre.code-block-pre {
     background: var(--code-bg, var(--bg-tertiary));
 }
 
@@ -91,9 +115,55 @@
     overflow-x: auto;
 }
 
+/* User message code block wrapper: translucent overlay on blue background */
+.chat-message.user .code-block-wrapper {
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.chat-message.user .code-block-wrapper pre {
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: 0;
+    margin: 0;
+}
+
+.chat-message.user .code-block-wrapper .code-block-header {
+    background: rgba(0, 0, 0, 0.1);
+    border-bottom-color: rgba(255, 255, 255, 0.15);
+}
+
+.chat-message.user .code-block-wrapper .code-block-lang {
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.chat-message.user .code-block-copy-btn,
+.chat-message.user .code-block-wrap-btn {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.chat-message.user .code-block-copy-btn:hover,
+.chat-message.user .code-block-wrap-btn:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.chat-message.user .code-block-copy-btn:active,
+.chat-message.user .code-block-wrap-btn:active {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.chat-message.user .code-block-wrap-btn.is-wrapped {
+    color: #ffffff;
+}
+
+.chat-message.user .code-block-copy-btn.is-copied {
+    color: #ffffff;
+}
+
 .markdown-body pre code,
 .chat-message.assistant pre code,
-.chat-message.user pre code {
+.chat-message.user pre code,
+.table-row-value pre code {
     background: transparent;
     padding: 0;
 }
@@ -104,13 +174,16 @@
 .chat-message.assistant ul,
 .chat-message.assistant ol,
 .chat-message.user ul,
-.chat-message.user ol {
+.chat-message.user ol,
+.table-row-value ul,
+.table-row-value ol {
     padding-left: 20px;
 }
 
 .markdown-body li,
 .chat-message.assistant li,
-.chat-message.user li {
+.chat-message.user li,
+.table-row-value li {
     margin: 3px 0;
 }
 
@@ -233,6 +306,18 @@
 
 .table-row-value code {
     font-size: 13px;
+    padding: 1px 4px;
+}
+
+.table-row-value pre {
+    margin: 6px 0;
+    padding: 8px;
+    border-radius: var(--radius-sm);
+}
+
+.table-row-value blockquote {
+    margin: 6px 0;
+    padding: 4px 12px;
 }
 
 .table-row-nav-btn {
@@ -258,7 +343,8 @@
 /* Image */
 .markdown-body img,
 .chat-message.assistant img,
-.chat-message.user img {
+.chat-message.user img,
+.table-row-value img {
     max-width: 100%;
     max-height: 60dvh;
     object-fit: contain;
@@ -274,7 +360,8 @@
 
 /* Horizontal Rule */
 .markdown-body hr,
-.chat-message.assistant hr {
+.chat-message.assistant hr,
+.table-row-value hr {
     border: none;
     border-top: 1px solid var(--border-color);
 }
@@ -288,13 +375,15 @@
 /* Deleted Text */
 .markdown-body del,
 .chat-message.assistant del,
-.chat-message.user del {
+.chat-message.user del,
+.table-row-value del {
     color: color-mix(in srgb, var(--text-secondary) 70%, transparent);
 }
 
 /* File path annotation & open button */
 .markdown-body .chat-file-path,
-.chat-message.assistant .chat-file-path {
+.chat-message.assistant .chat-file-path,
+.table-row-value .chat-file-path {
     font-family: monospace;
     background: var(--bg-secondary);
     border-radius: 3px;
@@ -302,7 +391,8 @@
 }
 
 .markdown-body .chat-file-open-btn,
-.chat-message.assistant .chat-file-open-btn {
+.chat-message.assistant .chat-file-open-btn,
+.table-row-value .chat-file-open-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -353,20 +443,23 @@
 }
 
 .markdown-body .chat-file-open-btn:hover,
-.chat-message.assistant .chat-file-open-btn:hover {
+.chat-message.assistant .chat-file-open-btn:hover,
+.table-row-value .chat-file-open-btn:hover {
     opacity: 1;
     color: var(--accent-color, #3b82f6);
 }
 
 /* Project-external file open button — orange icon */
 .markdown-body .chat-file-open-btn.external,
-.chat-message.assistant .chat-file-open-btn.external {
+.chat-message.assistant .chat-file-open-btn.external,
+.table-row-value .chat-file-open-btn.external {
     opacity: 0.7;
     color: #e67e22;
 }
 
 .markdown-body .chat-file-open-btn.external:hover,
-.chat-message.assistant .chat-file-open-btn.external:hover {
+.chat-message.assistant .chat-file-open-btn.external:hover,
+.table-row-value .chat-file-open-btn.external:hover {
     opacity: 1;
     color: #d35400;
 }
@@ -378,6 +471,7 @@
 
 .markdown-body .chat-file-open-btn svg,
 .chat-message.assistant .chat-file-open-btn svg,
-.chat-message.user .chat-file-open-btn svg {
+.chat-message.user .chat-file-open-btn svg,
+.table-row-value .chat-file-open-btn svg {
     display: block;
 }
