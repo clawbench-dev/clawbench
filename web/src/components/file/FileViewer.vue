@@ -195,7 +195,7 @@ import { useFileNavStack } from '@/composables/useFileNavStack.ts'
 
 const { t } = useI18n()
 const { isAppMode } = useAppMode()
-const { drawerVisible, drawerMarkerType, drawerCharDiff, drawerDiffLines, closeDrawer } = useDiffDrawer()
+const { drawerMarkerType, drawerCharDiff, drawerDiffLines, closeDrawer } = useDiffDrawer()
 const diffDrawer = useTabDrawer('browse', diffDrawerVisible)
 
 const props = defineProps({
