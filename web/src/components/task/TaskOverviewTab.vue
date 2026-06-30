@@ -98,7 +98,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { Pencil, Pause, Play, Zap, Trash2, History, CalendarClock, MessageSquare } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useTaskOverview } from '@/composables/useTaskOverview.ts'
@@ -106,7 +106,8 @@ import { useMarkdownRenderer } from '@/composables/useMarkdownRenderer'
 import { useAgents } from '@/composables/useAgents'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useWorktreeAnnotation } from '@/composables/useWorktreeAnnotation.ts'
-import { annotateCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
+import { annotateCommitHashes, verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
+import { annotateLocalhostUrls, useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { annotateCodeBlockHeaders, handleCodeBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { store } from '@/stores/app.ts'
 import { humanizeCron, repeatLabel, formatDateTime } from '@/utils/format'
@@ -116,6 +117,7 @@ const { renderMarkdown } = useMarkdownRenderer()
 const { getAgentIcon, getAgentName } = useAgents()
 const { annotateFilePaths, verifyFilePaths, openFilePath } = useFilePathAnnotation()
 const { annotateWorktreePaths } = useWorktreeAnnotation()
+const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 
 const props = defineProps<{
   task: any
@@ -138,6 +140,8 @@ const { actionLoading, triggerTask, pauseTask, resumeTask, deleteTask } = useTas
 })
 
 const promptBodyRef = ref<HTMLElement | null>(null)
+const renderedPrompt = ref('')
+let promptRenderId = 0
 
 function copyId() {
   if (props.task.id) {
@@ -155,32 +159,53 @@ const statusText = computed(() => {
   return map[props.task.status] || props.task.status
 })
 
-const renderedPrompt = computed(() => {
-  const projectRoot = store.state.projectRoot
-  const homeDir = store.state.homeDir
-  let html = renderMarkdown(props.task.prompt || '', { sanitize: true })
-  // Add code block headers (language label + copy/wrap buttons)
-  html = annotateCodeBlockHeaders(html)
-  // Annotate worktree paths BEFORE file paths — prevents partial matches
-  const { html: worktreeHtml } = annotateWorktreePaths(html, { projectRoot })
-  html = worktreeHtml
-  // Annotate file paths
-  const { html: annotatedHtml, detectedPaths } = annotateFilePaths(html, { projectRoot, homeDir })
-  // Annotate commit hashes
-  const { html: finalHtml } = annotateCommitHashes(annotatedHtml)
-  // Async verify file paths after render
-  if (detectedPaths.length > 0) {
-    const uniquePaths = [...new Set(detectedPaths)]
-    nextTick(() => {
-      if (promptBodyRef.value) {
-        verifyFilePaths(uniquePaths, promptBodyRef.value)
-      }
-    })
-  }
-  return finalHtml
-})
+watch(
+  () => [props.task.prompt, store.state.projectRoot, store.state.homeDir] as const,
+  ([prompt, projectRoot, homeDir]) => {
+    const renderId = ++promptRenderId
+    let html = renderMarkdown(prompt || '', { sanitize: true })
+    // Add code block headers (language label + copy/wrap buttons)
+    html = annotateCodeBlockHeaders(html)
+    // Annotate worktree paths BEFORE file paths — prevents partial matches
+    const { html: worktreeHtml } = annotateWorktreePaths(html, { projectRoot })
+    html = worktreeHtml
+    // Annotate file paths
+    const { html: annotatedHtml, detectedPaths } = annotateFilePaths(html, { projectRoot, homeDir })
+    // Annotate commit hashes
+    const { html: commitHtml, detectedSHAs } = annotateCommitHashes(annotatedHtml)
+    // Annotate localhost URLs
+    html = annotateLocalhostUrls(commitHtml)
+
+    renderedPrompt.value = html
+
+    // Async verify file paths after DOM update
+    if (detectedPaths.length > 0) {
+      const uniquePaths = [...new Set(detectedPaths)]
+      nextTick(() => {
+        if (renderId !== promptRenderId) return
+        if (promptBodyRef.value) {
+          verifyFilePaths(uniquePaths, promptBodyRef.value)
+        }
+      })
+    }
+    // Async verify commit hashes after DOM update
+    if (detectedSHAs.length > 0) {
+      const uniqueSHAs = [...new Set(detectedSHAs)]
+      nextTick(() => {
+        if (renderId !== promptRenderId) return
+        if (promptBodyRef.value) {
+          verifyCommitHashes(uniqueSHAs, promptBodyRef.value)
+        }
+      })
+    }
+  },
+  { immediate: true }
+)
 
 function handlePromptClick(event: MouseEvent) {
+  // Handle localhost URL clicks
+  if (handleLocalhostUrlClick(event)) return
+
   // Code block header buttons (copy/wrap)
   if (handleCodeBlockClick(event)) return
 
