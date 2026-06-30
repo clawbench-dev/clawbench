@@ -83,7 +83,7 @@
     </div>
 
     <!-- File changes sheet -->
-    <FileChangesSheet
+    <FileChangesDrawer
       :open="fileChangesDrawer.effectiveOpen.value"
       :created="fileChanges.created"
       :modified="fileChanges.modified"
@@ -113,7 +113,7 @@ import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
 import { store } from '@/stores/app.ts'
 import ContentBlocks from './ContentBlocks.vue'
 import FileAttachmentList from './FileAttachmentList.vue'
-import FileChangesSheet from './FileChangesSheet.vue'
+import FileChangesDrawer from './FileChangesDrawer.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import SummaryToggle from '@/components/common/SummaryToggle.vue'
 

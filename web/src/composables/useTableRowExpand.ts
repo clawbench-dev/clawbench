@@ -4,7 +4,7 @@ import { parseTableDataFromElement, onTableMouseDown, onTableTouchStart, isTable
 /**
  * Composable for table row expand modal.
  * Provides modal state, navigation, drag guard, and a unified click handler.
- * Used by ChatMessageList, ToolDetailOverlay, TaskExecDetail, and MarkdownPreview.
+ * Used by ChatMessageList, ToolDetailDrawer, TaskExecDetail, and MarkdownPreview.
  */
 export function useTableRowExpand() {
   const tableRowModal = ref<{ headers: string[], rows: string[][], currentIndex: number } | null>(null)

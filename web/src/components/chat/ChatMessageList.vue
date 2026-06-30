@@ -96,7 +96,7 @@
   </Transition>
 
   <!-- User message index drawer -->
-  <UserMsgIndexSheet
+  <UserMsgIndexDrawer
     :open="userMsgIndexDrawer.effectiveOpen.value"
     :messages="userMsgIndexList"
     :active-id="nearestUserMsgId"
@@ -123,7 +123,7 @@ import { ref, nextTick, inject, computed, watch, onMounted, onBeforeUnmount } fr
 import { useI18n } from 'vue-i18n'
 import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown } from 'lucide-vue-next'
 import ChatMessageItem from './ChatMessageItem.vue'
-import UserMsgIndexSheet from './UserMsgIndexSheet.vue'
+import UserMsgIndexDrawer from './UserMsgIndexDrawer.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'

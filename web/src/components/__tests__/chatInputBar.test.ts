@@ -140,7 +140,7 @@ function mountInputBar(props = {}) {
       stubs: {
         Teleport: TeleportStub,
         PopupMenu: true,
-        QuickSendDialog: true,
+        QuickSendDrawer: true,
       },
       plugins: [i18n],
     },

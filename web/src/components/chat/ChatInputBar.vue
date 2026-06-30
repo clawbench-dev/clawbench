@@ -166,7 +166,7 @@
       </PopupMenu>
       <!-- Session settings modal -->
       <SessionSettingModal
-        :show="showSettingsModal"
+        :show="settingsDrawer.effectiveOpen.value"
         :agent-id="currentAgentId"
         :initial-tab="settingsModalInitialTab"
         @update:show="showSettingsModal = $event"
@@ -175,7 +175,7 @@
         @switch-mode="handleSwitchMode"
         @switch-transport="handleSwitchTransport"
       />
-      <QuickSendDialog :open="quickSendDrawer.effectiveOpen.value" @close="quickSendStore.showEditDialog.value = false" />
+      <QuickSendDrawer :open="quickSendDrawer.effectiveOpen.value" @close="quickSendStore.showEditDialog.value = false" />
       <!-- @ command autocomplete menu (ClawBench built-in) -->
       <PopupMenu v-model:show="showAtMenu" :target-element="textareaRef" anchor="left" :max-width="260" :max-height="200" :menu-items-count="atMenuItems.length">
         <div class="at-menu-title">{{ t('chat.atCommand.title') }}</div>
@@ -259,7 +259,7 @@ import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, FileImag
 import { baseName } from '@/utils/path.ts'
 import { computeRecentReferencedFiles, computeHasFileGroups, computeAttachMenuItemCount } from '@/utils/chatInputUtils.ts'
 import PopupMenu from '@/components/common/PopupMenu.vue'
-import QuickSendDialog from '@/components/chat/QuickSendDialog.vue'
+import QuickSendDrawer from '@/components/chat/QuickSendDrawer.vue'
 import SessionSettingModal from '@/components/chat/SessionSettingModal.vue'
 import { createStopButtonMachine } from '@/utils/stopButtonMachine.ts'
 import { useDialog } from '@/composables/useDialog.ts'
@@ -316,7 +316,10 @@ const usageTooltip = computed(() => {
 const dialog = useDialog()
 const quickSendStore = useQuickSend()
 const { items: quickSendItems, fetchItems } = quickSendStore
+const showSettingsModal = ref(false)
+const settingsModalInitialTab = ref('model')
 const quickSendDrawer = useTabDrawer('chat', quickSendStore.showEditDialog)
+const settingsDrawer = useTabDrawer('chat', showSettingsModal)
 
 // ── Rotating placeholder ──
 const placeholderIndex = ref(0)
@@ -419,8 +422,6 @@ const showAttachMenu = ref(false)
 const attachMenuRef = ref(null)
 const showQuickMenu = ref(false)
 const sendBtnRef = ref(null)
-const showSettingsModal = ref(false)
-const settingsModalInitialTab = ref('model')
 
 function openSettingsModal(tab) {
   settingsModalInitialTab.value = tab

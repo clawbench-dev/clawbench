@@ -263,7 +263,7 @@ func TestAddChatMessage_AutoTitleEmptyContentWithFiles(t *testing.T) {
 
 	title, err := service.GetSessionTitle(sid)
 	assert.NoError(t, err)
-	assert.Equal(t, "NewSession", title)
+	assert.Equal(t, "file1.txt", title)
 }
 
 func TestAddChatMessage_AutoTitleEmptyContentNoFiles(t *testing.T) {
@@ -277,6 +277,74 @@ func TestAddChatMessage_AutoTitleEmptyContentNoFiles(t *testing.T) {
 	title, err := service.GetSessionTitle(sid)
 	assert.NoError(t, err)
 	assert.Equal(t, "NewSession", title)
+}
+
+func TestAddChatMessage_AutoTitleFromFiles_SingleFile(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "New Session")
+
+	_, err := service.AddChatMessage("/project", "claude", sid, "user", "", []string{"/src/main.go"}, false, "NewSession")
+	assert.NoError(t, err)
+
+	title, err := service.GetSessionTitle(sid)
+	assert.NoError(t, err)
+	assert.Equal(t, "main.go", title)
+}
+
+func TestAddChatMessage_AutoTitleFromFiles_MultipleFiles(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "New Session")
+
+	_, err := service.AddChatMessage("/project", "claude", sid, "user", "", []string{"photo.jpg", "document.pdf"}, false, "NewSession")
+	assert.NoError(t, err)
+
+	title, err := service.GetSessionTitle(sid)
+	assert.NoError(t, err)
+	assert.Equal(t, "photo.jpg, document.pdf", title)
+}
+
+func TestAddChatMessage_AutoTitleFromFiles_LongNamesTruncated(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "New Session")
+
+	longName1 := strings.Repeat("a", 30) + ".txt"
+	longName2 := strings.Repeat("b", 30) + ".txt"
+	_, err := service.AddChatMessage("/project", "claude", sid, "user", "", []string{longName1, longName2}, false, "NewSession")
+	assert.NoError(t, err)
+
+	title, err := service.GetSessionTitle(sid)
+	assert.NoError(t, err)
+	// Title should be truncated to 50 runes + "..."
+	assert.Equal(t, string([]rune(longName1+", "+longName2)[:50])+"...", title)
+}
+
+func TestAddChatMessage_AutoTitleFromFiles_WithPathStripsToBasename(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "New Session")
+
+	_, err := service.AddChatMessage("/project", "claude", sid, "user", "", []string{"/home/user/project/.clawbench/uploads/image.png"}, false, "NewSession")
+	assert.NoError(t, err)
+
+	title, err := service.GetSessionTitle(sid)
+	assert.NoError(t, err)
+	assert.Equal(t, "image.png", title)
+}
+
+func TestAddChatMessage_AutoTitleFromFiles_TextTakesPrecedence(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "New Session")
+
+	_, err := service.AddChatMessage("/project", "claude", sid, "user", "My question", []string{"/src/main.go"}, false, "NewSession")
+	assert.NoError(t, err)
+
+	title, err := service.GetSessionTitle(sid)
+	assert.NoError(t, err)
+	assert.Equal(t, "My question", title)
 }
 
 func TestExtractPlainText_PlainText(t *testing.T) {

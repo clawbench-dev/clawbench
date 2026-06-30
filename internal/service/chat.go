@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -258,8 +259,8 @@ func AddChatMessage(projectPath, backend, sessionID, role, content string, files
 		err = tx.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sessionID).Scan(&count)
 		if err == nil && count == 1 {
 			title := ExtractPlainText(content)
-			if len(files) > 0 && title == "" {
-				title = fallbackTitle
+			if title == "" && len(files) > 0 {
+				title = titleFromFiles(files)
 			}
 			if title == "" {
 				title = fallbackTitle
@@ -280,6 +281,25 @@ func AddChatMessage(projectPath, backend, sessionID, role, content string, files
 	}
 	messageID, _ := result.LastInsertId()
 	return messageID, nil
+}
+
+// titleFromFiles builds a session title from file paths by extracting basenames
+// and joining them with commas. Returns empty string if no files.
+func titleFromFiles(files []string) string {
+	if len(files) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(files))
+	for _, f := range files {
+		name := filepath.Base(f)
+		if name != "" && name != "." {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	return strings.Join(names, ", ")
 }
 
 // GetRecentProjects returns the most recent project paths.

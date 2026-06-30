@@ -4,18 +4,18 @@ import { shouldRetryToolFetch, resolveEffectiveMsgId } from '@/utils/chatStreamU
 import { formatToolOutput } from '@/utils/renderToolDetail.ts'
 import { appLog } from '@/utils/appLog'
 
-const TAG = 'ToolDetailOverlay'
+const TAG = 'ToolDetailDrawer'
 
-interface ToolDetailOverlayOptions {
+interface ToolDetailDrawerOptions {
   chatRender: any
   onFileOpen?: (path: string, lineStart?: number, lineEnd?: number) => void
   findLiveBlock?: (ids: { msgId: string | number; blockIdx: number }) => any | null
 }
 
 /**
- * Shared tool detail overlay logic for ChatPanelContent and TaskExecDetail.
+ * Shared tool detail drawer logic for ChatPanelContent and TaskExecDetail.
  */
-export function useToolDetailOverlay(options: ToolDetailOverlayOptions) {
+export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
   const { chatRender, onFileOpen, findLiveBlock } = options
   const { t } = useI18n()
 

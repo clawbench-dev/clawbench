@@ -59,7 +59,7 @@
   </Transition>
 
   <!-- iOS install instructions sheet -->
-  <IosInstallSheet :open="showIosSheet" @close="showIosSheet = false" />
+  <IosInstallDrawer :open="showIosSheet" @close="showIosSheet = false" />
 </template>
 
 <script setup lang="ts">
@@ -67,7 +67,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { usePwaInstall } from '@/composables/usePwaInstall'
 import { MonitorSmartphone, Smartphone } from 'lucide-vue-next'
-import IosInstallSheet from './common/IosInstallSheet.vue'
+import IosInstallDrawer from './common/IosInstallDrawer.vue'
 
 interface BackendInfo {
   id: string

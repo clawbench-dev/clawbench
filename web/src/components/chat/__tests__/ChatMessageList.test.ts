@@ -130,7 +130,7 @@ function mountComponent(props = {}) {
         ArrowDown: { template: '<span />' },
         ChevronUp: { template: '<span />' },
         List: { template: '<span class="list-icon-stub" />' },
-        UserMsgIndexSheet: { template: '<div class="user-msg-index-sheet-stub" />' },
+        UserMsgIndexDrawer: { template: '<div class="user-msg-index-drawer-stub" />' },
       },
       plugins: [i18n],
     },

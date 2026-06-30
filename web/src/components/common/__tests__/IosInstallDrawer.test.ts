@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
-import IosInstallSheet from '@/components/common/IosInstallSheet.vue'
+import IosInstallDrawer from '@/components/common/IosInstallDrawer.vue'
 
 // ── i18n ─────────────────────────────────────────────────────
 const i18n = createI18n({
@@ -22,7 +22,7 @@ const i18n = createI18n({
 })
 
 function mountSheet(props: Record<string, any> = {}) {
-  return mount(IosInstallSheet, {
+  return mount(IosInstallDrawer, {
     props: {
       open: false,
       ...props,
@@ -45,7 +45,7 @@ function mountSheet(props: Record<string, any> = {}) {
   })
 }
 
-describe('IosInstallSheet', () => {
+describe('IosInstallDrawer', () => {
   it('emits close when the got-it button is clicked', async () => {
     const wrapper = mountSheet({ open: true })
 

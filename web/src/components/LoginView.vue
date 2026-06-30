@@ -132,7 +132,7 @@
     </div>
 
     <!-- iOS install instructions sheet -->
-    <IosInstallSheet :open="showIosSheet" @close="showIosSheet = false" />
+    <IosInstallDrawer :open="showIosSheet" @close="showIosSheet = false" />
   </div>
 </template>
 
@@ -144,7 +144,7 @@ import { usePwaInstall } from '@/composables/usePwaInstall'
 import { useServerList } from '@/composables/useServerList'
 import { formatServerHost } from '@/utils/url'
 import { Server, X, Plus, MonitorSmartphone, Smartphone, ChevronRight } from 'lucide-vue-next'
-import IosInstallSheet from './common/IosInstallSheet.vue'
+import IosInstallDrawer from './common/IosInstallDrawer.vue'
 
 const { t } = useI18n()
 const { isAppMode } = useAppMode()

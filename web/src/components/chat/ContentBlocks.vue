@@ -947,7 +947,7 @@ onUnmounted(() => {
   margin-left: auto;
 }
 
-/* Inline tool detail — only used by AskUserQuestion (other tools use ToolDetailOverlay) */
+/* Inline tool detail — only used by AskUserQuestion (other tools use ToolDetailDrawer) */
 .tool-detail {
   margin: 2px 0 4px 0;
   padding: 6px 8px;

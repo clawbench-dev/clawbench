@@ -128,7 +128,7 @@
         @close="projectDialogOpen = false"
       />
 
-      <FileDetailsDialog
+      <FileDetailsDrawer
         :file="currentFile"
         :open="detailsDrawer.effectiveOpen.value && fileNav.overlayOpen.value"
         @close="detailsOpen = false"
@@ -265,7 +265,7 @@ import ProjectDialog from './components/ProjectDialog.vue'
 import LoginView from './components/LoginView.vue'
 import WelcomeOverlay from './components/WelcomeOverlay.vue'
 import TocDrawer from './components/TocDrawer.vue'
-import FileDetailsDialog from './components/file/FileDetailsDialog.vue'
+import FileDetailsDrawer from './components/file/FileDetailsDrawer.vue'
 import GitHistoryDrawer from './components/git/GitHistoryDrawer.vue'
 import SearchDrawer from './components/common/SearchDrawer.vue'
 import ToastNotification from './components/common/ToastNotification.vue'

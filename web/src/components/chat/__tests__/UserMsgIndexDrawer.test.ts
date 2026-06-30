@@ -20,7 +20,7 @@ vi.mock('@/utils/format.ts', () => ({
   formatRelativeTime: vi.fn(() => '2m ago'),
 }))
 
-import UserMsgIndexSheet from '@/components/chat/UserMsgIndexSheet.vue'
+import UserMsgIndexDrawer from '@/components/chat/UserMsgIndexDrawer.vue'
 
 const i18n = createI18n({
   legacy: false,
@@ -29,13 +29,13 @@ const i18n = createI18n({
 })
 
 function mountSheet(props = {}) {
-  return mount(UserMsgIndexSheet, {
+  return mount(UserMsgIndexDrawer, {
     props: { open: true, messages: [], ...props },
     global: { plugins: [i18n] },
   })
 }
 
-describe('UserMsgIndexSheet', () => {
+describe('UserMsgIndexDrawer', () => {
   describe('truncateText', () => {
     it('renders truncated message text via truncateUserMsg', () => {
       const messages = [

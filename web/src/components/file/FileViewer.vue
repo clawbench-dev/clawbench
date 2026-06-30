@@ -162,7 +162,7 @@
 
     <!-- Shared diff drawer for all file types -->
     <DiffDrawer
-      :visible="drawerVisible"
+      :visible="diffDrawer.effectiveOpen.value"
       :marker-type="drawerMarkerType"
       :char-diff="drawerCharDiff"
       :diff-lines="drawerDiffLines"
@@ -184,6 +184,8 @@ import MarkdownPreview from './MarkdownPreview.vue'
 import CodePreview from './CodePreview.vue'
 import DiffDrawer from './DiffDrawer.vue'
 import { useDiffDrawer } from '@/composables/useDiffDrawer.ts'
+import { diffDrawerVisible } from '@/composables/useMarkdownDiff.ts'
+import { useTabDrawer } from '@/composables/useTabDrawer'
 import { flashRanges, flashType } from '@/composables/useFileRefresh.ts'
 import FileHeader from './FileHeader.vue'
 import { getFileType, formatFileSize } from '@/utils/fileType.ts'
@@ -194,6 +196,7 @@ import { useFileNavStack } from '@/composables/useFileNavStack.ts'
 const { t } = useI18n()
 const { isAppMode } = useAppMode()
 const { drawerVisible, drawerMarkerType, drawerCharDiff, drawerDiffLines, closeDrawer } = useDiffDrawer()
+const diffDrawer = useTabDrawer('browse', diffDrawerVisible)
 
 const props = defineProps({
     file: Object,

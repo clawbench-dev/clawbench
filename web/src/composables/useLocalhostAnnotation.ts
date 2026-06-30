@@ -201,7 +201,7 @@ export function annotateLocalhostUrls(html: string): string {
  * Composable for handling localhost URL click events in rendered chat HTML.
  *
  * Provides two reusable functions that encapsulate the shared click-handling logic
- * used by ChatMessageList, ToolDetailOverlay, and TaskExecDetail:
+ * used by ChatMessageList, ToolDetailDrawer, and TaskExecDetail:
  *
  * - handleLocalhostUrlClick(event): inspects a click event for .chat-url-open-btn
  *   or <a href="localhost:..."> targets, intercepts the default navigation, and

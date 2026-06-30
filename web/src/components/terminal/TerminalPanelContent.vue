@@ -145,7 +145,7 @@
     />
 
     <!-- Quick command edit dialog — only open when terminal tab is active -->
-    <QuickCommandDialog :open="quickCmdDrawer.effectiveOpen.value" @close="showEditDialog = false" />
+    <QuickCommandDrawer :open="quickCmdDrawer.effectiveOpen.value" @close="showEditDialog = false" />
 
     <!-- Key config drawer — only open when terminal tab is active -->
     <KeyConfigDrawer
@@ -170,7 +170,7 @@ import { useI18n } from 'vue-i18n'
 import '@xterm/xterm/css/xterm.css'
 
 import PopupMenu from '@/components/common/PopupMenu.vue'
-import QuickCommandDialog from '@/components/terminal/QuickCommandDialog.vue'
+import QuickCommandDrawer from '@/components/terminal/QuickCommandDrawer.vue'
 import KeyConfigDrawer from '@/components/terminal/KeyConfigDrawer.vue'
 import OutputDrawer from '@/components/terminal/OutputDrawer.vue'
 import TerminalTabMenu from '@/components/terminal/TerminalTabMenu.vue'

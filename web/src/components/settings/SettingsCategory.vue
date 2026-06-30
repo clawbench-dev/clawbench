@@ -38,7 +38,7 @@
       @changed="handlePasswordChanged"
     />
     <!-- iOS install instructions sheet -->
-    <IosInstallSheet :open="showIosSheet" @close="showIosSheet = false" />
+    <IosInstallDrawer :open="showIosSheet" @close="showIosSheet = false" />
   </div>
 </template>
 
@@ -49,7 +49,7 @@ import SettingsItem from './SettingsItem.vue'
 import PasswordChangeDialog from './PasswordChangeDialog.vue'
 import SettingsAgentsIndex from './SettingsAgentsIndex.vue'
 import SettingsAgentDetail from './SettingsAgentDetail.vue'
-import IosInstallSheet from '@/components/common/IosInstallSheet.vue'
+import IosInstallDrawer from '@/components/common/IosInstallDrawer.vue'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useAgents } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast'
