@@ -71,7 +71,7 @@ jobs:
 
   build-linux:
     name: Build Linux amd64
-    needs: build-frontend
+    needs: [build-frontend, build-android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -82,6 +82,15 @@ jobs:
         with:
           name: public
           path: public/
+
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: android-apk/
+
+      - name: Include APK in public/assets/
+        run: mkdir -p public/assets && cp android-apk/clawbench-android.apk public/assets/
 
       - uses: actions/setup-go@v5
         with:
@@ -132,7 +141,7 @@ jobs:
 
   build-linux-arm64:
     name: Build Linux arm64
-    needs: build-frontend
+    needs: [build-frontend, build-android]
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: write
@@ -143,6 +152,15 @@ jobs:
         with:
           name: public
           path: public/
+
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: android-apk/
+
+      - name: Include APK in public/assets/
+        run: mkdir -p public/assets && cp android-apk/clawbench-android.apk public/assets/
 
       - uses: actions/setup-go@v5
         with:
@@ -193,7 +211,7 @@ jobs:
 
   build-windows:
     name: Build Windows amd64
-    needs: build-frontend
+    needs: [build-frontend, build-android]
     runs-on: windows-latest
     permissions:
       contents: write
@@ -204,6 +222,17 @@ jobs:
         with:
           name: public
           path: public/
+
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: android-apk/
+
+      - name: Include APK in public/assets/
+        run: |
+          New-Item -ItemType Directory -Force -Path public/assets | Out-Null
+          Copy-Item android-apk/clawbench-android.apk public/assets/
 
       - uses: actions/setup-go@v5
         with:
@@ -242,7 +271,7 @@ jobs:
 
   build-macos-arm64:
     name: Build macOS arm64
-    needs: build-frontend
+    needs: [build-frontend, build-android]
     runs-on: macos-latest
     permissions:
       contents: write
@@ -253,6 +282,15 @@ jobs:
         with:
           name: public
           path: public/
+
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: android-apk/
+
+      - name: Include APK in public/assets/
+        run: mkdir -p public/assets && cp android-apk/clawbench-android.apk public/assets/
 
       - uses: actions/setup-go@v5
         with:
@@ -291,7 +329,7 @@ jobs:
 
   build-macos-amd64:
     name: Build macOS amd64
-    needs: build-frontend
+    needs: [build-frontend, build-android]
     runs-on: macos-latest
     permissions:
       contents: write
@@ -302,6 +340,15 @@ jobs:
         with:
           name: public
           path: public/
+
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: android-apk/
+
+      - name: Include APK in public/assets/
+        run: mkdir -p public/assets && cp android-apk/clawbench-android.apk public/assets/
 
       - uses: actions/setup-go@v5
         with:
@@ -375,6 +422,12 @@ jobs:
           VERSION_CODE=$(git rev-list --count HEAD)
           VERSION_NAME=$(git describe --tags --always 2>/dev/null || echo "dev")
           ./gradlew assembleRelease -PversionCode=$VERSION_CODE -PversionName=$VERSION_NAME
+
+      - name: Upload APK artifact (for inclusion in platform packages)
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: android/app/build/outputs/apk/release/clawbench-android.apk
 
       - uses: softprops/action-gh-release@v2
         with:
