@@ -4,10 +4,9 @@ import { ref, computed, onUnmounted, type Ref } from 'vue'
  * Tab-drawer declarative binding registry.
  *
  * Drawers that use BottomSheet (teleported to <body>) survive v-show tab-panel
- * hiding, so they must be explicitly closed when their owning tab is deactivated.
- * Instead of hardcoding this in switchTab(), drawers register here with their
- * owning tabId. On tab switch, all drawers not belonging to the new tab are
- * auto-closed.
+ * hiding, so effectiveOpen must return false when the owning tab is deactivated.
+ * The openRef itself is preserved across tab switches so the drawer re-opens
+ * when the user switches back.
  *
  * Usage: call useTabDrawer(tabId, openRef) in the component's setup, then bind
  * the returned effectiveOpen.value to the BottomSheet/ModalDialog :open prop.
@@ -54,15 +53,13 @@ export function useTabDrawer(tabId: string, openRef: Ref<boolean>) {
 }
 
 /**
- * Call from switchTab() to deactivate all drawers not belonging to the new tab.
+ * Call from switchTab() to update the current tab.
+ * Drawers are visually hidden via effectiveOpen (computed) when their tab
+ * is inactive; the openRef itself is preserved so the drawer re-opens
+ * when the user switches back.
  */
 export function onTabSwitch(newTab: string) {
   currentTab.value = newTab
-  for (const [tabId, refs] of registry) {
-    if (tabId !== newTab) {
-      for (const r of refs) r.value = false
-    }
-  }
 }
 
 /**

@@ -489,16 +489,12 @@ provide('chatUI', { navigateToFileViewer: () => switchTab('browse') })
 provide('autoSpeech', autoSpeech)
 provide('layoutRefreshKey', layoutRefreshKey)
 
-// 子抽屉跟随聊天面板关闭；面板打开时刷新渲染（修复 display:none 期间的过时布局状态）
+// 面板打开时刷新渲染（修复 display:none 期间的过时布局状态）
 // immediate: true 确保首次挂载时（active 已为 true）也会加载历史记录
+// 子抽屉不再在此关闭 — useTabDrawer 的 effectiveOpen computed 已在 tab 不活跃时自动隐藏抽屉，
+// 切回 tab 时 openRef 保留原值，抽屉自动恢复。
 watch(() => props.active, async (val) => {
-  if (!val) {
-    identity.sessionDrawerOpen.value = false
-    toolDetailShow.value = false
-    messageListRef.value?.closeUserMsgIndex()
-    ragDetailItem.value = null
-    ragDetailShow.value = false
-  } else {
+  if (val) {
     // Open/Re-open: load history (with overlay, skip if unchanged) and fix stale layout state from v-show display:none
     // skipIfUnchanged=true preserves scroll position when no new messages arrived while tab was hidden
     await session.loadHistory(false, true, true)
