@@ -103,6 +103,7 @@ exempt_files = {
     "internal/model/discovery.go",           # model discovery spawns CLI subprocesses and reads external files
     "internal/handler/chat.go",              # executeStreamRun ctx.Done needs mock AI backend + goroutine sync
     "internal/handler/agent.go",              # serveAgentsPatch: multi-field validation branches, DB update, in-memory sync
+    "internal/handler/apk.go",               # ServeAPK: filepath.Abs/f.Close error paths untestable in unit tests
     "internal/handler/scheduler.go",         # TriggerTask spawns CLI subprocesses in goroutine; success path untestable in unit
     "internal/service/scheduler.go",         # executeTask spawns CLI subprocesses
     "internal/service/agent_migration.go",   # new file: saveAgentTx DB error paths, YAML read errors

@@ -768,3 +768,72 @@ describe('userMsgIndexUtils — truncateUserMsg', () => {
     expect(truncateUserMsg({ content: '', files: ['file.ts'] }, '附件')).toBe('[附件]')
   })
 })
+
+describe('ChatMessageList — empty state with agent', () => {
+  it('renders agent welcome when messages are empty and currentAgent is set', async () => {
+    const wrapper = mountComponent({
+      messages: [],
+      currentAgent: { icon: '🤖', name: 'TestBot', specialty: 'Testing', backend: 'test', model: 'gpt-4' },
+    })
+    await nextTick()
+
+    // Should show the agent welcome section
+    expect(wrapper.find('.agent-welcome').exists()).toBe(true)
+    expect(wrapper.find('.agent-welcome-name').text()).toBe('TestBot')
+    expect(wrapper.find('.agent-welcome-specialty').text()).toBe('Testing')
+    expect(wrapper.find('.agent-welcome-backend').text()).toBe('test')
+    expect(wrapper.find('.agent-welcome-model').text()).toBe('gpt-4')
+  })
+
+  it('renders start conversation hint when messages are empty without currentAgent', async () => {
+    const wrapper = mountComponent({
+      messages: [],
+      currentAgent: null,
+    })
+    await nextTick()
+
+    // Should show the fallback hint (no agent welcome)
+    expect(wrapper.find('.agent-welcome').exists()).toBe(false)
+    expect(wrapper.find('.chat-empty').exists()).toBe(true)
+  })
+})
+
+describe('ChatMessageList — showAllLoaded watcher', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('shows "all loaded" hint when hasMore transitions from true to false', async () => {
+    const wrapper = mountComponent({
+      messages: createMessages(5),
+      hasMore: true,
+    })
+    const vm = wrapper.vm as any
+
+    // Transition hasMore from true to false
+    await wrapper.setProps({ hasMore: false })
+    await nextTick()
+
+    // showAllLoaded should become true
+    expect(vm.$.exposed.showAllLoaded?.value ?? (vm as any).showAllLoaded).toBe(true)
+  })
+})
+
+describe('ChatMessageList — remainingCount computed', () => {
+  it('uses computeRemainingCount to calculate remaining count', async () => {
+    const { computeRemainingCount } = await import('@/utils/messageListUtils.ts')
+    vi.mocked(computeRemainingCount).mockReturnValue(42)
+
+    const wrapper = mountComponent({
+      messages: createMessages(5),
+      hasMore: true,
+      totalMessages: 47,
+    })
+
+    expect(computeRemainingCount).toHaveBeenCalledWith(true, 47, 5)
+  })
+})
