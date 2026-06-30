@@ -1218,12 +1218,10 @@ func TestServeProjectsCreate_PathTraversalName(t *testing.T) {
 // ============================================================================
 
 func TestServeIndex_MethodNotAllowed(t *testing.T) {
-	// ServeIndex is registered as a catch-all route — it handles GET only
-	// POST on "/" goes through the router which may return 404 instead of 405
+	// ServeIndex rejects non-GET/HEAD methods with 405
 	req := newRequest(t, http.MethodPost, "/", nil)
 	w := callHandler(ServeIndex, req)
-	// The handler may return 404 (no route) or 405 — just verify no panic
-	assert.NotEqual(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
 // ============================================================================

@@ -19,6 +19,12 @@ func ServeProjectDialog(w http.ResponseWriter, r *http.Request) {
 
 // ServeIndex serves the main index page and static assets.
 func ServeIndex(w http.ResponseWriter, r *http.Request) {
+	// Only serve GET/HEAD requests; reject other methods
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+		return
+	}
+
 	path := r.URL.Path
 
 	// ISS-055: Clean the path to prevent path traversal (e.g. /../etc/passwd)
