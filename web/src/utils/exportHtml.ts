@@ -4,12 +4,16 @@
  * Pipeline:
  * 1. Clone the .markdown-body DOM
  * 2. Inline images via /api/file/batch-base64
- * 3. Inline CSS via stylesheet serialization (freeze current theme)
+ * 3. Inline CSS via stylesheet serialization (preserve var() for theme switching)
  * 4. Handle failed Mermaid diagrams
- * 5. Build TOC (floating button + right drawer)
- * 6. Add code block copy/wrap interaction JS
- * 7. Assemble complete HTML document
+ * 5. Render Mermaid for both light + dark themes (dual-theme SVGs)
+ * 6. Build TOC (floating button + right drawer)
+ * 7. Add code block copy/wrap interaction JS
+ * 8. Add theme toggle button (light ↔ dark)
+ * 9. Assemble complete HTML document
  */
+
+import { mermaid } from './globals.ts'
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
@@ -125,15 +129,12 @@ async function inlineImages(clone: HTMLElement): Promise<{ skipped: number; exte
 
 /**
  * Collect and serialize CSS rules that apply to .markdown-body and its descendants.
- * Freeze the current theme by resolving CSS custom properties to computed values.
+ * Preserves var() references and exports both light + dark theme variable blocks
+ * so the exported HTML supports theme toggling via data-theme attribute.
  */
 function serializeCss(_markdownBodyEl: HTMLElement): string {
     const rules: string[] = []
-    const customProps: Map<string, string> = new Map()
 
-    // 1. Resolve all custom properties for the current theme from :root
-    const rootStyles = getComputedStyle(document.documentElement)
-    // Collect all custom properties used in the markdown body
     for (const sheet of Array.from(document.styleSheets)) {
         let cssRules: CSSRuleList
         try {
@@ -144,52 +145,14 @@ function serializeCss(_markdownBodyEl: HTMLElement): string {
         }
 
         for (const rule of Array.from(cssRules)) {
-            const text = rule.cssText
-
-            // Collect :root custom property definitions
-            if (rule instanceof CSSStyleRule) {
-                const sel = rule.selectorText
-                if (sel === ':root' || sel.startsWith(':root ')) {
-                    // Extract custom property names used in var() references
-                    const varRefs = text.match(/var\(\s*(--[\w-]+)/g)
-                    if (varRefs) {
-                        for (const ref of varRefs) {
-                            const name = ref.replace(/var\(\s*/, '')
-                            const val = rootStyles.getPropertyValue(name).trim()
-                            if (val) customProps.set(name, val)
-                        }
-                    }
-                    // Also collect custom properties defined directly in :root
-                    const propDefs = text.match(/(--[\w-]+)\s*:/g)
-                    if (propDefs) {
-                        for (const def of propDefs) {
-                            const name = def.replace(/\s*:/, '')
-                            const val = rootStyles.getPropertyValue(name).trim()
-                            if (val) customProps.set(name, val)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 2. Serialize all rules relevant to .markdown-body
-    for (const sheet of Array.from(document.styleSheets)) {
-        let cssRules: CSSRuleList
-        try {
-            cssRules = sheet.cssRules
-        } catch {
-            continue
-        }
-
-        for (const rule of Array.from(cssRules)) {
             if (rule instanceof CSSStyleRule) {
                 const sel = rule.selectorText
                 // Include rules that target markdown-body or its descendants,
-                // or :root / [data-theme] custom property blocks
+                // :root custom property blocks, or [data-theme="dark"] variable blocks
                 if (
                     sel.includes('.markdown-body') ||
                     sel === ':root' ||
+                    sel.startsWith('[data-theme') ||
                     sel.includes('.markdown-content') ||
                     sel.includes('.diff-marker') ||
                     sel.includes('.hljs') ||
@@ -226,30 +189,18 @@ function serializeCss(_markdownBodyEl: HTMLElement): string {
                     sel.includes('.chat-worktree-btn') ||
                     sel.includes('.mermaid')
                 ) {
-                    // Skip [data-theme] rules — they won't match in exported HTML
-                    // (theme is frozen via resolved var() values instead)
-                    if (sel.includes('[data-theme')) continue
+                    let text = rule.cssText
 
-                    // Handle [data-hljs-theme] rules: strip the attribute selector for
-                    // the current theme (so the rule matches), skip for the opposite theme
-                    let resolvedText = rule.cssText
-                    const currentHljsTheme = document.documentElement.getAttribute('data-hljs-theme') || 'light'
-                    const oppositeHljsTheme = currentHljsTheme === 'light' ? 'dark' : 'light'
-                    if (sel.includes(`[data-hljs-theme="${oppositeHljsTheme}"]`)) continue
-                    if (sel.includes('[data-hljs-theme')) {
-                        // Strip [data-hljs-theme="light/dark"] from selector
-                        resolvedText = resolvedText.replace(/\[data-hljs-theme="[^"]*"\]\s*/g, '')
-                    }
+                    // Rewrite [data-hljs-theme="light"] → [data-theme="light"]
+                    // Rewrite [data-hljs-theme="dark"]  → [data-theme="dark"]
+                    // This allows hljs overrides to respond to the theme toggle
+                    text = text.replace(/\[data-hljs-theme="light"\]/g, '[data-theme="light"]')
+                    text = text.replace(/\[data-hljs-theme="dark"\]/g, '[data-theme="dark"]')
 
-                    if (customProps.size > 0) {
-                        resolvedText = resolveVarRefs(resolvedText, customProps)
-                    }
-                    rules.push(resolvedText)
+                    rules.push(text)
                 }
             } else if (rule instanceof CSSKeyframesRule) {
                 // Include @keyframes used by animations in exported content
-                // (line-flash, copy-flash, char-flash-delete-anim, char-flash-add-anim,
-                //  diff-marker-highlight, diff-marker-added-flash, url-btn-spin)
                 const name = rule.name
                 if (
                     name.includes('line-flash') ||
@@ -263,23 +214,14 @@ function serializeCss(_markdownBodyEl: HTMLElement): string {
             } else if (rule instanceof CSSMediaRule) {
                 // Include media rules that contain markdown-body rules
                 const innerRules: string[] = []
-                const currentHljsTheme = document.documentElement.getAttribute('data-hljs-theme') || 'light'
-                const oppositeHljsTheme = currentHljsTheme === 'light' ? 'dark' : 'light'
                 for (const inner of Array.from(rule.cssRules)) {
                     if (inner instanceof CSSStyleRule) {
                         const sel = inner.selectorText
                         if (sel.includes('.markdown-body') || sel.includes('.hljs') || sel.includes('.katex')) {
-                            // Skip [data-theme] and opposite [data-hljs-theme] rules
-                            if (sel.includes('[data-theme')) continue
-                            if (sel.includes(`[data-hljs-theme="${oppositeHljsTheme}"]`)) continue
-                            let resolvedText = inner.cssText
-                            if (sel.includes('[data-hljs-theme')) {
-                                resolvedText = resolvedText.replace(/\[data-hljs-theme="[^"]*"\]\s*/g, '')
-                            }
-                            if (customProps.size > 0) {
-                                resolvedText = resolveVarRefs(resolvedText, customProps)
-                            }
-                            innerRules.push(resolvedText)
+                            let text = inner.cssText
+                            text = text.replace(/\[data-hljs-theme="light"\]/g, '[data-theme="light"]')
+                            text = text.replace(/\[data-hljs-theme="dark"\]/g, '[data-theme="dark"]')
+                            innerRules.push(text)
                         }
                     } else if (inner instanceof CSSKeyframesRule) {
                         const name = inner.name
@@ -295,36 +237,7 @@ function serializeCss(_markdownBodyEl: HTMLElement): string {
         }
     }
 
-    // 3. Add resolved :root custom properties as a :root block
-    if (customProps.size > 0) {
-        const propLines: string[] = []
-        for (const [name, val] of customProps) {
-            propLines.push(`  ${name}: ${val};`)
-        }
-        rules.unshift(`:root {\n${propLines.join('\n')}\n}`)
-    }
-
     return rules.join('\n')
-}
-
-/**
- * Replace var(--xxx) references in CSS text with their resolved values.
- * Handles var(--xxx) and var(--xxx, fallback).
- */
-function resolveVarRefs(cssText: string, props: Map<string, string>): string {
-    // Replace var(--xxx) and var(--xxx, fallback) — iterative to handle nested var()
-    let result = cssText
-    for (let i = 0; i < 3; i++) { // max 3 passes for nested var()
-        const prev = result
-        result = result.replace(/var\(\s*(--[\w-]+)\s*(?:,\s*([^)]*))?\)/g, (match, name: string, fallback?: string) => {
-            const resolved = props.get(name)
-            if (resolved) return resolved
-            if (fallback) return fallback.trim()
-            return match
-        })
-        if (result === prev) break // no more changes
-    }
-    return result
 }
 
 // ─── Mermaid error handling ────────────────────────────────────────────────────
@@ -333,10 +246,8 @@ function resolveVarRefs(cssText: string, props: Map<string, string>): string {
  * Replace unrendered Mermaid blocks (pre.mermaid without SVG child)
  * with error indicators.
  */
-function handleFailedMermaid(clone: HTMLElement, customProps: Map<string, string>): void {
+function handleFailedMermaid(clone: HTMLElement): void {
     const mermaidBlocks = clone.querySelectorAll('pre.mermaid, div.mermaid, code.mermaid')
-    const borderColor = customProps.get('--border-color') || '#d0d7de'
-    const textColor = customProps.get('--text-muted') || '#6c757d'
     for (const block of Array.from(mermaidBlocks)) {
         // If it contains an SVG, Mermaid rendered successfully
         if (block.querySelector('svg')) continue
@@ -344,12 +255,6 @@ function handleFailedMermaid(clone: HTMLElement, customProps: Map<string, string
         // Mermaid failed — wrap in error div
         const errorDiv = document.createElement('div')
         errorDiv.className = 'mermaid-error'
-        errorDiv.style.border = `1px dashed ${borderColor}`
-        errorDiv.style.padding = '12px'
-        errorDiv.style.margin = '8px 0'
-        errorDiv.style.borderRadius = '6px'
-        errorDiv.style.color = textColor
-        errorDiv.style.fontSize = '13px'
         const em = document.createElement('em')
         em.textContent = 'Diagram failed to render'
         errorDiv.appendChild(em)
@@ -357,35 +262,97 @@ function handleFailedMermaid(clone: HTMLElement, customProps: Map<string, string
     }
 }
 
-// ─── Theme color helpers ───────────────────────────────────────────────────────
+// ─── Dual-theme Mermaid rendering ─────────────────────────────────────────────
 
 /**
- * Get current theme colors from computed styles for use in exported HTML.
+ * Render Mermaid diagrams for both light and dark themes so the exported HTML
+ * can switch themes without needing the Mermaid JS library.
+ *
+ * For each div.mermaid that has a rendered SVG:
+ * 1. Extract the Mermaid source from data-mermaid attribute
+ * 2. Render the SVG for the OPPOSITE theme using mermaid.render()
+ * 3. Wrap both SVGs in a container with .mermaid-light / .mermaid-dark classes
+ *
+ * CSS rules then show/hide the correct version based on [data-theme].
  */
-function getThemeColors(): Map<string, string> {
-    const rootStyles = getComputedStyle(document.documentElement)
-    const colors = new Map<string, string>()
-    const keys = [
-        '--bg-primary', '--bg-secondary', '--bg-tertiary',
-        '--text-primary', '--text-secondary', '--text-muted', '--text-bold',
-        '--border-color', '--accent-color', '--accent-hover',
-        '--code-bg', '--blockquote-border', '--table-border',
-        '--scrollbar-thumb', '--scrollbar-track',
-    ]
-    for (const key of keys) {
-        const val = rootStyles.getPropertyValue(key).trim()
-        if (val) colors.set(key, val)
+async function renderDualThemeMermaid(clone: HTMLElement): Promise<void> {
+    const currentTheme = document.documentElement.getAttribute('data-theme') || 'light'
+    const oppositeTheme = currentTheme === 'dark' ? 'default' : 'dark'
+
+    const mermaidBlocks = Array.from(clone.querySelectorAll('div.mermaid'))
+    if (mermaidBlocks.length === 0) return
+
+    // Re-initialize mermaid with the opposite theme for rendering
+    // Keep securityLevel:'loose' so ER diagrams etc. can use <foreignObject>
+    // for HTML labels (we sanitize via DOMPurify below to strip scripts/iframes)
+    mermaid.initialize({
+        startOnLoad: false,
+        theme: oppositeTheme,
+        securityLevel: 'loose',
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    })
+
+    let mermaidCounter = 0
+
+    try {
+        for (const block of mermaidBlocks) {
+            // Only process blocks that have a rendered SVG
+            const existingSvg = block.querySelector('svg')
+            if (!existingSvg) continue
+
+            // Get the Mermaid source text
+            const source = (block as HTMLElement).dataset.mermaid
+            if (!source) continue
+
+            try {
+                // Render with the opposite theme (counter-based ID to avoid collisions)
+                const id = `mermaid-export-${mermaidCounter++}`
+                const result = await mermaid.render(id, source)
+
+                // Create a wrapper div with both theme versions
+                const wrapper = clone.ownerDocument.createElement('div')
+                wrapper.className = 'mermaid-dual'
+
+                // Current theme SVG — insert directly (content is from trusted
+                // Mermaid renderer; we already stripped <script>/<iframe> from clone)
+                const currentDiv = clone.ownerDocument.createElement('div')
+                currentDiv.className = currentTheme === 'dark' ? 'mermaid-dark' : 'mermaid-light'
+                currentDiv.innerHTML = existingSvg.outerHTML
+
+                // Opposite theme SVG — also insert directly, then strip
+                // <script> and <iframe> to prevent execution in standalone HTML
+                const oppositeDiv = clone.ownerDocument.createElement('div')
+                oppositeDiv.className = oppositeTheme === 'dark' ? 'mermaid-dark' : 'mermaid-light'
+                oppositeDiv.innerHTML = result.svg
+                for (const s of Array.from(oppositeDiv.querySelectorAll('script'))) s.remove()
+                for (const f of Array.from(oppositeDiv.querySelectorAll('iframe'))) f.remove()
+
+                wrapper.appendChild(currentDiv)
+                wrapper.appendChild(oppositeDiv)
+
+                block.parentNode?.replaceChild(wrapper, block)
+            } catch {
+                // Failed to render opposite theme — keep only the current theme SVG
+            }
+        }
+    } finally {
+        // Always restore mermaid to the current app theme
+        mermaid.initialize({
+            startOnLoad: false,
+            theme: currentTheme === 'dark' ? 'dark' : 'default',
+            securityLevel: 'loose',
+            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        })
     }
-    return colors
 }
 
 // ─── TOC generation ────────────────────────────────────────────────────────────
 
 /**
  * Build self-contained TOC HTML + JS for the exported document.
- * Uses theme colors for consistent appearance.
+ * Uses var() references so colors respond to theme changes.
  */
-function buildToc(clone: HTMLElement, theme: Map<string, string>): { tocButtonHtml: string; tocDrawerHtml: string; tocCss: string; tocJs: string } {
+function buildToc(clone: HTMLElement): { tocButtonHtml: string; tocDrawerHtml: string; tocCss: string; tocJs: string } {
     // Extract headings from the cloned DOM
     const headings = Array.from(clone.querySelectorAll('h1, h2, h3, h4, h5, h6')) as HTMLHeadingElement[]
     if (headings.length === 0) return { tocButtonHtml: '', tocDrawerHtml: '', tocCss: '', tocJs: '' }
@@ -409,25 +376,17 @@ function buildToc(clone: HTMLElement, theme: Map<string, string>): { tocButtonHt
 
     if (entries.length === 0) return { tocButtonHtml: '', tocDrawerHtml: '', tocCss: '', tocJs: '' }
 
-    // Resolve theme colors for TOC
-    const bgPrimary = theme.get('--bg-primary') || '#ffffff'
-    const bgTertiary = theme.get('--bg-tertiary') || '#e9ecef'
-    const textPrimary = theme.get('--text-primary') || '#212529'
-    const textSecondary = theme.get('--text-secondary') || '#495057'
-    const borderColor = theme.get('--border-color') || '#dee2e6'
-    const accentColor = theme.get('--accent-color') || '#4a90d9'
-
     // Build TOC list HTML
     const tocItemsHtml = entries.map(e => {
         const indent = (e.level - 1) * 16
-        return `<a class="toc-item" data-level="${e.level}" href="#${e.id}" style="padding-left: ${8 + indent}px">${escapeHtml(e.text)}</a>`
+        return `<a class="toc-item" data-level="${e.level}" href="#${escapeHtml(e.id)}" style="padding-left: ${8 + indent}px">${escapeHtml(e.text)}</a>`
     }).join('\n')
 
-    // Floating button (inline SVG list icon)
-    const tocButtonHtml = `<button id="toc-toggle" style="position:fixed;bottom:20px;right:20px;z-index:1000;width:40px;height:40px;border-radius:50%;border:1px solid ${borderColor};background:${bgPrimary};color:${textSecondary};cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.12);display:flex;align-items:center;justify-content:center" title="Table of Contents"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></button>`
+    // Floating button (inline SVG list icon) — uses CSS class for theme-aware colors
+    const tocButtonHtml = `<button id="toc-toggle" class="fab-btn" title="Table of Contents"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></button>`
 
     // TOC drawer
-    const tocDrawerHtml = `<div id="toc-drawer" style="position:fixed;right:0;top:0;height:100%;width:280px;background:${bgPrimary};border-left:1px solid ${borderColor};box-shadow:-2px 0 12px rgba(0,0,0,0.08);transform:translateX(100%);transition:transform 0.3s ease;z-index:999;overflow-y:auto;padding:16px 8px;box-sizing:border-box"><div style="font-size:14px;font-weight:600;margin-bottom:12px;padding:0 8px;color:${textPrimary}">Table of Contents</div>${tocItemsHtml}</div>`
+    const tocDrawerHtml = `<div id="toc-drawer"><div class="toc-drawer-title">Table of Contents</div>${tocItemsHtml}</div>`
 
     // TOC JS — fix: use contains() check on the button element (not === target)
     const tocJs = `
@@ -458,10 +417,16 @@ function buildToc(clone: HTMLElement, theme: Map<string, string>): { tocButtonHt
     });
 })();`
 
-    // TOC item CSS — use theme colors
+    // TOC + floating button CSS — all via var() for theme support
     const tocCss = `
-.toc-item { display: block; padding: 6px 8px; border-radius: 4px; cursor: pointer; font-size: 13px; color: ${textSecondary}; text-decoration: none; transition: background 0.15s, color 0.15s; border-left: 2px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.toc-item:hover { background: ${bgTertiary}; color: ${accentColor}; }`
+.fab-btn { position: fixed; width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-secondary); cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.12); display: flex; align-items: center; justify-content: center; padding: 0; }
+.fab-btn:hover { color: var(--accent-color); }
+#theme-toggle { bottom: 68px; right: 20px; z-index: 1000; }
+#toc-toggle { bottom: 20px; right: 20px; z-index: 1000; }
+#toc-drawer { position: fixed; right: 0; top: 0; height: 100%; width: 280px; background: var(--bg-primary); border-left: 1px solid var(--border-color); box-shadow: -2px 0 12px rgba(0,0,0,0.08); transform: translateX(100%); transition: transform 0.3s ease; z-index: 999; overflow-y: auto; padding: 16px 8px; box-sizing: border-box; }
+.toc-drawer-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; padding: 0 8px; color: var(--text-primary); }
+.toc-item { display: block; padding: 6px 8px; border-radius: 4px; cursor: pointer; font-size: 13px; color: var(--text-secondary); text-decoration: none; transition: background 0.15s, color 0.15s; border-left: 2px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toc-item:hover { background: var(--bg-tertiary); color: var(--accent-color); }`
 
     return { tocButtonHtml, tocDrawerHtml, tocCss, tocJs }
 }
@@ -474,9 +439,7 @@ function buildToc(clone: HTMLElement, theme: Map<string, string>): { tocButtonHt
  * Table blocks: .table-block-wrapper with .table-block-copy-btn/.table-block-wrap-btn
  * Both use data-action="copy"/"wrap" pattern from useCodeBlockHeader.ts.
  */
-function buildCodeBlockJs(theme: Map<string, string>): string {
-    const accentColor = theme.get('--accent-color') || '#4a90d9'
-
+function buildCodeBlockJs(): string {
     return `
 (function() {
     document.addEventListener('click', function(e) {
@@ -542,7 +505,7 @@ function buildCodeBlockJs(theme: Map<string, string>): string {
         }
         var orig = btn.innerHTML;
         var origTitle = btn.getAttribute('title') || '';
-        btn.innerHTML = '<span style="font-size:11px;color:${accentColor}">Copied!</span>';
+        btn.innerHTML = '<span class="copied-feedback">Copied!</span>';
         btn.classList.add('is-copied');
         btn.setAttribute('title', 'Copied');
         setTimeout(function() {
@@ -582,10 +545,6 @@ function escapeHtml(text: string): string {
 
 export async function exportRenderedHtml(options: ExportOptions): Promise<ExportResult> {
     const { markdownBodyEl, fileName } = options
-    // filePath is available for future use (resolving relative image paths)
-
-    // Get current theme colors for consistent export
-    const theme = getThemeColors()
 
     // 1. Clone DOM
     const clone = markdownBodyEl.cloneNode(true) as HTMLElement
@@ -597,59 +556,128 @@ export async function exportRenderedHtml(options: ExportOptions): Promise<Export
         script.remove()
     }
 
+    // 1c. Remove <iframe> elements from clone (some Mermaid rendering modes or
+    //     browser MathML handling can inject iframes; these cause "Unsafe attempt
+    //     to load URL" cross-origin errors when opened as file:// URLs)
+    for (const iframe of Array.from(clone.querySelectorAll('iframe'))) {
+        iframe.remove()
+    }
+
+    // 1d. Remove KaTeX MathML annotations (screen-reader-only <span class="katex-mathml">
+    //     containing <math> tags). Chrome tries to process MathML in a separate
+    //     security origin, triggering cross-origin errors on file:// URLs.
+    //     The visual rendering is handled by <span class="katex-html"> which remains.
+    for (const mathml of Array.from(clone.querySelectorAll('.katex-mathml'))) {
+        mathml.remove()
+    }
+
+    // 1e. Note: <foreignObject> elements in Mermaid SVGs are kept as-is.
+    //     Chrome may log "Unsafe attempt to load URL" warnings on file:// URLs,
+    //     but this does NOT affect rendering — the content displays correctly.
+    //     Converting foreignObject HTML to SVG <text> breaks text layout,
+    //     so we leave them untouched.
+
     // 2. Inline images
     const { skipped: skippedImages, external: externalImages } = await inlineImages(clone)
 
     // 3. Handle failed Mermaid diagrams
-    handleFailedMermaid(clone, theme)
+    handleFailedMermaid(clone)
 
-    // 4. Serialize CSS from stylesheets (freeze current theme)
+    // 3b. Render Mermaid for both light + dark themes
+    await renderDualThemeMermaid(clone)
+
+    // 4. Serialize CSS from stylesheets (preserves var() for theme switching)
     const css = serializeCss(markdownBodyEl)
 
     // 5. Build TOC
-    const { tocButtonHtml, tocDrawerHtml, tocCss, tocJs } = buildToc(clone, theme)
+    const { tocButtonHtml, tocDrawerHtml, tocCss, tocJs } = buildToc(clone)
 
     // 6. Build code block interaction JS
-    const codeBlockJs = buildCodeBlockJs(theme)
+    const codeBlockJs = buildCodeBlockJs()
 
     // 7. Assemble HTML
     const title = escapeHtml(fileName.replace(/\.md$/i, ''))
     const bodyContent = clone.outerHTML
 
-    // Resolve theme-dependent values for the base styles
-    const bgPrimary = theme.get('--bg-primary') || '#ffffff'
-    const borderColor = theme.get('--border-color') || '#dee2e6'
-    const textMuted = theme.get('--text-muted') || '#6c757d'
-    const textPrimary = theme.get('--text-primary') || '#212529'
+    // Use current app theme as default (avoids flash of wrong theme)
+    const currentAppTheme = document.documentElement.getAttribute('data-theme') || 'light'
+
+    // Theme toggle button (sun/moon icon)
+    const themeToggleHtml = `<button id="theme-toggle" class="fab-btn" title="Toggle theme"><svg id="theme-icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="theme-icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>`
+
+    // Theme toggle JS (localStorage restore is in <head> script to avoid FOWT)
+    const themeToggleJs = `
+(function() {
+    var btn = document.getElementById('theme-toggle');
+    var moonIcon = document.getElementById('theme-icon-moon');
+    var sunIcon = document.getElementById('theme-icon-sun');
+    updateIcon();
+    btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var current = document.documentElement.getAttribute('data-theme') || 'light';
+        var next = current === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('exported-html-theme', next);
+        updateIcon();
+    });
+    function updateIcon() {
+        var isDark = (document.documentElement.getAttribute('data-theme') || 'light') === 'dark';
+        moonIcon.style.display = isDark ? 'none' : 'block';
+        sunIcon.style.display = isDark ? 'block' : 'none';
+    }
+})();`
 
     const html = `<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="${currentAppTheme}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title}</title>
+<script>/* Restore saved theme before CSS renders to prevent flash */(function(){var t=localStorage.getItem('exported-html-theme');if(t)document.documentElement.setAttribute('data-theme',t)})()</script>
 <style>
 /* ─── Universal box-sizing reset (matches app base.css) ─── */
 *, *::before, *::after { box-sizing: border-box; }
 
-/* ─── Resolved theme + markdown styles ─── */
+/* ─── Theme variables + markdown styles (preserves var() for theme switching) ─── */
 ${css}
 
 /* ─── Base reset with theme colors ─── */
-body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; background: ${bgPrimary}; color: ${textPrimary}; }
+body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; background: var(--bg-primary); color: var(--text-primary); }
+
+/* ─── Scrollbar styling (matches app base.css) ─── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+::-webkit-scrollbar-button { display: none; }
+::-webkit-scrollbar-corner { background: transparent; }
+* { scrollbar-color: var(--scrollbar-thumb) transparent; }
 
 /* ─── Mermaid error ─── */
-.mermaid-error { border: 1px dashed ${borderColor}; padding: 12px; margin: 8px 0; border-radius: 6px; color: ${textMuted}; font-size: 13px; }
+.mermaid-error { border: 1px dashed var(--border-color); padding: 12px; margin: 8px 0; border-radius: 6px; color: var(--text-muted); font-size: 13px; }
 
-/* ─── TOC items ─── */
+/* ─── Dual-theme Mermaid: show/hide based on data-theme ─── */
+.mermaid-dual { background: var(--bg-secondary); padding: 20px; border-radius: var(--radius-md); margin: 1em 0; overflow-x: auto; }
+.mermaid-dual svg { max-width: 100%; height: auto; }
+.mermaid-dual .mermaid-light { display: block; }
+.mermaid-dual .mermaid-dark { display: none; }
+[data-theme="dark"] .mermaid-dual .mermaid-light { display: none; }
+[data-theme="dark"] .mermaid-dual .mermaid-dark { display: block; }
+
+/* ─── Copied feedback text ─── */
+.copied-feedback { font-size: 11px; color: var(--accent-color); }
+
+/* ─── TOC + FAB buttons ─── */
 ${tocCss}
 </style>
 </head>
 <body>
+${themeToggleHtml}
 ${tocButtonHtml}
 ${tocDrawerHtml}
 ${bodyContent}
 <script>
+${themeToggleJs}
 ${tocJs}
 ${codeBlockJs}
 </script>
