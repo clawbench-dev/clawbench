@@ -17,7 +17,7 @@
             <span class="modal-title">{{ title }}</span>
           </slot>
           <button class="modal-close-btn" @click="handleClose" :title="'Close'">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="3" x2="11" y2="11"/><line x1="11" y1="3" x2="3" y2="11"/></svg>
+            <svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="3" x2="11" y2="11"/><line x1="11" y1="3" x2="3" y2="11"/></svg>
           </button>
         </div>
         <div class="modal-body">
@@ -153,8 +153,8 @@ defineExpose({
 .modal-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
+  gap: 7px;
+  padding: 5px 9px;
   border-bottom: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 15%, var(--border-color, #e5e5e5));
   background: color-mix(in srgb, var(--accent-color, #0066cc) 6%, transparent);
   flex-shrink: 0;
@@ -196,7 +196,7 @@ defineExpose({
 
 .modal-title {
   font-weight: 600;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text-primary, #1a1a1a);
 }
 
