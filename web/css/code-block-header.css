@@ -153,7 +153,8 @@
     margin: 0.75em 0;
     border-radius: var(--radius-sm);
     overflow: hidden;
-    border: 1px solid var(--table-border, var(--border-color));
+    width: fit-content;
+    max-width: 100%;
 }
 
 /* ─── Header bar ─── */
@@ -247,6 +248,10 @@
 }
 
 /* ─── Word-wrap mode for markdown tables ─── */
+.table-block-wrapper.word-wrap {
+    width: 100%;  /* expand wrapper so table can fill and wrap */
+}
+
 .table-block-wrapper.word-wrap .table-wrap {
     overflow-x: hidden !important;
 }

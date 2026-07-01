@@ -108,11 +108,6 @@
 }
 
 /* Table block wrapper in table-row-value context (TableRowModal) */
-.table-row-value .table-block-wrapper {
-    border-radius: var(--radius-sm);
-    overflow: hidden;
-}
-
 .table-row-value .table-block-wrapper .table-wrap {
     margin: 0;
     border-radius: 0;
@@ -240,16 +235,7 @@
     border-collapse: collapse;
 }
 
-/* Assistant message table block wrapper */
-.chat-message.assistant .table-block-wrapper {
-    border-color: var(--border-color);
-}
-
-/* User message table block wrapper */
-.chat-message.user .table-block-wrapper {
-    border-color: rgba(255, 255, 255, 0.2);
-}
-
+/* User message table block header */
 .chat-message.user .table-block-header {
     background: rgba(0, 0, 0, 0.1);
     border-bottom-color: rgba(255, 255, 255, 0.15);

@@ -223,7 +223,7 @@ function tableToTSV(table: HTMLTableElement): string {
     // Determine header row and data rows
     const thead = table.querySelector('thead')
     const headers: string[] = []
-    // eslint-disable-next-line no-useless-assignment
+    // eslint-disable-next-line no-useless-assignment -- headerRow is used below in the for-loop skip check
     let headerRow: HTMLTableRowElement | null = null
 
     if (thead) {
@@ -254,6 +254,82 @@ function tableToTSV(table: HTMLTableElement): string {
 }
 
 /**
+ * Copy table to clipboard in both HTML and plain-text formats.
+ * HTML format ensures Word/Excel/Google Sheets paste as a proper table.
+ * Falls back to plain TSV if ClipboardItem is unavailable.
+ */
+function copyTableToClipboard(table: HTMLTableElement): void {
+    const tsv = tableToTSV(table)
+
+    // Try ClipboardItem with text/html for rich paste into Word/Excel
+    if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
+        // Build a clean HTML table from the DOM table's text content
+        const html = buildCleanTableHTML(table)
+        const clipboardItem = new ClipboardItem({
+            'text/html': new Blob([html], { type: 'text/html' }),
+            'text/plain': new Blob([tsv], { type: 'text/plain' }),
+        })
+        navigator.clipboard.write([clipboardItem]).catch(() => {
+            // Fallback to plain TSV
+            copyText(tsv)
+        })
+    } else {
+        copyText(tsv)
+    }
+}
+
+/**
+ * Build a clean, self-contained HTML table string from a DOM table.
+ * Strips classes, data attributes, event hooks — only text content and basic structure.
+ */
+function buildCleanTableHTML(table: HTMLTableElement): string {
+    const lines: string[] = ['<table>']
+    const thead = table.querySelector('thead')
+    if (thead) {
+        lines.push('<thead>')
+        for (const tr of thead.querySelectorAll('tr')) {
+            lines.push('<tr>')
+            for (const cell of tr.querySelectorAll('th, td')) {
+                const tag = cell.tagName === 'TH' ? 'th' : 'td'
+                lines.push(`<${tag}>${escapeCellText(cell.textContent || '')}</${tag}>`)
+            }
+            lines.push('</tr>')
+        }
+        lines.push('</thead>')
+    }
+    const tbody = table.querySelector('tbody')
+    if (tbody) {
+        lines.push('<tbody>')
+        for (const tr of tbody.querySelectorAll('tr')) {
+            lines.push('<tr>')
+            for (const cell of tr.querySelectorAll('td, th')) {
+                const tag = cell.tagName === 'TH' ? 'th' : 'td'
+                lines.push(`<${tag}>${escapeCellText(cell.textContent || '')}</${tag}>`)
+            }
+            lines.push('</tr>')
+        }
+        lines.push('</tbody>')
+    }
+    // If no thead/tbody, iterate all rows directly
+    if (!thead && !tbody) {
+        for (const tr of table.querySelectorAll('tr')) {
+            lines.push('<tr>')
+            for (const cell of tr.querySelectorAll('th, td')) {
+                const tag = cell.tagName === 'TH' ? 'th' : 'td'
+                lines.push(`<${tag}>${escapeCellText(cell.textContent || '')}</${tag}>`)
+            }
+            lines.push('</tr>')
+        }
+    }
+    lines.push('</table>')
+    return lines.join('')
+}
+
+function escapeCellText(text: string): string {
+    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+/**
  * Handle table block header button clicks via event delegation.
  * Call from any container click handler (ChatMessageList, MarkdownPreview, etc.).
  *
@@ -276,8 +352,7 @@ export function handleTableBlockClick(event: MouseEvent): boolean {
         if (btn.classList.contains('is-copied')) return true
         const table = wrapper.querySelector('table')
         if (!table) return true
-        const text = tableToTSV(table as HTMLTableElement)
-        copyText(text)
+        copyTableToClipboard(table as HTMLTableElement)
         // Show "Copied!" on the button briefly
         const originalTitle = btn.getAttribute('title') || ''
         const originalAriaLabel = btn.getAttribute('aria-label') || ''
