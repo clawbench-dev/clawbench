@@ -9,6 +9,23 @@ import { useDialog } from '@/composables/useDialog'
 
 const TAG = 'Store'
 
+// ── Browse directory persistence (per-project) ──
+const BROWSE_DIR_PREFIX = 'clawbench-browse-dir:'
+
+function saveBrowseDir(): void {
+    if (!state.projectRoot) return
+    try {
+        localStorage.setItem(BROWSE_DIR_PREFIX + state.projectRoot, state.currentDir)
+    } catch { /* ignore */ }
+}
+
+export function loadBrowseDir(): string {
+    if (!state.projectRoot) return ''
+    try {
+        return localStorage.getItem(BROWSE_DIR_PREFIX + state.projectRoot) || ''
+    } catch { return '' }
+}
+
 interface DirEntry {
     name: string
     type: 'dir' | 'file'
@@ -265,7 +282,7 @@ async function loadGitBranch(): Promise<{ isGit: boolean; branch: string; head: 
 let loadFilesSeq = 0 // monotonic counter to suppress stale concurrent loads
 let selectFileSeq = 0 // monotonic counter to suppress stale concurrent file loads
 
-async function loadFiles(dir = ''): Promise<void> {
+async function loadFiles(dir = '', silent = false): Promise<void> {
     const seq = ++loadFilesSeq // this call supersedes any earlier in-flight call
     // Defensive: strip leading slashes so currentDir is always a project-relative path.
     // The Go backend treats paths starting with "/" as absolute filesystem paths,
@@ -284,12 +301,14 @@ async function loadFiles(dir = ''): Promise<void> {
         }
         state.currentDir = dir
         state.dirEntries = data.items || []
+        saveBrowseDir()
     } catch (err) {
         // A newer loadFiles call started — don't corrupt its state
         if (seq !== loadFilesSeq) return
         // Roll back to previous state on failure
         state.currentDir = prevDir
         state.dirEntries = prevEntries
+        if (silent) throw err // let caller handle the error
         useToast().show(gt('file.toast.dirLoadFailed'), { type: 'error', icon: '⚠️' })
     } finally {
         // Only clear loading if we are still the latest call

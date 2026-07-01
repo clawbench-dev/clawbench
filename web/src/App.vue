@@ -297,7 +297,7 @@ import { refreshCurrentFile } from './composables/useFileRefresh.ts'
 import { useGlobalEvents } from './composables/useGlobalEvents'
 import { useEdgeSwipeBack, useFeatureBackHandler, PRIORITY_OVERLAY } from './composables/useEdgeSwipeBack'
 import { handleBackNavigation, requestExitConfirm } from './composables/useBackHandler'
-import { store } from './stores/app.ts'
+import { store, loadBrowseDir } from './stores/app.ts'
 import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts'
 import { initMermaid, reRenderMermaid } from './utils/mermaid.ts'
 import { getFileType } from './utils/fileType.ts'
@@ -362,8 +362,19 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   switchingProject.value = false
 
   // ── Phase 6: Background data loading — all independent, fully parallel, non-blocking ──
+  const restoreBrowseDir = async () => {
+    const savedDir = loadBrowseDir()
+    if (savedDir) {
+      try { await store.loadFiles(savedDir, true) } catch (_) {
+        // Directory no longer exists — fall back to project root
+        await store.loadFiles('')
+      }
+    } else {
+      await store.loadFiles('')
+    }
+  }
   Promise.allSettled([
-    store.loadFiles(''),
+    restoreBrowseDir(),
     sessionIdentity.initSessionFromAPI(),
     loadSessionsOnce(),
     store.loadGitBranch(),
@@ -770,8 +781,17 @@ async function initializeApp() {
   loadSSHInfo().catch(() => {})
   loadTerminalStatus().catch(() => {})
   store.loadGitBranch().catch(() => {})
-  try { await store.loadFiles('') } catch (_) {
+  // Restore last browsed directory; fall back to project root if the dir no longer exists
+  const savedDir = loadBrowseDir()
+  if (savedDir) {
+    try { await store.loadFiles(savedDir, true) } catch (_) {
+      // Directory no longer exists — fall back to project root
+      try { await store.loadFiles('') } catch (_) {}
+    }
+  } else {
+    try { await store.loadFiles('') } catch (_) {
       toast.show(t('toast.fileListLoadFailed'), { icon: '⚠️', type: 'error', duration: 6000 })
+    }
   }
   return true
 }
