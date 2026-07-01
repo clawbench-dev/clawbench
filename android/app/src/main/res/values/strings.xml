@@ -29,4 +29,6 @@
     <string name="browser_ssl_positive">信任并继续</string>
     <string name="browser_ssl_negative">取消连接</string>
     <string name="press_again_to_exit">再按一次退出应用</string>
+    <!-- Share feature -->
+    <string name="share_file_failed">分享文件失败</string>
 </resources>

@@ -24,6 +24,11 @@ export default {
     wrapOn: '自动换行已开启',
     wrapOff: '自动换行已关闭',
   },
+  tableBlock: {
+    label: '表格',
+    wrapOn: '自动换行已开启',
+    wrapOff: '自动换行已关闭',
+  },
   nav: {
     prevFile: '上一个文件',
     nextFile: '下一个文件',
@@ -608,7 +613,13 @@ export default {
       lineNumbers: '行号',
       stickyScroll: '粘性滚动',
       fileHistory: '文件历史',
+      shareExternal: '外部应用打开',
       confirmDelete: '确定要删除"{name}"吗？',
+      exportHtml: '导出 HTML',
+      exportingHtml: '导出 HTML 中...',
+      exportHtmlSuccess: 'HTML 导出成功',
+      exportHtmlFailed: '导出失败',
+      exportHtmlSkippedImages: '{n} 张图片无法嵌入',
     },
     overlay: {
       back: '返回',

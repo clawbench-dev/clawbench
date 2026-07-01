@@ -8,4 +8,8 @@
     <files-path
         name="internal_files"
         path="." />
+    <!-- Cache subdir for sharing files out to other apps via FileProvider -->
+    <cache-path
+        name="shared_files"
+        path="shared/" />
 </paths>

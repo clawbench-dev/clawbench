@@ -107,6 +107,18 @@
     margin: 0;
 }
 
+/* Table block wrapper in table-row-value context (TableRowModal) */
+.table-row-value .table-block-wrapper {
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.table-row-value .table-block-wrapper .table-wrap {
+    margin: 0;
+    border-radius: 0;
+    border: none;
+}
+
 /* Per-line code block uses --code-bg to match CodePreview */
 .markdown-body pre.code-block-pre,
 .chat-message.assistant pre.code-block-pre,
@@ -226,6 +238,49 @@
 /* User message table uses translucent overlays on blue background */
 .chat-message.user table {
     border-collapse: collapse;
+}
+
+/* Assistant message table block wrapper */
+.chat-message.assistant .table-block-wrapper {
+    border-color: var(--border-color);
+}
+
+/* User message table block wrapper */
+.chat-message.user .table-block-wrapper {
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.chat-message.user .table-block-header {
+    background: rgba(0, 0, 0, 0.1);
+    border-bottom-color: rgba(255, 255, 255, 0.15);
+}
+
+.chat-message.user .table-block-label {
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.chat-message.user .table-block-copy-btn,
+.chat-message.user .table-block-wrap-btn {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.chat-message.user .table-block-copy-btn:hover,
+.chat-message.user .table-block-wrap-btn:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.chat-message.user .table-block-copy-btn:active,
+.chat-message.user .table-block-wrap-btn:active {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.chat-message.user .table-block-wrap-btn.is-wrapped {
+    color: #ffffff;
+}
+
+.chat-message.user .table-block-copy-btn.is-copied {
+    color: #ffffff;
 }
 
 .chat-message.user th,

@@ -19,7 +19,7 @@ import {
   taskChanged,
   StaticBlockCache,
 } from '@/utils/streamPerf.ts'
-import { annotateCodeBlockHeaders } from '@/composables/useCodeBlockHeader.ts'
+import { annotateCodeBlockHeaders, annotateTableBlockHeaders } from '@/composables/useCodeBlockHeader.ts'
 import {
   rewriteImageUrls,
   convertAudioLinks,
@@ -180,6 +180,8 @@ export function useChatRender(options: { messages: any; theme: any; currentSessi
     html = injectTableRowAttrs(html)
     // Code block headers: add language label + copy/wrap buttons
     html = annotateCodeBlockHeaders(html)
+    // Table block headers: add label + copy/wrap buttons
+    html = annotateTableBlockHeaders(html)
 
     if (!skipEnhancements) {
       // Image styling, audio links, annotations: deferred to post-streaming

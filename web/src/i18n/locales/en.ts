@@ -24,6 +24,11 @@ export default {
     wrapOn: 'Word wrap on',
     wrapOff: 'Word wrap off',
   },
+  tableBlock: {
+    label: 'Table',
+    wrapOn: 'Word wrap on',
+    wrapOff: 'Word wrap off',
+  },
   nav: {
     prevFile: 'Previous file',
     nextFile: 'Next file',
@@ -608,7 +613,13 @@ export default {
       lineNumbers: 'Line Numbers',
       stickyScroll: 'Sticky Scroll',
       fileHistory: 'File history',
+      shareExternal: 'Open externally',
       confirmDelete: 'Delete "{name}"?',
+      exportHtml: 'Export HTML',
+      exportingHtml: 'Exporting HTML...',
+      exportHtmlSuccess: 'HTML exported',
+      exportHtmlFailed: 'Export failed',
+      exportHtmlSkippedImages: '{n} images could not be embedded',
     },
     overlay: {
       back: 'Back',

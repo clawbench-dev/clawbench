@@ -96,7 +96,7 @@ import { useChatRender } from '@/composables/useChatRender.ts'
 import { useAgents } from '@/composables/useAgents'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
-import { handleCodeBlockClick } from '@/composables/useCodeBlockHeader.ts'
+import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { store as appStore } from '@/stores/app.ts'
 import { useAutoSpeech } from '@/composables/useAutoSpeech.ts'
 import { useTaskTab } from '@/composables/useTaskTab.ts'
@@ -317,6 +317,9 @@ const contentRef = ref(null)
 function handleContentClick(event) {
   // 0. Code block header buttons (copy/wrap)
   if (handleCodeBlockClick(event)) return
+
+  // 0.5. Table block header buttons (copy/wrap)
+  if (handleTableBlockClick(event)) return
 
   // 1. Handle localhost URL clicks (icon button or <a> tag) — App mode only
   if (handleLocalhostUrlClick(event)) return

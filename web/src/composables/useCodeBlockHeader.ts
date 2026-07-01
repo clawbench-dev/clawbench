@@ -143,6 +143,165 @@ export function handleCodeBlockClick(event: MouseEvent): boolean {
     return true
 }
 
+// ── Table block header (same pattern as code block header) ──────────────────
+
+const TABLE_COPY_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
+
+const TABLE_WRAP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M3 6h18"/><path d="M3 12h15a3 3 0 1 1 0 6h-3"/><path d="M18 15l-3 3 3 3"/><path d="M3 18h7"/></svg>'
+
+/**
+ * Annotate table blocks in an HTML string with header bars containing
+ * "Table" label, copy button, and word-wrap toggle.
+ *
+ * Must run AFTER table-wrap insertion and injectTableRowAttrs().
+ */
+export function annotateTableBlockHeaders(html: string): string {
+    if (!html) return html
+
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+
+    const tableWraps = doc.querySelectorAll('.table-wrap')
+    for (const tableWrap of tableWraps) {
+        // Skip if already wrapped (idempotent guard)
+        if (tableWrap.parentElement?.classList.contains('table-block-wrapper')) continue
+
+        // Build wrapper div
+        const wrapper = doc.createElement('div')
+        wrapper.className = 'table-block-wrapper'
+
+        // Build header div
+        const header = doc.createElement('div')
+        header.className = 'table-block-header'
+
+        // Label
+        const label = doc.createElement('span')
+        label.className = 'table-block-label'
+        label.textContent = gt('tableBlock.label')
+        header.appendChild(label)
+
+        // Actions group (right side)
+        const actions = doc.createElement('span')
+        actions.className = 'table-block-header-actions'
+
+        // Copy button
+        const copyBtn = doc.createElement('button')
+        copyBtn.className = 'table-block-copy-btn'
+        copyBtn.setAttribute('data-action', 'copy')
+        copyBtn.setAttribute('title', gt('common.copy'))
+        copyBtn.setAttribute('aria-label', gt('common.copy'))
+        copyBtn.setAttribute('type', 'button')
+        copyBtn.innerHTML = TABLE_COPY_ICON_SVG
+        actions.appendChild(copyBtn)
+
+        // Wrap toggle button
+        const wrapBtn = doc.createElement('button')
+        wrapBtn.className = 'table-block-wrap-btn'
+        wrapBtn.setAttribute('data-action', 'wrap')
+        wrapBtn.setAttribute('title', gt('tableBlock.wrapOff'))
+        wrapBtn.setAttribute('aria-label', gt('tableBlock.wrapOff'))
+        wrapBtn.setAttribute('type', 'button')
+        wrapBtn.innerHTML = TABLE_WRAP_ICON_SVG
+        actions.appendChild(wrapBtn)
+
+        header.appendChild(actions)
+
+        // Insert wrapper before .table-wrap, move .table-wrap inside wrapper
+        tableWrap.parentNode?.insertBefore(wrapper, tableWrap)
+        wrapper.appendChild(header)
+        wrapper.appendChild(tableWrap)
+    }
+
+    return doc.body.innerHTML
+}
+
+/**
+ * Extract table data as tab-separated values (TSV) for Word-pasteable copying.
+ */
+function tableToTSV(table: HTMLTableElement): string {
+    const rows: string[][] = []
+
+    // Determine header row and data rows
+    const thead = table.querySelector('thead')
+    const headers: string[] = []
+    // eslint-disable-next-line no-useless-assignment
+    let headerRow: HTMLTableRowElement | null = null
+
+    if (thead) {
+        headerRow = thead.querySelector('tr')
+        thead.querySelectorAll('th').forEach(th => headers.push((th.textContent || '').trim()))
+    } else {
+        // No <thead>, use first <tr> as header
+        headerRow = table.querySelector('tr')
+        if (headerRow) {
+            headerRow.querySelectorAll('th, td').forEach(cell => headers.push((cell.textContent || '').trim()))
+        }
+    }
+
+    // Extract data rows: all <tr> except the header row
+    const allRows = table.querySelectorAll('tr')
+    for (const tr of allRows) {
+        if (tr === headerRow) continue
+        const cells: string[] = []
+        tr.querySelectorAll('td, th').forEach(cell => cells.push((cell.textContent || '').trim()))
+        rows.push(cells)
+    }
+
+    // Build TSV: header row + data rows
+    const lines: string[] = []
+    if (headers.length > 0) lines.push(headers.join('\t'))
+    for (const row of rows) lines.push(row.join('\t'))
+    return lines.join('\n')
+}
+
+/**
+ * Handle table block header button clicks via event delegation.
+ * Call from any container click handler (ChatMessageList, MarkdownPreview, etc.).
+ *
+ * @returns true if the click was handled (caller should return early)
+ */
+export function handleTableBlockClick(event: MouseEvent): boolean {
+    const target = event.target as HTMLElement
+    const btn = target.closest('.table-block-copy-btn, .table-block-wrap-btn')
+    if (!btn) return false
+
+    event.preventDefault()
+    event.stopPropagation()
+
+    const wrapper = btn.closest('.table-block-wrapper')
+    if (!wrapper) return true
+
+    const action = btn.getAttribute('data-action')
+
+    if (action === 'copy') {
+        if (btn.classList.contains('is-copied')) return true
+        const table = wrapper.querySelector('table')
+        if (!table) return true
+        const text = tableToTSV(table as HTMLTableElement)
+        copyText(text)
+        // Show "Copied!" on the button briefly
+        const originalTitle = btn.getAttribute('title') || ''
+        const originalAriaLabel = btn.getAttribute('aria-label') || ''
+        btn.innerHTML = `<span class="table-block-copied-text">${gt('common.copied')}</span>`
+        btn.classList.add('is-copied')
+        btn.setAttribute('title', gt('common.copied'))
+        btn.setAttribute('aria-label', gt('common.copied'))
+        setTimeout(() => {
+            btn.innerHTML = TABLE_COPY_ICON_SVG
+            btn.classList.remove('is-copied')
+            btn.setAttribute('title', originalTitle)
+            btn.setAttribute('aria-label', originalAriaLabel)
+        }, 1500)
+    } else if (action === 'wrap') {
+        wrapper.classList.toggle('word-wrap')
+        btn.classList.toggle('is-wrapped')
+        const isWrapped = wrapper.classList.contains('word-wrap')
+        btn.setAttribute('title', isWrapped ? gt('tableBlock.wrapOn') : gt('tableBlock.wrapOff'))
+        btn.setAttribute('aria-label', isWrapped ? gt('tableBlock.wrapOn') : gt('tableBlock.wrapOff'))
+    }
+
+    return true
+}
+
 export function useCodeBlockHeader() {
-    return { annotateCodeBlockHeaders, handleCodeBlockClick }
+    return { annotateCodeBlockHeaders, handleCodeBlockClick, annotateTableBlockHeaders, handleTableBlockClick }
 }

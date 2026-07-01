@@ -29,7 +29,11 @@ export function rewriteImageUrls(html: string, projectRoot: string): string {
           : `${projectRoot}/${src}`
         if (absolutePath.startsWith(projectRoot + '/') || absolutePath === projectRoot) {
           const rel = absolutePath.slice(projectRoot.length + 1)
-          cleanAttrs = cleanAttrs.replace(`src="${src}"`, `src="/api/local-file/${rel}?t=${Date.now()}"`)
+          // Encode each path segment to handle CJK/special characters
+          let decoded = rel
+          try { decoded = decodeURIComponent(rel) } catch { /* malformed encoding, use as-is */ }
+          const encoded = decoded.split('/').map((s: string) => encodeURIComponent(s)).join('/')
+          cleanAttrs = cleanAttrs.replace(`src="${src}"`, `src="/api/local-file/${encoded}?t=${Date.now()}"`)
         }
       }
     }

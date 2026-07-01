@@ -600,6 +600,11 @@ function handleOpenFile(path) {
     margin: 0.75em 0;
 }
 
+.chat-message.user .table-block-wrapper .table-wrap {
+    margin: 0;
+    border-radius: 0;
+}
+
 .chat-message.user table {
     display: block;
     margin: 0;
@@ -732,6 +737,11 @@ function handleOpenFile(path) {
     border: none;
     border-radius: 6px;
     margin: 0.75em 0;
+}
+
+.chat-message.assistant .table-block-wrapper .table-wrap {
+    margin: 0;
+    border-radius: 0;
 }
 
 .chat-message.assistant table {

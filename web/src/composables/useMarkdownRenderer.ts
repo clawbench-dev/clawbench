@@ -1,6 +1,7 @@
 import { marked, katex, mermaid, DOMPurify } from '@/utils/globals.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { injectTableRowAttrs } from '@/utils/tableRowExpand.ts'
+import { annotateTableBlockHeaders } from '@/composables/useCodeBlockHeader.ts'
 
 /**
  * Markdown渲染选项
@@ -121,7 +122,10 @@ export function renderMarkdown(
     // 6. 注入表格行属性标识
     html = injectTableRowAttrs(html)
 
-    // 7. 自定义后处理
+    // 7. 表格块头部（label + copy/wrap 按钮）
+    html = annotateTableBlockHeaders(html)
+
+    // 8. 自定义后处理
     if (postProcess) {
         html = postProcess(html)
     }

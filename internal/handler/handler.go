@@ -264,6 +264,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/file/delete", middleware.Auth(ServeFileDelete))
 	register("/api/file/batch-delete", middleware.Auth(ServeFileBatchDelete))
 	register("/api/file/batch-exists", middleware.Auth(ServeFileBatchExists))
+	register("/api/file/batch-base64", middleware.Auth(ServeFileBatchBase64))
 	register("/api/file/create", middleware.Auth(ServeFileCreate))
 	register("/api/file/copy", middleware.Auth(ServeFileCopy))
 	register("/api/dir/create", middleware.Auth(ServeDirCreate))

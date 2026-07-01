@@ -4,7 +4,7 @@
       <div class="lightbox-backdrop" @click="close" />
       <div class="lightbox-toolbar">
         <div v-if="currentFileName" class="lb-filename">{{ currentFileName }}</div>
-        <button v-if="currentUrl" class="lb-btn" @click="handleDownload" title="Download">
+        <button v-if="currentUrl || currentSvg" class="lb-btn" @click="handleDownload" title="Download">
           <Download :size="20" />
         </button>
         <button class="lb-btn" @click="resetAndRefresh" title="Reset & Reload">
@@ -63,6 +63,7 @@ import { store } from '@/stores/app.ts'
 import { baseName, joinPath } from '@/utils/path.ts'
 import { getFileType } from '@/utils/fileType.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
+import { downloadBlob } from '@/utils/download.ts'
 
 const { isAppMode } = useAppMode()
 const lightboxVisible = ref(false)
@@ -118,7 +119,10 @@ const currentFileName = computed(() => {
     if (navMode.value === 'md' && mdImages.value.length > 0) {
         return mdImages.value[mdCurrentIndex.value]?.name || ''
     }
-    if (!currentFilePath.value) return ''
+    if (!currentFilePath.value) {
+        if (currentSvg.value) return 'diagram.svg'
+        return ''
+    }
     return baseName(currentFilePath.value)
 })
 
@@ -320,20 +324,68 @@ function resetAndRefresh() {
 }
 
 function handleDownload() {
+    if (currentSvg.value) {
+        // Download SVG content as .svg file
+        const svgName = currentFileName.value || 'diagram.svg'
+        const name = svgName.endsWith('.svg') ? svgName : svgName.replace(/\.\w+$/, '') + '.svg'
+        downloadBlob(currentSvg.value, name, 'image/svg+xml')
+        return
+    }
     if (!currentUrl.value) return
     const native = window.AndroidNative
     if (isAppMode.value && native && native.downloadFile) {
-        // For app mode, extract file path from URL or use currentFilePath
-        native.downloadFile(currentFilePath.value)
+        // In app mode, we need the relative file path for downloadFile().
+        // currentFilePath is set for directory navigation but empty for markdown images.
+        // For markdown images, extract the path from the /api/local-file/ URL.
+        let filePath = currentFilePath.value
+        if (!filePath) {
+            try {
+                const url = new URL(currentUrl.value, window.location.origin)
+                const prefix = '/api/local-file/'
+                if (url.pathname.startsWith(prefix)) {
+                    filePath = decodeURIComponent(url.pathname.slice(prefix.length))
+                }
+            } catch { /* ignore */ }
+        }
+        if (filePath) {
+            native.downloadFile(filePath)
+        } else {
+            // External URL or unparseable — fall back to blob download
+            // Fetch the content and download via blob
+            fetch(currentUrl.value).then(r => r.blob()).then(blob => {
+                const reader = new FileReader()
+                reader.onload = () => {
+                    const base64 = String(reader.result).split(',')[1]
+                    native.downloadBlob(base64, currentFileName.value || 'download')
+                }
+                reader.readAsDataURL(blob)
+            })
+        }
         return
     }
+    // Build download URL: prefer /api/local-file/ with encodeURIComponent over
+    // parsing currentUrl, because currentUrl may have unencoded path segments.
+    let downloadHref
+    if (currentFilePath.value) {
+        downloadHref = '/api/local-file/' + encodeURIComponent(currentFilePath.value) + '?download=1'
+    } else {
+        const baseUrl = currentUrl.value.replace(/[?&]t=\d+/, '')
+        // Only append ?download=1 for local-file URLs
+        if (baseUrl.startsWith('/api/local-file/')) {
+            downloadHref = baseUrl + '?download=1'
+        } else {
+            downloadHref = baseUrl
+        }
+    }
     const a = document.createElement('a')
-    const baseUrl = currentUrl.value.replace(/[?&]t=\d+/, '')
-    a.href = baseUrl + (baseUrl.includes('?') ? '&' : '?') + 'download=1'
+    a.href = downloadHref
     a.download = currentFileName.value || ''
     document.body.appendChild(a)
     a.click()
-    document.body.removeChild(a)
+    // Delay cleanup to avoid race with download initiation
+    setTimeout(() => {
+        document.body.removeChild(a)
+    }, 1000)
 }
 
 function handleWheel(e) {

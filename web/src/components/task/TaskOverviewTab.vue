@@ -108,7 +108,7 @@ import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useWorktreeAnnotation } from '@/composables/useWorktreeAnnotation.ts'
 import { annotateCommitHashes, verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
 import { annotateLocalhostUrls, useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
-import { annotateCodeBlockHeaders, handleCodeBlockClick } from '@/composables/useCodeBlockHeader.ts'
+import { annotateCodeBlockHeaders, handleCodeBlockClick, annotateTableBlockHeaders, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { store } from '@/stores/app.ts'
 import { humanizeCron, repeatLabel, formatDateTime } from '@/utils/format'
 
@@ -166,6 +166,8 @@ watch(
     let html = renderMarkdown(prompt || '', { sanitize: true })
     // Add code block headers (language label + copy/wrap buttons)
     html = annotateCodeBlockHeaders(html)
+    // Add table block headers (label + copy/wrap buttons)
+    html = annotateTableBlockHeaders(html)
     // Annotate worktree paths BEFORE file paths — prevents partial matches
     const { html: worktreeHtml } = annotateWorktreePaths(html, { projectRoot })
     html = worktreeHtml
@@ -208,6 +210,9 @@ function handlePromptClick(event: MouseEvent) {
 
   // Code block header buttons (copy/wrap)
   if (handleCodeBlockClick(event)) return
+
+  // Table block header buttons (copy/wrap)
+  if (handleTableBlockClick(event)) return
 
   const target = event.target as HTMLElement | null
   // Handle commit-hash clicks

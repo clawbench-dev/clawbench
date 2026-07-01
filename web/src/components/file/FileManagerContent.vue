@@ -861,7 +861,8 @@ function doDownload() {
         a.download = name
         document.body.appendChild(a)
         a.click()
-        document.body.removeChild(a)
+        // Delay cleanup to avoid race with download initiation
+        setTimeout(() => { document.body.removeChild(a) }, 1000)
     }
 }
 

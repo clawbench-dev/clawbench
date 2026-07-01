@@ -59,6 +59,31 @@ func TestSanitizeArchiveName(t *testing.T) {
 }
 
 // ============================================================================
+// contentDispositionAttachment tests
+// ============================================================================
+
+func TestContentDispositionAttachment(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"ASCII", "file.txt", `attachment; filename="file.txt"; filename*=UTF-8''file.txt`},
+		{"CJK", "日本語.zip", `attachment; filename="日本語.zip"; filename*=UTF-8''%E6%97%A5%E6%9C%AC%E8%AA%9E.zip`},
+		{"Quote", `my"file.txt`, `attachment; filename="my_file.txt"; filename*=UTF-8''my%22file.txt`},
+		{"Space", "my file.txt", `attachment; filename="my file.txt"; filename*=UTF-8''my%20file.txt`},
+		{"Percent", "100%.txt", `attachment; filename="100%.txt"; filename*=UTF-8''100%25.txt`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := contentDispositionAttachment(tt.input)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// ============================================================================
 // addFileToZip tests
 // ============================================================================
 

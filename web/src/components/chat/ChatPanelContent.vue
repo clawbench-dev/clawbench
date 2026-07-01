@@ -1035,6 +1035,7 @@ onMounted(() => {
     session.loadSessionsOnce()
     document.addEventListener('visibilitychange', session.handleVisibilityChange)
     window.addEventListener('clawbench-summary-update', handleSummaryUpdate)
+
 })
 
 // Cleanup preview URLs on unmount

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 // maxArchivePaths limits the number of paths in a single archive request.
@@ -72,12 +73,9 @@ func ServeFileArchive(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 			zipName = base + ".zip"
 		}
 	}
-	// Sanitize filename for Content-Disposition header (prevent injection)
-	safeName := sanitizeArchiveName(zipName)
-
 	// Set response headers before writing any data
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, safeName))
+	w.Header().Set("Content-Disposition", contentDispositionAttachment(zipName))
 	w.Header().Set("Cache-Control", "no-store")
 
 	// Stream zip directly to response writer
@@ -154,6 +152,33 @@ func sanitizeArchiveName(name string) string {
 		}
 		return r
 	}, name)
+}
+
+// contentDispositionAttachment builds a Content-Disposition header value
+// with both filename (ASCII fallback) and filename* (RFC 5987/6267).
+// This ensures CJK and other non-ASCII filenames display correctly
+// across browsers, proxies, and the Android WebView.
+func contentDispositionAttachment(name string) string {
+	safe := sanitizeArchiveName(name)
+	// Build filename*=UTF-8''<percent-encoded> per RFC 5987
+	// Only ASCII alphanums and !#$&+-.^_`|~ are allowed unencoded.
+	var encoded strings.Builder
+	encoded.Grow(len(name) * 3)
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
+			r == '!' || r == '#' || r == '$' || r == '&' || r == '+' || r == '-' ||
+			r == '.' || r == '^' || r == '_' || r == '`' || r == '|' || r == '~' {
+			encoded.WriteRune(r)
+		} else {
+			// Percent-encode each byte of the UTF-8 representation
+			var buf [4]byte
+			n := utf8.EncodeRune(buf[:], r)
+			for i := 0; i < n; i++ {
+				fmt.Fprintf(&encoded, "%%%02X", buf[i])
+			}
+		}
+	}
+	return fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, safe, encoded.String())
 }
 
 // addFileToZip adds a single file to the zip writer.

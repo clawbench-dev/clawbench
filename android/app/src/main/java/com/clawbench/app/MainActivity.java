@@ -55,7 +55,9 @@ import androidx.core.content.ContextCompat;
 import org.json.JSONArray;
 
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.security.cert.X509Certificate;
 import java.text.SimpleDateFormat;
@@ -63,6 +65,7 @@ import java.util.Date;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
@@ -1131,6 +1134,7 @@ public class MainActivity extends AppCompatActivity {
         // Do NOT stop BackgroundService here — it should survive Activity lifecycle
         // so the SSH tunnel continues running when the app is in background.
         cancelConnectionTimeout();
+        cleanupSharedCacheDir();
         instance = null; // Clear static reference to prevent memory leak / stale access
         super.onDestroy();
     }
@@ -1311,6 +1315,30 @@ public class MainActivity extends AppCompatActivity {
             AppLog.i(TAG, "MainActivity: cleared intent extras to prevent re-dispatch");
         } else {
             AppLog.i(TAG, "MainActivity: handleNotificationIntent - no session_id or task_id in intent extras");
+        }
+    }
+
+    // --- Share Out ---
+
+    /** Get or create the shared temp files directory under cacheDir. */
+    private File getSharedCacheDir() {
+        File dir = new File(getCacheDir(), "shared");
+        if (!dir.exists()) dir.mkdirs();
+        return dir;
+    }
+
+    /** Clean up all files in the shared cache directory. Called in onDestroy. */
+    private void cleanupSharedCacheDir() {
+        try {
+            File dir = getSharedCacheDir();
+            File[] files = dir.listFiles();
+            if (files != null) {
+                for (File f : files) {
+                    f.delete();
+                }
+            }
+        } catch (Exception e) {
+            AppLog.w(TAG, "Failed to cleanup shared cache dir", e);
         }
     }
 
@@ -1504,6 +1532,15 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
             Uri url = request.getUrl();
+
+            // Allow content:// URIs only from our own FileProvider (camera capture, etc.)
+            if ("content".equals(url.getScheme())) {
+                if (url.getAuthority().equals(getPackageName() + ".fileprovider")) {
+                    return false;
+                }
+                return true; // Block other content:// URIs
+            }
+
             String host = url.getHost();
 
             // Allow localhost and the configured server
@@ -2165,6 +2202,131 @@ public class MainActivity extends AppCompatActivity {
                 } else {
                     activity.getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                     AppLog.i(TAG, "setKeepScreenOn: FLAG_KEEP_SCREEN_ON cleared");
+                }
+            });
+        }
+
+        /**
+         * Share a file from the ClawBench server with another app via ACTION_SEND.
+         * Downloads the file to a temp directory, then creates a share intent
+         * with a FileProvider content URI.
+         * @param path Relative file path (as used in /api/local-file/ URL)
+         * @param mimeType MIME type for the share intent (e.g. "image/png", "application/pdf")
+         */
+        @JavascriptInterface
+        public void shareFile(String path, String mimeType) {
+            // Path safety: reject traversal attempts (both raw and URL-decoded forms)
+            if (path == null || path.isEmpty() || path.contains("..") || path.startsWith("/")) {
+                AppLog.w(TAG, "shareFile: invalid path: " + path);
+                return;
+            }
+            try {
+                String decoded = java.net.URLDecoder.decode(path, "UTF-8");
+                if (decoded.contains("..") || decoded.startsWith("/")) {
+                    AppLog.w(TAG, "shareFile: invalid decoded path: " + path);
+                    return;
+                }
+            } catch (Exception e) {
+                AppLog.w(TAG, "shareFile: invalid path encoding: " + path);
+                return;
+            }
+
+            new Thread(() -> {
+                try {
+                    String serverUrl = activity.prefs.getString(KEY_SERVER_URL, "");
+                    if (serverUrl.isEmpty()) {
+                        AppLog.w(TAG, "shareFile: no server URL");
+                        return;
+                    }
+
+                    // Flush cookies and get auth cookie
+                    CookieManager.getInstance().flush();
+                    String cookie = CookieManager.getInstance().getCookie(serverUrl);
+                    if (cookie == null || cookie.isEmpty()) {
+                        AppLog.w(TAG, "shareFile: no auth cookie");
+                        activity.runOnUiThread(() ->
+                                Toast.makeText(activity, R.string.share_file_failed, Toast.LENGTH_SHORT).show());
+                        return;
+                    }
+
+                    // Download file from server
+                    String encodedPath = Uri.encode(path, "/");
+                    String downloadUrl = serverUrl + "/api/local-file/" + encodedPath + "?download=1";
+
+                    OkHttpClient client = activity.buildTrustingOkHttpClient();
+                    Request request = new Request.Builder()
+                            .url(downloadUrl)
+                            .addHeader("Cookie", cookie)
+                            .build();
+
+                    // Stream to temp file in shared cache dir
+                    String fileName = path.contains("/") ? path.substring(path.lastIndexOf("/") + 1) : path;
+                    fileName = fileName.replaceAll("[\\\\/:*?\"<>|]", "_");
+                    if (fileName.length() > 200) fileName = fileName.substring(0, 200);
+                    final String safeFileName = fileName;
+                    File tempFile = new File(activity.getSharedCacheDir(), UUID.randomUUID().toString() + "_" + safeFileName);
+
+                    try (Response response = client.newCall(request).execute()) {
+                        if (!response.isSuccessful() || response.body() == null) {
+                            AppLog.w(TAG, "shareFile: download failed, code=" + response.code());
+                            activity.runOnUiThread(() ->
+                                    Toast.makeText(activity, R.string.share_file_failed, Toast.LENGTH_SHORT).show());
+                            return;
+                        }
+                        try (InputStream is = response.body().byteStream();
+                             FileOutputStream fos = new FileOutputStream(tempFile)) {
+                            byte[] buffer = new byte[8192];
+                            int len;
+                            while ((len = is.read(buffer)) != -1) {
+                                fos.write(buffer, 0, len);
+                            }
+                        }
+                    }
+
+                    tempFile.deleteOnExit();
+
+                    // Get FileProvider content URI
+                    String authority = activity.getPackageName() + ".fileprovider";
+                    Uri contentUri = androidx.core.content.FileProvider.getUriForFile(activity, authority, tempFile);
+
+                    // Build share intent
+                    Intent shareIntent = new Intent(Intent.ACTION_SEND);
+                    shareIntent.setType(mimeType != null && !mimeType.isEmpty() ? mimeType : "*/*");
+                    shareIntent.putExtra(Intent.EXTRA_STREAM, contentUri);
+                    shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+
+                    activity.runOnUiThread(() -> {
+                        try {
+                            activity.startActivity(Intent.createChooser(shareIntent, safeFileName));
+                        } catch (Exception e) {
+                            AppLog.w(TAG, "shareFile: chooser failed", e);
+                            Toast.makeText(activity, R.string.share_file_failed, Toast.LENGTH_SHORT).show();
+                        }
+                    });
+
+                } catch (Exception e) {
+                    AppLog.e(TAG, "shareFile failed", e);
+                    activity.runOnUiThread(() ->
+                            Toast.makeText(activity, R.string.share_file_failed, Toast.LENGTH_SHORT).show());
+                }
+            }).start();
+        }
+
+        /**
+         * Share text with another app via ACTION_SEND.
+         * @param text Text content to share
+         */
+        @JavascriptInterface
+        public void shareText(String text) {
+            if (text == null || text.isEmpty()) return;
+            activity.runOnUiThread(() -> {
+                try {
+                    Intent shareIntent = new Intent(Intent.ACTION_SEND);
+                    shareIntent.setType("text/plain");
+                    shareIntent.putExtra(Intent.EXTRA_TEXT, text);
+                    activity.startActivity(Intent.createChooser(shareIntent, "Share"));
+                } catch (Exception e) {
+                    AppLog.w(TAG, "shareText: chooser failed", e);
                 }
             });
         }

@@ -94,6 +94,10 @@
     margin: 1em 0;
 }
 
+.markdown-body .table-block-wrapper .table-wrap {
+    margin: 0;
+}
+
 .markdown-body .table-wrap table {
     margin: 0;
 }
