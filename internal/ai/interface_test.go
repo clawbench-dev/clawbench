@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -80,6 +81,19 @@ func TestShouldInjectSystemPrompt(t *testing.T) {
 			assert.Equal(t, tt.expected, req.ShouldInjectSystemPrompt())
 		})
 	}
+}
+
+func TestQueueEventDataMessageIDJSON(t *testing.T) {
+	data := QueueEventData{MessageID: 42, Text: "hello"}
+	b, err := json.Marshal(data)
+	assert.NoError(t, err)
+	assert.Contains(t, string(b), `"messageId":42`)
+	assert.NotContains(t, string(b), `"MessageID"`)
+
+	var decoded QueueEventData
+	assert.NoError(t, json.Unmarshal(b, &decoded))
+	assert.Equal(t, int64(42), decoded.MessageID)
+	assert.Equal(t, "hello", decoded.Text)
 }
 
 func TestTruncateToolOutput(t *testing.T) {

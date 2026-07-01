@@ -552,7 +552,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				Type: "queue_drain",
 				QueueEvent: &ai.QueueEventData{
 					Text:      qMsg.Text,
-					MessageId: drainMsgID,
+					MessageID: drainMsgID,
 					FilePaths: qMsg.FilePaths,
 					Files:     qMsg.Files,
 					Queue:     remainingQueue,

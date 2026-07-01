@@ -70,7 +70,7 @@ func TestContentDispositionAttachment(t *testing.T) {
 	}{
 		{"ASCII", "file.txt", `attachment; filename="file.txt"; filename*=UTF-8''file.txt`},
 		{"CJK", "日本語.zip", `attachment; filename="日本語.zip"; filename*=UTF-8''%E6%97%A5%E6%9C%AC%E8%AA%9E.zip`},
-		{"Quote", `my"file.txt`, `attachment; filename="my_file.txt"; filename*=UTF-8''my%22file.txt`},
+		{"Quote", "my\"file.txt", `attachment; filename="my_file.txt"; filename*=UTF-8''my%22file.txt`},
 		{"Space", "my file.txt", `attachment; filename="my file.txt"; filename*=UTF-8''my%20file.txt`},
 		{"Percent", "100%.txt", `attachment; filename="100%.txt"; filename*=UTF-8''100%25.txt`},
 	}
@@ -80,6 +80,63 @@ func TestContentDispositionAttachment(t *testing.T) {
 			got := contentDispositionAttachment(tt.input)
 			assert.Equal(t, tt.want, got)
 		})
+	}
+}
+
+// ============================================================================
+// rfc5987Encode and isRFC5987Unreserved tests
+// ============================================================================
+
+func TestRFC5987Encode(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"Empty", "", ""},
+		{"AllUnreserved", "file.txt", "file.txt"},
+		{"Space", "my file", "my%20file"},
+		{"CJK", "日本語", "%E6%97%A5%E6%9C%AC%E8%AA%9E"},
+		{"Mixed", "hello 世界.txt", "hello%20%E4%B8%96%E7%95%8C.txt"},
+		{"SpecialChars", "!#$&+-.^_`|~", "!#$&+-.^_`|~"},
+		{"Percent", "100%", "100%25"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := rfc5987Encode(tt.input)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestIsRFC5987Unreserved(t *testing.T) {
+	unreserved := "!#$&+-.^_`|~"
+	for _, r := range unreserved {
+		if !isRFC5987Unreserved(r) {
+			t.Errorf("expected %q to be unreserved", r)
+		}
+	}
+	// Alphanums
+	for r := 'a'; r <= 'z'; r++ {
+		if !isRFC5987Unreserved(r) {
+			t.Errorf("expected %q to be unreserved", r)
+		}
+	}
+	for r := 'A'; r <= 'Z'; r++ {
+		if !isRFC5987Unreserved(r) {
+			t.Errorf("expected %q to be unreserved", r)
+		}
+	}
+	for r := '0'; r <= '9'; r++ {
+		if !isRFC5987Unreserved(r) {
+			t.Errorf("expected %q to be unreserved", r)
+		}
+	}
+	// Reserved characters
+	for _, r := range " @<>[]()=%/\\\"" {
+		if isRFC5987Unreserved(r) {
+			t.Errorf("expected %q to be reserved", r)
+		}
 	}
 }
 

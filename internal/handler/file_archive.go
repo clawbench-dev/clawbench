@@ -160,25 +160,51 @@ func sanitizeArchiveName(name string) string {
 // across browsers, proxies, and the Android WebView.
 func contentDispositionAttachment(name string) string {
 	safe := sanitizeArchiveName(name)
-	// Build filename*=UTF-8''<percent-encoded> per RFC 5987
-	// Only ASCII alphanums and !#$&+-.^_`|~ are allowed unencoded.
+	encoded := rfc5987Encode(name)
+	return fmt.Sprintf(`attachment; filename=%q; filename*=UTF-8''%s`, safe, encoded)
+}
+
+// rfc5987Encode percent-encodes a string per RFC 5987.
+// ASCII alphanums and !#$&+-.^_`|~ are left unencoded.
+func rfc5987Encode(name string) string {
 	var encoded strings.Builder
 	encoded.Grow(len(name) * 3)
 	for _, r := range name {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
-			r == '!' || r == '#' || r == '$' || r == '&' || r == '+' || r == '-' ||
-			r == '.' || r == '^' || r == '_' || r == '`' || r == '|' || r == '~' {
+		if isRFC5987Unreserved(r) {
 			encoded.WriteRune(r)
 		} else {
-			// Percent-encode each byte of the UTF-8 representation
 			var buf [4]byte
 			n := utf8.EncodeRune(buf[:], r)
-			for i := 0; i < n; i++ {
+			for i := range n {
 				fmt.Fprintf(&encoded, "%%%02X", buf[i])
 			}
 		}
 	}
-	return fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, safe, encoded.String())
+	return encoded.String()
+}
+
+// rfc5987Unreserved is the set of unreserved characters per RFC 5987
+// (ASCII alphanums plus !#$&+-.^_`|~).
+var rfc5987Unreserved = func() map[rune]bool {
+	m := make(map[rune]bool, 26+26+10+15)
+	for r := 'a'; r <= 'z'; r++ {
+		m[r] = true
+	}
+	for r := 'A'; r <= 'Z'; r++ {
+		m[r] = true
+	}
+	for r := '0'; r <= '9'; r++ {
+		m[r] = true
+	}
+	for _, r := range "!#$&+-.^_`|~" {
+		m[r] = true
+	}
+	return m
+}()
+
+// isRFC5987Unreserved reports whether r is an unreserved character per RFC 5987.
+func isRFC5987Unreserved(r rune) bool {
+	return rfc5987Unreserved[r]
 }
 
 // addFileToZip adds a single file to the zip writer.
