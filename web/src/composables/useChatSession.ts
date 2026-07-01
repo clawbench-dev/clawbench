@@ -388,6 +388,23 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (loadHistorySeq !== mySeq) { return }
       if (!resp.ok) {
         const errData = await resp.json().catch(() => ({}))
+        // If the session was deleted (404 + SessionNotFound), clear stale
+        // currentSessionId and recover by re-triggering loadHistory (which
+        // will use the recovery path to auto-select the latest available
+        // session or create a new one).
+        if (resp.status === 404 && errData.msgKey === 'SessionNotFound' && currentSessionId.value) {
+          appLog.w(TAG, 'loadHistory: session not found, clearing stale sessionId and recovering')
+          currentSessionId.value = ''
+          // Resolve deferred and clean up in-flight state before re-invoking
+          // so the finally block doesn't double-resolve or flicker switching.
+          loadHistoryInProgress = false
+          resolveDeferred!()
+          loadHistoryDeferred = null
+          const next = pendingReload || { forceScrollBottom, showOverlay, skipIfUnchanged }
+          pendingReload = null
+          setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged), 0)
+          return
+        }
         throw new Error(errData.error || gt('chat.session.requestFailed', { status: resp.status }))
       }
       const data = await resp.json()
@@ -594,6 +611,27 @@ export function useChatSession(options: UseChatSessionOptions) {
         fetch(chatUrl),
       ])
       if (!resp.ok) {
+        // If the session was deleted, clear stale currentSessionId and recover
+        // by falling back to the latest available session (same as deleteSession).
+        const errData = await resp.json().catch(() => ({}))
+        if (resp.status === 404 && errData.msgKey === 'SessionNotFound') {
+          appLog.w(TAG, 'switchSession: session not found, recovering to latest session')
+          const sessionsResp = await fetch('/api/ai/sessions')
+          const sessionsData = await sessionsResp.json()
+          // If another switch happened while fetching sessions, bail
+          if (switchSessionSeq !== mySeq) return
+          if (sessionsData.sessions && sessionsData.sessions.length > 0) {
+            // Switch to the most recent session — guard against recursive deletion
+            const targetId = sessionsData.sessions[0].id
+            if (targetId !== sessionId) {
+              await switchSession(targetId)
+              return
+            }
+          }
+          // No valid sessions left — create a new one
+          await createSession('')
+          return
+        }
         toast.show(gt('chat.session.switchFailed'), { icon: '⚠️', type: 'error' })
         return
       }
