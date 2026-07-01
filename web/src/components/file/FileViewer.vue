@@ -72,7 +72,7 @@
           <FileText />
           <div class="unsupported-title">{{ file.name }}</div>
           <div class="unsupported-desc">{{ t('file.viewer.fileTooLarge') }} {{ file.size ? '(' + formatSize(file.size) + ')' : '' }}</div>
-          <a v-if="!isAppMode" :href="'/api/local-file/' + encodeURIComponent(file.path) + '?download=1'" class="download-btn" :download="file.name">
+          <a v-if="!isAppMode" :href="buildLocalFileUrl(file.path, { download: true })" class="download-btn" :download="file.name">
             <Download :size="14" color="#fff" />
             {{ t('common.download') }}
           </a>
@@ -90,7 +90,7 @@
           <div class="unsupported-title">{{ file.name }}</div>
           <div class="unsupported-desc">{{ t('file.viewer.binaryFile') }} {{ file.size ? '(' + formatSize(file.size) + ')' : '' }}</div>
           <div class="unsupported-actions">
-            <a v-if="!isAppMode" :href="'/api/local-file/' + encodeURIComponent(file.path) + '?download=1'" class="download-btn" :download="file.name">
+            <a v-if="!isAppMode" :href="buildLocalFileUrl(file.path, { download: true })" class="download-btn" :download="file.name">
               <Download :size="14" color="#fff" />
               {{ t('common.download') }}
             </a>
@@ -199,7 +199,7 @@ import { store } from '@/stores/app.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useFileNavStack } from '@/composables/useFileNavStack.ts'
 import { exportRenderedHtml } from '@/utils/exportHtml.ts'
-import { downloadBlob } from '@/utils/download.ts'
+import { downloadBlob, buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 import { useToast } from '@/composables/useToast.ts'
 
 const { t } = useI18n()
@@ -385,10 +385,7 @@ function handleOpenAsText() {
 }
 
 function handleDownload(path) {
-    const native = window.AndroidNative
-    if (isAppMode.value && native && native.downloadFile) {
-        native.downloadFile(path)
-    }
+    downloadFileByPath(path, props.file?.name)
 }
 
 async function handleExportHtml() {

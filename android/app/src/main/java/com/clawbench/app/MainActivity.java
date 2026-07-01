@@ -2011,12 +2011,31 @@ public class MainActivity extends AppCompatActivity {
                     java.io.FileOutputStream fos = new java.io.FileOutputStream(outFile);
                     fos.write(data);
                     fos.close();
+
+                    // Register with DownloadManager so the system shows a completed
+                    // notification and the file appears in the Downloads app.
+                    try {
+                        DownloadManager dm = (DownloadManager) activity.getSystemService(Context.DOWNLOAD_SERVICE);
+                        // Infer MIME type from file extension (simple extraction, not URL parsing)
+                        int dot = fileName.lastIndexOf('.');
+                        String ext = (dot >= 0 && dot < fileName.length() - 1)
+                                ? fileName.substring(dot + 1).toLowerCase() : "";
+                        String mimeType = android.webkit.MimeTypeMap.getSingleton()
+                                .getMimeTypeFromExtension(ext);
+                        if (mimeType == null) mimeType = "application/octet-stream";
+                        dm.addCompletedDownload(fileName, activity.getString(R.string.download_description),
+                                true, mimeType, outFile.getAbsolutePath(), data.length,
+                                true /* show notification */);
+                    } catch (Exception e) {
+                        // addCompletedDownload may fail on some devices/scopes;
+                        // the file is already saved, just skip the notification.
+                        AppLog.w(TAG, "addCompletedDownload failed, file already saved", e);
+                    }
+
                     // Notify MediaScanner so the file appears in Downloads app
                     Intent scanIntent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
                     scanIntent.setData(Uri.fromFile(outFile));
                     activity.sendBroadcast(scanIntent);
-                    activity.runOnUiThread(() ->
-                            Toast.makeText(activity, R.string.download_completed, Toast.LENGTH_SHORT).show());
                 } catch (Exception e) {
                     AppLog.e(TAG, "downloadBlob failed", e);
                     activity.runOnUiThread(() ->

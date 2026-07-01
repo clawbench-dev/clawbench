@@ -34,7 +34,7 @@
         <button class="pdf-btn" @click="fitWidth" title="适合宽度">
           <MoveHorizontal :size="14" />
         </button>
-        <a v-if="!isAppMode" class="pdf-btn" :href="mediaUrl" download title="下载">
+        <a v-if="!isAppMode" class="pdf-btn" :href="buildLocalFileUrl(file.path, { download: true })" download title="下载">
           <Download :size="14" />
         </a>
         <button v-else class="pdf-btn" @click="handleDownload" title="下载">
@@ -68,7 +68,7 @@
       <FileX :size="48" />
       <div class="pdf-error-title">PDF 加载失败</div>
       <div class="pdf-error-desc">{{ error }}</div>
-      <a v-if="!isAppMode" :href="mediaUrl" class="pdf-download-link" download>
+      <a v-if="!isAppMode" :href="buildLocalFileUrl(file.path, { download: true })" class="pdf-download-link" download>
         <Download :size="14" />
         下载文件
       </a>
@@ -87,6 +87,7 @@ import {
 } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useAppMode } from '@/composables/useAppMode.ts'
+import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 
 const MIN_SCALE = 0.25
 const MAX_SCALE = 5.0
@@ -455,10 +456,7 @@ function setupObserver() {
 
 // Download
 function handleDownload() {
-  const native = window.AndroidNative
-  if (isAppMode.value && native && native.downloadFile) {
-    native.downloadFile(props.file.path)
-  }
+  downloadFileByPath(props.file.path)
 }
 
 // Lifecycle

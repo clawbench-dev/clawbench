@@ -163,7 +163,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 2px 8px;
-    background: var(--bg-tertiary);
+    background: var(--code-bg);
     border-bottom: 1px solid var(--border-color);
     font-size: 11px;
     line-height: 1.4;
@@ -175,7 +175,8 @@
 .table-block-label {
     color: var(--text-muted);
     font-weight: 500;
-    font-size: 11px;
+    text-transform: lowercase;
+    font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Segoe UI Mono', 'Roboto Mono', Consolas, 'Liberation Mono', monospace;
 }
 
 /* ─── Actions group (right side) ─── */
@@ -209,7 +210,7 @@
 .table-block-wrap-btn:hover {
     opacity: 1;
     color: var(--text-secondary);
-    background: var(--bg-secondary);
+    background: var(--bg-tertiary);
 }
 
 .table-block-copy-btn:active,
@@ -249,7 +250,7 @@
 
 /* ─── Word-wrap mode for markdown tables ─── */
 .table-block-wrapper.word-wrap {
-    width: 100%;  /* expand wrapper so table can fill and wrap */
+    max-width: 100%;
 }
 
 .table-block-wrapper.word-wrap .table-wrap {
@@ -258,8 +259,8 @@
 
 .table-block-wrapper.word-wrap table {
     display: table !important;     /* override display:block from ChatMessageItem */
-    table-layout: fixed !important;
-    width: 100% !important;
+    table-layout: auto !important;
+    max-width: 100% !important;
     margin: 0 !important;
 }
 

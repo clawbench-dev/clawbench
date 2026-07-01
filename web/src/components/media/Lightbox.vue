@@ -62,10 +62,8 @@ import { ref, computed, provide, onMounted, onUnmounted } from 'vue'
 import { store } from '@/stores/app.ts'
 import { baseName, joinPath } from '@/utils/path.ts'
 import { getFileType } from '@/utils/fileType.ts'
-import { useAppMode } from '@/composables/useAppMode.ts'
-import { downloadBlob } from '@/utils/download.ts'
+import { downloadBlob, buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 
-const { isAppMode } = useAppMode()
 const lightboxVisible = ref(false)
 const currentUrl = ref('')
 const currentSvg = ref('')
@@ -208,8 +206,7 @@ function navigateToIndex(newIdx, direction) {
     currentFilePath.value = entryPath
 
     // Build URL for the new file
-    const url = '/api/local-file/' + encodeURIComponent(entryPath)
-    currentUrl.value = url + '?t=' + Date.now()
+    currentUrl.value = buildLocalFileUrl(entryPath, { timestamp: true })
     currentSvg.value = ''
 
     // Sync with store
@@ -332,60 +329,32 @@ function handleDownload() {
         return
     }
     if (!currentUrl.value) return
-    const native = window.AndroidNative
-    if (isAppMode.value && native && native.downloadFile) {
-        // In app mode, we need the relative file path for downloadFile().
-        // currentFilePath is set for directory navigation but empty for markdown images.
-        // For markdown images, extract the path from the /api/local-file/ URL.
-        let filePath = currentFilePath.value
-        if (!filePath) {
-            try {
-                const url = new URL(currentUrl.value, window.location.origin)
-                const prefix = '/api/local-file/'
-                if (url.pathname.startsWith(prefix)) {
-                    filePath = decodeURIComponent(url.pathname.slice(prefix.length))
-                }
-            } catch { /* ignore */ }
-        }
-        if (filePath) {
-            native.downloadFile(filePath)
-        } else {
-            // External URL or unparseable — fall back to blob download
-            // Fetch the content and download via blob
-            fetch(currentUrl.value).then(r => r.blob()).then(blob => {
-                const reader = new FileReader()
-                reader.onload = () => {
-                    const base64 = String(reader.result).split(',')[1]
-                    native.downloadBlob(base64, currentFileName.value || 'download')
-                }
-                reader.readAsDataURL(blob)
-            })
-        }
+
+    // Resolve the relative file path for downloadFileByPath / buildLocalFileUrl
+    let filePath = currentFilePath.value
+    if (!filePath) {
+        try {
+            const url = new URL(currentUrl.value, window.location.origin)
+            const prefix = '/api/local-file/'
+            if (url.pathname.startsWith(prefix)) {
+                filePath = decodeURIComponent(url.pathname.slice(prefix.length))
+            }
+        } catch { /* ignore */ }
+    }
+
+    if (filePath) {
+        downloadFileByPath(filePath, currentFileName.value)
         return
     }
-    // Build download URL: prefer /api/local-file/ with encodeURIComponent over
-    // parsing currentUrl, because currentUrl may have unencoded path segments.
-    let downloadHref
-    if (currentFilePath.value) {
-        downloadHref = '/api/local-file/' + encodeURIComponent(currentFilePath.value) + '?download=1'
-    } else {
-        const baseUrl = currentUrl.value.replace(/[?&]t=\d+/, '')
-        // Only append ?download=1 for local-file URLs
-        if (baseUrl.startsWith('/api/local-file/')) {
-            downloadHref = baseUrl + '?download=1'
-        } else {
-            downloadHref = baseUrl
-        }
-    }
+
+    // External URL — construct download link directly
     const a = document.createElement('a')
-    a.href = downloadHref
+    const baseUrl = currentUrl.value.replace(/[?&]t=\d+/, '')
+    a.href = baseUrl
     a.download = currentFileName.value || ''
     document.body.appendChild(a)
     a.click()
-    // Delay cleanup to avoid race with download initiation
-    setTimeout(() => {
-        document.body.removeChild(a)
-    }, 1000)
+    setTimeout(() => { document.body.removeChild(a) }, 1000)
 }
 
 function handleWheel(e) {

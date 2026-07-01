@@ -192,6 +192,12 @@ function serializeCss(_markdownBodyEl: HTMLElement): string {
                     sel === ':root' ||
                     sel.includes('.markdown-content') ||
                     sel.includes('.diff-marker') ||
+                    sel.includes('.hljs') ||
+                    sel.includes('.katex') ||
+                    sel.includes('.code-line') ||
+                    sel.includes('.line-num') ||
+                    sel.includes('.code-text') ||
+                    sel.includes('.code-block-pre') ||
                     sel.includes('.code-block-header') ||
                     sel.includes('.code-block-wrapper') ||
                     sel.includes('.code-block-copy-btn') ||
@@ -199,6 +205,7 @@ function serializeCss(_markdownBodyEl: HTMLElement): string {
                     sel.includes('.code-block-lang') ||
                     sel.includes('.code-block-header-actions') ||
                     sel.includes('.code-block-copied-text') ||
+                    sel.includes('.code-file-path') ||
                     sel.includes('.table-block-wrapper') ||
                     sel.includes('.table-block-header') ||
                     sel.includes('.table-block-label') ||
@@ -207,27 +214,78 @@ function serializeCss(_markdownBodyEl: HTMLElement): string {
                     sel.includes('.table-block-header-actions') ||
                     sel.includes('.table-block-copied-text') ||
                     sel.includes('.table-wrap') ||
-                    sel.includes('.line-flash')
+                    sel.includes('.line-flash') ||
+                    sel.includes('.copy-flash') ||
+                    sel.includes('.char-flash-delete') ||
+                    sel.includes('.char-flash-add') ||
+                    sel.includes('.chat-file-path') ||
+                    sel.includes('.chat-file-open-btn') ||
+                    sel.includes('.chat-commit-hash') ||
+                    sel.includes('.chat-commit-open-btn') ||
+                    sel.includes('.chat-url-open-btn') ||
+                    sel.includes('.chat-worktree-btn') ||
+                    sel.includes('.mermaid')
                 ) {
                     // Skip [data-theme] rules — they won't match in exported HTML
                     // (theme is frozen via resolved var() values instead)
-                    // Replace var() references with resolved values
+                    if (sel.includes('[data-theme')) continue
+
+                    // Handle [data-hljs-theme] rules: strip the attribute selector for
+                    // the current theme (so the rule matches), skip for the opposite theme
                     let resolvedText = rule.cssText
+                    const currentHljsTheme = document.documentElement.getAttribute('data-hljs-theme') || 'light'
+                    const oppositeHljsTheme = currentHljsTheme === 'light' ? 'dark' : 'light'
+                    if (sel.includes(`[data-hljs-theme="${oppositeHljsTheme}"]`)) continue
+                    if (sel.includes('[data-hljs-theme')) {
+                        // Strip [data-hljs-theme="light/dark"] from selector
+                        resolvedText = resolvedText.replace(/\[data-hljs-theme="[^"]*"\]\s*/g, '')
+                    }
+
                     if (customProps.size > 0) {
                         resolvedText = resolveVarRefs(resolvedText, customProps)
                     }
                     rules.push(resolvedText)
                 }
+            } else if (rule instanceof CSSKeyframesRule) {
+                // Include @keyframes used by animations in exported content
+                // (line-flash, copy-flash, char-flash-delete-anim, char-flash-add-anim,
+                //  diff-marker-highlight, diff-marker-added-flash, url-btn-spin)
+                const name = rule.name
+                if (
+                    name.includes('line-flash') ||
+                    name.includes('copy-flash') ||
+                    name.includes('char-flash') ||
+                    name.includes('diff-marker') ||
+                    name.includes('url-btn-spin')
+                ) {
+                    rules.push(rule.cssText)
+                }
             } else if (rule instanceof CSSMediaRule) {
                 // Include media rules that contain markdown-body rules
                 const innerRules: string[] = []
+                const currentHljsTheme = document.documentElement.getAttribute('data-hljs-theme') || 'light'
+                const oppositeHljsTheme = currentHljsTheme === 'light' ? 'dark' : 'light'
                 for (const inner of Array.from(rule.cssRules)) {
-                    if (inner instanceof CSSStyleRule && inner.selectorText.includes('.markdown-body')) {
-                        let resolvedText = inner.cssText
-                        if (customProps.size > 0) {
-                            resolvedText = resolveVarRefs(resolvedText, customProps)
+                    if (inner instanceof CSSStyleRule) {
+                        const sel = inner.selectorText
+                        if (sel.includes('.markdown-body') || sel.includes('.hljs') || sel.includes('.katex')) {
+                            // Skip [data-theme] and opposite [data-hljs-theme] rules
+                            if (sel.includes('[data-theme')) continue
+                            if (sel.includes(`[data-hljs-theme="${oppositeHljsTheme}"]`)) continue
+                            let resolvedText = inner.cssText
+                            if (sel.includes('[data-hljs-theme')) {
+                                resolvedText = resolvedText.replace(/\[data-hljs-theme="[^"]*"\]\s*/g, '')
+                            }
+                            if (customProps.size > 0) {
+                                resolvedText = resolveVarRefs(resolvedText, customProps)
+                            }
+                            innerRules.push(resolvedText)
                         }
-                        innerRules.push(resolvedText)
+                    } else if (inner instanceof CSSKeyframesRule) {
+                        const name = inner.name
+                        if (name.includes('line-flash') || name.includes('copy-flash') || name.includes('char-flash') || name.includes('diff-marker') || name.includes('url-btn-spin')) {
+                            innerRules.push(inner.cssText)
+                        }
                     }
                 }
                 if (innerRules.length > 0) {
@@ -560,11 +618,8 @@ export async function exportRenderedHtml(options: ExportOptions): Promise<Export
 
     // Resolve theme-dependent values for the base styles
     const bgPrimary = theme.get('--bg-primary') || '#ffffff'
-    const codeBg = theme.get('--code-bg') || '#f6f8fa'
     const borderColor = theme.get('--border-color') || '#dee2e6'
     const textMuted = theme.get('--text-muted') || '#6c757d'
-    const bgTertiary = theme.get('--bg-tertiary') || '#e9ecef'
-    const accentColor = theme.get('--accent-color') || '#4a90d9'
     const textPrimary = theme.get('--text-primary') || '#212529'
 
     const html = `<!DOCTYPE html>
@@ -574,6 +629,9 @@ export async function exportRenderedHtml(options: ExportOptions): Promise<Export
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title}</title>
 <style>
+/* ─── Universal box-sizing reset (matches app base.css) ─── */
+*, *::before, *::after { box-sizing: border-box; }
+
 /* ─── Resolved theme + markdown styles ─── */
 ${css}
 
@@ -582,28 +640,6 @@ body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'S
 
 /* ─── Mermaid error ─── */
 .mermaid-error { border: 1px dashed ${borderColor}; padding: 12px; margin: 8px 0; border-radius: 6px; color: ${textMuted}; font-size: 13px; }
-
-/* ─── Line flash animation ─── */
-@keyframes line-flash-anim { 0% { background-color: rgba(74, 144, 217, 0.3); } 100% { background-color: transparent; } }
-.line-flash { animation: line-flash-anim 0.8s ease-out; }
-
-/* ─── Code block header ─── */
-.code-block-header { display: flex; align-items: center; justify-content: space-between; padding: 4px 12px; background: ${codeBg}; border-bottom: 1px solid ${borderColor}; font-size: 12px; color: ${textMuted}; }
-.code-block-header button { background: none; border: none; cursor: pointer; color: ${textMuted}; font-size: 12px; padding: 2px 8px; border-radius: 4px; }
-.code-block-header button:hover { background: ${bgTertiary}; color: ${accentColor}; }
-
-/* ─── Code block word wrap ─── */
-.code-block-wrapper.word-wrap pre { white-space: pre-wrap; word-break: break-word; }
-.code-block-wrapper.word-wrap .code-block-wrap-btn { color: ${accentColor}; }
-
-/* ─── Code block copied text ─── */
-.code-block-copied-text { font-size: 12px; }
-
-/* ─── Table block word wrap ─── */
-.table-block-wrapper.word-wrap .table-wrap { overflow-x: hidden !important; }
-.table-block-wrapper.word-wrap table { display: table !important; table-layout: fixed !important; width: 100% !important; margin: 0 !important; }
-.table-block-wrapper.word-wrap th, .table-block-wrapper.word-wrap td { white-space: normal; word-break: break-word; overflow-wrap: break-word; }
-.table-block-wrapper.word-wrap .table-block-wrap-btn { color: ${accentColor}; }
 
 /* ─── TOC items ─── */
 ${tocCss}

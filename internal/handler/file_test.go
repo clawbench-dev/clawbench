@@ -1011,7 +1011,7 @@ func TestServeLocalFile_DownloadMode(t *testing.T) {
 
 	w := callHandler(ServeLocalFile, req)
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, `attachment; filename="test.txt"`, w.Header().Get("Content-Disposition"))
+	assert.Equal(t, `attachment; filename="test.txt"; filename*=UTF-8''test.txt`, w.Header().Get("Content-Disposition"))
 }
 
 func TestServeLocalFile_Directory_Returns400(t *testing.T) {

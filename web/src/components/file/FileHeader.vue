@@ -58,7 +58,7 @@
               {{ t('file.header.stickyScroll') }}
               <span v-if="stickyScroll" class="wrap-check">✓</span>
             </button>
-            <a v-if="!isAppMode" class="dropdown-item" :href="'/api/local-file/' + encodeURIComponent(file.path) + '?download=1'" :download="file.name" @click="menuOpen = false">
+            <a v-if="!isAppMode" class="dropdown-item" :href="buildLocalFileUrl(file.path, { download: true })" :download="file.name" @click="menuOpen = false">
               <Download :size="14" />
               {{ t('common.download') }}
             </a>
@@ -101,6 +101,7 @@ import { getFileType } from '@/utils/fileType.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { useToast } from '@/composables/useToast.ts'
+import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 
 const props = defineProps({
     file: Object,
@@ -189,10 +190,7 @@ function handleOpenAsText() {
 
 function handleDownload() {
     menuOpen.value = false
-    const native = window.AndroidNative
-    if (native && native.downloadFile) {
-        native.downloadFile(props.file?.path)
-    }
+    downloadFileByPath(props.file?.path || '', props.file?.name)
 }
 
 function handleExportHtml() {
