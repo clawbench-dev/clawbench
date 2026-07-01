@@ -512,6 +512,7 @@ function handleOpenFile(path) {
     align-self: flex-end;
     border-radius: 20px 20px 0 20px;
     margin-right: 10px;
+    max-width: calc(100% - 20px);
     overflow: hidden;
 }
 
