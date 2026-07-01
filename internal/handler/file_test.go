@@ -1442,7 +1442,8 @@ func TestBatchBase64ResolvePath(t *testing.T) {
 	t.Run("AbsolutePathUnderProject", func(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()
-		// Use a path under the project dir, which is a known root
+		// Create the file so the path exists for symlink resolution
+		createTestFile(t, env.ProjectDir, "img/logo.png", "test")
 		testPath := filepath.Join(env.ProjectDir, "img/logo.png")
 		abs, ok := batchBase64ResolvePath(testPath, "/unused")
 		assert.True(t, ok)
