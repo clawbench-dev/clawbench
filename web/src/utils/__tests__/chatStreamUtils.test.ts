@@ -672,6 +672,50 @@ describe('drainQueueMessage', () => {
     const userMsgs = messages.filter(m => m.role === 'user')
     expect(userMsgs).toHaveLength(1)
   })
+
+  // ── dbMessageId parameter (queue_drain carries DB message ID) ──
+
+  it('uses dbMessageId as user message id when provided', () => {
+    const messages: any[] = [
+      { role: 'assistant', content: 'reply', blocks: [], streaming: true },
+    ]
+    drainQueueMessage(messages, 'B', [], 'claude', callbacks, undefined, 42)
+    const userMsg = messages.find(m => m.role === 'user' && m.content === 'B')
+    expect(userMsg).toBeDefined()
+    expect(userMsg.id).toBe(42)
+    expect(userMsg._drain).toBe(true)
+  })
+
+  it('prefers dbMessageId over drainId when both provided', () => {
+    const messages: any[] = [
+      { role: 'assistant', content: 'reply', blocks: [], streaming: true },
+    ]
+    drainQueueMessage(messages, 'B', [], 'claude', callbacks, 'drain-custom', 99)
+    const userMsg = messages.find(m => m.role === 'user' && m.content === 'B')
+    expect(userMsg.id).toBe(99) // dbMessageId wins
+  })
+
+  it('assigns stable drain ID to streaming assistant placeholder (never undefined)', () => {
+    const messages: any[] = [
+      { role: 'assistant', content: 'reply', blocks: [], streaming: true },
+    ]
+    const result = drainQueueMessage(messages, 'B', [], 'claude', callbacks, undefined, 42)
+    // Streaming assistant must have a non-undefined id — prevents 'local-{index}' v-for key
+    expect(result.id).toBeDefined()
+    expect(typeof result.id).toBe('string')
+    expect(result.id).toMatch(/^drain-/)
+  })
+
+  it('no message has undefined id after drain with dbMessageId', () => {
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [] },
+      { role: 'assistant', id: 2, content: 'reply', blocks: [], streaming: true },
+    ]
+    drainQueueMessage(messages, 'B', [], 'claude', callbacks, undefined, 50)
+    for (const msg of messages) {
+      expect(msg.id).toBeDefined()
+    }
+  })
 })
 
 describe('generateDrainId', () => {

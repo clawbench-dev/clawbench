@@ -208,6 +208,7 @@ func truncateToolOutput(output string) string {
 // queue_update: sent when a new message is enqueued while a session is running.
 type QueueEventData struct {
 	Text      string                `json:"text,omitempty"`
+	MessageId int64                 `json:"messageId,omitempty"` // DB ID of the drained user message (queue_drain only)
 	FilePaths []string              `json:"filePaths,omitempty"`
 	Files     []string              `json:"files,omitempty"`
 	Queue     []model.QueuedMessage `json:"queue,omitempty"`

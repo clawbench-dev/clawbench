@@ -526,6 +526,12 @@ export function useChatStream(options: UseChatStreamOptions) {
       clearToolUseTimeouts()
       thinkingBlockCounter = 0
 
+      // Finalize streaming state BEFORE loadHistory replaces the array.
+      // This ensures: (1) streaming flag removed immediately (no stuck "three dots"),
+      // (2) unfinished tool_use blocks marked done (no stuck spinners),
+      // (3) if loadHistory is slow/fails, UI is already in a clean state.
+      _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
+
       // Diagnostic: log message state when done event received
       const doneSummary = messages.value.map((m: any, i: number) =>
         `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
@@ -673,16 +679,21 @@ export function useChatStream(options: UseChatStreamOptions) {
       let data: any
       try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE queue_drain: invalid JSON, skipping'); return }
 
+      // Sync pendingStore FIRST — remove the drained message from pending before
+      // pushing the drain message into messages.value. This ordering ensures
+      // renderedMessages computed never sees the same message in both sources
+      // (drain + pending), preventing a brief duplicate flash.
+      // Always update pendingStore — this is per-session so no cross-session contamination.
+      pendingStore.syncFromBackendQueue(sessionId, data.queue || [])
+
       if (!sessionChanged()) {
-        // Push the drain message to messages.value BEFORE removing from pendingStore.
-        // This ensures the formal user message is already rendered when the
-        // pending message disappears, making the transition atomic — the user
-        // never sees a gap where neither is visible.
         const drainText = data.text || ''
         const drainFiles = [...(data.filePaths || []), ...(data.files || [])]
         drainQueueMessage(
           messages.value, drainText, drainFiles, currentBackend.value,
-          { onRenderNeeded, onExtractScheduledTasks }
+          { onRenderNeeded, onExtractScheduledTasks },
+          undefined,
+          data.messageId || undefined
         )
 
         if (isOpen.value) {
@@ -690,12 +701,6 @@ export function useChatStream(options: UseChatStreamOptions) {
           onScrollBottom(true)
         }
       }
-
-      // After pushing the drain message, sync pendingStore.
-      // The drained message is removed from the backend queue, so syncFromBackendQueue
-      // will remove it from pendingStore[sessionId].
-      // Always update pendingStore — this is per-session so no cross-session contamination.
-      pendingStore.syncFromBackendQueue(sessionId, data.queue || [])
     })
 
     // queue_update: sent when a new message is enqueued while a session is running.

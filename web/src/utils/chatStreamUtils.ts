@@ -161,7 +161,8 @@ export function drainQueueMessage(
     onRenderNeeded: (forceFull?: boolean) => void
     onExtractScheduledTasks?: (msgs: any[]) => void
   },
-  drainId?: string
+  drainId?: string,
+  dbMessageId?: number
 ): any {
   // 1. Finalize any streaming assistant message — never delete to avoid key shifts
   const streamingMsg = messages.find((m: any) => m.role === 'assistant' && m.streaming)
@@ -181,11 +182,13 @@ export function drainQueueMessage(
     callbacks.onExtractScheduledTasks?.(messages)
   }
 
-  // 2. Push the drained user message with a stable drain ID.
-  //    It's already in DB but not yet in messages.value (loadHistory hasn't run).
-  //    Without this, the user message is invisible between drain and stream-end.
-  //    Deduplicate by drain ID (not content text) to avoid race with loadHistory.
-  const effectiveDrainId = drainId || generateDrainId()
+  // 2. Push the drained user message with a stable ID.
+  //    If the backend provided a DB message ID (dbMessageId), use it directly —
+  //    this makes the v-for key stable (db-{numericId}) so Vue won't unmount/remount
+  //    when loadHistory later replaces the array with DB data.
+  //    Otherwise fall back to a synthetic drain ID.
+  //    Deduplicate by ID to avoid race with loadHistory.
+  const effectiveDrainId = dbMessageId || drainId || generateDrainId()
   const alreadyExists = messages.some(
     (m: any) => m.id === effectiveDrainId
   )
@@ -201,9 +204,14 @@ export function drainQueueMessage(
     })
   }
 
-  // 3. Push new streaming assistant placeholder for the next message
+  // 3. Push new streaming assistant placeholder with a stable drain ID.
+  //    Without an id, the v-for key would be 'local-{index}' (unstable) —
+  //    loadHistory replacement would change the key, causing Vue to
+  //    unmount/remount the component and lose the streaming state.
+  //    stream_start will later replace this drain ID with the real DB message_id.
   const newStreamingMsg = {
     role: 'assistant' as const,
+    id: generateDrainId(),
     content: '',
     blocks: [] as any[],
     streaming: true,

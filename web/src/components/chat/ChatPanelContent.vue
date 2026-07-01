@@ -208,7 +208,9 @@ const agents = agentsComposable
 
 const messages = ref([])
 const pendingStore = usePendingStore()
-/** Rendered messages = persisted messages + pending messages for current session */
+/** Rendered messages = persisted messages + pending messages for current session.
+ *  queue_drain handler syncs pendingStore BEFORE pushing drain message,
+ *  so the same message never appears in both sources simultaneously. */
 const renderedMessages = computed(() => [
   ...messages.value,
   ...pendingStore.getPending(identity.currentSessionId.value),

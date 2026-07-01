@@ -540,7 +540,11 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			slog.Info("draining queued message", slog.String("session", sessionID), slog.String("text", qMsg.Text))
 
 			// Persist user message to DB
-			service.AddChatMessage(projectPath, backendName, sessionID, "user", qMsg.Text, qMsg.Files, false, T(r, "FileMessage"))
+			drainMsgID, err := service.AddChatMessage(projectPath, backendName, sessionID, "user", qMsg.Text, qMsg.Files, false, T(r, "FileMessage"))
+			if err != nil {
+				slog.Error("failed to persist drain message", slog.String("session", sessionID), slog.String("error", err.Error()))
+				// Continue with drainMsgID=0 — frontend will use synthetic drain ID
+			}
 
 			// Send single atomic queue_drain event (replaces old queue_done + queue_consume + queue_update)
 			remainingQueue := service.GetQueue(sessionID)
@@ -548,6 +552,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				Type: "queue_drain",
 				QueueEvent: &ai.QueueEventData{
 					Text:      qMsg.Text,
+					MessageId: drainMsgID,
 					FilePaths: qMsg.FilePaths,
 					Files:     qMsg.Files,
 					Queue:     remainingQueue,
