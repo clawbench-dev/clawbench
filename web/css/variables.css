@@ -13,7 +13,7 @@
     --border-color: #dee2e6;
     --accent-color: #4a90d9;
     --accent-hover: #3a7bc8;
-    --user-msg-color: #5b8fbf;
+    --user-msg-color: #5a7e98;
     --header-height: 36px;
     --header-safe-area-top: env(safe-area-inset-top, 0px);
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
@@ -58,7 +58,7 @@
     --border-color: #30363d;
     --accent-color: #58a6ff;
     --accent-hover: #79b8ff;
-    --user-msg-color: #3d6a9e;
+    --user-msg-color: #3a6288;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
     --code-bg: #161b22;
