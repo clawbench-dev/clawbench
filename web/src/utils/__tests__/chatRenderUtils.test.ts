@@ -17,7 +17,7 @@ describe('rewriteImageUrls', () => {
   it('applies thumbnail styling to https:// URLs without rewriting', () => {
     const html = '<img src="https://example.com/img.png">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('class="chat-img-thumbnail"')
+    expect(result).toContain('class="lightbox-img"')
     expect(result).toContain('style="max-width: 200px')
     expect(result).toContain('src="https://example.com/img.png"')
     expect(result).not.toContain('/api/local-file/')
@@ -66,7 +66,7 @@ describe('rewriteImageUrls', () => {
     const html = `<img src="${projectRoot}/images/foo.png">`
     const result = rewriteImageUrls(html, projectRoot)
     // Starts with / → caught by external URL branch → styling only, no rewrite
-    expect(result).toContain('class="chat-img-thumbnail"')
+    expect(result).toContain('class="lightbox-img"')
     expect(result).toContain(`src="${projectRoot}/images/foo.png"`)
     expect(result).not.toContain('/api/local-file/')
   })
@@ -74,7 +74,7 @@ describe('rewriteImageUrls', () => {
   it('applies styling to deeply nested absolute path but does NOT rewrite', () => {
     const html = `<img src="${projectRoot}/a/b/c/d.png">`
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('class="chat-img-thumbnail"')
+    expect(result).toContain('class="lightbox-img"')
     expect(result).toContain(`src="${projectRoot}/a/b/c/d.png"`)
     expect(result).not.toContain('/api/local-file/')
   })
@@ -105,7 +105,7 @@ describe('rewriteImageUrls', () => {
     const html = `<img src="${projectRoot}/sub/file.png">`
     const result = rewriteImageUrls(html, projectRoot)
     // Starts with / → external URL branch → styling only
-    expect(result).toContain('class="chat-img-thumbnail"')
+    expect(result).toContain('class="lightbox-img"')
     expect(result).toContain(`src="${projectRoot}/sub/file.png"`)
     expect(result).not.toContain('/api/local-file/')
   })
@@ -113,7 +113,7 @@ describe('rewriteImageUrls', () => {
   it('applies styling but does not rewrite /-prefixed path outside projectRoot', () => {
     const html = '<img src="/usr/share/img.png">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('class="chat-img-thumbnail"')
+    expect(result).toContain('class="lightbox-img"')
     expect(result).toContain('src="/usr/share/img.png"')
     expect(result).not.toContain('/api/local-file/')
   })
@@ -130,7 +130,7 @@ describe('rewriteImageUrls', () => {
   it('applies styling even with empty projectRoot', () => {
     const html = '<img src="images/foo.png">'
     const result = rewriteImageUrls(html, '')
-    expect(result).toContain('class="chat-img-thumbnail"')
+    expect(result).toContain('class="lightbox-img"')
   })
 
   // ── Existing style/class attributes ──
@@ -142,11 +142,11 @@ describe('rewriteImageUrls', () => {
     expect(result).toContain('style="max-width: 200px')
   })
 
-  it('strips existing class attribute and replaces with chat-img-thumbnail', () => {
+  it('strips existing class attribute and replaces with lightbox-img', () => {
     const html = '<img src="images/foo.png" class="old-class another">'
     const result = rewriteImageUrls(html, projectRoot)
     expect(result).not.toContain('old-class')
-    expect(result).toContain('class="chat-img-thumbnail"')
+    expect(result).toContain('class="lightbox-img"')
   })
 
   it('strips both style and class attributes', () => {
@@ -155,7 +155,7 @@ describe('rewriteImageUrls', () => {
     expect(result).not.toContain('border:1px')
     expect(result).not.toContain('class="old"')
     expect(result).toContain('alt="test"')
-    expect(result).toContain('class="chat-img-thumbnail"')
+    expect(result).toContain('class="lightbox-img"')
   })
 
   // ── Multiple images ──
@@ -179,7 +179,7 @@ describe('rewriteImageUrls', () => {
   it('applies styling to images without src attribute', () => {
     const html = '<img alt="no image">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('class="chat-img-thumbnail"')
+    expect(result).toContain('class="lightbox-img"')
     expect(result).toContain('alt="no image"')
   })
 
@@ -197,7 +197,7 @@ describe('rewriteImageUrls', () => {
     const html = `<img src="${projectRoot}">`
     const result = rewriteImageUrls(html, projectRoot)
     // Starts with / → external URL branch → styling only, no rewrite
-    expect(result).toContain('class="chat-img-thumbnail"')
+    expect(result).toContain('class="lightbox-img"')
     expect(result).toContain(`src="${projectRoot}"`)
     expect(result).not.toContain('/api/local-file/')
   })

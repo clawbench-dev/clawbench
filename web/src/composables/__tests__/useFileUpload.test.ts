@@ -164,7 +164,7 @@ describe('useFileUpload', () => {
   describe('pendingFiles', () => {
     it('clearPendingFiles empties the array', () => {
       const upload = useFileUpload()
-      upload.pendingFiles.value.push({ path: '', previewUrl: null, isImage: false, uploading: false, progress: 0 })
+      upload.pendingFiles.value.push({ path: '', previewUrl: null, isImage: false, uploading: false, progress: 0, size: 0 })
       expect(upload.pendingFiles.value).toHaveLength(1)
       upload.clearPendingFiles()
       expect(upload.pendingFiles.value).toHaveLength(0)
@@ -172,8 +172,8 @@ describe('useFileUpload', () => {
 
     it('removeFile removes by index', () => {
       const upload = useFileUpload()
-      upload.pendingFiles.value.push({ path: 'a', previewUrl: null, isImage: false, uploading: false, progress: 0 })
-      upload.pendingFiles.value.push({ path: 'b', previewUrl: null, isImage: false, uploading: false, progress: 0 })
+      upload.pendingFiles.value.push({ path: 'a', previewUrl: null, isImage: false, uploading: false, progress: 0, size: 0 })
+      upload.pendingFiles.value.push({ path: 'b', previewUrl: null, isImage: false, uploading: false, progress: 0, size: 0 })
       upload.removeFile(0)
       expect(upload.pendingFiles.value).toHaveLength(1)
       expect(upload.pendingFiles.value[0].path).toBe('b')
@@ -356,7 +356,7 @@ describe('useFileUpload', () => {
       const upload = useFileUpload()
       // Pre-fill pendingFiles to max (5)
       for (let i = 0; i < 5; i++) {
-        upload.pendingFiles.value.push({ path: `f${i}.txt`, previewUrl: null, isImage: false, uploading: false, progress: 0 })
+        upload.pendingFiles.value.push({ path: `f${i}.txt`, previewUrl: null, isImage: false, uploading: false, progress: 0, size: 0 })
       }
 
       await upload.handleFileDrop([makeFile('extra.txt')])
@@ -438,9 +438,9 @@ describe('useFileUpload', () => {
       const revokeSpy = vi.spyOn(URL, 'revokeObjectURL')
       const upload = useFileUpload()
       upload.pendingFiles.value.push(
-        { path: 'a', previewUrl: 'blob:a', isImage: true, uploading: false, progress: 0 },
-        { path: 'b', previewUrl: null, isImage: false, uploading: false, progress: 0 },
-        { path: 'c', previewUrl: 'blob:c', isImage: true, uploading: false, progress: 0 },
+        { path: 'a', previewUrl: 'blob:a', isImage: true, uploading: false, progress: 0, size: 100 },
+        { path: 'b', previewUrl: null, isImage: false, uploading: false, progress: 0, size: 200 },
+        { path: 'c', previewUrl: 'blob:c', isImage: true, uploading: false, progress: 0, size: 300 },
       )
       upload.cleanupPreviewUrls()
       expect(revokeSpy).toHaveBeenCalledTimes(2)

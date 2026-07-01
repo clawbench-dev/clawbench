@@ -7,7 +7,7 @@ import { useChatContext } from '@/composables/useChatContext.ts'
 export function useFileUpload() {
   const toast = useToast()
 
-  const pendingFiles = ref<Array<{ path: string; previewUrl: string | null; isImage: boolean; uploading: boolean; progress: number }>>([])
+  const pendingFiles = ref<Array<{ path: string; previewUrl: string | null; isImage: boolean; uploading: boolean; progress: number; size: number }>>([])
 
   // attachedFiles is managed globally via useChatContext so any tab
   // (file preview, chat input, quote-question) can read/write it.
@@ -35,6 +35,7 @@ export function useFileUpload() {
           isImage,
           uploading: true,
           progress: 0,
+          size: file.size,
         })
         entry = pendingFiles.value[idx]
       }

@@ -9,7 +9,7 @@
       @touchmove="handleTouchMove"
       @touchend="handleTouchEnd"
       @touchcancel="handleTouchEnd">
-      <img :src="mediaUrl" :alt="file.name" class="image-preview-img"
+      <img :src="mediaUrl" :alt="file.name" class="image-preview-img lightbox-img"
         :style="{ transform: `translateX(${dragOffsetX}px)`, transition: isDragging ? 'none' : 'transform 0.25s ease-out' }" />
       <!-- Prev overlay -->
       <div v-if="hasPrev" class="img-nav-hint img-nav-prev" @click="goPrev">

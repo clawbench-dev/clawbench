@@ -518,7 +518,7 @@ onMounted(() => {
     document.addEventListener('mouseup', handleMouseUp)
     // Listen for clicks on images and mermaid diagrams to open lightbox
     document.addEventListener('click', (e) => {
-        const img = e.target.closest('.markdown-body img, .chat-message img, .image-preview-img')
+        const img = e.target.closest('.lightbox-img')
         if (img) {
             e.preventDefault()
             // Check if the image is inside a markdown body — collect sibling images for navigation

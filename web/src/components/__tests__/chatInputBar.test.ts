@@ -509,8 +509,8 @@ describe('ChatInputBar — quoteData chip', () => {
     })
     await nextTick()
 
-    expect(wrapper.find('.quote-line-info').exists()).toBe(true)
-    expect(wrapper.find('.quote-line-info').text()).toBe('L5')
+    expect(wrapper.find('.attachment-quote .attachment-filesize').exists()).toBe(true)
+    expect(wrapper.find('.attachment-quote .attachment-filesize').text()).toBe('L5')
   })
 
   it('hides line number when startLine is 0', async () => {
@@ -519,7 +519,7 @@ describe('ChatInputBar — quoteData chip', () => {
     })
     await nextTick()
 
-    expect(wrapper.find('.quote-line-info').exists()).toBe(false)
+    expect(wrapper.find('.attachment-quote .attachment-filesize').exists()).toBe(false)
   })
 
   it('emits remove-quote when quote remove button is clicked', async () => {
@@ -528,7 +528,7 @@ describe('ChatInputBar — quoteData chip', () => {
     })
     await nextTick()
 
-    await wrapper.find('.attachment-quote .attachment-tag-remove').trigger('click')
+    await wrapper.find('.attachment-quote .attachment-close-btn').trigger('click')
     expect(wrapper.emitted('remove-quote')).toBeTruthy()
   })
 

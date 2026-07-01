@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { getFileType, formatFileSize } from '@/utils/fileType.ts'
+import { isThumbableExt } from '@/utils/fileManager.ts'
 
 describe('getFileType', () => {
   it('detects TypeScript', () => {
@@ -112,5 +113,39 @@ describe('formatFileSize', () => {
 
   it('formats megabytes', () => {
     expect(formatFileSize(2 * 1024 * 1024)).toBe('2.0 MB')
+  })
+})
+
+describe('isThumbableExt', () => {
+  it('returns true for PNG', () => {
+    expect(isThumbableExt('photo.png')).toBe(true)
+  })
+
+  it('returns true for JPG/JPEG', () => {
+    expect(isThumbableExt('photo.jpg')).toBe(true)
+    expect(isThumbableExt('photo.jpeg')).toBe(true)
+  })
+
+  it('returns true for GIF', () => {
+    expect(isThumbableExt('anim.gif')).toBe(true)
+  })
+
+  it('returns false for WebP (not thumbable)', () => {
+    expect(isThumbableExt('photo.webp')).toBe(false)
+  })
+
+  it('returns false for non-image extensions', () => {
+    expect(isThumbableExt('doc.pdf')).toBe(false)
+    expect(isThumbableExt('main.go')).toBe(false)
+  })
+
+  it('handles full paths', () => {
+    expect(isThumbableExt('/home/user/photo.png')).toBe(true)
+    expect(isThumbableExt('.clawbench/uploads/img.jpg')).toBe(true)
+  })
+
+  it('is case-insensitive', () => {
+    expect(isThumbableExt('photo.PNG')).toBe(true)
+    expect(isThumbableExt('photo.Jpg')).toBe(true)
   })
 })

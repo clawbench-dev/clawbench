@@ -177,6 +177,11 @@ watch(
     const { html: commitHtml, detectedSHAs } = annotateCommitHashes(annotatedHtml)
     // Annotate localhost URLs
     html = annotateLocalhostUrls(commitHtml)
+    // Add lightbox-img class to all <img> tags for lightbox activation
+    html = html.replace(/<img(\s+[^>]*?)>/gi, (_match, attrs) => {
+      const clean = attrs.replace(/\s*class="[^"]*"/i, '')
+      return `<img${clean} class="lightbox-img">`
+    })
 
     renderedPrompt.value = html
 

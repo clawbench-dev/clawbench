@@ -60,6 +60,15 @@ export function isThumbable(entry: { type: string; name: string }): boolean {
   return false
 }
 
+/** Check if a file path is thumbable based on its extension (path-based variant of isThumbable). */
+export function isThumbableExt(path: string): boolean {
+  const lower = path.toLowerCase()
+  for (const ext of THUMBABLE_EXTS) {
+    if (lower.endsWith(ext)) return true
+  }
+  return false
+}
+
 // ── File size formatting ──
 
 export function formatSize(size: number | null | undefined): string {

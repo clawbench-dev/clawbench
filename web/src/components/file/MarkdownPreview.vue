@@ -192,7 +192,7 @@ function handleClick(event: MouseEvent) {
 
 function fixLocalImagePaths(html: string): string {
     const currentDir = props.file?.path ? dirName(props.file.path) : ''
-    return html.replace(/<img\s+([^>]*src=[^>]*)>/gi, (match: string, attrs: string) => {
+    let result = html.replace(/<img\s+([^>]*src=[^>]*)>/gi, (match: string, attrs: string) => {
         const srcMatch = attrs.match(/src="([^"]*)"/)
         if (!srcMatch) return match
         const src = srcMatch[1]
@@ -210,6 +210,12 @@ function fixLocalImagePaths(html: string): string {
         }
         return match.replace(`src="${src}"`, `src="/api/local-file/${normalized.join('/')}?t=${imageTimestamp.value}"`)
     })
+    // Add lightbox-img class to all <img> tags for lightbox activation
+    result = result.replace(/<img(\s+[^>]*?)>/gi, (_match: string, attrs: string) => {
+      const clean = attrs.replace(/\s*class="[^"]*"/i, '')
+      return `<img${clean} class="lightbox-img">`
+    })
+    return result
 }
 
 /**
