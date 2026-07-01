@@ -376,7 +376,7 @@ describe('exportRenderedHtml', () => {
     })
 
     const el = createElement('<img src="/api/local-file/img.png?t=12345">')
-    const result = await exportRenderedHtml({
+    await exportRenderedHtml({
       markdownBodyEl: el,
       filePath: 'test.md',
       fileName: 'test.md',
