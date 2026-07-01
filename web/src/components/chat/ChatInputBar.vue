@@ -881,9 +881,9 @@ defineExpose({
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  margin: 0 8px 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border-color, #e5e5e5);
+  margin: 0 0 8px;
+  padding: 8px 8px 0;
+  box-shadow: inset 0 1px 0 var(--border-color, #e5e5e5);
 }
 
 /* Session info bar (model + mode + thinking + transport, below input box) */

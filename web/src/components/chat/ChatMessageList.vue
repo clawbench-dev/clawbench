@@ -600,7 +600,7 @@ defineExpose({
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 10px;
+  padding: 12px 0;
   display: flex;
   flex-direction: column;
   gap: 8px;

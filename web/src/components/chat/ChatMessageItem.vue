@@ -90,15 +90,6 @@
       @close="fileChangesOpen = false"
       @open-file="handleOpenFile"
     />
-    <!-- Bottom bar for user messages -->
-    <div v-if="msg.role === 'user' && !msg.pending" class="chat-meta-bar chat-meta-bar-user">
-      <span class="chat-meta-info">
-      </span>
-      <button class="chat-action-btn chat-info-btn-user" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
-        <Info :size="14" />
-      </button>
-    </div>
-
   </div>
 </template>
 
@@ -351,7 +342,6 @@ function handleOpenFile(path) {
 /* Chat message - non-scoped for v-html penetration */
 .chat-message {
     padding: 8px 12px;
-    border-radius: var(--radius-md);
     font-size: 13px;
     line-height: 1.4;
     min-width: 0;
@@ -520,7 +510,8 @@ function handleOpenFile(path) {
     background: var(--user-msg-color);
     color: white;
     align-self: flex-end;
-    border-radius: 16px 16px 0 16px;
+    border-radius: 20px 20px 0 20px;
+    margin-right: 10px;
     overflow: hidden;
 }
 
@@ -528,7 +519,7 @@ function handleOpenFile(path) {
     background: var(--bg-tertiary);
     color: var(--text-primary);
     align-self: stretch;
-    border-radius: 16px 16px 16px 0;
+    border-radius: 0;
     position: relative;
     min-width: 0;
     overflow: hidden;
