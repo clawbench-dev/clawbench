@@ -348,7 +348,7 @@ describe('FileManagerContent — doDownload uses saved path/name after closeCtxM
     expect(wrapper.vm.ctxMenu.entry).toBeNull()
     expect(appendSpy).toHaveBeenCalled()
     const anchor = appendSpy.mock.calls[0][0]
-    expect(anchor.href).toContain('docs%2Freadme.md')
+    expect(anchor.href).toContain('docs/readme.md')
     expect(anchor.download).toBe('readme.md')
     expect(clickSpy).toHaveBeenCalled()
 

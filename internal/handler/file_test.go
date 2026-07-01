@@ -1349,6 +1349,105 @@ func TestServeFileBatchBase64(t *testing.T) {
 		assert.True(t, ok)
 		assert.Len(t, skipped, 1)
 	})
+
+	t.Run("WrongMethod_Returns405", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := newRequest(t, http.MethodGet, "/api/file/batch-base64", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ServeFileBatchBase64, req)
+		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+	})
+
+	t.Run("NoProjectCookie_Returns403", func(t *testing.T) {
+		req := newRequest(t, http.MethodPost, "/api/file/batch-base64", map[string]interface{}{
+			"paths": []string{"img/a.png"},
+		})
+
+		w := callHandler(ServeFileBatchBase64, req)
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+
+	t.Run("MixedImageAndNonImage", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		pngData := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82")
+		createTestFile(t, env.ProjectDir, "img/logo.png", string(pngData))
+		createTestFile(t, env.ProjectDir, "src/main.go", "package main")
+
+		req := newRequest(t, http.MethodPost, "/api/file/batch-base64", map[string]interface{}{
+			"paths": []string{"img/logo.png", "src/main.go"},
+		})
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ServeFileBatchBase64, req)
+		assertOK(t, w)
+
+		var result map[string]interface{}
+		err := json.Unmarshal(w.Body.Bytes(), &result)
+		assert.NoError(t, err)
+
+		results := result["results"].(map[string]interface{})
+		assert.Len(t, results, 1) // only the PNG
+		skipped := result["skipped"].([]interface{})
+		assert.Len(t, skipped, 1) // the .go file
+	})
+
+	t.Run("OversizedFile_Skipped", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		// Create a PNG larger than 2MB
+		bigData := make([]byte, 2*1024*1024+100)
+		copy(bigData, "\x89PNG\r\n\x1a\n")
+		createTestFile(t, env.ProjectDir, "img/big.png", string(bigData))
+
+		req := newRequest(t, http.MethodPost, "/api/file/batch-base64", map[string]interface{}{
+			"paths": []string{"img/big.png"},
+		})
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ServeFileBatchBase64, req)
+		assertOK(t, w)
+
+		var result map[string]interface{}
+		err := json.Unmarshal(w.Body.Bytes(), &result)
+		assert.NoError(t, err)
+
+		results := result["results"].(map[string]interface{})
+		assert.Empty(t, results)
+		skipped := result["skipped"].([]interface{})
+		assert.Len(t, skipped, 1)
+	})
+}
+
+func TestBatchBase64ResolvePath(t *testing.T) {
+	t.Run("RelativePath", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+		abs, ok := batchBase64ResolvePath("img/logo.png", env.ProjectDir)
+		assert.True(t, ok)
+		assert.Equal(t, filepath.Join(env.ProjectDir, "img/logo.png"), abs)
+	})
+
+	t.Run("AbsolutePathOutsideRoot", func(t *testing.T) {
+		abs, ok := batchBase64ResolvePath("/nonexistent/path/that/should/fail", "/unused")
+		assert.False(t, ok)
+		assert.Empty(t, abs)
+	})
+
+	t.Run("AbsolutePathUnderProject", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+		// Use a path under the project dir, which is a known root
+		testPath := filepath.Join(env.ProjectDir, "img/logo.png")
+		abs, ok := batchBase64ResolvePath(testPath, "/unused")
+		assert.True(t, ok)
+		assert.Equal(t, testPath, abs)
+	})
 }
 
 func TestGetFile_BrokenSymlink(t *testing.T) {
