@@ -348,6 +348,10 @@ else:
         # Exclude files with DOM/rendering dependencies that require full browser env
         TIER2_EXCLUDED_SUFFIXES = (
             "src/utils/exportHtml.ts",  # DOM cloning + Mermaid + CSS serialization + batch-base64 API
+            "src/utils/download.ts",  # Blob/FileReader/Android bridge, jsdom can't fully exercise
+            "src/components/file/FileViewer.vue",  # PDF/image/video/audio previews, heavy component mocking
+            "src/components/file/FileHeader.vue",  # Menu with many action handlers, needs full app context
+            "src/components/media/PdfPreview.vue",  # PDF.js worker integration, needs real browser
         )
         if any(file_path.endswith(s) for s in TIER2_EXCLUDED_SUFFIXES):
             continue
