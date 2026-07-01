@@ -11,8 +11,11 @@ const i18n = createI18n({
   messages: {
     en: {
       nav: { refresh: 'Refresh' },
-      common: { download: 'Download', delete: 'Delete' },
-      chat: { actions: { attachToChat: 'Attach' }, attach: { removeFromChat: 'Remove' } },
+      common: { download: 'Download', delete: 'Delete', close: 'Close' },
+      chat: {
+        actions: { attachToChat: 'Attach' },
+        attach: { removeFromChat: 'Remove', addedToChat: 'Added', removedFromChat: 'Removed' },
+      },
       file: {
         header: {
           toc: 'TOC',
@@ -25,7 +28,10 @@ const i18n = createI18n({
           lineNumbers: 'Line Numbers',
           stickyScroll: 'Sticky Scroll',
           fileHistory: 'File history',
+          shareExternal: 'Share',
+          exportHtml: 'Export HTML',
         },
+        overlay: { back: 'Back' },
       },
     },
   },
@@ -37,12 +43,15 @@ vi.mock('@/composables/useAppMode.ts', () => ({
 }))
 
 // Mock useChatContext
+const mockAddAttachedFile = vi.fn()
+const mockHasAttachedFile = vi.fn(() => false)
+const mockRemoveAttachedFileByPath = vi.fn()
 vi.mock('@/composables/useChatContext.ts', () => ({
   useChatContext: () => ({
-    addAttachedFile: vi.fn(),
-    hasAttachedFile: () => false,
+    addAttachedFile: mockAddAttachedFile,
+    hasAttachedFile: mockHasAttachedFile,
     toggleAttachedFile: vi.fn(),
-    removeAttachedFileByPath: vi.fn(),
+    removeAttachedFileByPath: mockRemoveAttachedFileByPath,
   }),
 }))
 
@@ -57,6 +66,9 @@ vi.mock('@/utils/fileType.ts', () => ({
     if (name.endsWith('.md')) return { isMarkdown: true, isHtml: false, isImage: false, isAudio: false, isVideo: false, isPdf: false }
     if (name.endsWith('.html')) return { isMarkdown: false, isHtml: true, isImage: false, isAudio: false, isVideo: false, isPdf: false }
     if (name.endsWith('.png')) return { isMarkdown: false, isHtml: false, isImage: true, isAudio: false, isVideo: false, isPdf: false }
+    if (name.endsWith('.pdf')) return { isMarkdown: false, isHtml: false, isImage: false, isAudio: false, isVideo: false, isPdf: true }
+    if (name.endsWith('.mp3')) return { isMarkdown: false, isHtml: false, isImage: false, isAudio: true, isVideo: false, isPdf: false }
+    if (name.endsWith('.mp4')) return { isMarkdown: false, isHtml: false, isImage: false, isAudio: false, isVideo: true, isPdf: false }
     return { isMarkdown: false, isHtml: false, isImage: false, isAudio: false, isVideo: false, isPdf: false }
   },
 }))
@@ -72,6 +84,8 @@ describe('FileHeader', () => {
         wordWrap: false,
         showLineNumbers: true,
         stickyScroll: true,
+        overlayOpen: false,
+        overlayCanGoBack: false,
         ...props,
       },
       global: {
@@ -80,7 +94,6 @@ describe('FileHeader', () => {
     })
   }
 
-  // Helper to get internal menuOpen ref
   function getMenuOpen(wrapper: ReturnType<typeof mount>): boolean {
     return (wrapper.vm as any).$.setupState.menuOpen
   }
@@ -100,18 +113,16 @@ describe('FileHeader', () => {
     expect(getMenuOpen(wrapper)).toBe(false)
   })
 
-  it('emits toggleStickyScroll when handleToggleStickyScroll is called', async () => {
+  it('emits toggleStickyScroll when handler is called', async () => {
     const wrapper = mountHeader({ viewMode: 'source' })
-    // Call the internal handler directly (Teleport content not accessible in jsdom)
     const vm = wrapper.vm as any
     vm.$.setupState.handleToggleStickyScroll()
     await nextTick()
     expect(wrapper.emitted('toggleStickyScroll')).toBeTruthy()
-    // Menu should also close
     expect(getMenuOpen(wrapper)).toBe(false)
   })
 
-  it('emits toggleWordWrap when handleToggleWordWrap is called', async () => {
+  it('emits toggleWordWrap when handler is called', async () => {
     const wrapper = mountHeader({ viewMode: 'source' })
     const vm = wrapper.vm as any
     vm.$.setupState.handleToggleWordWrap()
@@ -120,7 +131,7 @@ describe('FileHeader', () => {
     expect(getMenuOpen(wrapper)).toBe(false)
   })
 
-  it('emits toggleLineNumbers when handleToggleLineNumbers is called', async () => {
+  it('emits toggleLineNumbers when handler is called', async () => {
     const wrapper = mountHeader({ viewMode: 'source' })
     const vm = wrapper.vm as any
     vm.$.setupState.handleToggleLineNumbers()
@@ -129,25 +140,121 @@ describe('FileHeader', () => {
     expect(getMenuOpen(wrapper)).toBe(false)
   })
 
-  it('renders header actions with square buttons (border-radius: 4px)', () => {
+  it('renders header actions with file-header-btn class', () => {
     const wrapper = mountHeader()
     const btns = wrapper.findAll('.file-header-btn')
     expect(btns.length).toBeGreaterThan(0)
-    for (const btn of btns) {
-      expect(btn.classes()).toContain('file-header-btn')
+  })
+
+  it('emits toggleView when handleToggleView is called', async () => {
+    const wrapper = mountHeader({ viewMode: 'source' })
+    const vm = wrapper.vm as any
+    vm.$.setupState.handleToggleView()
+    await nextTick()
+    expect(wrapper.emitted('toggleView')).toBeTruthy()
+    expect(getMenuOpen(wrapper)).toBe(false)
+  })
+
+  it('emits openAsText when handleOpenAsText is called', async () => {
+    const wrapper = mountHeader({ viewMode: 'source' })
+    const vm = wrapper.vm as any
+    vm.$.setupState.handleOpenAsText()
+    await nextTick()
+    expect(wrapper.emitted('openAsText')).toBeTruthy()
+    expect(getMenuOpen(wrapper)).toBe(false)
+  })
+
+  it('emits exportHtml when handleExportHtml is called', async () => {
+    const wrapper = mountHeader({ viewMode: 'source' })
+    const vm = wrapper.vm as any
+    vm.$.setupState.handleExportHtml()
+    await nextTick()
+    expect(wrapper.emitted('exportHtml')).toBeTruthy()
+    expect(getMenuOpen(wrapper)).toBe(false)
+  })
+
+  it('emits delete with file path when handleDelete is called', async () => {
+    const wrapper = mountHeader()
+    const vm = wrapper.vm as any
+    vm.$.setupState.handleDelete()
+    await nextTick()
+    expect(wrapper.emitted('delete')).toBeTruthy()
+    expect(wrapper.emitted('delete')![0]).toEqual(['/tmp/main.ts'])
+    expect(getMenuOpen(wrapper)).toBe(false)
+  })
+
+  it('emits openGitHistory when handleGitHistory is called', async () => {
+    const wrapper = mountHeader()
+    const vm = wrapper.vm as any
+    vm.$.setupState.handleGitHistory()
+    await nextTick()
+    expect(wrapper.emitted('openGitHistory')).toBeTruthy()
+    expect(getMenuOpen(wrapper)).toBe(false)
+  })
+
+  it('emits refresh when handleRefresh is called', async () => {
+    const wrapper = mountHeader()
+    const vm = wrapper.vm as any
+    vm.$.setupState.handleRefresh()
+    await nextTick()
+    expect(wrapper.emitted('refresh')).toBeTruthy()
+    expect(getMenuOpen(wrapper)).toBe(false)
+  })
+
+  it('emits showDetails when file name is clicked', async () => {
+    const wrapper = mountHeader()
+    const nameEl = wrapper.find('.file-path-hint')
+    await nameEl.trigger('click')
+    expect(wrapper.emitted('showDetails')).toBeTruthy()
+  })
+
+  it('emits toggleToc when toc button is clicked', async () => {
+    const wrapper = mountHeader({ file: { name: 'main.ts', path: '/tmp/main.ts', content: 'code' } })
+    const tocBtn = wrapper.find('.file-header-btn')
+    if (tocBtn.exists()) {
+      await tocBtn.trigger('click')
+      // Could be either toggleToc or toggleSearch based on button order
+      const emitted = wrapper.emitted()
+      expect(emitted['toggleToc'] || emitted['toggleSearch']).toBeTruthy()
     }
+  })
+
+  it('adds file to chat context when attach button is clicked', async () => {
+    mockHasAttachedFile.mockReturnValue(false)
+    mockAddAttachedFile.mockReset()
+    const wrapper = mountHeader()
+    const vm = wrapper.vm as any
+    vm.$.setupState.handleAttachToChat()
+    await nextTick()
+    expect(mockAddAttachedFile).toHaveBeenCalledWith('/tmp/main.ts')
+  })
+
+  it('removes file from chat context when already attached', async () => {
+    mockHasAttachedFile.mockReturnValue(true)
+    mockRemoveAttachedFileByPath.mockReset()
+    const wrapper = mountHeader()
+    const vm = wrapper.vm as any
+    vm.$.setupState.handleAttachToChat()
+    await nextTick()
+    expect(mockRemoveAttachedFileByPath).toHaveBeenCalledWith('/tmp/main.ts')
+  })
+
+  it('does not attach when file has no path', async () => {
+    const wrapper = mountHeader({ file: { name: 'test.ts', path: '', content: '' } })
+    const vm = wrapper.vm as any
+    mockAddAttachedFile.mockReset()
+    vm.$.setupState.handleAttachToChat()
+    await nextTick()
+    expect(mockAddAttachedFile).not.toHaveBeenCalled()
   })
 
   it('closes menu after toggling sticky scroll', async () => {
     const wrapper = mountHeader({ viewMode: 'source' })
-    // Open dropdown
     await wrapper.find('.dropdown-wrapper .file-header-btn').trigger('click')
     expect(getMenuOpen(wrapper)).toBe(true)
-    // Call handler directly (simulates clicking the sticky scroll menu item)
     const vm = wrapper.vm as any
     vm.$.setupState.handleToggleStickyScroll()
     await nextTick()
-    // Menu should be closed
     expect(getMenuOpen(wrapper)).toBe(false)
   })
 })

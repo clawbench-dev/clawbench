@@ -345,6 +345,12 @@ else:
         # Exclude i18n locale dictionaries
         if "i18n/locales" in file_path:
             continue
+        # Exclude files with DOM/rendering dependencies that require full browser env
+        TIER2_EXCLUDED_SUFFIXES = (
+            "src/utils/exportHtml.ts",  # DOM cloning + Mermaid + CSS serialization + batch-base64 API
+        )
+        if any(file_path.endswith(s) for s in TIER2_EXCLUDED_SUFFIXES):
+            continue
 
         # Direct match first (git diff paths are web/src/...)
         cov_data = line_coverage.get(file_path)

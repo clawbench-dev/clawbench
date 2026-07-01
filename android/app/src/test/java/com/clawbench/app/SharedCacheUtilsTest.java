@@ -9,9 +9,9 @@ import java.io.File;
 import static org.junit.Assert.*;
 
 /**
- * Unit tests for SharedCacheUtils (Share Out shared cache directory logic).
+ * Unit tests for SharedCacheUtils.
  */
-public class MainActivityShareOutTest {
+public class SharedCacheUtilsTest {
 
     private File tempCacheDir;
 
@@ -24,7 +24,6 @@ public class MainActivityShareOutTest {
 
     @After
     public void tearDown() {
-        // Clean up
         File sharedDir = new File(tempCacheDir, SharedCacheUtils.SHARED_DIR_NAME);
         if (sharedDir.exists()) {
             for (File f : sharedDir.listFiles()) f.delete();
@@ -34,7 +33,7 @@ public class MainActivityShareOutTest {
     }
 
     @Test
-    public void getSharedCacheDir_createsDirectoryUnderCacheDir() {
+    public void getSharedCacheDir_createsDirectory() {
         File result = SharedCacheUtils.getSharedCacheDir(tempCacheDir);
         assertTrue(result.exists());
         assertTrue(result.isDirectory());
@@ -46,35 +45,28 @@ public class MainActivityShareOutTest {
         File first = SharedCacheUtils.getSharedCacheDir(tempCacheDir);
         File second = SharedCacheUtils.getSharedCacheDir(tempCacheDir);
         assertEquals(first, second);
-        assertTrue(second.exists());
     }
 
     @Test
     public void cleanupSharedCacheDir_deletesFiles() throws Exception {
         File sharedDir = SharedCacheUtils.getSharedCacheDir(tempCacheDir);
-        new File(sharedDir, "test1.png").createNewFile();
-        new File(sharedDir, "test2.jpg").createNewFile();
-        assertEquals(2, sharedDir.listFiles().length);
-
-        int deleted = SharedCacheUtils.cleanupSharedCacheDir(tempCacheDir);
-        assertEquals(2, deleted);
+        new File(sharedDir, "a.png").createNewFile();
+        new File(sharedDir, "b.jpg").createNewFile();
+        assertEquals(2, SharedCacheUtils.cleanupSharedCacheDir(tempCacheDir));
         assertEquals(0, sharedDir.listFiles().length);
     }
 
     @Test
     public void cleanupSharedCacheDir_returnsZeroWhenEmpty() {
         SharedCacheUtils.getSharedCacheDir(tempCacheDir);
-        int deleted = SharedCacheUtils.cleanupSharedCacheDir(tempCacheDir);
-        assertEquals(0, deleted);
+        assertEquals(0, SharedCacheUtils.cleanupSharedCacheDir(tempCacheDir));
     }
 
     @Test
     public void cleanupSharedCacheDir_handlesNonExistentDir() {
         File nonExistent = new File(System.getProperty("java.io.tmpdir"),
                 "clawbench-nonexistent-" + System.currentTimeMillis());
-        // Should not throw
-        int deleted = SharedCacheUtils.cleanupSharedCacheDir(nonExistent);
-        assertEquals(0, deleted);
+        assertEquals(0, SharedCacheUtils.cleanupSharedCacheDir(nonExistent));
         nonExistent.delete();
     }
 }

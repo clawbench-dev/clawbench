@@ -1322,24 +1322,12 @@ public class MainActivity extends AppCompatActivity {
 
     /** Get or create the shared temp files directory under cacheDir. */
     private File getSharedCacheDir() {
-        File dir = new File(getCacheDir(), "shared");
-        if (!dir.exists()) dir.mkdirs();
-        return dir;
+        return SharedCacheUtils.getSharedCacheDir(getCacheDir());
     }
 
     /** Clean up all files in the shared cache directory. Called in onDestroy. */
     private void cleanupSharedCacheDir() {
-        try {
-            File dir = getSharedCacheDir();
-            File[] files = dir.listFiles();
-            if (files != null) {
-                for (File f : files) {
-                    f.delete();
-                }
-            }
-        } catch (Exception e) {
-            AppLog.w(TAG, "Failed to cleanup shared cache dir", e);
-        }
+        SharedCacheUtils.cleanupSharedCacheDir(getCacheDir());
     }
 
     /**
