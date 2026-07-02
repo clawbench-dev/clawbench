@@ -121,7 +121,7 @@
         </div>
       </main>
 
-      <Lightbox />
+      <Lightbox ref="lightboxRef" />
 
       <ProjectDialog
         :open="projectDialogOpen"
@@ -1212,6 +1212,13 @@ provide('applyTheme', applyTheme)
 provide('activeTab', activeTab)
 provide('switchTab', switchTab)
 provide('hotSwitchProject', hotSwitchProject)
+
+// Lightbox — expose open/openMdImages/openSvg via ref and provide at App level
+// so TableRowModal (in <main> subtree, not Lightbox's subtree) can inject them
+const lightboxRef = ref(null)
+provide('openLightbox', (url, svg) => lightboxRef.value?.open(url, svg))
+provide('openSvgLightbox', (svg) => lightboxRef.value?.openSvg(svg))
+provide('openMdImages', (imgs, idx) => lightboxRef.value?.openMdImages(imgs, idx))
 
 function handleOpenFileManager() {
     switchTab('browse')

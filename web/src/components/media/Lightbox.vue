@@ -499,6 +499,8 @@ provide('openLightbox', open)
 provide('openSvgLightbox', openSvg)
 provide('openMdImages', openMdImages)
 
+defineExpose({ open, openMdImages, openSvg })
+
 onMounted(() => {
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
