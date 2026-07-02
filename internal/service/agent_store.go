@@ -150,7 +150,11 @@ func SaveAgent(db DBExec, agent *model.Agent) error {
 	sortOrder := agent.SortOrder
 	transport := agent.Transport
 	if transport == "" {
-		transport = "cli"
+		if agent.AcpCommand != "" {
+			transport = "acp-stdio"
+		} else {
+			transport = "cli"
+		}
 	}
 
 	_, err = db.Exec(`

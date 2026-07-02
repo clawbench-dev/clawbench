@@ -183,7 +183,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       identity.currentTransport.value = transportFromServer
     } else {
       const agent = getAgent(currentAgentId.value)
-      identity.currentTransport.value = agent?.transport || 'cli'
+      identity.currentTransport.value = agent?.transport || (agent?.acpCommand ? 'acp-stdio' : 'cli')
     }
   }
 

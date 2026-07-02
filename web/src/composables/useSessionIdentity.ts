@@ -397,7 +397,7 @@ export async function initSessionFromAPI() {
         } else {
           // Fall back to agent's stored transport
           const agent = agentsApi.getAgent(data.agentId || '')
-          currentTransport.value = agent?.transport || 'cli'
+          currentTransport.value = agent?.transport || (agent?.acpCommand ? 'acp-stdio' : 'cli')
         }
         // Initialize autoApprove from server state
         if (data.autoApprove !== undefined) {

@@ -487,8 +487,8 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			effectiveTransport := "cli"
 			if t := service.GetSessionTransport(sessionID); t != "" {
 				effectiveTransport = t
-			} else if agent, ok := model.Agents[effectiveAgentID]; ok && agent.SupportsACP() {
-				effectiveTransport = "acp-stdio"
+			} else if agent, ok := model.Agents[effectiveAgentID]; ok && agent.Transport != "" {
+				effectiveTransport = agent.Transport
 			}
 			if effectiveTransport == "acp-stdio" {
 				slog.Info("acp: marking connection idle for completed session", "session_id", sessionID, "agent_id", effectiveAgentID)
@@ -727,8 +727,8 @@ func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 	isACP := false
 	if transportOverride != "" {
 		isACP = transportOverride == "acp-stdio"
-	} else if agent, ok := model.Agents[agentID]; ok && agent.SupportsACP() {
-		isACP = true
+	} else if agent, ok := model.Agents[agentID]; ok {
+		isACP = agent.Transport == "acp-stdio"
 	}
 	// Resolve external_session_id for fork detection (used by both CLI resume and fork context injection).
 	var resolvedExtID string

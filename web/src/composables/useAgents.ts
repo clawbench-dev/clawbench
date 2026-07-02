@@ -287,7 +287,8 @@ function supportsDualTransport(agentId: string): boolean {
 /** Get the current transport mode for an agent. Returns 'acp-stdio' or 'cli'. */
 function getAgentTransport(agentId: string): string {
     const agent = agents.value.find(a => a.id === agentId)
-    return agent?.transport || 'cli'
+    if (agent?.transport) return agent.transport
+    return agent?.acpCommand ? 'acp-stdio' : 'cli'
 }
 
 /** Invalidate the ACP state cache for an agent so next access force-refreshes. */

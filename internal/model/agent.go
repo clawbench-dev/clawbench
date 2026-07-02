@@ -28,7 +28,7 @@ type Agent struct {
 	SystemPrompt            string       `json:"systemPrompt"`
 
 	// ACP configuration (only used when Transport != "cli")
-	Transport  string `json:"transport"`            // "cli"(default) | "acp-stdio"
+	Transport  string `json:"transport"`            // "cli" | "acp-stdio"; default depends on AcpCommand
 	AcpCommand string `json:"acpCommand,omitempty"` // acp-stdio: spawn command, e.g. "kimi --acp"
 
 	// CustomSystemPrompt is the user-editable portion of the system prompt.

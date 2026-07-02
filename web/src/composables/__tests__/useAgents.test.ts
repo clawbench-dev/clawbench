@@ -926,6 +926,15 @@ describe('useAgents', () => {
       expect(getAgentTransport('gpt')).toBe('cli')
     })
 
+    it('returns acp-stdio when transport is empty but acpCommand is set', async () => {
+      resetAgents()
+      registerMocks()
+      const agentsWithAcp = testAgents.map(a => a.id === 'claude' ? { ...a, acpCommand: 'claude --acp' } : a)
+      mockApiGet.mockResolvedValue({ agents: agentsWithAcp, defaultAgent: 'claude' })
+      await loadAgents()
+      expect(getAgentTransport('claude')).toBe('acp-stdio')
+    })
+
     it('returns cli for unknown agent', () => {
       expect(getAgentTransport('nonexistent')).toBe('cli')
     })

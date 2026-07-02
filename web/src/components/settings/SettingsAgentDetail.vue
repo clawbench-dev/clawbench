@@ -244,7 +244,7 @@ function getItemValue(item: AgentItem): any {
     case 'preferred_mode':
       return a.preferredMode || ''
     case 'transport':
-      return a.transport || 'cli'
+      return a.transport || (a.acpCommand ? 'acp-stdio' : 'cli')
     case 'name':
       return a.name || ''
     case 'icon':

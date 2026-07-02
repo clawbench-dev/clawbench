@@ -409,9 +409,10 @@ func SyncDiscoverAgentsDB(db *sql.DB) map[string]bool { //nolint:gocognit,gocycl
 			// Sync transport with acp_command changes:
 			// - ACP newly added + current transport is cli → upgrade to acp-stdio
 			// - ACP removed + current transport is acp-stdio → downgrade to cli
-			if r.spec.AcpCommand != "" && existingAcpCommand == "" && existingTransport == "cli" {
+			// - ACP unchanged but transport is stale cli (pre-existing DB record) → upgrade
+			if r.spec.AcpCommand != "" && existingTransport == "cli" {
 				updates["transport"] = "acp-stdio"
-			} else if r.spec.AcpCommand == "" && existingAcpCommand != "" && existingTransport == "acp-stdio" {
+			} else if r.spec.AcpCommand == "" && existingTransport == "acp-stdio" {
 				updates["transport"] = "cli"
 			}
 
