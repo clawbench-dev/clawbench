@@ -296,6 +296,11 @@ jobs:
           generate_release_notes: false
           files: pkg-windows/clawbench-windows-amd64.zip
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-package
+          path: pkg-windows/clawbench/
+
   build-macos-arm64:
     name: Build macOS arm64
     needs: [build-frontend, build-android]
@@ -361,6 +366,11 @@ jobs:
         with:
           generate_release_notes: false
           files: pkg-mac-arm64/clawbench-darwin-arm64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64-package
+          path: pkg-mac-arm64/clawbench/
 
   build-macos-amd64:
     name: Build macOS amd64
@@ -430,6 +440,11 @@ jobs:
         with:
           generate_release_notes: false
           files: pkg-mac-amd64/clawbench-darwin-amd64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-amd64-package
+          path: pkg-mac-amd64/clawbench/
 
   build-android:
     name: Build Android APK
@@ -567,9 +582,149 @@ jobs:
             echo "::warning::Could not determine package visibility. If it's private, set it to public at: ${SETTINGS_URL}"
           fi
 
+  publish-npm:
+    name: Publish to npm
+    needs: [build-frontend, build-linux, build-linux-arm64, build-windows, build-macos-arm64, build-macos-amd64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          # 去掉 v 前缀（npm 语义化版本不允许 v 前缀）
+          VERSION="${VERSION#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download frontend artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: public
+          path: public/
+
+      - name: Download Linux amd64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-package
+          path: pkg-linux/clawbench/
+
+      - name: Download Linux arm64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-arm64-package
+          path: pkg-linux-arm64/clawbench/
+
+      - name: Download Windows binary
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-package
+          path: pkg-windows/clawbench/
+
+      - name: Download macOS arm64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-arm64-package
+          path: pkg-mac-arm64/clawbench/
+
+      - name: Download macOS amd64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-amd64-package
+          path: pkg-mac-amd64/clawbench/
+
+      - name: Assemble npm platform packages
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          echo "Assembling npm packages for version: $VERSION"
+
+          # --- @xulongzhe/clawbench-linux-x64 ---
+          PLATFORM_DIR="npm/platforms/linux-x64"
+          mkdir -p "$PLATFORM_DIR/bin"
+          cp pkg-linux/clawbench/clawbench "$PLATFORM_DIR/bin/clawbench"
+          chmod +x "$PLATFORM_DIR/bin/clawbench"
+          cp -r public "$PLATFORM_DIR/public"
+          # Update version in package.json
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$PLATFORM_DIR/package.json','utf8'));p.version='$VERSION';fs.writeFileSync('$PLATFORM_DIR/package.json',JSON.stringify(p,null,2)+'\n')"
+
+          # --- @xulongzhe/clawbench-linux-arm64 ---
+          PLATFORM_DIR="npm/platforms/linux-arm64"
+          mkdir -p "$PLATFORM_DIR/bin"
+          cp pkg-linux-arm64/clawbench/clawbench "$PLATFORM_DIR/bin/clawbench"
+          chmod +x "$PLATFORM_DIR/bin/clawbench"
+          cp -r public "$PLATFORM_DIR/public"
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$PLATFORM_DIR/package.json','utf8'));p.version='$VERSION';fs.writeFileSync('$PLATFORM_DIR/package.json',JSON.stringify(p,null,2)+'\n')"
+
+          # --- @xulongzhe/clawbench-darwin-x64 ---
+          PLATFORM_DIR="npm/platforms/darwin-x64"
+          mkdir -p "$PLATFORM_DIR/bin"
+          cp pkg-mac-amd64/clawbench/clawbench "$PLATFORM_DIR/bin/clawbench"
+          chmod +x "$PLATFORM_DIR/bin/clawbench"
+          cp -r public "$PLATFORM_DIR/public"
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$PLATFORM_DIR/package.json','utf8'));p.version='$VERSION';fs.writeFileSync('$PLATFORM_DIR/package.json',JSON.stringify(p,null,2)+'\n')"
+
+          # --- @xulongzhe/clawbench-darwin-arm64 ---
+          PLATFORM_DIR="npm/platforms/darwin-arm64"
+          mkdir -p "$PLATFORM_DIR/bin"
+          cp pkg-mac-arm64/clawbench/clawbench "$PLATFORM_DIR/bin/clawbench"
+          chmod +x "$PLATFORM_DIR/bin/clawbench"
+          cp -r public "$PLATFORM_DIR/public"
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$PLATFORM_DIR/package.json','utf8'));p.version='$VERSION';fs.writeFileSync('$PLATFORM_DIR/package.json',JSON.stringify(p,null,2)+'\n')"
+
+          # --- @xulongzhe/clawbench-win32-x64 ---
+          PLATFORM_DIR="npm/platforms/win32-x64"
+          mkdir -p "$PLATFORM_DIR/bin"
+          cp pkg-windows/clawbench/clawbench.exe "$PLATFORM_DIR/bin/clawbench.exe"
+          cp -r public "$PLATFORM_DIR/public"
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$PLATFORM_DIR/package.json','utf8'));p.version='$VERSION';fs.writeFileSync('$PLATFORM_DIR/package.json',JSON.stringify(p,null,2)+'\n')"
+
+          # --- Update main package ---
+          MAIN_DIR="npm/main"
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$MAIN_DIR/package.json','utf8'));p.version='$VERSION';for(const d in p.optionalDependencies)p.optionalDependencies[d]='$VERSION';fs.writeFileSync('$MAIN_DIR/package.json',JSON.stringify(p,null,2)+'\n')"
+
+          echo "All npm packages assembled"
+
+      - name: Publish @xulongzhe/clawbench-linux-x64
+        run: npm publish npm/platforms/linux-x64 --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @xulongzhe/clawbench-linux-arm64
+        run: npm publish npm/platforms/linux-arm64 --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @xulongzhe/clawbench-darwin-x64
+        run: npm publish npm/platforms/darwin-x64 --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @xulongzhe/clawbench-darwin-arm64
+        run: npm publish npm/platforms/darwin-arm64 --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish @xulongzhe/clawbench-win32-x64
+        run: npm publish npm/platforms/win32-x64 --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish main package (@xulongzhe/clawbench)
+        run: npm publish npm/main --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
   release-notes:
     name: Generate Release Notes
-    needs: [build-linux, build-linux-arm64, build-windows, build-macos-arm64, build-macos-amd64, build-android, docker]
+    needs: [build-linux, build-linux-arm64, build-windows, build-macos-arm64, build-macos-amd64, build-android, docker, publish-npm]
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -1,0 +1,27 @@
+{
+  "name": "@xulongzhe/clawbench",
+  "version": "0.1.0",
+  "description": "Mobile-first AI workstation — Go backend + Vue3 frontend",
+  "type": "module",
+  "bin": {
+    "clawbench": "bin/clawbench.js"
+  },
+  "files": [
+    "bin/",
+    "install.js"
+  ],
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "optionalDependencies": {
+    "@xulongzhe/clawbench-linux-x64": "0.1.0",
+    "@xulongzhe/clawbench-linux-arm64": "0.1.0",
+    "@xulongzhe/clawbench-darwin-x64": "0.1.0",
+    "@xulongzhe/clawbench-darwin-arm64": "0.1.0",
+    "@xulongzhe/clawbench-win32-x64": "0.1.0"
+  },
+  "engines": {
+    "node": ">=14"
+  },
+  "license": "MIT"
+}

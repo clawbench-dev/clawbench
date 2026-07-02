@@ -76,6 +76,21 @@
 - **一台 PC（Linux / macOS / Windows）**：用于运行 ClawBench 服务端，需已安装至少一种 AI 编程智能体 CLI（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Cline、Copilot、Kimi 均可）
 - **一台手机**：安装 [ClawBench Android App](https://github.com/xulongzhe/clawbench/releases)，或使用手机浏览器（推荐 Chrome）访问服务端地址
 
+### npm 安装（国内镜像加速）
+
+通过 npm 一键安装，国内用户走淘宝源秒下：
+
+```bash
+# 配置淘宝镜像（仅需一次）
+npm config set registry https://registry.npmmirror.com/
+# 全局安装
+npm install -g @xulongzhe/clawbench
+# 启动
+clawbench
+```
+
+支持 Linux (x64/arm64)、macOS (Intel/Apple Silicon)、Windows (x64)。npm 根据当前平台自动选择对应的二进制包。
+
 ### 安装包部署
 
 从 [GitHub Releases](https://github.com/xulongzhe/clawbench/releases) 下载最新版 ZIP 包，解压即可运行，无需安装：

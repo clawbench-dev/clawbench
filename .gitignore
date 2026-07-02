@@ -100,3 +100,8 @@ clawbench-test
 .bin/
 coverage*.out
 skills-lock.json
+
+# npm publish temporary files
+npm/tmp/
+npm/platforms/*/bin/
+npm/platforms/*/public/

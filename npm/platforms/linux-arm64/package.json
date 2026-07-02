@@ -1,0 +1,9 @@
+{
+  "name": "@xulongzhe/clawbench-linux-arm64",
+  "version": "0.1.0",
+  "description": "ClawBench binary for Linux arm64",
+  "os": ["linux"],
+  "cpu": ["arm64"],
+  "preferUnplugged": true,
+  "files": ["bin/", "public/"]
+}

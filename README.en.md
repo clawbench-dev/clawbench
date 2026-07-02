@@ -120,6 +120,21 @@ graph LR
 - **A PC (Linux / macOS / Windows)**: To run the ClawBench server, with at least one AI coding agent CLI installed (CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Cline, Copilot, or Kimi)
 - **A phone**: Install the [ClawBench Android App](https://github.com/xulongzhe/clawbench/releases), or use a mobile browser (Chrome recommended) to access the server address
 
+### npm Install (with China mirror acceleration)
+
+Install via npm in one command. Users in China can use the npmmirror registry for fast downloads:
+
+```bash
+# Configure npmmirror (one-time setup)
+npm config set registry https://registry.npmmirror.com/
+# Install globally
+npm install -g @xulongzhe/clawbench
+# Start
+clawbench
+```
+
+Supports Linux (x64/arm64), macOS (Intel/Apple Silicon), and Windows (x64). npm automatically selects the correct platform-specific binary package.
+
 ### Download & Start
 
 Download the latest ZIP package from [GitHub Releases](https://github.com/xulongzhe/clawbench/releases), extract and you're ready:

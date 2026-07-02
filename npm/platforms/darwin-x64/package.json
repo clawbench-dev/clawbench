@@ -1,0 +1,9 @@
+{
+  "name": "@xulongzhe/clawbench-darwin-x64",
+  "version": "0.1.0",
+  "description": "ClawBench binary for macOS x64",
+  "os": ["darwin"],
+  "cpu": ["x64"],
+  "preferUnplugged": true,
+  "files": ["bin/", "public/"]
+}
