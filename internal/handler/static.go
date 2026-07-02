@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"clawbench/internal/frontend"
 )
 
 // ServeProjectDialog serves the project dialog HTML template.
@@ -30,32 +32,42 @@ func ServeIndex(w http.ResponseWriter, r *http.Request) {
 	// ISS-055: Clean the path to prevent path traversal (e.g. /../etc/passwd)
 	path = filepath.Clean(path)
 
+	fsys := frontend.GetFS()
+
 	// Serve index for root — auth is handled by the Vue app itself
 	if path == "/" || path == "." {
-		if _, err := os.Stat("public/index.html"); err == nil {
-			http.ServeFile(w, r, "public/index.html")
+		if fi, err := fsys.Open("index.html"); err == nil {
+			fi.Close()
+			frontend.ServeFileFromFS(w, r, fsys, "index.html")
 			return
 		}
+		// Dev fallback: serve from web/ directory
 		http.ServeFile(w, r, filepath.Join("web", "index.html"))
 		return
 	}
 
-	// For other paths (e.g. /index-*.css, /index-*.js), serve from public/
-	// ISS-055: Ensure the cleaned path stays within public/
+	// For other paths (e.g. /index-*.css, /index-*.js), serve from frontend FS
 	cleanRelPath := strings.TrimPrefix(path, "/")
-	absPublic, _ := filepath.Abs("public")
-	absTarget := filepath.Join("public", cleanRelPath)
-	absTarget, _ = filepath.Abs(absTarget)
-	if !strings.HasPrefix(absTarget, absPublic+string(filepath.Separator)) && absTarget != absPublic {
-		http.NotFound(w, r)
-		return
+
+	// ISS-055: When serving from disk, ensure the cleaned path stays within public/
+	if frontend.DiskPublicExists() {
+		absPublic, _ := filepath.Abs("public")
+		absTarget := filepath.Join("public", cleanRelPath)
+		absTarget, _ = filepath.Abs(absTarget)
+		if !strings.HasPrefix(absTarget, absPublic+string(filepath.Separator)) && absTarget != absPublic {
+			http.NotFound(w, r)
+			return
+		}
 	}
-	if _, err := os.Stat(absTarget); err == nil {
-		http.ServeFile(w, r, absTarget)
+
+	// Try serving from frontend filesystem (disk public/ or embed)
+	if fi, err := fsys.Open(cleanRelPath); err == nil {
+		fi.Close()
+		frontend.ServeFileFromFS(w, r, fsys, cleanRelPath)
 		return
 	}
 
-	// For /css/* paths, also try web/css/
+	// For /css/* paths, also try web/css/ (dev mode fallback)
 	if strings.HasPrefix(path, "/css/") {
 		fallback := filepath.Join("web", path)
 		if _, err := os.Stat(fallback); err == nil {

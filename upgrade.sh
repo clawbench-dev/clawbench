@@ -19,8 +19,9 @@ set -euo pipefail
 REPO="xulongzhe/clawbench"
 GITHUB_API="https://api.github.com/repos/${REPO}"
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BACKUP_DIR="${INSTALL_DIR}/.clawbench/upgrade-backup"
-VERSION_FILE="${INSTALL_DIR}/.clawbench/version"
+DATA_DIR="${INSTALL_DIR}/.clawbench"
+BACKUP_DIR="${DATA_DIR}/upgrade-backup"
+VERSION_FILE="${DATA_DIR}/version"
 
 # 检测 OS 和架构
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -40,8 +41,8 @@ PRESERVE_FILES=(
 # 需要从 release 包同步的目录/文件
 # 格式: "源路径" — 从 release 包根目录复制到安装目录
 SYNC_ENTRIES=(
-    "clawbench"       # 主二进制
-    "public"          # 前端静态资源
+    "clawbench"       # 主二进制（前端已通过 go:embed 内嵌）
+    "agents"          # 嵌入式智能体二进制（opencode, pi 等）
     "scripts"         # 辅助脚本
     "config/config.example.yaml" # 示例配置
 )
@@ -124,7 +125,7 @@ get_download_url() {
 stop_service() {
     log_info "停止 clawbench 服务..."
     # 通过 PID 文件或端口停止
-    local pid_file="${INSTALL_DIR}/.clawbench/server.pid"
+    local pid_file="${DATA_DIR}/server.pid"
     if [[ -f "$pid_file" ]]; then
         local pid=$(cat "$pid_file")
         if kill -0 "$pid" 2>/dev/null; then
@@ -464,6 +465,16 @@ main() {
             --force)       force=true ;;
             --no-restart)  no_restart=true ;;
             --keep-backup) keep_backup=true ;;
+            --data-dir)
+                if [[ $# -lt 2 ]]; then
+                    log_error "--data-dir 需要一个参数"
+                    exit 1
+                fi
+                DATA_DIR="$2"
+                BACKUP_DIR="${DATA_DIR}/upgrade-backup"
+                VERSION_FILE="${DATA_DIR}/version"
+                shift
+                ;;
             --help|-h)
                 echo "用法: $0 [选项]"
                 echo ""
@@ -472,6 +483,7 @@ main() {
                 echo "  --force         强制升级（即使版本相同）"
                 echo "  --no-restart    升级后不自动重启服务"
                 echo "  --keep-backup   升级后保留备份文件"
+                echo "  --data-dir DIR  指定数据目录（默认: INSTALL_DIR/.clawbench）"
                 echo "  -h, --help      显示帮助信息"
                 exit 0
                 ;;
@@ -489,6 +501,7 @@ main() {
     echo "╚══════════════════════════════════╝"
     echo ""
     log_info "安装目录: ${INSTALL_DIR}"
+    log_info "数据目录: ${DATA_DIR}"
     log_info "平台: ${OS}-${ARCH}"
     log_info "资源文件: ${ASSET_NAME}"
     echo ""

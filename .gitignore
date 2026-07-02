@@ -25,6 +25,8 @@ nohup.out
 node_modules/
 vite.log
 public/
+internal/frontend/dist/
+!internal/frontend/dist/.gitkeep
 web/coverage/
 web/package.json
 web/package-lock.json
@@ -32,6 +34,7 @@ web/package-lock.json
 # App runtime data
 .ClawBench/
 .clawbench/
+.clawbench-ci/
 .smartworkbench/
 *.db
 
@@ -82,6 +85,12 @@ clawbench-test
 # Codebuddy runtime
 .codebuddy/worktrees/
 .codebuddy/scheduled_tasks.lock
+
+# Embedded agent binaries (downloaded, not tracked)
+/agents/
+
+# TTS model files (downloaded, not tracked)
+/models/
 
 # Agent skills (local only)
 .agents/

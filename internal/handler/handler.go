@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	i18npkg "clawbench/internal/i18n"
+	"clawbench/internal/frontend"
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
@@ -338,11 +339,14 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/chat/quick-send", middleware.Auth(ServeChatQuickSend))
 	register("/api/chat/quick-send/", middleware.Auth(ServeChatQuickSendByID))
 
-	if _, err := os.Stat("public"); err == nil {
-		mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir("public"))))
-	} else {
+	// Serve static assets from frontend filesystem (disk public/ > embed fallback)
+	// http.FileServerFS internally cleans paths before Open(), preventing traversal.
+	// For embed.FS, Open() additionally rejects ".." paths. No explicit ISS-055 guard needed.
+	fsys := frontend.GetFS()
+	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServerFS(fsys)))
+	if !frontend.DiskPublicExists() {
+		// Dev mode fallbacks: Vite dev server needs these routes
 		mux.Handle("/css/", http.StripPrefix("/css/", http.FileServer(http.Dir(filepath.Join("web", "css")))))
 		mux.Handle("/js/", http.StripPrefix("/js/", http.FileServer(http.Dir(filepath.Join("web", "js")))))
-		mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir("assets"))))
 	}
 }

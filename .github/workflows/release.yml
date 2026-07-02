@@ -92,6 +92,15 @@ jobs:
       - name: Include APK in public/assets/
         run: mkdir -p public/assets && cp android-apk/clawbench-android.apk public/assets/
 
+      - name: Copy frontend for Go embed
+        run: |
+          rm -rf internal/frontend/dist
+          mkdir -p internal/frontend/dist
+          cp public/index.html internal/frontend/dist/
+          cp public/*.js public/*.css internal/frontend/dist/ 2>/dev/null || true
+          cp public/manifest-*.json public/sw.js internal/frontend/dist/ 2>/dev/null || true
+          cp -r public/assets internal/frontend/dist/assets 2>/dev/null || true
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
@@ -121,10 +130,9 @@ jobs:
         run: |
           mkdir -p pkg-linux/clawbench
           cp clawbench-linux pkg-linux/clawbench/clawbench
-          cp -r public pkg-linux/clawbench/public
           cp -r config pkg-linux/clawbench/config
-          mkdir -p pkg-linux/clawbench/.clawbench
-          cp -r .clawbench/${{ steps.embedded-agent.outputs.subdir }} pkg-linux/clawbench/.clawbench/${{ steps.embedded-agent.outputs.subdir }}
+          mkdir -p pkg-linux/clawbench/agents
+          cp -r agents/${{ steps.embedded-agent.outputs.subdir }} pkg-linux/clawbench/agents/${{ steps.embedded-agent.outputs.subdir }}
           chmod +x pkg-linux/clawbench/clawbench
           cd pkg-linux && zip -r clawbench-linux-amd64.zip clawbench/
 
@@ -162,6 +170,15 @@ jobs:
       - name: Include APK in public/assets/
         run: mkdir -p public/assets && cp android-apk/clawbench-android.apk public/assets/
 
+      - name: Copy frontend for Go embed
+        run: |
+          rm -rf internal/frontend/dist
+          mkdir -p internal/frontend/dist
+          cp public/index.html internal/frontend/dist/
+          cp public/*.js public/*.css internal/frontend/dist/ 2>/dev/null || true
+          cp public/manifest-*.json public/sw.js internal/frontend/dist/ 2>/dev/null || true
+          cp -r public/assets internal/frontend/dist/assets 2>/dev/null || true
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
@@ -191,10 +208,9 @@ jobs:
         run: |
           mkdir -p pkg-linux-arm64/clawbench
           cp clawbench-linux-arm64 pkg-linux-arm64/clawbench/clawbench
-          cp -r public pkg-linux-arm64/clawbench/public
           cp -r config pkg-linux-arm64/clawbench/config
-          mkdir -p pkg-linux-arm64/clawbench/.clawbench
-          cp -r .clawbench/${{ steps.embedded-agent.outputs.subdir }} pkg-linux-arm64/clawbench/.clawbench/${{ steps.embedded-agent.outputs.subdir }}
+          mkdir -p pkg-linux-arm64/clawbench/agents
+          cp -r agents/${{ steps.embedded-agent.outputs.subdir }} pkg-linux-arm64/clawbench/agents/${{ steps.embedded-agent.outputs.subdir }}
           chmod +x pkg-linux-arm64/clawbench/clawbench
           cd pkg-linux-arm64 && zip -r clawbench-linux-arm64.zip clawbench/
 
@@ -234,6 +250,18 @@ jobs:
           New-Item -ItemType Directory -Force -Path public/assets | Out-Null
           Copy-Item android-apk/clawbench-android.apk public/assets/
 
+      - name: Copy frontend for Go embed
+        shell: pwsh
+        run: |
+          if (Test-Path internal/frontend/dist) { Remove-Item -Recurse -Force internal/frontend/dist }
+          New-Item -ItemType Directory -Force -Path internal/frontend/dist | Out-Null
+          Copy-Item public/index.html internal/frontend/dist/
+          Copy-Item public/*.js internal/frontend/dist/ -ErrorAction SilentlyContinue
+          Copy-Item public/*.css internal/frontend/dist/ -ErrorAction SilentlyContinue
+          Copy-Item public/manifest-*.json internal/frontend/dist/ -ErrorAction SilentlyContinue
+          Copy-Item public/sw.js internal/frontend/dist/ -ErrorAction SilentlyContinue
+          if (Test-Path public/assets) { Copy-Item -Recurse public/assets internal/frontend/dist/assets }
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
@@ -258,10 +286,9 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path pkg-windows/clawbench
           Copy-Item clawbench.exe pkg-windows/clawbench/
-          Copy-Item -Recurse public pkg-windows/clawbench/public
           Copy-Item -Recurse config pkg-windows/clawbench/config
-          New-Item -ItemType Directory -Force -Path pkg-windows/clawbench/.clawbench
-          Copy-Item -Recurse .clawbench/${{ steps.embedded-agent.outputs.subdir }} pkg-windows/clawbench/.clawbench/${{ steps.embedded-agent.outputs.subdir }}
+          New-Item -ItemType Directory -Force -Path pkg-windows/clawbench/agents
+          Copy-Item -Recurse agents/${{ steps.embedded-agent.outputs.subdir }} pkg-windows/clawbench/agents/${{ steps.embedded-agent.outputs.subdir }}
           Compress-Archive -Path pkg-windows/clawbench -DestinationPath pkg-windows/clawbench-windows-amd64.zip
 
       - uses: softprops/action-gh-release@v2
@@ -292,6 +319,15 @@ jobs:
       - name: Include APK in public/assets/
         run: mkdir -p public/assets && cp android-apk/clawbench-android.apk public/assets/
 
+      - name: Copy frontend for Go embed
+        run: |
+          rm -rf internal/frontend/dist
+          mkdir -p internal/frontend/dist
+          cp public/index.html internal/frontend/dist/
+          cp public/*.js public/*.css internal/frontend/dist/ 2>/dev/null || true
+          cp public/manifest-*.json public/sw.js internal/frontend/dist/ 2>/dev/null || true
+          cp -r public/assets internal/frontend/dist/assets 2>/dev/null || true
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
@@ -315,10 +351,9 @@ jobs:
         run: |
           mkdir -p pkg-mac-arm64/clawbench
           cp clawbench-darwin-arm64 pkg-mac-arm64/clawbench/clawbench
-          cp -r public pkg-mac-arm64/clawbench/public
           cp -r config pkg-mac-arm64/clawbench/config
-          mkdir -p pkg-mac-arm64/clawbench/.clawbench
-          cp -r .clawbench/${{ steps.embedded-agent.outputs.subdir }} pkg-mac-arm64/clawbench/.clawbench/${{ steps.embedded-agent.outputs.subdir }}
+          mkdir -p pkg-mac-arm64/clawbench/agents
+          cp -r agents/${{ steps.embedded-agent.outputs.subdir }} pkg-mac-arm64/clawbench/agents/${{ steps.embedded-agent.outputs.subdir }}
           chmod +x pkg-mac-arm64/clawbench/clawbench
           cd pkg-mac-arm64 && zip -r clawbench-darwin-arm64.zip clawbench/
 
@@ -350,6 +385,15 @@ jobs:
       - name: Include APK in public/assets/
         run: mkdir -p public/assets && cp android-apk/clawbench-android.apk public/assets/
 
+      - name: Copy frontend for Go embed
+        run: |
+          rm -rf internal/frontend/dist
+          mkdir -p internal/frontend/dist
+          cp public/index.html internal/frontend/dist/
+          cp public/*.js public/*.css internal/frontend/dist/ 2>/dev/null || true
+          cp public/manifest-*.json public/sw.js internal/frontend/dist/ 2>/dev/null || true
+          cp -r public/assets internal/frontend/dist/assets 2>/dev/null || true
+
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
@@ -376,10 +420,9 @@ jobs:
         run: |
           mkdir -p pkg-mac-amd64/clawbench
           cp clawbench-darwin-amd64 pkg-mac-amd64/clawbench/clawbench
-          cp -r public pkg-mac-amd64/clawbench/public
           cp -r config pkg-mac-amd64/clawbench/config
-          mkdir -p pkg-mac-amd64/clawbench/.clawbench
-          cp -r .clawbench/${{ steps.embedded-agent.outputs.subdir }} pkg-mac-amd64/clawbench/.clawbench/${{ steps.embedded-agent.outputs.subdir }}
+          mkdir -p pkg-mac-amd64/clawbench/agents
+          cp -r agents/${{ steps.embedded-agent.outputs.subdir }} pkg-mac-amd64/clawbench/agents/${{ steps.embedded-agent.outputs.subdir }}
           chmod +x pkg-mac-amd64/clawbench/clawbench
           cd pkg-mac-amd64 && zip -r clawbench-darwin-amd64.zip clawbench/
 
@@ -453,7 +496,6 @@ jobs:
       - name: Prepare Docker build context
         run: |
           cp pkg-linux/clawbench/clawbench .
-          cp -r pkg-linux/clawbench/public .
           chmod +x ./clawbench
 
       - name: Resolve embedded agent version for Docker

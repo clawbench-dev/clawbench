@@ -22,9 +22,8 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-# Copy binary and frontend
+# Copy binary (frontend is embedded via go:embed)
 COPY clawbench .
-COPY public/ ./public/
 
 # Copy embedded agent download helper and config
 COPY scripts/download-embedded-agent.sh ./scripts/download-embedded-agent.sh
@@ -51,13 +50,13 @@ RUN if [ -n "$EMBEDDED_AGENT_ID" ] && [ -n "$EMBEDDED_AGENT_VERSION" ]; then \
       source ./scripts/download-embedded-agent.sh && \
       download_embedded_agent_for_docker opencode "$OPENCODE_VERSION"; \
     else \
-      mkdir -p .clawbench; \
+      mkdir -p agents; \
     fi
 
 # Copy local docker-staging/ as fallback (local builds only; no-op in CI when version is set).
-# When a version is set above, the RUN step already populated .clawbench/,
+# When a version is set above, the RUN step already populated agents/,
 # and this COPY overlays an empty directory (harmless).
-COPY docker-staging/ .clawbench/
+COPY docker-staging/ agents/
 
 # Data directory (mounted as volume for persistence)
 RUN mkdir -p /data/.clawbench

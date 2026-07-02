@@ -9,11 +9,13 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
+	"clawbench/internal/frontend"
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 )
@@ -148,7 +150,14 @@ func ServeAuthCheck(w http.ResponseWriter, r *http.Request) {
 func ServeLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		// Serve index.html which mounts the Vue app (LoginView handles auth UI)
-		http.ServeFile(w, r, "public/index.html")
+		fsys := frontend.GetFS()
+		if fi, err := fsys.Open("index.html"); err == nil {
+			fi.Close()
+			frontend.ServeFileFromFS(w, r, fsys, "index.html")
+			return
+		}
+		// Dev fallback: no built frontend available
+		http.ServeFile(w, r, filepath.Join("web", "index.html"))
 		return
 	}
 	if r.Method == http.MethodPost {

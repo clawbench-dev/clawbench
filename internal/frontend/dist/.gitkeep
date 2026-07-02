@@ -1,0 +1,3 @@
+// Placeholder to satisfy go:embed — this directory is populated by build.sh
+// with the frontend build output before `go build`.
+// If you see this file at runtime, the frontend was not built before compilation.
