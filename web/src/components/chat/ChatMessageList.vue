@@ -610,7 +610,7 @@ defineExpose({
 .chat-messages-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 20px;
 }
 
 .chat-empty {
