@@ -11,26 +11,38 @@
   />
   <!-- Standard settings category -->
   <div v-else class="settings-category">
-    <SettingsItem
-      v-for="(item, index) in items"
-      :key="item.key"
-      :label="item.label"
-      :description="item.description"
-      :type="item.type"
-      :model-value="getItemValue(item)"
-      :options="item.options"
-      :min="item.min"
-      :max="item.max"
-      :step="item.step"
-      :needs-restart="item.needsRestart"
-      :force-close="activeKey !== null && activeKey !== item.key"
-      :no-divider="isLastInSection(items, index)"
-      @update:model-value="(v: any) => handleUpdate(item, v)"
-      @click="handleClick(item)"
-      @edit-toggle="(open: boolean) => handleEditToggle(item.key, open)"
-      @desc-toggle="(open: boolean) => handleDescToggle(item.key, open)"
-      @discard="handleDiscard"
-    />
+    <template v-for="entry in renderList" :key="entry.type === 'group' ? entry.spec.groupId : entry.spec.key">
+      <!-- Config group panel -->
+      <SettingsGroupPanel
+        v-if="entry.type === 'group'"
+        :group="entry.spec"
+        :field-values="getGroupFieldValues(entry.spec)"
+        :field-options="getGroupFieldOptions(entry.spec)"
+        :force-close="activeKey !== null && activeKey !== entry.spec.groupId"
+        @save-result="handleGroupSaveResult"
+        @expand-toggle="(open: boolean) => handleGroupExpandToggle(entry.spec.groupId, open)"
+      />
+      <!-- Standalone item -->
+      <SettingsItem
+        v-else
+        :label="entry.spec.label || t(entry.spec.labelKey)"
+        :description="entry.spec.descriptionKey ? t(entry.spec.descriptionKey) : ''"
+        :type="entry.spec.type"
+        :model-value="getItemValue(entry.spec)"
+        :options="resolveItemOptions(entry.spec)"
+        :min="entry.spec.min"
+        :max="entry.spec.max"
+        :step="entry.spec.step"
+        :needs-restart="entry.spec.needsRestart"
+        :force-close="activeKey !== null && activeKey !== entry.spec.key"
+        :no-divider="false"
+        @update:model-value="(v: any) => handleUpdate(entry.spec, v)"
+        @click="handleClick(entry.spec)"
+        @edit-toggle="(open: boolean) => handleEditToggle(entry.spec.key, open)"
+        @desc-toggle="(open: boolean) => handleDescToggle(entry.spec.key, open)"
+        @discard="handleDiscard"
+      />
+    </template>
     <!-- Password change dialog -->
     <PasswordChangeDialog
       v-if="showPasswordDialog"
@@ -46,6 +58,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
+import SettingsGroupPanel from './SettingsGroupPanel.vue'
 import PasswordChangeDialog from './PasswordChangeDialog.vue'
 import SettingsAgentsIndex from './SettingsAgentsIndex.vue'
 import SettingsAgentDetail from './SettingsAgentDetail.vue'
@@ -57,7 +70,7 @@ import { useDialog } from '@/composables/useDialog'
 import { useAppMode } from '@/composables/useAppMode'
 import { usePwaInstall } from '@/composables/usePwaInstall'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
-import { categoryItems, engineVoiceOptions, type ItemSpec, type DependsOn } from './settingsFieldMap'
+import { categoryItems, categoryGroups, engineVoiceOptions, fieldBelongsToGroup, type ItemSpec, type ConfigGroup, type DependsOn } from './settingsFieldMap'
 
 const props = defineProps<{
   categoryId: string
@@ -104,86 +117,166 @@ function isDependsOnMet(dependsOn: ItemSpec['dependsOn']): boolean {
   return isSingleDependsOnMet(dependsOn)
 }
 
-// categoryItems is imported from the shared settingsFieldMap module
-// (single source of truth — also used by SettingsRestartDialog for field translation)
+// ── Render list: mixed groups + standalone items ──
 
-// Resolve i18n labels at runtime, and dynamically inject agent options
-const items = computed(() => {
+interface RenderItem {
+  type: 'item'
+  spec: any
+}
+interface RenderGroup {
+  type: 'group'
+  spec: ConfigGroup
+}
+
+const renderList = computed(() => {
+  const groups = categoryGroups[props.categoryId] ?? []
   const raw = categoryItems[props.categoryId] ?? []
-  // Filter by dependsOn and inject header pseudo-items
-  const expanded: any[] = []
+  const result: (RenderItem | RenderGroup)[] = []
+  const emittedGroups = new Set<string>()
+
   for (const item of raw) {
     if (!isDependsOnMet(item.dependsOn)) continue
-    // Hide appVersion row when not in Android App mode (no AndroidNative bridge)
+    // Hide appVersion row when not in Android App mode
     if (item.key === 'appVersion' && !isAppMode.value) continue
-    // Hide PWA install action when not available
     if (item.key === 'addToHomeScreen' && !pwaInstall.showPwaInstall.value) continue
-    // Hide APK download action when not available
     if (item.key === 'downloadAndroidApp' && !pwaInstall.showApkDownload.value) continue
-    // Inject push registration status as a standalone info row at the top of push category
-    if (item.key === 'push.jpush.enabled') {
-      expanded.push({
-        key: 'push-registration-status',
-        label: t('settings.items.pushStatus'),
-        labelKey: 'settings.items.pushStatus',
-        type: 'info' as const,
-        source: 'local' as const,
-        modelValue: pushRegistered.value ? t('settings.items.pushStatusRegistered') : t('settings.items.pushStatusNotRegistered'),
-      })
-    }
-    if (item.sectionHeader) {
-      expanded.push({
-        key: `header-${item.key}`,
-        label: t(item.sectionHeader),
-        labelKey: item.sectionHeader,
-        type: 'header' as const,
-        source: 'local' as const,
-      })
-    }
-    expanded.push(item)
-  }
-  return expanded.map(item => {
-    // Dynamically build options for default_agent from the agents list
-    let resolvedOptions = item.options
-    if (item.key === 'default_agent') {
-      resolvedOptions = agents.value.map(a => ({
-        labelKey: '',
-        value: a.id,
-        label: `${a.icon} ${a.name}`,
-      }))
-    }
-    // Dynamically build options for tts.voice based on current engine
-    if (item.key === 'tts.voice') {
-      const engine = resolveConfigValue('tts.engine') || 'edge'
-      resolvedOptions = engineVoiceOptions[engine] ?? []
-    }
 
-    return {
-      ...item,
-      label: item.label || t(item.labelKey),
-      description: item.descriptionKey ? t(item.descriptionKey) : '',
-      options: resolvedOptions?.map((opt: any) => ({
-        ...opt,
-        label: opt.label || resolveOptionLabel(item.key, opt),
-      })),
+    // Check if this item belongs to a group
+    const owningGroup = groups.find(g => fieldBelongsToGroup(g, item.key))
+    if (owningGroup && !emittedGroups.has(owningGroup.groupId)) {
+      // Inject push registration status before the JPush group
+      if (owningGroup.groupId === 'push-jpush-group') {
+        result.push({
+          type: 'item',
+          spec: {
+            key: 'push-registration-status',
+            label: t('settings.items.pushStatus'),
+            labelKey: 'settings.items.pushStatus',
+            type: 'info' as const,
+            source: 'local' as const,
+            modelValue: pushRegistered.value ? t('settings.items.pushStatusRegistered') : t('settings.items.pushStatusNotRegistered'),
+          },
+        })
+      }
+      result.push({ type: 'group', spec: owningGroup })
+      emittedGroups.add(owningGroup.groupId)
+    } else if (!owningGroup) {
+      // Standalone item (may have sectionHeader — inject header pseudo-item)
+      if (item.sectionHeader) {
+        result.push({
+          type: 'item',
+          spec: {
+            key: `header-${item.key}`,
+            label: t(item.sectionHeader),
+            labelKey: item.sectionHeader,
+            type: 'header' as const,
+            source: 'local' as const,
+          },
+        })
+      }
+      result.push({ type: 'item', spec: item })
     }
-  })
+  }
+
+  // Emit any groups not yet emitted (for categories where categoryItems is empty)
+  for (const g of groups) {
+    if (!emittedGroups.has(g.groupId)) {
+      // Inject push registration status before the JPush group
+      if (g.groupId === 'push-jpush-group') {
+        result.push({
+          type: 'item',
+          spec: {
+            key: 'push-registration-status',
+            label: t('settings.items.pushStatus'),
+            labelKey: 'settings.items.pushStatus',
+            type: 'info' as const,
+            source: 'local' as const,
+            modelValue: pushRegistered.value ? t('settings.items.pushStatusRegistered') : t('settings.items.pushStatusNotRegistered'),
+          },
+        })
+      }
+      result.push({ type: 'group', spec: g })
+    }
+  }
+
+  return result
 })
 
+// ── Group helpers ──
+
+/** Resolve all field values for a group from server/local config */
+function getGroupFieldValues(group: ConfigGroup): Record<string, any> {
+  const values: Record<string, any> = {}
+  values[group.entryField.key] = resolveConfigValue(group.entryField.key)
+  for (const f of group.commonFields ?? []) {
+    values[f.key] = resolveConfigValue(f.key)
+  }
+  for (const osf of group.optionSubFields ?? []) {
+    for (const f of osf.fields) {
+      values[f.key] = resolveConfigValue(f.key)
+    }
+  }
+  return values
+}
+
+/** Resolve dynamic field options for a group (e.g., tts.voice per engine) */
+function getGroupFieldOptions(group: ConfigGroup): Record<string, { label: string; value: any }[]> {
+  const options: Record<string, { label: string; value: any }[]> = {}
+  // TTS voice options — reactive to current engine
+  if (group.groupId === 'tts-group') {
+    const engine = resolveConfigValue('tts.engine') || 'edge'
+    const voiceOpts = engineVoiceOptions[engine] ?? []
+    options['tts.voice'] = voiceOpts.map(o => ({ label: t(o.labelKey), value: o.value }))
+  }
+  return options
+}
+
+/** Handle group save result (needsRestart check) */
+function handleGroupSaveResult(result: { needsRestart: boolean; changedColdFields: string[] }) {
+  if (result.needsRestart && result.changedColdFields.length > 0) {
+    emit('restartNeeded', result.changedColdFields)
+  }
+}
+
+/** Handle group expand/collapse (accordion) */
+function handleGroupExpandToggle(groupId: string, open: boolean) {
+  if (open) {
+    activeKey.value = groupId
+  } else if (activeKey.value === groupId) {
+    activeKey.value = null
+  }
+}
+
+// ── Standalone item helpers ──
+
+function resolveItemOptions(item: any): any {
+  let resolvedOptions = item.options
+  if (item.key === 'default_agent') {
+    resolvedOptions = agents.value.map(a => ({
+      labelKey: '',
+      value: a.id,
+      label: `${a.icon} ${a.name}`,
+    }))
+  }
+  if (resolvedOptions) {
+    return resolvedOptions.map((opt: any) => ({
+      ...opt,
+      label: opt.label || resolveOptionLabel(item.key, opt),
+    }))
+  }
+  return undefined
+}
+
 function resolveOptionLabel(_itemKey: string, opt: { labelKey: string; value: any }): string {
-  // All select options should have labelKey set to the i18n key
   if (opt.labelKey) return t(opt.labelKey)
   return String(opt.value)
 }
 
 function getItemValue(item: any): any {
-  // Header pseudo-items have no value
   if (item.type === 'header') return undefined
-  // Dynamically injected items with explicit modelValue (e.g. push-registration-status)
   if (item.modelValue !== undefined && item.source === 'local' && item.type === 'info') {
     return item.modelValue
   }
-  // Version info items
   if (item.key === 'serverVersion') {
     return serverConfig.value?.version ?? '-'
   }
@@ -194,7 +287,6 @@ function getItemValue(item: any): any {
     } catch { /* not in app mode */ }
     return '-'
   }
-  // Port forward port: 0 means auto-assign
   if (item.key === 'port_forward.port') {
     const val = getServerValueWithDefault(item.key)
     return val === 0 ? t('settings.items.portForwardPortAuto') : val
@@ -206,11 +298,9 @@ function getItemValue(item: any): any {
 }
 
 async function handleUpdate(item: any, value: any) {
-  // Password type: skip if empty or still masked (contains bullet chars)
   if (item.type === 'password') {
     if (!value || value.includes('•')) return
   }
-  // Confirm before disabling localhost auth exempt (CLI tools will be affected)
   if (item.key === 'localhost_auth_exempt' && value === false) {
     const confirmed = await dialog.confirm(
       t('settings.items.localhostAuthExemptConfirm'),
@@ -220,7 +310,6 @@ async function handleUpdate(item: any, value: any) {
   }
   if (item.source === 'local') {
     setLocalConfig(item.key, value)
-    // Bridge androidLogCapture switch to Android native AppLog
     if (item.key === 'androidLogCapture') {
       try {
         if (value) {
@@ -232,7 +321,6 @@ async function handleUpdate(item: any, value: any) {
     }
     return
   }
-  // Server config: auto-save immediately
   try {
     const result = await setServerValue(item.key, value)
     if (result.needsRestart && result.changedColdFields.length > 0) {
@@ -307,13 +395,6 @@ function handleDescToggle(key: string, open: boolean) {
 
 function handleDiscard() {
   toast.show(t('settings.passwordDiscarded'), { icon: 'ℹ️', type: 'info', duration: 3000 })
-}
-
-/** Check if item at index is the last in its section (last item overall, or next item is a header). */
-function isLastInSection(items: any[], index: number): boolean {
-  if (index >= items.length - 1) return true
-  const nextItem = items[index + 1]
-  return nextItem?.type === 'header'
 }
 </script>
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getServerFieldToLabelKey, categoryItems } from '@/components/settings/settingsFieldMap'
+import { getServerFieldToLabelKey, categoryItems, categoryGroups, getAllGroupFields } from '@/components/settings/settingsFieldMap'
 
 describe('settingsFieldMap', () => {
   it('maps all server-side dot-path keys to i18n label keys', () => {
@@ -13,20 +13,19 @@ describe('settingsFieldMap', () => {
     expect(map['port_forward.enabled']).toBeTruthy()
     expect(map['push.jpush.enabled']).toBeTruthy()
 
-    // Hot-reload fields (shouldn't normally appear but should still be mapped)
+    // Hot-reload fields
     expect(map['chat.page_size']).toBeTruthy()
     expect(map['upload.max_size_mb']).toBeTruthy()
 
-    // All mapped values should be i18n keys
+    // All mapped values should be i18n keys (settings.items.* or settings.categories.* for headers)
     for (const [key, labelKey] of Object.entries(map)) {
-      expect(labelKey).toMatch(/^settings\.items\./)
+      expect(labelKey).toMatch(/^settings\.(items|categories)\./)
     }
   })
 
   it('does not map local-only settings', () => {
     const map = getServerFieldToLabelKey()
 
-    // These are local settings, should not appear
     expect(map['theme']).toBeUndefined()
     expect(map['locale']).toBeUndefined()
     expect(map['autoSpeech']).toBeUndefined()
@@ -64,7 +63,6 @@ describe('settingsFieldMap', () => {
 
   it('does not map orphaned ssh.* keys (renamed to port_forward)', () => {
     const map = getServerFieldToLabelKey()
-    // SSH was renamed to port_forward — ssh.enabled/ssh.port are backend-internal only
     expect(map['ssh.enabled']).toBeUndefined()
     expect(map['ssh.port']).toBeUndefined()
   })
@@ -81,7 +79,6 @@ describe('settingsFieldMap', () => {
     for (const [category, items] of Object.entries(categoryItems)) {
       for (const item of items) {
         if (item.source === 'server' && item.key !== 'serverVersion' && item.key !== 'restart') {
-          // serverVersion and restart are virtual keys, not dot-path config paths
           expect(map[item.key]).toBeDefined()
         }
       }
@@ -94,16 +91,78 @@ describe('settingsFieldMap', () => {
     expect(item).toBeDefined()
     expect(item!.type).toBe('switch')
     expect(item!.source).toBe('local')
-    // No dependsOn — this is always visible (not conditional on push.jpush.enabled)
-    // because the serverConfig may not be loaded yet when the page renders,
-    // causing the dependsOn check to fail with the default value (false).
     expect(item!.dependsOn).toBeUndefined()
   })
 
-  it('pushPersistentNotification comes after pushEnabled in push category', () => {
-    const pushItems = categoryItems['push']
-    const enabledIdx = pushItems.findIndex(i => i.key === 'push.jpush.enabled')
-    const persistentIdx = pushItems.findIndex(i => i.key === 'pushPersistentNotification')
-    expect(enabledIdx).toBeLessThan(persistentIdx)
+  // ── Config Group tests ──
+
+  it('categoryGroups covers all grouped categories', () => {
+    expect(categoryGroups['tts']).toBeDefined()
+    expect(categoryGroups['summarization']).toBeDefined()
+    expect(categoryGroups['rag']).toBeDefined()
+    expect(categoryGroups['portForward']).toBeDefined()
+    expect(categoryGroups['push']).toBeDefined()
+  })
+
+  it('each group has a unique groupId', () => {
+    const ids = new Set<string>()
+    for (const groups of Object.values(categoryGroups)) {
+      for (const g of groups) {
+        expect(ids.has(g.groupId)).toBe(false)
+        ids.add(g.groupId)
+      }
+    }
+  })
+
+  it('group field keys are all in serverFieldToLabelKey', () => {
+    const map = getServerFieldToLabelKey()
+    for (const groups of Object.values(categoryGroups)) {
+      for (const group of groups) {
+        for (const field of getAllGroupFields(group)) {
+          if (field.source === 'server' && !field.key.startsWith('_')) {
+            expect(map[field.key]).toBeDefined()
+          }
+        }
+      }
+    }
+  })
+
+  it('no overlap between group field keys and standalone categoryItems keys', () => {
+    for (const [category, groups] of Object.entries(categoryGroups)) {
+      const groupKeys = new Set<string>()
+      for (const g of groups) {
+        for (const f of getAllGroupFields(g)) groupKeys.add(f.key)
+      }
+      const standaloneItems = categoryItems[category] ?? []
+      for (const item of standaloneItems) {
+        expect(groupKeys.has(item.key)).toBe(false)
+      }
+    }
+  })
+
+  it('summarize group has nonExpandValues for empty string', () => {
+    const summarizeGroup = categoryGroups['summarization']?.[0]
+    expect(summarizeGroup).toBeDefined()
+    expect(summarizeGroup!.nonExpandValues).toContain('')
+  })
+
+  it('port_forward group has nonExpandValues for false', () => {
+    const pfGroup = categoryGroups['portForward']?.[0]
+    expect(pfGroup).toBeDefined()
+    expect(pfGroup!.nonExpandValues).toContain(false)
+  })
+
+  it('tts group has no nonExpandValues (all engines expand)', () => {
+    const ttsGroup = categoryGroups['tts']?.[0]
+    expect(ttsGroup).toBeDefined()
+    expect(ttsGroup!.nonExpandValues ?? []).toHaveLength(0)
+  })
+
+  it('rag group has no optionSubFields (flat group)', () => {
+    const ragGroup = categoryGroups['rag']?.[0]
+    expect(ragGroup).toBeDefined()
+    expect(ragGroup!.entryType).toBe('header')
+    expect(ragGroup!.optionSubFields).toBeUndefined()
+    expect((ragGroup!.commonFields ?? []).length).toBeGreaterThan(0)
   })
 })

@@ -3,10 +3,11 @@
  *
  * Used by:
  * - SettingsCategory.vue (renders the UI)
+ * - SettingsGroupPanel.vue (renders atomic config group panels)
  * - SettingsRestartDialog.vue (translates changed_cold_fields via serverFieldToLabelKey)
  *
- * Adding a new setting? Add it here. Both the category page and the restart
- * dialog will pick it up automatically — no manual sync required.
+ * Adding a new setting? Add it here (or in categoryGroups for group settings).
+ * Both the category page and the restart dialog will pick it up automatically.
  */
 
 export interface DependsOn {
@@ -19,7 +20,7 @@ export interface ItemSpec {
   labelKey: string
   descriptionKey?: string
   key: string
-  type: 'switch' | 'select' | 'number' | 'text' | 'slider' | 'action' | 'info' | 'header' | 'password'
+  type: 'switch' | 'select' | 'number' | 'text' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea'
   source: 'server' | 'local'
   needsRestart?: boolean
   options?: { labelKey: string; value: any }[]
@@ -28,12 +29,54 @@ export interface ItemSpec {
   step?: number
   dependsOn?: DependsOn | DependsOn[]
   sectionHeader?: string
+  /** Transform raw value for display (e.g., 0 → 'auto' for port_forward.port) */
+  displayTransform?: (value: any) => any
+}
+
+// ── Config Group types ──────────────────────────────────────
+
+/** Fields visible for a given entry selector value. */
+export interface OptionSubFields {
+  /** The selector option value (e.g., 'piper', 'api', true) */
+  when: any
+  /** Fields specific to this option value (no dependsOn — visibility driven by `when`) */
+  fields: Omit<ItemSpec, 'dependsOn'>[]
+}
+
+/** Base properties shared by all ConfigGroup variants. */
+interface ConfigGroupBase {
+  /** Unique group ID (e.g., 'tts-group') */
+  groupId: string
+  /** i18n key for group title (only for entryType 'header') */
+  titleKey?: string
+  /** Description i18n key */
+  descriptionKey?: string
+  /** Fields shared across ALL option values (no dependsOn — visibility driven by commonFieldsVisibleWhen) */
+  commonFields?: Omit<ItemSpec, 'dependsOn'>[]
+  /** Option-specific fields; empty/omitted = all commonFields always visible (RAG pattern) */
+  optionSubFields?: OptionSubFields[]
+  /** Entry values for which panel should NOT expand */
+  nonExpandValues?: any[]
+  /** commonFields only shown for these entry values; undefined = shown for all */
+  commonFieldsVisibleWhen?: any[]
 }
 
 /**
+ * Discriminated union: entryType constrains entryField.type at compile time.
+ * - 'select': title row IS the selector (e.g., tts.engine, summarize.backend)
+ * - 'switch': title row IS the switch (e.g., push.jpush.enabled, port_forward.enabled)
+ * - 'header': plain title row, click to expand all fields (e.g., RAG)
+ */
+export type ConfigGroup =
+  | (ConfigGroupBase & { entryType: 'select'; entryField: ItemSpec & { type: 'select' } })
+  | (ConfigGroupBase & { entryType: 'switch'; entryField: ItemSpec & { type: 'switch' } })
+  | (ConfigGroupBase & { entryType: 'header'; entryField: ItemSpec & { type: 'header' } })
+
+// ── Category items (standalone, non-grouped) ────────────────
+
+/**
  * Complete category → items mapping.
- * The `agents` category has a static `default_agent` entry here;
- * the agent list is rendered dynamically by SettingsAgentsIndex.vue.
+ * Items that belong to a config group are defined in categoryGroups instead.
  */
 export const categoryItems: Record<string, ItemSpec[]> = {
   appearance: [
@@ -92,106 +135,17 @@ export const categoryItems: Record<string, ItemSpec[]> = {
     { labelKey: 'settings.items.terminalMaxSessions', descriptionKey: 'settings.items.terminalMaxSessionsDesc', key: 'terminal.max_sessions', type: 'number', source: 'server' },
     { labelKey: 'settings.items.terminalBufferLines', descriptionKey: 'settings.items.terminalBufferLinesDesc', key: 'terminal.buffer_lines', type: 'number', source: 'server' },
   ],
-  tts: [
-    // Engine selection (always shown)
-    { labelKey: 'settings.items.ttsEngine', descriptionKey: 'settings.items.ttsEngineDesc', key: 'tts.engine', type: 'select', source: 'server', options: [
-      { labelKey: 'settings.items.ttsEngineEdge', value: 'edge' },
-      { labelKey: 'settings.items.ttsEnginePiper', value: 'piper' },
-      { labelKey: 'settings.items.ttsEngineKokoro', value: 'kokoro' },
-      { labelKey: 'settings.items.ttsEngineMossNano', value: 'moss-nano' },
-    ]},
-    // Common fields (always shown)
-    { labelKey: 'settings.items.ttsVoice', descriptionKey: 'settings.items.ttsVoiceDesc', key: 'tts.voice', type: 'select', source: 'server' },
-    { labelKey: 'settings.items.ttsSpeed', descriptionKey: 'settings.items.ttsSpeedDesc', key: 'tts.speed', type: 'slider', source: 'server', min: 0.5, max: 3, step: 0.1 },
-    // Minimax-specific
-    { labelKey: 'settings.items.ttsModel', descriptionKey: 'settings.items.ttsModelDesc', key: 'tts.tts_model', type: 'text', source: 'server',
-      dependsOn: { key: 'tts.engine', value: 'minimax' } },
-    { labelKey: 'settings.items.ttsFormat', descriptionKey: 'settings.items.ttsFormatDesc', key: 'tts.format', type: 'select', source: 'server',
-      dependsOn: { key: 'tts.engine', value: 'minimax' }, options: [
-      { labelKey: 'settings.items.ttsFormatDefault', value: '' },
-      { labelKey: 'settings.items.ttsFormatMp3', value: 'mp3' },
-      { labelKey: 'settings.items.ttsFormatWav', value: 'wav' },
-      { labelKey: 'settings.items.ttsFormatPcm', value: 'pcm' },
-    ]},
-    // Piper sub-config
-    { labelKey: 'settings.items.piperModelPath', descriptionKey: 'settings.items.piperModelPathDesc', key: 'tts.piper.model_path', type: 'text', source: 'server',
-      dependsOn: { key: 'tts.engine', value: 'piper' }, sectionHeader: 'settings.items.ttsPiperHeader' },
-    { labelKey: 'settings.items.piperNoiseScale', descriptionKey: 'settings.items.piperNoiseScaleDesc', key: 'tts.piper.noise_scale', type: 'number', source: 'server', min: 0, max: 1, step: 0.001,
-      dependsOn: { key: 'tts.engine', value: 'piper' } },
-    { labelKey: 'settings.items.piperLengthScale', descriptionKey: 'settings.items.piperLengthScaleDesc', key: 'tts.piper.length_scale', type: 'number', source: 'server', min: 0.1, max: 5, step: 0.1,
-      dependsOn: { key: 'tts.engine', value: 'piper' } },
-    { labelKey: 'settings.items.piperSentenceSilence', descriptionKey: 'settings.items.piperSentenceSilenceDesc', key: 'tts.piper.sentence_silence', type: 'number', source: 'server', min: 0, max: 5, step: 0.1,
-      dependsOn: { key: 'tts.engine', value: 'piper' } },
-    // Kokoro sub-config
-    { labelKey: 'settings.items.kokoroModelPath', descriptionKey: 'settings.items.kokoroModelPathDesc', key: 'tts.kokoro.model_path', type: 'text', source: 'server',
-      dependsOn: { key: 'tts.engine', value: 'kokoro' }, sectionHeader: 'settings.items.ttsKokoroHeader' },
-    { labelKey: 'settings.items.kokoroVoicesPath', descriptionKey: 'settings.items.kokoroVoicesPathDesc', key: 'tts.kokoro.voices_path', type: 'text', source: 'server',
-      dependsOn: { key: 'tts.engine', value: 'kokoro' } },
-    { labelKey: 'settings.items.kokoroLang', descriptionKey: 'settings.items.kokoroLangDesc', key: 'tts.kokoro.lang', type: 'text', source: 'server',
-      dependsOn: { key: 'tts.engine', value: 'kokoro' } },
-    // MossNano sub-config
-    { labelKey: 'settings.items.mossNanoModelDir', descriptionKey: 'settings.items.mossNanoModelDirDesc', key: 'tts.moss_nano.model_dir', type: 'text', source: 'server',
-      dependsOn: { key: 'tts.engine', value: 'moss-nano' }, sectionHeader: 'settings.items.ttsMossNanoHeader' },
-    { labelKey: 'settings.items.mossNanoPromptSpeech', descriptionKey: 'settings.items.mossNanoPromptSpeechDesc', key: 'tts.moss_nano.prompt_speech', type: 'text', source: 'server',
-      dependsOn: { key: 'tts.engine', value: 'moss-nano' } },
-    { labelKey: 'settings.items.mossNanoVoice', descriptionKey: 'settings.items.mossNanoVoiceDesc', key: 'tts.moss_nano.voice', type: 'select', source: 'server',
-      dependsOn: { key: 'tts.engine', value: 'moss-nano' }, options: [
-      { labelKey: 'settings.items.voiceMossJunhao', value: 'Junhao' },
-    ]},
-    { labelKey: 'settings.items.mossNanoBackend', descriptionKey: 'settings.items.mossNanoBackendDesc', key: 'tts.moss_nano.backend', type: 'select', source: 'server',
-      dependsOn: { key: 'tts.engine', value: 'moss-nano' }, options: [
-      { labelKey: 'settings.items.mossNanoBackendOnnx', value: 'onnx' },
-      { labelKey: 'settings.items.mossNanoBackendPytorch', value: 'pytorch' },
-    ]},
-    // Cache
-    { labelKey: 'settings.items.ttsMaxCacheFiles', descriptionKey: 'settings.items.ttsMaxCacheFilesDesc', key: 'tts.max_cache_files', type: 'number', source: 'server',
-      sectionHeader: 'settings.items.ttsCacheHeader' },
-  ],
-  summarization: [
-    // Summarization backend (shared by TTS and tasks)
-    { labelKey: 'settings.items.summarizeBackend', descriptionKey: 'settings.items.summarizeBackendDesc', key: 'summarize.backend', type: 'select', source: 'server', options: [
-      { labelKey: 'settings.items.summarizeDisabled', value: '' },
-      { labelKey: 'settings.items.summarizeSimple', value: 'simple' },
-      { labelKey: 'settings.items.summarizeApi', value: 'api' },
-      { labelKey: 'settings.items.summarizeClaude', value: 'claude' },
-      { labelKey: 'settings.items.summarizeCodebuddy', value: 'codebuddy' },
-      { labelKey: 'settings.items.summarizeOpencode', value: 'opencode' },
-      { labelKey: 'settings.items.summarizeCodex', value: 'codex' },
-      { labelKey: 'settings.items.summarizeQoder', value: 'qoder' },
-      { labelKey: 'settings.items.summarizeVecli', value: 'vecli' },
-      { labelKey: 'settings.items.summarizeDeepseek', value: 'deepseek' },
-      { labelKey: 'settings.items.summarizePi', value: 'pi' },
-    ]},
-    { labelKey: 'settings.items.summarizeModel', descriptionKey: 'settings.items.summarizeModelDesc', key: 'summarize.model', type: 'text', source: 'server',
-      dependsOn: { key: 'summarize.backend', values: ['api', 'claude', 'codebuddy', 'opencode', 'codex', 'qoder', 'vecli', 'deepseek', 'pi'] } },
-    // API sub-config (shown when backend is "api")
-    { labelKey: 'settings.items.apiBaseUrl', descriptionKey: 'settings.items.apiBaseUrlDesc', key: 'summarize.api.base_url', type: 'text', source: 'server',
-      dependsOn: { key: 'summarize.backend', value: 'api' }, sectionHeader: 'settings.items.apiHeader' },
-    { labelKey: 'settings.items.apiKey', descriptionKey: 'settings.items.apiKeyDesc', key: 'summarize.api.key', type: 'password', source: 'server',
-      dependsOn: { key: 'summarize.backend', value: 'api' } },
-    { labelKey: 'settings.items.apiFormat', descriptionKey: 'settings.items.apiFormatDesc', key: 'summarize.api.format', type: 'select', source: 'server',
-      dependsOn: { key: 'summarize.backend', value: 'api' }, options: [
-      { labelKey: 'settings.items.apiFormatOpenai', value: 'openai' },
-      { labelKey: 'settings.items.apiFormatAnthropic', value: 'anthropic' },
-    ]},
-  ],
-  rag: [
-    { labelKey: 'settings.items.ragOllamaUrl', descriptionKey: 'settings.items.ragOllamaUrlDesc', key: 'rag.ollama_base_url', type: 'text', source: 'server' },
-    { labelKey: 'settings.items.ragOllamaModel', descriptionKey: 'settings.items.ragOllamaModelDesc', key: 'rag.ollama_model', type: 'text', source: 'server' },
-    { labelKey: 'settings.items.ragChunkSize', descriptionKey: 'settings.items.ragChunkSizeDesc', key: 'rag.chunk_size', type: 'number', source: 'server' },
-    { labelKey: 'settings.items.ragSearchLimit', descriptionKey: 'settings.items.ragSearchLimitDesc', key: 'rag.search_limit', type: 'number', source: 'server' },
-    { labelKey: 'settings.items.ragSearchPoolSize', descriptionKey: 'settings.items.ragSearchPoolSizeDesc', key: 'rag.search_pool_size', type: 'number', source: 'server' },
-    { labelKey: 'settings.items.ragRetentionDays', descriptionKey: 'settings.items.ragRetentionDaysDesc', key: 'rag.retention_days', type: 'number', source: 'server' },
-  ],
-  portForward: [
-    { labelKey: 'settings.items.portForwardEnabled', descriptionKey: 'settings.items.portForwardEnabledDesc', key: 'port_forward.enabled', type: 'switch', source: 'server', needsRestart: true },
-    { labelKey: 'settings.items.portForwardPort', descriptionKey: 'settings.items.portForwardPortDesc', key: 'port_forward.port', type: 'number', source: 'server', needsRestart: true },
-  ],
+  // TTS: all fields moved to categoryGroups
+  tts: [],
+  // Summarization: all fields moved to categoryGroups
+  summarization: [],
+  // RAG: all fields moved to categoryGroups
+  rag: [],
+  // Port Forward: all fields moved to categoryGroups
+  portForward: [],
+  // Push: only pushPersistentNotification remains standalone; JPush group in categoryGroups
   push: [
-    { labelKey: 'settings.items.pushEnabled', descriptionKey: 'settings.items.pushEnabledDesc', key: 'push.jpush.enabled', type: 'switch', source: 'server' },
     { labelKey: 'settings.items.pushPersistentNotification', descriptionKey: 'settings.items.pushPersistentNotificationDesc', key: 'pushPersistentNotification', type: 'switch', source: 'local' },
-    { labelKey: 'settings.items.pushAppKey', descriptionKey: 'settings.items.pushAppKeyDesc', key: 'push.jpush.app_key', type: 'text', source: 'server' },
-    { labelKey: 'settings.items.pushMasterSecret', descriptionKey: 'settings.items.pushMasterSecretDesc', key: 'push.jpush.master_secret', type: 'password', source: 'server' },
   ],
   android: [
     { labelKey: 'settings.items.androidLogCapture', descriptionKey: 'settings.items.androidLogCaptureDesc', key: 'androidLogCapture', type: 'switch', source: 'local' },
@@ -210,13 +164,194 @@ export const categoryItems: Record<string, ItemSpec[]> = {
   ],
 }
 
+// ── Config group definitions ────────────────────────────────
+
+const CLI_BACKENDS = ['claude', 'codebuddy', 'opencode', 'codex', 'qoder', 'vecli', 'deepseek', 'pi'] as const
+
+export const categoryGroups: Record<string, ConfigGroup[]> = {
+  tts: [{
+    groupId: 'tts-group',
+    entryType: 'select',
+    entryField: {
+      labelKey: 'settings.items.ttsEngine',
+      descriptionKey: 'settings.items.ttsEngineDesc',
+      key: 'tts.engine',
+      type: 'select',
+      source: 'server',
+      options: [
+        { labelKey: 'settings.items.ttsEngineEdge', value: 'edge' },
+        { labelKey: 'settings.items.ttsEnginePiper', value: 'piper' },
+        { labelKey: 'settings.items.ttsEngineKokoro', value: 'kokoro' },
+        { labelKey: 'settings.items.ttsEngineMossNano', value: 'moss-nano' },
+      ],
+    },
+    commonFields: [
+      { labelKey: 'settings.items.ttsVoice', descriptionKey: 'settings.items.ttsVoiceDesc', key: 'tts.voice', type: 'select', source: 'server' },
+      { labelKey: 'settings.items.ttsSpeed', descriptionKey: 'settings.items.ttsSpeedDesc', key: 'tts.speed', type: 'slider', source: 'server', min: 0.5, max: 3, step: 0.1 },
+      { labelKey: 'settings.items.ttsMaxCacheFiles', descriptionKey: 'settings.items.ttsMaxCacheFilesDesc', key: 'tts.max_cache_files', type: 'number', source: 'server' },
+    ],
+    optionSubFields: [
+      { when: 'edge', fields: [] },
+      { when: 'piper', fields: [
+        { labelKey: 'settings.items.piperModelPath', descriptionKey: 'settings.items.piperModelPathDesc', key: 'tts.piper.model_path', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsPiperHeader' },
+        { labelKey: 'settings.items.piperNoiseScale', descriptionKey: 'settings.items.piperNoiseScaleDesc', key: 'tts.piper.noise_scale', type: 'number', source: 'server', min: 0, max: 1, step: 0.001 },
+        { labelKey: 'settings.items.piperLengthScale', descriptionKey: 'settings.items.piperLengthScaleDesc', key: 'tts.piper.length_scale', type: 'number', source: 'server', min: 0.1, max: 5, step: 0.1 },
+        { labelKey: 'settings.items.piperSentenceSilence', descriptionKey: 'settings.items.piperSentenceSilenceDesc', key: 'tts.piper.sentence_silence', type: 'number', source: 'server', min: 0, max: 5, step: 0.1 },
+      ]},
+      { when: 'kokoro', fields: [
+        { labelKey: 'settings.items.kokoroModelPath', descriptionKey: 'settings.items.kokoroModelPathDesc', key: 'tts.kokoro.model_path', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsKokoroHeader' },
+        { labelKey: 'settings.items.kokoroVoicesPath', descriptionKey: 'settings.items.kokoroVoicesPathDesc', key: 'tts.kokoro.voices_path', type: 'text', source: 'server' },
+        { labelKey: 'settings.items.kokoroLang', descriptionKey: 'settings.items.kokoroLangDesc', key: 'tts.kokoro.lang', type: 'text', source: 'server' },
+      ]},
+      { when: 'moss-nano', fields: [
+        { labelKey: 'settings.items.mossNanoModelDir', descriptionKey: 'settings.items.mossNanoModelDirDesc', key: 'tts.moss_nano.model_dir', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsMossNanoHeader' },
+        { labelKey: 'settings.items.mossNanoPromptSpeech', descriptionKey: 'settings.items.mossNanoPromptSpeechDesc', key: 'tts.moss_nano.prompt_speech', type: 'text', source: 'server' },
+        { labelKey: 'settings.items.mossNanoVoice', descriptionKey: 'settings.items.mossNanoVoiceDesc', key: 'tts.moss_nano.voice', type: 'select', source: 'server', options: [
+          { labelKey: 'settings.items.voiceMossJunhao', value: 'Junhao' },
+        ]},
+        { labelKey: 'settings.items.mossNanoBackend', descriptionKey: 'settings.items.mossNanoBackendDesc', key: 'tts.moss_nano.backend', type: 'select', source: 'server', options: [
+          { labelKey: 'settings.items.mossNanoBackendOnnx', value: 'onnx' },
+          { labelKey: 'settings.items.mossNanoBackendPytorch', value: 'pytorch' },
+        ]},
+      ]},
+    ],
+  }],
+
+  summarization: [{
+    groupId: 'summarize-group',
+    entryType: 'select',
+    entryField: {
+      labelKey: 'settings.items.summarizeBackend',
+      descriptionKey: 'settings.items.summarizeBackendDesc',
+      key: 'summarize.backend',
+      type: 'select',
+      source: 'server',
+      options: [
+        { labelKey: 'settings.items.summarizeDisabled', value: '' },
+        { labelKey: 'settings.items.summarizeSimple', value: 'simple' },
+        { labelKey: 'settings.items.summarizeApi', value: 'api' },
+        { labelKey: 'settings.items.summarizeClaude', value: 'claude' },
+        { labelKey: 'settings.items.summarizeCodebuddy', value: 'codebuddy' },
+        { labelKey: 'settings.items.summarizeOpencode', value: 'opencode' },
+        { labelKey: 'settings.items.summarizeCodex', value: 'codex' },
+        { labelKey: 'settings.items.summarizeQoder', value: 'qoder' },
+        { labelKey: 'settings.items.summarizeVecli', value: 'vecli' },
+        { labelKey: 'settings.items.summarizeDeepseek', value: 'deepseek' },
+        { labelKey: 'settings.items.summarizePi', value: 'pi' },
+      ],
+    },
+    commonFields: [
+      { labelKey: 'settings.items.summarizeModel', descriptionKey: 'settings.items.summarizeModelDesc', key: 'summarize.model', type: 'text', source: 'server' },
+    ],
+    optionSubFields: [
+      { when: 'simple', fields: [] },
+      { when: 'api', fields: [
+        { labelKey: 'settings.items.apiBaseUrl', descriptionKey: 'settings.items.apiBaseUrlDesc', key: 'summarize.api.base_url', type: 'text', source: 'server', sectionHeader: 'settings.items.apiHeader' },
+        { labelKey: 'settings.items.apiKey', descriptionKey: 'settings.items.apiKeyDesc', key: 'summarize.api.key', type: 'password', source: 'server' },
+        { labelKey: 'settings.items.apiFormat', descriptionKey: 'settings.items.apiFormatDesc', key: 'summarize.api.format', type: 'select', source: 'server', options: [
+          { labelKey: 'settings.items.apiFormatOpenai', value: 'openai' },
+          { labelKey: 'settings.items.apiFormatAnthropic', value: 'anthropic' },
+        ]},
+      ]},
+      ...CLI_BACKENDS.map(b => ({ when: b, fields: [] as Omit<ItemSpec, 'dependsOn'>[] })),
+    ],
+    nonExpandValues: [''],
+    commonFieldsVisibleWhen: ['api', ...CLI_BACKENDS],
+  }],
+
+  rag: [{
+    groupId: 'rag-group',
+    titleKey: 'settings.categories.rag',
+    entryType: 'header',
+    entryField: { labelKey: 'settings.categories.rag', key: '_rag-header', type: 'header', source: 'server' },
+    commonFields: [
+      { labelKey: 'settings.items.ragOllamaUrl', descriptionKey: 'settings.items.ragOllamaUrlDesc', key: 'rag.ollama_base_url', type: 'text', source: 'server' },
+      { labelKey: 'settings.items.ragOllamaModel', descriptionKey: 'settings.items.ragOllamaModelDesc', key: 'rag.ollama_model', type: 'text', source: 'server' },
+      { labelKey: 'settings.items.ragChunkSize', descriptionKey: 'settings.items.ragChunkSizeDesc', key: 'rag.chunk_size', type: 'number', source: 'server' },
+      { labelKey: 'settings.items.ragSearchLimit', descriptionKey: 'settings.items.ragSearchLimitDesc', key: 'rag.search_limit', type: 'number', source: 'server' },
+      { labelKey: 'settings.items.ragSearchPoolSize', descriptionKey: 'settings.items.ragSearchPoolSizeDesc', key: 'rag.search_pool_size', type: 'number', source: 'server' },
+      { labelKey: 'settings.items.ragRetentionDays', descriptionKey: 'settings.items.ragRetentionDaysDesc', key: 'rag.retention_days', type: 'number', source: 'server' },
+    ],
+    // No optionSubFields — all commonFields always visible
+  }],
+
+  portForward: [{
+    groupId: 'port-forward-group',
+    entryType: 'switch',
+    entryField: {
+      labelKey: 'settings.items.portForwardEnabled',
+      descriptionKey: 'settings.items.portForwardEnabledDesc',
+      key: 'port_forward.enabled',
+      type: 'switch',
+      source: 'server',
+      needsRestart: true,
+    },
+    optionSubFields: [
+      { when: true, fields: [
+        { labelKey: 'settings.items.portForwardPort', descriptionKey: 'settings.items.portForwardPortDesc', key: 'port_forward.port', type: 'number', source: 'server', needsRestart: true, displayTransform: (v: any) => v === 0 ? '__auto__' : v },
+      ]},
+    ],
+    nonExpandValues: [false],
+  }],
+
+  push: [{
+    groupId: 'push-jpush-group',
+    entryType: 'switch',
+    entryField: {
+      labelKey: 'settings.items.pushEnabled',
+      descriptionKey: 'settings.items.pushEnabledDesc',
+      key: 'push.jpush.enabled',
+      type: 'switch',
+      source: 'server',
+    },
+    optionSubFields: [
+      { when: true, fields: [
+        { labelKey: 'settings.items.pushAppKey', descriptionKey: 'settings.items.pushAppKeyDesc', key: 'push.jpush.app_key', type: 'text', source: 'server' },
+        { labelKey: 'settings.items.pushMasterSecret', descriptionKey: 'settings.items.pushMasterSecretDesc', key: 'push.jpush.master_secret', type: 'password', source: 'server' },
+      ]},
+    ],
+    nonExpandValues: [false],
+  }],
+}
+
+// ── Helpers ─────────────────────────────────────────────────
+
+/** Flatten all fields from a ConfigGroup into a single array. */
+export function getAllGroupFields(group: ConfigGroup): ItemSpec[] {
+  const fields: ItemSpec[] = [group.entryField]
+  for (const f of group.commonFields ?? []) fields.push(f as ItemSpec)
+  for (const osf of group.optionSubFields ?? []) {
+    for (const f of osf.fields) fields.push(f as ItemSpec)
+  }
+  return fields
+}
+
+/** Check if a field key belongs to any group in a category. */
+export function fieldBelongsToGroup(group: ConfigGroup, key: string): boolean {
+  if (group.entryField.key === key) return true
+  if ((group.commonFields ?? []).some(f => f.key === key)) return true
+  if ((group.optionSubFields ?? []).some(osf => osf.fields.some(f => f.key === key))) return true
+  return false
+}
+
 /** Build and return the mapping from server config dot-path keys to i18n label keys. */
 export function getServerFieldToLabelKey(): Record<string, string> {
   const map: Record<string, string> = {}
+  // Standalone items
   for (const items of Object.values(categoryItems)) {
     for (const item of items) {
       if (item.source === 'server') {
         map[item.key] = item.labelKey
+      }
+    }
+  }
+  // Group items
+  for (const groups of Object.values(categoryGroups)) {
+    for (const group of groups) {
+      for (const field of getAllGroupFields(group)) {
+        if (field.source === 'server') {
+          map[field.key] = field.labelKey
+        }
       }
     }
   }
@@ -228,8 +363,8 @@ export const serverFieldToLabelKey: Record<string, string> = getServerFieldToLab
 
 /**
  * Voice options per TTS engine.
- * Used by SettingsCategory.vue to dynamically resolve tts.voice select options
- * based on the currently selected tts.engine value.
+ * Used by SettingsGroupPanel.vue to dynamically resolve tts.voice select options
+ * based on the currently selected tts.engine value (local preview inside panel).
  *
  * Labels are i18n keys — resolved at render time for locale support.
  */
