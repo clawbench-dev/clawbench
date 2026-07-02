@@ -42,6 +42,7 @@ const i18n = createI18n({
           ragOllamaUrl: '嵌入接口地址', ragOllamaModel: '嵌入模型',
           groupSave: '保存', groupSaving: '保存中...', groupCancel: '取消',
           groupNoConfig: '无需配置', groupUnsavedDiscard: '有未保存的更改，确定丢弃？',
+          switchOn: '开', switchOff: '关',
         },
         categories: { rag: 'RAG' },
       },
@@ -171,7 +172,8 @@ describe('SettingsGroupPanel', () => {
     it('renders entry row with switch for switch group', () => {
       const wrapper = mountGroup(pushGroup, { 'push.jpush.enabled': false })
       expect(wrapper.find('.settings-group__entry').text()).toContain('启用推送')
-      expect(wrapper.find('.settings-group__switch-input').exists()).toBe(true)
+      // Entry row shows on/off value text, not a switch toggle
+      expect(wrapper.find('.settings-group__entry-value').exists()).toBe(true)
     })
 
     it('renders entry row with title for header group', () => {
@@ -377,44 +379,51 @@ describe('SettingsGroupPanel', () => {
     })
   })
 
-  // ─── 6. Switch-OFF immediate PATCH ──────────────────────
-  describe('switch-OFF immediate PATCH', () => {
-    it('immediately PATCHes when switch toggled OFF', async () => {
+  // ─── 6. Switch group interactions ──────────────────────
+  describe('switch group interactions', () => {
+    it('expands and turns ON when clicking entry row while OFF', async () => {
+      const wrapper = mountGroup(pushGroup, { 'push.jpush.enabled': false, 'push.jpush.app_key': '' })
+      // Entry row click when OFF → expand + turn ON
+      await wrapper.find('.settings-group__entry').trigger('click')
+      await flush(wrapper)
+
+      expect(wrapper.find('.settings-group__panel').exists()).toBe(true)
+      // Panel switch should be ON (local entry value set to true)
+      const panelSwitch = wrapper.find('.settings-group__switch-input')
+      expect(panelSwitch.exists()).toBe(true)
+      expect(panelSwitch.element.checked).toBe(true)
+    })
+
+    it('panel switch toggle sets local value', async () => {
       const fv = { 'push.jpush.enabled': true, 'push.jpush.app_key': 'test-key', 'push.jpush.master_secret': 'test-secret' }
       const wrapper = mountGroup(pushGroup, fv)
+      await wrapper.find('.settings-group__entry').trigger('click')
+      await flush(wrapper)
 
-      await toggleCheckbox(wrapper.find('.settings-group__switch-input'), false)
+      // Toggle switch OFF inside panel
+      const panelSwitch = wrapper.find('.settings-group__switch-input')
+      await toggleCheckbox(panelSwitch, false)
+      await nextTick()
+
+      expect(getState(wrapper).localValues['push.jpush.enabled']).toBe(false)
+    })
+
+    it('PATCHes switch OFF via Save button', async () => {
+      const fv = { 'push.jpush.enabled': true, 'push.jpush.app_key': 'test-key', 'push.jpush.master_secret': 'test-secret' }
+      const wrapper = mountGroup(pushGroup, fv)
+      await wrapper.find('.settings-group__entry').trigger('click')
+      await flush(wrapper)
+
+      // Toggle switch OFF and save
+      const panelSwitch = wrapper.find('.settings-group__switch-input')
+      await toggleCheckbox(panelSwitch, false)
+      await nextTick()
+
+      await wrapper.find('.settings-group__btn--save').trigger('click')
       await flush(wrapper)
 
       expect(mockPatchConfig).toHaveBeenCalledTimes(1)
       expect(mockPatchConfig.mock.calls[0][0].push.jpush.enabled).toBe(false)
-    })
-
-    it('expands panel when switch toggled ON', async () => {
-      const wrapper = mountGroup(pushGroup, { 'push.jpush.enabled': false, 'push.jpush.app_key': '' })
-
-      await toggleCheckbox(wrapper.find('.settings-group__switch-input'), true)
-      await flush(wrapper)
-
-      expect(wrapper.find('.settings-group__panel').exists()).toBe(true)
-    })
-
-    it('confirms unsaved changes before switch-OFF', async () => {
-      mockDialogConfirm.mockResolvedValue(true)
-      const fv = { 'push.jpush.enabled': true, 'push.jpush.app_key': 'old-key', 'push.jpush.master_secret': 'old-secret' }
-      const wrapper = mountGroup(pushGroup, fv)
-
-      // Expand and edit
-      await wrapper.find('.settings-group__entry').trigger('click')
-      await flush(wrapper)
-      getState(wrapper).setLocalValue('push.jpush.app_key', 'new-key')
-      await nextTick()
-
-      // Toggle switch OFF from entry row
-      await toggleCheckbox(wrapper.find('.settings-group__entry .settings-group__switch-input'), false)
-      await flush(wrapper)
-
-      expect(mockDialogConfirm).toHaveBeenCalled()
     })
   })
 
@@ -600,19 +609,12 @@ describe('SettingsGroupPanel', () => {
       await wrapper.find('.settings-group__entry').trigger('click')
       await flush(wrapper)
 
-      // Find the panel switch (second .settings-group__switch-input)
-      const switches = wrapper.findAll('.settings-group__switch-input')
-      const panelSwitch = switches.length > 1 ? switches[1] : null
-      if (panelSwitch) {
-        await toggleCheckbox(panelSwitch, false)
-        await nextTick()
-        expect(getState(wrapper).localValues['push.jpush.enabled']).toBe(false)
-      } else {
-        // Verify via direct state manipulation
-        getState(wrapper).localValues['push.jpush.enabled'] = false
-        await nextTick()
-        expect(getState(wrapper).localValues['push.jpush.enabled']).toBe(false)
-      }
+      // Panel has one switch input
+      const panelSwitch = wrapper.find('.settings-group__switch-input')
+      expect(panelSwitch.exists()).toBe(true)
+      await toggleCheckbox(panelSwitch, false)
+      await nextTick()
+      expect(getState(wrapper).localValues['push.jpush.enabled']).toBe(false)
     })
   })
 
@@ -662,11 +664,15 @@ describe('SettingsGroupPanel', () => {
       nonExpandValues: [false],
     }
 
-    it('does not expand when switch is OFF', async () => {
+    it('expands and turns ON when clicking entry row while OFF', async () => {
       const wrapper = mountGroup(portForwardGroup, { 'port_forward.enabled': false, 'port_forward.port': 0 })
       await wrapper.find('.settings-group__entry').trigger('click')
       await flush(wrapper)
-      expect(wrapper.find('.settings-group__panel').exists()).toBe(false)
+      expect(wrapper.find('.settings-group__panel').exists()).toBe(true)
+      // Switch inside panel should be ON
+      const panelSwitch = wrapper.find('.settings-group__switch-input')
+      expect(panelSwitch.exists()).toBe(true)
+      expect(panelSwitch.element.checked).toBe(true)
     })
 
     it('expands when switch is ON', async () => {

@@ -1201,6 +1201,8 @@ export default {
       groupCancel: 'Cancel',
       groupUnsavedDiscard: 'You have unsaved changes. Discard them?',
       groupNoConfig: 'No additional configuration needed',
+      switchOn: 'On',
+      switchOff: 'Off',
       ttsCommonHeader: 'Common',
       piperModelPath: 'Model Path',
       piperModelPathDesc: 'Path to the Piper ONNX model file',

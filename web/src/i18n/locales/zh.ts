@@ -1201,6 +1201,8 @@ export default {
       groupCancel: '取消',
       groupUnsavedDiscard: '有未保存的更改，确定要丢弃吗？',
       groupNoConfig: '无需额外配置',
+      switchOn: '开',
+      switchOff: '关',
       ttsCommonHeader: '通用',
       piperModelPath: '模型路径',
       piperModelPathDesc: 'Piper ONNX 模型文件的路径',

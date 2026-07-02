@@ -12,21 +12,13 @@
         <component :is="expanded ? ChevronDown : ChevronRight" :size="16" class="settings-group__chevron" />
       </div>
     </div>
-    <!-- Switch entry: label | toggle | chevron -->
+    <!-- Switch entry: label | on/off value | chevron (same layout as select) -->
     <div v-else-if="group.entryType === 'switch'" class="settings-group__entry" @click="handleEntryClick">
       <div class="settings-group__entry-left">
         <span class="settings-group__entry-label">{{ t(group.entryField.labelKey) }}</span>
       </div>
       <div class="settings-group__entry-right">
-        <label class="settings-group__switch" @click.stop>
-          <input
-            type="checkbox"
-            class="settings-group__switch-input"
-            :checked="!!committedEntryValue"
-            @change="handleSwitchToggle"
-          />
-          <span class="settings-group__switch-track"></span>
-        </label>
+        <span class="settings-group__entry-value">{{ committedEntryValue ? t('settings.items.switchOn') : t('settings.items.switchOff') }}</span>
         <component :is="expanded ? ChevronDown : ChevronRight" :size="16" class="settings-group__chevron" />
       </div>
     </div>
@@ -56,7 +48,18 @@
       </div>
     </template>
     <template v-else-if="group.entryType === 'switch'">
-      <!-- No duplicate switch inside panel — the entry row switch is sufficient -->
+      <div class="settings-group__switch-row">
+        <span class="settings-group__switch-label">{{ t(group.entryField.labelKey) }}</span>
+        <label class="settings-group__switch" @click.stop>
+          <input
+            type="checkbox"
+            class="settings-group__switch-input"
+            :checked="!!localEntryValue"
+            @change="handlePanelSwitchToggle"
+          />
+          <span class="settings-group__switch-track"></span>
+        </label>
+      </div>
     </template>
     <!-- Render all visible fields with section headers injected -->
     <template v-for="entry in panelFields" :key="entry.type === 'header' ? entry.headerKey : entry.field.key">
@@ -99,7 +102,6 @@ import SettingsItem from './SettingsItem.vue'
 import { type ConfigGroup, type ItemSpec } from './settingsFieldMap'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
-import { useDialog } from '@/composables/useDialog'
 
 type GroupField = Omit<ItemSpec, 'dependsOn'>
 
@@ -132,7 +134,6 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const toast = useToast()
-const dialog = useDialog()
 const { patchConfig } = useSettingsConfig()
 
 // ── State ──
@@ -228,6 +229,10 @@ function handleEntryClick() {
     cancel()
   } else if (canExpand.value) {
     expand()
+  } else if (props.group.entryType === 'switch') {
+    // Switch is OFF (in nonExpandValues) — click entry row to turn ON and expand
+    expand()
+    localValues.value[entryFieldKey.value] = true
   }
 }
 
@@ -239,26 +244,6 @@ function handleEntrySelect(value: any) {
   }
 }
 
-/** Switch toggle in collapsed entry row */
-async function handleSwitchToggle(e: Event) {
-  const checked = (e.target as HTMLInputElement).checked
-  if (checked) {
-    // OFF → ON: expand panel
-    expand()
-  } else {
-    // ON → OFF: confirm if unsaved changes, then immediate PATCH
-    if (hasUnsavedChanges()) {
-      const confirmed = await dialog.confirm(
-        t('settings.items.groupUnsavedDiscard'),
-        { title: t(props.group.entryField.labelKey), dangerous: true }
-      )
-      if (!confirmed) return
-    }
-    // Immediate PATCH: switch OFF is a self-contained disable action
-    await immediateSwitchOff()
-  }
-}
-
 // ── Expand / Cancel / Save ──
 function expand() {
   snapshot.value = JSON.parse(JSON.stringify(props.fieldValues))
@@ -267,26 +252,16 @@ function expand() {
   emit('expand-toggle', true)
 }
 
+/** Switch toggle inside expanded panel */
+function handlePanelSwitchToggle(e: Event) {
+  const checked = (e.target as HTMLInputElement).checked
+  localValues.value[entryFieldKey.value] = checked
+}
+
 function cancel() {
   snapshot.value = null
   expanded.value = false
   emit('expand-toggle', false)
-}
-
-/** Immediate PATCH for switch-OFF (only path that PATCHes without Save button) */
-async function immediateSwitchOff() {
-  saving.value = true
-  try {
-    const result = await patchConfig(buildNestedChange(entryFieldKey.value, false))
-    expanded.value = false
-    snapshot.value = null
-    emit('expand-toggle', false)
-    emit('save-result', result)
-  } catch {
-    toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
-  } finally {
-    saving.value = false
-  }
 }
 
 async function save() {
@@ -363,22 +338,6 @@ function findFieldSpec(key: string): GroupField | ItemSpec | undefined {
     }
   }
   return undefined
-}
-
-/** Check if there are unsaved changes (localValues differ from snapshot) */
-function hasUnsavedChanges(): boolean {
-  if (!snapshot.value) return false
-  for (const key of Object.keys(localValues.value)) {
-    if (localValues.value[key] !== snapshot.value[key]) return true
-  }
-  return false
-}
-
-/** Build nested object from dot-path key: 'tts.engine' → { tts: { engine: val } } */
-function buildNestedChange(dotPath: string, value: any): Record<string, any> {
-  const result: Record<string, any> = {}
-  deepSetByDotPath(result, dotPath, value)
-  return result
 }
 
 /** Set a value in a nested object by dot-path: deepSetByDotPath(obj, 'a.b.c', 1) → { a: { b: { c: 1 } } } */
@@ -510,6 +469,20 @@ watch(() => props.forceClose, (val) => {
   font-size: 15px;
   color: var(--accent-color);
   font-weight: 600;
+}
+
+/* Switch inside panel */
+.settings-group__switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: var(--bg-primary);
+}
+
+.settings-group__switch-label {
+  font-size: 15px;
+  color: var(--text-primary);
 }
 
 /* iOS-style switch toggle */
