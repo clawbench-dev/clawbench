@@ -1,9 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, DOMWrapper } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
-import { defineComponent, nextTick } from 'vue'
+import { nextTick } from 'vue'
 import SettingsGroupPanel from '@/components/settings/SettingsGroupPanel.vue'
-import { type ConfigGroup, type ItemSpec } from '@/components/settings/settingsFieldMap'
+import { type ConfigGroup } from '@/components/settings/settingsFieldMap'
 
 // ── Mock composables ──────────────────────────────
 const mockPatchConfig = vi.fn().mockResolvedValue({ needsRestart: false, changedColdFields: [] })
