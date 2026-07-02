@@ -1015,6 +1015,8 @@ export default {
       swipeSessionDesc: '在聊天区域左右滑动切换到上/下一个会话',
       defaultAgent: '默认智能体',
       defaultAgentDesc: '新建聊天时默认使用的 AI 智能体',
+      agentIsDefault: '默认智能体',
+      agentIsDefaultDesc: '新建聊天时默认使用此智能体',
       agentModel: '首选模型',
       agentThinking: '思考强度',
       agentPreferredModel: '首选模型',

@@ -90,9 +90,7 @@ export const categoryItems: Record<string, ItemSpec[]> = {
       { labelKey: 'settings.items.localeEn', value: 'en' },
     ]},
   ],
-  agents: [
-    { labelKey: 'settings.items.defaultAgent', descriptionKey: 'settings.items.defaultAgentDesc', key: 'default_agent', type: 'select', source: 'server', needsRestart: false },
-  ],
+  agents: [],
   chat: [
     { labelKey: 'settings.items.autoSpeech', descriptionKey: 'settings.items.autoSpeechDesc', key: 'autoSpeech', type: 'switch', source: 'local' },
     { labelKey: 'settings.items.preventScreenLock', descriptionKey: 'settings.items.preventScreenLockDesc', key: 'preventScreenLock', type: 'switch', source: 'local' },

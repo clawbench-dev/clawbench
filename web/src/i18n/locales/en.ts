@@ -1015,6 +1015,8 @@ export default {
       swipeSessionDesc: 'Swipe left/right in the chat area to switch to the previous/next session',
       defaultAgent: 'Default Agent',
       defaultAgentDesc: 'AI agent used by default when starting a new chat',
+      agentIsDefault: 'Default Agent',
+      agentIsDefaultDesc: 'Use this agent by default when starting a new chat',
       agentModel: 'Preferred Model',
       agentThinking: 'Thinking Effort',
       agentPreferredModel: 'Preferred Model',

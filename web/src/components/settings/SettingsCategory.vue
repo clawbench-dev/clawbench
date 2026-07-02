@@ -86,7 +86,7 @@ const { t } = useI18n()
 const toast = useToast()
 const dialog = useDialog()
 const { localConfig, serverConfig, setLocalConfig, getServerValueWithDefault, setServerValue } = useSettingsConfig()
-const { agents, loadAgents } = useAgents()
+const { loadAgents } = useAgents()
 const { isAppMode } = useAppMode()
 const pwaInstall = usePwaInstall()
 const { pushRegistered } = useGlobalEvents()
@@ -250,14 +250,7 @@ function handleGroupExpandToggle(groupId: string, open: boolean) {
 // ── Standalone item helpers ──
 
 function resolveItemOptions(item: any): any {
-  let resolvedOptions = item.options
-  if (item.key === 'default_agent') {
-    resolvedOptions = agents.value.map(a => ({
-      labelKey: '',
-      value: a.id,
-      label: `${a.icon} ${a.name}`,
-    }))
-  }
+  const resolvedOptions = item.options
   if (resolvedOptions) {
     return resolvedOptions.map((opt: any) => ({
       ...opt,
