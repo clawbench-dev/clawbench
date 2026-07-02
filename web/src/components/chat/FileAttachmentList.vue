@@ -9,7 +9,8 @@
         class="attachment-thumb-img"
         :src="thumbUrl(normalizeFileEntry(f).path)" loading="lazy"
         @error="onThumbError(normalizeFileEntry(f).path)" />
-      <!-- Non-image: filename only -->
+      <!-- Non-image: icon + filename -->
+      <component v-if="!isImageFile(normalizeFileEntry(f).path)" :is="getFileIcon(normalizeFileEntry(f).path)" :size="14" :stroke-width="1.5" class="attachment-file-icon" />
       <span v-if="!isImageFile(normalizeFileEntry(f).path)" class="attachment-filename">{{ getFileName(normalizeFileEntry(f).path) }}</span>
     </span>
   </div>
@@ -18,9 +19,11 @@
 <script setup>
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { FileText, FileImage, FileVideo, FileMusic } from 'lucide-vue-next'
 import { baseName } from '@/utils/path.ts'
 import { normalizeFileEntry, isUploadPath, isImageFile } from '@/utils/fileAttachmentUtils.ts'
 import { isThumbableExt } from '@/utils/fileManager.ts'
+import { getFileType } from '@/utils/fileType.ts'
 
 const { t } = useI18n()
 
@@ -31,6 +34,14 @@ defineEmits(['file-tag-click'])
 
 function getFileName(path) {
   return baseName(path)
+}
+
+function getFileIcon(path) {
+  const ft = getFileType(path)
+  if (ft.isImage) return FileImage
+  if (ft.isAudio) return FileMusic
+  if (ft.isVideo) return FileVideo
+  return FileText
 }
 
 function thumbUrl(path) {
@@ -72,7 +83,8 @@ watch(() => props.files.length, (len) => {
 .chat-file-attachment {
   display: inline-flex;
   align-items: center;
-  border-radius: 6px;
+  gap: 4px;
+  border-radius: 12px;
   height: 40px;
   padding: 0 10px;
   font-size: 12px;
@@ -81,6 +93,10 @@ watch(() => props.files.length, (len) => {
   transition: opacity 0.15s;
   flex-shrink: 0;
   box-sizing: border-box;
+}
+
+.attachment-file-icon {
+  flex-shrink: 0;
 }
 
 .attachment-filename {
@@ -97,7 +113,7 @@ watch(() => props.files.length, (len) => {
   height: 40px;
   padding: 0;
   overflow: hidden;
-  border-radius: 8px;
+  border-radius: 10px;
 }
 
 .attachment-thumb-img {

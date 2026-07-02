@@ -67,6 +67,7 @@
           <img v-if="isImageFile(filePath) && isThumbableExt(filePath) && !thumbErrors.has(filePath)"
             class="attachment-thumb-img"
             :src="attachmentThumbUrl(filePath)" loading="lazy" @error="onThumbError(filePath)" />
+          <component v-if="!isImageFile(filePath)" :is="getFileIcon(filePath)" :size="14" :stroke-width="1.5" class="attachment-file-icon" />
           <span v-if="!isImageFile(filePath)" class="attachment-filename">{{ getFileName(filePath) }}</span>
           <button class="attachment-close-btn" @click.stop="$emit('remove-attached', idx)" :title="t('common.remove')">×</button>
         </span>
@@ -76,6 +77,7 @@
           <img v-else-if="f.isImage && !thumbErrors.has(f.path)"
             class="attachment-thumb-img"
             :src="attachmentThumbUrl(f.path)" loading="lazy" @error="onThumbError(f.path)" />
+          <component v-if="!f.isImage" :is="getFileIcon(f.path)" :size="14" :stroke-width="1.5" class="attachment-file-icon" />
           <span v-if="!f.isImage" class="attachment-filename">{{ getFileName(f.path) || t('chat.attach.uploading') }}</span>
           <span v-if="!f.isImage" class="attachment-filesize">{{ f.uploading ? f.progress + '%' : formatFileSize(f.size) }}</span>
           <button class="attachment-close-btn" @click.stop="$emit('remove-file', idx)" :title="t('common.remove')">×</button>
@@ -260,9 +262,9 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, FileText, Folder, XCircle, Inbox, Send, Square, Settings, Zap, Loader2, Cpu, Compass, Brain, Cable, Activity, MessagesSquare } from 'lucide-vue-next'
+import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, FileText, Folder, XCircle, Inbox, Send, Square, Settings, Zap, Loader2, Cpu, Compass, Brain, Cable, Activity, MessagesSquare, FileImage, FileVideo, FileMusic } from 'lucide-vue-next'
 import { baseName } from '@/utils/path.ts'
-import { formatFileSize } from '@/utils/fileType.ts'
+import { formatFileSize, getFileType } from '@/utils/fileType.ts'
 import { isThumbableExt } from '@/utils/fileManager.ts'
 import { isImageFile } from '@/utils/fileAttachmentUtils.ts'
 import { computeRecentReferencedFiles, computeHasFileGroups, computeAttachMenuItemCount } from '@/utils/chatInputUtils.ts'
@@ -585,6 +587,14 @@ async function handleDelete() {
 
 function getFileName(path) {
   return baseName(path)
+}
+
+function getFileIcon(path) {
+  const ft = getFileType(path)
+  if (ft.isImage) return FileImage
+  if (ft.isAudio) return FileMusic
+  if (ft.isVideo) return FileVideo
+  return FileText
 }
 
 function truncateQuoteText(text, maxLen) {
@@ -1296,7 +1306,7 @@ defineExpose({
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  border-radius: 6px;
+  border-radius: 12px;
   height: 40px;
   padding: 0 8px;
   padding-right: 24px;
@@ -1307,6 +1317,10 @@ defineExpose({
   cursor: pointer;
   transition: opacity 0.15s;
   box-sizing: border-box;
+}
+
+.attachment-file-icon {
+  flex-shrink: 0;
 }
 
 .attachment-filename {
@@ -1331,7 +1345,7 @@ defineExpose({
   height: 40px;
   padding: 0;
   overflow: hidden;
-  border-radius: 8px;
+  border-radius: 10px;
 }
 
 .attachment-thumb-img {
