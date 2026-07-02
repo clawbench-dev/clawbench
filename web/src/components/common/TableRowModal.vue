@@ -77,7 +77,7 @@ async function handleValueClick(event) {
         if (allImgs.length > 1) {
           const list = []
           let startIdx = 0
-          allImgs.forEach((img, i) => {
+          allImgs.forEach((img) => {
             const src = img.src
             if (!src) return
             const name = img.alt || extractImageName(src)
