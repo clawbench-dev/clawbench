@@ -430,9 +430,11 @@ watch(() => props.forceClose, (val) => {
 
 /* Panel */
 .settings-group__panel {
-  background: var(--bg-secondary);
+  background: var(--bg-tertiary);
   padding: 4px 0;
   border-top: 0.5px solid var(--border-color);
+  margin-left: 12px;
+  border-radius: 0 8px 8px 0;
 }
 
 /* Select option rows inside panel */
@@ -443,12 +445,12 @@ watch(() => props.forceClose, (val) => {
   padding: 10px 16px;
   cursor: pointer;
   min-height: 40px;
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
 }
 
 @media (hover: hover) {
   .settings-group__option:hover {
-    background: var(--bg-secondary);
+    background: var(--bg-primary);
   }
 }
 
@@ -457,7 +459,7 @@ watch(() => props.forceClose, (val) => {
 }
 
 .settings-group__option--active {
-  background: var(--bg-secondary);
+  background: var(--bg-primary);
 }
 
 .settings-group__option-label {
@@ -477,7 +479,7 @@ watch(() => props.forceClose, (val) => {
   align-items: center;
   justify-content: space-between;
   padding: 10px 16px;
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
 }
 
 .settings-group__switch-label {
@@ -534,7 +536,7 @@ watch(() => props.forceClose, (val) => {
 .settings-group__section-header {
   font-size: 12px;
   color: var(--text-muted);
-  padding: 12px 16px 4px;
+  padding: 10px 16px 4px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   font-weight: 500;
@@ -552,9 +554,10 @@ watch(() => props.forceClose, (val) => {
 .settings-group__actions {
   display: flex;
   gap: 8px;
-  padding: 8px 16px;
+  padding: 12px 16px 8px;
   padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
   justify-content: flex-end;
+  border-top: 0.5px solid var(--border-color);
 }
 
 .settings-group__btn {
