@@ -1209,7 +1209,7 @@ func ServeConfigPassword(w http.ResponseWriter, r *http.Request) { //nolint:gocy
 	}
 
 	// Also remove the auto-password file (if any) since user has set an explicit password
-	autoPasswordFile := filepath.Join(model.BinDir, ".clawbench", "auto-password")
+	autoPasswordFile := filepath.Join(model.DataDir, "auto-password")
 	// Read the old auto-password before deleting it (needed for API key rotation)
 	oldAutoPassword, _ := os.ReadFile(autoPasswordFile)
 	_ = os.Remove(autoPasswordFile)

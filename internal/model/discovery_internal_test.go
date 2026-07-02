@@ -1,9 +1,12 @@
 package model
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // --- canDiscoverModels internal tests ---
@@ -78,4 +81,45 @@ func TestBuildCommonPrompt_MediaRulesSeparated(t *testing.T) {
 	assert.Contains(t, full, "User Interaction")
 	assert.Contains(t, full, "Media Generation")
 	assert.Contains(t, full, "Media File Handling")
+}
+
+// --- Embedded binary path resolution tests ---
+
+func TestEmbeddedBinaryPathFromBase_NewLocation(t *testing.T) {
+	baseDir := t.TempDir()
+	subDir := "opencode"
+
+	// Create agents/opencode/opencode
+	agentDir := filepath.Join(baseDir, "agents", subDir)
+	require.NoError(t, os.MkdirAll(agentDir, 0o755))
+	binPath := filepath.Join(agentDir, subDir)
+	require.NoError(t, os.WriteFile(binPath, []byte("#!/bin/sh\n"), 0o755))
+
+	result := embeddedBinaryPathFromBase(baseDir, subDir)
+	assert.Equal(t, binPath, result)
+}
+
+func TestEmbeddedBinaryPathFromBase_NotFound(t *testing.T) {
+	baseDir := t.TempDir()
+	result := embeddedBinaryPathFromBase(baseDir, "nonexistent")
+	assert.Empty(t, result)
+}
+
+func TestEmbeddedBinaryVersionFromBase_NewLocation(t *testing.T) {
+	baseDir := t.TempDir()
+	subDir := "opencode"
+
+	// Create agents/opencode/VERSION
+	agentDir := filepath.Join(baseDir, "agents", subDir)
+	require.NoError(t, os.MkdirAll(agentDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(agentDir, "VERSION"), []byte("1.2.3\n"), 0o644))
+
+	result := EmbeddedBinaryVersionFromBase(baseDir, subDir, "VERSION")
+	assert.Equal(t, "1.2.3", result)
+}
+
+func TestEmbeddedBinaryVersionFromBase_NotFound(t *testing.T) {
+	baseDir := t.TempDir()
+	result := EmbeddedBinaryVersionFromBase(baseDir, "opencode", "VERSION")
+	assert.Empty(t, result)
 }

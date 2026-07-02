@@ -1784,8 +1784,10 @@ func TestServeConfigPassword_WithAutoPasswordFile(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(binDir, "config"), 0o755))
 
 	origBinDir := model.BinDir
+	origDataDir := model.DataDir
 	model.BinDir = binDir
-	defer func() { model.BinDir = origBinDir }()
+	model.DataDir = clawbenchDir
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
 		"current_password": password,

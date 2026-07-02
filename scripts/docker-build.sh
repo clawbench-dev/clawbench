@@ -44,8 +44,8 @@ rm -rf docker-staging
 AGENT_SUBDIR=$(parse_embedded_agent_config "$EMBEDDED_AGENT_ID" subdir)
 AGENT_CMD=$(parse_embedded_agent_config "$EMBEDDED_AGENT_ID" cmd)
 mkdir -p "docker-staging/$AGENT_SUBDIR"
-if [ -d ".clawbench/$AGENT_SUBDIR" ] && [ -f ".clawbench/$AGENT_SUBDIR/$AGENT_CMD" ]; then
-    cp -r ".clawbench/$AGENT_SUBDIR/"* "docker-staging/$AGENT_SUBDIR/"
+if [ -d "agents/$AGENT_SUBDIR" ] && [ -f "agents/$AGENT_SUBDIR/$AGENT_CMD" ]; then
+    cp -r "agents/$AGENT_SUBDIR/"* "docker-staging/$AGENT_SUBDIR/"
     echo "$EMBEDDED_AGENT_ID binary included in image (with dependencies)"
 else
     echo "$EMBEDDED_AGENT_ID binary not found"

@@ -11,9 +11,6 @@ import (
 const (
 	// piperCmd is the path to the piper executable, relative to the binary directory.
 	piperCmd = ".venv/bin/piper"
-
-	// piperDefaultModelDir is the default directory for Piper model files.
-	piperDefaultModelDir = ".clawbench/piper-models"
 )
 
 // PiperProvider implements SpeechProvider using Piper (local, offline TTS).
@@ -21,7 +18,7 @@ const (
 type PiperProvider struct {
 	CLISpeechProvider
 	// ModelPath is the path to the Piper .onnx model file.
-	// If empty, defaults to .clawbench/piper-models/<voice>.onnx.
+	// If empty, defaults to models/piper-models/<voice>.onnx (under BinDir).
 	ModelPath string
 	// NoiseScale controls the randomness of the synthesis (default: 0.667).
 	NoiseScale float64
@@ -109,7 +106,8 @@ func NewPiperProvider() *PiperProvider {
 
 // ResolveModelPath resolves the Piper model path from voice name or explicit path.
 // If modelPath is explicitly set, it is returned as-is.
-// Otherwise, the voice name is used to construct the path: .clawbench/piper-models/<voice>.onnx
+// Otherwise, the voice name is used to construct an absolute path under
+// {BinDir}/models/piper-models/, with fallback to {DataDir}/piper-models/ (deprecated).
 func ResolveModelPath(voice, modelPath string) string {
 	if modelPath != "" {
 		return modelPath
@@ -117,5 +115,5 @@ func ResolveModelPath(voice, modelPath string) string {
 	if voice == "" {
 		return ""
 	}
-	return filepath.Join(piperDefaultModelDir, voice+".onnx")
+	return resolveModelFile("piper-models", voice+".onnx")
 }

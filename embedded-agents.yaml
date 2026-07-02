@@ -6,6 +6,8 @@
 #   1. Add a BackendSpec with EmbeddedSubDir/EmbeddedGitHubRepo/etc. in the Go backend package
 #   2. Add an entry here with matching id and download metadata
 #   3. No other code changes needed
+#
+# subdir: subdirectory under agents/ (was under .clawbench/ prior to v2.0)
 
 agents:
   - id: opencode

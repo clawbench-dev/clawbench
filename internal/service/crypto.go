@@ -82,7 +82,7 @@ func readAutoPassword() string {
 	if model.BinDir == "" {
 		return ""
 	}
-	data, err := os.ReadFile(filepath.Join(model.BinDir, ".clawbench", "auto-password"))
+	data, err := os.ReadFile(filepath.Join(model.DataDir, "auto-password"))
 	if err != nil {
 		return ""
 	}
@@ -350,7 +350,7 @@ func RotateAPIKeyEncryption(db *sql.DB, oldAutoPassword string) error {
 			// CRITICAL: password was updated but re-encryption failed.
 			// Attempt rollback: restore the old auto-password
 			slog.Error("API key rotation failed, attempting rollback", "agent_id", k.AgentID, "provider", k.Provider, "error", err)
-			if writeErr := os.WriteFile(filepath.Join(model.BinDir, ".clawbench", "auto-password"), []byte(oldAutoPassword), 0o600); writeErr != nil {
+			if writeErr := os.WriteFile(filepath.Join(model.DataDir, "auto-password"), []byte(oldAutoPassword), 0o600); writeErr != nil {
 				slog.Error("CRITICAL: failed to rollback auto-password during key rotation", "error", writeErr)
 			}
 			ResetEncryptionKeyCache()

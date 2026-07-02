@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -139,7 +140,7 @@ type RAGConfig struct {
 
 // PiperConfig holds configuration for the Piper TTS engine.
 type PiperConfig struct {
-	ModelPath       string  `yaml:"model_path"`       // Path to .onnx model file (empty = .clawbench/piper-models/<voice>.onnx)
+	ModelPath       string  `yaml:"model_path"`       // Path to .onnx model file (empty = models/piper-models/<voice>.onnx)
 	NoiseScale      float64 `yaml:"noise_scale"`      // Noise scale for sampling (default: 0.667)
 	LengthScale     float64 `yaml:"length_scale"`     // Length scale for speech rate (default: 1.0)
 	SentenceSilence float64 `yaml:"sentence_silence"` // Silence between sentences in seconds (default: 0.2)
@@ -147,14 +148,14 @@ type PiperConfig struct {
 
 // KokoroConfig holds configuration for the Kokoro TTS engine.
 type KokoroConfig struct {
-	ModelPath  string `yaml:"model_path"`  // Path to kokoro .onnx model file (empty = .clawbench/kokoro-models/kokoro-v1.0.onnx)
-	VoicesPath string `yaml:"voices_path"` // Path to voices .bin file (empty = .clawbench/kokoro-models/voices-v1.0.bin)
+	ModelPath  string `yaml:"model_path"`  // Path to kokoro .onnx model file (empty = models/kokoro-models/kokoro-v1.0.onnx)
+	VoicesPath string `yaml:"voices_path"` // Path to voices .bin file (empty = models/kokoro-models/voices-v1.0.bin)
 	Lang       string `yaml:"lang"`        // espeak language code for phonemization (default: "cmn" for Mandarin Chinese)
 }
 
 // MossNanoConfig holds configuration for the MOSS-TTS-Nano TTS engine.
 type MossNanoConfig struct {
-	ModelDir     string `yaml:"model_dir"`     // Directory for ONNX model files (empty = .clawbench/moss-nano-models; CLI auto-downloads if missing)
+	ModelDir     string `yaml:"model_dir"`     // Directory for ONNX model files (empty = models/moss-nano-models; CLI auto-downloads if missing)
 	PromptSpeech string `yaml:"prompt_speech"` // Path to reference audio for voice cloning (empty = use built-in voice preset)
 	Voice        string `yaml:"voice"`         // Built-in voice preset for ONNX backend when no prompt-speech (default: "Junhao")
 	Backend      string `yaml:"backend"`       // Inference backend: "onnx" (default, CPU) or "pytorch" (requires GPU)
@@ -175,6 +176,7 @@ var ConfigInstance Config
 // Global application state
 var (
 	BinDir              string   // Directory of the running binary
+	DataDir             string   // Runtime data directory (default: BinDir/.clawbench; override with --data-dir)
 	RootPaths           []string // Filesystem root paths (Linux/macOS: ["/"], Windows: drive list)
 	SessionToken        string   // Legacy: stores the password-derived token for "has password" check; NOT used for cookie validation when CookieToken is set
 	CookieToken         string   // Cryptographically random session token for cookie validation (ISS-117, ISS-131, ISS-183)
@@ -229,29 +231,28 @@ func GenerateRandomToken(byteLen int) string {
 	return hex.EncodeToString(b)
 }
 
-// PersistCookieToken writes the cookie token to .clawbench/cookie-token so it
+// PersistCookieToken writes the cookie token to the data directory so it
 // survives server restarts. The token is not secret (it's validated via
 // constant-time compare), but it should not be readable by other users.
 func PersistCookieToken(token string) {
-	if BinDir == "" {
+	if DataDir == "" {
 		return
 	}
-	dir := BinDir + "/.clawbench"
-	_ = os.MkdirAll(dir, 0o755) // best-effort: if this fails, WriteFile will also fail
-	path := dir + "/cookie-token"
+	_ = os.MkdirAll(DataDir, 0o755) // best-effort: if this fails, WriteFile will also fail
+	path := filepath.Join(DataDir, "cookie-token")
 	if err := os.WriteFile(path, []byte(token), 0o600); err != nil {
 		// Non-fatal: cookie will simply not survive restart; user re-logs in.
 		_ = err
 	}
 }
 
-// LoadCookieToken reads the persisted cookie token from .clawbench/cookie-token.
+// LoadCookieToken reads the persisted cookie token from the data directory.
 // Returns empty string if the file does not exist or cannot be read.
 func LoadCookieToken() string {
-	if BinDir == "" {
+	if DataDir == "" {
 		return ""
 	}
-	data, err := os.ReadFile(BinDir + "/.clawbench/cookie-token")
+	data, err := os.ReadFile(filepath.Join(DataDir, "cookie-token"))
 	if err != nil {
 		return ""
 	}

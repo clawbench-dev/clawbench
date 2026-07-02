@@ -234,7 +234,7 @@ ClawBench 通过调用本地 CLI 实现与 AI 编程工具的交互，无需额�
 
 ### 设置向导
 
-当系统未安装任何 AI CLI 且检测到内置 Pi 二进制（`.clawbench/pi/pi`）时，首次启动自动显示设置向导，引导用户完成：
+当系统未安装任何 AI CLI 且检测到内置 Pi 二进制（`agents/pi/pi`）时，首次启动自动显示设置向导，引导用户完成：
 
 1. **欢迎**：显示内置智能体信息
 2. **选择提供商**：23 家 `WizardReady` LLM 提供商（OpenAI、Anthropic、Google、DeepSeek、阿里通义、月之暗面等），来源 `ProviderRegistry`；也可选择自定义 URL，接入任意 OpenAI/Anthropic 兼容端点

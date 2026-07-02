@@ -61,7 +61,7 @@ func (b *CLIBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		cmdName = b.Cmd
 	}
 	// Resolve embedded binary path for bare command names (e.g. "opencode")
-	// that aren't found in $PATH but exist under .clawbench/{subDir}/.
+	// that aren't found in $PATH but exist under agents/{subDir}/.
 	if !strings.Contains(cmdName, "/") {
 		if spec := model.FindBackendSpecByDefaultCmd(cmdName); spec != nil && spec.EmbeddedSubDir != "" {
 			if p := model.EmbeddedBinaryPath(spec.EmbeddedSubDir); p != "" {

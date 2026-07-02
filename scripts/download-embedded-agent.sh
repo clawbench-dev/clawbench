@@ -213,7 +213,7 @@ download_embedded_agent() {
 
     echo "[*] Downloading ${agent_id} v${version}..."
 
-    local agent_dir=".clawbench/${subdir}"
+    local agent_dir="agents/${subdir}"
 
     # Determine platform
     local os arch
@@ -287,7 +287,7 @@ download_embedded_agent_for_docker() {
 
     validate_github_repo "$github_repo" || return 1
 
-    local agent_dir=".clawbench/${subdir}"
+    local agent_dir="agents/${subdir}"
 
     # Docker is always linux
     local os="linux"

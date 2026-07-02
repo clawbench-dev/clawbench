@@ -132,10 +132,12 @@ func TestHTTPDoWithProject_UnreachableServer(t *testing.T) {
 func TestLoadConfig_SetsServerPort(t *testing.T) {
 	origCfg := model.ConfigInstance
 	origBinDir := model.BinDir
+	origDataDir := model.DataDir
 	origServerPort := model.ServerPort
 	t.Cleanup(func() {
 		model.ConfigInstance = origCfg
 		model.BinDir = origBinDir
+		model.DataDir = origDataDir
 		model.ServerPort = origServerPort
 	})
 
@@ -203,16 +205,19 @@ func TestLoadConfig_NoConfigFile(t *testing.T) {
 	// Test loadConfig when no config file exists — should apply defaults
 	origCfg := model.ConfigInstance
 	origBinDir := model.BinDir
+	origDataDir := model.DataDir
 	origServerPort := model.ServerPort
 	t.Cleanup(func() {
 		model.ConfigInstance = origCfg
 		model.BinDir = origBinDir
+		model.DataDir = origDataDir
 		model.ServerPort = origServerPort
 	})
 
 	tmpDir := t.TempDir()
 	model.ConfigInstance = model.Config{}
 	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 
 	loadConfig()
 

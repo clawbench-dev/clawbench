@@ -65,11 +65,13 @@ func TestParseSHA256Hash_InvalidTooLong(t *testing.T) {
 func TestApplyDefaults_SHA256PasswordRemovesAutoPasswordFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	origBinDir := BinDir
+	origDataDir := DataDir
 	BinDir = tmpDir
-	defer func() { BinDir = origBinDir }()
+	DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { BinDir = origBinDir; DataDir = origDataDir }()
 
 	// Create a stale auto-password file
-	autoFile := filepath.Join(tmpDir, ".clawbench", "auto-password")
+	autoFile := filepath.Join(DataDir, "auto-password")
 	require.NoError(t, os.MkdirAll(filepath.Dir(autoFile), 0o755))
 	require.NoError(t, os.WriteFile(autoFile, []byte("old-auto-password"), 0o600))
 
@@ -110,8 +112,10 @@ func TestGenerateRandomToken_HexChars(t *testing.T) {
 func TestPersistAndLoadCookieToken(t *testing.T) {
 	tmpDir := t.TempDir()
 	origBinDir := BinDir
+	origDataDir := DataDir
 	BinDir = tmpDir
-	defer func() { BinDir = origBinDir }()
+	DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { BinDir = origBinDir; DataDir = origDataDir }()
 
 	token := GenerateRandomToken(32)
 	PersistCookieToken(token)
@@ -123,8 +127,10 @@ func TestPersistAndLoadCookieToken(t *testing.T) {
 func TestLoadCookieToken_NoFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	origBinDir := BinDir
+	origDataDir := DataDir
 	BinDir = tmpDir
-	defer func() { BinDir = origBinDir }()
+	DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { BinDir = origBinDir; DataDir = origDataDir }()
 
 	// No file exists yet
 	loaded := LoadCookieToken()
@@ -132,18 +138,18 @@ func TestLoadCookieToken_NoFile(t *testing.T) {
 }
 
 func TestLoadCookieToken_EmptyBinDir(t *testing.T) {
-	origBinDir := BinDir
-	BinDir = ""
-	defer func() { BinDir = origBinDir }()
+	origDataDir := DataDir
+	DataDir = ""
+	defer func() { DataDir = origDataDir }()
 
 	loaded := LoadCookieToken()
-	assert.Equal(t, "", loaded, "empty BinDir should return empty token")
+	assert.Equal(t, "", loaded, "empty DataDir should return empty token")
 }
 
 func TestPersistCookieToken_EmptyBinDir(t *testing.T) {
-	origBinDir := BinDir
-	BinDir = ""
-	defer func() { BinDir = origBinDir }()
+	origDataDir := DataDir
+	DataDir = ""
+	defer func() { DataDir = origDataDir }()
 
 	// Should not panic
 	PersistCookieToken("some-token")
@@ -152,11 +158,13 @@ func TestPersistCookieToken_EmptyBinDir(t *testing.T) {
 func TestPersistCookieToken_WriteFailure(t *testing.T) {
 	tmpDir := t.TempDir()
 	origBinDir := BinDir
+	origDataDir := DataDir
 	BinDir = tmpDir
-	defer func() { BinDir = origBinDir }()
+	DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { BinDir = origBinDir; DataDir = origDataDir }()
 
 	// Create .clawbench as a read-only file (not a directory) to cause WriteFile to fail
-	clawbenchDir := filepath.Join(tmpDir, ".clawbench")
+	clawbenchDir := DataDir
 	require.NoError(t, os.WriteFile(clawbenchDir, []byte("not-a-dir"), 0o600))
 
 	// Should not panic — error is silently ignored

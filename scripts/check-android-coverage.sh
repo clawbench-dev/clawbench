@@ -5,7 +5,7 @@
 # Tier 2 — Diff Coverage: changed lines coverage >= 80% (strict)
 #
 # Baseline: auto-downloaded from main branch CI artifact
-#   Falls back to: .clawbench/baseline/ → gh CLI → skip Tier 1
+#   Falls back to: .clawbench-ci/baseline/ → gh CLI → skip Tier 1
 #
 # Usage:
 #   ./scripts/check-android-coverage.sh              # run tests + check
@@ -19,7 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ANDROID_DIR="$ROOT_DIR/android"
 JACOCO_XML="$ANDROID_DIR/app/build/reports/jacoco/jacocoTestReport/jacocoTestReport.xml"
-BASELINE_DIR="$ROOT_DIR/.clawbench/baseline"
+BASELINE_DIR="$ROOT_DIR/.clawbench-ci/baseline"
 
 SKIP_TEST=false
 
@@ -74,7 +74,7 @@ for _bf in "$BASELINE_DIR/jacocoTestReport.xml" \
            "$BASELINE_DIR/android/app/build/reports/jacoco/jacocoTestReport/jacocoTestReport.xml"; do
   if [ -f "$_bf" ]; then
     BASELINE_XML="$_bf"
-    echo "ℹ Using baseline from .clawbench/baseline/"
+    echo "ℹ Using baseline from .clawbench-ci/baseline/"
     break
   fi
 done

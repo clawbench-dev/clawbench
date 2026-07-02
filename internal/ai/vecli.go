@@ -43,7 +43,7 @@ func (b *VeCLIBackend) Name() string { return "vecli" }
 // --session-summary flag with a per-request temp file path to cmd.Args,
 // and stores the path in summaryMap for post-stream retrieval.
 func (b *VeCLIBackend) vecliPreStart(cmd *exec.Cmd, req ChatRequest) {
-	summaryDir := filepath.Join(model.BinDir, ".clawbench", "vecli-summary")
+	summaryDir := filepath.Join(model.DataDir, "vecli-summary")
 	if err := os.MkdirAll(summaryDir, 0o700); err != nil {
 		slog.Warn("vecli: failed to create summary dir", "dir", summaryDir, "error", err)
 	}

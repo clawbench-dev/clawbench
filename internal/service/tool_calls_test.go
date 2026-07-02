@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"testing"
 
 	"clawbench/internal/model"
@@ -127,8 +128,10 @@ func TestUpsertAndGetToolCall(t *testing.T) {
 // initTestDB creates a test database in the given directory
 func initTestDB(dbDir string) error {
 	origBinDir := model.BinDir
+	origDataDir := model.DataDir
 	model.BinDir = dbDir
-	defer func() { model.BinDir = origBinDir }()
+	model.DataDir = filepath.Join(dbDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	return InitDB(false)
 }

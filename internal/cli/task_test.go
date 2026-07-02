@@ -67,7 +67,7 @@ func TestCreateTask_LimitedRepeatWithoutMaxRuns(t *testing.T) {
 
 func TestCreateTask_ServerNotReachable(t *testing.T) {
 	tmpDir := t.TempDir()
-	model.BinDir = tmpDir
+	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	model.ConfigInstance = model.Config{
 		Port: 59999,
 	}

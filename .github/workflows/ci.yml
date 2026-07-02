@@ -59,7 +59,7 @@ jobs:
           workflow: ci.yml
           branch: main
           name: main-go-coverage
-          path: .clawbench/baseline/
+          path: .clawbench-ci/baseline/
         continue-on-error: true
 
       - uses: actions/setup-go@v5
@@ -138,7 +138,7 @@ jobs:
           workflow: ci.yml
           branch: main
           name: main-frontend-coverage
-          path: .clawbench/baseline/
+          path: .clawbench-ci/baseline/
         continue-on-error: true
 
       - uses: actions/setup-node@v4
@@ -177,7 +177,7 @@ jobs:
           workflow: ci.yml
           branch: main
           name: main-android-coverage
-          path: .clawbench/baseline/
+          path: .clawbench-ci/baseline/
         continue-on-error: true
 
       - uses: actions/setup-java@v4

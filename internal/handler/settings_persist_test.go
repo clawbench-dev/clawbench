@@ -24,8 +24,10 @@ func setupPersistTestEnv(t *testing.T) (*testEnv, func()) { //nolint:unparam // 
 
 	// Set BinDir to a temp directory so config.yaml gets written there
 	origBinDir := model.BinDir
+	origDataDir := model.DataDir
 	tmpDir := t.TempDir()
 	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 
 	// Also need config dir
 	_ = os.MkdirAll(filepath.Join(tmpDir, "config"), 0o755)
@@ -34,6 +36,7 @@ func setupPersistTestEnv(t *testing.T) (*testEnv, func()) { //nolint:unparam // 
 
 	cleanup := func() {
 		model.BinDir = origBinDir
+		model.DataDir = origDataDir
 		model.ConfigInstance = origConfig
 		teardown()
 	}

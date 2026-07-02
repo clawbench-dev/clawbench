@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"path/filepath"
 	"testing"
 
 	"clawbench/internal/model"
@@ -26,7 +27,7 @@ func TestRunRAGCommand_ShortHelpFlag(t *testing.T) {
 
 func TestRunRAGCommand_UnknownSubcommand(t *testing.T) {
 	tmpDir := t.TempDir()
-	model.BinDir = tmpDir
+	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	model.ConfigInstance = model.Config{Port: 30000}
 
 	exitCode := RunRAGCommand([]string{"foo"})
@@ -55,7 +56,7 @@ func TestRAGSession_MissingID(t *testing.T) {
 
 func TestRAGSearch_ServerNotReachable(t *testing.T) {
 	tmpDir := t.TempDir()
-	model.BinDir = tmpDir
+	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	model.ConfigInstance = model.Config{
 		Port: 59999,
 	}
@@ -66,7 +67,7 @@ func TestRAGSearch_ServerNotReachable(t *testing.T) {
 
 func TestRAGMessage_ServerNotReachable(t *testing.T) {
 	tmpDir := t.TempDir()
-	model.BinDir = tmpDir
+	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	model.ConfigInstance = model.Config{
 		Port: 59999,
 	}
@@ -77,7 +78,7 @@ func TestRAGMessage_ServerNotReachable(t *testing.T) {
 
 func TestRAGSession_ServerNotReachable(t *testing.T) {
 	tmpDir := t.TempDir()
-	model.BinDir = tmpDir
+	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	model.ConfigInstance = model.Config{
 		Port: 59999,
 	}

@@ -76,13 +76,15 @@ func TestParsePresenceMapDeeplyNested(t *testing.T) {
 	}
 }
 
-// setupTestBinDir creates a temp dir, sets BinDir, and returns a cleanup function.
+// setupTestBinDir creates a temp dir, sets BinDir and DataDir, and returns a cleanup function.
 func setupTestBinDir(t *testing.T) string {
 	t.Helper()
 	tmpDir := t.TempDir()
 	origBinDir := BinDir
+	origDataDir := DataDir
 	BinDir = tmpDir
-	t.Cleanup(func() { BinDir = origBinDir })
+	DataDir = filepath.Join(tmpDir, ".clawbench")
+	t.Cleanup(func() { BinDir = origBinDir; DataDir = origDataDir })
 	return tmpDir
 }
 

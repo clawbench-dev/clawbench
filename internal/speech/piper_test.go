@@ -9,7 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/model"
+
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // --- NewPiperProvider defaults ---
@@ -30,8 +33,27 @@ func TestResolveModelPath_ExplicitPath(t *testing.T) {
 }
 
 func TestResolveModelPath_VoiceName(t *testing.T) {
+	// Without BinDir set, falls back to relative path
 	result := ResolveModelPath("zh_CN-huayan-medium", "")
-	assert.Equal(t, filepath.Join(".clawbench", "piper-models", "zh_CN-huayan-medium.onnx"), result)
+	assert.Equal(t, filepath.Join("models", "piper-models", "zh_CN-huayan-medium.onnx"), result)
+}
+
+func TestResolveModelPath_NewLocation(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	// Create models/piper-models/zh_CN-huayan-medium.onnx
+	modelDir := filepath.Join(tmpDir, "models", "piper-models")
+	require.NoError(t, os.MkdirAll(modelDir, 0o755))
+	modelFile := filepath.Join(modelDir, "zh_CN-huayan-medium.onnx")
+	require.NoError(t, os.WriteFile(modelFile, []byte("fake"), 0o644))
+
+	result := ResolveModelPath("zh_CN-huayan-medium", "")
+	assert.Equal(t, modelFile, result)
 }
 
 func TestResolveModelPath_Empty(t *testing.T) {
@@ -147,14 +169,15 @@ func findPiperModel(t *testing.T) string {
 	t.Helper()
 
 	searchDirs := []string{
-		filepath.Join(".clawbench", "piper-models"),
+		filepath.Join("models", "piper-models"),
 	}
 
 	// Also check relative to binary
 	if exePath, err := os.Executable(); err == nil {
+		binDir := filepath.Dir(exePath)
 		searchDirs = append(
 			searchDirs,
-			filepath.Join(filepath.Dir(exePath), ".clawbench", "piper-models"),
+			filepath.Join(binDir, "models", "piper-models"),
 		)
 	}
 
@@ -163,7 +186,7 @@ func findPiperModel(t *testing.T) string {
 		projectRoot := filepath.Join(cwd, "..", "..")
 		searchDirs = append(
 			searchDirs,
-			filepath.Join(projectRoot, ".clawbench", "piper-models"),
+			filepath.Join(projectRoot, "models", "piper-models"),
 		)
 	}
 

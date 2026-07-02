@@ -422,8 +422,8 @@ func (e *SessionExecutor) injectSessionMetadata(meta *ai.Metadata) {
 	effectiveTransport := "cli"
 	if t := GetSessionTransport(e.cfg.SessionID); t != "" {
 		effectiveTransport = t
-	} else if agent, ok := model.Agents[e.cfg.AgentID]; ok && agent.SupportsACP() {
-		effectiveTransport = "acp-stdio"
+	} else if agent, ok := model.Agents[e.cfg.AgentID]; ok && agent.Transport != "" {
+		effectiveTransport = agent.Transport
 	}
 	meta.Transport = effectiveTransport
 

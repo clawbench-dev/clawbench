@@ -53,7 +53,7 @@ type BackendSpec struct {
 	Specialty            string   // short description, e.g. "代码编写与推理"
 	ThinkingEffortLevels []string // supported thinking effort levels, e.g. ["low","medium","high"]; nil = not supported
 	AcpCommand           string   // ACP spawn command for acp-stdio transport, e.g. "kimi --acp"; empty = no ACP support
-	EmbeddedSubDir       string   // subdirectory under .clawbench/ for embedded binary, e.g. "pi"; empty = no embedded binary
+	EmbeddedSubDir       string   // subdirectory under agents/ for embedded binary, e.g. "opencode"; empty = no embedded binary
 	EmbeddedVersionFile  string   // filename for fast version lookup under EmbeddedSubDir, e.g. "VERSION"; empty = no version file
 	EmbeddedGitHubRepo   string   // GitHub repo for release downloads, e.g. "anomalyco/opencode"; empty = no auto-download
 	EmbeddedArchMapping  string   // arch name mapping in archive names, e.g. "amd64=x64"; empty = no mapping
@@ -95,7 +95,7 @@ func CheckCLIExists(cmd string) bool {
 		return false
 	}
 
-	// Check for embedded binary (e.g. .clawbench/pi/pi)
+	// Check for embedded binary (e.g. agents/opencode/opencode)
 	if spec := FindBackendSpecByDefaultCmd(cmd); spec != nil && spec.EmbeddedSubDir != "" {
 		if EmbeddedBinaryPath(spec.EmbeddedSubDir) != "" {
 			return true
@@ -253,17 +253,22 @@ func AsyncRefreshModelCache(db *sql.DB) {
 // --- Embedded binary detection ---
 
 // EmbeddedBinaryPath returns the absolute path to the embedded binary under
-// .clawbench/{subDir}/, or empty string if not found.
-// subDir is the BackendSpec.EmbeddedSubDir value (e.g. "pi").
+// agents/{subDir}/, or empty string if not found.
+// subDir is the BackendSpec.EmbeddedSubDir value (e.g. "opencode").
 func EmbeddedBinaryPath(subDir string) string {
 	exePath, err := os.Executable()
 	if err != nil {
 		slog.Error("failed to get executable path", "error", err)
 		return ""
 	}
-	baseDir := filepath.Dir(exePath)
+	return embeddedBinaryPathFromBase(filepath.Dir(exePath), subDir)
+}
+
+// embeddedBinaryPathFromBase resolves the embedded binary path relative to baseDir.
+// Checks agents/{subDir}/.
+func embeddedBinaryPathFromBase(baseDir, subDir string) string {
 	for _, name := range []string{subDir, subDir + ".exe"} {
-		p := filepath.Join(baseDir, ".clawbench", subDir, name)
+		p := filepath.Join(baseDir, "agents", subDir, name)
 		if info, err := os.Stat(p); err == nil && !info.IsDir() {
 			return p
 		}
@@ -272,7 +277,7 @@ func EmbeddedBinaryPath(subDir string) string {
 }
 
 // EmbeddedBinaryVersion extracts the version for an embedded binary.
-// First reads .clawbench/{subDir}/{versionFile} (fast), then falls back to
+// First reads agents/{subDir}/{versionFile} (fast), then falls back to
 // running {binary} --version.
 func EmbeddedBinaryVersion(subDir, versionFile string) string {
 	exePath, err := os.Executable()
@@ -282,14 +287,8 @@ func EmbeddedBinaryVersion(subDir, versionFile string) string {
 	baseDir := filepath.Dir(exePath)
 
 	// Fast path: read version file
-	if versionFile != "" {
-		vf := filepath.Join(baseDir, ".clawbench", subDir, versionFile)
-		if data, err := os.ReadFile(vf); err == nil {
-			v := strings.TrimSpace(string(data))
-			if v != "" {
-				return v
-			}
-		}
+	if v := EmbeddedBinaryVersionFromBase(baseDir, subDir, versionFile); v != "" {
+		return v
 	}
 
 	// Slow path: run binary --version
@@ -304,6 +303,22 @@ func EmbeddedBinaryVersion(subDir, versionFile string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// EmbeddedBinaryVersionFromBase is like EmbeddedBinaryVersion but uses an
+// explicit baseDir instead of os.Executable().
+func EmbeddedBinaryVersionFromBase(baseDir, subDir, versionFile string) string {
+	// Fast path: read version file
+	if versionFile != "" {
+		vf := filepath.Join(baseDir, "agents", subDir, versionFile)
+		if data, err := os.ReadFile(vf); err == nil {
+			v := strings.TrimSpace(string(data))
+			if v != "" {
+				return v
+			}
+		}
+	}
+	return ""
 }
 
 // --- DB-based agent discovery and merge ---
@@ -363,8 +378,8 @@ func SyncDiscoverAgentsDB(db *sql.DB) map[string]bool { //nolint:gocognit,gocycl
 
 		// Check if DB already has an agent for this backend
 		var count int
-		var existingAcpCommand string
-		err := db.QueryRow("SELECT COUNT(*), COALESCE(acp_command, '') FROM agents WHERE backend = ?", r.spec.Backend).Scan(&count, &existingAcpCommand)
+		var existingAcpCommand, existingTransport string
+		err := db.QueryRow("SELECT COUNT(*), COALESCE(acp_command, ''), COALESCE(transport, '') FROM agents WHERE backend = ?", r.spec.Backend).Scan(&count, &existingAcpCommand, &existingTransport)
 		if err != nil {
 			slog.Warn("failed to query agents table", "backend", r.spec.Backend, "error", err)
 			continue
@@ -390,6 +405,14 @@ func SyncDiscoverAgentsDB(db *sql.DB) map[string]bool { //nolint:gocognit,gocycl
 			// stale values when ACP support is removed from a backend).
 			if r.spec.AcpCommand != existingAcpCommand {
 				updates["acp_command"] = r.spec.AcpCommand
+			}
+			// Sync transport with acp_command changes:
+			// - ACP newly added + current transport is cli → upgrade to acp-stdio
+			// - ACP removed + current transport is acp-stdio → downgrade to cli
+			if r.spec.AcpCommand != "" && existingAcpCommand == "" && existingTransport == "cli" {
+				updates["transport"] = "acp-stdio"
+			} else if r.spec.AcpCommand == "" && existingAcpCommand != "" && existingTransport == "acp-stdio" {
+				updates["transport"] = "cli"
 			}
 
 			if len(updates) > 0 {
@@ -429,9 +452,10 @@ func SyncDiscoverAgentsDB(db *sql.DB) map[string]bool { //nolint:gocognit,gocycl
 			agent.Command = p
 		}
 
-		// Store ACP command info from BackendSpec (transport defaults to "cli")
+		// Store ACP command info from BackendSpec (transport defaults to "acp-stdio")
 		if r.spec.AcpCommand != "" {
 			agent.AcpCommand = r.spec.AcpCommand
+			agent.Transport = "acp-stdio"
 		}
 
 		if err := saveAgentToDB(db, agent); err != nil {
@@ -475,7 +499,11 @@ func saveAgentToDB(db *sql.DB, agent *Agent) error {
 
 	transport := agent.Transport
 	if transport == "" {
-		transport = "cli"
+		if agent.AcpCommand != "" {
+			transport = "acp-stdio"
+		} else {
+			transport = "cli"
+		}
 	}
 
 	_, err = db.Exec(`INSERT INTO agents (id, name, icon, specialty, backend, command,

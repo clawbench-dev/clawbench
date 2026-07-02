@@ -41,7 +41,7 @@ func Init(cfg model.RAGConfig) error {
 	}
 
 	// Determine database path
-	dbPath := filepath.Join(model.BinDir, ".clawbench", "ClawBench.db")
+	dbPath := filepath.Join(model.DataDir, "ClawBench.db")
 	slog.Info("rag: opening SQLite store", slog.String("path", dbPath))
 
 	// Open SQLite store (uses the same database file as the main app)

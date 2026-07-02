@@ -5,7 +5,7 @@
 # Tier 2 — Diff Coverage: changed lines coverage >= 80% (strict)
 #
 # Baseline: auto-downloaded from main branch CI artifact
-#   Falls back to: .clawbench/baseline/ → gh CLI → GitHub API → skip Tier 1
+#   Falls back to: .clawbench-ci/baseline/ → gh CLI → GitHub API → skip Tier 1
 #
 # Usage:
 #   ./scripts/check-go-coverage.sh              # run tests + check
@@ -18,7 +18,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 COVERAGE_PROFILE="$ROOT_DIR/coverage.out"
-BASELINE_DIR="$ROOT_DIR/.clawbench/baseline"
+BASELINE_DIR="$ROOT_DIR/.clawbench-ci/baseline"
 
 SKIP_TEST=false
 
@@ -62,7 +62,7 @@ BASELINE_PROFILE=""
 # 3a. CI download step (already placed by workflow)
 if [ -f "$BASELINE_DIR/coverage.out" ]; then
   BASELINE_PROFILE="$BASELINE_DIR/coverage.out"
-  echo "ℹ Using baseline from .clawbench/baseline/coverage.out"
+  echo "ℹ Using baseline from .clawbench-ci/baseline/coverage.out"
 # 3b. Try gh CLI
 elif command -v gh &>/dev/null; then
   echo "ℹ Attempting baseline download via gh CLI..."

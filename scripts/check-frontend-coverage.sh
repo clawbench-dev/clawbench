@@ -17,7 +17,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 WEB_DIR="$ROOT_DIR/web"
-BASELINE_DIR="$ROOT_DIR/.clawbench/baseline"
+BASELINE_DIR="$ROOT_DIR/.clawbench-ci/baseline"
 
 SKIP_TEST=false
 
@@ -80,7 +80,7 @@ BASELINE_JSON=""
 for _bf in "$BASELINE_DIR/coverage-summary.json" "$BASELINE_DIR/coverage/coverage-summary.json"; do
   if [ -f "$_bf" ]; then
     BASELINE_JSON="$_bf"
-    echo "ℹ Using baseline from .clawbench/baseline/"
+    echo "ℹ Using baseline from .clawbench-ci/baseline/"
     break
   fi
 done

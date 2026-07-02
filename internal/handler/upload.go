@@ -86,7 +86,7 @@ func UploadFile(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mu
 		}
 		targetDir = dirAbs
 	} else {
-		// Default: .clawbench/uploads/
+		// Default: .clawbench/uploads/ (project-relative, not server DataDir)
 		customDir = false
 		targetDir = filepath.Join(projectPath, ".clawbench", "uploads")
 		if err := os.MkdirAll(targetDir, 0o755); err != nil {

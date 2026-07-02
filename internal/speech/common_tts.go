@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"clawbench/internal/model"
 )
 
 // TextSource describes how text is supplied to the CLI process.
@@ -158,4 +160,16 @@ func (p CLISpeechProvider) Synthesize(ctx context.Context, text string, outputPa
 	}
 
 	return nil
+}
+
+// resolveModelFile resolves a TTS model file path under {BinDir}/models/{subDir}/.
+func resolveModelFile(subDir, filename string) string {
+	if model.BinDir != "" {
+		p := filepath.Join(model.BinDir, "models", subDir, filename)
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	// Last resort: return relative path under models/ (will resolve from CWD)
+	return filepath.Join("models", subDir, filename)
 }

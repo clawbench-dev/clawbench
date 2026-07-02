@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -268,55 +269,65 @@ func TestHTTPDo_TimeoutOnSlowServer(t *testing.T) {
 
 func TestLoadSessionCookie_FileExists(t *testing.T) {
 	origBinDir := model.BinDir
-	t.Cleanup(func() { model.BinDir = origBinDir })
+	origDataDir := model.DataDir
+	t.Cleanup(func() { model.BinDir = origBinDir; model.DataDir = origDataDir })
 
 	tmpDir := t.TempDir()
-	clawbenchDir := tmpDir + "/.clawbench"
+	clawbenchDir := filepath.Join(tmpDir, ".clawbench")
 	assert.NoError(t, os.MkdirAll(clawbenchDir, 0o755))
-	assert.NoError(t, os.WriteFile(clawbenchDir+"/cookie-token", []byte("test-token-123"), 0o600))
+	assert.NoError(t, os.WriteFile(filepath.Join(clawbenchDir, "cookie-token"), []byte("test-token-123"), 0o600))
 
 	model.BinDir = tmpDir
+	model.DataDir = clawbenchDir
 	token := loadSessionCookie()
 	assert.Equal(t, "test-token-123", token)
 }
 
 func TestLoadSessionCookie_FileWithNewline(t *testing.T) {
 	origBinDir := model.BinDir
-	t.Cleanup(func() { model.BinDir = origBinDir })
+	origDataDir := model.DataDir
+	t.Cleanup(func() { model.BinDir = origBinDir; model.DataDir = origDataDir })
 
 	tmpDir := t.TempDir()
-	clawbenchDir := tmpDir + "/.clawbench"
+	clawbenchDir := filepath.Join(tmpDir, ".clawbench")
 	assert.NoError(t, os.MkdirAll(clawbenchDir, 0o755))
-	assert.NoError(t, os.WriteFile(clawbenchDir+"/cookie-token", []byte("test-token-456\n"), 0o600))
+	assert.NoError(t, os.WriteFile(filepath.Join(clawbenchDir, "cookie-token"), []byte("test-token-456\n"), 0o600))
 
 	model.BinDir = tmpDir
+	model.DataDir = clawbenchDir
 	token := loadSessionCookie()
 	assert.Equal(t, "test-token-456", token)
 }
 
 func TestLoadSessionCookie_FileMissing(t *testing.T) {
 	origBinDir := model.BinDir
-	t.Cleanup(func() { model.BinDir = origBinDir })
+	origDataDir := model.DataDir
+	t.Cleanup(func() { model.BinDir = origBinDir; model.DataDir = origDataDir })
 
-	model.BinDir = t.TempDir()
+	tmpDir := t.TempDir()
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	token := loadSessionCookie()
 	assert.Equal(t, "", token)
 }
 
 func TestSetAuthCookie_AttachesCookieWhenTokenExists(t *testing.T) {
 	origBinDir := model.BinDir
+	origDataDir := model.DataDir
 	origPort := model.ServerPort
 	t.Cleanup(func() {
 		model.BinDir = origBinDir
+		model.DataDir = origDataDir
 		model.ServerPort = origPort
 	})
 
 	tmpDir := t.TempDir()
-	clawbenchDir := tmpDir + "/.clawbench"
+	clawbenchDir := filepath.Join(tmpDir, ".clawbench")
 	assert.NoError(t, os.MkdirAll(clawbenchDir, 0o755))
-	assert.NoError(t, os.WriteFile(clawbenchDir+"/cookie-token", []byte("my-session-token"), 0o600))
+	assert.NoError(t, os.WriteFile(filepath.Join(clawbenchDir, "cookie-token"), []byte("my-session-token"), 0o600))
 
 	model.BinDir = tmpDir
+	model.DataDir = clawbenchDir
 	model.ServerPort = 20000
 
 	req, _ := http.NewRequest(http.MethodGet, "http://localhost:20000/api/test", http.NoBody)
@@ -335,9 +346,12 @@ func TestSetAuthCookie_AttachesCookieWhenTokenExists(t *testing.T) {
 
 func TestSetAuthCookie_NoCookieWhenFileMissing(t *testing.T) {
 	origBinDir := model.BinDir
-	t.Cleanup(func() { model.BinDir = origBinDir })
+	origDataDir := model.DataDir
+	t.Cleanup(func() { model.BinDir = origBinDir; model.DataDir = origDataDir })
 
-	model.BinDir = t.TempDir()
+	tmpDir := t.TempDir()
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 
 	req, _ := http.NewRequest(http.MethodGet, "http://localhost:20000/api/test", http.NoBody)
 	setAuthCookie(req)

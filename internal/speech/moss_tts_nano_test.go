@@ -8,7 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/model"
+
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // --- NewMossNanoProvider defaults ---
@@ -29,19 +32,21 @@ func TestResolveMossNanoModelDir_DefaultNoModels(t *testing.T) {
 }
 
 func TestResolveMossNanoModelDir_DefaultWithModels(t *testing.T) {
-	// Create a temp directory mimicking the default model structure
+	// Create a temp directory mimicking the default model structure under models/
 	tmpDir := t.TempDir()
-	subDir := filepath.Join(tmpDir, "MOSS-TTS-Nano-100M-ONNX")
-	_ = os.MkdirAll(subDir, 0o750)
-	_ = os.WriteFile(filepath.Join(subDir, "browser_poc_manifest.json"), []byte("{}"), 0o600)
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
-	// Temporarily override default for testing
-	origDefault := mossNanoDefaultModelDir
-	mossNanoDefaultModelDir = tmpDir
-	defer func() { mossNanoDefaultModelDir = origDefault }()
+	// Create models/moss-nano-models/MOSS-TTS-Nano-100M-ONNX/browser_poc_manifest.json
+	modelDir := filepath.Join(tmpDir, "models", "moss-nano-models", "MOSS-TTS-Nano-100M-ONNX")
+	require.NoError(t, os.MkdirAll(modelDir, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(modelDir, "browser_poc_manifest.json"), []byte("{}"), 0o600))
 
 	dir := ResolveMossNanoModelDir("")
-	assert.Equal(t, tmpDir, dir, "should return default dir when models exist")
+	assert.Equal(t, filepath.Join(tmpDir, "models", "moss-nano-models"), dir, "should return new models/ dir when models exist")
 }
 
 func TestResolveMossNanoModelDir_Explicit(t *testing.T) {

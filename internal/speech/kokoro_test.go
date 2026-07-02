@@ -25,9 +25,10 @@ func TestNewKokoroProvider_Defaults(t *testing.T) {
 // --- ResolveKokoroPaths ---
 
 func TestResolveKokoroPaths_Defaults(t *testing.T) {
-	model, voices := ResolveKokoroPaths("", "")
-	assert.Equal(t, filepath.Join(".clawbench/kokoro-models", "kokoro-v1.1-zh.onnx"), model)
-	assert.Equal(t, filepath.Join(".clawbench/kokoro-models", "voices-v1.1-zh.bin"), voices)
+	// Without BinDir set, falls back to relative path
+	mdl, voices := ResolveKokoroPaths("", "")
+	assert.Equal(t, filepath.Join("models", "kokoro-models", "kokoro-v1.1-zh.onnx"), mdl)
+	assert.Equal(t, filepath.Join("models", "kokoro-models", "voices-v1.1-zh.bin"), voices)
 }
 
 func TestResolveKokoroPaths_Explicit(t *testing.T) {

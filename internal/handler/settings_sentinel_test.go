@@ -4,6 +4,7 @@ package handler
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"clawbench/internal/model"
@@ -83,10 +84,10 @@ func TestJoinArgs(t *testing.T) {
 
 func TestLaunchSentinelProcess_StartsAndExits(t *testing.T) {
 	// Set up a minimal BinDir for the sentinel to reference
-	origBinDir := model.BinDir
+	origBinDir := model.BinDir; origDataDir := model.DataDir
 	tmpDir := t.TempDir()
-	model.BinDir = tmpDir
-	defer func() { model.BinDir = origBinDir }()
+	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	cmd, err := LaunchSentinelProcess()
 	if err != nil {

@@ -154,8 +154,22 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		fmt.Println("Run \"clawbench <command> --help\" for more information.")
 		fmt.Println()
 		fmt.Println("Server options:")
-		fmt.Println("  --port PORT    Server port (overrides config file, default: 20000)")
+		fmt.Println("  --port PORT       Server port (overrides config file, default: 20000)")
+		fmt.Println("  --data-dir DIR    Runtime data directory (default: <binary_dir>/.clawbench)")
 		os.Exit(0)
+	}
+
+	// Parse --data-dir early (before subcommand dispatch) so CLI subcommands
+	// can find cookie-token in the correct data directory.
+	for i, arg := range os.Args[1:] {
+		if arg == "--data-dir" && i+1 < len(os.Args[1:]) {
+			absDataDir, err := filepath.Abs(os.Args[i+2])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: invalid --data-dir path: %v\n", err)
+				os.Exit(1)
+			}
+			model.DataDir = absDataDir
+		}
 	}
 
 	// Task subcommand dispatch (e.g., "clawbench task create --name ...")
@@ -170,17 +184,33 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Parse CLI flags
 	cliPort := 0
+	cliDataDir := ""
 	for i, arg := range os.Args[1:] {
 		if arg == "--port" && i+1 < len(os.Args[1:]) {
 			if p, err := strconv.Atoi(os.Args[i+2]); err == nil && p > 0 && p <= 65535 {
 				cliPort = p
 			}
 		}
+		if arg == "--data-dir" && i+1 < len(os.Args[1:]) {
+			cliDataDir = os.Args[i+2]
+		}
 	}
 
 	// Determine binary directory for data storage (green portable layout)
 	absBinPath, _ := filepath.Abs(os.Args[0])
 	model.BinDir = filepath.Dir(absBinPath)
+
+	// Set data directory: --data-dir flag > default BinDir/.clawbench
+	if cliDataDir != "" {
+		absDataDir, err := filepath.Abs(cliDataDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: invalid --data-dir path: %v\n", err)
+			os.Exit(1)
+		}
+		model.DataDir = absDataDir
+	} else {
+		model.DataDir = filepath.Join(model.BinDir, ".clawbench")
+	}
 
 	// Load configuration — config/config.yaml is optional
 	var cfg model.Config
@@ -407,7 +437,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	if autoPassword != "" {
 		slog.Info(
 			"auto-generated password (no password configured)",
-			slog.String("file", filepath.Join(model.BinDir, ".clawbench", "auto-password")),
+			slog.String("file", filepath.Join(model.DataDir, "auto-password")),
 		)
 	}
 
@@ -852,7 +882,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		Port:            port,
 		LocalIP:         platform.GetOutboundIP(),
 		AutoPassword:    autoPassword,
-		DataDir:         filepath.Join(model.BinDir, ".clawbench"),
+		DataDir:         model.DataDir,
 		Agents:          agentInfos,
 		SSHEnabled:      sshEnabled,
 		SSHPort:         sshPort,

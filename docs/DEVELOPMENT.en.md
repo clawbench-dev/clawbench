@@ -234,7 +234,7 @@ All ten backends can be switched in real time on the ClawBench Web UI, with isol
 
 ### Setup Wizard
 
-When no AI CLI is installed and the embedded Pi binary is detected (`.clawbench/pi/pi`), a setup wizard appears on first launch, guiding users through:
+When no AI CLI is installed and the embedded Pi binary is detected (`agents/pi/pi`), a setup wizard appears on first launch, guiding users through:
 
 1. **Welcome**: Displays embedded agent info
 2. **Select Provider**: 23 `WizardReady` LLM providers (OpenAI, Anthropic, Google, DeepSeek, Alibaba Qwen, Moonshot, etc.) from `ProviderRegistry`; also supports custom URL mode for any OpenAI/Anthropic-compatible endpoint

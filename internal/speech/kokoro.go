@@ -16,9 +16,6 @@ const (
 	kokoroScriptVenv = ".venv/bin/kokoro_tts.py"
 	// kokoroScriptRepo is the fallback path (tracked in git repo).
 	kokoroScriptRepo = "scripts/kokoro_tts.py"
-
-	// kokoroDefaultModelDir is the default directory for Kokoro model files.
-	kokoroDefaultModelDir = ".clawbench/kokoro-models"
 )
 
 // KokoroProvider implements SpeechProvider using Kokoro-82M (local, ONNX-based TTS).
@@ -32,10 +29,10 @@ const (
 type KokoroProvider struct {
 	CLISpeechProvider
 	// ModelPath is the path to the Kokoro .onnx model file.
-	// If empty, defaults to .clawbench/kokoro-models/kokoro-v1.1-zh.onnx.
+	// If empty, defaults to models/kokoro-models/kokoro-v1.1-zh.onnx (under BinDir).
 	ModelPath string
 	// VoicesPath is the path to the Kokoro voices .bin file.
-	// If empty, defaults to .clawbench/kokoro-models/voices-v1.1-zh.bin.
+	// If empty, defaults to models/kokoro-models/voices-v1.1-zh.bin (under BinDir).
 	VoicesPath string
 	// Voice is the voice name (e.g. "zf_001", "zm_010" for v1.1; "zf_xiaobei", "zm_yunxi" for v1.0).
 	Voice string
@@ -135,13 +132,14 @@ func (p *KokoroProvider) Synthesize(ctx context.Context, text string, outputPath
 
 // ResolveKokoroPaths resolves the Kokoro model and voices paths from defaults.
 // If a path is explicitly set, it is returned as-is.
-// Otherwise, the default directory is used.
+// Otherwise, the path is resolved under {BinDir}/models/kokoro-models/,
+// with fallback to {DataDir}/kokoro-models/ (deprecated).
 func ResolveKokoroPaths(modelPath, voicesPath string) (string, string) {
 	if modelPath == "" {
-		modelPath = filepath.Join(kokoroDefaultModelDir, "kokoro-v1.1-zh.onnx")
+		modelPath = resolveModelFile("kokoro-models", "kokoro-v1.1-zh.onnx")
 	}
 	if voicesPath == "" {
-		voicesPath = filepath.Join(kokoroDefaultModelDir, "voices-v1.1-zh.bin")
+		voicesPath = resolveModelFile("kokoro-models", "voices-v1.1-zh.bin")
 	}
 	return modelPath, voicesPath
 }

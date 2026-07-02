@@ -61,7 +61,7 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	}
 
 	// --- Password ---
-	autoPasswordFile := filepath.Join(BinDir, ".clawbench", "auto-password")
+	autoPasswordFile := filepath.Join(DataDir, "auto-password")
 	if cfg.Password == "" {
 		// Try to reuse previously auto-generated password
 		saved, err := os.ReadFile(autoPasswordFile)
@@ -90,7 +90,7 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 
 	// --- LogDir ---
 	if cfg.LogDir == "" {
-		cfg.LogDir = filepath.Join(BinDir, ".clawbench", "logs")
+		cfg.LogDir = filepath.Join(DataDir, "logs")
 	}
 	cfg.LogDir = platform.ExpandTilde(cfg.LogDir)
 
@@ -148,7 +148,7 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	}
 	// Persist host key to avoid SSH fingerprint mismatch after server restart
 	if cfg.PortForward.HostKey == "" {
-		cfg.PortForward.HostKey = filepath.Join(BinDir, ".clawbench", "ssh_host_key")
+		cfg.PortForward.HostKey = filepath.Join(DataDir, "ssh_host_key")
 	}
 
 	// --- TTS ---

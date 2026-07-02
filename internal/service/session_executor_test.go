@@ -1846,7 +1846,7 @@ func TestSessionExecutor_BuildResult_AskUserQuestionContentJSONIncludesInput(t *
 func TestSessionExecutor_Finalize_TransportFromACP(t *testing.T) {
 	setupExecutorDB(t)
 	model.Agents = map[string]*model.Agent{
-		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test", AcpCommand: "test-acp"},
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test", AcpCommand: "test-acp", Transport: "acp-stdio"},
 	}
 	defer func() { model.Agents = nil }()
 

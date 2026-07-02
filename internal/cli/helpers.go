@@ -40,6 +40,9 @@ func loadConfig() {
 
 	absBinPath, _ := filepath.Abs(os.Args[0])
 	model.BinDir = filepath.Dir(absBinPath)
+	if model.DataDir == "" {
+		model.DataDir = filepath.Join(model.BinDir, ".clawbench")
+	}
 
 	var cfg model.Config
 	var presence map[string]bool
@@ -92,7 +95,7 @@ var httpClient = &http.Client{
 // Returns empty string if the file doesn't exist (no password configured or
 // server hasn't generated a token yet).
 func loadSessionCookie() string {
-	tokenPath := filepath.Join(model.BinDir, ".clawbench", "cookie-token")
+	tokenPath := filepath.Join(model.DataDir, "cookie-token")
 	data, err := os.ReadFile(tokenPath)
 	if err != nil {
 		return ""

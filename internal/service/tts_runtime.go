@@ -128,6 +128,7 @@ func EvictTTSCache(projectPath string, maxFiles int) {
 		return
 	}
 
+	// Project-relative path (not server DataDir)
 	ttsDir := filepath.Join(projectPath, ".clawbench", "generated", "tts")
 	entries, err := os.ReadDir(ttsDir)
 	if err != nil {

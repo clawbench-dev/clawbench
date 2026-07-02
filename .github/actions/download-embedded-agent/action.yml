@@ -21,7 +21,7 @@ outputs:
     description: 'Resolved agent version'
     value: ${{ steps.resolve.outputs.version }}
   subdir:
-    description: 'Agent subdir under .clawbench/'
+    description: 'Agent subdir under agents/'
     value: ${{ steps.resolve.outputs.subdir }}
 
 runs:
@@ -82,7 +82,7 @@ runs:
 
         URL="https://github.com/${GITHUB_REPO}/releases/download/v${_AGENT_VERSION}/${ARCHIVE_NAME}"
 
-        AGENT_DIR=".clawbench/${_AGENT_SUBDIR}"
+        AGENT_DIR="agents/${_AGENT_SUBDIR}"
         mkdir -p "$AGENT_DIR"
 
         # Download (use temp file + curl --fail to catch HTTP errors)

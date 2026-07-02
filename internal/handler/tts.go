@@ -141,6 +141,7 @@ func TTSGenerate(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // m
 	if _, ok := curProvider.(*speech.MossNanoProvider); ok { //nolint:govet // shadowed ok is standard type-assertion idiom
 		audioExt = ".wav"
 	}
+	// Project-relative path (not server DataDir)
 	relAudioPath := filepath.Join(".clawbench", "generated", "tts", cacheKey+audioExt)
 
 	// Validate the output path (defense-in-depth)
