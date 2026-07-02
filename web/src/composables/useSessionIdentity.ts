@@ -143,6 +143,13 @@ function loadThinkingPref(agentId: string): string | null {
 // Agent-initiated mode changes override user selection.
 // ───────────────────────────────────────────────────────────
 
+function loadModePref(agentId: string): string | null {
+  if (!agentId) return null
+  // Read from agent's server-side preference (preferredMode)
+  const { getEffectiveModeId } = useAgents()
+  return getEffectiveModeId(agentId) || null
+}
+
 /** Update mode state from REST API or user action (full state). */
 export function updateModeState(modeId: string, modes: Array<{ id: string; name: string }>) {
   if (modeId) {
@@ -656,6 +663,7 @@ export function useSessionIdentity() {
     saveThinkingPref,
     loadModelPref,
     loadThinkingPref,
+    loadModePref,
     toggleAutoApprove,
     // Mode state helpers
     updateModeState,

@@ -147,11 +147,19 @@
         >
           <button
             class="thinking-item"
-            :class="{ current: mode.id === currentModeId }"
+            :class="{ current: mode.id === currentModeId, 'is-default': mode.id === defaultModeId }"
             @click="selectMode(mode)"
+            @contextmenu.prevent="showModeDefaultMenu(mode)"
+            @touchstart="onTouchStartMode(mode, $event)"
+            @touchend="onTouchEnd"
+            @touchmove="onTouchMove"
           >
             <span class="model-item-indicator" :class="{ active: mode.id === currentModeId }"></span>
             <span class="model-item-name">{{ mode.name || mode.id }}</span>
+            <span v-if="mode.id === defaultModeId" class="default-badge">{{ t('chat.sessionSetting.defaultBadge') }}</span>
+            <button v-if="mode.id !== defaultModeId" class="set-default-btn" @click.stop="setDefaultMode(mode)" :title="t('chat.sessionSetting.setAsDefault')">
+              <Star :size="12" />
+            </button>
           </button>
           <div v-if="idx < availableModes.length - 1" class="model-divider"></div>
         </div>
@@ -214,6 +222,7 @@ const showDefaultPopupMenu = ref(false)
 const longPressTarget = ref(null)
 const pendingDefaultModel = ref(null)
 const pendingDefaultThinking = ref(null)
+const pendingDefaultMode = ref(null)
 
 // Long-press state
 let longPressTimer = null
@@ -249,6 +258,11 @@ const defaultModelId = computed(() => {
 const defaultThinkingEffort = computed(() => {
   const agent = getAgent(props.agentId || '')
   return agent?.preferredThinkingEffort || ''
+})
+
+const defaultModeId = computed(() => {
+  const agent = getAgent(props.agentId || '')
+  return agent?.preferredMode || ''
 })
 
 const defaultTransport = computed(() => {
@@ -294,6 +308,10 @@ function selectThinkingEffort(level) {
 // --- Mode selection ---
 
 function selectMode(mode) {
+  if (longPressTriggered.value) {
+    longPressTriggered.value = false
+    return
+  }
   emit('switch-mode', mode)
   emit('update:show', false)
 }
@@ -381,6 +399,15 @@ async function setDefaultTransport(transport) {
   }
 }
 
+async function setDefaultMode(mode) {
+  try {
+    await patchAgentPref(props.agentId, 'preferred_mode', mode.id)
+    updateAgentField(props.agentId, 'preferredMode', mode.id)
+  } catch (err) {
+    toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+  }
+}
+
 // --- Long-press for "Set as Default" (kept for popup menu compat) ---
 
 function onTouchStart(model, event) {
@@ -392,6 +419,7 @@ function onTouchStart(model, event) {
     longPressTriggered.value = true
     pendingDefaultModel.value = model.id
     pendingDefaultThinking.value = null
+    pendingDefaultMode.value = null
     longPressTarget.value = el
     showDefaultPopupMenu.value = true
   }, 500)
@@ -404,6 +432,20 @@ function onTouchStartThinking(level, event) {
     longPressTriggered.value = true
     pendingDefaultThinking.value = level
     pendingDefaultModel.value = null
+    pendingDefaultMode.value = null
+    longPressTarget.value = el
+    showDefaultPopupMenu.value = true
+  }, 500)
+}
+
+function onTouchStartMode(mode, event) {
+  longPressTriggered.value = false
+  longPressTimer = setTimeout(() => {
+    const el = event.target.closest('.model-item, .thinking-item')
+    longPressTriggered.value = true
+    pendingDefaultMode.value = mode.id
+    pendingDefaultModel.value = null
+    pendingDefaultThinking.value = null
     longPressTarget.value = el
     showDefaultPopupMenu.value = true
   }, 500)
@@ -424,6 +466,7 @@ function onTouchMove() {
 function showDefaultMenu(model) {
   pendingDefaultModel.value = model.id
   pendingDefaultThinking.value = null
+  pendingDefaultMode.value = null
   // For contextmenu, use the event target as anchor
   longPressTarget.value = null
   showDefaultPopupMenu.value = true
@@ -432,6 +475,15 @@ function showDefaultMenu(model) {
 function showThinkingDefaultMenu(level) {
   pendingDefaultThinking.value = level
   pendingDefaultModel.value = null
+  pendingDefaultMode.value = null
+  longPressTarget.value = null
+  showDefaultPopupMenu.value = true
+}
+
+function showModeDefaultMenu(mode) {
+  pendingDefaultMode.value = mode.id
+  pendingDefaultModel.value = null
+  pendingDefaultThinking.value = null
   longPressTarget.value = null
   showDefaultPopupMenu.value = true
 }
@@ -446,6 +498,9 @@ async function setAsDefault() {
     } else if (pendingDefaultThinking.value !== null) {
       await patchAgentPref(props.agentId, 'preferred_thinking_effort', pendingDefaultThinking.value)
       updateAgentField(props.agentId, 'preferredThinkingEffort', pendingDefaultThinking.value)
+    } else if (pendingDefaultMode.value !== null) {
+      await patchAgentPref(props.agentId, 'preferred_mode', pendingDefaultMode.value)
+      updateAgentField(props.agentId, 'preferredMode', pendingDefaultMode.value)
     }
   } catch (err) {
     toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })

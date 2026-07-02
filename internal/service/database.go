@@ -27,7 +27,7 @@ var DBRead *sql.DB
 // from previous crashes are cleaned up. When false (CLI subcommand), cleanup
 // is skipped because the server process may still be actively streaming.
 func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-table schema migration
-	dbDir := filepath.Join(model.BinDir, ".clawbench")
+	dbDir := model.DataDir
 	if err := os.MkdirAll(dbDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create db directory: %w", err)
 	}
@@ -518,6 +518,15 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 		// Backfill: set the most recently accessed project as default
 		_, _ = DB.Exec("UPDATE recent_projects SET is_default = 1 WHERE id = (SELECT id FROM recent_projects ORDER BY accessed_at DESC LIMIT 1)")
+	}
+
+	// Migrate: add preferred_mode column to agents for user's default ACP mode preference.
+	var hasPreferredMode int
+	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='preferred_mode'").Scan(&hasPreferredMode)
+	if hasPreferredMode == 0 {
+		if _, err := DB.Exec("ALTER TABLE agents ADD COLUMN preferred_mode TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add preferred_mode column: %w", err)
+		}
 	}
 
 	// Migrate: extract metadata from chat_history.content into chat_metadata table.

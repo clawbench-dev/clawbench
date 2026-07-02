@@ -181,6 +181,81 @@ func TestAgentPatch_InvalidPreferredThinkingEffort(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestAgentPatch_PreferredMode(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// Register available modes for the agent so validation passes
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.Update("codebuddy", &ai.AgentCapability{
+		AvailableModes: []ai.ModeDef{{ID: "code", Name: "Code"}, {ID: "ask", Name: "Ask"}},
+	})
+
+	body := map[string]any{
+		"id":             "codebuddy",
+		"preferred_mode": "code",
+	}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Verify in-memory agent updated
+	assert.Equal(t, "code", model.Agents["codebuddy"].PreferredMode)
+
+	// Verify DB updated
+	var preferredMode string
+	err := service.DB.QueryRow("SELECT preferred_mode FROM agents WHERE id = ?", "codebuddy").Scan(&preferredMode)
+	require.NoError(t, err)
+	assert.Equal(t, "code", preferredMode)
+}
+
+func TestAgentPatch_InvalidPreferredMode(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// Register available modes for the agent
+	reg := ai.GetAgentCapabilityRegistry()
+	reg.Update("codebuddy", &ai.AgentCapability{
+		AvailableModes: []ai.ModeDef{{ID: "code", Name: "Code"}},
+	})
+
+	body := map[string]any{
+		"id":             "codebuddy",
+		"preferred_mode": "nonexistent-mode",
+	}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestAgentPatch_ClearPreferredMode(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// First set a preferred mode
+	model.Agents["codebuddy"].PreferredMode = "code"
+
+	body := map[string]any{
+		"id":             "codebuddy",
+		"preferred_mode": "",
+	}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Verify in-memory agent cleared
+	assert.Equal(t, "", model.Agents["codebuddy"].PreferredMode)
+
+	// Verify DB cleared
+	var preferredMode string
+	err := service.DB.QueryRow("SELECT preferred_mode FROM agents WHERE id = ?", "codebuddy").Scan(&preferredMode)
+	require.NoError(t, err)
+	assert.Equal(t, "", preferredMode)
+}
+
 func TestAgentPatch_NonexistentAgent(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 

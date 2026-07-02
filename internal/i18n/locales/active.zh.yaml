@@ -71,6 +71,7 @@ JobNotFound: 任务未找到
 AgentNotFound: 智能体未找到
 InvalidModelForAgent: 无效的模型
 InvalidThinkingEffort: 无效的思考深度级别
+InvalidModeForAgent: 无效的模式
 InvalidAgentName: 无效的智能体名称
 InvalidAgentIcon: 无效的图标
 InvalidAgentSpecialty: 无效的描述

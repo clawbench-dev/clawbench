@@ -30,6 +30,7 @@ func setupTestDBForAgents(t *testing.T) *sql.DB {
 			command TEXT NOT NULL DEFAULT '',
 			thinking_effort TEXT NOT NULL DEFAULT '',
 			thinking_effort_levels TEXT NOT NULL DEFAULT '[]',
+			preferred_mode TEXT NOT NULL DEFAULT '',
 			preferred_model TEXT NOT NULL DEFAULT '',
 			preferred_thinking_effort TEXT NOT NULL DEFAULT '',
 			system_prompt TEXT NOT NULL DEFAULT '',
@@ -392,7 +393,7 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 	expectedColumns := map[string]bool{
 		"id": true, "name": true, "icon": true, "specialty": true, "backend": true,
 		"command": true, "thinking_effort": true, "thinking_effort_levels": true,
-		"preferred_model": true, "preferred_thinking_effort": true, "system_prompt": true,
+		"preferred_mode": true, "preferred_model": true, "preferred_thinking_effort": true, "system_prompt": true,
 		"custom_system_prompt": true,
 		"models":               true, "models_auto_detected": true, "source": true, "sort_order": true,
 		"transport": true, "acp_command": true,

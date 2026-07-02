@@ -142,3 +142,15 @@ func TestEffectiveThinkingEffort_Neither(t *testing.T) {
 	agent := &model.Agent{}
 	assert.Equal(t, "", agent.EffectiveThinkingEffort())
 }
+
+// ---------- EffectiveModeID ----------
+
+func TestEffectiveModeID_Preferred(t *testing.T) {
+	agent := &model.Agent{PreferredMode: "code"}
+	assert.Equal(t, "code", agent.EffectiveModeID())
+}
+
+func TestEffectiveModeID_Empty(t *testing.T) {
+	agent := &model.Agent{}
+	assert.Equal(t, "", agent.EffectiveModeID())
+}

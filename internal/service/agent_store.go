@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS agents (
 	command TEXT NOT NULL DEFAULT '',
 	thinking_effort TEXT NOT NULL DEFAULT '',
 	thinking_effort_levels TEXT NOT NULL DEFAULT '[]',
+	preferred_mode TEXT NOT NULL DEFAULT '',
 	preferred_model TEXT NOT NULL DEFAULT '',
 	preferred_thinking_effort TEXT NOT NULL DEFAULT '',
 	system_prompt TEXT NOT NULL DEFAULT '',
@@ -67,7 +68,7 @@ func LoadAgentsFromDB(db *sql.DB) ([]*model.Agent, error) {
 	rows, err := db.Query(`
 		SELECT id, name, icon, specialty, backend, command,
 			thinking_effort, thinking_effort_levels,
-			preferred_model, preferred_thinking_effort,
+			preferred_mode, preferred_model, preferred_thinking_effort,
 			system_prompt, custom_system_prompt, models, models_auto_detected,
 			source, sort_order,
 			transport, acp_command
@@ -87,7 +88,7 @@ func LoadAgentsFromDB(db *sql.DB) ([]*model.Agent, error) {
 		err := rows.Scan(
 			&a.ID, &a.Name, &a.Icon, &a.Specialty, &a.Backend, &a.Command,
 			&a.ThinkingEffort, &levelsJSON,
-			&a.PreferredModel, &a.PreferredThinkingEffort,
+			&a.PreferredMode, &a.PreferredModel, &a.PreferredThinkingEffort,
 			&a.SystemPrompt, &a.CustomSystemPrompt, &modelsJSON, &modelsAutoDetected,
 			&a.Source, &a.SortOrder,
 			&a.Transport, &a.AcpCommand,
@@ -155,11 +156,11 @@ func SaveAgent(db DBExec, agent *model.Agent) error {
 	_, err = db.Exec(`
 		INSERT INTO agents (id, name, icon, specialty, backend, command,
 			thinking_effort, thinking_effort_levels,
-			preferred_model, preferred_thinking_effort,
+			preferred_mode, preferred_model, preferred_thinking_effort,
 			system_prompt, custom_system_prompt, models, models_auto_detected,
 			source, sort_order,
 			transport, acp_command)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			icon = excluded.icon,
@@ -168,6 +169,7 @@ func SaveAgent(db DBExec, agent *model.Agent) error {
 			command = excluded.command,
 			thinking_effort = excluded.thinking_effort,
 			thinking_effort_levels = excluded.thinking_effort_levels,
+			preferred_mode = excluded.preferred_mode,
 			preferred_model = excluded.preferred_model,
 			preferred_thinking_effort = excluded.preferred_thinking_effort,
 			system_prompt = excluded.system_prompt,
@@ -181,7 +183,7 @@ func SaveAgent(db DBExec, agent *model.Agent) error {
 			updated_at = CURRENT_TIMESTAMP
 	`, agent.ID, agent.Name, agent.Icon, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON),
-		agent.PreferredModel, agent.PreferredThinkingEffort,
+		agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
 		agent.SystemPrompt, agent.CustomSystemPrompt, string(modelsJSON), modelsAutoDetected,
 		agent.Source, sortOrder,
 		transport, agent.AcpCommand)
@@ -218,6 +220,7 @@ func PatchAgent(db *sql.DB, id, preferredModel, preferredThinkingEffort, transpo
 // AgentPatch holds optional fields for partial agent updates.
 // Pointer fields distinguish "not provided" (nil) from "set to empty/zero".
 type AgentPatch struct {
+	PreferredMode           *string
 	PreferredModel          *string
 	PreferredThinkingEffort *string
 	Transport               *string
@@ -235,6 +238,10 @@ func PatchAgentFields(db *sql.DB, id string, patch AgentPatch) error {
 	setClauses := []string{}
 	args := []any{}
 
+	if patch.PreferredMode != nil {
+		setClauses = append(setClauses, "preferred_mode = ?")
+		args = append(args, *patch.PreferredMode)
+	}
 	if patch.PreferredModel != nil {
 		setClauses = append(setClauses, "preferred_model = ?")
 		args = append(args, *patch.PreferredModel)
@@ -370,6 +377,7 @@ func DuplicateAgent(db *sql.DB, sourceID, newName string) (*model.Agent, error) 
 		Command:                 source.Command,
 		ThinkingEffort:          source.ThinkingEffort,
 		ThinkingEffortLevels:    make([]string, len(source.ThinkingEffortLevels)),
+		PreferredMode:            source.PreferredMode,
 		PreferredModel:          source.PreferredModel,
 		PreferredThinkingEffort: source.PreferredThinkingEffort,
 		CustomSystemPrompt:      source.CustomSystemPrompt,

@@ -70,6 +70,7 @@ JobNotFound: job not found
 AgentNotFound: Agent not found
 InvalidModelForAgent: Invalid model for this agent
 InvalidThinkingEffort: Invalid thinking effort level for this agent
+InvalidModeForAgent: Invalid mode for this agent
 InvalidAgentName: Invalid agent name
 InvalidAgentIcon: Invalid icon
 InvalidAgentSpecialty: Invalid description

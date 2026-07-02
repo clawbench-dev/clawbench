@@ -1019,6 +1019,7 @@ export default {
       agentThinking: '思考强度',
       agentPreferredModel: '首选模型',
       agentPreferredThinkingEffort: '思考强度',
+      agentPreferredMode: '首选模式',
       agentTransport: '传输模式',
       agentName: '名称',
       agentIcon: '图标',

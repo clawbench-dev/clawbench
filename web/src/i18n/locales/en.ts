@@ -1019,6 +1019,7 @@ export default {
       agentThinking: 'Thinking Effort',
       agentPreferredModel: 'Preferred Model',
       agentPreferredThinkingEffort: 'Thinking Effort',
+      agentPreferredMode: 'Preferred Mode',
       agentTransport: 'Transport',
       agentName: 'Name',
       agentIcon: 'Icon',

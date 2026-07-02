@@ -300,6 +300,20 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 
 	ap := service.AgentPatch{}
 
+	// Validate and apply preferred_mode
+	if v, exists := patch["preferred_mode"]; exists {
+		modeID, _ := v.(string)
+		if modeID != "" {
+			// Validate against ACP available modes for this agent
+			reg := ai.GetAgentCapabilityRegistry()
+			if !reg.IsModeAvailable(agentID, modeID) {
+				writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidModeForAgent")
+				return
+			}
+		}
+		ap.PreferredMode = &modeID
+	}
+
 	// Validate and apply preferred_model
 	if v, exists := patch["preferred_model"]; exists {
 		modelID, _ := v.(string)
@@ -435,6 +449,9 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 	}
 
 	// Update in-memory agent for immediate reflection
+	if ap.PreferredMode != nil {
+		agent.PreferredMode = *ap.PreferredMode
+	}
 	if ap.PreferredModel != nil {
 		agent.PreferredModel = *ap.PreferredModel
 	}

@@ -705,6 +705,10 @@ func buildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		if effectiveThinkingEffort == "" && agent.EffectiveThinkingEffort() != "" {
 			effectiveThinkingEffort = agent.EffectiveThinkingEffort()
 		}
+		// Fall back to agent's preferred mode when frontend didn't specify
+		if effectiveMode == "" && agent.EffectiveModeID() != "" {
+			effectiveMode = agent.EffectiveModeID()
+		}
 	}
 
 	// Resolve effective session ID for CLI.

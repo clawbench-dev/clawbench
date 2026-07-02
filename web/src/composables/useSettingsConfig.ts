@@ -301,13 +301,14 @@ const serverDefaults: Record<string, any> = {
 // in agent YAML files via PATCH /api/agents.
 
 /** Patch an agent's preferred_model or preferred_thinking_effort on the server. */
-export async function patchAgentPref(agentId: string, field: 'preferred_model' | 'preferred_thinking_effort' | 'transport', value: string): Promise<void> {
+export async function patchAgentPref(agentId: string, field: 'preferred_model' | 'preferred_thinking_effort' | 'preferred_mode' | 'transport', value: string): Promise<void> {
   await apiPatch('/api/agents', { id: agentId, [field]: value })
   // Also update the agent object in useAgents so the UI reflects immediately
   const { updateAgentField } = useAgents()
   const fieldMap: Record<string, string> = {
     preferred_model: 'preferredModel',
     preferred_thinking_effort: 'preferredThinkingEffort',
+    preferred_mode: 'preferredMode',
     transport: 'transport',
   }
   updateAgentField(agentId, fieldMap[field] || field, value)
@@ -324,6 +325,7 @@ export async function patchAgentField(agentId: string, field: string, value: any
   const fieldMap: Record<string, string> = {
     preferred_model: 'preferredModel',
     preferred_thinking_effort: 'preferredThinkingEffort',
+    preferred_mode: 'preferredMode',
     transport: 'transport',
     custom_system_prompt: 'customSystemPrompt',
     sort_order: 'sortOrder',

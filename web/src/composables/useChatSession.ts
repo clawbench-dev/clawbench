@@ -164,10 +164,15 @@ export function useChatSession(options: UseChatSessionOptions) {
       const mode = availableModes?.find(m => m.id === modeIdFromServer)
       identity.currentModeName.value = mode?.name || modeIdFromServer
     } else if (!identity.currentModeId.value) {
-      // No server-persisted mode AND no agent-set mode via SSE — clear stale value.
-      // Agent-initiated mode changes (via SSE mode_update/config_update) take priority
-      // and should not be overwritten by an empty DB value (e.g. after stream completion).
-      identity.currentModeName.value = ''
+      // No server-persisted mode AND no agent-set mode via SSE — try agent preference.
+      const preferredMode = identity.loadModePref(currentAgentId.value)
+      if (preferredMode) {
+        identity.currentModeId.value = preferredMode
+        const mode = availableModes?.find(m => m.id === preferredMode)
+        identity.currentModeName.value = mode?.name || preferredMode
+      } else {
+        identity.currentModeName.value = ''
+      }
     }
   }
 

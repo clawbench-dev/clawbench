@@ -130,6 +130,17 @@ const items = computed<AgentItem[]>(() => {
     })
   }
 
+  // Preferred Mode (only for ACP agents with available modes)
+  if (a.acpCommand && a.acpAvailableModes && a.acpAvailableModes.length > 0) {
+    result.push({
+      key: 'preferred_mode',
+      label: t('settings.items.agentPreferredMode'),
+      type: 'select',
+      options: a.acpAvailableModes.map((m: any) => ({ label: m.name || m.id, value: m.id })),
+      patchField: 'preferred_mode',
+    })
+  }
+
   // -- Identity section --
   result.push({ key: 'header-identity', label: t('settings.items.agentSectionIdentity'), type: 'header' })
 
@@ -230,6 +241,8 @@ function getItemValue(item: AgentItem): any {
       return a.preferredModel || (a.models?.length ? a.models.find((m: any) => m.default)?.id || a.models[0]?.id : '')
     case 'preferred_thinking_effort':
       return a.preferredThinkingEffort || ''
+    case 'preferred_mode':
+      return a.preferredMode || ''
     case 'transport':
       return a.transport || 'cli'
     case 'name':

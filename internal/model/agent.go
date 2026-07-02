@@ -22,6 +22,7 @@ type Agent struct {
 	Command                 string       `json:"command"`                 // optional: custom command path for the AI backend CLI
 	ThinkingEffort          string       `json:"thinkingEffort"`          // agent's default thinking effort; not modified by user preference
 	ThinkingEffortLevels    []string     `json:"thinkingEffortLevels"`    // valid levels for this backend, e.g. ["low","medium","high","xhigh"]
+	PreferredMode            string       `json:"preferredMode"`            // user's preferred ACP mode; empty = use agent's default
 	PreferredModel          string       `json:"preferredModel"`          // user's preferred model; empty = use BaseModelID()
 	PreferredThinkingEffort string       `json:"preferredThinkingEffort"` // user's preferred thinking effort; empty = use ThinkingEffort
 	SystemPrompt            string       `json:"systemPrompt"`
@@ -83,6 +84,12 @@ func (a *Agent) EffectiveThinkingEffort() string {
 		return a.PreferredThinkingEffort
 	}
 	return a.ThinkingEffort
+}
+
+// EffectiveModeID returns the mode ID for new ACP sessions.
+// Priority: PreferredMode (user preference) > empty (agent's default from session/new).
+func (a *Agent) EffectiveModeID() string {
+	return a.PreferredMode
 }
 
 // SupportsACP returns true if the agent has ACP capability (has an acp_command configured),

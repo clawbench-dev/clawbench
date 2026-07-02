@@ -225,6 +225,12 @@ function getEffectiveThinkingEffort(agentId: string): string {
     return agent?.preferredThinkingEffort || agent?.thinkingEffort || ''
 }
 
+/** Get the effective mode ID for an agent. Priority: preferredMode > empty. */
+function getEffectiveModeId(agentId: string): string {
+    const agent = agents.value.find(a => a.id === agentId)
+    return agent?.preferredMode || ''
+}
+
 /** Update a single field on an agent in the reactive store (for immediate UI feedback after PATCH). */
 function updateAgentField(agentId: string, field: string, value: any): void {
     const agent = agents.value.find(a => a.id === agentId)
@@ -371,6 +377,7 @@ export function useAgents() {
         getAgentThinkingEffortLevels,
         hasThinkingEffortLevels,
         getEffectiveThinkingEffort,
+        getEffectiveModeId,
         updateAgentField,
         setDefaultAgent,
         canRefreshModels,
