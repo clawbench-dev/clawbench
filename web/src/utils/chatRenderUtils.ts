@@ -20,7 +20,7 @@ export function rewriteImageUrls(html: string, projectRoot: string): string {
       const src = srcMatch[1]
       // Skip absolute/external URLs
       if (/^(https?:|\/\/|^\/)/i.test(src)) {
-        return `<img${cleanAttrs} style="max-width: 200px; max-height: 200px; object-fit: cover; border-radius: 6px; margin: 4px 0; cursor: pointer;" class="lightbox-img">`
+        return `<img${cleanAttrs} class="chat-img lightbox-img">`
       }
       // Try to resolve as a project-local path
       if (projectRoot) {
@@ -37,7 +37,7 @@ export function rewriteImageUrls(html: string, projectRoot: string): string {
         }
       }
     }
-    return `<img${cleanAttrs} style="max-width: 200px; max-height: 200px; object-fit: cover; border-radius: 6px; margin: 4px 0; cursor: pointer;" class="lightbox-img">`
+    return `<img${cleanAttrs} class="chat-img lightbox-img">`
   })
 }
 

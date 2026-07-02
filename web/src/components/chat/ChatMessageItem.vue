@@ -194,6 +194,11 @@ function handleOpenFile(path) {
 }
 
 /* Image thumbnail style */
+.chat-message .chat-img {
+  cursor: pointer;
+  vertical-align: middle;
+}
+
 .chat-message .lightbox-img {
   cursor: pointer;
   transition: transform 0.15s, box-shadow 0.15s;

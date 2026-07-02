@@ -426,6 +426,18 @@
     border-radius: var(--radius-sm);
 }
 
+/* Chat inline image — fixed height for uniform gallery look */
+.chat-message.assistant img.chat-img,
+.chat-message.user img.chat-img {
+    max-height: 200px;
+    height: 200px;
+    width: auto;
+    max-width: 100%;
+    object-fit: cover;
+    border-radius: 6px;
+    margin: 4px 0;
+}
+
 /* Image inside table */
 .markdown-body table img,
 .chat-message.assistant table img,
