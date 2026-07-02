@@ -63,6 +63,7 @@ import { store } from '@/stores/app.ts'
 import { baseName, joinPath } from '@/utils/path.ts'
 import { getFileType } from '@/utils/fileType.ts'
 import { downloadBlob, buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
+import { extractImageName } from '@/utils/lightbox.ts'
 
 const lightboxVisible = ref(false)
 const currentUrl = ref('')
@@ -479,22 +480,6 @@ function handleTouchEnd(e) {
     pinchStartDist.value = 0
 }
 
-function extractImageName(src) {
-    try {
-        // Remove query string and hash
-        const url = new URL(src, window.location.origin)
-        const path = decodeURIComponent(url.pathname)
-        // Extract from /api/local-file/ prefix or just get basename
-        const localPrefix = '/api/local-file/'
-        if (path.startsWith(localPrefix)) {
-            return baseName(path.slice(localPrefix.length))
-        }
-        return baseName(path)
-    } catch {
-        return ''
-    }
-}
-
 function collectMdImages(container, clickedImg) {
     const imgs = container.querySelectorAll('img')
     const list = []
@@ -512,6 +497,7 @@ function collectMdImages(container, clickedImg) {
 
 provide('openLightbox', open)
 provide('openSvgLightbox', openSvg)
+provide('openMdImages', openMdImages)
 
 onMounted(() => {
     document.addEventListener('mousemove', handleMouseMove)

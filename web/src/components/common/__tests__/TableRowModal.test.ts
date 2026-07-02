@@ -65,6 +65,21 @@ vi.mock('@/utils/clipboard.ts', () => ({
   copyText: mockCopyText,
 }))
 
+vi.mock('@/composables/useCodeBlockHeader.ts', () => ({
+  handleCodeBlockClick: vi.fn(() => false),
+  handleTableBlockClick: vi.fn(() => false),
+}))
+
+vi.mock('@/utils/lightbox.ts', () => ({
+  extractImageName: (src: string) => {
+    try {
+      const path = new URL(src, 'http://localhost').pathname
+      const prefix = '/api/local-file/'
+      return path.startsWith(prefix) ? path.slice(prefix.length).split('/').pop() || '' : path.split('/').pop() || ''
+    } catch { return '' }
+  },
+}))
+
 vi.mock('@/stores/app.ts', () => ({
   store: { state: { projectRoot: '/tmp' }, setProject: vi.fn().mockResolvedValue(undefined) },
 }))
@@ -314,5 +329,67 @@ describe('TableRowModal', () => {
       await nextTick()
       await vi.waitFor(() => expect(mockOpenFilePath).toHaveBeenCalledWith('/bar.go', undefined, undefined))
     }
+  })
+
+  it('opens lightbox on image click', async () => {
+    const mockOpenLightbox = vi.fn()
+    const mockOpenMdImages = vi.fn()
+    const data = {
+      headers: ['Preview'],
+      rows: [['<img class="chat-img lightbox-img" src="/api/local-file/img.png" alt="test">']],
+      currentIndex: 0,
+    }
+    wrapper = mount(TableRowModal, {
+      props: { data },
+      global: {
+        stubs: { ModalDialog: MockModalDialog as any },
+        provide: {
+          toast: { show: vi.fn() },
+          switchTab: vi.fn(),
+          hotSwitchProject: vi.fn(),
+          openLightbox: mockOpenLightbox,
+          openMdImages: mockOpenMdImages,
+        },
+      },
+    })
+    const img = wrapper.element.querySelector('.lightbox-img') as HTMLElement
+    expect(img).toBeTruthy()
+    img.click()
+    await nextTick()
+    expect(mockOpenLightbox).toHaveBeenCalled()
+    expect(mockOpenMdImages).not.toHaveBeenCalled()
+  })
+
+  it('opens lightbox with md images navigation when multiple images exist', async () => {
+    const mockOpenLightbox = vi.fn()
+    const mockOpenMdImages = vi.fn()
+    const data = {
+      headers: ['Preview'],
+      rows: [['<img class="chat-img lightbox-img" src="/api/local-file/a.png" alt="A"><img class="chat-img lightbox-img" src="/api/local-file/b.png" alt="B">']],
+      currentIndex: 0,
+    }
+    wrapper = mount(TableRowModal, {
+      props: { data },
+      global: {
+        stubs: { ModalDialog: MockModalDialog as any },
+        provide: {
+          toast: { show: vi.fn() },
+          switchTab: vi.fn(),
+          hotSwitchProject: vi.fn(),
+          openLightbox: mockOpenLightbox,
+          openMdImages: mockOpenMdImages,
+        },
+      },
+    })
+    const imgs = wrapper.element.querySelectorAll('.lightbox-img')
+    expect(imgs.length).toBe(2)
+    // Click the second image
+    imgs[1].click()
+    await nextTick()
+    expect(mockOpenMdImages).toHaveBeenCalled()
+    const [list, startIdx] = mockOpenMdImages.mock.calls[0]
+    expect(list.length).toBe(2)
+    expect(startIdx).toBe(1)
+    expect(list[1].name).toBe('B')
   })
 })
