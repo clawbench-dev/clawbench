@@ -56,18 +56,7 @@
       </div>
     </template>
     <template v-else-if="group.entryType === 'switch'">
-      <div class="settings-group__switch-row">
-        <span class="settings-group__switch-label">{{ t(group.entryField.labelKey) }}</span>
-        <label class="settings-group__switch">
-          <input
-            type="checkbox"
-            class="settings-group__switch-input"
-            :checked="!!localEntryValue"
-            @change="handlePanelSwitchToggle"
-          />
-          <span class="settings-group__switch-track"></span>
-        </label>
-      </div>
+      <!-- No duplicate switch inside panel — the entry row switch is sufficient -->
     </template>
     <!-- Render all visible fields with section headers injected -->
     <template v-for="entry in panelFields" :key="entry.type === 'header' ? entry.headerKey : entry.field.key">
@@ -268,12 +257,6 @@ async function handleSwitchToggle(e: Event) {
     // Immediate PATCH: switch OFF is a self-contained disable action
     await immediateSwitchOff()
   }
-}
-
-/** Switch toggle inside expanded panel */
-function handlePanelSwitchToggle(e: Event) {
-  const checked = (e.target as HTMLInputElement).checked
-  localValues.value[entryFieldKey.value] = checked
 }
 
 // ── Expand / Cancel / Save ──
@@ -527,20 +510,6 @@ watch(() => props.forceClose, (val) => {
   font-size: 15px;
   color: var(--accent-color);
   font-weight: 600;
-}
-
-/* Switch inside panel */
-.settings-group__switch-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 16px;
-  background: var(--bg-primary);
-}
-
-.settings-group__switch-label {
-  font-size: 15px;
-  color: var(--text-primary);
 }
 
 /* iOS-style switch toggle */
