@@ -255,7 +255,7 @@ function handleOpenFile(path) {
 }
 
 /* Speak button loading spinner animation */
-.chat-speak-btn.loading .speak-spinner {
+.chat-action-btn.loading .speak-spinner {
     animation: speak-spin 1s linear infinite;
 }
 
