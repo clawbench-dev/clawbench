@@ -21,6 +21,8 @@
     margin: 0;
     border-radius: var(--radius-sm);
     overflow: hidden;
+    width: fit-content;
+    max-width: 100%;
 }
 
 /* ─── Header bar ─── */
