@@ -183,12 +183,9 @@ tts:
   engine: "moss-nano"
   moss_nano:
     model_dir: ""          # ONNX model directory; leave empty for auto-detection or CLI auto-download
-    prompt_speech: ""      # Reference audio path (for voice cloning); leave empty to use built-in voice
     voice: "Junhao"        # Built-in voice preset (ONNX backend)
     backend: "onnx"        # Inference backend: "onnx" (CPU) or "pytorch" (requires GPU)
 ```
-
-> 💡 `prompt_speech` is used for zero-shot voice cloning: provide a reference audio clip (e.g., `.clawbench/moss-nano-models/ref_zh.wav`), and the model will clone its voice. Leave empty to use the built-in voice preset specified by `voice`.
 
 ### Installation Steps
 

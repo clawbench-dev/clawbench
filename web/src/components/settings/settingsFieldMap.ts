@@ -205,7 +205,6 @@ export const categoryGroups: Record<string, ConfigGroup[]> = {
       ]},
       { when: 'moss-nano', fields: [
         { labelKey: 'settings.items.mossNanoModelDir', descriptionKey: 'settings.items.mossNanoModelDirDesc', key: 'tts.moss_nano.model_dir', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsMossNanoHeader' },
-        { labelKey: 'settings.items.mossNanoPromptSpeech', descriptionKey: 'settings.items.mossNanoPromptSpeechDesc', key: 'tts.moss_nano.prompt_speech', type: 'text', source: 'server' },
         { labelKey: 'settings.items.mossNanoVoice', descriptionKey: 'settings.items.mossNanoVoiceDesc', key: 'tts.moss_nano.voice', type: 'select', source: 'server', options: [
           { labelKey: 'settings.items.voiceMossJunhao', value: 'Junhao' },
         ]},

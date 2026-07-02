@@ -68,10 +68,9 @@ tts:
     max_cache_files: 0
     max_summarize_runes: 0
     moss_nano:
-        backend: ""
+        backend: onnx
         model_dir: /path/to/models
-        prompt_speech: ""
-        voice: ""
+        voice: Test
     piper:
         length_scale: 1.2
         model_path: /path/to/model.onnx

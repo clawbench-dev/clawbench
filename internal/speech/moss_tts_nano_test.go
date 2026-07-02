@@ -19,7 +19,6 @@ import (
 func TestNewMossNanoProvider_Defaults(t *testing.T) {
 	p := NewMossNanoProvider()
 	assert.Equal(t, "", p.ModelDir)
-	assert.Equal(t, "", p.PromptSpeech)
 	assert.Equal(t, "onnx", p.Backend)
 	assert.Equal(t, "Junhao", p.Voice)
 }

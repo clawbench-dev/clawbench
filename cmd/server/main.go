@@ -347,9 +347,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			m.Backend = cfg.TTS.MossNano.Backend
 		}
 		m.ModelDir = speech.ResolveMossNanoModelDir(cfg.TTS.MossNano.ModelDir)
-		if cfg.TTS.MossNano.PromptSpeech != "" {
-			m.PromptSpeech = cfg.TTS.MossNano.PromptSpeech
-		}
 		if cfg.TTS.MossNano.Voice != "" {
 			m.Voice = cfg.TTS.MossNano.Voice
 		}
@@ -359,7 +356,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			slog.String("engine", "moss-nano"),
 			slog.String("backend", m.Backend),
 			slog.String("model_dir", m.ModelDir),
-			slog.String("prompt_speech", m.PromptSpeech),
 			slog.String("voice", m.Voice),
 		)
 	default:
@@ -1072,9 +1068,6 @@ func newMossNanoTTSProvider(cfg model.Config) *speech.MossNanoProvider {
 		m.Backend = cfg.TTS.MossNano.Backend
 	}
 	m.ModelDir = speech.ResolveMossNanoModelDir(cfg.TTS.MossNano.ModelDir)
-	if cfg.TTS.MossNano.PromptSpeech != "" {
-		m.PromptSpeech = cfg.TTS.MossNano.PromptSpeech
-	}
 	if cfg.TTS.MossNano.Voice != "" {
 		m.Voice = cfg.TTS.MossNano.Voice
 	}

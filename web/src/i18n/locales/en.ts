@@ -1218,8 +1218,6 @@ export default {
       kokoroLangDesc: 'Language code for Kokoro synthesis, e.g. zh-cn, en-us',
       mossNanoModelDir: 'Model Directory',
       mossNanoModelDirDesc: 'Directory containing MOSS-Nano model files',
-      mossNanoPromptSpeech: 'Reference Audio',
-      mossNanoPromptSpeechDesc: 'Reference audio file path for voice cloning',
       mossNanoVoice: 'Voice Preset',
       mossNanoVoiceDesc: 'Built-in voice preset name for MOSS-Nano',
       mossNanoBackend: 'Inference Backend',

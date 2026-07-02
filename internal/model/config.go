@@ -155,10 +155,9 @@ type KokoroConfig struct {
 
 // MossNanoConfig holds configuration for the MOSS-TTS-Nano TTS engine.
 type MossNanoConfig struct {
-	ModelDir     string `yaml:"model_dir"`     // Directory for ONNX model files (empty = models/moss-nano-models; CLI auto-downloads if missing)
-	PromptSpeech string `yaml:"prompt_speech"` // Path to reference audio for voice cloning (empty = use built-in voice preset)
-	Voice        string `yaml:"voice"`         // Built-in voice preset for ONNX backend when no prompt-speech (default: "Junhao")
-	Backend      string `yaml:"backend"`       // Inference backend: "onnx" (default, CPU) or "pytorch" (requires GPU)
+	ModelDir string `yaml:"model_dir"` // Directory for ONNX model files (empty = models/moss-nano-models; CLI auto-downloads if missing)
+	Voice    string `yaml:"voice"`     // Built-in voice preset for ONNX backend (default: "Junhao")
+	Backend  string `yaml:"backend"`   // Inference backend: "onnx" (default, CPU) or "pytorch" (requires GPU)
 }
 
 // APIConfig holds configuration for the API-based summarization backend.

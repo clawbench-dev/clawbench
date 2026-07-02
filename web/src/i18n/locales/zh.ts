@@ -1218,8 +1218,6 @@ export default {
       kokoroLangDesc: 'Kokoro 合成的语言代码，如 zh-cn、en-us',
       mossNanoModelDir: '模型目录',
       mossNanoModelDirDesc: 'MOSS-Nano 模型文件所在目录',
-      mossNanoPromptSpeech: '参考音频',
-      mossNanoPromptSpeechDesc: '用于声音克隆的参考音频文件路径',
       mossNanoVoice: '预设音色',
       mossNanoVoiceDesc: 'MOSS-Nano 内置的预设音色名称',
       mossNanoBackend: '推理后端',

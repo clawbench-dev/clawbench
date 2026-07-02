@@ -15,16 +15,13 @@ import (
 type MossNanoProvider struct {
 	CLISpeechProvider
 	// ModelDir is the directory containing MOSS-TTS-Nano ONNX model files.
-	// If empty, models are auto-downloaded by the CLI on first run (to ./models/),
-	// or resolved to models/moss-nano-models/ (under BinDir).
+	// If empty, models are auto-detected under {BinDir}/models/moss-nano-models/,
+	// or CLI auto-downloads on first run.
 	ModelDir string
-	// PromptSpeech is the path to a reference audio file for voice cloning.
-	// If empty, the model uses a built-in voice preset ("Junhao").
-	PromptSpeech string
 	// Backend selects the inference backend: "onnx" (default, CPU-friendly) or "pytorch" (requires GPU).
 	Backend string
-	// Voice is the built-in voice preset name for ONNX backend when no prompt-speech is provided.
-	// Default: "Junhao". Only used with ONNX backend.
+	// Voice is the built-in voice preset name for ONNX backend.
+	// Default: "Junhao".
 	Voice string
 }
 
@@ -49,9 +46,7 @@ func NewMossNanoProvider() *MossNanoProvider {
 			if p.ModelDir != "" {
 				args = append(args, "--onnx-model-dir", p.ModelDir)
 			}
-			if p.PromptSpeech != "" {
-				args = append(args, "--prompt-speech", p.PromptSpeech)
-			} else if p.Voice != "" {
+			if p.Voice != "" {
 				args = append(args, "--voice", p.Voice)
 			}
 			return args

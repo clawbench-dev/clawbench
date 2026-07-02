@@ -183,12 +183,9 @@ tts:
   engine: "moss-nano"
   moss_nano:
     model_dir: ""          # ONNX 模型目录，留空则自动检测或 CLI 自动下载
-    prompt_speech: ""      # 参考音频路径（音色克隆），留空则使用内置音色
     voice: "Junhao"        # 内置音色预设（ONNX 后端）
     backend: "onnx"        # 推理后端: "onnx" (CPU) 或 "pytorch" (需GPU)
 ```
-
-> 💡 `prompt_speech` 用于零样本音色克隆：提供一段参考音频（如 `.clawbench/moss-nano-models/ref_zh.wav`），模型会复刻其音色。留空则使用 `voice` 指定的内置音色预设。
 
 ### 安装步骤
 

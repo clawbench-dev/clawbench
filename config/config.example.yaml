@@ -141,12 +141,11 @@ tts:
   #   voices_path: ""
   #   lang: "cmn"
 
-  # --- Combo 4: MOSS-TTS-Nano (local offline, multilingual, voice cloning) ---
-  # --- 组合4: MOSS-TTS-Nano（本地离线，多语言，音色克隆） ---
+  # --- Combo 4: MOSS-TTS-Nano (local offline, multilingual) ---
+  # --- 组合4: MOSS-TTS-Nano（本地离线，多语言） ---
   # engine: "moss-nano"
   # moss_nano:
   #   model_dir: ""
-  #   prompt_speech: ""
   #   voice: "Junhao"
   #   backend: "onnx"
 
