@@ -651,8 +651,7 @@ jobs:
           mkdir -p "$PLATFORM_DIR/bin"
           cp pkg-linux/clawbench/clawbench "$PLATFORM_DIR/bin/clawbench"
           chmod +x "$PLATFORM_DIR/bin/clawbench"
-          cp -r public "$PLATFORM_DIR/public"
-          # Update version in package.json
+          cp -r config "$PLATFORM_DIR/config"
           node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$PLATFORM_DIR/package.json','utf8'));p.version='$VERSION';fs.writeFileSync('$PLATFORM_DIR/package.json',JSON.stringify(p,null,2)+'\n')"
 
           # --- @xulongzhe/clawbench-linux-arm64 ---
@@ -660,7 +659,7 @@ jobs:
           mkdir -p "$PLATFORM_DIR/bin"
           cp pkg-linux-arm64/clawbench/clawbench "$PLATFORM_DIR/bin/clawbench"
           chmod +x "$PLATFORM_DIR/bin/clawbench"
-          cp -r public "$PLATFORM_DIR/public"
+          cp -r config "$PLATFORM_DIR/config"
           node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$PLATFORM_DIR/package.json','utf8'));p.version='$VERSION';fs.writeFileSync('$PLATFORM_DIR/package.json',JSON.stringify(p,null,2)+'\n')"
 
           # --- @xulongzhe/clawbench-darwin-x64 ---
@@ -668,7 +667,7 @@ jobs:
           mkdir -p "$PLATFORM_DIR/bin"
           cp pkg-mac-amd64/clawbench/clawbench "$PLATFORM_DIR/bin/clawbench"
           chmod +x "$PLATFORM_DIR/bin/clawbench"
-          cp -r public "$PLATFORM_DIR/public"
+          cp -r config "$PLATFORM_DIR/config"
           node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$PLATFORM_DIR/package.json','utf8'));p.version='$VERSION';fs.writeFileSync('$PLATFORM_DIR/package.json',JSON.stringify(p,null,2)+'\n')"
 
           # --- @xulongzhe/clawbench-darwin-arm64 ---
@@ -676,14 +675,14 @@ jobs:
           mkdir -p "$PLATFORM_DIR/bin"
           cp pkg-mac-arm64/clawbench/clawbench "$PLATFORM_DIR/bin/clawbench"
           chmod +x "$PLATFORM_DIR/bin/clawbench"
-          cp -r public "$PLATFORM_DIR/public"
+          cp -r config "$PLATFORM_DIR/config"
           node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$PLATFORM_DIR/package.json','utf8'));p.version='$VERSION';fs.writeFileSync('$PLATFORM_DIR/package.json',JSON.stringify(p,null,2)+'\n')"
 
           # --- @xulongzhe/clawbench-win32-x64 ---
           PLATFORM_DIR="npm/platforms/win32-x64"
           mkdir -p "$PLATFORM_DIR/bin"
           cp pkg-windows/clawbench/clawbench.exe "$PLATFORM_DIR/bin/clawbench.exe"
-          cp -r public "$PLATFORM_DIR/public"
+          cp -r config "$PLATFORM_DIR/config"
           node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$PLATFORM_DIR/package.json','utf8'));p.version='$VERSION';fs.writeFileSync('$PLATFORM_DIR/package.json',JSON.stringify(p,null,2)+'\n')"
 
           # --- Update main package ---

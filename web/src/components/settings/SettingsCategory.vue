@@ -323,6 +323,9 @@ async function handleUpdate(item: any, value: any) {
   }
   try {
     const result = await setServerValue(item.key, value)
+    if (item.key === 'terminal.enabled') {
+      loadTerminalStatus()
+    }
     if (result.needsRestart && result.changedColdFields.length > 0) {
       emit('restartNeeded', result.changedColdFields)
     }

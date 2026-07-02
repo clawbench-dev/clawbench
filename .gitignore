@@ -104,4 +104,4 @@ skills-lock.json
 # npm publish temporary files
 npm/tmp/
 npm/platforms/*/bin/
-npm/platforms/*/public/
+npm/platforms/*/config/

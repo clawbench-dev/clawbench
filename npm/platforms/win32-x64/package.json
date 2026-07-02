@@ -5,5 +5,6 @@
   "os": ["win32"],
   "cpu": ["x64"],
   "preferUnplugged": true,
-  "files": ["bin/", "public/"]
+  "files": ["bin/", "config/"],
+  "license": "MIT"
 }
