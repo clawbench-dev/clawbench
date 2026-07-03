@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getServerFieldToLabelKey, categoryItems, categoryGroups, getAllGroupFields, getGroupById, getCategoryForGroup } from '@/components/settings/settingsFieldMap'
+import { getServerFieldToLabelKey, categoryItems, categoryGroups, getGroupById, getCategoryForGroup } from '@/components/settings/settingsFieldMap'
 
 describe('settingsFieldMap', () => {
   it('maps all server-side dot-path keys to i18n label keys', () => {
@@ -93,74 +93,43 @@ describe('settingsFieldMap', () => {
     expect(item!.dependsOn).toBeUndefined()
   })
 
-  // ── Config Group tests ──
+  // ── All groups have been flattened to categoryItems ──
 
-  it('categoryGroups only has tts (others flattened to categoryItems)', () => {
-    expect(categoryGroups['tts']).toBeDefined()
-    expect(categoryGroups['summarization']).toEqual([])
-    expect(categoryGroups['rag']).toEqual([])
-    expect(categoryGroups['portForward']).toEqual([])
-    expect(categoryGroups['push']).toEqual([])
+  it('categoryGroups is empty (all groups flattened)', () => {
+    expect(Object.keys(categoryGroups)).toHaveLength(0)
   })
 
-  it('each group has a unique groupId', () => {
-    const ids = new Set<string>()
-    for (const groups of Object.values(categoryGroups)) {
-      for (const g of groups) {
-        expect(ids.has(g.groupId)).toBe(false)
-        ids.add(g.groupId)
-      }
-    }
-  })
-
-  it('group field keys are all in serverFieldToLabelKey', () => {
-    const map = getServerFieldToLabelKey()
-    for (const groups of Object.values(categoryGroups)) {
-      for (const group of groups) {
-        for (const field of getAllGroupFields(group)) {
-          if (field.source === 'server' && !field.key.startsWith('_')) {
-            expect(map[field.key]).toBeDefined()
-          }
-        }
-      }
-    }
-  })
-
-  it('no overlap between group field keys and standalone categoryItems keys', () => {
-    for (const [category, groups] of Object.entries(categoryGroups)) {
-      const groupKeys = new Set<string>()
-      for (const g of groups) {
-        for (const f of getAllGroupFields(g)) groupKeys.add(f.key)
-      }
-      const standaloneItems = categoryItems[category] ?? []
-      for (const item of standaloneItems) {
-        expect(groupKeys.has(item.key)).toBe(false)
-      }
-    }
-  })
-
-  it('tts group has no nonExpandValues (all engines expand)', () => {
-    const ttsGroup = categoryGroups['tts']?.[0]
-    expect(ttsGroup).toBeDefined()
-    expect(ttsGroup!.nonExpandValues ?? []).toHaveLength(0)
-  })
-
-  // ── Lookup helpers ──
-
-  it('getGroupById finds tts-group', () => {
-    expect(getGroupById('tts-group')).toBeDefined()
-    expect(getGroupById('tts-group')!.entryType).toBe('select')
-  })
-
-  it('getGroupById returns undefined for unknown groupId', () => {
+  it('getGroupById returns undefined for any groupId', () => {
+    expect(getGroupById('tts-group')).toBeUndefined()
     expect(getGroupById('nonexistent-group')).toBeUndefined()
   })
 
-  it('getCategoryForGroup returns correct category for tts', () => {
-    expect(getCategoryForGroup('tts-group')).toBe('tts')
+  it('getCategoryForGroup returns undefined for any groupId', () => {
+    expect(getCategoryForGroup('tts-group')).toBeUndefined()
+    expect(getCategoryForGroup('nonexistent-group')).toBeUndefined()
   })
 
-  it('getCategoryForGroup returns undefined for unknown groupId', () => {
-    expect(getCategoryForGroup('nonexistent-group')).toBeUndefined()
+  // ── TTS flattened items ──
+
+  it('tts categoryItems has engine selector and per-engine fields with dependsOn', () => {
+    const ttsItems = categoryItems['tts']
+    const engineItem = ttsItems.find(i => i.key === 'tts.engine')
+    expect(engineItem).toBeDefined()
+    expect(engineItem!.type).toBe('select')
+
+    const voiceItem = ttsItems.find(i => i.key === 'tts.voice')
+    expect(voiceItem).toBeDefined()
+
+    const piperItem = ttsItems.find(i => i.key === 'tts.piper.model_path')
+    expect(piperItem).toBeDefined()
+    expect(piperItem!.dependsOn).toEqual({ key: 'tts.engine', value: 'piper' })
+
+    const kokoroItem = ttsItems.find(i => i.key === 'tts.kokoro.model_path')
+    expect(kokoroItem).toBeDefined()
+    expect(kokoroItem!.dependsOn).toEqual({ key: 'tts.engine', value: 'kokoro' })
+
+    const mossNanoItem = ttsItems.find(i => i.key === 'tts.moss_nano.model_dir')
+    expect(mossNanoItem).toBeDefined()
+    expect(mossNanoItem!.dependsOn).toEqual({ key: 'tts.engine', value: 'moss-nano' })
   })
 })

@@ -3,10 +3,9 @@
  *
  * Used by:
  * - SettingsCategory.vue (renders the UI)
- * - SettingsGroupPanel.vue (renders atomic config group panels)
  * - SettingsRestartDialog.vue (translates changed_cold_fields via serverFieldToLabelKey)
  *
- * Adding a new setting? Add it here (or in categoryGroups for group settings).
+ * Adding a new setting? Add it here.
  * Both the category page and the restart dialog will pick it up automatically.
  */
 
@@ -80,7 +79,7 @@ const CLI_BACKENDS = ['claude', 'codebuddy', 'opencode', 'codex', 'qoder', 'vecl
 
 /**
  * Complete category → items mapping.
- * Items that belong to a config group are defined in categoryGroups instead.
+ * Per-engine fields use dependsOn for conditional visibility (e.g., piper fields only when tts.engine=piper).
  */
 export const categoryItems: Record<string, ItemSpec[]> = {
   appearance: [
@@ -137,8 +136,33 @@ export const categoryItems: Record<string, ItemSpec[]> = {
     { labelKey: 'settings.items.terminalMaxSessions', descriptionKey: 'settings.items.terminalMaxSessionsDesc', key: 'terminal.max_sessions', type: 'number', source: 'server' },
     { labelKey: 'settings.items.terminalBufferLines', descriptionKey: 'settings.items.terminalBufferLinesDesc', key: 'terminal.buffer_lines', type: 'number', source: 'server' },
   ],
-  // TTS: all fields moved to categoryGroups
-  tts: [],
+  // TTS: flattened from group (engine selector + per-engine fields via dependsOn)
+  tts: [
+    { labelKey: 'settings.items.ttsEngine', descriptionKey: 'settings.items.ttsEngineDesc', key: 'tts.engine', type: 'select', source: 'server', options: [
+      { labelKey: 'settings.items.ttsEngineEdge', value: 'edge' },
+      { labelKey: 'settings.items.ttsEnginePiper', value: 'piper' },
+      { labelKey: 'settings.items.ttsEngineKokoro', value: 'kokoro' },
+      { labelKey: 'settings.items.ttsEngineMossNano', value: 'moss-nano' },
+    ]},
+    { labelKey: 'settings.items.ttsVoice', descriptionKey: 'settings.items.ttsVoiceDesc', key: 'tts.voice', type: 'select', source: 'server' },
+    { labelKey: 'settings.items.ttsSpeed', descriptionKey: 'settings.items.ttsSpeedDesc', key: 'tts.speed', type: 'slider', source: 'server', min: 0.5, max: 3, step: 0.1 },
+    { labelKey: 'settings.items.ttsMaxCacheFiles', descriptionKey: 'settings.items.ttsMaxCacheFilesDesc', key: 'tts.max_cache_files', type: 'number', source: 'server' },
+    // Piper-specific fields
+    { labelKey: 'settings.items.piperModelPath', descriptionKey: 'settings.items.piperModelPathDesc', key: 'tts.piper.model_path', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsPiperHeader', dependsOn: { key: 'tts.engine', value: 'piper' } },
+    { labelKey: 'settings.items.piperNoiseScale', descriptionKey: 'settings.items.piperNoiseScaleDesc', key: 'tts.piper.noise_scale', type: 'number', source: 'server', min: 0, max: 1, step: 0.001, dependsOn: { key: 'tts.engine', value: 'piper' } },
+    { labelKey: 'settings.items.piperLengthScale', descriptionKey: 'settings.items.piperLengthScaleDesc', key: 'tts.piper.length_scale', type: 'number', source: 'server', min: 0.1, max: 5, step: 0.1, dependsOn: { key: 'tts.engine', value: 'piper' } },
+    { labelKey: 'settings.items.piperSentenceSilence', descriptionKey: 'settings.items.piperSentenceSilenceDesc', key: 'tts.piper.sentence_silence', type: 'number', source: 'server', min: 0, max: 5, step: 0.1, dependsOn: { key: 'tts.engine', value: 'piper' } },
+    // Kokoro-specific fields
+    { labelKey: 'settings.items.kokoroModelPath', descriptionKey: 'settings.items.kokoroModelPathDesc', key: 'tts.kokoro.model_path', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsKokoroHeader', dependsOn: { key: 'tts.engine', value: 'kokoro' } },
+    { labelKey: 'settings.items.kokoroVoicesPath', descriptionKey: 'settings.items.kokoroVoicesPathDesc', key: 'tts.kokoro.voices_path', type: 'text', source: 'server', dependsOn: { key: 'tts.engine', value: 'kokoro' } },
+    { labelKey: 'settings.items.kokoroLang', descriptionKey: 'settings.items.kokoroLangDesc', key: 'tts.kokoro.lang', type: 'text', source: 'server', dependsOn: { key: 'tts.engine', value: 'kokoro' } },
+    // Moss-Nano-specific fields
+    { labelKey: 'settings.items.mossNanoModelDir', descriptionKey: 'settings.items.mossNanoModelDirDesc', key: 'tts.moss_nano.model_dir', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsMossNanoHeader', dependsOn: { key: 'tts.engine', value: 'moss-nano' } },
+    { labelKey: 'settings.items.mossNanoBackend', descriptionKey: 'settings.items.mossNanoBackendDesc', key: 'tts.moss_nano.backend', type: 'select', source: 'server', dependsOn: { key: 'tts.engine', value: 'moss-nano' }, options: [
+      { labelKey: 'settings.items.mossNanoBackendOnnx', value: 'onnx' },
+      { labelKey: 'settings.items.mossNanoBackendPytorch', value: 'pytorch' },
+    ]},
+  ],
   // Summarization: flattened from group
   summarization: [
     { labelKey: 'settings.items.summarizeBackend', descriptionKey: 'settings.items.summarizeBackendDesc', key: 'summarize.backend', type: 'select', source: 'server', options: [
@@ -203,59 +227,7 @@ export const categoryItems: Record<string, ItemSpec[]> = {
 
 // ── Config group definitions ────────────────────────────────
 
-export const categoryGroups: Record<string, ConfigGroup[]> = {
-  tts: [{
-    groupId: 'tts-group',
-    entryType: 'select',
-    entryField: {
-      labelKey: 'settings.items.ttsEngine',
-      descriptionKey: 'settings.items.ttsEngineDesc',
-      key: 'tts.engine',
-      type: 'select',
-      source: 'server',
-      options: [
-        { labelKey: 'settings.items.ttsEngineEdge', value: 'edge' },
-        { labelKey: 'settings.items.ttsEnginePiper', value: 'piper' },
-        { labelKey: 'settings.items.ttsEngineKokoro', value: 'kokoro' },
-        { labelKey: 'settings.items.ttsEngineMossNano', value: 'moss-nano' },
-      ],
-    },
-    commonFields: [
-      { labelKey: 'settings.items.ttsVoice', descriptionKey: 'settings.items.ttsVoiceDesc', key: 'tts.voice', type: 'select', source: 'server' },
-      { labelKey: 'settings.items.ttsSpeed', descriptionKey: 'settings.items.ttsSpeedDesc', key: 'tts.speed', type: 'slider', source: 'server', min: 0.5, max: 3, step: 0.1 },
-      { labelKey: 'settings.items.ttsMaxCacheFiles', descriptionKey: 'settings.items.ttsMaxCacheFilesDesc', key: 'tts.max_cache_files', type: 'number', source: 'server' },
-    ],
-    optionSubFields: [
-      { when: 'edge', fields: [] },
-      { when: 'piper', fields: [
-        { labelKey: 'settings.items.piperModelPath', descriptionKey: 'settings.items.piperModelPathDesc', key: 'tts.piper.model_path', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsPiperHeader' },
-        { labelKey: 'settings.items.piperNoiseScale', descriptionKey: 'settings.items.piperNoiseScaleDesc', key: 'tts.piper.noise_scale', type: 'number', source: 'server', min: 0, max: 1, step: 0.001 },
-        { labelKey: 'settings.items.piperLengthScale', descriptionKey: 'settings.items.piperLengthScaleDesc', key: 'tts.piper.length_scale', type: 'number', source: 'server', min: 0.1, max: 5, step: 0.1 },
-        { labelKey: 'settings.items.piperSentenceSilence', descriptionKey: 'settings.items.piperSentenceSilenceDesc', key: 'tts.piper.sentence_silence', type: 'number', source: 'server', min: 0, max: 5, step: 0.1 },
-      ]},
-      { when: 'kokoro', fields: [
-        { labelKey: 'settings.items.kokoroModelPath', descriptionKey: 'settings.items.kokoroModelPathDesc', key: 'tts.kokoro.model_path', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsKokoroHeader' },
-        { labelKey: 'settings.items.kokoroVoicesPath', descriptionKey: 'settings.items.kokoroVoicesPathDesc', key: 'tts.kokoro.voices_path', type: 'text', source: 'server' },
-        { labelKey: 'settings.items.kokoroLang', descriptionKey: 'settings.items.kokoroLangDesc', key: 'tts.kokoro.lang', type: 'text', source: 'server' },
-      ]},
-      { when: 'moss-nano', fields: [
-        { labelKey: 'settings.items.mossNanoModelDir', descriptionKey: 'settings.items.mossNanoModelDirDesc', key: 'tts.moss_nano.model_dir', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsMossNanoHeader' },
-        { labelKey: 'settings.items.mossNanoBackend', descriptionKey: 'settings.items.mossNanoBackendDesc', key: 'tts.moss_nano.backend', type: 'select', source: 'server', options: [
-          { labelKey: 'settings.items.mossNanoBackendOnnx', value: 'onnx' },
-          { labelKey: 'settings.items.mossNanoBackendPytorch', value: 'pytorch' },
-        ]},
-      ]},
-    ],
-  }],
-
-  summarization: [],
-
-  rag: [],
-
-  portForward: [],
-
-  push: [],
-}
+export const categoryGroups: Record<string, ConfigGroup[]> = {}
 
 // ── Helpers ─────────────────────────────────────────────────
 
@@ -323,7 +295,7 @@ export function getCategoryForGroup(groupId: string): string | undefined {
 
 /**
  * Voice options per TTS engine.
- * Used by SettingsGroupPanel.vue to dynamically resolve tts.voice select options
+ * Used by SettingsCategory.vue to dynamically resolve tts.voice select options
  * based on the currently selected tts.engine value (local preview inside panel).
  *
  * Labels are i18n keys — resolved at render time for locale support.

@@ -338,19 +338,11 @@ describe('SettingsCategory', () => {
 
   // ─── TTS category ──────────────────────────────
   describe('tts category', () => {
-    it('renders TTS config as a group entry row with chevron', () => {
+    it('renders TTS engine as a standalone SettingsItem', () => {
       const wrapper = mountCategory('tts')
-      const entryRows = wrapper.findAll('.settings-group-entry')
-      expect(entryRows.length).toBe(1)
-      expect(entryRows[0].text()).toContain('TTS引擎')
-      expect(entryRows[0].find('.settings-group-entry__chevron').exists()).toBe(true)
-    })
-
-    it('emits navigate with tts:tts-group on group entry click', async () => {
-      const wrapper = mountCategory('tts')
-      await wrapper.find('.settings-group-entry').trigger('click')
-      expect(wrapper.emitted('navigate')).toBeTruthy()
-      expect(wrapper.emitted('navigate')![0]).toEqual(['tts:tts-group'])
+      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
+      const engineItem = allItems.find(i => i.props().label === 'TTS引擎')
+      expect(engineItem).toBeTruthy()
     })
   })
 
@@ -462,46 +454,6 @@ describe('SettingsCategory', () => {
       const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
       const jpushItem = allItems.find(i => i.props().label === '启用极光推送')
       expect(jpushItem).toBeTruthy()
-    })
-  })
-
-  // ─── Group drill-down routing ──────────────────────────────
-  describe('group drill-down', () => {
-    it('renders SettingsGroupPanel when categoryId matches group pattern', () => {
-      const wrapper = mount(SettingsCategory, {
-        props: { categoryId: 'tts:tts-group' },
-        global: {
-          plugins: [i18n],
-          stubs: { SettingsGroupPanel: true, SettingsItem: true },
-        },
-      })
-      expect(wrapper.findComponent({ name: 'SettingsGroupPanel' }).exists()).toBe(true)
-    })
-
-    it('passes correct group prop to SettingsGroupPanel', () => {
-      const wrapper = mount(SettingsCategory, {
-        props: { categoryId: 'tts:tts-group' },
-        global: {
-          plugins: [i18n],
-          stubs: { SettingsGroupPanel: true, SettingsItem: true },
-        },
-      })
-      const panel = wrapper.findComponent({ name: 'SettingsGroupPanel' })
-      expect(panel.props().group.groupId).toBe('tts-group')
-    })
-
-    it('emits navigate to parent category on navigate-back', async () => {
-      const wrapper = mount(SettingsCategory, {
-        props: { categoryId: 'tts:tts-group' },
-        global: {
-          plugins: [i18n],
-          stubs: { SettingsGroupPanel: { template: '<div data-test="panel" @click="$emit(\'navigate-back\')"></div>' } },
-        },
-      })
-      const panel = wrapper.find('[data-test="panel"]')
-      await panel.trigger('click')
-      expect(wrapper.emitted('navigate')).toBeTruthy()
-      expect(wrapper.emitted('navigate')![0]).toEqual(['tts'])
     })
   })
 

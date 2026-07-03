@@ -9,50 +9,25 @@
     :agent-id="categoryId.slice(7)"
     @deleted="$emit('navigate', 'agents')"
   />
-  <!-- Group drill-down detail page -->
-  <SettingsGroupPanel
-    v-else-if="groupDetail"
-    :group="groupDetail.group"
-    :field-values="getGroupFieldValues(groupDetail.group)"
-    :field-options="getGroupFieldOptions(groupDetail.group)"
-    @save-result="handleGroupSaveResult"
-    @navigate-back="$emit('navigate', groupDetail!.category)"
-  />
   <!-- Standard settings category -->
   <div v-else class="settings-category">
-    <template v-for="entry in renderList" :key="entry.type === 'group' ? entry.spec.groupId : entry.spec.key">
-      <!-- Config group entry row (navigates to drill-down) -->
-      <div
-        v-if="entry.type === 'group'"
-        class="settings-group-entry"
-        @click="handleGroupNavigate(entry.spec)"
-      >
-        <div class="settings-group-entry__left">
-          <span class="settings-group-entry__label">{{ t(entry.spec.entryField.labelKey) }}</span>
-        </div>
-        <div class="settings-group-entry__right">
-          <span class="settings-group-entry__value">{{ getGroupEntryDisplayValue(entry.spec) }}</span>
-          <ChevronRight :size="16" class="settings-group-entry__chevron" />
-        </div>
-      </div>
-      <!-- Standalone item -->
+    <template v-for="entry in renderList" :key="entry.key">
       <SettingsItem
-        v-else
-        :label="entry.spec.label || t(entry.spec.labelKey)"
-        :description="entry.spec.descriptionKey ? t(entry.spec.descriptionKey) : ''"
-        :type="entry.spec.type"
-        :model-value="getItemValue(entry.spec)"
-        :options="resolveItemOptions(entry.spec)"
-        :min="entry.spec.min"
-        :max="entry.spec.max"
-        :step="entry.spec.step"
-        :needs-restart="entry.spec.needsRestart"
-        :force-close="activeKey !== null && activeKey !== entry.spec.key"
+        :label="(entry as any).label || t(entry.labelKey)"
+        :description="entry.descriptionKey ? t(entry.descriptionKey) : ''"
+        :type="entry.type"
+        :model-value="getItemValue(entry)"
+        :options="resolveItemOptions(entry)"
+        :min="entry.min"
+        :max="entry.max"
+        :step="entry.step"
+        :needs-restart="entry.needsRestart"
+        :force-close="activeKey !== null && activeKey !== entry.key"
         :no-divider="false"
-        @update:model-value="(v: any) => handleUpdate(entry.spec, v)"
-        @click="handleClick(entry.spec)"
-        @edit-toggle="(open: boolean) => handleEditToggle(entry.spec.key, open)"
-        @desc-toggle="(open: boolean) => handleDescToggle(entry.spec.key, open)"
+        @update:model-value="(v: any) => handleUpdate(entry, v)"
+        @click="handleClick(entry)"
+        @edit-toggle="(open: boolean) => handleEditToggle(entry.key, open)"
+        @desc-toggle="(open: boolean) => handleDescToggle(entry.key, open)"
         @discard="handleDiscard"
       />
     </template>
@@ -70,9 +45,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronRight } from 'lucide-vue-next'
 import SettingsItem from './SettingsItem.vue'
-import SettingsGroupPanel from './SettingsGroupPanel.vue'
 import PasswordChangeDialog from './PasswordChangeDialog.vue'
 import SettingsAgentsIndex from './SettingsAgentsIndex.vue'
 import SettingsAgentDetail from './SettingsAgentDetail.vue'
@@ -86,7 +59,7 @@ import { usePwaInstall } from '@/composables/usePwaInstall'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { useTerminalStatus } from '@/composables/useTerminalStatus'
 import { usePortForward } from '@/composables/usePortForward'
-import { categoryItems, categoryGroups, engineVoiceOptions, fieldBelongsToGroup, getGroupById, getCategoryForGroup, type ItemSpec, type ConfigGroup, type DependsOn } from './settingsFieldMap'
+import { categoryItems, engineVoiceOptions, type ItemSpec, type DependsOn } from './settingsFieldMap'
 
 const props = defineProps<{
   categoryId: string
@@ -118,20 +91,6 @@ watch(() => props.categoryId, (id) => {
   if (id === 'chat' || id === 'agents' || id.startsWith('agents:')) loadAgents(true)
 }, { immediate: true })
 
-// ── Group drill-down detection ──
-
-/** If categoryId matches '{category}:{groupId}' pattern, extract group for drill-down rendering */
-const groupDetail = computed<{ group: ConfigGroup; category: string } | null>(() => {
-  const colonIdx = props.categoryId.indexOf(':')
-  if (colonIdx <= 0) return null
-  const groupId = props.categoryId.slice(colonIdx + 1)
-  const group = getGroupById(groupId)
-  if (!group) return null
-  const category = getCategoryForGroup(groupId)
-  if (!category) return null
-  return { group, category }
-})
-
 function resolveConfigValue(key: string): any {
   if (key in localConfig) return localConfig[key]
   return getServerValueWithDefault(key)
@@ -149,22 +108,11 @@ function isDependsOnMet(dependsOn: ItemSpec['dependsOn']): boolean {
   return isSingleDependsOnMet(dependsOn)
 }
 
-// ── Render list: mixed groups + standalone items ──
-
-interface RenderItem {
-  type: 'item'
-  spec: any
-}
-interface RenderGroup {
-  type: 'group'
-  spec: ConfigGroup
-}
+// ── Render list: standalone items with dependsOn filtering ──
 
 const renderList = computed(() => {
-  const groups = categoryGroups[props.categoryId] ?? []
   const raw = categoryItems[props.categoryId] ?? []
-  const result: (RenderItem | RenderGroup)[] = []
-  const emittedGroups = new Set<string>()
+  const result: ItemSpec[] = []
 
   for (const item of raw) {
     if (!isDependsOnMet(item.dependsOn)) continue
@@ -173,114 +121,42 @@ const renderList = computed(() => {
     if (item.key === 'addToHomeScreen' && !pwaInstall.showPwaInstall.value) continue
     if (item.key === 'downloadAndroidApp' && !pwaInstall.showApkDownload.value) continue
 
-    // Check if this item belongs to a group
-    const owningGroup = groups.find(g => fieldBelongsToGroup(g, item.key))
-    if (owningGroup && !emittedGroups.has(owningGroup.groupId)) {
-      result.push({ type: 'group', spec: owningGroup })
-      emittedGroups.add(owningGroup.groupId)
-    } else if (!owningGroup) {
-      // Inject push registration status before the JPush enabled switch
-      if (item.key === 'push.jpush.enabled') {
-        result.push({
-          type: 'item',
-          spec: {
-            key: 'push-registration-status',
-            label: t('settings.items.pushStatus'),
-            labelKey: 'settings.items.pushStatus',
-            type: 'info' as const,
-            source: 'local' as const,
-            modelValue: pushRegistered.value ? t('settings.items.pushStatusRegistered') : t('settings.items.pushStatusNotRegistered'),
-          },
-        })
-      }
-      // Standalone item (may have sectionHeader — inject header pseudo-item)
-      if (item.sectionHeader) {
-        result.push({
-          type: 'item',
-          spec: {
-            key: `header-${item.key}`,
-            label: t(item.sectionHeader),
-            labelKey: item.sectionHeader,
-            type: 'header' as const,
-            source: 'local' as const,
-          },
-        })
-      }
-      result.push({ type: 'item', spec: item })
+    // Inject push registration status before the JPush enabled switch
+    if (item.key === 'push.jpush.enabled') {
+      result.push({
+        key: 'push-registration-status',
+        label: t('settings.items.pushStatus'),
+        labelKey: 'settings.items.pushStatus',
+        type: 'info',
+        source: 'local',
+        modelValue: pushRegistered.value ? t('settings.items.pushStatusRegistered') : t('settings.items.pushStatusNotRegistered'),
+      } as any)
     }
-  }
-
-  // Emit any groups not yet emitted (for categories where categoryItems is empty)
-  for (const g of groups) {
-    if (!emittedGroups.has(g.groupId)) {
-      result.push({ type: 'group', spec: g })
+    // Inject section header pseudo-item before the field
+    if (item.sectionHeader) {
+      result.push({
+        key: `header-${item.key}`,
+        label: t(item.sectionHeader),
+        labelKey: item.sectionHeader,
+        type: 'header',
+        source: 'local',
+      } as any)
     }
+    result.push(item)
   }
 
   return result
 })
 
-// ── Group helpers ──
-
-/** Resolve all field values for a group from server/local config */
-function getGroupFieldValues(group: ConfigGroup): Record<string, any> {
-  const values: Record<string, any> = {}
-  values[group.entryField.key] = resolveConfigValue(group.entryField.key)
-  for (const f of group.commonFields ?? []) {
-    values[f.key] = resolveConfigValue(f.key)
-  }
-  for (const osf of group.optionSubFields ?? []) {
-    for (const f of osf.fields) {
-      values[f.key] = resolveConfigValue(f.key)
-    }
-  }
-  return values
-}
-
-/** Resolve dynamic field options for a group (e.g., tts.voice per engine) */
-function getGroupFieldOptions(group: ConfigGroup): Record<string, { label: string; value: any }[]> {
-  const options: Record<string, { label: string; value: any }[]> = {}
-  // TTS voice options — reactive to current engine
-  if (group.groupId === 'tts-group') {
-    const engine = resolveConfigValue('tts.engine') || 'edge'
-    const voiceOpts = engineVoiceOptions[engine] ?? []
-    options['tts.voice'] = voiceOpts.map(o => ({ label: t(o.labelKey), value: o.value }))
-  }
-  return options
-}
-
-/** Get display value for a group entry row (collapsed) */
-function getGroupEntryDisplayValue(group: ConfigGroup): string {
-  const entryVal = resolveConfigValue(group.entryField.key)
-  if (group.entryType === 'select') {
-    const opt = (group.entryField.options ?? []).find(o => o.value === entryVal)
-    return opt ? t(opt.labelKey) : String(entryVal ?? '')
-  }
-  if (group.entryType === 'switch') {
-    return entryVal ? t('settings.items.switchOn') : t('settings.items.switchOff')
-  }
-  // header type: no value
-  return ''
-}
-
-/** Navigate to group drill-down */
-function handleGroupNavigate(group: ConfigGroup) {
-  const category = getCategoryForGroup(group.groupId)
-  if (category) {
-    emit('navigate', `${category}:${group.groupId}`)
-  }
-}
-
-/** Handle group save result (needsRestart check) */
-function handleGroupSaveResult(result: { needsRestart: boolean; changedColdFields: string[] }) {
-  if (result.needsRestart && result.changedColdFields.length > 0) {
-    emit('restartNeeded', result.changedColdFields)
-  }
-}
-
 // ── Standalone item helpers ──
 
 function resolveItemOptions(item: any): any {
+  // TTS voice: resolve options dynamically based on current tts.engine
+  if (item.key === 'tts.voice') {
+    const engine = resolveConfigValue('tts.engine') || 'edge'
+    const voiceOpts = engineVoiceOptions[engine] ?? []
+    return voiceOpts.map((o: any) => ({ ...o, label: t(o.labelKey) }))
+  }
   const resolvedOptions = item.options
   if (resolvedOptions) {
     return resolvedOptions.map((opt: any) => ({
@@ -347,6 +223,15 @@ async function handleUpdate(item: any, value: any) {
   }
   try {
     const result = await setServerValue(item.key, value)
+    // When TTS engine changes, reset voice to first available for new engine
+    if (item.key === 'tts.engine') {
+      const voiceOpts = engineVoiceOptions[value] ?? []
+      if (voiceOpts.length > 0) {
+        try { await setServerValue('tts.voice', voiceOpts[0].value) } catch { /* best-effort */ }
+      } else {
+        try { await setServerValue('tts.voice', '') } catch { /* best-effort */ }
+      }
+    }
     if (item.key === 'terminal.enabled') {
       loadTerminalStatus()
     }
@@ -433,75 +318,5 @@ function handleDiscard() {
   padding: 8px 0;
   background: var(--bg-secondary);
   min-height: 100%;
-}
-
-/* Group entry row (navigates to drill-down) */
-.settings-group-entry {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 16px;
-  min-height: 48px;
-  cursor: pointer;
-  gap: 12px;
-  background: var(--bg-primary);
-  position: relative;
-}
-
-.settings-group-entry::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 0.5px;
-  background: var(--border-color);
-}
-
-@media (hover: hover) {
-  .settings-group-entry:hover {
-    background: var(--bg-tertiary);
-  }
-}
-
-.settings-group-entry:active {
-  background: var(--bg-tertiary);
-}
-
-.settings-group-entry__left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 1;
-  min-width: 0;
-}
-
-.settings-group-entry__label {
-  font-size: 15px;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.settings-group-entry__right {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-}
-
-.settings-group-entry__value {
-  font-size: 14px;
-  color: var(--text-secondary);
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-group-entry__chevron {
-  color: var(--text-muted);
-  flex-shrink: 0;
 }
 </style>
