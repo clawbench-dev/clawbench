@@ -1391,19 +1391,29 @@ public class BackgroundService extends Service {
     private void connectNativeWs(String serverUrl) {
         try {
             // Read session cookie from WebView's CookieManager
+            // Server uses port-scoped cookie names on non-default ports:
+            //   port 20000 → "clawbench_session"
+            //   port 20300 → "cb20300_clawbench_session"
             String cookies = android.webkit.CookieManager.getInstance().getCookie(serverUrl);
             String sessionCookie = null;
             if (cookies != null) {
                 for (String cookie : cookies.split(";")) {
                     String trimmed = cookie.trim();
-                    if (trimmed.startsWith("clawbench_session=")) {
-                        sessionCookie = trimmed;
-                        break;
+                    // Match both "clawbench_session=..." and "cb<port>_clawbench_session=..."
+                    int eqIdx = trimmed.indexOf('=');
+                    if (eqIdx > 0) {
+                        String name = trimmed.substring(0, eqIdx);
+                        if (name.equals("clawbench_session") ||
+                                (name.startsWith("cb") && name.endsWith("_clawbench_session"))) {
+                            sessionCookie = trimmed;
+                            break;
+                        }
                     }
                 }
             }
             if (sessionCookie == null) {
-                AppLog.w(TAG, "NativeWS: no session cookie found, cannot authenticate");
+                AppLog.w(TAG, "NativeWS: no session cookie found, scheduling retry");
+                scheduleNativeWsReconnect(serverUrl);
                 return;
             }
 
@@ -1466,8 +1476,15 @@ public class BackgroundService extends Service {
 
         // If no SSH ports are forwarded, the Service has no reason to stay alive.
         // Stop it to avoid wasting battery on an idle foreground service.
-        if (forwardedPorts.isEmpty()) {
-            AppLog.i(TAG, "NativeWS: no SSH ports either, stopping service");
+        maybeStopIdleService();
+    }
+
+    /**
+     * Stop the service if it has no active work (no SSH ports, no native WS needed).
+     */
+    private void maybeStopIdleService() {
+        if (forwardedPorts.isEmpty() && !nativeWsNeeded) {
+            AppLog.i(TAG, "Service idle (no SSH ports, no native WS), stopping");
             stopSelf();
         }
     }
@@ -1480,6 +1497,9 @@ public class BackgroundService extends Service {
         nativeWsReconnectAttempt++;
         if (nativeWsReconnectAttempt > MAX_RECONNECT_ATTEMPTS) {
             AppLog.w(TAG, "NativeWS: exhausted reconnect attempts, giving up");
+            nativeWsNeeded = false;
+            // If no SSH ports either, stop the service to avoid wasting battery
+            maybeStopIdleService();
             return;
         }
         int delayIdx = Math.min(nativeWsReconnectAttempt - 1, RECONNECT_DELAYS_MS.length - 1);

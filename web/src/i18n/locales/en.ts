@@ -302,6 +302,7 @@ export default {
       userMsgIndex: 'User message index',
       userMsgIndexTitle: 'User messages',
       conversationIndexTitle: 'Conversation index',
+      noUserMessages: 'No messages yet',
       userMsgIndexAttachment: 'Attachment',
     },
     pending: {

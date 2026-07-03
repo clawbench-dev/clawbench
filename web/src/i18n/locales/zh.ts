@@ -302,6 +302,7 @@ export default {
       userMsgIndex: '用户消息索引',
       userMsgIndexTitle: '用户消息',
       conversationIndexTitle: '对话索引',
+      noUserMessages: '暂无消息',
       userMsgIndexAttachment: '附件',
     },
     pending: {

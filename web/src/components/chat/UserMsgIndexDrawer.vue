@@ -13,7 +13,11 @@
       <span class="chat-load-spinner"></span>
       <span>{{ t('chat.messageList.loadingMore') }}</span>
     </div>
-    <div class="panel-list">
+    <div v-else-if="messages.length === 0" class="panel-empty">
+      <MessagesSquare :size="28" class="panel-empty-icon" />
+      <span>{{ t('chat.messageList.noUserMessages') }}</span>
+    </div>
+    <div v-else class="panel-list" ref="listRef">
       <div
         v-for="(msg, idx) in messages"
         :key="msg.id || idx"
@@ -46,10 +50,11 @@ import { MessagesSquare, Split } from 'lucide-vue-next'
 import { truncateUserMsg } from '@/utils/userMsgIndexUtils.ts'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import { formatRelativeTime } from '@/utils/format.ts'
+import { ref, watch, nextTick } from 'vue'
 
 const { t } = useI18n()
 
-defineProps({
+const props = defineProps({
   open: Boolean,
   messages: { type: Array, default: () => [] },
   activeId: { type: [Number, String], default: null, required: false },
@@ -59,9 +64,22 @@ defineProps({
 
 defineEmits(['close', 'select', 'fork'])
 
+const listRef = ref(null)
+
 function truncateText(msg) {
   return truncateUserMsg(msg, t('chat.messageList.userMsgIndexAttachment'))
 }
+
+// Scroll the active message into view when the drawer opens
+watch(() => props.open, async (val) => {
+  if (val) {
+    await nextTick()
+    const activeEl = listRef.value?.querySelector('.msg-item.active')
+    if (activeEl) {
+      activeEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    }
+  }
+})
 </script>
 
 <style scoped>
@@ -93,6 +111,21 @@ function truncateText(msg) {
 .panel-list {
   overflow-y: auto;
   padding: 4px 8px 12px 4px;
+}
+
+.panel-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 30vh;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.panel-empty-icon {
+  opacity: 0.35;
 }
 
 .msg-item {
