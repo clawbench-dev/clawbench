@@ -180,6 +180,13 @@ func SetSessionRunning(sessionID string, running bool, skipEvent ...bool) {
 	}
 	activeMu.Unlock()
 
+	if !running {
+		// Safety net: finalize any orphaned streaming=1 messages for this session.
+		// This handles the case where FinalizeStreamingMessage failed due to SQLITE_BUSY
+		// during the stream, leaving the message stuck at streaming=1 forever.
+		go finalizeOrphanedStreamingMessages(sessionID)
+	}
+
 	// Emit event unless caller explicitly skips (e.g. CancelSession sends its own event)
 	if len(skipEvent) == 0 || !skipEvent[0] {
 		if !running {
@@ -190,6 +197,68 @@ func SetSessionRunning(sessionID string, running bool, skipEvent ...bool) {
 			triggerChatSummarization(sessionID)
 		} else {
 			EmitSessionEvent(sessionID, "running", false)
+		}
+	}
+}
+
+// finalizeOrphanedStreamingMessages checks for and finalizes any streaming=1
+// assistant messages left behind for a session (e.g. due to SQLITE_BUSY failures).
+func finalizeOrphanedStreamingMessages(sessionID string) {
+	if DB == nil {
+		return
+	}
+	// Find streaming=1 messages for this session
+	rows, err := DB.Query(
+		"SELECT id, content FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1",
+		sessionID,
+	)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	type orphanMsg struct {
+		id      int64
+		content string
+	}
+	var orphans []orphanMsg
+	for rows.Next() {
+		var m orphanMsg
+		if err := rows.Scan(&m.id, &m.content); err != nil {
+			continue
+		}
+		orphans = append(orphans, m)
+	}
+
+	for _, m := range orphans {
+		var contentMap map[string]any
+		if err := json.Unmarshal([]byte(m.content), &contentMap); err != nil {
+			contentMap = map[string]any{
+				"blocks":    []any{map[string]any{"type": "text", "text": m.content}},
+				"cancelled": true,
+			}
+		} else {
+			if _, ok := contentMap["cancelled"]; !ok {
+				contentMap["cancelled"] = true
+				blocks, _ := contentMap["blocks"].([]any)
+				blocks = append(blocks, map[string]any{
+					"type":   "warning",
+					"text":   "Finalization failed, AI response may be incomplete",
+					"reason": "finalize_busy",
+				})
+				contentMap["blocks"] = blocks
+			}
+		}
+		updatedContent, _ := json.Marshal(contentMap)
+		if _, err := DB.Exec("UPDATE chat_history SET content = ?, streaming = 0 WHERE id = ?", string(updatedContent), m.id); err != nil {
+			slog.Error("failed to finalize orphaned streaming message on session stop",
+				slog.Int64("id", m.id),
+				slog.String("session", sessionID),
+				slog.String("err", err.Error()))
+		} else {
+			slog.Info("finalized orphaned streaming message on session stop",
+				slog.Int64("id", m.id),
+				slog.String("session", sessionID))
 		}
 	}
 }

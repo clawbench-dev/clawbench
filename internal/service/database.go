@@ -54,8 +54,8 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		return fmt.Errorf("failed to enable foreign keys: %w", err)
 	}
 
-	// Wait up to 5 seconds when database is locked instead of failing immediately
-	if _, err := DB.Exec("PRAGMA busy_timeout=5000"); err != nil {
+	// Wait up to 10 seconds when database is locked instead of failing immediately
+	if _, err := DB.Exec("PRAGMA busy_timeout=10000"); err != nil {
 		return fmt.Errorf("failed to set busy_timeout: %w", err)
 	}
 
@@ -415,7 +415,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if _, err := DBRead.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		return fmt.Errorf("failed to set read DB WAL mode: %w", err)
 	}
-	if _, err := DBRead.Exec("PRAGMA busy_timeout=5000"); err != nil {
+	if _, err := DBRead.Exec("PRAGMA busy_timeout=10000"); err != nil {
 		return fmt.Errorf("failed to set read DB busy_timeout: %w", err)
 	}
 	if isServerStartup {

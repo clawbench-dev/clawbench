@@ -274,7 +274,8 @@ export function useChatStream(options: UseChatStreamOptions) {
     }
 
     // Ensure a streaming assistant message exists — create one if needed
-    if (!findStreamingMsg(messages.value)) {
+    const existingStreaming = findStreamingMsg(messages.value)
+    if (!existingStreaming) {
       messages.value.push({
         role: 'assistant',
         content: '',
@@ -285,6 +286,11 @@ export function useChatStream(options: UseChatStreamOptions) {
       })
       thinkingBlockCounter = 0
       onRenderNeeded()
+    } else if ((existingStreaming as any).fromDB) {
+      // DB streaming message from a previous incomplete finalize —
+      // convert it to a live streaming placeholder by clearing fromDB
+      // so SSE events can update it properly.
+      delete (existingStreaming as any).fromDB
     }
     onScrollBottom()
 

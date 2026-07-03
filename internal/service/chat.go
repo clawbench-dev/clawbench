@@ -232,55 +232,61 @@ func AddChatMessage(projectPath, backend, sessionID, role, content string, files
 		streamingInt = 1
 	}
 
-	// Use transaction to ensure data consistency
-	tx, err := DB.Begin()
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
+	// Use transaction with retry on SQLITE_BUSY to ensure data consistency
+	var msgID int64
+	_, err := retryOnBusy(func() (struct{}, error) {
+		tx, txErr := DB.Begin()
+		if txErr != nil {
+			return struct{}{}, txErr
+		}
+		defer tx.Rollback()
 
-	result, err := tx.Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, files, streaming, indexed) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
-		projectPath, backend, sessionID, role, content, filesJSON, streamingInt,
-	)
-	if err != nil {
-		return 0, err
-	}
+		result, txErr := tx.Exec(
+			"INSERT INTO chat_history (project_path, backend, session_id, role, content, files, streaming, indexed) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
+			projectPath, backend, sessionID, role, content, filesJSON, streamingInt,
+		)
+		if txErr != nil {
+			return struct{}{}, txErr
+		}
 
-	// Update session's updated_at timestamp
-	_, err = tx.Exec("UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", sessionID)
-	if err != nil {
-		return 0, err
-	}
+		// Update session's updated_at timestamp
+		if _, txErr = tx.Exec("UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", sessionID); txErr != nil {
+			return struct{}{}, txErr
+		}
 
-	// If this is the first user message, update session title
-	if role == "user" {
-		var count int
-		err = tx.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sessionID).Scan(&count)
-		if err == nil && count == 1 {
-			title := ExtractPlainText(content)
-			if title == "" && len(files) > 0 {
-				title = titleFromFiles(files)
-			}
-			if title == "" {
-				title = fallbackTitle
-			}
-			runes := []rune(title)
-			if len(runes) > 50 {
-				title = string(runes[:50]) + "..."
-			}
-			_, err = tx.Exec("UPDATE chat_sessions SET title = ? WHERE id = ?", title, sessionID)
-			if err != nil {
-				return 0, err
+		// If this is the first user message, update session title
+		if role == "user" {
+			var count int
+			if txErr = tx.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sessionID).Scan(&count); txErr == nil && count == 1 {
+				title := ExtractPlainText(content)
+				if title == "" && len(files) > 0 {
+					title = titleFromFiles(files)
+				}
+				if title == "" {
+					title = fallbackTitle
+				}
+				runes := []rune(title)
+				if len(runes) > 50 {
+					title = string(runes[:50]) + "..."
+				}
+				if _, txErr = tx.Exec("UPDATE chat_sessions SET title = ? WHERE id = ?", title, sessionID); txErr != nil {
+					return struct{}{}, txErr
+				}
 			}
 		}
-	}
 
-	if err := tx.Commit(); err != nil {
+		if txErr = tx.Commit(); txErr != nil {
+			return struct{}{}, txErr
+		}
+
+		msgID, _ = result.LastInsertId()
+		return struct{}{}, nil
+	}, 3)
+	if err != nil {
 		return 0, err
 	}
-	messageID, _ := result.LastInsertId()
-	return messageID, nil
+
+	return msgID, nil
 }
 
 // titleFromFiles builds a session title from file paths by extracting basenames
@@ -920,23 +926,61 @@ func GetAssistantMessageCount(sessionID string) int {
 	return count
 }
 
-// UpdateStreamingMessage updates the content of the streaming assistant message for a session.
+// isSQLiteBusy checks if the error is a SQLITE_BUSY (database is locked) error.
+func isSQLiteBusy(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "SQLITE_BUSY")
+}
+
+// retryOnBusy retries a DB operation on SQLITE_BUSY errors with linear backoff.
+// Returns the result and error from the last attempt.
+func retryOnBusy[T any](fn func() (T, error), maxAttempts int) (T, error) {
+	var result T
+	var err error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		result, err = fn()
+		if err == nil || !isSQLiteBusy(err) {
+			return result, err
+		}
+		if attempt < maxAttempts-1 {
+			time.Sleep(time.Duration(100*(attempt+1)) * time.Millisecond)
+		}
+	}
+	return result, err
+}
+
+// UpdateStreamingMessage updates the content of the latest streaming assistant message for a session.
+// Uses subquery with ORDER BY id DESC LIMIT 1 to target only the most recent streaming=1 row,
+// preventing accidental updates to stale streaming rows left by failed finalizations.
 func UpdateStreamingMessage(projectPath, backend, sessionID, content string) error {
-	_, err := DB.Exec(
-		"UPDATE chat_history SET content = ? WHERE project_path = ? AND backend = ? AND session_id = ? AND role = 'assistant' AND streaming = 1",
-		content, projectPath, backend, sessionID,
-	)
+	_, err := retryOnBusy(func() (sql.Result, error) {
+		return DB.Exec(
+			`UPDATE chat_history SET content = ? WHERE id = (
+				SELECT id FROM chat_history
+				WHERE project_path = ? AND backend = ? AND session_id = ? AND role = 'assistant' AND streaming = 1
+				ORDER BY id DESC LIMIT 1
+			)`,
+			content, projectPath, backend, sessionID,
+		)
+	}, 3)
 	return err
 }
 
-// FinalizeStreamingMessage marks the streaming assistant message as complete and updates its content.
+// FinalizeStreamingMessage marks the latest streaming assistant message as complete and updates its content.
 // Also marks the message as unindexed (indexed=0) so the RAG indexer picks it up.
+// Uses subquery with ORDER BY id DESC LIMIT 1 to target only the most recent streaming=1 row,
+// preventing accidental finalization of stale streaming rows left by previous failed finalizations.
 // Returns the message ID of the finalized message (0 if not found).
 func FinalizeStreamingMessage(projectPath, backend, sessionID, content string) (int64, error) {
-	result, err := DB.Exec(
-		"UPDATE chat_history SET content = ?, streaming = 0, indexed = 0 WHERE project_path = ? AND backend = ? AND session_id = ? AND role = 'assistant' AND streaming = 1",
-		content, projectPath, backend, sessionID,
-	)
+	result, err := retryOnBusy(func() (sql.Result, error) {
+		return DB.Exec(
+			`UPDATE chat_history SET content = ?, streaming = 0, indexed = 0 WHERE id = (
+				SELECT id FROM chat_history
+				WHERE project_path = ? AND backend = ? AND session_id = ? AND role = 'assistant' AND streaming = 1
+				ORDER BY id DESC LIMIT 1
+			)`,
+			content, projectPath, backend, sessionID,
+		)
+	}, 3)
 	if err != nil {
 		return 0, err
 	}
