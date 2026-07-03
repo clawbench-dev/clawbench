@@ -5,12 +5,12 @@
     </div>
     <div ref="headerActionsRef" class="header-actions">
       <!-- TOC button (only for file types that support TOC) -->
-      <button v-if="hasToc && toolbarInlineIds.includes('toc')" class="file-header-btn" :class="{ active: tocOpen }" @click.stop="$emit('toggleToc')" :title="t('file.header.toc')">
+      <button v-if="hasToc && toolbarInlineIds.includes('toc')" class="file-header-btn" :class="{ active: tocOpen }" @click.stop="handleToggleToc" :title="t('file.header.toc')">
         <List :size="14" />
       </button>
 
       <!-- Search button (only for file types that support search) -->
-      <button v-if="hasToc && toolbarInlineIds.includes('search')" class="file-header-btn" :class="{ active: searchOpen }" :disabled="!file.content" @click.stop="$emit('toggleSearch')" :title="t('file.header.search')">
+      <button v-if="hasToc && toolbarInlineIds.includes('search')" class="file-header-btn" :class="{ active: searchOpen }" :disabled="!file.content" @click.stop="handleToggleSearch" :title="t('file.header.search')">
         <Search :size="14" />
       </button>
 
@@ -52,11 +52,11 @@
         <Teleport to="body">
           <div v-if="menuOpen" ref="menuRef" class="file-header-dropdown-menu" :style="menuStyle">
             <!-- Collapsed toolbar items -->
-            <button v-if="toolbarCollapsedIds.includes('toc')" class="dropdown-item" :class="{ active: tocOpen }" @click="$emit('toggleToc'); menuOpen = false">
+            <button v-if="toolbarCollapsedIds.includes('toc')" class="dropdown-item" :class="{ active: tocOpen }" @click="handleToggleToc(); menuOpen = false">
               <List :size="14" />
               {{ t('file.header.toc') }}
             </button>
-            <button v-if="toolbarCollapsedIds.includes('search')" class="dropdown-item" :class="{ active: searchOpen }" @click="$emit('toggleSearch'); menuOpen = false">
+            <button v-if="toolbarCollapsedIds.includes('search')" class="dropdown-item" :class="{ active: searchOpen }" @click="handleToggleSearch(); menuOpen = false">
               <Search :size="14" />
               {{ t('file.header.search') }}
             </button>
@@ -244,6 +244,14 @@ function handleToggleStickyScroll() {
     emit('toggleStickyScroll')
 }
 
+function handleToggleToc() {
+    emit('toggleToc')
+}
+
+function handleToggleSearch() {
+    emit('toggleSearch')
+}
+
 function handleOpenAsText() {
     menuOpen.value = false
     emit('openAsText')
@@ -358,7 +366,7 @@ onBeforeUnmount(() => {
     display: flex;
     align-items: center;
     gap: 4px;
-    min-width: 0;
+    min-width: 80px;
 }
 
 .file-path-hint {
@@ -423,7 +431,7 @@ onBeforeUnmount(() => {
     color: var(--text-secondary);
 }
 .file-header-btn.active {
-    color: var(--accent-color);
+    background: var(--accent-color-dim, rgba(74, 144, 217, 0.12));
 }
 
 /* Dropdown */
