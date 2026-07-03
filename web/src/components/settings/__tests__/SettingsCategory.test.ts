@@ -36,7 +36,7 @@ const serverConfig = ref<Record<string, any>>({
   upload: { max_size_mb: 100, max_files: 20 },
   terminal: { enabled: true, idle_timeout: '10m', max_sessions: 10, buffer_lines: 2000 },
   tts: { engine: 'edge', voice: '', speed: 1.0, max_cache_files: 100, format: '' },
-  rag: { enabled: false, ollama_base_url: 'http://localhost:11434', ollama_model: 'bge-m3', chunk_size: 512, search_limit: 5, retention_days: 90 },
+  rag: { enabled: false, base_url: 'http://localhost:11434', model: 'bge-m3', api_key: '', chunk_size: 512, search_limit: 5, retention_days: 90 },
   port_forward: { enabled: true, port: 0 },
   push: { jpush: { enabled: false, app_key: '' } },
   summarize: { backend: 'simple', model: '' },
@@ -801,7 +801,7 @@ describe('SettingsCategory', () => {
 
   // ─── isLastInSection ──────────────────
   // Note: isLastInSection was removed from SettingsCategory when config groups
-  // were introduced. Section dividers are now handled by SettingsGroupPanel.
+  // were introduced. Section dividers are now handled by sectionHeader on each item.
 
   // ─── handleAddToHomeScreen / downloadAndroidApp ──────────
   describe('handleAddToHomeScreen and downloadAndroidApp', () => {

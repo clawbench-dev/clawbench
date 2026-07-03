@@ -279,6 +279,7 @@ const serverDefaults: Record<string, any> = {
   'tts.max_cache_files': 100,
   'rag.base_url': 'http://localhost:11434',
   'rag.model': 'bge-m3',
+  'rag.api_key': '',
   'rag.chunk_size': 512,
   'rag.search_limit': 5,
   'rag.search_pool_size': 20,

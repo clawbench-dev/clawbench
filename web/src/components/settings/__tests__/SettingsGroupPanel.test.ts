@@ -34,7 +34,7 @@ const i18n = createI18n({
           apiHeader: 'API', apiBaseUrl: 'API地址', apiKey: 'API密钥',
           pushEnabled: '启用推送', pushAppKey: 'AppKey', pushMasterSecret: 'MasterSecret',
           portForwardEnabled: '启用端口转发', portForwardPort: '端口',
-          ragOllamaUrl: '嵌入接口地址', ragOllamaModel: '嵌入模型',
+          ragBaseUrl: '嵌入接口地址', ragModel: '嵌入模型',
           groupSave: '保存', groupSaving: '保存中...', groupCancel: '取消',
           groupNoConfig: '无需配置', groupUnsavedDiscard: '有未保存的更改，确定丢弃？',
           switchOn: '开', switchOff: '关',

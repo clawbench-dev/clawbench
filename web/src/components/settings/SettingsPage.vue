@@ -57,7 +57,6 @@ import { useSettingsNavigation } from '@/composables/useSettingsNavigation'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useAgents } from '@/composables/useAgents'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
-import { categoryGroups } from './settingsFieldMap'
 
 const props = defineProps<{
   active?: boolean
@@ -91,15 +90,7 @@ const currentCategoryTitle = computed(() => {
     const agent = getAgent(agentId)
     return agent ? `${agent.icon} ${agent.name}` : t('settings.categories.agents')
   }
-  // For group drill-down pages ({category}:{groupId}), show group entry label as title
-  const colonIdx = cat.indexOf(':')
-  if (colonIdx > 0) {
-    const groupId = cat.slice(colonIdx + 1)
-    for (const groups of Object.values(categoryGroups)) {
-      const group = groups.find(g => g.groupId === groupId)
-      if (group) return t(group.entryField.labelKey)
-    }
-  }
+  // For group drill-down pages ({category}:{groupId}) — no longer used, all groups flattened
   return t(`settings.categories.${cat}`)
 })
 
