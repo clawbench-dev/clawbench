@@ -326,6 +326,9 @@ func RegisterRoutes(mux *http.ServeMux) {
 		ws.EventsHandler(w, r)
 	})))
 
+	// Pending events (missed notifications for offline clients)
+	register("/api/ai/events/pending", middleware.Auth(http.HandlerFunc(ServePendingEvents)))
+
 	// Chat quick-send (CRUD for quick-send presets stored in database)
 	register("/api/chat/quick-send", middleware.Auth(ServeChatQuickSend))
 	register("/api/chat/quick-send/", middleware.Auth(ServeChatQuickSendByID))
