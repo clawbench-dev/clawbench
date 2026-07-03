@@ -692,6 +692,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			if mgr := ws.GetManager(); mgr != nil {
 				mgr.CleanupStale()
 			}
+			service.CleanupPendingEvents()
 		}
 	}()
 
