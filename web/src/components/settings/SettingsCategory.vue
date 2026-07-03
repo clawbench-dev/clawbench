@@ -174,8 +174,11 @@ const renderList = computed(() => {
     // Check if this item belongs to a group
     const owningGroup = groups.find(g => fieldBelongsToGroup(g, item.key))
     if (owningGroup && !emittedGroups.has(owningGroup.groupId)) {
-      // Inject push registration status before the JPush group
-      if (owningGroup.groupId === 'push-jpush-group') {
+      result.push({ type: 'group', spec: owningGroup })
+      emittedGroups.add(owningGroup.groupId)
+    } else if (!owningGroup) {
+      // Inject push registration status before the JPush enabled switch
+      if (item.key === 'push.jpush.enabled') {
         result.push({
           type: 'item',
           spec: {
@@ -188,9 +191,6 @@ const renderList = computed(() => {
           },
         })
       }
-      result.push({ type: 'group', spec: owningGroup })
-      emittedGroups.add(owningGroup.groupId)
-    } else if (!owningGroup) {
       // Standalone item (may have sectionHeader — inject header pseudo-item)
       if (item.sectionHeader) {
         result.push({
@@ -211,20 +211,6 @@ const renderList = computed(() => {
   // Emit any groups not yet emitted (for categories where categoryItems is empty)
   for (const g of groups) {
     if (!emittedGroups.has(g.groupId)) {
-      // Inject push registration status before the JPush group
-      if (g.groupId === 'push-jpush-group') {
-        result.push({
-          type: 'item',
-          spec: {
-            key: 'push-registration-status',
-            label: t('settings.items.pushStatus'),
-            labelKey: 'settings.items.pushStatus',
-            type: 'info' as const,
-            source: 'local' as const,
-            modelValue: pushRegistered.value ? t('settings.items.pushStatusRegistered') : t('settings.items.pushStatusNotRegistered'),
-          },
-        })
-      }
       result.push({ type: 'group', spec: g })
     }
   }

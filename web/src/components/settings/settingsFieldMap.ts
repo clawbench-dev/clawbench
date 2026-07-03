@@ -72,6 +72,10 @@ export type ConfigGroup =
   | (ConfigGroupBase & { entryType: 'switch'; entryField: ItemSpec & { type: 'switch' } })
   | (ConfigGroupBase & { entryType: 'header'; entryField: ItemSpec & { type: 'header' } })
 
+// ── CLI backend names (used by summarization dependsOn) ─────
+
+const CLI_BACKENDS = ['claude', 'codebuddy', 'opencode', 'codex', 'qoder', 'vecli', 'deepseek', 'pi'] as const
+
 // ── Category items (standalone, non-grouped) ────────────────
 
 /**
@@ -135,15 +139,49 @@ export const categoryItems: Record<string, ItemSpec[]> = {
   ],
   // TTS: all fields moved to categoryGroups
   tts: [],
-  // Summarization: all fields moved to categoryGroups
-  summarization: [],
-  // RAG: all fields moved to categoryGroups
-  rag: [],
-  // Port Forward: all fields moved to categoryGroups
-  portForward: [],
-  // Push: only pushPersistentNotification remains standalone; JPush group in categoryGroups
+  // Summarization: flattened from group
+  summarization: [
+    { labelKey: 'settings.items.summarizeBackend', descriptionKey: 'settings.items.summarizeBackendDesc', key: 'summarize.backend', type: 'select', source: 'server', options: [
+      { labelKey: 'settings.items.summarizeDisabled', value: '' },
+      { labelKey: 'settings.items.summarizeSimple', value: 'simple' },
+      { labelKey: 'settings.items.summarizeApi', value: 'api' },
+      { labelKey: 'settings.items.summarizeClaude', value: 'claude' },
+      { labelKey: 'settings.items.summarizeCodebuddy', value: 'codebuddy' },
+      { labelKey: 'settings.items.summarizeOpencode', value: 'opencode' },
+      { labelKey: 'settings.items.summarizeCodex', value: 'codex' },
+      { labelKey: 'settings.items.summarizeQoder', value: 'qoder' },
+      { labelKey: 'settings.items.summarizeVecli', value: 'vecli' },
+      { labelKey: 'settings.items.summarizeDeepseek', value: 'deepseek' },
+      { labelKey: 'settings.items.summarizePi', value: 'pi' },
+    ]},
+    { labelKey: 'settings.items.summarizeModel', descriptionKey: 'settings.items.summarizeModelDesc', key: 'summarize.model', type: 'text', source: 'server', dependsOn: { key: 'summarize.backend', values: ['api', ...CLI_BACKENDS] } },
+    { labelKey: 'settings.items.apiBaseUrl', descriptionKey: 'settings.items.apiBaseUrlDesc', key: 'summarize.api.base_url', type: 'text', source: 'server', sectionHeader: 'settings.items.apiHeader', dependsOn: { key: 'summarize.backend', value: 'api' } },
+    { labelKey: 'settings.items.apiKey', descriptionKey: 'settings.items.apiKeyDesc', key: 'summarize.api.key', type: 'password', source: 'server', dependsOn: { key: 'summarize.backend', value: 'api' } },
+    { labelKey: 'settings.items.apiFormat', descriptionKey: 'settings.items.apiFormatDesc', key: 'summarize.api.format', type: 'select', source: 'server', dependsOn: { key: 'summarize.backend', value: 'api' }, options: [
+      { labelKey: 'settings.items.apiFormatOpenai', value: 'openai' },
+      { labelKey: 'settings.items.apiFormatAnthropic', value: 'anthropic' },
+    ]},
+  ],
+  // RAG: flattened from group
+  rag: [
+    { labelKey: 'settings.items.ragOllamaUrl', descriptionKey: 'settings.items.ragOllamaUrlDesc', key: 'rag.ollama_base_url', type: 'text', source: 'server' },
+    { labelKey: 'settings.items.ragOllamaModel', descriptionKey: 'settings.items.ragOllamaModelDesc', key: 'rag.ollama_model', type: 'text', source: 'server' },
+    { labelKey: 'settings.items.ragChunkSize', descriptionKey: 'settings.items.ragChunkSizeDesc', key: 'rag.chunk_size', type: 'number', source: 'server' },
+    { labelKey: 'settings.items.ragSearchLimit', descriptionKey: 'settings.items.ragSearchLimitDesc', key: 'rag.search_limit', type: 'number', source: 'server' },
+    { labelKey: 'settings.items.ragSearchPoolSize', descriptionKey: 'settings.items.ragSearchPoolSizeDesc', key: 'rag.search_pool_size', type: 'number', source: 'server' },
+    { labelKey: 'settings.items.ragRetentionDays', descriptionKey: 'settings.items.ragRetentionDaysDesc', key: 'rag.retention_days', type: 'number', source: 'server' },
+  ],
+  // Port Forward: flattened from group
+  portForward: [
+    { labelKey: 'settings.items.portForwardEnabled', descriptionKey: 'settings.items.portForwardEnabledDesc', key: 'port_forward.enabled', type: 'switch', source: 'server', needsRestart: true },
+    { labelKey: 'settings.items.portForwardPort', descriptionKey: 'settings.items.portForwardPortDesc', key: 'port_forward.port', type: 'number', source: 'server', needsRestart: true, displayTransform: (v: any) => v === 0 ? '__auto__' : v, dependsOn: { key: 'port_forward.enabled', value: true } },
+  ],
+  // Push: flattened from group
   push: [
     { labelKey: 'settings.items.pushPersistentNotification', descriptionKey: 'settings.items.pushPersistentNotificationDesc', key: 'pushPersistentNotification', type: 'switch', source: 'local' },
+    { labelKey: 'settings.items.pushEnabled', descriptionKey: 'settings.items.pushEnabledDesc', key: 'push.jpush.enabled', type: 'switch', source: 'server' },
+    { labelKey: 'settings.items.pushAppKey', descriptionKey: 'settings.items.pushAppKeyDesc', key: 'push.jpush.app_key', type: 'text', source: 'server', dependsOn: { key: 'push.jpush.enabled', value: true } },
+    { labelKey: 'settings.items.pushMasterSecret', descriptionKey: 'settings.items.pushMasterSecretDesc', key: 'push.jpush.master_secret', type: 'password', source: 'server', dependsOn: { key: 'push.jpush.enabled', value: true } },
   ],
   android: [
     { labelKey: 'settings.items.androidLogCapture', descriptionKey: 'settings.items.androidLogCaptureDesc', key: 'androidLogCapture', type: 'switch', source: 'local' },
@@ -163,8 +201,6 @@ export const categoryItems: Record<string, ItemSpec[]> = {
 }
 
 // ── Config group definitions ────────────────────────────────
-
-const CLI_BACKENDS = ['claude', 'codebuddy', 'opencode', 'codex', 'qoder', 'vecli', 'deepseek', 'pi'] as const
 
 export const categoryGroups: Record<string, ConfigGroup[]> = {
   tts: [{
@@ -214,101 +250,13 @@ export const categoryGroups: Record<string, ConfigGroup[]> = {
     ],
   }],
 
-  summarization: [{
-    groupId: 'summarize-group',
-    entryType: 'select',
-    entryField: {
-      labelKey: 'settings.items.summarizeBackend',
-      descriptionKey: 'settings.items.summarizeBackendDesc',
-      key: 'summarize.backend',
-      type: 'select',
-      source: 'server',
-      options: [
-        { labelKey: 'settings.items.summarizeDisabled', value: '' },
-        { labelKey: 'settings.items.summarizeSimple', value: 'simple' },
-        { labelKey: 'settings.items.summarizeApi', value: 'api' },
-        { labelKey: 'settings.items.summarizeClaude', value: 'claude' },
-        { labelKey: 'settings.items.summarizeCodebuddy', value: 'codebuddy' },
-        { labelKey: 'settings.items.summarizeOpencode', value: 'opencode' },
-        { labelKey: 'settings.items.summarizeCodex', value: 'codex' },
-        { labelKey: 'settings.items.summarizeQoder', value: 'qoder' },
-        { labelKey: 'settings.items.summarizeVecli', value: 'vecli' },
-        { labelKey: 'settings.items.summarizeDeepseek', value: 'deepseek' },
-        { labelKey: 'settings.items.summarizePi', value: 'pi' },
-      ],
-    },
-    commonFields: [
-      { labelKey: 'settings.items.summarizeModel', descriptionKey: 'settings.items.summarizeModelDesc', key: 'summarize.model', type: 'text', source: 'server' },
-    ],
-    optionSubFields: [
-      { when: 'simple', fields: [] },
-      { when: 'api', fields: [
-        { labelKey: 'settings.items.apiBaseUrl', descriptionKey: 'settings.items.apiBaseUrlDesc', key: 'summarize.api.base_url', type: 'text', source: 'server', sectionHeader: 'settings.items.apiHeader' },
-        { labelKey: 'settings.items.apiKey', descriptionKey: 'settings.items.apiKeyDesc', key: 'summarize.api.key', type: 'password', source: 'server' },
-        { labelKey: 'settings.items.apiFormat', descriptionKey: 'settings.items.apiFormatDesc', key: 'summarize.api.format', type: 'select', source: 'server', options: [
-          { labelKey: 'settings.items.apiFormatOpenai', value: 'openai' },
-          { labelKey: 'settings.items.apiFormatAnthropic', value: 'anthropic' },
-        ]},
-      ]},
-      ...CLI_BACKENDS.map(b => ({ when: b, fields: [] as Omit<ItemSpec, 'dependsOn'>[] })),
-    ],
-    nonExpandValues: [''],
-    commonFieldsVisibleWhen: ['api', ...CLI_BACKENDS],
-  }],
+  summarization: [],
 
-  rag: [{
-    groupId: 'rag-group',
-    titleKey: 'settings.categories.rag',
-    entryType: 'header',
-    entryField: { labelKey: 'settings.categories.rag', key: '_rag-header', type: 'header', source: 'server' },
-    commonFields: [
-      { labelKey: 'settings.items.ragOllamaUrl', descriptionKey: 'settings.items.ragOllamaUrlDesc', key: 'rag.ollama_base_url', type: 'text', source: 'server' },
-      { labelKey: 'settings.items.ragOllamaModel', descriptionKey: 'settings.items.ragOllamaModelDesc', key: 'rag.ollama_model', type: 'text', source: 'server' },
-      { labelKey: 'settings.items.ragChunkSize', descriptionKey: 'settings.items.ragChunkSizeDesc', key: 'rag.chunk_size', type: 'number', source: 'server' },
-      { labelKey: 'settings.items.ragSearchLimit', descriptionKey: 'settings.items.ragSearchLimitDesc', key: 'rag.search_limit', type: 'number', source: 'server' },
-      { labelKey: 'settings.items.ragSearchPoolSize', descriptionKey: 'settings.items.ragSearchPoolSizeDesc', key: 'rag.search_pool_size', type: 'number', source: 'server' },
-      { labelKey: 'settings.items.ragRetentionDays', descriptionKey: 'settings.items.ragRetentionDaysDesc', key: 'rag.retention_days', type: 'number', source: 'server' },
-    ],
-    // No optionSubFields — all commonFields always visible
-  }],
+  rag: [],
 
-  portForward: [{
-    groupId: 'port-forward-group',
-    entryType: 'switch',
-    entryField: {
-      labelKey: 'settings.items.portForwardEnabled',
-      descriptionKey: 'settings.items.portForwardEnabledDesc',
-      key: 'port_forward.enabled',
-      type: 'switch',
-      source: 'server',
-      needsRestart: true,
-    },
-    optionSubFields: [
-      { when: true, fields: [
-        { labelKey: 'settings.items.portForwardPort', descriptionKey: 'settings.items.portForwardPortDesc', key: 'port_forward.port', type: 'number', source: 'server', needsRestart: true, displayTransform: (v: any) => v === 0 ? '__auto__' : v },
-      ]},
-    ],
-    nonExpandValues: [false],
-  }],
+  portForward: [],
 
-  push: [{
-    groupId: 'push-jpush-group',
-    entryType: 'switch',
-    entryField: {
-      labelKey: 'settings.items.pushEnabled',
-      descriptionKey: 'settings.items.pushEnabledDesc',
-      key: 'push.jpush.enabled',
-      type: 'switch',
-      source: 'server',
-    },
-    optionSubFields: [
-      { when: true, fields: [
-        { labelKey: 'settings.items.pushAppKey', descriptionKey: 'settings.items.pushAppKeyDesc', key: 'push.jpush.app_key', type: 'text', source: 'server' },
-        { labelKey: 'settings.items.pushMasterSecret', descriptionKey: 'settings.items.pushMasterSecretDesc', key: 'push.jpush.master_secret', type: 'password', source: 'server' },
-      ]},
-    ],
-    nonExpandValues: [false],
-  }],
+  push: [],
 }
 
 // ── Helpers ─────────────────────────────────────────────────
