@@ -25,6 +25,7 @@ import androidx.core.app.NotificationCompat;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
@@ -35,6 +36,8 @@ import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -87,6 +90,7 @@ public class BackgroundService extends Service {
     private static final String KEY_FORWARDED_PORTS = "forwarded_ports";
     private static final String KEY_BATTERY_OPT_REQUESTED = "battery_opt_requested";
     private static final String KEY_PERSISTENT_NOTIFICATION = "persistent_notification";
+    private static final String KEY_LAST_SEEN_EVENT_ID = "last_seen_event_id";
 
     // Reconnect parameters: exponential backoff delays in milliseconds
     private static final int[] RECONNECT_DELAYS_MS = {5000, 10000, 30000, 60000, 120000};
@@ -166,6 +170,23 @@ public class BackgroundService extends Service {
     // killing the Service before the native WS can be established.
     // Must be static so startNativeEventWs() can set it before the Service is created.
     private static volatile boolean nativeWsNeeded = false;
+
+    // Event ID dedup (mirrors frontend processedEventIds pattern)
+    private final LinkedHashSet<String> processedEventIds = new LinkedHashSet<>();
+    private static final int MAX_PROCESSED_IDS = 100;
+
+    private boolean isDuplicateEvent(String eventId) {
+        return processedEventIds.contains(eventId);
+    }
+
+    private void addProcessedEventId(String eventId) {
+        if (processedEventIds.size() >= MAX_PROCESSED_IDS) {
+            Iterator<String> it = processedEventIds.iterator();
+            it.next();
+            it.remove();
+        }
+        processedEventIds.add(eventId);
+    }
 
     // Terminal session count — updated by the WebView via WebAppInterface.
     // Used to show the active terminal count in the foreground service notification.
@@ -1629,6 +1650,13 @@ public class BackgroundService extends Service {
             acquireWakeLock();
             acquireWifiLock();
             startWsPingLoop();
+
+            // Fetch missed events that occurred while offline
+            String serverUrl = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                    .getString(KEY_SERVER_URL, "");
+            if (!serverUrl.isEmpty()) {
+                networkExecutor.execute(() -> fetchPendingEvents(serverUrl));
+            }
         }
 
         @Override
@@ -1658,6 +1686,14 @@ public class BackgroundService extends Service {
                     webSocket.send(ack.toString());
                 }
 
+                // Dedup check (prevents double notifications from WS replay + pending fetch)
+                if (!eventId.isEmpty()) {
+                    if (isDuplicateEvent(eventId)) {
+                        return;
+                    }
+                    addProcessedEventId(eventId);
+                }
+
                 // Only notify for terminal states and permission pending
                 String status = data.optString("status", "");
                 boolean shouldNotify = false;
@@ -1672,6 +1708,14 @@ public class BackgroundService extends Service {
 
                 if (shouldNotify) {
                     postEventNotification(event, data);
+                }
+
+                // Update last seen event cursor for pending events fetch
+                if (!eventId.isEmpty()) {
+                    getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                            .edit()
+                            .putString(KEY_LAST_SEEN_EVENT_ID, eventId)
+                            .apply();
                 }
 
             } catch (Exception e) {
@@ -1842,6 +1886,131 @@ public class BackgroundService extends Service {
 
         } catch (Exception e) {
             AppLog.e(TAG, "NativeWS: failed to post notification", e);
+        }
+    }
+
+    /**
+     * Fetch pending (missed) events from the server via HTTP GET.
+     * Called on WS reconnect to recover events that occurred while offline.
+     * Posts Android notifications for each missed terminal event.
+     * MUST be called from a background thread (network I/O).
+     */
+    private void fetchPendingEvents(String serverUrl) {
+        try {
+            String lastSeenId = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                    .getString(KEY_LAST_SEEN_EVENT_ID, "");
+
+            StringBuilder urlBuilder = new StringBuilder(serverUrl)
+                    .append("/api/ai/events/pending");
+            if (!lastSeenId.isEmpty()) {
+                urlBuilder.append("?after=").append(java.net.URLEncoder.encode(lastSeenId, "UTF-8"));
+            }
+
+            // Read session cookie (same pattern as connectNativeWs)
+            String cookies = android.webkit.CookieManager.getInstance().getCookie(serverUrl);
+            String sessionCookie = null;
+            if (cookies != null) {
+                for (String cookie : cookies.split(";")) {
+                    String trimmed = cookie.trim();
+                    int eqIdx = trimmed.indexOf('=');
+                    if (eqIdx > 0) {
+                        String name = trimmed.substring(0, eqIdx);
+                        if (name.equals("clawbench_session") ||
+                                (name.startsWith("cb") && name.endsWith("_clawbench_session"))) {
+                            sessionCookie = trimmed;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (sessionCookie == null) {
+                AppLog.w(TAG, "PendingEvents: no session cookie, skipping fetch");
+                return;
+            }
+
+            // Build OkHttp request (reuse SSL context)
+            OkHttpClient.Builder clientBuilder = new OkHttpClient.Builder()
+                    .connectTimeout(5, TimeUnit.SECONDS)
+                    .readTimeout(10, TimeUnit.SECONDS);
+            if (trustAllSSLContext != null && serverUrl.startsWith("https://")) {
+                clientBuilder.sslSocketFactory(trustAllSSLContext.getSocketFactory(), new X509TrustManager() {
+                    public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+                    public void checkClientTrusted(X509Certificate[] certs, String authType) {}
+                    public void checkServerTrusted(X509Certificate[] certs, String authType) {}
+                });
+                clientBuilder.hostnameVerifier((hostname, session) -> true);
+            }
+
+            Request request = new Request.Builder()
+                    .url(urlBuilder.toString())
+                    .header("Cookie", sessionCookie)
+                    .get()
+                    .build();
+
+            Response response = clientBuilder.build().newCall(request).execute();
+            if (response.code() != 200) {
+                AppLog.w(TAG, "PendingEvents: HTTP " + response.code());
+                return;
+            }
+
+            String body = response.body().string();
+            JSONObject json = new JSONObject(body);
+            JSONArray events = json.optJSONArray("events");
+            if (events == null || events.length() == 0) {
+                AppLog.d(TAG, "PendingEvents: no missed events");
+                return;
+            }
+
+            AppLog.i(TAG, "PendingEvents: processing " + events.length() + " missed events");
+            String latestId = lastSeenId;
+            for (int i = 0; i < events.length(); i++) {
+                JSONObject eventObj = events.getJSONObject(i);
+                String payloadStr = eventObj.optString("payload", "");
+                String eventId = eventObj.optString("event_id", "");
+
+                // Skip duplicates
+                if (!eventId.isEmpty() && isDuplicateEvent(eventId)) {
+                    continue;
+                }
+                if (!eventId.isEmpty()) {
+                    addProcessedEventId(eventId);
+                }
+
+                // Parse the full ServerMessage from payload
+                JSONObject msg = new JSONObject(payloadStr);
+                String eventType = msg.optString("event", "");
+                JSONObject data = msg.optJSONObject("data");
+                if (data == null) continue;
+
+                // Post notification (same logic as NativeEventListener.onMessage)
+                String status = data.optString("status", "");
+                boolean shouldNotify = false;
+                if ("session_update".equals(eventType)
+                        && ("completed".equals(status) || "cancelled".equals(status) || "permission_pending".equals(status))) {
+                    shouldNotify = true;
+                } else if ("task_update".equals(eventType)
+                        && ("completed".equals(status) || "failed".equals(status) || "cancelled".equals(status))) {
+                    shouldNotify = true;
+                }
+                if (shouldNotify) {
+                    postEventNotification(eventType, data);
+                }
+
+                if (!eventId.isEmpty()) {
+                    latestId = eventId;
+                }
+            }
+
+            // Update cursor
+            if (!latestId.equals(lastSeenId)) {
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                        .edit()
+                        .putString(KEY_LAST_SEEN_EVENT_ID, latestId)
+                        .apply();
+            }
+
+        } catch (Exception e) {
+            AppLog.w(TAG, "PendingEvents: fetch failed", e);
         }
     }
 
