@@ -90,8 +90,10 @@ public class BackgroundService extends Service {
 
     // Reconnect parameters: exponential backoff delays in milliseconds
     private static final int[] RECONNECT_DELAYS_MS = {5000, 10000, 30000, 60000, 120000};
-    private static final int MAX_RECONNECT_ATTEMPTS = 10;
     private static final int MONITOR_CHECK_INTERVAL_MS = 15000;
+
+    // Application-layer WebSocket ping interval (supplements OkHttp protocol-level ping)
+    private static final int WS_PING_INTERVAL_MS = 30000;
 
     private static volatile boolean isRunning = false;
     private static volatile BackgroundService instance;
@@ -136,7 +138,7 @@ public class BackgroundService extends Service {
     // WifiLock: prevents WiFi from being disabled while SSH tunnel is active
     private WifiManager.WifiLock wifiLock;
 
-    // WakeLock: prevents CPU from sleeping so SSH keep-alive packets are sent
+    // WakeLock: prevents CPU from sleeping so SSH keep-alive and WebSocket pings are sent
     private PowerManager.WakeLock wakeLock;
 
     // Reconnect state
@@ -147,11 +149,18 @@ public class BackgroundService extends Service {
     private static volatile String lastError = null;
 
     // --- Native WebSocket for background event notifications ---
-    private WebSocket nativeEventWs;
+    private volatile WebSocket nativeEventWs;
     private volatile boolean nativeWsActive = false;
     private volatile boolean nativeWsIntentionalStop = false;
     private volatile int nativeWsReconnectAttempt = 0;
     private String nativeClientId;
+    // Application-layer WS ping: sends {"type":"ping"} every WS_PING_INTERVAL_MS
+    // to detect half-open connections and keep the WebSocket alive through NAT timeouts.
+    private Handler wsPingHandler;
+    private Runnable wsPingRunnable;
+    // Reconnect scheduling: avoids accumulating multiple pending reconnect callbacks
+    private Handler wsReconnectHandler;
+    private Runnable wsReconnectRunnable;
     // Tracks whether the native WS needs this Service to stay alive.
     // Without this flag, onCreate() would stopSelf() when there are no SSH ports,
     // killing the Service before the native WS can be established.
@@ -388,7 +397,18 @@ public class BackgroundService extends Service {
                 networkExecutor.execute(this::disconnect);
             } else if ("RESTORE_PORTS".equals(action)) {
                 // Explicit restore request — e.g. from Activity after configuration change
+                // or from onTaskRemoved (app swiped from recents)
                 networkExecutor.execute(this::restoreAndReconnect);
+                // Also restore native WebSocket if it was active before task removal
+                if (nativeWsNeeded) {
+                    networkExecutor.execute(() -> {
+                        String serverUrl = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                                .getString(KEY_SERVER_URL, "");
+                        if (!serverUrl.isEmpty()) {
+                            startNativeEventWs(serverUrl);
+                        }
+                    });
+                }
             } else if ("START_NATIVE_WS".equals(action)) {
                 nativeWsNeeded = true;
                 networkExecutor.execute(() -> {
@@ -619,8 +639,9 @@ public class BackgroundService extends Service {
 
                         // Wait before attempt (except first attempt)
                         if (reconnectAttempt > 1) {
+                            int displayAttempt = Math.min(reconnectAttempt, 999);
                             updateNotification(forwardedPorts.size(),
-                                    "SSH 隧道断开，第 " + reconnectAttempt + "/" + MAX_RECONNECT_ATTEMPTS + " 次重连…");
+                                    "SSH 隧道断开，第 " + displayAttempt + " 次重连…");
                             try {
                                 Thread.sleep(delay);
                             } catch (InterruptedException e) {
@@ -629,13 +650,6 @@ public class BackgroundService extends Service {
                         }
 
                         if (!monitorActive || intentionalDisconnect) break;
-
-                        // Give up after max attempts
-                        if (reconnectAttempt > MAX_RECONNECT_ATTEMPTS) {
-                            AppLog.e(TAG, "SSH: exhausted " + MAX_RECONNECT_ATTEMPTS + " reconnect attempts, giving up");
-                            updateNotification(forwardedPorts.size(), "SSH 隧道重连失败，请重新打开页面");
-                            break;
-                        }
 
                         try {
                             AppLog.i(TAG, "SSH: auto-reconnect attempt #" + reconnectAttempt);
@@ -1097,7 +1111,7 @@ public class BackgroundService extends Service {
         intentionalDisconnect = true;
         stopConnectionMonitor();
         releaseWifiLock();
-        releaseWakeLock();
+        maybeReleaseWakeLock();
         disconnectInternal();
     }
 
@@ -1238,19 +1252,75 @@ public class BackgroundService extends Service {
         }
     }
 
+    // --- WebSocket application-layer ping ---
+
+    /**
+     * Start sending application-layer ping messages every WS_PING_INTERVAL_MS.
+     * Supplements OkHttp's protocol-level pingInterval to detect half-open
+     * connections and keep the WebSocket alive through NAT/firewall timeouts.
+     * Safe to call from any thread — posts to the main looper.
+     */
+    private void startWsPingLoop() {
+        // Ensure setup runs on the main thread (may be called from OkHttp callback thread)
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            new Handler(Looper.getMainLooper()).post(this::startWsPingLoop);
+            return;
+        }
+        stopWsPingLoop();
+        wsPingHandler = new Handler(Looper.getMainLooper());
+        wsPingRunnable = new Runnable() {
+            @Override
+            public void run() {
+                // Local volatile read to avoid race with stopNativeEventWs()
+                WebSocket ws = nativeEventWs;
+                if (ws != null && nativeWsActive && !nativeWsIntentionalStop) {
+                    boolean sent = ws.send("{\"type\":\"ping\"}");
+                    if (!sent) {
+                        AppLog.w(TAG, "NativeWS: ping send failed, connection likely dead");
+                        nativeWsActive = false;
+                        ws.close(1000, "ping-failed");
+                        nativeEventWs = null;
+                        String serverUrl = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                                .getString(KEY_SERVER_URL, "");
+                        if (!serverUrl.isEmpty() && !nativeWsIntentionalStop) {
+                            scheduleNativeWsReconnect(serverUrl);
+                        }
+                        return;
+                    }
+                    AppLog.d(TAG, "NativeWS: sent app-layer ping");
+                    wsPingHandler.postDelayed(this, WS_PING_INTERVAL_MS);
+                }
+            }
+        };
+        wsPingHandler.postDelayed(wsPingRunnable, WS_PING_INTERVAL_MS);
+        AppLog.i(TAG, "NativeWS: app-layer ping loop started (interval=" + WS_PING_INTERVAL_MS + "ms)");
+    }
+
+    /**
+     * Stop the application-layer ping loop.
+     */
+    private void stopWsPingLoop() {
+        if (wsPingHandler != null && wsPingRunnable != null) {
+            wsPingHandler.removeCallbacks(wsPingRunnable);
+            AppLog.d(TAG, "NativeWS: app-layer ping loop stopped");
+        }
+        wsPingHandler = null;
+        wsPingRunnable = null;
+    }
+
     // --- WakeLock ---
 
     /**
      * Acquire a partial WakeLock to prevent CPU from sleeping.
-     * This ensures SSH keep-alive packets are sent even when the screen is off
-     * and the device enters Doze mode.
+     * This ensures SSH keep-alive packets and WebSocket pings are sent
+     * even when the screen is off and the device enters Doze mode.
      */
     private void acquireWakeLock() {
         if (wakeLock != null && wakeLock.isHeld()) return;
         try {
             PowerManager pm = (PowerManager) getApplicationContext().getSystemService(Context.POWER_SERVICE);
             if (pm != null) {
-                wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ClawBench:SSH-Tunnel");
+                wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ClawBench:BgService");
                 wakeLock.setReferenceCounted(false);
                 wakeLock.acquire();
                 AppLog.i(TAG, "SSH: WakeLock acquired");
@@ -1272,6 +1342,28 @@ public class BackgroundService extends Service {
                 AppLog.w(TAG, "SSH: failed to release WakeLock", e);
             }
             wakeLock = null;
+        }
+    }
+
+    /**
+     * Release WakeLock only if neither SSH session nor native WebSocket is active.
+     * Called from disconnect paths where one subsystem may disconnect but the other
+     * still needs the CPU to stay awake.
+     */
+    private void maybeReleaseWakeLock() {
+        boolean sshActive = sshSession != null && sshSession.isConnected();
+        if (!sshActive && !nativeWsActive) {
+            releaseWakeLock();
+        }
+    }
+
+    /**
+     * Release WifiLock only if neither SSH session nor native WebSocket is active.
+     */
+    private void maybeReleaseWifiLock() {
+        boolean sshActive = sshSession != null && sshSession.isConnected();
+        if (!sshActive && !nativeWsActive) {
+            releaseWifiLock();
         }
     }
 
@@ -1466,6 +1558,13 @@ public class BackgroundService extends Service {
         nativeWsIntentionalStop = true;
         nativeWsActive = false;
         nativeWsNeeded = false;
+        stopWsPingLoop();
+        // Cancel any pending reconnect
+        if (wsReconnectHandler != null && wsReconnectRunnable != null) {
+            wsReconnectHandler.removeCallbacks(wsReconnectRunnable);
+            wsReconnectHandler = null;
+            wsReconnectRunnable = null;
+        }
         if (nativeEventWs != null) {
             try {
                 nativeEventWs.close(1000, "foreground");
@@ -1491,27 +1590,31 @@ public class BackgroundService extends Service {
 
     /**
      * Schedule a reconnect attempt for the native WebSocket.
+     * Reconnects indefinitely with exponential backoff, capped at the longest
+     * delay in RECONNECT_DELAYS_MS. Only stops on nativeWsIntentionalStop.
+     * Cancels any previously scheduled reconnect to avoid callback accumulation.
      */
     private void scheduleNativeWsReconnect(String serverUrl) {
         if (nativeWsIntentionalStop) return;
-        nativeWsReconnectAttempt++;
-        if (nativeWsReconnectAttempt > MAX_RECONNECT_ATTEMPTS) {
-            AppLog.w(TAG, "NativeWS: exhausted reconnect attempts, giving up");
-            nativeWsNeeded = false;
-            // If no SSH ports either, stop the service to avoid wasting battery
-            maybeStopIdleService();
-            return;
+        // Cancel any previously scheduled reconnect
+        if (wsReconnectHandler != null && wsReconnectRunnable != null) {
+            wsReconnectHandler.removeCallbacks(wsReconnectRunnable);
         }
+        nativeWsReconnectAttempt++;
         int delayIdx = Math.min(nativeWsReconnectAttempt - 1, RECONNECT_DELAYS_MS.length - 1);
         int delay = RECONNECT_DELAYS_MS[delayIdx];
-        AppLog.i(TAG, "NativeWS: reconnecting in " + delay + "ms (attempt " + nativeWsReconnectAttempt + ")");
+        int displayAttempt = Math.min(nativeWsReconnectAttempt, 999);
+        AppLog.i(TAG, "NativeWS: reconnecting in " + delay + "ms (attempt " + displayAttempt + ")");
 
         // Use Handler to schedule on main thread, then post to network executor
-        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+        wsReconnectHandler = new Handler(Looper.getMainLooper());
+        final String finalServerUrl = serverUrl;
+        wsReconnectRunnable = () -> {
             if (!nativeWsIntentionalStop && isRunning) {
-                networkExecutor.execute(() -> connectNativeWs(serverUrl));
+                networkExecutor.execute(() -> connectNativeWs(finalServerUrl));
             }
-        }, delay);
+        };
+        wsReconnectHandler.postDelayed(wsReconnectRunnable, delay);
     }
 
     /**
@@ -1523,6 +1626,9 @@ public class BackgroundService extends Service {
             nativeWsActive = true;
             nativeWsReconnectAttempt = 0;
             AppLog.i(TAG, "NativeWS: connected");
+            acquireWakeLock();
+            acquireWifiLock();
+            startWsPingLoop();
         }
 
         @Override
@@ -1581,6 +1687,7 @@ public class BackgroundService extends Service {
         @Override
         public void onClosed(WebSocket webSocket, int code, String reason) {
             nativeWsActive = false;
+            stopWsPingLoop();
             AppLog.i(TAG, "NativeWS: closed (code=" + code + ", reason=" + reason + ")");
             if (!nativeWsIntentionalStop) {
                 String serverUrl = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
@@ -1589,11 +1696,13 @@ public class BackgroundService extends Service {
                     scheduleNativeWsReconnect(serverUrl);
                 }
             }
+            maybeReleaseWakeLock();
         }
 
         @Override
         public void onFailure(WebSocket webSocket, Throwable t, Response response) {
             nativeWsActive = false;
+            stopWsPingLoop();
             AppLog.w(TAG, "NativeWS: connection failure: " + (t != null ? t.getMessage() : "unknown"));
             if (!nativeWsIntentionalStop) {
                 String serverUrl = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
@@ -1602,6 +1711,7 @@ public class BackgroundService extends Service {
                     scheduleNativeWsReconnect(serverUrl);
                 }
             }
+            maybeReleaseWakeLock();
         }
     }
 
