@@ -347,8 +347,8 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			m.Backend = cfg.TTS.MossNano.Backend
 		}
 		m.ModelDir = speech.ResolveMossNanoModelDir(cfg.TTS.MossNano.ModelDir)
-		if cfg.TTS.MossNano.Voice != "" {
-			m.Voice = cfg.TTS.MossNano.Voice
+		if cfg.TTS.Voice != "" {
+			m.Voice = cfg.TTS.Voice
 		}
 		ttsProvider = m
 		slog.Info(
@@ -1068,8 +1068,8 @@ func newMossNanoTTSProvider(cfg model.Config) *speech.MossNanoProvider {
 		m.Backend = cfg.TTS.MossNano.Backend
 	}
 	m.ModelDir = speech.ResolveMossNanoModelDir(cfg.TTS.MossNano.ModelDir)
-	if cfg.TTS.MossNano.Voice != "" {
-		m.Voice = cfg.TTS.MossNano.Voice
+	if cfg.TTS.Voice != "" {
+		m.Voice = cfg.TTS.Voice
 	}
 	return m
 }

@@ -65,7 +65,6 @@ var hotReloadFields = map[string]bool{
 	"tts.kokoro.voices_path":      true,
 	"tts.kokoro.lang":             true,
 	"tts.moss_nano.model_dir":     true,
-	"tts.moss_nano.voice":         true,
 	"tts.moss_nano.backend":       true,
 	// Summarize — reconstruct summarizer
 	"summarize.backend":      true,
@@ -178,7 +177,6 @@ type configKokoro struct {
 
 type configMossNano struct {
 	ModelDir string `json:"model_dir"`
-	Voice    string `json:"voice"`
 	Backend  string `json:"backend"`
 }
 
@@ -248,7 +246,6 @@ var PatchableConfigPaths = map[string]bool{
 	"tts.kokoro.voices_path":      true,
 	"tts.kokoro.lang":             true,
 	"tts.moss_nano.model_dir":     true,
-	"tts.moss_nano.voice":         true,
 	"tts.moss_nano.backend":       true,
 	"rag.base_url":                true,
 	"rag.model":                   true,
@@ -422,7 +419,6 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 	case "moss-nano":
 		resp.TTS.MossNano = &configMossNano{
 			ModelDir: cfg.TTS.MossNano.ModelDir,
-			Voice:    cfg.TTS.MossNano.Voice,
 			Backend:  cfg.TTS.MossNano.Backend,
 		}
 	}
@@ -845,9 +841,6 @@ func applyConfigPatch(patch map[string]any) error { //nolint:gocognit,gocyclo //
 			if v, ok := mossNano["model_dir"].(string); ok {
 				cfg.TTS.MossNano.ModelDir = v
 			}
-			if v, ok := mossNano["voice"].(string); ok {
-				cfg.TTS.MossNano.Voice = v
-			}
 			if v, ok := mossNano["backend"].(string); ok {
 				cfg.TTS.MossNano.Backend = v
 			}
@@ -960,7 +953,7 @@ func applyHotReloadGlobals() {
 			p.Voice = cfg.TTS.Voice
 		}
 		// Piper: voice is embedded in model_path, not a standalone field
-		// MOSS-Nano: uses moss_nano.voice, not tts.voice
+		// MOSS-Nano: uses tts.voice (shared with Edge/Kokoro)
 	}
 	if cfg.TTS.Speed > 0 {
 		if p, ok := curProvider.(*speech.EdgeTTSProvider); ok {

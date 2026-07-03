@@ -374,16 +374,6 @@ func TestPersist_MossNanoModelDir(t *testing.T) {
 	assert.Equal(t, "/path/to/models", getNestedValue(cfg, "tts.moss_nano.model_dir"))
 }
 
-func TestPersist_MossNanoVoice(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-
-	cfg := patchAndReadConfig(t, `{"tts":{"moss_nano":{"voice":"Xiaoxiao"}}}`)
-	assert.Equal(t, "Xiaoxiao", getNestedValue(cfg, "tts.moss_nano.voice"))
-}
-
 func TestPersist_MossNanoBackend(t *testing.T) {
 	_, cleanup := setupPersistTestEnv(t)
 	defer cleanup()

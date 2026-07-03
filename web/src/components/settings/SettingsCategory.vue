@@ -85,6 +85,7 @@ import { useAppMode } from '@/composables/useAppMode'
 import { usePwaInstall } from '@/composables/usePwaInstall'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { useTerminalStatus } from '@/composables/useTerminalStatus'
+import { usePortForward } from '@/composables/usePortForward'
 import { categoryItems, categoryGroups, engineVoiceOptions, fieldBelongsToGroup, getGroupById, getCategoryForGroup, type ItemSpec, type ConfigGroup, type DependsOn } from './settingsFieldMap'
 
 const props = defineProps<{
@@ -106,6 +107,7 @@ const { isAppMode } = useAppMode()
 const pwaInstall = usePwaInstall()
 const { pushRegistered } = useGlobalEvents()
 const { loadTerminalStatus } = useTerminalStatus()
+const { loadSSHInfo } = usePortForward()
 
 const activeKey = ref<string | null>(null)
 const showPasswordDialog = ref(false)
@@ -347,6 +349,9 @@ async function handleUpdate(item: any, value: any) {
     const result = await setServerValue(item.key, value)
     if (item.key === 'terminal.enabled') {
       loadTerminalStatus()
+    }
+    if (item.key === 'port_forward.enabled') {
+      loadSSHInfo()
     }
     if (result.needsRestart && result.changedColdFields.length > 0) {
       emit('restartNeeded', result.changedColdFields)

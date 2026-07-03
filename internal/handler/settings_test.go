@@ -198,7 +198,7 @@ func TestServeConfig_Get_ConditionalMossNanoSubConfig(t *testing.T) {
 	cfg := model.Config{}
 	cfg.TTS.Engine = "moss-nano"
 	cfg.TTS.MossNano.ModelDir = "/path/to/models"
-	cfg.TTS.MossNano.Voice = "Junhao"
+	cfg.TTS.Voice = "Junhao"
 	cfg.TTS.MossNano.Backend = "onnx"
 	model.ConfigInstance = cfg
 
@@ -218,7 +218,8 @@ func TestServeConfig_Get_ConditionalMossNanoSubConfig(t *testing.T) {
 
 	mossNano, _ := tts["moss_nano"].(map[string]any)
 	assert.Equal(t, "onnx", mossNano["backend"])
-	assert.Equal(t, "Junhao", mossNano["voice"])
+	// voice is now the shared tts.voice field, not moss_nano.voice
+	assert.Equal(t, "Junhao", tts["voice"])
 }
 
 func TestServeConfig_Get_ConditionalAPISubConfig(t *testing.T) {
@@ -834,16 +835,16 @@ func TestServeConfig_Patch_MossNanoSubConfigWithoutModelDir(t *testing.T) {
 	cfg.TTS.MossNano.ModelDir = ""
 	model.ConfigInstance = cfg
 
-	// Saving sub-config when engine is already moss-nano and model_dir is empty should succeed
-	// (model_dir is optional — empty value is valid, ResolveMossNanoModelDir handles it)
-	body := `{"tts":{"moss_nano":{"voice":"Junhao"}}}`
+	// Saving voice when engine is already moss-nano should succeed
+	// (voice is now the shared tts.voice field)
+	body := `{"tts":{"voice":"Junhao"}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "Junhao", model.ConfigInstance.TTS.MossNano.Voice)
+	assert.Equal(t, "Junhao", model.ConfigInstance.TTS.Voice)
 }
 
 func TestServeConfig_Patch_InvalidDefaultAgent(t *testing.T) {
@@ -1564,7 +1565,7 @@ func TestServeConfig_Patch_MossNanoModelDirInPatch(t *testing.T) {
 	model.ConfigInstance = cfg
 
 	// Patch model_dir when engine is already moss-nano
-	body := `{"tts":{"moss_nano":{"model_dir":"/path/to/models","voice":"Test","backend":"onnx"}}}`
+	body := `{"tts":{"moss_nano":{"model_dir":"/path/to/models","backend":"onnx"}}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
@@ -1572,7 +1573,6 @@ func TestServeConfig_Patch_MossNanoModelDirInPatch(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "/path/to/models", model.ConfigInstance.TTS.MossNano.ModelDir)
-	assert.Equal(t, "Test", model.ConfigInstance.TTS.MossNano.Voice)
 	assert.Equal(t, "onnx", model.ConfigInstance.TTS.MossNano.Backend)
 }
 
