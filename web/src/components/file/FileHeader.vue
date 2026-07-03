@@ -414,8 +414,7 @@ onBeforeUnmount(() => {
     justify-content: center;
 }
 .file-header-btn:hover {
-    background: var(--bg-tertiary);
-    color: var(--accent-color);
+    background: var(--accent-color-dim, rgba(74, 144, 217, 0.12));
 }
 .file-header-btn svg {
     width: 14px;
@@ -432,6 +431,7 @@ onBeforeUnmount(() => {
 }
 .file-header-btn.active {
     background: var(--accent-color-dim, rgba(74, 144, 217, 0.12));
+    color: var(--accent-color);
 }
 
 /* Dropdown */
@@ -483,6 +483,10 @@ onBeforeUnmount(() => {
 .file-header-dropdown-menu .dropdown-item:hover {
     background: var(--accent-color);
     color: #fff;
+}
+.file-header-dropdown-menu .dropdown-item.active {
+    background: var(--accent-color-dim, rgba(74, 144, 217, 0.12));
+    color: var(--accent-color);
 }
 .file-header-dropdown-menu .dropdown-item svg {
     flex-shrink: 0;
