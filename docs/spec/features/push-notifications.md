@@ -42,4 +42,40 @@ sequenceDiagram
 ### 设计要点
 
 - **推送是 WS 的后备而非替代**：推送通知有延迟、有字数限制、无法交互——在线时始终优先使用 WebSocket
-- **断线缓冲窗口有限（10s）**：WebSocket 断线后只缓冲 10s 内的事件，超过的事件丢失。这是存储和时效性的权衡——太久之前的事件对用户已无意义
+- **断线缓冲窗口有限（10s）**：WebSocket 断线后只缓冲 10s 内的事件，超过的事件进入离线持久化
+
+## 离线事件持久化
+
+设备关机或网络断开期间，WS 连接丢失，10s 缓冲窗口内的事件也会丢失。为了确保离线期间的关键通知不丢失，系统将终端状态事件持久化到 `pending_events` 表。
+
+### 持久化策略
+
+- **只持久化终端状态事件**：`session_update`（completed/cancelled/permission_pending）、`task_update`（completed/failed/cancelled）
+- **全局事件日志**：不按 client_id 分区，所有客户端共享同一个事件日志
+- **条件存储**：仅当存在断开连接的客户端时才写入（`HasDisconnectedClients()`），避免所有客户端在线时的写放大
+- **Write-ahead**：先存储后广播，确保事件日志无间隙
+- **客户端游标**：每个客户端在本地持久化 `last_seen_event_id`，重连时用 `after` 参数拉取游标之后的事件
+- **TTL**：
+  - 终端状态事件（completed/cancelled/failed）：24 小时
+  - 权限审批事件（permission_pending）：7 天（防止离线期间权限请求被清理导致 agent 死锁）
+- **容量上限**：最大 1000 条，超出丢弃最旧的
+
+### 拉取流程
+
+```mermaid
+sequenceDiagram
+    participant Android/前端
+    participant Server
+
+    Android/前端->>Server: WS 重连
+    Note over Android/前端: WS 回放缓冲事件
+    Android/前端->>Server: GET /api/ai/events/pending?after=evt_xxx
+    Server-->>Android/前端: 返回游标之后的未过期事件
+    Android/前端->>Android/前端: 逐条处理：去重 + 显示通知 + 播放声音
+    Android/前端->>Android/前端: 更新本地 last_seen_event_id
+```
+
+### 去重
+
+- **前端**：`processedEventIds` Set（cap 100），WS 回放和 pending fetch 共享同一去重集合
+- **Android**：`processedEventIds` LinkedHashSet（cap 100），防止 WS 回放 + pending fetch 产生重复通知
