@@ -1204,12 +1204,12 @@ public class BackgroundService extends Service {
                 .setContentText(text)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentIntent(pendingIntent)
-                .setOngoing(true)
-                .setSilent(true);
+                .setOngoing(true);
 
-        // When persistent notification is disabled, minimize it further
+        // When persistent notification is disabled, minimize it
         if (!persistent) {
-            builder.setPriority(NotificationCompat.PRIORITY_MIN);
+            builder.setPriority(NotificationCompat.PRIORITY_MIN)
+                    .setSilent(true);
         }
 
         return builder.build();
