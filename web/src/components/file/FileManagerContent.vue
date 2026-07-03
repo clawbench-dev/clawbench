@@ -356,7 +356,7 @@ import {
   resolveClickAction,
 } from '@/utils/fileManager.ts'
 import { store } from '@/stores/app.ts'
-import { localConfig, setLocalConfig, useSettingsConfig, getZoomedViewport, getUIScale } from '@/composables/useSettingsConfig'
+import { localConfig, setLocalConfig, useSettingsConfig, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useTerminalStatus } from '@/composables/useTerminalStatus.ts'
@@ -546,10 +546,9 @@ function closeCtxMenu() {
 // ── Unified context menu trigger (right-click + long-press) ──
 
 function onLongPress(entry, e) {
-    const z = getUIScale()
     const touch = e.touches[0]
-    ctxMenu.x = touch.clientX * z
-    ctxMenu.y = touch.clientY * z + 10
+    ctxMenu.x = touch.clientX
+    ctxMenu.y = touch.clientY + 10
     // DirEntry from v-for has no .path — compute it like handleCtxMenu does
     ctxMenu.entry = { type: entry.type, name: entry.name, path: itemPath(entry.name) }
     ctxMenu.visible = true
@@ -560,20 +559,18 @@ function onContainerLongPress(e) {
     // Ignore if touch originated on a file/dir item — child v-long-press handles it
     if (e.target?.closest('.file-item, .grid-item')) return
     // Long-press on empty area — show menu without entry (paste, new file/folder, terminal)
-    const z = getUIScale()
     const touch = e.touches[0]
-    ctxMenu.x = touch.clientX * z
-    ctxMenu.y = touch.clientY * z + 10
+    ctxMenu.x = touch.clientX
+    ctxMenu.y = touch.clientY + 10
     ctxMenu.entry = null
     ctxMenu.visible = true
     nextTick(() => clampCtxMenu())
 }
 
 function handleCtxMenu(e) {
-    const z = getUIScale()
     const item = e.target?.closest('.file-item, .grid-item')
-    ctxMenu.x = e.clientX * z
-    ctxMenu.y = e.clientY * z
+    ctxMenu.x = e.clientX
+    ctxMenu.y = e.clientY
     if (!item) {
         ctxMenu.entry = null
         ctxMenu.visible = true

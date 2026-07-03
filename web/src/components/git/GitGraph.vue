@@ -125,7 +125,7 @@
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { computeGraphData, refLabelText } from '@/utils/gitGraph'
-import { getZoomedViewport, getUIScale } from '@/composables/useSettingsConfig'
+import { getZoomedViewport } from '@/composables/useSettingsConfig'
 const { t } = useI18n()
 
 const props = defineProps({
@@ -192,9 +192,8 @@ const onNodeClick = (node, event) => {
   event.stopPropagation()
 
   // Use click event coordinates for reliable positioning regardless of scroll/collapsed state
-  const z = getUIScale()
-  const x = event.clientX * z + 8
-  const y = event.clientY * z - 8
+  const x = event.clientX + 8
+  const y = event.clientY - 8
 
   // Collect items: refs first, then branch names (deduplicated)
   const items = (node.refs || []).map(refLabelText)
@@ -217,10 +216,9 @@ const onLineClick = (line, event) => {
   const branchName = laneBranchName.value.get(line.lane)
   if (!branchName) return
 
-  const z = getUIScale()
   tooltip.value = {
-    x: event.clientX * z + 8,
-    y: event.clientY * z - 8,
+    x: event.clientX + 8,
+    y: event.clientY - 8,
     items: [branchName],
     color: line.color,
   }

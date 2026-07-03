@@ -227,17 +227,23 @@ export function getUIScale(): number {
 }
 
 /**
- * Get viewport dimensions in the same coordinate space as getBoundingClientRect()
- * under CSS zoom. When zoom is active on <html>, getBoundingClientRect() returns
- * zoom-scaled values but window.innerWidth/innerHeight do not. This function
- * returns the viewport dimensions scaled by the current zoom so that positioning
- * math (e.g., `viewportWidth - rect.right`) works correctly.
+ * Get viewport dimensions in the coordinate space used by
+ * getBoundingClientRect() and position:fixed under CSS zoom.
+ *
+ * When CSS zoom is applied to <html>, getBoundingClientRect() and
+ * position:fixed both operate in the viewport coordinate space,
+ * which is NOT scaled by zoom.  Therefore window.innerWidth/innerHeight
+ * (also in viewport space) are the correct dimensions for positioning
+ * math (e.g., `viewportWidth - rect.right`).
+ *
+ * The former implementation (innerWidth * zoom) was incorrect — it
+ * double-scaled the viewport dimensions, causing position:fixed popups
+ * to land outside the visible area when zoom > 1.
  */
 export function getZoomedViewport(): { width: number; height: number } {
-  const z = getUIScale()
   return {
-    width: window.innerWidth * z,
-    height: window.innerHeight * z,
+    width: window.innerWidth,
+    height: window.innerHeight,
   }
 }
 
