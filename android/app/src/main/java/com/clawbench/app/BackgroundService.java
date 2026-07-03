@@ -86,6 +86,7 @@ public class BackgroundService extends Service {
     private static final String KEY_SSH_PASSWORD = "ssh_password";
     private static final String KEY_FORWARDED_PORTS = "forwarded_ports";
     private static final String KEY_BATTERY_OPT_REQUESTED = "battery_opt_requested";
+    private static final String KEY_PERSISTENT_NOTIFICATION = "persistent_notification";
 
     // Reconnect parameters: exponential backoff delays in milliseconds
     private static final int[] RECONNECT_DELAYS_MS = {5000, 10000, 30000, 60000, 120000};
@@ -163,6 +164,28 @@ public class BackgroundService extends Service {
 
     public static boolean isRunning() {
         return isRunning;
+    }
+
+    /**
+     * Set whether the persistent (foreground service) notification is enabled.
+     * When disabled, the foreground notification is made minimal/silent.
+     */
+    public static void setPersistentNotificationEnabled(Context context, boolean enabled) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_PERSISTENT_NOTIFICATION, enabled).apply();
+        // If service is running, update the notification immediately
+        if (instance != null) {
+            instance.updateNotification(forwardedPorts.size(), null);
+        }
+    }
+
+    /**
+     * Query whether persistent notification is currently enabled.
+     * Defaults to true (notification shown) if not explicitly set.
+     */
+    public static boolean isPersistentNotificationEnabled(Context context) {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(KEY_PERSISTENT_NOTIFICATION, true);
     }
 
     /**
@@ -1173,14 +1196,23 @@ public class BackgroundService extends Service {
             text = sb.length() > 0 ? sb.toString() : "后台服务即将停止";
         }
 
-        return new NotificationCompat.Builder(this, CHANNEL_ID)
+        boolean persistent = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getBoolean(KEY_PERSISTENT_NOTIFICATION, true);
+
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentIntent(pendingIntent)
                 .setOngoing(true)
-                .setSilent(true)
-                .build();
+                .setSilent(true);
+
+        // When persistent notification is disabled, minimize it further
+        if (!persistent) {
+            builder.setPriority(NotificationCompat.PRIORITY_MIN);
+        }
+
+        return builder.build();
     }
 
     // --- Foreground service compat ---

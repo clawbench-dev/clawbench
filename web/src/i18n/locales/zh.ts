@@ -1170,6 +1170,8 @@ export default {
       portForwardPortDesc: '端口转发服务监听的本地端口号，0 表示自动分配',
       androidLogCapture: '调试日志捕获',
       androidLogCaptureDesc: '捕获 Android 调试日志用于问题排查',
+      pushPersistentNotification: '常驻通知',
+      pushPersistentNotificationDesc: '在通知栏显示后台服务常驻通知，防止服务被系统杀死',
       reconfigureServer: '重配服务器',
       reconfigureServerDesc: '重新配置 Android 连接的服务器地址',
       aboutServerVersion: '服务端版本',

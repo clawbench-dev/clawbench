@@ -1170,6 +1170,8 @@ export default {
       portForwardPortDesc: 'Local port number for port forwarding service to listen on, 0 for auto-assign',
       androidLogCapture: 'Debug Log Capture',
       androidLogCaptureDesc: 'Capture Android debug logs for troubleshooting',
+      pushPersistentNotification: 'Persistent Notification',
+      pushPersistentNotificationDesc: 'Show a persistent notification to keep the background service alive',
       reconfigureServer: 'Reconfigure Server',
       reconfigureServerDesc: 'Reconfigure the server address for Android connection',
       aboutServerVersion: 'Server Version',

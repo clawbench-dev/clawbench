@@ -128,6 +128,7 @@ describe('useSettingsConfig', () => {
     expect('terminalFontSize' in localConfig).toBe(true)
     expect('androidLogCapture' in localConfig).toBe(true)
     expect('swipeSession' in localConfig).toBe(true)
+    expect('pushPersistentNotification' in localConfig).toBe(true)
   })
 
   it('reads persisted localStorage value via setLocalConfig', () => {

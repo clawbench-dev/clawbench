@@ -2233,4 +2233,22 @@ public class MainActivity extends AppCompatActivity {
             default:  AppLog.d(tag, msg); break;
         }
     }
+
+    /**
+     * Control whether the BackgroundService shows a persistent notification.
+     * When enabled, the foreground service notification is visible (keeps service alive).
+     * When disabled, the service still runs but the notification is minimized/silent.
+     */
+    @JavascriptInterface
+    public void setPushPersistentNotification(boolean enabled) {
+        BackgroundService.setPersistentNotificationEnabled(activity, enabled);
+    }
+
+    /**
+     * Query whether persistent notification is currently enabled.
+     */
+    @JavascriptInterface
+    public boolean isPushPersistentNotification() {
+        return BackgroundService.isPersistentNotificationEnabled(activity);
+    }
 }

@@ -161,6 +161,8 @@ const i18n = createI18n({
           portForwardPort: '端口转发端口',
           portForwardPortAuto: '自动',
           portForwardHeader: '端口转发',
+          pushPersistentNotification: '常驻通知',
+          pushHeader: '推送',
           ttsCacheHeader: '缓存',
           terminalEnabled: '启用终端',
           terminalIdleTimeout: '空闲超时',
