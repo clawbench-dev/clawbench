@@ -148,6 +148,6 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 | TTS | `tts.engine`, `tts.speed`, `tts.voice`, `tts.max_cache_files` (100) |
 | Summarize | `summarize.backend` ("simple"), `summarize.model`, `summarize.api`, `summarize.chat_summary` (true) |
 | Port Forward | `port_forward.enabled` (true), `port_forward.port` (0=auto), `port_forward.host_key` |
-| RAG | `rag.enabled`, `rag.ollama_base_url`, `rag.ollama_model` (bge-m3), `rag.chunk_size` (512), `rag.retention_days` (90) |
+| RAG | `rag.base_url`, `rag.model` (bge-m3), `rag.api_key`, `rag.chunk_size` (512), `rag.retention_days` (90) |
 | Terminal | `terminal.enabled` (true), `terminal.idle_timeout` (10m), `terminal.max_sessions` (10) |
 | Push | `push.jpush.enabled`, `push.jpush.app_key`, `push.jpush.master_secret` |

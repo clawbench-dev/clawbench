@@ -146,7 +146,6 @@ tts:
   # engine: "moss-nano"
   # moss_nano:
   #   model_dir: ""
-  #   voice: "Junhao"
   #   backend: "onnx"
 
 # Summarization configuration / 总结配置

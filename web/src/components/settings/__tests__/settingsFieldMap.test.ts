@@ -8,7 +8,7 @@ describe('settingsFieldMap', () => {
     // Key server fields that can appear in changed_cold_fields
     expect(map['terminal.enabled']).toBeTruthy()
     expect(map['tts.engine']).toBeTruthy()
-    expect(map['rag.ollama_base_url']).toBeTruthy()
+    expect(map['rag.base_url']).toBeTruthy()
     expect(map['port_forward.enabled']).toBeTruthy()
     expect(map['push.jpush.enabled']).toBeTruthy()
 
@@ -95,12 +95,12 @@ describe('settingsFieldMap', () => {
 
   // ── Config Group tests ──
 
-  it('categoryGroups covers all grouped categories', () => {
+  it('categoryGroups only has tts (others flattened to categoryItems)', () => {
     expect(categoryGroups['tts']).toBeDefined()
-    expect(categoryGroups['summarization']).toBeDefined()
-    expect(categoryGroups['rag']).toBeDefined()
-    expect(categoryGroups['portForward']).toBeDefined()
-    expect(categoryGroups['push']).toBeDefined()
+    expect(categoryGroups['summarization']).toEqual([])
+    expect(categoryGroups['rag']).toEqual([])
+    expect(categoryGroups['portForward']).toEqual([])
+    expect(categoryGroups['push']).toEqual([])
   })
 
   it('each group has a unique groupId', () => {
@@ -139,53 +139,25 @@ describe('settingsFieldMap', () => {
     }
   })
 
-  it('summarize group has nonExpandValues for empty string', () => {
-    const summarizeGroup = categoryGroups['summarization']?.[0]
-    expect(summarizeGroup).toBeDefined()
-    expect(summarizeGroup!.nonExpandValues).toContain('')
-  })
-
-  it('port_forward group has nonExpandValues for false', () => {
-    const pfGroup = categoryGroups['portForward']?.[0]
-    expect(pfGroup).toBeDefined()
-    expect(pfGroup!.nonExpandValues).toContain(false)
-  })
-
   it('tts group has no nonExpandValues (all engines expand)', () => {
     const ttsGroup = categoryGroups['tts']?.[0]
     expect(ttsGroup).toBeDefined()
     expect(ttsGroup!.nonExpandValues ?? []).toHaveLength(0)
   })
 
-  it('rag group has no optionSubFields (flat group)', () => {
-    const ragGroup = categoryGroups['rag']?.[0]
-    expect(ragGroup).toBeDefined()
-    expect(ragGroup!.entryType).toBe('header')
-    expect(ragGroup!.optionSubFields).toBeUndefined()
-    expect((ragGroup!.commonFields ?? []).length).toBeGreaterThan(0)
-  })
-
   // ── Lookup helpers ──
 
-  it('getGroupById finds existing groups', () => {
+  it('getGroupById finds tts-group', () => {
     expect(getGroupById('tts-group')).toBeDefined()
     expect(getGroupById('tts-group')!.entryType).toBe('select')
-    expect(getGroupById('summarize-group')).toBeDefined()
-    expect(getGroupById('rag-group')).toBeDefined()
-    expect(getGroupById('port-forward-group')).toBeDefined()
-    expect(getGroupById('push-jpush-group')).toBeDefined()
   })
 
   it('getGroupById returns undefined for unknown groupId', () => {
     expect(getGroupById('nonexistent-group')).toBeUndefined()
   })
 
-  it('getCategoryForGroup returns correct category', () => {
+  it('getCategoryForGroup returns correct category for tts', () => {
     expect(getCategoryForGroup('tts-group')).toBe('tts')
-    expect(getCategoryForGroup('summarize-group')).toBe('summarization')
-    expect(getCategoryForGroup('rag-group')).toBe('rag')
-    expect(getCategoryForGroup('port-forward-group')).toBe('portForward')
-    expect(getCategoryForGroup('push-jpush-group')).toBe('push')
   })
 
   it('getCategoryForGroup returns undefined for unknown groupId', () => {

@@ -164,8 +164,9 @@ export const categoryItems: Record<string, ItemSpec[]> = {
   ],
   // RAG: flattened from group
   rag: [
-    { labelKey: 'settings.items.ragOllamaUrl', descriptionKey: 'settings.items.ragOllamaUrlDesc', key: 'rag.ollama_base_url', type: 'text', source: 'server' },
-    { labelKey: 'settings.items.ragOllamaModel', descriptionKey: 'settings.items.ragOllamaModelDesc', key: 'rag.ollama_model', type: 'text', source: 'server' },
+    { labelKey: 'settings.items.ragBaseUrl', descriptionKey: 'settings.items.ragBaseUrlDesc', key: 'rag.base_url', type: 'text', source: 'server' },
+    { labelKey: 'settings.items.ragModel', descriptionKey: 'settings.items.ragModelDesc', key: 'rag.model', type: 'text', source: 'server' },
+    { labelKey: 'settings.items.ragApiKey', descriptionKey: 'settings.items.ragApiKeyDesc', key: 'rag.api_key', type: 'password', source: 'server' },
     { labelKey: 'settings.items.ragChunkSize', descriptionKey: 'settings.items.ragChunkSizeDesc', key: 'rag.chunk_size', type: 'number', source: 'server' },
     { labelKey: 'settings.items.ragSearchLimit', descriptionKey: 'settings.items.ragSearchLimitDesc', key: 'rag.search_limit', type: 'number', source: 'server' },
     { labelKey: 'settings.items.ragSearchPoolSize', descriptionKey: 'settings.items.ragSearchPoolSizeDesc', key: 'rag.search_pool_size', type: 'number', source: 'server' },

@@ -160,7 +160,8 @@ const i18n = createI18n({
           apiFormatAnthropic: 'Anthropic',
           ttsMaxCacheFiles: '缓存上限',
           ragSearchPoolSize: '搜索池大小',
-          ragOllamaUrl: '嵌入接口地址',
+          ragBaseUrl: '嵌入接口地址',
+          ragModel: '嵌入模型',
           portForwardEnabled: '启用端口转发',
           portForwardPort: '端口转发端口',
           portForwardPortAuto: '自动',
@@ -185,8 +186,6 @@ const i18n = createI18n({
           fileViewGrid: '网格',
           uploadMaxSize: '上传大小上限',
           uploadMaxFiles: '上传文件上限',
-          ragOllamaUrl: '嵌入接口地址',
-          ragOllamaModel: '嵌入模型',
           ragChunkSize: '分块大小',
           ragSearchLimit: '搜索限制',
           ragRetentionDays: '保留天数',
@@ -418,53 +417,37 @@ describe('SettingsCategory', () => {
     })
   })
 
-  // ─── Summarization category ──────────────────────────────
+  // ─── Summarization category (flattened — no group drill-down) ──────────
   describe('summarization category', () => {
-    it('renders summarize config as a group entry row', () => {
+    it('renders summarize backend as a standalone SettingsItem', () => {
       const wrapper = mountCategory('summarization')
-      const entryRows = wrapper.findAll('.settings-group-entry')
-      expect(entryRows.length).toBe(1)
-      expect(entryRows[0].text()).toContain('摘要方式')
-    })
-
-    it('emits navigate with summarization:summarize-group on click', async () => {
-      const wrapper = mountCategory('summarization')
-      await wrapper.find('.settings-group-entry').trigger('click')
-      expect(wrapper.emitted('navigate')![0]).toEqual(['summarization:summarize-group'])
+      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
+      const backendItem = allItems.find(i => i.props().label === '摘要方式')
+      expect(backendItem).toBeTruthy()
     })
   })
 
-  // ─── RAG category ──────────────────────────────
+  // ─── RAG category (flattened — no group drill-down) ──────────
   describe('rag category', () => {
-    it('renders RAG config as a group entry row', () => {
+    it('renders RAG base_url as a standalone SettingsItem', () => {
       const wrapper = mountCategory('rag')
-      const entryRows = wrapper.findAll('.settings-group-entry')
-      expect(entryRows.length).toBe(1)
-    })
-
-    it('emits navigate with rag:rag-group on click', async () => {
-      const wrapper = mountCategory('rag')
-      await wrapper.find('.settings-group-entry').trigger('click')
-      expect(wrapper.emitted('navigate')![0]).toEqual(['rag:rag-group'])
+      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
+      const urlItem = allItems.find(i => i.props().label === '嵌入接口地址')
+      expect(urlItem).toBeTruthy()
     })
   })
 
-  // ─── Port Forward category ──────────────────────────────
+  // ─── Port Forward category (flattened — no group drill-down) ──────────
   describe('portForward category', () => {
-    it('renders port forward config as a group entry row', () => {
+    it('renders port forward enabled as a standalone SettingsItem', () => {
       const wrapper = mountCategory('portForward')
-      const entryRows = wrapper.findAll('.settings-group-entry')
-      expect(entryRows.length).toBe(1)
-    })
-
-    it('emits navigate with portForward:port-forward-group on click', async () => {
-      const wrapper = mountCategory('portForward')
-      await wrapper.find('.settings-group-entry').trigger('click')
-      expect(wrapper.emitted('navigate')![0]).toEqual(['portForward:port-forward-group'])
+      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
+      const enabledItem = allItems.find(i => i.props().label === '启用端口转发')
+      expect(enabledItem).toBeTruthy()
     })
   })
 
-  // ─── Push category ──────────────────────────────
+  // ─── Push category (flattened — no group drill-down) ──────────
   describe('push category', () => {
     it('renders push service status as info row', () => {
       const wrapper = mountCategory('push')
@@ -474,19 +457,11 @@ describe('SettingsCategory', () => {
       expect(statusItem!.props().type).toBe('info')
     })
 
-    it('renders JPush config as a group entry row', () => {
+    it('renders JPush enabled as a standalone SettingsItem', () => {
       const wrapper = mountCategory('push')
-      const entryRows = wrapper.findAll('.settings-group-entry')
-      const jpushRow = entryRows.find(r => r.text().includes('启用极光推送'))
-      expect(jpushRow).toBeTruthy()
-    })
-
-    it('emits navigate with push:push-jpush-group on JPush row click', async () => {
-      const wrapper = mountCategory('push')
-      const jpushRow = wrapper.findAll('.settings-group-entry').find(r => r.text().includes('启用极光推送'))
-      expect(jpushRow).toBeTruthy()
-      await jpushRow!.trigger('click')
-      expect(wrapper.emitted('navigate')![0]).toEqual(['push:push-jpush-group'])
+      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
+      const jpushItem = allItems.find(i => i.props().label === '启用极光推送')
+      expect(jpushItem).toBeTruthy()
     })
   })
 

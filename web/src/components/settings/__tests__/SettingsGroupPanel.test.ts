@@ -109,8 +109,8 @@ const ragGroup: ConfigGroup = {
   groupId: 'rag-group', titleKey: 'settings.categories.rag', entryType: 'header',
   entryField: { labelKey: 'settings.categories.rag', key: '_rag-header', type: 'header', source: 'server' },
   commonFields: [
-    { labelKey: 'settings.items.ragOllamaUrl', key: 'rag.ollama_base_url', type: 'text', source: 'server' },
-    { labelKey: 'settings.items.ragOllamaModel', key: 'rag.ollama_model', type: 'text', source: 'server' },
+    { labelKey: 'settings.items.ragBaseUrl', key: 'rag.base_url', type: 'text', source: 'server' },
+    { labelKey: 'settings.items.ragModel', key: 'rag.model', type: 'text', source: 'server' },
   ],
 }
 
@@ -437,7 +437,7 @@ describe('SettingsGroupPanel (drill-down detail page)', () => {
   // ─── 10. RAG flat group ──────────────────────
   describe('RAG flat group', () => {
     it('renders all common fields for header group', async () => {
-      const wrapper = mountGroup(ragGroup, { 'rag.ollama_base_url': 'http://localhost:11434', 'rag.ollama_model': 'bge-m3' })
+      const wrapper = mountGroup(ragGroup, { 'rag.base_url': 'http://localhost:11434', 'rag.model': 'bge-m3' })
       await flush(wrapper)
 
       const items = wrapper.findAllComponents({ name: 'SettingsItem' })
