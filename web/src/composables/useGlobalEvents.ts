@@ -48,6 +48,7 @@ let missedPongs = 0
 // Persistent client ID — identifies this browser/device across sessions.
 // Stored in localStorage so the server can track multiple tabs/devices independently.
 const CLIENT_ID_KEY = 'clawbench_client_id'
+const LAST_SEEN_KEY = 'clawbench_last_seen_event_id'
 let clientId = localStorage.getItem(CLIENT_ID_KEY)
 if (!clientId) {
     // crypto.randomUUID() requires a secure context (HTTPS or localhost);
@@ -101,6 +102,49 @@ function truncateForPush(s: string): string {
     return chars.slice(0, PUSH_ALERT_MAX_CODE_POINTS).join('') + '…'
 }
 
+async function fetchPendingEvents() {
+    try {
+        const lastSeenId = localStorage.getItem(LAST_SEEN_KEY) || ''
+        const url = lastSeenId
+            ? `/api/ai/events/pending?after=${encodeURIComponent(lastSeenId)}`
+            : '/api/ai/events/pending'
+
+        const resp = await fetch(url)
+        if (!resp.ok) return
+
+        const data = await resp.json()
+        const events: Array<{ event_id: string; event_type: string; payload: string }> = data.events || []
+        if (events.length === 0) return
+
+        let latestId = lastSeenId
+        for (const event of events) {
+            const msg: ServerEvent = JSON.parse(event.payload)
+            if (!msg.event || !msg.data) continue
+
+            // Dedup check
+            if (msg.id && isDuplicate(msg.id)) continue
+            if (msg.id) addProcessedId(msg.id)
+
+            // Dispatch to handlers
+            for (const handler of handlers) {
+                handler(msg.event!, msg.data)
+            }
+
+            // Show browser notification
+            showEventBrowserNotification(msg.event!, msg.data)
+
+            if (msg.id) latestId = msg.id
+        }
+
+        // Update cursor
+        if (latestId !== lastSeenId) {
+            localStorage.setItem(LAST_SEEN_KEY, latestId)
+        }
+    } catch {
+        // Non-critical
+    }
+}
+
 function connect() {
     disconnect()
 
@@ -113,6 +157,9 @@ function connect() {
         connected.value = true
         missedPongs = 0
         reconnect.reset()
+
+        // Fetch missed events that occurred while offline
+        fetchPendingEvents()
 
         // Start heartbeat monitoring
         startHeartbeat()
@@ -155,6 +202,8 @@ function connect() {
                 // Send ack
                 if (msg.id) {
                     send({ type: 'ack', id: msg.id })
+                    // Update last seen event cursor for offline recovery
+                    localStorage.setItem(LAST_SEEN_KEY, msg.id)
                 }
             }
         } catch {
