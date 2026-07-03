@@ -123,6 +123,14 @@ func TestManager_Unsubscribe(t *testing.T) {
 	}
 }
 
+func TestManager_HasDisconnectedClients(t *testing.T) {
+	m := NewManagerForTest()
+	// No subscriptions → true
+	if !m.HasDisconnectedClients() {
+		t.Fatal("expected true with no subscriptions")
+	}
+}
+
 func TestManager_BroadcastEvent_NoSubscription(_ *testing.T) {
 	mgr := newTestManager()
 	// Should not panic

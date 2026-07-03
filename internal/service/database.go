@@ -276,6 +276,18 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		);
 		CREATE INDEX IF NOT EXISTS idx_chat_metadata_model ON chat_metadata(model);
 		CREATE INDEX IF NOT EXISTS idx_chat_metadata_created ON chat_metadata(created_at);
+
+		-- Pending events for offline push notifications (added 2026-07)
+		CREATE TABLE IF NOT EXISTS pending_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			event_id TEXT NOT NULL UNIQUE,
+			event_type TEXT NOT NULL,
+			payload TEXT NOT NULL,
+			expires_at DATETIME NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_event_id ON pending_events(event_id);
+		CREATE INDEX IF NOT EXISTS idx_pending_expires ON pending_events(expires_at);
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)

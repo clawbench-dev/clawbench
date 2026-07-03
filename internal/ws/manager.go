@@ -223,6 +223,26 @@ func (s *ClientSubscription) bufferEvent(msg ServerMessage) {
 	}
 }
 
+// HasDisconnectedClients returns true if any subscription is disconnected
+// or if there are no subscriptions at all. Used to conditionally persist
+// events only when clients might miss them.
+func (m *Manager) HasDisconnectedClients() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.subscriptions) == 0 {
+		return true
+	}
+	for _, sub := range m.subscriptions {
+		sub.mu.Lock()
+		disconnected := sub.conn == nil
+		sub.mu.Unlock()
+		if disconnected {
+			return true
+		}
+	}
+	return false
+}
+
 // CleanupStale removes stale subscriptions:
 //   - Disconnected for > staleTimeout → remove
 //   - Connected subscriptions are never cleaned up.
