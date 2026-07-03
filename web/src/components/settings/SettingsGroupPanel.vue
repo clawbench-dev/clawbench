@@ -78,7 +78,7 @@ import { useI18n } from 'vue-i18n'
 import { ChevronRight } from 'lucide-vue-next'
 import SettingsItem from './SettingsItem.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
-import { type ConfigGroup, type ItemSpec } from './settingsFieldMap'
+import { type ConfigGroup, type ItemSpec, engineVoiceOptions } from './settingsFieldMap'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
 import { useTabDrawer } from '@/composables/useTabDrawer'
@@ -201,7 +201,15 @@ function setLocalValue(key: string, value: any) {
 }
 
 function resolveFieldOptions(field: GroupField): { label: string; value: any }[] | undefined {
-  // Dynamic options from fieldOptions prop (e.g., tts.voice)
+  // TTS voice options — resolve based on LOCAL engine value (not committed)
+  if (field.key === 'tts.voice' && props.group.groupId === 'tts-group') {
+    const engine = localEntryValue.value || 'edge'
+    const voiceOpts = engineVoiceOptions[engine] ?? []
+    if (voiceOpts.length > 0) {
+      return voiceOpts.map(o => ({ label: t(o.labelKey), value: o.value }))
+    }
+  }
+  // Dynamic options from fieldOptions prop
   if (props.fieldOptions && field.key in props.fieldOptions) {
     return props.fieldOptions[field.key]
   }
@@ -214,7 +222,19 @@ function resolveFieldOptions(field: GroupField): { label: string; value: any }[]
 
 // ── Entry interactions ──
 function handleEntrySelect(value: any) {
+  const prevValue = localEntryValue.value
   localValues.value[entryFieldKey.value] = value
+
+  // When TTS engine changes, reset tts.voice to the first available voice for the new engine
+  if (props.group.groupId === 'tts-group' && entryFieldKey.value === 'tts.engine' && value !== prevValue) {
+    const voiceOpts = engineVoiceOptions[value] ?? []
+    if (voiceOpts.length > 0) {
+      localValues.value['tts.voice'] = voiceOpts[0].value
+    } else {
+      localValues.value['tts.voice'] = ''
+    }
+  }
+
   entryPicker.close()
 }
 
