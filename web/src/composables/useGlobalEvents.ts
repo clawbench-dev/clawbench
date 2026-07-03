@@ -233,8 +233,8 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data']) 
     // Only show notification when page is not focused
     if (document.visibilityState === 'visible' && document.hasFocus()) return
 
-    let title = ''
-    let alert_ = ''
+    let title: string
+    let alert_: string
     let onClick: (() => void) | undefined
 
     if (event === 'session_update') {
