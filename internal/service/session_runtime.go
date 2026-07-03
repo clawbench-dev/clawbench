@@ -74,12 +74,16 @@ func EmitSessionEvent(sessionID, status string, hasNewMessages bool, toolName ..
 
 	data.ProjectPath = GetSessionProjectPath(sessionID)
 
-	mgr.BroadcastEvent(ws.ServerMessage{
+	// Generate one event ID, use for both store and broadcast (write-ahead)
+	msg := ws.ServerMessage{
 		Type:  ws.MessageTypeEvent,
 		ID:    ws.GenerateEventID(),
 		Event: "session_update",
 		Data:  data,
-	})
+	}
+	// Write-ahead: persist before broadcast so event log has no gaps
+	StoreNotifiableEvent(msg)
+	mgr.BroadcastEvent(msg)
 }
 
 // getSessionResponsePreview returns a preview of the AI's final reply text.

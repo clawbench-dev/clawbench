@@ -533,12 +533,14 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 			data.ResponsePreview = getSessionResponsePreview(sessionID)
 		}
 	}
-	mgr.BroadcastEvent(ws.ServerMessage{
+	msg := ws.ServerMessage{
 		Type:  ws.MessageTypeEvent,
 		ID:    ws.GenerateEventID(),
 		Event: "task_update",
 		Data:  data,
-	})
+	}
+	StoreNotifiableEvent(msg)
+	mgr.BroadcastEvent(msg)
 }
 
 // executeTask runs a scheduled task by invoking the AI backend and inserting
