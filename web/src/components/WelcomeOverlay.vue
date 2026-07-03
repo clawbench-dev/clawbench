@@ -63,7 +63,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { usePwaInstall } from '@/composables/usePwaInstall'
 import { MonitorSmartphone, Smartphone } from 'lucide-vue-next'
@@ -81,7 +81,7 @@ interface BackendInfo {
 
 const STORAGE_KEY = 'clawbench_welcome_dismissed'
 
-defineExpose({ show })
+defineExpose({ show, forceShow })
 
 const emit = defineEmits<{
   dismissed: []
@@ -152,7 +152,18 @@ function handleApkDownload() {
   window.location.href = '/api/apk'
 }
 
-onMounted(loadBackends)
+function forceShow() {
+  visible.value = true
+}
+
+onMounted(() => {
+  loadBackends()
+  window.addEventListener('clawbench-show-welcome', forceShow)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('clawbench-show-welcome', forceShow)
+})
 </script>
 
 <style scoped>

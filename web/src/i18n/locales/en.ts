@@ -1183,6 +1183,8 @@ export default {
       restartServer: 'Restart Server',
       restartServerDesc: 'Restart the server process; all connections will be dropped',
       restartServerConfirm: 'Are you sure you want to restart the server? All connections will be dropped.',
+      showWelcome: 'Show Welcome Screen',
+      showWelcomeDesc: 'View backend detection status and installation guide',
       aboutVersion: 'Version',
       serverRestart: 'Restart Server',
       serverRestartDesc: 'Restart the server to apply configuration changes',

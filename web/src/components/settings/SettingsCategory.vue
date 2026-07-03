@@ -264,6 +264,9 @@ function handleClick(item: any) {
   if (item.key === 'downloadAndroidApp') {
     window.location.href = '/api/apk'
   }
+  if (item.key === 'showWelcome') {
+    window.dispatchEvent(new CustomEvent('clawbench-show-welcome'))
+  }
 }
 
 async function handleAddToHomeScreen() {
