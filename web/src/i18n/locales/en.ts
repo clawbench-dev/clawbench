@@ -998,7 +998,7 @@ export default {
       appearance: 'Appearance',
       project: 'Project',
       chat: 'Chat',
-      agents: 'Agent Config',
+      agents: 'Agent',
       files: 'Files',
       terminal: 'Terminal',
       tts: 'TTS Voice',

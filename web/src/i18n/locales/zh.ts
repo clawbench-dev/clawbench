@@ -998,7 +998,7 @@ export default {
       appearance: '外观',
       project: '项目',
       chat: '聊天',
-      agents: '智能体配置',
+      agents: '智能体',
       files: '文件',
       terminal: '终端',
       tts: '语音朗读',
