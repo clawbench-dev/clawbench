@@ -251,8 +251,16 @@ func (m *Manager) CleanupStale() {
 	}
 }
 
-// eventSeq is an atomic counter to ensure unique event IDs.
+// eventSeq is an atomic counter to ensure unique event IDs within a server instance.
 var eventSeq atomic.Int64
+
+// serverInstanceID is set once at init time to ensure event IDs are unique
+// across server restarts.
+var serverInstanceID int64
+
+func init() {
+	serverInstanceID = time.Now().UnixMilli()
+}
 
 // truncateForPush truncates s to pushAlertMaxRunes, appending "…" if truncated.
 func truncateForPush(s string) string {
@@ -263,7 +271,8 @@ func truncateForPush(s string) string {
 }
 
 // GenerateEventID creates a unique event ID.
-// Uses an atomic counter instead of exposing server timestamps.
+// Includes the server instance ID (unix millis at startup) so IDs are unique
+// across server restarts, plus an atomic counter for within-instance uniqueness.
 func GenerateEventID() string {
-	return fmt.Sprintf("evt_%d", eventSeq.Add(1))
+	return fmt.Sprintf("evt_%d_%d", serverInstanceID, eventSeq.Add(1))
 }

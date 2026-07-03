@@ -232,9 +232,11 @@ func AddChatMessage(projectPath, backend, sessionID, role, content string, files
 		streamingInt = 1
 	}
 
-	// Use transaction with retry on SQLITE_BUSY to ensure data consistency
+	// Use transaction under write mutex to ensure data consistency and prevent SQLITE_BUSY
 	var msgID int64
 	_, err := retryOnBusy(func() (struct{}, error) {
+		writeMu.Lock()
+		defer writeMu.Unlock()
 		tx, txErr := DB.Begin()
 		if txErr != nil {
 			return struct{}{}, txErr
@@ -359,7 +361,7 @@ func GetRecentProjects() ([]string, error) {
 
 // AddRecentProject upserts a project path and prunes old entries beyond configured limit.
 func AddRecentProject(projectPath string) error {
-	_, err := DB.Exec(
+	_, err := WriteExec(
 		"INSERT INTO recent_projects (project_path, accessed_at) VALUES (?, CURRENT_TIMESTAMP) "+
 			"ON CONFLICT(project_path) DO UPDATE SET accessed_at = CURRENT_TIMESTAMP",
 		projectPath,
@@ -371,7 +373,7 @@ func AddRecentProject(projectPath string) error {
 	if limit <= 0 {
 		limit = 10
 	}
-	_, err = DB.Exec(
+	_, err = WriteExec(
 		"DELETE FROM recent_projects WHERE id NOT IN (SELECT id FROM recent_projects ORDER BY accessed_at DESC LIMIT ?)",
 		limit,
 	)
@@ -381,8 +383,8 @@ func AddRecentProject(projectPath string) error {
 // RemoveRecentProject deletes a project path from the recent projects list.
 // If the removed project was the default, its is_default flag is cleared first.
 func RemoveRecentProject(projectPath string) error {
-	_, _ = DB.Exec("UPDATE recent_projects SET is_default = 0 WHERE project_path = ? AND is_default = 1", projectPath)
-	_, err := DB.Exec("DELETE FROM recent_projects WHERE project_path = ?", projectPath)
+	_, _ = WriteExec("UPDATE recent_projects SET is_default = 0 WHERE project_path = ? AND is_default = 1", projectPath)
+	_, err := WriteExec("DELETE FROM recent_projects WHERE project_path = ?", projectPath)
 	return err
 }
 
@@ -400,7 +402,7 @@ func GetDefaultProject() (string, error) {
 			return path, nil
 		}
 		// Stale default — clear it
-		_, _ = DB.Exec("UPDATE recent_projects SET is_default = 0 WHERE is_default = 1")
+		_, _ = WriteExec("UPDATE recent_projects SET is_default = 0 WHERE is_default = 1")
 	}
 
 	// 2. Fall back to most recently accessed (DO NOT update accessed_at)
@@ -427,13 +429,13 @@ func GetDefaultProject() (string, error) {
 // This should only be called on user-initiated project switches.
 func SetDefaultProject(projectPath string) error {
 	// Clear existing default
-	_, _ = DB.Exec("UPDATE recent_projects SET is_default = 0 WHERE is_default = 1")
+	_, _ = WriteExec("UPDATE recent_projects SET is_default = 0 WHERE is_default = 1")
 	// Ensure the project exists in recent_projects (upsert with accessed_at update)
 	if err := AddRecentProject(projectPath); err != nil {
 		return err
 	}
 	// Set the new default
-	_, err := DB.Exec("UPDATE recent_projects SET is_default = 1 WHERE project_path = ?", projectPath)
+	_, err := WriteExec("UPDATE recent_projects SET is_default = 1 WHERE project_path = ?", projectPath)
 	return err
 }
 
@@ -571,7 +573,7 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 // UpdateLastRead sets the last_read_at timestamp for a session to now.
 // Runs asynchronously to avoid blocking the read path with a DB write.
 func UpdateLastRead(sessionID string) {
-	go DB.Exec("UPDATE chat_sessions SET last_read_at = CURRENT_TIMESTAMP WHERE id = ?", sessionID)
+	go WriteExec("UPDATE chat_sessions SET last_read_at = CURRENT_TIMESTAMP WHERE id = ?", sessionID)
 }
 
 // GetSessionBackend returns the backend of a session, or empty string if not found or deleted.
@@ -638,13 +640,13 @@ func GetSessionModel(sessionID string) string {
 // Called when the user selects a different model so that subsequent loads
 // restore the user's choice instead of the agent default.
 func UpdateSessionModel(sessionID, modelID string) error {
-	_, err := DB.Exec("UPDATE chat_sessions SET model = ? WHERE id = ?", modelID, sessionID)
+	_, err := WriteExec("UPDATE chat_sessions SET model = ? WHERE id = ?", modelID, sessionID)
 	return err
 }
 
 // UpdateSessionTransport updates the transport field for a session.
 func UpdateSessionTransport(sessionID, transport string) error {
-	_, err := DB.Exec("UPDATE chat_sessions SET transport = ? WHERE id = ?", transport, sessionID)
+	_, err := WriteExec("UPDATE chat_sessions SET transport = ? WHERE id = ?", transport, sessionID)
 	return err
 }
 
@@ -674,7 +676,7 @@ func UpdateSessionAutoApprove(sessionID string, enabled bool) error {
 	if enabled {
 		val = 1
 	}
-	_, err := DB.Exec("UPDATE chat_sessions SET auto_approve = ? WHERE id = ?", val, sessionID)
+	_, err := WriteExec("UPDATE chat_sessions SET auto_approve = ? WHERE id = ?", val, sessionID)
 	return err
 }
 
@@ -690,7 +692,7 @@ func SaveMetadata(messageID int64, meta *ai.Metadata) error {
 	if meta.IsError {
 		isError = 1
 	}
-	_, err := DB.Exec(
+	_, err := WriteExec(
 		`
 		INSERT OR REPLACE INTO chat_metadata
 			(message_id, mode, thinking_effort, transport, model, input_tokens, output_tokens,
@@ -730,7 +732,7 @@ func CreateSession(projectPath, backend, title, agentID, modelName, agentSource,
 	if sessionID == "" {
 		return "", fmt.Errorf("failed to generate unique session ID after 10 attempts")
 	}
-	_, err := DB.Exec(
+	_, err := WriteExec(
 		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, external_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		sessionID, projectPath, backend, title, agentID, agentSource, modelName, sessionType, "",
 	)
@@ -749,13 +751,13 @@ func CreateSession(projectPath, backend, title, agentID, modelName, agentSource,
 // UpdateSessionSourceID sets the source_session_id for a chat session.
 // Used by acp-load to track the ACP session origin (format: "acp:{acpSessionId}").
 func UpdateSessionSourceID(sessionID, sourceSessionID string) error {
-	_, err := DB.Exec("UPDATE chat_sessions SET source_session_id = ? WHERE id = ?", sourceSessionID, sessionID)
+	_, err := WriteExec("UPDATE chat_sessions SET source_session_id = ? WHERE id = ?", sourceSessionID, sessionID)
 	return err
 }
 
 // UpdateSessionTitle updates the title of a chat session.
 func UpdateSessionTitle(sessionID, title string) error {
-	_, err := DB.Exec("UPDATE chat_sessions SET title = ? WHERE id = ?", title, sessionID)
+	_, err := WriteExec("UPDATE chat_sessions SET title = ? WHERE id = ?", title, sessionID)
 	return err
 }
 
@@ -769,7 +771,7 @@ func DeleteSession(projectPath, backend, sessionID string) error {
 	// backend param kept for API compatibility but not used in WHERE —
 	// session ID (UUID) is already unique; filtering by backend could cause
 	// silent no-op when the client sends a wrong/empty backend value.
-	_, err := DB.Exec("UPDATE chat_sessions SET deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE project_path = ? AND id = ?", projectPath, sessionID)
+	_, err := WriteExec("UPDATE chat_sessions SET deleted = 1, updated_at = CURRENT_TIMESTAMP WHERE project_path = ? AND id = ?", projectPath, sessionID)
 	return err
 }
 
@@ -953,7 +955,7 @@ func retryOnBusy[T any](fn func() (T, error), maxAttempts int) (T, error) {
 // preventing accidental updates to stale streaming rows left by failed finalizations.
 func UpdateStreamingMessage(projectPath, backend, sessionID, content string) error {
 	_, err := retryOnBusy(func() (sql.Result, error) {
-		return DB.Exec(
+		return WriteExec(
 			`UPDATE chat_history SET content = ? WHERE id = (
 				SELECT id FROM chat_history
 				WHERE project_path = ? AND backend = ? AND session_id = ? AND role = 'assistant' AND streaming = 1
@@ -972,7 +974,7 @@ func UpdateStreamingMessage(projectPath, backend, sessionID, content string) err
 // Returns the message ID of the finalized message (0 if not found).
 func FinalizeStreamingMessage(projectPath, backend, sessionID, content string) (int64, error) {
 	result, err := retryOnBusy(func() (sql.Result, error) {
-		return DB.Exec(
+		return WriteExec(
 			`UPDATE chat_history SET content = ?, streaming = 0, indexed = 0 WHERE id = (
 				SELECT id FROM chat_history
 				WHERE project_path = ? AND backend = ? AND session_id = ? AND role = 'assistant' AND streaming = 1
@@ -1028,14 +1030,14 @@ func GetStreamingMessageID(sessionID string) int64 {
 
 // UpdateMessageContent updates the content of a specific message by its ID.
 func UpdateMessageContent(messageID int, content string) error {
-	_, err := DB.Exec("UPDATE chat_history SET content = ? WHERE id = ?", content, messageID)
+	_, err := WriteExec("UPDATE chat_history SET content = ? WHERE id = ?", content, messageID)
 	return err
 }
 
 // SaveRawResponse saves the raw AI backend output for debugging/analysis.
 // Called only after the AI response is fully complete.
 func SaveRawResponse(sessionID, backend string, messageID int64, rawOutput string) error {
-	_, err := DB.Exec(
+	_, err := WriteExec(
 		"INSERT INTO ai_raw_responses (session_id, message_id, backend, raw_output) VALUES (?, ?, ?, ?)",
 		sessionID, messageID, backend, rawOutput,
 	)
@@ -1044,7 +1046,7 @@ func SaveRawResponse(sessionID, backend string, messageID int64, rawOutput strin
 
 // UpdateExternalSessionID sets the external session ID for a ClawBench session.
 func UpdateExternalSessionID(sessionID, externalID string) error {
-	_, err := DB.Exec("UPDATE chat_sessions SET external_session_id = ? WHERE id = ?", externalID, sessionID)
+	_, err := WriteExec("UPDATE chat_sessions SET external_session_id = ? WHERE id = ?", externalID, sessionID)
 	if err != nil {
 		return err
 	}
@@ -1059,7 +1061,7 @@ func UpdateExternalSessionID(sessionID, externalID string) error {
 // mapping internally, so the CLI's external_session_id must not leak into the
 // ACP connection pool's GetOrCreateConn pre-population logic.
 func ClearExternalSessionID(sessionID string) {
-	_, _ = DB.Exec("UPDATE chat_sessions SET external_session_id = '' WHERE id = ?", sessionID)
+	_, _ = WriteExec("UPDATE chat_sessions SET external_session_id = '' WHERE id = ?", sessionID)
 }
 
 // GetExternalSessionID returns the external session ID for a ClawBench session.
@@ -1108,7 +1110,7 @@ func GetUnindexedMessages(limit int) ([]UnindexedMessage, error) {
 
 // MarkMessageIndexed marks a chat message as indexed by RAG.
 func MarkMessageIndexed(messageID int64) error {
-	_, err := DB.Exec("UPDATE chat_history SET indexed = 1 WHERE id = ?", messageID)
+	_, err := WriteExec("UPDATE chat_history SET indexed = 1 WHERE id = ?", messageID)
 	return err
 }
 
@@ -1147,10 +1149,11 @@ func PurgeDeletedData(sessionIDs []string) (sessionsPurged int64, messagesPurged
 		return 0, 0, nil
 	}
 
-	tx, err := DB.Begin()
+	tx, err := WriteBegin()
 	if err != nil {
 		return 0, 0, err
 	}
+	defer writeMu.Unlock()
 	defer tx.Rollback()
 
 	// Build placeholders for IN clause: (?, ?, ...)
@@ -1198,10 +1201,11 @@ func PurgeDeletedData(sessionIDs []string) (sessionsPurged int64, messagesPurged
 // before recreating them with fresh replay data.
 // Deletes in order: ai_raw_responses → chat_history → task_executions → chat_sessions.
 func HardDeleteSession(sessionID string) error {
-	tx, err := DB.Begin()
+	tx, err := WriteBegin()
 	if err != nil {
 		return err
 	}
+	defer writeMu.Unlock()
 	defer tx.Rollback()
 
 	_, _ = tx.Exec("DELETE FROM ai_raw_responses WHERE session_id = ?", sessionID)

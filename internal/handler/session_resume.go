@@ -336,7 +336,7 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 
 	// Batch insert replay messages to chat_history
 	for _, msg := range messages {
-		_, err := service.DB.Exec( //nolint:noctx // r.Context() not easily propagated through ServeACPLoadSession
+		_, err := service.WriteExec( //nolint:noctx // r.Context() not easily propagated through ServeACPLoadSession
 			"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, indexed) VALUES (?, ?, ?, ?, ?, 0, 0)",
 			projectPath, agent.Backend, sessionID, msg.role, msg.content,
 		)

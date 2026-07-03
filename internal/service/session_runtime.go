@@ -250,7 +250,7 @@ func finalizeOrphanedStreamingMessages(sessionID string) {
 			}
 		}
 		updatedContent, _ := json.Marshal(contentMap)
-		if _, err := DB.Exec("UPDATE chat_history SET content = ?, streaming = 0 WHERE id = ?", string(updatedContent), m.id); err != nil {
+		if _, err := WriteExec("UPDATE chat_history SET content = ?, streaming = 0 WHERE id = ?", string(updatedContent), m.id); err != nil {
 			slog.Error("failed to finalize orphaned streaming message on session stop",
 				slog.Int64("id", m.id),
 				slog.String("session", sessionID),

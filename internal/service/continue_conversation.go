@@ -15,7 +15,7 @@ import (
 // Messages in chat_history are not affected — only the session record needs restoring
 // since session-level soft-delete controls visibility.
 func restoreDeletedSession(sessionID string) error {
-	_, err := DB.Exec(
+	_, err := WriteExec(
 		"UPDATE chat_sessions SET deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 		sessionID,
 	)
@@ -168,7 +168,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// Copy external_session_id from the source session so that --resume works correctly.
 	// The continued session inherits the CLI backend's session context, allowing the
 	// same resume flow as a normal session (no special-casing needed).
-	_, err = DB.Exec(
+	_, err = WriteExec(
 		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, source_session_id, external_session_id, last_read_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?, ?, CURRENT_TIMESTAMP)",
 		newSessionID, sessProjectPath, backend, displayTitle, agentID, agentSource, modelName, sourceSessionID, externalSessionID,
 	)
@@ -219,7 +219,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// Insert messages and build old ID -> new ID mapping for summaries
 	idMap := make(map[int64]int64)
 	for _, m := range messages {
-		result, err := DB.Exec(
+		result, err := WriteExec(
 			"INSERT INTO chat_history (project_path, role, content, files, session_id, backend, streaming) VALUES (?, ?, ?, ?, ?, ?, 0)",
 			m.projectPath, m.role, m.content, m.files, newSessionID, m.backend,
 		)
@@ -245,7 +245,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 		if err != nil {
 			return "", false, fmt.Errorf("failed to query summary for message %d: %w", oldID, err)
 		}
-		_, err = DB.Exec(
+		_, err = WriteExec(
 			"INSERT OR REPLACE INTO summaries (target_type, target_id, summary, created_at) VALUES ('chat_message', ?, ?, CURRENT_TIMESTAMP)",
 			newID, summary,
 		)
@@ -320,7 +320,7 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 
 	// 5. Create new session (no external_session_id inheritance)
 	newSessionID := generateSessionID()
-	_, err = DB.Exec(
+	_, err = WriteExec(
 		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, source_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?)",
 		newSessionID, sessProjectPath, backend, title, agentID, agentSource, modelName, sourceSessionID,
 	)
@@ -400,7 +400,7 @@ func copySessionMessages(sourceSessionID, newSessionID string, beforeMessageID i
 
 	idMap := make(map[int64]int64)
 	for _, m := range messages {
-		result, err := DB.Exec(
+		result, err := WriteExec(
 			"INSERT INTO chat_history (project_path, role, content, files, session_id, backend, streaming) VALUES (?, ?, ?, ?, ?, ?, 0)",
 			m.projectPath, m.role, m.content, m.files, newSessionID, m.backend,
 		)
@@ -427,7 +427,7 @@ func copySessionSummaries(idMap map[int64]int64) error {
 		if err != nil {
 			return fmt.Errorf("failed to query summary for message %d: %w", oldID, err)
 		}
-		_, err = DB.Exec(
+		_, err = WriteExec(
 			"INSERT OR REPLACE INTO summaries (target_type, target_id, summary, created_at) VALUES ('chat_message', ?, ?, CURRENT_TIMESTAMP)",
 			newID, summary,
 		)

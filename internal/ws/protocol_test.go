@@ -2,19 +2,33 @@ package ws
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
 
 func TestGenerateEventID(t *testing.T) {
+	// IDs should start with "evt_"
 	id := GenerateEventID()
 	if !strings.HasPrefix(id, "evt_") {
-		t.Errorf("expected prefix 'evt_', got %q", id)
+		t.Errorf("expected ID to start with 'evt_', got %q", id)
 	}
-	// Should be unique across calls
-	id2 := GenerateEventID()
-	if id == id2 {
-		t.Errorf("expected unique IDs, got same: %q", id)
+
+	// IDs should contain the serverInstanceID
+	expectedPrefix := fmt.Sprintf("evt_%d_", serverInstanceID)
+	if !strings.HasPrefix(id, expectedPrefix) {
+		t.Errorf("expected ID to contain serverInstanceID prefix %q, got %q", expectedPrefix, id)
+	}
+
+	// 1000 generated IDs should all be unique
+	seen := make(map[string]struct{}, 1000)
+	seen[id] = struct{}{}
+	for i := 1; i < 1000; i++ {
+		id := GenerateEventID()
+		if _, ok := seen[id]; ok {
+			t.Errorf("duplicate event ID: %q", id)
+		}
+		seen[id] = struct{}{}
 	}
 }
 

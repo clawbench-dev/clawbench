@@ -966,7 +966,7 @@ func (r *ProxyRegistry) savePortToDB(localPort int, port int, host string, name,
 	if DB == nil {
 		return
 	}
-	_, err := DB.Exec(
+	_, err := WriteExec(
 		"INSERT OR REPLACE INTO forwarded_ports (local_port, port, host, name, protocol) VALUES (?, ?, ?, ?, ?)",
 		localPort, port, host, name, protocol,
 	)
@@ -980,7 +980,7 @@ func (r *ProxyRegistry) deletePortFromDB(localPort int) {
 	if DB == nil {
 		return
 	}
-	_, err := DB.Exec("DELETE FROM forwarded_ports WHERE local_port = ?", localPort)
+	_, err := WriteExec("DELETE FROM forwarded_ports WHERE local_port = ?", localPort)
 	if err != nil {
 		slog.Error("failed to delete port from DB", slog.Int("local_port", localPort), slog.String("err", err.Error()))
 	}
