@@ -107,7 +107,7 @@ import { baseName } from '@/utils/path.ts'
 import { store } from '@/stores/app.ts'
 import { setPendingManageNavigation } from '@/composables/useCommitNavigation.ts'
 import PopupMenu from '@/components/common/PopupMenu.vue'
-import { getZoomedViewport } from '@/composables/useSettingsConfig'
+import { getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 
 const { t } = useI18n()
 const { wsStatus } = useGlobalEvents()
@@ -184,8 +184,8 @@ function updateDropdownPosition() {
     const rect = dropdownRef.value.getBoundingClientRect()
     dropdownStyle.value = {
         position: 'fixed',
-        top: `${rect.bottom + 4}px`,
-        left: `${rect.left}px`,
+        top: `${toFixedCSS(rect.bottom + 4)}px`,
+        left: `${toFixedCSS(rect.left)}px`,
         minWidth: `${Math.max(220, rect.width)}px`,
         maxWidth: '280px',
     }
@@ -349,8 +349,8 @@ function updateServerDropdownPosition() {
     const vp = getZoomedViewport()
     serverDropdownStyle.value = {
         position: 'fixed',
-        top: `${rect.bottom + 4}px`,
-        right: `${vp.width - rect.right}px`,
+        top: `${toFixedCSS(rect.bottom + 4)}px`,
+        right: `${toFixedCSS(vp.width - rect.right)}px`,
         left: 'auto',
         minWidth: '200px',
         maxWidth: '260px',

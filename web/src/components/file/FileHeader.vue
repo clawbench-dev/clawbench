@@ -142,7 +142,7 @@ import { useChatContext } from '@/composables/useChatContext.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
-import { getZoomedViewport } from '@/composables/useSettingsConfig'
+import { getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 
 const props = defineProps({
     file: Object,
@@ -202,8 +202,8 @@ function updateMenuPosition() {
     const vp = getZoomedViewport()
     menuStyle.value = {
         position: 'fixed',
-        top: `${rect.bottom + 4}px`,
-        right: `${vp.width - rect.right}px`,
+        top: `${toFixedCSS(rect.bottom + 4)}px`,
+        right: `${toFixedCSS(vp.width - rect.right)}px`,
         left: 'auto',
     }
 }

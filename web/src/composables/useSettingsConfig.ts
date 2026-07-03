@@ -227,18 +227,33 @@ export function getUIScale(): number {
 }
 
 /**
- * Get viewport dimensions in the coordinate space used by
- * getBoundingClientRect() and position:fixed under CSS zoom.
+ * Convert a value from getBoundingClientRect() / window.innerWidth coordinate
+ * space to position:fixed CSS pixel value.
  *
- * When CSS zoom is applied to <html>, getBoundingClientRect() and
- * position:fixed both operate in the viewport coordinate space,
- * which is NOT scaled by zoom.  Therefore window.innerWidth/innerHeight
- * (also in viewport space) are the correct dimensions for positioning
- * math (e.g., `viewportWidth - rect.right`).
+ * Under CSS zoom on <html>, getBoundingClientRect() returns zoom-scaled
+ * coordinates and window.innerWidth/innerHeight are NOT scaled, while
+ * position:fixed CSS values are in the pre-zoom layout space:
+ *   - fixed left:100px under zoom:2 visually appears at 200px
+ *   - getBoundingClientRect().left of that element returns 200
  *
- * The former implementation (innerWidth * zoom) was incorrect — it
- * double-scaled the viewport dimensions, causing position:fixed popups
- * to land outside the visible area when zoom > 1.
+ * Therefore: fixedCSS = viewportCoord / zoom
+ *
+ * Example: to right-align a fixed popup to an anchor:
+ *   right: toFixedCSS(innerWidth - anchorRect.right) + 'px'
+ */
+export function toFixedCSS(viewportCoord: number): number {
+  const z = getUIScale()
+  return viewportCoord / z
+}
+
+/**
+ * Get viewport dimensions for position:fixed calculations under CSS zoom.
+ *
+ * Returns window.innerWidth/innerHeight (NOT affected by CSS zoom),
+ * in the same coordinate space as getBoundingClientRect().
+ *
+ * IMPORTANT: Values from this function are in getBoundingClientRect() space.
+ * To use them as position:fixed CSS values, pass through toFixedCSS().
  */
 export function getZoomedViewport(): { width: number; height: number } {
   return {

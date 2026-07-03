@@ -262,7 +262,7 @@ import { ref, computed, watch, onMounted, onUnmounted, provide, nextTick } from 
 import { appLog } from '@/utils/appLog'
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { useI18n } from 'vue-i18n'
-import { useSettingsConfig, applyUIScale, getZoomedViewport } from '@/composables/useSettingsConfig'
+import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 import { MessageSquare, FolderOpen, GitBranch, EthernetPort, SquareTerminal as TerminalIcon, CalendarClock, MoreHorizontal, Settings } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
@@ -1103,8 +1103,8 @@ const overflowPopupStyle = computed(() => {
   const vp = getZoomedViewport()
   return {
     position: 'fixed',
-    bottom: `${vp.height - rect.top + 8}px`,
-    right: `${vp.width - rect.right}px`,
+    bottom: `${toFixedCSS(vp.height - rect.top + 8)}px`,
+    right: `${toFixedCSS(vp.width - rect.right)}px`,
   }
 })
 

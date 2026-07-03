@@ -11,9 +11,15 @@
  *   position in the viewport: right side → right-aligned, left side → left-aligned.
  *   Callers can override with `anchor: 'left' | 'right'` to force alignment
  *   (useful for autocomplete menus that logically start at the left of the input).
+ *
+ * CSS zoom handling:
+ *   - getBoundingClientRect() returns zoom-scaled coordinates
+ *   - window.innerWidth/innerHeight are NOT scaled by zoom
+ *   - position:fixed CSS values are in pre-zoom layout space
+ *   - Conversion: fixedCSS = viewportCoord / zoom (via toFixedCSS)
  */
 
-import { getZoomedViewport } from '@/composables/useSettingsConfig'
+import { getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 
 /**
  * Compute the CSS style object for a popup menu's fixed position.
@@ -72,27 +78,27 @@ export function computeMenuStyle(
 
   if (goBelow) {
     // Menu appears BELOW the anchor
-    const top = rect.bottom + gap
-    const availableBelow = viewportHeight - top - edgeMargin
+    const top = toFixedCSS(rect.bottom + gap)
+    const availableBelow = viewportHeight - (rect.bottom + gap) - edgeMargin
     return {
       position: 'fixed',
       top: `${top}px`,
       ...horizontal,
       maxWidth: `${maxWidth}px`,
-      maxHeight: `min(${maxHeight}px, ${availableBelow}px)`,
+      maxHeight: `min(${maxHeight}px, ${toFixedCSS(availableBelow)}px)`,
       overflowY: 'auto',
     }
   }
 
   // Menu appears ABOVE the anchor (preferred)
-  const bottom = viewportHeight - rect.top + gap
+  const bottom = toFixedCSS(viewportHeight - rect.top + gap)
   const availableAbove = rect.top - gap - edgeMargin
   return {
     position: 'fixed',
     bottom: `${bottom}px`,
     ...horizontal,
     maxWidth: `${maxWidth}px`,
-    maxHeight: `min(${maxHeight}px, ${availableAbove}px)`,
+    maxHeight: `min(${maxHeight}px, ${toFixedCSS(availableAbove)}px)`,
     overflowY: 'auto',
   }
 }
@@ -104,9 +110,9 @@ function computeRight(
   edgeMargin: number,
   viewportWidth: number,
 ): Record<string, string> {
-  let right = viewportWidth - rect.right
-  if (right + maxWidth + edgeMargin > viewportWidth) {
-    right = viewportWidth - maxWidth - edgeMargin
+  let right = toFixedCSS(viewportWidth - rect.right)
+  if (right + maxWidth + edgeMargin > toFixedCSS(viewportWidth)) {
+    right = toFixedCSS(viewportWidth) - maxWidth - edgeMargin
   }
   right = Math.max(edgeMargin, right)
   return { right: `${right}px` }
@@ -119,9 +125,9 @@ function computeLeft(
   edgeMargin: number,
   viewportWidth: number,
 ): Record<string, string> {
-  let left = rect.left
-  if (left + maxWidth + edgeMargin > viewportWidth) {
-    left = viewportWidth - maxWidth - edgeMargin
+  let left = toFixedCSS(rect.left)
+  if (left + maxWidth + edgeMargin > toFixedCSS(viewportWidth)) {
+    left = toFixedCSS(viewportWidth) - maxWidth - edgeMargin
   }
   left = Math.max(edgeMargin, left)
   return { left: `${left}px` }

@@ -356,7 +356,7 @@ import {
   resolveClickAction,
 } from '@/utils/fileManager.ts'
 import { store } from '@/stores/app.ts'
-import { localConfig, setLocalConfig, useSettingsConfig, getZoomedViewport } from '@/composables/useSettingsConfig'
+import { localConfig, setLocalConfig, useSettingsConfig, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useTerminalStatus } from '@/composables/useTerminalStatus.ts'
@@ -547,8 +547,8 @@ function closeCtxMenu() {
 
 function onLongPress(entry, e) {
     const touch = e.touches[0]
-    ctxMenu.x = touch.clientX
-    ctxMenu.y = touch.clientY + 10
+    ctxMenu.x = toFixedCSS(touch.clientX)
+    ctxMenu.y = toFixedCSS(touch.clientY + 10)
     // DirEntry from v-for has no .path — compute it like handleCtxMenu does
     ctxMenu.entry = { type: entry.type, name: entry.name, path: itemPath(entry.name) }
     ctxMenu.visible = true
@@ -560,8 +560,8 @@ function onContainerLongPress(e) {
     if (e.target?.closest('.file-item, .grid-item')) return
     // Long-press on empty area — show menu without entry (paste, new file/folder, terminal)
     const touch = e.touches[0]
-    ctxMenu.x = touch.clientX
-    ctxMenu.y = touch.clientY + 10
+    ctxMenu.x = toFixedCSS(touch.clientX)
+    ctxMenu.y = toFixedCSS(touch.clientY + 10)
     ctxMenu.entry = null
     ctxMenu.visible = true
     nextTick(() => clampCtxMenu())
@@ -569,8 +569,8 @@ function onContainerLongPress(e) {
 
 function handleCtxMenu(e) {
     const item = e.target?.closest('.file-item, .grid-item')
-    ctxMenu.x = e.clientX
-    ctxMenu.y = e.clientY
+    ctxMenu.x = toFixedCSS(e.clientX)
+    ctxMenu.y = toFixedCSS(e.clientY)
     if (!item) {
         ctxMenu.entry = null
         ctxMenu.visible = true
@@ -853,8 +853,10 @@ function clampCtxMenu() {
     const vp = getZoomedViewport()
     // Add small padding from edges
     const pad = 8
-    ctxMenu.x = Math.max(pad, Math.min(ctxMenu.x, vp.width - w - pad))
-    ctxMenu.y = Math.max(pad, Math.min(ctxMenu.y, vp.height - h - pad))
+    const vpW = toFixedCSS(vp.width)
+    const vpH = toFixedCSS(vp.height)
+    ctxMenu.x = Math.max(pad, Math.min(ctxMenu.x, vpW - w - pad))
+    ctxMenu.y = Math.max(pad, Math.min(ctxMenu.y, vpH - h - pad))
 }
 
 function doOpenAsProject() {
