@@ -1110,7 +1110,7 @@ public class BackgroundService extends Service {
     private synchronized void disconnect() {
         intentionalDisconnect = true;
         stopConnectionMonitor();
-        releaseWifiLock();
+        maybeReleaseWifiLock();
         maybeReleaseWakeLock();
         disconnectInternal();
     }
@@ -1697,6 +1697,7 @@ public class BackgroundService extends Service {
                 }
             }
             maybeReleaseWakeLock();
+            maybeReleaseWifiLock();
         }
 
         @Override
@@ -1712,6 +1713,7 @@ public class BackgroundService extends Service {
                 }
             }
             maybeReleaseWakeLock();
+            maybeReleaseWifiLock();
         }
     }
 
