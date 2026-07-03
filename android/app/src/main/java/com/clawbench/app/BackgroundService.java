@@ -175,7 +175,7 @@ public class BackgroundService extends Service {
                 .edit().putBoolean(KEY_PERSISTENT_NOTIFICATION, enabled).apply();
         // If service is running, update the notification immediately
         if (instance != null) {
-            instance.updateNotification(forwardedPorts.size(), null);
+            instance.updateNotification(instance.forwardedPorts.size(), null);
         }
     }
 

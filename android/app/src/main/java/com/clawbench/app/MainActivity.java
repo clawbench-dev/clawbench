@@ -2170,6 +2170,24 @@ public class MainActivity extends AppCompatActivity {
                 }
             });
         }
+
+        /**
+         * Control whether the BackgroundService shows a persistent notification.
+         * When enabled, the foreground service notification is visible (keeps service alive).
+         * When disabled, the service still runs but the notification is minimized/silent.
+         */
+        @JavascriptInterface
+        public void setPushPersistentNotification(boolean enabled) {
+            BackgroundService.setPersistentNotificationEnabled(activity, enabled);
+        }
+
+        /**
+         * Query whether persistent notification is currently enabled.
+         */
+        @JavascriptInterface
+        public boolean isPushPersistentNotification() {
+            return BackgroundService.isPersistentNotificationEnabled(activity);
+        }
     }
 
     /**
@@ -2232,23 +2250,5 @@ public class MainActivity extends AppCompatActivity {
             case "I": AppLog.i(tag, msg); break;
             default:  AppLog.d(tag, msg); break;
         }
-    }
-
-    /**
-     * Control whether the BackgroundService shows a persistent notification.
-     * When enabled, the foreground service notification is visible (keeps service alive).
-     * When disabled, the service still runs but the notification is minimized/silent.
-     */
-    @JavascriptInterface
-    public void setPushPersistentNotification(boolean enabled) {
-        BackgroundService.setPersistentNotificationEnabled(activity, enabled);
-    }
-
-    /**
-     * Query whether persistent notification is currently enabled.
-     */
-    @JavascriptInterface
-    public boolean isPushPersistentNotification() {
-        return BackgroundService.isPersistentNotificationEnabled(activity);
     }
 }
