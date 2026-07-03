@@ -756,3 +756,145 @@ func TestTTSGenerate_SaveTTSSummaryByMessageID_DBError(t *testing.T) {
 	// Verify the job completed successfully despite the DB save error
 	assert.True(t, mockSum.called)
 }
+
+// --- ttsExtractConclusion: extracts final answer from message blocks ---
+
+func TestTTSExtractConclusion_LastAnswerAfterToolUse(t *testing.T) {
+	_, teardown := setupTTSTest(t, &mockSpeechProvider{}, &mockSummarizer{})
+	defer teardown()
+
+	// Insert a message with: text(intro) → tool_use → text(conclusion)
+	content := `{"blocks":[{"type":"text","text":"Let me check the code."},{"type":"tool_use","name":"Read","id":"1","input":{"file_path":"/foo.go"}},{"type":"text","text":"The fix is to add a null check on line 42."}]}`
+	result, err := service.DB.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', ?, 'sess-tts-1', 'claude', 0)",
+		content,
+	)
+	assert.NoError(t, err)
+	msgID, _ := result.LastInsertId()
+
+	conclusion := ttsExtractConclusion(msgID)
+	assert.Equal(t, "The fix is to add a null check on line 42.", conclusion)
+}
+
+func TestTTSExtractConclusion_NoToolUse_ReturnsLongestText(t *testing.T) {
+	_, teardown := setupTTSTest(t, &mockSpeechProvider{}, &mockSummarizer{})
+	defer teardown()
+
+	// Message with only text blocks (no tool_use) → longest text block
+	content := `{"blocks":[{"type":"text","text":"Short intro."},{"type":"text","text":"This is the main answer with much more detail and explanation about the fix."}]}`
+	result, err := service.DB.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', ?, 'sess-tts-2', 'claude', 0)",
+		content,
+	)
+	assert.NoError(t, err)
+	msgID, _ := result.LastInsertId()
+
+	conclusion := ttsExtractConclusion(msgID)
+	assert.Equal(t, "This is the main answer with much more detail and explanation about the fix.", conclusion)
+}
+
+func TestTTSExtractConclusion_WithAskUserQuestion(t *testing.T) {
+	_, teardown := setupTTSTest(t, &mockSpeechProvider{}, &mockSummarizer{})
+	defer teardown()
+
+	// Message: text(conclusion) → AskUserQuestion
+	content := `{"blocks":[{"type":"text","text":"The fix is done."},{"type":"tool_use","name":"AskUserQuestion","id":"2","input":{"questions":[{"question":"Which approach?","header":"Approach","options":[{"label":"Option A","description":"Fast"},{"label":"Option B","description":"Safe"}]}]}}]}`
+	result, err := service.DB.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', ?, 'sess-tts-3', 'claude', 0)",
+		content,
+	)
+	assert.NoError(t, err)
+	msgID, _ := result.LastInsertId()
+
+	conclusion := ttsExtractConclusion(msgID)
+	assert.Contains(t, conclusion, "The fix is done.")
+	assert.Contains(t, conclusion, "Which approach?")
+	assert.Contains(t, conclusion, "Option A — Fast")
+	assert.Contains(t, conclusion, "Option B — Safe")
+}
+
+func TestTTSExtractConclusion_OnlyAskUserQuestion(t *testing.T) {
+	_, teardown := setupTTSTest(t, &mockSpeechProvider{}, &mockSummarizer{})
+	defer teardown()
+
+	// Message with only AskUserQuestion (no text blocks)
+	content := `{"blocks":[{"type":"tool_use","name":"AskUserQuestion","id":"3","input":{"questions":[{"question":"Proceed?","options":["Yes","No"]}]}}]}`
+	result, err := service.DB.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', ?, 'sess-tts-4', 'claude', 0)",
+		content,
+	)
+	assert.NoError(t, err)
+	msgID, _ := result.LastInsertId()
+
+	conclusion := ttsExtractConclusion(msgID)
+	assert.Contains(t, conclusion, "Proceed?")
+	assert.Contains(t, conclusion, "Yes, No")
+}
+
+func TestTTSExtractConclusion_MessageNotFound(t *testing.T) {
+	_, teardown := setupTTSTest(t, &mockSpeechProvider{}, &mockSummarizer{})
+	defer teardown()
+
+	conclusion := ttsExtractConclusion(999999)
+	assert.Equal(t, "", conclusion)
+}
+
+func TestTTSExtractConclusion_EmptyBlocks(t *testing.T) {
+	_, teardown := setupTTSTest(t, &mockSpeechProvider{}, &mockSummarizer{})
+	defer teardown()
+
+	content := `{"blocks":[]}`
+	result, err := service.DB.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', ?, 'sess-tts-5', 'claude', 0)",
+		content,
+	)
+	assert.NoError(t, err)
+	msgID, _ := result.LastInsertId()
+
+	conclusion := ttsExtractConclusion(msgID)
+	assert.Equal(t, "", conclusion)
+}
+
+// --- TTSGenerate: messageId conclusion extraction replaces full text ---
+
+func TestTTSGenerate_WithMessageID_UsesConclusionNotFullText(t *testing.T) {
+	mockProvider := &mockSpeechProvider{}
+	mockSum := &mockSummarizer{result: "精简结论"}
+	env, teardown := setupTTSTest(t, mockProvider, mockSum)
+	defer teardown()
+
+	// Insert a message with intro text + tool_use + conclusion text
+	content := `{"blocks":[{"type":"text","text":"Let me check the file."},{"type":"tool_use","name":"Read","id":"10","input":{"file_path":"/foo.go"}},{"type":"text","text":"The answer is 42."}]}`
+	result, err := service.DB.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, 'sess-tts-conc', 'claude', 0)",
+		env.ProjectDir, content,
+	)
+	assert.NoError(t, err)
+	msgID, _ := result.LastInsertId()
+
+	// Send TTS request with full text (as frontend does) + messageId
+	fullText := "Let me check the file.\nThe answer is 42."
+	req := newRequest(t, http.MethodPost, "/api/tts/generate", map[string]any{"text": fullText, "messageId": msgID, "language": "zh"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+
+	TTSGenerate(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Wait for job to complete
+	// The cache key is computed from the conclusion text (after extraction), not the full text
+	conclusionText := "The answer is 42."
+	hash := sha256.Sum256([]byte(conclusionText))
+	cacheKey := hex.EncodeToString(hash[:])[:summarize.CacheKeyHexLen]
+	if job, ok := service.GetTTSJob(cacheKey); ok {
+		select {
+		case <-job.Done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("TTS job did not complete in time")
+		}
+	}
+
+	// The summarizer should have received the conclusion text, not the full text
+	assert.True(t, mockSum.called)
+	assert.Equal(t, conclusionText, mockSum.lastText)
+}
