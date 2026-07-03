@@ -247,9 +247,9 @@ defineExpose({
   min-height: 0;
 }
 
-/* Compact mode body - flex container for sticky tab bar */
+/* Compact mode body - scrollable when options overflow */
 .bs-panel.bs-compact .bs-body {
-  overflow-y: hidden;
+  overflow-y: auto;
 }
 
 /* Auto mode - auto height based on content, max full screen, no border-radius */
