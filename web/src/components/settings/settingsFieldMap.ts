@@ -358,6 +358,23 @@ export function getServerFieldToLabelKey(): Record<string, string> {
 /** Pre-computed singleton — used by SettingsRestartDialog to translate field paths. */
 export const serverFieldToLabelKey: Record<string, string> = getServerFieldToLabelKey()
 
+/** Find a group by its groupId across all categories. */
+export function getGroupById(groupId: string): ConfigGroup | undefined {
+  for (const groups of Object.values(categoryGroups)) {
+    const found = groups.find(g => g.groupId === groupId)
+    if (found) return found
+  }
+  return undefined
+}
+
+/** Find the category key that contains a given groupId. */
+export function getCategoryForGroup(groupId: string): string | undefined {
+  for (const [category, groups] of Object.entries(categoryGroups)) {
+    if (groups.some(g => g.groupId === groupId)) return category
+  }
+  return undefined
+}
+
 /**
  * Voice options per TTS engine.
  * Used by SettingsGroupPanel.vue to dynamically resolve tts.voice select options

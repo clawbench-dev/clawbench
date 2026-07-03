@@ -102,7 +102,7 @@ describe('SettingsItem', () => {
 
   // Inline editor tests — VTU cannot find fragment sibling nodes via find(),
   // so we test behavior by checking internal state and emitted events.
-  it('opens select editor on click and emits value on option select', async () => {
+  it('opens select picker on click and emits value on option select', async () => {
     const wrapper = mountItem({
       type: 'select',
       modelValue: 'light',
@@ -112,22 +112,22 @@ describe('SettingsItem', () => {
       ],
     })
 
-    // No editor initially
-    expect(isEditing(wrapper)).toBe(false)
-
-    // Click row to open editor
-    await wrapper.find('.settings-item').trigger('click')
-    expect(isEditing(wrapper)).toBe(true)
-
-    // Call selectOption directly (simulates clicking an option)
+    // No picker initially
     const vm = wrapper.vm as any
+    expect(vm.$.setupState.selectPickerOpen).toBe(false)
+
+    // Click row to open picker
+    await wrapper.find('.settings-item').trigger('click')
+    expect(vm.$.setupState.selectPickerOpen).toBe(true)
+
+    // Call selectOption directly (simulates clicking an option in the BottomSheet)
     vm.$.setupState.selectOption('dark')
     await nextTick()
 
     expect(wrapper.emitted('update:modelValue')).toBeTruthy()
     expect(wrapper.emitted('update:modelValue')![0]).toEqual(['dark'])
-    // Editor should close after selecting
-    expect(isEditing(wrapper)).toBe(false)
+    // Picker should close after selecting
+    expect(vm.$.setupState.selectPickerOpen).toBe(false)
   })
 
   it('opens number editor on click and emits value on confirm', async () => {
@@ -184,7 +184,7 @@ describe('SettingsItem', () => {
     expect(isEditing(wrapper)).toBe(false)
   })
 
-  it('toggles editor open/closed on repeated clicks', async () => {
+  it('opens select picker on first click and reopens on second click', async () => {
     const wrapper = mountItem({
       type: 'select',
       modelValue: 'light',
@@ -194,13 +194,15 @@ describe('SettingsItem', () => {
       ],
     })
 
-    // Open
-    await wrapper.find('.settings-item').trigger('click')
-    expect(isEditing(wrapper)).toBe(true)
+    const vm = wrapper.vm as any
 
-    // Close (toggle)
+    // First click opens picker
     await wrapper.find('.settings-item').trigger('click')
-    expect(isEditing(wrapper)).toBe(false)
+    expect(vm.$.setupState.selectPickerOpen).toBe(true)
+
+    // Second click reopens picker (currently always opens on click)
+    await wrapper.find('.settings-item').trigger('click')
+    expect(vm.$.setupState.selectPickerOpen).toBe(true)
   })
 
   describe('slider debounce', () => {

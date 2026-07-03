@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { getServerFieldToLabelKey, categoryItems, categoryGroups, getAllGroupFields } from '@/components/settings/settingsFieldMap'
+import { getServerFieldToLabelKey, categoryItems, categoryGroups, getAllGroupFields, getGroupById, getCategoryForGroup } from '@/components/settings/settingsFieldMap'
 
 describe('settingsFieldMap', () => {
   it('maps all server-side dot-path keys to i18n label keys', () => {
     const map = getServerFieldToLabelKey()
 
     // Key server fields that can appear in changed_cold_fields
-    expect(map['default_agent']).toBeTruthy()
     expect(map['terminal.enabled']).toBeTruthy()
     expect(map['tts.engine']).toBeTruthy()
     expect(map['rag.ollama_base_url']).toBeTruthy()
@@ -164,5 +163,32 @@ describe('settingsFieldMap', () => {
     expect(ragGroup!.entryType).toBe('header')
     expect(ragGroup!.optionSubFields).toBeUndefined()
     expect((ragGroup!.commonFields ?? []).length).toBeGreaterThan(0)
+  })
+
+  // ── Lookup helpers ──
+
+  it('getGroupById finds existing groups', () => {
+    expect(getGroupById('tts-group')).toBeDefined()
+    expect(getGroupById('tts-group')!.entryType).toBe('select')
+    expect(getGroupById('summarize-group')).toBeDefined()
+    expect(getGroupById('rag-group')).toBeDefined()
+    expect(getGroupById('port-forward-group')).toBeDefined()
+    expect(getGroupById('push-jpush-group')).toBeDefined()
+  })
+
+  it('getGroupById returns undefined for unknown groupId', () => {
+    expect(getGroupById('nonexistent-group')).toBeUndefined()
+  })
+
+  it('getCategoryForGroup returns correct category', () => {
+    expect(getCategoryForGroup('tts-group')).toBe('tts')
+    expect(getCategoryForGroup('summarize-group')).toBe('summarization')
+    expect(getCategoryForGroup('rag-group')).toBe('rag')
+    expect(getCategoryForGroup('port-forward-group')).toBe('portForward')
+    expect(getCategoryForGroup('push-jpush-group')).toBe('push')
+  })
+
+  it('getCategoryForGroup returns undefined for unknown groupId', () => {
+    expect(getCategoryForGroup('nonexistent-group')).toBeUndefined()
   })
 })

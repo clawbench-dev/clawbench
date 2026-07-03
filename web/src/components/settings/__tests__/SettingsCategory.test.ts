@@ -339,11 +339,19 @@ describe('SettingsCategory', () => {
 
   // ─── TTS category ──────────────────────────────
   describe('tts category', () => {
-    it('renders TTS config as a SettingsGroupPanel', () => {
+    it('renders TTS config as a group entry row with chevron', () => {
       const wrapper = mountCategory('tts')
-      const groups = wrapper.findAllComponents({ name: 'SettingsGroupPanel' })
-      expect(groups.length).toBe(1)
-      expect(groups[0].props().group.groupId).toBe('tts-group')
+      const entryRows = wrapper.findAll('.settings-group-entry')
+      expect(entryRows.length).toBe(1)
+      expect(entryRows[0].text()).toContain('TTS引擎')
+      expect(entryRows[0].find('.settings-group-entry__chevron').exists()).toBe(true)
+    })
+
+    it('emits navigate with tts:tts-group on group entry click', async () => {
+      const wrapper = mountCategory('tts')
+      await wrapper.find('.settings-group-entry').trigger('click')
+      expect(wrapper.emitted('navigate')).toBeTruthy()
+      expect(wrapper.emitted('navigate')![0]).toEqual(['tts:tts-group'])
     })
   })
 
@@ -412,31 +420,47 @@ describe('SettingsCategory', () => {
 
   // ─── Summarization category ──────────────────────────────
   describe('summarization category', () => {
-    it('renders summarize config as a SettingsGroupPanel', () => {
+    it('renders summarize config as a group entry row', () => {
       const wrapper = mountCategory('summarization')
-      const groups = wrapper.findAllComponents({ name: 'SettingsGroupPanel' })
-      expect(groups.length).toBe(1)
-      expect(groups[0].props().group.groupId).toBe('summarize-group')
+      const entryRows = wrapper.findAll('.settings-group-entry')
+      expect(entryRows.length).toBe(1)
+      expect(entryRows[0].text()).toContain('摘要方式')
+    })
+
+    it('emits navigate with summarization:summarize-group on click', async () => {
+      const wrapper = mountCategory('summarization')
+      await wrapper.find('.settings-group-entry').trigger('click')
+      expect(wrapper.emitted('navigate')![0]).toEqual(['summarization:summarize-group'])
     })
   })
 
   // ─── RAG category ──────────────────────────────
   describe('rag category', () => {
-    it('renders RAG config as a SettingsGroupPanel', () => {
+    it('renders RAG config as a group entry row', () => {
       const wrapper = mountCategory('rag')
-      const groups = wrapper.findAllComponents({ name: 'SettingsGroupPanel' })
-      expect(groups.length).toBe(1)
-      expect(groups[0].props().group.groupId).toBe('rag-group')
+      const entryRows = wrapper.findAll('.settings-group-entry')
+      expect(entryRows.length).toBe(1)
+    })
+
+    it('emits navigate with rag:rag-group on click', async () => {
+      const wrapper = mountCategory('rag')
+      await wrapper.find('.settings-group-entry').trigger('click')
+      expect(wrapper.emitted('navigate')![0]).toEqual(['rag:rag-group'])
     })
   })
 
   // ─── Port Forward category ──────────────────────────────
   describe('portForward category', () => {
-    it('renders port forward config as a SettingsGroupPanel', () => {
+    it('renders port forward config as a group entry row', () => {
       const wrapper = mountCategory('portForward')
-      const groups = wrapper.findAllComponents({ name: 'SettingsGroupPanel' })
-      expect(groups.length).toBe(1)
-      expect(groups[0].props().group.groupId).toBe('port-forward-group')
+      const entryRows = wrapper.findAll('.settings-group-entry')
+      expect(entryRows.length).toBe(1)
+    })
+
+    it('emits navigate with portForward:port-forward-group on click', async () => {
+      const wrapper = mountCategory('portForward')
+      await wrapper.find('.settings-group-entry').trigger('click')
+      expect(wrapper.emitted('navigate')![0]).toEqual(['portForward:port-forward-group'])
     })
   })
 
@@ -450,11 +474,59 @@ describe('SettingsCategory', () => {
       expect(statusItem!.props().type).toBe('info')
     })
 
-    it('renders JPush config as a SettingsGroupPanel', () => {
+    it('renders JPush config as a group entry row', () => {
       const wrapper = mountCategory('push')
-      const groups = wrapper.findAllComponents({ name: 'SettingsGroupPanel' })
-      const jpushGroup = groups.find(g => g.props().group.groupId === 'push-jpush-group')
-      expect(jpushGroup).toBeTruthy()
+      const entryRows = wrapper.findAll('.settings-group-entry')
+      const jpushRow = entryRows.find(r => r.text().includes('启用极光推送'))
+      expect(jpushRow).toBeTruthy()
+    })
+
+    it('emits navigate with push:push-jpush-group on JPush row click', async () => {
+      const wrapper = mountCategory('push')
+      const jpushRow = wrapper.findAll('.settings-group-entry').find(r => r.text().includes('启用极光推送'))
+      expect(jpushRow).toBeTruthy()
+      await jpushRow!.trigger('click')
+      expect(wrapper.emitted('navigate')![0]).toEqual(['push:push-jpush-group'])
+    })
+  })
+
+  // ─── Group drill-down routing ──────────────────────────────
+  describe('group drill-down', () => {
+    it('renders SettingsGroupPanel when categoryId matches group pattern', () => {
+      const wrapper = mount(SettingsCategory, {
+        props: { categoryId: 'tts:tts-group' },
+        global: {
+          plugins: [i18n],
+          stubs: { SettingsGroupPanel: true, SettingsItem: true },
+        },
+      })
+      expect(wrapper.findComponent({ name: 'SettingsGroupPanel' }).exists()).toBe(true)
+    })
+
+    it('passes correct group prop to SettingsGroupPanel', () => {
+      const wrapper = mount(SettingsCategory, {
+        props: { categoryId: 'tts:tts-group' },
+        global: {
+          plugins: [i18n],
+          stubs: { SettingsGroupPanel: true, SettingsItem: true },
+        },
+      })
+      const panel = wrapper.findComponent({ name: 'SettingsGroupPanel' })
+      expect(panel.props().group.groupId).toBe('tts-group')
+    })
+
+    it('emits navigate to parent category on navigate-back', async () => {
+      const wrapper = mount(SettingsCategory, {
+        props: { categoryId: 'tts:tts-group' },
+        global: {
+          plugins: [i18n],
+          stubs: { SettingsGroupPanel: { template: '<div data-test="panel" @click="$emit(\'navigate-back\')"></div>' } },
+        },
+      })
+      const panel = wrapper.find('[data-test="panel"]')
+      await panel.trigger('click')
+      expect(wrapper.emitted('navigate')).toBeTruthy()
+      expect(wrapper.emitted('navigate')![0]).toEqual(['tts'])
     })
   })
 

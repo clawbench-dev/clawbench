@@ -1,4 +1,4 @@
-import { ref, computed, onUnmounted, type Ref } from 'vue'
+import { ref, computed, onUnmounted, type Ref, type ComputedRef } from 'vue'
 
 /**
  * Tab-drawer declarative binding registry.
@@ -8,8 +8,11 @@ import { ref, computed, onUnmounted, type Ref } from 'vue'
  * The openRef itself is preserved across tab switches so the drawer re-opens
  * when the user switches back.
  *
- * Usage: call useTabDrawer(tabId, openRef) in the component's setup, then bind
- * the returned effectiveOpen.value to the BottomSheet/ModalDialog :open prop.
+ * IMPORTANT: In templates, always use `drawer.effectiveOpen.value` (with .value),
+ * NOT just `drawer.effectiveOpen`. Vue only auto-unwraps top-level refs from
+ * <script setup>, not nested computed refs on objects. Omitting .value passes
+ * the ComputedRef object (truthy) instead of the boolean, causing BottomSheet
+ * to always receive open=true.
  */
 
 // Registry: tabId → Set<openRef>
@@ -18,17 +21,27 @@ const registry = new Map<string, Set<Ref<boolean>>>()
 // Track current tab as a ref so effectiveOpen computed can react to tab switches
 const currentTab = ref('chat')
 
+/** Return type of useTabDrawer — explicit type prevents accidental misuse. */
+export interface TabDrawer {
+  /**
+   * Computed ref for the drawer's effective open state.
+   * In templates, bind as `:open="drawer.effectiveOpen.value"` (NOT `.effectiveOpen`).
+   */
+  effectiveOpen: ComputedRef<boolean>
+  /** Open the drawer (sets openRef = true, does NOT switch tab) */
+  open: () => void
+  /** Close the drawer (sets openRef = false) */
+  close: () => void
+}
+
 /**
  * Register a drawer's open ref as belonging to a tab.
  *
  * @param tabId  The tab this drawer belongs to (e.g. 'browse', 'chat', 'terminal')
  * @param openRef The ref controlling the drawer's open state
- * @returns An object with:
- *   - effectiveOpen: computed(boolean) — bind to BottomSheet :open, auto-false when tab inactive
- *   - open(): set the drawer open (does NOT switch tab)
- *   - close(): set the drawer closed
+ * @returns TabDrawer with effectiveOpen computed, open(), and close()
  */
-export function useTabDrawer(tabId: string, openRef: Ref<boolean>) {
+export function useTabDrawer(tabId: string, openRef: Ref<boolean>): TabDrawer {
   let set = registry.get(tabId)
   if (!set) {
     set = new Set()
@@ -43,11 +56,8 @@ export function useTabDrawer(tabId: string, openRef: Ref<boolean>) {
   const effectiveOpen = computed(() => currentTab.value === tabId && openRef.value)
 
   return {
-    /** Bind to BottomSheet/ModalDialog :open — automatically hides when tab is inactive */
     effectiveOpen,
-    /** Open the drawer (sets openRef = true) */
     open: () => { openRef.value = true },
-    /** Close the drawer (sets openRef = false) */
     close: () => { openRef.value = false },
   }
 }

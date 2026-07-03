@@ -8,7 +8,6 @@ import { type ConfigGroup } from '@/components/settings/settingsFieldMap'
 // ── Mock composables ──────────────────────────────
 const mockPatchConfig = vi.fn().mockResolvedValue({ needsRestart: false, changedColdFields: [] })
 const mockToastShow = vi.fn()
-const mockDialogConfirm = vi.fn().mockResolvedValue(false)
 
 vi.mock('@/composables/useSettingsConfig', () => ({
   useSettingsConfig: () => ({ patchConfig: mockPatchConfig }),
@@ -16,10 +15,6 @@ vi.mock('@/composables/useSettingsConfig', () => ({
 
 vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ show: mockToastShow }),
-}))
-
-vi.mock('@/composables/useDialog.ts', () => ({
-  useDialog: () => ({ confirm: mockDialogConfirm }),
 }))
 
 // ── i18n ──────────────────────────────
@@ -126,10 +121,10 @@ function mountGroup(
   extraProps: Record<string, any> = {},
 ) {
   return mount(SettingsGroupPanel, {
-    props: { group, fieldValues, forceClose: false, ...extraProps },
+    props: { group, fieldValues, ...extraProps },
     global: {
       plugins: [i18n],
-      stubs: { SettingsItem: true },
+      stubs: { SettingsItem: true, BottomSheet: false },
     },
   })
 }
@@ -153,108 +148,81 @@ function getState(wrapper: ReturnType<typeof mount>) {
   return (wrapper.vm as any).$.setupState
 }
 
-describe('SettingsGroupPanel', () => {
+describe('SettingsGroupPanel (drill-down detail page)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockPatchConfig.mockResolvedValue({ needsRestart: false, changedColdFields: [] })
-    mockDialogConfirm.mockResolvedValue(false)
   })
 
-  // ─── 1. Collapsed rendering ──────────────────────
-  describe('collapsed state', () => {
-    it('renders entry row with label and value for select group', () => {
+  // ─── 1. Always renders detail content ──────────────────────
+  describe('detail page rendering', () => {
+    it('renders entry row with label and current value for select group', () => {
       const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge' })
-      expect(wrapper.find('.settings-group__entry').exists()).toBe(true)
-      expect(wrapper.find('.settings-group__entry').text()).toContain('TTS引擎')
+      // Entry row shows label + current value
+      expect(wrapper.find('.settings-group__entry-row').exists()).toBe(true)
+      expect(wrapper.find('.settings-group__entry-label').text()).toContain('TTS引擎')
       expect(wrapper.find('.settings-group__entry-value').text()).toContain('Edge')
     })
 
-    it('renders entry row with switch for switch group', () => {
-      const wrapper = mountGroup(pushGroup, { 'push.jpush.enabled': false })
-      expect(wrapper.find('.settings-group__entry').text()).toContain('启用推送')
-      // Entry row shows on/off value text, not a switch toggle
-      expect(wrapper.find('.settings-group__entry-value').exists()).toBe(true)
-    })
-
-    it('renders entry row with title for header group', () => {
-      const wrapper = mountGroup(ragGroup, { 'rag.ollama_base_url': 'http://localhost:11434' })
-      expect(wrapper.find('.settings-group__entry').text()).toContain('RAG')
-    })
-
-    it('does not render panel when collapsed', () => {
+    it('renders BottomSheet for select group', () => {
       const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge' })
-      expect(wrapper.find('.settings-group__panel').exists()).toBe(false)
+      // BottomSheet is rendered (closed by default)
+      expect(wrapper.findComponent({ name: 'BottomSheet' }).exists()).toBe(true)
+    })
+
+    it('opens entry picker BottomSheet on entry row click', async () => {
+      const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge' })
+      await wrapper.find('.settings-group__entry-row').trigger('click')
+      await flush(wrapper)
+      expect(getState(wrapper).entryPickerOpen).toBe(true)
+    })
+
+    it('renders switch toggle for switch group', () => {
+      const wrapper = mountGroup(pushGroup, { 'push.jpush.enabled': true })
+      expect(wrapper.find('.settings-group__switch-input').exists()).toBe(true)
+      expect(wrapper.find('.settings-group__switch-input').element.checked).toBe(true)
+    })
+
+    it('renders common fields for all groups', () => {
+      const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge', 'tts.voice': '', 'tts.speed': 1.0 })
+      const items = wrapper.findAllComponents({ name: 'SettingsItem' })
+      expect(items.length).toBeGreaterThanOrEqual(2) // voice + speed
+    })
+
+    it('renders Save and Cancel buttons', () => {
+      const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge' })
+      expect(wrapper.find('.settings-group__btn--save').exists()).toBe(true)
+      expect(wrapper.find('.settings-group__btn--cancel').exists()).toBe(true)
     })
   })
 
-  // ─── 2. Expand behavior ──────────────────────
-  describe('expand', () => {
-    it('expands panel on entry click for select group', async () => {
-      const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge' })
-      await wrapper.find('.settings-group__entry').trigger('click')
-      await flush(wrapper)
-      expect(wrapper.find('.settings-group__panel').exists()).toBe(true)
+  // ─── 2. Snapshot on mount ──────────────────────
+  describe('snapshot on mount', () => {
+    it('creates snapshot of fieldValues on mount', () => {
+      const fv = { 'tts.engine': 'edge', 'tts.speed': 1.0 }
+      const wrapper = mountGroup(ttsGroup, fv)
+      const state = getState(wrapper)
+      expect(state.snapshot).toBeTruthy()
+      expect(state.snapshot['tts.engine']).toBe('edge')
+      expect(state.snapshot['tts.speed']).toBe(1.0)
     })
 
-    it('emits expand-toggle(true) on expand', async () => {
-      const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge' })
-      await wrapper.find('.settings-group__entry').trigger('click')
-      await flush(wrapper)
-      expect(wrapper.emitted('expand-toggle')).toBeTruthy()
-      expect(wrapper.emitted('expand-toggle')!.slice(-1)[0]).toEqual([true])
-    })
-
-    it('does NOT expand when entry value is in nonExpandValues', async () => {
-      const wrapper = mountGroup(summarizeGroup, { 'summarize.backend': '' })
-      await wrapper.find('.settings-group__entry').trigger('click')
-      await flush(wrapper)
-      expect(wrapper.find('.settings-group__panel').exists()).toBe(false)
-    })
-
-    it('expands header group on click', async () => {
-      const wrapper = mountGroup(ragGroup, { 'rag.ollama_base_url': 'http://localhost:11434' })
-      await wrapper.find('.settings-group__entry').trigger('click')
-      await flush(wrapper)
-      expect(wrapper.find('.settings-group__panel').exists()).toBe(true)
+    it('localValues initialized from fieldValues on mount', () => {
+      const fv = { 'tts.engine': 'edge', 'tts.speed': 1.0 }
+      const wrapper = mountGroup(ttsGroup, fv)
+      const state = getState(wrapper)
+      expect(state.localValues['tts.engine']).toBe('edge')
+      expect(state.localValues['tts.speed']).toBe(1.0)
     })
   })
 
   // ─── 3. Cancel behavior ──────────────────────
   describe('cancel', () => {
-    it('collapses panel on cancel click', async () => {
+    it('emits navigate-back on cancel click', async () => {
       const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge' })
-      await wrapper.find('.settings-group__entry').trigger('click')
-      await flush(wrapper)
-      expect(wrapper.find('.settings-group__panel').exists()).toBe(true)
-
       await wrapper.find('.settings-group__btn--cancel').trigger('click')
-      await flush(wrapper)
-      expect(wrapper.find('.settings-group__panel').exists()).toBe(false)
-    })
-
-    it('emits expandToggle(false) on cancel', async () => {
-      const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge' })
-      await wrapper.find('.settings-group__entry').trigger('click')
-      await flush(wrapper)
-
-      await wrapper.find('.settings-group__btn--cancel').trigger('click')
-      await flush(wrapper)
-      const toggles = wrapper.emitted('expand-toggle')!
-      expect(toggles[toggles.length - 1]).toEqual([false])
-    })
-
-    it('discards local changes on cancel', async () => {
-      const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge', 'tts.voice': '', 'tts.speed': 1.0 })
-      await wrapper.find('.settings-group__entry').trigger('click')
-      await flush(wrapper)
-
-      // Cancel and re-expand
-      await wrapper.find('.settings-group__btn--cancel').trigger('click')
-      await flush(wrapper)
-
-      await wrapper.find('.settings-group__entry').trigger('click')
-      await flush(wrapper)
-      expect(wrapper.find('.settings-group__panel').exists()).toBe(true)
+      expect(wrapper.emitted('navigate-back')).toBeTruthy()
+      expect(wrapper.emitted('navigate-back')!.length).toBe(1)
     })
   })
 
@@ -262,7 +230,6 @@ describe('SettingsGroupPanel', () => {
   describe('save', () => {
     it('PATCHes only changed fields', async () => {
       const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge', 'tts.voice': '', 'tts.speed': 1.0 })
-      await wrapper.find('.settings-group__entry').trigger('click')
       await flush(wrapper)
 
       getState(wrapper).setLocalValue('tts.speed', 2.0)
@@ -276,10 +243,9 @@ describe('SettingsGroupPanel', () => {
       expect(changes.tts.speed).toBe(2.0)
     })
 
-    it('collapses panel and emits save-result on success', async () => {
+    it('emits save-result and navigate-back on success', async () => {
       mockPatchConfig.mockResolvedValue({ needsRestart: true, changedColdFields: ['tts.speed'] })
       const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge', 'tts.speed': 1.0 })
-      await wrapper.find('.settings-group__entry').trigger('click')
       await flush(wrapper)
 
       getState(wrapper).setLocalValue('tts.speed', 2.0)
@@ -288,15 +254,14 @@ describe('SettingsGroupPanel', () => {
       await wrapper.find('.settings-group__btn--save').trigger('click')
       await flush(wrapper)
 
-      expect(wrapper.find('.settings-group__panel').exists()).toBe(false)
       const results = wrapper.emitted('save-result')!
       expect(results[results.length - 1][0]).toEqual({ needsRestart: true, changedColdFields: ['tts.speed'] })
+      expect(wrapper.emitted('navigate-back')).toBeTruthy()
     })
 
     it('skips empty password fields in diff', async () => {
       const fv = { 'summarize.backend': 'api', 'summarize.model': '', 'summarize.api.base_url': '', 'summarize.api.key': 'old-key' }
       const wrapper = mountGroup(summarizeGroup, fv)
-      await wrapper.find('.settings-group__entry').trigger('click')
       await flush(wrapper)
 
       const state = getState(wrapper)
@@ -312,22 +277,20 @@ describe('SettingsGroupPanel', () => {
       expect(changes.summarize?.api?.key).toBeUndefined()
     })
 
-    it('cancels (no PATCH) when no fields changed', async () => {
+    it('emits navigate-back (no PATCH) when no fields changed', async () => {
       const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge', 'tts.speed': 1.0 })
-      await wrapper.find('.settings-group__entry').trigger('click')
       await flush(wrapper)
 
       await wrapper.find('.settings-group__btn--save').trigger('click')
       await flush(wrapper)
 
       expect(mockPatchConfig).not.toHaveBeenCalled()
-      expect(wrapper.find('.settings-group__panel').exists()).toBe(false)
+      expect(wrapper.emitted('navigate-back')).toBeTruthy()
     })
 
-    it('shows toast on PATCH failure and keeps panel open', async () => {
+    it('shows toast on PATCH failure and stays on page', async () => {
       mockPatchConfig.mockRejectedValueOnce(new Error('network error'))
       const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge', 'tts.speed': 1.0 })
-      await wrapper.find('.settings-group__entry').trigger('click')
       await flush(wrapper)
 
       getState(wrapper).setLocalValue('tts.speed', 2.0)
@@ -337,25 +300,23 @@ describe('SettingsGroupPanel', () => {
       await flush(wrapper)
 
       expect(mockToastShow).toHaveBeenCalled()
-      expect(wrapper.find('.settings-group__panel').exists()).toBe(true)
+      // No navigate-back emitted on failure
+      expect(wrapper.emitted('navigate-back')).toBeFalsy()
     })
   })
 
   // ─── 5. Entry selector local preview ──────────────────────
   describe('entry selector local preview', () => {
-    it('switches option sub-fields when entry selection changes', async () => {
+    it('switches option sub-fields when entry selection changes via state', async () => {
       const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge', 'tts.voice': '', 'tts.speed': 1.0 })
-      await wrapper.find('.settings-group__entry').trigger('click')
       await flush(wrapper)
 
       // Edge: common fields visible (voice, speed) via SettingsItem stubs
       let items = wrapper.findAllComponents({ name: 'SettingsItem' })
       expect(items.length).toBeGreaterThanOrEqual(2) // voice + speed
 
-      // Click Piper option
-      const piperOpt = wrapper.findAll('.settings-group__option').find(o => o.text().includes('Piper'))
-      expect(piperOpt).toBeTruthy()
-      await piperOpt!.trigger('click')
+      // Change entry value to Piper via setLocalValue
+      getState(wrapper).setLocalValue('tts.engine', 'piper')
       await flush(wrapper)
 
       // Now Piper fields should be visible (more SettingsItem stubs)
@@ -364,43 +325,25 @@ describe('SettingsGroupPanel', () => {
       expect(items.length).toBeGreaterThanOrEqual(4)
     })
 
-    it('auto-cancels when selecting a nonExpandValue', async () => {
-      const wrapper = mountGroup(summarizeGroup, { 'summarize.backend': 'simple', 'summarize.model': '' })
-      await wrapper.find('.settings-group__entry').trigger('click')
+    it('updates entry display label when value changes', async () => {
+      const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge', 'tts.voice': '', 'tts.speed': 1.0 })
       await flush(wrapper)
-      expect(wrapper.find('.settings-group__panel').exists()).toBe(true)
+      expect(wrapper.find('.settings-group__entry-value').text()).toContain('Edge')
 
-      const disabledOpt = wrapper.findAll('.settings-group__option').find(o => o.text().includes('禁用'))
-      expect(disabledOpt).toBeTruthy()
-      await disabledOpt!.trigger('click')
+      getState(wrapper).setLocalValue('tts.engine', 'piper')
       await flush(wrapper)
-
-      expect(wrapper.find('.settings-group__panel').exists()).toBe(false)
+      expect(wrapper.find('.settings-group__entry-value').text()).toContain('Piper')
     })
   })
 
   // ─── 6. Switch group interactions ──────────────────────
   describe('switch group interactions', () => {
-    it('expands and turns ON when clicking entry row while OFF', async () => {
-      const wrapper = mountGroup(pushGroup, { 'push.jpush.enabled': false, 'push.jpush.app_key': '' })
-      // Entry row click when OFF → expand + turn ON
-      await wrapper.find('.settings-group__entry').trigger('click')
-      await flush(wrapper)
-
-      expect(wrapper.find('.settings-group__panel').exists()).toBe(true)
-      // Panel switch should be ON (local entry value set to true)
-      const panelSwitch = wrapper.find('.settings-group__switch-input')
-      expect(panelSwitch.exists()).toBe(true)
-      expect(panelSwitch.element.checked).toBe(true)
-    })
-
     it('panel switch toggle sets local value', async () => {
       const fv = { 'push.jpush.enabled': true, 'push.jpush.app_key': 'test-key', 'push.jpush.master_secret': 'test-secret' }
       const wrapper = mountGroup(pushGroup, fv)
-      await wrapper.find('.settings-group__entry').trigger('click')
       await flush(wrapper)
 
-      // Toggle switch OFF inside panel
+      // Toggle switch OFF inside detail page
       const panelSwitch = wrapper.find('.settings-group__switch-input')
       await toggleCheckbox(panelSwitch, false)
       await nextTick()
@@ -411,7 +354,6 @@ describe('SettingsGroupPanel', () => {
     it('PATCHes switch OFF via Save button', async () => {
       const fv = { 'push.jpush.enabled': true, 'push.jpush.app_key': 'test-key', 'push.jpush.master_secret': 'test-secret' }
       const wrapper = mountGroup(pushGroup, fv)
-      await wrapper.find('.settings-group__entry').trigger('click')
       await flush(wrapper)
 
       // Toggle switch OFF and save
@@ -427,39 +369,12 @@ describe('SettingsGroupPanel', () => {
     })
   })
 
-  // ─── 7. forceClose watch ──────────────────────
-  describe('forceClose', () => {
-    it('cancels (collapses panel) when forceClose triggers cancel', async () => {
-      const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge' })
-      await wrapper.find('.settings-group__entry').trigger('click')
-      await flush(wrapper)
-      expect(wrapper.find('.settings-group__panel').exists()).toBe(true)
-
-      // Simulate forceClose by calling cancel() directly
-      // (setProps-based watch testing is unreliable in VTU with Vue 3.5)
-      getState(wrapper).cancel()
-      await flush(wrapper)
-
-      expect(wrapper.find('.settings-group__panel').exists()).toBe(false)
-    })
-
-    it('does nothing when already collapsed', async () => {
-      const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge' })
-      expect(wrapper.find('.settings-group__panel').exists()).toBe(false)
-      // Calling cancel on collapsed panel is a no-op
-      getState(wrapper).cancel()
-      await flush(wrapper)
-      expect(wrapper.find('.settings-group__panel').exists()).toBe(false)
-    })
-  })
-
-  // ─── 8. Dynamic options ──────────────────────
+  // ─── 7. Dynamic options ──────────────────────
   describe('dynamic options', () => {
     it('renders panel fields when fieldOptions provided', async () => {
       const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge', 'tts.voice': '' }, {
         fieldOptions: { 'tts.voice': [{ label: 'Xiaoxiao', value: 'zh-CN-XiaoxiaoNeural' }] },
       })
-      await wrapper.find('.settings-group__entry').trigger('click')
       await flush(wrapper)
 
       // SettingsItem stubs should be rendered for common fields
@@ -468,12 +383,11 @@ describe('SettingsGroupPanel', () => {
     })
   })
 
-  // ─── 9. Password handling ──────────────────────
+  // ─── 8. Password handling ──────────────────────
   describe('password handling', () => {
     it('skips null password in diff', async () => {
       const fv = { 'summarize.backend': 'api', 'summarize.model': '', 'summarize.api.base_url': '', 'summarize.api.key': 'existing-key' }
       const wrapper = mountGroup(summarizeGroup, fv)
-      await wrapper.find('.settings-group__entry').trigger('click')
       await flush(wrapper)
 
       const state = getState(wrapper)
@@ -490,24 +404,20 @@ describe('SettingsGroupPanel', () => {
     })
   })
 
-  // ─── 10. commonFieldsVisibleWhen boundary ──────────────────────
+  // ─── 9. commonFieldsVisibleWhen boundary ──────────────────────
   describe('commonFieldsVisibleWhen', () => {
     it('hides common fields when entry value not in commonFieldsVisibleWhen', async () => {
       const wrapper = mountGroup(summarizeGroup, { 'summarize.backend': 'simple', 'summarize.model': '' })
-      await wrapper.find('.settings-group__entry').trigger('click')
       await flush(wrapper)
 
       // 'simple' not in commonFieldsVisibleWhen → model hidden
-      // Only the entry selector options should be visible, no SettingsItem for model
       const items = wrapper.findAllComponents({ name: 'SettingsItem' })
-      // simple has no option fields and model is hidden → 0 items
       expect(items.length).toBe(0)
     })
 
     it('shows common fields when entry value is in commonFieldsVisibleWhen', async () => {
       const fv = { 'summarize.backend': 'api', 'summarize.model': '', 'summarize.api.base_url': '', 'summarize.api.key': '' }
       const wrapper = mountGroup(summarizeGroup, fv)
-      await wrapper.find('.settings-group__entry').trigger('click')
       await flush(wrapper)
 
       // 'api' is in commonFieldsVisibleWhen → model + base_url + key = 3 items
@@ -517,7 +427,6 @@ describe('SettingsGroupPanel', () => {
 
     it('always shows common fields when commonFieldsVisibleWhen is undefined', async () => {
       const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge', 'tts.voice': '', 'tts.speed': 1.0 })
-      await wrapper.find('.settings-group__entry').trigger('click')
       await flush(wrapper)
 
       const items = wrapper.findAllComponents({ name: 'SettingsItem' })
@@ -525,11 +434,10 @@ describe('SettingsGroupPanel', () => {
     })
   })
 
-  // ─── 11. RAG flat group ──────────────────────
+  // ─── 10. RAG flat group ──────────────────────
   describe('RAG flat group', () => {
     it('renders all common fields for header group', async () => {
       const wrapper = mountGroup(ragGroup, { 'rag.ollama_base_url': 'http://localhost:11434', 'rag.ollama_model': 'bge-m3' })
-      await wrapper.find('.settings-group__entry').trigger('click')
       await flush(wrapper)
 
       const items = wrapper.findAllComponents({ name: 'SettingsItem' })
@@ -537,11 +445,10 @@ describe('SettingsGroupPanel', () => {
     })
   })
 
-  // ─── 12. Section headers ──────────────────────
+  // ─── 11. Section headers ──────────────────────
   describe('section headers', () => {
     it('renders section header before option-specific fields', async () => {
       const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'piper', 'tts.voice': '', 'tts.speed': 1.0, 'tts.piper.model_path': '' })
-      await wrapper.find('.settings-group__entry').trigger('click')
       await flush(wrapper)
 
       const headers = wrapper.findAll('.settings-group__section-header')
@@ -550,41 +457,13 @@ describe('SettingsGroupPanel', () => {
     })
   })
 
-  // ─── 13. Chevron ──────────────────────
-  describe('chevron', () => {
-    it('renders chevron icon', () => {
-      const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge' })
-      expect(wrapper.find('.settings-group__chevron').exists()).toBe(true)
-    })
-  })
-
-  // ─── 14. Empty panel hint ──────────────────────
-  describe('empty panel hint', () => {
-    it('shows empty hint when panelFields is empty', async () => {
-      const minimalGroup: ConfigGroup = {
-        groupId: 'test-empty', entryType: 'select',
-        entryField: {
-          labelKey: 'settings.items.ttsEngine', key: 'test.select', type: 'select', source: 'server',
-          options: [{ labelKey: 'settings.items.ttsEngineEdge', value: 'edge' }],
-        },
-      }
-      const wrapper = mountGroup(minimalGroup, { 'test.select': 'edge' })
-      await wrapper.find('.settings-group__entry').trigger('click')
-      await flush(wrapper)
-
-      expect(wrapper.find('.settings-group__empty').exists()).toBe(true)
-      expect(wrapper.find('.settings-group__empty').text()).toContain('无需配置')
-    })
-  })
-
-  // ─── 15. Save button disabled while saving ──────────────────────
+  // ─── 12. Save button disabled while saving ──────────────────────
   describe('saving state', () => {
     it('disables save button and shows saving text while saving', async () => {
       let resolvePatch!: (v: any) => void
       mockPatchConfig.mockReturnValue(new Promise(r => { resolvePatch = r }))
 
       const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge', 'tts.speed': 1.0 })
-      await wrapper.find('.settings-group__entry').trigger('click')
       await flush(wrapper)
 
       getState(wrapper).setLocalValue('tts.speed', 2.0)
@@ -602,14 +481,12 @@ describe('SettingsGroupPanel', () => {
     })
   })
 
-  // ─── 16. Panel switch toggle ──────────────────────
+  // ─── 13. Panel switch toggle ──────────────────────
   describe('panel switch toggle', () => {
-    it('toggles local value when switch changed inside panel', async () => {
+    it('toggles local value when switch changed', async () => {
       const wrapper = mountGroup(pushGroup, { 'push.jpush.enabled': true, 'push.jpush.app_key': 'test' })
-      await wrapper.find('.settings-group__entry').trigger('click')
       await flush(wrapper)
 
-      // Panel has one switch input
       const panelSwitch = wrapper.find('.settings-group__switch-input')
       expect(panelSwitch.exists()).toBe(true)
       await toggleCheckbox(panelSwitch, false)
@@ -618,12 +495,11 @@ describe('SettingsGroupPanel', () => {
     })
   })
 
-  // ─── 17. deepSetByDotPath ──────────────────────
+  // ─── 14. deepSetByDotPath ──────────────────────
   describe('deepSetByDotPath (via save)', () => {
     it('builds nested object from dot-path keys', async () => {
       const fv = { 'push.jpush.enabled': true, 'push.jpush.app_key': 'old-key', 'push.jpush.master_secret': 'old-secret' }
       const wrapper = mountGroup(pushGroup, fv)
-      await wrapper.find('.settings-group__entry').trigger('click')
       await flush(wrapper)
 
       getState(wrapper).setLocalValue('push.jpush.app_key', 'new-key')
@@ -637,21 +513,7 @@ describe('SettingsGroupPanel', () => {
     })
   })
 
-  // ─── 18. Toggle collapse ──────────────────────
-  describe('toggle collapse', () => {
-    it('collapses when clicking entry row while expanded', async () => {
-      const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge' })
-      await wrapper.find('.settings-group__entry').trigger('click')
-      await flush(wrapper)
-      expect(wrapper.find('.settings-group__panel').exists()).toBe(true)
-
-      await wrapper.find('.settings-group__entry').trigger('click')
-      await flush(wrapper)
-      expect(wrapper.find('.settings-group__panel').exists()).toBe(false)
-    })
-  })
-
-  // ─── 19. Port forward group ──────────────────────
+  // ─── 15. Port forward group ──────────────────────
   describe('port forward group', () => {
     const portForwardGroup: ConfigGroup = {
       groupId: 'port-forward-group', entryType: 'switch',
@@ -664,28 +526,17 @@ describe('SettingsGroupPanel', () => {
       nonExpandValues: [false],
     }
 
-    it('expands and turns ON when clicking entry row while OFF', async () => {
-      const wrapper = mountGroup(portForwardGroup, { 'port_forward.enabled': false, 'port_forward.port': 0 })
-      await wrapper.find('.settings-group__entry').trigger('click')
+    it('renders switch toggle for port forward group', async () => {
+      const wrapper = mountGroup(portForwardGroup, { 'port_forward.enabled': true, 'port_forward.port': 0 })
       await flush(wrapper)
-      expect(wrapper.find('.settings-group__panel').exists()).toBe(true)
-      // Switch inside panel should be ON
       const panelSwitch = wrapper.find('.settings-group__switch-input')
       expect(panelSwitch.exists()).toBe(true)
       expect(panelSwitch.element.checked).toBe(true)
     })
 
-    it('expands when switch is ON', async () => {
-      const wrapper = mountGroup(portForwardGroup, { 'port_forward.enabled': true, 'port_forward.port': 0 })
-      await wrapper.find('.settings-group__entry').trigger('click')
-      await flush(wrapper)
-      expect(wrapper.find('.settings-group__panel').exists()).toBe(true)
-    })
-
     it('emits save-result with needsRestart when port changed', async () => {
       mockPatchConfig.mockResolvedValue({ needsRestart: true, changedColdFields: ['port_forward.port'] })
       const wrapper = mountGroup(portForwardGroup, { 'port_forward.enabled': true, 'port_forward.port': 0 })
-      await wrapper.find('.settings-group__entry').trigger('click')
       await flush(wrapper)
 
       getState(wrapper).setLocalValue('port_forward.port', 8080)
@@ -696,6 +547,25 @@ describe('SettingsGroupPanel', () => {
 
       const results = wrapper.emitted('save-result')!
       expect(results[results.length - 1][0]).toEqual({ needsRestart: true, changedColdFields: ['port_forward.port'] })
+    })
+  })
+
+  // ─── 16. Entry picker select via handleEntrySelect ──────────────────────
+  describe('entry picker', () => {
+    it('handleEntrySelect updates local entry value and closes picker', async () => {
+      const wrapper = mountGroup(ttsGroup, { 'tts.engine': 'edge', 'tts.voice': '', 'tts.speed': 1.0 })
+      await flush(wrapper)
+
+      // Open picker
+      getState(wrapper).entryPickerOpen = true
+      await flush(wrapper)
+
+      // Call handleEntrySelect directly (simulating clicking an option in the BottomSheet)
+      getState(wrapper).handleEntrySelect('piper')
+      await flush(wrapper)
+
+      expect(getState(wrapper).localValues['tts.engine']).toBe('piper')
+      expect(getState(wrapper).entryPickerOpen).toBe(false)
     })
   })
 })

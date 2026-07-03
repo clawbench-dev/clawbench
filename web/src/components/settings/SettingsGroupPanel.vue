@@ -1,66 +1,27 @@
 <template>
-  <div class="settings-group-wrapper">
-  <!-- ── Entry Row (always rendered) ── -->
-  <div class="settings-group" :class="{ 'settings-group--expanded': expanded }">
-    <!-- Select entry: label | current-value | chevron -->
-    <div v-if="group.entryType === 'select'" class="settings-group__entry" @click="handleEntryClick">
-      <div class="settings-group__entry-left">
-        <span class="settings-group__entry-label">{{ t(group.entryField.labelKey) }}</span>
-      </div>
+  <div class="settings-group-detail">
+    <!-- Entry selector row -->
+    <!-- Select: label | current value | chevron (opens BottomSheet picker) -->
+    <div v-if="group.entryType === 'select'" class="settings-group__entry-row" @click="entryPicker.open()">
+      <span class="settings-group__entry-label">{{ t(group.entryField.labelKey) }}</span>
       <div class="settings-group__entry-right">
         <span class="settings-group__entry-value">{{ entryDisplayLabel }}</span>
-        <component :is="expanded ? ChevronDown : ChevronRight" :size="16" class="settings-group__chevron" />
+        <ChevronRight :size="14" class="settings-group__entry-chevron" />
       </div>
     </div>
-    <!-- Switch entry: label | on/off value | chevron (same layout as select) -->
-    <div v-else-if="group.entryType === 'switch'" class="settings-group__entry" @click="handleEntryClick">
-      <div class="settings-group__entry-left">
-        <span class="settings-group__entry-label">{{ t(group.entryField.labelKey) }}</span>
-      </div>
-      <div class="settings-group__entry-right">
-        <span class="settings-group__entry-value">{{ committedEntryValue ? t('settings.items.switchOn') : t('settings.items.switchOff') }}</span>
-        <component :is="expanded ? ChevronDown : ChevronRight" :size="16" class="settings-group__chevron" />
-      </div>
+    <!-- Switch: label | toggle -->
+    <div v-else-if="group.entryType === 'switch'" class="settings-group__switch-row">
+      <span class="settings-group__switch-label">{{ t(group.entryField.labelKey) }}</span>
+      <label class="settings-group__switch" @click.stop>
+        <input
+          type="checkbox"
+          class="settings-group__switch-input"
+          :checked="!!localEntryValue"
+          @change="handlePanelSwitchToggle"
+        />
+        <span class="settings-group__switch-track"></span>
+      </label>
     </div>
-    <!-- Header entry: title | chevron -->
-    <div v-else-if="group.entryType === 'header'" class="settings-group__entry settings-group__entry--header" @click="handleEntryClick">
-      <div class="settings-group__entry-left">
-        <span class="settings-group__entry-label">{{ t(group.titleKey || group.entryField.labelKey) }}</span>
-      </div>
-      <div class="settings-group__entry-right">
-        <component :is="expanded ? ChevronDown : ChevronRight" :size="16" class="settings-group__chevron" />
-      </div>
-    </div>
-  </div>
-  <!-- ── Expanded Panel ── -->
-  <div v-if="expanded" class="settings-group__panel">
-    <!-- Entry selector inside panel (select: radio list; switch: toggle + label) -->
-    <template v-if="group.entryType === 'select'">
-      <div
-        v-for="opt in entryOptions"
-        :key="opt.value"
-        class="settings-group__option"
-        :class="{ 'settings-group__option--active': localEntryValue === opt.value }"
-        @click="handleEntrySelect(opt.value)"
-      >
-        <span class="settings-group__option-label">{{ t(opt.labelKey) }}</span>
-        <span v-if="localEntryValue === opt.value" class="settings-group__option-check">✓</span>
-      </div>
-    </template>
-    <template v-else-if="group.entryType === 'switch'">
-      <div class="settings-group__switch-row">
-        <span class="settings-group__switch-label">{{ t(group.entryField.labelKey) }}</span>
-        <label class="settings-group__switch" @click.stop>
-          <input
-            type="checkbox"
-            class="settings-group__switch-input"
-            :checked="!!localEntryValue"
-            @change="handlePanelSwitchToggle"
-          />
-          <span class="settings-group__switch-track"></span>
-        </label>
-      </div>
-    </template>
     <!-- Render all visible fields with section headers injected -->
     <template v-for="entry in panelFields" :key="entry.type === 'header' ? entry.headerKey : entry.field.key">
       <div v-if="entry.type === 'header'" class="settings-group__section-header">{{ entry.label }}</div>
@@ -80,7 +41,7 @@
       />
     </template>
     <!-- Empty hint -->
-    <div v-if="panelFields.length === 0" class="settings-group__empty">
+    <div v-if="panelFields.length === 0 && group.entryType !== 'select'" class="settings-group__empty">
       {{ t('settings.items.groupNoConfig') }}
     </div>
     <!-- Save / Cancel -->
@@ -91,17 +52,36 @@
       </button>
     </div>
   </div>
-  </div>
+  <!-- Entry option picker BottomSheet -->
+  <BottomSheet
+    :open="entryPicker.effectiveOpen.value"
+    :title="t(group.entryField.labelKey)"
+    compact
+    @close="entryPicker.close()"
+  >
+    <div
+      v-for="opt in entryOptions"
+      :key="opt.value"
+      class="settings-group__option"
+      :class="{ 'settings-group__option--active': localEntryValue === opt.value }"
+      @click="handleEntrySelect(opt.value)"
+    >
+      <span class="settings-group__option-label">{{ t(opt.labelKey) }}</span>
+      <span v-if="localEntryValue === opt.value" class="settings-group__option-check">✓</span>
+    </div>
+  </BottomSheet>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, ChevronRight } from 'lucide-vue-next'
+import { ChevronRight } from 'lucide-vue-next'
 import SettingsItem from './SettingsItem.vue'
+import BottomSheet from '@/components/common/BottomSheet.vue'
 import { type ConfigGroup, type ItemSpec } from './settingsFieldMap'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
+import { useTabDrawer } from '@/composables/useTabDrawer'
 
 type GroupField = Omit<ItemSpec, 'dependsOn'>
 
@@ -123,13 +103,11 @@ const props = defineProps<{
   fieldValues: Record<string, any>
   /** Dynamic options for select fields (e.g., tts.voice per engine) */
   fieldOptions?: Record<string, { label: string; value: any }[]>
-  /** Accordion: true when another group/item is active */
-  forceClose: boolean
 }>()
 
 const emit = defineEmits<{
   'save-result': [result: { needsRestart: boolean; changedColdFields: string[] }]
-  'expand-toggle': [open: boolean]
+  'navigate-back': []
 }>()
 
 const { t } = useI18n()
@@ -137,29 +115,40 @@ const toast = useToast()
 const { patchConfig } = useSettingsConfig()
 
 // ── State ──
-const expanded = ref(false)
 const snapshot = ref<Record<string, any> | null>(null)
 const localValues = ref<Record<string, any>>({})
 const saving = ref(false)
+const entryPickerOpen = ref(false)
+const entryPicker = useTabDrawer('settings', entryPickerOpen)
+
+// Guard against useTabDrawer preserving openRef on tab switch back.
+// Reset openRef when effectiveOpen becomes false (tab deactivated).
+watch(() => entryPicker.effectiveOpen.value, (val) => {
+  if (!val && entryPickerOpen.value) {
+    entryPickerOpen.value = false
+  }
+})
+
+// Snapshot on mount — captures committed state for diff on save
+onMounted(() => {
+  snapshot.value = JSON.parse(JSON.stringify(props.fieldValues))
+  localValues.value = { ...props.fieldValues }
+})
 
 // ── Computed ──
 const entryFieldKey = computed(() => props.group.entryField.key)
-const committedEntryValue = computed(() => props.fieldValues[entryFieldKey.value])
-const localEntryValue = computed(() => localValues.value[entryFieldKey.value] ?? committedEntryValue.value)
+const localEntryValue = computed(() => {
+  if (entryFieldKey.value in localValues.value) return localValues.value[entryFieldKey.value]
+  return props.fieldValues[entryFieldKey.value]
+})
 const entryOptions = computed(() => props.group.entryType === 'select' ? props.group.entryField.options ?? [] : [])
 
-/** Display label for the current entry value (collapsed row) */
+/** Display label for the current entry value */
 const entryDisplayLabel = computed(() => {
   if (props.group.entryType !== 'select') return ''
-  const val = committedEntryValue.value
+  const val = localEntryValue.value
   const opt = entryOptions.value.find(o => o.value === val)
   return opt ? t(opt.labelKey) : String(val ?? '')
-})
-
-/** Whether the current entry value allows panel expansion */
-const canExpand = computed(() => {
-  const val = committedEntryValue.value
-  return !(props.group.nonExpandValues ?? []).includes(val)
 })
 
 /** Common fields visible for the current local entry value */
@@ -224,54 +213,26 @@ function resolveFieldOptions(field: GroupField): { label: string; value: any }[]
 }
 
 // ── Entry interactions ──
-function handleEntryClick() {
-  if (expanded.value) {
-    cancel()
-  } else if (canExpand.value) {
-    expand()
-  } else if (props.group.entryType === 'switch') {
-    // Switch is OFF (in nonExpandValues) — click entry row to turn ON and expand
-    expand()
-    localValues.value[entryFieldKey.value] = true
-  }
-}
-
 function handleEntrySelect(value: any) {
   localValues.value[entryFieldKey.value] = value
-  // If selected value is in nonExpandValues, auto-cancel (e.g., selected "disabled")
-  if ((props.group.nonExpandValues ?? []).includes(value)) {
-    cancel()
-  }
+  entryPicker.close()
 }
 
-// ── Expand / Cancel / Save ──
-function expand() {
-  snapshot.value = JSON.parse(JSON.stringify(props.fieldValues))
-  localValues.value = { ...props.fieldValues }
-  expanded.value = true
-  emit('expand-toggle', true)
-}
-
-/** Switch toggle inside expanded panel */
+/** Switch toggle inside detail page */
 function handlePanelSwitchToggle(e: Event) {
   const checked = (e.target as HTMLInputElement).checked
   localValues.value[entryFieldKey.value] = checked
 }
 
+// ── Cancel / Save ──
 function cancel() {
-  snapshot.value = null
-  expanded.value = false
-  emit('expand-toggle', false)
+  emit('navigate-back')
 }
 
 async function save() {
   if (!snapshot.value) return
 
   // Diff localValues vs snapshot for visible fields only.
-  // IMPORTANT: Diff against snapshot, NOT serverConfig. Snapshot captures committed
-  // state at expand time. External changes to non-diffed fields are preserved by
-  // deepAssign in patchConfig. External changes to diffed fields are last-write-wins
-  // (user intent).
   const visibleKeys = getVisibleFieldKeys()
   const changes: Record<string, any> = {}
 
@@ -287,20 +248,18 @@ async function save() {
   }
 
   if (Object.keys(changes).length === 0) {
-    cancel()
+    emit('navigate-back')
     return
   }
 
   saving.value = true
   try {
     const result = await patchConfig(changes)
-    snapshot.value = null
-    expanded.value = false
-    emit('expand-toggle', false)
     emit('save-result', result)
+    emit('navigate-back')
   } catch {
     toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
-    // Keep panel open so user can retry or cancel
+    // Stay on page so user can retry
   } finally {
     saving.value = false
   }
@@ -350,29 +309,27 @@ function deepSetByDotPath(obj: Record<string, any>, dotPath: string, value: any)
   }
   current[parts[parts.length - 1]] = value
 }
-
-// ── forceClose watch ──
-watch(() => props.forceClose, (val) => {
-  if (val && expanded.value) {
-    cancel()
-  }
-})
 </script>
 
 <style scoped>
-.settings-group__entry {
+.settings-group-detail {
+  background: var(--bg-secondary);
+  padding: 4px 0;
+}
+
+/* Entry selector row (select type) */
+.settings-group__entry-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 16px;
   min-height: 48px;
   cursor: pointer;
-  gap: 12px;
   background: var(--bg-primary);
   position: relative;
 }
 
-.settings-group__entry::after {
+.settings-group__entry-row::after {
   content: '';
   position: absolute;
   bottom: 0;
@@ -382,29 +339,24 @@ watch(() => props.forceClose, (val) => {
   background: var(--border-color);
 }
 
-.settings-group__entry--header {
-  font-size: 12px;
-  color: var(--text-muted);
-  padding: 16px 16px 4px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  font-weight: 500;
+@media (hover: hover) {
+  .settings-group__entry-row:hover {
+    background: var(--bg-tertiary);
+  }
 }
 
-.settings-group__entry-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 1;
-  min-width: 0;
+.settings-group__entry-row:active {
+  background: var(--bg-tertiary);
 }
 
 .settings-group__entry-label {
   font-size: 15px;
   color: var(--text-primary);
-  white-space: nowrap;
+  flex-shrink: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-group__entry-right {
@@ -423,63 +375,30 @@ watch(() => props.forceClose, (val) => {
   white-space: nowrap;
 }
 
-.settings-group__chevron {
+.settings-group__entry-chevron {
   color: var(--text-muted);
   flex-shrink: 0;
 }
 
-/* Panel */
-.settings-group__panel {
-  background: var(--bg-tertiary);
-  padding: 4px 0;
-  border-top: 0.5px solid var(--border-color);
-  margin-left: 12px;
-  border-radius: 0 8px 8px 0;
-}
-
-/* Select option rows inside panel */
-.settings-group__option {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 16px;
-  cursor: pointer;
-  min-height: 40px;
-  background: var(--bg-secondary);
-}
-
-@media (hover: hover) {
-  .settings-group__option:hover {
-    background: var(--bg-primary);
-  }
-}
-
-.settings-group__option:active {
-  background: var(--bg-tertiary);
-}
-
-.settings-group__option--active {
-  background: var(--bg-primary);
-}
-
-.settings-group__option-label {
-  font-size: 14px;
-  color: var(--text-primary);
-}
-
-.settings-group__option-check {
-  font-size: 15px;
-  color: var(--accent-color);
-  font-weight: 600;
-}
-
-/* Switch inside panel */
+/* Switch inside detail page */
 .settings-group__switch-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 16px;
-  background: var(--bg-secondary);
+  padding: 0 16px;
+  min-height: 48px;
+  background: var(--bg-primary);
+  position: relative;
+}
+
+.settings-group__switch-row::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 0.5px;
+  background: var(--border-color);
 }
 
 .settings-group__switch-label {
@@ -532,7 +451,7 @@ watch(() => props.forceClose, (val) => {
   transform: translateX(20px);
 }
 
-/* Section header inside panel */
+/* Section header */
 .settings-group__section-header {
   font-size: 12px;
   color: var(--text-muted);
@@ -598,5 +517,57 @@ watch(() => props.forceClose, (val) => {
 
 .settings-group__btn--save:active:not(:disabled) {
   background: var(--accent-hover);
+}
+</style>
+
+<!-- Non-scoped styles for BottomSheet-teleported option rows -->
+<style>
+.settings-group__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  cursor: pointer;
+  min-height: 44px;
+  position: relative;
+}
+
+.settings-group__option::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 0.5px;
+  background: var(--border-color);
+}
+
+.settings-group__option:last-child::after {
+  display: none;
+}
+
+@media (hover: hover) {
+  .settings-group__option:hover {
+    background: var(--bg-tertiary);
+  }
+}
+
+.settings-group__option:active {
+  background: var(--bg-tertiary);
+}
+
+.settings-group__option--active {
+  background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, var(--bg-primary, #fff));
+}
+
+.settings-group__option-label {
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.settings-group__option-check {
+  font-size: 15px;
+  color: var(--accent-color);
+  font-weight: 600;
 }
 </style>

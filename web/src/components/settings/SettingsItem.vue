@@ -56,23 +56,10 @@
   <div v-if="descriptionExpanded && description" class="settings-item__desc-panel">
     <div class="settings-item__desc-panel-inner">{{ description }}</div>
   </div>
-  <!-- Inline editor -->
-  <div v-if="editing" class="settings-item__editor" @click.stop>
-    <!-- Select editor: radio-style option list -->
-    <template v-if="type === 'select'">
-      <div
-        v-for="opt in options"
-        :key="opt.value"
-        class="settings-item__option"
-        :class="{ 'settings-item__option--active': editValue === opt.value }"
-        @click="selectOption(opt.value)"
-      >
-        <span class="settings-item__option-label">{{ opt.label }}</span>
-        <span v-if="editValue === opt.value" class="settings-item__option-check">✓</span>
-      </div>
-    </template>
+  <!-- Inline editor (non-select types) -->
+  <div v-if="editing && type !== 'select'" class="settings-item__editor" @click.stop>
     <!-- Number editor -->
-    <template v-else-if="type === 'number'">
+    <template v-if="type === 'number'">
       <div class="settings-item__input-row">
         <input
           type="number"
@@ -136,12 +123,33 @@
       <div v-if="warning" class="settings-item__textarea-warning">{{ warning }}</div>
     </template>
   </div>
+  <!-- Select option picker BottomSheet -->
+  <BottomSheet
+    v-if="type === 'select'"
+    :open="selectPicker.effectiveOpen.value"
+    :title="label"
+    compact
+    @close="selectPicker.close()"
+  >
+    <div
+      v-for="opt in options"
+      :key="opt.value"
+      class="settings-item__option"
+      :class="{ 'settings-item__option--active': modelValue === opt.value }"
+      @click="selectOption(opt.value)"
+    >
+      <span class="settings-item__option-label">{{ opt.label }}</span>
+      <span v-if="modelValue === opt.value" class="settings-item__option-check">✓</span>
+    </div>
+  </BottomSheet>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Eye, EyeOff } from 'lucide-vue-next'
+import BottomSheet from '@/components/common/BottomSheet.vue'
+import { useTabDrawer } from '@/composables/useTabDrawer'
 
 const { t } = useI18n()
 
@@ -189,6 +197,17 @@ const editing = ref(false)
 const editValue = ref<any>(null)
 const showPassword = ref(false)
 const descriptionExpanded = ref(false)
+const selectPickerOpen = ref(false)
+const selectPicker = useTabDrawer('settings', selectPickerOpen)
+
+// Guard against useTabDrawer preserving openRef on tab switch back.
+// Reset openRef when effectiveOpen becomes false (tab deactivated)
+// so the picker doesn't auto-reopen.
+watch(() => selectPicker.effectiveOpen.value, (val) => {
+  if (!val && selectPickerOpen.value) {
+    selectPickerOpen.value = false
+  }
+})
 
 // Slider debounce: only emit final value after 300ms of inactivity
 let sliderDebounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -209,6 +228,10 @@ watch(() => props.forceClose, (val) => {
       emit('discard')
     }
     editing.value = false
+    emit('editToggle', false)
+  }
+  if (val && selectPickerOpen.value) {
+    selectPicker.close()
     emit('editToggle', false)
   }
   if (val && descriptionExpanded.value) {
@@ -270,7 +293,17 @@ function handleClick() {
     }
     return
   }
-  // select / number / text / password: toggle inline editor + description
+  // select: open BottomSheet picker instead of inline editor
+  if (props.type === 'select') {
+    if (hasDescription) {
+      descriptionExpanded.value = !descriptionExpanded.value
+      emit('descToggle', descriptionExpanded.value)
+    }
+    selectPicker.open()
+    emit('editToggle', true)
+    return
+  }
+  // number / text / password: toggle inline editor + description
   if (hasDescription) {
     descriptionExpanded.value = !descriptionExpanded.value
     emit('descToggle', descriptionExpanded.value)
@@ -285,9 +318,8 @@ function handleClick() {
 }
 
 function selectOption(value: any) {
-  editValue.value = value
   emit('update:modelValue', value)
-  editing.value = false
+  selectPicker.close()
   emit('editToggle', false)
 }
 
@@ -479,41 +511,6 @@ function confirmEdit() {
   padding: 4px 0;
 }
 
-/* Select options */
-.settings-item__option {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 16px;
-  cursor: pointer;
-  min-height: 40px;
-}
-
-@media (hover: hover) {
-  .settings-item__option:hover {
-    background: var(--bg-secondary);
-  }
-}
-
-.settings-item__option:active {
-  background: var(--bg-tertiary);
-}
-
-.settings-item__option--active {
-  background: var(--bg-secondary);
-}
-
-.settings-item__option-label {
-  font-size: 14px;
-  color: var(--text-primary);
-}
-
-.settings-item__option-check {
-  font-size: 15px;
-  color: var(--accent-color);
-  font-weight: 600;
-}
-
 /* Input row (number / text / password) */
 .settings-item__input-row {
   display: flex;
@@ -611,5 +608,57 @@ function confirmEdit() {
   color: var(--text-muted);
   padding: 4px 16px 8px;
   line-height: 1.4;
+}
+</style>
+
+<!-- Non-scoped styles for BottomSheet-teleported select option rows -->
+<style>
+.settings-item__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  cursor: pointer;
+  min-height: 44px;
+  position: relative;
+}
+
+.settings-item__option::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 0.5px;
+  background: var(--border-color);
+}
+
+.settings-item__option:last-child::after {
+  display: none;
+}
+
+@media (hover: hover) {
+  .settings-item__option:hover {
+    background: var(--bg-tertiary);
+  }
+}
+
+.settings-item__option:active {
+  background: var(--bg-tertiary);
+}
+
+.settings-item__option--active {
+  background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, var(--bg-primary, #fff));
+}
+
+.settings-item__option-label {
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.settings-item__option-check {
+  font-size: 15px;
+  color: var(--accent-color);
+  font-weight: 600;
 }
 </style>
