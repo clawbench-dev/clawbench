@@ -56,12 +56,23 @@ function onLayoutChange() {
 
 watch(() => props.show, (val) => {
   if (val) {
-    // Compute position synchronously — the target element already exists in DOM
-    // and we need the style before the first paint of the menu.
-    updatePosition()
+    // Compute position — defer one frame so that a soft keyboard dismissal
+    // triggered by the same tap can begin before we read getBoundingClientRect().
+    // The menu is inside a Transition so it won't paint until the next tick anyway.
+    requestAnimationFrame(() => {
+      if (!props.show) return // may have been closed already
+      updatePosition()
+    })
     // Listen for layout changes that could move the anchor
     window.addEventListener('scroll', onLayoutChange, true) // capture to catch all scrolls
     window.addEventListener('resize', onLayoutChange)
+    // On mobile, soft keyboard show/hide triggers visualViewport resize but
+    // NOT window.resize (iOS, PWA standalone, or Android non-adjustResize).
+    // Listen to both so the popup repositions after keyboard state changes.
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', onLayoutChange)
+      window.visualViewport.addEventListener('scroll', onLayoutChange)
+    }
     // Use setTimeout to avoid the opening click being treated as outside click
     setTimeout(() => {
       if (props.show) {
@@ -71,6 +82,10 @@ watch(() => props.show, (val) => {
   } else {
     window.removeEventListener('scroll', onLayoutChange, true)
     window.removeEventListener('resize', onLayoutChange)
+    if (window.visualViewport) {
+      window.visualViewport.removeEventListener('resize', onLayoutChange)
+      window.visualViewport.removeEventListener('scroll', onLayoutChange)
+    }
     document.removeEventListener('click', handleClickOutside)
   }
 })
@@ -79,6 +94,10 @@ watch(() => props.show, (val) => {
 onBeforeUnmount(() => {
   window.removeEventListener('scroll', onLayoutChange, true)
   window.removeEventListener('resize', onLayoutChange)
+  if (window.visualViewport) {
+    window.visualViewport.removeEventListener('resize', onLayoutChange)
+    window.visualViewport.removeEventListener('scroll', onLayoutChange)
+  }
   document.removeEventListener('click', handleClickOutside)
 })
 </script>
