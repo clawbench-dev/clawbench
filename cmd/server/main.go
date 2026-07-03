@@ -38,7 +38,6 @@ import (
 	"clawbench/internal/handler"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
-	"clawbench/internal/push"
 	"clawbench/internal/rag"
 	"clawbench/internal/service"
 	"clawbench/internal/speech"
@@ -767,9 +766,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	}
 
 	// Initialize WS event manager
-	jpushClient := push.NewJPushClient(cfg.Push.JPush)
-	ws.InitManager(jpushClient)
-	handler.SetPushClient(jpushClient)
+	ws.InitManager()
 
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -972,7 +969,7 @@ func initTaskSummarizer(cfg model.Config) (*summarize.TaskSummarizer, error) {
 
 // hotReloadReconfigure is called by applyHotReloadGlobals() after a successful
 // config PATCH to reconfigure subsystems that support hot-reload.
-// It recreates TTS provider, TTS/task summarizers, and reconfigures terminal + push.
+// It recreates TTS provider, TTS/task summarizers, and reconfigures terminal.
 func hotReloadReconfigure(port int) {
 	cfg := model.ConfigInstance
 
@@ -990,12 +987,6 @@ func hotReloadReconfigure(port int) {
 
 	// --- Terminal: reconfigure or toggle enabled ---
 	hotReloadTerminal(cfg, port)
-
-	// --- Push/JPush: reconfigure ---
-	if client := handler.GetPushClient(); client != nil {
-		client.Reconfigure(cfg.Push.JPush)
-		slog.Info("hot-reload: push reconfigured", slog.Bool("enabled", client.Enabled()))
-	}
 }
 
 // newTTSProvider creates a SpeechProvider from TTS config.

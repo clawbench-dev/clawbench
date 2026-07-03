@@ -509,6 +509,16 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: add ACP cached usage state column to agents table for persistent
+	// storage of agent-level usage state (best-effort fallback for session switch).
+	var hasCachedUsage int
+	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='acp_cached_usage_state'").Scan(&hasCachedUsage)
+	if hasCachedUsage == 0 {
+		if _, err := DB.Exec("ALTER TABLE agents ADD COLUMN acp_cached_usage_state TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add acp_cached_usage_state column: %w", err)
+		}
+	}
+
 	// Migrate: add is_default column to recent_projects for server-side default project.
 	var hasIsDefault int
 	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('recent_projects') WHERE name='is_default'").Scan(&hasIsDefault)

@@ -101,13 +101,12 @@ cd clawbench
 
 ### Scope 参考
 
-`android`、`rag`、`task`、`scheduler`、`tts`/`speech`、`ssh`、`ws`、`push`、`terminal`、`config`、`ci`
+`android`、`rag`、`task`、`scheduler`、`tts`/`speech`、`ssh`、`ws`、`terminal`、`config`、`ci`
 
 ### 示例
 
 ```
 feat(android): 推送通知显示 AI 回复预览
-fix(push): JPush 可用时跳过原生 WS 通知
 docs: 补充 RAG 部署文档
 refactor(scheduler): 优化定时任务调度逻辑
 test: 改善后端测试覆盖 — internal/handler

@@ -24,6 +24,7 @@ const mockUpdateThinkingEffortState = vi.fn()
 const mockUpdateCommandState = vi.fn()
 const mockUpdateAvailableModes = vi.fn()
 const mockUpdateAvailableThinkingEfforts = vi.fn()
+const mockUpdateUsageState = vi.fn()
 const _currentAgentId = { value: '' }
 vi.mock('@/composables/useSessionIdentity.ts', () => ({
   updateModeState: (...args: any[]) => mockUpdateModeState(...args),
@@ -31,6 +32,7 @@ vi.mock('@/composables/useSessionIdentity.ts', () => ({
   updateCommandState: (...args: any[]) => mockUpdateCommandState(...args),
   updateAvailableModes: (...args: any[]) => mockUpdateAvailableModes(...args),
   updateAvailableThinkingEfforts: (...args: any[]) => mockUpdateAvailableThinkingEfforts(...args),
+  updateUsageState: (...args: any[]) => mockUpdateUsageState(...args),
   get currentAgentId() { return _currentAgentId },
 }))
 
@@ -56,6 +58,7 @@ describe('useAgents', () => {
       updateAvailableModes: (...args: any[]) => mockUpdateAvailableModes(...args),
       updateAvailableThinkingEfforts: (...args: any[]) => mockUpdateAvailableThinkingEfforts(...args),
       updateCommandState: (...args: any[]) => mockUpdateCommandState(...args),
+      updateUsageState: (...args: any[]) => mockUpdateUsageState(...args),
       currentAgentId: _currentAgentId,
     })
   }
@@ -650,6 +653,7 @@ describe('useAgents', () => {
       mockUpdateAvailableModes.mockReset()
       mockUpdateAvailableThinkingEfforts.mockReset()
       mockUpdateCommandState.mockReset()
+      mockUpdateUsageState.mockReset()
     })
 
     it('populates mode, thinking, commands, and model list from cached acpStates', async () => {
@@ -714,6 +718,46 @@ describe('useAgents', () => {
       // Should have force-reloaded
       expect(mockApiGet).toHaveBeenCalledTimes(2)
       expect(mockUpdateAvailableModes).toHaveBeenCalledWith(acpState.claude.modeState.availableModes)
+    })
+
+    it('populates usage state from cached acpStates', async () => {
+      resetAgents()
+      registerMocks()
+      const stateWithUsage = {
+        claude: {
+          modeState: {
+            currentModeId: 'code',
+            availableModes: [{ id: 'ask', name: 'Ask' }, { id: 'code', name: 'Code' }],
+          },
+          usageState: { used: 50000, size: 200000, cost: 0.35, currency: 'USD' },
+        },
+      }
+      mockApiGet.mockResolvedValue({ agents: testAgents, defaultAgent: 'claude', acpStates: stateWithUsage })
+      await loadAgents()
+
+      await populateACPStateFromCache('claude')
+
+      expect(mockUpdateUsageState).toHaveBeenCalledWith(50000, 200000, 0.35, 'USD')
+    })
+
+    it('skips usage state update when usageState.size is 0', async () => {
+      resetAgents()
+      registerMocks()
+      const stateWithEmptyUsage = {
+        claude: {
+          modeState: {
+            currentModeId: 'code',
+            availableModes: [{ id: 'code', name: 'Code' }],
+          },
+          usageState: { used: 0, size: 0 },
+        },
+      }
+      mockApiGet.mockResolvedValue({ agents: testAgents, defaultAgent: 'claude', acpStates: stateWithEmptyUsage })
+      await loadAgents()
+
+      await populateACPStateFromCache('claude')
+
+      expect(mockUpdateUsageState).not.toHaveBeenCalled()
     })
   })
 

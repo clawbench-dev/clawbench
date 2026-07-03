@@ -101,13 +101,12 @@ See [AGENTS.md](AGENTS.md) for build and run commands.
 
 ### Scopes (reference)
 
-`android`, `rag`, `task`, `scheduler`, `tts`/`speech`, `ssh`, `ws`, `push`, `terminal`, `config`, `ci`
+`android`, `rag`, `task`, `scheduler`, `tts`/`speech`, `ssh`, `ws`, `terminal`, `config`, `ci`
 
 ### Examples
 
 ```
 feat(android): push notifications show AI reply preview
-fix(push): skip native WS notification when JPush is available
 docs: add RAG deployment documentation
 refactor(scheduler): optimize scheduled task dispatch logic
 test: improve backend test coverage — internal/handler

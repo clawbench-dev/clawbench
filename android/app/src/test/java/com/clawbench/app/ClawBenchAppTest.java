@@ -15,12 +15,10 @@ import static org.junit.Assert.*;
  * ClawBenchApp extends Application which cannot be fully instantiated in JVM unit tests.
  * We use Unsafe allocation + reflection to test the private methods:
  * - isBrowserProcess()
- * - isPushCoreProcess()
  * - getProcessNameSuffix()
  *
  * The process detection logic determines which initialization path to take
- * in onCreate(): browser process gets WebView data directory suffix, pushcore
- * process starts PushService as foreground service.
+ * in onCreate(): browser process gets WebView data directory suffix.
  */
 public class ClawBenchAppTest {
 
@@ -56,20 +54,7 @@ public class ClawBenchAppTest {
     }
 
     // =====================================================
-    // Test 2: isPushCoreProcess returns false for non-pushcore process
-    // =====================================================
-
-    @Test
-    public void isPushCoreProcess_nonPushcoreProcess_returnsFalse() throws Exception {
-        Method method = ClawBenchApp.class.getDeclaredMethod("isPushCoreProcess");
-        method.setAccessible(true);
-        boolean result = (Boolean) method.invoke(app);
-        // In unit test, the process is a Java test runner, not ":pushcore"
-        assertFalse("isPushCoreProcess should be false for non-pushcore process", result);
-    }
-
-    // =====================================================
-    // Test 3: getProcessNameSuffix returns non-null string
+    // Test 2: getProcessNameSuffix returns non-null string
     // =====================================================
 
     @Test
@@ -81,7 +66,7 @@ public class ClawBenchAppTest {
     }
 
     // =====================================================
-    // Test 4: getProcessNameSuffix extracts suffix from process name
+    // Test 3: getProcessNameSuffix extracts suffix from process name
     // =====================================================
 
     @Test
@@ -95,7 +80,7 @@ public class ClawBenchAppTest {
     }
 
     // =====================================================
-    // Test 5: isBrowserProcess is private
+    // Test 4: isBrowserProcess is private
     // =====================================================
 
     @Test
@@ -106,18 +91,7 @@ public class ClawBenchAppTest {
     }
 
     // =====================================================
-    // Test 6: isPushCoreProcess is private
-    // =====================================================
-
-    @Test
-    public void isPushCoreProcess_isPrivate() throws Exception {
-        Method method = ClawBenchApp.class.getDeclaredMethod("isPushCoreProcess");
-        assertTrue("isPushCoreProcess should be private",
-                java.lang.reflect.Modifier.isPrivate(method.getModifiers()));
-    }
-
-    // =====================================================
-    // Test 7: getProcessNameSuffix is private
+    // Test 5: getProcessNameSuffix is private
     // =====================================================
 
     @Test
@@ -128,7 +102,7 @@ public class ClawBenchAppTest {
     }
 
     // =====================================================
-    // Test 8: TAG constant has expected value
+    // Test 6: TAG constant has expected value
     // =====================================================
 
     @Test
@@ -139,7 +113,7 @@ public class ClawBenchAppTest {
     }
 
     // =====================================================
-    // Test 9: ClawBenchApp extends Application
+    // Test 7: ClawBenchApp extends Application
     // =====================================================
 
     @Test
@@ -149,7 +123,7 @@ public class ClawBenchAppTest {
     }
 
     // =====================================================
-    // Test 10: onCreate method exists and overrides parent
+    // Test 8: onCreate method exists and overrides parent
     // =====================================================
 
     @Test
@@ -160,7 +134,7 @@ public class ClawBenchAppTest {
     }
 
     // =====================================================
-    // Test 11: isBrowserProcess logic matches getProcessNameSuffix
+    // Test 9: isBrowserProcess logic matches getProcessNameSuffix
     // =====================================================
 
     @Test
@@ -178,25 +152,7 @@ public class ClawBenchAppTest {
     }
 
     // =====================================================
-    // Test 12: isPushCoreProcess logic matches getProcessNameSuffix
-    // =====================================================
-
-    @Test
-    public void isPushCoreProcess_matchesSuffixLogic() throws Exception {
-        Method isPushCore = ClawBenchApp.class.getDeclaredMethod("isPushCoreProcess");
-        isPushCore.setAccessible(true);
-
-        Method getSuffix = ClawBenchApp.class.getDeclaredMethod("getProcessNameSuffix");
-        getSuffix.setAccessible(true);
-
-        String suffix = (String) getSuffix.invoke(app);
-        boolean expected = suffix.equals(":pushcore");
-        boolean actual = (Boolean) isPushCore.invoke(app);
-        assertEquals("isPushCoreProcess should match suffix.equals(':pushcore')", expected, actual);
-    }
-
-    // =====================================================
-    // Test 13: getProcessNameSuffix uses lastIndexOf colon
+    // Test 10: getProcessNameSuffix uses lastIndexOf colon
     // =====================================================
 
     @Test

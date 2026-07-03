@@ -23,6 +23,7 @@ func init() {
 		Spec: model.BackendSpec{
 			ID: "deepseek", Backend: "deepseek", DefaultCmd: "codewhale", AltCmd: "deepseek", Name: "CodeWhale", Icon: "🐋", Specialty: "AI 推理与编码",
 			AcpCommand: "codewhale serve --acp",
+			InstallCmd: "npm install -g codewhale",
 			SortOrder:  7,
 		},
 		ACP: &backends.ACPPlugin{

@@ -49,6 +49,7 @@ registerIdentityUpdaters({
   updateAvailableModes,
   updateAvailableThinkingEfforts,
   updateCommandState,
+  updateUsageState,
   currentAgentId,
 })
 

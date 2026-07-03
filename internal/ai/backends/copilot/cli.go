@@ -17,6 +17,7 @@ func init() {
 			ID: "copilot", Backend: "copilot", DefaultCmd: "copilot", Name: "Copilot", Icon: "🤝", Specialty: "GitHub Copilot 编码助手",
 			ThinkingEffortLevels: []string{"none", "low", "medium", "high", "xhigh", "max"},
 			AcpCommand:           "copilot --acp",
+			InstallCmd:           "npm install -g @github/copilot",
 			SortOrder:            11,
 		},
 	})

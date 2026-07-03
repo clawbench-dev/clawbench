@@ -303,15 +303,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/proxy/ports", middleware.Auth(ServeProxyPortAction))
 	register("/api/proxy/detect", middleware.Auth(ServeProxyDetect))
 
-	// Push config — intentionally unauthenticated:
-	// Android native layer calls this before WebView loads (no cookies)
-	// to discover JPush AppKey at runtime. Only exposes enabled flag and
-	// AppKey — no secrets or credentials.
-	register("/api/push/config", ServePushConfig)
-
-	// Push registration is now done via WS "register" message (see events.go).
-	// No need for a separate HTTP endpoint.
-
 	// SSH tunnel info — intentionally unauthenticated:
 	// 1. Android BackgroundService.fetchSSHPort() calls this from native Java
 	//    (no WebView cookies available) to discover the SSH port before connecting.

@@ -186,7 +186,7 @@ const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObs
     if (!isMarkdownRendered.value) ids.push('stickyScroll')
     return ids
   },
-  { inlineCount: 3, gap: 8 },
+  { inlineCount: 1, gap: 8 },
 )
 
 function toggleMenu() {

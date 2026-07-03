@@ -31,4 +31,12 @@
     <string name="press_again_to_exit">再按一次退出应用</string>
     <!-- Share feature -->
     <string name="share_file_failed">分享文件失败</string>
+    <!-- Push event notifications (mirrors backend i18n: PushTaskCompleted, PushSessionEnded, PushScheduledTaskDone, PushPermissionPending) -->
+    <string name="push_task_completed">AI任务完成</string>
+    <string name="push_session_ended">AI会话已结束</string>
+    <string name="push_session_cancelled">AI会话已取消</string>
+    <string name="push_scheduled_task_done">计划任务已完成</string>
+    <string name="push_task_failed">计划任务失败</string>
+    <string name="push_task_cancelled">计划任务已取消</string>
+    <string name="push_permission_pending">需要审批</string>
 </resources>

@@ -356,6 +356,67 @@ func TestRegistry_GetConfigState(t *testing.T) {
 	})
 }
 
+// ── UsageState (agent-level cache) ──────────────────────────────────────────
+
+func TestAgentCapability_HasData_WithCachedUsageState(t *testing.T) {
+	c := &AgentCapability{CachedUsageState: &UsageState{Used: 1000, Size: 200000}}
+	assert.True(t, c.HasData())
+}
+
+func TestRegistry_UpdateUsageState(t *testing.T) {
+	reg := resetGlobalRegistryForTest(t)
+	reg.UpdateUsageState("a1", &UsageState{Used: 1000, Size: 200000, Cost: 0.35, Currency: "USD"})
+
+	got := reg.Get("a1")
+	require.NotNil(t, got)
+	require.NotNil(t, got.CachedUsageState)
+	assert.Equal(t, 1000, got.CachedUsageState.Used)
+	assert.Equal(t, 200000, got.CachedUsageState.Size)
+	assert.InDelta(t, 0.35, got.CachedUsageState.Cost, 0.001)
+	assert.Equal(t, "USD", got.CachedUsageState.Currency)
+}
+
+func TestRegistry_GetUsageState(t *testing.T) {
+	reg := resetGlobalRegistryForTest(t)
+	t.Run("NoCapability", func(t *testing.T) {
+		assert.Nil(t, reg.GetUsageState("missing"))
+	})
+	t.Run("NoUsage", func(t *testing.T) {
+		reg.Update("a1", &AgentCapability{AvailableModes: []ModeDef{{ID: "code"}}})
+		assert.Nil(t, reg.GetUsageState("a1"))
+	})
+	t.Run("WithUsage", func(t *testing.T) {
+		reg.Update("a2", &AgentCapability{CachedUsageState: &UsageState{Used: 5000, Size: 200000}})
+		us := reg.GetUsageState("a2")
+		require.NotNil(t, us)
+		assert.Equal(t, 5000, us.Used)
+		assert.Equal(t, 200000, us.Size)
+	})
+}
+
+func TestRegistry_Merge_OverwritesUsageState(t *testing.T) {
+	reg := resetGlobalRegistryForTest(t)
+	reg.Update("a1", &AgentCapability{CachedUsageState: &UsageState{Used: 1000, Size: 100000}})
+
+	// Merge with new usage — must overwrite
+	reg.Update("a1", &AgentCapability{CachedUsageState: &UsageState{Used: 5000, Size: 200000}})
+	us := reg.GetUsageState("a1")
+	require.NotNil(t, us)
+	assert.Equal(t, 5000, us.Used)
+	assert.Equal(t, 200000, us.Size)
+}
+
+func TestRegistry_Merge_PreservesUsageState(t *testing.T) {
+	reg := resetGlobalRegistryForTest(t)
+	reg.Update("a1", &AgentCapability{CachedUsageState: &UsageState{Used: 1000, Size: 100000}})
+
+	// Merge with non-usage fields — usage must be preserved
+	reg.Update("a1", &AgentCapability{AvailableCommands: []AvailableCommandInfo{{Name: "init"}}})
+	us := reg.GetUsageState("a1")
+	require.NotNil(t, us)
+	assert.Equal(t, 1000, us.Used)
+}
+
 // ── Helpers (Has*) ──────────────────────────────────────────────────────────
 
 func TestRegistry_HasAvailableModes(t *testing.T) {

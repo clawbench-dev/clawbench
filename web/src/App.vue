@@ -196,7 +196,16 @@
               <span v-if="tab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
               <span v-if="tab === 'proxy' && store.state.portForwardActiveCount > 0 && activeTab !== 'proxy'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardActiveCount) }}</span>
             </div>
-            <!-- Overflow button -->
+            <!-- Single remaining popup item shown directly (no overflow menu) -->
+            <div v-if="singleDirectTab" :key="'single-' + singleDirectTab" class="dock-btn-wrap">
+              <button class="dock-btn" :class="dockInlineOverflowBtnClass(singleDirectTab)" @click.stop="handleInlineOverflowClick(singleDirectTab)" :title="dockTabTitle(singleDirectTab)">
+                <component :is="dockTabIcon(singleDirectTab)" />
+              </button>
+              <span v-if="singleDirectTab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
+              <span v-if="singleDirectTab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
+              <span v-if="singleDirectTab === 'proxy' && store.state.portForwardActiveCount > 0 && activeTab !== 'proxy'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardActiveCount) }}</span>
+            </div>
+            <!-- Overflow button (popup has >1 items) -->
             <div v-if="showOverflowButton" class="dock-overflow-wrapper">
               <button
                 ref="overflowBtnRef"
@@ -414,6 +423,7 @@ const DOCK_STEP = 46 // 34 (btn width) + 12 (gap)
 
 const dockActiveIndex = computed(() => {
   const visibleTabs = ['chat', 'browse', 'history', ...inlineOverflowTabs.value]
+  if (singleDirectTab.value) visibleTabs.push(singleDirectTab.value)
   if (showOverflowButton.value) visibleTabs.push('__overflow__')
   const idx = visibleTabs.indexOf(activeTab.value)
   if (idx >= 0) return idx
@@ -1046,6 +1056,7 @@ const dockRef = ref(null)
 const {
   inlineOverflowTabs,
   popupOverflowTabs,
+  singleDirectTab,
   showOverflowButton,
   allInlineOverflowTabs,
   startObserving: startDockResize,

@@ -66,11 +66,8 @@ func TestBackendRegistry_SpecificValues(t *testing.T) {
 	assert.Equal(t, "deepseek", specs["deepseek"].AltCmd)
 	assert.Equal(t, "pi", specs["pi"].DefaultCmd)
 
-	// Verify embedded agent metadata on opencode BackendSpec
-	assert.Equal(t, "opencode", specs["opencode"].EmbeddedSubDir, "opencode should have EmbeddedSubDir set")
-	assert.Equal(t, "VERSION", specs["opencode"].EmbeddedVersionFile, "opencode should have EmbeddedVersionFile set")
-	assert.Equal(t, "anomalyco/opencode", specs["opencode"].EmbeddedGitHubRepo, "opencode should have EmbeddedGitHubRepo set")
-	assert.Equal(t, "amd64=x64", specs["opencode"].EmbeddedArchMapping, "opencode should have EmbeddedArchMapping set")
+	// Verify install command on opencode BackendSpec
+	assert.Equal(t, "npm install -g opencode-ai", specs["opencode"].InstallCmd, "opencode should have InstallCmd set")
 }
 
 // --- Test 2: checkCLIExists ---

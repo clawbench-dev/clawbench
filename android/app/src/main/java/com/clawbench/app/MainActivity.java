@@ -44,8 +44,7 @@ import android.widget.Toast;
 import android.content.pm.PackageManager;
 import android.Manifest;
 
-import cn.jpush.android.api.JPushInterface;
-import cn.jpush.android.data.JPushConfig;
+
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -202,15 +201,6 @@ public class MainActivity extends AppCompatActivity {
     // as JS calls instead of adjusting system volume. Controlled by the terminal panel.
     private volatile boolean volumeKeyMode = false;
 
-    // Whether JPush push notifications are available (fetched from server config).
-    // When true, WebSocket can be disconnected on background (push will notify the user).
-    // When false, WebSocket stays alive in background for real-time events.
-    volatile boolean pushAvailable = false;
-    // When true, the server has JPush enabled (even if JPush SDK hasn't finished
-    // initializing yet). Used by native WS to suppress duplicate notifications
-    // during the window between JPush config fetch and SDK initialization.
-    volatile boolean jpushEnabledOnServer = false;
-
     // Pending navigation from a notification tap that occurred before the WebView
     // was loaded (cold start). Consumed by WebAppInterface.getPendingNavigation().
     public org.json.JSONObject pendingNavigation = null;
@@ -252,10 +242,6 @@ public class MainActivity extends AppCompatActivity {
         // Auto-connect if there's a saved URL (user has configured before).
         // This preserves the original behavior: returning users go straight
         // to the app. Only first-time users see the login page.
-
-        // Fetch JPush config from server and init JPush at runtime.
-        // AppKey is no longer baked into the APK — it comes from /api/push/config.
-        fetchPushConfig();
 
         // Load saved URL or show configuration dialog
         String savedUrl = prefs.getString(KEY_SERVER_URL, null);
@@ -664,12 +650,6 @@ public class MainActivity extends AppCompatActivity {
         prefs.edit().putString(KEY_SERVER_URL, url).apply();
         if (password != null && !password.isEmpty()) {
             BackgroundService.setPassword(this, password);
-        }
-
-        // Fetch JPush config now that we have a server URL.
-        // On first launch, onCreate's fetchPushConfig() skips because URL is empty.
-        if (!pushAvailable) {
-            fetchPushConfig();
         }
 
         if (isNetworkAvailable()) {
@@ -1143,11 +1123,9 @@ public class MainActivity extends AppCompatActivity {
     protected void onPause() {
         super.onPause();
         pauseWebView();
-        // App going to background — if JPush is not available, start native WS
-        // so we still get notifications when Android kills the WebView process.
-        // Check both pushAvailable (SDK ready) and jpushEnabledOnServer (config fetched)
-        // to avoid starting native WS when JPush will handle notifications anyway.
-        if (!pushAvailable && !jpushEnabledOnServer && webViewConnected) {
+        // App going to background — start native WS so we still get
+        // notifications when Android kills the WebView process.
+        if (webViewConnected) {
             BackgroundService.startNativeEventWs(this);
         }
     }
@@ -1362,111 +1340,6 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         return super.dispatchKeyEvent(event);
-    }
-
-    // --- JPush Runtime Init ---
-
-    /**
-     * Fetch JPush configuration (AppKey, enabled flag) from the server's /api/push/config endpoint.
-     * If JPush is enabled on the server, initializes JPush with the runtime AppKey.
-     * If JPush is not configured, skips init — the app will keep WebSocket alive in background
-     * instead of relying on push notifications.
-     *
-     * This runs on a background thread (OkHttp callback) and posts JPush init back to main thread.
-     */
-    // Guards against double JPush init (onCreate + connectToServer race).
-    private volatile boolean jpushInitStarted = false;
-
-    void fetchPushConfig() {
-        String serverUrl = prefs.getString(KEY_SERVER_URL, "");
-        if (serverUrl.isEmpty()) {
-            AppLog.w(TAG, "No server URL configured, skipping push config fetch");
-            return;
-        }
-
-        if (jpushInitStarted) {
-            AppLog.i(TAG, "JPush init already started, skipping duplicate fetchPushConfig");
-            return;
-        }
-        jpushInitStarted = true;
-
-        new Thread(() -> {
-            try {
-                java.net.URL url = new java.net.URL(serverUrl + "/api/push/config");
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-
-                // Trust self-signed certs for localhost connections (SSH tunnel / dev)
-                // Same logic as WebViewClient.onReceivedSslError — cert hostname won't match localhost
-                if (conn instanceof HttpsURLConnection && isLocalhostUrl(serverUrl)) {
-                    TrustManager[] trustAll = { new X509TrustManager() {
-                        public void checkClientTrusted(X509Certificate[] c, String a) {}
-                        public void checkServerTrusted(X509Certificate[] c, String a) {}
-                        public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
-                    }};
-                    SSLContext sc = SSLContext.getInstance("TLS");
-                    sc.init(null, trustAll, new java.security.SecureRandom());
-                    ((HttpsURLConnection) conn).setSSLSocketFactory(sc.getSocketFactory());
-                    ((HttpsURLConnection) conn).setHostnameVerifier((hostname, session) -> true);
-                }
-
-                conn.setRequestMethod("GET");
-                conn.setConnectTimeout(5000);
-                conn.setReadTimeout(5000);
-
-                int responseCode = conn.getResponseCode();
-                if (responseCode != 200) {
-                    AppLog.w(TAG, "Push config endpoint returned " + responseCode);
-                    conn.disconnect();
-                    return;
-                }
-
-                java.io.BufferedReader reader = new java.io.BufferedReader(
-                        new java.io.InputStreamReader(conn.getInputStream()));
-                StringBuilder response = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    response.append(line);
-                }
-                reader.close();
-                conn.disconnect();
-
-                // Parse JSON response
-                String jsonStr = response.toString();
-                org.json.JSONObject json = new org.json.JSONObject(jsonStr);
-                boolean jpushEnabled = json.optBoolean("jpush_enabled", false);
-                String jpushAppKey = json.optString("jpush_app_key", "");
-
-                // Mark server-side JPush status immediately, even before SDK init.
-                // This lets native WS suppress notifications during the init window.
-                if (jpushEnabled && !jpushAppKey.isEmpty()) {
-                    jpushEnabledOnServer = true;
-                    AppLog.i(TAG, "JPush enabled on server, initializing with AppKey: " + jpushAppKey.substring(0, 4) + "...");
-                    runOnUiThread(() -> {
-                        JPushInterface.setDebugMode(false);
-                        JPushConfig config = new JPushConfig();
-                        config.setjAppKey(jpushAppKey);
-                        JPushInterface.init(this, config);
-                        // NOTE: pushAvailable is NOT set to true here.
-                        // JPushInterface.init() is asynchronous — the SDK validates the AppKey
-                        // with the JPush server before registration succeeds. Setting
-                        // pushAvailable=true now would cause BackgroundService to disconnect
-                        // the native WS prematurely, even if init fails (e.g. 1005 error).
-                        // Instead, pushAvailable is set in JPushReceiver.onRegister() only
-                        // after the SDK confirms successful registration.
-                        AppLog.i(TAG, "JPush init called with server-provided AppKey, awaiting onRegister callback");
-                    });
-                } else {
-                    AppLog.i(TAG, "JPush not configured on server — will keep WebSocket alive in background");
-                }
-            } catch (Exception e) {
-                AppLog.w(TAG, "Failed to fetch push config: " + e.getMessage());
-            }
-        }).start();
-    }
-
-    /** Check if a URL points to localhost (SSH tunnel / local dev). */
-    private boolean isLocalhostUrl(String url) {
-        return url != null && (url.contains("//localhost:") || url.contains("//127.0.0.1:"));
     }
 
     // --- WebView Client ---
@@ -2045,48 +1918,8 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
-         * Get the JPush registration ID for push notifications.
-         * The WebView calls this on WS connect to register the device for push.
-         */
-        @JavascriptInterface
-        public String getPushRegistrationId() {
-            return JPushInterface.getRegistrationID(activity);
-        }
-
-        /**
-         * Check whether push notifications are available.
-         * Returns true if JPush was initialized with a valid AppKey from the server.
-         * When push is available, the frontend can safely disconnect WebSocket on background;
-         * when not available, WebSocket must stay alive for real-time events.
-         */
-        @JavascriptInterface
-        public boolean isPushAvailable() {
-            return activity.pushAvailable;
-        }
-
-        /**
-         * Toggle the push service persistent notification (foreground service).
-         * When enabled, PushService shows a persistent notification that prevents
-         * the :pushcore process from being killed. When disabled, PushService runs
-         * as a background service without a notification (less resistant to being killed).
-         */
-        @JavascriptInterface
-        public void setPushPersistentNotification(boolean enabled) {
-            PushService.setPersistentNotification(activity, enabled);
-        }
-
-        /**
-         * Check whether the push persistent notification is enabled.
-         * Returns true by default.
-         */
-        @JavascriptInterface
-        public boolean isPushPersistentNotification() {
-            return PushService.isPersistentNotificationEnabled(activity);
-        }
-
-        /**
          * Open a chat session by dispatching an event to the WebView.
-         * Called by JPushReceiver when a push notification is tapped.
+         * Called when a notification is tapped.
          */
         @JavascriptInterface
         public void openSession(String sessionId) {

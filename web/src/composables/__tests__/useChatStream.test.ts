@@ -196,7 +196,7 @@ describe('useChatStream', () => {
       })
       document.dispatchEvent(new Event('visibilitychange'))
 
-      // SSE should be closed — no pushAvailable check
+      // SSE should be closed
       expect(es.readyState).toBe(MockEventSource.CLOSED)
 
       document.removeEventListener('visibilitychange', handler)
@@ -246,10 +246,8 @@ describe('useChatStream', () => {
       document.removeEventListener('visibilitychange', handler)
     })
 
-    it('should NOT reference pushAvailable — always disconnects on hidden', () => {
-      // This is a regression guard: the old code checked pushAvailable before
-      // disconnecting. The new code always disconnects. We verify that
-      // disconnectStream is called regardless of any external state.
+    it('always disconnects on hidden', () => {
+      // Regression guard: disconnectStream is called regardless of any external state.
       const { options, stream, handler } = setupWithVisibility()
 
       const disconnectSpy = vi.spyOn(stream, 'disconnectStream')

@@ -38,7 +38,6 @@ const serverConfig = ref<Record<string, any>>({
   tts: { engine: 'edge', voice: '', speed: 1.0, max_cache_files: 100, format: '' },
   rag: { enabled: false, base_url: 'http://localhost:11434', model: 'bge-m3', api_key: '', chunk_size: 512, search_limit: 5, retention_days: 90 },
   port_forward: { enabled: true, port: 0 },
-  push: { jpush: { enabled: false, app_key: '' } },
   summarize: { backend: 'simple', model: '' },
 })
 
@@ -104,10 +103,6 @@ vi.mock('@/composables/usePwaInstall', () => ({
   }),
 }))
 
-vi.mock('@/composables/useGlobalEvents', () => ({
-  useGlobalEvents: () => ({ pushRegistered: ref(false) }),
-}))
-
 vi.mock('@/utils/api', () => ({
   apiPost: vi.fn().mockResolvedValue({ needs_restart: true }),
 }))
@@ -165,13 +160,7 @@ const i18n = createI18n({
           portForwardEnabled: '启用端口转发',
           portForwardPort: '端口转发端口',
           portForwardPortAuto: '自动',
-          pushEnabled: '启用极光推送',
-          pushStatus: '推送服务状态',
-          pushStatusRegistered: '正常',
-          pushStatusNotRegistered: '未注册',
-          pushAppKey: 'AppKey',
           portForwardHeader: '端口转发',
-          pushHeader: '推送',
           ttsCacheHeader: '缓存',
           terminalEnabled: '启用终端',
           terminalIdleTimeout: '空闲超时',
@@ -436,24 +425,6 @@ describe('SettingsCategory', () => {
       const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
       const enabledItem = allItems.find(i => i.props().label === '启用端口转发')
       expect(enabledItem).toBeTruthy()
-    })
-  })
-
-  // ─── Push category (flattened — no group drill-down) ──────────
-  describe('push category', () => {
-    it('renders push service status as info row', () => {
-      const wrapper = mountCategory('push')
-      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const statusItem = allItems.find(i => i.props().label === '推送服务状态')
-      expect(statusItem).toBeTruthy()
-      expect(statusItem!.props().type).toBe('info')
-    })
-
-    it('renders JPush enabled as a standalone SettingsItem', () => {
-      const wrapper = mountCategory('push')
-      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const jpushItem = allItems.find(i => i.props().label === '启用极光推送')
-      expect(jpushItem).toBeTruthy()
     })
   })
 

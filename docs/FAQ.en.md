@@ -53,10 +53,6 @@ A: Data is stored in the `.clawbench/` directory alongside the binary, including
 
 A: Back up the `.clawbench/ClawBench.db` database file in the directory alongside the binary.
 
-**Q: What if I don't have any AI CLI installed on first launch?**
-
-A: If the release package includes the embedded Pi agent (or you built with `./build.sh --with-pi`), a setup wizard appears automatically on first launch. The wizard guides you through selecting an LLM provider (23 supported including OpenAI, Anthropic, DeepSeek, etc.), entering your API key, verifying model connectivity, and naming your agent. API keys are encrypted with AES-256-GCM and encryption keys auto-rotate on password change.
-
 **Q: How are agents managed?**
 
-A: All agents are stored in the database (`agents` table), created via setup wizard or auto-discovered on first launch. API keys are encrypted and stored in the `agent_api_keys` table (AES-256-GCM), managed automatically by the system.
+A: All agents are stored in the database (`agents` table), created via welcome screen install or auto-discovered on first launch. API keys are encrypted and stored in the `agent_api_keys` table (AES-256-GCM), managed automatically by the system.

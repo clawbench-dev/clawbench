@@ -81,7 +81,7 @@ AutoResume 只用于 CLI 模式后端。ACP 后端使用会话级取消而非进
 - **ACP 连接管理**：每个聊天会话独占一个 ACP 连接（一对一模型），5 分钟空闲自动回收，活跃会话受保护不被回收。连接断开后自动重生并重试，崩溃的配置值自动跳过
 - **自动恢复（AutoResume）**：仅 CLI 模式。对 ExitPlanMode 场景自动执行"取消→恢复继续"流程，避免用户手动干预
 - **流式事件标准化**：各后端不同的输出格式经 LineParser（CLI）或 ACP 事件翻译层（ACP）统一为标准 StreamEvent 类型。ACP 额外提供 mode_update、config_update、thinking_effort_update、plan_update、model_list_update、commands_update 等能力事件
-- **ACP 权限审批**：ACP 后端请求用户审批工具调用时，系统推送 `permission_pending` 事件，前端展示审批界面，用户批准/拒绝后通过 `/api/ai/permission/respond` 回传。移动端通过 JPush 通知收到审批提醒
+- **ACP 权限审批**：ACP 后端请求用户审批工具调用时，系统推送 `permission_pending` 事件，前端展示审批界面，用户批准/拒绝后通过 `/api/ai/permission/respond` 回传
 - **工具名称归一化**：不同后端对同一操作使用不同的工具名称（如 `read_file` vs `Read`），归一化层统一映射，保证前端显示和 RAG 索引的一致性
 - **孤儿进程清理**：服务启动时扫描系统中的 AI 子进程孤儿（通过环境变量标记），检查父进程存活后安全清理。防止服务崩溃后遗留的进程占用资源
 

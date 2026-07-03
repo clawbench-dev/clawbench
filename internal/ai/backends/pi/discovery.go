@@ -55,13 +55,7 @@ func ParsePiModels(output string) []model.AgentModel {
 // DiscoverPiModels discovers Pi model IDs by running `pi --list-models` and parsing the output.
 // Pi outputs the model table to stderr (not stdout), so we must capture both streams.
 func DiscoverPiModels() []model.AgentModel {
-	// Try embedded binary first, fall back to PATH
 	piCmd := "pi"
-	if spec := model.FindSpecByBackend("pi"); spec != nil && spec.EmbeddedSubDir != "" {
-		if p := model.EmbeddedBinaryPath(spec.EmbeddedSubDir); p != "" {
-			piCmd = p
-		}
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

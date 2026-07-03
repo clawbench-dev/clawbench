@@ -31,33 +31,12 @@ if [ "$1" = "--clean" ]; then
 fi
 
 # Build binary (always rebuild to pick up latest code)
-EMBEDDED_AGENT_ID="${EMBEDDED_AGENT_ID:-opencode}"
-echo "Building binary with embedded agent: $EMBEDDED_AGENT_ID"
-./build.sh --embed-agent="$EMBEDDED_AGENT_ID"
+echo "Building binary..."
+./build.sh
 
-# Source download helper to read agent config
-# shellcheck source=scripts/download-embedded-agent.sh
-. ./scripts/download-embedded-agent.sh
-
-# Prepare staging directory for embedded binary
-rm -rf docker-staging
-AGENT_SUBDIR=$(parse_embedded_agent_config "$EMBEDDED_AGENT_ID" subdir)
-AGENT_CMD=$(parse_embedded_agent_config "$EMBEDDED_AGENT_ID" cmd)
-mkdir -p "docker-staging/$AGENT_SUBDIR"
-if [ -d "agents/$AGENT_SUBDIR" ] && [ -f "agents/$AGENT_SUBDIR/$AGENT_CMD" ]; then
-    cp -r "agents/$AGENT_SUBDIR/"* "docker-staging/$AGENT_SUBDIR/"
-    echo "$EMBEDDED_AGENT_ID binary included in image (with dependencies)"
-else
-    echo "$EMBEDDED_AGENT_ID binary not found"
-    echo "  (Run ./build.sh --embed-agent=$EMBEDDED_AGENT_ID to download it)"
-fi
-
-# Build and run via docker compose (staging dir must exist during build)
+# Build and run via docker compose
 echo "Building and starting container on port ${PORT}..."
 docker compose up -d --build 2>&1 | grep -v "^#" | grep -v "^$" || true
-
-# Clean up staging (after compose build is done)
-rm -rf docker-staging
 
 # Wait for server to start
 sleep 3

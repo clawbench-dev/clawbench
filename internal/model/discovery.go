@@ -53,10 +53,7 @@ type BackendSpec struct {
 	Specialty            string   // short description, e.g. "代码编写与推理"
 	ThinkingEffortLevels []string // supported thinking effort levels, e.g. ["low","medium","high"]; nil = not supported
 	AcpCommand           string   // ACP spawn command for acp-stdio transport, e.g. "kimi --acp"; empty = no ACP support
-	EmbeddedSubDir       string   // subdirectory under agents/ for embedded binary, e.g. "opencode"; empty = no embedded binary
-	EmbeddedVersionFile  string   // filename for fast version lookup under EmbeddedSubDir, e.g. "VERSION"; empty = no version file
-	EmbeddedGitHubRepo   string   // GitHub repo for release downloads, e.g. "anomalyco/opencode"; empty = no auto-download
-	EmbeddedArchMapping  string   // arch name mapping in archive names, e.g. "amd64=x64"; empty = no mapping
+	InstallCmd           string   // npm/pip install command, e.g. "npm install -g @anthropic-ai/claude-code"; empty = not installable
 	SortOrder            int      // display/registration order for deterministic BackendRegistry ordering
 }
 
@@ -89,17 +86,9 @@ func GetBackendRegistry() []BackendSpec {
 // If that fails, it falls back to exec.LookPath — some CLIs (especially Node.js ones)
 // may return non-zero exit codes for --version when run without a TTY or in certain
 // environments, but the binary itself is still present and functional.
-// For backends with EmbeddedSubDir, also checks the embedded binary.
 func CheckCLIExists(cmd string) bool {
 	if cmd == "" {
 		return false
-	}
-
-	// Check for embedded binary (e.g. agents/opencode/opencode)
-	if spec := FindBackendSpecByDefaultCmd(cmd); spec != nil && spec.EmbeddedSubDir != "" {
-		if EmbeddedBinaryPath(spec.EmbeddedSubDir) != "" {
-			return true
-		}
 	}
 
 	// Primary check: run `cmd --version`
@@ -126,17 +115,9 @@ func CheckCLIExists(cmd string) bool {
 
 // CheckCLIExistsErr returns an error describing why the CLI is not available,
 // or nil if the CLI is available. This is used for more specific error reporting.
-// For backends with EmbeddedSubDir, also checks the embedded binary.
 func CheckCLIExistsErr(cmd string) error {
 	if cmd == "" {
 		return fmt.Errorf("empty command")
-	}
-
-	// Check for embedded binary
-	if spec := FindBackendSpecByDefaultCmd(cmd); spec != nil && spec.EmbeddedSubDir != "" {
-		if EmbeddedBinaryPath(spec.EmbeddedSubDir) != "" {
-			return nil
-		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -250,83 +231,11 @@ func AsyncRefreshModelCache(db *sql.DB) {
 	}()
 }
 
-// --- Embedded binary detection ---
-
-// EmbeddedBinaryPath returns the absolute path to the embedded binary under
-// agents/{subDir}/, or empty string if not found.
-// subDir is the BackendSpec.EmbeddedSubDir value (e.g. "opencode").
-func EmbeddedBinaryPath(subDir string) string {
-	exePath, err := os.Executable()
-	if err != nil {
-		slog.Error("failed to get executable path", "error", err)
-		return ""
-	}
-	return embeddedBinaryPathFromBase(filepath.Dir(exePath), subDir)
-}
-
-// embeddedBinaryPathFromBase resolves the embedded binary path relative to baseDir.
-// Checks agents/{subDir}/.
-func embeddedBinaryPathFromBase(baseDir, subDir string) string {
-	for _, name := range []string{subDir, subDir + ".exe"} {
-		p := filepath.Join(baseDir, "agents", subDir, name)
-		if info, err := os.Stat(p); err == nil && !info.IsDir() {
-			return p
-		}
-	}
-	return ""
-}
-
-// EmbeddedBinaryVersion extracts the version for an embedded binary.
-// First reads agents/{subDir}/{versionFile} (fast), then falls back to
-// running {binary} --version.
-func EmbeddedBinaryVersion(subDir, versionFile string) string {
-	exePath, err := os.Executable()
-	if err != nil {
-		return ""
-	}
-	baseDir := filepath.Dir(exePath)
-
-	// Fast path: read version file
-	if v := EmbeddedBinaryVersionFromBase(baseDir, subDir, versionFile); v != "" {
-		return v
-	}
-
-	// Slow path: run binary --version
-	binPath := EmbeddedBinaryPath(subDir)
-	if binPath == "" {
-		return ""
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, binPath, "--version").Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
-
-// EmbeddedBinaryVersionFromBase is like EmbeddedBinaryVersion but uses an
-// explicit baseDir instead of os.Executable().
-func EmbeddedBinaryVersionFromBase(baseDir, subDir, versionFile string) string {
-	// Fast path: read version file
-	if versionFile != "" {
-		vf := filepath.Join(baseDir, "agents", subDir, versionFile)
-		if data, err := os.ReadFile(vf); err == nil {
-			v := strings.TrimSpace(string(data))
-			if v != "" {
-				return v
-			}
-		}
-	}
-	return ""
-}
-
 // --- DB-based agent discovery and merge ---
 
 // SyncDiscoverAgentsDB is the DB-based replacement for SyncDiscoverAgents.
 // It detects installed CLIs from BackendRegistry and writes new agents to the database
 // instead of YAML files. Existing DB records are never overwritten.
-// It also checks for embedded binaries (backends with EmbeddedSubDir).
 // Returns a set of backend types whose CLI is currently present.
 func SyncDiscoverAgentsDB(db *sql.DB) map[string]bool { //nolint:gocognit,gocyclo // multi-backend DB agent discovery
 	type result struct {
@@ -346,34 +255,11 @@ func SyncDiscoverAgentsDB(db *sql.DB) map[string]bool { //nolint:gocognit,gocycl
 	}
 	wg.Wait()
 
-	// Also check for embedded binaries (backends with EmbeddedSubDir)
-	embeddedPaths := make(map[string]string) // backend → embedded binary path
-	for i, r := range results {
-		if r.spec.EmbeddedSubDir != "" && !r.exists {
-			if p := EmbeddedBinaryPath(r.spec.EmbeddedSubDir); p != "" {
-				results[i] = result{spec: r.spec, exists: true}
-				embeddedPaths[r.spec.Backend] = p
-			}
-		}
-	}
-
 	present := make(map[string]bool)
 
 	for _, r := range results {
 		if r.exists {
 			present[r.spec.Backend] = true
-		}
-
-		// Skip auto-creation for backends only found via embedded binary.
-		// The setup wizard handles agent creation with API key + model config.
-		// Auto-creating from embedded binary would leave a broken agent (no API key).
-		if r.spec.EmbeddedSubDir != "" {
-			if _, ok := embeddedPaths[r.spec.Backend]; ok {
-				// Only auto-create if the CLI is genuinely installed on PATH (not just embedded)
-				if _, lookupErr := exec.LookPath(r.spec.DefaultCmd); lookupErr != nil {
-					continue
-				}
-			}
 		}
 
 		// Check if DB already has an agent for this backend
@@ -446,11 +332,6 @@ func SyncDiscoverAgentsDB(db *sql.DB) map[string]bool { //nolint:gocognit,gocycl
 			Specialty: r.spec.Specialty,
 			Backend:   r.spec.Backend,
 			Source:    "auto",
-		}
-
-		// Set command to embedded binary path for backends with embedded binaries
-		if p, ok := embeddedPaths[r.spec.Backend]; ok {
-			agent.Command = p
 		}
 
 		// Store ACP command info from BackendSpec (transport defaults to "acp-stdio")

@@ -10,7 +10,6 @@ describe('settingsFieldMap', () => {
     expect(map['tts.engine']).toBeTruthy()
     expect(map['rag.base_url']).toBeTruthy()
     expect(map['port_forward.enabled']).toBeTruthy()
-    expect(map['push.jpush.enabled']).toBeTruthy()
 
     // Hot-reload fields
     expect(map['chat.page_size']).toBeTruthy()
@@ -67,7 +66,7 @@ describe('settingsFieldMap', () => {
   })
 
   it('categoryItems covers all expected categories', () => {
-    const expectedCategories = ['appearance', 'agents', 'project', 'chat', 'files', 'terminal', 'tts', 'summarization', 'rag', 'portForward', 'push', 'android', 'about']
+    const expectedCategories = ['appearance', 'agents', 'project', 'chat', 'files', 'terminal', 'tts', 'summarization', 'rag', 'portForward', 'android', 'about']
     for (const cat of expectedCategories) {
       expect(categoryItems[cat]).toBeDefined()
     }
@@ -82,15 +81,6 @@ describe('settingsFieldMap', () => {
         }
       }
     }
-  })
-
-  it('pushPersistentNotification is a local switch without dependsOn', () => {
-    const pushItems = categoryItems['push']
-    const item = pushItems.find(i => i.key === 'pushPersistentNotification')
-    expect(item).toBeDefined()
-    expect(item!.type).toBe('switch')
-    expect(item!.source).toBe('local')
-    expect(item!.dependsOn).toBeUndefined()
   })
 
   // ── All groups have been flattened to categoryItems ──

@@ -50,15 +50,9 @@ func parseOpenCodeModels(output string) []model.AgentModel {
 }
 
 // DiscoverOpenCodeModels discovers OpenCode model IDs by running `opencode models`
-// and parsing the output. Uses embedded binary if available, falls back to PATH.
+// and parsing the output.
 func DiscoverOpenCodeModels() []model.AgentModel {
-	// Try embedded binary first, fall back to PATH
 	opencodeCmd := "opencode"
-	if spec := model.FindSpecByBackend("opencode"); spec != nil && spec.EmbeddedSubDir != "" {
-		if p := model.EmbeddedBinaryPath(spec.EmbeddedSubDir); p != "" {
-			opencodeCmd = p
-		}
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

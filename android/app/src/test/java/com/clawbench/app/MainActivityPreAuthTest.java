@@ -83,9 +83,6 @@ public class MainActivityPreAuthTest {
         // Stub getSharedPreferences for BackgroundService.setPassword
         doReturn(mockPrefs).when(activity).getSharedPreferences(anyString(), anyInt());
 
-        // Stub fetchPushConfig to avoid framework dependencies
-        doNothing().when(activity).fetchPushConfig();
-
         // Set the static instance field
         Field instanceField = MainActivity.class.getDeclaredField("instance");
         instanceField.setAccessible(true);
@@ -127,7 +124,7 @@ public class MainActivityPreAuthTest {
     // =====================================================
     // connectToServer: routing (tested via authenticateAndNavigate and handleAuthResponse)
     // connectToServer has deep framework dependencies (BackgroundService.setPassword,
-    // fetchPushConfig, etc.) that crash on Unsafe-allocated activity.
+    // etc.) that crash on Unsafe-allocated activity.
     // The routing logic is equivalent to:
     //   password != null && !password.isEmpty() → authenticateAndNavigate()
     //   else → webView.loadUrl(url) + startConnectionTimeout()

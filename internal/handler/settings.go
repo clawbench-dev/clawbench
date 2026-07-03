@@ -72,10 +72,6 @@ var hotReloadFields = map[string]bool{
 	"summarize.api.base_url": true,
 	"summarize.api.key":      true,
 	"summarize.api.format":   true,
-	// Push/JPush — stateless client, just update fields
-	"push.jpush.enabled":       true,
-	"push.jpush.app_key":       true,
-	"push.jpush.master_secret": true,
 }
 
 // restartGracePeriod is the delay before shutting down the server after a restart
@@ -94,7 +90,7 @@ func SetRestartFunc(f func()) {
 
 // reconfigureOnHotReload is called by applyHotReloadGlobals() to apply
 // hot-reload changes that require subsystem reconfiguration (TTS engine swap,
-// summarize reconstruction, terminal reconfigure, push reconfigure).
+// summarize reconstruction, terminal reconfigure).
 // Set by main.go via SetReconfigureFunc(). Defaults to a no-op for tests.
 var reconfigureOnHotReload func()
 
@@ -120,7 +116,6 @@ type configResponse struct {
 	TTS                 configTTS            `json:"tts"`
 	RAG                 configRAG            `json:"rag"`
 	PortForward         configPortForward    `json:"port_forward"`
-	Push                configPush           `json:"push"`
 	Summarize           configSummarize      `json:"summarize"`
 }
 
@@ -201,16 +196,6 @@ type configPortForward struct {
 	Port    int  `json:"port"`
 }
 
-type configPush struct {
-	JPush configJPush `json:"jpush"`
-}
-
-type configJPush struct {
-	Enabled      bool   `json:"enabled"`
-	AppKey       string `json:"app_key"`
-	MasterSecret string `json:"master_secret"`
-}
-
 type configSummarize struct {
 	Backend string     `json:"backend"`
 	Model   string     `json:"model"`
@@ -256,9 +241,6 @@ var PatchableConfigPaths = map[string]bool{
 	"rag.retention_days":          true,
 	"port_forward.enabled":        true,
 	"port_forward.port":           true,
-	"push.jpush.enabled":          true,
-	"push.jpush.app_key":          true,
-	"push.jpush.master_secret":    true,
 	"summarize.backend":           true,
 	"summarize.model":             true,
 	"summarize.api.base_url":      true,
@@ -378,13 +360,6 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		PortForward: configPortForward{
 			Enabled: cfg.PortForward.Enabled,
 			Port:    cfg.PortForward.Port,
-		},
-		Push: configPush{
-			JPush: configJPush{
-				Enabled:      cfg.Push.JPush.Enabled,
-				AppKey:       cfg.Push.JPush.AppKey, // AppKey is not a secret, no need to mask
-				MasterSecret: maskAPIKey(cfg.Push.JPush.MasterSecret),
-			},
 		},
 		Summarize: configSummarize{
 			Backend: cfg.Summarize.Backend,
@@ -883,20 +858,6 @@ func applyConfigPatch(patch map[string]any) error { //nolint:gocognit,gocyclo //
 		}
 	}
 
-	if push, ok := patch["push"].(map[string]any); ok {
-		if jpush, ok := push["jpush"].(map[string]any); ok {
-			if v, ok := jpush["enabled"].(bool); ok {
-				cfg.Push.JPush.Enabled = v
-			}
-			if v, ok := jpush["app_key"].(string); ok {
-				cfg.Push.JPush.AppKey = v
-			}
-			if v, ok := jpush["master_secret"].(string); ok {
-				cfg.Push.JPush.MasterSecret = v
-			}
-		}
-	}
-
 	if summarize, ok := patch["summarize"].(map[string]any); ok {
 		if v, ok := summarize["backend"].(string); ok {
 			cfg.Summarize.Backend = v
@@ -979,7 +940,7 @@ func applyHotReloadGlobals() {
 	}
 
 	// Reconfigure subsystems (TTS engine swap, summarize reconstruction,
-	// terminal reconfigure, push reconfigure). Set by main.go.
+	// terminal reconfigure). Set by main.go.
 	if reconfigureOnHotReload != nil {
 		reconfigureOnHotReload()
 	}

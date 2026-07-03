@@ -2,6 +2,9 @@ import { ref, computed } from 'vue'
 import { appLog } from '@/utils/appLog'
 import { useReconnect } from './useReconnect'
 import { useAppMode } from './useAppMode'
+import { showBrowserNotification } from './useNotification'
+import { playNotificationSound } from './useNotificationSound'
+import { gt } from './useLocale'
 
 const TAG = 'GlobalEvents'
 
@@ -17,6 +20,11 @@ interface ServerEvent {
         task_id?: string
         execution_id?: string
         count?: number
+        // Fields used for notification display
+        session_title?: string
+        response_preview?: string
+        tool_name?: string
+        project_path?: string
     }
 }
 
@@ -24,14 +32,11 @@ interface ServerEvent {
 type ClientMessage =
     | { type: 'ack'; id: string }
     | { type: 'pong' }
-    | { type: 'register'; push_reg_id: string }
 
 type EventHandler = (event: string, data: ServerEvent['data']) => void
 
 // Module-level singleton state
 const connected = ref(false)
-const pushAvailable = ref(false)
-const pushRegistered = ref(false)
 const handlers: EventHandler[] = []
 const processedEventIds = new Set<string>()
 const MAX_PROCESSED_IDS = 100
@@ -82,51 +87,18 @@ function isDuplicate(id: string): boolean {
     return processedEventIds.has(id)
 }
 
-/**
- * Check whether push notifications are available.
- * In app mode: query AndroidNative.isPushAvailable() (set by MainActivity after fetchPushConfig).
- * In web mode: fetch from /api/push/config endpoint.
- * Also sets pushRegistered if JPush is available AND has a registration ID.
- */
-async function checkPushAvailable() {
-    if (isAppMode.value) {
-        // Android native bridge — already fetched by MainActivity.fetchPushConfig()
-        const native = (window as any).AndroidNative
-        pushAvailable.value = !!native?.isPushAvailable?.()
-        // JPush registered = available + has registration ID from SDK
-        const regId = native?.getPushRegistrationId?.()
-        pushRegistered.value = pushAvailable.value && !!regId
-    } else {
-        // Web mode — check server config
-        try {
-            const resp = await fetch('/api/push/config')
-            if (resp.ok) {
-                const data = await resp.json()
-                pushAvailable.value = !!data.jpush_enabled && !!data.jpush_app_key
-            }
-        } catch {
-            pushAvailable.value = false
-        }
-        // Web mode doesn't run JPush SDK, pushRegistered is always false
-        pushRegistered.value = false
-    }
-}
+// Same as backend model.ResponsePreviewMaxRunes = 512
+const PUSH_ALERT_MAX_CODE_POINTS = 512
 
 /**
- * Register JPush Registration ID with the server via WS "register" message.
- * This is the preferred path — pushRegID is tied to the WS session.
- * If WS is not connected, falls back to connecting first (register will be sent on open).
+ * Truncate text for notification alert.
+ * Max N Unicode code points + "…".
+ * Uses [...str] to count code points (not UTF-16 code units).
  */
-function registerPushId() {
-    if (!isAppMode.value) return
-    const regId = (window as any).AndroidNative?.getPushRegistrationId?.()
-    if (!regId) {
-        appLog.d(TAG, 'registerPushId: no registration ID available yet (JPush SDK may still be initializing)')
-        return
-    }
-    send({ type: 'register', push_reg_id: regId })
-    pushRegistered.value = true
-    appLog.d(TAG, 'registerPushId: sent via WS, regId:', regId)
+function truncateForPush(s: string): string {
+    const chars = [...s]
+    if (chars.length <= PUSH_ALERT_MAX_CODE_POINTS) return s
+    return chars.slice(0, PUSH_ALERT_MAX_CODE_POINTS).join('') + '…'
 }
 
 function connect() {
@@ -141,13 +113,6 @@ function connect() {
         connected.value = true
         missedPongs = 0
         reconnect.reset()
-
-        // Check push availability (non-blocking)
-        checkPushAvailable()
-
-        // Register push ID via WS message (JPush SDK may have obtained
-        // the registration ID since last connect). This is idempotent.
-        registerPushId()
 
         // Start heartbeat monitoring
         startHeartbeat()
@@ -181,6 +146,11 @@ function connect() {
                 if (msg.event === 'summary_update' && (msg.data as any)?.targetType === 'chat_message') {
                     window.dispatchEvent(new CustomEvent('clawbench-summary-update', { detail: msg.data }))
                 }
+
+                // Browser notification: when page is not focused, show browser
+                // notification for terminal events (completed/cancelled/failed/
+                // permission_pending).
+                showEventBrowserNotification(msg.event!, msg.data)
 
                 // Send ack
                 if (msg.id) {
@@ -246,6 +216,118 @@ function stopHeartbeat() {
     }
 }
 
+/**
+ * Show browser notification for WS events when page is in background.
+ * - session_update: completed, cancelled, permission_pending
+ * - task_update: completed, failed, cancelled
+ * Title/alert formatting follows the same rules as the backend:
+ *   1. Initial defaults: title=PushTaskCompleted, alert=PushSessionEnded
+ *      (task_update: alert=PushScheduledTaskDone)
+ *   2. permission_pending: title=PushPermissionPending, alert=toolName||PushPermissionPending
+ *   3. If sessionTitle non-empty && not permission_pending: title="Done:"+sessionTitle
+ *   4. If responsePreview non-empty: alert=truncate(responsePreview)
+ */
+function showEventBrowserNotification(event: string, data: ServerEvent['data']) {
+    if (!data) return
+
+    // Only show notification when page is not focused
+    if (document.visibilityState === 'visible' && document.hasFocus()) return
+
+    let title = ''
+    let alert_ = ''
+    let onClick: (() => void) | undefined
+
+    if (event === 'session_update') {
+        const status = data.status
+        if (status !== 'completed' && status !== 'cancelled' && status !== 'permission_pending') return
+
+        // Default title/alert (same as backend, with cancelled-specific defaults)
+        title = gt('chat.push.taskCompleted')
+        alert_ = status === 'cancelled' ? gt('chat.push.sessionCancelled') : gt('chat.push.sessionEnded')
+
+        const sessionTitle = data.session_title || ''
+        const responsePreview = data.response_preview || ''
+
+        // Permission pending: override title/alert
+        if (status === 'permission_pending') {
+            title = gt('chat.push.permissionPending')
+            alert_ = data.tool_name || gt('chat.push.permissionPending')
+        }
+
+        // If sessionTitle non-empty and not permission_pending: "Done:"+sessionTitle
+        if (sessionTitle && status !== 'permission_pending') {
+            title = 'Done:' + sessionTitle
+        }
+
+        // If responsePreview non-empty: use as alert
+        if (responsePreview) {
+            alert_ = truncateForPush(responsePreview)
+        }
+
+        // Click: navigate to the session
+        const sessionId = data.session_id
+        const projectPath = data.project_path
+        if (sessionId) {
+            onClick = () => {
+                window.dispatchEvent(new CustomEvent('clawbench-open-session', {
+                    detail: { sessionId, projectPath },
+                }))
+            }
+        }
+    } else if (event === 'task_update') {
+        const status = data.status
+        if (status !== 'completed' && status !== 'failed' && status !== 'cancelled') return
+
+        // Default title/alert (with status-specific defaults)
+        title = gt('chat.push.taskCompleted')
+        if (status === 'failed') {
+            alert_ = gt('chat.push.taskFailed')
+        } else if (status === 'cancelled') {
+            alert_ = gt('chat.push.taskCancelled')
+        } else {
+            alert_ = gt('chat.push.scheduledTaskDone')
+        }
+
+        const sessionTitle = data.session_title || ''
+        const responsePreview = data.response_preview || ''
+
+        // If sessionTitle non-empty: "Done:"+sessionTitle
+        if (sessionTitle) {
+            title = 'Done:' + sessionTitle
+        }
+
+        // If responsePreview non-empty: use as alert
+        if (responsePreview) {
+            alert_ = truncateForPush(responsePreview)
+        }
+
+        // Click: navigate to the task
+        const taskId = data.task_id
+        const executionId = data.execution_id
+        const projectPath = data.project_path
+        if (taskId) {
+            onClick = () => {
+                window.dispatchEvent(new CustomEvent('clawbench-open-task', {
+                    detail: { taskId, executionId, projectPath },
+                }))
+            }
+        }
+    } else {
+        return
+    }
+
+    try {
+        playNotificationSound()
+        showBrowserNotification(title, {
+            body: alert_,
+            tag: `clawbench-${event}-${data.session_id || data.task_id || Date.now()}`,
+            onClick,
+        })
+    } catch {
+        // Non-critical
+    }
+}
+
 export function useGlobalEvents() {
     // WebSocket connection status: 'connected' | 'reconnecting' | 'disconnected'
     const wsStatus = computed(() => {
@@ -262,41 +344,29 @@ export function useGlobalEvents() {
         }
     }
 
-    // Visibility change: always disconnect WebSocket on background.
+    // Visibility change: disconnect WebSocket on background in app mode.
     // Mobile OS throttles/kills background connections, so keeping WS alive
     // is unreliable and wastes resources. The heartbeat monitor may keep
     // reconnecting a connection that the OS will just kill again.
-    // On foreground, we reconnect and do a full state pull.
+    // In browser mode, keep WS alive on background so that browser
+    // notifications can be shown for terminal events (completed/cancelled/
+    // permission_pending/failed). Desktop browsers keep WS alive in background.
     function handleVisibilityChange() {
         if (document.visibilityState === 'visible') {
-            // Returning to foreground — reconnect and do full state pull
-            connect()
+            // Returning to foreground — reconnect if disconnected and do full state pull
+            if (!connected.value) connect()
             // Emit a custom event that other composables can listen to
             window.dispatchEvent(new CustomEvent('clawbench-foreground'))
         } else {
-            // Going to background — always disconnect WebSocket
-            disconnect()
-            reconnect.disable() // prevent auto-reconnect while backgrounded
-            // Re-enable reconnect for next foreground
-            setTimeout(() => reconnect.reset(), 100)
+            if (isAppMode.value) {
+                // App mode: always disconnect WebSocket on background
+                disconnect()
+                reconnect.disable() // prevent auto-reconnect while backgrounded
+                // Re-enable reconnect for next foreground
+                setTimeout(() => reconnect.reset(), 100)
+            }
+            // Browser mode: keep WS alive for background notifications
         }
-    }
-
-    // Handle JPush registration event from native layer.
-    // This fires when JPushReceiver.onRegister() is called — typically a few
-    // seconds after app startup, when the JPush SDK has finished registering
-    // with JPush servers and obtained a Registration ID.
-    function handlePushRegistered(e: Event) {
-        const detail = (e as CustomEvent).detail
-        const regId = detail?.registrationId
-        if (!regId) return
-
-        appLog.d(TAG, 'JPush registration ID received from native:', regId)
-        // Update push availability state
-        pushAvailable.value = true
-        // Register via WS — this is the primary registration path now.
-        // If WS is connected, send immediately. If not, it'll be sent on next connect.
-        registerPushId()
     }
 
     let initialized = false
@@ -304,36 +374,24 @@ export function useGlobalEvents() {
         if (initialized) return
         initialized = true
         document.addEventListener('visibilitychange', handleVisibilityChange)
-        // Listen for JPush registration event from native layer.
-        // This fires when JPushReceiver.onRegister() is called, which may happen
-        // seconds after app startup (JPush SDK registration is async).
-        window.addEventListener('clawbench-push-registered', handlePushRegistered)
         // Initial connect
         connect()
-        // Register push ID via WS (may return empty if JPush hasn't initialized yet —
-        // the clawbench-push-registered event will re-trigger registration).
-        registerPushId()
     }
 
     function destroy() {
         document.removeEventListener('visibilitychange', handleVisibilityChange)
-        window.removeEventListener('clawbench-push-registered', handlePushRegistered)
         disconnect()
         // ISS-192: Clear handlers and state on destroy to prevent stale closures
         // from firing after SPA hot project switch.
         handlers.length = 0
         processedEventIds.clear()
         missedPongs = 0
-        pushAvailable.value = false
-        pushRegistered.value = false
         initialized = false
     }
 
     return {
         connected,
         wsStatus,
-        pushAvailable,
-        pushRegistered,
         connect,
         disconnect,
         onEvent,

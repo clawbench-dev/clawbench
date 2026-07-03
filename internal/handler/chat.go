@@ -216,6 +216,9 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 					if ml := reg.GetModelListState(sessionAgentID, ""); ml != nil {
 						modelListState = ml
 					}
+					if us := reg.GetUsageState(sessionAgentID); us != nil {
+						usageState = us
+					}
 				}
 			}
 		}

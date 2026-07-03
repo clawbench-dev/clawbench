@@ -232,28 +232,6 @@ ClawBench 通过调用本地 CLI 实现与 AI 编程工具的交互，无需额�
 
 十种后端可在 ClawBench Web UI 中实时切换，会话数据隔离。
 
-### 设置向导
-
-当系统未安装任何 AI CLI 且检测到内置 Pi 二进制（`agents/pi/pi`）时，首次启动自动显示设置向导，引导用户完成：
-
-1. **欢迎**：显示内置智能体信息
-2. **选择提供商**：23 家 `WizardReady` LLM 提供商（OpenAI、Anthropic、Google、DeepSeek、阿里通义、月之暗面等），来源 `ProviderRegistry`；也可选择自定义 URL，接入任意 OpenAI/Anthropic 兼容端点
-3. **输入 API Key**：AES-256-GCM 加密存储到 `agent_api_keys` 表
-4. **验证模型**：内置提供商通过 Pi CLI 验证；自定义 URL 通过直接 HTTP 请求验证（自动检测 API 格式，无需 Pi CLI，速度提升 24 倍）
-5. **命名智能体**：完成创建，自动配置 `summarize` 后端
-
-构建时加 `--with-pi` 下载 Pi 二进制：
-
-```bash
-./build.sh --with-pi              # 下载内置 Pi 智能体
-./build.sh --linux --with-pi      # Linux + Pi（CI 发布构建）
-PI_VERSION=0.79.0 ./build.sh --with-pi  # 指定 Pi 版本
-```
-
-API Key 安全：HKDF-SHA256 从 auto-password 派生 32 字节 AES 密钥，修改登录密码时自动调用 `RotateAPIKeyEncryption` 重加密所有密钥。
-
-提供商模型数据：`<BinDir>/.clawbench/provider_models.json` 运行时文件包含 23 家提供商的工具调用模型，由 `scripts/fetch-provider-models.sh` 从 models.dev API 自动生成（curl+jq，无 Python 依赖）。`build.sh` 和 CI 自动生成。启动时通过 `LoadProviderModelsFromFile()` 加载，填充 `ProviderRegistry` 的 `KnownModels` 字段。
-
 ### TTS 语音合成配置
 
 ClawBench 支持 TTS 语音合成，自动将 AI 回复总结后朗读。支持 5 种 TTS 引擎和 12 种总结后端。
@@ -324,7 +302,7 @@ docker compose up -d
 Docker 配置说明：
 - **Dockerfile**：基于 Ubuntu 24.04，动态链接（glibc 2.39+），无 Python 运行时依赖（Edge TTS 为原生 Go 实现）
 - **docker-compose.yml**：默认端口 20300，数据持久化到 Docker volume（`/data/.clawbench/`）
-- **构建脚本**：`scripts/docker-build.sh` 自动暂存 Pi 二进制到 Docker 上下文，构建镜像并启动
+- **构建脚本**：`scripts/docker-build.sh` 构建镜像并启动容器
 
 ### Linux 动态链接
 

@@ -23,6 +23,7 @@ func init() {
 		Spec: model.BackendSpec{
 			ID: "pi", Backend: "pi", DefaultCmd: "pi", Name: "Pi", Icon: "🥧", Specialty: "极简编程智能体",
 			ThinkingEffortLevels: []string{"off", "minimal", "low", "medium", "high", "xhigh"},
+			InstallCmd:           "npm install -g @earendil-works/pi-coding-agent",
 			SortOrder:            8,
 		},
 	})

@@ -46,7 +46,7 @@ type Agent struct {
 	// has model discovery capability (registered via RegisterDiscoverModelsFunc).
 	CanRefreshModels bool `json:"canRefreshModels"`
 
-	// Source indicates how the agent was created: "auto" (CLI detected), "setup" (wizard), "manual" (user).
+	// Source indicates how the agent was created: "auto" (CLI detected), "setup" (welcome screen install), "manual" (user).
 	Source string `json:"source"`
 
 	// SortOrder determines display order in agent list; lower values first.

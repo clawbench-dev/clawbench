@@ -136,7 +136,7 @@ func buildLines(cfg BannerConfig) []string {
 
 	// --- Agents ---
 	if len(cfg.Agents) == 0 {
-		lines = append(lines, label("🤖 Agents:", "(none — setup wizard will launch)"))
+		lines = append(lines, label("🤖 Agents:", "(none — install agents from welcome screen)"))
 	} else {
 		lines = append(lines, "🤖 Agents:")
 		maxNameW := 0

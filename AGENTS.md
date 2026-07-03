@@ -63,8 +63,7 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 - `internal/symbol/` — Code symbol extraction via tree-sitter (`gotreesitter`, pure Go, no CGO). 17 symbol kinds, 100+ languages.
 - `internal/rag/` — RAG: DuckDB vector store, Ollama BGE-M3 embeddings.
 - `internal/terminal/` — Web terminal: PTY sessions, ring buffer replay, multi-tab support, key/symbol configuration.
-- `internal/push/` — Push notifications via JPush (session completed/cancelled + ACP permission_pending).
-- `internal/ws/` — WebSocket event channel. JPush fallback on disconnect, buffered replay on reconnect.
+- `internal/ws/` — WebSocket event channel. Buffered replay on reconnect.
 
 ### Frontend (Vue 3 + TypeScript)
 
@@ -83,7 +82,7 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 - **AutoResumeBackend:** ExitPlanMode → cancel → resume "继续". Emits `resume_split` for DB finalization.
 - **ACP backend:** `ACPBackend` wraps ACP stdio agents with connection pooling (`ACPConnectionPool`, lazy init, 5-min idle sweep). Falls back to CLI via `sync.Once` if ACP not supported. State (mode/config/thinking/commands) cached and re-emitted on reconnect. Bridge adapters provide ACP for agents without native support.
 - **Agent system:** DB-backed (`agents` table). Models auto-discovered at runtime via `BackendRegistry` strategies. Shared rules template (`commonRulesTemplate`) embedded in Go binary. `@chatsearch`/`@task` template-injected on demand.
-- **Setup wizard:** 5-step flow when no agents + embedded Pi detected. Custom URL mode for any OpenAI/Anthropic-compatible endpoint. API keys AES-256-GCM encrypted with HKDF-SHA256. `previousEncryptionKey` fallback for crash recovery.
+- **Agent install:** `BackendSpec.InstallCmd` defines the install command for each backend (e.g., `npm install -g @anthropic-ai/claude-code`). `POST /api/agents/install` endpoint runs the install command and streams progress. Frontend shows install button for undetected backends.
 - **External session ID:** All backends write CLI session ID to `external_session_id` at creation. Continued sessions inherit from source.
 - **Cancel reason:** `"user"` (explicit) vs `"disconnect"` (SSE gone). `ForceCancelSession` kills zombie CLI processes.
 - **Green portable deployment:** All runtime data under `.clawbench/`. Multi-instance on different ports with auto-scoped cookies (`ScopedCookieName()`).
@@ -95,14 +94,13 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 - **Docker deployment:** `Dockerfile` + `docker-compose.yml` + `scripts/docker-build.sh`. Data via Docker volume at `/data/.clawbench/`.
 - **@ command injection:** `processAtCommand()` detects `@chatsearch`/`@task` → template injection. Frontend autocomplete in `ChatInputBar.vue`.
 - **Inline thinking streaming:** Thinking blocks stream inline during active session, auto-collapse to clickable chip on completion.
-- **Android integration:** HTML login + `AndroidNative` JS bridge. `BackgroundService` for SSH + WS. Push-aware: JPush when available, keep WS alive otherwise.
+- **Android integration:** HTML login + `AndroidNative` JS bridge. `BackgroundService` for SSH + WS.
 - **SPA hot project switch:** In-place state reset + Vue `:key` rebuild, no `window.location.reload()`.
 - **Worktree annotation:** `useWorktreeAnnotation` annotates worktree paths in chat messages. Runs before file path annotation to prevent partial matches.
 
 - **Terminal multi-tab:** `useTerminalTabs` manages tab lifecycle (create/close/switch). `useTerminalKeys` processes virtual key input with modifier lock. `useKeyConfig` persists custom key/symbol layouts to DB via `/api/terminal/key-config`.
 - **Chat summary modes:** `simple` mode extracts last answer text from blocks (no AI call); `ai` mode uses `AsyncSummarize`; empty string disables summarization. Mode set via `SetChatSummaryMode()`. All summaries stored as `target_type='chat_message'` keyed by assistant message ID; legacy `task_execution` summaries auto-migrated on startup via `MigrateTaskExecutionSummaries()`.
 - **File path annotation in code preview:** `useFilePathAnnotation` detects file paths in code blocks and renders them as clickable links. Supports import path resolution (e.g., `@/composables/useFoo` resolves to `web/src/composables/useFoo.ts`) and external file paths. `useWorktreeAnnotation` runs first to prevent partial matches.
-- **Permission pending push:** ACP `permission_pending` events trigger JPush notifications with tool name, allowing mobile users to approve from notification.
 - **Auto-approve indicator:** Mode chip turns green when auto-approve is enabled, providing visual feedback for ACP permission mode.
 - **File overlay navigation:** `useFileNavStack` manages a stack-based file overlay on the browse tab. Clicking a file pushes it onto the stack (overlay on top of file list); back button pops; close clears the stack. Replaces the separate viewer tab with a unified browse+overlay experience.
 - **Default project persistence:** Server-side `is_default` column in `recent_projects` table. `GetDefaultProject()` fallback chain: `is_default=1` row → most recently accessed project → home dir → first root path. `SetDefaultProject()` called on user-initiated project switch. Replaces cookie-based default project.
@@ -150,4 +148,4 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 | Port Forward | `port_forward.enabled` (true), `port_forward.port` (0=auto), `port_forward.host_key` |
 | RAG | `rag.base_url`, `rag.model` (bge-m3), `rag.api_key`, `rag.chunk_size` (512), `rag.retention_days` (90) |
 | Terminal | `terminal.enabled` (true), `terminal.idle_timeout` (10m), `terminal.max_sessions` (10) |
-| Push | `push.jpush.enabled`, `push.jpush.app_key`, `push.jpush.master_secret` |
+

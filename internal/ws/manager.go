@@ -12,19 +12,16 @@ import (
 
 	"github.com/coder/websocket"
 
-	"clawbench/internal/i18n"
 	"clawbench/internal/model"
-	"clawbench/internal/push"
 )
 
-// ClientSubscription tracks a single client's WS connection and push state.
+// ClientSubscription tracks a single client's WS connection state.
 type ClientSubscription struct {
 	mu          sync.Mutex
 	conn        *websocket.Conn
 	writeMu     *sync.Mutex // shared with EventsHandler for serialized writes
 	clientID    string      // identifies the client device (for logging)
-	pushRegID   string      // JPush registration ID (set via WS "register" message)
-	locale      string      // user's preferred locale (for push notification i18n)
+	locale      string      // user's preferred locale (for i18n)
 	lastActive  time.Time
 	eventBuffer []ServerMessage
 	bufferStart time.Time
@@ -48,19 +45,14 @@ const disconnectedBufferWindow = 10 * time.Second
 // buffer for WS reconnection.
 const maxBufferedEvents = 50
 
-// staleNoPushTimeout is the duration after which a disconnected subscription
-// without a push registration ID is cleaned up.
-const staleNoPushTimeout = 120 * time.Second
-
-// staleWithPushTimeout is the duration after which a subscription with a push
-// registration ID but no WS connection is cleaned up.
-const staleWithPushTimeout = 10 * 24 * time.Hour
+// staleTimeout is the duration after which a disconnected subscription
+// is cleaned up.
+const staleTimeout = 120 * time.Second
 
 // Manager manages all client subscriptions.
 type Manager struct {
 	mu            sync.Mutex
 	subscriptions map[string]*ClientSubscription // keyed by clientID
-	jpush         *push.JPushClient
 }
 
 var (
@@ -74,18 +66,16 @@ func SetManagerForTest(m *Manager) {
 }
 
 // NewManagerForTest creates a new Manager for testing.
-func NewManagerForTest(jpushClient *push.JPushClient) *Manager {
+func NewManagerForTest() *Manager {
 	return &Manager{
 		subscriptions: make(map[string]*ClientSubscription),
-		jpush:         jpushClient,
 	}
 }
 
-func InitManager(jpushClient *push.JPushClient) {
+func InitManager() {
 	defaultManagerOnce.Do(func() {
 		defaultManager = &Manager{
 			subscriptions: make(map[string]*ClientSubscription),
-			jpush:         jpushClient,
 		}
 	})
 }
@@ -136,9 +126,9 @@ func (m *Manager) Subscribe(conn *websocket.Conn, writeMu *sync.Mutex, clientID,
 }
 
 // DisconnectClient handles WS disconnection for a specific clientID.
-// This only detaches the connection — the subscription entry (including pushRegID)
-// is preserved so that push notifications can still be delivered while the client
-// is disconnected. Stale subscriptions are eventually cleaned up by CleanupStale.
+// This only detaches the connection — the subscription entry
+// is preserved so that buffered events can be replayed on reconnect.
+// Stale subscriptions are eventually cleaned up by CleanupStale.
 func (m *Manager) DisconnectClient(clientID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -157,50 +147,10 @@ func (m *Manager) DisconnectClient(clientID string) {
 	slog.Info("ws: client disconnected (subscription preserved)", "client_id", clientID)
 }
 
-// RegisterPushID stores the JPush registration ID for a client.
-// Called via WS "register" message — pushRegID is tied to the WS session.
-// If another subscription already uses the same pushRegID, the old one is cleared
-// (dedup: same device, later connection wins).
-func (m *Manager) RegisterPushID(regID string, clientID string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	// Dedup: if another subscription already has this pushRegID, clear it.
-	// Same device reconnecting — the new connection wins.
-	if regID != "" {
-		for id, sub := range m.subscriptions {
-			if id == clientID {
-				continue // skip self
-			}
-			sub.mu.Lock()
-			if sub.pushRegID == regID {
-				slog.Info("ws: deduplicating push reg ID, clearing from older client", "reg_id", regID, "old_client_id", id, "new_client_id", clientID)
-				sub.pushRegID = ""
-			}
-			sub.mu.Unlock()
-		}
-	}
-
-	// Set pushRegID on the target subscription
-	sub, ok := m.subscriptions[clientID]
-	if !ok {
-		// Subscription doesn't exist yet — shouldn't happen since register
-		// comes via WS which requires Subscribe first, but handle gracefully.
-		sub = &ClientSubscription{clientID: clientID}
-		m.subscriptions[clientID] = sub
-	}
-	sub.mu.Lock()
-	sub.pushRegID = regID
-	sub.mu.Unlock()
-
-	slog.Info("ws: registered push ID", "client_id", clientID, "reg_id", regID)
-}
-
-// BroadcastEvent sends an event to all connected clients, or buffers/sends JPush.
+// BroadcastEvent sends an event to all connected clients, or buffers for replay.
 // Events are fanned out to every subscription independently:
 // - WS connected → send via WS (and buffer for replay)
-// - WS disconnected + pushRegID → send JPush
-// - WS disconnected, no pushRegID → buffer within 10s window only
+// - WS disconnected → buffer within 10s window only
 func (m *Manager) BroadcastEvent(msg ServerMessage) {
 	m.mu.Lock()
 	// Snapshot subscription keys to avoid holding lock during sends
@@ -210,21 +160,13 @@ func (m *Manager) BroadcastEvent(msg ServerMessage) {
 	}
 	m.mu.Unlock()
 
-	// Track which pushRegIDs have already been notified for this event
-	// via any channel (WS or JPush). This prevents duplicate notifications
-	// when the same device has multiple subscriptions (e.g., frontend WS + native WS).
-	deliveredRegIDs := make(map[string]bool)
-
 	for _, key := range keys {
-		m.broadcastToSubscription(key, msg, deliveredRegIDs)
+		m.broadcastToSubscription(key, msg)
 	}
 }
 
 // broadcastToSubscription handles event delivery for a single subscription.
-// deliveredRegIDs tracks which pushRegIDs have already been notified for this event
-// (via WS or JPush), preventing duplicate notifications when the same device has
-// multiple subscriptions (e.g., frontend WS + native WS).
-func (m *Manager) broadcastToSubscription(key string, msg ServerMessage, deliveredRegIDs map[string]bool) { //nolint:gocognit,gocyclo // multi-client broadcast with push fallback
+func (m *Manager) broadcastToSubscription(key string, msg ServerMessage) {
 	m.mu.Lock()
 	sub, ok := m.subscriptions[key]
 	m.mu.Unlock()
@@ -235,7 +177,6 @@ func (m *Manager) broadcastToSubscription(key string, msg ServerMessage, deliver
 	sub.mu.Lock()
 	conn := sub.conn
 	writeMu := sub.writeMu
-	pushRegID := sub.pushRegID
 
 	if conn != nil && writeMu != nil {
 		// Client is connected — send via WS (serialized with writeMu)
@@ -252,11 +193,7 @@ func (m *Manager) broadcastToSubscription(key string, msg ServerMessage, deliver
 		writeMu.Unlock()
 		// Buffer event for reconnect replay
 		sub.bufferEvent(msg)
-		// If WS send succeeded and this subscription has a pushRegID,
-		// mark it as delivered so we don't also send JPush to the same device
-		if writeErr == nil && pushRegID != "" {
-			deliveredRegIDs[pushRegID] = true
-		}
+		_ = writeErr
 		sub.mu.Unlock()
 		return
 	}
@@ -266,97 +203,6 @@ func (m *Manager) broadcastToSubscription(key string, msg ServerMessage, deliver
 		sub.bufferEvent(msg)
 	}
 
-	// Send JPush only for terminal events (completed/cancelled/failed)
-	// and permission_pending (needs immediate user action).
-	// Non-terminal events (running, etc.) are delivered via WS or buffered for replay,
-	// but should never trigger a push notification — the user doesn't need to be
-	// interrupted just because a session started running.
-	shouldPush := false
-	switch d := msg.Data.(type) {
-	case *SessionUpdateData:
-		shouldPush = d.Status == "completed" || d.Status == "cancelled" || d.Status == StatusPermissionPending
-	case *TaskUpdateData:
-		shouldPush = d.Status == "completed" || d.Status == "failed" || d.Status == "cancelled"
-	}
-
-	if pushRegID != "" && m.jpush != nil && m.jpush.Enabled() && shouldPush {
-		// Dedup: skip if this regID was already notified for this event
-		// (e.g., another subscription for the same device already delivered via WS)
-		if deliveredRegIDs[pushRegID] {
-			slog.Debug("ws: skipping jpush, event already delivered to device", "reg_id", pushRegID, "client_id", key)
-			sub.mu.Unlock()
-			return
-		}
-		deliveredRegIDs[pushRegID] = true
-		sub.mu.Unlock() // unlock before potentially slow network call
-		extras := map[string]string{"event_type": msg.Event}
-		switch d := msg.Data.(type) {
-		case *SessionUpdateData:
-			extras["session_id"] = d.SessionID
-			if d.ProjectPath != "" {
-				extras["project_path"] = d.ProjectPath
-			}
-			if d.Status == StatusPermissionPending {
-				extras["event_type"] = StatusPermissionPending
-			}
-		case *TaskUpdateData:
-			extras["task_id"] = d.TaskID
-			extras["event_type"] = "task_update"
-			if d.ExecutionID != "" {
-				extras["execution_id"] = d.ExecutionID
-			}
-			if d.SessionID != "" {
-				extras["session_id"] = d.SessionID
-			}
-			if d.ProjectPath != "" {
-				extras["project_path"] = d.ProjectPath
-			}
-		}
-		loc := i18n.LocalizerForLocale(sub.locale)
-		title := i18n.T(loc, "PushTaskCompleted")
-		alert := i18n.T(loc, "PushSessionEnded")
-		if msg.Event == "task_update" {
-			alert = i18n.T(loc, "PushScheduledTaskDone")
-		}
-		// Extract session title and response preview from event data for both
-		// session_update and task_update events, then format the notification:
-		//   title = "Done:" + session title
-		//   alert = response preview (the actual AI answer content)
-		var sessionTitle, responsePreview string
-		switch d := msg.Data.(type) {
-		case *SessionUpdateData:
-			sessionTitle = d.SessionTitle
-			responsePreview = d.ResponsePreview
-			// Permission pending: override title/alert to show approval request
-			if d.Status == StatusPermissionPending {
-				title = i18n.T(loc, "PushPermissionPending")
-				if d.ToolName != "" {
-					alert = d.ToolName
-				} else {
-					alert = i18n.T(loc, "PushPermissionPending")
-				}
-			}
-		case *TaskUpdateData:
-			sessionTitle = d.SessionTitle
-			responsePreview = d.ResponsePreview
-		}
-		if sessionTitle != "" && title != i18n.T(loc, "PushPermissionPending") {
-			title = "Done:" + sessionTitle
-		}
-		if responsePreview != "" {
-			alert = truncateForPush(responsePreview)
-		}
-		slog.Debug("ws: sending jpush notification", "event", msg.Event, "client_id", key, "reg_id", pushRegID, "title", title, "extras", extras)
-		if err := m.jpush.SendNotification(pushRegID, title, alert, extras); err != nil {
-			slog.Warn("ws: jpush notification failed", "error", err, "client_id", key)
-		}
-		return
-	}
-
-	// No push registration ID available — log for debugging
-	if pushRegID == "" {
-		slog.Debug("ws: client disconnected, no push reg ID — notification not delivered", "event", msg.Event, "client_id", key)
-	}
 	sub.mu.Unlock()
 }
 
@@ -378,8 +224,7 @@ func (s *ClientSubscription) bufferEvent(msg ServerMessage) {
 }
 
 // CleanupStale removes stale subscriptions:
-//   - No pushRegID + disconnected for > staleNoPushTimeout → remove
-//   - Has pushRegID + no WS connection in the last staleWithPushTimeout → remove
+//   - Disconnected for > staleTimeout → remove
 //   - Connected subscriptions are never cleaned up.
 func (m *Manager) CleanupStale() {
 	m.mu.Lock()
@@ -397,19 +242,10 @@ func (m *Manager) CleanupStale() {
 			sub.mu.Unlock()
 			continue
 		}
-		if sub.pushRegID == "" {
-			// No push reg ID — clean up after staleNoPushTimeout
-			if time.Since(sub.bufferStart) > staleNoPushTimeout {
-				delete(m.subscriptions, key)
-				slog.Info("ws: cleaned up stale subscription (no push)", "client_id", key, "disconnected_for", time.Since(sub.bufferStart))
-			}
-		} else {
-			// Has push reg ID — clean up if no WS connection within staleWithPushTimeout
-			// lastActive is updated on every Subscribe, so it tracks the most recent connection
-			if time.Since(sub.lastActive) > staleWithPushTimeout {
-				delete(m.subscriptions, key)
-				slog.Info("ws: cleaned up stale subscription (with push, no connect in 10 days)", "client_id", key, "last_active", sub.lastActive)
-			}
+		// Clean up after staleTimeout
+		if time.Since(sub.bufferStart) > staleTimeout {
+			delete(m.subscriptions, key)
+			slog.Info("ws: cleaned up stale subscription", "client_id", key, "disconnected_for", time.Since(sub.bufferStart))
 		}
 		sub.mu.Unlock()
 	}

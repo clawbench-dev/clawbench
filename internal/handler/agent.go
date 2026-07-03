@@ -2,10 +2,16 @@
 package handler
 
 import (
+	"bufio"
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"os/exec"
 	"strings"
+	"sync"
+	"time"
 	"unicode/utf8"
 
 	acp "github.com/coder/acp-go-sdk"
@@ -32,6 +38,10 @@ func ServeAgentSubRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasSuffix(path, "/rescan") && r.Method == http.MethodPost {
 		serveAgentsRescan(w, r)
+		return
+	}
+	if strings.HasSuffix(path, "/install") && r.Method == http.MethodPost {
+		serveAgentsInstall(w, r)
 		return
 	}
 	writeLocalizedErrorf(w, r, http.StatusNotFound, "NotFound")
@@ -86,6 +96,7 @@ func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 		Commands     []ai.AvailableCommandInfo `json:"commands,omitempty"`
 		ModelList    *ai.ModelListState        `json:"modelListState,omitempty"`
 		Plan         *ai.PlanState             `json:"planState,omitempty"`
+		Usage        *ai.UsageState            `json:"usageState,omitempty"`
 		LoadSession  bool                      `json:"loadSession"`
 		ListSessions bool                      `json:"listSessions"`
 	}
@@ -111,11 +122,13 @@ func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 			var es *ai.ThinkingEffortState
 			var cmds []ai.AvailableCommandInfo
 			var ml *ai.ModelListState
+			var us *ai.UsageState
 
 			ms = reg.GetModeState(a.ID, "")
 			es = reg.GetThinkingEffortState(a.ID, "")
 			cmds = reg.GetCommands(a.ID)
 			ml = reg.GetModelListState(a.ID, "")
+			us = reg.GetUsageState(a.ID)
 
 			// When ACP provides a model list, override the agent's Models
 			// so the frontend SessionSettingModal shows ACP models instead of CLI-discovered ones.
@@ -123,9 +136,9 @@ func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 				a.Models = ml.Models
 			}
 
-			if ms != nil || es != nil || len(cmds) > 0 || ml != nil {
+			if ms != nil || es != nil || len(cmds) > 0 || ml != nil || us != nil {
 				states[a.ID] = &acpState{
-					Mode: ms, Effort: es, Commands: cmds, ModelList: ml,
+					Mode: ms, Effort: es, Commands: cmds, ModelList: ml, Usage: us,
 					LoadSession: reg.GetLoadSession(a.ID), ListSessions: reg.GetListSessions(a.ID),
 				}
 			}
@@ -215,6 +228,167 @@ func serveAgentsRescan(w http.ResponseWriter, _ *http.Request) {
 		"agents":       agents,
 		"defaultAgent": defaultAgent,
 	})
+}
+
+// installMu enforces one install at a time.
+var installMu sync.Mutex
+
+// serveAgentsInstall handles POST /api/agents/install — runs InstallCmd for a
+// backend and streams stdout/stderr via SSE. Only one install at a time.
+// Expects: {"backend_id": "opencode"}
+func serveAgentsInstall(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		BackendID string `json:"backend_id"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	// Find the BackendSpec
+	var spec *model.BackendSpec
+	for i := range model.GetBackendRegistry() {
+		s := &model.GetBackendRegistry()[i]
+		if s.ID == req.BackendID {
+			spec = s
+			break
+		}
+	}
+	if spec == nil {
+		writeLocalizedErrorf(w, r, http.StatusNotFound, "BackendNotFound")
+		return
+	}
+	if spec.InstallCmd == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "BackendNotInstallable")
+		return
+	}
+
+	// One install at a time
+	if !installMu.TryLock() {
+		writeLocalizedErrorf(w, r, http.StatusConflict, "InstallInProgress")
+		return
+	}
+	defer installMu.Unlock()
+
+	// Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		slog.Error("response writer does not support flushing for install SSE")
+		return
+	}
+
+	// Emit initial state
+	fmt.Fprintf(w, "event: install_start\ndata: {\"backend_id\":%q,\"command\":%q}\n\n", spec.ID, spec.InstallCmd)
+	flusher.Flush()
+
+	// Execute install command (no sudo)
+	// Note: strings.Fields works because all current InstallCmd values are simple
+	// space-separated tokens (no quoting needed). If future commands need quoted
+	// arguments, switch to sh.Split or similar.
+	cmdParts := strings.Fields(spec.InstallCmd)
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, cmdParts[0], cmdParts[1:]...)
+	cmd.Env = os.Environ()
+
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q}\n\n", err.Error())
+		flusher.Flush()
+		return
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q}\n\n", err.Error())
+		flusher.Flush()
+		return
+	}
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q,\"command\":%q}\n\n", err.Error(), spec.InstallCmd)
+		flusher.Flush()
+		return
+	}
+
+	// Stream stdout and stderr line-by-line as SSE events.
+	// Use a channel to merge both streams.
+	type logLine struct {
+		line   string
+		stream string
+	}
+	logCh := make(chan logLine, 64)
+
+	// Reader goroutine for stdout
+	var readerWg sync.WaitGroup
+	readerWg.Add(2)
+	go func() {
+		defer readerWg.Done()
+		scanner := bufio.NewScanner(stdoutPipe)
+		for scanner.Scan() {
+			logCh <- logLine{line: scanner.Text(), stream: "stdout"}
+		}
+	}()
+
+	// Reader goroutine for stderr
+	go func() {
+		defer readerWg.Done()
+		scanner := bufio.NewScanner(stderrPipe)
+		for scanner.Scan() {
+			logCh <- logLine{line: scanner.Text(), stream: "stderr"}
+		}
+	}()
+
+	// Close logCh after both readers finish (pipes close at process exit)
+	go func() {
+		readerWg.Wait()
+		close(logCh)
+	}()
+
+	// Merger goroutine: send exit error when process completes
+	exitErrCh := make(chan error, 1)
+	go func() {
+		exitErrCh <- cmd.Wait()
+	}()
+
+	// Heartbeat ticker
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+
+	// Main loop: forward log lines as SSE events, with heartbeats
+	for {
+		select {
+		case ll, ok := <-logCh:
+			if !ok {
+				// Channel closed (readers finished) — wait for exit status
+				logCh = nil
+				continue
+			}
+			fmt.Fprintf(w, "event: install_log\ndata: {\"line\":%q,\"stream\":%q}\n\n", ll.line, ll.stream)
+			flusher.Flush()
+		case exitErr := <-exitErrCh:
+			// Drain remaining log lines (channel will be closed by reader goroutines)
+			for ll := range logCh {
+				fmt.Fprintf(w, "event: install_log\ndata: {\"line\":%q,\"stream\":%q}\n\n", ll.line, ll.stream)
+				flusher.Flush()
+			}
+			if exitErr != nil {
+				fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q,\"command\":%q}\n\n", exitErr.Error(), spec.InstallCmd)
+			} else {
+				fmt.Fprintf(w, "event: install_success\ndata: {\"backend_id\":%q}\n\n", spec.ID)
+			}
+			flusher.Flush()
+			return
+		case <-heartbeat.C:
+			fmt.Fprintf(w, ": heartbeat\n\n")
+			flusher.Flush()
+		case <-r.Context().Done():
+			// Client disconnected
+			cancel()
+			return
+		}
+	}
 }
 
 // serveAgentsDelete handles DELETE /api/agents — deletes a single agent.
@@ -554,7 +728,7 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 		canDiscover = true
 		discovered := model.DiscoverModels(*spec)
 
-		// If agent has a provider (from setup wizard), filter to that provider's models.
+		// If agent has a provider (from initial setup), filter to that provider's models.
 		// Pi --list-models returns all providers' models in "provider/model" format.
 		if providerSpec != nil && len(discovered) > 0 {
 			prefix := providerSpec.ID + "/"
@@ -785,7 +959,7 @@ func ServeBackends(w http.ResponseWriter, r *http.Request) {
 		Specialty            string   `json:"specialty"`
 		DefaultCmd           string   `json:"default_cmd"`
 		ThinkingEffortLevels []string `json:"thinking_effort_levels,omitempty"`
-		Embedded             bool     `json:"embedded"`
+		InstallCmd           string   `json:"install_cmd,omitempty"`
 	}
 
 	backends := make([]backendInfo, 0, len(model.GetBackendRegistry()))
@@ -800,7 +974,7 @@ func ServeBackends(w http.ResponseWriter, r *http.Request) {
 			Specialty:            spec.Specialty,
 			DefaultCmd:           spec.DefaultCmd,
 			ThinkingEffortLevels: spec.ThinkingEffortLevels,
-			Embedded:             spec.EmbeddedSubDir != "",
+			InstallCmd:           spec.InstallCmd,
 		})
 	}
 

@@ -7,7 +7,7 @@ import (
 )
 
 // ResponsePreviewMaxRunes is the maximum number of runes included in the
-// response preview sent via WS session_update events and JPush notifications.
+// response preview sent via WS session_update events.
 const ResponsePreviewMaxRunes = 512
 
 // ChatMessage represents a single message in the chat history

@@ -14,6 +14,7 @@ func init() {
 			ID: "codex", Backend: "codex", DefaultCmd: "codex", Name: "Codex", Icon: "🐙", Specialty: "OpenAI 编码代理",
 			ThinkingEffortLevels: []string{"low", "medium", "high"},
 			AcpCommand:           "npx -y @agentclientprotocol/codex-acp@latest",
+			InstallCmd:           "npm install -g @openai/codex",
 			SortOrder:            4,
 		},
 	})

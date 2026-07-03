@@ -60,12 +60,11 @@ import okhttp3.WebSocketListener;
  *
  * Manages:
  * 1. SSH tunnels for port forwarding (127.0.0.1:{port} on device → 127.0.0.1:{port} on server)
- * 2. Native WebSocket event channel for AI session/task notifications when JPush is unavailable
- * 3. JPush push notification integration for real-time event delivery
+ * 2. Native WebSocket event channel for AI session/task notifications
  *
  * The service stays alive as long as at least one of these is active:
  * - Any forwarded SSH ports
- * - Native WS needed (JPush unavailable)
+ * - Native WS needed
  *
  * Reliability features:
  * - Auto-reconnect: monitors SSH connection and reconnects with exponential backoff
@@ -146,7 +145,7 @@ public class BackgroundService extends Service {
     // Last SSH error message (for JS bridge error reporting)
     private static volatile String lastError = null;
 
-    // --- Native WebSocket for background event notifications (when JPush is not available) ---
+    // --- Native WebSocket for background event notifications ---
     private WebSocket nativeEventWs;
     private volatile boolean nativeWsActive = false;
     private volatile boolean nativeWsIntentionalStop = false;
@@ -1301,7 +1300,7 @@ public class BackgroundService extends Service {
 
     /**
      * Start the native WebSocket for background event notifications.
-     * Called when the app goes to background and JPush is NOT available.
+     * Called when the app goes to background.
      * Sets nativeWsNeeded BEFORE starting the Service so that onCreate()
      * won't stopSelf() due to having no SSH ports to forward.
      */
@@ -1488,21 +1487,6 @@ public class BackgroundService extends Service {
 
                 if (!"event".equals(type)) return;
 
-                // If JPush is available, native WS is no longer needed —
-                // disconnect and let JPush handle notifications going forward.
-                // Also check jpushEnabledOnServer: even if JPush SDK hasn't finished
-                // initializing (pushAvailable=false), the server will send JPush
-                // notifications, so we must not show duplicate notifications.
-                if (MainActivity.instance != null &&
-                        (MainActivity.instance.pushAvailable || MainActivity.instance.jpushEnabledOnServer)) {
-                    AppLog.i(TAG, "NativeWS: JPush available (pushAvailable=" + MainActivity.instance.pushAvailable
-                            + ", jpushEnabledOnServer=" + MainActivity.instance.jpushEnabledOnServer
-                            + "), disconnecting native WS");
-                    nativeWsIntentionalStop = true;
-                    webSocket.close(1000, "jpush-available");
-                    return;
-                }
-
                 String eventId = msg.optString("id", "");
                 String event = msg.optString("event", "");
                 JSONObject data = msg.optJSONObject("data");
@@ -1571,133 +1555,115 @@ public class BackgroundService extends Service {
 
     /**
      * Post a system notification for an AI event.
+     * Title/alert formatting:
+     *   1. Default: title = PushTaskCompleted, alert = PushSessionEnded
+     *      (task_update: alert = PushScheduledTaskDone)
+     *   2. permission_pending: title = PushPermissionPending, alert = toolName || PushPermissionPending
+     *   3. If sessionTitle non-empty && NOT permission_pending: title = "Done:" + sessionTitle
+     *   4. If responsePreview non-empty: alert = truncateForPush(responsePreview, 512)
      */
     private void postEventNotification(String eventType, JSONObject data) {
         try {
             String status = data.optString("status", "");
-            String sessionId = null;
-            String taskId = null;
-            String projectPath = null;
-            String title = null;
-            String text = null;
+            String sessionId = data.optString("session_id", "");
+            String taskId = data.optString("task_id", "");
+            String executionId = data.optString("execution_id", "");
+            String projectPath = data.optString("project_path", "");
+            String sessionTitle = data.optString("session_title", "");
+            String responsePreview = data.optString("response_preview", "");
+            String toolName = data.optString("tool_name", "");
 
             AppLog.i(TAG, "NativeWS: postEventNotification called, eventType=" + eventType + ", data=" + data.toString());
 
+            // --- Title/alert formatting (mirrors backend ws/manager.go) ---
+
+            String title = getString(R.string.push_task_completed);
+            String alert;
+
             if ("session_update".equals(eventType)) {
-                sessionId = data.optString("session_id", "");
-                String responsePreview = data.optString("response_preview", "");
+                // Cancelled-specific default alert
+                alert = "cancelled".equals(status)
+                        ? getString(R.string.push_session_cancelled)
+                        : getString(R.string.push_session_ended);
+
+                // Permission pending: override title/alert
                 if ("permission_pending".equals(status)) {
-                    title = "需要审批";
-                    String toolName = data.optString("tool_name", "");
-                    text = toolName.isEmpty() ? "AI请求操作许可" : toolName;
-                } else if ("completed".equals(status)) {
-                    title = "AI 任务完成";
-                    text = responsePreview.isEmpty() ? "AI会话已结束" : responsePreview;
-                } else {
-                    title = "AI 会话通知";
-                    text = "会话已取消";
+                    title = getString(R.string.push_permission_pending);
+                    alert = toolName.isEmpty() ? getString(R.string.push_permission_pending) : toolName;
                 }
+
+                // If sessionTitle non-empty and not permission_pending: "Done:"+sessionTitle
+                if (!sessionTitle.isEmpty() && !"permission_pending".equals(status)) {
+                    title = "Done:" + sessionTitle;
+                }
+
+                // If responsePreview non-empty: use as alert (truncated)
+                if (!responsePreview.isEmpty()) {
+                    alert = truncateForPush(responsePreview);
+                }
+
             } else if ("task_update".equals(eventType)) {
-                taskId = data.optString("task_id", "");
-                sessionId = data.optString("session_id", null);
-                String executionId = data.optString("execution_id", null);
-                if ("completed".equals(status)) {
-                    title = "计划任务完成";
-                    text = "任务已完成";
+                // Status-specific default alert
+                if ("failed".equals(status)) {
+                    alert = getString(R.string.push_task_failed);
                 } else if ("cancelled".equals(status)) {
-                    title = "计划任务通知";
-                    text = "任务已取消";
+                    alert = getString(R.string.push_task_cancelled);
                 } else {
-                    title = "计划任务通知";
-                    text = "任务失败";
-                }
-                // Build intent for notification tap — open the app and navigate to task execution detail
-                Intent intent = new Intent(this, MainActivity.class);
-                intent.setAction(android.content.Intent.ACTION_MAIN);
-                intent.addCategory(android.content.Intent.CATEGORY_LAUNCHER);
-                intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-                intent.putExtra("event_type", "task_update");
-                if (taskId != null && !taskId.isEmpty()) {
-                    intent.putExtra("task_id", taskId);
-                }
-                if (executionId != null && !executionId.isEmpty()) {
-                    intent.putExtra("execution_id", executionId);
-                }
-                if (sessionId != null && !sessionId.isEmpty()) {
-                    intent.putExtra("session_id", sessionId);
-                }
-                projectPath = data.optString("project_path", "");
-                if (projectPath != null && !projectPath.isEmpty()) {
-                    intent.putExtra("project_path", projectPath);
+                    alert = getString(R.string.push_scheduled_task_done);
                 }
 
-                AppLog.i(TAG, "NativeWS: notification intent extras: session_id=" + sessionId
-                        + ", task_id=" + taskId + ", execution_id=" + executionId + ", project_path=" + projectPath);
-
-                PendingIntent pendingIntent = PendingIntent.getActivity(
-                        this, 0, intent,
-                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-                );
-
-                // Use hash of task_id as notification ID so each gets its own notification
-                int notifId = EVENTS_NOTIFICATION_ID;
-                if (taskId != null && !taskId.isEmpty()) {
-                    notifId = EVENTS_NOTIFICATION_ID + 1000 + Math.abs(taskId.hashCode() % 1000);
-                } else if (sessionId != null && !sessionId.isEmpty()) {
-                    notifId = EVENTS_NOTIFICATION_ID + Math.abs(sessionId.hashCode() % 1000);
+                // If sessionTitle non-empty: "Done:"+sessionTitle
+                if (!sessionTitle.isEmpty()) {
+                    title = "Done:" + sessionTitle;
                 }
 
-                Notification notification = new NotificationCompat.Builder(this, EVENTS_CHANNEL_ID)
-                        .setContentTitle(title)
-                        .setContentText(text)
-                        .setSmallIcon(R.drawable.ic_notification)
-                        .setContentIntent(pendingIntent)
-                        .setAutoCancel(true)
-                        .build();
-
-                NotificationManager nm = getSystemService(NotificationManager.class);
-                if (nm != null) {
-                    nm.notify(notifId, notification);
+                // If responsePreview non-empty: use as alert (truncated)
+                if (!responsePreview.isEmpty()) {
+                    alert = truncateForPush(responsePreview);
                 }
 
-                AppLog.i(TAG, "NativeWS: posted notification: " + title + " - " + text);
-                return;
             } else {
                 AppLog.i(TAG, "NativeWS: postEventNotification - unhandled eventType=" + eventType + ", skipping");
                 return;
             }
 
-            // Build intent for notification tap — open the app and navigate to session
+            // --- Build intent for notification tap ---
             Intent intent = new Intent(this, MainActivity.class);
             intent.setAction(android.content.Intent.ACTION_MAIN);
             intent.addCategory(android.content.Intent.CATEGORY_LAUNCHER);
             intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-            intent.putExtra("event_type", "permission_pending".equals(status) ? "permission_pending" : "session_update");
-            if (sessionId != null && !sessionId.isEmpty()) {
-                intent.putExtra("session_id", sessionId);
-            }
-            projectPath = data.optString("project_path", "");
-            if (projectPath != null && !projectPath.isEmpty()) {
-                intent.putExtra("project_path", projectPath);
-            }
 
-            AppLog.i(TAG, "NativeWS: notification intent extras: session_id=" + sessionId
-                    + ", project_path=" + projectPath);
+            if ("task_update".equals(eventType)) {
+                intent.putExtra("event_type", "task_update");
+                if (!taskId.isEmpty()) intent.putExtra("task_id", taskId);
+                if (!executionId.isEmpty()) intent.putExtra("execution_id", executionId);
+                if (!sessionId.isEmpty()) intent.putExtra("session_id", sessionId);
+            } else {
+                intent.putExtra("event_type", "permission_pending".equals(status) ? "permission_pending" : "session_update");
+                if (!sessionId.isEmpty()) intent.putExtra("session_id", sessionId);
+            }
+            if (!projectPath.isEmpty()) intent.putExtra("project_path", projectPath);
+
+            AppLog.i(TAG, "NativeWS: notification intent extras: event_type=" + eventType
+                    + ", session_id=" + sessionId + ", task_id=" + taskId
+                    + ", execution_id=" + executionId + ", project_path=" + projectPath);
 
             PendingIntent pendingIntent = PendingIntent.getActivity(
                     this, 0, intent,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
             );
 
-            // Use hash of session_id as notification ID so each gets its own notification
+            // Use hash of session_id or task_id as notification ID so each gets its own notification
             int notifId = EVENTS_NOTIFICATION_ID;
-            if (sessionId != null && !sessionId.isEmpty()) {
+            if (!taskId.isEmpty()) {
+                notifId = EVENTS_NOTIFICATION_ID + 1000 + Math.abs(taskId.hashCode() % 1000);
+            } else if (!sessionId.isEmpty()) {
                 notifId = EVENTS_NOTIFICATION_ID + Math.abs(sessionId.hashCode() % 1000);
             }
 
             Notification notification = new NotificationCompat.Builder(this, EVENTS_CHANNEL_ID)
                     .setContentTitle(title)
-                    .setContentText(text)
+                    .setContentText(alert)
                     .setSmallIcon(R.drawable.ic_notification)
                     .setContentIntent(pendingIntent)
                     .setAutoCancel(true)
@@ -1708,10 +1674,24 @@ public class BackgroundService extends Service {
                 nm.notify(notifId, notification);
             }
 
-            AppLog.i(TAG, "NativeWS: posted notification: " + title + " - " + text);
+            AppLog.i(TAG, "NativeWS: posted notification: " + title + " - " + alert);
 
         } catch (Exception e) {
             AppLog.e(TAG, "NativeWS: failed to post notification", e);
         }
+    }
+
+    /**
+     * Truncate text for push notification alert.
+     * Mirrors backend ws/manager.go truncateForPush: max 512 code points + "…".
+     */
+    private static final int PUSH_ALERT_MAX_CODE_POINTS = 512;
+
+    private static String truncateForPush(String s) {
+        if (s.codePointCount(0, s.length()) <= PUSH_ALERT_MAX_CODE_POINTS) {
+            return s;
+        }
+        int end = s.offsetByCodePoints(0, PUSH_ALERT_MAX_CODE_POINTS);
+        return s.substring(0, end) + "…";
     }
 }

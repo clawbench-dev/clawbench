@@ -34,7 +34,6 @@
 │  RAG 记忆          >   │
 │  端口转发          >   │
 │  SSH 隧道          >   │
-│  推送              >   │
 │  Android           >   │
 │  服务器            >   │
 │  关于              >   │
@@ -175,13 +174,6 @@
 | 启用 SSH | 后端 config `ssh.enabled` | 开关 | 冷 |
 | 端口 | 后端 config `ssh.port` | 数字输入 (0=自动) | 冷 |
 
-### 推送 (Push)
-
-| 配置项 | 来源 | 控件 | 冷/热 |
-|--------|------|------|-------|
-| 启用极光推送 | 后端 config `push.jpush.enabled` | 开关 | 冷 |
-| AppKey | 后端 config `push.jpush.app_key` | 文本输入 | 冷 |
-
 ### Android
 
 | 配置项 | 来源 | 控件 | 冷/热 |
@@ -225,7 +217,6 @@
 | `log_level` / `log_dir` / `log_max_days` | 运维级配置，普通用户无需改 |
 | `tls.*` | 证书路径变更可导致服务不可用 |
 | `ssh.host_key` | 密钥文件路径，敏感 |
-| `push.jpush.master_secret` | 密钥，绝对不能前端展示 |
 | `default_agent` | 已有 Agent 选择器管理 |
 | `dev_port` | 开发模式专用 |
 | `watch_dir` | 已有项目选择器管理 |
@@ -292,17 +283,11 @@
   "ssh": {
     "enabled": true,
     "port": 0
-  },
-  "push": {
-    "jpush": {
-      "enabled": false,
-      "app_key": ""
-    }
   }
 }
 ```
 
-不返回敏感字段（password、tls、master_secret 等）。
+不返回敏感字段（password、tls 等）。
 
 **与 `/api/watch-dir` 的关系：** `GET /api/config` 的响应包含原 `/api/watch-dir` 返回的所有配置字段。前端 `app.ts` `loadProject()` 迁移为使用 `GET /api/config`，`/api/watch-dir` 仅保留 `watchDir` 字段供项目路径选择使用。
 
@@ -323,7 +308,7 @@
 }
 ```
 
-**字段白名单（安全核心）：** PATCH handler 必须维护显式的字段白名单，拒绝任何白名单外的字段。白名单精确对应上方"Categories & Config Items"表中所有后端 config 字段。不在白名单中的字段（如 `password`、`tls.*`、`master_secret`）直接返回 `400 Bad Request`，即使前端不发送这些字段，后端也必须做防御性校验。
+**字段白名单（安全核心）：** PATCH handler 必须维护显式的字段白名单，拒绝任何白名单外的字段。白名单精确对应上方"Categories & Config Items"表中所有后端 config 字段。不在白名单中的字段（如 `password`、`tls.*`）直接返回 `400 Bad Request`，即使前端不发送这些字段，后端也必须做防御性校验。
 
 **处理逻辑：**
 
@@ -666,7 +651,7 @@ SettingsDrawer 打开
 ### 安全考虑
 
 - `PATCH /api/config` 和 `POST /api/config/restart` 均需认证（`middleware.Auth`）
-- `GET /api/config` 脱敏返回，不含 password / master_secret / tls key
+- `GET /api/config` 脱敏返回，不含 password / tls key
 - **PATCH 字段白名单：** 后端必须维护显式白名单，拒绝白名单外字段（即使前端不发送，也要做防御性校验）
 - App 模式下的"重配服务器"保留 Android JS bridge 方式，不走配置 API
 

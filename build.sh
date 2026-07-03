@@ -9,7 +9,6 @@ ASSETS="assets"
 TARGET_OS=""
 TARGET_ARCH=""
 BUILD_ANDROID=""
-EMBED_AGENTS=()
 for arg in "$@"; do
     case "$arg" in
         --windows)
@@ -35,13 +34,6 @@ for arg in "$@"; do
             ;;
         --android)
             BUILD_ANDROID=1
-            ;;
-        --embed-agent=*)
-            EMBED_AGENTS+=("${arg#--embed-agent=}")
-            ;;
-        --with-opencode)
-            # Backward-compatible alias for --embed-agent=opencode
-            EMBED_AGENTS+=("opencode")
             ;;
     esac
 done
@@ -121,21 +113,8 @@ else
     echo "  Go not found, skipping backend build"
 fi
 
-# 3. Download embedded agent binaries
-# Use --embed-agent=<id> to download (e.g., --embed-agent=opencode).
-# --with-opencode is a backward-compatible alias for --embed-agent=opencode.
-# Version can be pinned via the version_env variable defined in embedded-agents.yaml.
-if [ ${#EMBED_AGENTS[@]} -gt 0 ]; then
-    echo "[3/5] Downloading embedded agents..."
-    # Source the shared download helper
-    # shellcheck source=scripts/download-embedded-agent.sh
-    . ./scripts/download-embedded-agent.sh
-    for _agent_id in "${EMBED_AGENTS[@]}"; do
-        download_embedded_agent "$_agent_id"
-    done
-else
-    echo "[3/5] Embedded agent download skipped (use --embed-agent=<id> or --with-opencode)"
-fi
+# 3. (Skipped — embedded agent download removed)
+echo "[3/5] Skipped (embedded agent download removed)"
 
 # 4. Build Android APK (optional)
 if [ -n "$BUILD_ANDROID" ]; then
@@ -168,7 +147,6 @@ else
     echo "  ./$NAME              # Go binary (frontend embedded)"
 fi
 echo "  public/              # Frontend on disk (used if present, overrides embed)"
-echo "  agents/              # Embedded agent binaries (if --embed-agent=<id>)"
 echo ""
 echo "Run with: ./$NAME"
 echo ""
@@ -180,7 +158,3 @@ echo "  ./build.sh --darwin-amd64   # macOS amd64 (Intel)"
 echo "  ./build.sh --target=darwin/arm64"
 echo "  ./build.sh --android          # Android APK (release)"
 echo ""
-echo "Embedded agent:"
-echo "  ./build.sh --linux --embed-agent=opencode   # Linux + OpenCode (CI release)"
-echo "  ./build.sh --linux --with-opencode          # Backward-compatible alias"
-echo "  OPENCODE_VERSION=1.17.10 ./build.sh --embed-agent=opencode  # Pin a specific version"

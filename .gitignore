@@ -86,9 +86,6 @@ clawbench-test
 .codebuddy/worktrees/
 .codebuddy/scheduled_tasks.lock
 
-# Embedded agent binaries (downloaded, not tracked)
-/agents/
-
 # TTS model files (downloaded, not tracked)
 /models/
 

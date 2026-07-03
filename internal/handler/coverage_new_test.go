@@ -22,7 +22,6 @@ import (
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
-	"clawbench/internal/push"
 	"clawbench/internal/service"
 	"clawbench/internal/terminal"
 
@@ -908,79 +907,6 @@ func TestServeGitVerifyCommits_WrongMethod(t *testing.T) {
 	w := callHandler(ServeGitVerifyCommits, req)
 	assertStatus(t, w, http.StatusMethodNotAllowed)
 }
-
-// ============================================================================
-// SetPushClient / ServePushConfig tests
-// ============================================================================
-
-// TestSetPushClient_SetsRef removed — trivial setter test that only verifies Go assignment syntax
-
-func TestServePushConfig_NoClient(t *testing.T) {
-	origRef := GetPushClient()
-	defer SetPushClient(origRef)
-
-	SetPushClient(nil)
-
-	req := newRequest(t, http.MethodGet, "/api/push/config", nil)
-	w := callHandler(ServePushConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var result map[string]interface{}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
-	assert.Equal(t, false, result["jpush_enabled"])
-	assert.Equal(t, "", result["jpush_app_key"])
-}
-
-func TestServePushConfig_DisabledClient(t *testing.T) {
-	origRef := GetPushClient()
-	defer SetPushClient(origRef)
-
-	SetPushClient(push.NewJPushClient(model.JPushConfig{
-		Enabled:      false,
-		AppKey:       "test-key",
-		MasterSecret: "test-secret",
-	}))
-
-	req := newRequest(t, http.MethodGet, "/api/push/config", nil)
-	w := callHandler(ServePushConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var result map[string]interface{}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
-	assert.Equal(t, false, result["jpush_enabled"])
-}
-
-func TestServePushConfig_EnabledClient(t *testing.T) {
-	origRef := GetPushClient()
-	defer SetPushClient(origRef)
-
-	SetPushClient(push.NewJPushClient(model.JPushConfig{
-		Enabled:      true,
-		AppKey:       "test-app-key-123",
-		MasterSecret: "test-master-secret",
-	}))
-
-	req := newRequest(t, http.MethodGet, "/api/push/config", nil)
-	w := callHandler(ServePushConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var result map[string]interface{}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
-	assert.Equal(t, true, result["jpush_enabled"])
-	assert.Equal(t, "test-app-key-123", result["jpush_app_key"])
-}
-
-func TestServePushConfig_WrongMethod(t *testing.T) {
-	req := newRequest(t, http.MethodPost, "/api/push/config", nil)
-	w := callHandler(ServePushConfig, req)
-	assertStatus(t, w, http.StatusMethodNotAllowed)
-}
-
-// ============================================================================
-// SetSSHServer tests
-// ============================================================================
-
-// TestSetSSHServer_SetsRef removed — trivial setter test that only verifies nil assignment
 
 // ============================================================================
 // validateCreatePath tests

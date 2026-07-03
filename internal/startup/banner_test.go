@@ -159,8 +159,8 @@ func TestBannerNoAgents(t *testing.T) {
 	lines := buildLines(cfg)
 	joined := strings.Join(lines, "\n")
 
-	if !strings.Contains(joined, "setup wizard") {
-		t.Error("banner should mention setup wizard when no agents")
+	if !strings.Contains(joined, "welcome screen") {
+		t.Error("banner should mention welcome screen when no agents")
 	}
 
 	// Verify alignment

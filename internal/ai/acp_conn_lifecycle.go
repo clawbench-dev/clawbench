@@ -13,8 +13,6 @@ import (
 	"time"
 
 	acp "github.com/coder/acp-go-sdk"
-
-	"clawbench/internal/model"
 )
 
 // ---------------------------------------------------------------------------
@@ -336,15 +334,6 @@ func (c *ACPConn) spawnLocked(ctx context.Context) error {
 		if mcpConfigJSON := readUserMcpConfig(); mcpConfigJSON != "" {
 			cmdArgs = append(cmdArgs, "--mcp-config", mcpConfigJSON)
 			slog.Info("acp conn: injecting user MCP config via --mcp-config (workaround for issue #270)")
-		}
-	}
-
-	// Resolve embedded binary path for bare command names (e.g. "opencode acp" → use embedded opencode binary).
-	if !strings.Contains(cmdName, "/") {
-		if spec := model.FindBackendSpecByDefaultCmd(cmdName); spec != nil && spec.EmbeddedSubDir != "" {
-			if p := model.EmbeddedBinaryPath(spec.EmbeddedSubDir); p != "" {
-				cmdName = p
-			}
 		}
 	}
 

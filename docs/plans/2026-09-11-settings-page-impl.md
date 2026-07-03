@@ -181,15 +181,6 @@ type configSSH struct {
     Port    int  `json:"port"`
 }
 
-type configPush struct {
-    JPush configJPush `json:"jpush"`
-}
-
-type configJPush struct {
-    Enabled bool   `json:"enabled"`
-    AppKey  string `json:"app_key"`
-}
-
 // ServeConfig handles GET /api/config — returns sanitized config.
 func ServeConfig(w http.ResponseWriter, r *http.Request) {
     if r.Method != http.MethodGet {
@@ -243,12 +234,6 @@ func ServeConfig(w http.ResponseWriter, r *http.Request) {
         SSH: configSSH{
             Enabled: cfg.SSH.Enabled,
             Port:    cfg.SSH.Port,
-        },
-        Push: configPush{
-            JPush: configJPush{
-                Enabled: cfg.Push.JPush.Enabled,
-                AppKey:  cfg.Push.JPush.AppKey,
-            },
         },
     }
 
@@ -402,8 +387,6 @@ var PatchableConfigPaths = map[string]bool{
     "proxy.allowed_ports":         true,
     "ssh.enabled":                 true,
     "ssh.port":                    true,
-    "push.jpush.enabled":          true,
-    "push.jpush.app_key":          true,
 }
 ```
 
@@ -618,7 +601,6 @@ vi.mock('@/utils/api', () => ({
     rag: { enabled: false, ollama_base_url: 'http://localhost:11434', ollama_model: 'bge-m3', chunk_size: 512, search_limit: 5, retention_days: 90 },
     proxy: { enabled: true, allowed_ports: '1024-65535' },
     ssh: { enabled: true, port: 0 },
-    push: { jpush: { enabled: false, app_key: '' } },
   }),
   apiPatch: vi.fn().mockResolvedValue({ needs_restart: false, changed_cold_fields: [] }),
 }))
@@ -869,7 +851,6 @@ describe('useSettingsConfig', () => {
       rag: { enabled: false, ollama_base_url: 'http://localhost:11434', ollama_model: 'bge-m3', chunk_size: 512, search_limit: 5, retention_days: 90 },
       proxy: { enabled: true, allowed_ports: '1024-65535' },
       ssh: { enabled: true, port: 0 },
-      push: { jpush: { enabled: false, app_key: '' } },
     })
     mockApiPatch.mockResolvedValue({ needs_restart: false, changed_cold_fields: [] })
   })

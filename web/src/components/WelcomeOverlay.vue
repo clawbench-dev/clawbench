@@ -24,15 +24,16 @@
               <div class="backend-specialty">{{ b.specialty }}</div>
             </div>
             <span
-              v-if="detectedBackends.has(b.id) && b.embedded"
-              class="backend-badge badge-builtin"
-            >{{ t('welcomeInfo.builtin') }}</span>
-            <span
-              v-else
-              :class="['backend-badge', detectedBackends.has(b.id) ? 'badge-installed' : 'badge-not-installed']"
+              v-if="detectedBackends.has(b.id)"
+              class="backend-badge badge-installed"
             >
-              {{ detectedBackends.has(b.id) ? t('welcomeInfo.detected') : t('welcomeInfo.notDetected') }}
+              {{ t('welcomeInfo.detected') }}
             </span>
+            <button
+              v-if="!detectedBackends.has(b.id) && b.install_cmd && !installingBackendId"
+              class="btn-install"
+              @click="startInstall(b)"
+            >{{ t('welcomeInfo.install') }}</button>
           </div>
         </div>
         <!-- Install section (mobile web only) -->
@@ -50,9 +51,14 @@
           <button class="btn-ok" @click="close">
             {{ t('welcomeInfo.ok') }}
           </button>
-          <button class="btn-dont-show" @click="dontShowAgain">
-            {{ t('welcomeInfo.dontShowAgain') }}
-          </button>
+          <div class="footer-secondary">
+            <button class="btn-rescan" :disabled="rescanning" @click="rescan">
+              {{ rescanning ? t('welcomeInfo.rescanning') : t('welcomeInfo.rescan') }}
+            </button>
+            <button class="btn-dont-show" @click="dontShowAgain">
+              {{ t('welcomeInfo.dontShowAgain') }}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -60,14 +66,27 @@
 
   <!-- iOS install instructions sheet -->
   <IosInstallDrawer :open="showIosSheet" @close="showIosSheet = false" />
+
+  <!-- Agent install dialog -->
+  <AgentInstallDialog
+    v-if="installDialog.visible"
+    :backend-id="installDialog.backendId"
+    :backend-name="installDialog.backendName"
+    :install-cmd="installDialog.installCmd"
+    @close="closeInstallDialog"
+    @success="handleInstallSuccess"
+  />
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, reactive, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { usePwaInstall } from '@/composables/usePwaInstall'
+import { useAgents } from '@/composables/useAgents'
 import { MonitorSmartphone, Smartphone } from 'lucide-vue-next'
 import IosInstallDrawer from './common/IosInstallDrawer.vue'
+import AgentInstallDialog from './AgentInstallDialog.vue'
+import { appLog } from '@/utils/appLog'
 
 interface BackendInfo {
   id: string
@@ -76,7 +95,7 @@ interface BackendInfo {
   specialty: string
   default_cmd: string
   thinking_effort_levels?: string[]
-  embedded?: boolean
+  install_cmd?: string
 }
 
 const STORAGE_KEY = 'clawbench_welcome_dismissed'
@@ -89,12 +108,22 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const pwaInstall = usePwaInstall()
+const { rescanAgents } = useAgents()
 const visible = ref(false)
 const backends = ref<BackendInfo[]>([])
 const detectedBackends = ref<Set<string>>(new Set())
 const showIosSheet = ref(false)
+const installingBackendId = ref<string | null>(null)
+const rescanning = ref(false)
 
-// Sort: installed/built-in first, not-installed last
+const installDialog = reactive({
+  visible: false,
+  backendId: '',
+  backendName: '',
+  installCmd: '',
+})
+
+// Sort: installed first, not-installed last
 const sortedBackends = computed(() => {
   return [...backends.value].sort((a, b) => {
     const aDetected = detectedBackends.value.has(a.id)
@@ -138,6 +167,37 @@ function dontShowAgain() {
   localStorage.setItem(STORAGE_KEY, 'true')
   visible.value = false
   emit('dismissed')
+}
+
+async function rescan() {
+  if (rescanning.value) return
+  rescanning.value = true
+  try {
+    await rescanAgents()
+    await loadBackends()
+  } catch (e) {
+    appLog.w('WelcomeOverlay', 'rescan failed', e)
+  } finally {
+    rescanning.value = false
+  }
+}
+
+function startInstall(b: BackendInfo) {
+  installingBackendId.value = b.id
+  installDialog.visible = true
+  installDialog.backendId = b.id
+  installDialog.backendName = b.name
+  installDialog.installCmd = b.install_cmd || ''
+}
+
+function closeInstallDialog() {
+  installDialog.visible = false
+  installingBackendId.value = null
+}
+
+async function handleInstallSuccess() {
+  closeInstallDialog()
+  await rescan()
 }
 
 async function handlePwaInstall() {
@@ -306,14 +366,28 @@ onUnmounted(() => {
   color: var(--accent-color);
 }
 
-.badge-builtin {
-  background: color-mix(in srgb, var(--accent-color) 20%, transparent);
-  color: var(--accent-color);
-}
-
 .badge-not-installed {
   background: var(--bg-tertiary);
   color: var(--text-muted);
+}
+
+.btn-install {
+  position: absolute;
+  right: 6px;
+  top: 4px;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent-color);
+  color: #fff;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.btn-install:hover {
+  opacity: 0.85;
 }
 
 /* Install section */
@@ -351,6 +425,12 @@ onUnmounted(() => {
   align-items: center;
 }
 
+.footer-secondary {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
 .btn-ok {
   width: 100%;
   padding: 8px 16px;
@@ -366,6 +446,30 @@ onUnmounted(() => {
 
 .btn-ok:hover {
   opacity: 0.9;
+}
+
+.btn-rescan {
+  background: none;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.btn-rescan:hover {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}
+
+.btn-rescan:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  border-color: var(--accent-color);
+  color: var(--accent-color);
 }
 
 .btn-dont-show {

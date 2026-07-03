@@ -1023,7 +1023,7 @@ func TestEmitSessionEvent_CompletedWithPreview(t *testing.T) {
 	require.NoError(t, err)
 
 	// Set up ws manager and a subscriber to capture the event
-	mgr := ws.NewManagerForTest(nil)
+	mgr := ws.NewManagerForTest()
 	ws.SetManagerForTest(mgr)
 	defer ws.SetManagerForTest(nil)
 
@@ -1056,7 +1056,7 @@ func TestEmitSessionEvent_RunningNoPreview(t *testing.T) {
 	DBRead = db // Same instance for :memory: SQLite — data is shared
 	defer func() { DB = origDB; DBRead = origDBRead }()
 
-	mgr := ws.NewManagerForTest(nil)
+	mgr := ws.NewManagerForTest()
 	ws.SetManagerForTest(mgr)
 	defer ws.SetManagerForTest(nil)
 
@@ -1177,7 +1177,7 @@ func TestEmitTaskEvent_WithSessionIDAndProjectPath(t *testing.T) {
 	DBRead = db // Same instance for :memory: SQLite — data is shared
 	defer func() { DB = origDB; DBRead = origDBRead }()
 
-	mgr := ws.NewManagerForTest(nil)
+	mgr := ws.NewManagerForTest()
 	ws.SetManagerForTest(mgr)
 	defer ws.SetManagerForTest(nil)
 
@@ -1204,7 +1204,7 @@ func TestEmitTaskEvent_WithSessionIDAndProjectPath(t *testing.T) {
 }
 
 func TestEmitTaskEvent_EmptyOptionalFields(t *testing.T) {
-	mgr := ws.NewManagerForTest(nil)
+	mgr := ws.NewManagerForTest()
 	ws.SetManagerForTest(mgr)
 	defer ws.SetManagerForTest(nil)
 
@@ -1330,7 +1330,7 @@ func TestExecuteTask_BackendCreationFailed(t *testing.T) {
 	defer func() { DB = origDB; DBRead = origDBRead }()
 
 	// Set up ws manager to capture events
-	mgr := ws.NewManagerForTest(nil)
+	mgr := ws.NewManagerForTest()
 	ws.SetManagerForTest(mgr)
 	defer ws.SetManagerForTest(nil)
 
@@ -1403,7 +1403,7 @@ func TestExecuteTask_ExecuteStreamError(t *testing.T) {
 	defer func() { DB = origDB; DBRead = origDBRead }()
 
 	// Set up ws manager to capture events
-	mgr := ws.NewManagerForTest(nil)
+	mgr := ws.NewManagerForTest()
 	ws.SetManagerForTest(mgr)
 	defer ws.SetManagerForTest(nil)
 
@@ -1494,7 +1494,7 @@ func TestExecuteTask_AgentNotFound(t *testing.T) {
 	defer func() { DB = origDB; DBRead = origDBRead }()
 
 	// Set up ws manager
-	mgr := ws.NewManagerForTest(nil)
+	mgr := ws.NewManagerForTest()
 	ws.SetManagerForTest(mgr)
 	defer ws.SetManagerForTest(nil)
 
@@ -1737,7 +1737,7 @@ func TestEmitSessionEvent_PermissionPendingWithToolName(t *testing.T) {
 		"session-pp-1", "/home/user/project", "codebuddy", "Test Session")
 	require.NoError(t, err)
 
-	mgr := ws.NewManagerForTest(nil)
+	mgr := ws.NewManagerForTest()
 	ws.SetManagerForTest(mgr)
 	defer ws.SetManagerForTest(nil)
 
@@ -1779,7 +1779,7 @@ func TestTriggerChatSummarization_SimpleMode_BroadcastsWSUpdate(t *testing.T) {
 	chatSummaryEnabled.Store(true)
 
 	// Set up WS manager to capture broadcast
-	mgr := ws.NewManagerForTest(nil)
+	mgr := ws.NewManagerForTest()
 	ws.SetManagerForTest(mgr)
 	defer ws.SetManagerForTest(nil)
 

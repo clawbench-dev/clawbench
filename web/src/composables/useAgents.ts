@@ -15,17 +15,20 @@ const TAG = 'Agents'
 let _updateAvailableModes: ((modes: Array<{ id: string; name: string }>) => void) | null = null
 let _updateAvailableThinkingEfforts: ((levels: Array<{ id: string; name: string }>) => void) | null = null
 let _updateCommandState: ((commands: Array<{ name: string; description: string; inputHint?: string }>) => void) | null = null
+let _updateUsageState: ((used: number, size: number, cost?: number, currency?: string) => void) | null = null
 let _currentAgentId: { value: string } | null = null
 
 export function registerIdentityUpdaters(opts: {
   updateAvailableModes: (modes: Array<{ id: string; name: string }>) => void
   updateAvailableThinkingEfforts: (levels: Array<{ id: string; name: string }>) => void
   updateCommandState: (commands: Array<{ name: string; description: string; inputHint?: string }>) => void
+  updateUsageState: (used: number, size: number, cost?: number, currency?: string) => void
   currentAgentId: { value: string }
 }) {
   _updateAvailableModes = opts.updateAvailableModes
   _updateAvailableThinkingEfforts = opts.updateAvailableThinkingEfforts
   _updateCommandState = opts.updateCommandState
+  _updateUsageState = opts.updateUsageState
   _currentAgentId = opts.currentAgentId
 }
 
@@ -54,6 +57,7 @@ export function resetAgents(): void {
     _updateAvailableModes = null
     _updateAvailableThinkingEfforts = null
     _updateCommandState = null
+    _updateUsageState = null
     _currentAgentId = null
 }
 
@@ -109,6 +113,10 @@ async function loadAgents(force = false): Promise<void> {
                     }
                     if (activeState.planState?.entries?.length > 0) {
                         updatePlanEntries(activeState.planState.entries)
+                    }
+                    // Restore usage state from agent-level cache (best-effort fallback).
+                    if (activeState.usageState && activeState.usageState.size > 0) {
+                        _updateUsageState?.(activeState.usageState.used ?? 0, activeState.usageState.size, activeState.usageState.cost, activeState.usageState.currency)
                     }
                 }
             }
@@ -338,6 +346,12 @@ export async function populateACPStateFromCache(agentId: string): Promise<void> 
     }
     if (state.planState?.entries?.length > 0) {
         updatePlanEntries(state.planState.entries)
+    }
+    // Restore usage state from agent-level cache (best-effort fallback).
+    // This ensures usage chips appear immediately on session switch /
+    // reconnect without waiting for a new SSE usage_update event.
+    if (state.usageState && state.usageState.size > 0) {
+        _updateUsageState?.(state.usageState.used ?? 0, state.usageState.size, state.usageState.cost, state.usageState.currency)
     }
 }
 

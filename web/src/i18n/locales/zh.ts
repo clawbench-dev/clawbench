@@ -1414,6 +1414,7 @@ export default {
     notDetected: '未安装',
     install: '安装',
     rescan: '重新扫描',
+    rescanning: '扫描中...',
     installing: '正在安装',
     installSuccess: '安装成功',
     installFailed: '安装失败',

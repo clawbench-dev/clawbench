@@ -17,6 +17,7 @@ func init() {
 			ID: "cline", Backend: "cline", DefaultCmd: "cline", Name: "Cline", Icon: "🔮", Specialty: "自主编码智能体",
 			ThinkingEffortLevels: []string{"none", "low", "medium", "high", "xhigh"},
 			AcpCommand:           "cline --acp",
+			InstallCmd:           "npm install -g cline",
 			SortOrder:            9,
 		},
 	})

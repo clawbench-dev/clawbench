@@ -16,9 +16,8 @@ type ServerMessage struct {
 
 // ClientMessage is a message sent from client to server.
 type ClientMessage struct {
-	Type      string `json:"type"`                  // "ack", "pong", "register"
-	ID        string `json:"id,omitempty"`          // ack target event ID
-	PushRegID string `json:"push_reg_id,omitempty"` // JPush registration ID (for "register" type)
+	Type string `json:"type"`         // "ack", "pong"
+	ID   string `json:"id,omitempty"` // ack target event ID
 }
 
 // SessionUpdateData is the data payload for "session_update" events.

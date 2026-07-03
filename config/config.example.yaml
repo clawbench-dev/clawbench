@@ -176,8 +176,6 @@ summarize:
 
 # Default agent (optional; leave empty to use the first agent in database)
 # 默认智能体（可选，留空则使用数据库中的第一个智能体）
-# The default embedded agent (bundled with the installer) is opencode when --embed-agent=opencode is used.
-# 默认嵌入式智能体（随安装包附带）在使用 --embed-agent=opencode 时为 opencode。
 # Available agents depend on your database / 可用智能体取决于数据库
 default_agent: "codebuddy"
 
@@ -262,10 +260,4 @@ port_forward:
 # Android: PortForwardService native SSE listener uses ?token= auth; shows system notifications when backgrounded.
 # 安卓: PortForwardService 原生 SSE 监听器使用 ?token= 认证；后台时弹出系统通知。
 
-# Push notifications (JPush for Android)
-# 推送通知（极光推送，用于 Android）
-# push:
-#   jpush:
-#     enabled: false            # Enable JPush notifications (default: false) / 启用极光推送（默认: false）
-#     app_key: ""               # JPush AppKey / 极光推送 AppKey
-#     master_secret: ""         # JPush Master Secret / 极光推送 Master Secret
+

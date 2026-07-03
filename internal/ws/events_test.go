@@ -2,7 +2,6 @@ package ws
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -18,7 +17,7 @@ import (
 // TestEventsHandler_ExtractsLocaleFromHeader verifies that the WebSocket handler
 // extracts the locale from the X-Locale header and stores it in the subscription.
 func TestEventsHandler_ExtractsLocaleFromHeader(t *testing.T) {
-	mgr := newTestManager(nil)
+	mgr := newTestManager()
 	origMgr := defaultManager
 	defaultManager = mgr
 	defer func() { defaultManager = origMgr }()
@@ -63,7 +62,7 @@ func TestEventsHandler_ExtractsLocaleFromHeader(t *testing.T) {
 // TestEventsHandler_ExtractsLocaleFromCookie verifies that the WebSocket handler
 // extracts the locale from the clawbench-locale cookie when X-Locale header is absent.
 func TestEventsHandler_ExtractsLocaleFromCookie(t *testing.T) {
-	mgr := newTestManager(nil)
+	mgr := newTestManager()
 	origMgr := defaultManager
 	defaultManager = mgr
 	defer func() { defaultManager = origMgr }()
@@ -107,7 +106,7 @@ func TestEventsHandler_ExtractsLocaleFromCookie(t *testing.T) {
 // TestEventsHandler_DefaultLocaleWhenNoneProvided verifies that locale defaults
 // to empty string when neither X-Locale header nor cookie is provided.
 func TestEventsHandler_DefaultLocaleWhenNoneProvided(t *testing.T) {
-	mgr := newTestManager(nil)
+	mgr := newTestManager()
 	origMgr := defaultManager
 	defaultManager = mgr
 	defer func() { defaultManager = origMgr }()
@@ -143,58 +142,10 @@ func TestEventsHandler_DefaultLocaleWhenNoneProvided(t *testing.T) {
 	mgr.DisconnectClient("locale-default")
 }
 
-// TestEventsHandler_ReadClientMessages_Register verifies that the readClientMessages
-// handler processes "register" messages from the client (exercises the register path
-// and the conn.Close at handler exit).
-func TestEventsHandler_ReadClientMessages_Register(t *testing.T) {
-	mgr := newTestManager(nil)
-	origMgr := defaultManager
-	defaultManager = mgr
-	defer func() { defaultManager = origMgr }()
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/ai/events/ws", EventsHandler)
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	wsURL := "ws" + server.URL[4:] + "/api/ai/events/ws?client_id=register-test"
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	conn, resp, err := websocket.Dial(ctx, wsURL, nil)
-	require.NoError(t, err)
-	if resp != nil && resp.Body != nil {
-		defer func() { _ = resp.Body.Close() }()
-	}
-
-	// Send a "register" message with a push registration ID
-	regMsg := ClientMessage{Type: "register", PushRegID: "test-push-reg-123"}
-	data, err := json.Marshal(regMsg)
-	require.NoError(t, err)
-	require.NoError(t, conn.Write(ctx, websocket.MessageText, data))
-
-	// Wait for the registration to be processed
-	time.Sleep(200 * time.Millisecond)
-
-	// Verify the push registration ID was stored
-	mgr.mu.Lock()
-	sub, ok := mgr.subscriptions["register-test"]
-	mgr.mu.Unlock()
-	require.True(t, ok, "subscription should exist")
-	sub.mu.Lock()
-	regID := sub.pushRegID
-	sub.mu.Unlock()
-	assert.Equal(t, "test-push-reg-123", regID, "push reg ID should be stored from register message")
-
-	// Close connection — exercises _ = conn.Close at handler exit
-	_ = conn.Close(websocket.StatusNormalClosure, "test done")
-	mgr.DisconnectClient("register-test")
-}
-
 // TestEventsHandler_SubscriptionLimit verifies that the subscription limit
 // is enforced (exercises _ = conn.Close in Subscribe for limit rejection).
 func TestEventsHandler_SubscriptionLimit(t *testing.T) {
-	mgr := newTestManager(nil)
+	mgr := newTestManager()
 	origMgr := defaultManager
 	defaultManager = mgr
 	defer func() { defaultManager = origMgr }()
@@ -227,7 +178,7 @@ func TestEventsHandler_SubscriptionLimit(t *testing.T) {
 // TestEventsHandler_ServerCloseOnExit covers the `_ = conn.Close()` path
 // at the end of EventsHandler when the handler exits normally.
 func TestEventsHandler_ServerCloseOnExit(t *testing.T) {
-	mgr := newTestManager(nil)
+	mgr := newTestManager()
 	origMgr := defaultManager
 	defaultManager = mgr
 	defer func() { defaultManager = origMgr }()

@@ -118,21 +118,11 @@ jobs:
           file clawbench-linux
           ldd clawbench-linux
 
-      - name: Download embedded agent
-        uses: ./.github/actions/download-embedded-agent
-        id: embedded-agent
-        with:
-          agent-id: opencode
-          platform: linux-x64
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Package Linux
         run: |
           mkdir -p pkg-linux/clawbench
           cp clawbench-linux pkg-linux/clawbench/clawbench
           cp -r config pkg-linux/clawbench/config
-          mkdir -p pkg-linux/clawbench/agents
-          cp -r agents/${{ steps.embedded-agent.outputs.subdir }} pkg-linux/clawbench/agents/${{ steps.embedded-agent.outputs.subdir }}
           chmod +x pkg-linux/clawbench/clawbench
           cd pkg-linux && zip -r clawbench-linux-amd64.zip clawbench/
 
@@ -196,21 +186,11 @@ jobs:
           file clawbench-linux-arm64
           ldd clawbench-linux-arm64
 
-      - name: Download embedded agent
-        uses: ./.github/actions/download-embedded-agent
-        id: embedded-agent
-        with:
-          agent-id: opencode
-          platform: linux-arm64
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Package Linux arm64
         run: |
           mkdir -p pkg-linux-arm64/clawbench
           cp clawbench-linux-arm64 pkg-linux-arm64/clawbench/clawbench
           cp -r config pkg-linux-arm64/clawbench/config
-          mkdir -p pkg-linux-arm64/clawbench/agents
-          cp -r agents/${{ steps.embedded-agent.outputs.subdir }} pkg-linux-arm64/clawbench/agents/${{ steps.embedded-agent.outputs.subdir }}
           chmod +x pkg-linux-arm64/clawbench/clawbench
           cd pkg-linux-arm64 && zip -r clawbench-linux-arm64.zip clawbench/
 
@@ -273,22 +253,12 @@ jobs:
           $VERSION = if (git describe --tags --always 2>$null) { git describe --tags --always } else { "dev" }
           go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION" -o clawbench.exe ./cmd/server
 
-      - name: Download embedded agent
-        uses: ./.github/actions/download-embedded-agent
-        id: embedded-agent
-        with:
-          agent-id: opencode
-          platform: windows-x64
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Package Windows
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path pkg-windows/clawbench
           Copy-Item clawbench.exe pkg-windows/clawbench/
           Copy-Item -Recurse config pkg-windows/clawbench/config
-          New-Item -ItemType Directory -Force -Path pkg-windows/clawbench/agents
-          Copy-Item -Recurse agents/${{ steps.embedded-agent.outputs.subdir }} pkg-windows/clawbench/agents/${{ steps.embedded-agent.outputs.subdir }}
           Compress-Archive -Path pkg-windows/clawbench -DestinationPath pkg-windows/clawbench-windows-amd64.zip
 
       - uses: softprops/action-gh-release@v2
@@ -344,21 +314,11 @@ jobs:
           VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
           go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION" -o clawbench-darwin-arm64 ./cmd/server
 
-      - name: Download embedded agent
-        uses: ./.github/actions/download-embedded-agent
-        id: embedded-agent
-        with:
-          agent-id: opencode
-          platform: darwin-arm64
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Package macOS arm64
         run: |
           mkdir -p pkg-mac-arm64/clawbench
           cp clawbench-darwin-arm64 pkg-mac-arm64/clawbench/clawbench
           cp -r config pkg-mac-arm64/clawbench/config
-          mkdir -p pkg-mac-arm64/clawbench/agents
-          cp -r agents/${{ steps.embedded-agent.outputs.subdir }} pkg-mac-arm64/clawbench/agents/${{ steps.embedded-agent.outputs.subdir }}
           chmod +x pkg-mac-arm64/clawbench/clawbench
           cd pkg-mac-arm64 && zip -r clawbench-darwin-arm64.zip clawbench/
 
@@ -418,21 +378,11 @@ jobs:
           VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
           go build -tags "fts5" -ldflags="-s -w -X clawbench/internal/version.Version=$VERSION" -o clawbench-darwin-amd64 ./cmd/server
 
-      - name: Download embedded agent
-        uses: ./.github/actions/download-embedded-agent
-        id: embedded-agent
-        with:
-          agent-id: opencode
-          platform: darwin-x64
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Package macOS amd64
         run: |
           mkdir -p pkg-mac-amd64/clawbench
           cp clawbench-darwin-amd64 pkg-mac-amd64/clawbench/clawbench
           cp -r config pkg-mac-amd64/clawbench/config
-          mkdir -p pkg-mac-amd64/clawbench/agents
-          cp -r agents/${{ steps.embedded-agent.outputs.subdir }} pkg-mac-amd64/clawbench/agents/${{ steps.embedded-agent.outputs.subdir }}
           chmod +x pkg-mac-amd64/clawbench/clawbench
           cd pkg-mac-amd64 && zip -r clawbench-darwin-amd64.zip clawbench/
 
@@ -513,20 +463,6 @@ jobs:
           cp pkg-linux/clawbench/clawbench .
           chmod +x ./clawbench
 
-      - name: Resolve embedded agent version for Docker
-        id: embedded-agent
-        shell: bash
-        run: |
-          # Source the download helper to parse embedded-agents.yaml
-          # shellcheck source=scripts/download-embedded-agent.sh
-          . ./scripts/download-embedded-agent.sh
-          AGENT_ID="opencode"
-          VERSION=$(resolve_agent_version_gh "$AGENT_ID" "${{ secrets.GITHUB_TOKEN }}")
-          SUBDIR=$(parse_embedded_agent_config "$AGENT_ID" subdir)
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "subdir=$SUBDIR" >> "$GITHUB_OUTPUT"
-          mkdir -p "docker-staging/$SUBDIR"
-
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -550,9 +486,6 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          build-args: |
-            EMBEDDED_AGENT_ID=opencode
-            EMBEDDED_AGENT_VERSION=${{ steps.embedded-agent.outputs.version }}
           tags: |
             ghcr.io/${{ github.repository }}:latest
             ghcr.io/${{ github.repository }}:${{ steps.version.outputs.VERSION }}

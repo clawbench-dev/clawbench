@@ -32,7 +32,6 @@ const i18n = createI18n({
           summarizeBackend: '摘要方式', summarizeDisabled: '禁用', summarizeSimple: '简单', summarizeApi: 'API',
           summarizeModel: '摘要模型',
           apiHeader: 'API', apiBaseUrl: 'API地址', apiKey: 'API密钥',
-          pushEnabled: '启用推送', pushAppKey: 'AppKey', pushMasterSecret: 'MasterSecret',
           portForwardEnabled: '启用端口转发', portForwardPort: '端口',
           ragBaseUrl: '嵌入接口地址', ragModel: '嵌入模型',
           groupSave: '保存', groupSaving: '保存中...', groupCancel: '取消',
@@ -93,18 +92,6 @@ const summarizeGroup: ConfigGroup = {
   commonFieldsVisibleWhen: ['api'],
 }
 
-const pushGroup: ConfigGroup = {
-  groupId: 'push-jpush-group', entryType: 'switch',
-  entryField: { labelKey: 'settings.items.pushEnabled', key: 'push.jpush.enabled', type: 'switch', source: 'server' },
-  optionSubFields: [
-    { when: true, fields: [
-      { labelKey: 'settings.items.pushAppKey', key: 'push.jpush.app_key', type: 'text', source: 'server' },
-      { labelKey: 'settings.items.pushMasterSecret', key: 'push.jpush.master_secret', type: 'password', source: 'server' },
-    ]},
-  ],
-  nonExpandValues: [false],
-}
-
 const ragGroup: ConfigGroup = {
   groupId: 'rag-group', titleKey: 'settings.categories.rag', entryType: 'header',
   entryField: { labelKey: 'settings.categories.rag', key: '_rag-header', type: 'header', source: 'server' },
@@ -112,6 +99,17 @@ const ragGroup: ConfigGroup = {
     { labelKey: 'settings.items.ragBaseUrl', key: 'rag.base_url', type: 'text', source: 'server' },
     { labelKey: 'settings.items.ragModel', key: 'rag.model', type: 'text', source: 'server' },
   ],
+}
+
+const portForwardGroup: ConfigGroup = {
+  groupId: 'port-forward-group', entryType: 'switch',
+  entryField: { labelKey: 'settings.items.portForwardEnabled', key: 'port_forward.enabled', type: 'switch', source: 'server', needsRestart: true },
+  optionSubFields: [
+    { when: true, fields: [
+      { labelKey: 'settings.items.portForwardPort', key: 'port_forward.port', type: 'number', source: 'server', needsRestart: true },
+    ]},
+  ],
+  nonExpandValues: [false],
 }
 
 // ── Mount helper ──────────────────────────────
@@ -178,7 +176,7 @@ describe('SettingsGroupPanel (drill-down detail page)', () => {
     })
 
     it('renders switch toggle for switch group', () => {
-      const wrapper = mountGroup(pushGroup, { 'push.jpush.enabled': true })
+      const wrapper = mountGroup(portForwardGroup, { 'port_forward.enabled': true, 'port_forward.port': 0 })
       expect(wrapper.find('.settings-group__switch-input').exists()).toBe(true)
       expect(wrapper.find('.settings-group__switch-input').element.checked).toBe(true)
     })
@@ -336,39 +334,6 @@ describe('SettingsGroupPanel (drill-down detail page)', () => {
     })
   })
 
-  // ─── 6. Switch group interactions ──────────────────────
-  describe('switch group interactions', () => {
-    it('panel switch toggle sets local value', async () => {
-      const fv = { 'push.jpush.enabled': true, 'push.jpush.app_key': 'test-key', 'push.jpush.master_secret': 'test-secret' }
-      const wrapper = mountGroup(pushGroup, fv)
-      await flush(wrapper)
-
-      // Toggle switch OFF inside detail page
-      const panelSwitch = wrapper.find('.settings-group__switch-input')
-      await toggleCheckbox(panelSwitch, false)
-      await nextTick()
-
-      expect(getState(wrapper).localValues['push.jpush.enabled']).toBe(false)
-    })
-
-    it('PATCHes switch OFF via Save button', async () => {
-      const fv = { 'push.jpush.enabled': true, 'push.jpush.app_key': 'test-key', 'push.jpush.master_secret': 'test-secret' }
-      const wrapper = mountGroup(pushGroup, fv)
-      await flush(wrapper)
-
-      // Toggle switch OFF and save
-      const panelSwitch = wrapper.find('.settings-group__switch-input')
-      await toggleCheckbox(panelSwitch, false)
-      await nextTick()
-
-      await wrapper.find('.settings-group__btn--save').trigger('click')
-      await flush(wrapper)
-
-      expect(mockPatchConfig).toHaveBeenCalledTimes(1)
-      expect(mockPatchConfig.mock.calls[0][0].push.jpush.enabled).toBe(false)
-    })
-  })
-
   // ─── 7. Dynamic options ──────────────────────
   describe('dynamic options', () => {
     it('renders panel fields when fieldOptions provided', async () => {
@@ -481,51 +446,26 @@ describe('SettingsGroupPanel (drill-down detail page)', () => {
     })
   })
 
-  // ─── 13. Panel switch toggle ──────────────────────
-  describe('panel switch toggle', () => {
-    it('toggles local value when switch changed', async () => {
-      const wrapper = mountGroup(pushGroup, { 'push.jpush.enabled': true, 'push.jpush.app_key': 'test' })
-      await flush(wrapper)
-
-      const panelSwitch = wrapper.find('.settings-group__switch-input')
-      expect(panelSwitch.exists()).toBe(true)
-      await toggleCheckbox(panelSwitch, false)
-      await nextTick()
-      expect(getState(wrapper).localValues['push.jpush.enabled']).toBe(false)
-    })
-  })
-
   // ─── 14. deepSetByDotPath ──────────────────────
   describe('deepSetByDotPath (via save)', () => {
     it('builds nested object from dot-path keys', async () => {
-      const fv = { 'push.jpush.enabled': true, 'push.jpush.app_key': 'old-key', 'push.jpush.master_secret': 'old-secret' }
-      const wrapper = mountGroup(pushGroup, fv)
+      const fv = { 'summarize.backend': 'api', 'summarize.model': '', 'summarize.api.base_url': 'old-url', 'summarize.api.key': '' }
+      const wrapper = mountGroup(summarizeGroup, fv)
       await flush(wrapper)
 
-      getState(wrapper).setLocalValue('push.jpush.app_key', 'new-key')
+      getState(wrapper).setLocalValue('summarize.api.base_url', 'https://new.example.com')
       await nextTick()
 
       await wrapper.find('.settings-group__btn--save').trigger('click')
       await flush(wrapper)
 
       expect(mockPatchConfig).toHaveBeenCalledTimes(1)
-      expect(mockPatchConfig.mock.calls[0][0].push.jpush.app_key).toBe('new-key')
+      expect(mockPatchConfig.mock.calls[0][0].summarize.api.base_url).toBe('https://new.example.com')
     })
   })
 
   // ─── 15. Port forward group ──────────────────────
   describe('port forward group', () => {
-    const portForwardGroup: ConfigGroup = {
-      groupId: 'port-forward-group', entryType: 'switch',
-      entryField: { labelKey: 'settings.items.portForwardEnabled', key: 'port_forward.enabled', type: 'switch', source: 'server', needsRestart: true },
-      optionSubFields: [
-        { when: true, fields: [
-          { labelKey: 'settings.items.portForwardPort', key: 'port_forward.port', type: 'number', source: 'server', needsRestart: true },
-        ]},
-      ],
-      nonExpandValues: [false],
-    }
-
     it('renders switch toggle for port forward group', async () => {
       const wrapper = mountGroup(portForwardGroup, { 'port_forward.enabled': true, 'port_forward.port': 0 })
       await flush(wrapper)

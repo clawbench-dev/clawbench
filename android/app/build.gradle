@@ -33,12 +33,6 @@ android {
         versionCode (project.hasProperty('versionCode') ? project.property('versionCode').toInteger() : 1)
         versionName autoVersionName()
 
-        // JPush manifest placeholders (AppKey set at runtime via JPushConfig)
-        manifestPlaceholders = [
-            JPUSH_PKGNAME: applicationId,
-            JPUSH_APPKEY: "",
-            JPUSH_CHANNEL: "developer-default"
-        ]
     }
 
     signingConfigs {
@@ -102,8 +96,7 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.11.0'
     implementation 'com.github.mwiede:jsch:0.2.16'
-    implementation 'cn.jiguang.sdk:jpush:6.1.0'
-    implementation 'cn.jiguang.sdk:jcore:5.4.0'
+
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 
     testImplementation 'junit:junit:4.13.2'

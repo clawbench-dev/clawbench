@@ -55,7 +55,6 @@ sequenceDiagram
     participant SessionExecutor
     participant ws.Manager
     participant 前端
-    participant JPush
 
     ACP后端->>SessionExecutor: PermissionRequest(toolCall)
     SessionExecutor->>ws.Manager: permission_pending 事件
@@ -65,11 +64,11 @@ sequenceDiagram
         前端->>SessionExecutor: POST /api/ai/permission/respond
         SessionExecutor->>ACP后端: RespondPermission(approve/reject)
     else 前端离线
-        ws.Manager->>JPush: 推送通知（含工具名称）
+        ws.Manager->>ws.Manager: 缓冲事件，等待重连
     end
 ```
 
-ACP 后端的工具调用可能需要用户审批（如执行 shell 命令、写入文件）。系统通过 WebSocket 推送 `permission_pending` 事件，移动端离线时通过 JPush 通知提醒。用户批准或拒绝后，前端调用 `/api/ai/permission/respond` 回传结果，系统将响应转发给 ACP 连接。
+ACP 后端的工具调用可能需要用户审批（如执行 shell 命令、写入文件）。系统通过 WebSocket 推送 `permission_pending` 事件，前端离线时缓冲事件等待重连。用户批准或拒绝后，前端调用 `/api/ai/permission/respond` 回传结果，系统将响应转发给 ACP 连接。
 
 ## 功能与设计要点
 
@@ -85,7 +84,7 @@ ACP 后端的工具调用可能需要用户审批（如执行 shell 命令、写
 - **聊天自动摘要**：会话完成后自动为助手消息生成摘要，通过 WebSocket 实时推送。支持三种模式：`simple` 提取最后回答文本（无需 AI 调用），`ai` 异步调用 AI 生成，空字符串禁用。前端 `SummaryToggle` 组件提供按钮模式（聊天中切换）和标签页模式（任务执行详情中切换）。用户快速浏览 AI 回复的核心内容，不必逐行阅读长输出
 - **续接对话**：定时任务的执行结果可以续接为新的交互式聊天会话，继承原始会话的消息、摘要和 `external_session_id`。用户看到定时任务结果后想继续追问，无需从头描述上下文
 - **ACP 模式切换**：ACP 后端支持多种工作模式（如 code、ask、architect），用户可在聊天中切换，切换即时生效并持久化。不同模式适合不同任务，用户按需选择
-- **ACP 权限审批**：ACP 后端请求工具调用审批时，系统推送通知提醒用户。移动端通过 JPush 通知收到审批提醒，避免因未审批而阻塞执行
+- **ACP 权限审批**：ACP 后端请求工具调用审批时，系统推送通知提醒用户，避免因未审批而阻塞执行
 - **ACP 计划模式**：ACP 后端在执行前展示计划（步骤列表），用户可以跟踪进度。让用户理解 AI 将要做什么，而非只能看到结果
 
 ### 设计要点

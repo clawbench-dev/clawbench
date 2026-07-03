@@ -79,7 +79,6 @@ type Config struct {
 	PortForward PortForwardConfig `yaml:"port_forward"` // SSH tunnel server + port forwarding configuration
 	RAG         RAGConfig         `yaml:"rag"`          // RAG history memory configuration
 	Terminal    TerminalConfig    `yaml:"terminal"`     // Interactive web terminal configuration
-	Push        PushConfig        `yaml:"push"`         // Push notification configuration
 }
 
 // TerminalConfig holds configuration for the interactive web terminal.
@@ -107,18 +106,6 @@ func (s SummarizeConfig) IsChatSummaryEnabled() bool {
 		return true
 	}
 	return *s.ChatSummary
-}
-
-// PushConfig holds configuration for push notifications.
-type PushConfig struct {
-	JPush JPushConfig `yaml:"jpush"`
-}
-
-// JPushConfig holds configuration for the JPush push notification service.
-type JPushConfig struct {
-	Enabled      bool   `yaml:"enabled"`
-	AppKey       string `yaml:"app_key"`
-	MasterSecret string `yaml:"master_secret"`
 }
 
 // RAGConfig holds configuration for the RAG history memory system.

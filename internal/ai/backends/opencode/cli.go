@@ -42,10 +42,7 @@ func init() {
 			ID: "opencode", Backend: "opencode", DefaultCmd: "opencode", Name: "OpenCode", Icon: "📟", Specialty: "终端编码工具",
 			ThinkingEffortLevels: []string{"minimal", "high", "max"},
 			AcpCommand:           "opencode acp",
-			EmbeddedSubDir:       "opencode",
-			EmbeddedVersionFile:  "VERSION",
-			EmbeddedGitHubRepo:   "anomalyco/opencode",
-			EmbeddedArchMapping:  "amd64=x64",
+			InstallCmd:           "npm install -g opencode-ai",
 			SortOrder:            3,
 		},
 		ACP: &backends.ACPPlugin{

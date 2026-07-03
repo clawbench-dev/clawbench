@@ -1414,6 +1414,7 @@ export default {
     notDetected: 'Not installed',
     install: 'Install',
     rescan: 'Rescan',
+    rescanning: 'Scanning...',
     installing: 'Installing',
     installSuccess: 'Installed successfully',
     installFailed: 'Install failed',

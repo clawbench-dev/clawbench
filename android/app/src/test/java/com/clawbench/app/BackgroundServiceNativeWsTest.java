@@ -14,10 +14,9 @@ import static org.junit.Assert.*;
 /**
  * Pure unit tests for BackgroundService's nativeWsNeeded logic.
  *
- * Uses reflection instead of Robolectric to avoid JPush SDK VerifyError
- * caused by obfuscated bytecode in the JPush runtime JAR.
+ * Uses reflection instead of Robolectric to avoid SDK compatibility issues.
  *
- * Bug: When no SSH ports are forwarded and JPush is not available,
+ * Bug: When no SSH ports are forwarded,
  * BackgroundService.onCreate() would immediately stopSelf(), preventing
  * the native WebSocket from ever starting. The nativeWsNeeded flag fixes this
  * by making native WS a valid reason for the Service to stay alive.
@@ -550,51 +549,6 @@ public class BackgroundServiceNativeWsTest {
         EventNotificationState state = new EventNotificationState();
         assertEquals("计划任务完成",
                 state.buildNotificationTitle("task_update", "completed"));
-    }
-
-    // =====================================================
-    // Test 11: Native WS should disconnect when JPush is available
-    // When the onMessage handler detects pushAvailable=true,
-    // it should close the WebSocket and stop processing events.
-    // =====================================================
-
-    @Test
-    public void nativeWs_shouldDisconnectWhenPushAvailable() {
-        // Simulates the logic in NativeEventWsListener.onMessage():
-        // if (MainActivity.instance != null && MainActivity.instance.pushAvailable) {
-        //     webSocket.close(1000, "jpush-available");
-        //     return;
-        // }
-        boolean pushAvailable = true;
-        boolean shouldDisconnect = pushAvailable; // simplified condition
-        assertTrue("Native WS should disconnect when JPush is available", shouldDisconnect);
-    }
-
-    @Test
-    public void nativeWs_shouldStayConnectedWhenPushNotAvailable() {
-        boolean pushAvailable = false;
-        boolean shouldDisconnect = pushAvailable;
-        assertFalse("Native WS should stay connected when JPush is not available", shouldDisconnect);
-    }
-
-    @Test
-    public void nativeWs_fullLifecycle_jPushNotReadyThenReady() {
-        // Simulates the race condition:
-        // 1. App goes to background → JPush not ready → native WS starts
-        // 2. JPush registers → pushAvailable = true
-        // 3. Next onMessage → detects pushAvailable → disconnects native WS
-        boolean pushAvailable = false;
-        boolean nativeWsRunning = true;
-
-        // Step 1: Background, JPush not ready — native WS should stay
-        assertFalse("Native WS should stay when JPush not ready", pushAvailable && nativeWsRunning);
-
-        // Step 2: JPush registers
-        pushAvailable = true;
-
-        // Step 3: Next message arrives — native WS should disconnect
-        assertTrue("Native WS should disconnect after JPush becomes available",
-                pushAvailable && nativeWsRunning);
     }
 
     // --- Helper methods ---

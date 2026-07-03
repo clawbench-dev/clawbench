@@ -17,6 +17,7 @@ func init() {
 			ID: "mimo", Backend: "mimo", DefaultCmd: "mimo", Name: "MiMo-Code", Icon: "🚀", Specialty: "小米 MiMo 编码助手",
 			ThinkingEffortLevels: []string{"minimal", "high", "max"},
 			AcpCommand:           "mimo acp",
+			InstallCmd:           "npm install -g @mimo-ai/cli",
 			SortOrder:            12,
 		},
 	})

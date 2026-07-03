@@ -1,4 +1,28 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+
+// Mock dependencies before importing useGlobalEvents
+const mockShowBrowserNotification = vi.fn()
+vi.mock('@/composables/useNotification', () => ({
+    showBrowserNotification: (...args: unknown[]) => mockShowBrowserNotification(...args),
+}))
+
+const mockPlayNotificationSound = vi.fn()
+vi.mock('@/composables/useNotificationSound', () => ({
+    playNotificationSound: () => mockPlayNotificationSound(),
+}))
+
+vi.mock('@/composables/useLocale', () => ({
+    gt: (key: string) => key, // Return key itself for test assertions
+}))
+
+// Mutable flag for app mode — use plain object since vi.mock is hoisted
+const appModeState = { value: false }
+vi.mock('@/composables/useAppMode', () => ({
+    useAppMode: () => ({
+        isAppMode: { get value() { return appModeState.value }, set value(v: boolean) { appModeState.value = v } }
+    }),
+}))
+
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 
 // Mock WebSocket that captures constructor calls
@@ -56,20 +80,16 @@ function nextId(): string {
 
 describe('useGlobalEvents', () => {
     let originalWebSocket: typeof WebSocket
-    let originalFetch: typeof globalThis.fetch
     let events: ReturnType<typeof useGlobalEvents>
     let events2: ReturnType<typeof useGlobalEvents>
 
     beforeEach(() => {
         mockWsInstances = []
+        mockShowBrowserNotification.mockReset()
+        mockPlayNotificationSound.mockReset()
+        appModeState.value = false  // Default to browser mode
         originalWebSocket = globalThis.WebSocket
-        originalFetch = globalThis.fetch
         globalThis.WebSocket = MockWebSocket as any
-        // Mock fetch for push config endpoint
-        globalThis.fetch = vi.fn().mockResolvedValue({
-            ok: true,
-            json: () => Promise.resolve({ jpush_enabled: false, jpush_app_key: '' }),
-        })
         events = useGlobalEvents()
         events2 = undefined as any
     })
@@ -78,7 +98,6 @@ describe('useGlobalEvents', () => {
         events.destroy()
         events2?.destroy()
         globalThis.WebSocket = originalWebSocket
-        globalThis.fetch = originalFetch
     })
 
     function connectAndGetWs(): MockWebSocket {
@@ -193,19 +212,6 @@ describe('useGlobalEvents', () => {
         })
     })
 
-    describe('registerPushId', () => {
-        it('should skip registration in web mode (no AndroidNative)', () => {
-            // In web mode (no AndroidNative), registerPushId is a no-op.
-            // init() calls registerPushId() which early-returns if !isAppMode.
-            // Verify no push/register fetch call is made.
-            events.init()
-            const registerCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
-                (call: any[]) => call[0] === '/api/push/register'
-            )
-            expect(registerCalls).toHaveLength(0)
-        })
-    })
-
     describe('event handler receives correct data', () => {
         it('should pass event name and data to handler', () => {
             const handler = vi.fn()
@@ -306,26 +312,16 @@ describe('useGlobalEvents', () => {
 
             events2.destroy()
         })
-
-        it('should reset pushAvailable and pushRegistered on destroy', () => {
-            events.pushAvailable.value = true
-            events.pushRegistered.value = true
-
-            events.destroy()
-
-            expect(events.pushAvailable.value).toBe(false)
-            expect(events.pushRegistered.value).toBe(false)
-        })
     })
 
     describe('visibility change', () => {
-        it('should disconnect WebSocket on background regardless of push availability', () => {
+        it('should disconnect WebSocket on background in app mode', () => {
+            appModeState.value = true  // App mode: disconnect on background
             // init() registers the visibility change handler
             events.init()
             const ws = connectAndGetWs()
-            events.pushAvailable.value = false
 
-            // Simulate going to background — should disconnect even without push
+            // Simulate going to background — should disconnect in app mode
             Object.defineProperty(document, 'visibilityState', {
                 value: 'hidden',
                 writable: true,
@@ -333,11 +329,29 @@ describe('useGlobalEvents', () => {
             })
             document.dispatchEvent(new Event('visibilitychange'))
 
-            // WebSocket should be closed (always disconnect on background)
+            // WebSocket should be closed (app mode always disconnects on background)
             expect(ws.readyState).toBe(MockWebSocket.CLOSED)
         })
 
+        it('should keep WebSocket alive on background in browser mode', () => {
+            appModeState.value = false  // Browser mode: keep WS alive for notifications
+            events.init()
+            const ws = connectAndGetWs()
+
+            // Simulate going to background
+            Object.defineProperty(document, 'visibilityState', {
+                value: 'hidden',
+                writable: true,
+                configurable: true,
+            })
+            document.dispatchEvent(new Event('visibilitychange'))
+
+            // WebSocket should still be open (browser mode keeps WS alive)
+            expect(ws.readyState).toBe(MockWebSocket.OPEN)
+        })
+
         it('should reconnect on foreground after background', () => {
+            appModeState.value = true  // App mode for disconnect behavior
             events.init()
             const ws = connectAndGetWs()
 
@@ -451,6 +465,286 @@ describe('useGlobalEvents', () => {
             }
 
             expect(handler).toHaveBeenCalledTimes(102)
+        })
+    })
+
+    describe('browser notification on WS events', () => {
+        it('shows browser notification for session completed when page not focused', () => {
+            // Simulate page in background
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'session_update',
+                data: { session_id: 's1', status: 'completed', session_title: 'My Task', response_preview: 'Done!' },
+            })
+
+            expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+            expect(mockShowBrowserNotification).toHaveBeenCalledWith(
+                'Done:My Task',
+                expect.objectContaining({
+                    body: 'Done!',
+                    tag: expect.stringContaining('clawbench-session_update-s1'),
+                })
+            )
+            expect(mockPlayNotificationSound).toHaveBeenCalledTimes(1)
+        })
+
+        it('shows browser notification for session cancelled', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'session_update',
+                data: { session_id: 's2', status: 'cancelled' },
+            })
+
+            expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+        })
+
+        it('shows browser notification for permission_pending with tool name', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'session_update',
+                data: { session_id: 's3', status: 'permission_pending', tool_name: 'Bash' },
+            })
+
+            expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+            expect(mockShowBrowserNotification).toHaveBeenCalledWith(
+                'chat.push.permissionPending',
+                expect.objectContaining({ body: 'Bash' })
+            )
+        })
+
+        it('shows browser notification for task completed', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'task_update',
+                data: { task_id: '5', status: 'completed', session_title: 'Nightly build', response_preview: 'All tests pass' },
+            })
+
+            expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+            expect(mockShowBrowserNotification).toHaveBeenCalledWith(
+                'Done:Nightly build',
+                expect.objectContaining({ body: 'All tests pass' })
+            )
+        })
+
+        it('shows browser notification for task failed', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'task_update',
+                data: { task_id: '6', status: 'failed' },
+            })
+
+            expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+        })
+
+        it('uses default i18n title when no session_title', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'session_update',
+                data: { session_id: 's1', status: 'completed' },
+            })
+
+            expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+            // Backend default: title = "AI Task Completed", alert = "AI session ended"
+            expect(mockShowBrowserNotification).toHaveBeenCalledWith(
+                'chat.push.taskCompleted',
+                expect.objectContaining({ body: 'chat.push.sessionEnded' })
+            )
+        })
+
+        it('uses default i18n title for task_update without session_title', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'task_update',
+                data: { task_id: '5', status: 'completed' },
+            })
+
+            expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+            // Backend default: title = "AI Task Completed", alert = "Scheduled task completed"
+            expect(mockShowBrowserNotification).toHaveBeenCalledWith(
+                'chat.push.taskCompleted',
+                expect.objectContaining({ body: 'chat.push.scheduledTaskDone' })
+            )
+        })
+
+        it('uses failed-specific i18n for task_update with status=failed', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'task_update',
+                data: { task_id: '6', status: 'failed' },
+            })
+
+            expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+            expect(mockShowBrowserNotification).toHaveBeenCalledWith(
+                'chat.push.taskCompleted',
+                expect.objectContaining({ body: 'chat.push.taskFailed' })
+            )
+        })
+
+        it('uses default i18n body for permission_pending without tool_name', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'session_update',
+                data: { session_id: 's3', status: 'permission_pending' },
+            })
+
+            expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+            // Backend: title = "Approval Required", alert = "Approval Required"
+            expect(mockShowBrowserNotification).toHaveBeenCalledWith(
+                'chat.push.permissionPending',
+                expect.objectContaining({ body: 'chat.push.permissionPending' })
+            )
+        })
+
+        it('truncates long response_preview to 512 code points (mirrors backend truncateForPush)', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const longPreview = 'A'.repeat(600)
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'session_update',
+                data: { session_id: 's1', status: 'completed', session_title: 'Test', response_preview: longPreview },
+            })
+
+            const body = mockShowBrowserNotification.mock.calls[0][1].body
+            expect(body.length).toBeLessThan(600)
+            expect(body.endsWith('…')).toBe(true)
+        })
+
+        it('truncates by Unicode code points not UTF-16 code units (emoji safety)', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            // Each emoji is 2 UTF-16 code units but 1 code point
+            const emoji = '🎉'
+            const longPreview = emoji.repeat(600) // 600 code points, 1200 UTF-16 units
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'session_update',
+                data: { session_id: 's1', status: 'completed', session_title: 'Test', response_preview: longPreview },
+            })
+
+            const body = mockShowBrowserNotification.mock.calls[0][1].body
+            // Should be 512 emoji + "…", NOT truncated at 512 UTF-16 units (256 emoji)
+            const emojiCount = [...body.replace('…', '')].length
+            expect(emojiCount).toBe(512)
+        })
+
+        it('does not show notification for non-terminal session statuses', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({ type: 'event', id: nextId(), event: 'session_update', data: { status: 'running' } })
+            ws.receive({ type: 'event', id: nextId(), event: 'session_update', data: { status: 'permission_resolved' } })
+
+            expect(mockShowBrowserNotification).not.toHaveBeenCalled()
+        })
+
+        it('does not show notification for non-terminal task statuses', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({ type: 'event', id: nextId(), event: 'task_update', data: { status: 'running' } })
+
+            expect(mockShowBrowserNotification).not.toHaveBeenCalled()
+        })
+
+        it('notification onClick dispatches clawbench-open-session for session_update', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+            const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'session_update',
+                data: { session_id: 's1', status: 'completed', project_path: '/proj' },
+            })
+
+            // Extract onClick callback from the notification call
+            const onClick = mockShowBrowserNotification.mock.calls[0][1].onClick
+            expect(onClick).toBeDefined()
+            onClick()
+
+            expect(dispatchSpy).toHaveBeenCalledWith(
+                expect.objectContaining({ type: 'clawbench-open-session' })
+            )
+            dispatchSpy.mockRestore()
+        })
+
+        it('notification onClick dispatches clawbench-open-task for task_update', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+            const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'task_update',
+                data: { task_id: '5', execution_id: 'e1', status: 'completed', project_path: '/proj' },
+            })
+
+            const onClick = mockShowBrowserNotification.mock.calls[0][1].onClick
+            expect(onClick).toBeDefined()
+            onClick()
+
+            expect(dispatchSpy).toHaveBeenCalledWith(
+                expect.objectContaining({ type: 'clawbench-open-task' })
+            )
+            dispatchSpy.mockRestore()
         })
     })
 })

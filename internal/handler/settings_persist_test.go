@@ -500,36 +500,6 @@ func TestPersist_PortForwardPort(t *testing.T) {
 	assert.Equal(t, 2222, getNestedValue(cfg, "port_forward.port"))
 }
 
-// ─── Push section ──────────────────────────────────────
-
-func TestPersist_PushJPushEnabled(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-
-	cfg := patchAndReadConfig(t, `{"push":{"jpush":{"enabled":true}}}`)
-	push, ok := cfg["push"].(map[string]any)
-	require.True(t, ok, "push should be a map")
-	jpush, ok := push["jpush"].(map[string]any)
-	require.True(t, ok, "jpush should be a map")
-	assert.Equal(t, true, jpush["enabled"])
-}
-
-func TestPersist_PushJPushAppKey(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-
-	cfg := patchAndReadConfig(t, `{"push":{"jpush":{"app_key":"new-app-key"}}}`)
-	push, ok := cfg["push"].(map[string]any)
-	require.True(t, ok, "push should be a map")
-	jpush, ok := push["jpush"].(map[string]any)
-	require.True(t, ok, "jpush should be a map")
-	assert.Equal(t, "new-app-key", jpush["app_key"])
-}
-
 // ─── Multi-field PATCH ──────────────────────────────────────
 
 func TestPersist_MultipleFieldsInOnePatch(t *testing.T) {

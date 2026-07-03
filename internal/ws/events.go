@@ -141,11 +141,6 @@ func readClientMessages(conn *websocket.Conn, mgr *Manager, clientID string) {
 			slog.Debug("ws: ack received", "id", msg.ID, "client_id", clientID)
 		case "pong":
 			// Connection alive
-		case "register":
-			// Client registering its JPush push registration ID
-			if msg.PushRegID != "" {
-				mgr.RegisterPushID(msg.PushRegID, clientID)
-			}
 		default:
 			slog.Warn("ws: unknown client message type", "type", msg.Type, "client_id", clientID)
 		}

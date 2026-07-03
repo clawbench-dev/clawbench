@@ -17,6 +17,7 @@ func init() {
 			ID: "codebuddy", Backend: "codebuddy", DefaultCmd: "codebuddy", Name: "Codebuddy", Icon: "🐛", Specialty: "全栈开发助手",
 			ThinkingEffortLevels: []string{"low", "medium", "high", "xhigh"},
 			AcpCommand:           "codebuddy --acp",
+			InstallCmd:           "npm install -g @tencent-ai/codebuddy-code",
 			SortOrder:            2,
 		},
 		ACP: &backends.ACPPlugin{

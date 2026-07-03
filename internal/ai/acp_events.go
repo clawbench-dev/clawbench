@@ -277,6 +277,11 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		forwardACPEvent(ch, StreamEvent{Type: "usage_update", Usage: usageState})
 		if conn != nil {
 			conn.SetCachedUsageState(usageState)
+			// Also cache in agent-level registry so usage chips appear on
+			// session switch / reconnect without waiting for a new UsageUpdate.
+			if agentID := conn.AgentID(); agentID != "" {
+				GetAgentCapabilityRegistry().UpdateUsageState(agentID, usageState)
+			}
 		}
 	}
 }

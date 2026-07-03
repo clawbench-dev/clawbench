@@ -25,39 +25,6 @@ WORKDIR /app
 # Copy binary (frontend is embedded via go:embed)
 COPY clawbench .
 
-# Copy embedded agent download helper and config
-COPY scripts/download-embedded-agent.sh ./scripts/download-embedded-agent.sh
-COPY embedded-agents.yaml ./embedded-agents.yaml
-
-# Copy embedded agent binary — multi-arch aware
-# Local build: scripts/docker-build.sh populates docker-staging/
-# CI build: passes EMBEDDED_AGENT_ID + EMBEDDED_AGENT_VERSION build args; the RUN step
-# below downloads the correct agent binary for each target architecture.
-ARG TARGETARCH
-ARG EMBEDDED_AGENT_ID=""
-ARG EMBEDDED_AGENT_VERSION=""
-# Backward compat: OPENCODE_VERSION maps to EMBEDDED_AGENT_ID=opencode
-# If both OPENCODE_VERSION and EMBEDDED_AGENT_* are set, EMBEDDED_AGENT_* takes precedence.
-ARG OPENCODE_VERSION=""
-
-# Use bash for RUN commands (download-embedded-agent.sh requires bash features)
-SHELL ["/bin/bash", "-c"]
-
-RUN if [ -n "$EMBEDDED_AGENT_ID" ] && [ -n "$EMBEDDED_AGENT_VERSION" ]; then \
-      source ./scripts/download-embedded-agent.sh && \
-      download_embedded_agent_for_docker "$EMBEDDED_AGENT_ID" "$EMBEDDED_AGENT_VERSION"; \
-    elif [ -n "$OPENCODE_VERSION" ]; then \
-      source ./scripts/download-embedded-agent.sh && \
-      download_embedded_agent_for_docker opencode "$OPENCODE_VERSION"; \
-    else \
-      mkdir -p agents; \
-    fi
-
-# Copy local docker-staging/ as fallback (local builds only; no-op in CI when version is set).
-# When a version is set above, the RUN step already populated agents/,
-# and this COPY overlays an empty directory (harmless).
-COPY docker-staging/ agents/
-
 # Data directory (mounted as volume for persistence)
 RUN mkdir -p /data/.clawbench
 

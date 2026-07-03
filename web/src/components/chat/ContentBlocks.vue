@@ -1177,6 +1177,12 @@ onUnmounted(() => {
   color: #a78bfa;
 }
 
+/* Inside user bubble: use white-based palette for contrast against colored background */
+.chat-message.user .at-command-badge {
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.95);
+}
+
 /* Slash command badge in user messages (ACP backend commands) */
 .slash-command-badge {
   display: inline-block;
@@ -1194,6 +1200,12 @@ onUnmounted(() => {
 :root[data-theme="dark"] .slash-command-badge {
   background: color-mix(in srgb, #38bdf8 15%, transparent);
   color: #38bdf8;
+}
+
+/* Inside user bubble: use white-based palette for contrast against colored background */
+.chat-message.user .slash-command-badge {
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.95);
 }
 
 .at-command-rest {
