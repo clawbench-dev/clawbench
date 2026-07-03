@@ -18,6 +18,7 @@
         class="lightbox-content"
         :class="{ grabbing: isDragging, 'slide-left': slideDirection === 'left', 'slide-right': slideDirection === 'right' }"
         ref="contentRef"
+        @click="handleContentClick"
         @wheel.prevent="handleWheel"
         @mousedown="handleMouseDown"
         @touchstart.passive="handleTouchStart"
@@ -358,6 +359,13 @@ function handleDownload() {
     setTimeout(() => { document.body.removeChild(a) }, 1000)
 }
 
+function handleContentClick(e) {
+    // Close lightbox when clicking the blank area (not on the image/svg itself)
+    if (e.target === contentRef.value || e.target.closest('.lb-loading-spinner')) {
+        close()
+    }
+}
+
 function handleWheel(e) {
     const delta = e.deltaY > 0 ? 0.85 : 1.2
     const newScale = Math.min(Math.max(scale.value * delta, 0.1), 10)
@@ -554,7 +562,7 @@ onUnmounted(() => {
 .lightbox-backdrop {
     position: absolute;
     inset: 0;
-    background: var(--lb-bg, rgba(0,0,0,0.92));
+    background: var(--lb-bg, rgba(0,0,0,0.65));
     cursor: zoom-out;
 }
 
