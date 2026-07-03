@@ -109,7 +109,7 @@ async function fetchPendingEvents() {
             ? `/api/ai/events/pending?after=${encodeURIComponent(lastSeenId)}`
             : '/api/ai/events/pending'
 
-        const resp = await fetch(url)
+        const resp = await fetch(url, { credentials: 'same-origin' })
         if (!resp.ok) return
 
         const data = await resp.json()

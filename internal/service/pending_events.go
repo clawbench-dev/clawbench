@@ -73,23 +73,12 @@ func StorePendingEvent(eventID, eventType, payload, expiresAt string) error {
 		`INSERT OR IGNORE INTO pending_events (event_id, event_type, payload, expires_at) VALUES (?, ?, ?, ?)`,
 		eventID, eventType, payload, expiresAt,
 	)
-	if err != nil {
-		return err
-	}
-	// Evict expired events
-	_, _ = DB.Exec(`DELETE FROM pending_events WHERE expires_at < datetime('now')`)
-	// Cap total rows
-	_, _ = DB.Exec(
-		`DELETE FROM pending_events WHERE id NOT IN (
-			SELECT id FROM pending_events ORDER BY created_at DESC LIMIT ?
-		)`,
-		pendingEventMaxRows,
-	)
-	return nil
+	return err
 }
 
 // GetPendingEvents returns non-expired events optionally after a cursor event_id.
-// Results are ordered by id ASC.
+// Results are ordered by id ASC. If the cursor event_id has expired and been
+// cleaned up, returns an empty slice (client should reset cursor and re-fetch).
 func GetPendingEvents(afterEventID string) ([]PendingEvent, error) {
 	if DB == nil || DBRead == nil {
 		return nil, nil
@@ -98,11 +87,23 @@ func GetPendingEvents(afterEventID string) ([]PendingEvent, error) {
 	var rows *sql.Rows
 	var err error
 	if afterEventID != "" {
+		// Check if cursor event still exists; if not, return empty
+		// to signal client to reset cursor
+		var cursorExists int
+		if err := DBRead.QueryRow(
+			`SELECT COUNT(*) FROM pending_events WHERE event_id = ?`,
+			afterEventID,
+		).Scan(&cursorExists); err != nil {
+			return nil, err
+		}
+		if cursorExists == 0 {
+			return []PendingEvent{}, nil
+		}
 		rows, err = DBRead.Query(
 			`SELECT event_id, event_type, payload, expires_at, created_at
 			 FROM pending_events
 			 WHERE expires_at >= datetime('now')
-			   AND id > (SELECT COALESCE(id, 0) FROM pending_events WHERE event_id = ?)
+			   AND id > (SELECT id FROM pending_events WHERE event_id = ?)
 			 ORDER BY id ASC`,
 			afterEventID,
 		)
@@ -130,7 +131,7 @@ func GetPendingEvents(afterEventID string) ([]PendingEvent, error) {
 	return events, rows.Err()
 }
 
-// CleanupPendingEvents removes expired events.
+// CleanupPendingEvents removes expired events and caps total rows.
 func CleanupPendingEvents() {
 	if DB == nil {
 		return
@@ -141,6 +142,13 @@ func CleanupPendingEvents() {
 	} else if n, _ := result.RowsAffected(); n > 0 {
 		slog.Debug("pending_events: cleaned up expired", "count", n)
 	}
+	// Cap total rows
+	_, _ = DB.Exec(
+		`DELETE FROM pending_events WHERE id NOT IN (
+			SELECT id FROM pending_events ORDER BY created_at DESC LIMIT ?
+		)`,
+		pendingEventMaxRows,
+	)
 }
 
 // StoreNotifiableEvent persists a notifiable WS event if it's a terminal state.
@@ -166,6 +174,10 @@ func StoreNotifiableEvent(msg ws.ServerMessage) {
 		status = d.Status
 	case *ws.TaskUpdateData:
 		status = d.Status
+	case map[string]any:
+		if s, ok := d["status"].(string); ok {
+			status = s
+		}
 	}
 	expiresAt := pendingEventExpiresAt(msg.Event, status)
 	if err := StorePendingEvent(msg.ID, msg.Event, string(payload), expiresAt); err != nil {

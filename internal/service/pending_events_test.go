@@ -191,3 +191,26 @@ func TestPendingEventExpiresAt(t *testing.T) {
 		t.Fatalf("completed expiry should be ~24h, got %v", compDiff)
 	}
 }
+
+func TestGetPendingEventsExpiredCursor(t *testing.T) {
+	db, teardown := setupTestDBForPendingEvents(t)
+	defer teardown()
+	origDB := DB
+	origDBRead := DBRead
+	DB = db
+	DBRead = db
+	defer func() { DB = origDB; DBRead = origDBRead }()
+
+	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	StorePendingEvent("evt_20", "session_update", `{}`, expiresAt)
+
+	// Query with a cursor that doesn't exist (expired and cleaned up)
+	// Should return empty slice, not all events
+	events, err := GetPendingEvents("evt_10_gone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("expected 0 for expired cursor, got %d", len(events))
+	}
+}
