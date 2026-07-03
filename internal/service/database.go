@@ -2,6 +2,7 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -36,6 +37,14 @@ func WriteExec(query string, args ...any) (sql.Result, error) {
 	return DB.Exec(query, args...)
 }
 
+// WriteExecContext executes a write statement on DB under the write mutex with context support.
+// Use this instead of DB.ExecContext for writes that may need request-scoped cancellation.
+func WriteExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+	return DB.ExecContext(ctx, query, args...)
+}
+
 // WriteBegin starts a write transaction on DB under the write mutex.
 // The caller MUST call tx.Commit() or tx.Rollback() to release the mutex.
 // Typical usage:
@@ -52,6 +61,21 @@ func WriteBegin() (*sql.Tx, error) {
 		writeMu.Unlock()
 	}
 	return tx, err
+}
+
+// MutexDBExec wraps a DBExec to acquire writeMu on every Exec call.
+// Pass this to functions that accept DBExec when called from production code.
+// Tests should pass the unwrapped *sql.DB directly (single-goroutine, no contention).
+type MutexDBExec struct{ inner DBExec }
+
+func (m MutexDBExec) Exec(query string, args ...any) (sql.Result, error) {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+	return m.inner.Exec(query, args...)
+}
+
+func (m MutexDBExec) QueryRow(query string, args ...any) *sql.Row {
+	return m.inner.QueryRow(query, args...)
 }
 
 // InitDB initializes the SQLite database with latest schema.

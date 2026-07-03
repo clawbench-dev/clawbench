@@ -69,7 +69,7 @@ func StorePendingEvent(eventID, eventType, payload, expiresAt string) error {
 	if DB == nil {
 		return nil
 	}
-	_, err := DB.Exec(
+	_, err := WriteExec(
 		`INSERT OR IGNORE INTO pending_events (event_id, event_type, payload, expires_at) VALUES (?, ?, ?, ?)`,
 		eventID, eventType, payload, expiresAt,
 	)
@@ -136,14 +136,14 @@ func CleanupPendingEvents() {
 	if DB == nil {
 		return
 	}
-	result, err := DB.Exec(`DELETE FROM pending_events WHERE expires_at < datetime('now')`)
+	result, err := WriteExec(`DELETE FROM pending_events WHERE expires_at < datetime('now')`)
 	if err != nil {
 		slog.Warn("pending_events: cleanup failed", "error", err)
 	} else if n, _ := result.RowsAffected(); n > 0 {
 		slog.Debug("pending_events: cleaned up expired", "count", n)
 	}
 	// Cap total rows
-	_, _ = DB.Exec(
+	_, _ = WriteExec(
 		`DELETE FROM pending_events WHERE id NOT IN (
 			SELECT id FROM pending_events ORDER BY created_at DESC LIMIT ?
 		)`,

@@ -109,7 +109,7 @@ func ServeSessionResume(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Restore the session
-		_, err = service.DB.ExecContext(
+		_, err = service.WriteExecContext(
 			r.Context(),
 			"UPDATE chat_sessions SET deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 			req.SessionID,

@@ -27,7 +27,7 @@ type ToolCallRecord struct {
 // On conflict (same tool_id + message_id), input is overwritten,
 // output is only overwritten if non-empty, and status/done/summary are always updated.
 func UpsertToolCall(messageID int64, sessionID, toolID, name string, input json.RawMessage, output, status, summary string, done bool) error {
-	_, err := DB.ExecContext(context.Background(), `
+	_, err := WriteExecContext(context.Background(), `
 		INSERT INTO chat_tool_calls (message_id, session_id, tool_id, name, input, output, status, done, summary)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(tool_id, message_id) DO UPDATE SET
