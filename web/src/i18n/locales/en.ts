@@ -261,7 +261,7 @@ export default {
       confirm: 'Delete current session? This action cannot be undone.',
     },
     stream: {
-      aiReplied: 'AI replied',
+      aiReplied: 'AI output complete',
       clickToViewReply: 'Click to view reply',
       connectionFailed: 'Connection failed, please refresh',
       userCancelled: 'Cancelled by user',

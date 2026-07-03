@@ -261,7 +261,7 @@ export default {
       confirm: '确认删除当前会话？此操作不可撤销。',
     },
     stream: {
-      aiReplied: 'AI 已回复',
+      aiReplied: 'AI 输出完毕',
       clickToViewReply: '点击查看回复详情',
       connectionFailed: '连接失败，请刷新页面',
       userCancelled: '用户已中断',
