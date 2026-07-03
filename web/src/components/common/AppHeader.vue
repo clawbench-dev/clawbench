@@ -107,6 +107,7 @@ import { baseName } from '@/utils/path.ts'
 import { store } from '@/stores/app.ts'
 import { setPendingManageNavigation } from '@/composables/useCommitNavigation.ts'
 import PopupMenu from '@/components/common/PopupMenu.vue'
+import { getZoomedViewport } from '@/composables/useSettingsConfig'
 
 const { t } = useI18n()
 const { wsStatus } = useGlobalEvents()
@@ -345,10 +346,11 @@ function toggleServerDropdown() {
 function updateServerDropdownPosition() {
     if (!statusBtnRef.value) return
     const rect = statusBtnRef.value.getBoundingClientRect()
+    const vp = getZoomedViewport()
     serverDropdownStyle.value = {
         position: 'fixed',
         top: `${rect.bottom + 4}px`,
-        right: `${window.innerWidth - rect.right}px`,
+        right: `${vp.width - rect.right}px`,
         left: 'auto',
         minWidth: '200px',
         maxWidth: '260px',

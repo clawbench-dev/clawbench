@@ -13,6 +13,8 @@
  *   (useful for autocomplete menus that logically start at the left of the input).
  */
 
+import { getZoomedViewport } from '@/composables/useSettingsConfig'
+
 /**
  * Compute the CSS style object for a popup menu's fixed position.
  *
@@ -32,12 +34,13 @@ export function computeMenuStyle(
     anchor?: 'left' | 'right' | 'auto'
   } = {}
 ): Record<string, string> {
+  const defaultVp = typeof window !== 'undefined' ? getZoomedViewport() : { width: 1024, height: 768 }
   const {
     maxWidth = 220,
     maxHeight = 320,
     edgeMargin = 6,
-    viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1024,
-    viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 768,
+    viewportWidth = defaultVp.width,
+    viewportHeight = defaultVp.height,
     anchor = 'auto',
   } = opts
 

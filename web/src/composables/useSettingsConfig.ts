@@ -137,16 +137,6 @@ const legacyKeys: Record<string, {
     key: '',
     format: 'raw',
   },
-  pushPersistentNotification: {
-    key: '',
-    format: 'raw',
-    sideEffect(value: boolean) {
-      try {
-        const native = (window as any).AndroidNative
-        if (native?.setPushPersistentNotification) native.setPushPersistentNotification(value)
-      } catch { /* not in app mode */ }
-    },
-  },
   sortField: {
     key: '',
     format: 'raw',
@@ -165,6 +155,13 @@ const legacyKeys: Record<string, {
     format: 'raw',
     sideEffect(value: string) {
       window.dispatchEvent(new CustomEvent('clawbench-sort-change', { detail: { dir: value } }))
+    },
+  },
+  uiScale: {
+    key: '',
+    format: 'raw',
+    sideEffect(value: number) {
+      applyUIScale(value)
     },
   },
 }
@@ -200,6 +197,40 @@ function readLocalValue(settingsKey: string, defaultValue: any): any {
   return defaultValue
 }
 
+/** Apply global UI scale via CSS zoom — true browser-zoom behavior, no position:fixed breakage. */
+export function applyUIScale(scale: number) {
+  const el = document.documentElement
+  const s = Math.max(0.5, Math.min(2, scale))
+  if (s === 1) {
+    el.style.zoom = ''
+  } else {
+    el.style.zoom = String(s)
+  }
+}
+
+/** Read the current CSS zoom factor applied to <html>. Returns 1 if not set. */
+export function getUIScale(): number {
+  const z = document.documentElement.style.zoom
+  if (!z) return 1
+  const n = Number(z)
+  return isNaN(n) ? 1 : n
+}
+
+/**
+ * Get viewport dimensions in the same coordinate space as getBoundingClientRect()
+ * under CSS zoom. When zoom is active on <html>, getBoundingClientRect() returns
+ * zoom-scaled values but window.innerWidth/innerHeight do not. This function
+ * returns the viewport dimensions scaled by the current zoom so that positioning
+ * math (e.g., `viewportWidth - rect.right`) works correctly.
+ */
+export function getZoomedViewport(): { width: number; height: number } {
+  const z = getUIScale()
+  return {
+    width: window.innerWidth * z,
+    height: window.innerHeight * z,
+  }
+}
+
 const localDefaults: Record<string, any> = {
   theme: 'auto',
   locale: 'zh',
@@ -213,9 +244,9 @@ const localDefaults: Record<string, any> = {
   androidLogCapture: false,
   swipeSession: false,
   preventScreenLock: true,
-  pushPersistentNotification: true,
   sortField: null,
   sortDir: 'asc',
+  uiScale: 1,
 }
 
 // Build reactive local config from legacy localStorage + defaults
@@ -284,7 +315,6 @@ const serverDefaults: Record<string, any> = {
   'rag.search_limit': 5,
   'rag.search_pool_size': 20,
   'rag.retention_days': 90,
-  'push.jpush.enabled': false,
   'tts.piper.noise_scale': 0.667,
   'tts.piper.length_scale': 1.0,
   'tts.piper.sentence_silence': 0.2,
@@ -359,15 +389,7 @@ export function useSettingsConfig() {
   function syncNativeSettings() {
     try {
       const native = (window as any).AndroidNative
-      if (native?.isPushPersistentNotification) {
-        const nativeValue = native.isPushPersistentNotification()
-        if (localConfig.pushPersistentNotification !== nativeValue) {
-          localConfig.pushPersistentNotification = nativeValue
-          try {
-            localStorage.setItem(LOCAL_PREFIX + 'pushPersistentNotification', JSON.stringify(nativeValue))
-          } catch { /* ignore */ }
-        }
-      }
+      // No native push settings to sync after JPush removal
     } catch { /* not in app mode */ }
   }
 

@@ -31,6 +31,7 @@ export interface ItemSpec {
   /** Transform raw value for display (e.g., 0 → 'auto' for port_forward.port) */
   displayTransform?: (value: any) => any
   defaultValue?: any
+  displayFormat?: 'percent' | 'raw'
 }
 
 // ── Config Group types ──────────────────────────────────────
@@ -64,7 +65,7 @@ interface ConfigGroupBase {
 /**
  * Discriminated union: entryType constrains entryField.type at compile time.
  * - 'select': title row IS the selector (e.g., tts.engine, summarize.backend)
- * - 'switch': title row IS the switch (e.g., push.jpush.enabled, port_forward.enabled)
+ * - 'switch': title row IS the switch (e.g., port_forward.enabled)
  * - 'header': plain title row, click to expand all fields (e.g., RAG)
  */
 export type ConfigGroup =
@@ -93,7 +94,7 @@ export const categoryItems: Record<string, ItemSpec[]> = {
       { labelKey: 'settings.items.localeZh', value: 'zh' },
       { labelKey: 'settings.items.localeEn', value: 'en' },
     ]},
-    { labelKey: 'settings.items.uiScale', descriptionKey: 'settings.items.uiScaleDesc', key: 'uiScale', type: 'slider', source: 'local', min: 0.5, max: 2, step: 0.05, defaultValue: 1 },
+    { labelKey: 'settings.items.uiScale', descriptionKey: 'settings.items.uiScaleDesc', key: 'uiScale', type: 'slider', source: 'local', min: 0.5, max: 2, step: 0.05, defaultValue: 1, displayFormat: 'percent' },
   ],
   agents: [],
   chat: [
@@ -202,13 +203,6 @@ export const categoryItems: Record<string, ItemSpec[]> = {
   portForward: [
     { labelKey: 'settings.items.portForwardEnabled', descriptionKey: 'settings.items.portForwardEnabledDesc', key: 'port_forward.enabled', type: 'switch', source: 'server', needsRestart: true },
     { labelKey: 'settings.items.portForwardPort', descriptionKey: 'settings.items.portForwardPortDesc', key: 'port_forward.port', type: 'number', source: 'server', needsRestart: true, displayTransform: (v: any) => v === 0 ? '__auto__' : v },
-  ],
-  // Push: flattened from group
-  push: [
-    { labelKey: 'settings.items.pushPersistentNotification', descriptionKey: 'settings.items.pushPersistentNotificationDesc', key: 'pushPersistentNotification', type: 'switch', source: 'local' },
-    { labelKey: 'settings.items.pushEnabled', descriptionKey: 'settings.items.pushEnabledDesc', key: 'push.jpush.enabled', type: 'switch', source: 'server' },
-    { labelKey: 'settings.items.pushAppKey', descriptionKey: 'settings.items.pushAppKeyDesc', key: 'push.jpush.app_key', type: 'text', source: 'server', dependsOn: { key: 'push.jpush.enabled', value: true } },
-    { labelKey: 'settings.items.pushMasterSecret', descriptionKey: 'settings.items.pushMasterSecretDesc', key: 'push.jpush.master_secret', type: 'password', source: 'server', dependsOn: { key: 'push.jpush.enabled', value: true } },
   ],
   android: [
     { labelKey: 'settings.items.androidLogCapture', descriptionKey: 'settings.items.androidLogCaptureDesc', key: 'androidLogCapture', type: 'switch', source: 'local' },

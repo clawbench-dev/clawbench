@@ -3,71 +3,109 @@
     <!-- Dir nav -->
     <div id="dirNav" class="dir-nav">
       <div class="dir-toolbar">
-        <div class="toolbar-dropdown-wrap">
-          <button class="toolbar-btn" :class="{ 'sort-active': sortField }" @click="sortMenuOpen = !sortMenuOpen" :title="t('file.sortDefault')">
-            <ArrowDownAz v-if="!sortField || sortDir === 'asc'" :size="16" />
-            <ArrowUpZa v-else :size="16" />
-          </button>
-          <div v-if="sortMenuOpen" class="toolbar-dropdown" @click.stop>
-            <button class="toolbar-dropdown-item" :class="{ active: sortField === 'name' }" @click="onSortSelect('name')">
-              <ArrowDownAz :size="14" />
-              <span>{{ t('file.sortByName') }}</span>
-              <ChevronUp v-if="sortField === 'name' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
-              <ChevronDown v-else-if="sortField === 'name' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
+        <div ref="dirToolbarRef" class="dir-toolbar-btns">
+          <div class="toolbar-dropdown-wrap">
+            <button class="toolbar-btn" :class="{ 'sort-active': sortField }" @click="sortMenuOpen = !sortMenuOpen" :title="t('file.sortDefault')">
+              <ArrowDownAz v-if="!sortField || sortDir === 'asc'" :size="16" />
+              <ArrowUpZa v-else :size="16" />
             </button>
-            <button class="toolbar-dropdown-item" :class="{ active: sortField === 'time' }" @click="onSortSelect('time')">
-              <Clock :size="14" />
-              <span>{{ t('file.sortByTime') }}</span>
-              <ChevronUp v-if="sortField === 'time' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
-              <ChevronDown v-else-if="sortField === 'time' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
-            </button>
-            <button class="toolbar-dropdown-item" :class="{ active: sortField === 'type' }" @click="onSortSelect('type')">
-              <FileText :size="14" />
-              <span>{{ t('file.sortByType') }}</span>
-              <ChevronUp v-if="sortField === 'type' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
-              <ChevronDown v-else-if="sortField === 'type' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
-            </button>
-            <button class="toolbar-dropdown-item" :class="{ active: sortField === 'size' }" @click="onSortSelect('size')">
-              <HardDrive :size="14" />
-              <span>{{ t('file.sortBySize') }}</span>
-              <ChevronUp v-if="sortField === 'size' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
-              <ChevronDown v-else-if="sortField === 'size' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
-            </button>
+            <div v-if="sortMenuOpen" class="toolbar-dropdown" @click.stop>
+              <button class="toolbar-dropdown-item" :class="{ active: sortField === 'name' }" @click="onSortSelect('name')">
+                <ArrowDownAz :size="14" />
+                <span>{{ t('file.sortByName') }}</span>
+                <ChevronUp v-if="sortField === 'name' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
+                <ChevronDown v-else-if="sortField === 'name' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
+              </button>
+              <button class="toolbar-dropdown-item" :class="{ active: sortField === 'time' }" @click="onSortSelect('time')">
+                <Clock :size="14" />
+                <span>{{ t('file.sortByTime') }}</span>
+                <ChevronUp v-if="sortField === 'time' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
+                <ChevronDown v-else-if="sortField === 'time' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
+              </button>
+              <button class="toolbar-dropdown-item" :class="{ active: sortField === 'type' }" @click="onSortSelect('type')">
+                <FileText :size="14" />
+                <span>{{ t('file.sortByType') }}</span>
+                <ChevronUp v-if="sortField === 'type' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
+                <ChevronDown v-else-if="sortField === 'type' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
+              </button>
+              <button class="toolbar-dropdown-item" :class="{ active: sortField === 'size' }" @click="onSortSelect('size')">
+                <HardDrive :size="14" />
+                <span>{{ t('file.sortBySize') }}</span>
+                <ChevronUp v-if="sortField === 'size' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
+                <ChevronDown v-else-if="sortField === 'size' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
+              </button>
+            </div>
           </div>
-        </div>
-        <button class="toolbar-btn" @click="$emit('toggleHidden')" :title="showHidden ? t('file.hideHiddenFiles') : t('file.showHiddenFiles')">
-          <EyeOff v-if="!showHidden" :size="16" />
-          <Eye v-else :size="16" />
-        </button>
-        <button class="toolbar-btn" @click="$emit('refresh')" :title="t('nav.refresh')">
-          <RotateCw :size="16" />
-        </button>
-        <button class="toolbar-btn" :class="{ active: multiSelect.active }" @click="multiSelect.active ? exitMultiSelect() : enterMultiSelect()" :title="multiSelect.active ? t('file.multiSelect.exit') : t('file.multiSelect.enter')">
-          <CheckSquare :size="16" />
-        </button>
-        <div class="toolbar-dropdown-wrap">
-          <button class="toolbar-btn" @click="moreMenuOpen = !moreMenuOpen" :title="t('nav.more')">
-            <MoreHorizontal :size="16" />
+          <button v-if="toolbarInlineIds.includes('hidden')" class="toolbar-btn" @click="$emit('toggleHidden')" :title="showHidden ? t('file.hideHiddenFiles') : t('file.showHiddenFiles')">
+            <EyeOff v-if="!showHidden" :size="16" />
+            <Eye v-else :size="16" />
           </button>
-          <div v-if="moreMenuOpen" class="toolbar-dropdown toolbar-dropdown-right" @click.stop>
-            <button class="toolbar-dropdown-item" @click="doNewFile(); moreMenuOpen = false">
-              <FilePlus :size="14" />
-              <span>{{ t('file.context.newFile') }}</span>
+          <button v-if="toolbarInlineIds.includes('refresh')" class="toolbar-btn" @click="$emit('refresh')" :title="t('nav.refresh')">
+            <RotateCw :size="16" />
+          </button>
+          <button v-if="toolbarInlineIds.includes('multiselect')" class="toolbar-btn" :class="{ active: multiSelect.active }" @click="multiSelect.active ? exitMultiSelect() : enterMultiSelect()" :title="multiSelect.active ? t('file.multiSelect.exit') : t('file.multiSelect.enter')">
+            <CheckSquare :size="16" />
+          </button>
+          <button v-if="toolbarInlineIds.includes('newFile')" class="toolbar-btn" @click="doNewFile()" :title="t('file.context.newFile')">
+            <FilePlus :size="16" />
+          </button>
+          <button v-if="toolbarInlineIds.includes('upload')" class="toolbar-btn" :disabled="dirUploading" @click="triggerUpload()" :title="t('file.uploadHere')">
+            <Upload :size="16" />
+          </button>
+          <button v-if="toolbarInlineIds.includes('viewToggle')" class="toolbar-btn" @click="viewMode = viewMode === 'grid' ? 'list' : 'grid'" :title="viewMode === 'grid' ? t('file.viewList') : t('file.viewGrid')">
+            <LayoutGrid v-if="viewMode === 'list'" :size="16" />
+            <LayoutList v-else :size="16" />
+          </button>
+          <div class="toolbar-dropdown-wrap">
+            <button class="toolbar-btn" @click="moreMenuOpen = !moreMenuOpen" :title="t('nav.more')">
+              <MoreHorizontal :size="16" />
             </button>
-            <button class="toolbar-dropdown-item" @click="doNewFolder(); moreMenuOpen = false">
-              <FolderPlus :size="14" />
-              <span>{{ t('file.context.newFolder') }}</span>
-            </button>
-            <div class="toolbar-dropdown-divider" />
-            <button class="toolbar-dropdown-item" :disabled="dirUploading" @click="triggerUpload(); moreMenuOpen = false">
-              <Upload :size="14" />
-              <span>{{ t('file.uploadHere') }}</span>
-            </button>
-            <button class="toolbar-dropdown-item" @click="viewMode = viewMode === 'grid' ? 'list' : 'grid'; moreMenuOpen = false">
-              <LayoutGrid v-if="viewMode === 'list'" :size="14" />
-              <LayoutList v-else :size="14" />
-              <span>{{ viewMode === 'grid' ? t('file.viewList') : t('file.viewGrid') }}</span>
-            </button>
+            <div v-if="moreMenuOpen" class="toolbar-dropdown toolbar-dropdown-right" @click.stop>
+              <template v-if="toolbarCollapsedIds.includes('hidden')">
+                <button class="toolbar-dropdown-item" @click="$emit('toggleHidden'); moreMenuOpen = false">
+                  <EyeOff v-if="!showHidden" :size="14" />
+                  <Eye v-else :size="14" />
+                  <span>{{ showHidden ? t('file.hideHiddenFiles') : t('file.showHiddenFiles') }}</span>
+                </button>
+              </template>
+              <template v-if="toolbarCollapsedIds.includes('refresh')">
+                <button class="toolbar-dropdown-item" @click="$emit('refresh'); moreMenuOpen = false">
+                  <RotateCw :size="14" />
+                  <span>{{ t('nav.refresh') }}</span>
+                </button>
+              </template>
+              <template v-if="toolbarCollapsedIds.includes('multiselect')">
+                <button class="toolbar-dropdown-item" @click="multiSelect.active ? exitMultiSelect() : enterMultiSelect(); moreMenuOpen = false">
+                  <CheckSquare :size="14" />
+                  <span>{{ multiSelect.active ? t('file.multiSelect.exit') : t('file.multiSelect.enter') }}</span>
+                </button>
+              </template>
+              <div v-if="toolbarCollapsedIds.length > 0" class="toolbar-dropdown-divider" />
+              <template v-if="toolbarCollapsedIds.includes('newFile')">
+                <button class="toolbar-dropdown-item" @click="doNewFile(); moreMenuOpen = false">
+                  <FilePlus :size="14" />
+                  <span>{{ t('file.context.newFile') }}</span>
+                </button>
+              </template>
+              <button class="toolbar-dropdown-item" @click="doNewFolder(); moreMenuOpen = false">
+                <FolderPlus :size="14" />
+                <span>{{ t('file.context.newFolder') }}</span>
+              </button>
+              <div class="toolbar-dropdown-divider" />
+              <template v-if="toolbarCollapsedIds.includes('upload')">
+                <button class="toolbar-dropdown-item" :disabled="dirUploading" @click="triggerUpload(); moreMenuOpen = false">
+                  <Upload :size="14" />
+                  <span>{{ t('file.uploadHere') }}</span>
+                </button>
+              </template>
+              <template v-if="toolbarCollapsedIds.includes('viewToggle')">
+                <button class="toolbar-dropdown-item" @click="viewMode = viewMode === 'grid' ? 'list' : 'grid'; moreMenuOpen = false">
+                  <LayoutGrid v-if="viewMode === 'list'" :size="14" />
+                  <LayoutList v-else :size="14" />
+                  <span>{{ viewMode === 'grid' ? t('file.viewList') : t('file.viewGrid') }}</span>
+                </button>
+              </template>
+            </div>
           </div>
         </div>
         <SearchInput v-model="searchQuery" :placeholder="t('search.defaultPlaceholder')" @dblclick="searchQuery = ''" />
@@ -318,7 +356,7 @@ import {
   resolveClickAction,
 } from '@/utils/fileManager.ts'
 import { store } from '@/stores/app.ts'
-import { localConfig, setLocalConfig, useSettingsConfig } from '@/composables/useSettingsConfig'
+import { localConfig, setLocalConfig, useSettingsConfig, getZoomedViewport, getUIScale } from '@/composables/useSettingsConfig'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useTerminalStatus } from '@/composables/useTerminalStatus.ts'
@@ -328,6 +366,7 @@ import { useChatContext } from '@/composables/useChatContext.ts'
 import { downloadFileByPath } from '@/utils/download.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { useFileNavStack } from '@/composables/useFileNavStack'
+import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
 import SearchInput from '@/components/common/SearchInput.vue'
 import DirBreadcrumb from './DirBreadcrumb.vue'
 
@@ -386,6 +425,14 @@ const searchQuery = ref('')
 const sortMenuOpen = ref(false)
 const moreMenuOpen = ref(false)
 
+// Responsive toolbar overflow
+const dirToolbarRef = ref(null)
+const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
+  () => dirToolbarRef.value,
+  () => ['hidden', 'refresh', 'multiselect', 'newFile', 'upload', 'viewToggle'],
+  { inlineCount: 2, gap: 6 },
+)
+
 // ── View mode (list / grid) from settings config ──
 const viewMode = ref(localConfig.fileView || 'list')
 watch(viewMode, v => setLocalConfig('fileView', v))
@@ -441,10 +488,12 @@ function closeDropdowns(e) {
 onMounted(() => {
   document.addEventListener('click', closeDropdowns)
   document.addEventListener('keydown', handleKeydown)
+  startToolbarResize()
 })
 onUnmounted(() => {
   document.removeEventListener('click', closeDropdowns)
   document.removeEventListener('keydown', handleKeydown)
+  stopToolbarResize()
 })
 
 // Helper: build item path from entry name
@@ -497,9 +546,10 @@ function closeCtxMenu() {
 // ── Unified context menu trigger (right-click + long-press) ──
 
 function onLongPress(entry, e) {
+    const z = getUIScale()
     const touch = e.touches[0]
-    ctxMenu.x = touch.clientX
-    ctxMenu.y = touch.clientY + 10
+    ctxMenu.x = touch.clientX * z
+    ctxMenu.y = touch.clientY * z + 10
     // DirEntry from v-for has no .path — compute it like handleCtxMenu does
     ctxMenu.entry = { type: entry.type, name: entry.name, path: itemPath(entry.name) }
     ctxMenu.visible = true
@@ -510,18 +560,20 @@ function onContainerLongPress(e) {
     // Ignore if touch originated on a file/dir item — child v-long-press handles it
     if (e.target?.closest('.file-item, .grid-item')) return
     // Long-press on empty area — show menu without entry (paste, new file/folder, terminal)
+    const z = getUIScale()
     const touch = e.touches[0]
-    ctxMenu.x = touch.clientX
-    ctxMenu.y = touch.clientY + 10
+    ctxMenu.x = touch.clientX * z
+    ctxMenu.y = touch.clientY * z + 10
     ctxMenu.entry = null
     ctxMenu.visible = true
     nextTick(() => clampCtxMenu())
 }
 
 function handleCtxMenu(e) {
+    const z = getUIScale()
     const item = e.target?.closest('.file-item, .grid-item')
-    ctxMenu.x = e.clientX
-    ctxMenu.y = e.clientY
+    ctxMenu.x = e.clientX * z
+    ctxMenu.y = e.clientY * z
     if (!item) {
         ctxMenu.entry = null
         ctxMenu.visible = true
@@ -801,12 +853,11 @@ function clampCtxMenu() {
     if (!menu) return
     const w = menu.offsetWidth
     const h = menu.offsetHeight
-    const vw = window.innerWidth
-    const vh = window.innerHeight
+    const vp = getZoomedViewport()
     // Add small padding from edges
     const pad = 8
-    ctxMenu.x = Math.max(pad, Math.min(ctxMenu.x, vw - w - pad))
-    ctxMenu.y = Math.max(pad, Math.min(ctxMenu.y, vh - h - pad))
+    ctxMenu.x = Math.max(pad, Math.min(ctxMenu.x, vp.width - w - pad))
+    ctxMenu.y = Math.max(pad, Math.min(ctxMenu.y, vp.height - h - pad))
 }
 
 function doOpenAsProject() {
@@ -1108,9 +1159,17 @@ function currentFileForClipboard() {
     gap: 6px;
 }
 
+.dir-toolbar-btns {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
 .dir-toolbar :deep(.search-pill) {
-    flex: 1;
-    min-width: 0;
+    margin-left: auto;
+    min-width: 80px;
+    max-width: 200px;
     transition: opacity 0.15s;
 }
 

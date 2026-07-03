@@ -5,6 +5,7 @@
       <div class="settings-item__text">
         <span class="settings-item__label">{{ label }}</span>
         <span v-if="needsRestart" class="settings-item__badge">{{ t('settings.needsRestart') }}</span>
+        <span v-if="statusDot" class="settings-item__status-dot" :class="'settings-item__status-dot--' + statusDot" />
       </div>
     </div>
     <div class="settings-item__right">
@@ -22,6 +23,7 @@
         </label>
       </template>
       <template v-else-if="type === 'slider'">
+        <span class="settings-item__slider-value">{{ sliderDisplayValue }}</span>
         <input
           type="range"
           class="settings-item__slider"
@@ -33,6 +35,7 @@
           @input="onSliderInput"
           @click.stop
         />
+        <button v-if="defaultValue !== undefined && modelValue !== defaultValue" class="settings-item__slider-reset" @click.stop="resetSlider" :title="t('settings.items.resetToDefault')">↺</button>
       </template>
       <template v-else-if="type === 'password'">
         <span class="settings-item__value">{{ displayValue }}</span>
@@ -168,6 +171,9 @@ interface Props {
   forceClose?: boolean
   warning?: string
   noDivider?: boolean
+  defaultValue?: any
+  displayFormat?: 'percent' | 'raw'
+  statusDot?: 'green' | 'gray'
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -183,6 +189,7 @@ const props = withDefaults(defineProps<Props>(), {
   forceClose: false,
   warning: '',
   noDivider: false,
+  defaultValue: undefined,
 })
 
 const emit = defineEmits<{
@@ -276,6 +283,20 @@ function onSliderInput(e: Event) {
     emit('update:modelValue', value)
     sliderDebounceTimer = null
   }, SLIDER_DEBOUNCE_MS)
+}
+
+const sliderDisplayValue = computed(() => {
+  if (props.modelValue == null) return ''
+  if (props.displayFormat === 'percent') return `${Math.round(props.modelValue * 100)}%`
+  return String(props.modelValue)
+})
+
+function resetSlider() {
+  if (sliderDebounceTimer) {
+    clearTimeout(sliderDebounceTimer)
+    sliderDebounceTimer = null
+  }
+  emit('update:modelValue', props.defaultValue)
 }
 
 function handleClick() {
@@ -402,6 +423,24 @@ function confirmEdit() {
   flex-shrink: 0;
 }
 
+/* Status dot indicator (inline next to label) */
+.settings-item__status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: 6px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+.settings-item__status-dot--green {
+  background: #22c55e;
+}
+.settings-item__status-dot--gray {
+  background: var(--text-muted);
+  opacity: 0.5;
+}
+
 /* Description panel (expanded on click) */
 .settings-item__desc-panel {
   background: var(--bg-primary);
@@ -498,10 +537,31 @@ function confirmEdit() {
 }
 
 /* Slider */
+.settings-item__slider-value {
+  font-size: 13px;
+  color: var(--text-secondary);
+  min-width: 36px;
+  text-align: right;
+}
+
 .settings-item__slider {
   width: 120px;
   cursor: pointer;
   accent-color: var(--accent-color);
+}
+
+.settings-item__slider-reset {
+  font-size: 14px;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  line-height: 1;
+}
+
+.settings-item__slider-reset:active {
+  color: var(--accent-color);
 }
 
 /* ── Inline Editor ── */

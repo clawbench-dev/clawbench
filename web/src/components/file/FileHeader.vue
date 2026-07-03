@@ -3,21 +3,45 @@
     <div class="file-name-wrap">
       <span class="file-path-hint" style="cursor:pointer" @click="$emit('showDetails')" :title="file.name">{{ file.name }}</span>
     </div>
-    <div class="header-actions">
+    <div ref="headerActionsRef" class="header-actions">
       <!-- TOC button (only for file types that support TOC) -->
-      <button v-if="hasToc" class="file-header-btn" :class="{ active: tocOpen }" @click.stop="$emit('toggleToc')" :title="t('file.header.toc')">
+      <button v-if="hasToc && toolbarInlineIds.includes('toc')" class="file-header-btn" :class="{ active: tocOpen }" @click.stop="$emit('toggleToc')" :title="t('file.header.toc')">
         <List :size="14" />
       </button>
 
-
       <!-- Search button (only for file types that support search) -->
-      <button v-if="hasToc" class="file-header-btn" :class="{ active: searchOpen }" :disabled="!file.content" @click.stop="$emit('toggleSearch')" :title="t('file.header.search')">
+      <button v-if="hasToc && toolbarInlineIds.includes('search')" class="file-header-btn" :class="{ active: searchOpen }" :disabled="!file.content" @click.stop="$emit('toggleSearch')" :title="t('file.header.search')">
         <Search :size="14" />
       </button>
 
       <!-- Attach to chat button -->
-      <button ref="attachBtnRef" class="file-header-btn" :class="{ active: isAttached }" @click.stop="handleAttachToChat" :title="isAttached ? t('chat.attach.removeFromChat') : t('chat.actions.attachToChat')">
+      <button v-if="toolbarInlineIds.includes('attach')" ref="attachBtnRef" class="file-header-btn" :class="{ active: isAttached }" @click.stop="handleAttachToChat" :title="isAttached ? t('chat.attach.removeFromChat') : t('chat.actions.attachToChat')">
         <Paperclip :size="14" />
+      </button>
+
+      <!-- Refresh button -->
+      <button v-if="toolbarInlineIds.includes('refresh')" class="file-header-btn" @click.stop="handleRefresh" :title="t('nav.refresh')">
+        <RotateCw :size="14" />
+      </button>
+
+      <!-- Toggle view button (source/rendered) -->
+      <button v-if="toolbarInlineIds.includes('toggleView')" class="file-header-btn" @click.stop="handleToggleView" :title="viewMode === 'rendered' ? t('file.header.sourceView') : t('file.header.renderedView')">
+        <Code2 :size="14" />
+      </button>
+
+      <!-- Word wrap toggle button -->
+      <button v-if="toolbarInlineIds.includes('wordWrap')" class="file-header-btn" :class="{ active: wordWrap }" @click.stop="handleToggleWordWrap" :title="t('file.header.wordWrap')">
+        <TextWrap :size="14" />
+      </button>
+
+      <!-- Line numbers toggle button -->
+      <button v-if="toolbarInlineIds.includes('lineNumbers')" class="file-header-btn" :class="{ active: showLineNumbers }" @click.stop="handleToggleLineNumbers" :title="t('file.header.lineNumbers')">
+        <Hash :size="14" />
+      </button>
+
+      <!-- Sticky scroll toggle button -->
+      <button v-if="toolbarInlineIds.includes('stickyScroll')" class="file-header-btn" :class="{ active: stickyScroll }" @click.stop="handleToggleStickyScroll" :title="t('file.header.stickyScroll')">
+        <Pin :size="14" />
       </button>
 
       <!-- More actions dropdown -->
@@ -27,10 +51,44 @@
         </button>
         <Teleport to="body">
           <div v-if="menuOpen" ref="menuRef" class="file-header-dropdown-menu" :style="menuStyle">
-            <button class="dropdown-item" @click="handleRefresh">
+            <!-- Collapsed toolbar items -->
+            <button v-if="toolbarCollapsedIds.includes('toc')" class="dropdown-item" :class="{ active: tocOpen }" @click="$emit('toggleToc'); menuOpen = false">
+              <List :size="14" />
+              {{ t('file.header.toc') }}
+            </button>
+            <button v-if="toolbarCollapsedIds.includes('search')" class="dropdown-item" :class="{ active: searchOpen }" @click="$emit('toggleSearch'); menuOpen = false">
+              <Search :size="14" />
+              {{ t('file.header.search') }}
+            </button>
+            <button v-if="toolbarCollapsedIds.includes('attach')" class="dropdown-item" :class="{ active: isAttached }" @click="handleAttachToChat(); menuOpen = false">
+              <Paperclip :size="14" />
+              {{ isAttached ? t('chat.attach.removeFromChat') : t('chat.actions.attachToChat') }}
+            </button>
+            <button v-if="toolbarCollapsedIds.includes('refresh')" class="dropdown-item" @click="handleRefresh">
               <RotateCw :size="14" />
               {{ t('nav.refresh') }}
             </button>
+            <button v-if="toolbarCollapsedIds.includes('toggleView')" class="dropdown-item" @click="handleToggleView">
+              <Code2 :size="14" />
+              {{ viewMode === 'rendered' ? t('file.header.sourceView') : t('file.header.renderedView') }}
+            </button>
+            <button v-if="toolbarCollapsedIds.includes('wordWrap')" class="dropdown-item" @click="handleToggleWordWrap">
+              <TextWrap :size="14" />
+              {{ t('file.header.wordWrap') }}
+              <span v-if="wordWrap" class="wrap-check">✓</span>
+            </button>
+            <button v-if="toolbarCollapsedIds.includes('lineNumbers')" class="dropdown-item" @click="handleToggleLineNumbers">
+              <Hash :size="14" />
+              {{ t('file.header.lineNumbers') }}
+              <span v-if="showLineNumbers" class="wrap-check">✓</span>
+            </button>
+            <button v-if="toolbarCollapsedIds.includes('stickyScroll')" class="dropdown-item" @click="handleToggleStickyScroll">
+              <Pin :size="14" />
+              {{ t('file.header.stickyScroll') }}
+              <span v-if="stickyScroll" class="wrap-check">✓</span>
+            </button>
+            <div v-if="toolbarCollapsedIds.length > 0" class="dropdown-divider" />
+            <!-- Always-in-dropdown items -->
             <button v-if="file.isBinary" class="dropdown-item" @click="handleOpenAsText">
               <Code2 :size="14" />
               {{ t('file.header.openAsText') }}
@@ -38,25 +96,6 @@
             <button v-if="isAppMode" class="dropdown-item" @click="handleShareExternal">
               <Share :size="14" />
               {{ t('file.header.shareExternal') }}
-            </button>
-            <button v-if="isMarkdown || isHtml" class="dropdown-item" @click="handleToggleView">
-              <Code2 :size="14" />
-              {{ viewMode === 'rendered' ? t('file.header.sourceView') : t('file.header.renderedView') }}
-            </button>
-            <button v-if="!isMarkdownRendered" class="dropdown-item" @click="handleToggleWordWrap">
-              <TextWrap :size="14" />
-              {{ t('file.header.wordWrap') }}
-              <span v-if="wordWrap" class="wrap-check">✓</span>
-            </button>
-            <button v-if="!isMarkdownRendered" class="dropdown-item" @click="handleToggleLineNumbers">
-              <Hash :size="14" />
-              {{ t('file.header.lineNumbers') }}
-              <span v-if="showLineNumbers" class="wrap-check">✓</span>
-            </button>
-            <button v-if="!isMarkdownRendered" class="dropdown-item" @click="handleToggleStickyScroll">
-              <Pin :size="14" />
-              {{ t('file.header.stickyScroll') }}
-              <span v-if="stickyScroll" class="wrap-check">✓</span>
             </button>
             <a v-if="!isAppMode" class="dropdown-item" :href="buildLocalFileUrl(file.path, { download: true })" :download="file.name" @click="menuOpen = false">
               <Download :size="14" />
@@ -102,6 +141,8 @@ import { useAppMode } from '@/composables/useAppMode.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
+import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
+import { getZoomedViewport } from '@/composables/useSettingsConfig'
 
 const props = defineProps({
     file: Object,
@@ -129,6 +170,25 @@ const menuRef = ref(null)
 const menuStyle = ref({})
 const attachBtnRef = ref(null)
 
+// Responsive toolbar overflow
+const headerActionsRef = ref(null)
+const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
+  () => headerActionsRef.value,
+  () => {
+    const ids = []
+    if (hasToc.value) ids.push('toc')
+    if (hasToc.value) ids.push('search')
+    ids.push('attach')
+    ids.push('refresh')
+    if (isMarkdown.value || isHtml.value) ids.push('toggleView')
+    if (!isMarkdownRendered.value) ids.push('wordWrap')
+    if (!isMarkdownRendered.value) ids.push('lineNumbers')
+    if (!isMarkdownRendered.value) ids.push('stickyScroll')
+    return ids
+  },
+  { inlineCount: 3, gap: 8 },
+)
+
 function toggleMenu() {
     menuOpen.value = !menuOpen.value
     if (menuOpen.value) {
@@ -139,10 +199,11 @@ function toggleMenu() {
 function updateMenuPosition() {
     if (!dropdownRef.value) return
     const rect = dropdownRef.value.getBoundingClientRect()
+    const vp = getZoomedViewport()
     menuStyle.value = {
         position: 'fixed',
         top: `${rect.bottom + 4}px`,
-        right: `${window.innerWidth - rect.right}px`,
+        right: `${vp.width - rect.right}px`,
         left: 'auto',
     }
 }
@@ -269,10 +330,12 @@ function handleClickOutside(e) {
 
 onMounted(() => {
     document.addEventListener('click', handleClickOutside)
+    startToolbarResize()
 })
 
 onBeforeUnmount(() => {
     document.removeEventListener('click', handleClickOutside)
+    stopToolbarResize()
 })
 </script>
 
@@ -415,6 +478,9 @@ onBeforeUnmount(() => {
 }
 .file-header-dropdown-menu .dropdown-item svg {
     flex-shrink: 0;
+}
+.file-header-dropdown-menu .dropdown-divider {
+    height: 1px; background: var(--border-color); margin: 4px 0;
 }
 .file-header-dropdown-menu .dropdown-item.danger {
     color: #ef4444;

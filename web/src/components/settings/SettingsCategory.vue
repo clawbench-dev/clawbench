@@ -24,6 +24,9 @@
         :needs-restart="entry.needsRestart"
         :force-close="activeKey !== null && activeKey !== entry.key"
         :no-divider="false"
+        :default-value="entry.defaultValue"
+        :display-format="entry.displayFormat"
+        :status-dot="(entry as any).statusDot"
         @update:model-value="(v: any) => handleUpdate(entry, v)"
         @click="handleClick(entry)"
         @edit-toggle="(open: boolean) => handleEditToggle(entry.key, open)"
@@ -56,7 +59,6 @@ import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
 import { useAppMode } from '@/composables/useAppMode'
 import { usePwaInstall } from '@/composables/usePwaInstall'
-import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { useTerminalStatus } from '@/composables/useTerminalStatus'
 import { usePortForward } from '@/composables/usePortForward'
 import { categoryItems, engineVoiceOptions, type ItemSpec, type DependsOn } from './settingsFieldMap'
@@ -78,7 +80,6 @@ const { localConfig, serverConfig, setLocalConfig, getServerValueWithDefault, se
 const { loadAgents } = useAgents()
 const { isAppMode } = useAppMode()
 const pwaInstall = usePwaInstall()
-const { pushRegistered } = useGlobalEvents()
 const { loadTerminalStatus } = useTerminalStatus()
 const { loadSSHInfo } = usePortForward()
 
@@ -121,17 +122,6 @@ const renderList = computed(() => {
     if (item.key === 'addToHomeScreen' && !pwaInstall.showPwaInstall.value) continue
     if (item.key === 'downloadAndroidApp' && !pwaInstall.showApkDownload.value) continue
 
-    // Inject push registration status before the JPush enabled switch
-    if (item.key === 'push.jpush.enabled') {
-      result.push({
-        key: 'push-registration-status',
-        label: t('settings.items.pushStatus'),
-        labelKey: 'settings.items.pushStatus',
-        type: 'info',
-        source: 'local',
-        modelValue: pushRegistered.value ? t('settings.items.pushStatusRegistered') : t('settings.items.pushStatusNotRegistered'),
-      } as any)
-    }
     // Inject section header pseudo-item before the field
     if (item.sectionHeader) {
       result.push({

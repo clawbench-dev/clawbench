@@ -169,7 +169,7 @@
 
       <!-- Bottom dock (tab bar) -->
       <div v-if="isAuthenticated" v-show="!anyKeyboardActive" class="bottom-dock-wrapper">
-        <div class="bottom-dock">
+        <div ref="dockRef" class="bottom-dock">
           <div class="dock-center">
             <div class="dock-active-indicator" :style="dockIndicatorStyle"></div>
             <div class="dock-btn-wrap">
@@ -187,15 +187,17 @@
               </button>
               <span v-if="store.state.gitWorkingTreeChangeCount > 0 && activeTab !== 'history'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': historyBadgeAnim }" @animationend="historyBadgeAnim = false">{{ formatBadgeCount(store.state.gitWorkingTreeChangeCount) }}</span>
             </div>
-            <div class="dock-btn-wrap">
-              <button class="dock-btn" :class="{ active: activeTab === dockSlot4Tab, 'has-unread': dockSlot4Tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks', 'just-completed': dockSlot4Tab === 'tasks' && store.state.taskJustCompleted && activeTab !== 'tasks', 'has-running': dockSlot4Tab === 'tasks' && store.state.taskRunning && activeTab !== 'tasks' }" @click.stop="handleDockSlot4Click" :title="dockSlot4Title">
-                <component :is="dockSlot4Icon" />
+            <!-- Inline overflow tabs (rendered in overflowTabs order — settings always last) -->
+            <div v-for="tab in inlineOverflowTabs" :key="tab" class="dock-btn-wrap">
+              <button class="dock-btn" :class="dockInlineOverflowBtnClass(tab)" @click.stop="handleInlineOverflowClick(tab)" :title="dockTabTitle(tab)">
+                <component :is="dockTabIcon(tab)" />
               </button>
-              <span v-if="dockSlot4Tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
-              <span v-if="dockSlot4Tab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
-              <span v-if="dockSlot4Tab === 'proxy' && store.state.portForwardActiveCount > 0 && activeTab !== 'proxy'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardActiveCount) }}</span>
+              <span v-if="tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab !== 'tasks'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
+              <span v-if="tab === 'terminal' && store.state.terminalSessionCount > 0 && activeTab !== 'terminal'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
+              <span v-if="tab === 'proxy' && store.state.portForwardActiveCount > 0 && activeTab !== 'proxy'" class="dock-badge dock-badge-count" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardActiveCount) }}</span>
             </div>
-            <div class="dock-overflow-wrapper">
+            <!-- Overflow button -->
+            <div v-if="showOverflowButton" class="dock-overflow-wrapper">
               <button
                 ref="overflowBtnRef"
                 class="dock-btn dock-overflow-btn"
@@ -218,22 +220,22 @@
     <Teleport to="body">
       <Transition name="dock-popup">
         <div v-if="overflowMenuOpen" class="dock-overflow-popup" :style="overflowPopupStyle" @keydown.escape="overflowMenuOpen = false">
-          <button v-if="dockSlot4Tab !== 'tasks'" class="dock-overflow-item" :class="{ active: activeTab === 'tasks' }" @click.stop="handleOverflowSelect('tasks')">
+          <button v-if="popupOverflowTabs.includes('tasks')" class="dock-overflow-item" :class="{ active: activeTab === 'tasks' }" @click.stop="handleOverflowSelect('tasks')">
             <CalendarClock :size="16" />
             <span>{{ t('nav.tasks') }}</span>
             <span v-if="store.state.taskUnreadCount > 0" class="dock-overflow-count" :class="{ 'dock-badge-pop': taskBadgeAnim }" @animationend="taskBadgeAnim = false">{{ formatBadgeCount(store.state.taskUnreadCount) }}</span>
           </button>
-          <button v-if="!isSSHDisabled && dockSlot4Tab !== 'proxy'" class="dock-overflow-item" :class="{ active: activeTab === 'proxy' }" @click.stop="handleOverflowSelect('proxy')">
+          <button v-if="popupOverflowTabs.includes('proxy')" class="dock-overflow-item" :class="{ active: activeTab === 'proxy' }" @click.stop="handleOverflowSelect('proxy')">
             <EthernetPort :size="16" />
             <span>{{ t('nav.portForward') }}</span>
             <span v-if="store.state.portForwardActiveCount > 0" class="dock-overflow-count" :class="{ 'dock-badge-pop': proxyBadgeAnim }" @animationend="proxyBadgeAnim = false">{{ formatBadgeCount(store.state.portForwardActiveCount) }}</span>
           </button>
-          <button v-if="!isTerminalDisabled && dockSlot4Tab !== 'terminal'" class="dock-overflow-item" :class="{ active: activeTab === 'terminal' }" @click.stop="handleOverflowSelect('terminal')">
+          <button v-if="popupOverflowTabs.includes('terminal')" class="dock-overflow-item" :class="{ active: activeTab === 'terminal' }" @click.stop="handleOverflowSelect('terminal')">
             <TerminalIcon :size="16" />
             <span>{{ t('terminal.title') }}</span>
             <span v-if="store.state.terminalSessionCount > 0" class="dock-overflow-count" :class="{ 'dock-badge-pop': terminalBadgeAnim }" @animationend="terminalBadgeAnim = false">{{ formatBadgeCount(store.state.terminalSessionCount) }}</span>
           </button>
-          <button v-if="dockSlot4Tab !== 'settings'" class="dock-overflow-item" :class="{ active: activeTab === 'settings' }" @click.stop="handleOverflowSelect('settings')">
+          <button v-if="popupOverflowTabs.includes('settings')" class="dock-overflow-item" :class="{ active: activeTab === 'settings' }" @click.stop="handleOverflowSelect('settings')">
             <Settings :size="16" />
             <span>{{ t('nav.settings') }}</span>
           </button>
@@ -249,9 +251,10 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, provide, nextTick } from 'vue'
 import { appLog } from '@/utils/appLog'
+import { useDockOverflow } from '@/composables/useDockOverflow'
 import { useI18n } from 'vue-i18n'
-import { useSettingsConfig } from '@/composables/useSettingsConfig'
-import { MessageSquare, FolderOpen, GitBranch, EthernetPort, Terminal as TerminalIcon, CalendarClock, MoreHorizontal, Settings } from 'lucide-vue-next'
+import { useSettingsConfig, applyUIScale, getZoomedViewport } from '@/composables/useSettingsConfig'
+import { MessageSquare, FolderOpen, GitBranch, EthernetPort, SquareTerminal as TerminalIcon, CalendarClock, MoreHorizontal, Settings } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
@@ -287,6 +290,7 @@ import { clearPlanState } from './composables/usePlanProgress.ts'
 import { useToast } from './composables/useToast.ts'
 import { gt } from './composables/useLocale'
 import { useAppMode } from './composables/useAppMode.ts'
+import { requestNotificationPermission } from './composables/useNotification'
 import { useTerminalKeyboard } from './composables/useTerminalKeyboard.ts'
 import { useChatKeyboard } from './composables/useChatKeyboard.ts'
 import { usePortForward } from './composables/usePortForward.ts'
@@ -405,16 +409,17 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
 const activeTab = ref('chat')
 
 // Dock active indicator — water-drop sliding highlight
-// 5 buttons evenly spaced: btn_width=34, gap=12, step=46
-// Index: chat=0, browse=1, history=2, slot4=3, overflow=4
+// Dynamic button count: chat, browse, history, [inline overflow...], [overflow btn]
 const DOCK_STEP = 46 // 34 (btn width) + 12 (gap)
 
 const dockActiveIndex = computed(() => {
-  if (['chat', 'browse', 'history'].includes(activeTab.value)) {
-    return ['chat', 'browse', 'history'].indexOf(activeTab.value)
-  }
-  if (activeTab.value === dockSlot4Tab.value) return 3
-  return 4 // overflow
+  const visibleTabs = ['chat', 'browse', 'history', ...inlineOverflowTabs.value]
+  if (showOverflowButton.value) visibleTabs.push('__overflow__')
+  const idx = visibleTabs.indexOf(activeTab.value)
+  if (idx >= 0) return idx
+  // Active tab is in the overflow popup — highlight the overflow button
+  if (showOverflowButton.value) return visibleTabs.length - 1
+  return 0
 })
 
 const dockIndicatorStyle = computed(() => ({
@@ -442,10 +447,8 @@ function switchTab(tab) {
     store.state.taskUnreadCount = 0
     loadTasks()
   }
-  // Close overflow menu when switching to a main tab
-  if (!overflowTabs.value.includes(tab)) {
-    overflowMenuOpen.value = false
-  }
+  // Close overflow menu on any tab switch
+  overflowMenuOpen.value = false
 }
 
 /** Handle clawbench-open-session event from Android push notification tap */
@@ -772,6 +775,12 @@ async function initializeApp() {
   loadConfig()
   registerAppEventListeners()
 
+  // Request browser notification permission (web mode only).
+  // In app mode, Android manages its own notification permission.
+  if (!isAppMode.value) {
+    requestNotificationPermission().catch(() => {})
+  }
+
   // 3. Secondary data — non-blocking, can load in parallel with UI render
   loadSessionsOnce()
   if (isAppMode.value) syncToNative().catch(() => {})
@@ -805,6 +814,8 @@ async function handleLoginSuccess() {
     Object.keys(localStorage).filter(k => k.startsWith('clawbenchLastFile_') || k.startsWith('clawbenchLastDir_')).forEach(k => localStorage.removeItem(k))
     isAuthenticated.value = true
     await nextTick()
+    applyUIScale(localConfig.uiScale ?? 1)
+    startDockResize()
     welcomeOverlay.value?.show()
 }
 
@@ -1030,19 +1041,41 @@ const overflowTabMeta = {
   settings:{ icon: Settings, titleKey: 'nav.settings' },
 }
 
-// Dock slot 4: dynamic slot showing user's selected overflow item
-const STORAGE_KEY_DOCK_SLOT4 = 'clawbench_dock_slot4'
-const dockSlot4Tab = ref(localStorage.getItem(STORAGE_KEY_DOCK_SLOT4) || 'tasks')
-const dockSlot4Icon = computed(() => overflowTabMeta[dockSlot4Tab.value]?.icon ?? CalendarClock)
-const dockSlot4Title = computed(() => overflowTabMeta[dockSlot4Tab.value] ? t(overflowTabMeta[dockSlot4Tab.value].titleKey) : t('nav.tasks'))
+// Responsive dock overflow — ResizeObserver drives inline promotion
+const dockRef = ref(null)
+const {
+  inlineOverflowTabs,
+  popupOverflowTabs,
+  showOverflowButton,
+  allInlineOverflowTabs,
+  startObserving: startDockResize,
+  stopObserving: stopDockResize,
+} = useDockOverflow(
+  () => dockRef.value,
+  () => overflowTabs.value,
+)
 
-function setDockSlot4(tab) {
-  dockSlot4Tab.value = tab
-  localStorage.setItem(STORAGE_KEY_DOCK_SLOT4, tab)
+// Close overflow popup when layout changes (resize promotes/demotes items)
+watch(() => inlineOverflowTabs.value.length, () => {
+  overflowMenuOpen.value = false
+})
+
+// Helpers for dynamic inline overflow buttons
+function dockTabIcon(tab) {
+  return overflowTabMeta[tab]?.icon ?? CalendarClock
 }
-
-function handleDockSlot4Click() {
-  const tab = dockSlot4Tab.value
+function dockTabTitle(tab) {
+  return overflowTabMeta[tab] ? t(overflowTabMeta[tab].titleKey) : ''
+}
+function dockInlineOverflowBtnClass(tab) {
+  return {
+    active: activeTab.value === tab,
+    'has-unread': tab === 'tasks' && store.state.taskUnreadCount > 0 && activeTab.value !== 'tasks',
+    'just-completed': tab === 'tasks' && store.state.taskJustCompleted && activeTab.value !== 'tasks',
+    'has-running': tab === 'tasks' && store.state.taskRunning && activeTab.value !== 'tasks',
+  }
+}
+function handleInlineOverflowClick(tab) {
   if (tab === 'terminal') {
     handleDockTerminal()
   } else {
@@ -1050,30 +1083,26 @@ function handleDockSlot4Click() {
   }
 }
 
-const isOverflowTabActive = computed(() => overflowTabs.value.includes(activeTab.value) && activeTab.value !== dockSlot4Tab.value)
-
-// If the saved dock-slot4 tab becomes unavailable (e.g. terminal disabled), fall back to tasks
-watch(overflowTabs, (tabs) => {
-  if (!tabs.includes(dockSlot4Tab.value)) {
-    setDockSlot4('tasks')
-  }
-})
+const isOverflowTabActive = computed(() => popupOverflowTabs.value.includes(activeTab.value))
 
 const overflowPopupStyle = computed(() => {
   const btn = overflowBtnRef.value
   if (!btn) return {}
   const rect = btn.getBoundingClientRect()
+  const vp = getZoomedViewport()
   return {
     position: 'fixed',
-    bottom: `${window.innerHeight - rect.top + 8}px`,
-    right: `${window.innerWidth - rect.right}px`,
+    bottom: `${vp.height - rect.top + 8}px`,
+    right: `${vp.width - rect.right}px`,
   }
 })
 
 const overflowButtonIcon = computed(() => {
-  // Show the active overflow tab's icon, unless it's the dock-slot4 tab (which has its own button)
-  if (activeTab.value === dockSlot4Tab.value) return MoreHorizontal
-  return overflowTabMeta[activeTab.value]?.icon ?? MoreHorizontal
+  // If active tab is in the popup, show its icon on the overflow button
+  if (popupOverflowTabs.value.includes(activeTab.value)) {
+    return overflowTabMeta[activeTab.value]?.icon ?? MoreHorizontal
+  }
+  return MoreHorizontal
 })
 
 // Dock badge change animations
@@ -1094,34 +1123,40 @@ watch(() => store.state.gitWorkingTreeChangeCount, (n, o) => { if (o !== undefin
 watch(() => store.state.taskUnreadCount, (n, o) => {
   if (o !== undefined && n !== o) {
     triggerBadgeAnim(taskBadgeAnim)
-    if (dockSlot4Tab.value !== 'tasks') triggerBadgeAnim(overflowBadgeAnim)
+    if (!allInlineOverflowTabs.value.includes('tasks')) triggerBadgeAnim(overflowBadgeAnim)
   }
 })
 watch(() => store.state.terminalSessionCount, (n, o) => {
   if (o !== undefined && n !== o) {
     triggerBadgeAnim(terminalBadgeAnim)
-    if (dockSlot4Tab.value !== 'terminal') triggerBadgeAnim(overflowBadgeAnim)
+    if (!allInlineOverflowTabs.value.includes('terminal')) triggerBadgeAnim(overflowBadgeAnim)
   }
 })
 watch(() => store.state.portForwardActiveCount, (n, o) => {
   if (o !== undefined && n !== o) {
     triggerBadgeAnim(proxyBadgeAnim)
-    if (dockSlot4Tab.value !== 'proxy') triggerBadgeAnim(overflowBadgeAnim)
+    if (!allInlineOverflowTabs.value.includes('proxy')) triggerBadgeAnim(overflowBadgeAnim)
   }
 })
 
 const overflowBadgeCount = computed(() => {
-  let count = store.state.taskUnreadCount + store.state.portForwardActiveCount + store.state.terminalSessionCount
-  // Subtract the count shown on slot4 to avoid double-counting
-  if (dockSlot4Tab.value === 'tasks') count -= store.state.taskUnreadCount
-  else if (dockSlot4Tab.value === 'proxy') count -= store.state.portForwardActiveCount
-  else if (dockSlot4Tab.value === 'terminal') count -= store.state.terminalSessionCount
-  return count
+  let count = store.state.taskUnreadCount
+  if (!isSSHDisabled.value) count += store.state.portForwardActiveCount
+  if (!isTerminalDisabled.value) count += store.state.terminalSessionCount
+  // Subtract counts for ALL inline overflow tabs
+  for (const tab of allInlineOverflowTabs.value) {
+    if (tab === 'tasks') count -= store.state.taskUnreadCount
+    else if (tab === 'proxy') count -= store.state.portForwardActiveCount
+    else if (tab === 'terminal') count -= store.state.terminalSessionCount
+  }
+  return Math.max(0, count)
 })
 
 const overflowButtonTitle = computed(() => {
-  if (activeTab.value === dockSlot4Tab.value) return t('nav.more')
-  return overflowTabMeta[activeTab.value] ? t(overflowTabMeta[activeTab.value].titleKey) : t('nav.more')
+  if (popupOverflowTabs.value.includes(activeTab.value)) {
+    return overflowTabMeta[activeTab.value] ? t(overflowTabMeta[activeTab.value].titleKey) : t('nav.more')
+  }
+  return t('nav.more')
 })
 
 function toggleOverflowMenu() {
@@ -1142,8 +1177,6 @@ function handleOverflowSelect(tab) {
     return
   }
   overflowMenuOpen.value = false
-  // Remember this tab as the dock slot 4 shortcut
-  setDockSlot4(tab)
   if (tab === 'terminal') {
     handleDockTerminal()
   } else {
@@ -1318,6 +1351,8 @@ onMounted(async () => {
     if (!(await initializeApp())) return
     isAuthenticated.value = true
     await nextTick()
+    applyUIScale(localConfig.uiScale ?? 1)
+    startDockResize()
     welcomeOverlay.value?.show()
 
     // Handle pending navigation from push notification deep link
@@ -1417,6 +1452,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+    stopDockResize()
     removeTaskHandler()
     window.removeEventListener('clawbench-foreground', handleForeground)
     destroyGlobalEvents()

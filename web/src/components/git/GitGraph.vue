@@ -125,6 +125,7 @@
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { computeGraphData, refLabelText } from '@/utils/gitGraph'
+import { getZoomedViewport, getUIScale } from '@/composables/useSettingsConfig'
 const { t } = useI18n()
 
 const props = defineProps({
@@ -191,8 +192,9 @@ const onNodeClick = (node, event) => {
   event.stopPropagation()
 
   // Use click event coordinates for reliable positioning regardless of scroll/collapsed state
-  const x = event.clientX + 8
-  const y = event.clientY - 8
+  const z = getUIScale()
+  const x = event.clientX * z + 8
+  const y = event.clientY * z - 8
 
   // Collect items: refs first, then branch names (deduplicated)
   const items = (node.refs || []).map(refLabelText)
@@ -215,9 +217,10 @@ const onLineClick = (line, event) => {
   const branchName = laneBranchName.value.get(line.lane)
   if (!branchName) return
 
+  const z = getUIScale()
   tooltip.value = {
-    x: event.clientX + 8,
-    y: event.clientY - 8,
+    x: event.clientX * z + 8,
+    y: event.clientY * z - 8,
     items: [branchName],
     color: line.color,
   }
@@ -228,8 +231,7 @@ const tooltipStyle = computed(() => {
   if (!tooltip.value) return {}
   let x = tooltip.value.x
   let y = tooltip.value.y
-  const vw = window.innerWidth
-  const vh = window.innerHeight
+  const vp = getZoomedViewport()
   // Account for iOS notch / safe area so tooltip isn't hidden behind it
   const safeTop = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--header-safe-area-top')) || 0
   // Use measured dimensions if available, fall back to estimates
@@ -237,11 +239,11 @@ const tooltipStyle = computed(() => {
   const tw = el ? el.offsetWidth : Math.max(80, tooltip.value.items.length * 80)
   const th = el ? el.offsetHeight : 30 + tooltip.value.items.length * 18
   // Clamp right edge
-  if (x + tw > vw - 8) x = vw - tw - 8
+  if (x + tw > vp.width - 8) x = vp.width - tw - 8
   // Clamp left edge
   if (x < 8) x = 8
   // Clamp bottom edge
-  if (y + th > vh - 8) y = y - th - 16
+  if (y + th > vp.height - 8) y = y - th - 16
   // Clamp top edge — respect safe area
   const minTop = 8 + safeTop
   if (y < minTop) y = minTop
