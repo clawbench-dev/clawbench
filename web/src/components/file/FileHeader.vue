@@ -167,7 +167,7 @@ const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory
 
 const { isAppMode } = useAppMode()
 const { t } = useI18n()
-const { addAttachedFile, hasAttachedFile, toggleAttachedFile, removeAttachedFileByPath } = useChatContext()
+const { addAttachedFile, hasAttachedFile, removeAttachedFileByPath } = useChatContext()
 const toast = useToast()
 
 const isAttached = computed(() => !!props.file?.path && hasAttachedFile(props.file.path))
