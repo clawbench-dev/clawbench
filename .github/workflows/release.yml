@@ -631,32 +631,32 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @xulongzhe/clawbench-linux-x64
-        run: npm publish npm/platforms/linux-x64 --access public
+        run: npm publish ./npm/platforms/linux-x64 --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @xulongzhe/clawbench-linux-arm64
-        run: npm publish npm/platforms/linux-arm64 --access public
+        run: npm publish ./npm/platforms/linux-arm64 --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @xulongzhe/clawbench-darwin-x64
-        run: npm publish npm/platforms/darwin-x64 --access public
+        run: npm publish ./npm/platforms/darwin-x64 --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @xulongzhe/clawbench-darwin-arm64
-        run: npm publish npm/platforms/darwin-arm64 --access public
+        run: npm publish ./npm/platforms/darwin-arm64 --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @xulongzhe/clawbench-win32-x64
-        run: npm publish npm/platforms/win32-x64 --access public
+        run: npm publish ./npm/platforms/win32-x64 --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish main package (@xulongzhe/clawbench)
-        run: npm publish npm/main --access public
+        run: npm publish ./npm/main --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
