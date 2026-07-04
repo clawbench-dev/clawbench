@@ -4,8 +4,10 @@
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
+import { createRequire } from "module";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 
 const PLATFORM_MAP = {
   "linux-x64": "@xulongzhe/clawbench-linux-x64",

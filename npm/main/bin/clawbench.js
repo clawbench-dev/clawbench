@@ -2,9 +2,11 @@
 import { spawn } from "child_process";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
+import { createRequire } from "module";
 import os from "os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 
 const PLATFORM_MAP = {
   "linux-x64": "@xulongzhe/clawbench-linux-x64",
