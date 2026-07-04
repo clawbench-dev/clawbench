@@ -7,38 +7,16 @@
     <!-- Browse nav -->
     <div class="dialog-nav">
       <div class="dialog-toolbar-row">
-        <div ref="dialogToolbarRef" class="dialog-toolbar-btns">
-          <button v-if="!isRootLevel && toolbarInlineIds.includes('newfolder')" class="toolbar-btn" @click="doNewFolder" :title="t('projectDialog.newFolder')">
-            <FolderPlus :size="16" />
-          </button>
-          <button v-if="toolbarInlineIds.includes('hidden')" class="toolbar-btn" @click="showHidden = !showHidden" :title="showHidden ? t('projectDialog.hideHiddenFiles') : t('projectDialog.showHiddenFiles')">
-            <EyeOff v-if="!showHidden" :size="16" />
-            <Eye v-else :size="16" />
-          </button>
-          <button v-if="toolbarInlineIds.includes('refresh')" class="toolbar-btn" @click="loadBrowse" :title="t('nav.refresh')">
-            <RotateCw :size="16" />
-          </button>
-          <div v-if="toolbarCollapsedIds.length > 0" class="toolbar-dropdown-wrap">
-            <button class="toolbar-btn" @click="overflowMenuOpen = !overflowMenuOpen" :title="t('nav.more')">
-              <MoreHorizontal :size="16" />
-            </button>
-            <div v-if="overflowMenuOpen" class="toolbar-dropdown toolbar-dropdown-right" @click.stop>
-              <button v-if="toolbarCollapsedIds.includes('newfolder')" class="toolbar-dropdown-item" @click="doNewFolder(); overflowMenuOpen = false">
-                <FolderPlus :size="14" />
-                <span>{{ t('projectDialog.newFolder') }}</span>
-              </button>
-              <button v-if="toolbarCollapsedIds.includes('hidden')" class="toolbar-dropdown-item" @click="showHidden = !showHidden; overflowMenuOpen = false">
-                <EyeOff v-if="!showHidden" :size="14" />
-                <Eye v-else :size="14" />
-                <span>{{ showHidden ? t('projectDialog.hideHiddenFiles') : t('projectDialog.showHiddenFiles') }}</span>
-              </button>
-              <button v-if="toolbarCollapsedIds.includes('refresh')" class="toolbar-dropdown-item" @click="loadBrowse(); overflowMenuOpen = false">
-                <RotateCw :size="14" />
-                <span>{{ t('nav.refresh') }}</span>
-              </button>
-            </div>
-          </div>
-        </div>
+        <button v-if="!isRootLevel" class="toolbar-btn" @click="doNewFolder" :title="t('projectDialog.newFolder')">
+          <FolderPlus :size="16" />
+        </button>
+        <button class="toolbar-btn" @click="showHidden = !showHidden" :title="showHidden ? t('projectDialog.hideHiddenFiles') : t('projectDialog.showHiddenFiles')">
+          <EyeOff v-if="!showHidden" :size="16" />
+          <Eye v-else :size="16" />
+        </button>
+        <button class="toolbar-btn" @click="loadBrowse" :title="t('nav.refresh')">
+          <RotateCw :size="16" />
+        </button>
         <SearchInput v-model="searchQuery" :placeholder="t('projectDialog.search')" />
       </div>
       <DirBreadcrumb :path="browsePath === '/' ? '' : browsePath" @navigate="onBreadcrumbNavigate" />
@@ -79,15 +57,14 @@
 </template>
 
 <script setup>
-import { Folder, FolderPlus, Eye, EyeOff, Pencil, Trash2, RotateCw, MoreHorizontal } from 'lucide-vue-next'
-import { ref, computed, watch, inject, onUnmounted, nextTick } from 'vue'
+import { Folder, FolderPlus, Eye, EyeOff, Pencil, Trash2, RotateCw } from 'lucide-vue-next'
+import { ref, computed, watch, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ModalDialog from './common/ModalDialog.vue'
 import SearchInput from './common/SearchInput.vue'
 import DirBreadcrumb from './file/DirBreadcrumb.vue'
 import { baseName } from '@/utils/path.ts'
 import { useDialog } from '@/composables/useDialog.ts'
-import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
 
 const { t } = useI18n()
 const dialog = useDialog()
@@ -103,19 +80,6 @@ const loading = ref(false)
 const selectedPath = ref('')
 const searchQuery = ref('')
 const showHidden = ref(false)
-
-// Responsive toolbar overflow
-const dialogToolbarRef = ref(null)
-const overflowMenuOpen = ref(false)
-const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
-  () => dialogToolbarRef.value,
-  () => {
-    const ids = ['hidden', 'refresh']
-    if (!isRootLevel.value) ids.unshift('newfolder')
-    return ids
-  },
-  { gap: 4 },
-)
 
 // Browse state
 const browsePath = ref('/')
@@ -137,31 +101,14 @@ function pathJoin(base, name) {
 // Reload data when dialog opens (only first time)
 let initialized = false
 
-function closeOverflowMenu(e) {
-    if (overflowMenuOpen.value && !e.target.closest('.toolbar-dropdown-wrap')) {
-        overflowMenuOpen.value = false
-    }
-}
-
 watch(() => props.open, (isOpen) => {
     if (isOpen) {
         searchQuery.value = ''
-        overflowMenuOpen.value = false
-        nextTick(() => startToolbarResize())
-        document.addEventListener('click', closeOverflowMenu)
         if (!initialized) {
             initialized = true
             loadBrowse()
         }
-    } else {
-        stopToolbarResize()
-        document.removeEventListener('click', closeOverflowMenu)
     }
-})
-
-onUnmounted(() => {
-    stopToolbarResize()
-    document.removeEventListener('click', closeOverflowMenu)
 })
 
 function onBreadcrumbNavigate(path) {
@@ -321,13 +268,6 @@ async function confirm() {
   padding: 3px 10px 3px;
 }
 
-.dialog-toolbar-btns {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-}
-
 .dialog-toolbar-row :deep(.search-pill) {
     margin-left: auto;
     min-width: 80px;
@@ -364,23 +304,6 @@ async function confirm() {
   color: var(--accent-color, #0066cc);
 }
 .toolbar-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-
-/* Overflow dropdown */
-.toolbar-dropdown-wrap { position: relative; flex-shrink: 0; }
-.toolbar-dropdown {
-  position: absolute; top: 100%; right: 0; z-index: 100;
-  background: var(--bg-elevated, var(--bg-primary)); border: 1px solid var(--border-color);
-  border-radius: 6px; padding: 3px 0; min-width: 140px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-}
-.toolbar-dropdown-right { right: 0; left: auto; }
-.toolbar-dropdown-item {
-  display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 10px;
-  border: none; background: transparent; color: var(--text-primary); cursor: pointer;
-  font-size: 12px; white-space: nowrap;
-}
-.toolbar-dropdown-item:hover { background: var(--bg-tertiary); color: var(--accent-color); }
-.toolbar-dropdown-divider { height: 1px; background: var(--border-color); margin: 2px 0; }
 
 /* Content */
 .dialog-content {
