@@ -143,12 +143,17 @@ func CleanupPendingEvents() {
 		slog.Debug("pending_events: cleaned up expired", "count", n)
 	}
 	// Cap total rows
-	_, _ = WriteExec(
+	capResult, capErr := WriteExec(
 		`DELETE FROM pending_events WHERE id NOT IN (
 			SELECT id FROM pending_events ORDER BY created_at DESC LIMIT ?
 		)`,
 		pendingEventMaxRows,
 	)
+	if capErr != nil {
+		slog.Warn("pending_events: row cap failed", "error", capErr)
+	} else if n, _ := capResult.RowsAffected(); n > 0 {
+		slog.Warn("pending_events: evicted rows to cap", "count", n, "max", pendingEventMaxRows)
+	}
 }
 
 // StoreNotifiableEvent persists a notifiable WS event if it's a terminal state.

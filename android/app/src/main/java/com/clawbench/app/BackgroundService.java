@@ -1711,7 +1711,8 @@ public class BackgroundService extends Service {
                 }
 
                 // Update last seen event cursor for pending events fetch
-                if (!eventId.isEmpty()) {
+                // Only update for terminal-state events that are persisted server-side
+                if (!eventId.isEmpty() && shouldNotify) {
                     getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                             .edit()
                             .putString(KEY_LAST_SEEN_EVENT_ID, eventId)

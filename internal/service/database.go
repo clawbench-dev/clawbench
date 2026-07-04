@@ -66,16 +66,16 @@ func WriteBegin() (*sql.Tx, error) {
 // MutexDBExec wraps a DBExec to acquire writeMu on every Exec call.
 // Pass this to functions that accept DBExec when called from production code.
 // Tests should pass the unwrapped *sql.DB directly (single-goroutine, no contention).
-type MutexDBExec struct{ inner DBExec }
+type MutexDBExec struct{ Inner DBExec }
 
 func (m MutexDBExec) Exec(query string, args ...any) (sql.Result, error) {
 	writeMu.Lock()
 	defer writeMu.Unlock()
-	return m.inner.Exec(query, args...)
+	return m.Inner.Exec(query, args...)
 }
 
 func (m MutexDBExec) QueryRow(query string, args ...any) *sql.Row {
-	return m.inner.QueryRow(query, args...)
+	return m.Inner.QueryRow(query, args...)
 }
 
 // InitDB initializes the SQLite database with latest schema.
@@ -312,6 +312,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		);
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_event_id ON pending_events(event_id);
 		CREATE INDEX IF NOT EXISTS idx_pending_expires ON pending_events(expires_at);
+		CREATE INDEX IF NOT EXISTS idx_pending_created ON pending_events(created_at);
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)

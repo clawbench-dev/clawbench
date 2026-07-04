@@ -203,7 +203,13 @@ function connect() {
                 if (msg.id) {
                     send({ type: 'ack', id: msg.id })
                     // Update last seen event cursor for offline recovery
-                    localStorage.setItem(LAST_SEEN_KEY, msg.id)
+                    // Only update for terminal-state events that are persisted server-side
+                    const status = (msg.data as any)?.status as string | undefined
+                    const isTerminal = (msg.event === 'session_update' && (status === 'completed' || status === 'cancelled' || status === 'permission_pending'))
+                        || (msg.event === 'task_update' && (status === 'completed' || status === 'failed' || status === 'cancelled'))
+                    if (isTerminal) {
+                        localStorage.setItem(LAST_SEEN_KEY, msg.id)
+                    }
                 }
             }
         } catch {
