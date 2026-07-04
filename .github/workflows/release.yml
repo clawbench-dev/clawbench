@@ -619,8 +619,12 @@ jobs:
 
       - name: Configure npm registry for publishing
         run: |
-          echo "registry=https://registry.npmjs.org/" > .npmrc
-          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> .npmrc
+          # setup-node sets NPM_CONFIG_USERCONFIG which takes priority over
+          # project .npmrc, so we must write to that file instead.
+          cat > "${NPM_CONFIG_USERCONFIG}" <<EOF
+          registry=https://registry.npmjs.org/
+          //registry.npmjs.org/:_authToken=${NPM_TOKEN}
+          EOF
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
