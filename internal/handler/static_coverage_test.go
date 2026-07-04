@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -109,6 +110,9 @@ func TestServeIndex_TraversalBlockedOutsidePublic(t *testing.T) {
 // --- ServeIndex: root path "." ---
 
 func TestServeIndex_DotPath_ServesIndex(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("filepath.Clean behavior differs on Windows")
+	}
 	tmpDir := t.TempDir()
 	publicDir := filepath.Join(tmpDir, "public")
 	if err := os.MkdirAll(publicDir, 0o755); err != nil {

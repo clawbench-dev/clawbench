@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -272,7 +273,14 @@ func TestWriteConfigYAML_MkdirFail(t *testing.T) {
 	}
 
 	origBinDir := model.BinDir
-	model.BinDir = "/proc/cannot-create-here"
+	// Use a path that cannot be created on any OS:
+	// - Linux: /proc is a procfs mount, mkdir inside it fails with EROFS
+	// - Windows: CON is a reserved device name, mkdir fails
+	if runtime.GOOS == "windows" {
+		model.BinDir = `CON\cannot-create-here`
+	} else {
+		model.BinDir = "/proc/cannot-create-here"
+	}
 	defer func() { model.BinDir = origBinDir }()
 
 	err := writeConfigYAML(map[string]any{"test": "value"})

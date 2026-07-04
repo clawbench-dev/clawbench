@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"clawbench/internal/middleware"
@@ -16,6 +17,9 @@ import (
 // --- ISS-055: Path traversal in ServeIndex ---
 
 func TestServeIndex_PathTraversal(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("filepath.Clean and path traversal semantics differ on Windows")
+	}
 	// Create a temporary public directory with a known file
 	tmpDir := t.TempDir()
 	publicDir := filepath.Join(tmpDir, "public")
