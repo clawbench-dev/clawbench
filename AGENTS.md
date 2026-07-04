@@ -94,7 +94,7 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 - **Docker deployment:** `Dockerfile` + `docker-compose.yml` + `scripts/docker-build.sh`. Data via Docker volume at `/data/.clawbench/`.
 - **@ command injection:** `processAtCommand()` detects `@chatsearch`/`@task` → template injection. Frontend autocomplete in `ChatInputBar.vue`.
 - **Inline thinking streaming:** Thinking blocks stream inline during active session, auto-collapse to clickable chip on completion.
-- **Android integration:** HTML login + `AndroidNative` JS bridge. `BackgroundService` for SSH + WS.
+- **Android integration:** HTML login + `AndroidNative` JS bridge. `BackgroundService` for SSH + WS. APK embedded in Go binary via `go:embed` (built by `--android` flag, placed in `internal/frontend/dist/assets/`). `/api/apk` endpoint serves APK from embedded FS only. Single-binary deployment includes APK without external files.
 - **SPA hot project switch:** In-place state reset + Vue `:key` rebuild, no `window.location.reload()`.
 - **Worktree annotation:** `useWorktreeAnnotation` annotates worktree paths in chat messages. Runs before file path annotation to prevent partial matches.
 

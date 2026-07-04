@@ -89,8 +89,29 @@ else
     echo "  (Go binary will use empty embed — serve from disk public/ if available)"
 fi
 
-# 2. Build Go backend (after frontend so embed dir is populated)
-echo "[2/5] Building Go backend..."
+# 2. Build Android APK (optional, before Go build so APK is embedded)
+if [ -n "$BUILD_ANDROID" ]; then
+    echo "[2/5] Building Android APK..."
+    if [ -d "android" ] && [ -f "android/gradlew" ]; then
+        (cd android && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew assembleRelease \
+            -PversionCode=$VERSION_CODE -PversionName="$FULL_VERSION")
+        echo "  APK: android/app/build/outputs/apk/release/clawbench-android.apk"
+        if [ -f android/app/build/outputs/apk/release/clawbench-android.apk ]; then
+            mkdir -p internal/frontend/dist/assets
+            cp android/app/build/outputs/apk/release/clawbench-android.apk internal/frontend/dist/assets/
+            echo "  APK copied for embedding: internal/frontend/dist/assets/"
+        else
+            echo "  Warning: APK not found at expected path, skipping copy"
+        fi
+    else
+        echo "  Android project not found, skipping APK build"
+    fi
+else
+    echo "[2/5] Android APK skipped (use --android to build)"
+fi
+
+# 3. Build Go backend (after frontend + APK so embed dir is populated)
+echo "[3/5] Building Go backend..."
 
 if command -v go >/dev/null 2>&1; then
     if [ -n "$TARGET_OS" ] && [ -n "$TARGET_ARCH" ]; then
@@ -113,38 +134,17 @@ else
     echo "  Go not found, skipping backend build"
 fi
 
-# 3. (Skipped — embedded agent download removed)
-echo "[3/5] Skipped (embedded agent download removed)"
-
-# 4. Build Android APK (optional)
-if [ -n "$BUILD_ANDROID" ]; then
-    echo "[4/5] Building Android APK..."
-    if [ -d "android" ] && [ -f "android/gradlew" ]; then
-        (cd android && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew assembleRelease \
-            -PversionCode=$VERSION_CODE -PversionName="$FULL_VERSION")
-        echo "  APK: android/app/build/outputs/apk/release/clawbench-android.apk"
-        if [ -f android/app/build/outputs/apk/release/clawbench-android.apk ]; then
-            mkdir -p public/assets
-            cp android/app/build/outputs/apk/release/clawbench-android.apk public/assets/
-            echo "  APK copied to public/assets/"
-        else
-            echo "  Warning: APK not found at expected path, skipping copy"
-        fi
-    else
-        echo "  Android project not found, skipping APK build"
-    fi
-else
-    echo "[4/5] Android APK skipped (use --android to build)"
-fi
+# 4. (Skipped — embedded agent download removed)
+echo "[4/5] Skipped (embedded agent download removed)"
 
 echo ""
 echo "=== Build complete ==="
 if [ -n "$TARGET_OS" ] && [ -n "$TARGET_ARCH" ]; then
     BINARY_NAME="$NAME"
     [ "$TARGET_OS" = "windows" ] && BINARY_NAME="${NAME}.exe"
-    echo "  ./$BINARY_NAME       # Go binary ($TARGET_OS/$TARGET_ARCH, frontend embedded)"
+    echo "  ./$BINARY_NAME       # Go binary ($TARGET_OS/$TARGET_ARCH, frontend+APK embedded)"
 else
-    echo "  ./$NAME              # Go binary (frontend embedded)"
+    echo "  ./$NAME              # Go binary (frontend+APK embedded)"
 fi
 echo "  public/              # Frontend on disk (used if present, overrides embed)"
 echo ""

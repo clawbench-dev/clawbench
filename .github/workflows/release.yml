@@ -89,9 +89,6 @@ jobs:
           name: android-apk
           path: android-apk/
 
-      - name: Include APK in public/assets/
-        run: mkdir -p public/assets && cp android-apk/clawbench-android.apk public/assets/
-
       - name: Copy frontend for Go embed
         run: |
           rm -rf internal/frontend/dist
@@ -100,6 +97,8 @@ jobs:
           cp public/*.js public/*.css internal/frontend/dist/ 2>/dev/null || true
           cp public/manifest-*.json public/sw.js internal/frontend/dist/ 2>/dev/null || true
           cp -r public/assets internal/frontend/dist/assets 2>/dev/null || true
+          mkdir -p internal/frontend/dist/assets
+          cp android-apk/clawbench-android.apk internal/frontend/dist/assets/
 
       - uses: actions/setup-go@v5
         with:
@@ -157,9 +156,6 @@ jobs:
           name: android-apk
           path: android-apk/
 
-      - name: Include APK in public/assets/
-        run: mkdir -p public/assets && cp android-apk/clawbench-android.apk public/assets/
-
       - name: Copy frontend for Go embed
         run: |
           rm -rf internal/frontend/dist
@@ -168,6 +164,8 @@ jobs:
           cp public/*.js public/*.css internal/frontend/dist/ 2>/dev/null || true
           cp public/manifest-*.json public/sw.js internal/frontend/dist/ 2>/dev/null || true
           cp -r public/assets internal/frontend/dist/assets 2>/dev/null || true
+          mkdir -p internal/frontend/dist/assets
+          cp android-apk/clawbench-android.apk internal/frontend/dist/assets/
 
       - uses: actions/setup-go@v5
         with:
@@ -225,11 +223,6 @@ jobs:
           name: android-apk
           path: android-apk/
 
-      - name: Include APK in public/assets/
-        run: |
-          New-Item -ItemType Directory -Force -Path public/assets | Out-Null
-          Copy-Item android-apk/clawbench-android.apk public/assets/
-
       - name: Copy frontend for Go embed
         shell: pwsh
         run: |
@@ -241,6 +234,8 @@ jobs:
           Copy-Item public/manifest-*.json internal/frontend/dist/ -ErrorAction SilentlyContinue
           Copy-Item public/sw.js internal/frontend/dist/ -ErrorAction SilentlyContinue
           if (Test-Path public/assets) { Copy-Item -Recurse public/assets internal/frontend/dist/assets }
+          New-Item -ItemType Directory -Force -Path internal/frontend/dist/assets | Out-Null
+          Copy-Item android-apk/clawbench-android.apk internal/frontend/dist/assets/
 
       - uses: actions/setup-go@v5
         with:
@@ -291,9 +286,6 @@ jobs:
           name: android-apk
           path: android-apk/
 
-      - name: Include APK in public/assets/
-        run: mkdir -p public/assets && cp android-apk/clawbench-android.apk public/assets/
-
       - name: Copy frontend for Go embed
         run: |
           rm -rf internal/frontend/dist
@@ -302,6 +294,8 @@ jobs:
           cp public/*.js public/*.css internal/frontend/dist/ 2>/dev/null || true
           cp public/manifest-*.json public/sw.js internal/frontend/dist/ 2>/dev/null || true
           cp -r public/assets internal/frontend/dist/assets 2>/dev/null || true
+          mkdir -p internal/frontend/dist/assets
+          cp android-apk/clawbench-android.apk internal/frontend/dist/assets/
 
       - uses: actions/setup-go@v5
         with:
@@ -352,9 +346,6 @@ jobs:
           name: android-apk
           path: android-apk/
 
-      - name: Include APK in public/assets/
-        run: mkdir -p public/assets && cp android-apk/clawbench-android.apk public/assets/
-
       - name: Copy frontend for Go embed
         run: |
           rm -rf internal/frontend/dist
@@ -363,6 +354,8 @@ jobs:
           cp public/*.js public/*.css internal/frontend/dist/ 2>/dev/null || true
           cp public/manifest-*.json public/sw.js internal/frontend/dist/ 2>/dev/null || true
           cp -r public/assets internal/frontend/dist/assets 2>/dev/null || true
+          mkdir -p internal/frontend/dist/assets
+          cp android-apk/clawbench-android.apk internal/frontend/dist/assets/
 
       - uses: actions/setup-go@v5
         with:
