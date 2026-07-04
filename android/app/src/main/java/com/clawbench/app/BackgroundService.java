@@ -170,8 +170,9 @@ public class BackgroundService extends Service {
     private Handler wsPingHandler;
     private Runnable wsPingRunnable;
     // Adaptive ping: screen state and ramp-up timer
+    // Initialized from PowerManager in onCreate; default true before init
     private volatile boolean screenOn = true;
-    private long screenOffTime = 0;
+    private volatile long screenOffTime = 0;
     private Handler screenRampHandler;
     private Runnable screenRampRunnable;
     // Skip next ping when a WS message was just received (connection proven alive)
@@ -394,6 +395,15 @@ public class BackgroundService extends Service {
         createNotificationChannel();
         startForegroundCompat(NOTIFICATION_ID, buildNotification(0, null));
 
+        // Initialize screen state from PowerManager (may be off if service restarts while screen is off)
+        PowerManager pmInit = (PowerManager) getApplicationContext().getSystemService(Context.POWER_SERVICE);
+        if (pmInit != null) {
+            screenOn = pmInit.isInteractive();
+            if (!screenOn) {
+                screenOffTime = System.currentTimeMillis();
+            }
+        }
+
         // Register screen state receiver for adaptive WS ping interval
         IntentFilter screenFilter = new IntentFilter();
         screenFilter.addAction(Intent.ACTION_SCREEN_ON);
@@ -417,7 +427,11 @@ public class BackgroundService extends Service {
                 }
             }
         };
-        registerReceiver(screenStateReceiver, screenFilter);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            registerReceiver(screenStateReceiver, screenFilter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(screenStateReceiver, screenFilter);
+        }
 
         // Restore previously saved ports (from before Service was killed)
         restoreForwardedPorts();
@@ -1396,30 +1410,38 @@ public class BackgroundService extends Service {
     }
 
     /**
-     * Schedule delayed callbacks to restart the ping loop at each ramp-up step
-     * when the screen is off. Posts at 2min, 5min, and 10min after screen off
-     * to increase the ping interval progressively.
+     * Schedule a chained ramp-up callback that fires at each checkpoint
+     * (2min, 5min, 10min after screen off) to increase the ping interval.
+     * Uses a single self-chaining Runnable to avoid Handler.postDelayed
+     * replacing the previous callback (which would skip intermediate steps).
      */
     private void schedulePingRampUp() {
         cancelPingRampUp();
         screenRampHandler = new Handler(Looper.getMainLooper());
+        // Ramps: 2min → 60s, 5min → 120s, 10min → 300s
+        // Each step restarts the ping loop (which calls getCurrentPingInterval())
+        // and chains to the next checkpoint if screen is still off.
+        final long[] checkpoints = {120_000L, 300_000L, 600_000L}; // 2min, 5min, 10min from screenOffTime
         screenRampRunnable = new Runnable() {
+            int step = 0;
             @Override
             public void run() {
-                // Only restart ping loop if screen is still off and WS is active
                 if (!screenOn && nativeWsActive) {
                     int interval = getCurrentPingInterval();
-                    AppLog.i(TAG, "NativeWS: ping ramp-up, restarting loop (interval=" + interval + "ms)");
+                    AppLog.i(TAG, "NativeWS: ping ramp-up step " + step + " (interval=" + interval + "ms)");
                     startWsPingLoop();
+                    // Chain to next checkpoint
+                    step++;
+                    if (step < checkpoints.length) {
+                        long offDuration = System.currentTimeMillis() - screenOffTime;
+                        long nextDelay = Math.max(0, checkpoints[step] - offDuration);
+                        screenRampHandler.postDelayed(this, nextDelay);
+                    }
                 }
             }
         };
-        // Schedule ramp-up checkpoints at 2min, 5min, 10min after screen off
-        // The runnable restarts the ping loop, which will use getCurrentPingInterval()
-        // to determine the new interval based on how long screen has been off.
-        screenRampHandler.postDelayed(screenRampRunnable, 120_000L);  // 2 min → may ramp to 60s
-        screenRampHandler.postDelayed(screenRampRunnable, 300_000L);  // 5 min → may ramp to 120s
-        screenRampHandler.postDelayed(screenRampRunnable, 600_000L);  // 10 min → may ramp to 300s
+        // First checkpoint at 2min from screen off
+        screenRampHandler.postDelayed(screenRampRunnable, 120_000L);
     }
 
     /**
@@ -1460,7 +1482,9 @@ public class BackgroundService extends Service {
      * (ping send, reconnect attempt) to ensure CPU is awake for I/O.
      */
     private void ensureWakeLock() {
+        if (!isRunning) return; // Don't re-acquire if service is shutting down
         if (wakeLock == null || !wakeLock.isHeld()) {
+            AppLog.d(TAG, "SSH: WakeLock expired, re-acquiring");
             acquireWakeLock();
         }
     }
