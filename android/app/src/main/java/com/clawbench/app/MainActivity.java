@@ -100,6 +100,9 @@ public class MainActivity extends AppCompatActivity {
 
     static MainActivity instance;
 
+    /** Whether the app is currently in the foreground (between onResume and onPause). */
+    static volatile boolean isForeground = false;
+
     WebView webView;
     private ProgressBar progressBar;
     private SharedPreferences prefs;
@@ -1122,6 +1125,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         super.onPause();
+        isForeground = false;
         pauseWebView();
         // App going to background — start native WS so we still get
         // notifications when Android kills the WebView process.
@@ -1133,6 +1137,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        isForeground = true;
         resumeWebView();
         // App returning to foreground — stop native WS (WebView WS handles events)
         BackgroundService.stopNativeEventWs(this);
@@ -2258,6 +2263,19 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
             return false;
+        }
+
+        /**
+         * Sync the last seen event ID cursor from the WebView WS to
+         * SharedPreferences. Called by the frontend when it receives a
+         * terminal-state event (completed/cancelled/failed/permission_pending)
+         * while the app is in the foreground. This prevents the native WS
+         * fetchPendingEvents() from re-delivering already-seen events when
+         * the app switches to background.
+         */
+        @JavascriptInterface
+        public void updateLastSeenEventId(String eventId) {
+            BackgroundService.updateLastSeenEventId(activity, eventId);
         }
     }
 

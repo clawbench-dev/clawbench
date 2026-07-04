@@ -223,6 +223,21 @@ public class BackgroundService extends Service {
     }
 
     /**
+     * Update the last seen event ID cursor from the WebView WS.
+     * Called via JS bridge when the frontend receives a terminal-state event
+     * while the app is in the foreground. This keeps the SharedPreferences
+     * cursor in sync with localStorage so that fetchPendingEvents() won't
+     * re-deliver already-seen events when switching to background.
+     */
+    public static void updateLastSeenEventId(Context context, String eventId) {
+        if (eventId == null || eventId.isEmpty()) return;
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(KEY_LAST_SEEN_EVENT_ID, eventId)
+                .apply();
+    }
+
+    /**
      * Get the trust-all SSL context for use by PendingEventsWorker.
      * Returns null if not yet initialized.
      */
@@ -1999,6 +2014,11 @@ public class BackgroundService extends Service {
      *   4. If responsePreview non-empty: alert = truncateForPush(responsePreview, 512)
      */
     private void postEventNotification(String eventType, JSONObject data) {
+        // Suppress notifications when app is in the foreground
+        if (MainActivity.isForeground) {
+            AppLog.d(TAG, "NativeWS: suppressing notification, app is foreground");
+            return;
+        }
         try {
             String status = data.optString("status", "");
             String sessionId = data.optString("session_id", "");
@@ -2261,6 +2281,11 @@ public class BackgroundService extends Service {
      * Creates its own NotificationManager and channel since the service may not be running.
      */
     static void postEventNotificationFromWorker(Context context, String eventType, JSONObject data) {
+        // Suppress notifications when app is in the foreground
+        if (MainActivity.isForeground) {
+            AppLog.d(TAG, "PendingEvents: suppressing notification, app is foreground");
+            return;
+        }
         try {
             String status = data.optString("status", "");
             String sessionId = data.optString("session_id", "");

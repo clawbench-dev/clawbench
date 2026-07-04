@@ -139,6 +139,10 @@ async function fetchPendingEvents() {
         // Update cursor
         if (latestId !== lastSeenId) {
             localStorage.setItem(LAST_SEEN_KEY, latestId)
+            // Sync cursor to Android SharedPreferences
+            try {
+                ;(window as any).AndroidNative?.updateLastSeenEventId(latestId)
+            } catch {}
         }
     } catch {
         // Non-critical
@@ -209,6 +213,12 @@ function connect() {
                         || (msg.event === 'task_update' && (status === 'completed' || status === 'failed' || status === 'cancelled'))
                     if (isTerminal) {
                         localStorage.setItem(LAST_SEEN_KEY, msg.id)
+                        // Sync cursor to Android SharedPreferences so that the native
+                        // fetchPendingEvents() won't re-deliver these events when
+                        // the app switches to background.
+                        try {
+                            ;(window as any).AndroidNative?.updateLastSeenEventId(msg.id)
+                        } catch {}
                     }
                 }
             }
