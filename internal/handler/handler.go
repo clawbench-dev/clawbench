@@ -10,8 +10,8 @@ import (
 	"slices"
 	"strings"
 
-	i18npkg "clawbench/internal/i18n"
 	"clawbench/internal/frontend"
+	i18npkg "clawbench/internal/i18n"
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
@@ -154,7 +154,7 @@ func isPathUnderAnyRoot(absPath string) bool {
 // isPathUnderBase checks that absPath is under basePath by resolving symlinks
 // on both sides before comparing. This prevents symlink traversal attacks.
 // Both paths must be absolute.
-func isPathUnderBase(absPath, basePath string) bool { //nolint:unused // security utility
+func isPathUnderBase(absPath, basePath string) bool {
 	evalBase, err := filepath.EvalSymlinks(basePath)
 	if err != nil {
 		return false

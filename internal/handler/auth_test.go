@@ -207,6 +207,7 @@ func TestServeLogin(t *testing.T) {
 
 		// PasswordHash is nil — should reject login (no insecure SHA-256 fallback)
 		model.SessionToken = hashPassword("testpass")
+		model.PasswordIsSHA256 = false
 		model.PasswordHash = nil
 
 		req := newRequest(t, http.MethodPost, "/login", map[string]string{

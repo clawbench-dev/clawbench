@@ -212,14 +212,14 @@ func finalizeOrphanedStreamingMessages(sessionID string) {
 		return
 	}
 	// Find streaming=1 messages for this session
-	rows, err := dbRead.Query(
+	rows, err := dbRead.Query( //nolint:noctx // background goroutine, no request context available
 		"SELECT id, content FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1",
 		sessionID,
 	)
 	if err != nil {
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	type orphanMsg struct {
 		id      int64
@@ -232,6 +232,9 @@ func finalizeOrphanedStreamingMessages(sessionID string) {
 			continue
 		}
 		orphans = append(orphans, m)
+	}
+	if err := rows.Err(); err != nil {
+		slog.Warn("failed to iterate orphaned streaming messages", "session_id", sessionID, "error", err)
 	}
 
 	for _, m := range orphans {

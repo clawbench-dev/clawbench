@@ -76,6 +76,8 @@ vi.mock('@/composables/useSettingsConfig', () => ({
   localConfig: { fileView: 'list' },
   setLocalConfig: vi.fn(),
   useSettingsConfig: () => ({}),
+  getZoomedViewport: () => ({ width: 1024, height: 768 }),
+  toFixedCSS: (v: number) => Math.round(v * 100) / 100,
 }))
 
 vi.mock('@/stores/app', () => ({

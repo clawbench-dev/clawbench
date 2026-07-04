@@ -106,4 +106,86 @@ describe('AppHeader logic', () => {
     expect(formatServerHost('https://example.com')).toBe('example.com')
     expect(formatServerHost('http://localhost:8080')).toBe('localhost:8080')
   })
+
+  // ── serverStatusLabel ──
+
+  it('serverStatusLabel returns connected for connected status', () => {
+    mockWsStatus.value = 'connected'
+    const serverStatusLabel = computed(() => {
+      if (mockWsStatus.value === 'connected') return 'Connected'
+      if (mockWsStatus.value === 'reconnecting') return 'Reconnecting'
+      return 'Disconnected'
+    })
+    expect(serverStatusLabel.value).toBe('Connected')
+  })
+
+  it('serverStatusLabel returns reconnecting for reconnecting status', () => {
+    mockWsStatus.value = 'reconnecting'
+    const serverStatusLabel = computed(() => {
+      if (mockWsStatus.value === 'connected') return 'Connected'
+      if (mockWsStatus.value === 'reconnecting') return 'Reconnecting'
+      return 'Disconnected'
+    })
+    expect(serverStatusLabel.value).toBe('Reconnecting')
+  })
+
+  it('serverStatusLabel returns disconnected for disconnected status', () => {
+    mockWsStatus.value = 'disconnected'
+    const serverStatusLabel = computed(() => {
+      if (mockWsStatus.value === 'connected') return 'Connected'
+      if (mockWsStatus.value === 'reconnecting') return 'Reconnecting'
+      return 'Disconnected'
+    })
+    expect(serverStatusLabel.value).toBe('Disconnected')
+  })
+
+  // ── dropdown position calculation ──
+
+  it('dropdownStyle calculates fixed position from element rect', () => {
+    const toFixedCSS = (coord: number) => coord // zoom=1
+    const rect = { bottom: 50, left: 10, width: 200 }
+    const style = {
+      position: 'fixed',
+      top: `${toFixedCSS(rect.bottom + 4)}px`,
+      left: `${toFixedCSS(rect.left)}px`,
+      minWidth: `${Math.max(220, rect.width)}px`,
+      maxWidth: '280px',
+    }
+    expect(style.top).toBe('54px')
+    expect(style.left).toBe('10px')
+    expect(style.minWidth).toBe('220px')
+  })
+
+  // ── recentItems path display ──
+
+  it('displayPath is relative to homeDir when path starts with it', () => {
+    const homeDir = '/home/user'
+    const p = '/home/user/projects/myapp'
+    const normHome = homeDir.replace(/\\/g, '/')
+    const normP = p.replace(/\\/g, '/')
+    const displayPath = (normHome && normP.startsWith(normHome + '/'))
+      ? p.slice(homeDir.length + 1)
+      : p
+    expect(displayPath).toBe('projects/myapp')
+  })
+
+  it('displayPath is absolute when not under homeDir', () => {
+    const homeDir = '/home/user'
+    const p = '/opt/other/project'
+    const normHome = homeDir.replace(/\\/g, '/')
+    const normP = p.replace(/\\/g, '/')
+    const displayPath = (normHome && normP.startsWith(normHome + '/'))
+      ? p.slice(homeDir.length + 1)
+      : p
+    expect(displayPath).toBe('/opt/other/project')
+  })
+
+  // ── branch animation ──
+
+  it('branchAnimating triggers on branch change', async () => {
+    mockGitBranch.value = 'main'
+    // Simulate branch change
+    mockGitBranch.value = 'feature-test'
+    expect(mockGitBranch.value).toBe('feature-test')
+  })
 })

@@ -236,7 +236,7 @@ var installMu sync.Mutex
 // serveAgentsInstall handles POST /api/agents/install — runs InstallCmd for a
 // backend and streams stdout/stderr via SSE. Only one install at a time.
 // Expects: {"backend_id": "opencode"}
-func serveAgentsInstall(w http.ResponseWriter, r *http.Request) {
+func serveAgentsInstall(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // SSE install streaming has multiple sequential branches
 	var req struct {
 		BackendID string `json:"backend_id"`
 	}
@@ -281,7 +281,7 @@ func serveAgentsInstall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Emit initial state
-	fmt.Fprintf(w, "event: install_start\ndata: {\"backend_id\":%q,\"command\":%q}\n\n", spec.ID, spec.InstallCmd)
+	_, _ = fmt.Fprintf(w, "event: install_start\ndata: {\"backend_id\":%q,\"command\":%q}\n\n", spec.ID, spec.InstallCmd)
 	flusher.Flush()
 
 	// Execute install command (no sudo)
@@ -296,18 +296,18 @@ func serveAgentsInstall(w http.ResponseWriter, r *http.Request) {
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q}\n\n", err.Error())
+		_, _ = fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q}\n\n", err.Error())
 		flusher.Flush()
 		return
 	}
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
-		fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q}\n\n", err.Error())
+		_, _ = fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q}\n\n", err.Error())
 		flusher.Flush()
 		return
 	}
 	if err := cmd.Start(); err != nil {
-		fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q,\"command\":%q}\n\n", err.Error(), spec.InstallCmd)
+		_, _ = fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q,\"command\":%q}\n\n", err.Error(), spec.InstallCmd)
 		flusher.Flush()
 		return
 	}
@@ -365,23 +365,23 @@ func serveAgentsInstall(w http.ResponseWriter, r *http.Request) {
 				logCh = nil
 				continue
 			}
-			fmt.Fprintf(w, "event: install_log\ndata: {\"line\":%q,\"stream\":%q}\n\n", ll.line, ll.stream)
+			_, _ = fmt.Fprintf(w, "event: install_log\ndata: {\"line\":%q,\"stream\":%q}\n\n", ll.line, ll.stream)
 			flusher.Flush()
 		case exitErr := <-exitErrCh:
 			// Drain remaining log lines (channel will be closed by reader goroutines)
 			for ll := range logCh {
-				fmt.Fprintf(w, "event: install_log\ndata: {\"line\":%q,\"stream\":%q}\n\n", ll.line, ll.stream)
+				_, _ = fmt.Fprintf(w, "event: install_log\ndata: {\"line\":%q,\"stream\":%q}\n\n", ll.line, ll.stream)
 				flusher.Flush()
 			}
 			if exitErr != nil {
-				fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q,\"command\":%q}\n\n", exitErr.Error(), spec.InstallCmd)
+				_, _ = fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q,\"command\":%q}\n\n", exitErr.Error(), spec.InstallCmd)
 			} else {
-				fmt.Fprintf(w, "event: install_success\ndata: {\"backend_id\":%q}\n\n", spec.ID)
+				_, _ = fmt.Fprintf(w, "event: install_success\ndata: {\"backend_id\":%q}\n\n", spec.ID)
 			}
 			flusher.Flush()
 			return
 		case <-heartbeat.C:
-			fmt.Fprintf(w, ": heartbeat\n\n")
+			_, _ = fmt.Fprintf(w, ": heartbeat\n\n")
 			flusher.Flush()
 		case <-r.Context().Done():
 			// Client disconnected
@@ -922,7 +922,7 @@ func findExistingACPSessions(acpSessionIDs []string) map[string]bool {
 	}
 
 	result := make(map[string]bool)
-	rows, err := service.ReadDB().Query( //nolint:noctx // background DB query, no request context available in this helper
+	rows, err := service.ReadDB().Query( // background DB query, no request context available in this helper
 		"SELECT source_session_id FROM chat_sessions WHERE source_session_id IN ("+placeholders+")",
 		sourceIDs...,
 	)

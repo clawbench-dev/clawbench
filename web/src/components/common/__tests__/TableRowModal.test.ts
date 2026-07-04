@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, VueWrapper } from '@vue/test-utils'
-import { defineComponent, nextTick } from 'vue'
+import { defineComponent, nextTick, h } from 'vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 
 // Hoisted mocks
@@ -11,8 +11,10 @@ const { mockHandleLocalhostUrlClick, mockConfirm, mockOpenFilePath, mockCopyText
   mockCopyText: vi.fn(),
 }))
 
-// Mock ModalDialog
+// Mock ModalDialog — replaces the real component (which uses Teleport) with a simple mock
+// Must use h() render function inside vi.hoisted because defineComponent isn't available there
 const MockModalDialog = defineComponent({
+  name: 'MockModalDialog',
   props: { open: Boolean, title: String },
   emits: ['close'],
   template: `
@@ -23,6 +25,15 @@ const MockModalDialog = defineComponent({
     </div>
   `,
 })
+
+vi.mock('@/components/common/ModalDialog.vue', () => ({
+  default: defineComponent({
+    name: 'MockModalDialog',
+    props: { open: Boolean, title: String },
+    emits: ['close'],
+    template: '<div v-if="open" class="modal-dialog-mock"><div class="modal-title">{{ title }}</div><slot /><div class="modal-footer"><slot name="footer" /></div></div>',
+  }),
+}))
 
 // Mock vue-i18n
 vi.mock('vue-i18n', () => ({
@@ -121,9 +132,6 @@ describe('TableRowModal', () => {
     wrapper = mount(TableRowModal, {
       props: { data },
       global: {
-        stubs: {
-          ModalDialog: MockModalDialog as any,
-        },
         provide: {
           toast: { show: vi.fn() },
           switchTab: vi.fn(),
@@ -266,7 +274,6 @@ describe('TableRowModal', () => {
     wrapper = mount(TableRowModal, {
       props: { data: { headers: ['P'], rows: [['<span class="chat-worktree-btn" data-worktree-path="/wt">x</span>']], currentIndex: 0 } },
       global: {
-        stubs: { ModalDialog: MockModalDialog as any },
         provide: { toast: { show: vi.fn() }, switchTab: vi.fn(), hotSwitchProject: mockHotSwitch },
       },
     })
@@ -342,7 +349,6 @@ describe('TableRowModal', () => {
     wrapper = mount(TableRowModal, {
       props: { data },
       global: {
-        stubs: { ModalDialog: MockModalDialog as any },
         provide: {
           toast: { show: vi.fn() },
           switchTab: vi.fn(),
@@ -371,7 +377,6 @@ describe('TableRowModal', () => {
     wrapper = mount(TableRowModal, {
       props: { data },
       global: {
-        stubs: { ModalDialog: MockModalDialog as any },
         provide: {
           toast: { show: vi.fn() },
           switchTab: vi.fn(),

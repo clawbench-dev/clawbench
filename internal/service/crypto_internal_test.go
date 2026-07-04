@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// setupTestDirs creates a temp dir, sets BinDir and DataDir, and returns (tmpDir, cleanup).
-func setupTestDirs(t *testing.T) string {
+// setupTestDirs creates a temp dir, sets BinDir and DataDir, and returns a cleanup function.
+func setupTestDirs(t *testing.T) {
 	t.Helper()
 	tmpDir := t.TempDir()
 	origBinDir := model.BinDir
@@ -20,7 +20,6 @@ func setupTestDirs(t *testing.T) string {
 	model.BinDir = tmpDir
 	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	t.Cleanup(func() { model.BinDir = origBinDir; model.DataDir = origDataDir })
-	return tmpDir
 }
 
 func TestDeriveFallbackKey(t *testing.T) {
@@ -33,7 +32,7 @@ func TestDeriveFallbackKey(t *testing.T) {
 }
 
 func TestReadAutoPassword_FileExists(t *testing.T) {
-	_ = setupTestDirs(t)
+	setupTestDirs(t)
 	dataDir := model.DataDir
 
 	// Write auto-password file
@@ -47,7 +46,7 @@ func TestReadAutoPassword_FileExists(t *testing.T) {
 }
 
 func TestReadAutoPassword_NoFile(t *testing.T) {
-	_ = setupTestDirs(t)
+	setupTestDirs(t)
 
 	password := readAutoPassword()
 	assert.Equal(t, "", password, "should return empty string when file doesn't exist")
@@ -63,7 +62,7 @@ func TestReadAutoPassword_EmptyBinDir(t *testing.T) {
 }
 
 func TestDeriveKeyFromPassword_WithPassword(t *testing.T) {
-	_ = setupTestDirs(t)
+	setupTestDirs(t)
 	dataDir := model.DataDir
 
 	// Write auto-password file
@@ -78,7 +77,7 @@ func TestDeriveKeyFromPassword_WithPassword(t *testing.T) {
 }
 
 func TestDeriveKeyFromPassword_NoPassword(t *testing.T) {
-	_ = setupTestDirs(t)
+	setupTestDirs(t)
 
 	// No auto-password file — HKDF will use empty string, not fallback
 	ResetEncryptionKeyCache()
@@ -184,7 +183,7 @@ func TestRotateAPIKeyEncryption_LoadKeysError(t *testing.T) {
 }
 
 func TestRotateAPIKeyEncryption_SaveKeyError(t *testing.T) {
-	_ = setupTestDirs(t)
+	setupTestDirs(t)
 	dataDir := model.DataDir
 
 	// Write initial password file
@@ -284,7 +283,7 @@ func TestDeriveEncryptionKey_ConcurrentAccess(t *testing.T) {
 }
 
 func TestRotateAPIKeyEncryption_WithPasswordChange(t *testing.T) {
-	_ = setupTestDirs(t)
+	setupTestDirs(t)
 	dataDir := model.DataDir
 
 	// Write initial password file
@@ -332,7 +331,7 @@ func TestRotateAPIKeyEncryption_WithPasswordChange(t *testing.T) {
 // process crashed mid-rotation, DecryptAPIKey should fall back to the
 // previous key to decrypt it.
 func TestDecryptAPIKey_PreviousKeyFallback(t *testing.T) {
-	_ = setupTestDirs(t)
+	setupTestDirs(t)
 	dataDir := model.DataDir
 
 	// Write initial password file

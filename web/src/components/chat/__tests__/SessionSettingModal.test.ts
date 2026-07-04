@@ -255,4 +255,59 @@ describe('SessionSettingModal', () => {
     expect(filtered.length).toBe(1)
     expect(filtered[0].name).toContain('Opus')
   })
+
+  // ── Thinking tab content ──
+
+  it('shows thinking effort items on thinking tab', async () => {
+    const wrapper = mountModal()
+    const tabs = wrapper.findAll('.model-tab')
+    await tabs[1].trigger('click')
+    await nextTick()
+    const items = wrapper.findAll('.thinking-item')
+    expect(items.length).toBe(3) // low, medium, high
+  })
+
+  // ── Mode tab content ──
+
+  it('shows mode tab content when clicked', async () => {
+    const wrapper = mountModal()
+    const tabs = wrapper.findAll('.model-tab')
+    await tabs[2].trigger('click')
+    await nextTick()
+    const content = wrapper.find('.model-tab-content')
+    expect(content.exists()).toBe(true)
+  })
+
+  // ── Transport tab content ──
+
+  it('shows transport tab content when clicked', async () => {
+    const wrapper = mountModal()
+    const tabs = wrapper.findAll('.model-tab')
+    await tabs[3].trigger('click')
+    await nextTick()
+    // Verify tab switched (content area exists)
+    const content = wrapper.find('.model-tab-content')
+    expect(content.exists()).toBe(true)
+  })
+
+  // ── Model select interaction ──
+
+  it('emits switch-model when model item is clicked', async () => {
+    const wrapper = mountModal()
+    const items = wrapper.findAll('.model-item')
+    await items[1].trigger('click')
+    expect(wrapper.emitted('switch-model')).toBeTruthy()
+  })
+
+  // ── Model search ──
+
+  it('updates search query when typing in search input', async () => {
+    const wrapper = mountModal()
+    const input = wrapper.find('.model-search-input')
+    await input.setValue('sonnet')
+    await nextTick()
+    const filtered = wrapper.vm._getFilteredModels()
+    expect(filtered.length).toBe(1)
+    expect(filtered[0].name).toContain('Sonnet')
+  })
 })

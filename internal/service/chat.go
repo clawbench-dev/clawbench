@@ -275,7 +275,7 @@ func AddChatMessage(projectPath, backend, sessionID, role, content string, files
 		}
 	}
 
-	if txErr = tx.Commit(); txErr != nil {
+	if txErr := tx.Commit(); txErr != nil {
 		return 0, txErr
 	}
 

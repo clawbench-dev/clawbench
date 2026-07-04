@@ -231,7 +231,7 @@ type AgentPatch struct {
 
 // PatchAgentFields updates only the non-nil fields in the AgentPatch struct.
 // Returns nil even if the agent doesn't exist (no rows affected).
-func PatchAgentFields(id string, patch AgentPatch) error {
+func PatchAgentFields(id string, patch AgentPatch) error { //nolint:gocyclo // multi-field dynamic patch builder
 	// Build dynamic SET clause
 	setClauses := []string{}
 	args := []any{}
@@ -375,7 +375,7 @@ func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
 		Command:                 source.Command,
 		ThinkingEffort:          source.ThinkingEffort,
 		ThinkingEffortLevels:    make([]string, len(source.ThinkingEffortLevels)),
-		PreferredMode:            source.PreferredMode,
+		PreferredMode:           source.PreferredMode,
 		PreferredModel:          source.PreferredModel,
 		PreferredThinkingEffort: source.PreferredThinkingEffort,
 		CustomSystemPrompt:      source.CustomSystemPrompt,

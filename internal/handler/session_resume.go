@@ -188,7 +188,7 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 	sourceID := "acp:" + req.AcpSessionID
 	var existingID string
 	var existingDeleted int
-	err := service.ReadDB().QueryRow( //nolint:noctx // r.Context() not easily propagated through ServeACPLoadSession
+	err := service.ReadDB().QueryRow( // r.Context() not easily propagated through ServeACPLoadSession
 		"SELECT id, deleted FROM chat_sessions WHERE source_session_id = ? AND session_type = 'chat' ORDER BY deleted ASC, updated_at DESC LIMIT 1",
 		sourceID,
 	).Scan(&existingID, &existingDeleted)
@@ -336,7 +336,7 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 
 	// Batch insert replay messages to chat_history
 	for _, msg := range messages {
-		_, err := service.WriteExec( //nolint:noctx // r.Context() not easily propagated through ServeACPLoadSession
+		_, err := service.WriteExec( // r.Context() not easily propagated through ServeACPLoadSession
 			"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, indexed) VALUES (?, ?, ?, ?, ?, 0, 0)",
 			projectPath, agent.Backend, sessionID, msg.role, msg.content,
 		)

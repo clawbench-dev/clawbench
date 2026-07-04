@@ -481,8 +481,6 @@ func (r *AgentCapabilityRegistry) persistAsync(agentID string) {
 }
 
 // saveToDB persists capabilities for a single agent to the agents table.
-//
-//nolint:noctx // saveToDB runs in a background goroutine spawned from persistAsync; no caller-provided context is available, so the context-free Exec is intentional
 func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, agentCap *AgentCapability) error {
 	modesJSON, _ := json.Marshal(agentCap.AvailableModes)
 	if string(modesJSON) == "null" {
@@ -533,7 +531,7 @@ func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, age
 
 // LoadFromDB loads persisted capabilities from the agents table on startup.
 //
-//nolint:gocyclo,noctx // LoadFromDB branches on each capability field (modes/efforts/commands/config); a switch adds boilerplate without clarity. Query without context runs once during startup where cancellation is not relevant
+//nolint:gocyclo,gocognit // LoadFromDB branches on each capability field; a switch adds boilerplate without clarity
 func (r *AgentCapabilityRegistry) LoadFromDB(db dbutil.Reader) {
 	rows, err := db.Query(`
 		SELECT id, acp_available_modes, acp_available_thinking_efforts,

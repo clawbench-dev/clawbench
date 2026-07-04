@@ -51,7 +51,7 @@ vi.mock('@/utils/chatSessionUtils', () => ({
     parseMessages: vi.fn().mockReturnValue([]),
 }))
 
-import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, toggleAutoApprove } from '@/composables/useSessionIdentity'
+import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, toggleAutoApprove, getSessionId, prefetchCommands, registerSessionDrawerRef } from '@/composables/useSessionIdentity'
 
 describe('useSessionIdentity', () => {
     beforeEach(() => {
@@ -1261,6 +1261,74 @@ describe('useSessionIdentity', () => {
 
             expect(identity.availableThinkingEfforts.value).toEqual([])
             expect(identity.currentThinkingEffortName.value).toBe('')
+        })
+    })
+
+    // ── getSessionId ──
+
+    describe('getSessionId', () => {
+        it('returns the current session ID directly', async () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'test-session-42'
+
+            expect(getSessionId()).toBe('test-session-42')
+
+            // Reset
+            identity.currentSessionId.value = ''
+        })
+
+        it('returns empty string when no session is active', () => {
+            resetIdentity()
+            expect(getSessionId()).toBe('')
+        })
+    })
+
+    // ── prefetchCommands (deprecated no-op) ──
+
+    describe('prefetchCommands', () => {
+        it('resolves without error (no-op)', async () => {
+            await expect(prefetchCommands('any-agent')).resolves.toBeUndefined()
+        })
+    })
+
+    // ── registerSessionDrawerRef / openAgentSelector ──
+
+    describe('openAgentSelector', () => {
+        it('calls openAgentSelector on registered drawer ref', () => {
+            const mockOpenAgentSelector = vi.fn()
+            registerSessionDrawerRef({ openAgentSelector: mockOpenAgentSelector })
+
+            const identity = useSessionIdentity()
+            identity.openAgentSelector()
+
+            expect(mockOpenAgentSelector).toHaveBeenCalled()
+        })
+
+        it('does nothing when no drawer ref is registered', () => {
+            resetIdentity()
+            const identity = useSessionIdentity()
+            expect(() => identity.openAgentSelector()).not.toThrow()
+        })
+    })
+
+    // ── forkSession (in SessionActions interface) ──
+
+    describe('SessionActions.forkSession', () => {
+        it('is declared in the SessionActions interface', () => {
+            // forkSession is part of the interface but the composable
+            // does not expose it directly — it's handled by ChatPanel.
+            // Just verify registerSessionActions accepts it.
+            const actions = {
+                switchSession: vi.fn(),
+                createSession: vi.fn(),
+                deleteSession: vi.fn(),
+                sendMessage: vi.fn(),
+                openChatPanel: vi.fn(),
+                continueFromExecution: vi.fn().mockResolvedValue(true),
+                checkContinueSession: vi.fn().mockResolvedValue({ exists: false, sessionId: '' }),
+                forkSession: vi.fn().mockResolvedValue(true),
+            }
+            expect(() => registerSessionActions(actions)).not.toThrow()
         })
     })
 })

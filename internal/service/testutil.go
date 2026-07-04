@@ -1,4 +1,4 @@
-//nolint:noctx // test code
+//nolint:noctx,govet // test code: db local shadows package-level db, context not applicable
 package service
 
 import (

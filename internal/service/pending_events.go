@@ -1,4 +1,4 @@
-//nolint:noctx,govet // db global singleton, context not applicable
+//nolint:govet,noctx // db global singleton, context not applicable
 package service
 
 import (
@@ -27,6 +27,10 @@ const (
 	pendingEventPermPendTTL = 7 * 24 * time.Hour
 	// pendingEventMaxRows is the maximum total rows in pending_events.
 	pendingEventMaxRows = 1000
+	// statusCancelled is the cancelled status string used across event types.
+	statusCancelled = "cancelled"
+	// statusCompleted is the completed status string used across event types.
+	statusCompleted = "completed"
 )
 
 // IsNotifiableEvent returns true if the event is a terminal state that
@@ -47,9 +51,9 @@ func IsNotifiableEvent(event string, data any) bool {
 	}
 	switch event {
 	case "session_update":
-		return status == "completed" || status == "cancelled" || status == "permission_pending"
+		return status == statusCompleted || status == statusCancelled || status == "permission_pending"
 	case "task_update":
-		return status == "completed" || status == "failed" || status == "cancelled"
+		return status == statusCompleted || status == "failed" || status == statusCancelled
 	default:
 		return false
 	}
@@ -118,7 +122,7 @@ func GetPendingEvents(afterEventID string) ([]PendingEvent, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var events []PendingEvent
 	for rows.Next() {

@@ -154,6 +154,7 @@ linters:
           - noctx
           - bodyclose
           - errcheck
+          - govet
 
       # internal/ai: stream event types are domain strings, not config constants
       - path: internal/ai/

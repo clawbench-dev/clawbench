@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { useSettingsConfig } from '@/composables/useSettingsConfig'
+import { useSettingsConfig, applyUIScale, getUIScale, toFixedCSS, getZoomedViewport } from '@/composables/useSettingsConfig'
 
 // Mock api.ts
 vi.mock('@/utils/api', () => ({
@@ -411,6 +411,91 @@ describe('useSettingsConfig', () => {
 
       window.removeEventListener('clawbench-autospeech-change', listener)
       localStorage.removeItem('clawbench-settings-autoSpeech')
+    })
+  })
+
+  // ── applyUIScale / getUIScale ──
+
+  describe('applyUIScale', () => {
+    it('applies zoom style for scale > 1', () => {
+      applyUIScale(1.5)
+      expect(document.documentElement.style.zoom).toBe('1.5')
+    })
+
+    it('applies zoom style for scale < 1', () => {
+      applyUIScale(0.75)
+      expect(document.documentElement.style.zoom).toBe('0.75')
+    })
+
+    it('clears zoom style when scale is 1', () => {
+      applyUIScale(1)
+      expect(document.documentElement.style.zoom).toBe('')
+    })
+
+    it('clamps scale to minimum 0.5', () => {
+      applyUIScale(0.1)
+      expect(document.documentElement.style.zoom).toBe('0.5')
+    })
+
+    it('clamps scale to maximum 2', () => {
+      applyUIScale(3)
+      expect(document.documentElement.style.zoom).toBe('2')
+    })
+  })
+
+  describe('getUIScale', () => {
+    it('returns 1 when no zoom is set', () => {
+      document.documentElement.style.zoom = ''
+      expect(getUIScale()).toBe(1)
+    })
+
+    it('returns current zoom value', () => {
+      document.documentElement.style.zoom = '1.5'
+      expect(getUIScale()).toBe(1.5)
+      document.documentElement.style.zoom = ''
+    })
+
+    it('returns 1 for non-numeric zoom value', () => {
+      document.documentElement.style.zoom = 'invalid'
+      expect(getUIScale()).toBe(1)
+      document.documentElement.style.zoom = ''
+    })
+  })
+
+  describe('toFixedCSS', () => {
+    it('divides viewportCoord by zoom factor', () => {
+      document.documentElement.style.zoom = '2'
+      expect(toFixedCSS(200)).toBe(100)
+      document.documentElement.style.zoom = ''
+    })
+
+    it('returns same value when zoom is 1', () => {
+      document.documentElement.style.zoom = ''
+      expect(toFixedCSS(150)).toBe(150)
+    })
+  })
+
+  describe('getZoomedViewport', () => {
+    it('returns window inner dimensions', () => {
+      const vp = getZoomedViewport()
+      expect(vp.width).toBe(window.innerWidth)
+      expect(vp.height).toBe(window.innerHeight)
+    })
+  })
+
+  // ── uiScale side effect ──
+
+  describe('uiScale side effect', () => {
+    it('setLocalConfig for uiScale applies CSS zoom', () => {
+      const { setLocalConfig } = useSettingsConfig()
+
+      setLocalConfig('uiScale', 1.5)
+
+      expect(document.documentElement.style.zoom).toBe('1.5')
+
+      // Clean up
+      document.documentElement.style.zoom = ''
+      localStorage.removeItem('clawbench-settings-uiScale')
     })
   })
 })

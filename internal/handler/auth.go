@@ -152,7 +152,7 @@ func ServeLogin(w http.ResponseWriter, r *http.Request) {
 		// Serve index.html which mounts the Vue app (LoginView handles auth UI)
 		fsys := frontend.GetFS()
 		if fi, err := fsys.Open("index.html"); err == nil {
-			fi.Close()
+			_ = fi.Close()
 			frontend.ServeFileFromFS(w, r, fsys, "index.html")
 			return
 		}

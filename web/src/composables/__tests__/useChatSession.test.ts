@@ -163,6 +163,8 @@ vi.mock('@/composables/useSessionIdentity.ts', () => ({
     saveThinkingPref: mockIdentityFns.saveThinkingPref,
     loadModelPref: mockIdentityFns.loadModelPref,
     loadThinkingPref: mockIdentityFns.loadThinkingPref,
+    loadModePref: vi.fn().mockReturnValue(''),
+    saveModePref: vi.fn(),
     toggleAutoApprove: vi.fn(),
   }),
   currentAgentId: { value: '' },
@@ -839,10 +841,14 @@ describe('switchSession', () => {
     const session = createSession()
     await session.switchSession('s2')
 
+    // loadSessionsOnce is fire-and-forget — wait for it to complete
+    await vi.waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+    })
+
     // After switching to s2 and recalculating, no unread sessions remain
     expect(mockState.chatUnreadCount).toBe(0)
     // fetch called twice: once for chat history, once for sessions list
-    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
   })
 
   it('clears chatUnread after switching when all sessions are read', async () => {

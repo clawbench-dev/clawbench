@@ -89,7 +89,7 @@ type ttsGenerateRequest struct {
 // TTSGenerate handles POST /api/tts/generate.
 // It validates input, checks cache, and either returns cached audio immediately
 // or starts an async TTS job and returns a jobId for SSE streaming.
-func TTSGenerate(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // multi-mode TTS generation
+func TTSGenerate(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,gocognit // multi-mode TTS generation
 	projectPath, ok := requireProject(w, r)
 	if !ok {
 		return
@@ -292,7 +292,7 @@ func TTSGenerate(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // m
 // intermediate step commentary), then appends AskUserQuestion text so TTS
 // can read the question and options to the user.
 // Returns empty string if the message cannot be loaded or has no speakable text.
-func ttsExtractConclusion(messageID int64) string {
+func ttsExtractConclusion(messageID int64) string { //nolint:gocyclo,gocognit // multi-branch AskUserQuestion extraction
 	msg, err := service.GetMessageByID(messageID)
 	if err != nil || msg == nil {
 		return ""

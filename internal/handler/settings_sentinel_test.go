@@ -84,9 +84,11 @@ func TestJoinArgs(t *testing.T) {
 
 func TestLaunchSentinelProcess_StartsAndExits(t *testing.T) {
 	// Set up a minimal BinDir for the sentinel to reference
-	origBinDir := model.BinDir; origDataDir := model.DataDir
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
 	tmpDir := t.TempDir()
-	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	cmd, err := LaunchSentinelProcess()

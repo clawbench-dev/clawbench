@@ -91,7 +91,7 @@ func TestEdgeTTSProvider_DifferentVoices(t *testing.T) {
 	}
 
 	for _, voice := range voices {
-		p := &EdgeTTSProvider{Voice: voice, Rate: "+0%"} //nolint:govet // test verifies Voice field
+		p := &EdgeTTSProvider{Voice: voice, Rate: "+0%"}
 		assert.Equal(t, voice, p.Voice)
 	}
 }

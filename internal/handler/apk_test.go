@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"io"
 	"io/fs"
 	"net/http"
@@ -110,7 +111,7 @@ func TestReaderSeeker(t *testing.T) {
 	}
 
 	n, err = rs.Read(buf2)
-	if n != 0 || err != io.EOF {
+	if n != 0 || !errors.Is(err, io.EOF) {
 		t.Errorf("read past end: got %d, err %v", n, err)
 	}
 }

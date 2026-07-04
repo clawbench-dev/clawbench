@@ -3,10 +3,10 @@ chat:
     page_size: 0
     session_page_size: 0
     system_prompt_interval: 20
-default_agent: opencode
+default_agent: ""
 dev_port: 0
 host: ""
-localhost_auth_exempt: true
+localhost_auth_exempt: false
 log_dir: ""
 log_level: ""
 log_max_days: 0
@@ -72,7 +72,7 @@ tts:
         noise_scale: 0.5
         sentence_silence: 0.3
     speed: 1.5
-    tts_model: test-model
+    tts_model: test-tts-model
     voice: Junhao
 upload:
     max_files: 0

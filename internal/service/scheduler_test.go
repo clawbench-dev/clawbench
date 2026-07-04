@@ -1,4 +1,3 @@
-//nolint:govet // shadowed err in test code
 package service_test
 
 import (

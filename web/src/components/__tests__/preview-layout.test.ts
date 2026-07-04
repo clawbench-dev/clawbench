@@ -77,6 +77,8 @@ vi.mock('@/composables/useSettingsConfig.ts', () => ({
     localConfig: { wordWrap: false, lineNumbers: true, stickyScroll: true },
     setLocalConfig: vi.fn(),
   }),
+  getZoomedViewport: () => ({ width: 1024, height: 768 }),
+  toFixedCSS: (v: number) => Math.round(v * 100) / 100,
 }))
 
 vi.mock('@/composables/useDiffDrawer.ts', () => ({
@@ -91,6 +93,24 @@ vi.mock('@/composables/useDiffDrawer.ts', () => ({
 
 vi.mock('@/composables/useAppMode.ts', () => ({
   useAppMode: () => ({ isAppMode: { value: false } }),
+}))
+
+vi.mock('@/composables/useChatContext', () => ({
+  useChatContext: () => ({
+    addAttachedFile: vi.fn(),
+    hasAttachedFile: vi.fn(() => false),
+    removeAttachedFileByPath: vi.fn(),
+    toggleAttachedFile: vi.fn(),
+    attachedFiles: { value: [] },
+    quoteData: { value: null },
+    setQuoteData: vi.fn(),
+    removeAttachedFile: vi.fn(),
+    clearAll: vi.fn(),
+  }),
+}))
+
+vi.mock('@/composables/useToast', () => ({
+  useToast: () => ({ show: vi.fn() }),
 }))
 
 vi.mock('@/composables/useFileNavStack.ts', () => ({

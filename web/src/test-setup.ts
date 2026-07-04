@@ -7,6 +7,26 @@
 // reactivity. Without this handler, vitest exits non-zero and the coverage gate
 // reports "Frontend tests failed" even though all test cases pass.
 
+// ── ResizeObserver polyfill for jsdom ──
+// jsdom does not implement ResizeObserver, but components like FileHeader and
+// FileManagerContent use useToolbarOverflow which creates one on mount.
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class ResizeObserver {
+    constructor(_callback: ResizeObserverCallback) {
+      // no-op in test environment
+    }
+    observe() {
+      // no-op in test environment
+    }
+    unobserve() {
+      // no-op in test environment
+    }
+    disconnect() {
+      // no-op in test environment
+    }
+  } as unknown as typeof globalThis.ResizeObserver
+}
+
 function isRecursiveUpdateError(reason: unknown): boolean {
   if (reason instanceof Error) {
     return reason.message.includes('Maximum recursive updates')

@@ -469,11 +469,10 @@ func TestGetRecentProjects_RemoveStaleFails(t *testing.T) {
 	insertProjectWithTime(t, db, nonExistentPath, baseTime.Add(1*time.Second))
 
 	// Close the write DB to make RemoveRecentProject fail
-	// but keep the read DB (same instance for :memory:) working for the query
-	// We need to set DB to a closed connection
+	// but keep the read DB working for the query
 	closedDB, _ := sql.Open("sqlite", ":memory:")
 	closedDB.Close()
-	cleanup := service.SetDBForTest(closedDB, closedDB)
+	cleanup := service.SetDBForTest(closedDB, db)
 	t.Cleanup(cleanup)
 
 	// GetRecentProjects should still succeed (return valid paths)

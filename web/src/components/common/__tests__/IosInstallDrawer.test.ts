@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
+import { defineComponent } from 'vue'
 import IosInstallDrawer from '@/components/common/IosInstallDrawer.vue'
 
 // ── i18n ─────────────────────────────────────────────────────
@@ -21,6 +22,19 @@ const i18n = createI18n({
   },
 })
 
+// Mock BottomSheet — replaces the real component (which uses Teleport) with a simple mock
+vi.mock('@/components/common/BottomSheet.vue', () => ({
+  default: defineComponent({
+    props: ['open', 'title', 'compact'],
+    emits: ['close'],
+    template: '<div class="bottom-sheet-stub" v-if="open"><slot /><div class="bs-footer-stub"><slot name="footer" /></div></div>',
+  }),
+}))
+
+vi.mock('lucide-vue-next', () => ({
+  Share: { template: '<span class="share-icon-stub" />' },
+}))
+
 function mountSheet(props: Record<string, any> = {}) {
   return mount(IosInstallDrawer, {
     props: {
@@ -29,18 +43,6 @@ function mountSheet(props: Record<string, any> = {}) {
     },
     global: {
       plugins: [i18n],
-      stubs: {
-        BottomSheet: {
-          props: ['open', 'title', 'compact'],
-          template: `
-            <div class="bottom-sheet-stub" v-if="open">
-              <slot />
-              <div class="bs-footer-stub"><slot name="footer" /></div>
-            </div>
-          `,
-        },
-        Share: { template: '<span class="share-icon-stub" />' },
-      },
     },
   })
 }

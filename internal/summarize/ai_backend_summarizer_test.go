@@ -167,7 +167,7 @@ func TestAIBackendSummarizer_doSummarizePass_CancelledContext(t *testing.T) {
 
 func TestAIBackendSummarizer_ModelOverride(t *testing.T) {
 	s := &AIBackendSummarizer{
-		backend: &mockAIBackend{name: "test"}, //nolint:govet // test setup, backend not used but verifies struct
+		backend: &mockAIBackend{name: "test"},
 		Model:   "custom-model-v2",
 	}
 	assert.Equal(t, "custom-model-v2", s.Model)

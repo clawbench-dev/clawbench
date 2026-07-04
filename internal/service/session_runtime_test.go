@@ -1776,3 +1776,364 @@ func TestTriggerChatSummarization_SimpleMode_SaveSummaryError(t *testing.T) {
 	// Should not panic, just log warning and return
 	triggerChatSummarization(sessionID)
 }
+
+// --- truncatePreview tests ---
+
+func TestTruncatePreview_EmptyString(t *testing.T) {
+	assert.Equal(t, "", truncatePreview(""))
+}
+
+func TestTruncatePreview_ShortText(t *testing.T) {
+	assert.Equal(t, "hello", truncatePreview("hello"))
+}
+
+func TestTruncatePreview_ExactMaxRunes(t *testing.T) {
+	text := strings.Repeat("a", responsePreviewMaxRunes)
+	assert.Equal(t, text, truncatePreview(text))
+}
+
+func TestTruncatePreview_OverMaxRunes(t *testing.T) {
+	text := strings.Repeat("a", responsePreviewMaxRunes+10)
+	result := truncatePreview(text)
+	assert.Equal(t, responsePreviewMaxRunes, utf8.RuneCountInString(result)-1) // minus ellipsis
+	assert.True(t, strings.HasSuffix(result, "…"))
+}
+
+func TestTruncatePreview_MultibyteExact(t *testing.T) {
+	text := strings.Repeat("你", responsePreviewMaxRunes)
+	result := truncatePreview(text)
+	assert.Equal(t, text, result)
+	assert.Equal(t, responsePreviewMaxRunes, utf8.RuneCountInString(result))
+}
+
+func TestTruncatePreview_MultibyteOver(t *testing.T) {
+	text := strings.Repeat("你", responsePreviewMaxRunes+1)
+	result := truncatePreview(text)
+	expected := strings.Repeat("你", responsePreviewMaxRunes) + "…"
+	assert.Equal(t, expected, result)
+}
+
+// --- extractPreviewFromBlocks tests ---
+
+func TestExtractPreviewFromBlocks_Empty(t *testing.T) {
+	assert.Equal(t, "", extractPreviewFromBlocks(nil))
+	assert.Equal(t, "", extractPreviewFromBlocks([]model.ContentBlock{}))
+}
+
+func TestExtractPreviewFromBlocks_SingleText(t *testing.T) {
+	blocks := []model.ContentBlock{{Type: "text", Text: "answer"}}
+	assert.Equal(t, "answer", extractPreviewFromBlocks(blocks))
+}
+
+func TestExtractPreviewFromBlocks_TextAfterToolUse(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: "text", Text: "intermediate"},
+		{Type: "tool_use", Name: "Bash", ID: "t1"},
+		{Type: "text", Text: "final answer"},
+	}
+	assert.Equal(t, "final answer", extractPreviewFromBlocks(blocks))
+}
+
+func TestExtractPreviewFromBlocks_FallbackLongestText(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: "text", Text: "short"},
+		{Type: "tool_use", Name: "Bash", ID: "t1"},
+	}
+	// No text after tool_use → fallback to longest text block
+	assert.Equal(t, "short", extractPreviewFromBlocks(blocks))
+}
+
+func TestExtractPreviewFromBlocks_FallbackPicksLongest(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: "text", Text: "short text"},
+		{Type: "text", Text: "this is a much longer text block"},
+		{Type: "tool_use", Name: "Bash", ID: "t1"},
+	}
+	// No text after tool_use → fallback picks the longest text block
+	assert.Equal(t, "this is a much longer text block", extractPreviewFromBlocks(blocks))
+}
+
+func TestExtractPreviewFromBlocks_OnlyToolUses(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: "tool_use", Name: "Bash", ID: "t1"},
+		{Type: "tool_use", Name: "Read", ID: "t2"},
+	}
+	assert.Equal(t, "", extractPreviewFromBlocks(blocks))
+}
+
+func TestExtractPreviewFromBlocks_EmptyTextSkipped(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: "text", Text: ""},
+		{Type: "tool_use", Name: "Bash", ID: "t1"},
+		{Type: "text", Text: ""},
+	}
+	// All text blocks empty → empty result
+	assert.Equal(t, "", extractPreviewFromBlocks(blocks))
+}
+
+func TestExtractPreviewFromBlocks_Truncation(t *testing.T) {
+	longText := strings.Repeat("x", responsePreviewMaxRunes+10)
+	blocks := []model.ContentBlock{{Type: "text", Text: longText}}
+	result := extractPreviewFromBlocks(blocks)
+	assert.True(t, strings.HasSuffix(result, "…"))
+}
+
+// --- GetRunningSessionIDs tests ---
+
+func TestGetRunningSessionIDs_Empty(t *testing.T) {
+	cleanupActiveSessions()
+	defer cleanupActiveSessions()
+
+	ids := GetRunningSessionIDs()
+	assert.Equal(t, []string{}, ids)
+}
+
+func TestGetRunningSessionIDs_SingleSession(t *testing.T) {
+	cleanupActiveSessions()
+	defer cleanupActiveSessions()
+
+	SetSessionRunning("session-ids-1", true)
+	ids := GetRunningSessionIDs()
+	assert.ElementsMatch(t, []string{"session-ids-1"}, ids)
+}
+
+func TestGetRunningSessionIDs_MultipleSessions(t *testing.T) {
+	cleanupActiveSessions()
+	defer cleanupActiveSessions()
+
+	SetSessionRunning("session-ids-a", true)
+	SetSessionRunning("session-ids-b", true)
+	SetSessionRunning("session-ids-c", true)
+
+	ids := GetRunningSessionIDs()
+	assert.ElementsMatch(t, []string{"session-ids-a", "session-ids-b", "session-ids-c"}, ids)
+}
+
+func TestGetRunningSessionIDs_AfterRemoval(t *testing.T) {
+	cleanupActiveSessions()
+	defer cleanupActiveSessions()
+
+	SetSessionRunning("session-ids-x", true)
+	SetSessionRunning("session-ids-y", true)
+	SetSessionRunning("session-ids-x", false) // remove x
+
+	ids := GetRunningSessionIDs()
+	assert.ElementsMatch(t, []string{"session-ids-y"}, ids)
+}
+
+// --- finalizeOrphanedStreamingMessages tests ---
+
+func TestFinalizeOrphanedStreamingMessages_NilDB(t *testing.T) {
+	cleanup := SetDBForTest(nil, nil)
+	defer cleanup()
+
+	// Should return early without panic
+	assert.NotPanics(t, func() {
+		finalizeOrphanedStreamingMessages("session-orphan-nil")
+	})
+}
+
+func TestFinalizeOrphanedStreamingMessages_NoOrphans(t *testing.T) {
+	db := setupChatTestDB(t)
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	// No streaming messages → should return without error
+	assert.NotPanics(t, func() {
+		finalizeOrphanedStreamingMessages("session-no-orphans")
+	})
+}
+
+func TestFinalizeOrphanedStreamingMessages_WithOrphan(t *testing.T) {
+	db := setupChatTestDB(t)
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	sessionID := "session-orphan-1"
+
+	// Insert a streaming=1 assistant message (orphan)
+	validContent := `{"blocks":[{"type":"text","text":"partial answer"}]}`
+	_, err := db.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
+		"/test", "assistant", validContent, sessionID,
+	)
+	require.NoError(t, err)
+
+	// Finalize orphans
+	finalizeOrphanedStreamingMessages(sessionID)
+
+	// Wait briefly for the async goroutine in SetSessionRunning to complete
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify the message was finalized: streaming=0 and content has cancelled=true + warning block
+	var streaming int
+	var updatedContent string
+	err = db.QueryRow(
+		"SELECT content, streaming FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1",
+		sessionID,
+	).Scan(&updatedContent, &streaming)
+	require.NoError(t, err)
+	assert.Equal(t, 0, streaming, "orphaned message should be finalized (streaming=0)")
+
+	// Content should have cancelled=true and a warning block appended
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal([]byte(updatedContent), &parsed))
+	assert.Equal(t, true, parsed["cancelled"])
+	blocks, ok := parsed["blocks"].([]any)
+	require.True(t, ok)
+	// Original 1 block + 1 warning block = 2
+	assert.Equal(t, 2, len(blocks))
+	// Last block should be the warning
+	lastBlock, ok := blocks[1].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "warning", lastBlock["type"])
+	assert.Equal(t, "finalize_busy", lastBlock["reason"])
+}
+
+func TestFinalizeOrphanedStreamingMessages_WithAlreadyCancelledContent(t *testing.T) {
+	db := setupChatTestDB(t)
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	sessionID := "session-orphan-cancelled"
+
+	// Insert a streaming=1 message that already has cancelled=true
+	cancelledContent := `{"blocks":[{"type":"text","text":"stopped"}],"cancelled":true}`
+	_, err := db.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
+		"/test", "assistant", cancelledContent, sessionID,
+	)
+	require.NoError(t, err)
+
+	finalizeOrphanedStreamingMessages(sessionID)
+	time.Sleep(50 * time.Millisecond)
+
+	// Content should NOT have an additional warning block (already cancelled)
+	var updatedContent string
+	var streaming int
+	err = db.QueryRow(
+		"SELECT content, streaming FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1",
+		sessionID,
+	).Scan(&updatedContent, &streaming)
+	require.NoError(t, err)
+	assert.Equal(t, 0, streaming)
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal([]byte(updatedContent), &parsed))
+	assert.Equal(t, true, parsed["cancelled"])
+	blocks, ok := parsed["blocks"].([]any)
+	require.True(t, ok)
+	// Should still have 1 block (no warning appended for already-cancelled content)
+	assert.Equal(t, 1, len(blocks))
+}
+
+func TestFinalizeOrphanedStreamingMessages_WithInvalidJSON(t *testing.T) {
+	db := setupChatTestDB(t)
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	sessionID := "session-orphan-bad-json"
+
+	// Insert a streaming=1 message with invalid JSON content
+	invalidContent := "this is not JSON at all"
+	_, err := db.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
+		"/test", "assistant", invalidContent, sessionID,
+	)
+	require.NoError(t, err)
+
+	finalizeOrphanedStreamingMessages(sessionID)
+	time.Sleep(50 * time.Millisecond)
+
+	// Invalid JSON → fallback content with text block + cancelled=true
+	var updatedContent string
+	var streaming int
+	err = db.QueryRow(
+		"SELECT content, streaming FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1",
+		sessionID,
+	).Scan(&updatedContent, &streaming)
+	require.NoError(t, err)
+	assert.Equal(t, 0, streaming)
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal([]byte(updatedContent), &parsed))
+	assert.Equal(t, true, parsed["cancelled"])
+	blocks, ok := parsed["blocks"].([]any)
+	require.True(t, ok)
+	// Fallback: wraps raw content as a text block
+	assert.Equal(t, 1, len(blocks))
+	firstBlock, ok := blocks[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "text", firstBlock["type"])
+	assert.Equal(t, invalidContent, firstBlock["text"])
+}
+
+func TestFinalizeOrphanedStreamingMessages_MultipleOrphans(t *testing.T) {
+	db := setupChatTestDB(t)
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	sessionID := "session-orphan-multi"
+
+	// Insert two streaming=1 messages
+	content1 := `{"blocks":[{"type":"text","text":"first partial"}]}`
+	content2 := `{"blocks":[{"type":"text","text":"second partial"}]}`
+	_, err := db.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
+		"/test", "assistant", content1, sessionID,
+	)
+	require.NoError(t, err)
+	_, err = db.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
+		"/test", "assistant", content2, sessionID,
+	)
+	require.NoError(t, err)
+
+	finalizeOrphanedStreamingMessages(sessionID)
+	time.Sleep(50 * time.Millisecond)
+
+	// Both messages should be finalized
+	var count int
+	err = db.QueryRow(
+		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0",
+		sessionID,
+	).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count, "both orphaned messages should be finalized")
+}
+
+// --- SetSessionRunning triggers finalizeOrphanedStreamingMessages ---
+
+func TestSetSessionRunning_FalseTriggersOrphanFinalization(t *testing.T) {
+	cleanupActiveSessions()
+	defer cleanupActiveSessions()
+
+	db := setupChatTestDB(t)
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	sessionID := "session-orphan-trigger"
+
+	// Insert a streaming=1 orphan message
+	validContent := `{"blocks":[{"type":"text","text":"orphaned text"}]}`
+	_, err := db.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
+		"/test", "assistant", validContent, sessionID,
+	)
+	require.NoError(t, err)
+
+	// Set running=false triggers go finalizeOrphanedStreamingMessages
+	SetSessionRunning(sessionID, false, true)
+
+	// Wait for async goroutine to complete
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify the orphan was finalized
+	var streaming int
+	err = db.QueryRow(
+		"SELECT streaming FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1",
+		sessionID,
+	).Scan(&streaming)
+	require.NoError(t, err)
+	assert.Equal(t, 0, streaming, "orphan should be finalized when session stops")
+}

@@ -1,12 +1,9 @@
 import { ref, computed } from 'vue'
-import { appLog } from '@/utils/appLog'
 import { useReconnect } from './useReconnect'
 import { useAppMode } from './useAppMode'
 import { showBrowserNotification } from './useNotification'
 import { playNotificationSound } from './useNotificationSound'
 import { gt } from './useLocale'
-
-const TAG = 'GlobalEvents'
 
 // Event types from server
 interface ServerEvent {

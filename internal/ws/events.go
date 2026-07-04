@@ -105,14 +105,14 @@ func EventsHandler(w http.ResponseWriter, r *http.Request) {
 	// Use the request context so the connection is closed when the client
 	// disconnects or the server shuts down. Add an idle timeout to prevent
 	// dead connections from lingering indefinitely (no client messages for 5min).
-	readClientMessages(conn, mgr, clientID)
+	readClientMessages(conn, clientID)
 
 	_ = conn.Close(websocket.StatusNormalClosure, "handler exiting")
 }
 
 // readClientMessages reads messages from the WebSocket connection, resetting
 // an idle timeout on each message. Extracted into a helper for clarity.
-func readClientMessages(conn *websocket.Conn, mgr *Manager, clientID string) {
+func readClientMessages(conn *websocket.Conn, clientID string) {
 	for {
 		// Create a fresh idle-timeout context for each read attempt.
 		// Each cancel is called explicitly — no deferred cancel needed since

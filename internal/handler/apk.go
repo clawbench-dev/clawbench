@@ -10,8 +10,10 @@ import (
 	"clawbench/internal/frontend"
 )
 
-const apkFilename = "clawbench-android.apk"
-const apkEmbedPath = "assets/" + apkFilename
+const (
+	apkFilename  = "clawbench-android.apk"
+	apkEmbedPath = "assets/" + apkFilename
+)
 
 // ServeAPK serves the embedded Android APK file for download.
 // No authentication required — APK is a public resource.

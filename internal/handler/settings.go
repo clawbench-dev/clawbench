@@ -54,18 +54,18 @@ var hotReloadFields = map[string]bool{
 	"terminal.max_sessions": true,
 	"terminal.buffer_lines": true,
 	// TTS engine + sub-configs — recreate provider
-	"tts.engine":                  true,
-	"tts.tts_model":               true, // forward-compatible: MiniMax TTS model name (no-op until MiniMax provider is wired)
-	"tts.format":                  true, // forward-compatible: audio format override (no-op, inferred from engine)
-	"tts.piper.model_path":        true,
-	"tts.piper.noise_scale":       true,
-	"tts.piper.length_scale":      true,
-	"tts.piper.sentence_silence":  true,
-	"tts.kokoro.model_path":       true,
-	"tts.kokoro.voices_path":      true,
-	"tts.kokoro.lang":             true,
-	"tts.moss_nano.model_dir":     true,
-	"tts.moss_nano.backend":       true,
+	"tts.engine":                 true,
+	"tts.tts_model":              true, // forward-compatible: MiniMax TTS model name (no-op until MiniMax provider is wired)
+	"tts.format":                 true, // forward-compatible: audio format override (no-op, inferred from engine)
+	"tts.piper.model_path":       true,
+	"tts.piper.noise_scale":      true,
+	"tts.piper.length_scale":     true,
+	"tts.piper.sentence_silence": true,
+	"tts.kokoro.model_path":      true,
+	"tts.kokoro.voices_path":     true,
+	"tts.kokoro.lang":            true,
+	"tts.moss_nano.model_dir":    true,
+	"tts.moss_nano.backend":      true,
 	// Summarize — reconstruct summarizer
 	"summarize.backend":      true,
 	"summarize.model":        true,

@@ -11,7 +11,7 @@ import (
 // The "after" query parameter is the last event_id the client has seen.
 func ServePendingEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{strError: "method not allowed"})
 		return
 	}
 
@@ -19,7 +19,7 @@ func ServePendingEvents(w http.ResponseWriter, r *http.Request) {
 
 	events, err := service.GetPendingEvents(after)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch pending events"})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{strError: "failed to fetch pending events"})
 		return
 	}
 

@@ -76,12 +76,6 @@ func ReadDB() dbutil.Reader { return dbRead }
 // Query/QueryRow calls use the read pool without the mutex.
 func WriteDB() dbutil.Writer { return mutexDBWriter{} }
 
-// unsafeDB returns the raw write *sql.DB handle.
-// This exists ONLY for database initialization, migrations, and tests.
-// All writes MUST go through WriteExec/WriteBegin or dbutil.Writer.
-// Misuse will cause SQLITE_BUSY errors under concurrency.
-func unsafeDB() *sql.DB { return db }
-
 // UnsafeDBForTest returns the raw write *sql.DB handle for test code.
 // Must only be called from _test.go files.
 func UnsafeDBForTest() *sql.DB { return db }

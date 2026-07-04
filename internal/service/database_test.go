@@ -125,8 +125,10 @@ func setupTestDBForQuickSend(t *testing.T) func() {
 
 func TestSchema_SessionTypeColumnExists(t *testing.T) {
 	tmpDir := t.TempDir()
-	origBinDir := model.BinDir; origDataDir := model.DataDir
-	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	origDB := UnsafeDBForTest()
@@ -143,8 +145,10 @@ func TestSchema_SessionTypeColumnExists(t *testing.T) {
 
 func TestSchema_TaskExecutionsColumns(t *testing.T) {
 	tmpDir := t.TempDir()
-	origBinDir := model.BinDir; origDataDir := model.DataDir
-	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	origDB := UnsafeDBForTest()
@@ -163,8 +167,10 @@ func TestSchema_TaskExecutionsColumns(t *testing.T) {
 
 func TestSchema_NewIndexes(t *testing.T) {
 	tmpDir := t.TempDir()
-	origBinDir := model.BinDir; origDataDir := model.DataDir
-	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	origDB := UnsafeDBForTest()
@@ -203,8 +209,10 @@ func getTableColumns(t *testing.T, db *sql.DB, table string) map[string]bool {
 
 func TestSchema_SummariesTable(t *testing.T) {
 	tmpDir := t.TempDir()
-	origBinDir := model.BinDir; origDataDir := model.DataDir
-	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	origDB := UnsafeDBForTest()
@@ -223,8 +231,10 @@ func TestSchema_SummariesTable(t *testing.T) {
 
 func TestSchema_TTSSummariesNewSchema(t *testing.T) {
 	tmpDir := t.TempDir()
-	origBinDir := model.BinDir; origDataDir := model.DataDir
-	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	origDB := UnsafeDBForTest()
@@ -262,8 +272,10 @@ func getIndexes(t *testing.T, db *sql.DB) map[string]bool {
 
 func TestInitDB_ReadWriteSeparation(t *testing.T) {
 	tmpDir := t.TempDir()
-	origBinDir := model.BinDir; origDataDir := model.DataDir
-	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	origDB := UnsafeDBForTest()
@@ -331,8 +343,10 @@ func TestCloseDB_NilDBRead(t *testing.T) {
 
 func TestSchema_HistorySessionIDIndex(t *testing.T) {
 	tmpDir := t.TempDir()
-	origBinDir := model.BinDir; origDataDir := model.DataDir
-	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	origDB := UnsafeDBForTest()
@@ -349,8 +363,10 @@ func TestSchema_HistorySessionIDIndex(t *testing.T) {
 
 func TestSchema_TasksProjectIndex(t *testing.T) {
 	tmpDir := t.TempDir()
-	origBinDir := model.BinDir; origDataDir := model.DataDir
-	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	origDB := UnsafeDBForTest()
@@ -831,8 +847,10 @@ func TestGetChatQuickSend_OrderedBySortOrder(t *testing.T) {
 
 func TestSchema_ForwardedPortsColumns(t *testing.T) {
 	tmpDir := t.TempDir()
-	origBinDir := model.BinDir; origDataDir := model.DataDir
-	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	origDB := UnsafeDBForTest()
@@ -853,8 +871,10 @@ func TestSchema_ForwardedPortsColumns(t *testing.T) {
 
 func TestSchema_ForwardedPortsMigration_HostColumn(t *testing.T) {
 	tmpDir := t.TempDir()
-	origBinDir := model.BinDir; origDataDir := model.DataDir
-	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	origDB := UnsafeDBForTest()
@@ -874,8 +894,10 @@ func TestSchema_ForwardedPortsMigration_HostColumn(t *testing.T) {
 
 func TestSchema_ForwardedPortsMigration_LocalPortColumn(t *testing.T) {
 	tmpDir := t.TempDir()
-	origBinDir := model.BinDir; origDataDir := model.DataDir
-	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	origDB := UnsafeDBForTest()
@@ -904,8 +926,10 @@ func TestSchema_ForwardedPortsMigration_LocalPortColumn(t *testing.T) {
 func TestSchema_ForwardedPortsMigration_LocalPortBackfill(t *testing.T) {
 	// Simulate migration: old table without local_port → add column + backfill
 	tmpDir := t.TempDir()
-	origBinDir := model.BinDir; origDataDir := model.DataDir
-	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	origDB := UnsafeDBForTest()
@@ -930,8 +954,10 @@ func TestSchema_ForwardedPortsMigration_LocalPortBackfill(t *testing.T) {
 
 func TestSchema_ForwardedPortsMigration_HostDefaultValue(t *testing.T) {
 	tmpDir := t.TempDir()
-	origBinDir := model.BinDir; origDataDir := model.DataDir
-	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	origDB := UnsafeDBForTest()
@@ -955,8 +981,10 @@ func TestSchema_ForwardedPortsMigration_HostDefaultValue(t *testing.T) {
 
 func TestSchema_ForwardedPortsMigration_HostWithCustomValue(t *testing.T) {
 	tmpDir := t.TempDir()
-	origBinDir := model.BinDir; origDataDir := model.DataDir
-	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	origDB := UnsafeDBForTest()
@@ -981,8 +1009,10 @@ func TestSchema_ForwardedPortsMigration_HostWithCustomValue(t *testing.T) {
 func TestSchema_ForwardedPortsMigration_Idempotent(t *testing.T) {
 	// Running InitDB twice should not fail (migrations are idempotent)
 	tmpDir := t.TempDir()
-	origBinDir := model.BinDir; origDataDir := model.DataDir
-	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	origDB := UnsafeDBForTest()
@@ -1002,8 +1032,10 @@ func TestSchema_ForwardedPortsMigration_Idempotent(t *testing.T) {
 func TestSchema_ForwardedPortsMigration_HostColumnFromOldSchema(t *testing.T) {
 	// Simulate upgrading from old schema without host column
 	tmpDir := t.TempDir()
-	origBinDir := model.BinDir; origDataDir := model.DataDir
-	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	origDB := UnsafeDBForTest()
@@ -1334,8 +1366,10 @@ func TestSaveTTSSummaryByMessageID_Upsert(t *testing.T) {
 
 func TestInitDB_TTSSummariesMigrationFromOldSchema(t *testing.T) {
 	tmpDir := t.TempDir()
-	origBinDir := model.BinDir; origDataDir := model.DataDir
-	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	origDB := UnsafeDBForTest()
@@ -1379,8 +1413,10 @@ func TestInitDB_TTSSummariesMigrationFromOldSchema(t *testing.T) {
 
 func TestInitDB_TTSSummariesFreshInstall(t *testing.T) {
 	tmpDir := t.TempDir()
-	origBinDir := model.BinDir; origDataDir := model.DataDir
-	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	origDB := UnsafeDBForTest()
@@ -1409,8 +1445,10 @@ func TestInitDB_TTSSummariesFreshInstall(t *testing.T) {
 // drops it and recreates the idx_history_session_id index.
 func TestSchema_DropHistoryDeletedColumn_FromOldSchema(t *testing.T) {
 	tmpDir := t.TempDir()
-	origBinDir := model.BinDir; origDataDir := model.DataDir
-	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	origDB := UnsafeDBForTest()
@@ -1539,8 +1577,10 @@ func TestSchema_DropHistoryDeletedColumn_FromOldSchema(t *testing.T) {
 // without error (the migration is a no-op).
 func TestSchema_DropHistoryDeletedColumn_Idempotent(t *testing.T) {
 	tmpDir := t.TempDir()
-	origBinDir := model.BinDir; origDataDir := model.DataDir
-	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	origDB := UnsafeDBForTest()
@@ -1962,8 +2002,10 @@ func TestReorderQuickCommands_EmptyIDs(t *testing.T) {
 
 func TestInitDB_CreatesAgentTables(t *testing.T) {
 	tmpDir := t.TempDir()
-	origBinDir := model.BinDir; origDataDir := model.DataDir
-	model.BinDir = tmpDir; model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	origDB := UnsafeDBForTest()

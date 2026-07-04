@@ -218,4 +218,79 @@ describe('ChatInputBar', () => {
     const wrapper = mountBar()
     expect(wrapper.find('.chat-action-btn').exists()).toBe(true)
   })
+
+  it('exposes clearInput method', () => {
+    const wrapper = mountBar()
+    expect(typeof wrapper.vm.clearInput).toBe('function')
+  })
+
+  it('exposes inputText ref', () => {
+    const wrapper = mountBar()
+    expect(wrapper.vm.inputText).toBeDefined()
+  })
+
+  it('exposes injectToInput method', () => {
+    const wrapper = mountBar()
+    expect(typeof wrapper.vm.injectToInput).toBe('function')
+  })
+
+  it('clearInput resets inputText', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = 'hello world'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('hello world')
+    wrapper.vm.clearInput()
+    expect(wrapper.vm.inputText).toBe('')
+  })
+
+  it('injectToInput appends text on newline when existing content', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = 'existing'
+    wrapper.vm.injectToInput('new command')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('existing\nnew command')
+  })
+
+  it('injectToInput sets text when input is empty', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = ''
+    wrapper.vm.injectToInput('command')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('command')
+  })
+
+  it('emits send when Enter is pressed in textarea', async () => {
+    const wrapper = mountBar()
+    const textarea = wrapper.find('.chat-textarea')
+    await textarea.setValue('hello')
+    await textarea.trigger('keydown.enter', { key: 'Enter' })
+    expect(wrapper.emitted('send')).toBeTruthy()
+    expect(wrapper.emitted('send')![0]).toEqual(['hello'])
+  })
+
+  it('delete button is disabled when no currentSessionId', () => {
+    const wrapper = mountBar({ currentSessionId: '' })
+    const deleteBtn = wrapper.find('.chat-action-btn-delete')
+    expect(deleteBtn.classes()).toContain('disabled')
+  })
+
+  it('delete button is enabled when currentSessionId exists', () => {
+    const wrapper = mountBar({ currentSessionId: 'session-1' })
+    const deleteBtn = wrapper.find('.chat-action-btn-delete')
+    expect(deleteBtn.classes()).not.toContain('disabled')
+  })
+
+  it('exposes quick send touch handlers', () => {
+    const wrapper = mountBar()
+    expect(typeof wrapper.vm.handleQuickSendClick).toBe('function')
+    expect(typeof wrapper.vm.onQuickSendTouchStart).toBe('function')
+    expect(typeof wrapper.vm.onQuickSendTouchMove).toBe('function')
+    expect(typeof wrapper.vm.onQuickSendTouchEnd).toBe('function')
+    expect(typeof wrapper.vm.cancelQuickSendPress).toBe('function')
+  })
+
+  it('exposes quickSendPressingId ref', () => {
+    const wrapper = mountBar()
+    expect(wrapper.vm.quickSendPressingId).toBeDefined()
+  })
 })

@@ -233,14 +233,19 @@ describe('SettingsAgentsIndex', () => {
     let resolveRescan: () => void
     mockRescanAgents.mockReturnValueOnce(new Promise<void>(r => { resolveRescan = r }))
     const wrapper = mountIndex()
-    const rescanRow = wrapper.find('.settings-agents-index__rescan-row')
-    await rescanRow.trigger('click')
 
+    // Call handleRescan directly and let it run until the first await
     const vm = wrapper.vm as any
+    const rescanPromise = vm.$.setupState.handleRescan()
+    // The async function sets rescanning=true synchronously before the first await
+    await wrapper.vm.$nextTick()
+
     expect(vm.$.setupState.rescanning).toBe(true)
-    expect(rescanRow.classes()).toContain('settings-agents-index__rescan-row--disabled')
+    const el = wrapper.find('.settings-agents-index__rescan-row').element as HTMLElement
+    expect(el.classList.contains('settings-agents-index__rescan-row--disabled')).toBe(true)
 
     resolveRescan!()
+    await rescanPromise
     await wrapper.vm.$nextTick()
     expect(vm.$.setupState.rescanning).toBe(false)
   })

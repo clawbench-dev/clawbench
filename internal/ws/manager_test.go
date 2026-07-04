@@ -408,7 +408,7 @@ func TestManager_Subscribe_ConnectionReplacement(t *testing.T) {
 			return
 		}
 		defer mgr.DisconnectClient("replace-test")
-		readClientMessages(conn, mgr, "replace-test")
+		readClientMessages(conn, "replace-test")
 		_ = conn.Close(websocket.StatusNormalClosure, "done")
 	})
 	server := httptest.NewServer(handler)
@@ -491,7 +491,7 @@ func TestManager_Subscribe_LimitReached(t *testing.T) {
 			return
 		}
 		defer mgr.DisconnectClient("overflow")
-		readClientMessages(conn, mgr, "overflow")
+		readClientMessages(conn, "overflow")
 		_ = conn.Close(websocket.StatusNormalClosure, "done")
 	})
 	server := httptest.NewServer(handler)
@@ -513,4 +513,252 @@ func TestManager_Subscribe_LimitReached(t *testing.T) {
 		t.Error("expected connection to be closed by server (limit reached)")
 	}
 	_ = conn.Close(websocket.StatusNormalClosure, "")
+}
+
+func TestManager_HasDisconnectedClients_AllConnected(t *testing.T) {
+	m := NewManagerForTest()
+
+	// To simulate a connected client, we need a non-nil conn.
+	// Create a real WS server to get a real conn.
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		var wmu sync.Mutex
+		m.Subscribe(conn, &wmu, "connected-client", "")
+		// Keep conn alive briefly
+		time.Sleep(500 * time.Millisecond)
+		_ = conn.Close(websocket.StatusNormalClosure, "done")
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	wsURL := "ws" + server.URL[4:]
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	// Wait for subscribe
+	time.Sleep(150 * time.Millisecond)
+
+	// All clients connected → should return false
+	if m.HasDisconnectedClients() {
+		t.Error("expected false when all clients are connected")
+	}
+}
+
+func TestManager_HasDisconnectedClients_SomeDisconnected(t *testing.T) {
+	m := NewManagerForTest()
+	var writeMu sync.Mutex
+
+	// Two clients: one connected, one disconnected
+	m.Subscribe(nil, &writeMu, "disconnected-client", "")
+	m.DisconnectClient("disconnected-client")
+
+	// Subscribe a connected client via a real WS
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		var wmu sync.Mutex
+		m.Subscribe(conn, &wmu, "connected-client", "")
+		time.Sleep(500 * time.Millisecond)
+		_ = conn.Close(websocket.StatusNormalClosure, "done")
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	wsURL := "ws" + server.URL[4:]
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	time.Sleep(150 * time.Millisecond)
+
+	// Some clients disconnected → should return true
+	if !m.HasDisconnectedClients() {
+		t.Error("expected true when some clients are disconnected")
+	}
+}
+
+func TestManager_DisconnectClient_NonExistent(t *testing.T) {
+	m := NewManagerForTest()
+	// Should not panic
+	m.DisconnectClient("nonexistent")
+}
+
+func TestManager_BroadcastEvent_ConnectedClient(t *testing.T) {
+	m := NewManagerForTest()
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		var wmu sync.Mutex
+		sub := m.Subscribe(conn, &wmu, "ws-client", "")
+		if sub == nil {
+			_ = conn.Close(websocket.StatusNormalClosure, "")
+			return
+		}
+		defer m.DisconnectClient("ws-client")
+		// Keep connection alive — read loop discards incoming client messages
+		readClientMessages(conn, "ws-client")
+		_ = conn.Close(websocket.StatusNormalClosure, "done")
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	wsURL := "ws" + server.URL[4:]
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	// Wait for subscription
+	time.Sleep(150 * time.Millisecond)
+
+	// Broadcast while connected — should send via WS and also buffer
+	msg := ServerMessage{Type: "event", ID: "evt_ws_1", Event: "session_update", Data: &SessionUpdateData{SessionID: "s1", Status: "completed"}}
+	m.BroadcastEvent(msg)
+
+	// The client (dialed conn) should receive the message via WS
+	readCtx, readCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer readCancel()
+	_, data, readErr := conn.Read(readCtx)
+	if readErr != nil {
+		t.Fatalf("expected to read WS message, got error: %v", readErr)
+	}
+	if !strings.Contains(string(data), "evt_ws_1") {
+		t.Errorf("expected WS message to contain event ID 'evt_ws_1', got: %s", data)
+	}
+
+	// Verify the event was also buffered for reconnect replay
+	m.mu.Lock()
+	sub := m.subscriptions["ws-client"]
+	m.mu.Unlock()
+	buffered := sub.GetBufferedEvents()
+	if len(buffered) == 0 {
+		t.Error("expected event to be buffered for reconnect replay")
+	} else if buffered[0].ID != "evt_ws_1" {
+		t.Errorf("expected buffered event ID 'evt_ws_1', got %q", buffered[0].ID)
+	}
+}
+
+func TestManager_BroadcastEvent_BufferStartZero(t *testing.T) {
+	m := NewManagerForTest()
+
+	// Manually create a subscription with conn=nil but bufferStart=zero
+	// This simulates a subscription that was never connected (edge case)
+	sub := &ClientSubscription{clientID: "never-connected"}
+	m.mu.Lock()
+	m.subscriptions["never-connected"] = sub
+	m.mu.Unlock()
+
+	msg := ServerMessage{Type: "event", ID: "evt_z", Event: "session_update", Data: &SessionUpdateData{SessionID: "s1", Status: "completed"}}
+	m.BroadcastEvent(msg)
+
+	// bufferStart.IsZero() → should buffer (the IsZero check allows buffering)
+	buffered := sub.GetBufferedEvents()
+	if len(buffered) != 1 {
+		t.Fatalf("expected 1 buffered event when bufferStart is zero, got %d", len(buffered))
+	}
+	if buffered[0].ID != "evt_z" {
+		t.Errorf("expected buffered event ID 'evt_z', got %q", buffered[0].ID)
+	}
+}
+
+func TestCleanupStale_ZeroBufferStart(t *testing.T) {
+	m := NewManagerForTest()
+
+	// Manually create a subscription with conn=nil and bufferStart=zero
+	sub := &ClientSubscription{clientID: "zero-buffer"}
+	m.mu.Lock()
+	m.subscriptions["zero-buffer"] = sub
+	m.mu.Unlock()
+
+	// Should NOT be cleaned up (bufferStart.IsZero() → continue)
+	m.CleanupStale()
+
+	m.mu.Lock()
+	_, exists := m.subscriptions["zero-buffer"]
+	m.mu.Unlock()
+	if !exists {
+		t.Error("expected subscription with zero bufferStart to not be cleaned up")
+	}
+}
+
+func TestManager_BroadcastEvent_SubscriptionRemovedBetweenSnapshotAndDelivery(t *testing.T) {
+	m := NewManagerForTest()
+	var writeMu sync.Mutex
+
+	m.Subscribe(nil, &writeMu, "ephemeral", "")
+	m.DisconnectClient("ephemeral")
+
+	// Remove the subscription after BroadcastEvent snapshots keys but before delivery
+	// This is hard to trigger deterministically, but we can test by:
+	// 1. Having a subscription, 2. Removing it manually, then 3. calling broadcastToSubscription
+	// The broadcastToSubscription handles !ok → return (line 173-175)
+
+	m.mu.Lock()
+	delete(m.subscriptions, "ephemeral")
+	m.mu.Unlock()
+
+	// broadcastToSubscription on a missing key should not panic
+	m.broadcastToSubscription("ephemeral", ServerMessage{Type: "event", ID: "evt_x"})
+}
+
+func TestManager_BroadcastEvent_MarshalError(t *testing.T) {
+	m := NewManagerForTest()
+
+	// Create a subscription with a real conn so we hit the marshal path
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		var wmu sync.Mutex
+		m.Subscribe(conn, &wmu, "marshal-client", "")
+		time.Sleep(2 * time.Second)
+		_ = conn.Close(websocket.StatusNormalClosure, "done")
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	wsURL := "ws" + server.URL[4:]
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	time.Sleep(150 * time.Millisecond)
+
+	// Broadcast a message with unmarshallable Data — json.Marshal should fail
+	msg := ServerMessage{Type: "event", ID: "evt_bad", Data: make(chan int)} // channels can't be marshaled
+	m.BroadcastEvent(msg)                                                    // should not panic, just log error
+
+	// Verify nothing was buffered (marshal error → return before bufferEvent)
+	m.mu.Lock()
+	sub := m.subscriptions["marshal-client"]
+	m.mu.Unlock()
+	buffered := sub.GetBufferedEvents()
+	if len(buffered) != 0 {
+		t.Errorf("expected 0 buffered events on marshal error, got %d", len(buffered))
+	}
 }

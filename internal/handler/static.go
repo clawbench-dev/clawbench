@@ -37,7 +37,7 @@ func ServeIndex(w http.ResponseWriter, r *http.Request) {
 	// Serve index for root — auth is handled by the Vue app itself
 	if path == "/" || path == "." {
 		if fi, err := fsys.Open("index.html"); err == nil {
-			fi.Close()
+			_ = fi.Close()
 			frontend.ServeFileFromFS(w, r, fsys, "index.html")
 			return
 		}
@@ -62,7 +62,7 @@ func ServeIndex(w http.ResponseWriter, r *http.Request) {
 
 	// Try serving from frontend filesystem (disk public/ or embed)
 	if fi, err := fsys.Open(cleanRelPath); err == nil {
-		fi.Close()
+		_ = fi.Close()
 		frontend.ServeFileFromFS(w, r, fsys, cleanRelPath)
 		return
 	}
