@@ -94,7 +94,7 @@ export const categoryItems: Record<string, ItemSpec[]> = {
       { labelKey: 'settings.items.localeZh', value: 'zh' },
       { labelKey: 'settings.items.localeEn', value: 'en' },
     ]},
-    { labelKey: 'settings.items.uiScale', descriptionKey: 'settings.items.uiScaleDesc', key: 'uiScale', type: 'slider', source: 'local', min: 0.5, max: 2, step: 0.05, defaultValue: 1, displayFormat: 'percent' },
+    { labelKey: 'settings.items.uiScale', descriptionKey: 'settings.items.uiScaleDesc', key: 'uiScale', type: 'slider', source: 'local', min: 0.8, max: 1.5, step: 0.05, defaultValue: 1, displayFormat: 'percent' },
   ],
   agents: [],
   chat: [
