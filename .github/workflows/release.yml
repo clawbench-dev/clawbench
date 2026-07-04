@@ -617,6 +617,13 @@ jobs:
 
           echo "All npm packages assembled"
 
+      - name: Configure npm registry for publishing
+        run: |
+          echo "registry=https://registry.npmjs.org/" > .npmrc
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> .npmrc
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Publish @xulongzhe/clawbench-linux-x64
         run: npm publish npm/platforms/linux-x64 --access public
         env:
