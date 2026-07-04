@@ -7,6 +7,8 @@ import android.app.Service;
 import android.app.AlarmManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.BroadcastReceiver;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.net.Uri;
 import android.net.wifi.WifiManager;
@@ -95,9 +97,14 @@ public class BackgroundService extends Service {
     // Reconnect parameters: exponential backoff delays in milliseconds
     private static final int[] RECONNECT_DELAYS_MS = {5000, 10000, 30000, 60000, 120000};
     private static final int MONITOR_CHECK_INTERVAL_MS = 15000;
+    // WakeLock timeout: re-acquired via ensureWakeLock() before network operations
+    private static final long WAKELOCK_TIMEOUT_MS = 60_000L;
 
-    // Application-layer WebSocket ping interval (supplements OkHttp protocol-level ping)
-    private static final int WS_PING_INTERVAL_MS = 30000;
+    // Adaptive WebSocket ping intervals (milliseconds)
+    private static final int WS_PING_FAST_MS = 30000;       // Screen on / recently active
+    private static final int WS_PING_MEDIUM_MS = 60000;     // Screen off 2-5 min
+    private static final int WS_PING_SLOW_MS = 120000;      // Screen off 5-10 min
+    private static final int WS_PING_VERY_SLOW_MS = 300000; // Screen off 10+ min
 
     private static volatile boolean isRunning = false;
     private static volatile BackgroundService instance;
@@ -158,10 +165,19 @@ public class BackgroundService extends Service {
     private volatile boolean nativeWsIntentionalStop = false;
     private volatile int nativeWsReconnectAttempt = 0;
     private String nativeClientId;
-    // Application-layer WS ping: sends {"type":"ping"} every WS_PING_INTERVAL_MS
+    // Application-layer WS ping: sends {"type":"ping"} at adaptive intervals
     // to detect half-open connections and keep the WebSocket alive through NAT timeouts.
     private Handler wsPingHandler;
     private Runnable wsPingRunnable;
+    // Adaptive ping: screen state and ramp-up timer
+    private volatile boolean screenOn = true;
+    private long screenOffTime = 0;
+    private Handler screenRampHandler;
+    private Runnable screenRampRunnable;
+    // Skip next ping when a WS message was just received (connection proven alive)
+    private volatile boolean skipNextPing = false;
+    // Screen state BroadcastReceiver (unregistered in onDestroy)
+    private BroadcastReceiver screenStateReceiver;
     // Reconnect scheduling: avoids accumulating multiple pending reconnect callbacks
     private Handler wsReconnectHandler;
     private Runnable wsReconnectRunnable;
@@ -378,6 +394,31 @@ public class BackgroundService extends Service {
         createNotificationChannel();
         startForegroundCompat(NOTIFICATION_ID, buildNotification(0, null));
 
+        // Register screen state receiver for adaptive WS ping interval
+        IntentFilter screenFilter = new IntentFilter();
+        screenFilter.addAction(Intent.ACTION_SCREEN_ON);
+        screenFilter.addAction(Intent.ACTION_SCREEN_OFF);
+        screenStateReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (Intent.ACTION_SCREEN_ON.equals(intent.getAction())) {
+                    screenOn = true;
+                    screenOffTime = 0;
+                    cancelPingRampUp();
+                    // Restart ping loop with fast interval
+                    if (nativeWsActive) {
+                        startWsPingLoop();
+                    }
+                } else if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
+                    screenOn = false;
+                    screenOffTime = System.currentTimeMillis();
+                    // Schedule ramp-up steps to increase ping interval gradually
+                    schedulePingRampUp();
+                }
+            }
+        };
+        registerReceiver(screenStateReceiver, screenFilter);
+
         // Restore previously saved ports (from before Service was killed)
         restoreForwardedPorts();
 
@@ -483,6 +524,12 @@ public class BackgroundService extends Service {
     @Override
     public void onDestroy() {
         intentionalDisconnect = true;
+        // Unregister screen state receiver
+        if (screenStateReceiver != null) {
+            try { unregisterReceiver(screenStateReceiver); } catch (Exception ignored) {}
+            screenStateReceiver = null;
+        }
+        cancelPingRampUp();
         stopNativeEventWs();
         stopConnectionMonitor();
         releaseWifiLock();
@@ -730,15 +777,12 @@ public class BackgroundService extends Service {
         try {
             WifiManager wifiManager = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
             if (wifiManager != null) {
-                // WIFI_MODE_FULL_HIGH_PERF uses less power than WIFI_MODE_FULL (Android 12+)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "ClawBench-SSH");
-                } else {
-                    wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL, "ClawBench-SSH");
-                }
+                // WIFI_MODE_FULL: sufficient for low-bandwidth WS event traffic.
+                // Avoids WIFI_MODE_FULL_HIGH_PERF which prevents WiFi power save entirely.
+                wifiLock = wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL, "ClawBench-SSH");
                 wifiLock.setReferenceCounted(false);
                 wifiLock.acquire();
-                AppLog.i(TAG, "SSH: WifiLock acquired");
+                AppLog.i(TAG, "SSH: WifiLock acquired (WIFI_MODE_FULL)");
             }
         } catch (Exception e) {
             AppLog.w(TAG, "SSH: failed to acquire WifiLock", e);
@@ -1276,9 +1320,23 @@ public class BackgroundService extends Service {
     // --- WebSocket application-layer ping ---
 
     /**
-     * Start sending application-layer ping messages every WS_PING_INTERVAL_MS.
-     * Supplements OkHttp's protocol-level pingInterval to detect half-open
-     * connections and keep the WebSocket alive through NAT/firewall timeouts.
+     * Get the current adaptive ping interval based on screen state.
+     * Screen on → 30s, screen off ramps up: 30s→60s→120s→300s.
+     */
+    private int getCurrentPingInterval() {
+        if (screenOn) return WS_PING_FAST_MS;
+        if (screenOffTime == 0) return WS_PING_FAST_MS;
+        long offDuration = System.currentTimeMillis() - screenOffTime;
+        if (offDuration < 120_000) return WS_PING_FAST_MS;
+        if (offDuration < 300_000) return WS_PING_MEDIUM_MS;
+        if (offDuration < 600_000) return WS_PING_SLOW_MS;
+        return WS_PING_VERY_SLOW_MS;
+    }
+
+    /**
+     * Start sending application-layer ping messages at adaptive intervals.
+     * Detects half-open connections and keeps the WebSocket alive through
+     * NAT/firewall timeouts. Adapts ping rate based on screen state.
      * Safe to call from any thread — posts to the main looper.
      */
     private void startWsPingLoop() {
@@ -1295,6 +1353,13 @@ public class BackgroundService extends Service {
                 // Local volatile read to avoid race with stopNativeEventWs()
                 WebSocket ws = nativeEventWs;
                 if (ws != null && nativeWsActive && !nativeWsIntentionalStop) {
+                    // If we just received a WS message, skip this ping (connection proven alive)
+                    if (skipNextPing) {
+                        skipNextPing = false;
+                        wsPingHandler.postDelayed(this, getCurrentPingInterval());
+                        return;
+                    }
+                    ensureWakeLock(); // Re-acquire WakeLock if expired before network I/O
                     boolean sent = ws.send("{\"type\":\"ping\"}");
                     if (!sent) {
                         AppLog.w(TAG, "NativeWS: ping send failed, connection likely dead");
@@ -1309,12 +1374,13 @@ public class BackgroundService extends Service {
                         return;
                     }
                     AppLog.d(TAG, "NativeWS: sent app-layer ping");
-                    wsPingHandler.postDelayed(this, WS_PING_INTERVAL_MS);
+                    wsPingHandler.postDelayed(this, getCurrentPingInterval());
                 }
             }
         };
-        wsPingHandler.postDelayed(wsPingRunnable, WS_PING_INTERVAL_MS);
-        AppLog.i(TAG, "NativeWS: app-layer ping loop started (interval=" + WS_PING_INTERVAL_MS + "ms)");
+        int interval = getCurrentPingInterval();
+        wsPingHandler.postDelayed(wsPingRunnable, interval);
+        AppLog.i(TAG, "NativeWS: adaptive ping loop started (interval=" + interval + "ms)");
     }
 
     /**
@@ -1329,12 +1395,50 @@ public class BackgroundService extends Service {
         wsPingRunnable = null;
     }
 
+    /**
+     * Schedule delayed callbacks to restart the ping loop at each ramp-up step
+     * when the screen is off. Posts at 2min, 5min, and 10min after screen off
+     * to increase the ping interval progressively.
+     */
+    private void schedulePingRampUp() {
+        cancelPingRampUp();
+        screenRampHandler = new Handler(Looper.getMainLooper());
+        screenRampRunnable = new Runnable() {
+            @Override
+            public void run() {
+                // Only restart ping loop if screen is still off and WS is active
+                if (!screenOn && nativeWsActive) {
+                    int interval = getCurrentPingInterval();
+                    AppLog.i(TAG, "NativeWS: ping ramp-up, restarting loop (interval=" + interval + "ms)");
+                    startWsPingLoop();
+                }
+            }
+        };
+        // Schedule ramp-up checkpoints at 2min, 5min, 10min after screen off
+        // The runnable restarts the ping loop, which will use getCurrentPingInterval()
+        // to determine the new interval based on how long screen has been off.
+        screenRampHandler.postDelayed(screenRampRunnable, 120_000L);  // 2 min → may ramp to 60s
+        screenRampHandler.postDelayed(screenRampRunnable, 300_000L);  // 5 min → may ramp to 120s
+        screenRampHandler.postDelayed(screenRampRunnable, 600_000L);  // 10 min → may ramp to 300s
+    }
+
+    /**
+     * Cancel any pending ping ramp-up callbacks.
+     */
+    private void cancelPingRampUp() {
+        if (screenRampHandler != null && screenRampRunnable != null) {
+            screenRampHandler.removeCallbacks(screenRampRunnable);
+        }
+        screenRampHandler = null;
+        screenRampRunnable = null;
+    }
+
     // --- WakeLock ---
 
     /**
-     * Acquire a partial WakeLock to prevent CPU from sleeping.
-     * This ensures SSH keep-alive packets and WebSocket pings are sent
-     * even when the screen is off and the device enters Doze mode.
+     * Acquire a partial WakeLock with a timeout to prevent CPU from sleeping.
+     * Uses a 60s timeout instead of permanent acquire to allow CPU to sleep
+     * between network operations. Call ensureWakeLock() before each network op.
      */
     private void acquireWakeLock() {
         if (wakeLock != null && wakeLock.isHeld()) return;
@@ -1343,11 +1447,21 @@ public class BackgroundService extends Service {
             if (pm != null) {
                 wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ClawBench:BgService");
                 wakeLock.setReferenceCounted(false);
-                wakeLock.acquire();
-                AppLog.i(TAG, "SSH: WakeLock acquired");
+                wakeLock.acquire(WAKELOCK_TIMEOUT_MS);
+                AppLog.i(TAG, "SSH: WakeLock acquired (timeout=" + WAKELOCK_TIMEOUT_MS + "ms)");
             }
         } catch (Exception e) {
             AppLog.w(TAG, "SSH: failed to acquire WakeLock", e);
+        }
+    }
+
+    /**
+     * Re-acquire WakeLock if expired. Call before network operations
+     * (ping send, reconnect attempt) to ensure CPU is awake for I/O.
+     */
+    private void ensureWakeLock() {
+        if (wakeLock == null || !wakeLock.isHeld()) {
+            acquireWakeLock();
         }
     }
 
@@ -1538,9 +1652,9 @@ public class BackgroundService extends Service {
 
             AppLog.i(TAG, "NativeWS: connecting to " + wsUrl);
 
-            // Build OkHttp client
+            // Build OkHttp client — adaptive app-layer ping subsumes protocol-level ping
             OkHttpClient.Builder clientBuilder = new OkHttpClient.Builder()
-                    .pingInterval(30, TimeUnit.SECONDS)
+                    .pingInterval(0, TimeUnit.MILLISECONDS)
                     .readTimeout(0, TimeUnit.MILLISECONDS);
 
             // Handle self-signed certs
@@ -1627,11 +1741,16 @@ public class BackgroundService extends Service {
         int displayAttempt = Math.min(nativeWsReconnectAttempt, 999);
         AppLog.i(TAG, "NativeWS: reconnecting in " + delay + "ms (attempt " + displayAttempt + ")");
 
+        // Release locks during reconnect backoff — re-acquired before connect attempt
+        maybeReleaseWakeLock();
+        maybeReleaseWifiLock();
+
         // Use Handler to schedule on main thread, then post to network executor
         wsReconnectHandler = new Handler(Looper.getMainLooper());
         final String finalServerUrl = serverUrl;
         wsReconnectRunnable = () -> {
             if (!nativeWsIntentionalStop && isRunning) {
+                ensureWakeLock(); // Briefly wake CPU for connection attempt
                 networkExecutor.execute(() -> connectNativeWs(finalServerUrl));
             }
         };
@@ -1722,6 +1841,8 @@ public class BackgroundService extends Service {
             } catch (Exception e) {
                 AppLog.w(TAG, "NativeWS: error processing message", e);
             }
+            // Message received proves connection is alive — skip next ping to save CPU
+            skipNextPing = true;
         }
 
         @Override
