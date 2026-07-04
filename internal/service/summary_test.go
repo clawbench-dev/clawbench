@@ -21,8 +21,6 @@ import (
 // setupTestDBForAsyncSummary creates an in-memory DB with summaries table
 func setupTestDBForAsyncSummary(t *testing.T) (*sql.DB, func()) {
 	t.Helper()
-	origDB := DB
-	origDBRead := DBRead
 
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -46,11 +44,9 @@ func setupTestDBForAsyncSummary(t *testing.T) (*sql.DB, func()) {
 		t.Fatalf("failed to create tables: %v", err)
 	}
 
-	DB = db
-	DBRead = db
+	cleanup := SetDBForTest(db, db)
 	teardown := func() {
-		DB = origDB
-		DBRead = origDBRead
+		cleanup()
 		db.Close()
 	}
 	return db, teardown
@@ -160,8 +156,6 @@ func TestAsyncSummarize_NilSummarizer(t *testing.T) {
 // for MigrateTaskExecutionSummaries.
 func setupTestDBForMigration(t *testing.T) func() {
 	t.Helper()
-	origDB := DB
-	origDBRead := DBRead
 
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -202,11 +196,9 @@ func setupTestDBForMigration(t *testing.T) func() {
 		t.Fatalf("failed to create tables: %v", err)
 	}
 
-	DB = db
-	DBRead = db
+	cleanup := SetDBForTest(db, db)
 	teardown := func() {
-		DB = origDB
-		DBRead = origDBRead
+		cleanup()
 		db.Close()
 	}
 	return teardown
@@ -220,7 +212,7 @@ func TestMigrateTaskExecutionSummaries_NoopWhenEmpty(t *testing.T) {
 	MigrateTaskExecutionSummaries()
 
 	var count int
-	_ = DBRead.QueryRow("SELECT COUNT(*) FROM summaries WHERE target_type = 'task_execution'").Scan(&count)
+	_ = dbRead.QueryRow("SELECT COUNT(*) FROM summaries WHERE target_type = 'task_execution'").Scan(&count)
 	assert.Equal(t, 0, count)
 }
 
@@ -229,21 +221,21 @@ func TestMigrateTaskExecutionSummaries_ConvertsToChatMessage(t *testing.T) {
 	defer teardown()
 
 	// Set up: task_execution → session → assistant message
-	_, _ = DB.Exec("INSERT INTO task_executions (id, task_id, session_id, status) VALUES (1, 10, 'sess-1', 'completed')")
-	_, _ = DB.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', '{\"blocks\":[]}', 'sess-1', 'claude', 0)")
+	_, _ = db.Exec("INSERT INTO task_executions (id, task_id, session_id, status) VALUES (1, 10, 'sess-1', 'completed')")
+	_, _ = db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', '{\"blocks\":[]}', 'sess-1', 'claude', 0)")
 	// Get the assistant message ID
 	var msgID int64
-	_ = DBRead.QueryRow("SELECT id FROM chat_history WHERE session_id = 'sess-1' AND role = 'assistant'").Scan(&msgID)
+	_ = dbRead.QueryRow("SELECT id FROM chat_history WHERE session_id = 'sess-1' AND role = 'assistant'").Scan(&msgID)
 
 	// Insert a task_execution summary
-	_, _ = DB.Exec("INSERT INTO summaries (target_type, target_id, summary, created_at) VALUES ('task_execution', 1, 'Task summary text', CURRENT_TIMESTAMP)")
+	_, _ = db.Exec("INSERT INTO summaries (target_type, target_id, summary, created_at) VALUES ('task_execution', 1, 'Task summary text', CURRENT_TIMESTAMP)")
 
 	// Run migration
 	MigrateTaskExecutionSummaries()
 
 	// Verify: task_execution summary deleted
 	var taskExecCount int
-	_ = DBRead.QueryRow("SELECT COUNT(*) FROM summaries WHERE target_type = 'task_execution'").Scan(&taskExecCount)
+	_ = dbRead.QueryRow("SELECT COUNT(*) FROM summaries WHERE target_type = 'task_execution'").Scan(&taskExecCount)
 	assert.Equal(t, 0, taskExecCount, "task_execution summary should be deleted after migration")
 
 	// Verify: chat_message summary created with correct content
@@ -257,20 +249,20 @@ func TestMigrateTaskExecutionSummaries_NoAssistantMessage(t *testing.T) {
 	defer teardown()
 
 	// Set up: task_execution with no corresponding assistant message
-	_, _ = DB.Exec("INSERT INTO task_executions (id, task_id, session_id, status) VALUES (2, 20, 'sess-orphan', 'completed')")
-	_, _ = DB.Exec("INSERT INTO summaries (target_type, target_id, summary, created_at) VALUES ('task_execution', 2, 'Orphan summary', CURRENT_TIMESTAMP)")
+	_, _ = db.Exec("INSERT INTO task_executions (id, task_id, session_id, status) VALUES (2, 20, 'sess-orphan', 'completed')")
+	_, _ = db.Exec("INSERT INTO summaries (target_type, target_id, summary, created_at) VALUES ('task_execution', 2, 'Orphan summary', CURRENT_TIMESTAMP)")
 
 	// Run migration — should skip this summary (no assistant message found)
 	MigrateTaskExecutionSummaries()
 
 	// Verify: task_execution summary deleted (even though no chat_message was created)
 	var taskExecCount int
-	_ = DBRead.QueryRow("SELECT COUNT(*) FROM summaries WHERE target_type = 'task_execution'").Scan(&taskExecCount)
+	_ = dbRead.QueryRow("SELECT COUNT(*) FROM summaries WHERE target_type = 'task_execution'").Scan(&taskExecCount)
 	assert.Equal(t, 0, taskExecCount, "orphaned task_execution summary should be cleaned up")
 
 	// Verify: no chat_message summary created (no assistant message to attach to)
 	var chatMsgCount int
-	_ = DBRead.QueryRow("SELECT COUNT(*) FROM summaries WHERE target_type = 'chat_message'").Scan(&chatMsgCount)
+	_ = dbRead.QueryRow("SELECT COUNT(*) FROM summaries WHERE target_type = 'chat_message'").Scan(&chatMsgCount)
 	assert.Equal(t, 0, chatMsgCount)
 }
 
@@ -279,9 +271,9 @@ func TestMigrateTaskExecutionSummaries_Idempotent(t *testing.T) {
 	defer teardown()
 
 	// Set up
-	_, _ = DB.Exec("INSERT INTO task_executions (id, task_id, session_id, status) VALUES (3, 30, 'sess-idem', 'completed')")
-	_, _ = DB.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', '{\"blocks\":[]}', 'sess-idem', 'claude', 0)")
-	_, _ = DB.Exec("INSERT INTO summaries (target_type, target_id, summary, created_at) VALUES ('task_execution', 3, 'Idempotent summary', CURRENT_TIMESTAMP)")
+	_, _ = db.Exec("INSERT INTO task_executions (id, task_id, session_id, status) VALUES (3, 30, 'sess-idem', 'completed')")
+	_, _ = db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', '{\"blocks\":[]}', 'sess-idem', 'claude', 0)")
+	_, _ = db.Exec("INSERT INTO summaries (target_type, target_id, summary, created_at) VALUES ('task_execution', 3, 'Idempotent summary', CURRENT_TIMESTAMP)")
 
 	// Run migration twice
 	MigrateTaskExecutionSummaries()
@@ -289,12 +281,12 @@ func TestMigrateTaskExecutionSummaries_Idempotent(t *testing.T) {
 
 	// Verify: only one chat_message summary exists (INSERT OR IGNORE)
 	var chatMsgCount int
-	_ = DBRead.QueryRow("SELECT COUNT(*) FROM summaries WHERE target_type = 'chat_message'").Scan(&chatMsgCount)
+	_ = dbRead.QueryRow("SELECT COUNT(*) FROM summaries WHERE target_type = 'chat_message'").Scan(&chatMsgCount)
 	assert.Equal(t, 1, chatMsgCount, "should have exactly one chat_message summary after running twice")
 
 	// Verify: no task_execution summaries remain
 	var taskExecCount int
-	_ = DBRead.QueryRow("SELECT COUNT(*) FROM summaries WHERE target_type = 'task_execution'").Scan(&taskExecCount)
+	_ = dbRead.QueryRow("SELECT COUNT(*) FROM summaries WHERE target_type = 'task_execution'").Scan(&taskExecCount)
 	assert.Equal(t, 0, taskExecCount)
 }
 

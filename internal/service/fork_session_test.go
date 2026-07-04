@@ -39,7 +39,7 @@ func TestForkSession_NormalFlow(t *testing.T) {
 
 	// New session should have source_session_id set
 	var sourceID *string
-	err = service.DB.QueryRow("SELECT source_session_id FROM chat_sessions WHERE id = ?", newSessID).Scan(&sourceID)
+	err = service.UnsafeDBForTest().QueryRow("SELECT source_session_id FROM chat_sessions WHERE id = ?", newSessID).Scan(&sourceID)
 	assert.NoError(t, err)
 	assert.NotNil(t, sourceID)
 	assert.Equal(t, sessID, *sourceID)
@@ -247,7 +247,7 @@ func TestForkSession_ForkOfFork(t *testing.T) {
 
 	// fork2's source_session_id should point to fork1, not original
 	var sourceID *string
-	err = service.DB.QueryRow("SELECT source_session_id FROM chat_sessions WHERE id = ?", fork2ID).Scan(&sourceID)
+	err = service.UnsafeDBForTest().QueryRow("SELECT source_session_id FROM chat_sessions WHERE id = ?", fork2ID).Scan(&sourceID)
 	assert.NoError(t, err)
 	assert.NotNil(t, sourceID)
 	assert.Equal(t, fork1ID, *sourceID)
@@ -271,7 +271,7 @@ func TestForkSession_SessionTypeIsChat(t *testing.T) {
 	assert.NoError(t, err)
 
 	var sessionType string
-	err = service.DB.QueryRow("SELECT session_type FROM chat_sessions WHERE id = ?", newSessID).Scan(&sessionType)
+	err = service.UnsafeDBForTest().QueryRow("SELECT session_type FROM chat_sessions WHERE id = ?", newSessID).Scan(&sessionType)
 	assert.NoError(t, err)
 	assert.Equal(t, "chat", sessionType)
 }

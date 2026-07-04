@@ -128,7 +128,7 @@ func TestSessionExecutor_HandleNonTerminalEvent_IncrementalPersistence(t *testin
 	// After 5 events, flushStreamingMessage should have been called
 	// Verify by checking DB
 	var content string
-	err := DBRead.QueryRow(
+	err := dbRead.QueryRow(
 		"SELECT content FROM chat_history WHERE session_id = ? AND streaming = 1",
 		sid,
 	).Scan(&content)
@@ -573,7 +573,7 @@ func TestSessionExecutor_Finalize_SavesMetadata(t *testing.T) {
 
 	// Verify metadata was saved
 	var inputTokens int
-	err := DBRead.QueryRow("SELECT input_tokens FROM chat_metadata WHERE message_id = ?", finalized.MsgID).Scan(&inputTokens)
+	err := dbRead.QueryRow("SELECT input_tokens FROM chat_metadata WHERE message_id = ?", finalized.MsgID).Scan(&inputTokens)
 	require.NoError(t, err)
 	assert.Equal(t, 100, inputTokens)
 }

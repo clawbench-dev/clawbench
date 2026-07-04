@@ -166,7 +166,7 @@ func getSessionTitles(sessionIDs map[string]bool) map[string]string {
 	}
 
 	// Check if service DB is available
-	if service.DB == nil {
+	if !service.DBReady() {
 		return map[string]string{}
 	}
 

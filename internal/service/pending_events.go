@@ -1,4 +1,4 @@
-//nolint:noctx,govet // DB global singleton, context not applicable
+//nolint:noctx,govet // db global singleton, context not applicable
 package service
 
 import (
@@ -66,7 +66,7 @@ func pendingEventExpiresAt(event, status string) string {
 
 // StorePendingEvent persists a notifiable event to the global event log.
 func StorePendingEvent(eventID, eventType, payload, expiresAt string) error {
-	if DB == nil {
+	if db == nil {
 		return nil
 	}
 	_, err := WriteExec(
@@ -80,7 +80,7 @@ func StorePendingEvent(eventID, eventType, payload, expiresAt string) error {
 // Results are ordered by id ASC. If the cursor event_id has expired and been
 // cleaned up, returns an empty slice (client should reset cursor and re-fetch).
 func GetPendingEvents(afterEventID string) ([]PendingEvent, error) {
-	if DB == nil || DBRead == nil {
+	if db == nil || dbRead == nil {
 		return nil, nil
 	}
 
@@ -90,7 +90,7 @@ func GetPendingEvents(afterEventID string) ([]PendingEvent, error) {
 		// Check if cursor event still exists; if not, return empty
 		// to signal client to reset cursor
 		var cursorExists int
-		if err := DBRead.QueryRow(
+		if err := dbRead.QueryRow(
 			`SELECT COUNT(*) FROM pending_events WHERE event_id = ?`,
 			afterEventID,
 		).Scan(&cursorExists); err != nil {
@@ -99,7 +99,7 @@ func GetPendingEvents(afterEventID string) ([]PendingEvent, error) {
 		if cursorExists == 0 {
 			return []PendingEvent{}, nil
 		}
-		rows, err = DBRead.Query(
+		rows, err = dbRead.Query(
 			`SELECT event_id, event_type, payload, expires_at, created_at
 			 FROM pending_events
 			 WHERE expires_at >= datetime('now')
@@ -108,7 +108,7 @@ func GetPendingEvents(afterEventID string) ([]PendingEvent, error) {
 			afterEventID,
 		)
 	} else {
-		rows, err = DBRead.Query(
+		rows, err = dbRead.Query(
 			`SELECT event_id, event_type, payload, expires_at, created_at
 			 FROM pending_events
 			 WHERE expires_at >= datetime('now')
@@ -133,7 +133,7 @@ func GetPendingEvents(afterEventID string) ([]PendingEvent, error) {
 
 // CleanupPendingEvents removes expired events and caps total rows.
 func CleanupPendingEvents() {
-	if DB == nil {
+	if db == nil {
 		return
 	}
 	result, err := WriteExec(`DELETE FROM pending_events WHERE expires_at < datetime('now')`)

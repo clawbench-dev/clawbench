@@ -180,7 +180,7 @@ func serveAgentsDuplicate(w http.ResponseWriter, r *http.Request) {
 	configMutex.Lock()
 	defer configMutex.Unlock()
 
-	clone, err := service.DuplicateAgent(service.DB, req.SourceID, req.Name)
+	clone, err := service.DuplicateAgent(req.SourceID, req.Name)
 	if err != nil {
 		slog.Error("failed to duplicate agent", "source", req.SourceID, "error", err)
 		if strings.Contains(err.Error(), "not found") {
@@ -215,9 +215,9 @@ func serveAgentsRescan(w http.ResponseWriter, _ *http.Request) {
 	configMutex.Lock()
 	defer configMutex.Unlock()
 
-	present := model.SyncDiscoverAgentsDB(service.DB)
+	present := model.SyncDiscoverAgentsDB(service.WriteDB())
 	discoveredModels := model.SyncDiscoverModels()
-	model.MergeDiscoveredDataDB(service.DB, discoveredModels, present)
+	model.MergeDiscoveredDataDB(service.WriteDB(), discoveredModels, present)
 
 	// Return the current agent list (same shape as GET /api/agents)
 	agents := make([]*model.Agent, len(model.AgentList))
@@ -428,7 +428,7 @@ func serveAgentsDelete(w http.ResponseWriter, r *http.Request) {
 		slog.Info("closed ACP connections before agent delete", "agent", req.ID)
 	}
 
-	if err := service.DeleteAgent(service.DB, req.ID); err != nil {
+	if err := service.DeleteAgent(req.ID); err != nil {
 		slog.Error("failed to delete agent", "agent", req.ID, "error", err)
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
@@ -617,7 +617,7 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 	}
 
 	// Persist to database
-	if err := service.PatchAgentFields(service.DB, agentID, ap); err != nil {
+	if err := service.PatchAgentFields(agentID, ap); err != nil {
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}
@@ -772,7 +772,7 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 	agent.ModelsAutoDetected = true
 
 	// Update database
-	if err := service.SaveAgent(service.DB, agent); err != nil {
+	if err := service.SaveAgent(service.WriteDB(), agent); err != nil {
 		slog.Warn("failed to persist model refresh to DB", "agent", agentID, "error", err)
 	}
 
@@ -784,11 +784,11 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 // findProviderSpecForAgent looks up the provider for an agent from the agent_api_keys table
 // and returns the corresponding ProviderSpec. Used for provider prefix filtering during model refresh.
 func findProviderSpecForAgent(ctx context.Context, agentID string) *model.ProviderSpec {
-	if service.DB == nil {
+	if !service.DBReady() {
 		return nil
 	}
 	var providerID string
-	if err := service.DB.QueryRowContext(ctx, "SELECT provider FROM agent_api_keys WHERE agent_id = ?", agentID).Scan(&providerID); err != nil {
+	if err := service.ReadDB().QueryRowContext(ctx, "SELECT provider FROM agent_api_keys WHERE agent_id = ?", agentID).Scan(&providerID); err != nil {
 		return nil
 	}
 	return model.FindProviderSpec(providerID)
@@ -922,7 +922,7 @@ func findExistingACPSessions(acpSessionIDs []string) map[string]bool {
 	}
 
 	result := make(map[string]bool)
-	rows, err := service.DBRead.Query( //nolint:noctx // background DB query, no request context available in this helper
+	rows, err := service.ReadDB().Query( //nolint:noctx // background DB query, no request context available in this helper
 		"SELECT source_session_id FROM chat_sessions WHERE source_session_id IN ("+placeholders+")",
 		sourceIDs...,
 	)

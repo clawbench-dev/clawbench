@@ -2379,7 +2379,7 @@ func TestAIChat_Get_NoSessionID_UsesLatestSession(t *testing.T) {
 	s1, _ := service.CreateSession(env.ProjectDir, "claude", "First", "claude", "", "default", "chat")
 	s2, _ := service.CreateSession(env.ProjectDir, "codebuddy", "Second", "codebuddy", "", "default", "chat")
 	// Force s2 to be more recent by setting its updated_at 1 second ahead
-	_, _ = service.DB.Exec("UPDATE chat_sessions SET updated_at = datetime(updated_at, '+1 second') WHERE id = ?", s2)
+	_, _ = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime(updated_at, '+1 second') WHERE id = ?", s2)
 
 	// GET without session_id should use the latest session
 	req := newRequest(t, http.MethodGet, "/api/ai/chat?limit=20", nil)
@@ -2783,7 +2783,7 @@ func TestBuildChatRequest_ContinuedSessionUsesExternalSessionID(t *testing.T) {
 
 	// Create task + execution
 	var taskID int64
-	result, err := service.DB.Exec(
+	result, err := service.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, status) VALUES (?, ?, '0 8 * * *', ?, 'Do task', 'active')",
 		env.ProjectDir, "Task", "codebuddy",
 	)
@@ -2791,7 +2791,7 @@ func TestBuildChatRequest_ContinuedSessionUsesExternalSessionID(t *testing.T) {
 	taskID, _ = result.LastInsertId()
 
 	var execID int64
-	result, err = service.DB.Exec(
+	result, err = service.UnsafeDBForTest().Exec(
 		"INSERT INTO task_executions (task_id, session_id, status) VALUES (?, ?, 'completed')",
 		taskID, schedSessionID,
 	)
@@ -2988,7 +2988,7 @@ func TestAIChat_POST_NoSessionID_Returns400(t *testing.T) {
 
 	// Count sessions before the request
 	countBefore := 0
-	_ = service.DBRead.QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE deleted = 0 AND session_type = 'chat'").Scan(&countBefore)
+	_ = service.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE deleted = 0 AND session_type = 'chat'").Scan(&countBefore)
 
 	// POST without session_id (no cookie, no query param)
 	body := map[string]string{"message": "hello"}
@@ -3006,7 +3006,7 @@ func TestAIChat_POST_NoSessionID_Returns400(t *testing.T) {
 
 	// Verify no new session was created
 	countAfter := 0
-	_ = service.DBRead.QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE deleted = 0 AND session_type = 'chat'").Scan(&countAfter)
+	_ = service.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE deleted = 0 AND session_type = 'chat'").Scan(&countAfter)
 	assert.Equal(t, countBefore, countAfter, "POST without session_id should NOT auto-create a session")
 }
 

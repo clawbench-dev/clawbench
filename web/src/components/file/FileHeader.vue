@@ -121,13 +121,16 @@
         </Teleport>
       </div>
 
-      <!-- Overlay nav: back and close (only when in overlay mode) -->
-      <button v-if="overlayCanGoBack" class="file-header-btn overlay-nav-btn" @click.stop="$emit('overlayGoBack')" :title="t('file.overlay.back')">
-        <ChevronLeft :size="14" />
-      </button>
-      <button v-if="overlayOpen" class="file-header-btn overlay-nav-btn" @click.stop="$emit('overlayClose')" :title="t('common.close')">
-        <X :size="14" />
-      </button>
+      <!-- Overlay nav: inside header-actions, always rendered when overlay is open -->
+      <template v-if="overlayOpen">
+        <div class="overlay-nav-separator"></div>
+        <button v-if="overlayCanGoBack" class="file-header-btn overlay-nav-btn" @click.stop="$emit('overlayGoBack')" :title="t('file.overlay.back')">
+          <ChevronLeft :size="14" />
+        </button>
+        <button class="file-header-btn overlay-nav-btn overlay-close-btn" @click.stop="$emit('overlayClose')" :title="t('common.close')">
+          <X :size="14" />
+        </button>
+      </template>
     </div>
   </div>
 </template>
@@ -169,9 +172,15 @@ const dropdownRef = ref(null)
 const menuRef = ref(null)
 const menuStyle = ref({})
 const attachBtnRef = ref(null)
-
-// Responsive toolbar overflow
 const headerActionsRef = ref(null)
+
+// Responsive toolbar overflow — reserve space for more dropdown (1) + overlay nav buttons when visible
+// overlayOpen: 1 (close) or 2 (back + close) extra always-inline buttons; +1 for the separator
+const overlayInlineExtra = computed(() => {
+  if (!props.overlayOpen) return 0
+  // separator + close button = 2, optionally + back button = 3
+  return props.overlayCanGoBack ? 3 : 2
+})
 const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
   () => headerActionsRef.value,
   () => {
@@ -186,7 +195,7 @@ const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObs
     if (!isMarkdownRendered.value) ids.push('stickyScroll')
     return ids
   },
-  { inlineCount: 1, gap: 8 },
+  { inlineCount: computed(() => 1 + overlayInlineExtra.value), gap: 8 },
 )
 
 function toggleMenu() {
@@ -366,7 +375,7 @@ onBeforeUnmount(() => {
     display: flex;
     align-items: center;
     gap: 4px;
-    min-width: 80px;
+    min-width: 160px;
 }
 
 .file-path-hint {
@@ -397,7 +406,6 @@ onBeforeUnmount(() => {
     gap: 8px;
     margin-left: auto;
     flex-shrink: 0;
-    padding-right: 8px;
 }
 
 .file-header-btn {
@@ -439,9 +447,25 @@ onBeforeUnmount(() => {
     position: relative;
 }
 
-/* Overlay nav buttons (back/close) */
+/* Overlay nav separator and buttons (inside header-actions, always-inline) */
+.overlay-nav-separator {
+    width: 1px;
+    height: 16px;
+    background: var(--border-color);
+    flex-shrink: 0;
+    margin: 0 2px;
+}
 .overlay-nav-btn {
-    margin-left: 4px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+}
+.overlay-nav-btn:hover {
+    background: var(--accent-color-dim, rgba(74, 144, 217, 0.12));
+    color: var(--accent-color);
+    border-color: var(--accent-color);
+}
+.overlay-close-btn {
+    background: var(--accent-color-dim, rgba(74, 144, 217, 0.08));
 }
 
 .wrap-check {

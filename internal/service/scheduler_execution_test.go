@@ -337,8 +337,6 @@ func TestScheduler_TaskRunning_ConcurrentNoDuplicate(t *testing.T) {
 // for testing auto-approve persistence.
 func setupTestDBForAutoApprove(t *testing.T) (*sql.DB, func()) {
 	t.Helper()
-	origDB := DB
-	origDBRead := DBRead
 
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -373,11 +371,9 @@ func setupTestDBForAutoApprove(t *testing.T) (*sql.DB, func()) {
 		t.Fatalf("failed to create tables: %v", err)
 	}
 
-	DB = db
-	DBRead = db
+	cleanup := SetDBForTest(db, db)
 	teardown := func() {
-		DB = origDB
-		DBRead = origDBRead
+		cleanup()
 		db.Close()
 	}
 	return db, teardown

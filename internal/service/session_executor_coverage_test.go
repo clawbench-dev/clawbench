@@ -86,11 +86,11 @@ func TestGetToolCall_ClosedDBError(t *testing.T) {
 	require.True(t, msgID > 0)
 
 	// Use a closed DB to force a query error
-	origDBRead := DBRead
+	origDBRead := dbRead
 	closedDB, _ := initClosedDB()
-	DBRead = closedDB
+	dbRead = closedDB
 	t.Cleanup(func() {
-		DBRead = origDBRead
+		dbRead = origDBRead
 	})
 
 	_, err := GetToolCall("toolu_err", msgID)

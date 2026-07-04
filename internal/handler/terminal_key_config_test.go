@@ -153,11 +153,10 @@ func TestServeKeyConfig_GetDBError(t *testing.T) {
 	defer teardown()
 
 	// Close the DB to force an error from GetKeyConfig
-	origDBRead := service.DBRead
 	closedDB, _ := sql.Open("sqlite", ":memory:")
 	closedDB.Close()
-	service.DBRead = closedDB
-	defer func() { service.DBRead = origDBRead }()
+	cleanup := service.SetDBForTest(closedDB, closedDB)
+	defer cleanup()
 
 	req := newRequest(t, http.MethodGet, "/api/terminal/key-config?type=key", nil)
 	w := callHandler(ServeKeyConfig, req)
@@ -169,11 +168,10 @@ func TestServeKeyConfig_PutDBError(t *testing.T) {
 	defer teardown()
 
 	// Close the DB to force an error from ReplaceKeyConfig
-	origDB := service.DB
 	closedDB, _ := sql.Open("sqlite", ":memory:")
 	closedDB.Close()
-	service.DB = closedDB
-	defer func() { service.DB = origDB }()
+	cleanup := service.SetDBForTest(closedDB, closedDB)
+	defer cleanup()
 
 	putBody := map[string]any{
 		"type":  "key",

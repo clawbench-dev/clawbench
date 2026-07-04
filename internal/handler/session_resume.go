@@ -65,7 +65,7 @@ func ServeSessionResume(w http.ResponseWriter, r *http.Request) {
 	// Check session exists and belongs to project
 	var sessionProjectPath string
 	var deleted int
-	err := service.DBRead.QueryRowContext(
+	err := service.ReadDB().QueryRowContext(
 		r.Context(),
 		"SELECT project_path, deleted FROM chat_sessions WHERE id = ?",
 		req.SessionID,
@@ -89,7 +89,7 @@ func ServeSessionResume(w http.ResponseWriter, r *http.Request) {
 	if deleted == 1 {
 		if model.SessionMaxCount > 0 {
 			var count int
-			err = service.DBRead.QueryRowContext(
+			err = service.ReadDB().QueryRowContext(
 				r.Context(),
 				"SELECT COUNT(*) FROM chat_sessions WHERE project_path = ? AND deleted = 0 AND session_type = 'chat'",
 				sessionProjectPath,
@@ -188,7 +188,7 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 	sourceID := "acp:" + req.AcpSessionID
 	var existingID string
 	var existingDeleted int
-	err := service.DBRead.QueryRow( //nolint:noctx // r.Context() not easily propagated through ServeACPLoadSession
+	err := service.ReadDB().QueryRow( //nolint:noctx // r.Context() not easily propagated through ServeACPLoadSession
 		"SELECT id, deleted FROM chat_sessions WHERE source_session_id = ? AND session_type = 'chat' ORDER BY deleted ASC, updated_at DESC LIMIT 1",
 		sourceID,
 	).Scan(&existingID, &existingDeleted)

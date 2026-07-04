@@ -189,7 +189,8 @@ public class BackgroundService extends Service {
     private static volatile boolean nativeWsNeeded = false;
 
     // Event ID dedup (mirrors frontend processedEventIds pattern)
-    private final LinkedHashSet<String> processedEventIds = new LinkedHashSet<>();
+    // ConcurrentHashMap-backed for thread safety (accessed from OkHttp callback + networkExecutor)
+    private final Set<String> processedEventIds = java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());
     private static final int MAX_PROCESSED_IDS = 100;
 
     private boolean isDuplicateEvent(String eventId) {
@@ -197,10 +198,10 @@ public class BackgroundService extends Service {
     }
 
     private void addProcessedEventId(String eventId) {
+        // Evict oldest entries if over capacity ( ConcurrentHashMap doesn't maintain insertion
+        // order, so we just clear and re-add when over capacity — rare, at most once per 100 events)
         if (processedEventIds.size() >= MAX_PROCESSED_IDS) {
-            Iterator<String> it = processedEventIds.iterator();
-            it.next();
-            it.remove();
+            processedEventIds.clear();
         }
         processedEventIds.add(eventId);
     }
@@ -211,6 +212,22 @@ public class BackgroundService extends Service {
 
     public static boolean isRunning() {
         return isRunning;
+    }
+
+    /**
+     * Check whether the native WebSocket is currently active.
+     * Used by PendingEventsWorker to skip polling when WS is connected.
+     */
+    public static boolean isNativeWsActive() {
+        return isRunning && instance != null && instance.nativeWsActive;
+    }
+
+    /**
+     * Get the trust-all SSL context for use by PendingEventsWorker.
+     * Returns null if not yet initialized.
+     */
+    public static SSLContext getTrustAllSSLContext() {
+        return trustAllSSLContext;
     }
 
     /**
@@ -1600,6 +1617,9 @@ public class BackgroundService extends Service {
         } else {
             context.startService(intent);
         }
+        // Schedule WorkManager fallback in case foreground service gets killed
+        // (common on Chinese ROMs during Doze). Will be cancelled when WS connects.
+        schedulePendingEventsWork(context);
     }
 
     /**
@@ -1610,6 +1630,62 @@ public class BackgroundService extends Service {
         Intent intent = new Intent(context, BackgroundService.class);
         intent.setAction("STOP_NATIVE_WS");
         context.startService(intent);
+    }
+
+    // --- WorkManager periodic pending events polling ---
+
+    private static final String PENDING_EVENTS_WORK_NAME = "clawbench_pending_events";
+
+    /**
+     * Schedule periodic WorkManager polling for pending events.
+     * Runs every 15 minutes (WorkManager minimum interval).
+     * Only fires when battery is not low to avoid excessive polling.
+     * Called when native WS goes inactive (foreground service killed by system).
+     */
+    public static void schedulePendingEventsWork(Context context) {
+        try {
+            androidx.work.PeriodicWorkRequest workRequest =
+                    new androidx.work.PeriodicWorkRequest.Builder(
+                            PendingEventsWorker.class,
+                            15, java.util.concurrent.TimeUnit.MINUTES)
+                            .setConstraints(
+                                    new androidx.work.Constraints.Builder()
+                                            .setRequiresBatteryNotLow(true)
+                                            .build())
+                            .build();
+            androidx.work.WorkManager.getInstance(context)
+                    .enqueueUniquePeriodicWork(
+                            PENDING_EVENTS_WORK_NAME,
+                            androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+                            workRequest);
+            AppLog.i(TAG, "WorkManager: scheduled pending events periodic work (15min)");
+        } catch (Exception e) {
+            AppLog.w(TAG, "WorkManager: failed to schedule pending events work", e);
+        }
+    }
+
+    /**
+     * Cancel periodic WorkManager polling for pending events.
+     * Called when native WS becomes active (foreground service reconnects).
+     */
+    public static void cancelPendingEventsWork(Context context) {
+        try {
+            androidx.work.WorkManager.getInstance(context)
+                    .cancelUniqueWork(PENDING_EVENTS_WORK_NAME);
+            AppLog.i(TAG, "WorkManager: cancelled pending events periodic work");
+        } catch (Exception e) {
+            AppLog.w(TAG, "WorkManager: failed to cancel pending events work", e);
+        }
+    }
+
+    /** Instance helper: schedule WorkManager work using application context. */
+    private void schedulePendingEventsWs() {
+        schedulePendingEventsWork(getApplicationContext());
+    }
+
+    /** Instance helper: cancel WorkManager work using application context. */
+    private void cancelPendingEventsWs() {
+        cancelPendingEventsWork(getApplicationContext());
     }
 
     /**
@@ -1793,6 +1869,8 @@ public class BackgroundService extends Service {
             acquireWakeLock();
             acquireWifiLock();
             startWsPingLoop();
+            // Cancel WorkManager polling — WS is more efficient
+            cancelPendingEventsWs();
 
             // Fetch missed events that occurred while offline
             String serverUrl = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
@@ -1888,6 +1966,8 @@ public class BackgroundService extends Service {
             }
             maybeReleaseWakeLock();
             maybeReleaseWifiLock();
+            // Schedule WorkManager fallback since WS is down
+            schedulePendingEventsWs();
         }
 
         @Override
@@ -1904,6 +1984,8 @@ public class BackgroundService extends Service {
             }
             maybeReleaseWakeLock();
             maybeReleaseWifiLock();
+            // Schedule WorkManager fallback since WS failed
+            schedulePendingEventsWs();
         }
     }
 
@@ -2172,5 +2254,122 @@ public class BackgroundService extends Service {
         }
         int end = s.offsetByCodePoints(0, PUSH_ALERT_MAX_CODE_POINTS);
         return s.substring(0, end) + "…";
+    }
+
+    /**
+     * Post an event notification from outside the service (e.g. PendingEventsWorker).
+     * Creates its own NotificationManager and channel since the service may not be running.
+     */
+    static void postEventNotificationFromWorker(Context context, String eventType, JSONObject data) {
+        try {
+            String status = data.optString("status", "");
+            String sessionId = data.optString("session_id", "");
+            String taskId = data.optString("task_id", "");
+            String executionId = data.optString("execution_id", "");
+            String projectPath = data.optString("project_path", "");
+            String sessionTitle = data.optString("session_title", "");
+            String responsePreview = data.optString("response_preview", "");
+            String toolName = data.optString("tool_name", "");
+
+            // Ensure notification channel exists
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                android.app.NotificationManager nm = context.getSystemService(android.app.NotificationManager.class);
+                if (nm != null) {
+                    android.app.NotificationChannel channel = nm.getNotificationChannel(EVENTS_CHANNEL_ID);
+                    if (channel == null) {
+                        channel = new android.app.NotificationChannel(
+                                EVENTS_CHANNEL_ID, "AI 事件通知",
+                                android.app.NotificationManager.IMPORTANCE_HIGH);
+                        channel.setDescription("AI会话和任务完成通知");
+                        channel.enableLights(true);
+                        channel.setVibrationPattern(new long[]{0, 300, 200, 300});
+                        nm.createNotificationChannel(channel);
+                    }
+                }
+            }
+
+            // Title/alert formatting (same logic as postEventNotification, using R.string resources)
+            String title;
+            String alert;
+            if ("session_update".equals(eventType)) {
+                title = context.getString(R.string.push_session_ended);
+                alert = "cancelled".equals(status)
+                        ? context.getString(R.string.push_session_cancelled)
+                        : context.getString(R.string.push_session_ended);
+                if ("permission_pending".equals(status)) {
+                    title = context.getString(R.string.push_permission_pending);
+                    alert = toolName.isEmpty()
+                            ? context.getString(R.string.push_permission_pending)
+                            : toolName;
+                }
+                if (!sessionTitle.isEmpty() && !"permission_pending".equals(status)) {
+                    title = "Done:" + sessionTitle;
+                }
+                if (!responsePreview.isEmpty()) {
+                    alert = truncateForPush(responsePreview);
+                }
+            } else if ("task_update".equals(eventType)) {
+                title = context.getString(R.string.push_task_completed);
+                if ("failed".equals(status)) {
+                    alert = context.getString(R.string.push_task_failed);
+                } else if ("cancelled".equals(status)) {
+                    alert = context.getString(R.string.push_task_cancelled);
+                } else {
+                    alert = context.getString(R.string.push_scheduled_task_done);
+                }
+                if (!sessionTitle.isEmpty()) {
+                    title = "Done:" + sessionTitle;
+                }
+                if (!responsePreview.isEmpty()) {
+                    alert = truncateForPush(responsePreview);
+                }
+            } else {
+                return;
+            }
+
+            Intent intent = new Intent(context, MainActivity.class);
+            intent.setAction(android.content.Intent.ACTION_MAIN);
+            intent.addCategory(android.content.Intent.CATEGORY_LAUNCHER);
+            intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            if ("task_update".equals(eventType)) {
+                intent.putExtra("event_type", "task_update");
+                if (!taskId.isEmpty()) intent.putExtra("task_id", taskId);
+                if (!executionId.isEmpty()) intent.putExtra("execution_id", executionId);
+                if (!sessionId.isEmpty()) intent.putExtra("session_id", sessionId);
+            } else {
+                intent.putExtra("event_type", "permission_pending".equals(status) ? "permission_pending" : "session_update");
+                if (!sessionId.isEmpty()) intent.putExtra("session_id", sessionId);
+            }
+            if (!projectPath.isEmpty()) intent.putExtra("project_path", projectPath);
+
+            PendingIntent pendingIntent = PendingIntent.getActivity(
+                    context, 0, intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+            );
+
+            int notifId = EVENTS_NOTIFICATION_ID;
+            if (!taskId.isEmpty()) {
+                notifId = EVENTS_NOTIFICATION_ID + 1000 + Math.abs(taskId.hashCode() % 1000);
+            } else if (!sessionId.isEmpty()) {
+                notifId = EVENTS_NOTIFICATION_ID + Math.abs(sessionId.hashCode() % 1000);
+            }
+
+            Notification notification = new NotificationCompat.Builder(context, EVENTS_CHANNEL_ID)
+                    .setContentTitle(title)
+                    .setContentText(alert)
+                    .setSmallIcon(R.drawable.ic_notification)
+                    .setContentIntent(pendingIntent)
+                    .setAutoCancel(true)
+                    .build();
+
+            NotificationManager nm = context.getSystemService(NotificationManager.class);
+            if (nm != null) {
+                nm.notify(notifId, notification);
+            }
+
+            AppLog.i(TAG, "PendingEventsWorker: posted notification: " + title + " - " + alert);
+        } catch (Exception e) {
+            AppLog.e(TAG, "PendingEventsWorker: failed to post notification", e);
+        }
     }
 }

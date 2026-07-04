@@ -98,6 +98,7 @@ dependencies {
     implementation 'com.github.mwiede:jsch:0.2.16'
 
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'androidx.work:work-runtime:2.9.0'
 
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.robolectric:robolectric:4.11.1'

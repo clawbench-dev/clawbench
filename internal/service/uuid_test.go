@@ -37,13 +37,9 @@ func setupUUIDTestDB(t *testing.T) *sql.DB {
 	if _, err := db.Exec(uuidTestSchema); err != nil {
 		t.Fatalf("failed to create tables: %v", err)
 	}
-	origDB := DB
-	origDBRead := DBRead
-	DB = db
-	DBRead = db // Same instance for :memory: SQLite — data is shared
+	cleanup := SetDBForTest(db, db)
 	t.Cleanup(func() {
-		DB = origDB
-		DBRead = origDBRead
+		cleanup()
 		db.Close()
 	})
 	return db

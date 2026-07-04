@@ -496,7 +496,7 @@ func TestServeTaskByID_DeleteExecution_Running(t *testing.T) {
 	// Don't mark as completed — stays "running"
 
 	var execID int64
-	_ = service.DB.QueryRow("SELECT id FROM task_executions WHERE session_id = ?", sessionID).Scan(&execID)
+	_ = service.UnsafeDBForTest().QueryRow("SELECT id FROM task_executions WHERE session_id = ?", sessionID).Scan(&execID)
 
 	req := newRequest(t, http.MethodPut, fmt.Sprintf("/api/tasks/%d", task.ID), map[string]any{
 		"action":      "deleteExecution",
@@ -820,7 +820,7 @@ func TestServeTaskByID_UpdateReactivatesCompletedTask(t *testing.T) {
 	_ = s.AddTask(task)
 
 	// Mark task as completed by simulating it
-	_, _ = service.DB.Exec("UPDATE scheduled_tasks SET status = 'completed', run_count = 1 WHERE id = ?", task.ID)
+	_, _ = service.UnsafeDBForTest().Exec("UPDATE scheduled_tasks SET status = 'completed', run_count = 1 WHERE id = ?", task.ID)
 
 	// Update should reactivate it
 	req := newRequest(t, http.MethodPut, fmt.Sprintf("/api/tasks/%d", task.ID), map[string]any{

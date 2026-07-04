@@ -2188,6 +2188,77 @@ public class MainActivity extends AppCompatActivity {
         public boolean isPushPersistentNotification() {
             return BackgroundService.isPersistentNotificationEnabled(activity);
         }
+
+        /**
+         * Check if the device is a Chinese OEM with aggressive background process
+         * management (Xiaomi, Huawei, OPPO, vivo). The frontend uses this to
+         * prompt the user to enable auto-start / battery optimization whitelisting.
+         */
+        @JavascriptInterface
+        public boolean isChineseOem() {
+            return OemUtils.isChineseOem();
+        }
+
+        /**
+         * Get the detected OEM name for display purposes.
+         * Returns one of: "xiaomi", "huawei", "oppo", "vivo", "samsung", "other".
+         */
+        @JavascriptInterface
+        public String getOemName() {
+            return OemUtils.detectOem().name().toLowerCase();
+        }
+
+        /**
+         * Check if the auto-start prompt has been shown to the user.
+         */
+        @JavascriptInterface
+        public boolean isOemAutoStartPrompted() {
+            return OemUtils.isAutoStartPrompted(activity);
+        }
+
+        /**
+         * Mark the auto-start prompt as shown (don't prompt again).
+         */
+        @JavascriptInterface
+        public void setOemAutoStartPrompted() {
+            OemUtils.setAutoStartPrompted(activity);
+        }
+
+        /**
+         * Open the OEM-specific auto-start / startup manager settings.
+         * Returns true if an intent was launched, false if not supported.
+         */
+        @JavascriptInterface
+        public boolean openOemAutoStartSettings() {
+            Intent intent = OemUtils.getAutoStartIntent(activity);
+            if (intent != null) {
+                try {
+                    activity.startActivity(intent);
+                    return true;
+                } catch (Exception e) {
+                    AppLog.w(TAG, "Failed to open OEM auto-start settings", e);
+                }
+            }
+            return false;
+        }
+
+        /**
+         * Open the OEM-specific battery optimization settings.
+         * Returns true if an intent was launched, false if not supported.
+         */
+        @JavascriptInterface
+        public boolean openOemBatterySettings() {
+            Intent intent = OemUtils.getBatterySettingsIntent(activity);
+            if (intent != null) {
+                try {
+                    activity.startActivity(intent);
+                    return true;
+                } catch (Exception e) {
+                    AppLog.w(TAG, "Failed to open OEM battery settings", e);
+                }
+            }
+            return false;
+        }
     }
 
     /**

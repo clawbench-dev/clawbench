@@ -904,7 +904,7 @@ func TestServeTaskByID_DeleteExecution(t *testing.T) {
 
 	// Get execution ID and mark it as completed (simulates finished execution)
 	var execID int64
-	err = service.DB.QueryRow("SELECT id FROM task_executions WHERE session_id = ?", sessionID).Scan(&execID)
+	err = service.UnsafeDBForTest().QueryRow("SELECT id FROM task_executions WHERE session_id = ?", sessionID).Scan(&execID)
 	assert.NoError(t, err)
 	_ = service.UpdateExecutionStatus(sessionID, "completed")
 
@@ -919,7 +919,7 @@ func TestServeTaskByID_DeleteExecution(t *testing.T) {
 
 	// Verify execution is deleted
 	var count int
-	_ = service.DB.QueryRow("SELECT COUNT(*) FROM task_executions WHERE id = ?", execID).Scan(&count)
+	_ = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM task_executions WHERE id = ?", execID).Scan(&count)
 	assert.Equal(t, 0, count)
 }
 
@@ -1016,7 +1016,7 @@ func TestServeTaskByID_DeleteExecution_WrongProject(t *testing.T) {
 	_, _ = service.AddTaskExecution(task.ID, sessionID, "auto")
 	_ = service.UpdateExecutionStatus(sessionID, "completed")
 	var execID int64
-	_ = service.DB.QueryRow("SELECT id FROM task_executions WHERE session_id = ?", sessionID).Scan(&execID)
+	_ = service.UnsafeDBForTest().QueryRow("SELECT id FROM task_executions WHERE session_id = ?", sessionID).Scan(&execID)
 
 	// Request from a different project should be forbidden
 	otherProject := t.TempDir()
@@ -1062,7 +1062,7 @@ func TestServeTaskByID_DeleteAllExecutions(t *testing.T) {
 
 	// Verify 2 executions exist
 	var count int
-	_ = service.DB.QueryRow("SELECT COUNT(*) FROM task_executions WHERE task_id = ?", task.ID).Scan(&count)
+	_ = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM task_executions WHERE task_id = ?", task.ID).Scan(&count)
 	assert.Equal(t, 2, count)
 
 	// Delete all via API
@@ -1074,7 +1074,7 @@ func TestServeTaskByID_DeleteAllExecutions(t *testing.T) {
 	assertOK(t, w)
 
 	// Verify all executions deleted
-	_ = service.DB.QueryRow("SELECT COUNT(*) FROM task_executions WHERE task_id = ?", task.ID).Scan(&count)
+	_ = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM task_executions WHERE task_id = ?", task.ID).Scan(&count)
 	assert.Equal(t, 0, count)
 }
 

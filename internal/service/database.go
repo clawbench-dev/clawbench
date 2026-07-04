@@ -1,4 +1,4 @@
-//nolint:noctx,govet,goconst,rowserrcheck // DB global singleton, context not applicable; shadowed err is standard Go pattern; JSON/SQL field names are domain strings; legacy DB.Query pattern
+//nolint:noctx,govet,goconst,rowserrcheck // db global singleton, context not applicable; shadowed err is standard Go pattern; JSON/SQL field names are domain strings; legacy db.Query pattern
 package service
 
 import (
@@ -13,16 +13,19 @@ import (
 	"time"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/dbutil"
 	"clawbench/internal/model"
 
 	_ "modernc.org/sqlite" // register SQLite driver
 )
 
-var DB *sql.DB
+var db *sql.DB
 
-// DBRead is the read-only connection pool (MaxOpenConns=2) for SELECT queries.
+// dbRead is the read-only connection pool (MaxOpenConns=2) for SELECT queries.
 // In WAL mode, reads never block writes and vice versa.
-var DBRead *sql.DB
+// Unexported to prevent external packages from bypassing the write mutex via dbRead.Exec().
+// External callers should use ReadDB() to access the read pool.
+var dbRead *sql.DB
 
 // writeMu serializes all write operations (INSERT/UPDATE/DELETE/DDL) to prevent
 // SQLITE_BUSY errors under concurrent goroutines. Reads (Query/QueryRow) are NOT
@@ -34,7 +37,7 @@ var writeMu sync.Mutex
 func WriteExec(query string, args ...any) (sql.Result, error) {
 	writeMu.Lock()
 	defer writeMu.Unlock()
-	return DB.Exec(query, args...)
+	return db.Exec(query, args...)
 }
 
 // WriteExecContext executes a write statement on DB under the write mutex with context support.
@@ -42,7 +45,7 @@ func WriteExec(query string, args ...any) (sql.Result, error) {
 func WriteExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
 	writeMu.Lock()
 	defer writeMu.Unlock()
-	return DB.ExecContext(ctx, query, args...)
+	return db.ExecContext(ctx, query, args...)
 }
 
 // WriteBegin starts a write transaction on DB under the write mutex.
@@ -56,26 +59,73 @@ func WriteExecContext(ctx context.Context, query string, args ...any) (sql.Resul
 //	if err := tx.Commit(); err != nil { return err }
 func WriteBegin() (*sql.Tx, error) {
 	writeMu.Lock()
-	tx, err := DB.Begin()
+	tx, err := db.Begin()
 	if err != nil {
 		writeMu.Unlock()
 	}
 	return tx, err
 }
 
-// MutexDBExec wraps a DBExec to acquire writeMu on every Exec call.
-// Pass this to functions that accept DBExec when called from production code.
-// Tests should pass the unwrapped *sql.DB directly (single-goroutine, no contention).
-type MutexDBExec struct{ Inner DBExec }
+// DBReady returns true if the database has been initialized.
+func DBReady() bool { return db != nil }
 
-func (m MutexDBExec) Exec(query string, args ...any) (sql.Result, error) {
-	writeMu.Lock()
-	defer writeMu.Unlock()
-	return m.Inner.Exec(query, args...)
+// ReadDB returns the read connection pool as a dbutil.Reader (read-only, no Exec).
+func ReadDB() dbutil.Reader { return dbRead }
+
+// WriteDB returns a dbutil.Writer that acquires writeMu on every Exec/ExecContext call.
+// Query/QueryRow calls use the read pool without the mutex.
+func WriteDB() dbutil.Writer { return mutexDBWriter{} }
+
+// unsafeDB returns the raw write *sql.DB handle.
+// This exists ONLY for database initialization, migrations, and tests.
+// All writes MUST go through WriteExec/WriteBegin or dbutil.Writer.
+// Misuse will cause SQLITE_BUSY errors under concurrency.
+func unsafeDB() *sql.DB { return db }
+
+// UnsafeDBForTest returns the raw write *sql.DB handle for test code.
+// Must only be called from _test.go files.
+func UnsafeDBForTest() *sql.DB { return db }
+
+// SetDBForTest sets the database handles for test code.
+// It returns a cleanup function that restores the original values.
+// Must only be called from _test.go files.
+func SetDBForTest(writeDB, readDB *sql.DB) func() {
+	origDB, origDBRead := db, dbRead
+	db, dbRead = writeDB, readDB
+	return func() { db, dbRead = origDB, origDBRead }
 }
 
-func (m MutexDBExec) QueryRow(query string, args ...any) *sql.Row {
-	return m.Inner.QueryRow(query, args...)
+// mutexDBWriter implements dbutil.Writer. Exec/ExecContext acquire writeMu
+// and use the write pool (DB). Query/QueryRow use the read pool (dbRead)
+// without the mutex — WAL mode allows concurrent reads during writes.
+type mutexDBWriter struct{}
+
+func (mutexDBWriter) Exec(query string, args ...any) (sql.Result, error) {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+	return db.Exec(query, args...)
+}
+
+func (mutexDBWriter) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+	return db.ExecContext(ctx, query, args...)
+}
+
+func (mutexDBWriter) Query(query string, args ...any) (*sql.Rows, error) {
+	return dbRead.Query(query, args...)
+}
+
+func (mutexDBWriter) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return dbRead.QueryContext(ctx, query, args...)
+}
+
+func (mutexDBWriter) QueryRow(query string, args ...any) *sql.Row {
+	return dbRead.QueryRow(query, args...)
+}
+
+func (mutexDBWriter) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	return dbRead.QueryRowContext(ctx, query, args...)
 }
 
 // InitDB initializes the SQLite database with latest schema.
@@ -90,16 +140,21 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 	dbPath := filepath.Join(dbDir, "ClawBench.db")
 	var err error
-	DB, err = sql.Open("sqlite", dbPath)
+	db, err = sql.Open("sqlite", dbPath)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// SQLite concurrency: WAL mode + busy timeout
+	// SQLite concurrency: WAL mode + write mutex + busy_timeout (defense-in-depth)
+	// All writes go through WriteExec/WriteBegin which acquire writeMu, serializing
+	// writes at the Go level and preventing SQLITE_BUSY. Reads bypass the mutex entirely
+	// since WAL mode allows concurrent reads during writes.
+	// busy_timeout=10s is kept as a fallback for any code path that bypasses the mutex
+	// (e.g., RAG store which has its own *sql.DB on a separate database file).
 	// MaxOpenConns must be > 1 to avoid deadlocks when iterating rows (which holds
 	// a connection) and performing writes (which needs a separate connection) in the
 	// same loop — e.g., MigrateCustomSystemPrompt's SELECT + UPDATE pattern.
-	DB.SetMaxOpenConns(2)
+	db.SetMaxOpenConns(2)
 
 	// Enable WAL mode for concurrent reads during writes
 	if _, err := WriteExec("PRAGMA journal_mode=WAL"); err != nil {
@@ -110,7 +165,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		return fmt.Errorf("failed to enable foreign keys: %w", err)
 	}
 
-	// Wait up to 10 seconds when database is locked instead of failing immediately
+	// Wait up to 10 seconds when database is locked (defense-in-depth fallback)
 	if _, err := WriteExec("PRAGMA busy_timeout=10000"); err != nil {
 		return fmt.Errorf("failed to set busy_timeout: %w", err)
 	}
@@ -325,8 +380,10 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	}
 
 	// Schema migrations: add columns that may not exist in older databases.
+	// NOTE: Migration reads use db (write pool) directly, NOT dbRead, because
+	// dbRead is not initialized until after all migrations complete.
 	var hasReadAt int
-	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('task_executions') WHERE name='read_at'").Scan(&hasReadAt)
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('task_executions') WHERE name='read_at'").Scan(&hasReadAt)
 	if hasReadAt == 0 {
 		if _, err := WriteExec("ALTER TABLE task_executions ADD COLUMN read_at DATETIME"); err != nil {
 			return fmt.Errorf("failed to add read_at column: %w", err)
@@ -335,7 +392,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 	// Migrate: add summary column for task execution summarization
 	var hasSummary int
-	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('task_executions') WHERE name='summary'").Scan(&hasSummary)
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('task_executions') WHERE name='summary'").Scan(&hasSummary)
 	if hasSummary == 0 {
 		if _, err := WriteExec("ALTER TABLE task_executions ADD COLUMN summary TEXT"); err != nil {
 			return fmt.Errorf("failed to add summary column: %w", err)
@@ -344,7 +401,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 	// Migrate: add source_session_id column for "continue conversation" feature
 	var hasSourceSessionID int
-	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='source_session_id'").Scan(&hasSourceSessionID)
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='source_session_id'").Scan(&hasSourceSessionID)
 	if hasSourceSessionID == 0 {
 		if _, err := WriteExec("ALTER TABLE chat_sessions ADD COLUMN source_session_id TEXT DEFAULT NULL"); err != nil {
 			return fmt.Errorf("failed to add source_session_id column: %w", err)
@@ -356,7 +413,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 	// Migrate: add source_session_id column for "continue conversation" feature
 	var hasTransport int
-	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='transport'").Scan(&hasTransport)
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='transport'").Scan(&hasTransport)
 	if hasTransport == 0 {
 		if _, err := WriteExec("ALTER TABLE chat_sessions ADD COLUMN transport TEXT DEFAULT ''"); err != nil {
 			return fmt.Errorf("failed to add transport column: %w", err)
@@ -365,7 +422,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 	// Migrate: add auto_approve column for per-session auto-approve (甩手掌柜) mode
 	var hasAutoApprove int
-	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='auto_approve'").Scan(&hasAutoApprove)
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='auto_approve'").Scan(&hasAutoApprove)
 	if hasAutoApprove == 0 {
 		if _, err := WriteExec("ALTER TABLE chat_sessions ADD COLUMN auto_approve INTEGER NOT NULL DEFAULT 0"); err != nil {
 			return fmt.Errorf("failed to add auto_approve column: %w", err)
@@ -374,7 +431,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 	// Migrate: add host column to forwarded_ports for custom target host
 	var hasForwardedPortHost int
-	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forwarded_ports') WHERE name='host'").Scan(&hasForwardedPortHost)
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forwarded_ports') WHERE name='host'").Scan(&hasForwardedPortHost)
 	if hasForwardedPortHost == 0 {
 		if _, err := WriteExec("ALTER TABLE forwarded_ports ADD COLUMN host TEXT NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("failed to add host column to forwarded_ports: %w", err)
@@ -384,7 +441,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// Migrate: add local_port column for auto-assigned local port
 	// For existing rows, local_port = port (backward compatible)
 	var hasForwardedPortLocalPort int
-	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forwarded_ports') WHERE name='local_port'").Scan(&hasForwardedPortLocalPort)
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forwarded_ports') WHERE name='local_port'").Scan(&hasForwardedPortLocalPort)
 	if hasForwardedPortLocalPort == 0 {
 		if _, err := WriteExec("ALTER TABLE forwarded_ports ADD COLUMN local_port INTEGER"); err != nil {
 			return fmt.Errorf("failed to add local_port column to forwarded_ports: %w", err)
@@ -397,7 +454,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 	// Migrate: add custom_system_prompt column to agents for user-editable system prompt
 	var hasCustomSystemPrompt int
-	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='custom_system_prompt'").Scan(&hasCustomSystemPrompt)
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='custom_system_prompt'").Scan(&hasCustomSystemPrompt)
 	if hasCustomSystemPrompt == 0 {
 		if _, err := WriteExec("ALTER TABLE agents ADD COLUMN custom_system_prompt TEXT NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("failed to add custom_system_prompt column to agents: %w", err)
@@ -409,7 +466,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// so chat_history.deleted is redundant. Removing it simplifies queries
 	// and eliminates the need to restore messages when restoring a session.
 	var hasHistoryDeleted int
-	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name='deleted'").Scan(&hasHistoryDeleted)
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name='deleted'").Scan(&hasHistoryDeleted)
 	if hasHistoryDeleted > 0 {
 		// SQLite DROP COLUMN fails if any index references the column.
 		// Drop and recreate idx_history_session_id to avoid the error.
@@ -434,7 +491,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// Since we don't do backward compatibility, drop the old table if it exists
 	// and recreate with the new schema.
 	var hasTTSCacheKey int
-	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('tts_summaries') WHERE name='cache_key'").Scan(&hasTTSCacheKey)
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('tts_summaries') WHERE name='cache_key'").Scan(&hasTTSCacheKey)
 	if hasTTSCacheKey > 0 {
 		// Old table exists with cache_key — drop and recreate
 		if _, err := WriteExec("DROP TABLE tts_summaries"); err != nil {
@@ -454,7 +511,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	}
 	// Create new tts_summaries table if it doesn't exist yet (fresh install)
 	var hasTTSSummaries int
-	_ = DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tts_summaries'").Scan(&hasTTSSummaries)
+	_ = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tts_summaries'").Scan(&hasTTSSummaries)
 	if hasTTSSummaries == 0 {
 		if _, err := WriteExec(`
 			CREATE TABLE tts_summaries (
@@ -473,22 +530,23 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// WAL contract: DB (MaxOpenConns=2) serializes writes + avoids deadlocks; DBRead (MaxOpenConns=2)
 	// allows concurrent reads that never block writes and vice versa.
 	// Both pools must use WAL mode + busy_timeout for this to work correctly.
-	DBRead, err = sql.Open("sqlite", dbPath)
+	dbRead, err = sql.Open("sqlite", dbPath)
 	if err != nil {
 		return fmt.Errorf("failed to open read database: %w", err)
 	}
-	DBRead.SetMaxOpenConns(2)
-	DBRead.SetMaxIdleConns(2)                   // match MaxOpenConns to avoid churn
-	DBRead.SetConnMaxLifetime(0)                // unlimited — SQLite file DB, no reconnection needed
-	DBRead.SetConnMaxIdleTime(30 * time.Minute) // close idle conns after 30min
-	if _, err := DBRead.Exec("PRAGMA journal_mode=WAL"); err != nil {
+	dbRead.SetMaxOpenConns(2)
+	dbRead.SetMaxIdleConns(2)                   // match MaxOpenConns to avoid churn
+	dbRead.SetConnMaxLifetime(0)                // unlimited — SQLite file DB, no reconnection needed
+	dbRead.SetConnMaxIdleTime(30 * time.Minute) // close idle conns after 30min
+	if _, err := dbRead.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		return fmt.Errorf("failed to set read DB WAL mode: %w", err)
 	}
-	if _, err := DBRead.Exec("PRAGMA busy_timeout=10000"); err != nil {
+	if _, err := dbRead.Exec("PRAGMA busy_timeout=10000"); err != nil {
 		return fmt.Errorf("failed to set read DB busy_timeout: %w", err)
 	}
 	if isServerStartup {
-		rows, err := DB.Query("SELECT id, content FROM chat_history WHERE streaming = 1")
+		// Uses db (write pool) because dbRead is not yet initialized at this point in InitDB.
+		rows, err := db.Query("SELECT id, content FROM chat_history WHERE streaming = 1")
 		if err != nil {
 			return fmt.Errorf("failed to query orphaned streaming messages: %w", err)
 		}
@@ -537,7 +595,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 	// Migrate: add ACP transport columns to agents table.
 	var hasTransportCol int
-	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='transport'").Scan(&hasTransportCol)
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='transport'").Scan(&hasTransportCol)
 	if hasTransportCol == 0 {
 		if _, err := WriteExec("ALTER TABLE agents ADD COLUMN transport TEXT NOT NULL DEFAULT 'cli'"); err != nil {
 			return fmt.Errorf("failed to add transport column: %w", err)
@@ -550,7 +608,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// Migrate: add ACP capability columns to agents table for persistent storage
 	// of agent-level mode/thinking/commands/config state.
 	var hasACPMods int
-	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='acp_available_modes'").Scan(&hasACPMods)
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='acp_available_modes'").Scan(&hasACPMods)
 	if hasACPMods == 0 {
 		if _, err := WriteExec("ALTER TABLE agents ADD COLUMN acp_available_modes TEXT NOT NULL DEFAULT '[]'"); err != nil {
 			return fmt.Errorf("failed to add acp_available_modes column: %w", err)
@@ -568,7 +626,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 	// Migrate: add ACP LoadSession/ListSessions capability columns to agents table.
 	var hasLoadSessionCol int
-	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='acp_load_session'").Scan(&hasLoadSessionCol)
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='acp_load_session'").Scan(&hasLoadSessionCol)
 	if hasLoadSessionCol == 0 {
 		if _, err := WriteExec("ALTER TABLE agents ADD COLUMN acp_load_session BOOLEAN NOT NULL DEFAULT false"); err != nil {
 			return fmt.Errorf("failed to add acp_load_session column: %w", err)
@@ -581,7 +639,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// Migrate: add ACP cached usage state column to agents table for persistent
 	// storage of agent-level usage state (best-effort fallback for session switch).
 	var hasCachedUsage int
-	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='acp_cached_usage_state'").Scan(&hasCachedUsage)
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='acp_cached_usage_state'").Scan(&hasCachedUsage)
 	if hasCachedUsage == 0 {
 		if _, err := WriteExec("ALTER TABLE agents ADD COLUMN acp_cached_usage_state TEXT NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("failed to add acp_cached_usage_state column: %w", err)
@@ -590,7 +648,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 	// Migrate: add is_default column to recent_projects for server-side default project.
 	var hasIsDefault int
-	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('recent_projects') WHERE name='is_default'").Scan(&hasIsDefault)
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('recent_projects') WHERE name='is_default'").Scan(&hasIsDefault)
 	if hasIsDefault == 0 {
 		if _, err := WriteExec("ALTER TABLE recent_projects ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0"); err != nil {
 			return fmt.Errorf("failed to add is_default column: %w", err)
@@ -601,7 +659,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 	// Migrate: add preferred_mode column to agents for user's default ACP mode preference.
 	var hasPreferredMode int
-	_ = DB.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='preferred_mode'").Scan(&hasPreferredMode)
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='preferred_mode'").Scan(&hasPreferredMode)
 	if hasPreferredMode == 0 {
 		if _, err := WriteExec("ALTER TABLE agents ADD COLUMN preferred_mode TEXT NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("failed to add preferred_mode column: %w", err)
@@ -633,7 +691,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 func MigrateMetadataFromContent() {
 	// Count how many rows need migration
 	var needed int
-	_ = DBRead.QueryRow(`
+	_ = dbRead.QueryRow(`
 		SELECT COUNT(*) FROM chat_history h
 		WHERE h.role = 'assistant'
 		  AND h.content LIKE '%"metadata"%'
@@ -713,7 +771,7 @@ func migrateMetadataBatch(batchSize, offset int) ([]struct {
 	Content string
 }, error,
 ) {
-	rows, err := DBRead.Query(
+	rows, err := dbRead.Query(
 		`
 		SELECT h.id, h.content FROM chat_history h
 		WHERE h.role = 'assistant'
@@ -757,7 +815,7 @@ func migrateMetadataBatch(batchSize, offset int) ([]struct {
 func MigrateTaskExecutionSummaries() {
 	// Check if there are any task_execution summaries to migrate
 	var count int
-	_ = DBRead.QueryRow("SELECT COUNT(*) FROM summaries WHERE target_type = 'task_execution'").Scan(&count)
+	_ = dbRead.QueryRow("SELECT COUNT(*) FROM summaries WHERE target_type = 'task_execution'").Scan(&count)
 	if count == 0 {
 		return
 	}
@@ -767,7 +825,7 @@ func MigrateTaskExecutionSummaries() {
 	// and create a chat_message summary.
 	// Collect all rows first to avoid holding the read connection while writing
 	// (SQLite single-writer lock would deadlock if DBRead and DB share the same conn).
-	rows, err := DBRead.Query(`
+	rows, err := dbRead.Query(`
 		SELECT sm.target_id, sm.summary, te.session_id
 		FROM summaries sm
 		JOIN task_executions te ON te.id = sm.target_id
@@ -798,7 +856,7 @@ func MigrateTaskExecutionSummaries() {
 	for _, m := range migrations {
 		// Find the last non-streaming assistant message for this session
 		var msgID int64
-		if err := DBRead.QueryRow(
+		if err := dbRead.QueryRow(
 			"SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0 ORDER BY id DESC LIMIT 1",
 			m.SessionID,
 		).Scan(&msgID); err != nil {
@@ -839,7 +897,7 @@ func MigrateToolCallsFromContent() {
 	// We detect old-format data by checking for "input" key inside tool_use blocks,
 	// which the slim format does not include.
 	var needed int
-	_ = DBRead.QueryRow(`
+	_ = dbRead.QueryRow(`
 		SELECT COUNT(*) FROM chat_history h
 		WHERE h.role = 'assistant'
 		  AND h.content LIKE '%"tool_use"%'
@@ -862,7 +920,7 @@ func MigrateToolCallsFromContent() {
 	failed := 0
 
 	for {
-		rows, err := DBRead.Query(
+		rows, err := dbRead.Query(
 			`
 			SELECT h.id, h.session_id, h.content FROM chat_history h
 			WHERE h.role = 'assistant'
@@ -1007,11 +1065,11 @@ func migrateToolCallsForRow(msgID int64, sessionID, content string) error {
 
 // CloseDB closes both write and read database connections.
 func CloseDB() {
-	if DB != nil {
-		_ = DB.Close()
+	if db != nil {
+		_ = db.Close()
 	}
-	if DBRead != nil {
-		_ = DBRead.Close()
+	if dbRead != nil {
+		_ = dbRead.Close()
 	}
 }
 
@@ -1019,7 +1077,7 @@ func CloseDB() {
 // Returns (summary, found). Empty summary = text was too short.
 func GetSummary(targetType string, targetID int64) (string, bool) {
 	var summary string
-	err := DBRead.QueryRow(
+	err := dbRead.QueryRow(
 		"SELECT summary FROM summaries WHERE target_type = ? AND target_id = ?",
 		targetType, targetID,
 	).Scan(&summary)
@@ -1043,7 +1101,7 @@ func SaveSummary(targetType string, targetID int64, summary string) error {
 // Returns (ttsSummary, found).
 func GetTTSSummaryByMessageID(messageID int64) (string, bool) {
 	var ttsSummary string
-	err := DBRead.QueryRow(
+	err := dbRead.QueryRow(
 		"SELECT tts_summary FROM tts_summaries WHERE message_id = ?",
 		messageID,
 	).Scan(&ttsSummary)
@@ -1123,7 +1181,7 @@ type crudHelpers[T any, E any] struct {
 
 // list returns all rows from the helper's table ordered by sort_order.
 func (h crudHelpers[T, E]) list() ([]T, error) {
-	rows, err := DBRead.Query("SELECT " + h.scanCols + " FROM " + h.table + " ORDER BY sort_order")
+	rows, err := dbRead.Query("SELECT " + h.scanCols + " FROM " + h.table + " ORDER BY sort_order")
 	if err != nil {
 		return nil, err
 	}
@@ -1151,7 +1209,7 @@ func (h crudHelpers[T, E]) insert(item T) (int64, error) {
 		}
 	}
 	var maxOrder sql.NullInt64
-	_ = DB.QueryRow("SELECT MAX(sort_order) FROM " + h.table).Scan(&maxOrder)
+	_ = dbRead.QueryRow("SELECT MAX(sort_order) FROM " + h.table).Scan(&maxOrder)
 	if maxOrder.Valid {
 		sortOrder = int(maxOrder.Int64) + 1
 	}
@@ -1289,7 +1347,7 @@ type KeyConfigItem struct {
 
 // GetKeyConfig returns all key config items of the given type, ordered by sort_order.
 func GetKeyConfig(typeFilter string) ([]KeyConfigItem, error) {
-	rows, err := DBRead.Query("SELECT id, type, key_id, sort_order FROM terminal_key_config WHERE type = ? ORDER BY sort_order", typeFilter)
+	rows, err := dbRead.Query("SELECT id, type, key_id, sort_order FROM terminal_key_config WHERE type = ? ORDER BY sort_order", typeFilter)
 	if err != nil {
 		return nil, err
 	}

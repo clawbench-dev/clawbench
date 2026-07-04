@@ -1,4 +1,4 @@
-//nolint:noctx,goconst,rowserrcheck // DB global and platform exec.Command calls, context not applicable; protocol/role strings are domain constants; legacy DB.Query pattern
+//nolint:noctx,goconst,rowserrcheck // db global and platform exec.Command calls, context not applicable; protocol/role strings are domain constants; legacy db.Query pattern
 package service
 
 import (
@@ -909,11 +909,11 @@ func isPortInRange(port int, rangeStr string) bool {
 // loadPortsFromDB restores previously persisted forwarded ports from the database.
 // Called once during ProxyRegistry initialization.
 func (r *ProxyRegistry) loadPortsFromDB() {
-	if DB == nil {
+	if db == nil {
 		return
 	}
 
-	rows, err := DB.Query("SELECT local_port, port, host, name, protocol FROM forwarded_ports")
+	rows, err := dbRead.Query("SELECT local_port, port, host, name, protocol FROM forwarded_ports")
 	if err != nil {
 		slog.Warn("failed to load persisted ports from DB", slog.String("err", err.Error()))
 		return
@@ -963,7 +963,7 @@ func (r *ProxyRegistry) loadPortsFromDB() {
 
 // savePortToDB persists a single forwarded port to the database.
 func (r *ProxyRegistry) savePortToDB(localPort int, port int, host string, name, protocol string) {
-	if DB == nil {
+	if db == nil {
 		return
 	}
 	_, err := WriteExec(
@@ -977,7 +977,7 @@ func (r *ProxyRegistry) savePortToDB(localPort int, port int, host string, name,
 
 // deletePortFromDB removes a forwarded port from the database.
 func (r *ProxyRegistry) deletePortFromDB(localPort int) {
-	if DB == nil {
+	if db == nil {
 		return
 	}
 	_, err := WriteExec("DELETE FROM forwarded_ports WHERE local_port = ?", localPort)

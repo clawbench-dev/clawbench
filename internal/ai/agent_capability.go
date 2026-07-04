@@ -1,12 +1,12 @@
 package ai
 
 import (
-	"database/sql"
 	"encoding/json"
 	"log/slog"
 	"sync"
 	"time"
 
+	"clawbench/internal/dbutil"
 	"clawbench/internal/model"
 )
 
@@ -442,18 +442,18 @@ func (r *AgentCapabilityRegistry) HasNewAvailableModels(agentID string, newModel
 // dbHolder stores the DB reference for async persistence.
 var dbHolder struct {
 	mu sync.RWMutex
-	db *sql.DB
+	db dbutil.Writer
 }
 
 // SetRegistryDB sets the database reference used for persistence.
 // Called once during startup after InitDB.
-func SetRegistryDB(db *sql.DB) {
+func SetRegistryDB(db dbutil.Writer) {
 	dbHolder.mu.Lock()
 	defer dbHolder.mu.Unlock()
 	dbHolder.db = db
 }
 
-func getRegistryDB() *sql.DB {
+func getRegistryDB() dbutil.Writer {
 	dbHolder.mu.RLock()
 	defer dbHolder.mu.RUnlock()
 	return dbHolder.db
@@ -483,7 +483,7 @@ func (r *AgentCapabilityRegistry) persistAsync(agentID string) {
 // saveToDB persists capabilities for a single agent to the agents table.
 //
 //nolint:noctx // saveToDB runs in a background goroutine spawned from persistAsync; no caller-provided context is available, so the context-free Exec is intentional
-func (r *AgentCapabilityRegistry) saveToDB(db *sql.DB, agentID string, agentCap *AgentCapability) error {
+func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, agentCap *AgentCapability) error {
 	modesJSON, _ := json.Marshal(agentCap.AvailableModes)
 	if string(modesJSON) == "null" {
 		modesJSON = []byte("[]")
@@ -534,7 +534,7 @@ func (r *AgentCapabilityRegistry) saveToDB(db *sql.DB, agentID string, agentCap 
 // LoadFromDB loads persisted capabilities from the agents table on startup.
 //
 //nolint:gocyclo,noctx // LoadFromDB branches on each capability field (modes/efforts/commands/config); a switch adds boilerplate without clarity. Query without context runs once during startup where cancellation is not relevant
-func (r *AgentCapabilityRegistry) LoadFromDB(db *sql.DB) {
+func (r *AgentCapabilityRegistry) LoadFromDB(db dbutil.Reader) {
 	rows, err := db.Query(`
 		SELECT id, acp_available_modes, acp_available_thinking_efforts,
 		       acp_available_commands, acp_config_options,

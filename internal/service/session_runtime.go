@@ -208,11 +208,11 @@ func SetSessionRunning(sessionID string, running bool, skipEvent ...bool) {
 // finalizeOrphanedStreamingMessages checks for and finalizes any streaming=1
 // assistant messages left behind for a session (e.g. due to SQLITE_BUSY failures).
 func finalizeOrphanedStreamingMessages(sessionID string) {
-	if DB == nil {
+	if db == nil {
 		return
 	}
 	// Find streaming=1 messages for this session
-	rows, err := DB.Query(
+	rows, err := dbRead.Query(
 		"SELECT id, content FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1",
 		sessionID,
 	)

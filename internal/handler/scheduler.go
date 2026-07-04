@@ -414,7 +414,7 @@ func serveTaskExecutions(w http.ResponseWriter, r *http.Request, taskID int64, p
 		args = append(args, limit+1)
 	}
 
-	rows, err := service.DB.QueryContext(r.Context(), query, args...)
+	rows, err := service.ReadDB().QueryContext(r.Context(), query, args...)
 	if err != nil {
 		model.WriteError(w, model.Internal(fmt.Errorf("failed to load execution history")))
 		return

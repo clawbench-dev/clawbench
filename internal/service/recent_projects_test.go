@@ -32,13 +32,9 @@ func setupRecentProjectsDB(t *testing.T) *sql.DB {
 	_, err = db.Exec(recentProjectsSchema)
 	assert.NoError(t, err)
 
-	origDB := service.DB
-	origDBRead := service.DBRead
-	service.DB = db
-	service.DBRead = db // Same instance for :memory: SQLite — data is shared
+	cleanup := service.SetDBForTest(db, db)
 	t.Cleanup(func() {
-		service.DB = origDB
-		service.DBRead = origDBRead
+		cleanup()
 		db.Close()
 	})
 	return db
@@ -451,14 +447,8 @@ func TestGetRecentProjects_DBQueryError(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	assert.NoError(t, err)
 
-	origDB := service.DB
-	origDBRead := service.DBRead
-	service.DB = db
-	service.DBRead = db
-	t.Cleanup(func() {
-		service.DB = origDB
-		service.DBRead = origDBRead
-	})
+	cleanup := service.SetDBForTest(db, db)
+	t.Cleanup(cleanup)
 
 	// Close the DB before querying to trigger an error
 	db.Close()
@@ -481,13 +471,10 @@ func TestGetRecentProjects_RemoveStaleFails(t *testing.T) {
 	// Close the write DB to make RemoveRecentProject fail
 	// but keep the read DB (same instance for :memory:) working for the query
 	// We need to set DB to a closed connection
-	origDB := service.DB
 	closedDB, _ := sql.Open("sqlite", ":memory:")
 	closedDB.Close()
-	service.DB = closedDB
-	t.Cleanup(func() {
-		service.DB = origDB
-	})
+	cleanup := service.SetDBForTest(closedDB, closedDB)
+	t.Cleanup(cleanup)
 
 	// GetRecentProjects should still succeed (return valid paths)
 	// even though RemoveRecentProject fails for stale entries
@@ -501,14 +488,8 @@ func TestAddRecentProject_DBError(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	assert.NoError(t, err)
 
-	origDB := service.DB
-	origDBRead := service.DBRead
-	service.DB = db
-	service.DBRead = db
-	t.Cleanup(func() {
-		service.DB = origDB
-		service.DBRead = origDBRead
-	})
+	cleanup := service.SetDBForTest(db, db)
+	t.Cleanup(cleanup)
 
 	// Close the DB before operation
 	db.Close()

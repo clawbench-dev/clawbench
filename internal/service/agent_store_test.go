@@ -65,13 +65,9 @@ func setupTestDBForAgents(t *testing.T) *sql.DB {
 	require.NoError(t, err)
 
 	// Save and replace global DB
-	origDB := service.DB
-	origDBRead := service.DBRead
-	service.DB = db
-	service.DBRead = db
+	cleanup := service.SetDBForTest(db, db)
 	t.Cleanup(func() {
-		service.DB = origDB
-		service.DBRead = origDBRead
+		cleanup()
 		db.Close()
 	})
 
@@ -79,9 +75,9 @@ func setupTestDBForAgents(t *testing.T) *sql.DB {
 }
 
 func TestLoadAgentsFromDB_Empty(t *testing.T) {
-	db := setupTestDBForAgents(t)
+	_ = setupTestDBForAgents(t)
 
-	agents, err := service.LoadAgentsFromDB(db)
+	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	assert.Empty(t, agents)
 }
@@ -109,7 +105,7 @@ func TestSaveAgent_Insert(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify it was saved
-	agents, err := service.LoadAgentsFromDB(db)
+	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 
@@ -149,7 +145,7 @@ func TestSaveAgent_Upsert(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify only one record, with updated values
-	agents, err := service.LoadAgentsFromDB(db)
+	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.Equal(t, "Pi Updated", agents[0].Name)
@@ -170,7 +166,7 @@ func TestSaveAgent_MultipleAgents(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	got, err := service.LoadAgentsFromDB(db)
+	got, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	assert.Len(t, got, 3)
 
@@ -190,21 +186,21 @@ func TestDeleteAgent(t *testing.T) {
 	require.NoError(t, err)
 
 	// Delete one
-	err = service.DeleteAgent(db, "pi")
+	err = service.DeleteAgent("pi")
 	require.NoError(t, err)
 
 	// Verify only claude remains
-	agents, err := service.LoadAgentsFromDB(db)
+	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.Equal(t, "claude", agents[0].ID)
 }
 
 func TestDeleteAgent_NotFound(t *testing.T) {
-	db := setupTestDBForAgents(t)
+	_ = setupTestDBForAgents(t)
 
 	// Deleting non-existent agent should not error
-	err := service.DeleteAgent(db, "nonexistent")
+	err := service.DeleteAgent("nonexistent")
 	assert.NoError(t, err)
 }
 
@@ -216,11 +212,11 @@ func TestPatchAgent(t *testing.T) {
 	require.NoError(t, err)
 
 	// Patch preferred model and thinking
-	err = service.PatchAgent(db, "pi", "openai/gpt-5.5", "high", "cli")
+	err = service.PatchAgent("pi", "openai/gpt-5.5", "high", "cli")
 	require.NoError(t, err)
 
 	// Verify
-	agents, err := service.LoadAgentsFromDB(db)
+	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.Equal(t, "openai/gpt-5.5", agents[0].PreferredModel)
@@ -243,11 +239,11 @@ func TestPatchAgent_ClearPreferences(t *testing.T) {
 	require.NoError(t, err)
 
 	// Patch to clear preferences
-	err = service.PatchAgent(db, "pi", "", "", "cli")
+	err = service.PatchAgent("pi", "", "", "cli")
 	require.NoError(t, err)
 
 	// Verify preferences are cleared
-	agents, err := service.LoadAgentsFromDB(db)
+	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.Equal(t, "", agents[0].PreferredModel)
@@ -255,10 +251,10 @@ func TestPatchAgent_ClearPreferences(t *testing.T) {
 }
 
 func TestPatchAgent_NotFound(t *testing.T) {
-	db := setupTestDBForAgents(t)
+	_ = setupTestDBForAgents(t)
 
 	// Patching non-existent agent should not error (no rows affected)
-	err := service.PatchAgent(db, "nonexistent", "model", "high", "cli")
+	err := service.PatchAgent("nonexistent", "model", "high", "cli")
 	assert.NoError(t, err)
 }
 
@@ -279,7 +275,7 @@ func TestLoadAgentsFromDB_ModelsJSON(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify models are correctly serialized/deserialized
-	agents, err := service.LoadAgentsFromDB(db)
+	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	require.Len(t, agents[0].Models, 2)
@@ -302,7 +298,7 @@ func TestLoadAgentsFromDB_ThinkingEffortLevelsJSON(t *testing.T) {
 	err := service.SaveAgent(db, agent)
 	require.NoError(t, err)
 
-	agents, err := service.LoadAgentsFromDB(db)
+	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.Equal(t, []string{"off", "minimal", "low", "medium", "high", "xhigh"}, agents[0].ThinkingEffortLevels)
@@ -321,7 +317,7 @@ func TestLoadAgentsFromDB_EmptyModelsAndLevels(t *testing.T) {
 	err := service.SaveAgent(db, agent)
 	require.NoError(t, err)
 
-	agents, err := service.LoadAgentsFromDB(db)
+	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.Empty(t, agents[0].Models)
@@ -344,7 +340,7 @@ func TestSaveAgent_SourceField(t *testing.T) {
 		})
 	}
 
-	agents, err := service.LoadAgentsFromDB(db)
+	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	assert.Len(t, agents, 3)
 
@@ -376,7 +372,7 @@ func TestDeleteAgent_CascadesAPIKeys(t *testing.T) {
 	assert.Equal(t, 1, count)
 
 	// Delete agent should cascade to API keys
-	err = service.DeleteAgent(db, "pi")
+	err = service.DeleteAgent("pi")
 	require.NoError(t, err)
 
 	// Verify API keys are deleted
@@ -490,7 +486,7 @@ func TestSaveAgent_ModelsWithSpecialChars(t *testing.T) {
 	err := service.SaveAgent(db, agent)
 	require.NoError(t, err)
 
-	agents, err := service.LoadAgentsFromDB(db)
+	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.Equal(t, "anthropic/claude-sonnet-4-6", agents[0].Models[0].ID)
@@ -514,7 +510,7 @@ func TestSaveAgent_WithTransport(t *testing.T) {
 	require.NoError(t, err)
 
 	// Load and verify transport fields
-	agents, err := service.LoadAgentsFromDB(db)
+	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 
@@ -537,7 +533,7 @@ func TestSaveAgent_TransportDefaultsToCLI(t *testing.T) {
 	err := service.SaveAgent(db, agent)
 	require.NoError(t, err)
 
-	agents, err := service.LoadAgentsFromDB(db)
+	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.Equal(t, "cli", agents[0].Transport)
@@ -566,10 +562,10 @@ func TestPatchAgentFields_Name(t *testing.T) {
 	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "auto"}))
 
 	name := "Pi Updated"
-	err := service.PatchAgentFields(db, "pi", service.AgentPatch{Name: &name})
+	err := service.PatchAgentFields("pi", service.AgentPatch{Name: &name})
 	require.NoError(t, err)
 
-	agents, err := service.LoadAgentsFromDB(db)
+	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.Equal(t, "Pi Updated", agents[0].Name)
@@ -580,10 +576,10 @@ func TestPatchAgentFields_Icon(t *testing.T) {
 	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "auto"}))
 
 	icon := "🥧"
-	err := service.PatchAgentFields(db, "pi", service.AgentPatch{Icon: &icon})
+	err := service.PatchAgentFields("pi", service.AgentPatch{Icon: &icon})
 	require.NoError(t, err)
 
-	agents, err := service.LoadAgentsFromDB(db)
+	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.Equal(t, "🥧", agents[0].Icon)
@@ -594,10 +590,10 @@ func TestPatchAgentFields_Specialty(t *testing.T) {
 	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "auto"}))
 
 	specialty := "极简编程"
-	err := service.PatchAgentFields(db, "pi", service.AgentPatch{Specialty: &specialty})
+	err := service.PatchAgentFields("pi", service.AgentPatch{Specialty: &specialty})
 	require.NoError(t, err)
 
-	agents, err := service.LoadAgentsFromDB(db)
+	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.Equal(t, "极简编程", agents[0].Specialty)
@@ -608,10 +604,10 @@ func TestPatchAgentFields_CustomSystemPrompt(t *testing.T) {
 	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "auto"}))
 
 	custom := "You are a helpful math tutor."
-	err := service.PatchAgentFields(db, "pi", service.AgentPatch{CustomSystemPrompt: &custom})
+	err := service.PatchAgentFields("pi", service.AgentPatch{CustomSystemPrompt: &custom})
 	require.NoError(t, err)
 
-	agents, err := service.LoadAgentsFromDB(db)
+	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.Equal(t, custom, agents[0].CustomSystemPrompt)
@@ -627,10 +623,10 @@ func TestPatchAgentFields_SortOrder(t *testing.T) {
 	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "auto"}))
 
 	order := 5
-	err := service.PatchAgentFields(db, "pi", service.AgentPatch{SortOrder: &order})
+	err := service.PatchAgentFields("pi", service.AgentPatch{SortOrder: &order})
 	require.NoError(t, err)
 
-	agents, err := service.LoadAgentsFromDB(db)
+	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.Equal(t, 5, agents[0].SortOrder)
@@ -642,10 +638,10 @@ func TestPatchAgentFields_PartialPatch(t *testing.T) {
 
 	// Only patch name, verify other fields unchanged
 	name := "Pi New"
-	err := service.PatchAgentFields(db, "pi", service.AgentPatch{Name: &name})
+	err := service.PatchAgentFields("pi", service.AgentPatch{Name: &name})
 	require.NoError(t, err)
 
-	agents, err := service.LoadAgentsFromDB(db)
+	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.Equal(t, "Pi New", agents[0].Name)
@@ -658,10 +654,10 @@ func TestPatchAgentFields_NilFieldsSkipped(t *testing.T) {
 	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "auto"}))
 
 	// Empty patch — should be a no-op
-	err := service.PatchAgentFields(db, "pi", service.AgentPatch{})
+	err := service.PatchAgentFields("pi", service.AgentPatch{})
 	require.NoError(t, err)
 
-	agents, err := service.LoadAgentsFromDB(db)
+	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.Equal(t, "Pi", agents[0].Name)
@@ -689,10 +685,10 @@ func TestMigrateCustomSystemPrompt(t *testing.T) {
 	require.NoError(t, service.SaveAgent(db, agent))
 
 	// Run migration
-	service.MigrateCustomSystemPrompt(db)
+	service.MigrateCustomSystemPrompt()
 
 	// Verify custom_system_prompt was backfilled
-	agents, err := service.LoadAgentsFromDB(db)
+	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.Equal(t, custom, agents[0].CustomSystemPrompt)
@@ -713,9 +709,9 @@ func TestMigrateCustomSystemPrompt_CommonOnly(t *testing.T) {
 	}
 	require.NoError(t, service.SaveAgent(db, agent))
 
-	service.MigrateCustomSystemPrompt(db)
+	service.MigrateCustomSystemPrompt()
 
-	agents, err := service.LoadAgentsFromDB(db)
+	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.Equal(t, "", agents[0].CustomSystemPrompt)
@@ -736,9 +732,9 @@ func TestMigrateCustomSystemPrompt_AlreadyMigrated(t *testing.T) {
 	}
 	require.NoError(t, service.SaveAgent(db, agent))
 
-	service.MigrateCustomSystemPrompt(db)
+	service.MigrateCustomSystemPrompt()
 
-	agents, err := service.LoadAgentsFromDB(db)
+	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.Equal(t, custom, agents[0].CustomSystemPrompt) // unchanged

@@ -273,9 +273,9 @@ func TestServeForkSession_BeforeMessageID_EmptyContentFallsBackToSessionTitle(t 
 	// then delete the message itself. GetMessageContent will return ("", nil) for ErrNoRows.
 	// Then when ForkSession tries to find the message, it also won't find it and
 	// returns "not found in session" error. This tests the InvalidForkPoint error path.
-	_, _ = service.DB.Exec("DELETE FROM chat_metadata WHERE message_id = ?", userID)
-	_, _ = service.DB.Exec("DELETE FROM chat_tool_calls WHERE message_id = ?", userID)
-	_, _ = service.DB.Exec("DELETE FROM chat_history WHERE id = ?", userID)
+	_, _ = service.UnsafeDBForTest().Exec("DELETE FROM chat_metadata WHERE message_id = ?", userID)
+	_, _ = service.UnsafeDBForTest().Exec("DELETE FROM chat_tool_calls WHERE message_id = ?", userID)
+	_, _ = service.UnsafeDBForTest().Exec("DELETE FROM chat_history WHERE id = ?", userID)
 
 	req := newRequest(t, http.MethodPost, "/api/ai/session/fork", map[string]any{"sessionId": sessID, "beforeMessageId": userID})
 	req = withProjectCookie(req, env.ProjectDir)

@@ -241,6 +241,8 @@ export default {
       viewDetails: '查看详情',
       speaking: '朗读中',
       readAloud: '朗读',
+      copy: '复制',
+      copied: '已复制',
       summaryViewOriginal: '原文',
       summaryViewSummary: '摘要',
       deepThinking: '深度思考',

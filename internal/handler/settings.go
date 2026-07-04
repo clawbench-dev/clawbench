@@ -1164,8 +1164,8 @@ func ServeConfigPassword(w http.ResponseWriter, r *http.Request) { //nolint:gocy
 	// Rotate API key encryption: the auto-password is being removed, which changes
 	// the encryption key derivation. Re-encrypt all stored API keys with the new key
 	// (which will fall back to deriveFallbackKey since auto-password is gone).
-	if service.DB != nil && len(oldAutoPassword) > 0 {
-		if err := service.RotateAPIKeyEncryption(service.DB, string(oldAutoPassword)); err != nil {
+	if service.DBReady() && len(oldAutoPassword) > 0 {
+		if err := service.RotateAPIKeyEncryption(string(oldAutoPassword)); err != nil {
 			slog.Error("failed to rotate API key encryption after password change", "error", err)
 			// Don't fail the password change — the user can re-enter API keys later
 		}

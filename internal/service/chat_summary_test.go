@@ -17,8 +17,6 @@ import (
 // setupTestDBForChatSummary creates an in-memory DB with chat_history and summaries tables.
 func setupTestDBForChatSummary(t *testing.T) (*sql.DB, func()) {
 	t.Helper()
-	origDB := DB
-	origDBRead := DBRead
 
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -63,11 +61,9 @@ func setupTestDBForChatSummary(t *testing.T) (*sql.DB, func()) {
 		);
 	`)
 
-	DB = db
-	DBRead = db
+	cleanup := SetDBForTest(db, db)
 	teardown := func() {
-		DB = origDB
-		DBRead = origDBRead
+		cleanup()
 		db.Close()
 	}
 	return db, teardown

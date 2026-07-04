@@ -37,6 +37,13 @@ const i18n = createI18n({
   },
 })
 
+// Mock ResizeObserver (not available in jsdom)
+vi.stubGlobal('ResizeObserver', class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+})
+
 // Mock useAppMode
 vi.mock('@/composables/useAppMode.ts', () => ({
   useAppMode: () => ({ isAppMode: { value: false } }),

@@ -76,6 +76,10 @@
             <span>{{ t('chat.message.readAloud') }}</span>
           </template>
         </button>
+        <button v-if="!msg.streaming" class="chat-action-btn" @click="handleCopyMessage" :title="t('chat.message.copy')">
+          <Check v-if="copied" :size="14" class="copy-check" />
+          <Copy v-else :size="14" />
+        </button>
         <button v-if="!msg.streaming" class="chat-action-btn" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
           <Info :size="14" />
         </button>
@@ -96,8 +100,9 @@
 <script setup>
 import { ref, inject, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Pause, Volume2, Info, FileDiff } from 'lucide-vue-next'
+import { Clock, Pause, Volume2, Info, FileDiff, Copy, Check } from 'lucide-vue-next'
 import { formatDuration } from '@/utils/format.ts'
+import { copyText } from '@/utils/clipboard.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
 import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
@@ -167,6 +172,25 @@ function handleOpenFile(path) {
   const root = store.state.projectRoot
   const relPath = root && path.startsWith(root + '/') ? path.slice(root.length + 1) : path
   openFilePath(relPath)
+}
+
+// Copy message markdown — only the final conclusion (last text block)
+const copied = ref(false)
+function handleCopyMessage() {
+  const blocks = props.msg?.blocks || []
+  // Find the last text block (the conclusion)
+  let lastText = ''
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    if (blocks[i].type === 'text' && blocks[i].text?.trim()) {
+      lastText = blocks[i].text
+      break
+    }
+  }
+  if (!lastText) return
+  copyText(lastText, () => {
+    copied.value = true
+    setTimeout(() => { copied.value = false }, 1500)
+  })
 }
 </script>
 
@@ -246,6 +270,11 @@ function handleOpenFile(path) {
 .chat-action-btn.active {
     opacity: 1;
     color: var(--accent-color, #0066cc);
+}
+
+/* Copy confirmed check icon */
+.chat-action-btn .copy-check {
+    color: #22c55e;
 }
 
 .chat-action-btn.active:hover {

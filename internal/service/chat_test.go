@@ -136,13 +136,9 @@ func setupDB(t *testing.T) *sql.DB {
 	_, err = db.Exec(schema)
 	assert.NoError(t, err)
 
-	origDB := service.DB
-	origDBRead := service.DBRead
-	service.DB = db
-	service.DBRead = db // Same instance for :memory: SQLite — data is shared
+	cleanup := service.SetDBForTest(db, db)
 	t.Cleanup(func() {
-		service.DB = origDB
-		service.DBRead = origDBRead
+		cleanup()
 		db.Close()
 	})
 	return db
@@ -487,13 +483,13 @@ func TestDeleteSession(t *testing.T) {
 
 	// But the session is soft-deleted
 	var deleted int
-	err = service.DB.QueryRow("SELECT deleted FROM chat_sessions WHERE id = ?", sid).Scan(&deleted)
+	err = service.UnsafeDBForTest().QueryRow("SELECT deleted FROM chat_sessions WHERE id = ?", sid).Scan(&deleted)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, deleted)
 
 	// updated_at should have been set to the deletion timestamp
 	var updatedAt string
-	err = service.DB.QueryRow("SELECT updated_at FROM chat_sessions WHERE id = ?", sid).Scan(&updatedAt)
+	err = service.UnsafeDBForTest().QueryRow("SELECT updated_at FROM chat_sessions WHERE id = ?", sid).Scan(&updatedAt)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, updatedAt)
 }
@@ -946,9 +942,9 @@ func TestGetSessions_OrderedByUpdatedDesc(t *testing.T) {
 
 	// Set explicit timestamps to guarantee ordering (SQLite time precision is seconds,
 	// AddChatMessage may land in the same second as creation making order nondeterministic)
-	_, err := service.DB.Exec("UPDATE chat_sessions SET updated_at = datetime('now', '-60 seconds') WHERE id = ?", sid1)
+	_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '-60 seconds') WHERE id = ?", sid1)
 	assert.NoError(t, err)
-	_, err = service.DB.Exec("UPDATE chat_sessions SET updated_at = datetime('now') WHERE id = ?", sid2)
+	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now') WHERE id = ?", sid2)
 	assert.NoError(t, err)
 
 	sessions, err := service.GetSessions("/project", "claude")
@@ -1071,11 +1067,11 @@ func TestGetMessageIDBeforeTime(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "BeforeTime")
 
 	// Insert messages with known timestamps
-	service.DB.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+	service.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
 		"/project", "claude", sid, "user", "msg1", "2025-01-01 10:00:00")
-	service.DB.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+	service.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
 		"/project", "claude", sid, "assistant", "msg2", "2025-01-01 10:00:01")
-	service.DB.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+	service.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
 		"/project", "claude", sid, "user", "msg3", "2025-01-01 10:00:02")
 
 	// Query for messages before 10:00:02 — should return max ID of messages before that time
@@ -1091,11 +1087,11 @@ func TestGetMessageIDBeforeTime(t *testing.T) {
 
 // Ensure TestMain-like global DB save/restore works correctly
 func TestGlobalDBPreservedAcrossParallelTests(t *testing.T) {
-	originalDB := service.DB
+	originalDB := service.UnsafeDBForTest()
 	setupDB(t)
-	// Within this test, service.DB is our in-memory DB
-	assert.NotNil(t, service.DB)
-	assert.NotEqual(t, originalDB, service.DB) // if originalDB was nil or different
+	// Within this test, service.UnsafeDBForTest() is our in-memory DB
+	assert.NotNil(t, service.UnsafeDBForTest())
+	assert.NotEqual(t, originalDB, service.UnsafeDBForTest()) // if originalDB was nil or different
 }
 
 func TestAddChatMessage_StreamingFalse(t *testing.T) {
@@ -1177,10 +1173,10 @@ func TestUpdateLastRead(t *testing.T) {
 	// UpdateLastRead runs in a goroutine. Since the test DB uses :memory: SQLite
 	// with MaxOpenConns=1, the goroutine may not complete before we check.
 	// Instead, test the SQL directly to verify the UPDATE works.
-	_, err := service.DB.Exec("UPDATE chat_sessions SET last_read_at = CURRENT_TIMESTAMP WHERE id = ?", sid)
+	_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET last_read_at = CURRENT_TIMESTAMP WHERE id = ?", sid)
 	assert.NoError(t, err)
 	var lastRead sql.NullTime
-	err = service.DB.QueryRow("SELECT last_read_at FROM chat_sessions WHERE id = ?", sid).Scan(&lastRead)
+	err = service.UnsafeDBForTest().QueryRow("SELECT last_read_at FROM chat_sessions WHERE id = ?", sid).Scan(&lastRead)
 	assert.NoError(t, err)
 	assert.True(t, lastRead.Valid)
 }
@@ -1369,7 +1365,7 @@ func TestGetExpiredDeletedSessions_WithExpired(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "Old Deleted")
 	_ = service.DeleteSession("/project", "claude", sid)
 
-	_, err := service.DB.Exec("UPDATE chat_sessions SET updated_at = datetime('now', '-100 days') WHERE id = ?", sid)
+	_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '-100 days') WHERE id = ?", sid)
 	assert.NoError(t, err)
 
 	cutoff := time.Now().AddDate(0, 0, -90)
@@ -1383,7 +1379,7 @@ func TestGetExpiredDeletedSessions_ActiveSessionsNotIncluded(t *testing.T) {
 
 	// Create an active session with old updated_at
 	sid := helperCreateSession(t, "/project", "claude", "Old Active")
-	_, _ = service.DB.Exec("UPDATE chat_sessions SET updated_at = datetime('now', '-100 days') WHERE id = ?", sid)
+	_, _ = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '-100 days') WHERE id = ?", sid)
 
 	cutoff := time.Now().AddDate(0, 0, -90)
 	ids, err := service.GetExpiredDeletedSessions(cutoff)
@@ -1399,7 +1395,7 @@ func TestGetExpiredDeletedSessions_MultipleExpired(t *testing.T) {
 	for i := range 3 {
 		sid := helperCreateSession(t, "/project", "claude", fmt.Sprintf("Old %d", i))
 		_ = service.DeleteSession("/project", "claude", sid)
-		_, _ = service.DB.Exec("UPDATE chat_sessions SET updated_at = datetime('now', '-100 days') WHERE id = ?", sid)
+		_, _ = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '-100 days') WHERE id = ?", sid)
 		expectedIDs = append(expectedIDs, sid)
 	}
 
@@ -1437,7 +1433,7 @@ func TestPurgeDeletedData_HardDeletesSessions(t *testing.T) {
 	_ = service.DeleteSession("/project", "claude", sid)
 
 	// Add a raw response for this session
-	_, _ = service.DB.Exec("INSERT INTO ai_raw_responses (session_id, message_id, backend, raw_output) VALUES (?, 1, 'claude', 'raw')", sid)
+	_, _ = service.UnsafeDBForTest().Exec("INSERT INTO ai_raw_responses (session_id, message_id, backend, raw_output) VALUES (?, 1, 'claude', 'raw')", sid)
 
 	sessionsPurged, messagesPurged, err := service.PurgeDeletedData([]string{sid})
 	assert.NoError(t, err)
@@ -1446,17 +1442,17 @@ func TestPurgeDeletedData_HardDeletesSessions(t *testing.T) {
 
 	// Verify session is completely gone from DB
 	var count int
-	err = service.DB.QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE id = ?", sid).Scan(&count)
+	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE id = ?", sid).Scan(&count)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, count)
 
 	// Verify messages are completely gone
-	err = service.DB.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&count)
+	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&count)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, count)
 
 	// Verify raw responses are gone
-	err = service.DB.QueryRow("SELECT COUNT(*) FROM ai_raw_responses WHERE session_id = ?", sid).Scan(&count)
+	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM ai_raw_responses WHERE session_id = ?", sid).Scan(&count)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, count)
 }
@@ -1512,18 +1508,18 @@ func TestHardDeleteSession_ActiveSession(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "Active To HardDelete")
 	_, _ = service.AddChatMessage("/project", "claude", sid, "user", "msg1", nil, false, "NewSession")
 	_, _ = service.AddChatMessage("/project", "claude", sid, "assistant", "reply1", nil, false, "NewSession")
-	_, _ = service.DB.Exec("INSERT INTO ai_raw_responses (session_id, message_id, backend, raw_output) VALUES (?, 1, 'claude', 'raw')", sid)
+	_, _ = service.UnsafeDBForTest().Exec("INSERT INTO ai_raw_responses (session_id, message_id, backend, raw_output) VALUES (?, 1, 'claude', 'raw')", sid)
 
 	err := service.HardDeleteSession(sid)
 	assert.NoError(t, err)
 
 	// Verify all data is gone
 	var count int
-	assert.NoError(t, service.DB.QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE id = ?", sid).Scan(&count))
+	assert.NoError(t, service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE id = ?", sid).Scan(&count))
 	assert.Equal(t, 0, count, "session should be gone")
-	assert.NoError(t, service.DB.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&count))
+	assert.NoError(t, service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&count))
 	assert.Equal(t, 0, count, "messages should be gone")
-	assert.NoError(t, service.DB.QueryRow("SELECT COUNT(*) FROM ai_raw_responses WHERE session_id = ?", sid).Scan(&count))
+	assert.NoError(t, service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM ai_raw_responses WHERE session_id = ?", sid).Scan(&count))
 	assert.Equal(t, 0, count, "raw responses should be gone")
 }
 
@@ -1538,7 +1534,7 @@ func TestHardDeleteSession_SoftDeletedSession(t *testing.T) {
 	assert.NoError(t, err)
 
 	var count int
-	assert.NoError(t, service.DB.QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE id = ?", sid).Scan(&count))
+	assert.NoError(t, service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE id = ?", sid).Scan(&count))
 	assert.Equal(t, 0, count, "soft-deleted session should be gone after hard delete")
 }
 
@@ -1582,7 +1578,7 @@ func TestCreateSession_ScheduledType(t *testing.T) {
 
 	// Verify session_type is stored correctly in DB
 	var sessionType string
-	err = service.DB.QueryRow("SELECT session_type FROM chat_sessions WHERE id = ?", sid).Scan(&sessionType)
+	err = service.UnsafeDBForTest().QueryRow("SELECT session_type FROM chat_sessions WHERE id = ?", sid).Scan(&sessionType)
 	assert.NoError(t, err)
 	assert.Equal(t, "scheduled", sessionType)
 }
@@ -1596,7 +1592,7 @@ func TestCreateSession_DefaultsToChatType(t *testing.T) {
 
 	// Verify session_type defaults to 'chat'
 	var sessionType string
-	err = service.DB.QueryRow("SELECT session_type FROM chat_sessions WHERE id = ?", sid).Scan(&sessionType)
+	err = service.UnsafeDBForTest().QueryRow("SELECT session_type FROM chat_sessions WHERE id = ?", sid).Scan(&sessionType)
 	assert.NoError(t, err)
 	assert.Equal(t, "chat", sessionType)
 }
@@ -1716,7 +1712,7 @@ func TestGetSessionsPaged_CursorSecondPage(t *testing.T) {
 	for i := range 5 {
 		sid := helperCreateSession(t, "/project", "claude", fmt.Sprintf("S%d", i))
 		// Stagger updated_at so ordering is deterministic
-		_, err := service.DB.Exec("UPDATE chat_sessions SET updated_at = datetime('now', ? || ' seconds') WHERE id = ?", fmt.Sprintf("-%d", (4-i)*60), sid)
+		_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', ? || ' seconds') WHERE id = ?", fmt.Sprintf("-%d", (4-i)*60), sid)
 		assert.NoError(t, err)
 	}
 
@@ -1752,7 +1748,7 @@ func TestGetSessionsPaged_CursorLastPage(t *testing.T) {
 
 	for i := range 5 {
 		sid := helperCreateSession(t, "/project", "claude", fmt.Sprintf("S%d", i))
-		_, err := service.DB.Exec("UPDATE chat_sessions SET updated_at = datetime('now', ? || ' seconds') WHERE id = ?", fmt.Sprintf("-%d", (4-i)*60), sid)
+		_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', ? || ' seconds') WHERE id = ?", fmt.Sprintf("-%d", (4-i)*60), sid)
 		assert.NoError(t, err)
 	}
 
@@ -1828,9 +1824,9 @@ func TestGetSessionsPaged_OrderedByUpdatedDesc(t *testing.T) {
 	sid2 := helperCreateSession(t, "/project", "claude", "New")
 
 	// Set explicit timestamps to guarantee ordering (SQLite time precision is seconds)
-	_, err := service.DB.Exec("UPDATE chat_sessions SET updated_at = datetime('now', '-60 seconds') WHERE id = ?", sid1)
+	_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '-60 seconds') WHERE id = ?", sid1)
 	assert.NoError(t, err)
-	_, err = service.DB.Exec("UPDATE chat_sessions SET updated_at = datetime('now') WHERE id = ?", sid2)
+	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now') WHERE id = ?", sid2)
 	assert.NoError(t, err)
 
 	sessions, _, err := service.GetSessionsPaged("/project", "", 10, "", "")
@@ -1848,7 +1844,7 @@ func TestGetSessionsPaged_AllPagesCoverAllSessions(t *testing.T) {
 	for i := range 7 {
 		sid := helperCreateSession(t, "/project", "claude", fmt.Sprintf("S%d", i))
 		allIDs = append(allIDs, sid)
-		_, err := service.DB.Exec("UPDATE chat_sessions SET updated_at = datetime('now', ? || ' seconds') WHERE id = ?", fmt.Sprintf("-%d", (6-i)*60), sid)
+		_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', ? || ' seconds') WHERE id = ?", fmt.Sprintf("-%d", (6-i)*60), sid)
 		assert.NoError(t, err)
 	}
 
@@ -1906,11 +1902,11 @@ func TestGetSessionsPaged_SameTimestampTiebreaker(t *testing.T) {
 
 	// Set sid1 and sid2 to the same timestamp, sid3 slightly newer
 	baseTime := "2026-01-15 12:00:00"
-	_, err := service.DB.Exec("UPDATE chat_sessions SET updated_at = ? WHERE id = ?", baseTime, sid1)
+	_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = ? WHERE id = ?", baseTime, sid1)
 	assert.NoError(t, err)
-	_, err = service.DB.Exec("UPDATE chat_sessions SET updated_at = ? WHERE id = ?", baseTime, sid2)
+	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = ? WHERE id = ?", baseTime, sid2)
 	assert.NoError(t, err)
-	_, err = service.DB.Exec("UPDATE chat_sessions SET updated_at = '2026-01-15 12:01:00' WHERE id = ?", sid3)
+	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = '2026-01-15 12:01:00' WHERE id = ?", sid3)
 	assert.NoError(t, err)
 
 	// First page: limit=2 — should get sid3 (newest) and one of sid1/sid2
@@ -1980,7 +1976,7 @@ func TestGetSessionTitlesBatch_ExcludesEmptyTitles(t *testing.T) {
 
 	// Create session with a title, then set it to empty
 	sid := helperCreateSession(t, "/project", "claude", "Has Title")
-	_, err := service.DB.Exec("UPDATE chat_sessions SET title = '' WHERE id = ?", sid)
+	_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET title = '' WHERE id = ?", sid)
 	assert.NoError(t, err)
 
 	titles, err := service.GetSessionTitlesBatch([]string{sid})
@@ -2036,7 +2032,7 @@ func TestGetSessionTitlesBatchIncludeDeleted_ExcludesEmptyTitles(t *testing.T) {
 	setupDB(t)
 
 	sid := helperCreateSession(t, "/project", "claude", "Has Title")
-	_, err := service.DB.Exec("UPDATE chat_sessions SET title = '' WHERE id = ?", sid)
+	_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET title = '' WHERE id = ?", sid)
 	assert.NoError(t, err)
 
 	titles, err := service.GetSessionTitlesBatchIncludeDeleted([]string{sid})
@@ -2344,11 +2340,11 @@ func TestGetSessionsPaged_UnreadCount(t *testing.T) {
 	assert.False(t, hasMore)
 }
 
-// ---------- DBRead initialization ----------
+// ---------- dbRead initialization ----------
 
 func TestDBRead_Initialized_ChatDB(t *testing.T) {
 	_ = setupDB(t)
-	assert.NotNil(t, service.DBRead, "DBRead should be initialized in test setup")
+	assert.NotNil(t, service.ReadDB(), "dbRead should be initialized in test setup")
 }
 
 // ---------- GetRunningSessionIDs ----------
@@ -2438,7 +2434,7 @@ func TestGetLatestSessionID(t *testing.T) {
 
 	// Create another and force its updated_at ahead (SQLite timestamps have second precision)
 	s2, _ := service.CreateSession("/project", "codebuddy", "Second", "codebuddy", "", "default", "chat")
-	service.DB.Exec("UPDATE chat_sessions SET updated_at = datetime('now', '+1 second') WHERE id = ?", s2)
+	service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '+1 second') WHERE id = ?", s2)
 
 	// Should return the newer one
 	id, backend, err = service.GetLatestSessionID("/project")
@@ -2514,7 +2510,7 @@ func TestCreateSession_ExternalSessionIDPersistedInDB(t *testing.T) {
 	assert.NoError(t, err)
 
 	var extID string
-	err = service.DB.QueryRow("SELECT external_session_id FROM chat_sessions WHERE id = ?", sid).Scan(&extID)
+	err = service.UnsafeDBForTest().QueryRow("SELECT external_session_id FROM chat_sessions WHERE id = ?", sid).Scan(&extID)
 	assert.NoError(t, err)
 	assert.Equal(t, "", extID, "external_session_id column should be empty in DB")
 }
@@ -2538,7 +2534,7 @@ func TestDeleteSession_DoesNotModifyChatHistory(t *testing.T) {
 
 	// Verify messages exist before deletion
 	var countBefore int
-	err = service.DB.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&countBefore)
+	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&countBefore)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, countBefore)
 
@@ -2548,7 +2544,7 @@ func TestDeleteSession_DoesNotModifyChatHistory(t *testing.T) {
 
 	// Verify messages are still present with identical content
 	var countAfter int
-	err = service.DB.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&countAfter)
+	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&countAfter)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, countAfter, "chat_history rows should NOT be modified by DeleteSession")
 
@@ -2589,7 +2585,7 @@ func TestRestoreDeletedSession_PreservesChatHistory(t *testing.T) {
 	assert.Len(t, msgsAfterDelete, 2, "messages should still exist after session soft-delete")
 
 	// Restore the session by setting deleted=0
-	_, err = service.DB.Exec("UPDATE chat_sessions SET deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?", sid)
+	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?", sid)
 	assert.NoError(t, err)
 
 	// Verify restored session can be found by GetSessionBackend
@@ -2791,7 +2787,7 @@ func TestSaveRawResponse(t *testing.T) {
 
 	// Verify it was saved
 	var rawOutput string
-	err = service.DB.QueryRow("SELECT raw_output FROM ai_raw_responses WHERE session_id = ?", sid).Scan(&rawOutput)
+	err = service.UnsafeDBForTest().QueryRow("SELECT raw_output FROM ai_raw_responses WHERE session_id = ?", sid).Scan(&rawOutput)
 	assert.NoError(t, err)
 	assert.Equal(t, "raw output data", rawOutput)
 }
@@ -2833,7 +2829,7 @@ func TestMarkMessageIndexed(t *testing.T) {
 
 	// Verify the message is now indexed
 	var indexed int
-	err = service.DB.QueryRow("SELECT indexed FROM chat_history WHERE id = ?", msgID).Scan(&indexed)
+	err = service.UnsafeDBForTest().QueryRow("SELECT indexed FROM chat_history WHERE id = ?", msgID).Scan(&indexed)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, indexed)
 }
@@ -2990,7 +2986,7 @@ func TestCreateSession_EmptySessionTypeDefaultsToChat(t *testing.T) {
 	assert.NoError(t, err)
 
 	var sessionType string
-	err = service.DB.QueryRow("SELECT session_type FROM chat_sessions WHERE id = ?", sid).Scan(&sessionType)
+	err = service.UnsafeDBForTest().QueryRow("SELECT session_type FROM chat_sessions WHERE id = ?", sid).Scan(&sessionType)
 	assert.NoError(t, err)
 	assert.Equal(t, "chat", sessionType)
 }

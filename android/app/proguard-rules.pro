@@ -10,3 +10,7 @@
 # OkHttp (used for native WebSocket in BackgroundService)
 -dontwarn okhttp3.**
 -dontwarn okio.**
+
+# WorkManager — custom Worker subclass must be kept (instantiated via reflection)
+-keep class com.clawbench.app.PendingEventsWorker { *; }
+-dontwarn androidx.work.**

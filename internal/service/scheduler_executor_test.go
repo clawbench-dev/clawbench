@@ -130,13 +130,9 @@ func setupSchedulerExecDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to exec schema: %v", err)
 	}
-	origDB := DB
-	origDBRead := DBRead
-	DB = db
-	DBRead = db
+	cleanup := SetDBForTest(db, db)
 	t.Cleanup(func() {
-		DB = origDB
-		DBRead = origDBRead
+		cleanup()
 		db.Close()
 	})
 }
@@ -224,7 +220,7 @@ func TestScheduledExecution_NormalCompletion(t *testing.T) {
 	// Verify execution status was updated
 	_ = UpdateExecutionStatus(sid, "completed")
 	var status string
-	if err := DBRead.QueryRow("SELECT status FROM task_executions WHERE id = ?", executionID).Scan(&status); err != nil {
+	if err := dbRead.QueryRow("SELECT status FROM task_executions WHERE id = ?", executionID).Scan(&status); err != nil {
 		t.Fatalf("failed to query execution status: %v", err)
 	}
 	if status != "completed" {
@@ -289,7 +285,7 @@ func TestScheduledExecution_CancelledContext(t *testing.T) {
 	// Verify execution status was set to "cancelled"
 	_ = UpdateExecutionStatus(sid, "cancelled")
 	var status string
-	if err := DBRead.QueryRow("SELECT status FROM task_executions WHERE id = ?", executionID).Scan(&status); err != nil {
+	if err := dbRead.QueryRow("SELECT status FROM task_executions WHERE id = ?", executionID).Scan(&status); err != nil {
 		t.Fatalf("failed to query execution status: %v", err)
 	}
 	if status != "cancelled" {
@@ -350,7 +346,7 @@ func TestScheduledExecution_CrashedProcess(t *testing.T) {
 	// Verify execution status was set to "failed"
 	_ = UpdateExecutionStatus(sid, "failed")
 	var status string
-	if err := DBRead.QueryRow("SELECT status FROM task_executions WHERE id = ?", executionID).Scan(&status); err != nil {
+	if err := dbRead.QueryRow("SELECT status FROM task_executions WHERE id = ?", executionID).Scan(&status); err != nil {
 		t.Fatalf("failed to query execution status: %v", err)
 	}
 	if status != "failed" {

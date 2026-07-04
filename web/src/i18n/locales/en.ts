@@ -241,6 +241,8 @@ export default {
       viewDetails: 'View details',
       speaking: 'Speaking',
       readAloud: 'Read',
+      copy: 'Copy',
+      copied: 'Copied',
       summaryViewOriginal: 'Original',
       summaryViewSummary: 'Summary',
       deepThinking: 'Thinking',

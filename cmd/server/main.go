@@ -478,8 +478,8 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Load persisted agent capabilities from DB so mode/thinking/command chips
 	// appear immediately on startup without requiring prefetch.
-	ai.SetRegistryDB(service.DB)
-	ai.GetAgentCapabilityRegistry().LoadFromDB(service.DB)
+	ai.SetRegistryDB(service.WriteDB())
+	ai.GetAgentCapabilityRegistry().LoadFromDB(service.ReadDB())
 
 	// Kill orphan AI subprocesses from a previous server crash.
 	// On Linux, scans /proc for CLAWBENCH_CHILD=1 env marker.
@@ -489,7 +489,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// New setups write the key directly to config.yaml. This fallback resolves
 	// the key from DB for legacy configs that have key="" and agent_id set.
 	if cfg.Summarize.Backend == summarizeBackendAPI && cfg.Summarize.API.Key == "" && cfg.Summarize.API.AgentID != "" {
-		if _, _, ak, err := service.LoadAgentAnyAPIKey(service.DB, cfg.Summarize.API.AgentID); err == nil && ak != "" {
+		if _, _, ak, err := service.LoadAgentAnyAPIKey(cfg.Summarize.API.AgentID); err == nil && ak != "" {
 			cfg.Summarize.API.Key = ak
 			slog.Info("resolved summarize API key from agent_api_keys", slog.String("agent_id", cfg.Summarize.API.AgentID))
 		} else if err != nil {
@@ -499,7 +499,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Inject API key loader for Pi CLI runtime (avoids import cycle between ai and service packages)
 	ai.SetAgentAPIKeyLoader(func(agentID string) (provider, customURL, apiKey string, found bool) {
-		p, cu, ak, err := service.LoadAgentAnyAPIKey(service.DB, agentID)
+		p, cu, ak, err := service.LoadAgentAnyAPIKey(agentID)
 		if err != nil || ak == "" {
 			return "", "", "", false
 		}
@@ -587,10 +587,10 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	model.ClawbenchBin = absBinPath
 
 	// 1. Detect installed CLIs and write new agents to DB
-	present := model.SyncDiscoverAgentsDB(service.DB)
+	present := model.SyncDiscoverAgentsDB(service.WriteDB())
 
 	// 1a. Load manually-defined agents from config/agents/*.yaml (e.g., acp-mock for E2E)
-	model.LoadYamlAgents(service.DB, filepath.Dir(configPath))
+	model.LoadYamlAgents(service.WriteDB(), filepath.Dir(configPath))
 
 	// 2. Synchronous model discovery (run when agents may have empty model lists)
 	discoveredModels := model.SyncDiscoverModels()
@@ -598,15 +598,15 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// 2a. Migrate custom_system_prompt BEFORE LoadAgentsIntoMemory so the
 	// composition logic (commonPrompt + customSystemPrompt) works correctly
 	// on first startup with legacy system_prompt data.
-	service.MigrateCustomSystemPrompt(service.DB)
+	service.MigrateCustomSystemPrompt()
 
 	// 3. Merge runtime data: fill models/levels from discovery results/registry, delete missing CLIs, reload memory
-	model.MergeDiscoveredDataDB(service.DB, discoveredModels, present)
+	model.MergeDiscoveredDataDB(service.WriteDB(), discoveredModels, present)
 
 	slog.Info("agents loaded", slog.Int("count", len(model.AgentList)))
 
 	// 4. Async: refresh model cache in background (non-blocking)
-	model.AsyncRefreshModelCache(service.DB)
+	model.AsyncRefreshModelCache(service.WriteDB())
 
 	// Set default agent ID from config, or fall back to first agent
 	if cfg.DefaultAgent != "" {

@@ -3,7 +3,6 @@ package model
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -14,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"clawbench/internal/dbutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -202,7 +202,7 @@ func SyncDiscoverModels() map[string][]AgentModel {
 
 // AsyncRefreshModelCache runs DiscoverModels in a goroutine for all backends
 // and updates in-memory Agent data + DB. Call this after startup — it does not block.
-func AsyncRefreshModelCache(db *sql.DB) {
+func AsyncRefreshModelCache(db dbutil.Writer) {
 	go func() {
 		for _, spec := range GetBackendRegistry() {
 			if !CanDiscoverModels(spec) {
@@ -237,7 +237,7 @@ func AsyncRefreshModelCache(db *sql.DB) {
 // It detects installed CLIs from BackendRegistry and writes new agents to the database
 // instead of YAML files. Existing DB records are never overwritten.
 // Returns a set of backend types whose CLI is currently present.
-func SyncDiscoverAgentsDB(db *sql.DB) map[string]bool { //nolint:gocognit,gocyclo // multi-backend DB agent discovery
+func SyncDiscoverAgentsDB(db dbutil.Writer) map[string]bool { //nolint:gocognit,gocyclo // multi-backend DB agent discovery
 	type result struct {
 		spec   BackendSpec
 		exists bool
@@ -365,7 +365,7 @@ func SyncDiscoverAgentsDB(db *sql.DB) map[string]bool { //nolint:gocognit,gocycl
 }
 
 // saveAgentToDB inserts a minimal agent record into the database.
-func saveAgentToDB(db *sql.DB, agent *Agent) error {
+func saveAgentToDB(db dbutil.Writer, agent *Agent) error {
 	modelsJSON, err := json.Marshal(agent.Models)
 	if err != nil {
 		return fmt.Errorf("marshal models: %w", err)
@@ -425,7 +425,7 @@ type yamlAgent struct {
 // them into the database if they don't already exist. This allows manually-defined
 // agents (e.g., acp-mock for E2E testing) to be loaded without requiring an entry
 // in BackendRegistry.
-func LoadYamlAgents(db *sql.DB, configDir string) {
+func LoadYamlAgents(db dbutil.Writer, configDir string) {
 	agentsDir := filepath.Join(configDir, "agents")
 	entries, err := os.ReadDir(agentsDir)
 	if err != nil {
@@ -502,7 +502,7 @@ func LoadYamlAgents(db *sql.DB, configDir string) {
 // 2. Fill ThinkingEffortLevels from BackendRegistry and update DB
 // 3. Fill Models from cache for agents with empty models and update DB
 // 4. Reload in-memory state from DB
-func MergeDiscoveredDataDB(db *sql.DB, discoveredModels map[string][]AgentModel, present map[string]bool) { //nolint:gocognit,gocyclo // multi-step data merge
+func MergeDiscoveredDataDB(db dbutil.Writer, discoveredModels map[string][]AgentModel, present map[string]bool) { //nolint:gocognit,gocyclo // multi-step data merge
 	// Step 1: Soft-delete auto agents whose CLI is not present
 	if present != nil {
 		// Build list of present backends for SQL
@@ -636,7 +636,7 @@ func MergeDiscoveredDataDB(db *sql.DB, discoveredModels map[string][]AgentModel,
 }
 
 // loadAgentsFromDBRows loads agents from the database into Agent structs.
-func loadAgentsFromDBRows(db *sql.DB) ([]*Agent, error) {
+func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 	rows, err := db.Query(`SELECT id, name, icon, specialty, backend, command,
 		thinking_effort, thinking_effort_levels, preferred_model, preferred_thinking_effort,
 		system_prompt, models, models_auto_detected, source, sort_order,

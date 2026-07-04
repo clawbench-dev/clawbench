@@ -30,14 +30,11 @@ func setupAgentTestEnv(t *testing.T) func() {
 	// Save original globals
 	origAgents := model.Agents
 	origAgentList := model.AgentList
-	origDB := service.DB
-	origDBRead := service.DBRead
 
 	// Init in-memory SQLite
 	db, err := service.InitInMemoryDB()
 	require.NoError(t, err)
-	service.DB = db
-	service.DBRead = db
+	cleanup := service.SetDBForTest(db, db)
 
 	// Set up test agents directly in DB
 	codebuddyAgent := &model.Agent{
@@ -83,8 +80,7 @@ func setupAgentTestEnv(t *testing.T) func() {
 	teardown := func() {
 		model.Agents = origAgents
 		model.AgentList = origAgentList
-		service.DB = origDB
-		service.DBRead = origDBRead
+		cleanup()
 		_ = db.Close()
 	}
 
@@ -125,7 +121,7 @@ func TestAgentPatch_PreferredModel(t *testing.T) {
 
 	// Verify DB updated
 	var preferredModel string
-	err := service.DB.QueryRow("SELECT preferred_model FROM agents WHERE id = ?", "codebuddy").Scan(&preferredModel)
+	err := service.UnsafeDBForTest().QueryRow("SELECT preferred_model FROM agents WHERE id = ?", "codebuddy").Scan(&preferredModel)
 	require.NoError(t, err)
 	assert.Equal(t, "glm-4-flash", preferredModel)
 }
@@ -162,7 +158,7 @@ func TestAgentPatch_PreferredThinkingEffort(t *testing.T) {
 
 	// Verify DB updated
 	var preferredThinking string
-	err := service.DB.QueryRow("SELECT preferred_thinking_effort FROM agents WHERE id = ?", "codebuddy").Scan(&preferredThinking)
+	err := service.UnsafeDBForTest().QueryRow("SELECT preferred_thinking_effort FROM agents WHERE id = ?", "codebuddy").Scan(&preferredThinking)
 	require.NoError(t, err)
 	assert.Equal(t, "high", preferredThinking)
 }
@@ -205,7 +201,7 @@ func TestAgentPatch_PreferredMode(t *testing.T) {
 
 	// Verify DB updated
 	var preferredMode string
-	err := service.DB.QueryRow("SELECT preferred_mode FROM agents WHERE id = ?", "codebuddy").Scan(&preferredMode)
+	err := service.UnsafeDBForTest().QueryRow("SELECT preferred_mode FROM agents WHERE id = ?", "codebuddy").Scan(&preferredMode)
 	require.NoError(t, err)
 	assert.Equal(t, "code", preferredMode)
 }
@@ -251,7 +247,7 @@ func TestAgentPatch_ClearPreferredMode(t *testing.T) {
 
 	// Verify DB cleared
 	var preferredMode string
-	err := service.DB.QueryRow("SELECT preferred_mode FROM agents WHERE id = ?", "codebuddy").Scan(&preferredMode)
+	err := service.UnsafeDBForTest().QueryRow("SELECT preferred_mode FROM agents WHERE id = ?", "codebuddy").Scan(&preferredMode)
 	require.NoError(t, err)
 	assert.Equal(t, "", preferredMode)
 }
@@ -290,7 +286,7 @@ func TestAgentPatch_BothFields(t *testing.T) {
 
 	// Verify DB updated
 	var preferredModel, preferredThinking string
-	err := service.DB.QueryRow("SELECT preferred_model, preferred_thinking_effort FROM agents WHERE id = ?", "claude").Scan(&preferredModel, &preferredThinking)
+	err := service.UnsafeDBForTest().QueryRow("SELECT preferred_model, preferred_thinking_effort FROM agents WHERE id = ?", "claude").Scan(&preferredModel, &preferredThinking)
 	require.NoError(t, err)
 	assert.Equal(t, "claude-sonnet-4-6", preferredModel)
 	assert.Equal(t, "xhigh", preferredThinking)
@@ -588,7 +584,7 @@ func TestServeAgentRefreshModels_SaveAgentDBError(t *testing.T) {
 	defer func() { model.DiscoverModels = origDiscover }()
 
 	// Delete agents table to cause SaveAgent to fail
-	_, _ = service.DB.Exec("DROP TABLE agents")
+	_, _ = service.UnsafeDBForTest().Exec("DROP TABLE agents")
 
 	req := newRequest(t, http.MethodPost, "/api/agents/codebuddy/refresh-models", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -612,7 +608,7 @@ func TestServeAgentRefreshModels_CLINotFoundSpecificError(t *testing.T) {
 		Models:  []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
 	}
 	model.AgentList = append(model.AgentList, model.Agents["fake-cli"])
-	require.NoError(t, service.SaveAgent(service.DB, model.Agents["fake-cli"]))
+	require.NoError(t, service.SaveAgent(service.UnsafeDBForTest(), model.Agents["fake-cli"]))
 
 	// Override DiscoverModels to return nil — will hit "no models" path
 	origDiscover := model.DiscoverModels
@@ -640,7 +636,7 @@ func TestAgentPatch_NoThinkingEffortLevels(t *testing.T) {
 		Models:  []model.AgentModel{{ID: "m1", Name: "Model 1", Default: true}},
 	}
 	model.AgentList = append(model.AgentList, model.Agents["nolevels"])
-	require.NoError(t, service.SaveAgent(service.DB, model.Agents["nolevels"]))
+	require.NoError(t, service.SaveAgent(service.UnsafeDBForTest(), model.Agents["nolevels"]))
 
 	body := map[string]any{
 		"id":                        "nolevels",
@@ -663,9 +659,8 @@ func TestAgentPatch_PatchAgentDBError(t *testing.T) {
 	_ = closedDB.Close()
 
 	// Replace service.DB with the closed DB
-	origDB := service.DB
-	service.DB = closedDB
-	defer func() { service.DB = origDB }()
+	cleanup := service.SetDBForTest(closedDB, closedDB)
+	defer cleanup()
 
 	body := map[string]any{
 		"id":              "codebuddy",
@@ -699,7 +694,7 @@ func TestAgentPatch_TransportSwitchToCLI(t *testing.T) {
 
 	// Verify DB updated
 	var transport string
-	err := service.DB.QueryRow("SELECT transport FROM agents WHERE id = ?", "claude").Scan(&transport)
+	err := service.UnsafeDBForTest().QueryRow("SELECT transport FROM agents WHERE id = ?", "claude").Scan(&transport)
 	require.NoError(t, err)
 	assert.Equal(t, "cli", transport)
 }
@@ -731,7 +726,7 @@ func TestAgentPatch_TransportACPNotAllowedForNoACPAgent(t *testing.T) {
 		Models:  []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
 	}
 	model.AgentList = append(model.AgentList, model.Agents["noacp"])
-	require.NoError(t, service.SaveAgent(service.DB, model.Agents["noacp"]))
+	require.NoError(t, service.SaveAgent(service.UnsafeDBForTest(), model.Agents["noacp"]))
 
 	body := map[string]any{
 		"id":        "noacp",
@@ -789,7 +784,7 @@ func TestServeAgentRefreshModels_WithProviderFilter(t *testing.T) {
 	}
 
 	// Add agent_api_keys entry using SaveAgentAPIKey
-	require.NoError(t, service.SaveAgentAPIKey(service.DB, "codebuddy", "openai", "", "test-api-key"))
+	require.NoError(t, service.SaveAgentAPIKey(service.UnsafeDBForTest(), "codebuddy", "openai", "", "test-api-key"))
 
 	req := newRequest(t, http.MethodPost, "/api/agents/codebuddy/refresh-models", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -820,7 +815,7 @@ func TestServeAgentRefreshModels_ProviderFilterNoMatch(t *testing.T) {
 	}
 
 	// Set up provider that won't match any model prefix
-	require.NoError(t, service.SaveAgentAPIKey(service.DB, "codebuddy", "deepseek", "", "test-api-key"))
+	require.NoError(t, service.SaveAgentAPIKey(service.UnsafeDBForTest(), "codebuddy", "deepseek", "", "test-api-key"))
 
 	req := newRequest(t, http.MethodPost, "/api/agents/codebuddy/refresh-models", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -852,7 +847,7 @@ func TestServeAgentsGet_ACPStateFromPoolCache(t *testing.T) {
 	}
 	model.Agents["acp-agent"] = acpAgent
 	model.AgentList = append(model.AgentList, acpAgent)
-	require.NoError(t, service.SaveAgent(service.DB, acpAgent))
+	require.NoError(t, service.SaveAgent(service.UnsafeDBForTest(), acpAgent))
 
 	// Populate agent-level capabilities in the registry
 	ai.GetAgentCapabilityRegistry().UpdateModes("acp-agent", []ai.ModeDef{{ID: "code", Name: "Code"}, {ID: "ask", Name: "Ask"}})
@@ -956,7 +951,7 @@ func TestAgentPatch_Name(t *testing.T) {
 	assert.Equal(t, "My Assistant", model.Agents["codebuddy"].Name)
 
 	var name string
-	err := service.DB.QueryRow("SELECT name FROM agents WHERE id = ?", "codebuddy").Scan(&name)
+	err := service.UnsafeDBForTest().QueryRow("SELECT name FROM agents WHERE id = ?", "codebuddy").Scan(&name)
 	require.NoError(t, err)
 	assert.Equal(t, "My Assistant", name)
 }
@@ -1055,7 +1050,7 @@ func TestServeAgentsGet_PrefetchACPStateForUncachedAgent(t *testing.T) {
 	}
 	model.Agents["acp-prefetch"] = acpAgent
 	model.AgentList = append(model.AgentList, acpAgent)
-	require.NoError(t, service.SaveAgent(service.DB, acpAgent))
+	require.NoError(t, service.SaveAgent(service.UnsafeDBForTest(), acpAgent))
 
 	// Ensure the AcpCommand is registered in BackendRegistry so prefetch is triggered
 	spec := model.FindSpecByBackend("acp-prefetch")
@@ -1144,7 +1139,7 @@ func TestServeAgentsGet_ACPModelListOverridesModels(t *testing.T) {
 	}
 	model.Agents["acp-ml-override"] = acpAgent
 	model.AgentList = append(model.AgentList, acpAgent)
-	require.NoError(t, service.SaveAgent(service.DB, acpAgent))
+	require.NoError(t, service.SaveAgent(service.UnsafeDBForTest(), acpAgent))
 
 	// Inject agent-level models in the registry that should override CLI-discovered models
 	ai.GetAgentCapabilityRegistry().UpdateModels("acp-ml-override", []model.AgentModel{

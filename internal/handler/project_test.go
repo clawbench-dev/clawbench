@@ -24,7 +24,7 @@ func TestServeProjectSet(t *testing.T) {
 		_ = os.MkdirAll(projectPath, 0o755)
 
 		// Set project as default in DB (GET now reads from DB, not cookie)
-		_, err := service.DB.Exec("INSERT INTO recent_projects (project_path, is_default) VALUES (?, 1)", projectPath)
+		_, err := service.UnsafeDBForTest().Exec("INSERT INTO recent_projects (project_path, is_default) VALUES (?, 1)", projectPath)
 		assert.NoError(t, err)
 
 		req := newRequest(t, http.MethodGet, "/api/project", nil)
@@ -65,7 +65,7 @@ func TestServeProjectSet(t *testing.T) {
 		_ = os.MkdirAll(recentPath, 0o755)
 
 		// Insert a recent project directly into the DB
-		_, err := service.DB.Exec(
+		_, err := service.UnsafeDBForTest().Exec(
 			"INSERT INTO recent_projects (project_path) VALUES (?)", recentPath,
 		)
 		assert.NoError(t, err)
@@ -130,7 +130,7 @@ func TestServeProjectSet(t *testing.T) {
 
 		// Verify is_default=1 in DB
 		var isDefault int
-		err := service.DB.QueryRow("SELECT is_default FROM recent_projects WHERE project_path = ?", projectPath).Scan(&isDefault)
+		err := service.UnsafeDBForTest().QueryRow("SELECT is_default FROM recent_projects WHERE project_path = ?", projectPath).Scan(&isDefault)
 		assert.NoError(t, err, "project should exist in recent_projects")
 		assert.Equal(t, 1, isDefault, "posted project should be marked as default")
 	})
@@ -268,7 +268,7 @@ func TestServeRecentProjects(t *testing.T) {
 
 		projectPath := filepath.Join(env.WatchDir, "proj1")
 		_ = os.MkdirAll(projectPath, 0o755)
-		_, err := service.DB.Exec(
+		_, err := service.UnsafeDBForTest().Exec(
 			"INSERT INTO recent_projects (project_path) VALUES (?)", projectPath,
 		)
 		assert.NoError(t, err)

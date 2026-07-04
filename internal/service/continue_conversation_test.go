@@ -68,7 +68,7 @@ func TestContinueFromExecution_NormalFlow(t *testing.T) {
 
 	// New session should be a chat session
 	var sessionType string
-	err = service.DB.QueryRow("SELECT session_type FROM chat_sessions WHERE id = ?", newSessID).Scan(&sessionType)
+	err = service.UnsafeDBForTest().QueryRow("SELECT session_type FROM chat_sessions WHERE id = ?", newSessID).Scan(&sessionType)
 	assert.NoError(t, err)
 	assert.Equal(t, "chat", sessionType)
 
@@ -88,7 +88,7 @@ func TestContinueFromExecution_NormalFlow(t *testing.T) {
 
 	// New session should have source_session_id
 	var sourceSessID *string
-	err = service.DB.QueryRow("SELECT source_session_id FROM chat_sessions WHERE id = ?", newSessID).Scan(&sourceSessID)
+	err = service.UnsafeDBForTest().QueryRow("SELECT source_session_id FROM chat_sessions WHERE id = ?", newSessID).Scan(&sourceSessID)
 	assert.NoError(t, err)
 	assert.NotNil(t, sourceSessID)
 	assert.Equal(t, sessID, *sourceSessID)
@@ -151,7 +151,7 @@ func TestContinueFromExecution_DeletedThenRecontinue(t *testing.T) {
 
 	// Session should no longer be deleted
 	var deleted int
-	err = service.DB.QueryRow("SELECT deleted FROM chat_sessions WHERE id = ?", newSessID2).Scan(&deleted)
+	err = service.UnsafeDBForTest().QueryRow("SELECT deleted FROM chat_sessions WHERE id = ?", newSessID2).Scan(&deleted)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, deleted)
 }
@@ -334,7 +334,7 @@ func TestContinueFromExecution_FieldInheritance(t *testing.T) {
 
 	// Project path should be inherited
 	var projPath string
-	err = service.DB.QueryRow("SELECT project_path FROM chat_sessions WHERE id = ?", newSessID).Scan(&projPath)
+	err = service.UnsafeDBForTest().QueryRow("SELECT project_path FROM chat_sessions WHERE id = ?", newSessID).Scan(&projPath)
 	assert.NoError(t, err)
 	assert.Equal(t, "/project", projPath)
 
@@ -360,13 +360,13 @@ func TestContinueFromExecution_OriginalSessionUnaffected(t *testing.T) {
 
 	// Original session should still be scheduled type
 	var origType string
-	err = service.DB.QueryRow("SELECT session_type FROM chat_sessions WHERE id = ?", sessID).Scan(&origType)
+	err = service.UnsafeDBForTest().QueryRow("SELECT session_type FROM chat_sessions WHERE id = ?", sessID).Scan(&origType)
 	assert.NoError(t, err)
 	assert.Equal(t, "scheduled", origType)
 
 	// Original session's source_session_id should be NULL
 	var origSource *string
-	err = service.DB.QueryRow("SELECT source_session_id FROM chat_sessions WHERE id = ?", sessID).Scan(&origSource)
+	err = service.UnsafeDBForTest().QueryRow("SELECT source_session_id FROM chat_sessions WHERE id = ?", sessID).Scan(&origSource)
 	assert.NoError(t, err)
 	assert.Nil(t, origSource)
 
@@ -405,7 +405,7 @@ func TestContinueFromExecution_NoMessages(t *testing.T) {
 // helperCreateScheduledTask creates a scheduled task and returns its ID.
 func helperCreateScheduledTask(t *testing.T, projectPath, name, agentID string) int64 {
 	t.Helper()
-	result, err := service.DB.Exec(
+	result, err := service.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, status) VALUES (?, ?, '0 8 * * *', ?, 'Do task', 'active')",
 		projectPath, name, agentID,
 	)
@@ -418,7 +418,7 @@ func helperCreateScheduledTask(t *testing.T, projectPath, name, agentID string) 
 // helperCreateTaskExecution creates a task execution row and returns its ID.
 func helperCreateTaskExecution(t *testing.T, taskID int64, sessionID, status string) int64 {
 	t.Helper()
-	result, err := service.DB.Exec(
+	result, err := service.UnsafeDBForTest().Exec(
 		"INSERT INTO task_executions (task_id, session_id, status) VALUES (?, ?, ?)",
 		taskID, sessionID, status,
 	)
@@ -449,18 +449,18 @@ func TestContinueFromExecution_CopiesChatMessageSummary(t *testing.T) {
 	// Create task + session + assistant message + execution
 	taskID := helperCreateScheduledTask(t, projectPath, "Summary Test", "agent1")
 	sessionID := helperCreateScheduledSessionWithDetails(t, projectPath, "claude", "Summary Test", "agent1", "", "")
-	_, err := service.DB.Exec("INSERT INTO chat_history (session_id, project_path, role, content, backend) VALUES (?, ?, 'user', 'hello', 'claude')", sessionID, projectPath)
+	_, err := service.UnsafeDBForTest().Exec("INSERT INTO chat_history (session_id, project_path, role, content, backend) VALUES (?, ?, 'user', 'hello', 'claude')", sessionID, projectPath)
 	assert.NoError(t, err)
-	_, err = service.DB.Exec("INSERT INTO chat_history (session_id, project_path, role, content, backend) VALUES (?, ?, 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"response\"}]}', 'claude')", sessionID, projectPath)
+	_, err = service.UnsafeDBForTest().Exec("INSERT INTO chat_history (session_id, project_path, role, content, backend) VALUES (?, ?, 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"response\"}]}', 'claude')", sessionID, projectPath)
 	assert.NoError(t, err)
 	execID := helperCreateTaskExecution(t, taskID, sessionID, "completed")
 
 	// Add chat_message type summary on the source assistant message (this is
 	// what the scheduler now creates — same as interactive sessions)
 	var sourceAssistantID int64
-	err = service.DB.QueryRow("SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", sessionID).Scan(&sourceAssistantID)
+	err = service.UnsafeDBForTest().QueryRow("SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", sessionID).Scan(&sourceAssistantID)
 	assert.NoError(t, err)
-	_, err = service.DB.Exec("INSERT INTO summaries (target_type, target_id, summary, created_at) VALUES ('chat_message', ?, 'Scheduled task summary', CURRENT_TIMESTAMP)", sourceAssistantID)
+	_, err = service.UnsafeDBForTest().Exec("INSERT INTO summaries (target_type, target_id, summary, created_at) VALUES ('chat_message', ?, 'Scheduled task summary', CURRENT_TIMESTAMP)", sourceAssistantID)
 	assert.NoError(t, err)
 
 	// Continue
@@ -471,11 +471,11 @@ func TestContinueFromExecution_CopiesChatMessageSummary(t *testing.T) {
 
 	// Verify: chat_message summary is copied to the corresponding new message
 	var lastAssistantID int64
-	err = service.DB.QueryRow("SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", newSessionID).Scan(&lastAssistantID)
+	err = service.UnsafeDBForTest().QueryRow("SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", newSessionID).Scan(&lastAssistantID)
 	assert.NoError(t, err)
 
 	var copiedSummary string
-	err = service.DB.QueryRow("SELECT summary FROM summaries WHERE target_type = 'chat_message' AND target_id = ?", lastAssistantID).Scan(&copiedSummary)
+	err = service.UnsafeDBForTest().QueryRow("SELECT summary FROM summaries WHERE target_type = 'chat_message' AND target_id = ?", lastAssistantID).Scan(&copiedSummary)
 	assert.NoError(t, err)
 	assert.Equal(t, "Scheduled task summary", copiedSummary)
 }
@@ -488,7 +488,7 @@ func TestRestoreDeletedSession_NonExistent(t *testing.T) {
 	setupDB(t)
 
 	// Directly call the equivalent of restoreDeletedSession via DB
-	_, err := service.DB.Exec(
+	_, err := service.UnsafeDBForTest().Exec(
 		"UPDATE chat_sessions SET deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 		"non-existent-session-id",
 	)
@@ -502,14 +502,14 @@ func TestRestoreDeletedSession_AlreadyRestored(t *testing.T) {
 
 	sid := helperCreateSession(t, "/project", "claude", "Active")
 	// Session is already active (deleted=0)
-	_, err := service.DB.Exec(
+	_, err := service.UnsafeDBForTest().Exec(
 		"UPDATE chat_sessions SET deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 		sid,
 	)
 	assert.NoError(t, err)
 
 	var deleted int
-	err = service.DB.QueryRow("SELECT deleted FROM chat_sessions WHERE id = ?", sid).Scan(&deleted)
+	err = service.UnsafeDBForTest().QueryRow("SELECT deleted FROM chat_sessions WHERE id = ?", sid).Scan(&deleted)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, deleted, "session should still be active")
 }
@@ -542,7 +542,7 @@ func TestCheckContinueSession_AutoRestoresDeletedSession(t *testing.T) {
 
 	// Verify the session is restored (deleted=0)
 	var deleted int
-	err = service.DB.QueryRow("SELECT deleted FROM chat_sessions WHERE id = ?", newSessID).Scan(&deleted)
+	err = service.UnsafeDBForTest().QueryRow("SELECT deleted FROM chat_sessions WHERE id = ?", newSessID).Scan(&deleted)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, deleted, "session should be restored (deleted=0)")
 }
@@ -571,9 +571,9 @@ func TestContinueFromExecution_DedupPrefersActiveOverDeleted(t *testing.T) {
 	// Manually create session B (simulating a second continued session)
 	// by directly inserting into the DB with a different ID
 	sessB := "manual-continued-session-b"
-	_ = service.DB.QueryRow("SELECT id FROM chat_sessions WHERE id = ?", sessB).Scan(new(string))
+	_ = service.UnsafeDBForTest().QueryRow("SELECT id FROM chat_sessions WHERE id = ?", sessB).Scan(new(string))
 	// sessB shouldn't exist yet
-	_, err = service.DB.Exec(
+	_, err = service.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, source_session_id, external_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?, ?)",
 		sessB, "/project", "claude", "Manual B", "", "default", "", sessID, sessID,
 	)
@@ -705,7 +705,7 @@ func TestContinueFromExecution_TitleFormatWithExplicitTimestamp(t *testing.T) {
 	sessID := helperCreateScheduledSession(t, "/project", "claude", "Daily Review")
 
 	// Insert execution with a known created_at
-	result, err := service.DB.Exec(
+	result, err := service.UnsafeDBForTest().Exec(
 		"INSERT INTO task_executions (task_id, session_id, status, created_at) VALUES (?, ?, 'completed', '2026-03-15 08:30:00')",
 		taskID, sessID,
 	)
@@ -745,7 +745,7 @@ func TestContinueFromExecution_CreatedAtFormatConsistent(t *testing.T) {
 
 	// Verify: copied messages' created_at should NOT contain 'T' or 'Z' (ISO format markers)
 	var hasBadFormat int
-	err = service.DB.QueryRow(
+	err = service.UnsafeDBForTest().QueryRow(
 		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND (created_at LIKE '%T%' OR created_at LIKE '%Z%')",
 		newSessID,
 	).Scan(&hasBadFormat)
@@ -755,7 +755,7 @@ func TestContinueFromExecution_CreatedAtFormatConsistent(t *testing.T) {
 	// Verify: unread count query should return 0 for the continued session
 	// (last_read_at is set at creation time, and created_at uses the same format)
 	var unreadCount int
-	err = service.DB.QueryRow(
+	err = service.UnsafeDBForTest().QueryRow(
 		`
 		SELECT COALESCE(unread.cnt, 0) FROM chat_sessions s
 		LEFT JOIN (
@@ -792,7 +792,7 @@ func TestContinueFromExecution_TaskNotFound(t *testing.T) {
 
 	// Create an execution referencing a non-existent task
 	sessID := helperCreateScheduledSession(t, "/project", "claude", "Task")
-	result, err := service.DB.Exec(
+	result, err := service.UnsafeDBForTest().Exec(
 		"INSERT INTO task_executions (task_id, session_id, status) VALUES (99999, ?, 'completed')",
 		sessID,
 	)
@@ -808,13 +808,12 @@ func TestContinueFromExecution_TaskNotFound(t *testing.T) {
 func TestCheckContinueSession_ClosedDB(t *testing.T) {
 	setupDB(t)
 
-	origDBRead := service.DBRead
 	// Use a closed DB connection — this triggers a real error from the SQL driver
 	closedDB, err := sql.Open("sqlite", ":memory:")
 	assert.NoError(t, err)
 	closedDB.Close()
-	service.DBRead = closedDB
-	t.Cleanup(func() { service.DBRead = origDBRead })
+	cleanup := service.SetDBForTest(closedDB, closedDB)
+	t.Cleanup(cleanup)
 
 	exists, sessionID, err := service.CheckContinueSession(1)
 	assert.Error(t, err)
@@ -827,16 +826,15 @@ func TestCheckContinueSession_ClosedDB(t *testing.T) {
 func TestRestoreDeletedSession_DBError(t *testing.T) {
 	setupDB(t)
 
-	origDB := service.DB
 	// Set DB to a closed connection to trigger an error
 	closedDB, err := sql.Open("sqlite", ":memory:")
 	assert.NoError(t, err)
 	closedDB.Close()
-	service.DB = closedDB
-	t.Cleanup(func() { service.DB = origDB })
+	cleanup := service.SetDBForTest(closedDB, closedDB)
+	t.Cleanup(cleanup)
 
 	// restoreDeletedSession is private, but we can test the equivalent DB call
-	_, err = service.DB.Exec(
+	_, err = service.UnsafeDBForTest().Exec(
 		"UPDATE chat_sessions SET deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 		"some-session-id",
 	)

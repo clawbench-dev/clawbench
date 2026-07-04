@@ -18,11 +18,8 @@ func TestServePendingEvents_Empty(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	origDB := service.DB
-	origDBRead := service.DBRead
-	service.DB = db
-	service.DBRead = db
-	defer func() { service.DB = origDB; service.DBRead = origDBRead }()
+	cleanup := service.SetDBForTest(db, db)
+	defer cleanup()
 
 	db.Exec(`CREATE TABLE IF NOT EXISTS pending_events (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,

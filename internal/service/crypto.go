@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"clawbench/internal/dbutil"
 	"clawbench/internal/model"
 
 	"golang.org/x/crypto/hkdf"
@@ -198,7 +199,7 @@ func ResetEncryptionKeyCache() {
 
 // SaveAgentAPIKey encrypts and stores an API key for an agent+provider combination.
 // Uses upsert (ON CONFLICT) to update existing keys.
-func SaveAgentAPIKey(db DBExec, agentID, provider, customURL, apiKey string) error {
+func SaveAgentAPIKey(db dbutil.Writer, agentID, provider, customURL, apiKey string) error {
 	encrypted, nonce, err := EncryptAPIKey(apiKey)
 	if err != nil {
 		return fmt.Errorf("encrypt API key: %w", err)
@@ -221,9 +222,9 @@ func SaveAgentAPIKey(db DBExec, agentID, provider, customURL, apiKey string) err
 
 // LoadAgentAPIKey decrypts and returns the API key for an agent+provider combination.
 // Returns error if not found.
-func LoadAgentAPIKey(db *sql.DB, agentID, provider string) (customURL, apiKey string, err error) {
+func LoadAgentAPIKey(agentID, provider string) (customURL, apiKey string, err error) {
 	var encKey, nonce string
-	err = db.QueryRow(`
+	err = dbRead.QueryRow(`
 		SELECT custom_url, encrypted_key, key_nonce
 		FROM agent_api_keys
 		WHERE agent_id = ? AND provider = ?
@@ -243,9 +244,9 @@ func LoadAgentAPIKey(db *sql.DB, agentID, provider string) (customURL, apiKey st
 // LoadAgentAnyAPIKey decrypts and returns the first API key found for an agent
 // (across all providers). Returns the provider, customURL, and apiKey.
 // Returns ("", "", "", nil) if no keys exist for this agent.
-func LoadAgentAnyAPIKey(db *sql.DB, agentID string) (provider, customURL, apiKey string, err error) {
+func LoadAgentAnyAPIKey(agentID string) (provider, customURL, apiKey string, err error) {
 	var encKey, nonce string
-	err = db.QueryRow(`
+	err = dbRead.QueryRow(`
 		SELECT provider, custom_url, encrypted_key, key_nonce
 		FROM agent_api_keys
 		WHERE agent_id = ?
@@ -276,8 +277,8 @@ type DecryptedAPIKey struct {
 }
 
 // loadAllAPIKeys loads and decrypts all API keys from the database.
-func loadAllAPIKeys(db *sql.DB) ([]DecryptedAPIKey, error) {
-	rows, err := db.Query("SELECT agent_id, provider, custom_url, encrypted_key, key_nonce FROM agent_api_keys")
+func loadAllAPIKeys() ([]DecryptedAPIKey, error) {
+	rows, err := dbRead.Query("SELECT agent_id, provider, custom_url, encrypted_key, key_nonce FROM agent_api_keys")
 	if err != nil {
 		return nil, fmt.Errorf("query API keys: %w", err)
 	}
@@ -320,9 +321,9 @@ func loadAllAPIKeys(db *sql.DB) ([]DecryptedAPIKey, error) {
 // If any step fails, attempts to roll back by restoring the old password.
 // The previousEncryptionKey fallback ensures that if the process crashes
 // mid-rotation, DecryptAPIKey can still decrypt keys using the old key.
-func RotateAPIKeyEncryption(db *sql.DB, oldAutoPassword string) error {
+func RotateAPIKeyEncryption(oldAutoPassword string) error {
 	// 1. Decrypt all keys with the CURRENT (old) key
-	keys, err := loadAllAPIKeys(db)
+	keys, err := loadAllAPIKeys()
 	if err != nil {
 		return fmt.Errorf("load API keys for rotation: %w", err)
 	}
@@ -346,7 +347,7 @@ func RotateAPIKeyEncryption(db *sql.DB, oldAutoPassword string) error {
 
 	// 3. Re-encrypt all keys with the new key
 	for _, k := range keys {
-		if err := SaveAgentAPIKey(db, k.AgentID, k.Provider, k.CustomURL, k.PlaintextKey); err != nil {
+		if err := SaveAgentAPIKey(WriteDB(), k.AgentID, k.Provider, k.CustomURL, k.PlaintextKey); err != nil {
 			// CRITICAL: password was updated but re-encryption failed.
 			// Attempt rollback: restore the old auto-password
 			slog.Error("API key rotation failed, attempting rollback", "agent_id", k.AgentID, "provider", k.Provider, "error", err)

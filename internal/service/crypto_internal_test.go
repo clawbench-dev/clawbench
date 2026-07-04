@@ -96,13 +96,10 @@ func TestLoadAllAPIKeys_Empty(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
-	origDB := DB
-	origDBRead := DBRead
-	DB = db
-	DBRead = db
-	defer func() { DB = origDB; DBRead = origDBRead }()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
 
-	keys, err := loadAllAPIKeys(db)
+	keys, err := loadAllAPIKeys()
 	require.NoError(t, err)
 	assert.Empty(t, keys)
 }
@@ -112,11 +109,8 @@ func TestLoadAllAPIKeys_WithKeys(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
-	origDB := DB
-	origDBRead := DBRead
-	DB = db
-	DBRead = db
-	defer func() { DB = origDB; DBRead = origDBRead }()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
 
 	err = SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
 	require.NoError(t, err)
@@ -124,7 +118,7 @@ func TestLoadAllAPIKeys_WithKeys(t *testing.T) {
 	err = SaveAgentAPIKey(db, "pi", "openai", "https://api.openai.com", "sk-test-key")
 	require.NoError(t, err)
 
-	keys, err := loadAllAPIKeys(db)
+	keys, err := loadAllAPIKeys()
 	require.NoError(t, err)
 	require.Len(t, keys, 1)
 	assert.Equal(t, "pi", keys[0].AgentID)
@@ -138,11 +132,8 @@ func TestLoadAllAPIKeys_MultipleKeys(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
-	origDB := DB
-	origDBRead := DBRead
-	DB = db
-	DBRead = db
-	defer func() { DB = origDB; DBRead = origDBRead }()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
 
 	err = SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
 	require.NoError(t, err)
@@ -152,7 +143,7 @@ func TestLoadAllAPIKeys_MultipleKeys(t *testing.T) {
 	err = SaveAgentAPIKey(db, "pi", "anthropic", "https://custom.api", "sk-ant-key")
 	require.NoError(t, err)
 
-	keys, err := loadAllAPIKeys(db)
+	keys, err := loadAllAPIKeys()
 	require.NoError(t, err)
 	assert.Len(t, keys, 2)
 }
@@ -162,11 +153,8 @@ func TestLoadAllAPIKeys_CorruptKey(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
-	origDB := DB
-	origDBRead := DBRead
-	DB = db
-	DBRead = db
-	defer func() { DB = origDB; DBRead = origDBRead }()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
 
 	err = SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
 	require.NoError(t, err)
@@ -176,7 +164,7 @@ func TestLoadAllAPIKeys_CorruptKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// loadAllAPIKeys should return an error when decryption fails
-	_, err = loadAllAPIKeys(db)
+	_, err = loadAllAPIKeys()
 	assert.Error(t, err)
 }
 
@@ -184,16 +172,13 @@ func TestRotateAPIKeyEncryption_LoadKeysError(t *testing.T) {
 	db, err := InitInMemoryDB()
 	require.NoError(t, err)
 
-	origDB := DB
-	origDBRead := DBRead
-	DB = db
-	DBRead = db
-	defer func() { DB = origDB; DBRead = origDBRead }()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
 
 	// Close the DB to make loadAllAPIKeys fail
 	db.Close()
 
-	err = RotateAPIKeyEncryption(db, "old-password")
+	err = RotateAPIKeyEncryption("old-password")
 	assert.Error(t, err, "should fail when loadAllAPIKeys errors")
 	assert.Contains(t, err.Error(), "load API keys for rotation")
 }
@@ -211,11 +196,8 @@ func TestRotateAPIKeyEncryption_SaveKeyError(t *testing.T) {
 	db, err := InitInMemoryDB()
 	require.NoError(t, err)
 
-	origDB := DB
-	origDBRead := DBRead
-	DB = db
-	DBRead = db
-	defer func() { DB = origDB; DBRead = origDBRead }()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
 
 	err = SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
 	require.NoError(t, err)
@@ -237,7 +219,7 @@ func TestRotateAPIKeyEncryption_SaveKeyError(t *testing.T) {
 	_, err = db.Exec("PRAGMA query_only = ON")
 	require.NoError(t, err)
 
-	err = RotateAPIKeyEncryption(db, "old-password")
+	err = RotateAPIKeyEncryption("old-password")
 	assert.Error(t, err, "should fail when SaveAgentAPIKey errors during rotation")
 	assert.Contains(t, err.Error(), "re-encrypt API key")
 
@@ -315,11 +297,8 @@ func TestRotateAPIKeyEncryption_WithPasswordChange(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
-	origDB := DB
-	origDBRead := DBRead
-	DB = db
-	DBRead = db
-	defer func() { DB = origDB; DBRead = origDBRead }()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
 
 	err = SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
 	require.NoError(t, err)
@@ -337,12 +316,12 @@ func TestRotateAPIKeyEncryption_WithPasswordChange(t *testing.T) {
 
 	// IMPORTANT: Do NOT reset cache before calling RotateAPIKeyEncryption.
 	// The function itself handles the cache reset after decrypting all keys.
-	err = RotateAPIKeyEncryption(db, "old-password")
+	err = RotateAPIKeyEncryption("old-password")
 	require.NoError(t, err)
 
 	// Verify the key can still be decrypted with the new key
 	ResetEncryptionKeyCache() // Now derive from new password
-	customURL, apiKey, err := LoadAgentAPIKey(db, "pi", "openai")
+	customURL, apiKey, err := LoadAgentAPIKey("pi", "openai")
 	require.NoError(t, err)
 	assert.Equal(t, "", customURL)
 	assert.Equal(t, "sk-test-key", apiKey)
@@ -366,11 +345,8 @@ func TestDecryptAPIKey_PreviousKeyFallback(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
 
-	origDB := DB
-	origDBRead := DBRead
-	DB = db
-	DBRead = db
-	defer func() { DB = origDB; DBRead = origDBRead }()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
 
 	err = SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi", Source: "setup"})
 	require.NoError(t, err)
@@ -386,7 +362,7 @@ func TestDecryptAPIKey_PreviousKeyFallback(t *testing.T) {
 	require.NoError(t, err)
 
 	// Call RotateAPIKeyEncryption which sets previousEncryptionKey
-	err = RotateAPIKeyEncryption(db, "old-password")
+	err = RotateAPIKeyEncryption("old-password")
 	require.NoError(t, err)
 
 	// Step 3: Now simulate a crash mid-rotation by saving a new key with the NEW password,
@@ -418,13 +394,13 @@ func TestDecryptAPIKey_PreviousKeyFallback(t *testing.T) {
 	ResetEncryptionKeyCache()
 
 	// The openai key should still be decryptable via the previous key fallback
-	customURL, apiKey, err := LoadAgentAPIKey(db, "pi", "openai")
+	customURL, apiKey, err := LoadAgentAPIKey("pi", "openai")
 	require.NoError(t, err, "should decrypt with previous key fallback (ISS-225)")
 	assert.Equal(t, "", customURL)
 	assert.Equal(t, "sk-fallback-test", apiKey)
 
 	// The anthropic key (encrypted with new key) should decrypt normally
-	customURL, apiKey, err = LoadAgentAPIKey(db, "pi", "anthropic")
+	customURL, apiKey, err = LoadAgentAPIKey("pi", "anthropic")
 	require.NoError(t, err)
 	assert.Equal(t, "", customURL)
 	assert.Equal(t, "sk-new-key", apiKey)

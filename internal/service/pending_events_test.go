@@ -64,11 +64,8 @@ func TestPendingEventsTableCreated(t *testing.T) {
 func TestStorePendingEvent(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	origDB := DB
-	origDBRead := DBRead
-	DB = db
-	DBRead = db
-	defer func() { DB = origDB; DBRead = origDBRead }()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
 	err := StorePendingEvent("evt_1", "session_update", `{"status":"completed"}`, expiresAt)
@@ -85,11 +82,8 @@ func TestStorePendingEvent(t *testing.T) {
 func TestGetPendingEvents(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	origDB := DB
-	origDBRead := DBRead
-	DB = db
-	DBRead = db
-	defer func() { DB = origDB; DBRead = origDBRead }()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
 	StorePendingEvent("evt_10", "session_update", `{"status":"completed"}`, expiresAt)
@@ -107,11 +101,8 @@ func TestGetPendingEvents(t *testing.T) {
 func TestGetPendingEventsAfterCursor(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	origDB := DB
-	origDBRead := DBRead
-	DB = db
-	DBRead = db
-	defer func() { DB = origDB; DBRead = origDBRead }()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
 	StorePendingEvent("evt_10", "session_update", `{}`, expiresAt)
@@ -129,11 +120,8 @@ func TestGetPendingEventsAfterCursor(t *testing.T) {
 func TestCleanupPendingEvents(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	origDB := DB
-	origDBRead := DBRead
-	DB = db
-	DBRead = db
-	defer func() { DB = origDB; DBRead = origDBRead }()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
 
 	// Insert event with past expires_at (expired)
 	db.Exec(`INSERT INTO pending_events (event_id, event_type, payload, expires_at, created_at) VALUES ('evt_1','session_update','{}',datetime('now','-1 hour'),datetime('now','-25 hours'))`)
@@ -195,11 +183,8 @@ func TestPendingEventExpiresAt(t *testing.T) {
 func TestGetPendingEventsExpiredCursor(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	origDB := DB
-	origDBRead := DBRead
-	DB = db
-	DBRead = db
-	defer func() { DB = origDB; DBRead = origDBRead }()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
 	StorePendingEvent("evt_20", "session_update", `{}`, expiresAt)

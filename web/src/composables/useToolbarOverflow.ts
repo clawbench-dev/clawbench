@@ -1,4 +1,5 @@
-import { ref, computed } from 'vue'
+import { ref, computed, unref } from 'vue'
+import type { ComputedRef, Ref } from 'vue'
 
 /** Default constants matching toolbar CSS */
 const DEFAULT_BTN_WIDTH = 26
@@ -23,15 +24,14 @@ export function useToolbarOverflow(
     btnWidth?: number
     /** Gap between buttons in px (default 6) */
     gap?: number
-    /** Always-inline button count (not in demotable list) */
-    inlineCount?: number
+    /** Always-inline button count (not in demotable list); supports reactive ref/computed */
+    inlineCount?: number | Ref<number> | ComputedRef<number>
     /** Whether a SearchInput occupies remaining space (default false) */
     hasSearch?: boolean
   },
 ) {
   const btnWidth = opts?.btnWidth ?? DEFAULT_BTN_WIDTH
   const gap = opts?.gap ?? DEFAULT_GAP
-  const inlineCount = opts?.inlineCount ?? 0
   const hasSearch = opts?.hasSearch ?? false
   const step = btnWidth + gap
 
@@ -45,6 +45,7 @@ export function useToolbarOverflow(
     const ids = getDemotableIds()
     if (ids.length === 0) return []
 
+    const inlineCount = unref(opts?.inlineCount ?? 0)
     // Fixed space: always-inline buttons + gaps between all inline items + search
     const fixedBtns = inlineCount
     const searchSpace = hasSearch ? MAX_SEARCH_WIDTH : 0

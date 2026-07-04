@@ -21,11 +21,11 @@ func TestServeUserMessageIndex_Basic(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert some user messages
-	_, err = service.DB.Exec(`INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', 'Hello', ?, 'claude', 0)`, env.ProjectDir, sessionID)
+	_, err = service.UnsafeDBForTest().Exec(`INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', 'Hello', ?, 'claude', 0)`, env.ProjectDir, sessionID)
 	require.NoError(t, err)
-	_, err = service.DB.Exec(`INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', 'Hi', ?, 'claude', 0)`, env.ProjectDir, sessionID)
+	_, err = service.UnsafeDBForTest().Exec(`INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', 'Hi', ?, 'claude', 0)`, env.ProjectDir, sessionID)
 	require.NoError(t, err)
-	_, err = service.DB.Exec(`INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', 'How are you?', ?, 'claude', 0)`, env.ProjectDir, sessionID)
+	_, err = service.UnsafeDBForTest().Exec(`INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', 'How are you?', ?, 'claude', 0)`, env.ProjectDir, sessionID)
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/user-messages?session_id="+sessionID, nil)
@@ -74,7 +74,7 @@ func TestServeUserMessageIndex_DeletedSession(t *testing.T) {
 	require.NoError(t, err)
 
 	// Soft-delete the session
-	_, err = service.DB.Exec(`UPDATE chat_sessions SET deleted = 1 WHERE id = ?`, sessionID)
+	_, err = service.UnsafeDBForTest().Exec(`UPDATE chat_sessions SET deleted = 1 WHERE id = ?`, sessionID)
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/user-messages?session_id="+sessionID, nil)
@@ -123,7 +123,7 @@ func TestServeUserMessageIndex_WithFiles(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert a user message with files
-	_, err = service.DB.Exec(`INSERT INTO chat_history (project_path, role, content, files, session_id, backend, streaming) VALUES (?, 'user', 'Check this', '["/src/main.go"]', ?, 'claude', 0)`, env.ProjectDir, sessionID)
+	_, err = service.UnsafeDBForTest().Exec(`INSERT INTO chat_history (project_path, role, content, files, session_id, backend, streaming) VALUES (?, 'user', 'Check this', '["/src/main.go"]', ?, 'claude', 0)`, env.ProjectDir, sessionID)
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/user-messages?session_id="+sessionID, nil)
@@ -162,7 +162,7 @@ func TestServeChatCount_DeletedSession(t *testing.T) {
 	require.NoError(t, err)
 
 	// Soft-delete the session
-	_, err = service.DB.Exec(`UPDATE chat_sessions SET deleted = 1 WHERE id = ?`, sessionID)
+	_, err = service.UnsafeDBForTest().Exec(`UPDATE chat_sessions SET deleted = 1 WHERE id = ?`, sessionID)
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/count?session_id="+sessionID, nil)

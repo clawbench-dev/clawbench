@@ -347,7 +347,7 @@ func TestSessionExecutor_FlushStreamingMessage_NilBlocks(t *testing.T) {
 
 	// Verify the streaming message was updated (with empty blocks array)
 	var content string
-	err := DBRead.QueryRow(
+	err := dbRead.QueryRow(
 		"SELECT content FROM chat_history WHERE session_id = ? AND streaming = 1",
 		sid,
 	).Scan(&content)
@@ -985,7 +985,7 @@ func TestSessionExecutor_FlushStreamingMessage(t *testing.T) {
 
 	// Verify the streaming message was updated with blocks
 	var content string
-	err := DBRead.QueryRow(
+	err := dbRead.QueryRow(
 		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1",
 		sid,
 	).Scan(&content)
@@ -1023,7 +1023,7 @@ func TestSessionExecutor_FlushStreamingMessage_WithMetadata(t *testing.T) {
 
 	// Verify the streaming message was updated with metadata
 	var content string
-	err := DBRead.QueryRow(
+	err := dbRead.QueryRow(
 		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1",
 		sid,
 	).Scan(&content)
@@ -1062,7 +1062,7 @@ func TestSessionExecutor_HandleResumeSplit(t *testing.T) {
 
 	// Verify the old streaming message was finalized (streaming=0)
 	var streamingCount int
-	err := DBRead.QueryRow(
+	err := dbRead.QueryRow(
 		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0",
 		sid,
 	).Scan(&streamingCount)
@@ -1075,7 +1075,7 @@ func TestSessionExecutor_HandleResumeSplit(t *testing.T) {
 
 	// Verify a new streaming placeholder was created
 	var newStreamingCount int
-	err = DBRead.QueryRow(
+	err = dbRead.QueryRow(
 		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1",
 		sid,
 	).Scan(&newStreamingCount)
@@ -1140,7 +1140,7 @@ func TestSessionExecutor_Finalize_WithDB(t *testing.T) {
 
 	// Verify the message was finalized in DB
 	var streaming int
-	err := DBRead.QueryRow(
+	err := dbRead.QueryRow(
 		"SELECT streaming FROM chat_history WHERE id = ?",
 		runResult.MsgID,
 	).Scan(&streaming)
@@ -1800,7 +1800,7 @@ func TestSessionExecutor_BuildResult_AskUserQuestionContentJSONIncludesInput(t *
 		t.Fatal("expected non-zero message ID after Finalize")
 	}
 	var content string
-	err := DBRead.QueryRow("SELECT content FROM chat_history WHERE id = ?", msgID).Scan(&content)
+	err := dbRead.QueryRow("SELECT content FROM chat_history WHERE id = ?", msgID).Scan(&content)
 	if err != nil {
 		t.Fatalf("failed to read content from DB: %v", err)
 	}
@@ -1919,7 +1919,7 @@ func TestSessionExecutor_Finalize_SavesRawOutput(t *testing.T) {
 		t.Fatal("expected MsgID > 0 after Finalize")
 	}
 	var rawCount int
-	err := DBRead.QueryRow(
+	err := dbRead.QueryRow(
 		"SELECT COUNT(*) FROM ai_raw_responses WHERE session_id = ?",
 		sid,
 	).Scan(&rawCount)
