@@ -29,7 +29,8 @@
 
       <!-- Toggle view button (source/rendered) -->
       <button v-if="toolbarInlineIds.includes('toggleView')" class="file-header-btn" @click.stop="handleToggleView" :title="viewMode === 'rendered' ? t('file.header.sourceView') : t('file.header.renderedView')">
-        <Code2 :size="14" />
+        <Code2 v-if="viewMode === 'rendered'" :size="14" />
+        <Eye v-else :size="14" />
       </button>
 
       <!-- Word wrap toggle button -->
@@ -72,7 +73,8 @@
               {{ t('nav.refresh') }}
             </button>
             <button v-if="toolbarCollapsedIds.includes('toggleView')" class="dropdown-item" @click="handleToggleView">
-              <Code2 :size="14" />
+              <Code2 v-if="viewMode === 'rendered'" :size="14" />
+              <Eye v-else :size="14" />
               {{ viewMode === 'rendered' ? t('file.header.sourceView') : t('file.header.renderedView') }}
             </button>
             <button v-if="toolbarCollapsedIds.includes('wordWrap')" class="dropdown-item" @click="handleToggleWordWrap">
@@ -141,7 +143,7 @@
 <script setup>
 import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, ChevronLeft, X, Paperclip, Share, FileOutput } from 'lucide-vue-next'
+import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, ChevronLeft, X, Paperclip, Share, FileOutput, Eye } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
@@ -462,15 +464,13 @@ onBeforeUnmount(() => {
 }
 .overlay-nav-btn {
     border: none;
-    border-radius: 50%;
-    background: var(--bg-tertiary);
+    border-radius: 4px;
 }
 .overlay-nav-btn:hover {
-    background: var(--accent-color-dim, rgba(74, 144, 217, 0.18));
+    background: var(--accent-color-dim, rgba(74, 144, 217, 0.12));
     color: var(--accent-color);
 }
 .overlay-close-btn {
-    background: var(--bg-tertiary);
 }
 
 .wrap-check {
