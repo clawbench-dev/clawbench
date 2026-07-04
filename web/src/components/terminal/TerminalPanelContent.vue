@@ -1005,19 +1005,24 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
   align-items: center;
   justify-content: center;
   width: 28px;
+  height: 28px;
   border: none;
   border-radius: 0;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
   flex-shrink: 0;
-  margin: 0;
+  margin: 0 6px 0 0;
   transition: background 0.1s ease, color 0.1s ease;
 }
 
 .terminal-tab-add:hover:not(.disabled) {
   background: var(--bg-tertiary);
   color: var(--text-primary);
+}
+
+.terminal-tab-add:active:not(.disabled) {
+  transform: scale(0.9);
 }
 
 .terminal-tab-add.disabled {
@@ -1199,7 +1204,8 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
 
 .symbol-bar {
   padding: 3px 6px 0;
-  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  background: color-mix(in srgb, var(--bg-primary) 60%, var(--bg-secondary));
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
   border-radius: 0;
 }
 
