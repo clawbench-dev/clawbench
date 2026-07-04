@@ -1,8 +1,11 @@
 <template>
   <div class="file-header-bar">
+    <!-- Region 1: File name -->
     <div class="file-name-wrap">
       <span class="file-path-hint" style="cursor:pointer" @click="$emit('showDetails')" :title="file.name">{{ file.name }}</span>
     </div>
+
+    <!-- Region 2: Toolbar (ResizeObserver target) -->
     <div ref="headerActionsRef" class="header-actions">
       <!-- TOC button (only for file types that support TOC) -->
       <button v-if="hasToc && toolbarInlineIds.includes('toc')" class="file-header-btn" :class="{ active: tocOpen }" @click.stop="handleToggleToc" :title="t('file.header.toc')">
@@ -120,17 +123,17 @@
           </div>
         </Teleport>
       </div>
+    </div>
 
-      <!-- Overlay nav: inside header-actions, always rendered when overlay is open -->
-      <template v-if="overlayOpen">
-        <div class="overlay-nav-separator"></div>
-        <button v-if="overlayCanGoBack" class="file-header-btn overlay-nav-btn" @click.stop="$emit('overlayGoBack')" :title="t('file.overlay.back')">
-          <ChevronLeft :size="14" />
-        </button>
-        <button class="file-header-btn overlay-nav-btn overlay-close-btn" @click.stop="$emit('overlayClose')" :title="t('common.close')">
-          <X :size="14" />
-        </button>
-      </template>
+    <!-- Region 3: Overlay nav (back + close, always present, fixed size) -->
+    <div class="overlay-nav">
+      <div class="overlay-nav-separator"></div>
+      <button class="file-header-btn overlay-nav-btn" :disabled="!overlayCanGoBack" @click.stop="$emit('overlayGoBack')" :title="t('file.overlay.back')">
+        <ChevronLeft :size="14" />
+      </button>
+      <button class="file-header-btn overlay-nav-btn overlay-close-btn" @click.stop="$emit('overlayClose')" :title="t('common.close')">
+        <X :size="14" />
+      </button>
     </div>
   </div>
 </template>
@@ -174,13 +177,7 @@ const menuStyle = ref({})
 const attachBtnRef = ref(null)
 const headerActionsRef = ref(null)
 
-// Responsive toolbar overflow — reserve space for more dropdown (1) + overlay nav buttons when visible
-// overlayOpen: 1 (close) or 2 (back + close) extra always-inline buttons; +1 for the separator
-const overlayInlineExtra = computed(() => {
-  if (!props.overlayOpen) return 0
-  // separator + close button = 2, optionally + back button = 3
-  return props.overlayCanGoBack ? 3 : 2
-})
+// Responsive toolbar overflow — only the "More" dropdown is always-inline (1)
 const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
   () => headerActionsRef.value,
   () => {
@@ -195,7 +192,7 @@ const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObs
     if (!isMarkdownRendered.value) ids.push('stickyScroll')
     return ids
   },
-  { inlineCount: computed(() => 1 + overlayInlineExtra.value), gap: 8 },
+  { inlineCount: 1, gap: 8 },
 )
 
 function toggleMenu() {
@@ -371,11 +368,14 @@ onBeforeUnmount(() => {
     min-width: 0;
 }
 
+/* Region 1: File name — shrinks when toolbar needs space, but has a minimum width */
 .file-name-wrap {
     display: flex;
     align-items: center;
     gap: 4px;
-    min-width: 160px;
+    flex: 0 1 auto;
+    min-width: 80px;
+    overflow: hidden;
 }
 
 .file-path-hint {
@@ -384,14 +384,11 @@ onBeforeUnmount(() => {
     color: var(--text-muted);
     font-family: monospace;
     font-size: 12px;
-    overflow-x: auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
     cursor: pointer;
     transition: color 0.15s;
-    scrollbar-width: none;
-}
-.file-path-hint::-webkit-scrollbar {
-    display: none;
 }
 .file-path-hint:hover {
     color: var(--accent-color);
@@ -400,12 +397,15 @@ onBeforeUnmount(() => {
     color: #22c55e;
 }
 
+/* Region 2: Toolbar — takes remaining space, shrinks to trigger overflow */
 .header-actions {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-left: auto;
-    flex-shrink: 0;
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    justify-content: flex-end;
 }
 
 .file-header-btn {
@@ -447,25 +447,30 @@ onBeforeUnmount(() => {
     position: relative;
 }
 
-/* Overlay nav separator and buttons (inside header-actions, always-inline) */
+/* Region 3: Overlay nav — fixed size, never shrinks, always visible */
+.overlay-nav {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
 .overlay-nav-separator {
     width: 1px;
     height: 16px;
     background: var(--border-color);
-    flex-shrink: 0;
     margin: 0 2px;
 }
 .overlay-nav-btn {
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border: none;
+    border-radius: 50%;
+    background: var(--bg-tertiary);
 }
 .overlay-nav-btn:hover {
-    background: var(--accent-color-dim, rgba(74, 144, 217, 0.12));
+    background: var(--accent-color-dim, rgba(74, 144, 217, 0.18));
     color: var(--accent-color);
-    border-color: var(--accent-color);
 }
 .overlay-close-btn {
-    background: var(--accent-color-dim, rgba(74, 144, 217, 0.08));
+    background: var(--bg-tertiary);
 }
 
 .wrap-check {
