@@ -17,7 +17,6 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.util.Size;
-import android.view.Display;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
@@ -378,6 +377,8 @@ public class QrScanActivity extends AppCompatActivity {
         }
     }
 
+    private int decodeAttemptCount = 0;
+
     private final ImageReader.OnImageAvailableListener onImageAvailableListener = reader -> {
         if (scanned) return;
         Image image = null;
@@ -397,11 +398,9 @@ public class QrScanActivity extends AppCompatActivity {
             // Extract Y plane considering stride and pixelStride
             byte[] yData;
             if (yPixelStride == 1 && yRowStride == width) {
-                // Compact: direct array read
                 yData = new byte[width * height];
                 yBuffer.get(yData);
             } else {
-                // Need row-by-row copy
                 yData = new byte[width * height];
                 for (int row = 0; row < height; row++) {
                     yBuffer.position(row * yRowStride);
@@ -409,54 +408,51 @@ public class QrScanActivity extends AppCompatActivity {
                 }
             }
 
-            // Rotate luminance data to match display orientation
-            // Camera sensor is typically landscape; for portrait we rotate 90°
-            byte[] rotatedData;
-            int rotatedWidth, rotatedHeight;
-            int rotation = getDisplayRotation();
-            if (rotation == 90 || rotation == 270) {
-                // Swap width/height for 90/270 rotation
-                rotatedWidth = height;
-                rotatedHeight = width;
-                rotatedData = new byte[rotatedWidth * rotatedHeight];
-                boolean reverse = (rotation == 270);
-                for (int y = 0; y < height; y++) {
-                    for (int x = 0; x < width; x++) {
-                        int dstX = reverse ? (height - 1 - y) : y;
-                        int dstY = reverse ? x : (width - 1 - x);
-                        rotatedData[dstY * rotatedWidth + dstX] = yData[y * width + x];
+            // Try all rotation variants (0°, 90°, 180°, 270°) — one will match
+            // the actual display orientation. This is more robust than computing
+            // the exact rotation from sensor/display metadata.
+            byte[][] candidates = {
+                yData,
+                rotate90(yData, width, height),
+                rotate180(yData, width, height),
+                rotate270(yData, width, height),
+            };
+            int[][] dimensions = {
+                {width, height},
+                {height, width},  // 90
+                {width, height},  // 180
+                {height, width},  // 270
+            };
+
+            for (int i = 0; i < candidates.length; i++) {
+                int w = dimensions[i][0];
+                int h = dimensions[i][1];
+                PlanarYUVLuminanceSource source = new PlanarYUVLuminanceSource(
+                        candidates[i], w, h, 0, 0, w, h, false);
+                BinaryBitmap bitmap = new BinaryBitmap(new HybridBinarizer(source));
+                try {
+                    zxingReader.reset();
+                    Result result = zxingReader.decode(bitmap);
+                    String text = result.getText();
+                    if (text != null && text.startsWith("clawbench://connect")) {
+                        AppLog.i(TAG, "QR decoded successfully at rotation " + (i * 90) + "°: " + text.substring(0, Math.min(text.length(), 40)) + "...");
+                        scanned = true;
+                        Intent intent = new Intent();
+                        intent.putExtra("qr_data", text);
+                        setResult(RESULT_OK, intent);
+                        runOnUiThread(this::finish);
+                        return;
                     }
+                } catch (com.google.zxing.NotFoundException ignored) {
+                    // No QR at this rotation — try next
                 }
-            } else if (rotation == 180) {
-                rotatedWidth = width;
-                rotatedHeight = height;
-                rotatedData = new byte[width * height];
-                for (int y = 0; y < height; y++) {
-                    for (int x = 0; x < width; x++) {
-                        rotatedData[(height - 1 - y) * width + (width - 1 - x)] = yData[y * width + x];
-                    }
-                }
-            } else {
-                rotatedWidth = width;
-                rotatedHeight = height;
-                rotatedData = yData;
             }
 
-            PlanarYUVLuminanceSource source = new PlanarYUVLuminanceSource(
-                    rotatedData, rotatedWidth, rotatedHeight, 0, 0, rotatedWidth, rotatedHeight, false);
-            BinaryBitmap bitmap = new BinaryBitmap(new HybridBinarizer(source));
-
-            Result result = zxingReader.decode(bitmap);
-            String text = result.getText();
-            if (text != null && text.startsWith("clawbench://connect")) {
-                scanned = true;
-                Intent intent = new Intent();
-                intent.putExtra("qr_data", text);
-                setResult(RESULT_OK, intent);
-                runOnUiThread(this::finish);
+            decodeAttemptCount++;
+            if (decodeAttemptCount % 30 == 1) {
+                AppLog.d(TAG, "Decode attempts: " + decodeAttemptCount
+                        + " (sensorRotation=" + sensorRotation + ")");
             }
-        } catch (com.google.zxing.NotFoundException e) {
-            // No QR in frame — normal, skip
         } catch (Exception e) {
             AppLog.e(TAG, "Decode error", e);
         } finally {
@@ -464,20 +460,34 @@ public class QrScanActivity extends AppCompatActivity {
         }
     };
 
-    /** Get the rotation needed to display camera frames in the correct orientation. */
-    private int getDisplayRotation() {
-        Display display = getWindowManager().getDefaultDisplay();
-        int displayRotation = display.getRotation();
-        int degrees;
-        switch (displayRotation) {
-            case Surface.ROTATION_0: degrees = 0; break;
-            case Surface.ROTATION_90: degrees = 90; break;
-            case Surface.ROTATION_180: degrees = 180; break;
-            case Surface.ROTATION_270: degrees = 270; break;
-            default: degrees = 0; break;
+    private static byte[] rotate90(byte[] data, int width, int height) {
+        byte[] rotated = new byte[width * height];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                rotated[x * height + (height - 1 - y)] = data[y * width + x];
+            }
         }
-        // Sensor sees landscape; we want portrait
-        return (sensorRotation + degrees) % 360;
+        return rotated;
+    }
+
+    private static byte[] rotate180(byte[] data, int width, int height) {
+        byte[] rotated = new byte[width * height];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                rotated[(height - 1 - y) * width + (width - 1 - x)] = data[y * width + x];
+            }
+        }
+        return rotated;
+    }
+
+    private static byte[] rotate270(byte[] data, int width, int height) {
+        byte[] rotated = new byte[width * height];
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                rotated[(width - 1 - x) * height + y] = data[y * width + x];
+            }
+        }
+        return rotated;
     }
 
     private static Size chooseOptimalSize(Size[] choices, int textureWidth, int textureHeight) {
