@@ -92,7 +92,6 @@
               {{ t('file.header.stickyScroll') }}
               <span v-if="stickyScroll" class="wrap-check">✓</span>
             </button>
-            <div v-if="toolbarCollapsedIds.length > 0" class="dropdown-divider" />
             <!-- Always-in-dropdown items -->
             <button v-if="file.isBinary" class="dropdown-item" @click="handleOpenAsText">
               <Code2 :size="14" />

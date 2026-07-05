@@ -56,6 +56,12 @@
             <LayoutGrid v-if="viewMode === 'list'" :size="16" />
             <LayoutList v-else :size="16" />
           </button>
+          <template v-if="!showMoreDropdown">
+            <button class="toolbar-btn" @click="doNewFolder()" :title="t('file.context.newFolder')">
+              <FolderPlus :size="16" />
+            </button>
+          </template>
+          <template v-else>
           <div class="toolbar-dropdown-wrap">
             <button class="toolbar-btn" @click="moreMenuOpen = !moreMenuOpen" :title="t('nav.more')">
               <MoreHorizontal :size="16" />
@@ -80,7 +86,6 @@
                   <span>{{ multiSelect.active ? t('file.multiSelect.exit') : t('file.multiSelect.enter') }}</span>
                 </button>
               </template>
-              <div v-if="toolbarCollapsedIds.length > 0" class="toolbar-dropdown-divider" />
               <template v-if="toolbarCollapsedIds.includes('newFile')">
                 <button class="toolbar-dropdown-item" @click="doNewFile(); moreMenuOpen = false">
                   <FilePlus :size="14" />
@@ -91,7 +96,6 @@
                 <FolderPlus :size="14" />
                 <span>{{ t('file.context.newFolder') }}</span>
               </button>
-              <div class="toolbar-dropdown-divider" />
               <template v-if="toolbarCollapsedIds.includes('upload')">
                 <button class="toolbar-dropdown-item" :disabled="dirUploading" @click="triggerUpload(); moreMenuOpen = false">
                   <Upload :size="14" />
@@ -107,6 +111,7 @@
               </template>
             </div>
           </div>
+          </template>
         </div>
         <SearchInput v-model="searchQuery" :placeholder="t('search.defaultPlaceholder')" @dblclick="searchQuery = ''" />
       </div>
@@ -432,6 +437,10 @@ const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObs
   () => ['hidden', 'refresh', 'multiselect', 'newFile', 'upload', 'viewToggle'],
   { inlineCount: 2, gap: 6 },
 )
+
+// newFolder is always-in-dropdown; collapsed items are conditional
+const moreDropdownItemCount = computed(() => toolbarCollapsedIds.value.length + 1)
+const showMoreDropdown = computed(() => moreDropdownItemCount.value > 1)
 
 // ── View mode (list / grid) from settings config ──
 const viewMode = ref(localConfig.fileView || 'list')
@@ -1167,7 +1176,7 @@ function currentFileForClipboard() {
 
 .dir-toolbar :deep(.search-pill) {
     margin-left: auto;
-    min-width: 80px;
+    min-width: 120px;
     max-width: 200px;
     transition: opacity 0.15s;
 }
