@@ -92,11 +92,7 @@ jobs:
       - name: Copy frontend for Go embed
         run: |
           rm -rf internal/frontend/dist
-          mkdir -p internal/frontend/dist
-          cp public/index.html internal/frontend/dist/
-          cp public/*.js public/*.css internal/frontend/dist/ 2>/dev/null || true
-          cp public/manifest-*.json public/sw.js internal/frontend/dist/ 2>/dev/null || true
-          cp -r public/assets internal/frontend/dist/assets 2>/dev/null || true
+          cp -r public internal/frontend/dist
           mkdir -p internal/frontend/dist/assets
           cp android-apk/clawbench-android.apk internal/frontend/dist/assets/
 
@@ -159,11 +155,7 @@ jobs:
       - name: Copy frontend for Go embed
         run: |
           rm -rf internal/frontend/dist
-          mkdir -p internal/frontend/dist
-          cp public/index.html internal/frontend/dist/
-          cp public/*.js public/*.css internal/frontend/dist/ 2>/dev/null || true
-          cp public/manifest-*.json public/sw.js internal/frontend/dist/ 2>/dev/null || true
-          cp -r public/assets internal/frontend/dist/assets 2>/dev/null || true
+          cp -r public internal/frontend/dist
           mkdir -p internal/frontend/dist/assets
           cp android-apk/clawbench-android.apk internal/frontend/dist/assets/
 
@@ -227,13 +219,7 @@ jobs:
         shell: pwsh
         run: |
           if (Test-Path internal/frontend/dist) { Remove-Item -Recurse -Force internal/frontend/dist }
-          New-Item -ItemType Directory -Force -Path internal/frontend/dist | Out-Null
-          Copy-Item public/index.html internal/frontend/dist/
-          Copy-Item public/*.js internal/frontend/dist/ -ErrorAction SilentlyContinue
-          Copy-Item public/*.css internal/frontend/dist/ -ErrorAction SilentlyContinue
-          Copy-Item public/manifest-*.json internal/frontend/dist/ -ErrorAction SilentlyContinue
-          Copy-Item public/sw.js internal/frontend/dist/ -ErrorAction SilentlyContinue
-          if (Test-Path public/assets) { Copy-Item -Recurse public/assets internal/frontend/dist/assets }
+          Copy-Item -Recurse public internal/frontend/dist
           New-Item -ItemType Directory -Force -Path internal/frontend/dist/assets | Out-Null
           Copy-Item android-apk/clawbench-android.apk internal/frontend/dist/assets/
 
@@ -289,11 +275,7 @@ jobs:
       - name: Copy frontend for Go embed
         run: |
           rm -rf internal/frontend/dist
-          mkdir -p internal/frontend/dist
-          cp public/index.html internal/frontend/dist/
-          cp public/*.js public/*.css internal/frontend/dist/ 2>/dev/null || true
-          cp public/manifest-*.json public/sw.js internal/frontend/dist/ 2>/dev/null || true
-          cp -r public/assets internal/frontend/dist/assets 2>/dev/null || true
+          cp -r public internal/frontend/dist
           mkdir -p internal/frontend/dist/assets
           cp android-apk/clawbench-android.apk internal/frontend/dist/assets/
 
@@ -349,11 +331,7 @@ jobs:
       - name: Copy frontend for Go embed
         run: |
           rm -rf internal/frontend/dist
-          mkdir -p internal/frontend/dist
-          cp public/index.html internal/frontend/dist/
-          cp public/*.js public/*.css internal/frontend/dist/ 2>/dev/null || true
-          cp public/manifest-*.json public/sw.js internal/frontend/dist/ 2>/dev/null || true
-          cp -r public/assets internal/frontend/dist/assets 2>/dev/null || true
+          cp -r public internal/frontend/dist
           mkdir -p internal/frontend/dist/assets
           cp android-apk/clawbench-android.apk internal/frontend/dist/assets/
 
