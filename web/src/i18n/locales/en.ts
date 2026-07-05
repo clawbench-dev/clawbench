@@ -19,6 +19,7 @@ export default {
     noData: 'No data',
     ok: 'OK',
     listSeparator: ', ',
+    or: 'or',
   },
   codeBlock: {
     wrapOn: 'Word wrap on',
@@ -69,6 +70,12 @@ export default {
     deleteServer: 'Remove this server',
     switchServer: 'Switch server',
     logout: 'Logout',
+    scanToLogin: 'Scan to Login',
+    scanToLoginDesc: 'Scan with ClawBench App for quick login',
+    qrExpired: 'QR code expired',
+    qrRefresh: 'Refresh QR code',
+    qrUnavailable: 'QR login unavailable',
+    qrLoading: 'Loading QR code...',
   },
   welcome: {
     selectFile: 'Select a file to start',

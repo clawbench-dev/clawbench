@@ -19,6 +19,7 @@ export default {
     noData: '暂无数据',
     ok: '确定',
     listSeparator: '，',
+    or: '或',
   },
   codeBlock: {
     wrapOn: '自动换行已开启',
@@ -69,6 +70,12 @@ export default {
     deleteServer: '删除此服务端',
     switchServer: '切换服务端',
     logout: '登出',
+    scanToLogin: '扫码登录',
+    scanToLoginDesc: '用 ClawBench App 扫码快速登录',
+    qrExpired: '二维码已过期',
+    qrRefresh: '刷新二维码',
+    qrUnavailable: '扫码登录不可用',
+    qrLoading: '加载二维码...',
   },
   welcome: {
     selectFile: '选择文件开始对话',

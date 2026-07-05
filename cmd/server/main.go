@@ -870,13 +870,13 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Initialize QR token manager for phone scanning (after scheme is known)
 	var qrContent string
 	if cfg.FRP.Enabled && frpStatus.RemotePort > 0 {
-		qrTokenMgr := handler.NewQRTokenManager(5 * time.Minute)
+		lanURL := fmt.Sprintf("%s://%s:%d", scheme, platform.GetOutboundIP(), port)
+		frpURL := frpStatus.RemoteURL
+		qrTokenMgr := handler.NewQRTokenManager(5*time.Minute, lanURL, frpURL)
 		token := qrTokenMgr.Generate()
 		handler.SetQRTokenManager(qrTokenMgr)
 
 		// Build deep link: clawbench://connect?lan=...&frp=...&token=...
-		lanURL := fmt.Sprintf("%s://%s:%d", scheme, platform.GetOutboundIP(), port)
-		frpURL := frpStatus.RemoteURL
 		qrContent = fmt.Sprintf("clawbench://connect?lan=%s&frp=%s&token=%s",
 			url.QueryEscape(lanURL), url.QueryEscape(frpURL), token)
 	}

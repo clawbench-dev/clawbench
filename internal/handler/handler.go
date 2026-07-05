@@ -317,6 +317,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/frp/status", ServeFRPStatus)                // Minimal status, no auth (only enabled+running)
 
 	// QR code token authentication
+	register("/api/auth/qr-code", ServeQRCode)                                             // QR code deep link for frontend rendering
 	register("/api/auth/qr-token", ServeQRTokenAuth)                          // Exchange QR token for session cookie
 	register("/api/auth/qr-token/regenerate", middleware.Auth(ServeQRTokenRegenerate)) // Regenerate QR token (auth required)
 

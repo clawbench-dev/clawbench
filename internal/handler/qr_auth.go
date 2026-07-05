@@ -3,7 +3,9 @@ package handler
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -19,11 +21,13 @@ type QRTokenManager struct {
 	expiry time.Time
 	used   bool
 	ttl    time.Duration
+	lanURL string // LAN address for deep link
+	frpURL string // FRP tunnel address for deep link
 }
 
-// NewQRTokenManager creates a QR token manager with the given TTL.
-func NewQRTokenManager(ttl time.Duration) *QRTokenManager {
-	return &QRTokenManager{ttl: ttl}
+// NewQRTokenManager creates a QR token manager with the given TTL and connection URLs.
+func NewQRTokenManager(ttl time.Duration, lanURL, frpURL string) *QRTokenManager {
+	return &QRTokenManager{ttl: ttl, lanURL: lanURL, frpURL: frpURL}
 }
 
 // Generate creates a new random QR login token.
@@ -61,6 +65,22 @@ func (q *QRTokenManager) IsExpired() bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	return q.used || time.Now().After(q.expiry)
+}
+
+// DeepLink builds the clawbench://connect deep link with the current token.
+func (q *QRTokenManager) DeepLink() string {
+	q.mu.Lock()
+	tok := q.token
+	q.mu.Unlock()
+	return fmt.Sprintf("clawbench://connect?lan=%s&frp=%s&token=%s",
+		url.QueryEscape(q.lanURL), url.QueryEscape(q.frpURL), tok)
+}
+
+// Expiry returns the token expiry time.
+func (q *QRTokenManager) Expiry() time.Time {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.expiry
 }
 
 // qrTokenMgr holds the global QR token manager, set from main.go.
@@ -148,5 +168,33 @@ func ServeQRTokenRegenerate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":    true,
 		"token": newToken,
+	})
+}
+
+// ServeQRCode returns the QR code deep link URL and expiry for frontend rendering.
+// No auth required — this is used on the login page before authentication.
+// GET /api/auth/qr-code
+func ServeQRCode(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	if qrTokenMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"ok":    false,
+			"error": "QR login not available",
+		})
+		return
+	}
+
+	// If token is expired or used, regenerate automatically
+	if qrTokenMgr.IsExpired() {
+		qrTokenMgr.Regenerate()
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":       true,
+		"url":      qrTokenMgr.DeepLink(),
+		"expiresAt": qrTokenMgr.Expiry().Unix(),
 	})
 }
