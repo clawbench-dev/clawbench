@@ -353,8 +353,6 @@ async function fetchQrCode() {
 function scheduleQrRefresh(expiresAt) {
   if (qrRefreshTimer) clearTimeout(qrRefreshTimer)
   const msUntilExpiry = (expiresAt * 1000) - Date.now()
-  // Refresh 10s before expiry, or immediately if already within 10s
-  const refreshIn = Math.max(msUntilExpiry - 10000, 3000)
   qrRefreshTimer = setTimeout(() => {
     qrState.value = 'expired'
   }, msUntilExpiry > 0 ? msUntilExpiry : 0)
