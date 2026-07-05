@@ -472,7 +472,16 @@ func serveAgentsInstall(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 				flusher.Flush()
 			}
 			if exitErr != nil {
-				_, _ = fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q,\"command\":%q}\n\n", exitErr.Error(), effectiveCmd)
+				// npm install -g can exit non-zero even when the CLI is successfully installed
+				// (e.g., postinstall warnings, peer dep conflicts, npm 10+ strict checks).
+				// Verify the CLI actually exists on PATH before reporting failure.
+				if model.CheckCLIExists(spec.DefaultCmd) || (spec.AltCmd != "" && model.CheckCLIExists(spec.AltCmd)) {
+					slog.Info("install command exited with error but CLI is available, treating as success",
+						"backend", spec.ID, "cmd", effectiveCmd, "exit_error", exitErr)
+					_, _ = fmt.Fprintf(w, "event: install_success\ndata: {\"backend_id\":%q}\n\n", spec.ID)
+				} else {
+					_, _ = fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q,\"command\":%q}\n\n", exitErr.Error(), effectiveCmd)
+				}
 			} else {
 				_, _ = fmt.Fprintf(w, "event: install_success\ndata: {\"backend_id\":%q}\n\n", spec.ID)
 			}

@@ -59,6 +59,9 @@ const status = ref<'running' | 'success' | 'error'>('running')
 const logContainer = ref<HTMLElement | null>(null)
 const effectiveInstallCmd = ref('')
 let abortController: AbortController | null = null
+let retryCount409 = 0
+const MAX_409_RETRIES = 10
+const RETRY_409_BASE_MS = 1500
 
 onMounted(() => {
   startInstall()
@@ -84,6 +87,14 @@ async function startInstall() {
 
     if (!response.ok) {
       const errText = await response.text().catch(() => '')
+      // Auto-retry on 409 InstallInProgress — another install is finishing
+      if (response.status === 409 && retryCount409 < MAX_409_RETRIES) {
+        retryCount409++
+        const delay = RETRY_409_BASE_MS * retryCount409
+        logLines.value.push(`Another install in progress, retrying in ${delay / 1000}s...`)
+        await new Promise(r => setTimeout(r, delay))
+        return startInstall()
+      }
       status.value = 'error'
       logLines.value.push(`HTTP ${response.status}: ${errText || response.statusText}`)
       return
@@ -159,6 +170,7 @@ function scrollToBottom() {
 }
 
 function retry() {
+  retryCount409 = 0
   startInstall()
 }
 

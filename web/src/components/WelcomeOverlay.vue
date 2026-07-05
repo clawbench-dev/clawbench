@@ -30,10 +30,16 @@
               {{ t('welcomeInfo.detected') }}
             </span>
             <button
-              v-if="!detectedBackends.has(b.id) && b.install_cmd && installingBackendId !== b.id"
+              v-if="!detectedBackends.has(b.id) && b.install_cmd && !installingBackendId"
               class="btn-install"
               @click="startInstall(b)"
             >{{ t('welcomeInfo.install') }}</button>
+            <span
+              v-if="!detectedBackends.has(b.id) && b.install_cmd && installingBackendId && installingBackendId !== b.id"
+              class="btn-install-waiting"
+            >
+              {{ t('welcomeInfo.install') }}
+            </span>
             <span
               v-if="!detectedBackends.has(b.id) && b.install_cmd && installingBackendId === b.id"
               class="btn-installing"
@@ -77,6 +83,7 @@
   <!-- Agent install dialog -->
   <AgentInstallDialog
     v-if="installDialog.visible"
+    :key="installDialog.backendId"
     :backend-id="installDialog.backendId"
     :backend-name="installDialog.backendName"
     :install-cmd="installDialog.installCmd"
@@ -391,6 +398,20 @@ onUnmounted(() => {
   color: #fff;
   cursor: pointer;
   transition: opacity 0.2s;
+}
+
+.btn-install-waiting {
+  position: absolute;
+  right: 6px;
+  top: 4px;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  opacity: 0.5;
 }
 
 .btn-install:hover {
