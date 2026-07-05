@@ -32,6 +32,17 @@
                 :placeholder="t(field.descriptionKey || field.labelKey)"
                 @input="touched = true"
               />
+              <select
+                v-else-if="field.type === 'select'"
+                class="group-dialog__input group-dialog__select"
+                :class="{ 'group-dialog__input--error': isRequired(field.key) && editValues[field.key] === '' && touched }"
+                v-model="editValues[field.key]"
+                @change="touched = true"
+              >
+                <option v-for="opt in field.options" :key="opt.value" :value="opt.value">
+                  {{ t(opt.labelKey) }}
+                </option>
+              </select>
               <input
                 v-else
                 type="text"
@@ -96,7 +107,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
-  saved: [needsRestart: boolean]
+  saved: [needsRestart: boolean, changedColdFields: string[]]
 }>()
 
 const { t } = useI18n()
@@ -191,13 +202,19 @@ async function handleSubmit() {
     const payload = buildNestedObject(entries)
     const result = await apiPatch<{ needs_restart?: boolean; changed_cold_fields?: string[] }>('/api/config', payload)
 
-    // Optimistically update local cache for all fields
-    const { setServerValue } = useSettingsConfig()
-    for (const [key, val] of entries) {
-      try { await setServerValue(key, val) } catch { /* cache already patched by apiPatch */ }
+    // Optimistically update local cache (no additional server calls — apiPatch already sent)
+    const { serverConfig } = useSettingsConfig()
+    for (const [dotPath, val] of entries) {
+      const parts = dotPath.split('.')
+      let obj: any = serverConfig.value
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (obj && parts[i] in obj) obj = obj[parts[i]]
+        else break
+      }
+      if (obj) obj[parts[parts.length - 1]] = val
     }
 
-    emit('saved', result.needs_restart ?? false)
+    emit('saved', result.needs_restart ?? false, result.changed_cold_fields ?? [])
   } catch (err: any) {
     serverError.value = err?.message || t('settings.saveFailed')
   } finally {
@@ -281,6 +298,11 @@ function handleClose() {
 
 .group-dialog__input:focus {
   border-color: var(--accent-color);
+}
+
+.group-dialog__select {
+  appearance: auto;
+  cursor: pointer;
 }
 
 .group-dialog__input--error {

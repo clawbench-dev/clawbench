@@ -326,7 +326,7 @@ function handlePasswordChanged(needsRestart: boolean) {
   }
 }
 
-function handleGroupDialogSaved(needsRestart: boolean) {
+function handleGroupDialogSaved(needsRestart: boolean, changedColdFields: string[]) {
   groupDialog.visible = false
   toast.show(t('settings.groupConfig.saved'), { icon: '✓', type: 'success', duration: 3000 })
   // Trigger side-effects based on the trigger item
@@ -337,8 +337,17 @@ function handleGroupDialogSaved(needsRestart: boolean) {
   if (key === 'port_forward.enabled' || key === 'frp.enabled') {
     loadSSHInfo()
   }
-  if (needsRestart) {
-    emit('restartNeeded', [key])
+  // When TTS engine changes, reset voice to first available for new engine
+  if (key === 'tts.engine') {
+    const voiceOpts = engineVoiceOptions[groupDialog.triggerValue] ?? []
+    if (voiceOpts.length > 0) {
+      try { setServerValue('tts.voice', voiceOpts[0].value) } catch { /* best-effort */ }
+    } else {
+      try { setServerValue('tts.voice', '') } catch { /* best-effort */ }
+    }
+  }
+  if (needsRestart && changedColdFields.length > 0) {
+    emit('restartNeeded', changedColdFields)
   }
 }
 
