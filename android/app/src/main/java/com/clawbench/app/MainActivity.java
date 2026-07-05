@@ -105,9 +105,6 @@ public class MainActivity extends AppCompatActivity {
     /** Whether the app is currently in the foreground (between onResume and onPause). */
     static volatile boolean isForeground = false;
 
-    /** Transient flag to prevent duplicate OEM prompt within the same launch. */
-    private boolean oemPromptShownThisLaunch = false;
-
     WebView webView;
     private ProgressBar progressBar;
     private SharedPreferences prefs;
@@ -1114,19 +1111,25 @@ public class MainActivity extends AppCompatActivity {
         }
 
         // Layer 2: Chinese OEM auto-start / background permission.
-        // Check on every launch — the actual OEM permission may be revoked
-        // by system updates or the user, so we can't rely on "prompted" flag alone.
+        // Show at most once per app version — OEMs don't provide an API to check
+        // if their proprietary permission is actually granted, so we need to remind,
+        // but not on every single launch (too intrusive).
         if (OemUtils.isChineseOem()) {
-            // Only show if we haven't already shown it in THIS launch
-            // (prevents duplicate if called multiple times). Use a transient flag.
-            if (!oemPromptShownThisLaunch) {
-                oemPromptShownThisLaunch = true;
+            String lastPromptVersion = prefs.getString("oem_prompt_last_version", "");
+            String currentVersion = "";
+            try {
+                currentVersion = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+            } catch (Exception ignored) {}
+            if (currentVersion == null) currentVersion = "";
+            if (!currentVersion.isEmpty() && !currentVersion.equals(lastPromptVersion)) {
+                final String version = currentVersion; // effectively final for lambda
+                prefs.edit().putString("oem_prompt_last_version", version).apply();
                 new Handler(Looper.getMainLooper()).postDelayed(() -> {
                     Intent autoStartIntent = OemUtils.getAutoStartIntent(this);
                     if (autoStartIntent != null) {
                         try {
                             startActivity(autoStartIntent);
-                            AppLog.i(TAG, "Opened OEM auto-start settings");
+                            AppLog.i(TAG, "Opened OEM auto-start settings (version " + version + ")");
                         } catch (Exception e) {
                             AppLog.w(TAG, "Failed to open OEM auto-start settings", e);
                         }
@@ -1135,13 +1138,13 @@ public class MainActivity extends AppCompatActivity {
                         if (batteryIntent != null) {
                             try {
                                 startActivity(batteryIntent);
-                                AppLog.i(TAG, "Opened OEM battery settings");
+                                AppLog.i(TAG, "Opened OEM battery settings (version " + version + ")");
                             } catch (Exception e) {
                                 AppLog.w(TAG, "Failed to open OEM battery settings", e);
                             }
                         }
                     }
-                }, 800); // Delay so standard dialog (if any) settles first
+                }, 800);
             }
         }
     }

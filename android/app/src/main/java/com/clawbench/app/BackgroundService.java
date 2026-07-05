@@ -442,6 +442,7 @@ public class BackgroundService extends Service {
             if (!screenOn) {
                 screenOffTime = System.currentTimeMillis();
                 sshScreenSuspended = true; // Start suspended if screen is already off
+                AppLog.i(TAG, "SSH: service started while screen off, SSH suspended");
             }
         }
 
@@ -461,18 +462,20 @@ public class BackgroundService extends Service {
                         startWsPingLoop();
                     }
                     // Resume SSH: reconnect if suspended and ports need forwarding.
-                    // Guard check runs on networkExecutor to avoid unsynchronized
-                    // sshSession read from the main thread.
-                    if (sshScreenSuspended && !forwardedPorts.isEmpty()) {
+                    // Guard check runs inside networkExecutor to avoid reading
+                    // sshScreenSuspended from the main thread (review C1).
+                    if (!forwardedPorts.isEmpty() && !intentionalDisconnect) {
                         networkExecutor.execute(() -> {
-                            sshScreenSuspended = false;
-                            try {
-                                AppLog.i(TAG, "SSH: screen on, resuming SSH tunnel");
-                                ensureConnection();
-                                updateNotification(forwardedPorts.size(), null);
-                            } catch (Exception e) {
-                                lastError = e.getMessage();
-                                AppLog.w(TAG, "SSH: failed to resume on screen on: " + e.getMessage());
+                            if (sshScreenSuspended && !intentionalDisconnect) {
+                                sshScreenSuspended = false;
+                                try {
+                                    AppLog.i(TAG, "SSH: screen on, resuming SSH tunnel");
+                                    ensureConnection();
+                                    updateNotification(forwardedPorts.size(), null);
+                                } catch (Exception e) {
+                                    lastError = e.getMessage();
+                                    AppLog.w(TAG, "SSH: failed to resume on screen on: " + e.getMessage());
+                                }
                             }
                         });
                     } else {
@@ -485,9 +488,10 @@ public class BackgroundService extends Service {
                     schedulePingRampUp();
                     // Suspend SSH: disconnect tunnel to save battery.
                     // Guard check and disconnect run on networkExecutor for thread safety.
-                    if (!forwardedPorts.isEmpty()) {
+                    // Don't suspend if user intentionally disconnected (review I3).
+                    if (!forwardedPorts.isEmpty() && !intentionalDisconnect) {
                         networkExecutor.execute(() -> {
-                            if (sshSession != null && sshSession.isConnected()) {
+                            if (sshSession != null && sshSession.isConnected() && !intentionalDisconnect) {
                                 sshScreenSuspended = true;
                                 AppLog.i(TAG, "SSH: screen off, suspending SSH tunnel to save battery");
                                 stopConnectionMonitor();
