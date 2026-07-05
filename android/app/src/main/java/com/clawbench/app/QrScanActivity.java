@@ -40,6 +40,7 @@ import com.google.zxing.common.HybridBinarizer;
 import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Camera-based QR code scanning Activity using camera2 + ZXing.
@@ -56,22 +57,23 @@ public class QrScanActivity extends AppCompatActivity {
     private TextureView textureView;
     private CameraDevice cameraDevice;
     private CameraCaptureSession captureSession;
+    private Surface previewSurface;
     private ImageReader imageReader;
     private Handler backgroundHandler;
     private HandlerThread backgroundThread;
     private MultiFormatReader zxingReader;
     private volatile boolean scanned = false;
-    private volatile boolean cameraOpening = false;
+    private final AtomicBoolean cameraOpening = new AtomicBoolean(false);
     private Size previewSize;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Install a temporary uncaught exception handler to log crash details
+        // Install a crash-logging handler that chains to the previous handler
+        final Thread.UncaughtExceptionHandler prev = Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
             AppLog.e(TAG, "UNCAUGHT EXCEPTION in QrScanActivity", throwable);
-            // Also write to a crash file that persists
             try {
                 java.io.FileWriter fw = new java.io.FileWriter(
                         new java.io.File(getCacheDir(), "qr_scan_crash.txt"), true);
@@ -91,8 +93,8 @@ public class QrScanActivity extends AppCompatActivity {
                 fw.append("\n");
                 fw.close();
             } catch (Exception ignored) {}
-            // Let the default handler kill the process
-            android.os.Process.killProcess(android.os.Process.myPid());
+            // Chain to previous handler (framework default) for proper cleanup
+            if (prev != null) prev.uncaughtException(thread, throwable);
         });
 
         setContentView(createContentView());
@@ -123,8 +125,14 @@ public class QrScanActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (textureView.isAvailable() && cameraDevice == null && !cameraOpening) {
-            openCamera(textureView.getWidth(), textureView.getHeight());
+        if (textureView.isAvailable() && cameraDevice == null && !cameraOpening.get()) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                    == PackageManager.PERMISSION_GRANTED) {
+                openCamera(textureView.getWidth(), textureView.getHeight());
+            } else {
+                ActivityCompat.requestPermissions(this,
+                        new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION_REQUEST);
+            }
         }
     }
 
@@ -214,8 +222,8 @@ public class QrScanActivity extends AppCompatActivity {
 
     @SuppressWarnings("MissingPermission")
     private void openCamera(int width, int height) {
-        if (cameraOpening || cameraDevice != null) return;
-        cameraOpening = true;
+        if (!cameraOpening.compareAndSet(false, true)) return;
+        if (cameraDevice != null) { cameraOpening.set(false); return; }
 
         if (backgroundThread == null) {
             startBackgroundThread();
@@ -232,7 +240,7 @@ public class QrScanActivity extends AppCompatActivity {
                 }
             }
             if (cameraId == null) {
-                cameraOpening = false;
+                cameraOpening.set(false);
                 Toast.makeText(this, "未找到后置摄像头", Toast.LENGTH_SHORT).show();
                 finish();
                 return;
@@ -242,7 +250,7 @@ public class QrScanActivity extends AppCompatActivity {
             StreamConfigurationMap map = characteristics.get(
                     CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
             if (map == null) {
-                cameraOpening = false;
+                cameraOpening.set(false);
                 Toast.makeText(this, "相机配置不可用", Toast.LENGTH_SHORT).show();
                 finish();
                 return;
@@ -263,7 +271,7 @@ public class QrScanActivity extends AppCompatActivity {
                 @Override
                 public void onOpened(@NonNull CameraDevice camera) {
                     cameraDevice = camera;
-                    cameraOpening = false;
+                    cameraOpening.set(false);
                     createCameraPreviewSession();
                 }
 
@@ -271,14 +279,14 @@ public class QrScanActivity extends AppCompatActivity {
                 public void onDisconnected(@NonNull CameraDevice camera) {
                     camera.close();
                     cameraDevice = null;
-                    cameraOpening = false;
+                    cameraOpening.set(false);
                 }
 
                 @Override
                 public void onError(@NonNull CameraDevice camera, int error) {
                     camera.close();
                     cameraDevice = null;
-                    cameraOpening = false;
+                    cameraOpening.set(false);
                     AppLog.e(TAG, "Camera open error: " + error);
                     runOnUiThread(() -> {
                         Toast.makeText(QrScanActivity.this, "相机打开失败", Toast.LENGTH_SHORT).show();
@@ -287,7 +295,7 @@ public class QrScanActivity extends AppCompatActivity {
                 }
             }, backgroundHandler);
         } catch (Exception e) {
-            cameraOpening = false;
+            cameraOpening.set(false);
             AppLog.e(TAG, "openCamera failed", e);
             Toast.makeText(this, "相机初始化失败", Toast.LENGTH_SHORT).show();
             finish();
@@ -302,7 +310,11 @@ public class QrScanActivity extends AppCompatActivity {
                 return;
             }
             texture.setDefaultBufferSize(previewSize.getWidth(), previewSize.getHeight());
-            Surface previewSurface = new Surface(texture);
+            // Release previous preview surface if any
+            if (previewSurface != null) {
+                previewSurface.release();
+            }
+            previewSurface = new Surface(texture);
             Surface readerSurface = imageReader.getSurface();
 
             CaptureRequest.Builder builder = cameraDevice.createCaptureRequest(
@@ -443,6 +455,10 @@ public class QrScanActivity extends AppCompatActivity {
         if (cameraDevice != null) {
             cameraDevice.close();
             cameraDevice = null;
+        }
+        if (previewSurface != null) {
+            previewSurface.release();
+            previewSurface = null;
         }
         if (imageReader != null) {
             imageReader.close();

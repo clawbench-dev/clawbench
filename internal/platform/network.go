@@ -62,7 +62,7 @@ func GetAllLanIPs() []string {
 			case *net.IPAddr:
 				ip = v.IP
 			}
-			if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+			if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.To4() == nil {
 				continue
 			}
 			ips = append(ips, ip.String())

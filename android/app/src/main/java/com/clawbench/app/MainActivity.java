@@ -1452,24 +1452,37 @@ public class MainActivity extends AppCompatActivity {
             org.json.JSONObject jsonBody = new org.json.JSONObject();
             jsonBody.put("token", token);
             String json = jsonBody.toString();
-            OkHttpClient client = new OkHttpClient.Builder()
-                .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
-                .build();
-            RequestBody body = RequestBody.create(json, MediaType.parse("application/json"));
-            Request request = new Request.Builder().url(url).post(body).build();
-            try (Response response = client.newCall(request).execute()) {
-                if (!response.isSuccessful()) return false;
 
-                // Extract Set-Cookie headers and inject into WebView CookieManager
-                // so the WebView loads authenticated pages directly.
+            // Use HttpURLConnection with trust-all SSL for self-signed certificates
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            javax.net.ssl.SSLContext sslCtx = BackgroundService.getTrustAllSSLContext();
+            if (conn instanceof javax.net.ssl.HttpsURLConnection && sslCtx != null) {
+                ((javax.net.ssl.HttpsURLConnection) conn).setSSLSocketFactory(sslCtx.getSocketFactory());
+                ((javax.net.ssl.HttpsURLConnection) conn).setHostnameVerifier((hostname, session) -> true);
+            }
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setRequestProperty("Content-Type", "application/json");
+            try (java.io.OutputStream os = conn.getOutputStream()) {
+                os.write(json.getBytes("UTF-8"));
+            }
+
+            int responseCode = conn.getResponseCode();
+
+            // Extract Set-Cookie headers and inject into WebView CookieManager
+            if (responseCode == 200) {
                 CookieManager cookieManager = CookieManager.getInstance();
-                java.util.List<String> cookies = response.headers("Set-Cookie");
+                java.util.List<String> cookies = conn.getHeaderFields().getOrDefault("Set-Cookie", java.util.Collections.emptyList());
                 for (String cookie : cookies) {
                     cookieManager.setCookie(serverUrl, cookie);
                 }
                 cookieManager.flush();
-                return true;
             }
+
+            conn.disconnect();
+            return responseCode == 200;
         } catch (Exception e) {
             AppLog.e(TAG, "QR token exchange failed: " + e.getMessage());
             return false;
