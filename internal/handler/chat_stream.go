@@ -121,6 +121,16 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 		slog.Debug("sse: re-emitted cached ACP state on connect", "session_id", sessionID)
+	} else {
+		// No live connection — try orphaned usage for usage_update re-emit
+		if ou := ai.GetACPConnManager().GetOrphanedUsageState(sessionID); ou != nil {
+			data, _ := json.Marshal(ou)
+			fmt.Fprintf(w, "event: usage_update\ndata: %s\n\n", data)
+			if canFlush {
+				flusher.Flush()
+			}
+			slog.Debug("sse: re-emitted orphaned usage on connect", "session_id", sessionID)
+		}
 	}
 
 	// Send stream_start with the streaming assistant message ID so the frontend
