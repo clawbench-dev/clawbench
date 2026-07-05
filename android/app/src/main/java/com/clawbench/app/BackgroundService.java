@@ -1317,16 +1317,16 @@ public class BackgroundService extends Service {
             boolean enabled = json.optBoolean("enabled", false);
             boolean running = json.optBoolean("running", false);
 
+            SharedPreferences sp = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
             if (enabled && running) {
                 AppLog.i(TAG, "FRP: tunnel is running");
-                // Save a flag that FRP is available (remote URL comes from QR scan)
-                prefs.edit().putBoolean("frp_available", true).apply();
+                sp.edit().putBoolean("frp_available", true).apply();
             } else {
                 AppLog.d(TAG, "FRP: not available (enabled=" + enabled + ", running=" + running + ")");
-                prefs.edit().remove("frp_available").apply();
+                sp.edit().remove("frp_available").apply();
             }
         } catch (Exception e) {
-            AppLog.d(TAG, "FRP: failed to fetch status", e);
+            AppLog.d(TAG, "FRP: failed to fetch status: " + e.getMessage());
         }
     }
 
