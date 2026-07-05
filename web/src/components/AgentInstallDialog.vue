@@ -9,7 +9,15 @@
           </div>
           <div class="install-log" ref="logContainer">
             <div v-for="(line, i) in logLines" :key="i" class="log-line">{{ line }}</div>
-            <div v-if="logLines.length === 0 && status === 'running'" class="log-waiting">...</div>
+            <div v-if="logLines.length === 0 && status === 'running'" class="log-waiting">
+              <span class="waiting-spinner"></span>
+              <span class="waiting-text">{{ t('welcomeInfo.preparing') }}</span>
+            </div>
+            <div v-if="logLines.length > 0 && status === 'running'" class="log-running-indicator">
+              <span class="running-dot"></span>
+              <span class="running-dot"></span>
+              <span class="running-dot"></span>
+            </div>
           </div>
           <div v-if="status === 'error'" class="install-error-section">
             <div class="install-hint">{{ t('welcomeInfo.manualInstallHint') }}</div>
@@ -207,7 +215,58 @@ function handleClose() {
 }
 
 .log-waiting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.waiting-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border-color, #333);
+  border-top-color: var(--accent-color, #0066cc);
+  border-radius: 50%;
+  animation: wait-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes wait-spin {
+  to { transform: rotate(360deg); }
+}
+
+.waiting-text {
   color: var(--text-muted, #666);
+  font-size: 11px;
+}
+
+.log-running-indicator {
+  display: inline-flex;
+  gap: 3px;
+  padding: 6px 0 2px;
+  align-items: center;
+}
+
+.running-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text-muted, #666);
+  animation: dot-pulse 1.2s ease-in-out infinite;
+}
+
+.running-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.running-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes dot-pulse {
+  0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1.2); }
 }
 
 .install-error-section {

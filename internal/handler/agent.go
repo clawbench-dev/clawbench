@@ -21,6 +21,82 @@ import (
 	"clawbench/internal/service"
 )
 
+// chinaMirrorChecked caches the result of isChinaMainland() to avoid repeated
+// network probes. Zero means not yet checked; 1 = true; 2 = false.
+var chinaMirrorChecked int
+
+// isChinaMainland returns true if the server appears to be running in mainland
+// China. Detection strategy:
+//  1. Check LANG/LC_ALL/LC_MESSAGES env vars for zh_CN locale
+//  2. Quick HTTP probe to ip-api.com (2s timeout) — if country_code == "CN"
+//
+// Result is cached for the process lifetime.
+func isChinaMainland() bool {
+	if chinaMirrorChecked == 1 {
+		return true
+	}
+	if chinaMirrorChecked == 2 {
+		return false
+	}
+
+	// Strategy 1: locale env vars
+	for _, key := range []string{"LANG", "LC_ALL", "LC_MESSAGES"} {
+		if v := os.Getenv(key); strings.Contains(v, "zh_CN") {
+			chinaMirrorChecked = 1
+			slog.Debug("china mirror detection: zh_CN locale found", "env", key, "value", v)
+			return true
+		}
+	}
+
+	// Strategy 2: network probe (2s timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://ip-api.com/line/?fields=countryCode", nil)
+	if err != nil {
+		chinaMirrorChecked = 2
+		return false
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		chinaMirrorChecked = 2
+		slog.Debug("china mirror detection: network probe failed", "error", err)
+		return false
+	}
+	defer resp.Body.Close()
+	body := make([]byte, 4)
+	n, _ := resp.Body.Read(body)
+	code := strings.TrimSpace(string(body[:n]))
+	isCN := code == "CN"
+	if isCN {
+		chinaMirrorChecked = 1
+		slog.Debug("china mirror detection: country code CN detected")
+	} else {
+		chinaMirrorChecked = 2
+		slog.Debug("china mirror detection: country code not CN", "code", code)
+	}
+	return isCN
+}
+
+// npmMirrorRegistry is the China mainland npm mirror.
+const npmMirrorRegistry = "https://registry.npmmirror.com"
+
+// applyNpmMirror modifies an npm install command to use the China mirror if
+// running in mainland China. Returns the modified command string.
+func applyNpmMirror(installCmd string) string {
+	if !isChinaMainland() {
+		return installCmd
+	}
+	// Only modify npm install commands
+	if !strings.HasPrefix(installCmd, "npm install") {
+		return installCmd
+	}
+	// Already has a --registry flag
+	if strings.Contains(installCmd, "--registry") {
+		return installCmd
+	}
+	return installCmd + " --registry=" + npmMirrorRegistry
+}
+
 // ServeAgentSubRoutes handles /api/agents/* sub-routes (e.g. /api/agents/{id}/refresh-models).
 func ServeAgentSubRoutes(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
@@ -281,14 +357,16 @@ func serveAgentsInstall(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 	}
 
 	// Emit initial state
-	_, _ = fmt.Fprintf(w, "event: install_start\ndata: {\"backend_id\":%q,\"command\":%q}\n\n", spec.ID, spec.InstallCmd)
+	// Apply China npm mirror if applicable
+	effectiveCmd := applyNpmMirror(spec.InstallCmd)
+	_, _ = fmt.Fprintf(w, "event: install_start\ndata: {\"backend_id\":%q,\"command\":%q}\n\n", spec.ID, effectiveCmd)
 	flusher.Flush()
 
 	// Execute install command (no sudo)
 	// Note: strings.Fields works because all current InstallCmd values are simple
 	// space-separated tokens (no quoting needed). If future commands need quoted
 	// arguments, switch to sh.Split or similar.
-	cmdParts := strings.Fields(spec.InstallCmd)
+	cmdParts := strings.Fields(effectiveCmd)
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, cmdParts[0], cmdParts[1:]...)

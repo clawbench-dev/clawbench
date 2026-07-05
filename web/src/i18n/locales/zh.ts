@@ -1427,6 +1427,7 @@ export default {
     installSuccess: '安装成功',
     installFailed: '安装失败',
     manualInstallHint: '你可以手动运行以下命令安装：',
+    preparing: '准备安装环境...',
     dontShowAgain: '不再提示',
     ok: '确定',
   },

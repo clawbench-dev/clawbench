@@ -30,10 +30,17 @@
               {{ t('welcomeInfo.detected') }}
             </span>
             <button
-              v-if="!detectedBackends.has(b.id) && b.install_cmd && !installingBackendId"
+              v-if="!detectedBackends.has(b.id) && b.install_cmd && installingBackendId !== b.id"
               class="btn-install"
               @click="startInstall(b)"
             >{{ t('welcomeInfo.install') }}</button>
+            <span
+              v-if="!detectedBackends.has(b.id) && b.install_cmd && installingBackendId === b.id"
+              class="btn-installing"
+            >
+              <span class="install-spinner"></span>
+              {{ t('welcomeInfo.installing') }}
+            </span>
           </div>
         </div>
         <!-- Install section (mobile web only) -->
@@ -388,6 +395,35 @@ onUnmounted(() => {
 
 .btn-install:hover {
   opacity: 0.85;
+}
+
+.btn-installing {
+  position: absolute;
+  right: 6px;
+  top: 4px;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent-color) 15%, transparent);
+  color: var(--accent-color);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.install-spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid color-mix(in srgb, var(--accent-color) 40%, transparent);
+  border-top-color: var(--accent-color);
+  border-radius: 50%;
+  animation: install-spin 0.6s linear infinite;
+}
+
+@keyframes install-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* Install section */

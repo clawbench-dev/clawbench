@@ -1427,6 +1427,7 @@ export default {
     installSuccess: 'Installed successfully',
     installFailed: 'Install failed',
     manualInstallHint: 'You can install manually by running:',
+    preparing: 'Preparing install environment...',
     dontShowAgain: "Don't show again",
     ok: 'OK',
   },
