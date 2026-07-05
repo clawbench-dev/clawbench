@@ -66,7 +66,7 @@ describe('settingsFieldMap', () => {
   })
 
   it('categoryItems covers all expected categories', () => {
-    const expectedCategories = ['appearance', 'agents', 'project', 'chat', 'files', 'terminal', 'tts', 'summarization', 'rag', 'portForward', 'push', 'android', 'about']
+    const expectedCategories = ['appearance', 'agents', 'project', 'chat', 'files', 'terminal', 'tts', 'summarization', 'rag', 'portForward', 'frp', 'push', 'android', 'about']
     for (const cat of expectedCategories) {
       expect(categoryItems[cat]).toBeDefined()
     }
@@ -109,6 +109,31 @@ describe('settingsFieldMap', () => {
   })
 
   // ── TTS flattened items ──
+
+  it('frp categoryItems has enabled switch and fields with dependsOn', () => {
+    const frpItems = categoryItems['frp']
+    const enabledItem = frpItems.find(i => i.key === 'frp.enabled')
+    expect(enabledItem).toBeDefined()
+    expect(enabledItem!.type).toBe('switch')
+    expect(enabledItem!.needsRestart).toBe(true)
+
+    const addrItem = frpItems.find(i => i.key === 'frp.server_addr')
+    expect(addrItem).toBeDefined()
+    expect(addrItem!.dependsOn).toEqual({ key: 'frp.enabled', value: true })
+
+    const portItem = frpItems.find(i => i.key === 'frp.server_port')
+    expect(portItem).toBeDefined()
+    expect(portItem!.dependsOn).toEqual({ key: 'frp.enabled', value: true })
+
+    const tokenItem = frpItems.find(i => i.key === 'frp.token')
+    expect(tokenItem).toBeDefined()
+    expect(tokenItem!.type).toBe('password')
+    expect(tokenItem!.dependsOn).toEqual({ key: 'frp.enabled', value: true })
+
+    const remotePortItem = frpItems.find(i => i.key === 'frp.remote_port')
+    expect(remotePortItem).toBeDefined()
+    expect(remotePortItem!.dependsOn).toEqual({ key: 'frp.enabled', value: true })
+  })
 
   it('tts categoryItems has engine selector and per-engine fields with dependsOn', () => {
     const ttsItems = categoryItems['tts']

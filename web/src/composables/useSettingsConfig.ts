@@ -356,6 +356,9 @@ const serverDefaults: Record<string, any> = {
   'summarize.model': '',
   'summarize.api.format': 'openai',
   'port_forward.allowed_ports': '1024-65535',
+  'frp.enabled': false,
+  'frp.server_port': 7000,
+  'frp.remote_port': 0,
 }
 
 // ── Agent preference helpers ──────────────────────────────
