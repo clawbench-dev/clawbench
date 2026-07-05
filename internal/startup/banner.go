@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/mdp/qrterminal/v3"
 )
 
 // AgentInfo describes one discovered AI agent for the banner.
@@ -33,6 +35,15 @@ type BannerConfig struct {
 	TerminalOn      bool
 	TaskCount       int
 	StartupDuration time.Duration
+
+	// FRP tunnel info
+	FRPEnabled    bool
+	FRPRemoteURL  string // e.g. "http://120.26.168.245:20050"
+	FRPServerAddr string // e.g. "120.26.168.245"
+	FRPRemotePort int    // e.g. 20050
+
+	// QR code for phone scanning
+	QRContent string // deep link URL, empty = no QR code
 }
 
 // ---------------------------------------------------------------------------
@@ -161,6 +172,18 @@ func buildLines(cfg BannerConfig) []string {
 		lines = append(lines, label("🔒 SSH:", sshCmd), "")
 	}
 
+	// --- FRP tunnel (conditional) ---
+	if cfg.FRPEnabled {
+		if cfg.FRPRemoteURL != "" {
+			lines = append(lines, label("🌐 FRP:", cfg.FRPRemoteURL))
+		} else if cfg.FRPServerAddr != "" {
+			lines = append(lines, label("🌐 FRP:", cfg.FRPServerAddr+" (waiting for port...)"))
+		} else {
+			lines = append(lines, label("🌐 FRP:", "enabled"))
+		}
+		lines = append(lines, "")
+	}
+
 	// --- Data directory ---
 	lines = append(lines, label("📁 Data:", cfg.DataDir), "")
 
@@ -185,6 +208,11 @@ func buildLines(cfg BannerConfig) []string {
 
 	// --- Startup duration ---
 	lines = append(lines, fmt.Sprintf("⚡ Ready in %s", formatDuration(cfg.StartupDuration)))
+
+	// --- QR code (conditional) ---
+	if cfg.QRContent != "" {
+		lines = append(lines, "", "📱 Scan QR code to connect phone:")
+	}
 
 	return lines
 }
@@ -238,4 +266,10 @@ func FprintBanner(w io.Writer, cfg BannerConfig) {
 	}
 	_, _ = fmt.Fprintf(w, " └%s┘\n", horiz)
 	_, _ = fmt.Fprintln(w)
+
+	// Render QR code below the banner box (doesn't fit inside the bordered box)
+	if cfg.QRContent != "" {
+		qrterminal.Generate(cfg.QRContent, qrterminal.L, w)
+		_, _ = fmt.Fprintln(w)
+	}
 }

@@ -224,6 +224,9 @@ public class MainActivity extends AppCompatActivity {
         // Check if launched from notification
         logLaunchIntent(getIntent());
 
+        // Handle deep link (clawbench://) from QR code scanning
+        handleDeepLink(getIntent());
+
         // Initialize trust-all SSL for self-signed HTTPS servers (used by BackgroundService)
         BackgroundService.initTrustAllSSL();
 
@@ -253,6 +256,9 @@ public class MainActivity extends AppCompatActivity {
         // to the app. Only first-time users see the login page.
 
         // Load saved URL or show configuration dialog
+        // Note: if the saved URL was a LAN address from QR scan, it may become
+        // unreachable when the user leaves WiFi. Re-scanning the QR code will
+        // update the saved URL to the FRP address as fallback.
         String savedUrl = prefs.getString(KEY_SERVER_URL, null);
         if (savedUrl != null) {
             // Auto-reconnect: use pre-authentication to verify server is reachable
@@ -1283,7 +1289,130 @@ public class MainActivity extends AppCompatActivity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        handleDeepLink(intent);
         handleNotificationIntent(intent);
+    }
+
+    /**
+     * Handle clawbench:// deep link from QR code scanning.
+     * Format: clawbench://connect?lan=http%3A%2F%2F...&frp=http%3A%2F%2F...&token=xxx
+     */
+    void handleDeepLink(Intent intent) {
+        if (intent == null) return;
+        Uri uri = intent.getData();
+        if (uri == null) return;
+        if (!"clawbench".equals(uri.getScheme()) || !"connect".equals(uri.getHost())) return;
+
+        String lanUrl = uri.getQueryParameter("lan");
+        String frpUrl = uri.getQueryParameter("frp");
+        String token = uri.getQueryParameter("token");
+
+        AppLog.i(TAG, "Deep link received: lan=" + lanUrl + ", frp=" + frpUrl + ", token=" + (token != null ? "***" : "null"));
+
+        connectWithQR(lanUrl, frpUrl, token);
+    }
+
+    /**
+     * Connect to ClawBench server using QR code parameters.
+     * Strategy: LAN direct → FRP tunnel → error
+     */
+    void connectWithQR(String lanUrl, String frpUrl, String token) {
+        new Thread(() -> {
+            String connectUrl = null;
+
+            // 1. Try LAN direct (2s timeout)
+            if (lanUrl != null && !lanUrl.isEmpty()) {
+                if (isReachable(lanUrl, 2000)) {
+                    connectUrl = lanUrl;
+                    AppLog.i(TAG, "QR: LAN reachable, using " + lanUrl);
+                }
+            }
+
+            // 2. Try FRP tunnel (3s timeout)
+            if (connectUrl == null && frpUrl != null && !frpUrl.isEmpty()) {
+                if (isReachable(frpUrl, 3000)) {
+                    connectUrl = frpUrl;
+                    AppLog.i(TAG, "QR: FRP reachable, using " + frpUrl);
+                }
+            }
+
+            if (connectUrl == null) {
+                runOnUiThread(() -> Toast.makeText(this,
+                        "无法连接服务器，请检查网络", Toast.LENGTH_LONG).show());
+                return;
+            }
+
+            // Exchange QR token for session cookie
+            if (token != null && !token.isEmpty()) {
+                boolean authOk = exchangeQRToken(connectUrl, token);
+                if (!authOk) {
+                    runOnUiThread(() -> Toast.makeText(this,
+                            "登录令牌已过期，请重新扫码", Toast.LENGTH_LONG).show());
+                    return;
+                }
+            }
+
+            // Save URL and load WebView
+            String finalUrl = connectUrl;
+            runOnUiThread(() -> {
+                prefs.edit()
+                    .putString(KEY_SERVER_URL, finalUrl)
+                    .putString("frp_remote_url", frpUrl != null ? frpUrl : "")
+                    .apply();
+                webViewConnected = false;
+                webView.loadUrl(finalUrl);
+            });
+        }).start();
+    }
+
+    /** Check if a URL is reachable within the given timeout (simple GET /api/health). */
+    boolean isReachable(String url, int timeoutMs) {
+        try {
+            HttpURLConnection conn = (HttpURLConnection) new java.net.URL(url + "/api/health").openConnection();
+            // Handle self-signed HTTPS certificates (same as BackgroundService)
+            javax.net.ssl.SSLContext sslCtx = BackgroundService.getTrustAllSSLContext();
+            if (conn instanceof javax.net.ssl.HttpsURLConnection && sslCtx != null) {
+                ((javax.net.ssl.HttpsURLConnection) conn).setSSLSocketFactory(sslCtx.getSocketFactory());
+                ((javax.net.ssl.HttpsURLConnection) conn).setHostnameVerifier((hostname, session) -> true);
+            }
+            conn.setConnectTimeout(timeoutMs);
+            conn.setReadTimeout(timeoutMs);
+            conn.setRequestMethod("GET");
+            int code = conn.getResponseCode();
+            conn.disconnect();
+            return code == 200;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** Exchange QR token for session cookie via POST /api/auth/qr-token. */
+    boolean exchangeQRToken(String serverUrl, String token) {
+        try {
+            String url = serverUrl + "/api/auth/qr-token";
+            String json = "{\"token\":\"" + token + "\"}";
+            OkHttpClient client = new OkHttpClient.Builder()
+                .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                .build();
+            RequestBody body = RequestBody.create(json, MediaType.parse("application/json"));
+            Request request = new Request.Builder().url(url).post(body).build();
+            try (Response response = client.newCall(request).execute()) {
+                if (!response.isSuccessful()) return false;
+
+                // Extract Set-Cookie headers and inject into WebView CookieManager
+                // so the WebView loads authenticated pages directly.
+                CookieManager cookieManager = CookieManager.getInstance();
+                java.util.List<String> cookies = response.headers("Set-Cookie");
+                for (String cookie : cookies) {
+                    cookieManager.setCookie(serverUrl, cookie);
+                }
+                cookieManager.flush();
+                return true;
+            }
+        } catch (Exception e) {
+            AppLog.e(TAG, "QR token exchange failed: " + e.getMessage());
+            return false;
+        }
     }
 
     /**

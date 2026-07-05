@@ -200,6 +200,21 @@ port_forward:
   allowed_ports: ""  # Allowed port range for SSH tunnel forwarding (empty = allow all; supports ranges and discrete ports, e.g. "1024-65535", "80,443,8080")
                      # 允许通过 SSH 隧道转发的端口范围（空 = 允许所有端口；支持范围和离散端口，如 "1024-65535", "80,443,8080"）
 
+# FRP (Fast Reverse Proxy) configuration / FRP 内网穿透配置
+# Enables Android phones to connect to ClawBench through a public FRP server,
+# even when both are behind NAT. Requires a user-deployed frps server.
+# 启用后，Android 手机可通过公网 FRP 服务器连接 ClawBench，即使双方都在 NAT 后面。
+# 需要用户自行部署 frps 服务器。
+# Default: disabled / 默认：关闭
+# frp:
+#   enabled: false           # Enable FRP tunnel (default: false) / 启用 FRP 穿透（默认: false）
+#   server_addr: ""          # FRP server address, e.g. "120.26.168.245" / FRP 服务器地址
+#   server_port: 7000        # FRP server port (default: 7000) / FRP 服务器端口（默认: 7000）
+#   token: ""                # FRP authentication token / FRP 认证 token
+#   remote_port: 0           # Remote TCP forwarding port (0 = frps auto-assign) / 远程转发端口（0 = frps 自动分配）
+#   binary_path: ""          # frpc binary path (empty = auto-find in PATH) / frpc 二进制路径（空 = 自动查找）
+#   ssh_remote_port: 0       # SSH forwarding remote port (0 = auto-assign) / SSH 转发远程端口（0 = 自动分配）
+
 # RAG history memory configuration / RAG 历史记忆配置
 # When enabled, chat messages are automatically indexed into a vector database (DuckDB),
 # and AI agents can search historical conversations via the RAG API.

@@ -312,6 +312,14 @@ func RegisterRoutes(mux *http.ServeMux) {
 	//    host key fingerprint, and connection stats — no secrets or credentials.
 	register("/api/ssh/info", ServeSSHInfo)
 
+	// FRP tunnel status
+	register("/api/frp/info", middleware.Auth(ServeFRPInfo))   // Full status, requires auth (exposes public IP)
+	register("/api/frp/status", ServeFRPStatus)                // Minimal status, no auth (only enabled+running)
+
+	// QR code token authentication
+	register("/api/auth/qr-token", ServeQRTokenAuth)                          // Exchange QR token for session cookie
+	register("/api/auth/qr-token/regenerate", middleware.Auth(ServeQRTokenRegenerate)) // Regenerate QR token (auth required)
+
 	// Terminal (interactive web terminal with PTY + WebSocket + xterm.js)
 	register("/api/terminal/ws", middleware.Auth(TerminalWebSocket))
 	register("/api/terminal/status", middleware.Auth(TerminalStatus))

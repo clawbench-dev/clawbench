@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -35,6 +36,7 @@ import (
 	_ "clawbench/internal/ai/backends/qoder"
 	_ "clawbench/internal/ai/backends/vecli"
 	"clawbench/internal/cli"
+	"clawbench/internal/frp"
 	"clawbench/internal/handler"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
@@ -135,6 +137,11 @@ func makeRestartFunc(shutdown func()) func() {
 		}
 		shutdown()
 	}
+}
+
+// urlEncode URL-encodes a string for use in QR code deep links.
+func urlEncode(s string) string {
+	return url.QueryEscape(s)
 }
 
 func main() { //nolint:gocognit,gocyclo // complex startup orchestration
@@ -739,6 +746,48 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		slog.Info("SSH tunnel and port forwarding disabled by config")
 	}
 
+	// Initialize FRP tunnel (Fast Reverse Proxy for remote access from Android).
+	// FRP is disabled by default; requires user-provided frps server.
+	var frpManagerRef *frp.Manager
+	var frpStatus frp.Status
+	if cfg.FRP.Enabled && cfg.FRP.ServerAddr != "" {
+		binary, err := frp.FindBinary(cfg.FRP.BinaryPath)
+		if err != nil {
+			slog.Warn("FRP enabled but frpc not found, disabling", slog.String("err", err.Error()))
+			cfg.FRP.Enabled = false
+		} else {
+			sshPort := 0
+			if sshServerRef != nil {
+				sshPort = sshServerRef.Port()
+			}
+			mgr := frp.NewManager(cfg.FRP, binary, port, sshPort)
+			if err := mgr.Start(); err != nil {
+				slog.Warn("FRP failed to start", slog.String("err", err.Error()))
+				cfg.FRP.Enabled = false
+			} else {
+				frpManagerRef = mgr
+				defer mgr.Stop()
+
+				// Wait for port assignment (up to 30s) before generating QR code
+				select {
+				case frpStatus = <-mgr.OnReady():
+					slog.Info("FRP tunnel enabled",
+						slog.String("server", cfg.FRP.ServerAddr),
+						slog.Int("remotePort", frpStatus.RemotePort),
+					)
+				case <-time.After(30 * time.Second):
+					slog.Warn("FRP port allocation timeout, QR code will be skipped")
+				}
+			}
+		}
+	} else if cfg.FRP.Enabled {
+		slog.Warn("FRP enabled but server_addr not configured, disabling")
+		cfg.FRP.Enabled = false
+	}
+	handler.SetFRPManager(frpManagerRef, cfg.FRP.Enabled)
+
+	// QR code content will be built after scheme is resolved (below)
+
 	// Initialize file watcher for auto-refresh (non-critical — continue on failure)
 	if err := service.InitFileWatcher(); err != nil {
 		slog.Warn(
@@ -818,6 +867,20 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		slog.Info("starting with HTTP")
 	}
 
+	// Initialize QR token manager for phone scanning (after scheme is known)
+	var qrContent string
+	if cfg.FRP.Enabled && frpStatus.RemotePort > 0 {
+		qrTokenMgr := handler.NewQRTokenManager(5 * time.Minute)
+		token := qrTokenMgr.Generate()
+		handler.SetQRTokenManager(qrTokenMgr)
+
+		// Build deep link: clawbench://connect?lan=...&frp=...&token=...
+		lanURL := fmt.Sprintf("%s://%s:%d", scheme, platform.GetOutboundIP(), port)
+		frpURL := frpStatus.RemoteURL
+		qrContent = fmt.Sprintf("clawbench://connect?lan=%s&frp=%s&token=%s",
+			url.QueryEscape(lanURL), url.QueryEscape(frpURL), token)
+	}
+
 	// Pre-bind the main listener to detect port conflicts BEFORE printing the banner.
 	// Without this, PrintBanner shows a password for an instance that immediately fails
 	// to bind, confusing users who then see "wrong password" when they connect to
@@ -885,6 +948,11 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		TerminalOn:      cfg.Terminal.Enabled,
 		TaskCount:       taskCount,
 		StartupDuration: time.Since(startTime),
+		FRPEnabled:      cfg.FRP.Enabled,
+		FRPRemoteURL:    frpStatus.RemoteURL,
+		FRPServerAddr:   cfg.FRP.ServerAddr,
+		FRPRemotePort:   frpStatus.RemotePort,
+		QRContent:       qrContent,
 	})
 
 	// Graceful shutdown on SIGINT/SIGTERM

@@ -77,6 +77,7 @@ type Config struct {
 	Summarize   SummarizeConfig   `yaml:"summarize"`    // Shared summarization configuration (TTS + Tasks)
 	Proxy       ProxyConfig       `yaml:"proxy"`        // Legacy: kept for backward-compatible YAML reading
 	PortForward PortForwardConfig `yaml:"port_forward"` // SSH tunnel server + port forwarding configuration
+	FRP         FRPConfig         `yaml:"frp"`          // FRP (Fast Reverse Proxy) client configuration
 	RAG         RAGConfig         `yaml:"rag"`          // RAG history memory configuration
 	Terminal    TerminalConfig    `yaml:"terminal"`     // Interactive web terminal configuration
 }

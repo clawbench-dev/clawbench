@@ -181,6 +181,10 @@ function getItemValue(item: any): any {
     const val = getServerValueWithDefault(item.key)
     return val === 0 ? t('settings.items.portForwardPortAuto') : val
   }
+  if (item.key === 'frp.remote_port') {
+    const val = getServerValueWithDefault(item.key)
+    return val === 0 ? t('settings.items.portForwardPortAuto') : val
+  }
   if (item.source === 'local') {
     return localConfig[item.key]
   }
@@ -227,6 +231,9 @@ async function handleUpdate(item: any, value: any) {
     }
     if (item.key === 'port_forward.enabled') {
       loadSSHInfo()
+    }
+    if (item.key === 'frp.enabled') {
+      // FRP state change requires restart — banner will reflect on next startup
     }
     if (result.needsRestart && result.changedColdFields.length > 0) {
       emit('restartNeeded', result.changedColdFields)
