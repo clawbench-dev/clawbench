@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -93,21 +94,35 @@ func isChinaMainland() bool {
 // npmMirrorRegistry is the China mainland npm mirror.
 const npmMirrorRegistry = "https://registry.npmmirror.com"
 
-// applyNpmMirror modifies an npm install command to use the China mirror if
-// running in mainland China. Returns the modified command string.
-func applyNpmMirror(installCmd string) string {
-	if !isChinaMainland() {
-		return installCmd
+// needsShell reports whether a command contains shell operators (pipes,
+// redirects, chains) that require interpretation by a shell.
+func needsShell(cmd string) bool {
+	for _, op := range []string{"|", "&&", "||", ">", ">>", "<<", "<&", ">&"} {
+		if strings.Contains(cmd, op) {
+			return true
+		}
 	}
-	// Only modify npm install commands
+	return false
+}
+
+// prepareInstallCmd modifies an install command for non-interactive execution:
+//  1. Adds --ignore-scripts to npm install to prevent postinstall scripts from
+//     blocking (e.g., opencode-ai's postinstall.mjs prompts for npm approve-scripts).
+//  2. Adds China npm mirror registry if running in mainland China.
+func prepareInstallCmd(installCmd string) string {
 	if !strings.HasPrefix(installCmd, "npm install") {
 		return installCmd
 	}
-	// Already has a --registry flag
-	if strings.Contains(installCmd, "--registry") {
-		return installCmd
+	result := installCmd
+	// Add --ignore-scripts if not already present
+	if !strings.Contains(result, "--ignore-scripts") {
+		result += " --ignore-scripts"
 	}
-	return installCmd + " --registry=" + npmMirrorRegistry
+	// Add China mirror if applicable and not already specified
+	if isChinaMainland() && !strings.Contains(result, "--registry") {
+		result += " --registry=" + npmMirrorRegistry
+	}
+	return result
 }
 
 // ServeAgentSubRoutes handles /api/agents/* sub-routes (e.g. /api/agents/{id}/refresh-models).
@@ -356,7 +371,14 @@ func serveAgentsInstall(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 		writeLocalizedErrorf(w, r, http.StatusConflict, "InstallInProgress")
 		return
 	}
-	defer installMu.Unlock()
+	muReleased := false
+	releaseMu := func() {
+		if !muReleased {
+			muReleased = true
+			installMu.Unlock()
+		}
+	}
+	defer releaseMu()
 
 	// Set SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -371,25 +393,32 @@ func serveAgentsInstall(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 
 	// Emit initial state
 	// Apply China npm mirror if applicable
-	effectiveCmd := applyNpmMirror(spec.InstallCmd)
+	effectiveCmd := prepareInstallCmd(spec.InstallCmd)
 	_, _ = fmt.Fprintf(w, "event: install_start\ndata: {\"backend_id\":%q,\"command\":%q}\n\n", spec.ID, effectiveCmd)
 	flusher.Flush()
 
-	// If mirror was applied, emit an informational log line so the user knows
+	// Log if command was modified (mirror and/or --ignore-scripts applied)
 	if effectiveCmd != spec.InstallCmd {
-		_, _ = fmt.Fprintf(w, "event: install_log\ndata: {\"line\":%q,\"stream\":\"stdout\"}\n\n",
-			fmt.Sprintf("Using China npm mirror: %s", npmMirrorRegistry))
-		flusher.Flush()
+		parts := []string{}
+		if strings.Contains(effectiveCmd, "--ignore-scripts") && !strings.Contains(spec.InstallCmd, "--ignore-scripts") {
+			parts = append(parts, "ignore-scripts")
+		}
+		if strings.Contains(effectiveCmd, "--registry") && !strings.Contains(spec.InstallCmd, "--registry") {
+			parts = append(parts, "mirror="+npmMirrorRegistry)
+		}
+		slog.Info("install command modified", "backend", spec.ID, "mods", strings.Join(parts, ", "), "cmd", effectiveCmd)
 	}
 
 	// Execute install command (no sudo)
-	// Note: strings.Fields works because all current InstallCmd values are simple
-	// space-separated tokens (no quoting needed). If future commands need quoted
-	// arguments, switch to sh.Split or similar.
-	cmdParts := strings.Fields(effectiveCmd)
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, cmdParts[0], cmdParts[1:]...)
+	var cmd *exec.Cmd
+	if needsShell(effectiveCmd) {
+		cmd = exec.CommandContext(ctx, "bash", "-c", effectiveCmd)
+	} else {
+		cmdParts := strings.Fields(effectiveCmd)
+		cmd = exec.CommandContext(ctx, cmdParts[0], cmdParts[1:]...)
+	}
 	cmd.Env = os.Environ()
 
 	stdoutPipe, err := cmd.StdoutPipe()
@@ -404,6 +433,10 @@ func serveAgentsInstall(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 		flusher.Flush()
 		return
 	}
+	// Put install subprocess in its own process group so we can kill the
+	// entire group (including any children) on timeout or client disconnect.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
 	if err := cmd.Start(); err != nil {
 		_, _ = fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q,\"command\":%q}\n\n", err.Error(), effectiveCmd)
 		flusher.Flush()
@@ -418,14 +451,28 @@ func serveAgentsInstall(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 	}
 	logCh := make(chan logLine, 64)
 
+	// installScannerMax is the max line length for install output scanners.
+	// npm can produce very long lines (e.g., dependency trees, error stacks).
+	const installScannerMax = 1024 * 1024 // 1MB
+
 	// Reader goroutine for stdout
 	var readerWg sync.WaitGroup
 	readerWg.Add(2)
 	go func() {
 		defer readerWg.Done()
 		scanner := bufio.NewScanner(stdoutPipe)
+		scanner.Buffer(make([]byte, 0, 64*1024), installScannerMax)
 		for scanner.Scan() {
-			logCh <- logLine{line: scanner.Text(), stream: "stdout"}
+			select {
+			case logCh <- logLine{line: scanner.Text(), stream: "stdout"}:
+			default: // channel full, drop line (install log, non-critical)
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			select {
+			case logCh <- logLine{line: fmt.Sprintf("[scanner stdout error: %v]", err), stream: "stderr"}:
+			default:
+			}
 		}
 	}()
 
@@ -433,8 +480,18 @@ func serveAgentsInstall(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 	go func() {
 		defer readerWg.Done()
 		scanner := bufio.NewScanner(stderrPipe)
+		scanner.Buffer(make([]byte, 0, 64*1024), installScannerMax)
 		for scanner.Scan() {
-			logCh <- logLine{line: scanner.Text(), stream: "stderr"}
+			select {
+			case logCh <- logLine{line: scanner.Text(), stream: "stderr"}:
+			default: // channel full, drop line
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			select {
+			case logCh <- logLine{line: fmt.Sprintf("[scanner stderr error: %v]", err), stream: "stderr"}:
+			default:
+			}
 		}
 	}()
 
@@ -444,10 +501,16 @@ func serveAgentsInstall(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 		close(logCh)
 	}()
 
-	// Merger goroutine: send exit error when process completes
+	// Merger goroutine: send exit error when process completes.
+	// After Wait returns, kill any orphan child processes in the process group.
 	exitErrCh := make(chan error, 1)
 	go func() {
-		exitErrCh <- cmd.Wait()
+		err := cmd.Wait()
+		// Kill remaining children in the process group (orphaned by the parent exit).
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		exitErrCh <- err
 	}()
 
 	// Heartbeat ticker
@@ -486,12 +549,22 @@ func serveAgentsInstall(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 				_, _ = fmt.Fprintf(w, "event: install_success\ndata: {\"backend_id\":%q}\n\n", spec.ID)
 			}
 			flusher.Flush()
+			// Release mutex immediately after terminal event so the next install
+			// can start without waiting for deferred cleanup.
+			releaseMu()
 			return
 		case <-heartbeat.C:
 			_, _ = fmt.Fprintf(w, ": heartbeat\n\n")
 			flusher.Flush()
 		case <-r.Context().Done():
-			// Client disconnected
+			// Client disconnected — release mutex immediately so the next
+			// install request doesn't get blocked by this orphaned session.
+			releaseMu()
+			// Kill the entire process group (parent + children) to unblock
+			// pipe readers so goroutines can clean up.
+			if cmd.Process != nil {
+				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			}
 			cancel()
 			return
 		}

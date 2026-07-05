@@ -34,12 +34,13 @@
               class="btn-install"
               @click="startInstall(b)"
             >{{ t('welcomeInfo.install') }}</button>
-            <span
+            <button
               v-if="!detectedBackends.has(b.id) && b.install_cmd && installingBackendId && installingBackendId !== b.id"
               class="btn-install-waiting"
+              @click="showInstallBusyTip"
             >
               {{ t('welcomeInfo.install') }}
-            </span>
+            </button>
             <span
               v-if="!detectedBackends.has(b.id) && b.install_cmd && installingBackendId === b.id"
               class="btn-installing"
@@ -97,6 +98,7 @@ import { ref, computed, reactive, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { usePwaInstall } from '@/composables/usePwaInstall'
 import { useAgents } from '@/composables/useAgents'
+import { useToast } from '@/composables/useToast'
 import { MonitorSmartphone, Smartphone } from 'lucide-vue-next'
 import IosInstallDrawer from './common/IosInstallDrawer.vue'
 import AgentInstallDialog from './AgentInstallDialog.vue'
@@ -123,6 +125,7 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const pwaInstall = usePwaInstall()
 const { rescanAgents } = useAgents()
+const toast = useToast()
 const visible = ref(false)
 const backends = ref<BackendInfo[]>([])
 const detectedBackends = ref<Set<string>>(new Set())
@@ -202,6 +205,10 @@ function startInstall(b: BackendInfo) {
   installDialog.backendId = b.id
   installDialog.backendName = b.name
   installDialog.installCmd = b.install_cmd || ''
+}
+
+function showInstallBusyTip() {
+  toast.show(t('welcomeInfo.installBusyTip'), { type: 'info', duration: 2000 })
 }
 
 function closeInstallDialog() {
@@ -410,8 +417,9 @@ onUnmounted(() => {
   border: none;
   border-radius: 6px;
   background: var(--bg-tertiary);
-  color: var(--text-muted);
-  opacity: 0.5;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: opacity 0.2s;
 }
 
 .btn-install:hover {

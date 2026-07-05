@@ -60,6 +60,7 @@ const logContainer = ref<HTMLElement | null>(null)
 const effectiveInstallCmd = ref('')
 let abortController: AbortController | null = null
 let retryCount409 = 0
+let retryTimerId: ReturnType<typeof setTimeout> | null = null
 const MAX_409_RETRIES = 10
 const RETRY_409_BASE_MS = 1500
 
@@ -69,12 +70,19 @@ onMounted(() => {
 
 onUnmounted(() => {
   abortController?.abort()
+  if (retryTimerId !== null) {
+    clearTimeout(retryTimerId)
+    retryTimerId = null
+  }
 })
 
 async function startInstall() {
-  logLines.value = []
+  // Only reset state on first call, not on 409 retries
+  if (retryCount409 === 0) {
+    logLines.value = []
+    effectiveInstallCmd.value = ''
+  }
   status.value = 'running'
-  effectiveInstallCmd.value = ''
   abortController = new AbortController()
 
   try {
@@ -92,7 +100,8 @@ async function startInstall() {
         retryCount409++
         const delay = RETRY_409_BASE_MS * retryCount409
         logLines.value.push(`Another install in progress, retrying in ${delay / 1000}s...`)
-        await new Promise(r => setTimeout(r, delay))
+        // Use tracked timer so onUnmounted can cancel it
+        await new Promise<void>(r => { retryTimerId = setTimeout(() => { retryTimerId = null; r() }, delay) })
         return startInstall()
       }
       status.value = 'error'
@@ -104,8 +113,9 @@ async function startInstall() {
     const reader = response.body!.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
+    let terminal = false
 
-    while (true) {
+    while (!terminal) {
       const { done, value } = await reader.read()
       if (done) break
 
@@ -136,9 +146,13 @@ async function startInstall() {
             } else if (currentEvent === 'install_success') {
               status.value = 'success'
               emit('success')
+              terminal = true
+              break
             } else if (currentEvent === 'install_error') {
               status.value = 'error'
               logLines.value.push(data.error || 'Unknown error')
+              terminal = true
+              break
             }
           } catch {
             // ignore parse errors for non-JSON data lines
@@ -151,6 +165,11 @@ async function startInstall() {
           currentEvent = ''
         }
       }
+    }
+    // Release reader to allow the response body to be closed
+    reader.releaseLock()
+    if (!response.body!.locked) {
+      response.body!.cancel().catch(() => {})
     }
   } catch (e: unknown) {
     if (e instanceof DOMException && e.name === 'AbortError') return
@@ -176,6 +195,10 @@ function retry() {
 
 function handleClose() {
   abortController?.abort()
+  if (retryTimerId !== null) {
+    clearTimeout(retryTimerId)
+    retryTimerId = null
+  }
   emit('close')
 }
 </script>
