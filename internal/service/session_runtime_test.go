@@ -2068,6 +2068,49 @@ func TestFinalizeOrphanedStreamingMessages_WithInvalidJSON(t *testing.T) {
 	assert.Equal(t, invalidContent, firstBlock["text"])
 }
 
+func TestFinalizeOrphanedStreamingMessages_UserCancelNoWarning(t *testing.T) {
+	db := setupChatTestDB(t)
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	sessionID := "session-orphan-user-cancel"
+	cleanupCancelReasons()
+	defer cleanupCancelReasons()
+
+	// Simulate user-initiated cancel: set the cancel reason
+	sessionCancelReasons.Store(sessionID, "user")
+
+	// Insert a streaming=1 assistant message (orphan)
+	validContent := `{"blocks":[{"type":"text","text":"partial answer"}]}`
+	_, err := db.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
+		"/test", "assistant", validContent, sessionID,
+	)
+	require.NoError(t, err)
+
+	// Finalize orphans
+	finalizeOrphanedStreamingMessages(sessionID)
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify: cancelled=true, but NO warning block (user intentionally cancelled)
+	var streaming int
+	var updatedContent string
+	err = db.QueryRow(
+		"SELECT content, streaming FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1",
+		sessionID,
+	).Scan(&updatedContent, &streaming)
+	require.NoError(t, err)
+	assert.Equal(t, 0, streaming, "orphaned message should be finalized (streaming=0)")
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal([]byte(updatedContent), &parsed))
+	assert.Equal(t, true, parsed["cancelled"])
+	blocks, ok := parsed["blocks"].([]any)
+	require.True(t, ok)
+	// Should still have 1 block only — no warning block appended for user cancel
+	assert.Equal(t, 1, len(blocks))
+}
+
 func TestFinalizeOrphanedStreamingMessages_MultipleOrphans(t *testing.T) {
 	db := setupChatTestDB(t)
 	cleanup := SetDBForTest(db, db)

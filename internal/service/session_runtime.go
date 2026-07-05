@@ -247,13 +247,18 @@ func finalizeOrphanedStreamingMessages(sessionID string) {
 		} else {
 			if _, ok := contentMap["cancelled"]; !ok {
 				contentMap["cancelled"] = true
-				blocks, _ := contentMap["blocks"].([]any)
-				blocks = append(blocks, map[string]any{
-					"type":   "warning",
-					"text":   "Finalization failed, AI response may be incomplete",
-					"reason": "finalize_busy",
-				})
-				contentMap["blocks"] = blocks
+				// For user-initiated cancel, just mark cancelled without a warning block.
+				// The frontend renders a clean "cancelled" badge — no alarming warning needed.
+				cancelReason := GetCancelReason(sessionID)
+				if cancelReason != "user" {
+					blocks, _ := contentMap["blocks"].([]any)
+					blocks = append(blocks, map[string]any{
+						"type":   "warning",
+						"text":   "Finalization failed, AI response may be incomplete",
+						"reason": "finalize_busy",
+					})
+					contentMap["blocks"] = blocks
+				}
 			}
 		}
 		updatedContent, _ := json.Marshal(contentMap)
@@ -316,6 +321,20 @@ func GetAndClearCancelReason(sessionID string) string {
 		return ""
 	}
 	// Safe type assertion to prevent panic if value is not a string (ISS-126)
+	reason, ok := val.(string)
+	if !ok {
+		return ""
+	}
+	return reason
+}
+
+// GetCancelReason returns the cancellation reason without clearing it.
+// Used by finalizeOrphanedStreamingMessages to decide how to mark orphaned messages.
+func GetCancelReason(sessionID string) string {
+	val, ok := sessionCancelReasons.Load(sessionID)
+	if !ok {
+		return ""
+	}
 	reason, ok := val.(string)
 	if !ok {
 		return ""
