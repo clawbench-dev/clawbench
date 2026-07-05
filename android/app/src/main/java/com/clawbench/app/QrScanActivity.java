@@ -141,18 +141,48 @@ public class QrScanActivity extends AppCompatActivity {
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if (hasFocus && textureView != null) {
-            // Size TextureView to a 3:4 portrait preview (width=screen, height=width*4/3)
-            // but cap at 70% of screen height so there's room for hint text
+        // Initial sizing — will be refined in adjustTextureSize after camera opens
+        if (hasFocus && textureView != null && previewSize == null) {
             int screenWidth = getResources().getDisplayMetrics().widthPixels;
             int screenHeight = getResources().getDisplayMetrics().heightPixels;
+            // Default to 9:16 portrait (most common for back camera)
             int tvWidth = screenWidth;
-            int tvHeight = Math.min(tvWidth * 4 / 3, screenHeight * 7 / 10);
+            int tvHeight = Math.min(tvWidth * 16 / 9, screenHeight * 65 / 100);
             ViewGroup.LayoutParams lp = textureView.getLayoutParams();
             lp.width = tvWidth;
             lp.height = tvHeight;
             textureView.setLayoutParams(lp);
         }
+    }
+
+    /**
+     * Adjust TextureView size to match the rotated camera preview aspect ratio.
+     * Called from openCamera after sensorRotation and previewSize are known.
+     */
+    private void adjustTextureSize() {
+        if (previewSize == null || textureView == null) return;
+        int pw = previewSize.getWidth();
+        int ph = previewSize.getHeight();
+        // After rotation, effective preview is (ph, pw) for 90/270
+        int effectiveW, effectiveH;
+        if (sensorRotation == 90 || sensorRotation == 270) {
+            effectiveW = ph;
+            effectiveH = pw;
+        } else {
+            effectiveW = pw;
+            effectiveH = ph;
+        }
+        int screenWidth = getResources().getDisplayMetrics().widthPixels;
+        int screenHeight = getResources().getDisplayMetrics().heightPixels;
+        // Fit width to screen, height = width * effectiveH / effectiveW
+        int tvWidth = screenWidth;
+        int tvHeight = Math.min(tvWidth * effectiveH / effectiveW, screenHeight * 65 / 100);
+        runOnUiThread(() -> {
+            ViewGroup.LayoutParams lp = textureView.getLayoutParams();
+            lp.width = tvWidth;
+            lp.height = tvHeight;
+            textureView.setLayoutParams(lp);
+        });
     }
 
     @Override
@@ -286,6 +316,7 @@ public class QrScanActivity extends AppCompatActivity {
             // Choose optimal preview size (capped at 1280x720 for QR scanning)
             Size[] sizes = map.getOutputSizes(SurfaceTexture.class);
             previewSize = chooseOptimalSize(sizes, width, height);
+            adjustTextureSize();
 
             // ImageReader for frame capture (YUV_420_888)
             int readerWidth = previewSize.getWidth();
