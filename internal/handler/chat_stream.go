@@ -293,6 +293,19 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 					})
 					fmt.Fprintf(w, "event: queue_update\ndata: %s\n\n", data)
 				}
+			case "queue_queued":
+				// Sent when a new message is enqueued — carries full message data
+				// so the frontend can push a pending message into messages.value.
+				if event.QueueEvent != nil {
+					data, _ := json.Marshal(map[string]any{
+						"sessionId": event.QueueEvent.SessionID,
+						"text":      event.QueueEvent.Text,
+						"filePaths": event.QueueEvent.FilePaths,
+						"files":     event.QueueEvent.Files,
+						"queue":     event.QueueEvent.Queue,
+					})
+					fmt.Fprintf(w, "event: queue_queued\ndata: %s\n\n", data)
+				}
 			case "resume_split":
 				// Internal event from AutoResumeBackend: the AI detected ExitPlanMode
 				// and will auto-resume. Forward to frontend so it can reset streaming

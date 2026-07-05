@@ -49,11 +49,13 @@ export function useToolbarOverflow(
     // Fixed space: always-inline buttons + gaps between all inline items + search
     const fixedBtns = inlineCount
     const searchSpace = hasSearch ? MAX_SEARCH_WIDTH : 0
-    // Minimum gaps: between always-inline buttons (N-1 gaps for N buttons)
+    // Gaps: between always-inline buttons (N-1), plus 1 between last inline and first demotable
     const minGaps = Math.max(0, fixedBtns - 1) * gap
     const fixedSpace = fixedBtns * btnWidth + minGaps + searchSpace
+    // Deduct the gap before the first demotable button (it's not in step which covers gap *after* each demotable)
+    const bridgeGap = ids.length > 0 ? gap : 0
 
-    const availableSpace = width - fixedSpace
+    const availableSpace = width - fixedSpace - bridgeGap
     if (availableSpace < 0) return []
 
     const maxInline = Math.floor(availableSpace / step)

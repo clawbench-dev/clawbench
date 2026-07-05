@@ -2,9 +2,8 @@
  * Pure functions and constants extracted from useChatStream composable.
  * These have no Vue reactivity dependencies and can be tested in isolation.
  *
- * NOTE: Pending messages are NO LONGER stored in the messages array.
- * They live in a separate per-session pendingStore (usePendingStore).
- * The messages array only contains persisted (DB) messages.
+ * Pending messages are stored in the messages array with pending: true flag.
+ * No separate pendingStore — one source of truth.
  */
 
 /**
@@ -182,26 +181,42 @@ export function drainQueueMessage(
     callbacks.onExtractScheduledTasks?.(messages)
   }
 
-  // 2. Push the drained user message with a stable ID.
-  //    If the backend provided a DB message ID (dbMessageId), use it directly —
-  //    this makes the v-for key stable (db-{numericId}) so Vue won't unmount/remount
-  //    when loadHistory later replaces the array with DB data.
-  //    Otherwise fall back to a synthetic drain ID.
-  //    Deduplicate by ID to avoid race with loadHistory.
-  const effectiveDrainId = dbMessageId || drainId || generateDrainId()
-  const alreadyExists = messages.some(
-    (m: any) => m.id === effectiveDrainId
+  // 2. Find the pending user message that matches the drain content and
+  //    clear its pending flag. The message was pushed into messages by
+  //    queue_queued event or optimistically by sendMessage.
+  //    If not found (e.g. queue_queued was missed), push it as a fallback.
+  //    If the backend provided a DB message ID (dbMessageId), set it for
+  //    v-for key stability so Vue won't unmount/remount on loadHistory.
+  const pendingIdx = messages.findIndex(
+    (m: any) => m.role === 'user' && m.pending && m.content === userContent
   )
-  if (!alreadyExists && userContent) {
-    messages.push({
-      role: 'user',
-      id: effectiveDrainId,
-      _drain: true,
-      content: userContent,
-      blocks: userContent ? [{ type: 'text', text: userContent }] : [],
-      files: userFiles.map((p: string) => ({ path: p })),
-      createdAt: new Date().toISOString(),
-    })
+  if (pendingIdx !== -1) {
+    // Found the pending message — clear pending flag, update id to stable DB id
+    delete messages[pendingIdx].pending
+    if (dbMessageId) {
+      messages[pendingIdx].id = dbMessageId
+    }
+    if (drainId && !dbMessageId) {
+      messages[pendingIdx].id = drainId
+    }
+  } else if (userContent) {
+    // Fallback: pending message not found (queue_queued event was missed).
+    // Push it directly. Deduplicate by ID to avoid race with loadHistory.
+    const effectiveDrainId = dbMessageId || drainId || generateDrainId()
+    const alreadyExists = messages.some(
+      (m: any) => m.id === effectiveDrainId
+    )
+    if (!alreadyExists) {
+      messages.push({
+        role: 'user',
+        id: effectiveDrainId,
+        _drain: true,
+        content: userContent,
+        blocks: userContent ? [{ type: 'text', text: userContent }] : [],
+        files: userFiles.map((p: string) => ({ path: p })),
+        createdAt: new Date().toISOString(),
+      })
+    }
   }
 
   // 3. Push new streaming assistant placeholder with a stable drain ID.

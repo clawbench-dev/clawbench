@@ -2,8 +2,8 @@
   <div class="file-manager-content">
     <!-- Dir nav -->
     <div id="dirNav" class="dir-nav">
-      <div class="dir-toolbar">
-        <div ref="dirToolbarRef" class="dir-toolbar-btns">
+      <div ref="dirToolbarRef" class="dir-toolbar">
+        <div class="dir-toolbar-btns">
           <div class="toolbar-dropdown-wrap">
             <button class="toolbar-btn" :class="{ 'sort-active': sortField }" @click="sortMenuOpen = !sortMenuOpen" :title="t('file.sortDefault')">
               <ArrowDownAz v-if="!sortField || sortDir === 'asc'" :size="16" />
@@ -435,7 +435,7 @@ const dirToolbarRef = ref(null)
 const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
   () => dirToolbarRef.value,
   () => ['hidden', 'refresh', 'multiselect', 'newFile', 'upload', 'viewToggle'],
-  { inlineCount: 2, gap: 6 },
+  { inlineCount: 2, gap: 6, hasSearch: true },
 )
 
 // newFolder is always-in-dropdown; collapsed items are conditional
@@ -1165,6 +1165,8 @@ function currentFileForClipboard() {
     display: flex;
     align-items: center;
     gap: 6px;
+    min-width: 0;
+    /* No overflow:hidden — toolbar-dropdown uses position:absolute and would be clipped */
 }
 
 .dir-toolbar-btns {
@@ -1176,7 +1178,8 @@ function currentFileForClipboard() {
 
 .dir-toolbar :deep(.search-pill) {
     margin-left: auto;
-    min-width: 120px;
+    flex: 0 1 auto;
+    min-width: 80px;
     max-width: 200px;
     transition: opacity 0.15s;
 }

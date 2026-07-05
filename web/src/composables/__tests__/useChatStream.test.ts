@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { ref } from 'vue'
 import { useChatStream } from '@/composables/useChatStream'
 import { forceCleanupStreamingState, FILE_MODIFYING_TOOLS } from '@/utils/chatStreamUtils'
-import { usePendingStore } from '@/composables/usePendingStore'
+// usePendingStore removed — pending messages now live in messages.value with pending:true
 
 // ── Mock EventSource ──
 
@@ -80,8 +80,13 @@ vi.mock('@/utils/chatStreamUtils', () => ({
     // Finalize any streaming message
     const streamingMsg = messages.find((m: any) => m.role === 'assistant' && m.streaming)
     if (streamingMsg) delete streamingMsg.streaming
-    // Push drained user message with drain ID (matches real impl)
-    if (userContent) {
+    // Find existing pending message and clear its pending flag (new architecture)
+    const pendingIdx = messages.findIndex((m: any) => m.role === 'user' && m.pending && m.content === userContent)
+    if (pendingIdx !== -1) {
+      delete messages[pendingIdx].pending
+      if (_drainId) messages[pendingIdx].id = _drainId
+    } else if (userContent) {
+      // Fallback: push directly (no matching pending message)
       const effectiveDrainId = _drainId || `drain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       messages.push({ role: 'user', id: effectiveDrainId, _drain: true, content: userContent, blocks: [{ type: 'text', text: userContent }], files: userFiles.map((p: string) => ({ path: p })), createdAt: new Date().toISOString() })
     }
@@ -122,10 +127,8 @@ vi.mock('@/composables/usePlanProgress', async (importOriginal) => {
 
 function createOptions(overrides: Record<string, any> = {}) {
   const messages = ref<any[]>([])
-  const pendingStore = usePendingStore()
   return {
     messages,
-    pendingStore,
     currentSessionId: ref('test-session-1'),
     currentBackend: ref('test-backend'),
     loading: ref(false),
@@ -613,36 +616,26 @@ describe('useChatStream', () => {
       expect(options.onScrollBottom).toHaveBeenCalledWith(true)
     })
 
-    it('should call pendingStore.syncFromBackendQueue with correct sessionId and queue', () => {
+    it('should replace pending messages in messages.value on queue_drain', () => {
       const options = createOptions()
-      const syncSpy = vi.spyOn(options.pendingStore, 'syncFromBackendQueue')
-      const { connectStream } = useChatStream(options)
+      // Add a pending message to simulate a queued message
+      options.messages.value.push({
+        role: 'user', content: 'queued msg', pending: true,
+        blocks: [{ type: 'text', text: 'queued msg' }],
+        createdAt: new Date().toISOString(),
+      })
 
+      const { connectStream } = useChatStream(options)
       connectStream('test-session-1')
       const es = getLatestEs()
       es.simulateOpen()
 
-      es.simulate('queue_drain', { queue: [{ id: 'q1' }, { id: 'q2' }] })
+      es.simulate('queue_drain', { text: 'queued msg', filePaths: [], files: [], queue: [] })
 
-      expect(syncSpy).toHaveBeenCalledWith('test-session-1', [{ id: 'q1' }, { id: 'q2' }])
-    })
-
-    it('should still sync pendingStore even when session changed', () => {
-      const options = createOptions()
-      const syncSpy = vi.spyOn(options.pendingStore, 'syncFromBackendQueue')
-      const { connectStream } = useChatStream(options)
-
-      connectStream('test-session-1')
-      const es = getLatestEs()
-      es.simulateOpen()
-
-      // Change session to fail guard
-      options.currentSessionId.value = 'different-session'
-
-      es.simulate('queue_drain', { queue: [{ id: 'q1' }] })
-
-      // pendingStore.syncFromBackendQueue IS always called — even on session change
-      expect(syncSpy).toHaveBeenCalledWith('test-session-1', [{ id: 'q1' }])
+      // After queue_drain: pending flag should be cleared on the matching message
+      const userMsg = options.messages.value.find((m: any) => m.role === 'user' && m.content === 'queued msg')
+      expect(userMsg).toBeDefined()
+      expect(userMsg.pending).toBeUndefined()
     })
 
     it('should not modify messages array when session changed (prevents cross-session contamination)', () => {
@@ -696,16 +689,18 @@ describe('useChatStream', () => {
       expect(callArgs[4]).toHaveProperty('onExtractScheduledTasks')
     })
 
-    it('should push drain message BEFORE syncing pendingStore (atomic visual transition)', () => {
-      // This is the core fix: drainQueueMessage runs BEFORE syncFromBackendQueue
-      // so the user never sees a gap where neither pending nor drain message is visible.
-      // We verify by checking that the user message is already in messages.value
-      // BEFORE syncFromBackendQueue would have removed the pending.
+    it('should push drain message and clear pending flag atomically (visual transition)', () => {
+      // This is the core fix: drainQueueMessage clears the pending flag on the
+      // existing message so the user never sees a gap where neither pending nor
+      // drain message is visible.
       const options = createOptions()
       // Add a pending message to simulate a queued message
-      options.pendingStore.addPending('test-session-1', { role: 'user', content: 'queued msg', blocks: [{ type: 'text', text: 'queued msg' }], files: [], createdAt: new Date().toISOString(), pending: true })
+      options.messages.value.push({
+        role: 'user', content: 'queued msg', pending: true,
+        blocks: [{ type: 'text', text: 'queued msg' }],
+        files: [], createdAt: new Date().toISOString(),
+      })
 
-      const syncSpy = vi.spyOn(options.pendingStore, 'syncFromBackendQueue')
       const { connectStream } = useChatStream(options)
       connectStream('test-session-1')
       const es = getLatestEs()
@@ -713,11 +708,10 @@ describe('useChatStream', () => {
 
       es.simulate('queue_drain', { text: 'queued msg', filePaths: [], files: [], queue: [] })
 
-      // After queue_drain: user message should be in messages.value (pushed by drain)
+      // After queue_drain: user message should still be in messages.value with pending cleared
       const userMsg = options.messages.value.find((m: any) => m.role === 'user' && m.content === 'queued msg')
       expect(userMsg).toBeDefined()
-      // And pendingStore should have been synced (drained item removed)
-      expect(syncSpy).toHaveBeenCalledWith('test-session-1', [])
+      expect(userMsg.pending).toBeUndefined()
     })
 
     it('should assign drain ID to the pushed user message', () => {
@@ -755,39 +749,28 @@ describe('useChatStream', () => {
   })
 
   describe('queue_update event (enqueue notification)', () => {
-    it('should call pendingStore.syncFromBackendQueue with correct sessionId and queue', () => {
+    it('should replace pending portion of messages.value with backend queue', () => {
       const options = createOptions()
-      const syncSpy = vi.spyOn(options.pendingStore, 'syncFromBackendQueue')
-      const { connectStream } = useChatStream(options)
+      // Add an existing pending message
+      options.messages.value.push({
+        role: 'user', content: 'old pending', pending: true,
+        blocks: [{ type: 'text', text: 'old pending' }],
+        createdAt: new Date().toISOString(),
+      })
 
+      const { connectStream } = useChatStream(options)
       connectStream('test-session-1')
       const es = getLatestEs()
       es.simulateOpen()
 
-      es.simulate('queue_update', { queue: [{ id: 'q1' }, { id: 'q2' }] })
+      es.simulate('queue_update', { queue: [{ id: 'q1', text: 'new msg' }, { id: 'q2', text: 'another msg' }] })
 
-      expect(syncSpy).toHaveBeenCalledWith('test-session-1', [{ id: 'q1' }, { id: 'q2' }])
+      // Pending messages should be replaced by backend queue
+      const pendingMsgs = options.messages.value.filter((m: any) => m.pending)
+      expect(pendingMsgs.length).toBe(2)
     })
 
-    it('should still sync pendingStore when session changed (pendingStore is always updated)', () => {
-      const options = createOptions()
-      const syncSpy = vi.spyOn(options.pendingStore, 'syncFromBackendQueue')
-      const { connectStream } = useChatStream(options)
-
-      connectStream('test-session-1')
-      const es = getLatestEs()
-      es.simulateOpen()
-
-      // Change session to fail guard
-      options.currentSessionId.value = 'different-session'
-
-      es.simulate('queue_update', { queue: [{ id: 'q1' }] })
-
-      // pendingStore.syncFromBackendQueue IS always called — even on session change
-      expect(syncSpy).toHaveBeenCalledWith('test-session-1', [{ id: 'q1' }])
-    })
-
-    it('should not render when session changed (only pendingStore is updated)', () => {
+    it('should not render when session changed (only pending messages are updated)', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 

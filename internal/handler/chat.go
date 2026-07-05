@@ -415,10 +415,17 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		}
 		queueState := service.EnqueueMessage(sessionID, qMsg)
 
-		// Notify the running goroutine via SSE
+		// Notify the running goroutine via SSE — send queue_queued with the full
+		// message data so the frontend can push a pending message into messages
 		service.SendSessionEvent(sessionID, ai.StreamEvent{
-			Type:       "queue_update",
-			QueueEvent: &ai.QueueEventData{SessionID: sessionID, Queue: queueState},
+			Type: "queue_queued",
+			QueueEvent: &ai.QueueEventData{
+				SessionID: sessionID,
+				Text:      req.Message,
+				FilePaths: allFilePaths,
+				Files:     allFiles,
+				Queue:     queueState,
+			},
 		})
 
 		writeJSON(w, http.StatusOK, map[string]any{

@@ -3,6 +3,7 @@ package handler
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"sync"
