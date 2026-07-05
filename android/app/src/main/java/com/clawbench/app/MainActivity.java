@@ -285,10 +285,11 @@ public class MainActivity extends AppCompatActivity {
             // Auto-reconnect: use pre-authentication to verify server is reachable
             // before loading the WebView. This prevents Chrome's built-in error page.
             String savedPassword = prefs.getString(KEY_SSH_PASSWORD, null);
-            if (savedPassword != null && !savedPassword.isEmpty()) {
+            if (savedPassword != null && !savedPassword.isEmpty() && !"__qr__".equals(savedPassword)) {
                 webView.setVisibility(View.INVISIBLE);
                 authenticateAndNavigate(savedUrl, savedPassword);
             } else {
+                // QR-authenticated or no password: rely on session cookie
                 webView.setVisibility(View.INVISIBLE);
                 checkConnectivityAndNavigate(savedUrl);
             }
@@ -1371,10 +1372,13 @@ public class MainActivity extends AppCompatActivity {
             }
 
             // Save URL and load WebView
+            // Save a sentinel password so auto-reconnect knows this was QR-authenticated
+            // and uses checkConnectivityAndNavigate (which relies on the session cookie).
             String finalUrl = connectUrl;
             runOnUiThread(() -> {
                 prefs.edit()
                     .putString(KEY_SERVER_URL, finalUrl)
+                    .putString(KEY_SSH_PASSWORD, "__qr__")
                     .putString("frp_remote_url", frpUrl != null ? frpUrl : "")
                     .apply();
                 webViewConnected = false;
@@ -1408,7 +1412,9 @@ public class MainActivity extends AppCompatActivity {
     boolean exchangeQRToken(String serverUrl, String token) {
         try {
             String url = serverUrl + "/api/auth/qr-token";
-            String json = "{\"token\":\"" + token + "\"}";
+            org.json.JSONObject jsonBody = new org.json.JSONObject();
+            jsonBody.put("token", token);
+            String json = jsonBody.toString();
             OkHttpClient client = new OkHttpClient.Builder()
                 .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
                 .build();

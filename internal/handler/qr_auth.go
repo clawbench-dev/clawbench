@@ -3,10 +3,8 @@ package handler
 import (
 	"crypto/subtle"
 	"encoding/json"
-	"fmt"
 	"net"
 	"net/http"
-	"net/url"
 	"sync"
 	"time"
 
@@ -66,22 +64,6 @@ func (q *QRTokenManager) IsExpired() bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	return q.used || time.Now().After(q.expiry)
-}
-
-// EnsureActive regenerates the token if expired or used, then returns the deep link and expiry.
-// This is atomic under a single lock, preventing TOCTOU races between IsExpired/Regenerate
-// and between DeepLink/Expiry calls.
-func (q *QRTokenManager) EnsureActive() (deepLink string, expiry time.Time) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if q.used || time.Now().After(q.expiry) {
-		q.token = model.GenerateRandomToken(16)
-		q.expiry = time.Now().Add(q.ttl)
-		q.used = false
-	}
-	deepLink = fmt.Sprintf("clawbench://connect?lan=%s&frp=%s&token=%s",
-		url.QueryEscape(q.lanURL), url.QueryEscape(q.frpURL), q.token)
-	return deepLink, q.expiry
 }
 
 // qrTokenMgr holds the global QR token manager, set from main.go.

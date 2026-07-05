@@ -108,38 +108,6 @@
           <Plus :size="14" />
           <span>{{ t('login.addServer') }}</span>
         </button>
-
-        <!-- QR scan login section -->
-        <div v-if="!showAddForm" class="qr-login-section">
-          <div class="qr-divider">
-            <span class="qr-divider-text">{{ t('common.or') }}</span>
-          </div>
-          <button v-if="!showQrPanel" class="qr-login-btn" @click="openQrPanel">
-            <QrCode :size="16" />
-            <span>{{ t('login.scanToLogin') }}</span>
-          </button>
-          <div v-else class="qr-panel">
-            <button class="qr-close-btn" @click="closeQrPanel">
-              <X :size="14" />
-            </button>
-            <div class="qr-code-wrapper">
-              <canvas ref="qrCanvas" class="qr-canvas"></canvas>
-              <div v-if="qrState === 'loading'" class="qr-overlay">
-                <span class="btn-spinner"></span>
-              </div>
-              <div v-else-if="qrState === 'expired'" class="qr-overlay qr-overlay-expired" @click="fetchQrCode">
-                <RefreshCw :size="24" />
-                <span>{{ t('login.qrExpired') }}</span>
-                <span class="qr-refresh-hint">{{ t('login.qrRefresh') }}</span>
-              </div>
-              <div v-else-if="qrState === 'unavailable'" class="qr-overlay qr-overlay-expired">
-                <WifiOff :size="24" />
-                <span>{{ t('login.qrUnavailable') }}</span>
-              </div>
-            </div>
-            <p class="qr-hint">{{ t('login.scanToLoginDesc') }}</p>
-          </div>
-        </div>
       </div>
 
       <!-- Install banner (mobile web only) -->
@@ -169,15 +137,14 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppMode } from '@/composables/useAppMode'
 import { usePwaInstall } from '@/composables/usePwaInstall'
 import { useServerList } from '@/composables/useServerList'
 import { formatServerHost } from '@/utils/url'
-import { Server, X, Plus, MonitorSmartphone, Smartphone, ChevronRight, QrCode, RefreshCw, WifiOff } from 'lucide-vue-next'
+import { Server, X, Plus, MonitorSmartphone, Smartphone, ChevronRight } from 'lucide-vue-next'
 import IosInstallDrawer from './common/IosInstallDrawer.vue'
-import QRCode from 'qrcode'
 
 const { t } = useI18n()
 const { isAppMode } = useAppMode()
@@ -195,14 +162,6 @@ const showAddForm = ref(false)
 const newServerUrl = ref('')
 const newServerPassword = ref('')
 const showIosSheet = ref(false)
-
-// QR login state
-const showQrPanel = ref(false)
-const qrCanvas = ref(null)
-const qrState = ref('idle') // idle | loading | active | expired | unavailable
-const qrExpiresAt = ref(0)
-let qrRefreshTimer = null
-let qrPollTimer = null
 
 const showServerSelector = computed(() => servers.value.length >= 1)
 const showInstallBanner = computed(() => pwaInstall.showPwaInstall.value || pwaInstall.showApkDownload.value)
@@ -316,78 +275,6 @@ function handleApkDownload() {
   window.location.href = '/api/apk'
 }
 
-// --- QR scan login ---
-function openQrPanel() {
-  showQrPanel.value = true
-  fetchQrCode()
-}
-
-function closeQrPanel() {
-  showQrPanel.value = false
-  stopQrTimers()
-  qrState.value = 'idle'
-}
-
-async function fetchQrCode() {
-  qrState.value = 'loading'
-  try {
-    const res = await fetch('/api/auth/qr-code')
-    if (!res.ok) {
-      qrState.value = 'unavailable'
-      return
-    }
-    const data = await res.json()
-    if (!data.ok) {
-      qrState.value = 'unavailable'
-      return
-    }
-    // Render QR code to canvas
-    await nextTick()
-    if (qrCanvas.value) {
-      await QRCode.toCanvas(qrCanvas.value, data.url, {
-        width: 200,
-        margin: 2,
-        color: { dark: '#000000', light: '#ffffff' },
-      })
-    }
-    qrExpiresAt.value = data.expiresAt
-    qrState.value = 'active'
-    scheduleQrRefresh(data.expiresAt)
-    startAuthPoll()
-  } catch {
-    qrState.value = 'unavailable'
-  }
-}
-
-function scheduleQrRefresh(expiresAt) {
-  if (qrRefreshTimer) clearTimeout(qrRefreshTimer)
-  const msUntilExpiry = (expiresAt * 1000) - Date.now()
-  qrRefreshTimer = setTimeout(() => {
-    qrState.value = 'expired'
-  }, msUntilExpiry > 0 ? msUntilExpiry : 0)
-}
-
-// Poll /api/me to detect when QR token auth succeeds (another device exchanged the token)
-function startAuthPoll() {
-  if (qrPollTimer) clearInterval(qrPollTimer)
-  qrPollTimer = setInterval(async () => {
-    try {
-      const res = await fetch('/api/me')
-      if (res.ok) {
-        // Authenticated! QR scan login succeeded
-        stopQrTimers()
-        qrState.value = 'idle' // prevent double-emit on next interval
-        emit('loginSuccess')
-      }
-    } catch { /* ignore */ }
-  }, 2000)
-}
-
-function stopQrTimers() {
-  if (qrRefreshTimer) { clearTimeout(qrRefreshTimer); qrRefreshTimer = null }
-  if (qrPollTimer) { clearInterval(qrPollTimer); qrPollTimer = null }
-}
-
 onMounted(() => {
   if (isAppMode.value) {
     loadServers()
@@ -399,10 +286,6 @@ onMounted(() => {
       password.value = savedPassword
     }
   }
-})
-
-onUnmounted(() => {
-  stopQrTimers()
 })
 </script>
 
@@ -816,134 +699,5 @@ input:focus {
 .install-arrow {
     color: var(--text-muted);
     flex-shrink: 0;
-}
-
-/* QR scan login section */
-.qr-login-section {
-    margin-top: 16px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
-}
-
-.qr-divider {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
-.qr-divider::before,
-.qr-divider::after {
-    content: '';
-    flex: 1;
-    height: 1px;
-    background: var(--border-color);
-}
-
-.qr-divider-text {
-    font-size: 12px;
-    color: var(--text-muted);
-    flex-shrink: 0;
-}
-
-.qr-login-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    width: 100%;
-    padding: 10px;
-    border: 1px solid var(--border-color);
-    border-radius: 10px;
-    background: transparent;
-    color: var(--text-secondary);
-    font-size: 13px;
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-
-.qr-login-btn:hover {
-    background: var(--bg-tertiary);
-    color: var(--accent-color);
-    border-color: var(--accent-color);
-}
-
-.qr-panel {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
-    position: relative;
-}
-
-.qr-close-btn {
-    position: absolute;
-    top: -6px;
-    right: -6px;
-    width: 24px;
-    height: 24px;
-    border: none;
-    border-radius: 50%;
-    background: var(--bg-tertiary);
-    color: var(--text-muted);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1;
-    transition: background 0.15s, color 0.15s;
-}
-
-.qr-close-btn:hover {
-    background: var(--border-color);
-    color: var(--text-primary);
-}
-
-.qr-code-wrapper {
-    position: relative;
-    width: 200px;
-    height: 200px;
-    border-radius: 12px;
-    overflow: hidden;
-    background: #fff;
-}
-
-.qr-canvas {
-    display: block;
-    width: 200px;
-    height: 200px;
-}
-
-.qr-overlay {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    background: rgba(255, 255, 255, 0.85);
-    color: var(--text-primary);
-    font-size: 13px;
-    font-weight: 500;
-}
-
-.qr-overlay-expired {
-    cursor: pointer;
-}
-
-.qr-refresh-hint {
-    font-size: 11px;
-    color: var(--accent-color);
-    font-weight: 400;
-}
-
-.qr-hint {
-    font-size: 12px;
-    color: var(--text-muted);
-    margin: 0;
-    text-align: center;
 }
 </style>

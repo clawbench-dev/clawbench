@@ -4,8 +4,6 @@ import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.ImageFormat;
-import android.graphics.Matrix;
-import android.graphics.RectF;
 import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
@@ -40,8 +38,6 @@ import com.google.zxing.Result;
 import com.google.zxing.common.HybridBinarizer;
 
 import java.nio.ByteBuffer;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -53,6 +49,8 @@ import java.util.Map;
 public class QrScanActivity extends AppCompatActivity {
 
     private static final int CAMERA_PERMISSION_REQUEST = 1001;
+    private static final int MAX_PREVIEW_WIDTH = 1280;
+    private static final int MAX_PREVIEW_HEIGHT = 720;
 
     private TextureView textureView;
     private CameraDevice cameraDevice;
@@ -61,7 +59,7 @@ public class QrScanActivity extends AppCompatActivity {
     private Handler backgroundHandler;
     private HandlerThread backgroundThread;
     private MultiFormatReader zxingReader;
-    private boolean scanned = false;
+    private volatile boolean scanned = false;
     private Size previewSize;
 
     @Override
@@ -83,6 +81,20 @@ public class QrScanActivity extends AppCompatActivity {
             ActivityCompat.requestPermissions(this,
                     new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION_REQUEST);
         }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (textureView.isAvailable() && cameraDevice == null) {
+            openCamera(textureView.getWidth(), textureView.getHeight());
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        closeCamera();
     }
 
     private View createContentView() {
@@ -165,7 +177,9 @@ public class QrScanActivity extends AppCompatActivity {
 
     @SuppressWarnings("MissingPermission")
     private void openCamera(int width, int height) {
-        startBackgroundThread();
+        if (backgroundThread == null) {
+            startBackgroundThread();
+        }
         CameraManager manager = (CameraManager) getSystemService(CAMERA_SERVICE);
         try {
             String cameraId = null;
@@ -192,7 +206,7 @@ public class QrScanActivity extends AppCompatActivity {
                 return;
             }
 
-            // Choose optimal preview size
+            // Choose optimal preview size (capped at 1280x720 for QR scanning)
             Size[] sizes = map.getOutputSizes(SurfaceTexture.class);
             previewSize = chooseOptimalSize(sizes, width, height);
 
@@ -263,6 +277,7 @@ public class QrScanActivity extends AppCompatActivity {
                         @Override
                         public void onConfigureFailed(@NonNull CameraCaptureSession session) {
                             Toast.makeText(QrScanActivity.this, "相机配置失败", Toast.LENGTH_SHORT).show();
+                            finish();
                         }
                     }, backgroundHandler);
         } catch (Exception e) {
@@ -315,17 +330,27 @@ public class QrScanActivity extends AppCompatActivity {
     };
 
     private static Size chooseOptimalSize(Size[] choices, int textureWidth, int textureHeight) {
-        // Collect sizes close to the target aspect ratio, then pick the smallest big enough
+        // Collect sizes close to the target aspect ratio, capped at MAX_PREVIEW resolution
         float targetRatio = (float) textureWidth / textureHeight;
         Size best = null;
         float minDiff = Float.MAX_VALUE;
         for (Size s : choices) {
+            // Skip resolutions above our cap — wasteful for QR scanning
+            if (s.getWidth() > MAX_PREVIEW_WIDTH || s.getHeight() > MAX_PREVIEW_HEIGHT) continue;
             float ratio = (float) s.getWidth() / s.getHeight();
             float diff = Math.abs(ratio - targetRatio);
             if (diff < minDiff || (diff == minDiff && best != null
                     && s.getWidth() < best.getWidth())) {
                 best = s;
                 minDiff = diff;
+            }
+        }
+        // Fallback: if all sizes exceed the cap, pick the smallest available
+        if (best == null) {
+            for (Size s : choices) {
+                if (best == null || s.getWidth() * s.getHeight() < best.getWidth() * best.getHeight()) {
+                    best = s;
+                }
             }
         }
         return best != null ? best : choices[0];
