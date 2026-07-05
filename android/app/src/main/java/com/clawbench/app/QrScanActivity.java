@@ -4,6 +4,7 @@ import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.ImageFormat;
+import android.graphics.Matrix;
 import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
@@ -17,9 +18,11 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.util.Size;
+import android.view.Display;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -65,6 +68,7 @@ public class QrScanActivity extends AppCompatActivity {
     private volatile boolean scanned = false;
     private final AtomicBoolean cameraOpening = new AtomicBoolean(false);
     private Size previewSize;
+    private int sensorRotation;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -93,7 +97,6 @@ public class QrScanActivity extends AppCompatActivity {
                 fw.append("\n");
                 fw.close();
             } catch (Exception ignored) {}
-            // Chain to previous handler (framework default) for proper cleanup
             if (prev != null) prev.uncaughtException(thread, throwable);
         });
 
@@ -152,7 +155,7 @@ public class QrScanActivity extends AppCompatActivity {
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         root.addView(textureView);
 
-        // Hint text
+        // Scanning hint
         TextView hint = new TextView(this);
         hint.setText("将二维码对准框内即可自动扫描");
         hint.setTextColor(0xCCFFFFFF);
@@ -182,6 +185,29 @@ public class QrScanActivity extends AppCompatActivity {
         return root;
     }
 
+    /**
+     * Adjust TextureView transform so the camera preview fills the view
+     * without distortion (crop-to-fill, maintaining aspect ratio).
+     */
+    private void adjustTextureTransform(int viewWidth, int viewHeight) {
+        if (previewSize == null || viewWidth == 0 || viewHeight == 0) return;
+        int pw = previewSize.getWidth();
+        int ph = previewSize.getHeight();
+        // Account for sensor rotation: swap preview dims if rotated 90/270
+        if (sensorRotation == 90 || sensorRotation == 270) {
+            int tmp = pw; pw = ph; ph = tmp;
+        }
+        float scaleX = (float) viewWidth / pw;
+        float scaleY = (float) viewHeight / ph;
+        float scale = Math.max(scaleX, scaleY); // crop-to-fill
+        float dx = (viewWidth - pw * scale) / 2f;
+        float dy = (viewHeight - ph * scale) / 2f;
+        Matrix matrix = new Matrix();
+        matrix.setScale(scale, scale);
+        matrix.postTranslate(dx, dy);
+        textureView.setTransform(matrix);
+    }
+
     private final TextureView.SurfaceTextureListener surfaceTextureListener =
             new TextureView.SurfaceTextureListener() {
                 @Override
@@ -190,7 +216,9 @@ public class QrScanActivity extends AppCompatActivity {
                 }
 
                 @Override
-                public void onSurfaceTextureSizeChanged(@NonNull SurfaceTexture surface, int width, int height) {}
+                public void onSurfaceTextureSizeChanged(@NonNull SurfaceTexture surface, int width, int height) {
+                    adjustTextureTransform(width, height);
+                }
 
                 @Override
                 public boolean onSurfaceTextureDestroyed(@NonNull SurfaceTexture surface) {
@@ -247,6 +275,9 @@ public class QrScanActivity extends AppCompatActivity {
             }
 
             CameraCharacteristics characteristics = manager.getCameraCharacteristics(cameraId);
+            sensorRotation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) != null
+                    ? characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) : 90;
+
             StreamConfigurationMap map = characteristics.get(
                     CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
             if (map == null) {
@@ -259,6 +290,7 @@ public class QrScanActivity extends AppCompatActivity {
             // Choose optimal preview size (capped at 1280x720 for QR scanning)
             Size[] sizes = map.getOutputSizes(SurfaceTexture.class);
             previewSize = chooseOptimalSize(sizes, width, height);
+            adjustTextureTransform(textureView.getWidth(), textureView.getHeight());
 
             // ImageReader for frame capture (YUV_420_888)
             int readerWidth = previewSize.getWidth();
@@ -310,7 +342,6 @@ public class QrScanActivity extends AppCompatActivity {
                 return;
             }
             texture.setDefaultBufferSize(previewSize.getWidth(), previewSize.getHeight());
-            // Release previous preview surface if any
             if (previewSurface != null) {
                 previewSurface.release();
             }
@@ -363,19 +394,61 @@ public class QrScanActivity extends AppCompatActivity {
             Image.Plane yPlane = planes[0];
             ByteBuffer yBuffer = yPlane.getBuffer();
             int yRowStride = yPlane.getRowStride();
+            int yPixelStride = yPlane.getPixelStride();
 
             int width = image.getWidth();
             int height = image.getHeight();
 
-            // Build Y-only byte array for ZXing (luminance)
-            byte[] yData = new byte[width * height];
-            for (int row = 0; row < height; row++) {
-                yBuffer.position(row * yRowStride);
-                yBuffer.get(yData, row * width, width);
+            // Extract Y plane considering stride and pixelStride
+            byte[] yData;
+            if (yPixelStride == 1 && yRowStride == width) {
+                // Compact: direct array read
+                yData = new byte[width * height];
+                yBuffer.get(yData);
+            } else {
+                // Need row-by-row copy
+                yData = new byte[width * height];
+                for (int row = 0; row < height; row++) {
+                    yBuffer.position(row * yRowStride);
+                    yBuffer.get(yData, row * width, width);
+                }
+            }
+
+            // Rotate luminance data to match display orientation
+            // Camera sensor is typically landscape; for portrait we rotate 90°
+            byte[] rotatedData;
+            int rotatedWidth, rotatedHeight;
+            int rotation = getDisplayRotation();
+            if (rotation == 90 || rotation == 270) {
+                // Swap width/height for 90/270 rotation
+                rotatedWidth = height;
+                rotatedHeight = width;
+                rotatedData = new byte[rotatedWidth * rotatedHeight];
+                boolean reverse = (rotation == 270);
+                for (int y = 0; y < height; y++) {
+                    for (int x = 0; x < width; x++) {
+                        int dstX = reverse ? (height - 1 - y) : y;
+                        int dstY = reverse ? x : (width - 1 - x);
+                        rotatedData[dstY * rotatedWidth + dstX] = yData[y * width + x];
+                    }
+                }
+            } else if (rotation == 180) {
+                rotatedWidth = width;
+                rotatedHeight = height;
+                rotatedData = new byte[width * height];
+                for (int y = 0; y < height; y++) {
+                    for (int x = 0; x < width; x++) {
+                        rotatedData[(height - 1 - y) * width + (width - 1 - x)] = yData[y * width + x];
+                    }
+                }
+            } else {
+                rotatedWidth = width;
+                rotatedHeight = height;
+                rotatedData = yData;
             }
 
             PlanarYUVLuminanceSource source = new PlanarYUVLuminanceSource(
-                    yData, width, height, 0, 0, width, height, false);
+                    rotatedData, rotatedWidth, rotatedHeight, 0, 0, rotatedWidth, rotatedHeight, false);
             BinaryBitmap bitmap = new BinaryBitmap(new HybridBinarizer(source));
 
             Result result = zxingReader.decode(bitmap);
@@ -396,6 +469,22 @@ public class QrScanActivity extends AppCompatActivity {
         }
     };
 
+    /** Get the rotation needed to display camera frames in the correct orientation. */
+    private int getDisplayRotation() {
+        Display display = getWindowManager().getDefaultDisplay();
+        int displayRotation = display.getRotation();
+        int degrees;
+        switch (displayRotation) {
+            case Surface.ROTATION_0: degrees = 0; break;
+            case Surface.ROTATION_90: degrees = 90; break;
+            case Surface.ROTATION_180: degrees = 180; break;
+            case Surface.ROTATION_270: degrees = 270; break;
+            default: degrees = 0; break;
+        }
+        // Sensor sees landscape; we want portrait
+        return (sensorRotation + degrees) % 360;
+    }
+
     private static Size chooseOptimalSize(Size[] choices, int textureWidth, int textureHeight) {
         if (choices == null || choices.length == 0) {
             return new Size(textureWidth, textureHeight);
@@ -405,7 +494,6 @@ public class QrScanActivity extends AppCompatActivity {
         Size best = null;
         float minDiff = Float.MAX_VALUE;
         for (Size s : choices) {
-            // Skip resolutions above our cap — wasteful for QR scanning
             if (s.getWidth() > MAX_PREVIEW_WIDTH || s.getHeight() > MAX_PREVIEW_HEIGHT) continue;
             float ratio = (float) s.getWidth() / s.getHeight();
             float diff = Math.abs(ratio - targetRatio);
@@ -415,7 +503,6 @@ public class QrScanActivity extends AppCompatActivity {
                 minDiff = diff;
             }
         }
-        // Fallback: if all sizes exceed the cap, pick the smallest available
         if (best == null) {
             for (Size s : choices) {
                 if (best == null || s.getWidth() * s.getHeight() < best.getWidth() * best.getHeight()) {
