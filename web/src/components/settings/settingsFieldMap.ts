@@ -15,6 +15,17 @@ export interface DependsOn {
   values?: any[]
 }
 
+export interface GroupConfigTrigger {
+  /** The value that triggers the dialog (e.g., "piper", "api") */
+  triggerValue: any
+  /** i18n key for the dialog title */
+  dialogTitleKey: string
+  /** Dot-path keys of sub-fields to show in the dialog */
+  fields: string[]
+  /** Dot-path keys of required fields (empty → red border + block submit) */
+  requiredFields: string[]
+}
+
 export interface ItemSpec {
   labelKey: string
   descriptionKey?: string
@@ -32,6 +43,9 @@ export interface ItemSpec {
   displayTransform?: (value: any) => any
   defaultValue?: any
   displayFormat?: 'percent' | 'raw'
+  /** When this field changes to a triggerValue, show a modal to batch-edit sub-fields.
+   *  Supports multiple triggers (e.g., tts.engine has one for "piper" and one for "kokoro"). */
+  groupConfig?: GroupConfigTrigger[]
 }
 
 // ── Config Group types ──────────────────────────────────────
@@ -146,6 +160,9 @@ export const categoryItems: Record<string, ItemSpec[]> = {
       { labelKey: 'settings.items.ttsEnginePiper', value: 'piper' },
       { labelKey: 'settings.items.ttsEngineKokoro', value: 'kokoro' },
       { labelKey: 'settings.items.ttsEngineMossNano', value: 'moss-nano' },
+    ], groupConfig: [
+      { triggerValue: 'piper', dialogTitleKey: 'settings.groupConfig.ttsPiperTitle', fields: ['tts.piper.model_path', 'tts.piper.noise_scale', 'tts.piper.length_scale', 'tts.piper.sentence_silence'], requiredFields: ['tts.piper.model_path'] },
+      { triggerValue: 'kokoro', dialogTitleKey: 'settings.groupConfig.ttsKokoroTitle', fields: ['tts.kokoro.model_path', 'tts.kokoro.voices_path', 'tts.kokoro.lang'], requiredFields: ['tts.kokoro.model_path', 'tts.kokoro.voices_path'] },
     ]},
     { labelKey: 'settings.items.ttsVoice', descriptionKey: 'settings.items.ttsVoiceDesc', key: 'tts.voice', type: 'select', source: 'server' },
     { labelKey: 'settings.items.ttsSpeed', descriptionKey: 'settings.items.ttsSpeedDesc', key: 'tts.speed', type: 'slider', source: 'server', min: 0.5, max: 3, step: 0.1 },
@@ -180,6 +197,8 @@ export const categoryItems: Record<string, ItemSpec[]> = {
       { labelKey: 'settings.items.summarizeVecli', value: 'vecli' },
       { labelKey: 'settings.items.summarizeDeepseek', value: 'deepseek' },
       { labelKey: 'settings.items.summarizePi', value: 'pi' },
+    ], groupConfig: [
+      { triggerValue: 'api', dialogTitleKey: 'settings.groupConfig.summarizeApiTitle', fields: ['summarize.api.base_url', 'summarize.api.key', 'summarize.api.format'], requiredFields: ['summarize.api.base_url'] },
     ]},
     { labelKey: 'settings.items.summarizeModel', descriptionKey: 'settings.items.summarizeModelDesc', key: 'summarize.model', type: 'text', source: 'server', dependsOn: { key: 'summarize.backend', values: ['api', ...CLI_BACKENDS] } },
     { labelKey: 'settings.items.apiBaseUrl', descriptionKey: 'settings.items.apiBaseUrlDesc', key: 'summarize.api.base_url', type: 'text', source: 'server', sectionHeader: 'settings.items.apiHeader', dependsOn: { key: 'summarize.backend', value: 'api' } },
@@ -206,7 +225,9 @@ export const categoryItems: Record<string, ItemSpec[]> = {
   ],
   // FRP (Fast Reverse Proxy) remote tunnel — flattened from group
   frp: [
-    { labelKey: 'settings.items.frpEnabled', descriptionKey: 'settings.items.frpEnabledDesc', key: 'frp.enabled', type: 'switch', source: 'server', needsRestart: true },
+    { labelKey: 'settings.items.frpEnabled', descriptionKey: 'settings.items.frpEnabledDesc', key: 'frp.enabled', type: 'switch', source: 'server', needsRestart: true, groupConfig: [
+      { triggerValue: true, dialogTitleKey: 'settings.groupConfig.frpTitle', fields: ['frp.server_addr', 'frp.server_port', 'frp.token', 'frp.remote_port'], requiredFields: ['frp.server_addr'] },
+    ] },
     { labelKey: 'settings.items.frpServerAddr', descriptionKey: 'settings.items.frpServerAddrDesc', key: 'frp.server_addr', type: 'text', source: 'server', dependsOn: { key: 'frp.enabled', value: true } },
     { labelKey: 'settings.items.frpServerPort', descriptionKey: 'settings.items.frpServerPortDesc', key: 'frp.server_port', type: 'number', source: 'server', dependsOn: { key: 'frp.enabled', value: true } },
     { labelKey: 'settings.items.frpToken', descriptionKey: 'settings.items.frpTokenDesc', key: 'frp.token', type: 'password', source: 'server', dependsOn: { key: 'frp.enabled', value: true } },

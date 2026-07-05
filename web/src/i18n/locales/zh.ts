@@ -1351,6 +1351,15 @@ export default {
     passwordStrengthWeak: '弱',
     passwordStrengthMedium: '中',
     passwordStrengthStrong: '强',
+    groupConfig: {
+      frpTitle: '配置 FRP 隧道',
+      summarizeApiTitle: '配置 API 摘要',
+      ttsPiperTitle: '配置 Piper 语音',
+      ttsKokoroTitle: '配置 Kokoro 语音',
+      requiredHint: '带 * 为必填项，未填写将无法启用',
+      confirm: '确定开启',
+      saved: '配置已保存',
+    },
   },
   terminal: {
     title: '终端',

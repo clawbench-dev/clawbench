@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getServerFieldToLabelKey, categoryItems, categoryGroups, getGroupById, getCategoryForGroup } from '@/components/settings/settingsFieldMap'
+import { getServerFieldToLabelKey, categoryItems, categoryGroups, getGroupById, getCategoryForGroup, type ItemSpec } from '@/components/settings/settingsFieldMap'
 
 describe('settingsFieldMap', () => {
   it('maps all server-side dot-path keys to i18n label keys', () => {
@@ -155,5 +155,47 @@ describe('settingsFieldMap', () => {
     const mossNanoItem = ttsItems.find(i => i.key === 'tts.moss_nano.model_dir')
     expect(mossNanoItem).toBeDefined()
     expect(mossNanoItem!.dependsOn).toEqual({ key: 'tts.engine', value: 'moss-nano' })
+  })
+
+  // ── groupConfig tests ──
+
+  it('frp.enabled has groupConfig with triggerValue=true', () => {
+    const frpItems = categoryItems['frp']
+    const enabledItem = frpItems.find(i => i.key === 'frp.enabled') as ItemSpec
+    expect(enabledItem).toBeDefined()
+    expect(enabledItem.groupConfig).toBeDefined()
+    expect(enabledItem.groupConfig!.length).toBe(1)
+    expect(enabledItem.groupConfig![0].triggerValue).toBe(true)
+    expect(enabledItem.groupConfig![0].requiredFields).toEqual(['frp.server_addr'])
+    expect(enabledItem.groupConfig![0].fields).toContain('frp.server_addr')
+    expect(enabledItem.groupConfig![0].fields).toContain('frp.server_port')
+    expect(enabledItem.groupConfig![0].fields).toContain('frp.token')
+    expect(enabledItem.groupConfig![0].fields).toContain('frp.remote_port')
+  })
+
+  it('summarize.backend has groupConfig with triggerValue="api"', () => {
+    const summarizeItems = categoryItems['summarization']
+    const backendItem = summarizeItems.find(i => i.key === 'summarize.backend') as ItemSpec
+    expect(backendItem).toBeDefined()
+    expect(backendItem.groupConfig).toBeDefined()
+    expect(backendItem.groupConfig!.length).toBe(1)
+    expect(backendItem.groupConfig![0].triggerValue).toBe('api')
+    expect(backendItem.groupConfig![0].requiredFields).toEqual(['summarize.api.base_url'])
+  })
+
+  it('tts.engine has groupConfig for piper and kokoro', () => {
+    const ttsItems = categoryItems['tts']
+    const engineItem = ttsItems.find(i => i.key === 'tts.engine') as ItemSpec
+    expect(engineItem).toBeDefined()
+    expect(engineItem.groupConfig).toBeDefined()
+    expect(engineItem.groupConfig!.length).toBe(2)
+
+    const piperTrigger = engineItem.groupConfig!.find(gc => gc.triggerValue === 'piper')
+    expect(piperTrigger).toBeDefined()
+    expect(piperTrigger!.requiredFields).toEqual(['tts.piper.model_path'])
+
+    const kokoroTrigger = engineItem.groupConfig!.find(gc => gc.triggerValue === 'kokoro')
+    expect(kokoroTrigger).toBeDefined()
+    expect(kokoroTrigger!.requiredFields).toEqual(['tts.kokoro.model_path', 'tts.kokoro.voices_path'])
   })
 })

@@ -1351,6 +1351,15 @@ export default {
     passwordStrengthWeak: 'Weak',
     passwordStrengthMedium: 'Medium',
     passwordStrengthStrong: 'Strong',
+    groupConfig: {
+      frpTitle: 'Configure FRP Tunnel',
+      summarizeApiTitle: 'Configure API Summarizer',
+      ttsPiperTitle: 'Configure Piper TTS',
+      ttsKokoroTitle: 'Configure Kokoro TTS',
+      requiredHint: 'Fields marked * are required to enable',
+      confirm: 'Confirm',
+      saved: 'Configuration saved',
+    },
   },
   terminal: {
     title: 'Terminal',

@@ -40,16 +40,28 @@
       @close="showPasswordDialog = false"
       @changed="handlePasswordChanged"
     />
+    <!-- Config group dialog (batch edit for FRP, Summarize-API, TTS-Piper/Kokoro) -->
+    <ConfigGroupDialog
+      v-if="groupDialog.visible"
+      :visible="groupDialog.visible"
+      :trigger="groupDialog.trigger"
+      :trigger-item="groupDialog.triggerItem"
+      :trigger-value="groupDialog.triggerValue"
+      :all-items="categoryItems[categoryId] ?? []"
+      @close="groupDialog.visible = false"
+      @saved="handleGroupDialogSaved"
+    />
     <!-- iOS install instructions sheet -->
     <IosInstallDrawer :open="showIosSheet" @close="showIosSheet = false" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, reactive, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
 import PasswordChangeDialog from './PasswordChangeDialog.vue'
+import ConfigGroupDialog from './ConfigGroupDialog.vue'
 import SettingsAgentsIndex from './SettingsAgentsIndex.vue'
 import SettingsAgentDetail from './SettingsAgentDetail.vue'
 import IosInstallDrawer from '@/components/common/IosInstallDrawer.vue'
@@ -61,7 +73,7 @@ import { useAppMode } from '@/composables/useAppMode'
 import { usePwaInstall } from '@/composables/usePwaInstall'
 import { useTerminalStatus } from '@/composables/useTerminalStatus'
 import { usePortForward } from '@/composables/usePortForward'
-import { categoryItems, engineVoiceOptions, type ItemSpec, type DependsOn } from './settingsFieldMap'
+import { categoryItems, engineVoiceOptions, type ItemSpec, type DependsOn, type GroupConfigTrigger } from './settingsFieldMap'
 
 const props = defineProps<{
   categoryId: string
@@ -86,6 +98,14 @@ const { loadSSHInfo } = usePortForward()
 const activeKey = ref<string | null>(null)
 const showPasswordDialog = ref(false)
 const showIosSheet = ref(false)
+
+// Group config dialog state
+const groupDialog = reactive({
+  visible: false,
+  trigger: {} as GroupConfigTrigger,
+  triggerItem: {} as ItemSpec,
+  triggerValue: null as any,
+})
 
 // Load agents when chat or agents category is shown
 watch(() => props.categoryId, (id) => {
@@ -195,6 +215,20 @@ async function handleUpdate(item: any, value: any) {
   if (item.type === 'password') {
     if (!value || value.includes('•')) return
   }
+
+  // Check if this value triggers a group config dialog
+  if (item.groupConfig && Array.isArray(item.groupConfig)) {
+    const trigger = item.groupConfig.find((gc: GroupConfigTrigger) => gc.triggerValue === value)
+    if (trigger) {
+      // Show group dialog instead of immediate save
+      groupDialog.visible = true
+      groupDialog.trigger = trigger
+      groupDialog.triggerItem = item
+      groupDialog.triggerValue = value
+      return
+    }
+  }
+
   if (item.key === 'localhost_auth_exempt' && value === false) {
     const confirmed = await dialog.confirm(
       t('settings.items.localhostAuthExemptConfirm'),
@@ -289,6 +323,22 @@ function handlePasswordChanged(needsRestart: boolean) {
   toast.show(t('settings.passwordChanged'), { icon: '✓', type: 'success', duration: 3000 })
   if (needsRestart) {
     emit('restartNeeded', ['password'])
+  }
+}
+
+function handleGroupDialogSaved(needsRestart: boolean) {
+  groupDialog.visible = false
+  toast.show(t('settings.groupConfig.saved'), { icon: '✓', type: 'success', duration: 3000 })
+  // Trigger side-effects based on the trigger item
+  const key = groupDialog.triggerItem.key
+  if (key === 'terminal.enabled') {
+    loadTerminalStatus()
+  }
+  if (key === 'port_forward.enabled' || key === 'frp.enabled') {
+    loadSSHInfo()
+  }
+  if (needsRestart) {
+    emit('restartNeeded', [key])
   }
 }
 
