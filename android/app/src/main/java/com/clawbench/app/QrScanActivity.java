@@ -4,7 +4,6 @@ import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.ImageFormat;
-import android.graphics.Matrix;
 import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
@@ -140,6 +139,23 @@ public class QrScanActivity extends AppCompatActivity {
     }
 
     @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus && textureView != null) {
+            // Size TextureView to a 3:4 portrait preview (width=screen, height=width*4/3)
+            // but cap at 70% of screen height so there's room for hint text
+            int screenWidth = getResources().getDisplayMetrics().widthPixels;
+            int screenHeight = getResources().getDisplayMetrics().heightPixels;
+            int tvWidth = screenWidth;
+            int tvHeight = Math.min(tvWidth * 4 / 3, screenHeight * 7 / 10);
+            ViewGroup.LayoutParams lp = textureView.getLayoutParams();
+            lp.width = tvWidth;
+            lp.height = tvHeight;
+            textureView.setLayoutParams(lp);
+        }
+    }
+
+    @Override
     protected void onPause() {
         super.onPause();
         closeCamera();
@@ -149,10 +165,15 @@ public class QrScanActivity extends AppCompatActivity {
         FrameLayout root = new FrameLayout(this);
         root.setLayoutParams(new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        root.setBackgroundColor(0xFF000000); // black background
 
+        // TextureView with fixed 4:3 portrait aspect ratio, centered
         textureView = new TextureView(this);
-        textureView.setLayoutParams(new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        // We'll set the actual size in onWindowFocusChanged after layout is ready
+        FrameLayout.LayoutParams tvLp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        tvLp.gravity = android.view.Gravity.CENTER;
+        textureView.setLayoutParams(tvLp);
         root.addView(textureView);
 
         // Scanning hint
@@ -164,7 +185,7 @@ public class QrScanActivity extends AppCompatActivity {
         FrameLayout.LayoutParams hintLp = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
         hintLp.gravity = android.view.Gravity.BOTTOM | android.view.Gravity.CENTER_HORIZONTAL;
-        hintLp.bottomMargin = 120;
+        hintLp.bottomMargin = 80;
         hint.setLayoutParams(hintLp);
         root.addView(hint);
 
@@ -185,29 +206,6 @@ public class QrScanActivity extends AppCompatActivity {
         return root;
     }
 
-    /**
-     * Adjust TextureView transform so the camera preview fills the view
-     * without distortion (crop-to-fill, maintaining aspect ratio).
-     */
-    private void adjustTextureTransform(int viewWidth, int viewHeight) {
-        if (previewSize == null || viewWidth == 0 || viewHeight == 0) return;
-        int pw = previewSize.getWidth();
-        int ph = previewSize.getHeight();
-        // Account for sensor rotation: swap preview dims if rotated 90/270
-        if (sensorRotation == 90 || sensorRotation == 270) {
-            int tmp = pw; pw = ph; ph = tmp;
-        }
-        float scaleX = (float) viewWidth / pw;
-        float scaleY = (float) viewHeight / ph;
-        float scale = Math.max(scaleX, scaleY); // crop-to-fill
-        float dx = (viewWidth - pw * scale) / 2f;
-        float dy = (viewHeight - ph * scale) / 2f;
-        Matrix matrix = new Matrix();
-        matrix.setScale(scale, scale);
-        matrix.postTranslate(dx, dy);
-        textureView.setTransform(matrix);
-    }
-
     private final TextureView.SurfaceTextureListener surfaceTextureListener =
             new TextureView.SurfaceTextureListener() {
                 @Override
@@ -216,9 +214,7 @@ public class QrScanActivity extends AppCompatActivity {
                 }
 
                 @Override
-                public void onSurfaceTextureSizeChanged(@NonNull SurfaceTexture surface, int width, int height) {
-                    adjustTextureTransform(width, height);
-                }
+                public void onSurfaceTextureSizeChanged(@NonNull SurfaceTexture surface, int width, int height) {}
 
                 @Override
                 public boolean onSurfaceTextureDestroyed(@NonNull SurfaceTexture surface) {
@@ -290,7 +286,6 @@ public class QrScanActivity extends AppCompatActivity {
             // Choose optimal preview size (capped at 1280x720 for QR scanning)
             Size[] sizes = map.getOutputSizes(SurfaceTexture.class);
             previewSize = chooseOptimalSize(sizes, width, height);
-            adjustTextureTransform(textureView.getWidth(), textureView.getHeight());
 
             // ImageReader for frame capture (YUV_420_888)
             int readerWidth = previewSize.getWidth();
