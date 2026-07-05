@@ -869,16 +869,21 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Initialize QR token manager for phone scanning (after scheme is known)
 	var qrContent string
-	if cfg.FRP.Enabled && frpStatus.RemotePort > 0 {
+	{
 		lanURL := fmt.Sprintf("%s://%s:%d", scheme, platform.GetOutboundIP(), port)
-		frpURL := frpStatus.RemoteURL
-		qrTokenMgr := handler.NewQRTokenManager(5*time.Minute, lanURL, frpURL)
-		token := qrTokenMgr.Generate()
-		handler.SetQRTokenManager(qrTokenMgr)
+		frpURL := ""
+		if cfg.FRP.Enabled && frpStatus.RemotePort > 0 {
+			frpURL = frpStatus.RemoteURL
+		}
+		if lanURL != "" {
+			qrTokenMgr := handler.NewQRTokenManager(5*time.Minute, lanURL, frpURL)
+			token := qrTokenMgr.Generate()
+			handler.SetQRTokenManager(qrTokenMgr)
 
-		// Build deep link: clawbench://connect?lan=...&frp=...&token=...
-		qrContent = fmt.Sprintf("clawbench://connect?lan=%s&frp=%s&token=%s",
-			url.QueryEscape(lanURL), url.QueryEscape(frpURL), token)
+			// Build deep link: clawbench://connect?lan=...&frp=...&token=...
+			qrContent = fmt.Sprintf("clawbench://connect?lan=%s&frp=%s&token=%s",
+				url.QueryEscape(lanURL), url.QueryEscape(frpURL), token)
+		}
 	}
 
 	// Pre-bind the main listener to detect port conflicts BEFORE printing the banner.
