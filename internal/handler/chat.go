@@ -201,6 +201,9 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				// No session-level mapping yet (new session, never sent a message).
 				// Fall back to agent-level registry so mode/thinking/command chips
 				// appear immediately without requiring the first message.
+				// Note: usageState is NOT restored from agent-level registry — it is
+				// per-session and using the agent-level cache would show another
+				// session's context usage. It is resolved from orphanedUsage below.
 				reg := ai.GetAgentCapabilityRegistry()
 				agentCap := reg.Get(sessionAgentID)
 				if agentCap != nil && agentCap.HasData() {
@@ -216,9 +219,13 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 					if ml := reg.GetModelListState(sessionAgentID, ""); ml != nil {
 						modelListState = ml
 					}
-					if us := reg.GetUsageState(sessionAgentID); us != nil {
-						usageState = us
-					}
+				}
+			}
+			// If no usageState from live connection, try orphaned usage
+			// (preserved when the connection was reaped by idle sweep).
+			if usageState == nil {
+				if ou := ai.GetACPConnManager().GetOrphanedUsageState(sessionID); ou != nil {
+					usageState = ou
 				}
 			}
 		}

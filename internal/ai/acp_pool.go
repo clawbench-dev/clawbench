@@ -77,6 +77,12 @@ type ACPConnManager struct {
 	conns     map[string]*ACPConn // keyed by clawbenchSID
 	stopSweep chan struct{}       // closed to stop the idle sweep goroutine
 
+	// orphanedUsage preserves per-session usage state after connections are
+	// reaped. Without this, switching to an idle session shows 0/0 because
+	// the connection (and its cachedUsageState) was removed by idle sweep.
+	// Cleared when a new connection is registered for the same session.
+	orphanedUsage map[string]*UsageState
+
 	// isSessionRunning is a callback that checks whether a session is
 	// actively running. Set by the service layer to avoid circular imports.
 	// If nil, idle sweep skips the running-check and closes all idle connections.
@@ -100,8 +106,9 @@ var (
 func GetACPConnManager() *ACPConnManager {
 	globalManagerOnce.Do(func() {
 		globalManager = &ACPConnManager{
-			conns:     make(map[string]*ACPConn),
-			stopSweep: make(chan struct{}),
+			conns:         make(map[string]*ACPConn),
+			orphanedUsage: make(map[string]*UsageState),
+			stopSweep:     make(chan struct{}),
 		}
 		go globalManager.idleSweep()
 	})
@@ -119,6 +126,7 @@ func (m *ACPConnManager) StopAll() {
 		conn.close()
 		delete(m.conns, sid)
 	}
+	m.orphanedUsage = make(map[string]*UsageState)
 	m.mu.Unlock()
 }
 
@@ -198,6 +206,7 @@ func (m *ACPConnManager) sweepOnce() {
 		conn, ok = m.conns[sid]
 		if ok {
 			delete(m.conns, sid)
+			m.preserveOrphanedUsage(sid, conn)
 		}
 		m.mu.Unlock()
 
@@ -265,6 +274,7 @@ func (m *ACPConnManager) GetOrCreateConn(ctx context.Context, agent *model.Agent
 				"clawbench_sid", clawbenchSID, "acp_sid", extID)
 		}
 		m.conns[clawbenchSID] = conn
+		m.clearOrphanedUsage(clawbenchSID)
 	}
 	m.mu.Unlock()
 
@@ -285,6 +295,7 @@ func (m *ACPConnManager) GetOrCreateConnForLoad(ctx context.Context, agent *mode
 	if !ok {
 		conn = newACPConn(agent, clawbenchSID)
 		m.conns[clawbenchSID] = conn
+		m.clearOrphanedUsage(clawbenchSID)
 	}
 	m.mu.Unlock()
 
@@ -342,12 +353,39 @@ func (m *ACPConnManager) CloseConn(clawbenchSID string) {
 	conn, ok := m.conns[clawbenchSID]
 	if ok {
 		delete(m.conns, clawbenchSID)
+		m.preserveOrphanedUsage(clawbenchSID, conn)
 	}
 	m.mu.Unlock()
 
 	if ok {
 		conn.close()
 	}
+}
+
+// preserveOrphanedUsage saves a connection's cachedUsageState into the
+// orphanedUsage map so it survives connection reaping. Caller must hold m.mu.
+func (m *ACPConnManager) preserveOrphanedUsage(sid string, conn *ACPConn) {
+	conn.mu.Lock()
+	usage := conn.cachedUsageState
+	conn.mu.Unlock()
+	if usage != nil {
+		m.orphanedUsage[sid] = usage
+	}
+}
+
+// clearOrphanedUsage removes orphaned usage state for a session when a new
+// connection is registered. Caller must hold m.mu.
+func (m *ACPConnManager) clearOrphanedUsage(sid string) {
+	delete(m.orphanedUsage, sid)
+}
+
+// GetOrphanedUsageState returns preserved usage state for a session whose
+// connection has been reaped. Returns nil if none is preserved.
+func (m *ACPConnManager) GetOrphanedUsageState(clawbenchSID string) *UsageState {
+	m.mu.Lock()
+	us := m.orphanedUsage[clawbenchSID]
+	m.mu.Unlock()
+	return us
 }
 
 // MarkIdle marks the connection for a ClawBench session as idle by setting
@@ -472,6 +510,7 @@ func (m *ACPConnManager) CloseConnsByAgentID(agentID string) {
 	for sid, conn := range m.conns {
 		if conn.agent != nil && conn.agent.ID == agentID {
 			delete(m.conns, sid)
+			m.preserveOrphanedUsage(sid, conn)
 			toClose = append(toClose, conn)
 		}
 	}
