@@ -124,8 +124,9 @@ func TestSessionExecutor_BuildContentJSON_WithUserCancel(t *testing.T) {
 	result := RunResult{CancelReason: "user"}
 	meta := &ai.Metadata{}
 	contentJSON, blocks := executor.buildContentJSON(nil, result, meta)
-	assert.Contains(t, contentJSON, "User cancelled")
 	assert.Contains(t, contentJSON, `"cancelled":true`)
+	assert.NotContains(t, contentJSON, "User cancelled", "user cancel should not add a warning block")
+	assert.Empty(t, blocks, "user cancel with no content should have no blocks")
 	_ = blocks
 }
 

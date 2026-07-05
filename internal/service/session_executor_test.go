@@ -1182,19 +1182,14 @@ func TestSessionExecutor_Finalize_EmptyBlocks_UserCancel(t *testing.T) {
 	runResult := executor.RunWithChannel(ch)
 	runResult = executor.Finalize(runResult, nil)
 
-	// Should have a warning block and cancelled flag
-	if len(runResult.Blocks) == 0 {
-		t.Fatal("expected at least one block for empty cancelled result")
+	// Should have cancelled flag and NO warning block (user cancel is clean)
+	if len(runResult.Blocks) != 0 {
+		t.Fatalf("expected no blocks for user-cancelled result, got %d", len(runResult.Blocks))
 	}
-	found := false
-	for _, b := range runResult.Blocks {
-		if b.Type == "warning" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatal("expected warning block for user-cancelled empty result")
+	// Verify content JSON contains cancelled:true
+	contentJSON, _ := executor.buildContentJSON(nil, runResult, &ai.Metadata{})
+	if !strings.Contains(contentJSON, `"cancelled":true`) {
+		t.Fatal("expected cancelled:true in content JSON")
 	}
 }
 

@@ -312,8 +312,7 @@ func TestSessionExecutor_BuildContentJSON_EmptyWithUserCancel(t *testing.T) {
 	content, blocks := executor.buildContentJSON(nil, result, meta)
 
 	assert.NotEmpty(t, content)
-	assert.Len(t, blocks, 1)
-	assert.Equal(t, "warning", blocks[0].Type)
+	assert.Empty(t, blocks, "user cancel should not add warning blocks")
 	assert.Contains(t, content, "cancelled")
 }
 
