@@ -67,6 +67,7 @@ public class QrScanActivity extends AppCompatActivity {
     private final AtomicBoolean cameraOpening = new AtomicBoolean(false);
     private Size previewSize;
     private int sensorRotation;
+    private TextView statusText;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -175,18 +176,18 @@ public class QrScanActivity extends AppCompatActivity {
         textureView.setLayoutParams(tvLp);
         root.addView(textureView);
 
-        // Scanning hint
-        TextView hint = new TextView(this);
-        hint.setText("将二维码对准框内即可自动扫描");
-        hint.setTextColor(0xCCFFFFFF);
-        hint.setTextSize(14);
-        hint.setGravity(android.view.Gravity.CENTER);
+        // Status text (shows decode attempts / errors for debugging)
+        statusText = new TextView(this);
+        statusText.setText("等待相机...");
+        statusText.setTextColor(0xCCFFFFFF);
+        statusText.setTextSize(12);
+        statusText.setGravity(android.view.Gravity.CENTER);
         FrameLayout.LayoutParams hintLp = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
         hintLp.gravity = android.view.Gravity.BOTTOM | android.view.Gravity.CENTER_HORIZONTAL;
         hintLp.bottomMargin = 80;
-        hint.setLayoutParams(hintLp);
-        root.addView(hint);
+        statusText.setLayoutParams(hintLp);
+        root.addView(statusText);
 
         // Close button (top-left)
         MaterialButton closeBtn = new MaterialButton(this);
@@ -298,6 +299,9 @@ public class QrScanActivity extends AppCompatActivity {
                 public void onOpened(@NonNull CameraDevice camera) {
                     cameraDevice = camera;
                     cameraOpening.set(false);
+                    runOnUiThread(() -> {
+                        if (statusText != null) statusText.setText("扫描中...");
+                    });
                     createCameraPreviewSession();
                 }
 
@@ -449,12 +453,23 @@ public class QrScanActivity extends AppCompatActivity {
             }
 
             decodeAttemptCount++;
-            if (decodeAttemptCount % 30 == 1) {
-                AppLog.d(TAG, "Decode attempts: " + decodeAttemptCount
-                        + " (sensorRotation=" + sensorRotation + ")");
+            // Update on-screen status every 10 frames
+            if (decodeAttemptCount % 10 == 0) {
+                String msg = "扫描中... (" + decodeAttemptCount + "帧)";
+                runOnUiThread(() -> {
+                    if (!isFinishing() && statusText != null) {
+                        statusText.setText(msg);
+                    }
+                });
             }
         } catch (Exception e) {
             AppLog.e(TAG, "Decode error", e);
+            final String errMsg = "解码错误: " + e.getClass().getSimpleName();
+            runOnUiThread(() -> {
+                if (!isFinishing() && statusText != null) {
+                    statusText.setText(errMsg);
+                }
+            });
         } finally {
             if (image != null) image.close();
         }
