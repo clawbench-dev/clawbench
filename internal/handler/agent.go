@@ -334,8 +334,9 @@ func serveAgentsRescan(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-// installMu enforces one install at a time.
-var installMu sync.Mutex
+// installMuMap provides per-backend install locks. Same backend cannot be
+// installed concurrently, but different backends can install in parallel.
+var installMuMap sync.Map // map[string]*sync.Mutex
 
 // serveAgentsInstall handles POST /api/agents/install — runs InstallCmd for a
 // backend and streams stdout/stderr via SSE. Only one install at a time.
@@ -366,8 +367,10 @@ func serveAgentsInstall(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 		return
 	}
 
-	// One install at a time
-	if !installMu.TryLock() {
+	// One install per backend at a time (different backends can install in parallel)
+	mu, _ := installMuMap.LoadOrStore(req.BackendID, &sync.Mutex{})
+	backendMu := mu.(*sync.Mutex)
+	if !backendMu.TryLock() {
 		writeLocalizedErrorf(w, r, http.StatusConflict, "InstallInProgress")
 		return
 	}
@@ -375,7 +378,7 @@ func serveAgentsInstall(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 	releaseMu := func() {
 		if !muReleased {
 			muReleased = true
-			installMu.Unlock()
+			backendMu.Unlock()
 		}
 	}
 	defer releaseMu()
@@ -502,15 +505,29 @@ func serveAgentsInstall(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 	}()
 
 	// Merger goroutine: send exit error when process completes.
-	// After Wait returns, kill any orphan child processes in the process group.
+	// After Wait returns, kill the process group to ensure all child processes
+	// (which may inherit pipe FDs) are terminated. Without this, the drain loop
+	// for logCh would block forever because the pipe readers can't reach EOF.
 	exitErrCh := make(chan error, 1)
 	go func() {
 		err := cmd.Wait()
-		// Kill remaining children in the process group (orphaned by the parent exit).
+		// Kill remaining children in the process group.
 		if cmd.Process != nil {
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		}
 		exitErrCh <- err
+	}()
+
+	// When context is cancelled (timeout or client disconnect), kill the entire
+	// process group. This must be separate from cmd.Wait because Wait blocks
+	// until all pipe I/O completes, and orphan child processes can keep pipes
+	// open indefinitely. Killing the process group first closes the pipes,
+	// which unblocks Wait.
+	go func() {
+		<-ctx.Done()
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
 	}()
 
 	// Heartbeat ticker
@@ -529,10 +546,15 @@ func serveAgentsInstall(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 			_, _ = fmt.Fprintf(w, "event: install_log\ndata: {\"line\":%q,\"stream\":%q}\n\n", ll.line, ll.stream)
 			flusher.Flush()
 		case exitErr := <-exitErrCh:
-			// Drain remaining log lines (channel will be closed by reader goroutines)
-			for ll := range logCh {
-				_, _ = fmt.Fprintf(w, "event: install_log\ndata: {\"line\":%q,\"stream\":%q}\n\n", ll.line, ll.stream)
-				flusher.Flush()
+			// Drain remaining log lines. If logCh was already set to nil (channel
+			// was closed and consumed by the select above), skip the drain — all
+			// remaining lines have already been forwarded. Otherwise, range until
+			// logCh is closed by the reader goroutines.
+			if logCh != nil {
+				for ll := range logCh {
+					_, _ = fmt.Fprintf(w, "event: install_log\ndata: {\"line\":%q,\"stream\":%q}\n\n", ll.line, ll.stream)
+					flusher.Flush()
+				}
 			}
 			if exitErr != nil {
 				// npm install -g can exit non-zero even when the CLI is successfully installed
@@ -559,12 +581,9 @@ func serveAgentsInstall(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 		case <-r.Context().Done():
 			// Client disconnected — release mutex immediately so the next
 			// install request doesn't get blocked by this orphaned session.
+			// The context-cancel goroutine will kill the process group,
+			// which unblocks cmd.Wait and lets pipe readers exit.
 			releaseMu()
-			// Kill the entire process group (parent + children) to unblock
-			// pipe readers so goroutines can clean up.
-			if cmd.Process != nil {
-				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			}
 			cancel()
 			return
 		}

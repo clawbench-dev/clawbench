@@ -4,37 +4,39 @@
     <div id="dirNav" class="dir-nav">
       <div ref="dirToolbarRef" class="dir-toolbar">
         <div class="dir-toolbar-btns">
-          <div class="toolbar-dropdown-wrap">
+          <div ref="sortDropdownWrapRef" class="toolbar-dropdown-wrap">
             <button class="toolbar-btn" :class="{ 'sort-active': sortField }" @click="sortMenuOpen = !sortMenuOpen" :title="t('file.sortDefault')">
               <ArrowDownAz v-if="!sortField || sortDir === 'asc'" :size="16" />
               <ArrowUpZa v-else :size="16" />
             </button>
-            <div v-if="sortMenuOpen" class="toolbar-dropdown" @click.stop>
-              <button class="toolbar-dropdown-item" :class="{ active: sortField === 'name' }" @click="onSortSelect('name')">
-                <ArrowDownAz :size="14" />
-                <span>{{ t('file.sortByName') }}</span>
-                <ChevronUp v-if="sortField === 'name' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
-                <ChevronDown v-else-if="sortField === 'name' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
-              </button>
-              <button class="toolbar-dropdown-item" :class="{ active: sortField === 'time' }" @click="onSortSelect('time')">
-                <Clock :size="14" />
-                <span>{{ t('file.sortByTime') }}</span>
-                <ChevronUp v-if="sortField === 'time' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
-                <ChevronDown v-else-if="sortField === 'time' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
-              </button>
-              <button class="toolbar-dropdown-item" :class="{ active: sortField === 'type' }" @click="onSortSelect('type')">
-                <FileText :size="14" />
-                <span>{{ t('file.sortByType') }}</span>
-                <ChevronUp v-if="sortField === 'type' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
-                <ChevronDown v-else-if="sortField === 'type' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
-              </button>
-              <button class="toolbar-dropdown-item" :class="{ active: sortField === 'size' }" @click="onSortSelect('size')">
-                <HardDrive :size="14" />
-                <span>{{ t('file.sortBySize') }}</span>
-                <ChevronUp v-if="sortField === 'size' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
-                <ChevronDown v-else-if="sortField === 'size' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
-              </button>
-            </div>
+            <Teleport to="body">
+              <div v-if="sortMenuOpen" ref="sortMenuRef" class="toolbar-dropdown-menu" :style="sortMenuStyle" @click.stop>
+                <button class="toolbar-dropdown-item" :class="{ active: sortField === 'name' }" @click="onSortSelect('name')">
+                  <ArrowDownAz :size="14" />
+                  <span>{{ t('file.sortByName') }}</span>
+                  <ChevronUp v-if="sortField === 'name' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
+                  <ChevronDown v-else-if="sortField === 'name' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
+                </button>
+                <button class="toolbar-dropdown-item" :class="{ active: sortField === 'time' }" @click="onSortSelect('time')">
+                  <Clock :size="14" />
+                  <span>{{ t('file.sortByTime') }}</span>
+                  <ChevronUp v-if="sortField === 'time' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
+                  <ChevronDown v-else-if="sortField === 'time' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
+                </button>
+                <button class="toolbar-dropdown-item" :class="{ active: sortField === 'type' }" @click="onSortSelect('type')">
+                  <FileText :size="14" />
+                  <span>{{ t('file.sortByType') }}</span>
+                  <ChevronUp v-if="sortField === 'type' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
+                  <ChevronDown v-else-if="sortField === 'type' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
+                </button>
+                <button class="toolbar-dropdown-item" :class="{ active: sortField === 'size' }" @click="onSortSelect('size')">
+                  <HardDrive :size="14" />
+                  <span>{{ t('file.sortBySize') }}</span>
+                  <ChevronUp v-if="sortField === 'size' && sortDir === 'asc'" :size="12" class="sort-dir-icon" />
+                  <ChevronDown v-else-if="sortField === 'size' && sortDir === 'desc'" :size="12" class="sort-dir-icon" />
+                </button>
+              </div>
+            </Teleport>
           </div>
           <button v-if="toolbarInlineIds.includes('hidden')" class="toolbar-btn" @click="$emit('toggleHidden')" :title="showHidden ? t('file.hideHiddenFiles') : t('file.showHiddenFiles')">
             <EyeOff v-if="!showHidden" :size="16" />
@@ -62,11 +64,12 @@
             </button>
           </template>
           <template v-else>
-          <div class="toolbar-dropdown-wrap">
+          <div ref="moreDropdownWrapRef" class="toolbar-dropdown-wrap">
             <button class="toolbar-btn" @click="moreMenuOpen = !moreMenuOpen" :title="t('nav.more')">
               <MoreHorizontal :size="16" />
             </button>
-            <div v-if="moreMenuOpen" class="toolbar-dropdown toolbar-dropdown-right" @click.stop>
+            <Teleport to="body">
+              <div v-if="moreMenuOpen" ref="moreMenuRef" class="toolbar-dropdown-menu" :style="moreMenuStyle" @click.stop>
               <template v-if="toolbarCollapsedIds.includes('hidden')">
                 <button class="toolbar-dropdown-item" @click="$emit('toggleHidden'); moreMenuOpen = false">
                   <EyeOff v-if="!showHidden" :size="14" />
@@ -110,6 +113,7 @@
                 </button>
               </template>
             </div>
+            </Teleport>
           </div>
           </template>
         </div>
@@ -430,6 +434,81 @@ const searchQuery = ref('')
 const sortMenuOpen = ref(false)
 const moreMenuOpen = ref(false)
 
+// Dropdown refs & boundary-aware positioning
+const sortDropdownWrapRef = ref<HTMLElement | null>(null)
+const moreDropdownWrapRef = ref<HTMLElement | null>(null)
+const sortMenuRef = ref<HTMLElement | null>(null)
+const moreMenuRef = ref<HTMLElement | null>(null)
+const sortMenuStyle = ref({})
+const moreMenuStyle = ref({})
+
+function computeMenuStyle(anchorRef, menuRef, preferredAlign = 'left') {
+  if (!anchorRef.value) return {}
+  const rect = anchorRef.value.getBoundingClientRect()
+  const vp = getZoomedViewport()
+  const GAP = 4
+
+  // Start with preferred alignment, then flip if overflowing viewport
+  let alignLeft = preferredAlign === 'left'
+  if (menuRef.value) {
+    const menuW = menuRef.value.offsetWidth
+    if (alignLeft && rect.left + menuW > vp.width) alignLeft = false
+    if (!alignLeft && rect.right - menuW < 0) alignLeft = true
+  }
+
+  // Check vertical overflow: if menu extends below viewport, flip above anchor
+  let above = false
+  if (menuRef.value) {
+    const menuH = menuRef.value.offsetHeight
+    if (rect.bottom + GAP + menuH > vp.height) above = true
+  }
+
+  let style = { position: 'fixed' }
+  if (above) {
+    style.top = 'auto'
+    style.bottom = `${toFixedCSS(vp.height - rect.top + GAP)}px`
+  } else {
+    style.top = `${toFixedCSS(rect.bottom + GAP)}px`
+    style.bottom = 'auto'
+  }
+  if (alignLeft) {
+    style.left = `${toFixedCSS(rect.left)}px`
+    style.right = 'auto'
+  } else {
+    style.right = `${toFixedCSS(vp.width - rect.right)}px`
+    style.left = 'auto'
+  }
+  return style
+}
+
+function repositionSortMenu() {
+  sortMenuStyle.value = computeMenuStyle(sortDropdownWrapRef, sortMenuRef)
+}
+function repositionMoreMenu() {
+  moreMenuStyle.value = computeMenuStyle(moreDropdownWrapRef, moreMenuRef, 'right')
+}
+
+watch(sortMenuOpen, (open) => {
+  if (open) {
+    nextTick(() => { sortMenuStyle.value = computeMenuStyle(sortDropdownWrapRef, sortMenuRef) })
+    window.addEventListener('scroll', repositionSortMenu, true)
+    window.addEventListener('resize', repositionSortMenu)
+  } else {
+    window.removeEventListener('scroll', repositionSortMenu, true)
+    window.removeEventListener('resize', repositionSortMenu)
+  }
+})
+watch(moreMenuOpen, (open) => {
+  if (open) {
+    nextTick(() => { moreMenuStyle.value = computeMenuStyle(moreDropdownWrapRef, moreMenuRef, 'right') })
+    window.addEventListener('scroll', repositionMoreMenu, true)
+    window.addEventListener('resize', repositionMoreMenu)
+  } else {
+    window.removeEventListener('scroll', repositionMoreMenu, true)
+    window.removeEventListener('resize', repositionMoreMenu)
+  }
+})
+
 // Responsive toolbar overflow
 const dirToolbarRef = ref(null)
 const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
@@ -488,7 +567,7 @@ function onSortSelect(field) {
 }
 
 function closeDropdowns(e) {
-  if (!e.target.closest('.toolbar-dropdown-wrap')) {
+  if (!e.target.closest('.toolbar-dropdown-wrap') && !e.target.closest('.toolbar-dropdown-menu')) {
     sortMenuOpen.value = false
     moreMenuOpen.value = false
   }
@@ -1166,7 +1245,7 @@ function currentFileForClipboard() {
     align-items: center;
     gap: 6px;
     min-width: 0;
-    /* No overflow:hidden — toolbar-dropdown uses position:absolute and would be clipped */
+    /* No overflow:hidden — Teleported dropdowns need unclipped ancestors */
 }
 
 .dir-toolbar-btns {
@@ -1179,8 +1258,8 @@ function currentFileForClipboard() {
 .dir-toolbar :deep(.search-pill) {
     margin-left: auto;
     flex: 0 1 auto;
-    min-width: 80px;
-    max-width: 200px;
+    min-width: 56px;
+    max-width: 140px;
     transition: opacity 0.15s;
 }
 
@@ -1380,67 +1459,6 @@ function currentFileForClipboard() {
 .toolbar-dropdown-wrap {
     position: relative;
     flex-shrink: 0;
-}
-
-.toolbar-dropdown {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
-    z-index: 100;
-    min-width: 140px;
-    background: var(--bg-primary);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-    padding: 4px;
-}
-
-.toolbar-dropdown-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 6px 10px;
-    border: none;
-    border-radius: 6px;
-    background: none;
-    color: var(--text-primary);
-    font-size: 13px;
-    cursor: pointer;
-    white-space: nowrap;
-}
-
-.toolbar-dropdown-item:hover {
-    background: var(--bg-tertiary, #f0f0f0);
-}
-
-.toolbar-dropdown-item.active {
-    color: var(--accent-color, #4a90d9);
-    font-weight: 500;
-}
-
-.toolbar-dropdown-item svg {
-    flex-shrink: 0;
-}
-
-.toolbar-dropdown-divider {
-    height: 1px;
-    background: var(--border-color, #e5e5e5);
-    margin: 4px 6px;
-}
-
-.toolbar-dropdown-item .sort-dir-icon {
-    margin-left: auto;
-}
-
-.toolbar-dropdown-item:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
-
-.toolbar-dropdown-right {
-    left: auto;
-    right: 0;
 }
 
 /* ── File Items ── */
@@ -1744,4 +1762,54 @@ function currentFileForClipboard() {
     white-space: nowrap;
 }
 
+</style>
+
+<!-- Unscoped styles for Teleported dropdown menu (rendered in body, outside scoped context) -->
+<style>
+.toolbar-dropdown-menu {
+    z-index: 9999;
+    min-width: 140px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+    padding: 4px;
+}
+
+.toolbar-dropdown-menu .toolbar-dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 10px;
+    border: none;
+    border-radius: 6px;
+    background: none;
+    color: var(--text-primary);
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.toolbar-dropdown-menu .toolbar-dropdown-item:hover {
+    background: var(--bg-tertiary, #f0f0f0);
+}
+
+.toolbar-dropdown-menu .toolbar-dropdown-item.active {
+    color: var(--accent-color, #4a90d9);
+    font-weight: 500;
+}
+
+.toolbar-dropdown-menu .toolbar-dropdown-item svg {
+    flex-shrink: 0;
+}
+
+.toolbar-dropdown-menu .toolbar-dropdown-item .sort-dir-icon {
+    margin-left: auto;
+}
+
+.toolbar-dropdown-menu .toolbar-dropdown-item:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
 </style>

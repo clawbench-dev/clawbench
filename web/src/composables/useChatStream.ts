@@ -274,14 +274,27 @@ export function useChatStream(options: UseChatStreamOptions) {
     // Ensure a streaming assistant message exists — create one if needed
     const existingStreaming = findStreamingMsg(messages.value)
     if (!existingStreaming) {
-      messages.value.push({
-        role: 'assistant',
+      const newStreaming = {
+        role: 'assistant' as const,
+        id: `drain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         content: '',
-        blocks: [],
+        blocks: [] as any[],
         streaming: true,
         createdAt: new Date().toISOString(),
         backend: currentBackend.value
-      })
+      }
+      // Insert after the last non-pending user message, not at the end.
+      // Pending messages (queued) come after the active conversation,
+      // so push() would place the streaming assistant after them,
+      // making the AI reply appear below the queued messages.
+      const lastUserIdx = messages.value.findLastIndex(
+        (m: any) => m.role === 'user' && !m.pending
+      )
+      if (lastUserIdx !== -1) {
+        messages.value.splice(lastUserIdx + 1, 0, newStreaming)
+      } else {
+        messages.value.push(newStreaming)
+      }
       thinkingBlockCounter = 0
       onRenderNeeded()
     } else if ((existingStreaming as any).fromDB) {

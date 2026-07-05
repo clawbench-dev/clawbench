@@ -4,7 +4,7 @@ import type { ComputedRef, Ref } from 'vue'
 /** Default constants matching toolbar CSS */
 const DEFAULT_BTN_WIDTH = 26
 const DEFAULT_GAP = 6
-const MAX_SEARCH_WIDTH = 200
+const MAX_SEARCH_WIDTH = 140
 
 /**
  * Composable for responsive toolbar overflow.

@@ -37,8 +37,8 @@ describe('useToolbarOverflow', () => {
     })
 
     it('returns partial IDs when width is limited', () => {
-      const { inlineIds } = setupWithWidth(['hidden', 'refresh', 'multiselect'], 310, { inlineCount: 2, hasSearch: true })
-      // 310 - 2*26 (inline btns) - 2*6 (gaps) - 200 (search) = 46px → floor(46/32) = 1 demotable button
+      const { inlineIds } = setupWithWidth(['hidden', 'refresh', 'multiselect'], 250, { inlineCount: 2, hasSearch: true })
+      // 250 - 2*26 (inline btns) - 1*6 (gap between inline btns) - 140 (search) - 6 (bridge gap) = 46px → floor(46/32) = 1 demotable button
       expect(inlineIds.value.length).toBeGreaterThanOrEqual(1)
       expect(inlineIds.value.length).toBeLessThan(3)
     })
@@ -62,7 +62,7 @@ describe('useToolbarOverflow', () => {
     })
 
     it('returns IDs that dont fit inline', () => {
-      const { inlineIds, collapsedIds } = setupWithWidth(['hidden', 'refresh', 'multiselect'], 310, { inlineCount: 2, hasSearch: true })
+      const { inlineIds, collapsedIds } = setupWithWidth(['hidden', 'refresh', 'multiselect'], 250, { inlineCount: 2, hasSearch: true })
       // inlineIds + collapsedIds = all demotable IDs
       expect([...inlineIds.value, ...collapsedIds.value]).toEqual(['hidden', 'refresh', 'multiselect'])
       expect(collapsedIds.value.length).toBeGreaterThan(0)

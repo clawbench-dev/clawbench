@@ -4,8 +4,10 @@
       <div class="install-overlay" @click.self="handleClose">
         <div class="install-box">
           <div class="install-title">
-            {{ status === 'error' ? t('welcomeInfo.installFailed') : t('welcomeInfo.installing') }}
-            {{ backendName }}...
+            <template v-if="status === 'verifying'">{{ t('welcomeInfo.verifying') }} {{ backendName }}...</template>
+            <template v-else-if="status === 'error' || status === 'notDetected'">{{ t('welcomeInfo.installFailed') }} {{ backendName }}</template>
+            <template v-else-if="status === 'success'">{{ t('welcomeInfo.installSuccess') }} {{ backendName }}</template>
+            <template v-else>{{ t('welcomeInfo.installing') }} {{ backendName }}...</template>
           </div>
           <div class="install-log" ref="logContainer">
             <div v-for="(line, i) in logLines" :key="i" class="log-line">{{ line }}</div>
@@ -18,16 +20,20 @@
               <span class="running-dot"></span>
               <span class="running-dot"></span>
             </div>
+            <div v-if="status === 'verifying'" class="log-waiting">
+              <span class="waiting-spinner"></span>
+              <span class="waiting-text">{{ t('welcomeInfo.verifying') }}...</span>
+            </div>
           </div>
-          <div v-if="status === 'error'" class="install-error-section">
+          <div v-if="status === 'error' || status === 'notDetected'" class="install-error-section">
             <div class="install-hint">{{ t('welcomeInfo.manualInstallHint') }}</div>
             <code class="install-cmd">{{ effectiveInstallCmd || installCmd }}</code>
           </div>
           <div class="install-actions">
             <button class="dlg-btn dlg-cancel" @click="handleClose">
-              {{ status === 'error' ? t('common.close') : t('common.cancel') }}
+              {{ (status === 'error' || status === 'notDetected') ? t('common.close') : t('common.cancel') }}
             </button>
-            <button v-if="status === 'error'" class="dlg-btn dlg-ok" @click="retry">
+            <button v-if="status === 'error' || status === 'notDetected'" class="dlg-btn dlg-ok" @click="retry">
               {{ t('welcomeInfo.install') }}
             </button>
           </div>
@@ -55,7 +61,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const logLines = ref<string[]>([])
-const status = ref<'running' | 'success' | 'error'>('running')
+const status = ref<'running' | 'verifying' | 'success' | 'error' | 'notDetected'>('running')
 const logContainer = ref<HTMLElement | null>(null)
 const effectiveInstallCmd = ref('')
 let abortController: AbortController | null = null
@@ -100,7 +106,6 @@ async function startInstall() {
         retryCount409++
         const delay = RETRY_409_BASE_MS * retryCount409
         logLines.value.push(`Another install in progress, retrying in ${delay / 1000}s...`)
-        // Use tracked timer so onUnmounted can cancel it
         await new Promise<void>(r => { retryTimerId = setTimeout(() => { retryTimerId = null; r() }, delay) })
         return startInstall()
       }
@@ -139,13 +144,10 @@ async function startInstall() {
                 logLines.value.splice(0, logLines.value.length - 400)
               }
             } else if (currentEvent === 'install_start') {
-              // Track the actual command being used (may differ if mirror was applied)
               if (data.command) {
                 effectiveInstallCmd.value = data.command
               }
             } else if (currentEvent === 'install_success') {
-              status.value = 'success'
-              emit('success')
               terminal = true
               break
             } else if (currentEvent === 'install_error') {
@@ -171,12 +173,56 @@ async function startInstall() {
     if (!response.body!.locked) {
       response.body!.cancel().catch(() => {})
     }
+
+    // If install_success was received, verify the agent is actually detected
+    if (status.value === 'running') {
+      await verifyAndFinish()
+    }
   } catch (e: unknown) {
     if (e instanceof DOMException && e.name === 'AbortError') return
     status.value = 'error'
     const msg = e instanceof Error ? e.message : String(e)
     logLines.value.push(msg)
     appLog.w('AgentInstallDialog', 'install failed', e)
+  }
+}
+
+/** After install_success, scan /api/agents to verify the backend is actually detected. */
+async function verifyAndFinish() {
+  status.value = 'verifying'
+  logLines.value.push('')
+  logLines.value.push('--- ' + t('welcomeInfo.verifying') + ' ---')
+  scrollToBottom()
+
+  try {
+    const resp = await fetch('/api/agents')
+    if (resp.ok) {
+      const data = await resp.json()
+      const agents: { backend?: string; id?: string }[] = data.agents || data || []
+      const found = agents.some(a => (a.backend || a.id) === props.backendId)
+      if (found) {
+        status.value = 'success'
+        logLines.value.push(t('welcomeInfo.installSuccess'))
+        scrollToBottom()
+        emit('success')
+      } else {
+        status.value = 'notDetected'
+        logLines.value.push(t('welcomeInfo.notDetectedAfterInstall'))
+        scrollToBottom()
+      }
+    } else {
+      // API error — assume success since install_success was received
+      status.value = 'success'
+      logLines.value.push(t('welcomeInfo.installSuccess'))
+      scrollToBottom()
+      emit('success')
+    }
+  } catch {
+    // Network error — assume success
+    status.value = 'success'
+    logLines.value.push(t('welcomeInfo.installSuccess'))
+    scrollToBottom()
+    emit('success')
   }
 }
 

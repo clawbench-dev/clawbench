@@ -226,7 +226,9 @@ export function drainQueueMessage(
     }
   }
 
-  // 3. Push new streaming assistant placeholder with a stable drain ID.
+  // 3. Insert new streaming assistant placeholder right after the drain
+  //    user message. Using push() would place it after any remaining pending
+  //    messages, making the AI reply appear below the queued messages.
   //    Without an id, the v-for key would be 'local-{index}' (unstable) —
   //    loadHistory replacement would change the key, causing Vue to
   //    unmount/remount the component and lose the streaming state.
@@ -240,7 +242,15 @@ export function drainQueueMessage(
     createdAt: new Date().toISOString(),
     backend: currentBackend,
   }
-  messages.push(newStreamingMsg)
+  // Find the user message that was just drained (pending flag cleared or fallback pushed)
+  const drainUserIdx = pendingIdx !== -1
+    ? pendingIdx
+    : messages.findLastIndex((m: any) => m.role === 'user' && m.content === userContent)
+  if (drainUserIdx !== -1) {
+    messages.splice(drainUserIdx + 1, 0, newStreamingMsg)
+  } else {
+    messages.push(newStreamingMsg)
+  }
 
   return newStreamingMsg
 }

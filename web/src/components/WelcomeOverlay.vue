@@ -16,7 +16,7 @@
             v-for="b in sortedBackends"
             :key="b.id"
             class="backend-item"
-            :class="{ 'backend-not-detected': !detectedBackends.has(b.id) }"
+            :class="{ 'backend-not-detected': !detectedBackends.has(b.id) && !installingBackendIds.has(b.id) }"
           >
             <div class="backend-icon">{{ b.icon }}</div>
             <div class="backend-info">
@@ -30,19 +30,12 @@
               {{ t('welcomeInfo.detected') }}
             </span>
             <button
-              v-if="!detectedBackends.has(b.id) && b.install_cmd && !installingBackendId"
+              v-if="!detectedBackends.has(b.id) && b.install_cmd && !installingBackendIds.has(b.id)"
               class="btn-install"
               @click="startInstall(b)"
             >{{ t('welcomeInfo.install') }}</button>
-            <button
-              v-if="!detectedBackends.has(b.id) && b.install_cmd && installingBackendId && installingBackendId !== b.id"
-              class="btn-install-waiting"
-              @click="showInstallBusyTip"
-            >
-              {{ t('welcomeInfo.install') }}
-            </button>
             <span
-              v-if="!detectedBackends.has(b.id) && b.install_cmd && installingBackendId === b.id"
+              v-if="!detectedBackends.has(b.id) && b.install_cmd && installingBackendIds.has(b.id)"
               class="btn-installing"
             >
               <span class="install-spinner"></span>
@@ -81,24 +74,23 @@
   <!-- iOS install instructions sheet -->
   <IosInstallDrawer :open="showIosSheet" @close="showIosSheet = false" />
 
-  <!-- Agent install dialog -->
+  <!-- Agent install dialogs (one per concurrent install) -->
   <AgentInstallDialog
-    v-if="installDialog.visible"
-    :key="installDialog.backendId"
-    :backend-id="installDialog.backendId"
-    :backend-name="installDialog.backendName"
-    :install-cmd="installDialog.installCmd"
-    @close="closeInstallDialog"
-    @success="handleInstallSuccess"
+    v-for="d in installDialogs"
+    :key="d.backendId"
+    :backend-id="d.backendId"
+    :backend-name="d.backendName"
+    :install-cmd="d.installCmd"
+    @close="closeInstallDialog(d.backendId)"
+    @success="handleInstallSuccess(d.backendId)"
   />
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { usePwaInstall } from '@/composables/usePwaInstall'
 import { useAgents } from '@/composables/useAgents'
-import { useToast } from '@/composables/useToast'
 import { MonitorSmartphone, Smartphone } from 'lucide-vue-next'
 import IosInstallDrawer from './common/IosInstallDrawer.vue'
 import AgentInstallDialog from './AgentInstallDialog.vue'
@@ -114,6 +106,12 @@ interface BackendInfo {
   install_cmd?: string
 }
 
+interface InstallDialogEntry {
+  backendId: string
+  backendName: string
+  installCmd: string
+}
+
 const STORAGE_KEY = 'clawbench_welcome_dismissed'
 
 defineExpose({ show, forceShow })
@@ -125,27 +123,23 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const pwaInstall = usePwaInstall()
 const { rescanAgents } = useAgents()
-const toast = useToast()
 const visible = ref(false)
 const backends = ref<BackendInfo[]>([])
 const detectedBackends = ref<Set<string>>(new Set())
 const showIosSheet = ref(false)
-const installingBackendId = ref<string | null>(null)
+const installingBackendIds = ref<Set<string>>(new Set())
+const installDialogs = ref<InstallDialogEntry[]>([])
 const rescanning = ref(false)
 
-const installDialog = reactive({
-  visible: false,
-  backendId: '',
-  backendName: '',
-  installCmd: '',
-})
-
-// Sort: installed first, not-installed last
+// Sort: installed first, installing second, not-installed last
 const sortedBackends = computed(() => {
   return [...backends.value].sort((a, b) => {
+    const aInstalling = installingBackendIds.value.has(a.id)
+    const bInstalling = installingBackendIds.value.has(b.id)
     const aDetected = detectedBackends.value.has(a.id)
     const bDetected = detectedBackends.value.has(b.id)
     if (aDetected !== bDetected) return aDetected ? -1 : 1
+    if (aInstalling !== bInstalling) return aInstalling ? -1 : 1
     return 0
   })
 })
@@ -164,7 +158,6 @@ async function loadBackends() {
     }
     if (agentsResp.ok) {
       const data = await agentsResp.json()
-      // agents is an array of { id, backend, ... } — collect backend IDs
       const agentBackends = (data.agents || data || []).map((a: { backend?: string; id?: string }) => a.backend || a.id)
       detectedBackends.value = new Set(agentBackends)
     }
@@ -200,24 +193,21 @@ async function rescan() {
 }
 
 function startInstall(b: BackendInfo) {
-  installingBackendId.value = b.id
-  installDialog.visible = true
-  installDialog.backendId = b.id
-  installDialog.backendName = b.name
-  installDialog.installCmd = b.install_cmd || ''
+  installingBackendIds.value = new Set([...installingBackendIds.value, b.id])
+  installDialogs.value = [...installDialogs.value, {
+    backendId: b.id,
+    backendName: b.name,
+    installCmd: b.install_cmd || '',
+  }]
 }
 
-function showInstallBusyTip() {
-  toast.show(t('welcomeInfo.installBusyTip'), { type: 'info', duration: 2000 })
+function closeInstallDialog(backendId: string) {
+  installingBackendIds.value = new Set([...installingBackendIds.value].filter(id => id !== backendId))
+  installDialogs.value = installDialogs.value.filter(d => d.backendId !== backendId)
 }
 
-function closeInstallDialog() {
-  installDialog.visible = false
-  installingBackendId.value = null
-}
-
-async function handleInstallSuccess() {
-  closeInstallDialog()
+async function handleInstallSuccess(backendId: string) {
+  closeInstallDialog(backendId)
   await rescan()
 }
 
@@ -403,21 +393,6 @@ onUnmounted(() => {
   border-radius: 6px;
   background: var(--accent-color);
   color: #fff;
-  cursor: pointer;
-  transition: opacity 0.2s;
-}
-
-.btn-install-waiting {
-  position: absolute;
-  right: 6px;
-  top: 4px;
-  font-size: 9px;
-  font-weight: 600;
-  padding: 2px 6px;
-  border: none;
-  border-radius: 6px;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
   cursor: pointer;
   transition: opacity 0.2s;
 }

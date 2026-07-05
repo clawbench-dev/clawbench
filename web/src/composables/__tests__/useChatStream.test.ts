@@ -1413,6 +1413,28 @@ describe('useChatStream', () => {
       expect(assistantMsg).toBeDefined()
       expect(assistantMsg.blocks).toEqual([])
     })
+
+    it('should insert streaming assistant AFTER last non-pending user message, before pending', () => {
+      // Bug: connectStream used push(), placing streaming assistant after
+      // pending messages. Fix: insert after the last non-pending user message.
+      const options = createOptions()
+      // Simulate: user_A sent, user_B enqueued while A is still processing
+      options.messages.value.push(
+        { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+        { role: 'user', id: 'queue-B', content: 'B', blocks: [{ type: 'text', text: 'B' }], pending: true },
+      )
+
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      // Streaming assistant for A should be right after user_A, before user_B
+      expect(options.messages.value[0].role).toBe('user')
+      expect(options.messages.value[0].content).toBe('A')
+      expect(options.messages.value[1].role).toBe('assistant')
+      expect(options.messages.value[1].streaming).toBe(true)
+      expect(options.messages.value[2].role).toBe('user')
+      expect(options.messages.value[2].pending).toBe(true)
+    })
   })
 
   describe('isOpen guard — skip render and scroll when panel not visible', () => {

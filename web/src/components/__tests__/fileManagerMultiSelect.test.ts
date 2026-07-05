@@ -516,12 +516,11 @@ describe('FileManagerContent — more menu and upload', () => {
     const wrapper = mountComponent()
 
     // Dropdown should not be visible initially
-    expect(wrapper.find('.toolbar-dropdown-right').exists()).toBe(false)
+    expect(wrapper.find('.toolbar-dropdown-menu').exists()).toBe(false)
 
     // Open dropdown by setting moreMenuOpen ref directly
-    // (clicking triggers document.closeDropdowns which immediately closes it)
     await setMoreMenuOpen(wrapper, true)
-    expect(wrapper.find('.toolbar-dropdown-right').exists()).toBe(true)
+    expect(wrapper.find('.toolbar-dropdown-menu').exists()).toBe(true)
   })
 
   it('more menu contains at least one item', async () => {
