@@ -21,7 +21,7 @@
           </div>
           <div v-if="status === 'error'" class="install-error-section">
             <div class="install-hint">{{ t('welcomeInfo.manualInstallHint') }}</div>
-            <code class="install-cmd">{{ installCmd }}</code>
+            <code class="install-cmd">{{ effectiveInstallCmd || installCmd }}</code>
           </div>
           <div class="install-actions">
             <button class="dlg-btn dlg-cancel" @click="handleClose">
@@ -57,6 +57,7 @@ const { t } = useI18n()
 const logLines = ref<string[]>([])
 const status = ref<'running' | 'success' | 'error'>('running')
 const logContainer = ref<HTMLElement | null>(null)
+const effectiveInstallCmd = ref('')
 let abortController: AbortController | null = null
 
 onMounted(() => {
@@ -70,6 +71,7 @@ onUnmounted(() => {
 async function startInstall() {
   logLines.value = []
   status.value = 'running'
+  effectiveInstallCmd.value = ''
   abortController = new AbortController()
 
   try {
@@ -114,6 +116,11 @@ async function startInstall() {
               // Cap log lines to prevent unbounded memory growth
               if (logLines.value.length > 500) {
                 logLines.value.splice(0, logLines.value.length - 400)
+              }
+            } else if (currentEvent === 'install_start') {
+              // Track the actual command being used (may differ if mirror was applied)
+              if (data.command) {
+                effectiveInstallCmd.value = data.command
               }
             } else if (currentEvent === 'install_success') {
               status.value = 'success'

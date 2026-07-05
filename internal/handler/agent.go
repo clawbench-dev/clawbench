@@ -5,12 +5,14 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -22,27 +24,33 @@ import (
 )
 
 // chinaMirrorChecked caches the result of isChinaMainland() to avoid repeated
-// network probes. Zero means not yet checked; 1 = true; 2 = false.
-var chinaMirrorChecked int
+// network probes. 0 = not yet checked; 1 = true (China); 2 = false.
+var chinaMirrorChecked atomic.Int32
+
+// chinaProbeClient is a dedicated HTTP client for the China IP probe.
+// It bypasses HTTP_PROXY (direct network check) and has a short timeout.
+var chinaProbeClient = &http.Client{
+	Timeout: 3 * time.Second,
+	Transport: &http.Transport{
+		Proxy: nil,
+	},
+}
 
 // isChinaMainland returns true if the server appears to be running in mainland
 // China. Detection strategy:
 //  1. Check LANG/LC_ALL/LC_MESSAGES env vars for zh_CN locale
 //  2. Quick HTTP probe to ip-api.com (2s timeout) — if country_code == "CN"
 //
-// Result is cached for the process lifetime.
+// Result is cached for the process lifetime via atomic store.
 func isChinaMainland() bool {
-	if chinaMirrorChecked == 1 {
-		return true
-	}
-	if chinaMirrorChecked == 2 {
-		return false
+	if v := chinaMirrorChecked.Load(); v != 0 {
+		return v == 1
 	}
 
 	// Strategy 1: locale env vars
 	for _, key := range []string{"LANG", "LC_ALL", "LC_MESSAGES"} {
 		if v := os.Getenv(key); strings.Contains(v, "zh_CN") {
-			chinaMirrorChecked = 1
+			chinaMirrorChecked.Store(1)
 			slog.Debug("china mirror detection: zh_CN locale found", "env", key, "value", v)
 			return true
 		}
@@ -53,25 +61,30 @@ func isChinaMainland() bool {
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://ip-api.com/line/?fields=countryCode", nil)
 	if err != nil {
-		chinaMirrorChecked = 2
+		chinaMirrorChecked.Store(2)
 		return false
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := chinaProbeClient.Do(req)
 	if err != nil {
-		chinaMirrorChecked = 2
+		chinaMirrorChecked.Store(2)
 		slog.Debug("china mirror detection: network probe failed", "error", err)
 		return false
 	}
 	defer resp.Body.Close()
-	body := make([]byte, 4)
-	n, _ := resp.Body.Read(body)
-	code := strings.TrimSpace(string(body[:n]))
+	// Read body fully (with cap) so the connection can be reused by the pool
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 16))
+	if err != nil {
+		chinaMirrorChecked.Store(2)
+		slog.Debug("china mirror detection: read body failed", "error", err)
+		return false
+	}
+	code := strings.TrimSpace(string(body))
 	isCN := code == "CN"
 	if isCN {
-		chinaMirrorChecked = 1
+		chinaMirrorChecked.Store(1)
 		slog.Debug("china mirror detection: country code CN detected")
 	} else {
-		chinaMirrorChecked = 2
+		chinaMirrorChecked.Store(2)
 		slog.Debug("china mirror detection: country code not CN", "code", code)
 	}
 	return isCN
@@ -362,6 +375,13 @@ func serveAgentsInstall(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 	_, _ = fmt.Fprintf(w, "event: install_start\ndata: {\"backend_id\":%q,\"command\":%q}\n\n", spec.ID, effectiveCmd)
 	flusher.Flush()
 
+	// If mirror was applied, emit an informational log line so the user knows
+	if effectiveCmd != spec.InstallCmd {
+		_, _ = fmt.Fprintf(w, "event: install_log\ndata: {\"line\":%q,\"stream\":\"stdout\"}\n\n",
+			fmt.Sprintf("Using China npm mirror: %s", npmMirrorRegistry))
+		flusher.Flush()
+	}
+
 	// Execute install command (no sudo)
 	// Note: strings.Fields works because all current InstallCmd values are simple
 	// space-separated tokens (no quoting needed). If future commands need quoted
@@ -385,7 +405,7 @@ func serveAgentsInstall(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 		return
 	}
 	if err := cmd.Start(); err != nil {
-		_, _ = fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q,\"command\":%q}\n\n", err.Error(), spec.InstallCmd)
+		_, _ = fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q,\"command\":%q}\n\n", err.Error(), effectiveCmd)
 		flusher.Flush()
 		return
 	}
@@ -452,7 +472,7 @@ func serveAgentsInstall(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 				flusher.Flush()
 			}
 			if exitErr != nil {
-				_, _ = fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q,\"command\":%q}\n\n", exitErr.Error(), spec.InstallCmd)
+				_, _ = fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q,\"command\":%q}\n\n", exitErr.Error(), effectiveCmd)
 			} else {
 				_, _ = fmt.Fprintf(w, "event: install_success\ndata: {\"backend_id\":%q}\n\n", spec.ID)
 			}
