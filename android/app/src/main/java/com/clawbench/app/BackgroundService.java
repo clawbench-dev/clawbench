@@ -73,6 +73,8 @@ import okhttp3.WebSocketListener;
  *
  * Reliability features:
  * - Auto-reconnect: monitors SSH connection and reconnects with exponential backoff
+ * - Screen-off suspend: disconnects SSH when screen turns off (port forwarding
+ *   requires screen-on interaction), reconnects on screen on to save battery
  * - Port persistence: saves forwarded ports to SharedPreferences, restores on Service restart
  * - WifiLock: prevents WiFi from disconnecting while SSH tunnel is active
  * - WakeLock: prevents CPU from sleeping so SSH keep-alive packets are sent
@@ -155,6 +157,11 @@ public class BackgroundService extends Service {
     // Reconnect state
     private volatile boolean isReconnecting = false;
     private volatile int reconnectAttempt = 0;
+
+    // SSH suspended due to screen off — SSH is only needed for port forwarding
+    // which requires screen-on interaction. Disconnecting while suspended saves battery.
+    // All reads/writes happen on networkExecutor (see screen state receiver) for thread safety.
+    private volatile boolean sshScreenSuspended = false;
 
     // Last SSH error message (for JS bridge error reporting)
     private static volatile String lastError = null;
@@ -433,10 +440,11 @@ public class BackgroundService extends Service {
             screenOn = pmInit.isInteractive();
             if (!screenOn) {
                 screenOffTime = System.currentTimeMillis();
+                sshScreenSuspended = true; // Start suspended if screen is already off
             }
         }
 
-        // Register screen state receiver for adaptive WS ping interval
+        // Register screen state receiver for adaptive WS ping + SSH suspend/resume
         IntentFilter screenFilter = new IntentFilter();
         screenFilter.addAction(Intent.ACTION_SCREEN_ON);
         screenFilter.addAction(Intent.ACTION_SCREEN_OFF);
@@ -447,15 +455,51 @@ public class BackgroundService extends Service {
                     screenOn = true;
                     screenOffTime = 0;
                     cancelPingRampUp();
-                    // Restart ping loop with fast interval
+                    // Restart WS ping loop with fast interval
                     if (nativeWsActive) {
                         startWsPingLoop();
+                    }
+                    // Resume SSH: reconnect if suspended and ports need forwarding.
+                    // Guard check runs on networkExecutor to avoid unsynchronized
+                    // sshSession read from the main thread.
+                    if (sshScreenSuspended && !forwardedPorts.isEmpty()) {
+                        networkExecutor.execute(() -> {
+                            sshScreenSuspended = false;
+                            try {
+                                AppLog.i(TAG, "SSH: screen on, resuming SSH tunnel");
+                                ensureConnection();
+                                updateNotification(forwardedPorts.size(), null);
+                            } catch (Exception e) {
+                                lastError = e.getMessage();
+                                AppLog.w(TAG, "SSH: failed to resume on screen on: " + e.getMessage());
+                            }
+                        });
+                    } else {
+                        sshScreenSuspended = false;
                     }
                 } else if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
                     screenOn = false;
                     screenOffTime = System.currentTimeMillis();
                     // Schedule ramp-up steps to increase ping interval gradually
                     schedulePingRampUp();
+                    // Suspend SSH: disconnect tunnel to save battery.
+                    // Guard check and disconnect run on networkExecutor for thread safety.
+                    if (!forwardedPorts.isEmpty()) {
+                        networkExecutor.execute(() -> {
+                            if (sshSession != null && sshSession.isConnected()) {
+                                sshScreenSuspended = true;
+                                AppLog.i(TAG, "SSH: screen off, suspending SSH tunnel to save battery");
+                                stopConnectionMonitor();
+                                disconnectInternal();
+                                // NOTE: must call maybeRelease* AFTER disconnectInternal() because
+                                // it nulls sshSession, which makes maybeRelease* correctly
+                                // evaluate sshActive=false.
+                                maybeReleaseWifiLock();
+                                maybeReleaseWakeLock();
+                                updateNotification(forwardedPorts.size(), null);
+                            }
+                        });
+                    }
                 }
             }
         };
@@ -701,6 +745,12 @@ public class BackgroundService extends Service {
             restoreForwardedPorts();
         }
         if (!forwardedPorts.isEmpty()) {
+            if (!screenOn) {
+                // Screen is off — don't reconnect SSH, defer until screen on
+                AppLog.i(TAG, "SSH: screen is off, deferring reconnect until screen on");
+                sshScreenSuspended = true;
+                return;
+            }
             try {
                 ensureConnection();
                 AppLog.i(TAG, "SSH: restored all port forwards after service restart");
@@ -732,6 +782,9 @@ public class BackgroundService extends Service {
                 }
 
                 if (!monitorActive || intentionalDisconnect) break;
+
+                // Skip reconnect while SSH is suspended (screen off)
+                if (sshScreenSuspended) continue;
 
                 // Check if session is dead
                 if (sshSession == null || !sshSession.isConnected()) {
@@ -856,6 +909,10 @@ public class BackgroundService extends Service {
      * MUST be called from a background thread (network I/O).
      */
     private synchronized void ensureConnection() throws Exception {
+        // Clear suspended flag — if something is explicitly requesting a connection
+        // (addPortForward, screen-on resume), the tunnel is needed.
+        sshScreenSuspended = false;
+
         if (sshSession != null && sshSession.isConnected()) {
             AppLog.d(TAG, "SSH: ensureConnection: session already alive, skipping");
             return;
