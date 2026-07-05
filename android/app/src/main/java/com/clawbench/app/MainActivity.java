@@ -1357,9 +1357,9 @@ public class MainActivity extends AppCompatActivity {
             addresses.add(frpUrl);
             try {
                 java.net.URL u = new java.net.URL(frpUrl);
-                labels.add("远程: " + u.getHost() + ":" + u.getPort());
+                labels.add("内网穿透: " + u.getHost() + ":" + u.getPort());
             } catch (Exception e) {
-                labels.add("远程: " + frpUrl);
+                labels.add("内网穿透: " + frpUrl);
             }
         }
 
