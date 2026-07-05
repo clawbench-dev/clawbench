@@ -67,6 +67,34 @@ public class QrScanActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        // Install a temporary uncaught exception handler to log crash details
+        Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
+            AppLog.e(TAG, "UNCAUGHT EXCEPTION in QrScanActivity", throwable);
+            // Also write to a crash file that persists
+            try {
+                java.io.FileWriter fw = new java.io.FileWriter(
+                        new java.io.File(getCacheDir(), "qr_scan_crash.txt"), true);
+                fw.append(new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+                        .format(new java.util.Date())).append("\n");
+                fw.append(thread.toString()).append("\n");
+                fw.append(throwable.toString()).append("\n");
+                for (StackTraceElement ste : throwable.getStackTrace()) {
+                    fw.append("  at ").append(ste.toString()).append("\n");
+                }
+                if (throwable.getCause() != null) {
+                    fw.append("Caused by: ").append(throwable.getCause().toString()).append("\n");
+                    for (StackTraceElement ste : throwable.getCause().getStackTrace()) {
+                        fw.append("  at ").append(ste.toString()).append("\n");
+                    }
+                }
+                fw.append("\n");
+                fw.close();
+            } catch (Exception ignored) {}
+            // Let the default handler kill the process
+            android.os.Process.killProcess(android.os.Process.myPid());
+        });
+
         setContentView(createContentView());
 
         // ZXing reader, QR only
@@ -252,8 +280,10 @@ public class QrScanActivity extends AppCompatActivity {
                     cameraDevice = null;
                     cameraOpening = false;
                     AppLog.e(TAG, "Camera open error: " + error);
-                    Toast.makeText(QrScanActivity.this, "相机打开失败", Toast.LENGTH_SHORT).show();
-                    finish();
+                    runOnUiThread(() -> {
+                        Toast.makeText(QrScanActivity.this, "相机打开失败", Toast.LENGTH_SHORT).show();
+                        finish();
+                    });
                 }
             }, backgroundHandler);
         } catch (Exception e) {
@@ -299,8 +329,10 @@ public class QrScanActivity extends AppCompatActivity {
                         @Override
                         public void onConfigureFailed(@NonNull CameraCaptureSession session) {
                             AppLog.e(TAG, "Camera capture session configure failed");
-                            Toast.makeText(QrScanActivity.this, "相机配置失败", Toast.LENGTH_SHORT).show();
-                            finish();
+                            runOnUiThread(() -> {
+                                Toast.makeText(QrScanActivity.this, "相机配置失败", Toast.LENGTH_SHORT).show();
+                                finish();
+                            });
                         }
                     }, backgroundHandler);
         } catch (Exception e) {

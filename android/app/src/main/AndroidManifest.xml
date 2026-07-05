@@ -48,7 +48,7 @@
 
         <activity
             android:name=".QrScanActivity"
-            android:theme="@style/Theme.AppCompat.NoActionBar"
+            android:theme="@style/Theme.ClawBench"
             android:screenOrientation="portrait"
             android:exported="false" />
 
