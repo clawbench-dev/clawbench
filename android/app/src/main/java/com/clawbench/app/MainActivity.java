@@ -105,6 +105,9 @@ public class MainActivity extends AppCompatActivity {
     /** Whether the app is currently in the foreground (between onResume and onPause). */
     static volatile boolean isForeground = false;
 
+    /** Transient flag to prevent duplicate OEM prompt within the same launch. */
+    private boolean oemPromptShownThisLaunch = false;
+
     WebView webView;
     private ProgressBar progressBar;
     private SharedPreferences prefs;
@@ -1085,44 +1088,41 @@ public class MainActivity extends AppCompatActivity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
             if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
-                if (!BackgroundService.isBatteryOptRequested(this)) {
-                    requestIgnoreBatteryOptimization();
-                }
-            } else {
-                // Already whitelisted — mark as requested so OEM prompt can proceed
-                if (!BackgroundService.isBatteryOptRequested(this)) {
-                    BackgroundService.setBatteryOptRequested(this);
-                }
+                // Not whitelisted — request exemption every launch until granted
+                requestIgnoreBatteryOptimization();
             }
         }
 
         // Layer 2: Chinese OEM auto-start / background permission.
-        // Only prompt once. Triggered after standard battery opt is handled.
-        if (OemUtils.isChineseOem() && BackgroundService.isBatteryOptRequested(this)
-                && !OemUtils.isAutoStartPrompted(this)) {
-            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                Intent autoStartIntent = OemUtils.getAutoStartIntent(this);
-                if (autoStartIntent != null) {
-                    try {
-                        startActivity(autoStartIntent);
-                        OemUtils.setAutoStartPrompted(this);
-                        AppLog.i(TAG, "Opened OEM auto-start settings on first launch");
-                    } catch (Exception e) {
-                        AppLog.w(TAG, "Failed to open OEM auto-start settings", e);
-                    }
-                } else {
-                    Intent batteryIntent = OemUtils.getBatterySettingsIntent(this);
-                    if (batteryIntent != null) {
+        // Check on every launch — the actual OEM permission may be revoked
+        // by system updates or the user, so we can't rely on "prompted" flag alone.
+        if (OemUtils.isChineseOem()) {
+            // Only show if we haven't already shown it in THIS launch
+            // (prevents duplicate if called multiple times). Use a transient flag.
+            if (!oemPromptShownThisLaunch) {
+                oemPromptShownThisLaunch = true;
+                new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                    Intent autoStartIntent = OemUtils.getAutoStartIntent(this);
+                    if (autoStartIntent != null) {
                         try {
-                            startActivity(batteryIntent);
-                            OemUtils.setAutoStartPrompted(this);
-                            AppLog.i(TAG, "Opened OEM battery settings on first launch");
+                            startActivity(autoStartIntent);
+                            AppLog.i(TAG, "Opened OEM auto-start settings");
                         } catch (Exception e) {
-                            AppLog.w(TAG, "Failed to open OEM battery settings", e);
+                            AppLog.w(TAG, "Failed to open OEM auto-start settings", e);
+                        }
+                    } else {
+                        Intent batteryIntent = OemUtils.getBatterySettingsIntent(this);
+                        if (batteryIntent != null) {
+                            try {
+                                startActivity(batteryIntent);
+                                AppLog.i(TAG, "Opened OEM battery settings");
+                            } catch (Exception e) {
+                                AppLog.w(TAG, "Failed to open OEM battery settings", e);
+                            }
                         }
                     }
-                }
-            }, 500);
+                }, 800); // Delay so standard dialog (if any) settles first
+            }
         }
     }
 
