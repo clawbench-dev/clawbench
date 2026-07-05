@@ -4,6 +4,9 @@ import { cancelChat } from '@/utils/api'
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
 import { usePendingStore } from '@/composables/usePendingStore.ts'
+import { appLog } from '@/utils/appLog'
+
+const TAG = 'SessionManager'
 
 /**
  * Unified session manager — a thin coordination layer that ensures
@@ -97,15 +100,23 @@ export function useSessionManager(options: UseSessionManagerOptions) {
   /** Enqueue a message for later delivery while AI is generating.
    *  Returns the enqueue result which may contain `needs_start` if the
    *  session is no longer running (race condition: user enqueues right
-   *  as AI finishes). The caller should resubmit via sendMessageNow. */
-  async function enqueueMessage(text: string, extraFilePaths: string[] = [], attachedFiles: string[] = [], pendingFilePaths: string[] = []): Promise<{ needsStart: boolean; message?: string; filePaths?: string[]; files?: string[] }> {
+   *  as AI finishes). The caller should resubmit via sendMessageNow.
+   *
+   *  IMPORTANT: sessionId MUST be captured by the caller BEFORE any async
+   *  boundary (e.g. before calling addPending). Never pass
+   *  identity.currentSessionId.value from inside an async function —
+   *  the user may switch sessions between the optimistic addPending and
+   *  this call, sending the message to the wrong session. */
+  async function enqueueMessage(sessionId: string, text: string, extraFilePaths: string[] = [], attachedFiles: string[] = [], pendingFilePaths: string[] = []): Promise<{ needsStart: boolean; message?: string; filePaths?: string[]; files?: string[] }> {
     const inputText = text !== undefined ? text : ''
     const filePaths = [...(extraFilePaths || []), ...(attachedFiles.length > 0 ? attachedFiles : [])]
     const allFiles = [...(pendingFilePaths || []), ...filePaths]
 
+    appLog.d(TAG, `[enqueueMessage] targetSid=${sessionId.slice(0,8)} currentSid=${identity.currentSessionId.value.slice(0,8)} text="${inputText.slice(0,40)}" same=${sessionId === identity.currentSessionId.value}`)
+
     try {
       const resp = await fetch(
-        `/api/ai/queue?session_id=${encodeURIComponent(identity.currentSessionId.value)}`,
+        `/api/ai/queue?session_id=${encodeURIComponent(sessionId)}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -123,8 +134,8 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       if (data.needs_start) {
         // Remove the pending message from pendingStore — it will be
         // sent as a normal (non-pending) message via sendMessageNow.
-        pendingStore.removePending(identity.currentSessionId.value, data.message || inputText)
-        pendingStore.syncFromBackendQueue(identity.currentSessionId.value, data.queue || [])
+        pendingStore.removePending(sessionId, data.message || inputText)
+        pendingStore.syncFromBackendQueue(sessionId, data.queue || [])
         scrollBottom(true)
         return {
           needsStart: true,
@@ -135,11 +146,11 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       }
 
       // Sync pending messages in pendingStore with backend queue state
-      pendingStore.syncFromBackendQueue(identity.currentSessionId.value, data.queue || [])
+      pendingStore.syncFromBackendQueue(sessionId, data.queue || [])
     } catch (err) {
       toast.show(gt('session.queueFailed'), { icon: '⚠️', type: 'error' })
       // On enqueue failure, remove the pending message we just added
-      pendingStore.removePending(identity.currentSessionId.value, inputText)
+      pendingStore.removePending(sessionId, inputText)
     }
 
     scrollBottom(true)

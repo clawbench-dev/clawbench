@@ -418,7 +418,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		// Notify the running goroutine via SSE
 		service.SendSessionEvent(sessionID, ai.StreamEvent{
 			Type:       "queue_update",
-			QueueEvent: &ai.QueueEventData{Queue: queueState},
+			QueueEvent: &ai.QueueEventData{SessionID: sessionID, Queue: queueState},
 		})
 
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -561,6 +561,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{
 				Type: "queue_drain",
 				QueueEvent: &ai.QueueEventData{
+					SessionID: sessionID,
 					Text:      qMsg.Text,
 					MessageID: drainMsgID,
 					FilePaths: qMsg.FilePaths,

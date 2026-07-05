@@ -274,7 +274,9 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 			case "queue_drain":
 				if event.QueueEvent != nil {
 					data, _ := json.Marshal(map[string]any{
+						"sessionId": event.QueueEvent.SessionID,
 						"text":      event.QueueEvent.Text,
+						"messageId": event.QueueEvent.MessageID,
 						"filePaths": event.QueueEvent.FilePaths,
 						"files":     event.QueueEvent.Files,
 						"queue":     event.QueueEvent.Queue,
@@ -286,7 +288,8 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 				// Syncs pending messages with the backend queue state.
 				if event.QueueEvent != nil {
 					data, _ := json.Marshal(map[string]any{
-						"queue": event.QueueEvent.Queue,
+						"sessionId": event.QueueEvent.SessionID,
+						"queue":     event.QueueEvent.Queue,
 					})
 					fmt.Fprintf(w, "event: queue_update\ndata: %s\n\n", data)
 				}

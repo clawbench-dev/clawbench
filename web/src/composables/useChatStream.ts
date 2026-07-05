@@ -685,16 +685,25 @@ export function useChatStream(options: UseChatStreamOptions) {
       let data: any
       try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE queue_drain: invalid JSON, skipping'); return }
 
-      // Sync pendingStore FIRST — remove the drained message from pending before
-      // pushing the drain message into messages.value. This ordering ensures
-      // renderedMessages computed never sees the same message in both sources
-      // (drain + pending), preventing a brief duplicate flash.
-      // Always update pendingStore — this is per-session so no cross-session contamination.
-      pendingStore.syncFromBackendQueue(sessionId, data.queue || [])
+      // Route by event's explicit sessionId — always correct regardless of
+      // session switches. Fallback to connectStream-captured sessionId for
+      // backward compatibility with older backends that don't include sessionId.
+      const eventSessionId = data.sessionId || sessionId
 
-      if (!sessionChanged()) {
+      // Sync pendingStore FIRST for the event's session — remove the drained
+      // message from pending before pushing the drain message into messages.value.
+      // This ordering ensures renderedMessages computed never sees the same
+      // message in both sources (drain + pending), preventing a brief duplicate flash.
+      // Always sync — pendingStore is per-session, no cross-session contamination.
+      pendingStore.syncFromBackendQueue(eventSessionId, data.queue || [])
+
+      // Only update messages.value if this event is for the currently viewed session.
+      // Replaces the old sessionChanged() guard which could incorrectly reject events
+      // after a switch-away-and-back (the captured sessionId was stale).
+      if (eventSessionId === currentSessionId.value) {
         const drainText = data.text || ''
         const drainFiles = [...(data.filePaths || []), ...(data.files || [])]
+        appLog.d(TAG, `[queue_drain] eventSid=${eventSessionId.slice(0,8)} currentSid=${currentSessionId.value.slice(0,8)} matched=true msgId=${data.messageId || 'none'} text="${drainText.slice(0,40)}" pendingAfter=${(data.queue || []).length}`)
         drainQueueMessage(
           messages.value, drainText, drainFiles, currentBackend.value,
           { onRenderNeeded, onExtractScheduledTasks },
@@ -706,6 +715,8 @@ export function useChatStream(options: UseChatStreamOptions) {
           onRenderNeeded()
           onScrollBottom(true)
         }
+      } else {
+        appLog.d(TAG, `[queue_drain] eventSid=${eventSessionId.slice(0,8)} currentSid=${currentSessionId.value.slice(0,8)} matched=false (event for background session, pendingStore synced)`)
       }
     })
 
@@ -716,13 +727,19 @@ export function useChatStream(options: UseChatStreamOptions) {
       let data: any
       try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE queue_update: invalid JSON, skipping'); return }
 
-      // Always update pendingStore — per-session, no contamination possible.
-      pendingStore.syncFromBackendQueue(sessionId, data.queue || [])
+      // Route by event's explicit sessionId (fallback to captured sessionId)
+      const eventSessionId = data.sessionId || sessionId
 
-      if (sessionChanged()) return
+      // Always sync pendingStore for the event's session — no contamination possible.
+      pendingStore.syncFromBackendQueue(eventSessionId, data.queue || [])
 
-      // Trigger render when pending messages are added/removed for the current session
-      onRenderNeeded()
+      // Only trigger render if this event is for the currently viewed session
+      if (eventSessionId === currentSessionId.value) {
+        appLog.d(TAG, `[queue_update] eventSid=${eventSessionId.slice(0,8)} currentSid=${currentSessionId.value.slice(0,8)} matched=true pendingAfter=${(data.queue || []).length}`)
+        onRenderNeeded()
+      } else {
+        appLog.d(TAG, `[queue_update] eventSid=${eventSessionId.slice(0,8)} currentSid=${currentSessionId.value.slice(0,8)} matched=false (background session)`)
+      }
     })
 
     eventSource.addEventListener('error', (e) => {
