@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"sync"
@@ -67,20 +68,20 @@ func (q *QRTokenManager) IsExpired() bool {
 	return q.used || time.Now().After(q.expiry)
 }
 
-// DeepLink builds the clawbench://connect deep link with the current token.
-func (q *QRTokenManager) DeepLink() string {
-	q.mu.Lock()
-	tok := q.token
-	q.mu.Unlock()
-	return fmt.Sprintf("clawbench://connect?lan=%s&frp=%s&token=%s",
-		url.QueryEscape(q.lanURL), url.QueryEscape(q.frpURL), tok)
-}
-
-// Expiry returns the token expiry time.
-func (q *QRTokenManager) Expiry() time.Time {
+// EnsureActive regenerates the token if expired or used, then returns the deep link and expiry.
+// This is atomic under a single lock, preventing TOCTOU races between IsExpired/Regenerate
+// and between DeepLink/Expiry calls.
+func (q *QRTokenManager) EnsureActive() (deepLink string, expiry time.Time) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	return q.expiry
+	if q.used || time.Now().After(q.expiry) {
+		q.token = model.GenerateRandomToken(16)
+		q.expiry = time.Now().Add(q.ttl)
+		q.used = false
+	}
+	deepLink = fmt.Sprintf("clawbench://connect?lan=%s&frp=%s&token=%s",
+		url.QueryEscape(q.lanURL), url.QueryEscape(q.frpURL), q.token)
+	return deepLink, q.expiry
 }
 
 // qrTokenMgr holds the global QR token manager, set from main.go.
@@ -106,6 +107,21 @@ func ServeQRTokenAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Rate limit: reuse the same IP-based login rate limiter as /login
+	remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if remoteIP == "" {
+		remoteIP = r.RemoteAddr
+	}
+	limiter := getLoginLimiter()
+	if limiter.isBlocked(remoteIP) {
+		slog.Warn("QR token auth blocked: too many failures", slog.String("ip", remoteIP))
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{
+			"ok":    false,
+			"error": "too many attempts, try again later",
+		})
+		return
+	}
+
 	var body struct {
 		Token string `json:"token"`
 	}
@@ -118,6 +134,7 @@ func ServeQRTokenAuth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !qrTokenMgr.Validate(body.Token) {
+		limiter.recordFailure(remoteIP)
 		slog.Warn("QR token auth failed: token invalid, expired, or already used",
 			slog.String("remote", r.RemoteAddr))
 		writeJSON(w, http.StatusUnauthorized, map[string]any{
@@ -145,6 +162,7 @@ func ServeQRTokenAuth(w http.ResponseWriter, r *http.Request) {
 	})
 
 	slog.Info("QR token auth succeeded", slog.String("remote", r.RemoteAddr))
+	limiter.reset(remoteIP)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -187,14 +205,12 @@ func ServeQRCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If token is expired or used, regenerate automatically
-	if qrTokenMgr.IsExpired() {
-		qrTokenMgr.Regenerate()
-	}
+	// Atomically ensure token is active and get deep link + expiry
+	deepLink, expiry := qrTokenMgr.EnsureActive()
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":       true,
-		"url":      qrTokenMgr.DeepLink(),
-		"expiresAt": qrTokenMgr.Expiry().Unix(),
+		"ok":        true,
+		"url":       deepLink,
+		"expiresAt": expiry.Unix(),
 	})
 }

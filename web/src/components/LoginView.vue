@@ -119,6 +119,9 @@
             <span>{{ t('login.scanToLogin') }}</span>
           </button>
           <div v-else class="qr-panel">
+            <button class="qr-close-btn" @click="closeQrPanel">
+              <X :size="14" />
+            </button>
             <div class="qr-code-wrapper">
               <canvas ref="qrCanvas" class="qr-canvas"></canvas>
               <div v-if="qrState === 'loading'" class="qr-overlay">
@@ -319,6 +322,12 @@ function openQrPanel() {
   fetchQrCode()
 }
 
+function closeQrPanel() {
+  showQrPanel.value = false
+  stopQrTimers()
+  qrState.value = 'idle'
+}
+
 async function fetchQrCode() {
   qrState.value = 'loading'
   try {
@@ -367,6 +376,7 @@ function startAuthPoll() {
       if (res.ok) {
         // Authenticated! QR scan login succeeded
         stopQrTimers()
+        qrState.value = 'idle' // prevent double-emit on next interval
         emit('loginSuccess')
       }
     } catch { /* ignore */ }
@@ -865,6 +875,30 @@ input:focus {
     flex-direction: column;
     align-items: center;
     gap: 10px;
+    position: relative;
+}
+
+.qr-close-btn {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    width: 24px;
+    height: 24px;
+    border: none;
+    border-radius: 50%;
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1;
+    transition: background 0.15s, color 0.15s;
+}
+
+.qr-close-btn:hover {
+    background: var(--border-color);
+    color: var(--text-primary);
 }
 
 .qr-code-wrapper {

@@ -317,8 +317,11 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/frp/status", ServeFRPStatus)                // Minimal status, no auth (only enabled+running)
 
 	// QR code token authentication
+	// /api/auth/qr-code is intentionally unauthenticated: used on the login page before
+	// auth. Exposes LAN IP + FRP URL (same as terminal banner QR code). Token is
+	// short-lived (5min) and one-shot.
 	register("/api/auth/qr-code", ServeQRCode)                                             // QR code deep link for frontend rendering
-	register("/api/auth/qr-token", ServeQRTokenAuth)                          // Exchange QR token for session cookie
+	register("/api/auth/qr-token", ServeQRTokenAuth)                          // Exchange QR token for session cookie (rate-limited)
 	register("/api/auth/qr-token/regenerate", middleware.Auth(ServeQRTokenRegenerate)) // Regenerate QR token (auth required)
 
 	// Terminal (interactive web terminal with PTY + WebSocket + xterm.js)
