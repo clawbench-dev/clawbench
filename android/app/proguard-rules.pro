@@ -17,3 +17,5 @@
 
 # ZXing (QR code decoding)
 -keep class com.google.zxing.** { *; }
+-keep class * implements com.google.zxing.Reader { *; }
+-dontwarn com.google.zxing.**

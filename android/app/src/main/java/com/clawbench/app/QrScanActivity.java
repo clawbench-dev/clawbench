@@ -48,6 +48,7 @@ import java.util.Map;
  */
 public class QrScanActivity extends AppCompatActivity {
 
+    private static final String TAG = "QrScan";
     private static final int CAMERA_PERMISSION_REQUEST = 1001;
     private static final int MAX_PREVIEW_WIDTH = 1280;
     private static final int MAX_PREVIEW_HEIGHT = 720;
@@ -60,6 +61,7 @@ public class QrScanActivity extends AppCompatActivity {
     private HandlerThread backgroundThread;
     private MultiFormatReader zxingReader;
     private volatile boolean scanned = false;
+    private volatile boolean cameraOpening = false;
     private Size previewSize;
 
     @Override
@@ -68,11 +70,18 @@ public class QrScanActivity extends AppCompatActivity {
         setContentView(createContentView());
 
         // ZXing reader, QR only
-        Map<DecodeHintType, Object> hints = new HashMap<>();
-        hints.put(DecodeHintType.POSSIBLE_FORMATS,
-                java.util.Arrays.asList(com.google.zxing.BarcodeFormat.QR_CODE));
-        zxingReader = new MultiFormatReader();
-        zxingReader.setHints(hints);
+        try {
+            Map<DecodeHintType, Object> hints = new HashMap<>();
+            hints.put(DecodeHintType.POSSIBLE_FORMATS,
+                    java.util.Arrays.asList(com.google.zxing.BarcodeFormat.QR_CODE));
+            zxingReader = new MultiFormatReader();
+            zxingReader.setHints(hints);
+        } catch (Exception e) {
+            AppLog.e(TAG, "ZXing init failed", e);
+            Toast.makeText(this, "扫码组件初始化失败", Toast.LENGTH_SHORT).show();
+            finish();
+            return;
+        }
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
                 == PackageManager.PERMISSION_GRANTED) {
@@ -86,7 +95,7 @@ public class QrScanActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (textureView.isAvailable() && cameraDevice == null) {
+        if (textureView.isAvailable() && cameraDevice == null && !cameraOpening) {
             openCamera(textureView.getWidth(), textureView.getHeight());
         }
     }
@@ -177,6 +186,9 @@ public class QrScanActivity extends AppCompatActivity {
 
     @SuppressWarnings("MissingPermission")
     private void openCamera(int width, int height) {
+        if (cameraOpening || cameraDevice != null) return;
+        cameraOpening = true;
+
         if (backgroundThread == null) {
             startBackgroundThread();
         }
@@ -192,6 +204,7 @@ public class QrScanActivity extends AppCompatActivity {
                 }
             }
             if (cameraId == null) {
+                cameraOpening = false;
                 Toast.makeText(this, "未找到后置摄像头", Toast.LENGTH_SHORT).show();
                 finish();
                 return;
@@ -201,6 +214,7 @@ public class QrScanActivity extends AppCompatActivity {
             StreamConfigurationMap map = characteristics.get(
                     CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
             if (map == null) {
+                cameraOpening = false;
                 Toast.makeText(this, "相机配置不可用", Toast.LENGTH_SHORT).show();
                 finish();
                 return;
@@ -221,6 +235,7 @@ public class QrScanActivity extends AppCompatActivity {
                 @Override
                 public void onOpened(@NonNull CameraDevice camera) {
                     cameraDevice = camera;
+                    cameraOpening = false;
                     createCameraPreviewSession();
                 }
 
@@ -228,18 +243,22 @@ public class QrScanActivity extends AppCompatActivity {
                 public void onDisconnected(@NonNull CameraDevice camera) {
                     camera.close();
                     cameraDevice = null;
+                    cameraOpening = false;
                 }
 
                 @Override
                 public void onError(@NonNull CameraDevice camera, int error) {
                     camera.close();
                     cameraDevice = null;
+                    cameraOpening = false;
+                    AppLog.e(TAG, "Camera open error: " + error);
                     Toast.makeText(QrScanActivity.this, "相机打开失败", Toast.LENGTH_SHORT).show();
                     finish();
                 }
             }, backgroundHandler);
         } catch (Exception e) {
-            AppLog.e("QrScan", "openCamera failed", e);
+            cameraOpening = false;
+            AppLog.e(TAG, "openCamera failed", e);
             Toast.makeText(this, "相机初始化失败", Toast.LENGTH_SHORT).show();
             finish();
         }
@@ -248,7 +267,10 @@ public class QrScanActivity extends AppCompatActivity {
     private void createCameraPreviewSession() {
         try {
             SurfaceTexture texture = textureView.getSurfaceTexture();
-            assert texture != null;
+            if (texture == null) {
+                AppLog.e(TAG, "SurfaceTexture is null in createCameraPreviewSession");
+                return;
+            }
             texture.setDefaultBufferSize(previewSize.getWidth(), previewSize.getHeight());
             Surface previewSurface = new Surface(texture);
             Surface readerSurface = imageReader.getSurface();
@@ -270,18 +292,19 @@ public class QrScanActivity extends AppCompatActivity {
                                         CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
                                 session.setRepeatingRequest(builder.build(), null, backgroundHandler);
                             } catch (Exception e) {
-                                AppLog.e("QrScan", "setRepeatingRequest failed", e);
+                                AppLog.e(TAG, "setRepeatingRequest failed", e);
                             }
                         }
 
                         @Override
                         public void onConfigureFailed(@NonNull CameraCaptureSession session) {
+                            AppLog.e(TAG, "Camera capture session configure failed");
                             Toast.makeText(QrScanActivity.this, "相机配置失败", Toast.LENGTH_SHORT).show();
                             finish();
                         }
                     }, backgroundHandler);
         } catch (Exception e) {
-            AppLog.e("QrScan", "createCameraPreviewSession failed", e);
+            AppLog.e(TAG, "createCameraPreviewSession failed", e);
         }
     }
 
@@ -323,13 +346,16 @@ public class QrScanActivity extends AppCompatActivity {
         } catch (com.google.zxing.NotFoundException e) {
             // No QR in frame — normal, skip
         } catch (Exception e) {
-            AppLog.e("QrScan", "Decode error", e);
+            AppLog.e(TAG, "Decode error", e);
         } finally {
             if (image != null) image.close();
         }
     };
 
     private static Size chooseOptimalSize(Size[] choices, int textureWidth, int textureHeight) {
+        if (choices == null || choices.length == 0) {
+            return new Size(textureWidth, textureHeight);
+        }
         // Collect sizes close to the target aspect ratio, capped at MAX_PREVIEW resolution
         float targetRatio = (float) textureWidth / textureHeight;
         Size best = null;
