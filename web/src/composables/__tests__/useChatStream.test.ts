@@ -748,6 +748,73 @@ describe('useChatStream', () => {
     })
   })
 
+  describe('queue_queued event (new pending message)', () => {
+    it('should push pending message into messages.value', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('queue_queued', { sessionId: 'test-session-1', text: 'queued msg', filePaths: ['/foo.go'], files: [], queue: [] })
+
+      const pendingMsgs = options.messages.value.filter((m: any) => m.pending)
+      expect(pendingMsgs).toHaveLength(1)
+      expect(pendingMsgs[0].content).toBe('queued msg')
+      expect(pendingMsgs[0].role).toBe('user')
+    })
+
+    it('should dedup — skip if pending message with same content already exists', () => {
+      const options = createOptions()
+      // Pre-add a pending message with the same content
+      options.messages.value.push({
+        role: 'user', content: 'queued msg', pending: true,
+        blocks: [{ type: 'text', text: 'queued msg' }],
+        createdAt: new Date().toISOString(),
+      })
+
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('queue_queued', { sessionId: 'test-session-1', text: 'queued msg', filePaths: [], files: [], queue: [] })
+
+      const pendingMsgs = options.messages.value.filter((m: any) => m.pending)
+      expect(pendingMsgs).toHaveLength(1)
+    })
+
+    it('should ignore event for different session', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      // Event for a different session
+      options.onRenderNeeded.mockClear()
+      es.simulate('queue_queued', { sessionId: 'different-session', text: 'other msg', filePaths: [], files: [], queue: [] })
+
+      // Should not add any pending message or trigger render
+      const pendingMsgs = options.messages.value.filter((m: any) => m.pending)
+      expect(pendingMsgs).toHaveLength(0)
+      expect(options.onRenderNeeded).not.toHaveBeenCalled()
+    })
+
+    it('should skip if text is empty', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+
+      es.simulate('queue_queued', { sessionId: 'test-session-1', text: '', filePaths: [], files: [], queue: [] })
+
+      const pendingMsgs = options.messages.value.filter((m: any) => m.pending)
+      expect(pendingMsgs).toHaveLength(0)
+    })
+  })
+
   describe('queue_update event (enqueue notification)', () => {
     it('should replace pending portion of messages.value with backend queue', () => {
       const options = createOptions()

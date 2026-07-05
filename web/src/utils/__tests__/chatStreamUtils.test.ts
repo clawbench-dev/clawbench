@@ -716,6 +716,60 @@ describe('drainQueueMessage', () => {
       expect(msg.id).toBeDefined()
     }
   })
+
+  // ── pending message flag clearing (new architecture) ──
+
+  it('finds pending message and clears its flag instead of pushing duplicate', () => {
+    const messages: any[] = [
+      { role: 'user', id: 'queue-1', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], pending: true },
+      { role: 'assistant', content: '', blocks: [], streaming: true },
+    ]
+    drainQueueMessage(messages, 'hello', [], 'claude', callbacks)
+    // No duplicate user message — the existing pending one had its flag cleared
+    const userMsgs = messages.filter(m => m.role === 'user')
+    expect(userMsgs).toHaveLength(1)
+    expect(userMsgs[0].pending).toBeUndefined()
+    expect(userMsgs[0].content).toBe('hello')
+  })
+
+  it('sets dbMessageId on the found pending message', () => {
+    const messages: any[] = [
+      { role: 'user', id: 'queue-1', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], pending: true },
+      { role: 'assistant', content: '', blocks: [], streaming: true },
+    ]
+    drainQueueMessage(messages, 'hello', [], 'claude', callbacks, undefined, 42)
+    const userMsg = messages.find(m => m.role === 'user')
+    expect(userMsg.id).toBe(42)
+    expect(userMsg.pending).toBeUndefined()
+  })
+
+  it('falls back to push when no matching pending message found', () => {
+    // Pending message content doesn't match drain content — push as fallback
+    const messages: any[] = [
+      { role: 'user', id: 'queue-1', content: 'other msg', blocks: [{ type: 'text', text: 'other msg' }], pending: true },
+      { role: 'assistant', content: '', blocks: [], streaming: true },
+    ]
+    drainQueueMessage(messages, 'hello', [], 'claude', callbacks)
+    const userMsgs = messages.filter(m => m.role === 'user')
+    expect(userMsgs).toHaveLength(2)
+    // First pending message still has its flag
+    expect(userMsgs[0].pending).toBe(true)
+    // New message was pushed as fallback
+    expect(userMsgs[1].content).toBe('hello')
+  })
+
+  it('FIFO: with two identical pending messages, first drain clears first pending', () => {
+    const messages: any[] = [
+      { role: 'user', id: 'queue-1', content: 'yes', blocks: [{ type: 'text', text: 'yes' }], pending: true },
+      { role: 'user', id: 'queue-2', content: 'yes', blocks: [{ type: 'text', text: 'yes' }], pending: true },
+      { role: 'assistant', content: '', blocks: [], streaming: true },
+    ]
+    drainQueueMessage(messages, 'yes', [], 'claude', callbacks)
+    // First pending message has flag cleared, second still pending
+    const userMsgs = messages.filter(m => m.role === 'user')
+    expect(userMsgs[0].pending).toBeUndefined()
+    expect(userMsgs[1].pending).toBe(true)
+  })
 })
 
 describe('generateDrainId', () => {

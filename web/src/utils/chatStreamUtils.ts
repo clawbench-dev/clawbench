@@ -187,6 +187,13 @@ export function drainQueueMessage(
   //    If not found (e.g. queue_queued was missed), push it as a fallback.
   //    If the backend provided a DB message ID (dbMessageId), set it for
   //    v-for key stability so Vue won't unmount/remount on loadHistory.
+  //    NOTE: findIndex matches the first pending message with matching content.
+  //    This is correct for FIFO semantics — drain always dequeues the oldest
+  //    pending message, and findIndex finds the oldest match. If two queued
+  //    messages have identical text, the first drain matches the first pending,
+  //    clears its flag, and the second drain's findIndex skips it and matches
+  //    the second. Any transient ordering mismatch is corrected by the next
+  //    queue_update event which replaces the entire pending portion.
   const pendingIdx = messages.findIndex(
     (m: any) => m.role === 'user' && m.pending && m.content === userContent
   )
