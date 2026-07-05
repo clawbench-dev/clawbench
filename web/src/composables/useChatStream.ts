@@ -759,12 +759,10 @@ export function useChatStream(options: UseChatStreamOptions) {
           onScrollBottom(true)
         }
       } else {
-        // Event for a background session — clear any stale pending messages
-        // for that session from messages.value (they'll be re-synced on switch)
-        for (let i = messages.value.length - 1; i >= 0; i--) {
-          if (messages.value[i].pending) messages.value.splice(i, 1)
-        }
-        appLog.d(TAG, `[queue_drain] sid=${eventSessionId.slice(0,8)} background session, cleared stale pending`)
+        // Event for a background session — skip. Pending messages in
+        // messages.value belong to the current session; background session's
+        // pending messages will be synced via fetchQueue when user switches.
+        appLog.d(TAG, `[queue_drain] sid=${eventSessionId.slice(0,8)} background session, skipped`)
       }
     })
 

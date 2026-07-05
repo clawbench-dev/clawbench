@@ -324,8 +324,16 @@ export function useChatSession(options: UseChatSessionOptions) {
               }
               Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
               Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
-              // Replace messages — pending messages are in pendingStore, not messages.value
+              // Replace messages — preserve pending messages from messages.value
+              // (they're not in DB, so parseMessages won't include them)
+              const _pendingMsgs = messages.value.filter((m: any) => m.pending)
               messages.value = parseMessages(recoverMsgs, onParseAssistantContent, messages.value, recoverData.running)
+              // Re-append pending messages that aren't already represented in DB data
+              for (const pm of _pendingMsgs) {
+                if (!messages.value.some((m: any) => m.role === 'user' && m.content === pm.content && !m.pending)) {
+                  messages.value.push(pm)
+                }
+              }
               totalMessages.value = recoverData.total || messages.value.length
               // Sync remaining session metadata from recovery response
               if (recoverData.modeState && recoverData.modeState?.availableModes?.length > 0) {
@@ -441,10 +449,16 @@ export function useChatSession(options: UseChatSessionOptions) {
       Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
       Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
 
-      // Replace messages with server data. Pending messages are NOT in
-      // messages.value — they live in a separate per-session pendingStore.
-      // No need to preserve/re-append pending messages here.
+      // Replace messages with server data. Pending messages are in
+      // messages.value with pending:true — preserve them across the replacement.
+      const _pendingMsgs = messages.value.filter((m: any) => m.pending)
       messages.value = parseMessages(rawMsgs, onParseAssistantContent, messages.value, data.running)
+      // Re-append pending messages that aren't already represented in DB data
+      for (const pm of _pendingMsgs) {
+        if (!messages.value.some((m: any) => m.role === 'user' && m.content === pm.content && !m.pending)) {
+          messages.value.push(pm)
+        }
+      }
 
       totalMessages.value = data.total || messages.value.length
       // Sanity check: if the backend returned a different sessionId than what we
