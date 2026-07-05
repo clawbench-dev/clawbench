@@ -72,6 +72,11 @@ var hotReloadFields = map[string]bool{
 	"summarize.api.base_url": true,
 	"summarize.api.key":      true,
 	"summarize.api.format":   true,
+	// FRP — non-enabled fields hot-reload by restarting frpc subprocess
+	"frp.server_addr": true,
+	"frp.server_port": true,
+	"frp.token":       true,
+	"frp.remote_port": true,
 }
 
 // restartGracePeriod is the delay before shutting down the server after a restart
@@ -116,6 +121,7 @@ type configResponse struct {
 	TTS                 configTTS            `json:"tts"`
 	RAG                 configRAG            `json:"rag"`
 	PortForward         configPortForward    `json:"port_forward"`
+	FRP                 configFRP            `json:"frp"`
 	Summarize           configSummarize      `json:"summarize"`
 }
 
@@ -196,6 +202,14 @@ type configPortForward struct {
 	Port    int  `json:"port"`
 }
 
+type configFRP struct {
+	Enabled    bool   `json:"enabled"`
+	ServerAddr string `json:"server_addr"`
+	ServerPort int    `json:"server_port"`
+	Token      string `json:"token"` // masked in GET, accepted in PATCH
+	RemotePort int    `json:"remote_port"`
+}
+
 type configSummarize struct {
 	Backend string     `json:"backend"`
 	Model   string     `json:"model"`
@@ -241,6 +255,11 @@ var PatchableConfigPaths = map[string]bool{
 	"rag.retention_days":          true,
 	"port_forward.enabled":        true,
 	"port_forward.port":           true,
+	"frp.enabled":                 true,
+	"frp.server_addr":             true,
+	"frp.server_port":             true,
+	"frp.token":                   true,
+	"frp.remote_port":             true,
 	"summarize.backend":           true,
 	"summarize.model":             true,
 	"summarize.api.base_url":      true,
@@ -360,6 +379,13 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		PortForward: configPortForward{
 			Enabled: cfg.PortForward.Enabled,
 			Port:    cfg.PortForward.Port,
+		},
+		FRP: configFRP{
+			Enabled:    cfg.FRP.Enabled,
+			ServerAddr: cfg.FRP.ServerAddr,
+			ServerPort: cfg.FRP.ServerPort,
+			Token:      maskAPIKey(cfg.FRP.Token),
+			RemotePort: cfg.FRP.RemotePort,
 		},
 		Summarize: configSummarize{
 			Backend: cfg.Summarize.Backend,
@@ -701,6 +727,32 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 	}
 
+	// FRP: when enabled, server_addr must be non-empty (skip when just switching enabled on —
+	// user hasn't had a chance to fill in the address yet, frontend auto-saves one field at a time).
+	if frp, ok := patch["frp"].(map[string]any); ok {
+		effectiveEnabled := cfg.FRP.Enabled
+		enabledSwitchedOn := false
+		if v, ok := frp["enabled"].(bool); ok {
+			if v && !cfg.FRP.Enabled {
+				enabledSwitchedOn = true
+			}
+			effectiveEnabled = v
+		}
+		effectiveAddr := cfg.FRP.ServerAddr
+		if v, ok := frp["server_addr"].(string); ok {
+			effectiveAddr = v
+		}
+		if effectiveEnabled && !enabledSwitchedOn && effectiveAddr == "" {
+			return fmt.Errorf("frp.server_addr is required when FRP is enabled")
+		}
+		if v, ok := frp["server_port"].(float64); ok && (v < 0 || v > 65535) {
+			return fmt.Errorf("frp.server_port must be between 0 and 65535")
+		}
+		if v, ok := frp["remote_port"].(float64); ok && (v < 0 || v > 65535) {
+			return fmt.Errorf("frp.remote_port must be between 0 and 65535")
+		}
+	}
+
 	return nil
 }
 
@@ -855,6 +907,24 @@ func applyConfigPatch(patch map[string]any) error { //nolint:gocognit,gocyclo //
 		}
 		if v, ok := pf["port"].(float64); ok {
 			cfg.PortForward.Port = int(v)
+		}
+	}
+
+	if frp, ok := patch["frp"].(map[string]any); ok {
+		if v, ok := frp["enabled"].(bool); ok {
+			cfg.FRP.Enabled = v
+		}
+		if v, ok := frp["server_addr"].(string); ok {
+			cfg.FRP.ServerAddr = v
+		}
+		if v, ok := frp["server_port"].(float64); ok {
+			cfg.FRP.ServerPort = int(v)
+		}
+		if v, ok := frp["token"].(string); ok {
+			cfg.FRP.Token = v
+		}
+		if v, ok := frp["remote_port"].(float64); ok {
+			cfg.FRP.RemotePort = int(v)
 		}
 	}
 
