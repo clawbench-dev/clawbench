@@ -209,11 +209,12 @@ public class MainActivity extends AppCompatActivity {
                     String qrData = result.getData().getStringExtra("qr_data");
                     if (qrData != null && qrData.startsWith("clawbench://connect")) {
                         Uri uri = Uri.parse(qrData);
-                        String lanUrl = uri.getQueryParameter("lan");
+                        // Support multiple lan= params (multi-NIC machines)
+                        java.util.List<String> lanUrls = uri.getQueryParameters("lan");
                         String frpUrl = uri.getQueryParameter("frp");
                         String token = uri.getQueryParameter("token");
-                        AppLog.i(TAG, "QR scan result: lan=" + lanUrl + ", frp=" + frpUrl);
-                        connectWithQR(lanUrl, frpUrl, token);
+                        AppLog.i(TAG, "QR scan result: lan=" + lanUrls + ", frp=" + frpUrl);
+                        connectWithQR(lanUrls, frpUrl, token);
                     } else {
                         Toast.makeText(this, "无法识别此二维码", Toast.LENGTH_SHORT).show();
                     }
@@ -1322,42 +1323,75 @@ public class MainActivity extends AppCompatActivity {
         if (uri == null) return;
         if (!"clawbench".equals(uri.getScheme()) || !"connect".equals(uri.getHost())) return;
 
-        String lanUrl = uri.getQueryParameter("lan");
+        java.util.List<String> lanUrls = uri.getQueryParameters("lan");
         String frpUrl = uri.getQueryParameter("frp");
         String token = uri.getQueryParameter("token");
 
-        AppLog.i(TAG, "Deep link received: lan=" + lanUrl + ", frp=" + frpUrl + ", token=" + (token != null ? "***" : "null"));
+        AppLog.i(TAG, "Deep link received: lan=" + lanUrls + ", frp=" + frpUrl + ", token=" + (token != null ? "***" : "null"));
 
-        connectWithQR(lanUrl, frpUrl, token);
+        connectWithQR(lanUrls, frpUrl, token);
     }
 
     /**
      * Connect to ClawBench server using QR code parameters.
-     * Strategy: LAN direct → FRP tunnel → error
+     * If multiple LAN/FRP addresses are available, show a picker dialog.
+     * If only one address, use it directly.
      */
-    void connectWithQR(String lanUrl, String frpUrl, String token) {
+    void connectWithQR(java.util.List<String> lanUrls, String frpUrl, String token) {
+        // Build list of all candidate addresses
+        java.util.List<String> addresses = new java.util.ArrayList<>();
+        java.util.List<String> labels = new java.util.ArrayList<>();
+        for (String lan : lanUrls) {
+            if (lan != null && !lan.isEmpty()) {
+                addresses.add(lan);
+                // Extract host:port for display
+                try {
+                    java.net.URL u = new java.net.URL(lan);
+                    labels.add("局域网: " + u.getHost() + ":" + u.getPort());
+                } catch (Exception e) {
+                    labels.add("局域网: " + lan);
+                }
+            }
+        }
+        if (frpUrl != null && !frpUrl.isEmpty()) {
+            addresses.add(frpUrl);
+            try {
+                java.net.URL u = new java.net.URL(frpUrl);
+                labels.add("远程: " + u.getHost() + ":" + u.getPort());
+            } catch (Exception e) {
+                labels.add("远程: " + frpUrl);
+            }
+        }
+
+        if (addresses.isEmpty()) {
+            Toast.makeText(this, "二维码中无有效地址", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        // Single address — use directly
+        if (addresses.size() == 1) {
+            connectWithQRUrl(addresses.get(0), frpUrl, token);
+            return;
+        }
+
+        // Multiple addresses — let user choose
+        String[] items = labels.toArray(new String[0]);
+        new AlertDialog.Builder(this)
+            .setTitle("选择连接方式")
+            .setItems(items, (dialog, which) -> {
+                connectWithQRUrl(addresses.get(which), frpUrl, token);
+            })
+            .setNegativeButton("取消", null)
+            .show();
+    }
+
+    /** Proceed with QR login using the chosen URL. */
+    void connectWithQRUrl(String connectUrl, String frpUrl, String token) {
         new Thread(() -> {
-            String connectUrl = null;
-
-            // 1. Try LAN direct (2s timeout)
-            if (lanUrl != null && !lanUrl.isEmpty()) {
-                if (isReachable(lanUrl, 2000)) {
-                    connectUrl = lanUrl;
-                    AppLog.i(TAG, "QR: LAN reachable, using " + lanUrl);
-                }
-            }
-
-            // 2. Try FRP tunnel (3s timeout)
-            if (connectUrl == null && frpUrl != null && !frpUrl.isEmpty()) {
-                if (isReachable(frpUrl, 3000)) {
-                    connectUrl = frpUrl;
-                    AppLog.i(TAG, "QR: FRP reachable, using " + frpUrl);
-                }
-            }
-
-            if (connectUrl == null) {
+            // Verify chosen URL is reachable
+            if (!isReachable(connectUrl, 5000)) {
                 runOnUiThread(() -> Toast.makeText(this,
-                        "无法连接服务器，请检查网络", Toast.LENGTH_LONG).show());
+                        "无法连接 " + connectUrl + "，请检查网络", Toast.LENGTH_LONG).show());
                 return;
             }
 

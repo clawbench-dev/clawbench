@@ -870,19 +870,38 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Initialize QR token manager for phone scanning (after scheme is known)
 	var qrContent string
 	{
-		lanURL := fmt.Sprintf("%s://%s:%d", scheme, platform.GetOutboundIP(), port)
+		// Collect all LAN IPs for multi-NIC machines
+		allLanIPs := platform.GetAllLanIPs()
+		var lanURLs []string
+		for _, ip := range allLanIPs {
+			lanURLs = append(lanURLs, fmt.Sprintf("%s://%s:%d", scheme, ip, port))
+		}
 		frpURL := ""
 		if cfg.FRP.Enabled && frpStatus.RemotePort > 0 {
 			frpURL = frpStatus.RemoteURL
 		}
-		if lanURL != "" {
-			qrTokenMgr := handler.NewQRTokenManager(5*time.Minute, lanURL, frpURL)
+		if len(lanURLs) > 0 {
+			// Use first LAN URL as the primary for QRTokenManager (backward compat)
+			qrTokenMgr := handler.NewQRTokenManager(5*time.Minute, lanURLs[0], frpURL)
 			token := qrTokenMgr.Generate()
 			handler.SetQRTokenManager(qrTokenMgr)
 
-			// Build deep link: clawbench://connect?lan=...&frp=...&token=...
-			qrContent = fmt.Sprintf("clawbench://connect?lan=%s&frp=%s&token=%s",
-				url.QueryEscape(lanURL), url.QueryEscape(frpURL), token)
+			// Build deep link with multiple lan params:
+			// clawbench://connect?lan=addr1&lan=addr2&frp=...&token=...
+			var buf strings.Builder
+			buf.WriteString("clawbench://connect?")
+			for i, lan := range lanURLs {
+				if i > 0 {
+					buf.WriteByte('&')
+				}
+				buf.WriteString("lan=")
+				buf.WriteString(url.QueryEscape(lan))
+			}
+			buf.WriteString("&frp=")
+			buf.WriteString(url.QueryEscape(frpURL))
+			buf.WriteString("&token=")
+			buf.WriteString(token)
+			qrContent = buf.String()
 		}
 	}
 
