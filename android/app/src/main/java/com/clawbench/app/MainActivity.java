@@ -202,6 +202,24 @@ public class MainActivity extends AppCompatActivity {
                 cameraImageUri = null;
             });
 
+    // Activity result launcher for QR code scanning
+    private final ActivityResultLauncher<Intent> qrScanLauncher =
+            registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
+                if (result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
+                    String qrData = result.getData().getStringExtra("qr_data");
+                    if (qrData != null && qrData.startsWith("clawbench://connect")) {
+                        Uri uri = Uri.parse(qrData);
+                        String lanUrl = uri.getQueryParameter("lan");
+                        String frpUrl = uri.getQueryParameter("frp");
+                        String token = uri.getQueryParameter("token");
+                        AppLog.i(TAG, "QR scan result: lan=" + lanUrl + ", frp=" + frpUrl);
+                        connectWithQR(lanUrl, frpUrl, token);
+                    } else {
+                        Toast.makeText(this, "无法识别此二维码", Toast.LENGTH_SHORT).show();
+                    }
+                }
+            });
+
     // Map of ports currently being forwarded: port -> host (thread-safe for access from WebView background threads)
     final Map<Integer, String> forwardedPorts = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -1892,6 +1910,20 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public void connectToServer(String url, String password) {
             activity.runOnUiThread(() -> activity.connectToServer(url, password));
+        }
+
+        /**
+         * Launch the QR code scanner (QrScanActivity) to scan a terminal QR code.
+         * Called from the static login page's "扫码登录" button.
+         * On successful scan, the result is handled by qrScanLauncher which
+         * parses the clawbench://connect deep link and calls connectWithQR().
+         */
+        @JavascriptInterface
+        public void startQrScan() {
+            activity.runOnUiThread(() -> {
+                Intent intent = new Intent(activity, QrScanActivity.class);
+                activity.qrScanLauncher.launch(intent);
+            });
         }
 
         /**

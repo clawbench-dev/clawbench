@@ -188,29 +188,3 @@ func ServeQRTokenRegenerate(w http.ResponseWriter, r *http.Request) {
 		"token": newToken,
 	})
 }
-
-// ServeQRCode returns the QR code deep link URL and expiry for frontend rendering.
-// No auth required — this is used on the login page before authentication.
-// GET /api/auth/qr-code
-func ServeQRCode(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodGet) {
-		return
-	}
-
-	if qrTokenMgr == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
-			"ok":    false,
-			"error": "QR login not available",
-		})
-		return
-	}
-
-	// Atomically ensure token is active and get deep link + expiry
-	deepLink, expiry := qrTokenMgr.EnsureActive()
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":        true,
-		"url":       deepLink,
-		"expiresAt": expiry.Unix(),
-	})
-}

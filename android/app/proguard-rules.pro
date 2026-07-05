@@ -14,3 +14,11 @@
 # WorkManager — custom Worker subclass must be kept (instantiated via reflection)
 -keep class com.clawbench.app.PendingEventsWorker { *; }
 -dontwarn androidx.work.**
+
+# ML Kit Barcode Scanning
+-keep class com.google.mlkit.vision.barcode.** { *; }
+-dontwarn com.google.mlkit.vision.barcode.**
+
+# CameraX
+-keep class androidx.camera.** { *; }
+-dontwarn androidx.camera.**

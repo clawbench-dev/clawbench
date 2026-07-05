@@ -46,6 +46,12 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".QrScanActivity"
+            android:theme="@style/Theme.AppCompat.NoActionBar"
+            android:screenOrientation="portrait"
+            android:exported="false" />
+
         <service
             android:name=".BackgroundService"
             android:foregroundServiceType="dataSync|remoteMessaging"
