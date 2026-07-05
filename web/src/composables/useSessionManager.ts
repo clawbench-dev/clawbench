@@ -190,12 +190,14 @@ export function useSessionManager(options: UseSessionManagerOptions) {
 
   async function switchSession(sessionId: string) {
     cleanupActiveStream()
+    _clearInputState()
     await switchSessionCore(sessionId)
     // pending messages are synced by the watch on currentSessionId below
   }
 
   async function createSession(agentId?: string) {
     cleanupActiveStream()
+    _clearInputState()
     pendingStore.clearPending(identity.currentSessionId.value)
     await createSessionCore(agentId)
   }
@@ -240,6 +242,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
   /** Fork the current session — create a new session with copied messages. */
   async function forkSession(sessionId: string, beforeMessageId?: number): Promise<boolean> {
     cleanupActiveStream()
+    _clearInputState()
     pendingStore.clearPending(identity.currentSessionId.value)
     return await forkSessionCore(sessionId, beforeMessageId)
   }
