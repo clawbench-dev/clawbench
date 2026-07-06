@@ -140,7 +140,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, ChevronLeft, X, Paperclip, Share, FileOutput, Eye } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
@@ -172,8 +172,8 @@ const toast = useToast()
 const isAttached = computed(() => !!props.file?.path && hasAttachedFile(props.file.path))
 
 const menuOpen = ref(false)
-const dropdownRef = ref<HTMLElement | null>(null)
-const menuRef = ref<HTMLElement | null>(null)
+const dropdownRef = ref(null)
+const menuRef = ref(null)
 const menuStyle = ref({})
 const attachBtnRef = ref(null)
 const headerActionsRef = ref(null)
@@ -198,56 +198,22 @@ const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObs
 
 function toggleMenu() {
     menuOpen.value = !menuOpen.value
+    if (menuOpen.value) {
+        nextTick(() => updateMenuPosition())
+    }
 }
 
 function updateMenuPosition() {
     if (!dropdownRef.value) return
     const rect = dropdownRef.value.getBoundingClientRect()
     const vp = getZoomedViewport()
-    const GAP = 4
-
-    // Horizontal: prefer right-aligned, flip to left if overflowing left edge
-    let alignRight = true
-    if (menuRef.value) {
-        const menuW = menuRef.value.offsetWidth
-        if (rect.right - menuW < 0) alignRight = false
+    menuStyle.value = {
+        position: 'fixed',
+        top: `${toFixedCSS(rect.bottom + 4)}px`,
+        right: `${toFixedCSS(vp.width - rect.right)}px`,
+        left: 'auto',
     }
-
-    // Vertical: prefer below, flip above if overflowing bottom edge
-    let above = false
-    if (menuRef.value) {
-        const menuH = menuRef.value.offsetHeight
-        if (rect.bottom + GAP + menuH > vp.height) above = true
-    }
-
-    let style = { position: 'fixed' }
-    if (above) {
-        style.top = 'auto'
-        style.bottom = `${toFixedCSS(vp.height - rect.top + GAP)}px`
-    } else {
-        style.top = `${toFixedCSS(rect.bottom + GAP)}px`
-        style.bottom = 'auto'
-    }
-    if (alignRight) {
-        style.right = `${toFixedCSS(vp.width - rect.right)}px`
-        style.left = 'auto'
-    } else {
-        style.left = `${toFixedCSS(rect.left)}px`
-        style.right = 'auto'
-    }
-    menuStyle.value = style
 }
-
-watch(menuOpen, (open) => {
-    if (open) {
-        nextTick(() => updateMenuPosition())
-        window.addEventListener('scroll', updateMenuPosition, true)
-        window.addEventListener('resize', updateMenuPosition)
-    } else {
-        window.removeEventListener('scroll', updateMenuPosition, true)
-        window.removeEventListener('resize', updateMenuPosition)
-    }
-})
 
 const fileType = computed(() => props.file ? getFileType(props.file.name) : null)
 const isMarkdown = computed(() => fileType.value?.isMarkdown || false)
