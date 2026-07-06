@@ -135,16 +135,16 @@ func UploadFile(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mu
 		return
 	}
 
-	// Return relative path
+	// Return relative path (always use forward slashes for frontend)
 	var relativePath string
 	if customDir {
 		relPath, err := filepath.Rel(projectPath, dstPath)
 		if err != nil {
 			relPath = filepath.Join(dir, filename)
 		}
-		relativePath = relPath
+		relativePath = filepath.ToSlash(relPath)
 	} else {
-		relativePath = filepath.Join(".clawbench", "uploads", filename)
+		relativePath = ".clawbench/uploads/" + filename
 	}
 
 	w.Header().Set("Content-Type", "application/json")

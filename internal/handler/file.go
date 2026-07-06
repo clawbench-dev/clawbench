@@ -86,9 +86,10 @@ func ListDir(w http.ResponseWriter, r *http.Request) {
 	items := buildDirEntries(entries)
 
 	relFromBase, _ := filepath.Rel(basePath, absPath)
+	relFromBase = filepath.ToSlash(relFromBase)
 	var parent *string
 	if relFromBase != "." {
-		parentDir := filepath.Dir(relFromBase)
+		parentDir := path.Dir(relFromBase)
 		if parentDir != "." {
 			parent = &parentDir
 		} else {
@@ -495,12 +496,12 @@ func ServeProjects(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo //
 		}
 	}
 	if !isAtRoot {
-		p := filepath.Dir(absPath)
+		p := filepath.ToSlash(filepath.Dir(absPath))
 		parent = &p
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"path":   absPath,
+		"path":   filepath.ToSlash(absPath),
 		"parent": parent,
 		"items":  items,
 	})
@@ -914,7 +915,7 @@ func serveProjectsCreate(w http.ResponseWriter, r *http.Request) {
 		model.WriteError(w, model.Internal(fmt.Errorf("create directory failed: %w", err)))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "path": newDirAbs})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "path": filepath.ToSlash(newDirAbs)})
 }
 
 const (
