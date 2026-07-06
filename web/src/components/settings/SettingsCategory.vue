@@ -40,28 +40,16 @@
       @close="showPasswordDialog = false"
       @changed="handlePasswordChanged"
     />
-    <!-- Config group dialog (batch edit for FRP, Summarize-API, TTS-Piper/Kokoro) -->
-    <ConfigGroupDialog
-      v-if="groupDialog.visible"
-      :visible="groupDialog.visible"
-      :trigger="groupDialog.trigger"
-      :trigger-item="groupDialog.triggerItem"
-      :trigger-value="groupDialog.triggerValue"
-      :all-items="categoryItems[categoryId] ?? []"
-      @close="handleGroupDialogClose"
-      @saved="handleGroupDialogSaved"
-    />
     <!-- iOS install instructions sheet -->
     <IosInstallDrawer :open="showIosSheet" @close="showIosSheet = false" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, reactive, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
 import PasswordChangeDialog from './PasswordChangeDialog.vue'
-import ConfigGroupDialog from './ConfigGroupDialog.vue'
 import SettingsAgentsIndex from './SettingsAgentsIndex.vue'
 import SettingsAgentDetail from './SettingsAgentDetail.vue'
 import IosInstallDrawer from '@/components/common/IosInstallDrawer.vue'
@@ -74,7 +62,7 @@ import { usePwaInstall } from '@/composables/usePwaInstall'
 import { useTerminalStatus } from '@/composables/useTerminalStatus'
 import { usePortForward } from '@/composables/usePortForward'
 import { useFrp } from '@/composables/useFrp'
-import { categoryItems, engineVoiceOptions, type ItemSpec, type DependsOn, type GroupConfigTrigger } from './settingsFieldMap'
+import { categoryItems, engineVoiceOptions, type ItemSpec, type DependsOn } from './settingsFieldMap'
 
 const props = defineProps<{
   categoryId: string
@@ -100,14 +88,6 @@ const { frpState, fetchFrpInfo } = useFrp()
 const activeKey = ref<string | null>(null)
 const showPasswordDialog = ref(false)
 const showIosSheet = ref(false)
-
-// Group config dialog state
-const groupDialog = reactive({
-  visible: false,
-  trigger: {} as GroupConfigTrigger,
-  triggerItem: {} as ItemSpec,
-  triggerValue: null as any,
-})
 
 // Load agents when chat or agents category is shown
 watch(() => props.categoryId, (id) => {
@@ -254,19 +234,6 @@ async function handleUpdate(item: any, value: any) {
     if (!value || value.includes('•')) return
   }
 
-  // Check if this value triggers a group config dialog
-  if (item.groupConfig && Array.isArray(item.groupConfig)) {
-    const trigger = item.groupConfig.find((gc: GroupConfigTrigger) => gc.triggerValue === value)
-    if (trigger) {
-      // Show group dialog instead of immediate save
-      groupDialog.visible = true
-      groupDialog.trigger = trigger
-      groupDialog.triggerItem = item
-      groupDialog.triggerValue = value
-      return
-    }
-  }
-
   if (item.key === 'localhost_auth_exempt' && value === false) {
     const confirmed = await dialog.confirm(
       t('settings.items.localhostAuthExemptConfirm'),
@@ -361,40 +328,6 @@ function handlePasswordChanged(needsRestart: boolean) {
   toast.show(t('settings.passwordChanged'), { icon: '✓', type: 'success', duration: 3000 })
   if (needsRestart) {
     emit('restartNeeded', ['password'])
-  }
-}
-
-function handleGroupDialogClose() {
-  // When dialog is cancelled (not saved), rollback the trigger switch.
-  // The server value was never saved, so getItemValue() still returns the
-  // original value. Simply closing the dialog is sufficient — Vue's reactivity
-  // will re-render the switch with the unchanged server value on next tick.
-  // No explicit rollback needed since handleUpdate never saved the trigger value.
-  groupDialog.visible = false
-}
-
-function handleGroupDialogSaved(needsRestart: boolean, changedColdFields: string[]) {
-  groupDialog.visible = false
-  toast.show(t('settings.groupConfig.saved'), { icon: '✓', type: 'success', duration: 3000 })
-  // Trigger side-effects based on the trigger item
-  const key = groupDialog.triggerItem.key
-  if (key === 'terminal.enabled') {
-    loadTerminalStatus()
-  }
-  if (key === 'port_forward.enabled' || key === 'frp.enabled') {
-    loadSSHInfo()
-  }
-  // When TTS engine changes, reset voice to first available for new engine
-  if (key === 'tts.engine') {
-    const voiceOpts = engineVoiceOptions[groupDialog.triggerValue] ?? []
-    if (voiceOpts.length > 0) {
-      try { setServerValue('tts.voice', voiceOpts[0].value) } catch { /* best-effort */ }
-    } else {
-      try { setServerValue('tts.voice', '') } catch { /* best-effort */ }
-    }
-  }
-  if (needsRestart && changedColdFields.length > 0) {
-    emit('restartNeeded', changedColdFields)
   }
 }
 

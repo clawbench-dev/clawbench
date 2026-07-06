@@ -1355,15 +1355,6 @@ export default {
     passwordStrengthWeak: 'Weak',
     passwordStrengthMedium: 'Medium',
     passwordStrengthStrong: 'Strong',
-    groupConfig: {
-      frpTitle: 'Configure NAT Traversal (frp)',
-      summarizeApiTitle: 'Configure API Summarizer',
-      ttsPiperTitle: 'Configure Piper TTS',
-      ttsKokoroTitle: 'Configure Kokoro TTS',
-      requiredHint: 'Fields marked * are required to enable',
-      confirm: 'Confirm',
-      saved: 'Configuration saved',
-    },
   },
   terminal: {
     title: 'Terminal',
