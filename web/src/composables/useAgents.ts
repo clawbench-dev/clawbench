@@ -15,14 +15,14 @@ const TAG = 'Agents'
 let _updateAvailableModes: ((modes: Array<{ id: string; name: string }>) => void) | null = null
 let _updateAvailableThinkingEfforts: ((levels: Array<{ id: string; name: string }>) => void) | null = null
 let _updateCommandState: ((commands: Array<{ name: string; description: string; inputHint?: string }>) => void) | null = null
-let _updateUsageState: ((used: number, size: number, cost?: number, currency?: string) => void) | null = null
+let _updateUsageState: ((used: number, size: number, cost?: number, currency?: string, sessionId?: string) => void) | null = null
 let _currentAgentId: { value: string } | null = null
 
 export function registerIdentityUpdaters(opts: {
   updateAvailableModes: (modes: Array<{ id: string; name: string }>) => void
   updateAvailableThinkingEfforts: (levels: Array<{ id: string; name: string }>) => void
   updateCommandState: (commands: Array<{ name: string; description: string; inputHint?: string }>) => void
-  updateUsageState: (used: number, size: number, cost?: number, currency?: string) => void
+  updateUsageState: (used: number, size: number, cost?: number, currency?: string, sessionId?: string) => void
   currentAgentId: { value: string }
 }) {
   _updateAvailableModes = opts.updateAvailableModes

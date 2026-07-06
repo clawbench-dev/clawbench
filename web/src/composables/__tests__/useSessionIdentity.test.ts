@@ -51,7 +51,7 @@ vi.mock('@/utils/chatSessionUtils', () => ({
     parseMessages: vi.fn().mockReturnValue([]),
 }))
 
-import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, toggleAutoApprove, getSessionId, prefetchCommands, registerSessionDrawerRef } from '@/composables/useSessionIdentity'
+import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, clearAllUsageState, toggleAutoApprove, getSessionId, prefetchCommands, registerSessionDrawerRef } from '@/composables/useSessionIdentity'
 
 describe('useSessionIdentity', () => {
     beforeEach(() => {
@@ -1124,8 +1124,13 @@ describe('useSessionIdentity', () => {
     // ── usage state ──
 
     describe('updateUsageState / clearUsageState', () => {
+        beforeEach(() => {
+            clearAllUsageState()
+        })
+
         it('sets usage state from SSE event', () => {
             const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-A'
             updateUsageState(5000, 200000, 0.05, 'USD')
 
             expect(identity.contextUsed.value).toBe(5000)
@@ -1136,14 +1141,16 @@ describe('useSessionIdentity', () => {
 
         it('defaults cost and currency when not provided', () => {
             const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-A'
             updateUsageState(1000, 100000)
 
             expect(identity.contextCost.value).toBe(0)
             expect(identity.contextCurrency.value).toBe('')
         })
 
-        it('clearUsageState resets all usage refs', () => {
+        it('clearUsageState removes current session cache entry', () => {
             const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-A'
             updateUsageState(5000, 200000, 0.05, 'USD')
             clearUsageState()
 
@@ -1151,6 +1158,74 @@ describe('useSessionIdentity', () => {
             expect(identity.contextSize.value).toBe(0)
             expect(identity.contextCost.value).toBe(0)
             expect(identity.contextCurrency.value).toBe('')
+        })
+
+        it('writing to a different session does not affect current display', () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-A'
+
+            // Set usage for the current session
+            updateUsageState(5000, 200000, 0.05, 'USD')
+            expect(identity.contextUsed.value).toBe(5000)
+
+            // SSE event for a different session writes to its own cache bucket —
+            // current display should be unaffected
+            updateUsageState(99999, 888888, 1.0, 'EUR', 'session-B')
+            expect(identity.contextUsed.value).toBe(5000)
+            expect(identity.contextSize.value).toBe(200000)
+            expect(identity.contextCost.value).toBe(0.05)
+            expect(identity.contextCurrency.value).toBe('USD')
+        })
+
+        it('switching sessions instantly switches usage display', () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-A'
+            updateUsageState(5000, 200000, 0.05, 'USD')
+
+            // Write data for session-B while viewing session-A
+            updateUsageState(3000, 100000, 0.02, 'EUR', 'session-B')
+
+            // Still showing session-A data
+            expect(identity.contextUsed.value).toBe(5000)
+            expect(identity.contextSize.value).toBe(200000)
+
+            // Switch to session-B — instantly shows its cached data, no flash to 0
+            identity.currentSessionId.value = 'session-B'
+            expect(identity.contextUsed.value).toBe(3000)
+            expect(identity.contextSize.value).toBe(100000)
+            expect(identity.contextCost.value).toBe(0.02)
+            expect(identity.contextCurrency.value).toBe('EUR')
+
+            // Switch back to session-A — data is still there
+            identity.currentSessionId.value = 'session-A'
+            expect(identity.contextUsed.value).toBe(5000)
+            expect(identity.contextSize.value).toBe(200000)
+        })
+
+        it('unknown session shows zero usage', () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-unknown'
+
+            expect(identity.contextUsed.value).toBe(0)
+            expect(identity.contextSize.value).toBe(0)
+            expect(identity.contextCost.value).toBe(0)
+            expect(identity.contextCurrency.value).toBe('')
+        })
+
+        it('clearUsageState only clears current session, not other sessions', () => {
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-A'
+            updateUsageState(5000, 200000, 0.05, 'USD', 'session-A')
+            updateUsageState(3000, 100000, 0.02, 'EUR', 'session-B')
+
+            // Clear current session (A) only
+            clearUsageState()
+            expect(identity.contextUsed.value).toBe(0)
+
+            // Session B data is still cached
+            identity.currentSessionId.value = 'session-B'
+            expect(identity.contextUsed.value).toBe(3000)
+            expect(identity.contextSize.value).toBe(100000)
         })
     })
 

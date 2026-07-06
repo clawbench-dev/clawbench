@@ -28,10 +28,27 @@ const autoApprove = ref(false)
 const availableModes = ref<Array<{ id: string; name: string }>>([])
 const availableCommands = ref<Array<{ name: string; description: string; inputHint?: string }>>([])
 const availableThinkingEfforts = ref<Array<{ id: string; name: string }>>([])
-const contextUsed = ref(0)
-const contextSize = ref(0)
-const contextCost = ref(0)
-const contextCurrency = ref('')
+// ───────────────────────────────────────────────────────────
+// Per-session usage state cache.
+// Each session's usage (contextUsed/contextSize/cost/currency) is
+// stored in a Map keyed by sessionId. The exported computed refs
+// read from the current session's entry — switching currentSessionId
+// instantly switches the view with no clear→repopulate race.
+// ───────────────────────────────────────────────────────────
+interface UsageState {
+  used: number
+  size: number
+  cost: number
+  currency: string
+}
+const usageStateCache = new Map<string, UsageState>()
+// Bumped on every mutation to usageStateCache so computed properties
+// that read from it re-evaluate correctly (Vue cannot track Map mutations).
+const usageStateVersion = ref(0)
+const contextUsed = computed(() => { void usageStateVersion.value /* reactivity: Map mutations */; return usageStateCache.get(currentSessionId.value)?.used ?? 0 })
+const contextSize = computed(() => { void usageStateVersion.value /* reactivity: Map mutations */; return usageStateCache.get(currentSessionId.value)?.size ?? 0 })
+const contextCost = computed(() => { void usageStateVersion.value /* reactivity: Map mutations */; return usageStateCache.get(currentSessionId.value)?.cost ?? 0 })
+const contextCurrency = computed(() => { void usageStateVersion.value /* reactivity: Map mutations */; return usageStateCache.get(currentSessionId.value)?.currency ?? '' })
 export const runningSessions = ref(new Set<string>())
 // Bumped on every mutation to runningSessions so computed properties
 // that depend on the set's contents re-evaluate correctly.
@@ -75,10 +92,7 @@ export function resetIdentity(): void {
   availableModes.value = []
   availableCommands.value = []
   availableThinkingEfforts.value = []
-  contextUsed.value = 0
-  contextSize.value = 0
-  contextCost.value = 0
-  contextCurrency.value = ''
+  clearAllUsageState()
   runningSessions.value = new Set()
   runningSessionsVersion.value = 0
   sessionDrawerOpen.value = false
@@ -238,20 +252,29 @@ export function clearThinkingEffortState() {
   currentThinkingEffortName.value = ''
 }
 
-/** Update context usage state from SSE usage_update event. */
-export function updateUsageState(used: number, size: number, cost?: number, currency?: string) {
-  contextUsed.value = used
-  contextSize.value = size
-  contextCost.value = cost ?? 0
-  contextCurrency.value = currency ?? ''
+/** Update context usage state for a session (from SSE or REST).
+ *  Writes to the per-session cache — does not affect the displayed
+ *  values unless the target session is the current one. */
+export function updateUsageState(used: number, size: number, cost?: number, currency?: string, sessionId?: string) {
+  const key = sessionId || currentSessionId.value
+  if (!key) return
+  usageStateCache.set(key, { used, size, cost: cost ?? 0, currency: currency ?? '' })
+  usageStateVersion.value++
 }
 
-/** Clear usage state (called on session switch or reset). */
+/** Clear usage state for the current session (removes its cache entry). */
 export function clearUsageState() {
-  contextUsed.value = 0
-  contextSize.value = 0
-  contextCost.value = 0
-  contextCurrency.value = ''
+  const key = currentSessionId.value
+  if (key) {
+    usageStateCache.delete(key)
+    usageStateVersion.value++
+  }
+}
+
+/** Clear all per-session usage state (used by resetIdentity). */
+export function clearAllUsageState() {
+  usageStateCache.clear()
+  usageStateVersion.value++
 }
 
 /** Toggle auto-approve mode and persist to server. */
@@ -443,7 +466,7 @@ export async function initSessionFromAPI() {
         }
         // Initialize usage state from server cached data
         if (data.usageState && data.usageState.size > 0) {
-          updateUsageState(data.usageState.used ?? 0, data.usageState.size, data.usageState.cost, data.usageState.currency)
+          updateUsageState(data.usageState.used ?? 0, data.usageState.size, data.usageState.cost, data.usageState.currency, data.sessionId)
         }
       }
     }
@@ -676,5 +699,6 @@ export function useSessionIdentity() {
     clearThinkingEffortState,
     updateUsageState,
     clearUsageState,
+    clearAllUsageState,
   }
 }

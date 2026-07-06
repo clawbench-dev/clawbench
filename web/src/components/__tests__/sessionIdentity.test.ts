@@ -524,7 +524,8 @@ describe('clearThinkingEffortState', () => {
 
 describe('updateUsageState', () => {
   it('updates usage state', () => {
-    const { contextUsed, contextSize, contextCost, contextCurrency } = useSessionIdentity()
+    const { currentSessionId, contextUsed, contextSize, contextCost, contextCurrency } = useSessionIdentity()
+    currentSessionId.value = 'test-session'
     updateUsageState(5000, 200000, 0.05, 'USD')
     expect(contextUsed.value).toBe(5000)
     expect(contextSize.value).toBe(200000)
@@ -535,7 +536,8 @@ describe('updateUsageState', () => {
   })
 
   it('defaults cost and currency when not provided', () => {
-    const { contextCost, contextCurrency } = useSessionIdentity()
+    const { currentSessionId, contextCost, contextCurrency } = useSessionIdentity()
+    currentSessionId.value = 'test-session'
     updateUsageState(1000, 50000)
     expect(contextCost.value).toBe(0)
     expect(contextCurrency.value).toBe('')
@@ -546,7 +548,8 @@ describe('updateUsageState', () => {
 
 describe('clearUsageState', () => {
   it('clears usage state', () => {
-    const { contextUsed, contextSize, contextCost, contextCurrency } = useSessionIdentity()
+    const { currentSessionId, contextUsed, contextSize, contextCost, contextCurrency } = useSessionIdentity()
+    currentSessionId.value = 'test-session'
     updateUsageState(5000, 200000, 0.05, 'USD')
     clearUsageState()
     expect(contextUsed.value).toBe(0)
@@ -627,10 +630,7 @@ describe('resetIdentity', () => {
     identity.availableModes.value = [{ id: 'code', name: 'Code' }]
     identity.availableCommands.value = [{ name: '/commit', description: 'Commit' }]
     identity.availableThinkingEfforts.value = [{ id: 'high', name: 'High' }]
-    identity.contextUsed.value = 5000
-    identity.contextSize.value = 200000
-    identity.contextCost.value = 0.05
-    identity.contextCurrency.value = 'USD'
+    updateUsageState(5000, 200000, 0.05, 'USD', 's1')
     identity.runningSessions.value = new Set(['s1'])
     identity.runningSessionsVersion.value = 5
     identity.sessionDrawerOpen.value = true

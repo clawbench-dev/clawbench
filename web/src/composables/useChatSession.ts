@@ -187,10 +187,14 @@ export function useChatSession(options: UseChatSessionOptions) {
     }
   }
 
-  // Helper: sync usage state from server data
-  function syncUsageFromData(usageStateData?: { used?: number; size?: number; cost?: number; currency?: string }) {
+  // Helper: sync usage state from server data.
+  // When usageStateData is missing or size=0, clears the target session's
+  // cache entry so the context bar doesn't show stale data.
+  function syncUsageFromData(usageStateData?: { used?: number; size?: number; cost?: number; currency?: string }, sessionId?: string) {
     if (usageStateData && (usageStateData.size ?? 0) > 0) {
-      updateUsageState(usageStateData.used ?? 0, usageStateData.size ?? 0, usageStateData.cost, usageStateData.currency)
+      updateUsageState(usageStateData.used ?? 0, usageStateData.size ?? 0, usageStateData.cost, usageStateData.currency, sessionId)
+    } else {
+      clearUsageState()
     }
   }
 
@@ -301,7 +305,7 @@ export function useChatSession(options: UseChatSessionOptions) {
             syncThinkingEffortFromData(recoverData.thinkingEffortState?.currentId || '')
             syncModeFromData(recoverData.modeState?.currentModeId || '', recoverData.modeState?.availableModes)
             syncTransportFromData(recoverData.transport)
-            syncUsageFromData(recoverData.usageState)
+            syncUsageFromData(recoverData.usageState, recoverData.sessionId)
             if (recoverData.autoApprove !== undefined) {
               autoApprove.value = recoverData.autoApprove
             }
@@ -479,7 +483,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       syncThinkingEffortFromData(data.thinkingEffortState?.currentId || '')
       syncModeFromData(data.modeState?.currentModeId || '', data.modeState?.availableModes)
       syncTransportFromData(data.transport)
-      syncUsageFromData(data.usageState)
+      syncUsageFromData(data.usageState, returnedId)
       // Restore autoApprove from server state (per-session, not global)
       if (data.autoApprove !== undefined) {
         autoApprove.value = data.autoApprove
@@ -612,7 +616,9 @@ export function useChatSession(options: UseChatSessionOptions) {
     clearModeState()
     clearCommandState()
     clearThinkingEffortState()
-    clearUsageState()
+    // No clearUsageState() here — usage state is per-session in a Map cache.
+    // Switching currentSessionId makes the computed refs read from the new
+    // session's cache entry instantly, with no clear→repopulate race.
     autoApprove.value = false
     // Restore original CLI model list in case ACP had overridden it
     const prevAgentId = _currentAgentId.value
@@ -670,7 +676,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       syncThinkingEffortFromData(data.thinkingEffortState?.currentId || '')
       syncModeFromData(data.modeState?.currentModeId || '', data.modeState?.availableModes)
       syncTransportFromData(data.transport)
-      syncUsageFromData(data.usageState)
+      syncUsageFromData(data.usageState, data.sessionId || sessionId)
       // Restore autoApprove from server state (per-session, not global)
       if (data.autoApprove !== undefined) {
         autoApprove.value = data.autoApprove

@@ -698,7 +698,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       let data: any
       try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE usage_update: invalid JSON, skipping'); return }
       if (data.size > 0) {
-        updateUsageState(data.used ?? 0, data.size, data.cost, data.currency)
+        updateUsageState(data.used ?? 0, data.size, data.cost, data.currency, sessionId)
       }
     })
 

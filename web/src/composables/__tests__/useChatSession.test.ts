@@ -992,9 +992,10 @@ describe('switchSession', () => {
     const session = createSession()
     await session.switchSession('s2')
 
-    // clearUsageState is called first (to clear stale state), then updateUsageState restores from API
-    expect(mockClearUsageState).toHaveBeenCalled()
-    expect(mockUpdateUsageState).toHaveBeenCalledWith(50000, 200000, 1.5, 'USD')
+    // With per-session usage cache, switchSession no longer calls clearUsageState.
+    // The computed refs automatically read from the new session's cache entry.
+    // updateUsageState is called to write the API response data into the cache.
+    expect(mockUpdateUsageState).toHaveBeenCalledWith(50000, 200000, 1.5, 'USD', 's2')
   })
 
   it('does not call updateUsageState when API response has no usageState', async () => {
@@ -1023,7 +1024,8 @@ describe('switchSession', () => {
     const session = createSession()
     await session.switchSession('s2')
 
-    // clearUsageState is still called, but updateUsageState should NOT be called
+    // syncUsageFromData calls clearUsageState when no usageState in response,
+    // but updateUsageState should NOT be called (no data to write)
     expect(mockClearUsageState).toHaveBeenCalled()
     expect(mockUpdateUsageState).not.toHaveBeenCalled()
   })
@@ -1054,7 +1056,8 @@ describe('switchSession', () => {
     const session = createSession()
     await session.switchSession('s2')
 
-    // size=0 means no context window info available — should not restore
+    // size=0 means no context window info — syncUsageFromData calls clearUsageState
+    // instead of updateUsageState
     expect(mockClearUsageState).toHaveBeenCalled()
     expect(mockUpdateUsageState).not.toHaveBeenCalled()
   })
@@ -2767,7 +2770,7 @@ describe('syncUsageFromData', () => {
     const session = createSession()
     await session.loadHistory(true, false, false)
 
-    expect(mockUpdateUsageState).toHaveBeenCalledWith(100000, 200000, 2.5, 'EUR')
+    expect(mockUpdateUsageState).toHaveBeenCalledWith(100000, 200000, 2.5, 'EUR', 's1')
   })
 
   it('does not call updateUsageState when usageState is missing', async () => {
