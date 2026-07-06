@@ -350,6 +350,7 @@ func buildProxyConfigs(cfg model.FRPConfig, httpLocalPort, sshLocalPort int) []v
 	tcpCfg.ProxyBaseConfig.LocalIP = "127.0.0.1"
 	tcpCfg.ProxyBaseConfig.LocalPort = httpLocalPort
 	tcpCfg.RemotePort = cfg.RemotePort
+	tcpCfg.ProxyBaseConfig.Transport.UseCompression = true
 	tcpCfg.ProxyBaseConfig.Complete()
 	proxies = append(proxies, httpCfg)
 
@@ -361,6 +362,7 @@ func buildProxyConfigs(cfg model.FRPConfig, httpLocalPort, sshLocalPort int) []v
 		sshTcpCfg.ProxyBaseConfig.LocalIP = "127.0.0.1"
 		sshTcpCfg.ProxyBaseConfig.LocalPort = sshLocalPort
 		sshTcpCfg.RemotePort = cfg.SSHRemotePort
+		sshTcpCfg.ProxyBaseConfig.Transport.UseCompression = true
 		sshTcpCfg.ProxyBaseConfig.Complete()
 		proxies = append(proxies, sshCfg)
 	}
