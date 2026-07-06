@@ -173,7 +173,7 @@ interface Props {
   noDivider?: boolean
   defaultValue?: any
   displayFormat?: 'percent' | 'raw'
-  statusDot?: 'green' | 'gray'
+  statusDot?: 'green' | 'gray' | 'red' | 'yellow'
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -436,9 +436,21 @@ function confirmEdit() {
 .settings-item__status-dot--green {
   background: #22c55e;
 }
+.settings-item__status-dot--yellow {
+  background: #eab308;
+  animation: status-dot-pulse 1.5s ease-in-out infinite;
+}
+.settings-item__status-dot--red {
+  background: #ef4444;
+}
 .settings-item__status-dot--gray {
   background: var(--text-muted);
   opacity: 0.5;
+}
+
+@keyframes status-dot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
 /* Description panel (expanded on click) */

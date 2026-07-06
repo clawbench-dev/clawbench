@@ -48,7 +48,7 @@
       :trigger-item="groupDialog.triggerItem"
       :trigger-value="groupDialog.triggerValue"
       :all-items="categoryItems[categoryId] ?? []"
-      @close="groupDialog.visible = false"
+      @close="handleGroupDialogClose"
       @saved="handleGroupDialogSaved"
     />
     <!-- iOS install instructions sheet -->
@@ -73,6 +73,7 @@ import { useAppMode } from '@/composables/useAppMode'
 import { usePwaInstall } from '@/composables/usePwaInstall'
 import { useTerminalStatus } from '@/composables/useTerminalStatus'
 import { usePortForward } from '@/composables/usePortForward'
+import { useFrp } from '@/composables/useFrp'
 import { categoryItems, engineVoiceOptions, type ItemSpec, type DependsOn, type GroupConfigTrigger } from './settingsFieldMap'
 
 const props = defineProps<{
@@ -94,6 +95,7 @@ const { isAppMode } = useAppMode()
 const pwaInstall = usePwaInstall()
 const { loadTerminalStatus } = useTerminalStatus()
 const { loadSSHInfo } = usePortForward()
+const { frpState, fetchFrpInfo } = useFrp()
 
 const activeKey = ref<string | null>(null)
 const showPasswordDialog = ref(false)
@@ -110,6 +112,7 @@ const groupDialog = reactive({
 // Load agents when chat or agents category is shown
 watch(() => props.categoryId, (id) => {
   if (id === 'chat' || id === 'agents' || id.startsWith('agents:')) loadAgents(true)
+  if (id === 'frp') fetchFrpInfo()
 }, { immediate: true })
 
 function resolveConfigValue(key: string): any {
@@ -152,6 +155,15 @@ const renderList = computed(() => {
         source: 'local',
       } as any)
     }
+    // Inject FRP status dot on the frp.enabled switch
+    if (item.key === 'frp.enabled' && frpState.enabled) {
+      const dot: 'green' | 'yellow' | 'red' | undefined =
+        frpState.state === 'running' ? 'green' :
+        frpState.state === 'starting' ? 'yellow' :
+        frpState.state === 'failed' ? 'red' : undefined
+      if (dot) (item as any).statusDot = dot
+    }
+
     result.push(item)
   }
 
@@ -324,6 +336,15 @@ function handlePasswordChanged(needsRestart: boolean) {
   if (needsRestart) {
     emit('restartNeeded', ['password'])
   }
+}
+
+function handleGroupDialogClose() {
+  // When dialog is cancelled (not saved), rollback the trigger switch.
+  // The server value was never saved, so getItemValue() still returns the
+  // original value. Simply closing the dialog is sufficient — Vue's reactivity
+  // will re-render the switch with the unchanged server value on next tick.
+  // No explicit rollback needed since handleUpdate never saved the trigger value.
+  groupDialog.visible = false
 }
 
 function handleGroupDialogSaved(needsRestart: boolean, changedColdFields: string[]) {

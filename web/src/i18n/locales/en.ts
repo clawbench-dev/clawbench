@@ -1185,6 +1185,8 @@ export default {
       frpTokenDesc: 'Must match the token configured on the frps server',
       frpRemotePort: 'Remote Forwarding Port',
       frpRemotePortDesc: 'Remote port for FRP forwarding, 0 for frps auto-assign',
+      frpStatusConnecting: 'Connecting...',
+      frpStatusFailed: 'Connection failed',
       androidLogCapture: 'Debug Log Capture',
       androidLogCaptureDesc: 'Capture Android debug logs for troubleshooting',
       reconfigureServer: 'Reconfigure Server',

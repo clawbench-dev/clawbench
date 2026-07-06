@@ -1185,6 +1185,8 @@ export default {
       frpTokenDesc: '与 frps 服务器配置的 token 一致',
       frpRemotePort: '远程转发端口',
       frpRemotePortDesc: 'FRP 转发到的远程端口，0 表示由 frps 自动分配',
+      frpStatusConnecting: '连接中...',
+      frpStatusFailed: '连接失败',
       androidLogCapture: '调试日志捕获',
       androidLogCaptureDesc: '捕获 Android 调试日志用于问题排查',
       reconfigureServer: '重配服务器',
