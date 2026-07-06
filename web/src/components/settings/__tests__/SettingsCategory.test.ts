@@ -83,6 +83,9 @@ vi.mock('@/composables/useAgents', () => ({
       const def = a.models.find((m: any) => m.default)
       return def ? def.id : a.models[0].id
     },
+    getAgent: (agentId: string) => {
+      return mockAgents.find(a => a.id === agentId) || null
+    },
   }),
 }))
 
@@ -322,109 +325,6 @@ describe('SettingsCategory', () => {
       expect(item).toBeTruthy()
       // session.max_count is hot-reloadable via applyHotReloadGlobals, no restart needed
       expect(item!.props().needsRestart).toBe(false)
-    })
-  })
-
-  // ─── TTS category ──────────────────────────────
-  describe('tts category', () => {
-    it('renders TTS engine as a standalone SettingsItem', () => {
-      const wrapper = mountCategory('tts')
-      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const engineItem = allItems.find(i => i.props().label === 'TTS引擎')
-      expect(engineItem).toBeTruthy()
-    })
-  })
-
-  // ─── Terminal category ──────────────────────────────
-  describe('terminal category', () => {
-    it('saves terminalFontSize locally', async () => {
-      const wrapper = mountCategory('terminal')
-      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const fontItem = allItems.find(i => i.props().label === '终端字号')
-      expect(fontItem).toBeTruthy()
-
-      await fontItem!.vm.$emit('update:modelValue', 14)
-      await wrapper.vm.$nextTick()
-
-      expect(mockSetLocalConfig).toHaveBeenCalledWith('terminalFontSize', 14)
-    })
-
-    it('PATCHes terminal.enabled when toggled', async () => {
-      const wrapper = mountCategory('terminal')
-      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const enabledItem = allItems.find(i => i.props().label === '启用终端')
-      expect(enabledItem).toBeTruthy()
-
-      await enabledItem!.vm.$emit('update:modelValue', false)
-      await wrapper.vm.$nextTick()
-
-      expect(mockSetServerValue).toHaveBeenCalledWith('terminal.enabled', false)
-    })
-
-    it('PATCHes terminal.idle_timeout when changed', async () => {
-      const wrapper = mountCategory('terminal')
-      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const timeoutItem = allItems.find(i => i.props().label === '空闲超时')
-      expect(timeoutItem).toBeTruthy()
-
-      await timeoutItem!.vm.$emit('update:modelValue', '30m')
-      await wrapper.vm.$nextTick()
-
-      expect(mockSetServerValue).toHaveBeenCalledWith('terminal.idle_timeout', '30m')
-    })
-
-    it('PATCHes terminal.max_sessions when changed', async () => {
-      const wrapper = mountCategory('terminal')
-      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const item = allItems.find(i => i.props().label === '最大会话')
-      expect(item).toBeTruthy()
-
-      await item!.vm.$emit('update:modelValue', 5)
-      await wrapper.vm.$nextTick()
-
-      expect(mockSetServerValue).toHaveBeenCalledWith('terminal.max_sessions', 5)
-    })
-
-    it('PATCHes terminal.buffer_lines when changed', async () => {
-      const wrapper = mountCategory('terminal')
-      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const item = allItems.find(i => i.props().label === '缓冲行数')
-      expect(item).toBeTruthy()
-
-      await item!.vm.$emit('update:modelValue', 5000)
-      await wrapper.vm.$nextTick()
-
-      expect(mockSetServerValue).toHaveBeenCalledWith('terminal.buffer_lines', 5000)
-    })
-  })
-
-  // ─── Summarization category (flattened — no group drill-down) ──────────
-  describe('summarization category', () => {
-    it('renders summarize backend as a standalone SettingsItem', () => {
-      const wrapper = mountCategory('summarization')
-      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const backendItem = allItems.find(i => i.props().label === '摘要方式')
-      expect(backendItem).toBeTruthy()
-    })
-  })
-
-  // ─── RAG category (flattened — no group drill-down) ──────────
-  describe('rag category', () => {
-    it('renders RAG base_url as a standalone SettingsItem', () => {
-      const wrapper = mountCategory('rag')
-      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const urlItem = allItems.find(i => i.props().label === '嵌入接口地址')
-      expect(urlItem).toBeTruthy()
-    })
-  })
-
-  // ─── Port Forward category (flattened — no group drill-down) ──────────
-  describe('portForward category', () => {
-    it('renders port forward enabled as a standalone SettingsItem', () => {
-      const wrapper = mountCategory('portForward')
-      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const enabledItem = allItems.find(i => i.props().label === '启用端口转发')
-      expect(enabledItem).toBeTruthy()
     })
   })
 
@@ -840,30 +740,4 @@ describe('SettingsCategory', () => {
     })
   })
 
-  // ─── handleUpdate — androidLogCapture ──────────
-  describe('handleUpdate — androidLogCapture', () => {
-    it('calls AndroidNative.startLogCapture when enabling androidLogCapture', async () => {
-      const mockStart = vi.fn()
-      const mockStop = vi.fn()
-      ;(window as any).AndroidNative = { startLogCapture: mockStart, stopLogCapture: mockStop }
-      const wrapper = mountCategory('terminal')
-      const vm = wrapper.vm as any
-      await vm.$.setupState.handleUpdate({ key: 'androidLogCapture', source: 'local' }, true)
-      expect(mockSetLocalConfig).toHaveBeenCalledWith('androidLogCapture', true)
-      expect(mockStart).toHaveBeenCalled()
-      delete (window as any).AndroidNative
-    })
-
-    it('calls AndroidNative.stopLogCapture when disabling androidLogCapture', async () => {
-      const mockStart = vi.fn()
-      const mockStop = vi.fn()
-      ;(window as any).AndroidNative = { startLogCapture: mockStart, stopLogCapture: mockStop }
-      const wrapper = mountCategory('terminal')
-      const vm = wrapper.vm as any
-      await vm.$.setupState.handleUpdate({ key: 'androidLogCapture', source: 'local' }, false)
-      expect(mockSetLocalConfig).toHaveBeenCalledWith('androidLogCapture', false)
-      expect(mockStop).toHaveBeenCalled()
-      delete (window as any).AndroidNative
-    })
-  })
 })

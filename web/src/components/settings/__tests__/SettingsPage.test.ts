@@ -3,6 +3,8 @@ import { mount, shallowMount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, nextTick, computed, reactive } from 'vue'
 import SettingsPage from '@/components/settings/SettingsPage.vue'
+import SettingsDrillDown from '@/components/settings/SettingsDrillDown.vue'
+import { isDrillDownCategory } from '@/components/settings/settingsFieldMap'
 
 // Mutable refs that tests can flip to control UI state
 const needsRestart = ref(false)
@@ -25,6 +27,7 @@ function createMockNavigation() {
     restartingOverlay: ref(false),
     handleRestartNeeded: vi.fn(),
     handleRestart: vi.fn(),
+    setBeforeResetGuard: vi.fn(),
   }
 }
 
@@ -39,12 +42,39 @@ vi.mock('@/composables/useSettingsConfig', () => ({
     setLocalConfig: vi.fn(),
     getServerValueWithDefault: vi.fn(() => ''),
     setServerValue: vi.fn(),
+    patchConfig: vi.fn().mockResolvedValue({ needsRestart: false, changedColdFields: [] }),
   }),
 }))
 
 vi.mock('@/composables/useEdgeSwipeBack', () => ({
   useFeatureBackHandler: vi.fn(),
   PRIORITY_PAGE: 100,
+}))
+
+vi.mock('@/composables/useDrillDownSideEffects', () => ({
+  useDrillDownSideEffects: () => ({
+    init: vi.fn(),
+    afterSave: vi.fn(),
+    frpStatusDot: ref(null),
+    frpAutoPortInfo: ref(null),
+    needsVoiceReset: ref(false),
+  }),
+}))
+
+vi.mock('@/composables/useTabDrawer', () => ({
+  useTabDrawer: () => ({
+    effectiveOpen: ref(false),
+    open: vi.fn(),
+    close: vi.fn(),
+  }),
+}))
+
+vi.mock('@/composables/useToast', () => ({
+  useToast: () => ({ show: vi.fn() }),
+}))
+
+vi.mock('@/composables/useDialog', () => ({
+  useDialog: () => ({ confirm: vi.fn().mockResolvedValue(false) }),
 }))
 
 const i18n = createI18n({
@@ -183,5 +213,40 @@ describe('SettingsPage', () => {
   it('hides version badge when serverConfig has no version', () => {
     const wrapper = mountPage()
     expect(wrapper.find('.settings-page__version').text()).toBe('v1.2.3')
+  })
+
+  // ─── Drill-down routing ──────────────────────
+  describe('drill-down routing', () => {
+    const drillDownIds = ['terminal', 'tts', 'summarization', 'rag', 'portForward', 'frp']
+    const flatIds = ['appearance', 'project', 'chat', 'agents', 'files', 'security', 'android', 'about']
+
+    it('isDrillDownCategory identifies drill-down categories', () => {
+      for (const id of drillDownIds) {
+        expect(isDrillDownCategory(id)).toBe(true)
+      }
+    })
+
+    it('isDrillDownCategory returns false for flat categories', () => {
+      for (const id of flatIds) {
+        expect(isDrillDownCategory(id)).toBe(false)
+      }
+    })
+
+    it('renders SettingsDrillDown for drill-down categories', async () => {
+      navStack.value = ['tts']
+      const wrapper = mountPage()
+      await nextTick()
+
+      expect(wrapper.findComponent(SettingsDrillDown).exists()).toBe(true)
+    })
+
+    it('renders SettingsCategory for flat categories', async () => {
+      navStack.value = ['appearance']
+      const wrapper = mountPage()
+      await nextTick()
+
+      // SettingsDrillDown should NOT be rendered for a flat category
+      expect(wrapper.findComponent(SettingsDrillDown).exists()).toBe(false)
+    })
   })
 })
