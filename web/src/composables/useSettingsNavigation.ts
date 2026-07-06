@@ -6,12 +6,6 @@ import { useToast } from '@/composables/useToast'
 const MAX_POLL_ATTEMPTS = 60 // 2 minutes at 2s interval
 const POLL_INTERVAL_MS = 2000
 
-let beforeReset: (() => boolean) | null = null
-
-export function setBeforeResetGuard(fn: (() => boolean) | null) {
-  beforeReset = fn
-}
-
 /**
  * Shared composable for settings page navigation, restart logic, and state.
  * Used by SettingsPage.vue to avoid code duplication.
@@ -32,6 +26,11 @@ export function useSettingsNavigation() {
   let pollTimer: ReturnType<typeof setInterval> | null = null
 
   const currentCategory = ref<string | null>(null)
+  const beforeReset = ref<(() => boolean) | null>(null)
+
+  function setBeforeResetGuard(fn: (() => boolean) | null) {
+    beforeReset.value = fn
+  }
 
   // Update currentCategory whenever navStack changes
   function pushNav(categoryId: string) {
@@ -49,7 +48,7 @@ export function useSettingsNavigation() {
   }
 
   function resetState() {
-    if (beforeReset && !beforeReset()) return  // guard says don't reset
+    if (beforeReset.value && !beforeReset.value()) return  // guard says don't reset
     navStack.value = []
     currentCategory.value = null
     needsRestart.value = false

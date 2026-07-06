@@ -53,6 +53,7 @@
         :force-close="activeKey !== null && activeKey !== entry.field.key"
         :default-value="entry.field.defaultValue"
         :display-format="entry.field.displayFormat"
+        :display-transform="entry.field.displayTransform"
         :no-divider="false"
         @update:model-value="(v: any) => setLocalValue(entry.field.key, v)"
         @edit-toggle="(open: boolean) => handleEditToggle(entry.field.key, open)"

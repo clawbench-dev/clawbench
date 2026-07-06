@@ -208,7 +208,7 @@ function mountDrillDown(categoryId: string) {
       stubs: {
         SettingsItem: {
           template: '<div class="stub-settings-item" :data-key="field?.key" :data-type="field?.type" :data-disabled="disabled" :data-needs-restart="field?.needsRestart" />',
-          props: ['label', 'description', 'type', 'modelValue', 'options', 'min', 'max', 'step', 'needsRestart', 'disabled', 'forceClose', 'defaultValue', 'displayFormat', 'noDivider'],
+          props: ['label', 'description', 'type', 'modelValue', 'options', 'min', 'max', 'step', 'needsRestart', 'disabled', 'forceClose', 'defaultValue', 'displayFormat', 'displayTransform', 'noDivider'],
           setup(props: any) {
             // Reconstruct the field spec from the parent's renderList
             // We expose it through a provide/inject-like mechanism: use attrs

@@ -173,6 +173,7 @@ interface Props {
   noDivider?: boolean
   defaultValue?: any
   displayFormat?: 'percent' | 'raw'
+  displayTransform?: (value: any) => any
   statusDot?: 'green' | 'gray' | 'red' | 'yellow'
 }
 
@@ -265,7 +266,8 @@ const displayValue = computed(() => {
     return opt?.label ?? props.modelValue ?? props.placeholder
   }
   if (props.modelValue !== undefined && props.modelValue !== '') {
-    return String(props.modelValue)
+    const v = props.displayTransform ? props.displayTransform(props.modelValue) : props.modelValue
+    return String(v)
   }
   return props.placeholder
 })

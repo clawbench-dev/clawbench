@@ -26,6 +26,7 @@
         :no-divider="false"
         :default-value="entry.defaultValue"
         :display-format="entry.displayFormat"
+        :display-transform="entry.displayTransform"
         @update:model-value="(v: any) => handleUpdate(entry, v)"
         @click="handleClick(entry)"
         @edit-toggle="(open: boolean) => handleEditToggle(entry.key, open)"
