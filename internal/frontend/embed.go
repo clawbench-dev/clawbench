@@ -3,6 +3,7 @@ package frontend
 import (
 	"embed"
 	"io/fs"
+	"log/slog"
 	"os"
 )
 
@@ -19,8 +20,10 @@ var distFS, _ = fs.Sub(embeddedFS, "dist")
 // while the embedded content serves as a fallback for single-binary deployment.
 func GetFS() fs.FS {
 	if fi, err := os.Stat("public"); err == nil && fi.IsDir() {
+		slog.Info("frontend: serving from disk", slog.String("dir", "public/"))
 		return os.DirFS("public")
 	}
+	slog.Info("frontend: serving from embedded binary")
 	return distFS
 }
 
@@ -30,4 +33,12 @@ func GetFS() fs.FS {
 func DiskPublicExists() bool {
 	fi, err := os.Stat("public")
 	return err == nil && fi.IsDir()
+}
+
+// ModeLabel returns a human-readable label for the current frontend serving mode.
+func ModeLabel() string {
+	if DiskPublicExists() {
+		return "disk (public/)"
+	}
+	return "embedded"
 }

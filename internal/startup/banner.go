@@ -33,6 +33,7 @@ type BannerConfig struct {
 	TerminalOn      bool
 	TaskCount       int
 	StartupDuration time.Duration
+	FrontendMode    string // "disk (public/)" or "embedded"
 
 	// FRP tunnel info
 	FRPEnabled    bool
@@ -180,7 +181,10 @@ func buildLines(cfg BannerConfig) []string {
 	}
 
 	// --- Data directory ---
-	lines = append(lines, label("📁 Data:", cfg.DataDir), "")
+	lines = append(lines, label("📁 Data:", cfg.DataDir))
+
+	// --- Frontend mode ---
+	lines = append(lines, label("🎨 Frontend:", cfg.FrontendMode), "")
 
 	// --- Service status line ---
 	// Note: use single-codepoint emoji only to avoid combining-sequence width issues.

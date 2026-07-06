@@ -36,6 +36,7 @@ import (
 	_ "clawbench/internal/ai/backends/vecli"
 	"clawbench/internal/cli"
 	"clawbench/internal/frp"
+	"clawbench/internal/frontend"
 	"clawbench/internal/handler"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
@@ -936,6 +937,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		FRPRemoteURL:    frpStatus.RemoteURL,
 		FRPServerAddr:   cfg.FRP.ServerAddr,
 		FRPRemotePort:   frpStatus.RemotePort,
+		FrontendMode:   frontend.ModeLabel(),
 	})
 
 	// Graceful shutdown on SIGINT/SIGTERM
