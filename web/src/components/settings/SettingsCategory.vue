@@ -26,7 +26,6 @@
         :no-divider="false"
         :default-value="entry.defaultValue"
         :display-format="entry.displayFormat"
-        :status-dot="(entry as any).statusDot"
         @update:model-value="(v: any) => handleUpdate(entry, v)"
         @click="handleClick(entry)"
         @edit-toggle="(open: boolean) => handleEditToggle(entry.key, open)"
@@ -59,10 +58,7 @@ import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
 import { useAppMode } from '@/composables/useAppMode'
 import { usePwaInstall } from '@/composables/usePwaInstall'
-import { useTerminalStatus } from '@/composables/useTerminalStatus'
-import { usePortForward } from '@/composables/usePortForward'
-import { useFrp } from '@/composables/useFrp'
-import { categoryItems, engineVoiceOptions, type ItemSpec, type DependsOn } from './settingsFieldMap'
+import { categoryItems, type ItemSpec, type DependsOn } from './settingsFieldMap'
 
 const props = defineProps<{
   categoryId: string
@@ -81,10 +77,6 @@ const { localConfig, serverConfig, setLocalConfig, getServerValueWithDefault, se
 const { loadAgents } = useAgents()
 const { isAppMode } = useAppMode()
 const pwaInstall = usePwaInstall()
-const { loadTerminalStatus } = useTerminalStatus()
-const { loadSSHInfo } = usePortForward()
-const { frpState, fetchFrpInfo } = useFrp()
-
 const activeKey = ref<string | null>(null)
 const showPasswordDialog = ref(false)
 const showIosSheet = ref(false)
@@ -92,7 +84,6 @@ const showIosSheet = ref(false)
 // Load agents when chat or agents category is shown
 watch(() => props.categoryId, (id) => {
   if (id === 'chat' || id === 'agents' || id.startsWith('agents:')) loadAgents(true)
-  if (id === 'frp') fetchFrpInfo()
 }, { immediate: true })
 
 function resolveConfigValue(key: string): any {
@@ -135,41 +126,6 @@ const renderList = computed(() => {
         source: 'local',
       } as any)
     }
-    // Inject FRP status dot on the frp.enabled switch
-    if (item.key === 'frp.enabled' && frpState.enabled) {
-      const dot: 'green' | 'yellow' | 'red' | undefined =
-        frpState.state === 'running' ? 'green' :
-        frpState.state === 'starting' ? 'yellow' :
-        frpState.state === 'failed' ? 'red' : undefined
-      if (dot) (item as any).statusDot = dot
-    }
-
-    // When frp.auto_port is true, inject read-only info items
-    // showing the actual assigned ports after the auto_port switch
-    if (item.key === 'frp.auto_port' && resolveConfigValue('frp.auto_port') === true && resolveConfigValue('frp.enabled') === true) {
-      result.push(item)
-      const httpPort = frpState.state === 'running' && frpState.remotePort > 0 ? frpState.remotePort : 0
-      result.push({
-        key: '_frp_assigned_http_port',
-        labelKey: 'settings.items.frpAssignedPort',
-        label: t('settings.items.frpAssignedPort'),
-        type: 'info',
-        source: 'local',
-        modelValue: httpPort > 0 ? httpPort : '—',
-      } as any)
-      if (frpState.state === 'running' && frpState.sshRemotePort > 0) {
-        result.push({
-          key: '_frp_assigned_ssh_port',
-          labelKey: 'settings.items.frpAssignedSSHPort',
-          label: t('settings.items.frpAssignedSSHPort'),
-          type: 'info',
-          source: 'local',
-          modelValue: frpState.sshRemotePort,
-        } as any)
-      }
-      continue
-    }
-
     result.push(item)
   }
 
@@ -179,12 +135,6 @@ const renderList = computed(() => {
 // ── Standalone item helpers ──
 
 function resolveItemOptions(item: any): any {
-  // TTS voice: resolve options dynamically based on current tts.engine
-  if (item.key === 'tts.voice') {
-    const engine = resolveConfigValue('tts.engine') || 'edge'
-    const voiceOpts = engineVoiceOptions[engine] ?? []
-    return voiceOpts.map((o: any) => ({ ...o, label: t(o.labelKey) }))
-  }
   const resolvedOptions = item.options
   if (resolvedOptions) {
     return resolvedOptions.map((opt: any) => ({
@@ -214,14 +164,6 @@ function getItemValue(item: any): any {
       if (native?.getAppVersion) return native.getAppVersion() ?? '-'
     } catch { /* not in app mode */ }
     return '-'
-  }
-  if (item.key === 'port_forward.port') {
-    const val = getServerValueWithDefault(item.key)
-    return val === 0 ? t('settings.items.portForwardPortAuto') : val
-  }
-  if (item.key === 'frp.remote_port') {
-    const val = getServerValueWithDefault(item.key)
-    return val === 0 ? t('settings.items.portForwardPortAuto') : val
   }
   if (item.source === 'local') {
     return localConfig[item.key]
@@ -256,24 +198,6 @@ async function handleUpdate(item: any, value: any) {
   }
   try {
     const result = await setServerValue(item.key, value)
-    // When TTS engine changes, reset voice to first available for new engine
-    if (item.key === 'tts.engine') {
-      const voiceOpts = engineVoiceOptions[value] ?? []
-      if (voiceOpts.length > 0) {
-        try { await setServerValue('tts.voice', voiceOpts[0].value) } catch { /* best-effort */ }
-      } else {
-        try { await setServerValue('tts.voice', '') } catch { /* best-effort */ }
-      }
-    }
-    if (item.key === 'terminal.enabled') {
-      loadTerminalStatus()
-    }
-    if (item.key === 'port_forward.enabled') {
-      loadSSHInfo()
-    }
-    if (item.key === 'frp.enabled') {
-      // FRP state change requires restart — banner will reflect on next startup
-    }
     if (result.needsRestart && result.changedColdFields.length > 0) {
       emit('restartNeeded', result.changedColdFields)
     }
