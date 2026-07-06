@@ -894,8 +894,12 @@ async function handleLoadMore() {
 /** Handle remove-pending event from ChatMessageItem.
  *  The event passes the pending message's content text.
  *  Find the pending message in messages.value, remove it optimistically,
- *  and also remove from the backend queue. */
-function handleRemovePending(content) {
+ *  and also remove from the backend queue.
+ *  IMPORTANT: This must await the backend DELETE so that rapid sequential
+ *  deletes compute correct indices. Without awaiting, the second delete
+ *  would compute its pendingIndex against the already-spliced array while
+ *  the backend queue hasn't been updated yet, sending a wrong index. */
+async function handleRemovePending(content) {
     // Find the pending message in messages.value
     const msgIdx = messages.value.findIndex(m => m.pending && m.content === content)
     if (msgIdx < 0) return
@@ -904,8 +908,8 @@ function handleRemovePending(content) {
     // Optimistically remove from messages.value
     messages.value.splice(msgIdx, 1)
     render.updateRenderedContents()
-    // Remove from backend queue
-    manager.handleRemovePending(pendingIndex)
+    // Remove from backend queue — await to serialize rapid deletes
+    await manager.handleRemovePending(pendingIndex)
 }
 
 function showMetadata(msg) {

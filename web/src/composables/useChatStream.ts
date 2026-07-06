@@ -602,9 +602,8 @@ export function useChatStream(options: UseChatStreamOptions) {
       if (!sm) return
       disconnectStream()
       sm.cancelled = true
-      if ((!sm.blocks || sm.blocks.length === 0) && !sm.content) {
-        sm.blocks = [{ type: 'error', text: gt('chat.stream.userCancelled') }]
-      }
+      // No error block needed — sm.cancelled already shows the neutral "已中断" marker.
+      // User cancellation is intentional, not an error.
       _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
       loading.value = false
       onStreamEnd?.('cancelled')

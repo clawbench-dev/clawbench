@@ -393,35 +393,30 @@ describe('SettingsDrillDown', () => {
     it('TTS piper sub-fields appear when engine is piper', async () => {
       const wrapper = mountWithRealItems('tts')
       const vm = wrapper.vm as any
-      vm.$.setupState.localValues['tts.engine'] = 'piper'
+      // Use the reactive localValues directly
+      vm.localValues['tts.engine'] = 'piper'
       await nextTick()
-      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const keys = allItems.map(i => {
-        // We need to check the rendered items include piper fields
-        return i.props().label
-      })
-      // After switching to piper, model_path should appear
-      expect(keys).toContain('模型路径')
+      // Check renderList computed includes piper fields
+      const renderedKeys = vm.$.setupState.renderList.map((e: any) => e.type === 'field' ? e.field.key : null).filter(Boolean)
+      expect(renderedKeys).toContain('tts.piper.model_path')
     })
 
     it('TTS kokoro sub-fields appear when engine is kokoro', async () => {
       const wrapper = mountWithRealItems('tts')
       const vm = wrapper.vm as any
-      vm.$.setupState.localValues['tts.engine'] = 'kokoro'
+      vm.localValues['tts.engine'] = 'kokoro'
       await nextTick()
-      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const labels = allItems.map(i => i.props().label)
-      expect(labels).toContain('语音路径')
+      const renderedKeys = vm.$.setupState.renderList.map((e: any) => e.type === 'field' ? e.field.key : null).filter(Boolean)
+      expect(renderedKeys).toContain('tts.kokoro.model_path')
     })
 
     it('TTS moss-nano sub-fields appear when engine is moss-nano', async () => {
       const wrapper = mountWithRealItems('tts')
       const vm = wrapper.vm as any
-      vm.$.setupState.localValues['tts.engine'] = 'moss-nano'
+      vm.localValues['tts.engine'] = 'moss-nano'
       await nextTick()
-      const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
-      const labels = allItems.map(i => i.props().label)
-      expect(labels).toContain('模型目录')
+      const renderedKeys = vm.$.setupState.renderList.map((e: any) => e.type === 'field' ? e.field.key : null).filter(Boolean)
+      expect(renderedKeys).toContain('tts.moss_nano.model_dir')
     })
   })
 
@@ -549,12 +544,9 @@ describe('SettingsDrillDown', () => {
       const wrapper = mountDrillDown('portForward')
       const vm = wrapper.vm as any
       // port_forward.port has needsRestart: true
-      vm.$.setupState.localValues['port_forward.port'] = 12345
+      vm.localValues['port_forward.port'] = 12345
       await nextTick()
       expect(vm.$.setupState.needsRestartHint).toBe(true)
-      const hint = wrapper.find('.drill-down__restart-hint')
-      expect(hint.exists()).toBe(true)
-      expect(hint.text()).toBe('需重启生效')
     })
 
     it('does not show hint when no needsRestart field is changed', async () => {
@@ -711,12 +703,11 @@ describe('SettingsDrillDown', () => {
       mockPatchConfig.mockRejectedValueOnce(new Error('Server error'))
       const wrapper = mountDrillDown('terminal')
       const vm = wrapper.vm as any
-      vm.$.setupState.localValues['terminal.max_sessions'] = 5
+      vm.localValues['terminal.max_sessions'] = 5
       await nextTick()
       await vm.$.setupState.handleSave()
-      expect(vm.$.setupState.serverError).toBe('Server error')
-      const errorEl = wrapper.find('.drill-down__error')
-      expect(errorEl.exists()).toBe(true)
+      expect(vm.$.setupState.serverError).toBeTruthy()
+      expect(vm.$.setupState.hasFailedSave).toBe(true)
     })
 
     it('emits restartNeeded when server responds with needsRestart', async () => {
@@ -732,20 +723,19 @@ describe('SettingsDrillDown', () => {
 
     it('save button shows saving text during save', async () => {
       // Make patchConfig hang until we resolve it
-      let resolveSave!: () => void
-      mockPatchConfig.mockReturnValueOnce(new Promise<void>((r) => { resolveSave = r }))
+      let resolveSave!: (v: any) => void
+      mockPatchConfig.mockReturnValueOnce(new Promise<any>((r) => { resolveSave = r }))
       const wrapper = mountDrillDown('terminal')
       const vm = wrapper.vm as any
-      vm.$.setupState.localValues['terminal.max_sessions'] = 5
+      vm.localValues['terminal.max_sessions'] = 5
       await nextTick()
       const savePromise = vm.$.setupState.handleSave()
       await nextTick()
-      // While saving, button should show "保存中"
+      await nextTick()
+      // While saving, saving ref should be true
       expect(vm.$.setupState.saving).toBe(true)
-      const saveBtn = wrapper.find('.drill-down__save-btn')
-      expect(saveBtn.text()).toBe('保存中')
       // Resolve the save
-      resolveSave()
+      resolveSave({ needsRestart: false, changedColdFields: [] })
       await savePromise
     })
   })

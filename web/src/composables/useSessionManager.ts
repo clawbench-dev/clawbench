@@ -163,10 +163,12 @@ export function useSessionManager(options: UseSessionManagerOptions) {
         }
       }
 
-      // Sync pending messages with backend queue state
-      if (data.queue) {
-        syncPendingFromBackendQueue(data.queue)
-      }
+      // Don't full-sync the queue here. The optimistically pushed pending
+      // message is already in messages.value with correct order. Full sync
+      // (clear all + re-push from backend) causes races when two enqueueMessage
+      // calls overlap: the first sync clears the second's optimistic message.
+      // The queue will be synced by fetchQueue (session switch),
+      // handleVisibilityChange (mobile unlock), watch(loading), and SSE events.
     } catch (err) {
       toast.show(gt('session.queueFailed'), { icon: '⚠️', type: 'error' })
       // On enqueue failure, remove the pending message we just added
@@ -180,12 +182,14 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     return { needsStart: false }
   }
 
-  /** Remove a pending message by its index in the pending list for the current session. */
+  /** Remove a pending message by its index in the pending list for the current session.
+   *  The index is computed by the caller BEFORE the optimistic splice, so it's
+   *  valid against the pre-splice messages array. We must NOT re-validate against
+   *  the current messages.value (which has already been spliced) — that would
+   *  reject the index as out-of-range and silently skip the backend DELETE. */
   async function handleRemovePending(pendingIndex: number) {
+    if (pendingIndex < 0) return  // Negative index is always invalid
     const sessionId = identity.currentSessionId.value
-    // Count pending messages in messages.value to validate index
-    const pendingMsgs = messages.value.filter((m: any) => m.pending)
-    if (pendingIndex < 0 || pendingIndex >= pendingMsgs.length) return
 
     try {
       const resp = await fetch(
