@@ -38,15 +38,8 @@
             </div>
             </Teleport>
           </div>
-          <button v-if="toolbarInlineIds.includes('hidden')" class="toolbar-btn" @click="$emit('toggleHidden')" :title="showHidden ? t('file.hideHiddenFiles') : t('file.showHiddenFiles')">
-            <EyeOff v-if="!showHidden" :size="16" />
-            <Eye v-else :size="16" />
-          </button>
           <button v-if="toolbarInlineIds.includes('refresh')" class="toolbar-btn" @click="$emit('refresh')" :title="t('nav.refresh')">
             <RotateCw :size="16" />
-          </button>
-          <button v-if="toolbarInlineIds.includes('multiselect')" class="toolbar-btn" :class="{ active: multiSelect.active }" @click="multiSelect.active ? exitMultiSelect() : enterMultiSelect()" :title="multiSelect.active ? t('file.multiSelect.exit') : t('file.multiSelect.enter')">
-            <CheckSquare :size="16" />
           </button>
           <button v-if="toolbarInlineIds.includes('newFile')" class="toolbar-btn" @click="doNewFile()" :title="t('file.context.newFile')">
             <FilePlus :size="16" />
@@ -57,6 +50,13 @@
           <button v-if="toolbarInlineIds.includes('viewToggle')" class="toolbar-btn" @click="viewMode = viewMode === 'grid' ? 'list' : 'grid'" :title="viewMode === 'grid' ? t('file.viewList') : t('file.viewGrid')">
             <LayoutGrid v-if="viewMode === 'list'" :size="16" />
             <LayoutList v-else :size="16" />
+          </button>
+          <button v-if="toolbarInlineIds.includes('multiselect')" class="toolbar-btn" :class="{ active: multiSelect.active }" @click="multiSelect.active ? exitMultiSelect() : enterMultiSelect()" :title="multiSelect.active ? t('file.multiSelect.exit') : t('file.multiSelect.enter')">
+            <CheckSquare :size="16" />
+          </button>
+          <button v-if="toolbarInlineIds.includes('hidden')" class="toolbar-btn" @click="$emit('toggleHidden')" :title="showHidden ? t('file.hideHiddenFiles') : t('file.showHiddenFiles')">
+            <EyeOff v-if="!showHidden" :size="16" />
+            <Eye v-else :size="16" />
           </button>
           <template v-if="!showMoreDropdown">
             <button class="toolbar-btn" @click="doNewFolder()" :title="t('file.context.newFolder')">
@@ -70,23 +70,10 @@
             </button>
             <Teleport to="body">
               <div v-if="moreMenuOpen" class="toolbar-dropdown" :style="moreMenuStyle" @click.stop>
-              <template v-if="toolbarCollapsedIds.includes('hidden')">
-                <button class="toolbar-dropdown-item" @click="$emit('toggleHidden'); moreMenuOpen = false">
-                  <EyeOff v-if="!showHidden" :size="14" />
-                  <Eye v-else :size="14" />
-                  <span>{{ showHidden ? t('file.hideHiddenFiles') : t('file.showHiddenFiles') }}</span>
-                </button>
-              </template>
               <template v-if="toolbarCollapsedIds.includes('refresh')">
                 <button class="toolbar-dropdown-item" @click="$emit('refresh'); moreMenuOpen = false">
                   <RotateCw :size="14" />
                   <span>{{ t('nav.refresh') }}</span>
-                </button>
-              </template>
-              <template v-if="toolbarCollapsedIds.includes('multiselect')">
-                <button class="toolbar-dropdown-item" @click="multiSelect.active ? exitMultiSelect() : enterMultiSelect(); moreMenuOpen = false">
-                  <CheckSquare :size="14" />
-                  <span>{{ multiSelect.active ? t('file.multiSelect.exit') : t('file.multiSelect.enter') }}</span>
                 </button>
               </template>
               <template v-if="toolbarCollapsedIds.includes('newFile')">
@@ -110,6 +97,19 @@
                   <LayoutGrid v-if="viewMode === 'list'" :size="14" />
                   <LayoutList v-else :size="14" />
                   <span>{{ viewMode === 'grid' ? t('file.viewList') : t('file.viewGrid') }}</span>
+                </button>
+              </template>
+              <template v-if="toolbarCollapsedIds.includes('multiselect')">
+                <button class="toolbar-dropdown-item" @click="multiSelect.active ? exitMultiSelect() : enterMultiSelect(); moreMenuOpen = false">
+                  <CheckSquare :size="14" />
+                  <span>{{ multiSelect.active ? t('file.multiSelect.exit') : t('file.multiSelect.enter') }}</span>
+                </button>
+              </template>
+              <template v-if="toolbarCollapsedIds.includes('hidden')">
+                <button class="toolbar-dropdown-item" @click="$emit('toggleHidden'); moreMenuOpen = false">
+                  <EyeOff v-if="!showHidden" :size="14" />
+                  <Eye v-else :size="14" />
+                  <span>{{ showHidden ? t('file.hideHiddenFiles') : t('file.showHiddenFiles') }}</span>
                 </button>
               </template>
             </div>
@@ -474,7 +474,7 @@ watch(moreMenuOpen, (open) => {
 const dirToolbarRef = ref(null)
 const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
   () => dirToolbarRef.value,
-  () => ['hidden', 'refresh', 'multiselect', 'newFile', 'upload', 'viewToggle'],
+  () => ['refresh', 'newFile', 'upload', 'viewToggle', 'multiselect', 'hidden'],
   { inlineCount: 2, gap: 6, hasSearch: true },
 )
 
