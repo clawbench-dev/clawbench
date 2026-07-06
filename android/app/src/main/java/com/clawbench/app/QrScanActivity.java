@@ -469,14 +469,25 @@ public class QrScanActivity extends AppCompatActivity {
                     zxingReader.reset();
                     Result result = zxingReader.decode(bitmap);
                     String text = result.getText();
-                    if (text != null && text.startsWith("clawbench://connect")) {
-                        AppLog.i(TAG, "QR decoded successfully at rotation " + (i * 90) + "°: " + text.substring(0, Math.min(text.length(), 40)) + "...");
-                        scanned = true;
-                        Intent intent = new Intent();
-                        intent.putExtra("qr_data", text);
-                        setResult(RESULT_OK, intent);
-                        runOnUiThread(this::finish);
-                        return;
+                    if (text != null) {
+                        final String display = text.length() > 60 ? text.substring(0, 60) + "…" : text;
+                        AppLog.i(TAG, "QR decoded at rotation " + (i * 90) + "°: " + display);
+                        if (text.startsWith("clawbench://connect")) {
+                            scanned = true;
+                            Intent intent = new Intent();
+                            intent.putExtra("qr_data", text);
+                            setResult(RESULT_OK, intent);
+                            runOnUiThread(this::finish);
+                            return;
+                        }
+                        // Not our QR — show what was scanned so user knows ZXing works
+                        runOnUiThread(() -> {
+                            if (!isFinishing() && statusText != null) {
+                                statusText.setText("扫码结果: " + display);
+                            }
+                        });
+                        // Don't try other rotations — we found a QR, just not ours
+                        break;
                     }
                 } catch (com.google.zxing.NotFoundException ignored) {
                     // No QR at this rotation — try next
