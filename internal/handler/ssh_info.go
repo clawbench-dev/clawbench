@@ -19,6 +19,11 @@ func SetSSHServer(s *ssh.Server) {
 	sshServerRef = s
 }
 
+// GetSSHServer returns the SSH server reference (for hot-reload).
+func GetSSHServer() *ssh.Server {
+	return sshServerRef
+}
+
 // ServeSSHInfo returns SSH connection info for tunnel setup.
 // GET /api/ssh/info
 func ServeSSHInfo(w http.ResponseWriter, r *http.Request) {

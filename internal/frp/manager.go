@@ -1,18 +1,19 @@
 package frp
 
 import (
-	"bufio"
+	"context"
 	"fmt"
-	"io"
-	"os"
-	"os/exec"
-	"path/filepath"
+	"net"
+	"strconv"
 	"sync"
 	"time"
 
 	"log/slog"
 
-	"clawbench/internal/ai"
+	"github.com/fatedier/frp/client"
+	v1 "github.com/fatedier/frp/pkg/config/v1"
+	"github.com/fatedier/frp/pkg/config/source"
+
 	"clawbench/internal/model"
 	"clawbench/internal/ws"
 )
@@ -21,12 +22,11 @@ import (
 type State string
 
 const (
-	StateDisabled   State = "disabled"   // FRP not configured
-	StateStarting   State = "starting"   // frpc started, waiting for port assignment
-	StateRunning    State = "running"    // tunnel established, remote port known
-	StateRestarting State = "restarting" // frpc crashed, retrying with backoff
-	StateFailed     State = "failed"     // max retries exceeded
-	StateStopped    State = "stopped"    // user stopped the tunnel
+	StateDisabled State = "disabled" // FRP not configured
+	StateStarting State = "starting" // service started, waiting for proxy ready
+	StateRunning  State = "running"  // tunnel established, remote port known
+	StateFailed   State = "failed"   // service exited with error
+	StateStopped  State = "stopped"  // user stopped the tunnel
 )
 
 // Status holds the current FRP tunnel status.
@@ -41,42 +41,36 @@ type Status struct {
 	Message       string `json:"message,omitempty"`
 }
 
-// Manager manages the frpc subprocess lifecycle.
+// Manager manages the in-process frp client.Service lifecycle.
+// A Manager is single-use: after Stop(), create a new Manager to restart.
 type Manager struct {
 	cfg           model.FRPConfig
-	binaryPath    string
 	httpLocalPort int
 	sshLocalPort  int
 
 	mu            sync.RWMutex
-	cmd           *exec.Cmd
+	svc           *client.Service
+	configSource  *source.ConfigSource
+	cancel        context.CancelFunc
 	state         State
 	remotePort    int
 	sshRemotePort int
 
-	readyCh  chan Status // closed when port is assigned (OnReady)
-	done     chan struct{} // closed when manager stops
-	stopped  bool         // user called Stop()
-
-	retryCount int
-	maxRetries int
-	baseDelay  time.Duration
-	maxDelay   time.Duration
+	readyCh chan Status   // receives Status once when port is assigned
+	done    chan struct{} // closed when manager stops (via sync.Once)
+	closeOnce sync.Once  // ensures done is closed exactly once
+	stopped bool         // user called Stop()
 }
 
-// NewManager creates a new FRP manager. Call Start() to launch frpc.
-func NewManager(cfg model.FRPConfig, binaryPath string, httpLocalPort, sshLocalPort int) *Manager {
+// NewManager creates a new FRP manager. Call Start() to launch the in-process frp service.
+func NewManager(cfg model.FRPConfig, httpLocalPort, sshLocalPort int) *Manager {
 	return &Manager{
 		cfg:           cfg,
-		binaryPath:    binaryPath,
 		httpLocalPort: httpLocalPort,
 		sshLocalPort:  sshLocalPort,
 		state:         StateStarting,
 		readyCh:       make(chan Status, 1),
 		done:          make(chan struct{}),
-		maxRetries:    10,
-		baseDelay:     1 * time.Second,
-		maxDelay:      30 * time.Second,
 	}
 }
 
@@ -107,22 +101,47 @@ func (m *Manager) Status() Status {
 	return s
 }
 
-// Start launches the frpc subprocess. Returns error on immediate failure.
+// Start launches the in-process frp client.Service. Returns error on immediate failure.
 func (m *Manager) Start() error {
-	if err := m.startProcess(); err != nil {
-		m.mu.Lock()
-		m.state = StateFailed
-		m.mu.Unlock()
-		return fmt.Errorf("frpc start failed: %w", err)
+	commonCfg := buildClientCommonConfig(m.cfg)
+	proxyCfgs := buildProxyConfigs(m.cfg, m.httpLocalPort, m.sshLocalPort)
+
+	// Create in-memory config source
+	cs := source.NewConfigSource()
+	if err := cs.ReplaceAll(proxyCfgs, nil); err != nil {
+		return fmt.Errorf("frp: set proxy configs: %w", err)
+	}
+	aggregator := source.NewAggregator(cs)
+
+	// Create Service
+	svc, err := client.NewService(client.ServiceOptions{
+		Common:                 commonCfg,
+		ConfigSourceAggregator: aggregator,
+	})
+	if err != nil {
+		return fmt.Errorf("frp: create service: %w", err)
 	}
 
-	// Monitor goroutine: handles crash + exponential backoff restart
-	go m.monitor()
+	// Create context for the Run() goroutine
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Store all state under mutex to prevent race with concurrent Stop()
+	m.mu.Lock()
+	m.svc = svc
+	m.configSource = cs
+	m.cancel = cancel
+	m.mu.Unlock()
+
+	// Run service in a goroutine (blocks until context cancelled)
+	go m.runService(ctx, svc)
+
+	// Start status polling goroutine
+	go m.pollStatus()
 
 	return nil
 }
 
-// Stop gracefully stops the frpc subprocess.
+// Stop gracefully stops the in-process frp service.
 func (m *Manager) Stop() {
 	m.mu.Lock()
 	if m.stopped {
@@ -131,201 +150,245 @@ func (m *Manager) Stop() {
 	}
 	m.stopped = true
 	m.state = StateStopped
+	cancel := m.cancel
 	m.mu.Unlock()
 
-	// Close done channel FIRST to signal monitor goroutine to exit
-	// before we reap the process, avoiding a double-Wait() race.
-	close(m.done)
+	// Signal the Run() goroutine to stop
+	if cancel != nil {
+		cancel()
+	}
 
-	m.killProcess()
+	// Close done channel exactly once to signal pollStatus to exit
+	m.closeOnce.Do(func() { close(m.done) })
 
 	emitEvent("stopped")
 }
 
-// startProcess starts (or restarts) the frpc subprocess.
-func (m *Manager) startProcess() error {
-	// Generate frpc.toml config file
-	configContent, err := GenerateConfig(m.cfg, m.httpLocalPort, m.sshLocalPort)
-	if err != nil {
-		return fmt.Errorf("generate frpc config: %w", err)
-	}
-	configDir := filepath.Join(model.DataDir, "frp")
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
-		return fmt.Errorf("create config dir: %w", err)
-	}
-	configPath := filepath.Join(configDir, "frpc.toml")
-	if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
-		return fmt.Errorf("write frpc.toml: %w", err)
+// Reconfigure updates the frp service configuration.
+// If common config changed (ServerAddr/ServerPort/Token), returns needsRestart=true
+// because frp's Service cannot hot-swap the control connection.
+// Proxy-only changes (RemotePort/SSHRemotePort) are applied in-place.
+// The caller should create a new Manager if needsRestart is true.
+func (m *Manager) Reconfigure(cfg model.FRPConfig, httpLocalPort, sshLocalPort int) (needsRestart bool, err error) {
+	// Check if common config changed (requires restart) — read under RLock
+	m.mu.RLock()
+	oldCfg := m.cfg
+	m.mu.RUnlock()
+
+	needsRestart = cfg.ServerAddr != oldCfg.ServerAddr ||
+		cfg.ServerPort != oldCfg.ServerPort ||
+		cfg.Token != oldCfg.Token
+
+	if needsRestart {
+		return needsRestart, nil
 	}
 
-	// Build command
-	cmd := exec.Command(m.binaryPath, "-c", configPath)
-	cmd.Env = append(os.Environ(), ai.OrphanChildEnvVar)
-	setProcessGroup(cmd)
+	// Build new proxy configs outside the lock
+	proxyCfgs := buildProxyConfigs(cfg, httpLocalPort, sshLocalPort)
+	commonCfg := buildClientCommonConfig(cfg)
 
-	// Capture stdout for parsing
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("stdout pipe: %w", err)
-	}
-	// Merge stderr into stdout for unified parsing
-	cmd.Stderr = cmd.Stdout
+	// Perform frp I/O outside the lock
+	m.mu.RLock()
+	cs := m.configSource
+	svc := m.svc
+	m.mu.RUnlock()
 
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("frpc start: %w", err)
+	if cs != nil {
+		if err := cs.ReplaceAll(proxyCfgs, nil); err != nil {
+			return false, fmt.Errorf("frp: update proxy configs: %w", err)
+		}
+		if svc != nil {
+			if err := svc.UpdateConfigSource(commonCfg, proxyCfgs, nil); err != nil {
+				return false, fmt.Errorf("frp: update config source: %w", err)
+			}
+		}
 	}
+
+	// Update in-memory state under the lock
+	m.mu.Lock()
+	m.cfg = cfg
+	m.httpLocalPort = httpLocalPort
+	m.sshLocalPort = sshLocalPort
+	m.mu.Unlock()
+
+	return false, nil
+}
+
+// --- internal helpers ---
+
+// runService runs the frp Service.Run() and handles exit.
+// When Run() returns (whether by context cancellation or error),
+// it ensures the done channel is closed so pollStatus exits.
+func (m *Manager) runService(ctx context.Context, svc *client.Service) {
+	err := svc.Run(ctx)
 
 	m.mu.Lock()
-	m.cmd = cmd
 	if !m.stopped {
-		m.state = StateStarting
+		if err != nil {
+			m.state = StateFailed
+		} else {
+			m.state = StateStopped
+		}
 	}
 	m.mu.Unlock()
 
-	slog.Info("frp: frpc started", slog.Int("pid", cmd.Process.Pid), slog.String("config", configPath))
-
-	// Parse stdout in background
-	go m.parseStdout(stdout)
-
-	return nil
-}
-
-// parseStdout reads frpc stdout line by line and extracts port assignments.
-func (m *Manager) parseStdout(pipe io.Reader) {
-	scanner := bufio.NewScanner(pipe)
-	for scanner.Scan() {
-		line := scanner.Text()
-		slog.Debug("frp: frpc stdout", slog.String("line", line))
-
-		ev := ParseLine(line)
-		if ev == nil {
-			continue
-		}
-
-		switch ev.Type {
-		case "port_assigned":
-			m.mu.Lock()
-			if ev.ProxyName == "clawbench-http" {
-				m.remotePort = ev.RemotePort
-			} else if ev.ProxyName == "clawbench-ssh" {
-				m.sshRemotePort = ev.RemotePort
-			}
-
-			// Once HTTP port is assigned, we're running
-			if m.remotePort > 0 && (m.state == StateStarting || m.state == StateRestarting) {
-				m.state = StateRunning
-				m.retryCount = 0
-
-				status := Status{
-					Enabled:       true,
-					Running:       true,
-					State:         StateRunning,
-					ServerAddr:    m.cfg.ServerAddr,
-					RemotePort:    m.remotePort,
-					SSHRemotePort: m.sshRemotePort,
-					RemoteURL:     FormatRemoteURL(m.cfg.ServerAddr, m.remotePort),
-				}
-
-				// Send to readyCh (non-blocking, channel has buffer 1)
-				select {
-				case m.readyCh <- status:
-				default:
-				}
-
-				emitEvent("running", map[string]any{
-					"remote_url":      status.RemoteURL,
-					"remote_port":     status.RemotePort,
-					"ssh_remote_port": status.SSHRemotePort,
-				})
-			}
-			m.mu.Unlock()
-
-		case "proxy_start":
-			slog.Info("frp: proxy started", slog.String("proxy", ev.ProxyName))
-		}
+	if err != nil {
+		slog.Error("frp: service exited with error", slog.String("err", err.Error()))
+		emitEvent("failed", map[string]any{"error": err.Error()})
+	} else {
+		slog.Info("frp: service stopped")
 	}
 
-	if err := scanner.Err(); err != nil {
-		slog.Warn("frp: stdout scanner error", slog.String("err", err.Error()))
-	}
+	// Ensure pollStatus exits even if Stop() wasn't called
+	m.closeOnce.Do(func() { close(m.done) })
 }
 
-// monitor waits for frpc to exit and restarts with exponential backoff.
-func (m *Manager) monitor() {
+// pollStatus periodically checks proxy status via StatusExporter and updates state.
+func (m *Manager) pollStatus() {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
 	for {
-		m.mu.RLock()
-		cmd := m.cmd
-		m.mu.RUnlock()
-
-		if cmd == nil {
-			return
-		}
-
-		exitErr := cmd.Wait()
-		slog.Warn("frp: frpc exited", slog.String("err", func() string {
-			if exitErr != nil {
-				return exitErr.Error()
-			}
-			return "exit code 0"
-		}()))
-
-		m.mu.Lock()
-		if m.stopped {
-			m.mu.Unlock()
-			return
-		}
-
-		m.retryCount++
-		if m.retryCount > m.maxRetries {
-			m.state = StateFailed
-			m.mu.Unlock()
-			slog.Error("frp: max retries exceeded, giving up", slog.Int("retries", m.retryCount))
-			emitEvent("failed", map[string]any{"error": "max retries exceeded"})
-			return
-		}
-
-		// Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s, 30s, ...
-		delay := m.baseDelay * time.Duration(1<<(m.retryCount-1))
-		if delay > m.maxDelay {
-			delay = m.maxDelay
-		}
-		m.state = StateRestarting
-		m.mu.Unlock()
-
-		slog.Info("frp: restarting frpc", slog.Int("retry", m.retryCount), slog.Duration("delay", delay))
-
-		emitEvent("restarting", map[string]any{
-			"retry":         m.retryCount,
-			"max_retries":   m.maxRetries,
-			"next_delay_ms": delay.Milliseconds(),
-		})
-
-		// Wait with cancellation
 		select {
 		case <-m.done:
 			return
-		case <-time.After(delay):
-		}
-
-		if err := m.startProcess(); err != nil {
-			slog.Error("frp: restart failed", slog.String("err", err.Error()))
+		case <-ticker.C:
+			m.checkProxyStatus()
 		}
 	}
 }
 
-// killProcess kills the frpc process group.
-func (m *Manager) killProcess() {
-	m.mu.Lock()
-	cmd := m.cmd
-	m.cmd = nil
-	m.mu.Unlock()
+// checkProxyStatus queries the frp StatusExporter and updates remote port info.
+func (m *Manager) checkProxyStatus() {
+	m.mu.RLock()
+	svc := m.svc
+	stopped := m.stopped
+	m.mu.RUnlock()
 
-	if cmd == nil || cmd.Process == nil {
+	if svc == nil || stopped {
 		return
 	}
 
-	killProcessGroup(cmd.Process.Pid)
-	_ = cmd.Process.Kill()
+	exporter := svc.StatusExporter()
+	if exporter == nil {
+		return
+	}
+
+	httpStatus, httpOK := exporter.GetProxyStatus("clawbench-http")
+	sshStatus, sshOK := exporter.GetProxyStatus("clawbench-ssh")
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.stopped {
+		return
+	}
+
+	// Extract remote port from RemoteAddr (format: "host:port")
+	if httpOK && httpStatus.Phase == ProxyPhaseRunning && httpStatus.RemoteAddr != "" {
+		m.remotePort = parsePortFromAddr(httpStatus.RemoteAddr)
+	}
+
+	if sshOK && sshStatus.Phase == ProxyPhaseRunning && sshStatus.RemoteAddr != "" {
+		m.sshRemotePort = parsePortFromAddr(sshStatus.RemoteAddr)
+	}
+
+	// Transition to running once HTTP port is assigned
+	if m.remotePort > 0 && (m.state == StateStarting || m.state == StateFailed) {
+		m.state = StateRunning
+
+		status := Status{
+			Enabled:       true,
+			Running:       true,
+			State:         StateRunning,
+			ServerAddr:    m.cfg.ServerAddr,
+			RemotePort:    m.remotePort,
+			SSHRemotePort: m.sshRemotePort,
+			RemoteURL:     FormatRemoteURL(m.cfg.ServerAddr, m.remotePort),
+		}
+
+		// Send to readyCh (non-blocking, channel has buffer 1)
+		select {
+		case m.readyCh <- status:
+		default:
+		}
+
+		emitEvent("running", map[string]any{
+			"remote_url":      status.RemoteURL,
+			"remote_port":     status.RemotePort,
+			"ssh_remote_port": status.SSHRemotePort,
+		})
+	}
+}
+
+// --- config builders (replace config.go) ---
+
+// buildClientCommonConfig constructs the v1.ClientCommonConfig from ClawBench's FRPConfig.
+func buildClientCommonConfig(cfg model.FRPConfig) *v1.ClientCommonConfig {
+	loginFailExit := false // don't exit on login failure — frp will retry
+	cc := &v1.ClientCommonConfig{
+		ServerAddr: cfg.ServerAddr,
+		ServerPort: cfg.ServerPort,
+		Auth: v1.AuthClientConfig{
+			Method: "token",
+			Token:  cfg.Token,
+		},
+		LoginFailExit: &loginFailExit,
+	}
+	cc.Complete() // populate defaults
+	return cc
+}
+
+// buildProxyConfigs constructs proxy configs for HTTP and optional SSH.
+func buildProxyConfigs(cfg model.FRPConfig, httpLocalPort, sshLocalPort int) []v1.ProxyConfigurer {
+	proxies := make([]v1.ProxyConfigurer, 0, 2)
+
+	// HTTP proxy — main ClawBench web interface
+	httpCfg := v1.NewProxyConfigurerByType(v1.ProxyTypeTCP)
+	tcpCfg := httpCfg.(*v1.TCPProxyConfig)
+	tcpCfg.ProxyBaseConfig.Name = "clawbench-http"
+	tcpCfg.ProxyBaseConfig.LocalIP = "127.0.0.1"
+	tcpCfg.ProxyBaseConfig.LocalPort = httpLocalPort
+	tcpCfg.RemotePort = cfg.RemotePort
+	tcpCfg.ProxyBaseConfig.Complete()
+	proxies = append(proxies, httpCfg)
+
+	// SSH proxy — optional, only if SSH tunnel is running
+	if sshLocalPort > 0 {
+		sshCfg := v1.NewProxyConfigurerByType(v1.ProxyTypeTCP)
+		sshTcpCfg := sshCfg.(*v1.TCPProxyConfig)
+		sshTcpCfg.ProxyBaseConfig.Name = "clawbench-ssh"
+		sshTcpCfg.ProxyBaseConfig.LocalIP = "127.0.0.1"
+		sshTcpCfg.ProxyBaseConfig.LocalPort = sshLocalPort
+		sshTcpCfg.RemotePort = cfg.SSHRemotePort
+		sshTcpCfg.ProxyBaseConfig.Complete()
+		proxies = append(proxies, sshCfg)
+	}
+
+	return proxies
+}
+
+// --- utilities (from parser.go) ---
+
+// ProxyPhaseRunning is the frp proxy phase indicating the proxy is active.
+const ProxyPhaseRunning = "running"
+
+// FormatRemoteURL builds the public URL from server address and remote port.
+func FormatRemoteURL(serverAddr string, remotePort int) string {
+	return fmt.Sprintf("http://%s:%d", serverAddr, remotePort)
+}
+
+// parsePortFromAddr extracts the port number from a "host:port" address string.
+func parsePortFromAddr(addr string) int {
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 0
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return 0
+	}
+	return port
 }
 
 // emitEvent broadcasts an frp_status event to connected WS clients.

@@ -72,7 +72,8 @@ var hotReloadFields = map[string]bool{
 	"summarize.api.base_url": true,
 	"summarize.api.key":      true,
 	"summarize.api.format":   true,
-	// FRP — non-enabled fields hot-reload by restarting frpc subprocess
+	// FRP — in-process frp service; enabled can be toggled, other fields hot-reload
+	"frp.enabled":     true,
 	"frp.server_addr": true,
 	"frp.server_port": true,
 	"frp.token":       true,

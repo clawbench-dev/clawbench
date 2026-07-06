@@ -225,7 +225,7 @@ export const categoryItems: Record<string, ItemSpec[]> = {
   ],
   // FRP (Fast Reverse Proxy) remote tunnel — flattened from group
   frp: [
-    { labelKey: 'settings.items.frpEnabled', descriptionKey: 'settings.items.frpEnabledDesc', key: 'frp.enabled', type: 'switch', source: 'server', needsRestart: true, groupConfig: [
+    { labelKey: 'settings.items.frpEnabled', descriptionKey: 'settings.items.frpEnabledDesc', key: 'frp.enabled', type: 'switch', source: 'server', groupConfig: [
       { triggerValue: true, dialogTitleKey: 'settings.groupConfig.frpTitle', fields: ['frp.server_addr', 'frp.server_port', 'frp.token', 'frp.remote_port'], requiredFields: ['frp.server_addr'] },
     ] },
     { labelKey: 'settings.items.frpServerAddr', descriptionKey: 'settings.items.frpServerAddrDesc', key: 'frp.server_addr', type: 'text', source: 'server', dependsOn: { key: 'frp.enabled', value: true } },

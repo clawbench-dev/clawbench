@@ -18,6 +18,11 @@ func SetFRPManager(m *frp.Manager, enabled bool) {
 	frpEnabled = enabled
 }
 
+// GetFRPManager returns the current FRP manager reference (for hot-reload).
+func GetFRPManager() *frp.Manager {
+	return frpManagerRef
+}
+
 // ServeFRPInfo returns full FRP tunnel status. Requires authentication.
 // GET /api/frp/info
 func ServeFRPInfo(w http.ResponseWriter, r *http.Request) {

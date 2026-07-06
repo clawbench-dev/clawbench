@@ -750,35 +750,30 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Initialize FRP tunnel (Fast Reverse Proxy for remote access from Android).
 	// FRP is disabled by default; requires user-provided frps server.
+	// The frp client runs in-process as a Go library — no external binary needed.
 	var frpManagerRef *frp.Manager
 	var frpStatus frp.Status
 	if cfg.FRP.Enabled && cfg.FRP.ServerAddr != "" {
-		binary, err := frp.FindBinary(cfg.FRP.BinaryPath)
-		if err != nil {
-			slog.Warn("FRP enabled but frpc not found, disabling", slog.String("err", err.Error()))
+		sshPort := 0
+		if sshServerRef != nil {
+			sshPort = sshServerRef.Port()
+		}
+		mgr := frp.NewManager(cfg.FRP, port, sshPort)
+		if err := mgr.Start(); err != nil {
+			slog.Warn("FRP failed to start", slog.String("err", err.Error()))
 			cfg.FRP.Enabled = false
 		} else {
-			sshPort := 0
-			if sshServerRef != nil {
-				sshPort = sshServerRef.Port()
-			}
-			mgr := frp.NewManager(cfg.FRP, binary, port, sshPort)
-			if err := mgr.Start(); err != nil {
-				slog.Warn("FRP failed to start", slog.String("err", err.Error()))
-				cfg.FRP.Enabled = false
-			} else {
-				frpManagerRef = mgr
-				defer mgr.Stop()
+			frpManagerRef = mgr
+			defer mgr.Stop()
 
-				select {
-				case frpStatus = <-mgr.OnReady():
-					slog.Info("FRP tunnel enabled",
-						slog.String("server", cfg.FRP.ServerAddr),
-						slog.Int("remotePort", frpStatus.RemotePort),
-					)
-				case <-time.After(30 * time.Second):
-					slog.Warn("FRP port allocation timeout")
-				}
+			select {
+			case frpStatus = <-mgr.OnReady():
+				slog.Info("FRP tunnel enabled",
+					slog.String("server", cfg.FRP.ServerAddr),
+					slog.Int("remotePort", frpStatus.RemotePort),
+				)
+			case <-time.After(30 * time.Second):
+				slog.Warn("FRP port allocation timeout")
 			}
 		}
 	} else if cfg.FRP.Enabled {
@@ -1041,6 +1036,9 @@ func hotReloadReconfigure(port int) {
 
 	// --- Terminal: reconfigure or toggle enabled ---
 	hotReloadTerminal(cfg, port)
+
+	// --- FRP: reconfigure or toggle enabled ---
+	hotReloadFRP(cfg, port)
 }
 
 // newTTSProvider creates a SpeechProvider from TTS config.
@@ -1192,6 +1190,59 @@ func hotReloadTerminal(cfg model.Config, port int) {
 			mgr.CloseAllSessions()
 			handler.SetTerminalManager(nil)
 			slog.Info("hot-reload: terminal disabled")
+		}
+	}
+}
+
+// hotReloadFRP reconfigures or toggles the FRP tunnel on hot-reload.
+func hotReloadFRP(cfg model.Config, port int) {
+	mgr := handler.GetFRPManager()
+
+	// Determine SSH port for FRP proxy
+	sshPort := 0
+	if sshRef := handler.GetSSHServer(); sshRef != nil {
+		sshPort = sshRef.Port()
+	}
+
+	if cfg.FRP.Enabled && cfg.FRP.ServerAddr != "" {
+		if mgr != nil {
+			// FRP is running — try in-place reconfigure
+			needsRestart, err := mgr.Reconfigure(cfg.FRP, port, sshPort)
+			if err != nil {
+				slog.Warn("hot-reload: FRP reconfigure failed", slog.String("err", err.Error()))
+				return
+			}
+			if needsRestart {
+				// Common config changed (server_addr/port/token) — restart service
+				slog.Info("hot-reload: FRP common config changed, restarting")
+				mgr.Stop()
+				newMgr := frp.NewManager(cfg.FRP, port, sshPort)
+				if err := newMgr.Start(); err != nil {
+					slog.Warn("hot-reload: FRP restart failed", slog.String("err", err.Error()))
+					handler.SetFRPManager(nil, false)
+				} else {
+					handler.SetFRPManager(newMgr, true)
+					slog.Info("hot-reload: FRP restarted")
+				}
+			} else {
+				slog.Info("hot-reload: FRP reconfigured (proxy only)")
+			}
+		} else {
+			// FRP was disabled, now enabled — create new Manager
+			newMgr := frp.NewManager(cfg.FRP, port, sshPort)
+			if err := newMgr.Start(); err != nil {
+				slog.Warn("hot-reload: FRP failed to start", slog.String("err", err.Error()))
+			} else {
+				handler.SetFRPManager(newMgr, true)
+				slog.Info("hot-reload: FRP enabled")
+			}
+		}
+	} else {
+		// FRP should be disabled
+		if mgr != nil {
+			mgr.Stop()
+			handler.SetFRPManager(nil, false)
+			slog.Info("hot-reload: FRP disabled")
 		}
 	}
 }
