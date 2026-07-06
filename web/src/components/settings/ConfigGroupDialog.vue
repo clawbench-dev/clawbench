@@ -11,8 +11,12 @@
                 <span v-if="isRequired(field.key)" class="group-dialog__required">*</span>
                 {{ t(field.labelKey) }}
               </label>
+              <label v-if="field.type === 'switch'" class="group-dialog__switch">
+                <input type="checkbox" class="group-dialog__switch-input" v-model="editValues[field.key]" @change="touched = true" />
+                <span class="group-dialog__switch-track"></span>
+              </label>
               <input
-                v-if="field.type === 'password'"
+                v-else-if="field.type === 'password'"
                 :type="showPassword[field.key] ? 'text' : 'password'"
                 class="group-dialog__input"
                 :class="{ 'group-dialog__input--error': isRequired(field.key) && editValues[field.key] === '' && touched }"
@@ -307,6 +311,52 @@ function handleClose() {
 
 .group-dialog__input--error {
   border-color: var(--color-red, #e74c3c);
+}
+
+/* Switch toggle (same style as SettingsItem) */
+.group-dialog__switch {
+  position: relative;
+  display: inline-block;
+  width: 51px;
+  height: 31px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.group-dialog__switch-input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.group-dialog__switch-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 15.5px;
+  background: var(--bg-tertiary);
+  transition: background 0.2s ease;
+}
+
+.group-dialog__switch-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: var(--bg-primary);
+  transition: transform 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.group-dialog__switch-input:checked + .group-dialog__switch-track {
+  background: var(--color-green);
+}
+
+.group-dialog__switch-input:checked + .group-dialog__switch-track::after {
+  transform: translateX(20px);
 }
 
 .group-dialog__eye {

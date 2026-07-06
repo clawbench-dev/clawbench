@@ -347,7 +347,9 @@ const serverDefaults: Record<string, any> = {
   'port_forward.allowed_ports': '1024-65535',
   'frp.enabled': false,
   'frp.server_port': 7000,
+  'frp.auto_port': true,
   'frp.remote_port': 0,
+  'frp.ssh_remote_port': 0,
 }
 
 // ── Agent preference helpers ──────────────────────────────

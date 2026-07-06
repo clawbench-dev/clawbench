@@ -226,12 +226,14 @@ export const categoryItems: Record<string, ItemSpec[]> = {
   // FRP (Fast Reverse Proxy) remote tunnel — flattened from group
   frp: [
     { labelKey: 'settings.items.frpEnabled', descriptionKey: 'settings.items.frpEnabledDesc', key: 'frp.enabled', type: 'switch', source: 'server', groupConfig: [
-      { triggerValue: true, dialogTitleKey: 'settings.groupConfig.frpTitle', fields: ['frp.server_addr', 'frp.server_port', 'frp.token', 'frp.remote_port'], requiredFields: ['frp.server_addr'] },
+      { triggerValue: true, dialogTitleKey: 'settings.groupConfig.frpTitle', fields: ['frp.server_addr', 'frp.server_port', 'frp.token', 'frp.auto_port'], requiredFields: ['frp.server_addr'] },
     ] },
     { labelKey: 'settings.items.frpServerAddr', descriptionKey: 'settings.items.frpServerAddrDesc', key: 'frp.server_addr', type: 'text', source: 'server', dependsOn: { key: 'frp.enabled', value: true } },
     { labelKey: 'settings.items.frpServerPort', descriptionKey: 'settings.items.frpServerPortDesc', key: 'frp.server_port', type: 'number', source: 'server', dependsOn: { key: 'frp.enabled', value: true } },
     { labelKey: 'settings.items.frpToken', descriptionKey: 'settings.items.frpTokenDesc', key: 'frp.token', type: 'password', source: 'server', dependsOn: { key: 'frp.enabled', value: true } },
-    { labelKey: 'settings.items.frpRemotePort', descriptionKey: 'settings.items.frpRemotePortDesc', key: 'frp.remote_port', type: 'number', source: 'server', dependsOn: { key: 'frp.enabled', value: true }, displayTransform: (v: any) => v === 0 ? '__auto__' : v },
+    { labelKey: 'settings.items.frpAutoPort', descriptionKey: 'settings.items.frpAutoPortDesc', key: 'frp.auto_port', type: 'switch', source: 'server', dependsOn: { key: 'frp.enabled', value: true } },
+    { labelKey: 'settings.items.frpRemotePort', descriptionKey: 'settings.items.frpRemotePortDesc', key: 'frp.remote_port', type: 'number', source: 'server', dependsOn: [{ key: 'frp.enabled', value: true }, { key: 'frp.auto_port', value: false }] },
+    { labelKey: 'settings.items.frpSSHRemotePort', descriptionKey: 'settings.items.frpSSHRemotePortDesc', key: 'frp.ssh_remote_port', type: 'number', source: 'server', dependsOn: [{ key: 'frp.enabled', value: true }, { key: 'frp.auto_port', value: false }] },
   ],
   android: [
     { labelKey: 'settings.items.androidLogCapture', descriptionKey: 'settings.items.androidLogCaptureDesc', key: 'androidLogCapture', type: 'switch', source: 'local' },

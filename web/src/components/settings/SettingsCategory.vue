@@ -164,6 +164,33 @@ const renderList = computed(() => {
       if (dot) (item as any).statusDot = dot
     }
 
+    // When frp.auto_port is true and FRP is running, inject read-only info items
+    // showing the actual assigned ports after the auto_port switch
+    if (item.key === 'frp.auto_port' && resolveConfigValue('frp.auto_port') === true && frpState.state === 'running') {
+      result.push(item)
+      if (frpState.remotePort > 0) {
+        result.push({
+          key: '_frp_assigned_http_port',
+          labelKey: 'settings.items.frpAssignedPort',
+          label: t('settings.items.frpAssignedPort'),
+          type: 'info',
+          source: 'local',
+          modelValue: frpState.remotePort,
+        } as any)
+      }
+      if (frpState.sshRemotePort > 0) {
+        result.push({
+          key: '_frp_assigned_ssh_port',
+          labelKey: 'settings.items.frpAssignedSSHPort',
+          label: t('settings.items.frpAssignedSSHPort'),
+          type: 'info',
+          source: 'local',
+          modelValue: frpState.sshRemotePort,
+        } as any)
+      }
+      continue
+    }
+
     result.push(item)
   }
 

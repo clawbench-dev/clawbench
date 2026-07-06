@@ -343,13 +343,21 @@ func buildClientCommonConfig(cfg model.FRPConfig) *v1.ClientCommonConfig {
 func buildProxyConfigs(cfg model.FRPConfig, httpLocalPort, sshLocalPort int) []v1.ProxyConfigurer {
 	proxies := make([]v1.ProxyConfigurer, 0, 2)
 
+	// Resolve remote ports: AutoPort=true → 0 (frps auto-assign), AutoPort=false → user-specified
+	httpRemotePort := cfg.RemotePort
+	sshRemotePort := cfg.SSHRemotePort
+	if cfg.AutoPort {
+		httpRemotePort = 0
+		sshRemotePort = 0
+	}
+
 	// HTTP proxy — main ClawBench web interface
 	httpCfg := v1.NewProxyConfigurerByType(v1.ProxyTypeTCP)
 	tcpCfg := httpCfg.(*v1.TCPProxyConfig)
 	tcpCfg.ProxyBaseConfig.Name = "clawbench-http"
 	tcpCfg.ProxyBaseConfig.LocalIP = "127.0.0.1"
 	tcpCfg.ProxyBaseConfig.LocalPort = httpLocalPort
-	tcpCfg.RemotePort = cfg.RemotePort
+	tcpCfg.RemotePort = httpRemotePort
 	tcpCfg.ProxyBaseConfig.Transport.UseCompression = true
 	tcpCfg.ProxyBaseConfig.Complete()
 	proxies = append(proxies, httpCfg)
@@ -361,7 +369,7 @@ func buildProxyConfigs(cfg model.FRPConfig, httpLocalPort, sshLocalPort int) []v
 		sshTcpCfg.ProxyBaseConfig.Name = "clawbench-ssh"
 		sshTcpCfg.ProxyBaseConfig.LocalIP = "127.0.0.1"
 		sshTcpCfg.ProxyBaseConfig.LocalPort = sshLocalPort
-		sshTcpCfg.RemotePort = cfg.SSHRemotePort
+		sshTcpCfg.RemotePort = sshRemotePort
 		sshTcpCfg.ProxyBaseConfig.Transport.UseCompression = true
 		sshTcpCfg.ProxyBaseConfig.Complete()
 		proxies = append(proxies, sshCfg)
