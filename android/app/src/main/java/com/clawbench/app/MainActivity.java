@@ -1081,35 +1081,41 @@ public class MainActivity extends AppCompatActivity {
      * overwhelmed with two system dialogs at once.
      */
     private void requestBackgroundPermission() {
+        boolean needsStandardBatteryOpt = false;
+
         // Layer 1: Standard Android battery optimization
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
             if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
-                // Not whitelisted — request exemption every launch until granted
+                needsStandardBatteryOpt = true;
                 requestIgnoreBatteryOptimization();
             }
         }
 
         // Layer 2: Chinese OEM auto-start / background permission.
-        // Show at most once per app version — OEMs don't provide an API to check
-        // if their proprietary permission is actually granted, so we need to remind,
-        // but not on every single launch (too intrusive).
+        // OEMs don't provide an API to check if their proprietary permission is granted.
+        // Show OEM settings if:
+        //   - Standard battery opt is still not granted (strongest signal), OR
+        //   - App version changed (catch system updates that revoke OEM permission)
         if (OemUtils.isChineseOem()) {
-            String lastPromptVersion = prefs.getString("oem_prompt_last_version", "");
             String currentVersion = "";
             try {
                 currentVersion = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
             } catch (Exception ignored) {}
             if (currentVersion == null) currentVersion = "";
-            if (!currentVersion.isEmpty() && !currentVersion.equals(lastPromptVersion)) {
-                final String version = currentVersion; // effectively final for lambda
+
+            String lastPromptVersion = prefs.getString("oem_prompt_last_version", "");
+            boolean versionChanged = !currentVersion.isEmpty() && !currentVersion.equals(lastPromptVersion);
+
+            if (needsStandardBatteryOpt || versionChanged) {
+                final String version = currentVersion;
                 prefs.edit().putString("oem_prompt_last_version", version).apply();
                 new Handler(Looper.getMainLooper()).postDelayed(() -> {
                     Intent autoStartIntent = OemUtils.getAutoStartIntent(this);
                     if (autoStartIntent != null) {
                         try {
                             startActivity(autoStartIntent);
-                            AppLog.i(TAG, "Opened OEM auto-start settings (version " + version + ")");
+                            AppLog.i(TAG, "Opened OEM auto-start settings");
                         } catch (Exception e) {
                             AppLog.w(TAG, "Failed to open OEM auto-start settings", e);
                         }
@@ -1118,13 +1124,13 @@ public class MainActivity extends AppCompatActivity {
                         if (batteryIntent != null) {
                             try {
                                 startActivity(batteryIntent);
-                                AppLog.i(TAG, "Opened OEM battery settings (version " + version + ")");
+                                AppLog.i(TAG, "Opened OEM battery settings");
                             } catch (Exception e) {
                                 AppLog.w(TAG, "Failed to open OEM battery settings", e);
                             }
                         }
                     }
-                }, 800);
+                }, needsStandardBatteryOpt ? 1200 : 200); // Longer delay if standard dialog is showing
             }
         }
     }
