@@ -168,13 +168,14 @@ const renderList = computed(() => {
     // showing the actual assigned ports after the auto_port switch
     if (item.key === 'frp.auto_port' && resolveConfigValue('frp.auto_port') === true && resolveConfigValue('frp.enabled') === true) {
       result.push(item)
+      const httpPort = frpState.state === 'running' && frpState.remotePort > 0 ? frpState.remotePort : 0
       result.push({
         key: '_frp_assigned_http_port',
         labelKey: 'settings.items.frpAssignedPort',
         label: t('settings.items.frpAssignedPort'),
         type: 'info',
         source: 'local',
-        modelValue: frpState.state === 'running' && frpState.remotePort > 0 ? String(frpState.remotePort) : '—',
+        modelValue: httpPort > 0 ? httpPort : '—',
       } as any)
       if (frpState.state === 'running' && frpState.sshRemotePort > 0) {
         result.push({
@@ -183,7 +184,7 @@ const renderList = computed(() => {
           label: t('settings.items.frpAssignedSSHPort'),
           type: 'info',
           source: 'local',
-          modelValue: String(frpState.sshRemotePort),
+          modelValue: frpState.sshRemotePort,
         } as any)
       }
       continue
