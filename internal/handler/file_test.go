@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -116,6 +117,130 @@ func TestListDir(t *testing.T) {
 		assert.Equal(t, "file", entry["type"])
 	})
 }
+
+// --- ServeLocalFile with external ?path= query param ---
+
+func TestServeLocalFile_ExternalPath_ServesFile(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Create a file outside the project directory but under WatchDir (a root path)
+	extDir := filepath.Join(env.WatchDir, "external")
+	require.NoError(t, os.MkdirAll(extDir, 0o755))
+	extFile := filepath.Join(extDir, "photo.png")
+	pngData := []byte{
+		0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+		0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+		0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
+		0x54, 0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00,
+		0x00, 0x00, 0x02, 0x00, 0x01, 0xE2, 0x21, 0xBC,
+		0x33, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+		0x44, 0xAE, 0x42, 0x60, 0x82,
+	}
+	require.NoError(t, os.WriteFile(extFile, pngData, 0o644))
+
+	req := newRequest(t, http.MethodGet, "/api/local-file/?path="+url.QueryEscape(extFile), nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeLocalFile, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "image/png", w.Header().Get("Content-Type"))
+}
+
+func TestServeLocalFile_ExternalPath_DownloadMode(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	extDir := filepath.Join(env.WatchDir, "external")
+	require.NoError(t, os.MkdirAll(extDir, 0o755))
+	extFile := filepath.Join(extDir, "data.csv")
+	require.NoError(t, os.WriteFile(extFile, []byte("a,b,c\n1,2,3\n"), 0o644))
+
+	req := newRequest(t, http.MethodGet, "/api/local-file/?download=1&path="+url.QueryEscape(extFile), nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeLocalFile, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Header().Get("Content-Disposition"), "attachment")
+	assert.Contains(t, w.Header().Get("Content-Disposition"), "data.csv")
+}
+
+func TestServeLocalFile_ExternalPath_NotFound_Returns404(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/local-file/?path="+url.QueryEscape(filepath.Join(env.WatchDir, "nonexistent.txt")), nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeLocalFile, req)
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+func TestServeLocalFile_ExternalPath_RelativePath_Returns400(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// ?path= with a relative path should be rejected
+	req := newRequest(t, http.MethodGet, "/api/local-file/?path=relative/path.txt", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeLocalFile, req)
+	assertStatus(t, w, http.StatusBadRequest)
+}
+
+func TestServeLocalFile_ExternalPath_OutsideRoot_Returns403(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Try to access a path outside the configured root paths
+	// On most systems /etc/hostname exists, but it's outside env.WatchDir
+	// We construct a path that is definitely outside WatchDir
+	outsidePath := "/proc/version" // unlikely to be under WatchDir
+	req := newRequest(t, http.MethodGet, "/api/local-file/?path="+url.QueryEscape(outsidePath), nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeLocalFile, req)
+	// Should be 403 (AccessDenied) since /proc is not under WatchDir
+	assertStatus(t, w, http.StatusForbidden)
+}
+
+// --- GetFile with ?path= root path validation ---
+
+func TestGetFile_ExternalPath_OutsideRoot_Returns403(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Try to access a path outside the configured root paths
+	outsidePath := "/proc/version"
+	req := newRequest(t, http.MethodGet, "/api/file/?path="+url.QueryEscape(outsidePath), nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(GetFile, req)
+	assertStatus(t, w, http.StatusForbidden)
+}
+
+func TestGetFile_ExternalPath_UnderRoot_ServesFile(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Create a file under WatchDir (which is a root path)
+	extFile := filepath.Join(env.WatchDir, "external-readme.md")
+	require.NoError(t, os.WriteFile(extFile, []byte("# Hello"), 0o644))
+
+	req := newRequest(t, http.MethodGet, "/api/file/?path="+url.QueryEscape(extFile), nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(GetFile, req)
+	assertOK(t, w)
+
+	var result FileContent
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, "# Hello", result.Content)
+	assert.Equal(t, extFile, result.Path) // external files return absolute path
+}
+
 
 func TestGetFile_DoubleSlashPath(t *testing.T) {
 	t.Run("DoubleSlashPath_ReturnsFileContent", func(t *testing.T) {
@@ -901,7 +1026,9 @@ func TestGetFile_ExternalPathNotExisting_Returns404(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := newRequest(t, http.MethodGet, "/api/file?path=/nonexistent/file.txt", nil)
+	// Use a path under WatchDir (root path) that doesn't exist
+	missingPath := filepath.Join(env.WatchDir, "nonexistent", "file.txt")
+	req := newRequest(t, http.MethodGet, "/api/file?path="+url.QueryEscape(missingPath), nil)
 	withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(GetFile, req)

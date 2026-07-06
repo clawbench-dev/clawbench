@@ -28,6 +28,21 @@ describe('buildLocalFileUrl', () => {
   it('handles simple filename without slashes', () => {
     expect(buildLocalFileUrl('readme.md')).toBe('/api/local-file/readme.md')
   })
+
+  it('uses ?path= query param for absolute paths', () => {
+    const url = buildLocalFileUrl('/home/user/docs/report.pdf')
+    expect(url).toBe('/api/local-file/?path=%2Fhome%2Fuser%2Fdocs%2Freport.pdf')
+  })
+
+  it('uses ?path= query param for absolute paths with download', () => {
+    const url = buildLocalFileUrl('/tmp/data.csv', { download: true })
+    expect(url).toBe('/api/local-file/?download=1&path=%2Ftmp%2Fdata.csv')
+  })
+
+  it('uses ?path= query param for absolute paths with timestamp', () => {
+    const url = buildLocalFileUrl('/var/log/syslog', { timestamp: true })
+    expect(url).toMatch(/\/api\/local-file\/\?t=\d+&path=%2Fvar%2Flog%2Fsyslog/)
+  })
 })
 
 describe('downloadFileByPath', () => {
@@ -49,6 +64,20 @@ describe('downloadFileByPath', () => {
 
     appendChildSpy.mockRestore()
     // Clean up the anchor if still in the DOM
+    anchor.remove()
+  })
+
+  it('creates anchor element with ?path= for absolute paths', () => {
+    const appendChildSpy = vi.spyOn(document.body, 'appendChild')
+    downloadFileByPath('/home/user/docs/report.pdf')
+
+    expect(appendChildSpy).toHaveBeenCalled()
+    const anchor = appendChildSpy.mock.calls[0][0] as HTMLAnchorElement
+    expect(anchor.href).toContain('/api/local-file/')
+    expect(anchor.href).toContain('path=')
+    expect(anchor.download).toBe('report.pdf')
+
+    appendChildSpy.mockRestore()
     anchor.remove()
   })
 })

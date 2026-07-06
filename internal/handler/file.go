@@ -166,6 +166,10 @@ func resolveFilePath(w http.ResponseWriter, r *http.Request, projectPath string)
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidFilePath")
 			return "", false, false
 		}
+		if !isPathUnderAnyRoot(absPath) {
+			writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+			return "", false, false
+		}
 		return absPath, true, true
 	}
 
@@ -323,32 +327,55 @@ func responsePath(absPath, projectPath string, isExternal bool) string {
 }
 
 // ServeLocalFile serves a file directly (for images, PDFs, etc.).
+// Supports project-relative paths via URL path and absolute paths via ?path=
+// query param (for files outside the project directory).
 func ServeLocalFile(w http.ResponseWriter, r *http.Request) {
 	projectPath, ok := requireProject(w, r)
 	if !ok {
 		return
 	}
 
-	filepathStr := r.URL.Path
-	if !strings.HasPrefix(filepathStr, "/api/local-file/") {
-		http.NotFound(w, r)
-		return
-	}
-	filepathStr = filepathStr[len("/api/local-file/"):]
-	// Strip leading slashes to handle double-slash URLs (/api/local-file//path)
-	// caused by encodeURIComponent("/path") which encodes as %2Fpath.
-	filepathStr = strings.TrimLeft(filepathStr, "/")
-	filepathStr = path.Clean(filepathStr)
+	var absPath string
+	if queryPath := r.URL.Query().Get("path"); queryPath != "" {
+		// Absolute path via ?path= — serves files outside the project directory
+		if !strings.HasPrefix(queryPath, "/") && !filepath.IsAbs(queryPath) {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidPath")
+			return
+		}
+		var err error
+		absPath, err = filepath.Abs(queryPath)
+		if err != nil {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidPath")
+			return
+		}
+		if !isPathUnderAnyRoot(absPath) {
+			writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+			return
+		}
+	} else {
+		// Project-relative path from URL path
+		filepathStr := r.URL.Path
+		if !strings.HasPrefix(filepathStr, "/api/local-file/") {
+			http.NotFound(w, r)
+			return
+		}
+		filepathStr = filepathStr[len("/api/local-file/"):]
+		// Strip leading slashes to handle double-slash URLs (/api/local-file//path)
+		// caused by encodeURIComponent("/path") which encodes as %2Fpath.
+		filepathStr = strings.TrimLeft(filepathStr, "/")
+		filepathStr = path.Clean(filepathStr)
 
-	if filepathStr == ".." || path.IsAbs(filepathStr) {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidPath")
-		return
-	}
+		if filepathStr == ".." || path.IsAbs(filepathStr) {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidPath")
+			return
+		}
 
-	basePath, _ := filepath.Abs(projectPath)
-	absPath, ok := validateAndResolvePath(w, r, basePath, filepathStr)
-	if !ok {
-		return
+		basePath, _ := filepath.Abs(projectPath)
+		var valid bool
+		absPath, valid = validateAndResolvePath(w, r, basePath, filepathStr)
+		if !valid {
+			return
+		}
 	}
 
 	info, err := os.Stat(absPath)
