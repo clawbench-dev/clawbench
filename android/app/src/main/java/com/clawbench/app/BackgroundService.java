@@ -253,8 +253,6 @@ public class BackgroundService extends Service {
     }
 
     /**
-     * Set whether the persistent (foreground service) notification is enabled.
-    /**
      * Update the terminal session count (called from WebAppInterface JS bridge).
      * Updates the foreground notification to show the current terminal count.
      */

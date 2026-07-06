@@ -411,11 +411,7 @@ function getAgentThinkingPref(agentId: string): string | null {
 export function useSettingsConfig() {
   /** Sync local-only settings from Android native to keep WebView and native state in sync. */
   function syncNativeSettings() {
-    try {
-      const native = (window as any).AndroidNative
-      // No native settings to sync currently
-      void native
-    } catch { /* not in app mode */ }
+    // No native settings to sync currently
   }
 
   async function loadConfig() {
