@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getServerFieldToLabelKey, categoryItems, drillDownCategories, isDrillDownCategory, type ItemSpec } from '@/components/settings/settingsFieldMap'
+import { getServerFieldToLabelKey, categoryItems, drillDownCategories, isDrillDownCategory } from '@/components/settings/settingsFieldMap'
 
 describe('settingsFieldMap', () => {
   it('maps all server-side dot-path keys to i18n label keys', () => {
@@ -16,7 +16,7 @@ describe('settingsFieldMap', () => {
     expect(map['upload.max_size_mb']).toBeTruthy()
 
     // All mapped values should be i18n keys (settings.items.* or settings.categories.* for headers)
-    for (const [key, labelKey] of Object.entries(map)) {
+    for (const labelKey of Object.values(map)) {
       expect(labelKey).toMatch(/^settings\.(items|categories)\./)
     }
   })
@@ -83,7 +83,7 @@ describe('settingsFieldMap', () => {
 
   it('every server item in categoryItems has a corresponding field map entry', () => {
     const map = getServerFieldToLabelKey()
-    for (const [category, items] of Object.entries(categoryItems)) {
+    for (const items of Object.values(categoryItems)) {
       for (const item of items) {
         if (item.source === 'server' && item.key !== 'serverVersion' && item.key !== 'restart') {
           expect(map[item.key]).toBeDefined()
