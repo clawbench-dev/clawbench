@@ -73,11 +73,13 @@ var hotReloadFields = map[string]bool{
 	"summarize.api.key":      true,
 	"summarize.api.format":   true,
 	// FRP — in-process frp service; enabled can be toggled, other fields hot-reload
-	"frp.enabled":     true,
-	"frp.server_addr": true,
-	"frp.server_port": true,
-	"frp.token":       true,
-	"frp.remote_port": true,
+	"frp.enabled":         true,
+	"frp.server_addr":     true,
+	"frp.server_port":     true,
+	"frp.token":           true,
+	"frp.auto_port":       true,
+	"frp.remote_port":     true,
+	"frp.ssh_remote_port": true,
 }
 
 // restartGracePeriod is the delay before shutting down the server after a restart
@@ -204,11 +206,13 @@ type configPortForward struct {
 }
 
 type configFRP struct {
-	Enabled    bool   `json:"enabled"`
-	ServerAddr string `json:"server_addr"`
-	ServerPort int    `json:"server_port"`
-	Token      string `json:"token"` // masked in GET, accepted in PATCH
-	RemotePort int    `json:"remote_port"`
+	Enabled       bool   `json:"enabled"`
+	ServerAddr    string `json:"server_addr"`
+	ServerPort    int    `json:"server_port"`
+	Token         string `json:"token"` // masked in GET, accepted in PATCH
+	AutoPort      bool   `json:"auto_port"`
+	RemotePort    int    `json:"remote_port"`
+	SSHRemotePort int    `json:"ssh_remote_port"`
 }
 
 type configSummarize struct {
@@ -260,7 +264,9 @@ var PatchableConfigPaths = map[string]bool{
 	"frp.server_addr":             true,
 	"frp.server_port":             true,
 	"frp.token":                   true,
+	"frp.auto_port":               true,
 	"frp.remote_port":             true,
+	"frp.ssh_remote_port":         true,
 	"summarize.backend":           true,
 	"summarize.model":             true,
 	"summarize.api.base_url":      true,
@@ -382,11 +388,13 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			Port:    cfg.PortForward.Port,
 		},
 		FRP: configFRP{
-			Enabled:    cfg.FRP.Enabled,
-			ServerAddr: cfg.FRP.ServerAddr,
-			ServerPort: cfg.FRP.ServerPort,
-			Token:      maskAPIKey(cfg.FRP.Token),
-			RemotePort: cfg.FRP.RemotePort,
+			Enabled:       cfg.FRP.Enabled,
+			ServerAddr:    cfg.FRP.ServerAddr,
+			ServerPort:    cfg.FRP.ServerPort,
+			Token:         maskAPIKey(cfg.FRP.Token),
+			AutoPort:      cfg.FRP.AutoPort,
+			RemotePort:    cfg.FRP.RemotePort,
+			SSHRemotePort: cfg.FRP.SSHRemotePort,
 		},
 		Summarize: configSummarize{
 			Backend: cfg.Summarize.Backend,
@@ -752,6 +760,9 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		if v, ok := frp["remote_port"].(float64); ok && (v < 0 || v > 65535) {
 			return fmt.Errorf("frp.remote_port must be between 0 and 65535")
 		}
+		if v, ok := frp["ssh_remote_port"].(float64); ok && (v < 0 || v > 65535) {
+			return fmt.Errorf("frp.ssh_remote_port must be between 0 and 65535")
+		}
 	}
 
 	return nil
@@ -924,8 +935,14 @@ func applyConfigPatch(patch map[string]any) error { //nolint:gocognit,gocyclo //
 		if v, ok := frp["token"].(string); ok {
 			cfg.FRP.Token = v
 		}
+		if v, ok := frp["auto_port"].(bool); ok {
+			cfg.FRP.AutoPort = v
+		}
 		if v, ok := frp["remote_port"].(float64); ok {
 			cfg.FRP.RemotePort = int(v)
+		}
+		if v, ok := frp["ssh_remote_port"].(float64); ok {
+			cfg.FRP.SSHRemotePort = int(v)
 		}
 	}
 
