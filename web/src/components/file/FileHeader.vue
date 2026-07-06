@@ -187,10 +187,10 @@ const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObs
     if (hasToc.value) ids.push('search')
     ids.push('attach')
     ids.push('refresh')
-    if (isMarkdown.value || isHtml.value) ids.push('toggleView')
-    if (!isMarkdownRendered.value) ids.push('wordWrap')
-    if (!isMarkdownRendered.value) ids.push('lineNumbers')
-    if (!isMarkdownRendered.value) ids.push('stickyScroll')
+    if (!isMediaFile.value && (isMarkdown.value || isHtml.value)) ids.push('toggleView')
+    if (!isMediaFile.value && !isMarkdownRendered.value) ids.push('wordWrap')
+    if (!isMediaFile.value && !isMarkdownRendered.value) ids.push('lineNumbers')
+    if (!isMediaFile.value && !isMarkdownRendered.value) ids.push('stickyScroll')
     return ids
   },
   { inlineCount: 1, gap: 8 },
@@ -219,6 +219,10 @@ const fileType = computed(() => props.file ? getFileType(props.file.name) : null
 const isMarkdown = computed(() => fileType.value?.isMarkdown || false)
 const isHtml = computed(() => fileType.value?.isHtml || false)
 const isMarkdownRendered = computed(() => (isMarkdown.value || isHtml.value) && props.viewMode === 'rendered')
+const isMediaFile = computed(() => {
+    const ft = fileType.value
+    return ft?.isImage || ft?.isAudio || ft?.isVideo || ft?.isPdf || false
+})
 const hasToc = computed(() => {
     if (!props.file) return false
     const ft = fileType.value

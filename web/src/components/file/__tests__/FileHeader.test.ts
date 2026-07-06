@@ -264,4 +264,65 @@ describe('FileHeader', () => {
     await nextTick()
     expect(getMenuOpen(wrapper)).toBe(false)
   })
+
+  describe('media file filtering', () => {
+    it('hides code-only toolbar items for image files', async () => {
+      const wrapper = mountHeader({ file: { name: 'photo.png', path: '/tmp/photo.png', content: '' } })
+      const vm = wrapper.vm as any
+      expect(vm.$.setupState.isMediaFile).toBe(true)
+      // wordWrap, lineNumbers, stickyScroll should not be in toolbar IDs
+      const ids = vm.$.setupState.toolbarInlineIds
+      expect(ids).not.toContain('wordWrap')
+      expect(ids).not.toContain('lineNumbers')
+      expect(ids).not.toContain('stickyScroll')
+      expect(ids).not.toContain('toggleView')
+      // attach and refresh should still be available
+      expect(ids).toContain('attach')
+      expect(ids).toContain('refresh')
+    })
+
+    it('hides code-only toolbar items for audio files', async () => {
+      const wrapper = mountHeader({ file: { name: 'song.mp3', path: '/tmp/song.mp3', content: '' } })
+      const vm = wrapper.vm as any
+      expect(vm.$.setupState.isMediaFile).toBe(true)
+      const ids = vm.$.setupState.toolbarInlineIds
+      expect(ids).not.toContain('wordWrap')
+      expect(ids).not.toContain('lineNumbers')
+      expect(ids).not.toContain('stickyScroll')
+    })
+
+    it('hides code-only toolbar items for video files', async () => {
+      const wrapper = mountHeader({ file: { name: 'clip.mp4', path: '/tmp/clip.mp4', content: '' } })
+      const vm = wrapper.vm as any
+      expect(vm.$.setupState.isMediaFile).toBe(true)
+      const ids = vm.$.setupState.toolbarInlineIds
+      expect(ids).not.toContain('wordWrap')
+      expect(ids).not.toContain('lineNumbers')
+      expect(ids).not.toContain('stickyScroll')
+    })
+
+    it('hides code-only toolbar items for PDF files', async () => {
+      const wrapper = mountHeader({ file: { name: 'doc.pdf', path: '/tmp/doc.pdf', content: '' } })
+      const vm = wrapper.vm as any
+      expect(vm.$.setupState.isMediaFile).toBe(true)
+      const ids = vm.$.setupState.toolbarInlineIds
+      expect(ids).not.toContain('wordWrap')
+      expect(ids).not.toContain('lineNumbers')
+      expect(ids).not.toContain('stickyScroll')
+      expect(ids).not.toContain('toggleView')
+      // PDF keeps TOC and search
+      expect(ids).toContain('toc')
+      expect(ids).toContain('search')
+    })
+
+    it('shows code toolbar items for text files', async () => {
+      const wrapper = mountHeader({ file: { name: 'main.ts', path: '/tmp/main.ts', content: 'code' } })
+      const vm = wrapper.vm as any
+      expect(vm.$.setupState.isMediaFile).toBe(false)
+      const ids = vm.$.setupState.toolbarInlineIds
+      expect(ids).toContain('wordWrap')
+      expect(ids).toContain('lineNumbers')
+      expect(ids).toContain('stickyScroll')
+    })
+  })
 })
