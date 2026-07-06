@@ -1929,7 +1929,7 @@ func TestFinalizeOrphanedStreamingMessages_NilDB(t *testing.T) {
 
 	// Should return early without panic
 	assert.NotPanics(t, func() {
-		finalizeOrphanedStreamingMessages("session-orphan-nil")
+		finalizeOrphanedStreamingMessages("session-orphan-nil", "")
 	})
 }
 
@@ -1940,7 +1940,7 @@ func TestFinalizeOrphanedStreamingMessages_NoOrphans(t *testing.T) {
 
 	// No streaming messages → should return without error
 	assert.NotPanics(t, func() {
-		finalizeOrphanedStreamingMessages("session-no-orphans")
+		finalizeOrphanedStreamingMessages("session-no-orphans", "")
 	})
 }
 
@@ -1960,7 +1960,7 @@ func TestFinalizeOrphanedStreamingMessages_WithOrphan(t *testing.T) {
 	require.NoError(t, err)
 
 	// Finalize orphans
-	finalizeOrphanedStreamingMessages(sessionID)
+	finalizeOrphanedStreamingMessages(sessionID, "")
 
 	// Wait briefly for the async goroutine in SetSessionRunning to complete
 	time.Sleep(50 * time.Millisecond)
@@ -2005,7 +2005,7 @@ func TestFinalizeOrphanedStreamingMessages_WithAlreadyCancelledContent(t *testin
 	)
 	require.NoError(t, err)
 
-	finalizeOrphanedStreamingMessages(sessionID)
+	finalizeOrphanedStreamingMessages(sessionID, "")
 	time.Sleep(50 * time.Millisecond)
 
 	// Content should NOT have an additional warning block (already cancelled)
@@ -2042,7 +2042,7 @@ func TestFinalizeOrphanedStreamingMessages_WithInvalidJSON(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	finalizeOrphanedStreamingMessages(sessionID)
+	finalizeOrphanedStreamingMessages(sessionID, "")
 	time.Sleep(50 * time.Millisecond)
 
 	// Invalid JSON → fallback content with text block + cancelled=true
@@ -2074,11 +2074,6 @@ func TestFinalizeOrphanedStreamingMessages_UserCancelNoWarning(t *testing.T) {
 	defer cleanup()
 
 	sessionID := "session-orphan-user-cancel"
-	cleanupCancelReasons()
-	defer cleanupCancelReasons()
-
-	// Simulate user-initiated cancel: set the cancel reason
-	sessionCancelReasons.Store(sessionID, "user")
 
 	// Insert a streaming=1 assistant message (orphan)
 	validContent := `{"blocks":[{"type":"text","text":"partial answer"}]}`
@@ -2088,8 +2083,8 @@ func TestFinalizeOrphanedStreamingMessages_UserCancelNoWarning(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Finalize orphans
-	finalizeOrphanedStreamingMessages(sessionID)
+	// Finalize orphans with user cancel reason — should NOT add warning block
+	finalizeOrphanedStreamingMessages(sessionID, "user")
 	time.Sleep(50 * time.Millisecond)
 
 	// Verify: cancelled=true, but NO warning block (user intentionally cancelled)
@@ -2132,7 +2127,7 @@ func TestFinalizeOrphanedStreamingMessages_MultipleOrphans(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	finalizeOrphanedStreamingMessages(sessionID)
+	finalizeOrphanedStreamingMessages(sessionID, "")
 	time.Sleep(50 * time.Millisecond)
 
 	// Both messages should be finalized
@@ -2179,4 +2174,60 @@ func TestSetSessionRunning_FalseTriggersOrphanFinalization(t *testing.T) {
 	).Scan(&streaming)
 	require.NoError(t, err)
 	assert.Equal(t, 0, streaming, "orphan should be finalized when session stops")
+}
+
+// Verify the race condition fix: when user cancels, SetSessionRunning captures
+// the cancelReason before launching the goroutine. Even if GetAndClearCancelReason
+// is called after SetSessionRunning (as buildResult would do in the concurrent
+// session executor goroutine), the finalizeOrphanedStreamingMessages goroutine
+// receives the captured reason directly, so it correctly skips the warning.
+func TestSetSessionRunning_UserCancelNoOrphanWarning(t *testing.T) {
+	cleanupActiveSessions()
+	defer cleanupActiveSessions()
+
+	db := setupChatTestDB(t)
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	sessionID := "session-user-cancel-race"
+	cleanupCancelReasons()
+	defer cleanupCancelReasons()
+
+	// Insert a streaming=1 orphan message
+	validContent := `{"blocks":[{"type":"text","text":"partial answer"}]}`
+	_, err := db.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
+		"/test", "assistant", validContent, sessionID,
+	)
+	require.NoError(t, err)
+
+	// Simulate user cancel: set the reason, then call SetSessionRunning(false)
+	// which captures the reason before launching the goroutine.
+	SetCancelReason(sessionID, "user")
+	SetSessionRunning(sessionID, false, true)
+
+	// Simulate concurrent buildResult clearing the reason after the goroutine
+	// was already launched — the goroutine has the captured value, so this is safe.
+	GetAndClearCancelReason(sessionID)
+
+	// Wait for async goroutine to complete
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify: cancelled=true, but NO warning block (user intentionally cancelled)
+	var streaming int
+	var updatedContent string
+	err = db.QueryRow(
+		"SELECT content, streaming FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1",
+		sessionID,
+	).Scan(&updatedContent, &streaming)
+	require.NoError(t, err)
+	assert.Equal(t, 0, streaming)
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal([]byte(updatedContent), &parsed))
+	assert.Equal(t, true, parsed["cancelled"])
+	blocks, ok := parsed["blocks"].([]any)
+	require.True(t, ok)
+	// Should have 1 block only — no warning block for user cancel
+	assert.Equal(t, 1, len(blocks))
 }

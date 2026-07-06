@@ -188,7 +188,10 @@ func SetSessionRunning(sessionID string, running bool, skipEvent ...bool) {
 		// Safety net: finalize any orphaned streaming=1 messages for this session.
 		// This handles the case where FinalizeStreamingMessage failed due to SQLITE_BUSY
 		// during the stream, leaving the message stuck at streaming=1 forever.
-		go finalizeOrphanedStreamingMessages(sessionID)
+		// Capture cancel reason now — GetAndClearCancelReason in buildResult may
+		// clear it before the goroutine runs, causing a false warning for user cancels.
+		cancelReason := GetCancelReason(sessionID)
+		go finalizeOrphanedStreamingMessages(sessionID, cancelReason)
 	}
 
 	// Emit event unless caller explicitly skips (e.g. CancelSession sends its own event)
@@ -207,7 +210,9 @@ func SetSessionRunning(sessionID string, running bool, skipEvent ...bool) {
 
 // finalizeOrphanedStreamingMessages checks for and finalizes any streaming=1
 // assistant messages left behind for a session (e.g. due to SQLITE_BUSY failures).
-func finalizeOrphanedStreamingMessages(sessionID string) {
+// cancelReason is captured at the time SetSessionRunning(false) is called to avoid
+// a race with GetAndClearCancelReason in buildResult clearing the value first.
+func finalizeOrphanedStreamingMessages(sessionID string, cancelReason string) {
 	if db == nil {
 		return
 	}
@@ -249,7 +254,6 @@ func finalizeOrphanedStreamingMessages(sessionID string) {
 				contentMap["cancelled"] = true
 				// For user-initiated cancel, just mark cancelled without a warning block.
 				// The frontend renders a clean "cancelled" badge — no alarming warning needed.
-				cancelReason := GetCancelReason(sessionID)
 				if cancelReason != "user" {
 					blocks, _ := contentMap["blocks"].([]any)
 					blocks = append(blocks, map[string]any{
@@ -329,7 +333,9 @@ func GetAndClearCancelReason(sessionID string) string {
 }
 
 // GetCancelReason returns the cancellation reason without clearing it.
-// Used by finalizeOrphanedStreamingMessages to decide how to mark orphaned messages.
+// Used by SetSessionRunning to capture the reason before launching the
+// finalizeOrphanedStreamingMessages goroutine, avoiding a race with
+// GetAndClearCancelReason in buildResult.
 func GetCancelReason(sessionID string) string {
 	val, ok := sessionCancelReasons.Load(sessionID)
 	if !ok {
