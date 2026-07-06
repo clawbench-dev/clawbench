@@ -164,28 +164,26 @@ const renderList = computed(() => {
       if (dot) (item as any).statusDot = dot
     }
 
-    // When frp.auto_port is true and FRP is running, inject read-only info items
+    // When frp.auto_port is true, inject read-only info items
     // showing the actual assigned ports after the auto_port switch
-    if (item.key === 'frp.auto_port' && resolveConfigValue('frp.auto_port') === true && frpState.state === 'running') {
+    if (item.key === 'frp.auto_port' && resolveConfigValue('frp.auto_port') === true && resolveConfigValue('frp.enabled') === true) {
       result.push(item)
-      if (frpState.remotePort > 0) {
-        result.push({
-          key: '_frp_assigned_http_port',
-          labelKey: 'settings.items.frpAssignedPort',
-          label: t('settings.items.frpAssignedPort'),
-          type: 'info',
-          source: 'local',
-          modelValue: frpState.remotePort,
-        } as any)
-      }
-      if (frpState.sshRemotePort > 0) {
+      result.push({
+        key: '_frp_assigned_http_port',
+        labelKey: 'settings.items.frpAssignedPort',
+        label: t('settings.items.frpAssignedPort'),
+        type: 'info',
+        source: 'local',
+        modelValue: frpState.state === 'running' && frpState.remotePort > 0 ? String(frpState.remotePort) : '—',
+      } as any)
+      if (frpState.state === 'running' && frpState.sshRemotePort > 0) {
         result.push({
           key: '_frp_assigned_ssh_port',
           labelKey: 'settings.items.frpAssignedSSHPort',
           label: t('settings.items.frpAssignedSSHPort'),
           type: 'info',
           source: 'local',
-          modelValue: frpState.sshRemotePort,
+          modelValue: String(frpState.sshRemotePort),
         } as any)
       }
       continue
