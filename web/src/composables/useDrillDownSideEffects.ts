@@ -1,4 +1,4 @@
-import { computed } from 'vue'
+import { computed, unref } from 'vue'
 import type { Ref } from 'vue'
 import { useTerminalStatus } from '@/composables/useTerminalStatus'
 import { usePortForward } from '@/composables/usePortForward'
@@ -9,8 +9,7 @@ export function useDrillDownSideEffects(categoryId: Ref<string> | string) {
   const { loadSSHInfo } = usePortForward()
   const { frpState, fetchFrpInfo } = useFrp()
 
-  // Resolve categoryId (supports both ref and plain string)
-  const catId = typeof categoryId === 'string' ? categoryId : categoryId
+  const catId = unref(categoryId)
 
   /** Run after successful save. changedKeys = dot-paths that were PATCHed. */
   function afterSave(changedKeys: string[]) {

@@ -61,7 +61,7 @@
       <!-- FRP auto_port info injection -->
       <template v-if="entry.type === 'field' && entry.field.key === 'frp.auto_port' && isFrpAutoPortActive">
         <SettingsItem
-          label=""
+          :label="t('settings.items.frpAssignedPort')"
           :description="''"
           type="info"
           :model-value="frpHttpPortDisplay"
@@ -69,7 +69,7 @@
         />
         <SettingsItem
           v-if="frpSshPortDisplay"
-          label=""
+          :label="t('settings.items.frpAssignedSSHPort')"
           :description="''"
           type="info"
           :model-value="frpSshPortDisplay"
@@ -408,7 +408,11 @@ const hasChanges = computed(() => {
 const canSave = computed(() => {
   const cfg = config.value
   const required = cfg.requiredFields ?? []
+  if (required.length === 0) return true
+  // Only check required fields that are currently visible in the render list
+  const visibleKeys = new Set(renderList.value.filter(e => e.type === 'field').map(e => e.key))
   for (const key of required) {
+    if (!visibleKeys.has(key)) continue
     const val = localValues[key]
     if (val === '' || val === null || val === undefined) return false
   }
@@ -418,8 +422,9 @@ const canSave = computed(() => {
 const needsRestartHint = computed(() => {
   const snap = snapshot.value
   for (const key of getAllFieldKeys()) {
+    const spec = findFieldSpec(key)
+    if (spec?.type === 'password' && (localValues[key] === '' || localValues[key] === null || localValues[key] === undefined)) continue
     if (localValues[key] !== snap[key]) {
-      const spec = findFieldSpec(key)
       if (spec?.needsRestart) return true
     }
   }
