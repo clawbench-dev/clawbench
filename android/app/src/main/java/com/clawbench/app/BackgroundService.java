@@ -101,6 +101,8 @@ public class BackgroundService extends Service {
     private static final int MONITOR_CHECK_INTERVAL_MS = 15000;
     // WakeLock timeout: re-acquired via ensureWakeLock() before network operations
     private static final long WAKELOCK_TIMEOUT_MS = 60_000L;
+    // Delay after WS ping send before releasing WakeLock — gives pong time to arrive
+    private static final long WS_PING_WAKELOCK_RELEASE_DELAY_MS = 5_000L;
 
     // Adaptive WebSocket ping intervals (milliseconds)
     private static final int WS_PING_FAST_MS = 30000;       // Screen on / recently active
@@ -1454,10 +1456,16 @@ public class BackgroundService extends Service {
     // --- WebSocket application-layer ping ---
 
     /**
-     * Get the current adaptive ping interval based on screen state.
+     * Get the current adaptive ping interval based on screen state and power mode.
      * Screen on → 30s, screen off ramps up: 30s→60s→120s→300s.
+     * Power save mode → always 300s (minimize radio wakeups).
      */
     private int getCurrentPingInterval() {
+        // Power save mode: force minimum ping interval to reduce battery drain
+        PowerManager pm = (PowerManager) getApplicationContext().getSystemService(Context.POWER_SERVICE);
+        if (pm != null && pm.isPowerSaveMode()) {
+            return WS_PING_VERY_SLOW_MS;
+        }
         if (screenOn) return WS_PING_FAST_MS;
         if (screenOffTime == 0) return WS_PING_FAST_MS;
         long offDuration = System.currentTimeMillis() - screenOffTime;
@@ -1508,6 +1516,11 @@ public class BackgroundService extends Service {
                         return;
                     }
                     AppLog.d(TAG, "NativeWS: sent app-layer ping");
+                    // Release WakeLock after brief delay to allow pong response,
+                    // but don't hold it for the full 60s timeout — saves CPU
+                    // between pings when screen is off.
+                    wsPingHandler.postDelayed(() -> maybeReleaseWakeLock(),
+                            WS_PING_WAKELOCK_RELEASE_DELAY_MS);
                     wsPingHandler.postDelayed(this, getCurrentPingInterval());
                 }
             }
@@ -1944,9 +1957,9 @@ public class BackgroundService extends Service {
         int displayAttempt = Math.min(nativeWsReconnectAttempt, 999);
         AppLog.i(TAG, "NativeWS: reconnecting in " + delay + "ms (attempt " + displayAttempt + ")");
 
-        // Release locks during reconnect backoff — re-acquired before connect attempt
+        // Release WakeLock during reconnect backoff — re-acquired before connect attempt
+        // WifiLock not released here — WS never acquires it (only SSH does)
         maybeReleaseWakeLock();
-        maybeReleaseWifiLock();
 
         // Use Handler to schedule on main thread, then post to network executor
         wsReconnectHandler = new Handler(Looper.getMainLooper());
@@ -1969,8 +1982,10 @@ public class BackgroundService extends Service {
             nativeWsActive = true;
             nativeWsReconnectAttempt = 0;
             AppLog.i(TAG, "NativeWS: connected");
-            acquireWakeLock();
-            acquireWifiLock();
+            // WifiLock not acquired for WS — only SSH needs it to prevent WiFi
+            // radio sleep. WS is a low-frequency notification channel (ping ≤300s);
+            // WiFi DTIM power-save (~100-300ms wake interval) delivers frames fine.
+            // This saves ~10mA/h when screen is off and SSH is suspended.
             startWsPingLoop();
             // Cancel WorkManager polling — WS is more efficient
             cancelPendingEventsWs();
@@ -2068,7 +2083,7 @@ public class BackgroundService extends Service {
                 }
             }
             maybeReleaseWakeLock();
-            maybeReleaseWifiLock();
+            // WifiLock not released here — WS never acquires it (only SSH does)
             // Schedule WorkManager fallback since WS is down
             schedulePendingEventsWs();
         }
@@ -2086,7 +2101,7 @@ public class BackgroundService extends Service {
                 }
             }
             maybeReleaseWakeLock();
-            maybeReleaseWifiLock();
+            // WifiLock not released here — WS never acquires it (only SSH does)
             // Schedule WorkManager fallback since WS failed
             schedulePendingEventsWs();
         }

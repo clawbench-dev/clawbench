@@ -104,7 +104,9 @@ func EventsHandler(w http.ResponseWriter, r *http.Request) {
 	// Read client messages (blocks until disconnect).
 	// Use the request context so the connection is closed when the client
 	// disconnects or the server shuts down. Add an idle timeout to prevent
-	// dead connections from lingering indefinitely (no client messages for 5min).
+	// dead connections from lingering indefinitely (no client messages for 10min).
+	// 10min accommodates the client's maximum app-layer ping interval (300s)
+	// with safety margin for network latency and Doze maintenance windows.
 	readClientMessages(conn, clientID)
 
 	_ = conn.Close(websocket.StatusNormalClosure, "handler exiting")
@@ -118,7 +120,7 @@ func readClientMessages(conn *websocket.Conn, clientID string) {
 		// Each cancel is called explicitly — no deferred cancel needed since
 		// the loop re-creates the context on every iteration and calls
 		// the previous cancel before creating a new one.
-		readCtx, readCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		readCtx, readCancel := context.WithTimeout(context.Background(), 10*time.Minute)
 
 		_, data, err := conn.Read(readCtx)
 		if err != nil {
