@@ -826,6 +826,18 @@ async function handleLoginSuccess() {
     await nextTick()
     applyUIScale(localConfig.uiScale ?? 1)
     startDockResize()
+    // Measure dock height and set --dock-height CSS variable for fixed-position elements
+    const dockWrapper = document.querySelector('.bottom-dock-wrapper')
+    if (dockWrapper) {
+      const updateDockHeight = () => {
+        const h = dockWrapper.offsetHeight
+        document.documentElement.style.setProperty('--dock-height', h ? `${h}px` : '0px')
+      }
+      updateDockHeight()
+      const dockResizeObs = new ResizeObserver(updateDockHeight)
+      dockResizeObs.observe(dockWrapper)
+      onUnmounted(() => dockResizeObs.disconnect())
+    }
     welcomeOverlay.value?.show()
 }
 

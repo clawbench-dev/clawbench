@@ -738,7 +738,7 @@ defineExpose({ requestBack })
 /* Fixed bottom save bar */
 .drill-down__save-bar {
   position: fixed;
-  bottom: 0;
+  bottom: var(--dock-height, 0px);
   left: 0;
   right: 0;
   display: flex;
