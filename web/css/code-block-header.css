@@ -250,26 +250,41 @@
     border: none;
 }
 
-/* ─── Word-wrap mode for markdown tables ─── */
-.table-block-wrapper.word-wrap {
-    max-width: 100%;
+/* ─── Default: word-wrap (auto line-wrap) for markdown tables ─── */
+.table-block-wrapper .table-wrap {
+    overflow-x: hidden;
 }
 
-.table-block-wrapper.word-wrap .table-wrap {
-    overflow-x: hidden !important;
-}
-
-.table-block-wrapper.word-wrap table {
+.table-block-wrapper table {
     display: table !important;     /* override display:block from ChatMessageItem */
     table-layout: auto !important;
     max-width: 100% !important;
     margin: 0 !important;
 }
 
-.table-block-wrapper.word-wrap th,
-.table-block-wrapper.word-wrap td {
+.table-block-wrapper th,
+.table-block-wrapper td {
     white-space: normal !important;  /* override white-space:nowrap from ChatMessageItem */
     word-break: break-word !important;
     overflow-wrap: break-word !important;
+}
+
+/* ─── No-wrap mode: horizontal scroll (toggled off) ─── */
+.table-block-wrapper.no-wrap .table-wrap {
+    overflow-x: auto !important;
+}
+
+.table-block-wrapper.no-wrap table {
+    display: block !important;
+    table-layout: auto !important;
+    max-width: none !important;
+    width: max-content !important;
+}
+
+.table-block-wrapper.no-wrap th,
+.table-block-wrapper.no-wrap td {
+    white-space: nowrap !important;
+    word-break: normal !important;
+    overflow-wrap: normal !important;
 }
 

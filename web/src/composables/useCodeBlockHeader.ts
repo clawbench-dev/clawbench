@@ -165,9 +165,9 @@ export function annotateTableBlockHeaders(html: string): string {
         // Skip if already wrapped (idempotent guard)
         if (tableWrap.parentElement?.classList.contains('table-block-wrapper')) continue
 
-        // Build wrapper div
+        // Build wrapper div (default: word-wrap on)
         const wrapper = doc.createElement('div')
-        wrapper.className = 'table-block-wrapper'
+        wrapper.className = 'table-block-wrapper word-wrap'
 
         // Build header div
         const header = doc.createElement('div')
@@ -193,12 +193,12 @@ export function annotateTableBlockHeaders(html: string): string {
         copyBtn.innerHTML = TABLE_COPY_ICON_SVG
         actions.appendChild(copyBtn)
 
-        // Wrap toggle button
+        // Wrap toggle button (default: wrap on, so button shows "wrapOn" state)
         const wrapBtn = doc.createElement('button')
-        wrapBtn.className = 'table-block-wrap-btn'
+        wrapBtn.className = 'table-block-wrap-btn is-wrapped'
         wrapBtn.setAttribute('data-action', 'wrap')
-        wrapBtn.setAttribute('title', gt('tableBlock.wrapOff'))
-        wrapBtn.setAttribute('aria-label', gt('tableBlock.wrapOff'))
+        wrapBtn.setAttribute('title', gt('tableBlock.wrapOn'))
+        wrapBtn.setAttribute('aria-label', gt('tableBlock.wrapOn'))
         wrapBtn.setAttribute('type', 'button')
         wrapBtn.innerHTML = TABLE_WRAP_ICON_SVG
         actions.appendChild(wrapBtn)
@@ -367,11 +367,18 @@ export function handleTableBlockClick(event: MouseEvent): boolean {
             btn.setAttribute('aria-label', originalAriaLabel)
         }, 1500)
     } else if (action === 'wrap') {
-        wrapper.classList.toggle('word-wrap')
-        btn.classList.toggle('is-wrapped')
         const isWrapped = wrapper.classList.contains('word-wrap')
-        btn.setAttribute('title', isWrapped ? gt('tableBlock.wrapOn') : gt('tableBlock.wrapOff'))
-        btn.setAttribute('aria-label', isWrapped ? gt('tableBlock.wrapOn') : gt('tableBlock.wrapOff'))
+        if (isWrapped) {
+            wrapper.classList.remove('word-wrap')
+            wrapper.classList.add('no-wrap')
+        } else {
+            wrapper.classList.remove('no-wrap')
+            wrapper.classList.add('word-wrap')
+        }
+        btn.classList.toggle('is-wrapped')
+        const nowWrapped = wrapper.classList.contains('word-wrap')
+        btn.setAttribute('title', nowWrapped ? gt('tableBlock.wrapOn') : gt('tableBlock.wrapOff'))
+        btn.setAttribute('aria-label', nowWrapped ? gt('tableBlock.wrapOn') : gt('tableBlock.wrapOff'))
     }
 
     return true
