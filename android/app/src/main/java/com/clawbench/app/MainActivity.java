@@ -689,15 +689,20 @@ public class MainActivity extends AppCompatActivity {
         new Thread(() -> {
             try {
                 AuthResult result = performLoginRequest(url, password);
-                handleAuthResponse(result.statusCode, url, password, result.cookies);
+                OkHttpClient standardClient = new OkHttpClient.Builder()
+                        .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .build();
+                handleAuthResponse(result.statusCode, url, password, result.cookies, standardClient);
             } catch (javax.net.ssl.SSLException e) {
                 // SSL error (self-signed cert, hostname mismatch, etc.)
                 // Show native confirmation dialog on UI thread, then retry with trusting client
                 AppLog.w(TAG, "SSL error during pre-auth, showing confirmation dialog", e);
                 runOnUiThread(() -> showSslConfirmationDialog(() -> {
                     try {
-                        AuthResult result = performLoginRequestWithClient(buildTrustingOkHttpClient(), url, password);
-                        handleAuthResponse(result.statusCode, url, password, result.cookies);
+                        OkHttpClient trustClient = buildTrustingOkHttpClient();
+                        AuthResult result = performLoginRequestWithClient(trustClient, url, password);
+                        handleAuthResponse(result.statusCode, url, password, result.cookies, trustClient);
                     } catch (Exception retryEx) {
                         AppLog.w(TAG, "SSL retry failed", retryEx);
                         runOnUiThread(() -> showLoginPage(getNetworkErrorMessage(retryEx)));
@@ -907,7 +912,7 @@ public class MainActivity extends AppCompatActivity {
      * @param url        the server URL to navigate to on success/fallback
      * @param cookies    Set-Cookie headers from the response (may be empty)
      */
-    void handleAuthResponse(int statusCode, String url, String password, java.util.List<String> cookies) {
+    void handleAuthResponse(int statusCode, String url, String password, java.util.List<String> cookies, OkHttpClient client) {
         if (statusCode == 200) {
             // Extract Set-Cookie and inject into WebView CookieManager.
             // Before injecting, clear all ClawBench cookies for the target domain
@@ -932,11 +937,7 @@ public class MainActivity extends AppCompatActivity {
             }
             // Auth success — verify this is a ClawBench server before navigating WebView
             try {
-                OkHttpClient healthClient = new OkHttpClient.Builder()
-                        .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-                        .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-                        .build();
-                String healthError = performHealthCheck(url, healthClient);
+                String healthError = performHealthCheck(url, client);
                 if (healthError != null) {
                     runOnUiThread(() -> showLoginPage(healthError));
                     return;

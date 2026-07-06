@@ -764,14 +764,18 @@ public class MainActivityPreAuthTest {
     }
 
     /**
-     * Invoke handleAuthResponse(int statusCode, String url, List<String> cookies)
+     * Invoke handleAuthResponse(int statusCode, String url, String password, List<String> cookies, OkHttpClient client)
      * via reflection.
      */
     @SuppressWarnings("unchecked")
     private void invokeHandleAuthResponse(int statusCode, String url, String password, List<String> cookies) throws Exception {
+        okhttp3.OkHttpClient client = new okhttp3.OkHttpClient.Builder()
+                .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                .build();
         Method method = findMethod(activity.getClass(), "handleAuthResponse",
-                int.class, String.class, String.class, java.util.List.class);
+                int.class, String.class, String.class, java.util.List.class, okhttp3.OkHttpClient.class);
         method.setAccessible(true);
-        method.invoke(activity, statusCode, url, password, cookies);
+        method.invoke(activity, statusCode, url, password, cookies, client);
     }
 }
