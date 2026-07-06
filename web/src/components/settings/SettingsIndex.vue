@@ -10,7 +10,6 @@
         <component :is="cat.icon" class="settings-index__icon" :size="18" />
         <span class="settings-index__label">{{ cat.label }}</span>
       </div>
-      <span v-if="cat.id === 'frp' && frpSummary" class="settings-index__summary">{{ frpSummary }}</span>
       <ChevronRight class="settings-index__arrow" :size="18" />
     </div>
   </div>
@@ -37,7 +36,6 @@ import {
 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useAppMode } from '@/composables/useAppMode'
-import { useFrp } from '@/composables/useFrp'
 
 defineEmits<{
   navigate: [categoryId: string]
@@ -45,18 +43,6 @@ defineEmits<{
 
 const { t } = useI18n()
 const { isAppMode } = useAppMode()
-const { frpState, fetchFrpInfo } = useFrp()
-
-// Fetch FRP info on mount for status summary
-fetchFrpInfo()
-
-const frpSummary = computed(() => {
-  if (!frpState.enabled) return ''
-  if (frpState.state === 'running' && frpState.remoteUrl) return frpState.remoteUrl.replace(/^https?:\/\//, '')
-  if (frpState.state === 'starting') return t('settings.items.frpStatusConnecting')
-  if (frpState.state === 'failed') return t('settings.items.frpStatusFailed')
-  return ''
-})
 
 const categoryDefs = computed(() => [
   { id: 'appearance', icon: Palette },
@@ -151,16 +137,6 @@ const categories = computed(() =>
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.settings-index__summary {
-  font-size: 13px;
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 160px;
-  flex-shrink: 0;
 }
 
 .settings-index__arrow {
