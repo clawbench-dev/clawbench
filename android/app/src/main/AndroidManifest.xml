@@ -37,20 +37,7 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Deep link for QR code scanning: clawbench://connect?lan=...&frp=...&token=... -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="clawbench" android:host="connect" />
-            </intent-filter>
         </activity>
-
-        <activity
-            android:name=".QrScanActivity"
-            android:theme="@style/Theme.ClawBench"
-            android:screenOrientation="portrait"
-            android:exported="false" />
 
         <service
             android:name=".BackgroundService"

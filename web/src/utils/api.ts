@@ -12,6 +12,8 @@ const API_TIMEOUT_MS = 10_000
 export interface ApiOptions {
     signal?: AbortSignal
     body?: unknown
+    /** Override the default API timeout (ms). Defaults to API_TIMEOUT_MS (10s). */
+    timeoutMs?: number
 }
 
 /**
@@ -22,7 +24,8 @@ export interface ApiOptions {
  */
 function createSignal(opts: ApiOptions = {}): { signal: AbortSignal; cleanup: () => void } {
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), API_TIMEOUT_MS)
+    const timeout = opts.timeoutMs ?? API_TIMEOUT_MS
+    const timer = setTimeout(() => controller.abort(), timeout)
 
     // If external signal is already aborted, abort immediately
     if (opts.signal?.aborted) {

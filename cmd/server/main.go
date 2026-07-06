@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -137,11 +136,6 @@ func makeRestartFunc(shutdown func()) func() {
 		}
 		shutdown()
 	}
-}
-
-// urlEncode URL-encodes a string for use in QR code deep links.
-func urlEncode(s string) string {
-	return url.QueryEscape(s)
 }
 
 func main() { //nolint:gocognit,gocyclo // complex startup orchestration
@@ -775,7 +769,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 				frpManagerRef = mgr
 				defer mgr.Stop()
 
-				// Wait for port assignment (up to 30s) before generating QR code
 				select {
 				case frpStatus = <-mgr.OnReady():
 					slog.Info("FRP tunnel enabled",
@@ -783,7 +776,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 						slog.Int("remotePort", frpStatus.RemotePort),
 					)
 				case <-time.After(30 * time.Second):
-					slog.Warn("FRP port allocation timeout, QR code will be skipped")
+					slog.Warn("FRP port allocation timeout")
 				}
 			}
 		}
@@ -792,8 +785,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		cfg.FRP.Enabled = false
 	}
 	handler.SetFRPManager(frpManagerRef, cfg.FRP.Enabled)
-
-	// QR code content will be built after scheme is resolved (below)
 
 	// Initialize file watcher for auto-refresh (non-critical — continue on failure)
 	if err := service.InitFileWatcher(); err != nil {
@@ -874,44 +865,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		slog.Info("starting with HTTP")
 	}
 
-	// Initialize QR token manager for phone scanning (after scheme is known)
-	var qrContent string
-	{
-		// Collect all LAN IPs for multi-NIC machines
-		allLanIPs := platform.GetAllLanIPs()
-		var lanURLs []string
-		for _, ip := range allLanIPs {
-			lanURLs = append(lanURLs, fmt.Sprintf("%s://%s:%d", scheme, ip, port))
-		}
-		frpURL := ""
-		if cfg.FRP.Enabled && frpStatus.RemotePort > 0 {
-			frpURL = frpStatus.RemoteURL
-		}
-		if len(lanURLs) > 0 {
-			// Use first LAN URL as the primary for QRTokenManager (backward compat)
-			qrTokenMgr := handler.NewQRTokenManager(5*time.Minute, lanURLs[0], frpURL)
-			token := qrTokenMgr.Generate()
-			handler.SetQRTokenManager(qrTokenMgr)
-
-			// Build deep link with multiple lan params:
-			// clawbench://connect?lan=addr1&lan=addr2&frp=...&token=...
-			var buf strings.Builder
-			buf.WriteString("clawbench://connect?")
-			for i, lan := range lanURLs {
-				if i > 0 {
-					buf.WriteByte('&')
-				}
-				buf.WriteString("lan=")
-				buf.WriteString(url.QueryEscape(lan))
-			}
-			buf.WriteString("&frp=")
-			buf.WriteString(url.QueryEscape(frpURL))
-			buf.WriteString("&token=")
-			buf.WriteString(token)
-			qrContent = buf.String()
-		}
-	}
-
 	// Pre-bind the main listener to detect port conflicts BEFORE printing the banner.
 	// Without this, PrintBanner shows a password for an instance that immediately fails
 	// to bind, confusing users who then see "wrong password" when they connect to
@@ -983,7 +936,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		FRPRemoteURL:    frpStatus.RemoteURL,
 		FRPServerAddr:   cfg.FRP.ServerAddr,
 		FRPRemotePort:   frpStatus.RemotePort,
-		QRContent:       qrContent,
 	})
 
 	// Graceful shutdown on SIGINT/SIGTERM

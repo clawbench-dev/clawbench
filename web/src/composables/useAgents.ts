@@ -369,7 +369,7 @@ async function deleteAgent(agentId: string): Promise<void> {
 
 /** Rescan all agents (re-run CLI discovery pipeline). */
 async function rescanAgents(): Promise<void> {
-    await apiPost('/api/agents/rescan', {})
+    await apiPost('/api/agents/rescan', {}, { timeoutMs: 60_000 })
     await loadAgents(true)
 }
 

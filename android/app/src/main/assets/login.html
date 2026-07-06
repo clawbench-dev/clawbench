@@ -455,52 +455,6 @@
     text-align: center;
   }
 
-  /* QR scan login */
-  .qr-divider {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-top: 16px;
-  }
-
-  .qr-divider::before,
-  .qr-divider::after {
-    content: '';
-    flex: 1;
-    height: 1px;
-    background: var(--border-color);
-  }
-
-  .qr-divider-text {
-    font-size: 12px;
-    color: var(--text-muted);
-    flex-shrink: 0;
-  }
-
-  .qr-scan-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    width: 100%;
-    padding: 10px;
-    margin-top: 10px;
-    border: 1px solid var(--border-color);
-    border-radius: 10px;
-    background: transparent;
-    color: var(--text-muted);
-    font-size: 13px;
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s, border-color 0.15s;
-  }
-
-  .qr-scan-btn:hover {
-    background: var(--bg-tertiary);
-    color: var(--accent-color);
-    border-color: var(--accent-color);
-  }
-
   /* Safe area padding for notch devices */
   @supports (padding: env(safe-area-inset-bottom)) {
     .content {
@@ -604,15 +558,6 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         <span>添加服务器</span>
       </button>
-
-      <!-- QR scan login button -->
-      <div class="qr-divider" id="qrDivider" style="display:none;">
-        <span class="qr-divider-text">或</span>
-      </div>
-      <button type="button" class="qr-scan-btn" id="qrScanBtn" style="display:none;">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="2" height="2"/><line x1="17" y1="16" x2="21" y2="16"/><line x1="17" y1="16" x2="17" y2="21"/><line x1="21" y1="21" x2="17" y2="21"/></svg>
-        <span>扫码登录</span>
-      </button>
     </div>
 
     <div class="version" id="version"></div>
@@ -710,15 +655,6 @@
     document.getElementById('cancelAddBtn').addEventListener('click', function() {
       hideAddForm();
     });
-
-    // Event: QR scan login
-    document.getElementById('qrScanBtn').addEventListener('click', function() {
-      try {
-        AndroidNative.startQrScan();
-      } catch(e) {
-        showError('errorMsg', '扫码功能不可用');
-      }
-    });
   });
 
   function loadServerList() {
@@ -742,8 +678,6 @@
       container.style.display = 'none';
       connectForm.style.display = 'none';
       addBtn.style.display = 'none';
-      document.getElementById('qrDivider').style.display = 'flex';
-      document.getElementById('qrScanBtn').style.display = 'flex';
       showAddForm();
       return;
     }
@@ -769,8 +703,6 @@
     // Show connect form and add button
     connectForm.style.display = 'block';
     addBtn.style.display = 'flex';
-    document.getElementById('qrDivider').style.display = 'flex';
-    document.getElementById('qrScanBtn').style.display = 'flex';
 
     // Select first server by default
     var selected = savedServers[0];
@@ -834,8 +766,6 @@
     document.getElementById('connectForm').style.display = 'none';
     document.getElementById('addServerBtn').style.display = 'none';
     document.getElementById('addServerForm').style.display = 'block';
-    document.getElementById('qrDivider').style.display = 'none';
-    document.getElementById('qrScanBtn').style.display = 'none';
   }
 
   function hideAddForm() {

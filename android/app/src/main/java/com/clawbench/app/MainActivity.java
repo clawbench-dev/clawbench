@@ -59,7 +59,6 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.HttpURLConnection;
 import java.security.cert.X509Certificate;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -199,25 +198,6 @@ public class MainActivity extends AppCompatActivity {
                 cameraImageUri = null;
             });
 
-    // Activity result launcher for QR code scanning
-    private final ActivityResultLauncher<Intent> qrScanLauncher =
-            registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
-                if (result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
-                    String qrData = result.getData().getStringExtra("qr_data");
-                    if (qrData != null && qrData.startsWith("clawbench://connect")) {
-                        Uri uri = Uri.parse(qrData);
-                        // Support multiple lan= params (multi-NIC machines)
-                        java.util.List<String> lanUrls = uri.getQueryParameters("lan");
-                        String frpUrl = uri.getQueryParameter("frp");
-                        String token = uri.getQueryParameter("token");
-                        AppLog.i(TAG, "QR scan result: lan=" + lanUrls + ", frp=" + frpUrl);
-                        connectWithQR(lanUrls, frpUrl, token);
-                    } else {
-                        Toast.makeText(this, "无法识别此二维码", Toast.LENGTH_SHORT).show();
-                    }
-                }
-            });
-
     // Map of ports currently being forwarded: port -> host (thread-safe for access from WebView background threads)
     final Map<Integer, String> forwardedPorts = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -242,9 +222,6 @@ public class MainActivity extends AppCompatActivity {
 
         // Check if launched from notification
         logLaunchIntent(getIntent());
-
-        // Handle deep link (clawbench://) from QR code scanning
-        handleDeepLink(getIntent());
 
         // Initialize trust-all SSL for self-signed HTTPS servers (used by BackgroundService)
         BackgroundService.initTrustAllSSL();
@@ -275,19 +252,22 @@ public class MainActivity extends AppCompatActivity {
         // to the app. Only first-time users see the login page.
 
         // Load saved URL or show configuration dialog
-        // Note: if the saved URL was a LAN address from QR scan, it may become
-        // unreachable when the user leaves WiFi. Re-scanning the QR code will
-        // update the saved URL to the FRP address as fallback.
+        // Migration: clear QR-auth sentinel ("__qr__") from previous QR scan login feature.
+        // Treat it as "no password" — rely on session cookie instead.
+        String savedPassword = prefs.getString(KEY_SSH_PASSWORD, null);
+        if ("__qr__".equals(savedPassword)) {
+            prefs.edit().remove(KEY_SSH_PASSWORD).apply();
+            savedPassword = null;
+        }
         String savedUrl = prefs.getString(KEY_SERVER_URL, null);
         if (savedUrl != null) {
             // Auto-reconnect: use pre-authentication to verify server is reachable
             // before loading the WebView. This prevents Chrome's built-in error page.
-            String savedPassword = prefs.getString(KEY_SSH_PASSWORD, null);
-            if (savedPassword != null && !savedPassword.isEmpty() && !"__qr__".equals(savedPassword)) {
+            if (savedPassword != null && !savedPassword.isEmpty()) {
                 webView.setVisibility(View.INVISIBLE);
                 authenticateAndNavigate(savedUrl, savedPassword);
             } else {
-                // QR-authenticated or no password: rely on session cookie
+                // No password: rely on session cookie
                 webView.setVisibility(View.INVISIBLE);
                 checkConnectivityAndNavigate(savedUrl);
             }
@@ -1312,181 +1292,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        handleDeepLink(intent);
         handleNotificationIntent(intent);
-    }
-
-    /**
-     * Handle clawbench:// deep link from QR code scanning.
-     * Format: clawbench://connect?lan=http%3A%2F%2F...&frp=http%3A%2F%2F...&token=xxx
-     */
-    void handleDeepLink(Intent intent) {
-        if (intent == null) return;
-        Uri uri = intent.getData();
-        if (uri == null) return;
-        if (!"clawbench".equals(uri.getScheme()) || !"connect".equals(uri.getHost())) return;
-
-        java.util.List<String> lanUrls = uri.getQueryParameters("lan");
-        String frpUrl = uri.getQueryParameter("frp");
-        String token = uri.getQueryParameter("token");
-
-        AppLog.i(TAG, "Deep link received: lan=" + lanUrls + ", frp=" + frpUrl + ", token=" + (token != null ? "***" : "null"));
-
-        connectWithQR(lanUrls, frpUrl, token);
-    }
-
-    /**
-     * Connect to ClawBench server using QR code parameters.
-     * If multiple LAN/FRP addresses are available, show a picker dialog.
-     * If only one address, use it directly.
-     */
-    void connectWithQR(java.util.List<String> lanUrls, String frpUrl, String token) {
-        // Build list of all candidate addresses
-        java.util.List<String> addresses = new java.util.ArrayList<>();
-        java.util.List<String> labels = new java.util.ArrayList<>();
-        for (String lan : lanUrls) {
-            if (lan != null && !lan.isEmpty()) {
-                addresses.add(lan);
-                // Extract host:port for display
-                try {
-                    java.net.URL u = new java.net.URL(lan);
-                    labels.add("局域网: " + u.getHost() + ":" + u.getPort());
-                } catch (Exception e) {
-                    labels.add("局域网: " + lan);
-                }
-            }
-        }
-        if (frpUrl != null && !frpUrl.isEmpty()) {
-            addresses.add(frpUrl);
-            try {
-                java.net.URL u = new java.net.URL(frpUrl);
-                labels.add("内网穿透: " + u.getHost() + ":" + u.getPort());
-            } catch (Exception e) {
-                labels.add("内网穿透: " + frpUrl);
-            }
-        }
-
-        if (addresses.isEmpty()) {
-            Toast.makeText(this, "二维码中无有效地址", Toast.LENGTH_LONG).show();
-            return;
-        }
-
-        // Single address — use directly
-        if (addresses.size() == 1) {
-            connectWithQRUrl(addresses.get(0), frpUrl, token);
-            return;
-        }
-
-        // Multiple addresses — let user choose
-        String[] items = labels.toArray(new String[0]);
-        new AlertDialog.Builder(this)
-            .setTitle("选择连接方式")
-            .setItems(items, (dialog, which) -> {
-                connectWithQRUrl(addresses.get(which), frpUrl, token);
-            })
-            .setNegativeButton("取消", null)
-            .show();
-    }
-
-    /** Proceed with QR login using the chosen URL. */
-    void connectWithQRUrl(String connectUrl, String frpUrl, String token) {
-        new Thread(() -> {
-            // Verify chosen URL is reachable
-            if (!isReachable(connectUrl, 5000)) {
-                runOnUiThread(() -> Toast.makeText(this,
-                        "无法连接 " + connectUrl + "，请检查网络", Toast.LENGTH_LONG).show());
-                return;
-            }
-
-            // Exchange QR token for session cookie
-            if (token != null && !token.isEmpty()) {
-                boolean authOk = exchangeQRToken(connectUrl, token);
-                if (!authOk) {
-                    runOnUiThread(() -> Toast.makeText(this,
-                            "登录令牌已过期，请重新扫码", Toast.LENGTH_LONG).show());
-                    return;
-                }
-            }
-
-            // Save URL and load WebView
-            // Save a sentinel password so auto-reconnect knows this was QR-authenticated
-            // and uses checkConnectivityAndNavigate (which relies on the session cookie).
-            String finalUrl = connectUrl;
-            runOnUiThread(() -> {
-                prefs.edit()
-                    .putString(KEY_SERVER_URL, finalUrl)
-                    .putString(KEY_SSH_PASSWORD, "__qr__")
-                    .putString("frp_remote_url", frpUrl != null ? frpUrl : "")
-                    .apply();
-                webViewConnected = false;
-                webView.loadUrl(finalUrl);
-            });
-        }).start();
-    }
-
-    /** Check if a URL is reachable within the given timeout (simple GET /api/health). */
-    boolean isReachable(String url, int timeoutMs) {
-        try {
-            HttpURLConnection conn = (HttpURLConnection) new java.net.URL(url + "/api/health").openConnection();
-            // Handle self-signed HTTPS certificates (same as BackgroundService)
-            javax.net.ssl.SSLContext sslCtx = BackgroundService.getTrustAllSSLContext();
-            if (conn instanceof javax.net.ssl.HttpsURLConnection && sslCtx != null) {
-                ((javax.net.ssl.HttpsURLConnection) conn).setSSLSocketFactory(sslCtx.getSocketFactory());
-                ((javax.net.ssl.HttpsURLConnection) conn).setHostnameVerifier((hostname, session) -> true);
-            }
-            conn.setConnectTimeout(timeoutMs);
-            conn.setReadTimeout(timeoutMs);
-            conn.setRequestMethod("GET");
-            int code = conn.getResponseCode();
-            conn.disconnect();
-            return code == 200;
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    /** Exchange QR token for session cookie via POST /api/auth/qr-token. */
-    boolean exchangeQRToken(String serverUrl, String token) {
-        try {
-            String url = serverUrl + "/api/auth/qr-token";
-            org.json.JSONObject jsonBody = new org.json.JSONObject();
-            jsonBody.put("token", token);
-            String json = jsonBody.toString();
-
-            // Use HttpURLConnection with trust-all SSL for self-signed certificates
-            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
-            javax.net.ssl.SSLContext sslCtx = BackgroundService.getTrustAllSSLContext();
-            if (conn instanceof javax.net.ssl.HttpsURLConnection && sslCtx != null) {
-                ((javax.net.ssl.HttpsURLConnection) conn).setSSLSocketFactory(sslCtx.getSocketFactory());
-                ((javax.net.ssl.HttpsURLConnection) conn).setHostnameVerifier((hostname, session) -> true);
-            }
-            conn.setConnectTimeout(5000);
-            conn.setReadTimeout(5000);
-            conn.setRequestMethod("POST");
-            conn.setDoOutput(true);
-            conn.setRequestProperty("Content-Type", "application/json");
-            try (java.io.OutputStream os = conn.getOutputStream()) {
-                os.write(json.getBytes("UTF-8"));
-            }
-
-            int responseCode = conn.getResponseCode();
-
-            // Extract Set-Cookie headers and inject into WebView CookieManager
-            if (responseCode == 200) {
-                CookieManager cookieManager = CookieManager.getInstance();
-                java.util.List<String> cookies = conn.getHeaderFields().getOrDefault("Set-Cookie", java.util.Collections.emptyList());
-                for (String cookie : cookies) {
-                    cookieManager.setCookie(serverUrl, cookie);
-                }
-                cookieManager.flush();
-            }
-
-            conn.disconnect();
-            return responseCode == 200;
-        } catch (Exception e) {
-            AppLog.e(TAG, "QR token exchange failed: " + e.getMessage());
-            return false;
-        }
     }
 
     /**
@@ -1966,20 +1772,6 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public void connectToServer(String url, String password) {
             activity.runOnUiThread(() -> activity.connectToServer(url, password));
-        }
-
-        /**
-         * Launch the QR code scanner (QrScanActivity) to scan a terminal QR code.
-         * Called from the static login page's "扫码登录" button.
-         * On successful scan, the result is handled by qrScanLauncher which
-         * parses the clawbench://connect deep link and calls connectWithQR().
-         */
-        @JavascriptInterface
-        public void startQrScan() {
-            activity.runOnUiThread(() -> {
-                Intent intent = new Intent(activity, QrScanActivity.class);
-                activity.qrScanLauncher.launch(intent);
-            });
         }
 
         /**

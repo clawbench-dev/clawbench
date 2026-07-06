@@ -36,37 +36,3 @@ func GetOutboundIP() string {
 	}
 	return addr.IP.String()
 }
-
-// GetAllLanIPs returns all non-loopback IPv4/IPv6 addresses from all network interfaces.
-// Useful for multi-NIC machines where QR code should include all reachable LAN addresses.
-func GetAllLanIPs() []string {
-	var ips []string
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return ips
-	}
-	for _, iface := range ifaces {
-		// Skip loopback and down interfaces
-		if iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagUp == 0 {
-			continue
-		}
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, addr := range addrs {
-			var ip net.IP
-			switch v := addr.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
-			}
-			if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.To4() == nil {
-				continue
-			}
-			ips = append(ips, ip.String())
-		}
-	}
-	return ips
-}
