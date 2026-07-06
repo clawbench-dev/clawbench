@@ -14,8 +14,6 @@ import android.net.http.SslError;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
-import android.os.Handler;
-import android.os.Looper;
 import android.os.PowerManager;
 import android.util.Log;
 import android.provider.MediaStore;
@@ -235,10 +233,6 @@ public class MainActivity extends AppCompatActivity {
 
         // Request notification permission (Android 13+) — required for foreground service notification
         requestNotificationPermission();
-
-        // Request background running permission — needed for BackgroundService to survive
-        // on Chinese ROMs (OPPO, Xiaomi, Huawei, vivo) and standard battery optimization.
-        requestBackgroundPermission();
 
         // Auto-restore BackgroundService if there are previously saved ports.
         // This ensures the SSH tunnel and its notification are active immediately on cold start,
@@ -1046,96 +1040,6 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * Request the system to exclude ClawBench from battery optimization.
-     * This prevents the OS from aggressively killing the background service.
-     */
-    void requestIgnoreBatteryOptimization() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
-            String packageName = getPackageName();
-            if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName)) {
-                try {
-                    Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
-                    intent.setData(Uri.parse("urn:android:pkg:" + packageName));
-                    startActivity(intent);
-                    BackgroundService.setBatteryOptRequested(this);
-                    AppLog.i(TAG, "Requested battery optimization exemption");
-                } catch (Exception e) {
-                    AppLog.w(TAG, "Failed to request battery optimization exemption", e);
-                }
-            } else {
-                BackgroundService.setBatteryOptRequested(this);
-            }
-        }
-    }
-
-    /**
-     * Request background running permission on app startup.
-     *
-     * Two layers of permission:
-     * 1. Standard Android: ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
-     * 2. Chinese OEM-specific: auto-start + battery settings (OPPO, Xiaomi, Huawei, vivo)
-     *
-     * Each layer is only prompted once (tracked via SharedPreferences).
-     * The OEM prompt is shown AFTER the standard dialog, so the user isn't
-     * overwhelmed with two system dialogs at once.
-     */
-    private void requestBackgroundPermission() {
-        boolean needsStandardBatteryOpt = false;
-
-        // Layer 1: Standard Android battery optimization
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
-            if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
-                needsStandardBatteryOpt = true;
-                requestIgnoreBatteryOptimization();
-            }
-        }
-
-        // Layer 2: Chinese OEM auto-start / background permission.
-        // OEMs don't provide an API to check if their proprietary permission is granted.
-        // Show OEM settings if:
-        //   - Standard battery opt is still not granted (strongest signal), OR
-        //   - App version changed (catch system updates that revoke OEM permission)
-        if (OemUtils.isChineseOem()) {
-            String currentVersion = "";
-            try {
-                currentVersion = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
-            } catch (Exception ignored) {}
-            if (currentVersion == null) currentVersion = "";
-
-            String lastPromptVersion = prefs.getString("oem_prompt_last_version", "");
-            boolean versionChanged = !currentVersion.isEmpty() && !currentVersion.equals(lastPromptVersion);
-
-            if (needsStandardBatteryOpt || versionChanged) {
-                final String version = currentVersion;
-                prefs.edit().putString("oem_prompt_last_version", version).apply();
-                new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                    Intent autoStartIntent = OemUtils.getAutoStartIntent(this);
-                    if (autoStartIntent != null) {
-                        try {
-                            startActivity(autoStartIntent);
-                            AppLog.i(TAG, "Opened OEM auto-start settings");
-                        } catch (Exception e) {
-                            AppLog.w(TAG, "Failed to open OEM auto-start settings", e);
-                        }
-                    } else {
-                        Intent batteryIntent = OemUtils.getBatterySettingsIntent(this);
-                        if (batteryIntent != null) {
-                            try {
-                                startActivity(batteryIntent);
-                                AppLog.i(TAG, "Opened OEM battery settings");
-                            } catch (Exception e) {
-                                AppLog.w(TAG, "Failed to open OEM battery settings", e);
-                            }
-                        }
-                    }
-                }, needsStandardBatteryOpt ? 1200 : 200); // Longer delay if standard dialog is showing
-            }
-        }
-    }
-
-    /**
      * Show the login page for server configuration.
      * Replaces the old AlertDialog-based server dialog with the
      * static HTML login page that matches the web UI style.
@@ -1712,6 +1616,14 @@ public class MainActivity extends AppCompatActivity {
             activity.runOnUiThread(() -> {
                 activity.forwardedPorts.put(localPort, host != null ? host : "");
                 BackgroundService.addForwardedPort(activity, localPort, targetPort, host != null ? host : "");
+
+                // Request battery optimization exemption on first port forward.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    PowerManager pm = (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
+                    if (pm != null && !pm.isIgnoringBatteryOptimizations(activity.getPackageName())) {
+                        requestIgnoreBatteryOptimization();
+                    }
+                }
             });
         }
 
@@ -1721,7 +1633,23 @@ public class MainActivity extends AppCompatActivity {
          * Only requested once — tracked via SharedPreferences.
          */
         private void requestIgnoreBatteryOptimization() {
-            activity.requestIgnoreBatteryOptimization();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PowerManager pm = (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
+                String packageName = activity.getPackageName();
+                if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName)) {
+                    try {
+                        Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                        intent.setData(Uri.parse("urn:android:pkg:" + packageName));
+                        activity.startActivity(intent);
+                        BackgroundService.setBatteryOptRequested(activity);
+                        AppLog.i(TAG, "Requested battery optimization exemption");
+                    } catch (Exception e) {
+                        AppLog.w(TAG, "Failed to request battery optimization exemption", e);
+                    }
+                } else {
+                    BackgroundService.setBatteryOptRequested(activity);
+                }
+            }
         }
 
         /**
