@@ -121,13 +121,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronRight } from 'lucide-vue-next'
 import SettingsItem from './SettingsItem.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import { drillDownCategories, engineVoiceOptions, type ItemSpec, type DrillDownCategory } from './settingsFieldMap'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
+import { useSettingsNavigation } from '@/composables/useSettingsNavigation'
 import { useDrillDownSideEffects } from '@/composables/useDrillDownSideEffects'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
@@ -148,6 +149,7 @@ const { t } = useI18n()
 const toast = useToast()
 const dialog = useDialog()
 const { patchConfig, getServerValueWithDefault, setLocalConfig, localConfig } = useSettingsConfig()
+const { setBeforeResetGuard } = useSettingsNavigation()
 const sideEffects = useDrillDownSideEffects(props.categoryId)
 
 // ── Config ──
@@ -207,6 +209,13 @@ onMounted(() => {
 
   // Init side effects (e.g., fetch FRP info)
   sideEffects.init()
+
+  // Set beforeReset guard to prevent navStack clear when unsaved changes exist
+  setBeforeResetGuard(() => !hasChanges.value && !hasFailedSave.value)
+})
+
+onUnmounted(() => {
+  setBeforeResetGuard(null)
 })
 
 // ── Enable toggle ──
