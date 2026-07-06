@@ -2195,24 +2195,6 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
-         * Control whether the BackgroundService shows a persistent notification.
-         * When enabled, the foreground service notification is visible (keeps service alive).
-         * When disabled, the service still runs but the notification is minimized/silent.
-         */
-        @JavascriptInterface
-        public void setPushPersistentNotification(boolean enabled) {
-            BackgroundService.setPersistentNotificationEnabled(activity, enabled);
-        }
-
-        /**
-         * Query whether persistent notification is currently enabled.
-         */
-        @JavascriptInterface
-        public boolean isPushPersistentNotification() {
-            return BackgroundService.isPersistentNotificationEnabled(activity);
-        }
-
-        /**
          * Check if the device is a Chinese OEM with aggressive background process
          * management (Xiaomi, Huawei, OPPO, vivo). The frontend uses this to
          * prompt the user to enable auto-start / battery optimization whitelisting.

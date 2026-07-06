@@ -137,16 +137,6 @@ const legacyKeys: Record<string, {
     key: '',
     format: 'raw',
   },
-  pushPersistentNotification: {
-    key: '',
-    format: 'raw',
-    sideEffect(value: boolean) {
-      try {
-        const native = (window as any).AndroidNative
-        if (native?.setPushPersistentNotification) native.setPushPersistentNotification(value)
-      } catch { /* not in app mode */ }
-    },
-  },
   sortField: {
     key: '',
     format: 'raw',
@@ -275,7 +265,6 @@ const localDefaults: Record<string, any> = {
   androidLogCapture: false,
   swipeSession: false,
   preventScreenLock: true,
-  pushPersistentNotification: true,
   sortField: null,
   sortDir: 'asc',
   uiScale: 1,
@@ -424,15 +413,8 @@ export function useSettingsConfig() {
   function syncNativeSettings() {
     try {
       const native = (window as any).AndroidNative
-      if (native?.isPushPersistentNotification) {
-        const nativeValue = native.isPushPersistentNotification()
-        if (localConfig.pushPersistentNotification !== nativeValue) {
-          localConfig.pushPersistentNotification = nativeValue
-          try {
-            localStorage.setItem(LOCAL_PREFIX + 'pushPersistentNotification', JSON.stringify(nativeValue))
-          } catch { /* ignore */ }
-        }
-      }
+      // No native settings to sync currently
+      void native
     } catch { /* not in app mode */ }
   }
 

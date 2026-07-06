@@ -233,10 +233,6 @@ export const categoryItems: Record<string, ItemSpec[]> = {
     { labelKey: 'settings.items.frpToken', descriptionKey: 'settings.items.frpTokenDesc', key: 'frp.token', type: 'password', source: 'server', dependsOn: { key: 'frp.enabled', value: true } },
     { labelKey: 'settings.items.frpRemotePort', descriptionKey: 'settings.items.frpRemotePortDesc', key: 'frp.remote_port', type: 'number', source: 'server', dependsOn: { key: 'frp.enabled', value: true }, displayTransform: (v: any) => v === 0 ? '__auto__' : v },
   ],
-  // Push: persistent notification control for BackgroundService
-  push: [
-    { labelKey: 'settings.items.pushPersistentNotification', descriptionKey: 'settings.items.pushPersistentNotificationDesc', key: 'pushPersistentNotification', type: 'switch', source: 'local' },
-  ],
   android: [
     { labelKey: 'settings.items.androidLogCapture', descriptionKey: 'settings.items.androidLogCaptureDesc', key: 'androidLogCapture', type: 'switch', source: 'local' },
     { labelKey: 'settings.items.reconfigureServer', descriptionKey: 'settings.items.reconfigureServerDesc', key: 'reconfigureServer', type: 'action', source: 'local' },
