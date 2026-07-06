@@ -1034,7 +1034,7 @@ describe('useAgents', () => {
 
     it('calls apiPost to rescan, then reloads agents', async () => {
       await rescanAgents()
-      expect(mockApiPost).toHaveBeenCalledWith('/api/agents/rescan', {})
+      expect(mockApiPost).toHaveBeenCalledWith('/api/agents/rescan', {}, { timeoutMs: 60_000 })
     })
   })
 

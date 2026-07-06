@@ -1,43 +1,43 @@
 <template>
   <Teleport to="body">
     <Transition name="dlg">
-      <div class="install-overlay" @click.self="handleClose">
-        <div class="install-box">
-          <div class="install-title">
-            <template v-if="status === 'verifying'">{{ t('welcomeInfo.verifying') }} {{ backendName }}...</template>
-            <template v-else-if="status === 'error' || status === 'notDetected'">{{ t('welcomeInfo.installFailed') }} {{ backendName }}</template>
-            <template v-else-if="status === 'success'">{{ t('welcomeInfo.installSuccess') }} {{ backendName }}</template>
-            <template v-else>{{ t('welcomeInfo.installing') }} {{ backendName }}...</template>
+      <div v-show="visible !== false" class="install-overlay" @click.self="handleClose">
+      <div class="install-box">
+        <div class="install-title">
+          <template v-if="status === 'verifying'">{{ t('welcomeInfo.verifying') }} {{ backendName }}...</template>
+          <template v-else-if="status === 'error' || status === 'notDetected'">{{ t('welcomeInfo.installFailed') }} {{ backendName }}</template>
+          <template v-else-if="status === 'success'">{{ t('welcomeInfo.installSuccess') }} {{ backendName }}</template>
+          <template v-else>{{ t('welcomeInfo.installing') }} {{ backendName }}...</template>
+        </div>
+        <div class="install-log" ref="logContainer">
+          <div v-for="(line, i) in logLines" :key="i" class="log-line">{{ line }}</div>
+          <div v-if="logLines.length === 0 && status === 'running'" class="log-waiting">
+            <span class="waiting-spinner"></span>
+            <span class="waiting-text">{{ t('welcomeInfo.preparing') }}</span>
           </div>
-          <div class="install-log" ref="logContainer">
-            <div v-for="(line, i) in logLines" :key="i" class="log-line">{{ line }}</div>
-            <div v-if="logLines.length === 0 && status === 'running'" class="log-waiting">
-              <span class="waiting-spinner"></span>
-              <span class="waiting-text">{{ t('welcomeInfo.preparing') }}</span>
-            </div>
-            <div v-if="logLines.length > 0 && status === 'running'" class="log-running-indicator">
-              <span class="running-dot"></span>
-              <span class="running-dot"></span>
-              <span class="running-dot"></span>
-            </div>
-            <div v-if="status === 'verifying'" class="log-waiting">
-              <span class="waiting-spinner"></span>
-              <span class="waiting-text">{{ t('welcomeInfo.verifying') }}...</span>
-            </div>
+          <div v-if="logLines.length > 0 && status === 'running'" class="log-running-indicator">
+            <span class="running-dot"></span>
+            <span class="running-dot"></span>
+            <span class="running-dot"></span>
           </div>
-          <div v-if="status === 'error' || status === 'notDetected'" class="install-error-section">
-            <div class="install-hint">{{ t('welcomeInfo.manualInstallHint') }}</div>
-            <code class="install-cmd">{{ effectiveInstallCmd || installCmd }}</code>
-          </div>
-          <div class="install-actions">
-            <button class="dlg-btn dlg-cancel" @click="handleClose">
-              {{ (status === 'error' || status === 'notDetected') ? t('common.close') : t('common.cancel') }}
-            </button>
-            <button v-if="status === 'error' || status === 'notDetected'" class="dlg-btn dlg-ok" @click="retry">
-              {{ t('welcomeInfo.install') }}
-            </button>
+          <div v-if="status === 'verifying'" class="log-waiting">
+            <span class="waiting-spinner"></span>
+            <span class="waiting-text">{{ t('welcomeInfo.verifying') }}...</span>
           </div>
         </div>
+        <div v-if="(effectiveInstallCmd || installCmd) && status !== 'success'" class="install-cmd-section">
+          <div v-if="status === 'error' || status === 'notDetected'" class="install-hint">{{ t('welcomeInfo.manualInstallHint') }}</div>
+          <code class="install-cmd">{{ effectiveInstallCmd || installCmd }}</code>
+        </div>
+        <div class="install-actions">
+          <button class="dlg-btn dlg-cancel" @click="handleClose">
+            {{ (status === 'error' || status === 'notDetected') ? t('common.close') : t('common.cancel') }}
+          </button>
+          <button v-if="status === 'error' || status === 'notDetected'" class="dlg-btn dlg-ok" @click="retry">
+            {{ t('welcomeInfo.install') }}
+          </button>
+        </div>
+      </div>
       </div>
     </Transition>
   </Teleport>
@@ -52,18 +52,20 @@ const props = defineProps<{
   backendId: string
   backendName: string
   installCmd: string
+  visible?: boolean
 }>()
 
 const emit = defineEmits<{
   close: []
   success: []
+  failed: []
 }>()
 
 const { t } = useI18n()
 const logLines = ref<string[]>([])
 const status = ref<'running' | 'verifying' | 'success' | 'error' | 'notDetected'>('running')
 const logContainer = ref<HTMLElement | null>(null)
-const effectiveInstallCmd = ref('')
+const effectiveInstallCmd = ref(props.installCmd)
 let abortController: AbortController | null = null
 let retryCount409 = 0
 let retryTimerId: ReturnType<typeof setTimeout> | null = null
@@ -86,7 +88,6 @@ async function startInstall() {
   // Only reset state on first call, not on 409 retries
   if (retryCount409 === 0) {
     logLines.value = []
-    effectiveInstallCmd.value = ''
   }
   status.value = 'running'
   abortController = new AbortController()
@@ -111,6 +112,7 @@ async function startInstall() {
       }
       status.value = 'error'
       logLines.value.push(`HTTP ${response.status}: ${errText || response.statusText}`)
+      emit('failed')
       return
     }
 
@@ -153,6 +155,7 @@ async function startInstall() {
             } else if (currentEvent === 'install_error') {
               status.value = 'error'
               logLines.value.push(data.error || 'Unknown error')
+              emit('failed')
               terminal = true
               break
             }
@@ -184,6 +187,7 @@ async function startInstall() {
     const msg = e instanceof Error ? e.message : String(e)
     logLines.value.push(msg)
     appLog.w('AgentInstallDialog', 'install failed', e)
+    emit('failed')
   }
 }
 
@@ -209,6 +213,7 @@ async function verifyAndFinish() {
         status.value = 'notDetected'
         logLines.value.push(t('welcomeInfo.notDetectedAfterInstall'))
         scrollToBottom()
+        emit('failed')
       }
     } else {
       // API error — assume success since install_success was received
@@ -240,11 +245,10 @@ function retry() {
 }
 
 function handleClose() {
-  abortController?.abort()
-  if (retryTimerId !== null) {
-    clearTimeout(retryTimerId)
-    retryTimerId = null
-  }
+  // Only hide the dialog — do NOT abort the install.
+  // The install keeps running so success/failed events will fire
+  // and update the installing indicator on the button.
+  // Abort is handled in onUnmounted when the component is actually destroyed.
   emit('close')
 }
 </script>
@@ -357,11 +361,11 @@ function handleClose() {
   40% { opacity: 1; transform: scale(1.2); }
 }
 
-.install-error-section {
+.install-cmd-section {
   margin-bottom: 12px;
   padding: 8px 10px;
-  background: color-mix(in srgb, #d32f2f 8%, var(--bg-primary, #fff));
-  border: 1px solid color-mix(in srgb, #d32f2f 20%, var(--border-color, #ddd));
+  background: var(--bg-tertiary, #f0f0f0);
+  border: 1px solid var(--border-color, #ddd);
   border-radius: 8px;
 }
 

@@ -74,15 +74,17 @@
   <!-- iOS install instructions sheet -->
   <IosInstallDrawer :open="showIosSheet" @close="showIosSheet = false" />
 
-  <!-- Agent install dialogs (one per concurrent install) -->
+  <!-- Agent install dialogs (one per concurrent install; hidden ones are v-show'd to keep alive) -->
   <AgentInstallDialog
     v-for="d in installDialogs"
     :key="d.backendId"
     :backend-id="d.backendId"
     :backend-name="d.backendName"
     :install-cmd="d.installCmd"
+    :visible="!d.hidden"
     @close="closeInstallDialog(d.backendId)"
     @success="handleInstallSuccess(d.backendId)"
+    @failed="handleInstallFailed(d.backendId)"
   />
 </template>
 
@@ -110,6 +112,7 @@ interface InstallDialogEntry {
   backendId: string
   backendName: string
   installCmd: string
+  hidden?: boolean // user closed the dialog UI but install is still running
 }
 
 const STORAGE_KEY = 'clawbench_welcome_dismissed'
@@ -202,13 +205,29 @@ function startInstall(b: BackendInfo) {
 }
 
 function closeInstallDialog(backendId: string) {
-  installingBackendIds.value = new Set([...installingBackendIds.value].filter(id => id !== backendId))
-  installDialogs.value = installDialogs.value.filter(d => d.backendId !== backendId)
+  // Hide the dialog UI but keep the component alive so it can finish the install
+  // and emit success/failed to update the installing indicator.
+  installDialogs.value = installDialogs.value.map(d =>
+    d.backendId === backendId ? { ...d, hidden: true } : d
+  )
 }
 
 async function handleInstallSuccess(backendId: string) {
-  closeInstallDialog(backendId)
-  await rescan()
+  // Install verified — remove installing indicator and dialog entry
+  installingBackendIds.value = new Set([...installingBackendIds.value].filter(id => id !== backendId))
+  installDialogs.value = installDialogs.value.filter(d => d.backendId !== backendId)
+  try {
+    await rescan()
+  } catch (e) {
+    appLog.w('WelcomeOverlay', 'rescan after install failed', e)
+  }
+}
+
+function handleInstallFailed(backendId: string) {
+  // Install failed or not detected — remove installing indicator so user can retry
+  installingBackendIds.value = new Set([...installingBackendIds.value].filter(id => id !== backendId))
+  // Keep the dialog entry removed too (component already unmounted if hidden)
+  installDialogs.value = installDialogs.value.filter(d => d.backendId !== backendId)
 }
 
 async function handlePwaInstall() {

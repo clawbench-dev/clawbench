@@ -18,7 +18,7 @@ export interface ApiOptions {
 
 /**
  * Create an AbortSignal that aborts when either:
- * - The internal timeout fires (API_TIMEOUT_MS)
+ * - The internal timeout fires (opts.timeoutMs ?? API_TIMEOUT_MS)
  * - The external signal (if provided) aborts
  * Returns the combined signal and a cleanup function.
  */
