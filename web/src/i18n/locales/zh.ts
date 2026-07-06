@@ -1355,6 +1355,17 @@ export default {
     passwordStrengthWeak: '弱',
     passwordStrengthMedium: '中',
     passwordStrengthStrong: '强',
+    drillDown: {
+      save: '保存',
+      saving: '保存中...',
+      needsRestartHint: '更改需要重启服务器生效',
+      unsavedTitle: '未保存的更改',
+      unsavedMessage: '您有未保存的更改，是否丢弃？',
+      discard: '丢弃',
+      continueEditing: '继续编辑',
+      saved: '配置已保存',
+      saveFailed: '保存失败',
+    },
   },
   terminal: {
     title: '终端',

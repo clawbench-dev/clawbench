@@ -1355,6 +1355,17 @@ export default {
     passwordStrengthWeak: 'Weak',
     passwordStrengthMedium: 'Medium',
     passwordStrengthStrong: 'Strong',
+    drillDown: {
+      save: 'Save',
+      saving: 'Saving...',
+      needsRestartHint: 'Changes require server restart to take effect',
+      unsavedTitle: 'Unsaved Changes',
+      unsavedMessage: 'You have unsaved changes. Discard them?',
+      discard: 'Discard',
+      continueEditing: 'Continue Editing',
+      saved: 'Configuration saved',
+      saveFailed: 'Save failed',
+    },
   },
   terminal: {
     title: 'Terminal',
