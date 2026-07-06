@@ -82,7 +82,7 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 - **AutoResumeBackend:** ExitPlanMode → cancel → resume "继续". Emits `resume_split` for DB finalization.
 - **ACP backend:** `ACPBackend` wraps ACP stdio agents with connection pooling (`ACPConnectionPool`, lazy init, 5-min idle sweep). Falls back to CLI via `sync.Once` if ACP not supported. State (mode/config/thinking/commands) cached and re-emitted on reconnect. Bridge adapters provide ACP for agents without native support.
 - **Agent system:** DB-backed (`agents` table). Models auto-discovered at runtime via `BackendRegistry` strategies. Shared rules template (`commonRulesTemplate`) embedded in Go binary. `@chatsearch`/`@task` template-injected on demand.
-- **Agent install:** `BackendSpec.InstallCmd` defines the install command for each backend (e.g., `npm install -g @anthropic-ai/claude-code`). `POST /api/agents/install` endpoint runs the install command and streams progress. Frontend shows install button for undetected backends.
+- **Agent install:** `BackendSpec.InstallCmd` defines the install command for each backend (e.g., `npm install -g @anthropic-ai/claude-code`). Frontend shows install button for undetected backends — clicking it displays the command in a dialog with a copy button for the user to run manually.
 - **External session ID:** All backends write CLI session ID to `external_session_id` at creation. Continued sessions inherit from source.
 - **Cancel reason:** `"user"` (explicit) vs `"disconnect"` (SSE gone). `ForceCancelSession` kills zombie CLI processes.
 - **Green portable deployment:** All runtime data under `.clawbench/`. Multi-instance on different ports with auto-scoped cookies (`ScopedCookieName()`).

@@ -16,7 +16,7 @@
             v-for="b in sortedBackends"
             :key="b.id"
             class="backend-item"
-            :class="{ 'backend-not-detected': !detectedBackends.has(b.id) && !installingBackendIds.has(b.id) }"
+            :class="{ 'backend-not-detected': !detectedBackends.has(b.id) }"
           >
             <div class="backend-icon">{{ b.icon }}</div>
             <div class="backend-info">
@@ -30,17 +30,10 @@
               {{ t('welcomeInfo.detected') }}
             </span>
             <button
-              v-if="!detectedBackends.has(b.id) && b.install_cmd && !installingBackendIds.has(b.id)"
+              v-if="!detectedBackends.has(b.id) && b.install_cmd"
               class="btn-install"
               @click="startInstall(b)"
             >{{ t('welcomeInfo.install') }}</button>
-            <span
-              v-if="!detectedBackends.has(b.id) && b.install_cmd && installingBackendIds.has(b.id)"
-              class="btn-installing"
-            >
-              <span class="install-spinner"></span>
-              {{ t('welcomeInfo.installing') }}
-            </span>
           </div>
         </div>
         <!-- Install section (mobile web only) -->
@@ -74,17 +67,12 @@
   <!-- iOS install instructions sheet -->
   <IosInstallDrawer :open="showIosSheet" @close="showIosSheet = false" />
 
-  <!-- Agent install dialogs (one per concurrent install; hidden ones are v-show'd to keep alive) -->
+  <!-- Agent install command dialog -->
   <AgentInstallDialog
-    v-for="d in installDialogs"
-    :key="d.backendId"
-    :backend-id="d.backendId"
-    :backend-name="d.backendName"
-    :install-cmd="d.installCmd"
-    :visible="!d.hidden"
-    @close="closeInstallDialog(d.backendId)"
-    @success="handleInstallSuccess(d.backendId)"
-    @failed="handleInstallFailed(d.backendId)"
+    v-if="selectedBackend"
+    :backend-name="selectedBackend.name"
+    :install-cmd="selectedBackend.install_cmd || ''"
+    @close="selectedBackend = null"
   />
 </template>
 
@@ -108,13 +96,6 @@ interface BackendInfo {
   install_cmd?: string
 }
 
-interface InstallDialogEntry {
-  backendId: string
-  backendName: string
-  installCmd: string
-  hidden?: boolean // user closed the dialog UI but install is still running
-}
-
 const STORAGE_KEY = 'clawbench_welcome_dismissed'
 
 defineExpose({ show, forceShow })
@@ -130,19 +111,15 @@ const visible = ref(false)
 const backends = ref<BackendInfo[]>([])
 const detectedBackends = ref<Set<string>>(new Set())
 const showIosSheet = ref(false)
-const installingBackendIds = ref<Set<string>>(new Set())
-const installDialogs = ref<InstallDialogEntry[]>([])
+const selectedBackend = ref<BackendInfo | null>(null)
 const rescanning = ref(false)
 
-// Sort: installed first, installing second, not-installed last
+// Sort: installed first, not-installed last
 const sortedBackends = computed(() => {
   return [...backends.value].sort((a, b) => {
-    const aInstalling = installingBackendIds.value.has(a.id)
-    const bInstalling = installingBackendIds.value.has(b.id)
     const aDetected = detectedBackends.value.has(a.id)
     const bDetected = detectedBackends.value.has(b.id)
     if (aDetected !== bDetected) return aDetected ? -1 : 1
-    if (aInstalling !== bInstalling) return aInstalling ? -1 : 1
     return 0
   })
 })
@@ -196,38 +173,7 @@ async function rescan() {
 }
 
 function startInstall(b: BackendInfo) {
-  installingBackendIds.value = new Set([...installingBackendIds.value, b.id])
-  installDialogs.value = [...installDialogs.value, {
-    backendId: b.id,
-    backendName: b.name,
-    installCmd: b.install_cmd || '',
-  }]
-}
-
-function closeInstallDialog(backendId: string) {
-  // Hide the dialog UI but keep the component alive so it can finish the install
-  // and emit success/failed to update the installing indicator.
-  installDialogs.value = installDialogs.value.map(d =>
-    d.backendId === backendId ? { ...d, hidden: true } : d
-  )
-}
-
-async function handleInstallSuccess(backendId: string) {
-  // Install verified — remove installing indicator and dialog entry
-  installingBackendIds.value = new Set([...installingBackendIds.value].filter(id => id !== backendId))
-  installDialogs.value = installDialogs.value.filter(d => d.backendId !== backendId)
-  try {
-    await rescan()
-  } catch (e) {
-    appLog.w('WelcomeOverlay', 'rescan after install failed', e)
-  }
-}
-
-function handleInstallFailed(backendId: string) {
-  // Install failed or not detected — remove installing indicator so user can retry
-  installingBackendIds.value = new Set([...installingBackendIds.value].filter(id => id !== backendId))
-  // Keep the dialog entry removed too (component already unmounted if hidden)
-  installDialogs.value = installDialogs.value.filter(d => d.backendId !== backendId)
+  selectedBackend.value = b
 }
 
 async function handlePwaInstall() {
@@ -418,35 +364,6 @@ onUnmounted(() => {
 
 .btn-install:hover {
   opacity: 0.85;
-}
-
-.btn-installing {
-  position: absolute;
-  right: 6px;
-  top: 4px;
-  font-size: 9px;
-  font-weight: 600;
-  padding: 2px 6px;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--accent-color) 15%, transparent);
-  color: var(--accent-color);
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.install-spinner {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border: 1.5px solid color-mix(in srgb, var(--accent-color) 40%, transparent);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: install-spin 0.6s linear infinite;
-}
-
-@keyframes install-spin {
-  to { transform: rotate(360deg); }
 }
 
 /* Install section */

@@ -2,16 +2,11 @@
 package handler
 
 import (
-	"bufio"
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
-	"os/exec"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
@@ -27,8 +22,6 @@ import (
 // network probes. 0 = not yet checked; 1 = true (China); 2 = false.
 var chinaMirrorChecked atomic.Int32
 
-// chinaProbeClient is a dedicated HTTP client for the China IP probe.
-// It bypasses HTTP_PROXY (direct network check) and has a short timeout.
 var chinaProbeClient = &http.Client{
 	Timeout: 3 * time.Second,
 	Transport: &http.Transport{
@@ -36,27 +29,12 @@ var chinaProbeClient = &http.Client{
 	},
 }
 
-// isChinaMainland returns true if the server appears to be running in mainland
-// China. Detection strategy:
-//  1. Check LANG/LC_ALL/LC_MESSAGES env vars for zh_CN locale
-//  2. Quick HTTP probe to ip-api.com (2s timeout) — if country_code == "CN"
-//
-// Result is cached for the process lifetime via atomic store.
+// isChinaMainland returns true if the server appears to be running in mainland China.
+// Uses network probe to ip-api.com — country_code == "CN". Result cached.
 func isChinaMainland() bool {
 	if v := chinaMirrorChecked.Load(); v != 0 {
 		return v == 1
 	}
-
-	// Strategy 1: locale env vars
-	for _, key := range []string{"LANG", "LC_ALL", "LC_MESSAGES"} {
-		if v := os.Getenv(key); strings.Contains(v, "zh_CN") {
-			chinaMirrorChecked.Store(1)
-			slog.Debug("china mirror detection: zh_CN locale found", "env", key, "value", v)
-			return true
-		}
-	}
-
-	// Strategy 2: network probe (2s timeout)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://ip-api.com/line/?fields=countryCode", nil)
@@ -67,62 +45,38 @@ func isChinaMainland() bool {
 	resp, err := chinaProbeClient.Do(req)
 	if err != nil {
 		chinaMirrorChecked.Store(2)
-		slog.Debug("china mirror detection: network probe failed", "error", err)
 		return false
 	}
 	defer resp.Body.Close()
-	// Read body fully (with cap) so the connection can be reused by the pool
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 16))
 	if err != nil {
 		chinaMirrorChecked.Store(2)
-		slog.Debug("china mirror detection: read body failed", "error", err)
 		return false
 	}
 	code := strings.TrimSpace(string(body))
 	isCN := code == "CN"
 	if isCN {
 		chinaMirrorChecked.Store(1)
-		slog.Debug("china mirror detection: country code CN detected")
 	} else {
 		chinaMirrorChecked.Store(2)
-		slog.Debug("china mirror detection: country code not CN", "code", code)
 	}
 	return isCN
 }
 
-// npmMirrorRegistry is the China mainland npm mirror.
 const npmMirrorRegistry = "https://registry.npmmirror.com"
 
-// needsShell reports whether a command contains shell operators (pipes,
-// redirects, chains) that require interpretation by a shell.
-func needsShell(cmd string) bool {
-	for _, op := range []string{"|", "&&", "||", ">", ">>", "<<", "<&", ">&"} {
-		if strings.Contains(cmd, op) {
-			return true
-		}
-	}
-	return false
-}
-
-// prepareInstallCmd modifies an install command for non-interactive execution:
-//  1. Adds --ignore-scripts to npm install to prevent postinstall scripts from
-//     blocking (e.g., opencode-ai's postinstall.mjs prompts for npm approve-scripts).
-//  2. Adds China npm mirror registry if running in mainland China.
+// prepareInstallCmd modifies an install command for display:
+// Adds China npm mirror registry if in mainland China.
 func prepareInstallCmd(installCmd string) string {
 	if !strings.HasPrefix(installCmd, "npm install") {
 		return installCmd
 	}
-	result := installCmd
-	// Add --ignore-scripts if not already present
-	if !strings.Contains(result, "--ignore-scripts") {
-		result += " --ignore-scripts"
+	if isChinaMainland() && !strings.Contains(installCmd, "--registry") {
+		return installCmd + " --registry=" + npmMirrorRegistry
 	}
-	// Add China mirror if applicable and not already specified
-	if isChinaMainland() && !strings.Contains(result, "--registry") {
-		result += " --registry=" + npmMirrorRegistry
-	}
-	return result
+	return installCmd
 }
+
 
 // ServeAgentSubRoutes handles /api/agents/* sub-routes (e.g. /api/agents/{id}/refresh-models).
 func ServeAgentSubRoutes(w http.ResponseWriter, r *http.Request) {
@@ -141,10 +95,6 @@ func ServeAgentSubRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasSuffix(path, "/rescan") && r.Method == http.MethodPost {
 		serveAgentsRescan(w, r)
-		return
-	}
-	if strings.HasSuffix(path, "/install") && r.Method == http.MethodPost {
-		serveAgentsInstall(w, r)
 		return
 	}
 	writeLocalizedErrorf(w, r, http.StatusNotFound, "NotFound")
@@ -333,264 +283,6 @@ func serveAgentsRescan(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-// installMuMap provides per-backend install locks. Same backend cannot be
-// installed concurrently, but different backends can install in parallel.
-var installMuMap sync.Map // map[string]*sync.Mutex
-
-// serveAgentsInstall handles POST /api/agents/install — runs InstallCmd for a
-// backend and streams stdout/stderr via SSE. Only one install at a time.
-// Expects: {"backend_id": "opencode"}
-func serveAgentsInstall(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // SSE install streaming has multiple sequential branches
-	var req struct {
-		BackendID string `json:"backend_id"`
-	}
-	if !decodeJSON(w, r, &req) {
-		return
-	}
-
-	// Find the BackendSpec
-	var spec *model.BackendSpec
-	for i := range model.GetBackendRegistry() {
-		s := &model.GetBackendRegistry()[i]
-		if s.ID == req.BackendID {
-			spec = s
-			break
-		}
-	}
-	if spec == nil {
-		writeLocalizedErrorf(w, r, http.StatusNotFound, "BackendNotFound")
-		return
-	}
-	if spec.InstallCmd == "" {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "BackendNotInstallable")
-		return
-	}
-
-	// One install per backend at a time (different backends can install in parallel)
-	mu, _ := installMuMap.LoadOrStore(req.BackendID, &sync.Mutex{})
-	backendMu := mu.(*sync.Mutex)
-	if !backendMu.TryLock() {
-		writeLocalizedErrorf(w, r, http.StatusConflict, "InstallInProgress")
-		return
-	}
-	muReleased := false
-	releaseMu := func() {
-		if !muReleased {
-			muReleased = true
-			backendMu.Unlock()
-		}
-	}
-	defer releaseMu()
-
-	// Set SSE headers
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		slog.Error("response writer does not support flushing for install SSE")
-		return
-	}
-
-	// Emit initial state
-	// Apply China npm mirror if applicable
-	effectiveCmd := prepareInstallCmd(spec.InstallCmd)
-	_, _ = fmt.Fprintf(w, "event: install_start\ndata: {\"backend_id\":%q,\"command\":%q}\n\n", spec.ID, effectiveCmd)
-	flusher.Flush()
-
-	// Log if command was modified (mirror and/or --ignore-scripts applied)
-	if effectiveCmd != spec.InstallCmd {
-		parts := []string{}
-		if strings.Contains(effectiveCmd, "--ignore-scripts") && !strings.Contains(spec.InstallCmd, "--ignore-scripts") {
-			parts = append(parts, "ignore-scripts")
-		}
-		if strings.Contains(effectiveCmd, "--registry") && !strings.Contains(spec.InstallCmd, "--registry") {
-			parts = append(parts, "mirror="+npmMirrorRegistry)
-		}
-		slog.Info("install command modified", "backend", spec.ID, "mods", strings.Join(parts, ", "), "cmd", effectiveCmd)
-	}
-
-	// Execute install command (no sudo)
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
-	defer cancel()
-	var cmd *exec.Cmd
-	if needsShell(effectiveCmd) {
-		cmd = exec.CommandContext(ctx, "bash", "-c", effectiveCmd)
-	} else {
-		cmdParts := strings.Fields(effectiveCmd)
-		cmd = exec.CommandContext(ctx, cmdParts[0], cmdParts[1:]...)
-	}
-	cmd.Env = os.Environ()
-
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		_, _ = fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q}\n\n", err.Error())
-		flusher.Flush()
-		return
-	}
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		_, _ = fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q}\n\n", err.Error())
-		flusher.Flush()
-		return
-	}
-	// Put install subprocess in its own process group so we can kill the
-	// entire group (including any children) on timeout or client disconnect.
-	setProcessGroup(cmd)
-
-	if err := cmd.Start(); err != nil {
-		_, _ = fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q,\"command\":%q}\n\n", err.Error(), effectiveCmd)
-		flusher.Flush()
-		return
-	}
-
-	// Stream stdout and stderr line-by-line as SSE events.
-	// Use a channel to merge both streams.
-	type logLine struct {
-		line   string
-		stream string
-	}
-	logCh := make(chan logLine, 64)
-
-	// installScannerMax is the max line length for install output scanners.
-	// npm can produce very long lines (e.g., dependency trees, error stacks).
-	const installScannerMax = 1024 * 1024 // 1MB
-
-	// Reader goroutine for stdout
-	var readerWg sync.WaitGroup
-	readerWg.Add(2)
-	go func() {
-		defer readerWg.Done()
-		scanner := bufio.NewScanner(stdoutPipe)
-		scanner.Buffer(make([]byte, 0, 64*1024), installScannerMax)
-		for scanner.Scan() {
-			select {
-			case logCh <- logLine{line: scanner.Text(), stream: "stdout"}:
-			default: // channel full, drop line (install log, non-critical)
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			select {
-			case logCh <- logLine{line: fmt.Sprintf("[scanner stdout error: %v]", err), stream: "stderr"}:
-			default:
-			}
-		}
-	}()
-
-	// Reader goroutine for stderr
-	go func() {
-		defer readerWg.Done()
-		scanner := bufio.NewScanner(stderrPipe)
-		scanner.Buffer(make([]byte, 0, 64*1024), installScannerMax)
-		for scanner.Scan() {
-			select {
-			case logCh <- logLine{line: scanner.Text(), stream: "stderr"}:
-			default: // channel full, drop line
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			select {
-			case logCh <- logLine{line: fmt.Sprintf("[scanner stderr error: %v]", err), stream: "stderr"}:
-			default:
-			}
-		}
-	}()
-
-	// Close logCh after both readers finish (pipes close at process exit)
-	go func() {
-		readerWg.Wait()
-		close(logCh)
-	}()
-
-	// Merger goroutine: send exit error when process completes.
-	// After Wait returns, kill the process group to ensure all child processes
-	// (which may inherit pipe FDs) are terminated. Without this, the drain loop
-	// for logCh would block forever because the pipe readers can't reach EOF.
-	exitErrCh := make(chan error, 1)
-	go func() {
-		err := cmd.Wait()
-		// Kill remaining children in the process group.
-		if cmd.Process != nil {
-			killProcessGroup(cmd.Process.Pid)
-		}
-		exitErrCh <- err
-	}()
-
-	// When context is cancelled (timeout or client disconnect), kill the entire
-	// process group. This must be separate from cmd.Wait because Wait blocks
-	// until all pipe I/O completes, and orphan child processes can keep pipes
-	// open indefinitely. Killing the process group first closes the pipes,
-	// which unblocks Wait.
-	go func() {
-		<-ctx.Done()
-		if cmd.Process != nil {
-			killProcessGroup(cmd.Process.Pid)
-		}
-	}()
-
-	// Heartbeat ticker
-	heartbeat := time.NewTicker(15 * time.Second)
-	defer heartbeat.Stop()
-
-	// Main loop: forward log lines as SSE events, with heartbeats
-	for {
-		select {
-		case ll, ok := <-logCh:
-			if !ok {
-				// Channel closed (readers finished) — wait for exit status
-				logCh = nil
-				continue
-			}
-			_, _ = fmt.Fprintf(w, "event: install_log\ndata: {\"line\":%q,\"stream\":%q}\n\n", ll.line, ll.stream)
-			flusher.Flush()
-		case exitErr := <-exitErrCh:
-			// Drain remaining log lines. If logCh was already set to nil (channel
-			// was closed and consumed by the select above), skip the drain — all
-			// remaining lines have already been forwarded. Otherwise, range until
-			// logCh is closed by the reader goroutines.
-			if logCh != nil {
-				for ll := range logCh {
-					_, _ = fmt.Fprintf(w, "event: install_log\ndata: {\"line\":%q,\"stream\":%q}\n\n", ll.line, ll.stream)
-					flusher.Flush()
-				}
-			}
-			if exitErr != nil {
-				// npm install -g can exit non-zero even when the CLI is successfully installed
-				// (e.g., postinstall warnings, peer dep conflicts, npm 10+ strict checks).
-				// Verify the CLI actually exists on PATH before reporting failure.
-				if model.CheckCLIExists(spec.DefaultCmd) || (spec.AltCmd != "" && model.CheckCLIExists(spec.AltCmd)) {
-					slog.Info("install command exited with error but CLI is available, treating as success",
-						"backend", spec.ID, "cmd", effectiveCmd, "exit_error", exitErr)
-					_, _ = fmt.Fprintf(w, "event: install_success\ndata: {\"backend_id\":%q}\n\n", spec.ID)
-				} else {
-					_, _ = fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q,\"command\":%q}\n\n", exitErr.Error(), effectiveCmd)
-				}
-			} else {
-				_, _ = fmt.Fprintf(w, "event: install_success\ndata: {\"backend_id\":%q}\n\n", spec.ID)
-			}
-			flusher.Flush()
-			// Release mutex immediately after terminal event so the next install
-			// can start without waiting for deferred cleanup.
-			releaseMu()
-			return
-		case <-heartbeat.C:
-			_, _ = fmt.Fprintf(w, ": heartbeat\n\n")
-			flusher.Flush()
-		case <-r.Context().Done():
-			// Client disconnected — release mutex immediately so the next
-			// install request doesn't get blocked by this orphaned session.
-			// The context-cancel goroutine will kill the process group,
-			// which unblocks cmd.Wait and lets pipe readers exit.
-			releaseMu()
-			cancel()
-			return
-		}
-	}
-}
-
-// serveAgentsDelete handles DELETE /api/agents — deletes a single agent.
-// Expects: {"id": "claude"}. Cannot delete the default agent.
 func serveAgentsDelete(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID string `json:"id"`
@@ -1172,7 +864,7 @@ func ServeBackends(w http.ResponseWriter, r *http.Request) {
 			Specialty:            spec.Specialty,
 			DefaultCmd:           spec.DefaultCmd,
 			ThinkingEffortLevels: spec.ThinkingEffortLevels,
-			InstallCmd:           spec.InstallCmd,
+			InstallCmd:           prepareInstallCmd(spec.InstallCmd),
 		})
 	}
 

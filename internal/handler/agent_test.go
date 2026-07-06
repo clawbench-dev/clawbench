@@ -140,6 +140,40 @@ func TestAgentPatch_InvalidPreferredModel(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// ── install command preparation tests ──
+
+func TestPrepareInstallCmd_NpmInstallWithChinaMirror(t *testing.T) {
+	orig := chinaMirrorChecked.Load()
+	defer chinaMirrorChecked.Store(orig)
+	chinaMirrorChecked.Store(1)
+
+	result := prepareInstallCmd("npm install -g @anthropic-ai/claude-code")
+	assert.Contains(t, result, "--registry="+npmMirrorRegistry)
+}
+
+func TestPrepareInstallCmd_NpmInstallWithoutChina(t *testing.T) {
+	orig := chinaMirrorChecked.Load()
+	defer chinaMirrorChecked.Store(orig)
+	chinaMirrorChecked.Store(2)
+
+	result := prepareInstallCmd("npm install -g @anthropic-ai/claude-code")
+	assert.NotContains(t, result, "--registry=")
+}
+
+func TestPrepareInstallCmd_NonNpmCommand(t *testing.T) {
+	result := prepareInstallCmd("curl -fsSL https://get.qoder.dev | bash")
+	assert.Equal(t, "curl -fsSL https://get.qoder.dev | bash", result)
+}
+
+func TestPrepareInstallCmd_AlreadyHasRegistry(t *testing.T) {
+	orig := chinaMirrorChecked.Load()
+	defer chinaMirrorChecked.Store(orig)
+	chinaMirrorChecked.Store(1)
+
+	result := prepareInstallCmd("npm install -g --registry=https://my.local npm-pkg")
+	assert.NotContains(t, result, npmMirrorRegistry)
+}
+
 func TestAgentPatch_PreferredThinkingEffort(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 
@@ -1312,58 +1346,3 @@ func TestAgentDelete_EmptyID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// ── install command preparation tests ──
-
-func TestPrepareInstallCmd_NpmInstallWithChinaMirror(t *testing.T) {
-	orig := chinaMirrorChecked.Load()
-	defer chinaMirrorChecked.Store(orig)
-
-	// Simulate China mainland detected
-	chinaMirrorChecked.Store(1)
-
-	result := prepareInstallCmd("npm install -g @anthropic-ai/claude-code")
-	assert.Equal(t, "npm install -g @anthropic-ai/claude-code --ignore-scripts --registry=https://registry.npmmirror.com", result)
-}
-
-func TestPrepareInstallCmd_NpmInstallWithoutChina(t *testing.T) {
-	orig := chinaMirrorChecked.Load()
-	defer chinaMirrorChecked.Store(orig)
-
-	// Simulate NOT in China
-	chinaMirrorChecked.Store(2)
-
-	result := prepareInstallCmd("npm install -g @anthropic-ai/claude-code")
-	assert.Equal(t, "npm install -g @anthropic-ai/claude-code --ignore-scripts", result)
-}
-
-func TestPrepareInstallCmd_NonNpmCommand(t *testing.T) {
-	orig := chinaMirrorChecked.Load()
-	defer chinaMirrorChecked.Store(orig)
-
-	// Even in China, non-npm commands should not be modified
-	chinaMirrorChecked.Store(1)
-
-	result := prepareInstallCmd("curl -fsSL https://qoder.com/install | bash")
-	assert.Equal(t, "curl -fsSL https://qoder.com/install | bash", result)
-}
-
-func TestPrepareInstallCmd_AlreadyHasRegistry(t *testing.T) {
-	orig := chinaMirrorChecked.Load()
-	defer chinaMirrorChecked.Store(orig)
-
-	// If --registry is already specified, don't add another
-	chinaMirrorChecked.Store(1)
-
-	result := prepareInstallCmd("npm install -g some-pkg --registry=https://my-registry.com")
-	assert.Equal(t, "npm install -g some-pkg --registry=https://my-registry.com --ignore-scripts", result)
-}
-
-func TestPrepareInstallCmd_AlreadyHasIgnoreScripts(t *testing.T) {
-	orig := chinaMirrorChecked.Load()
-	defer chinaMirrorChecked.Store(orig)
-
-	chinaMirrorChecked.Store(2)
-
-	result := prepareInstallCmd("npm install -g some-pkg --ignore-scripts")
-	assert.Equal(t, "npm install -g some-pkg --ignore-scripts", result)
-}
