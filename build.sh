@@ -67,8 +67,11 @@ if [ -f "package.json" ] && command -v npm >/dev/null 2>&1; then
         echo "  Installing dependencies..."
         npm install
     fi
-    # Clean stale hashed assets before rebuild (index-*.js, index-*.css, manifest-*.json)
-    find public/ -maxdepth 1 -name 'index-*.js' -o -name 'index-*.css' -o -name 'manifest-*.json' | xargs rm -f 2>/dev/null || true
+    # Clean all stale build output before rebuild.
+    # Vite generates new hashed filenames each build but does not remove old ones,
+    # so leftover chunks (diagram JS, CSS, fonts, etc.) accumulate indefinitely.
+    # Preserve only index.html and assets/ (static user assets); Vite regenerates the rest.
+    find public/ -maxdepth 1 -type f ! -name 'index.html' -delete 2>/dev/null || true
     npm run build
     echo "  Frontend: public/"
 

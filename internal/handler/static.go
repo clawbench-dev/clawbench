@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -27,15 +28,17 @@ func ServeIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path := r.URL.Path
+	urlPath := r.URL.Path
 
 	// ISS-055: Clean the path to prevent path traversal (e.g. /../etc/passwd)
-	path = filepath.Clean(path)
+	// Use path.Clean (not filepath.Clean) to keep forward slashes —
+	// fs.FS.Open requires "/" separators on all platforms including Windows.
+	urlPath = path.Clean(urlPath)
 
 	fsys := frontend.GetFS()
 
 	// Serve index for root — auth is handled by the Vue app itself
-	if path == "/" || path == "." {
+	if urlPath == "/" || urlPath == "." {
 		if fi, err := fsys.Open("index.html"); err == nil {
 			_ = fi.Close()
 			frontend.ServeFileFromFS(w, r, fsys, "index.html")
@@ -47,7 +50,7 @@ func ServeIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// For other paths (e.g. /index-*.css, /index-*.js), serve from frontend FS
-	cleanRelPath := strings.TrimPrefix(path, "/")
+	cleanRelPath := strings.TrimPrefix(urlPath, "/")
 
 	// ISS-055: When serving from disk, ensure the cleaned path stays within public/
 	if frontend.DiskPublicExists() {
@@ -68,8 +71,8 @@ func ServeIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// For /css/* paths, also try web/css/ (dev mode fallback)
-	if strings.HasPrefix(path, "/css/") {
-		fallback := filepath.Join("web", path)
+	if strings.HasPrefix(urlPath, "/css/") {
+		fallback := filepath.Join("web", urlPath)
 		if _, err := os.Stat(fallback); err == nil {
 			http.ServeFile(w, r, fallback)
 			return

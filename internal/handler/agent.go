@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -438,7 +437,7 @@ func serveAgentsInstall(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 	}
 	// Put install subprocess in its own process group so we can kill the
 	// entire group (including any children) on timeout or client disconnect.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setProcessGroup(cmd)
 
 	if err := cmd.Start(); err != nil {
 		_, _ = fmt.Fprintf(w, "event: install_error\ndata: {\"error\":%q,\"command\":%q}\n\n", err.Error(), effectiveCmd)
@@ -513,7 +512,7 @@ func serveAgentsInstall(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 		err := cmd.Wait()
 		// Kill remaining children in the process group.
 		if cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			killProcessGroup(cmd.Process.Pid)
 		}
 		exitErrCh <- err
 	}()
@@ -526,7 +525,7 @@ func serveAgentsInstall(w http.ResponseWriter, r *http.Request) { //nolint:gocyc
 	go func() {
 		<-ctx.Done()
 		if cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			killProcessGroup(cmd.Process.Pid)
 		}
 	}()
 
