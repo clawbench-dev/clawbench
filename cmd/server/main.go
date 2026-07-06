@@ -587,6 +587,13 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		port = cliPort
 	}
 
+	// If port was overridden and DevPort was auto-calculated from the original port,
+	// recalculate DevPort to match the new port.
+	if port != cfg.Port && cfg.DevPort == cfg.Port+2 {
+		cfg.DevPort = port + 2
+	}
+	cfg.Port = port
+
 	// Set global port for cookie name scoping (multi-instance on same hostname)
 	model.ServerPort = port
 
