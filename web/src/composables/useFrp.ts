@@ -23,14 +23,27 @@ const frpState = reactive<FrpState>({
   remoteUrl: '',
 })
 
+/** Map snake_case API response to camelCase FrpState */
+function mapFrpInfo(data: Record<string, any>): Partial<FrpState> {
+  return {
+    enabled: data.enabled,
+    running: data.running,
+    state: data.state,
+    serverAddr: data.server_addr,
+    remotePort: data.remote_port,
+    sshRemotePort: data.ssh_remote_port,
+    remoteUrl: data.remote_url,
+  }
+}
+
 let wsListenerRegistered = false
 
 export function useFrp() {
   const frpConnected = computed(() => frpState.state === 'running')
 
   function fetchFrpInfo() {
-    apiGet<FrpState>('/api/frp/info').then(data => {
-      Object.assign(frpState, data)
+    apiGet<Record<string, any>>('/api/frp/info').then(data => {
+      Object.assign(frpState, mapFrpInfo(data))
     }).catch(() => {
       // FRP info not available — leave state as-is
     })
@@ -49,6 +62,7 @@ export function useFrp() {
       frpState.running = status === 'running'
       frpState.enabled = status !== 'disabled'
 
+      // WS event uses snake_case keys
       if (data) {
         if (data.remote_url) frpState.remoteUrl = data.remote_url as string
         if (data.remote_port) frpState.remotePort = data.remote_port as number
