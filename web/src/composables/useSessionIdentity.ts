@@ -277,6 +277,13 @@ export function clearAllUsageState() {
   usageStateVersion.value++
 }
 
+/** Clear usage state for a specific session by ID (used by deleteSession). */
+export function clearUsageStateById(sessionId: string) {
+  if (usageStateCache.delete(sessionId)) {
+    usageStateVersion.value++
+  }
+}
+
 /** Toggle auto-approve mode and persist to server. */
 export function toggleAutoApprove(enabled: boolean) {
   autoApprove.value = enabled
@@ -700,5 +707,6 @@ export function useSessionIdentity() {
     updateUsageState,
     clearUsageState,
     clearAllUsageState,
+    clearUsageStateById,
   }
 }

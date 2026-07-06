@@ -5,7 +5,7 @@ import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'ChatSession'
-import { clearModeState, updateAvailableModes, clearCommandState, updateCommandState, updateAvailableThinkingEfforts, clearThinkingEffortState, clearUsageState, updateUsageState, currentAgentId as _currentAgentId } from '@/composables/useSessionIdentity.ts'
+import { clearModeState, updateAvailableModes, clearCommandState, updateCommandState, updateAvailableThinkingEfforts, clearThinkingEffortState, clearUsageState, clearUsageStateById, updateUsageState, currentAgentId as _currentAgentId } from '@/composables/useSessionIdentity.ts'
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
 import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
@@ -774,6 +774,8 @@ export function useChatSession(options: UseChatSessionOptions) {
       })
       const data = await resp.json()
       if (data.ok) {
+        // Evict usage cache for the deleted session
+        clearUsageStateById(sessionId)
         // If deleted current session, switch to another
         if (sessionId === currentSessionId.value) {
           const sessionsResp = await fetch('/api/ai/sessions')

@@ -47,6 +47,7 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     saveThinkingPref: vi.fn(),
     updateUsageState: vi.fn(),
     clearUsageState: vi.fn(),
+    clearUsageStateById: vi.fn(),
   }
   const mockAgentFns = {
     loadAgents: vi.fn().mockResolvedValue(undefined),
@@ -178,6 +179,7 @@ vi.mock('@/composables/useSessionIdentity.ts', () => ({
   clearThinkingEffortState: vi.fn(),
   updateUsageState: mockUpdateUsageState,
   clearUsageState: mockClearUsageState,
+  clearUsageStateById: mockIdentityFns.clearUsageStateById,
 }))
 
 vi.mock('@/composables/useToast', () => ({
