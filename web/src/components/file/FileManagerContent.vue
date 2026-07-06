@@ -351,7 +351,7 @@
 
 <script setup>
 import '@/assets/loading-mask.css'
-import { ref, computed, reactive, inject, nextTick, onMounted, onUnmounted, Teleport, watch } from 'vue'
+import { ref, computed, reactive, inject, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { joinPath } from '@/utils/path'
@@ -443,7 +443,6 @@ const moreMenuStyle = ref({})
 function updateSortMenuStyle() {
   if (!sortDropdownWrapRef.value) return
   const rect = sortDropdownWrapRef.value.getBoundingClientRect()
-  const vp = getZoomedViewport()
   sortMenuStyle.value = {
     position: 'fixed',
     top: `${toFixedCSS(rect.bottom + 4)}px`,
