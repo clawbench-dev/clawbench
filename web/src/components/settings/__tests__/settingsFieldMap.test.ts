@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getServerFieldToLabelKey, categoryItems, categoryGroups, getGroupById, getCategoryForGroup, type ItemSpec } from '@/components/settings/settingsFieldMap'
+import { getServerFieldToLabelKey, categoryItems, drillDownCategories, isDrillDownCategory, type ItemSpec } from '@/components/settings/settingsFieldMap'
 
 describe('settingsFieldMap', () => {
   it('maps all server-side dot-path keys to i18n label keys', () => {
@@ -65,11 +65,20 @@ describe('settingsFieldMap', () => {
     expect(map['ssh.port']).toBeUndefined()
   })
 
-  it('categoryItems covers all expected categories', () => {
-    const expectedCategories = ['appearance', 'agents', 'project', 'chat', 'files', 'terminal', 'tts', 'summarization', 'rag', 'portForward', 'frp', 'android', 'about']
+  it('categoryItems covers flat (non-drill-down) categories', () => {
+    const expectedCategories = ['appearance', 'agents', 'project', 'chat', 'files', 'android', 'security', 'about']
     for (const cat of expectedCategories) {
       expect(categoryItems[cat]).toBeDefined()
     }
+  })
+
+  it('drill-down categories are not in categoryItems', () => {
+    expect(categoryItems['terminal']).toBeUndefined()
+    expect(categoryItems['tts']).toBeUndefined()
+    expect(categoryItems['summarization']).toBeUndefined()
+    expect(categoryItems['rag']).toBeUndefined()
+    expect(categoryItems['portForward']).toBeUndefined()
+    expect(categoryItems['frp']).toBeUndefined()
   })
 
   it('every server item in categoryItems has a corresponding field map entry', () => {
@@ -83,110 +92,140 @@ describe('settingsFieldMap', () => {
     }
   })
 
-  // ── All groups have been flattened to categoryItems ──
+  // ── Drill-down categories ──
 
-  it('categoryGroups is empty (all groups flattened)', () => {
-    expect(Object.keys(categoryGroups)).toHaveLength(0)
+  it('drillDownCategories covers all 6 drill-down categories', () => {
+    const expectedIds = ['terminal', 'tts', 'summarization', 'rag', 'portForward', 'frp']
+    for (const id of expectedIds) {
+      expect(drillDownCategories[id]).toBeDefined()
+      expect(drillDownCategories[id].categoryId).toBe(id)
+    }
   })
 
-  it('getGroupById returns undefined for any groupId', () => {
-    expect(getGroupById('tts-group')).toBeUndefined()
-    expect(getGroupById('nonexistent-group')).toBeUndefined()
+  it('isDrillDownCategory identifies drill-down categories', () => {
+    expect(isDrillDownCategory('terminal')).toBe(true)
+    expect(isDrillDownCategory('tts')).toBe(true)
+    expect(isDrillDownCategory('summarization')).toBe(true)
+    expect(isDrillDownCategory('rag')).toBe(true)
+    expect(isDrillDownCategory('portForward')).toBe(true)
+    expect(isDrillDownCategory('frp')).toBe(true)
+    expect(isDrillDownCategory('appearance')).toBe(false)
+    expect(isDrillDownCategory('chat')).toBe(false)
+    expect(isDrillDownCategory('about')).toBe(false)
   })
 
-  it('getCategoryForGroup returns undefined for any groupId', () => {
-    expect(getCategoryForGroup('tts-group')).toBeUndefined()
-    expect(getCategoryForGroup('nonexistent-group')).toBeUndefined()
+  // ── Terminal drill-down ──
+
+  it('terminal drill-down has enableKey and commonFields', () => {
+    const dd = drillDownCategories['terminal']
+    expect(dd.enableKey).toBe('terminal.enabled')
+    expect(dd.enableLabelKey).toBe('settings.items.terminalEnabled')
+    expect(dd.commonFields.length).toBe(4)
+    expect(dd.commonFields[0].key).toBe('terminalFontSize')
+    expect(dd.commonFields[0].source).toBe('local')
   })
 
-  // ── TTS flattened items ──
+  // ── TTS drill-down ──
 
-  it('frp categoryItems has enabled switch and fields with dependsOn', () => {
-    const frpItems = categoryItems['frp']
-    const enabledItem = frpItems.find(i => i.key === 'frp.enabled')
-    expect(enabledItem).toBeDefined()
-    expect(enabledItem!.type).toBe('switch')
-    expect(enabledItem!.needsRestart).toBe(true)
+  it('tts drill-down has entrySelector and optionSubFields', () => {
+    const dd = drillDownCategories['tts']
+    expect(dd.entrySelector).toBeDefined()
+    expect(dd.entrySelector!.key).toBe('tts.engine')
+    expect(dd.entrySelector!.type).toBe('select')
+    expect(dd.entrySelector!.options!.length).toBe(4)
+    expect(dd.commonFields.length).toBe(3)
+    expect(dd.optionSubFields!.length).toBe(3)
 
-    const addrItem = frpItems.find(i => i.key === 'frp.server_addr')
-    expect(addrItem).toBeDefined()
-    expect(addrItem!.dependsOn).toEqual({ key: 'frp.enabled', value: true })
+    const piperSub = dd.optionSubFields!.find(osf => osf.when === 'piper')
+    expect(piperSub).toBeDefined()
+    expect(piperSub!.fields.length).toBe(4)
+    expect(piperSub!.fields[0].key).toBe('tts.piper.model_path')
 
-    const portItem = frpItems.find(i => i.key === 'frp.server_port')
-    expect(portItem).toBeDefined()
-    expect(portItem!.dependsOn).toEqual({ key: 'frp.enabled', value: true })
+    const kokoroSub = dd.optionSubFields!.find(osf => osf.when === 'kokoro')
+    expect(kokoroSub).toBeDefined()
+    expect(kokoroSub!.fields.length).toBe(3)
 
-    const tokenItem = frpItems.find(i => i.key === 'frp.token')
-    expect(tokenItem).toBeDefined()
-    expect(tokenItem!.type).toBe('password')
-    expect(tokenItem!.dependsOn).toEqual({ key: 'frp.enabled', value: true })
+    const mossNanoSub = dd.optionSubFields!.find(osf => osf.when === 'moss-nano')
+    expect(mossNanoSub).toBeDefined()
+    expect(mossNanoSub!.fields.length).toBe(2)
 
-    const remotePortItem = frpItems.find(i => i.key === 'frp.remote_port')
-    expect(remotePortItem).toBeDefined()
-    expect(remotePortItem!.dependsOn).toEqual({ key: 'frp.enabled', value: true })
+    expect(dd.requiredFields).toEqual(['tts.piper.model_path', 'tts.kokoro.model_path', 'tts.kokoro.voices_path'])
   })
 
-  it('tts categoryItems has engine selector and per-engine fields with dependsOn', () => {
-    const ttsItems = categoryItems['tts']
-    const engineItem = ttsItems.find(i => i.key === 'tts.engine')
-    expect(engineItem).toBeDefined()
-    expect(engineItem!.type).toBe('select')
+  // ── Summarization drill-down ──
 
-    const voiceItem = ttsItems.find(i => i.key === 'tts.voice')
-    expect(voiceItem).toBeDefined()
+  it('summarization drill-down has entrySelector and optionSubFields', () => {
+    const dd = drillDownCategories['summarization']
+    expect(dd.entrySelector).toBeDefined()
+    expect(dd.entrySelector!.key).toBe('summarize.backend')
+    expect(dd.entrySelector!.type).toBe('select')
+    expect(dd.requiredFields).toEqual(['summarize.api.base_url'])
 
-    const piperItem = ttsItems.find(i => i.key === 'tts.piper.model_path')
-    expect(piperItem).toBeDefined()
-    expect(piperItem!.dependsOn).toEqual({ key: 'tts.engine', value: 'piper' })
+    const apiSub = dd.optionSubFields!.find(osf => osf.when === 'api')
+    expect(apiSub).toBeDefined()
+    expect(apiSub!.fields.length).toBe(4)
+    expect(apiSub!.fields[1].key).toBe('summarize.api.base_url')
 
-    const kokoroItem = ttsItems.find(i => i.key === 'tts.kokoro.model_path')
-    expect(kokoroItem).toBeDefined()
-    expect(kokoroItem!.dependsOn).toEqual({ key: 'tts.engine', value: 'kokoro' })
-
-    const mossNanoItem = ttsItems.find(i => i.key === 'tts.moss_nano.model_dir')
-    expect(mossNanoItem).toBeDefined()
-    expect(mossNanoItem!.dependsOn).toEqual({ key: 'tts.engine', value: 'moss-nano' })
+    // CLI backend sub-fields
+    const claudeSub = dd.optionSubFields!.find(osf => osf.when === 'claude')
+    expect(claudeSub).toBeDefined()
+    expect(claudeSub!.fields.length).toBe(1)
+    expect(claudeSub!.fields[0].key).toBe('summarize.model')
   })
 
-  // ── groupConfig tests ──
+  // ── RAG drill-down ──
 
-  it('frp.enabled has groupConfig with triggerValue=true', () => {
-    const frpItems = categoryItems['frp']
-    const enabledItem = frpItems.find(i => i.key === 'frp.enabled') as ItemSpec
-    expect(enabledItem).toBeDefined()
-    expect(enabledItem.groupConfig).toBeDefined()
-    expect(enabledItem.groupConfig!.length).toBe(1)
-    expect(enabledItem.groupConfig![0].triggerValue).toBe(true)
-    expect(enabledItem.groupConfig![0].requiredFields).toEqual(['frp.server_addr'])
-    expect(enabledItem.groupConfig![0].fields).toContain('frp.server_addr')
-    expect(enabledItem.groupConfig![0].fields).toContain('frp.server_port')
-    expect(enabledItem.groupConfig![0].fields).toContain('frp.token')
-    expect(enabledItem.groupConfig![0].fields).toContain('frp.remote_port')
+  it('rag drill-down has 7 commonFields and requiredFields', () => {
+    const dd = drillDownCategories['rag']
+    expect(dd.commonFields.length).toBe(7)
+    expect(dd.commonFields[0].key).toBe('rag.base_url')
+    expect(dd.requiredFields).toEqual(['rag.base_url'])
   })
 
-  it('summarize.backend has groupConfig with triggerValue="api"', () => {
-    const summarizeItems = categoryItems['summarization']
-    const backendItem = summarizeItems.find(i => i.key === 'summarize.backend') as ItemSpec
-    expect(backendItem).toBeDefined()
-    expect(backendItem.groupConfig).toBeDefined()
-    expect(backendItem.groupConfig!.length).toBe(1)
-    expect(backendItem.groupConfig![0].triggerValue).toBe('api')
-    expect(backendItem.groupConfig![0].requiredFields).toEqual(['summarize.api.base_url'])
+  // ── Port Forward drill-down ──
+
+  it('portForward drill-down has enableKey and commonFields with needsRestart', () => {
+    const dd = drillDownCategories['portForward']
+    expect(dd.enableKey).toBe('port_forward.enabled')
+    expect(dd.enableLabelKey).toBe('settings.items.portForwardEnabled')
+    expect(dd.commonFields.length).toBe(1)
+    expect(dd.commonFields[0].key).toBe('port_forward.port')
+    expect(dd.commonFields[0].needsRestart).toBe(true)
   })
 
-  it('tts.engine has groupConfig for piper and kokoro', () => {
-    const ttsItems = categoryItems['tts']
-    const engineItem = ttsItems.find(i => i.key === 'tts.engine') as ItemSpec
-    expect(engineItem).toBeDefined()
-    expect(engineItem.groupConfig).toBeDefined()
-    expect(engineItem.groupConfig!.length).toBe(2)
+  // ── FRP drill-down ──
 
-    const piperTrigger = engineItem.groupConfig!.find(gc => gc.triggerValue === 'piper')
-    expect(piperTrigger).toBeDefined()
-    expect(piperTrigger!.requiredFields).toEqual(['tts.piper.model_path'])
+  it('frp drill-down has enableKey, optionSubFields, and requiredFields', () => {
+    const dd = drillDownCategories['frp']
+    expect(dd.enableKey).toBe('frp.enabled')
+    expect(dd.enableLabelKey).toBe('settings.items.frpEnabled')
+    expect(dd.commonFields.length).toBe(4)
 
-    const kokoroTrigger = engineItem.groupConfig!.find(gc => gc.triggerValue === 'kokoro')
-    expect(kokoroTrigger).toBeDefined()
-    expect(kokoroTrigger!.requiredFields).toEqual(['tts.kokoro.model_path', 'tts.kokoro.voices_path'])
+    const autoPortFalseSub = dd.optionSubFields!.find(osf => osf.when === false)
+    expect(autoPortFalseSub).toBeDefined()
+    expect(autoPortFalseSub!.fields.length).toBe(2)
+    expect(autoPortFalseSub!.fields[0].key).toBe('frp.remote_port')
+    expect(autoPortFalseSub!.fields[1].key).toBe('frp.ssh_remote_port')
+
+    expect(dd.requiredFields).toEqual(['frp.server_addr'])
+  })
+
+  // ── Drill-down fields are included in serverFieldToLabelKey ──
+
+  it('drill-down server fields appear in serverFieldToLabelKey', () => {
+    const map = getServerFieldToLabelKey()
+    // Terminal enable key
+    expect(map['terminal.enabled']).toBe('settings.items.terminalEnabled')
+    // TTS engine
+    expect(map['tts.engine']).toBe('settings.items.ttsEngine')
+    // RAG base_url
+    expect(map['rag.base_url']).toBe('settings.items.ragBaseUrl')
+    // Port forward enable
+    expect(map['port_forward.enabled']).toBe('settings.items.portForwardEnabled')
+    // FRP enable
+    expect(map['frp.enabled']).toBe('settings.items.frpEnabled')
+    // FRP sub-fields
+    expect(map['frp.server_addr']).toBe('settings.items.frpServerAddr')
+    expect(map['frp.remote_port']).toBe('settings.items.frpRemotePort')
   })
 })

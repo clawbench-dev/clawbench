@@ -15,17 +15,6 @@ export interface DependsOn {
   values?: any[]
 }
 
-export interface GroupConfigTrigger {
-  /** The value that triggers the dialog (e.g., "piper", "api") */
-  triggerValue: any
-  /** i18n key for the dialog title */
-  dialogTitleKey: string
-  /** Dot-path keys of sub-fields to show in the dialog */
-  fields: string[]
-  /** Dot-path keys of required fields (empty → red border + block submit) */
-  requiredFields: string[]
-}
-
 export interface ItemSpec {
   labelKey: string
   descriptionKey?: string
@@ -43,59 +32,28 @@ export interface ItemSpec {
   displayTransform?: (value: any) => any
   defaultValue?: any
   displayFormat?: 'percent' | 'raw'
-  /** When this field changes to a triggerValue, show a modal to batch-edit sub-fields.
-   *  Supports multiple triggers (e.g., tts.engine has one for "piper" and one for "kokoro"). */
-  groupConfig?: GroupConfigTrigger[]
 }
 
-// ── Config Group types ──────────────────────────────────────
+// ── Drill-down category types ──────────────────────────────
 
-/** Fields visible for a given entry selector value. */
-export interface OptionSubFields {
-  /** The selector option value (e.g., 'piper', 'api', true) */
-  when: any
-  /** Fields specific to this option value (no dependsOn — visibility driven by `when`) */
-  fields: Omit<ItemSpec, 'dependsOn'>[]
+export interface DrillDownCategory {
+  categoryId: string
+  enableKey?: string
+  enableLabelKey?: string
+  entrySelector?: ItemSpec
+  commonFields: ItemSpec[]
+  optionSubFields?: { when: any; fields: ItemSpec[] }[]
+  requiredFields?: string[]
 }
-
-/** Base properties shared by all ConfigGroup variants. */
-interface ConfigGroupBase {
-  /** Unique group ID (e.g., 'tts-group') */
-  groupId: string
-  /** i18n key for group title (only for entryType 'header') */
-  titleKey?: string
-  /** Description i18n key */
-  descriptionKey?: string
-  /** Fields shared across ALL option values (no dependsOn — visibility driven by commonFieldsVisibleWhen) */
-  commonFields?: Omit<ItemSpec, 'dependsOn'>[]
-  /** Option-specific fields; empty/omitted = all commonFields always visible (RAG pattern) */
-  optionSubFields?: OptionSubFields[]
-  /** Entry values for which panel should NOT expand */
-  nonExpandValues?: any[]
-  /** commonFields only shown for these entry values; undefined = shown for all */
-  commonFieldsVisibleWhen?: any[]
-}
-
-/**
- * Discriminated union: entryType constrains entryField.type at compile time.
- * - 'select': title row IS the selector (e.g., tts.engine, summarize.backend)
- * - 'switch': title row IS the switch (e.g., port_forward.enabled)
- * - 'header': plain title row, click to expand all fields (e.g., RAG)
- */
-export type ConfigGroup =
-  | (ConfigGroupBase & { entryType: 'select'; entryField: ItemSpec & { type: 'select' } })
-  | (ConfigGroupBase & { entryType: 'switch'; entryField: ItemSpec & { type: 'switch' } })
-  | (ConfigGroupBase & { entryType: 'header'; entryField: ItemSpec & { type: 'header' } })
 
 // ── CLI backend names (used by summarization dependsOn) ─────
 
 const CLI_BACKENDS = ['claude', 'codebuddy', 'opencode', 'codex', 'qoder', 'vecli', 'deepseek', 'pi'] as const
 
-// ── Category items (standalone, non-grouped) ────────────────
+// ── Category items (standalone, non-drill-down) ────────────
 
 /**
- * Complete category → items mapping.
- * Per-engine fields use dependsOn for conditional visibility (e.g., piper fields only when tts.engine=piper).
+ * Complete category → items mapping for flat (non-drill-down) categories.
  */
 export const categoryItems: Record<string, ItemSpec[]> = {
   appearance: [
@@ -146,95 +104,6 @@ export const categoryItems: Record<string, ItemSpec[]> = {
     { labelKey: 'settings.items.uploadMaxSize', descriptionKey: 'settings.items.uploadMaxSizeDesc', key: 'upload.max_size_mb', type: 'number', source: 'server' },
     { labelKey: 'settings.items.uploadMaxFiles', descriptionKey: 'settings.items.uploadMaxFilesDesc', key: 'upload.max_files', type: 'number', source: 'server' },
   ],
-  terminal: [
-    { labelKey: 'settings.items.terminalEnabled', descriptionKey: 'settings.items.terminalEnabledDesc', key: 'terminal.enabled', type: 'switch', source: 'server' },
-    { labelKey: 'settings.items.terminalFontSize', descriptionKey: 'settings.items.terminalFontSizeDesc', key: 'terminalFontSize', type: 'slider', source: 'local', min: 10, max: 24, step: 1, defaultValue: 12 },
-    { labelKey: 'settings.items.terminalIdleTimeout', descriptionKey: 'settings.items.terminalIdleTimeoutDesc', key: 'terminal.idle_timeout', type: 'text', source: 'server' },
-    { labelKey: 'settings.items.terminalMaxSessions', descriptionKey: 'settings.items.terminalMaxSessionsDesc', key: 'terminal.max_sessions', type: 'number', source: 'server' },
-    { labelKey: 'settings.items.terminalBufferLines', descriptionKey: 'settings.items.terminalBufferLinesDesc', key: 'terminal.buffer_lines', type: 'number', source: 'server' },
-  ],
-  // TTS: flattened from group (engine selector + per-engine fields via dependsOn)
-  tts: [
-    { labelKey: 'settings.items.ttsEngine', descriptionKey: 'settings.items.ttsEngineDesc', key: 'tts.engine', type: 'select', source: 'server', options: [
-      { labelKey: 'settings.items.ttsEngineEdge', value: 'edge' },
-      { labelKey: 'settings.items.ttsEnginePiper', value: 'piper' },
-      { labelKey: 'settings.items.ttsEngineKokoro', value: 'kokoro' },
-      { labelKey: 'settings.items.ttsEngineMossNano', value: 'moss-nano' },
-    ], groupConfig: [
-      { triggerValue: 'piper', dialogTitleKey: 'settings.groupConfig.ttsPiperTitle', fields: ['tts.piper.model_path', 'tts.piper.noise_scale', 'tts.piper.length_scale', 'tts.piper.sentence_silence'], requiredFields: ['tts.piper.model_path'] },
-      { triggerValue: 'kokoro', dialogTitleKey: 'settings.groupConfig.ttsKokoroTitle', fields: ['tts.kokoro.model_path', 'tts.kokoro.voices_path', 'tts.kokoro.lang'], requiredFields: ['tts.kokoro.model_path', 'tts.kokoro.voices_path'] },
-    ]},
-    { labelKey: 'settings.items.ttsVoice', descriptionKey: 'settings.items.ttsVoiceDesc', key: 'tts.voice', type: 'select', source: 'server' },
-    { labelKey: 'settings.items.ttsSpeed', descriptionKey: 'settings.items.ttsSpeedDesc', key: 'tts.speed', type: 'slider', source: 'server', min: 0.5, max: 3, step: 0.1 },
-    { labelKey: 'settings.items.ttsMaxCacheFiles', descriptionKey: 'settings.items.ttsMaxCacheFilesDesc', key: 'tts.max_cache_files', type: 'number', source: 'server' },
-    // Piper-specific fields
-    { labelKey: 'settings.items.piperModelPath', descriptionKey: 'settings.items.piperModelPathDesc', key: 'tts.piper.model_path', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsPiperHeader', dependsOn: { key: 'tts.engine', value: 'piper' } },
-    { labelKey: 'settings.items.piperNoiseScale', descriptionKey: 'settings.items.piperNoiseScaleDesc', key: 'tts.piper.noise_scale', type: 'number', source: 'server', min: 0, max: 1, step: 0.001, dependsOn: { key: 'tts.engine', value: 'piper' } },
-    { labelKey: 'settings.items.piperLengthScale', descriptionKey: 'settings.items.piperLengthScaleDesc', key: 'tts.piper.length_scale', type: 'number', source: 'server', min: 0.1, max: 5, step: 0.1, dependsOn: { key: 'tts.engine', value: 'piper' } },
-    { labelKey: 'settings.items.piperSentenceSilence', descriptionKey: 'settings.items.piperSentenceSilenceDesc', key: 'tts.piper.sentence_silence', type: 'number', source: 'server', min: 0, max: 5, step: 0.1, dependsOn: { key: 'tts.engine', value: 'piper' } },
-    // Kokoro-specific fields
-    { labelKey: 'settings.items.kokoroModelPath', descriptionKey: 'settings.items.kokoroModelPathDesc', key: 'tts.kokoro.model_path', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsKokoroHeader', dependsOn: { key: 'tts.engine', value: 'kokoro' } },
-    { labelKey: 'settings.items.kokoroVoicesPath', descriptionKey: 'settings.items.kokoroVoicesPathDesc', key: 'tts.kokoro.voices_path', type: 'text', source: 'server', dependsOn: { key: 'tts.engine', value: 'kokoro' } },
-    { labelKey: 'settings.items.kokoroLang', descriptionKey: 'settings.items.kokoroLangDesc', key: 'tts.kokoro.lang', type: 'text', source: 'server', dependsOn: { key: 'tts.engine', value: 'kokoro' } },
-    // Moss-Nano-specific fields
-    { labelKey: 'settings.items.mossNanoModelDir', descriptionKey: 'settings.items.mossNanoModelDirDesc', key: 'tts.moss_nano.model_dir', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsMossNanoHeader', dependsOn: { key: 'tts.engine', value: 'moss-nano' } },
-    { labelKey: 'settings.items.mossNanoBackend', descriptionKey: 'settings.items.mossNanoBackendDesc', key: 'tts.moss_nano.backend', type: 'select', source: 'server', dependsOn: { key: 'tts.engine', value: 'moss-nano' }, options: [
-      { labelKey: 'settings.items.mossNanoBackendOnnx', value: 'onnx' },
-      { labelKey: 'settings.items.mossNanoBackendPytorch', value: 'pytorch' },
-    ]},
-  ],
-  // Summarization: flattened from group
-  summarization: [
-    { labelKey: 'settings.items.summarizeBackend', descriptionKey: 'settings.items.summarizeBackendDesc', key: 'summarize.backend', type: 'select', source: 'server', options: [
-      { labelKey: 'settings.items.summarizeDisabled', value: '' },
-      { labelKey: 'settings.items.summarizeSimple', value: 'simple' },
-      { labelKey: 'settings.items.summarizeApi', value: 'api' },
-      { labelKey: 'settings.items.summarizeClaude', value: 'claude' },
-      { labelKey: 'settings.items.summarizeCodebuddy', value: 'codebuddy' },
-      { labelKey: 'settings.items.summarizeOpencode', value: 'opencode' },
-      { labelKey: 'settings.items.summarizeCodex', value: 'codex' },
-      { labelKey: 'settings.items.summarizeQoder', value: 'qoder' },
-      { labelKey: 'settings.items.summarizeVecli', value: 'vecli' },
-      { labelKey: 'settings.items.summarizeDeepseek', value: 'deepseek' },
-      { labelKey: 'settings.items.summarizePi', value: 'pi' },
-    ], groupConfig: [
-      { triggerValue: 'api', dialogTitleKey: 'settings.groupConfig.summarizeApiTitle', fields: ['summarize.api.base_url', 'summarize.api.key', 'summarize.api.format'], requiredFields: ['summarize.api.base_url'] },
-    ]},
-    { labelKey: 'settings.items.summarizeModel', descriptionKey: 'settings.items.summarizeModelDesc', key: 'summarize.model', type: 'text', source: 'server', dependsOn: { key: 'summarize.backend', values: ['api', ...CLI_BACKENDS] } },
-    { labelKey: 'settings.items.apiBaseUrl', descriptionKey: 'settings.items.apiBaseUrlDesc', key: 'summarize.api.base_url', type: 'text', source: 'server', sectionHeader: 'settings.items.apiHeader', dependsOn: { key: 'summarize.backend', value: 'api' } },
-    { labelKey: 'settings.items.apiKey', descriptionKey: 'settings.items.apiKeyDesc', key: 'summarize.api.key', type: 'password', source: 'server', dependsOn: { key: 'summarize.backend', value: 'api' } },
-    { labelKey: 'settings.items.apiFormat', descriptionKey: 'settings.items.apiFormatDesc', key: 'summarize.api.format', type: 'select', source: 'server', dependsOn: { key: 'summarize.backend', value: 'api' }, options: [
-      { labelKey: 'settings.items.apiFormatOpenai', value: 'openai' },
-      { labelKey: 'settings.items.apiFormatAnthropic', value: 'anthropic' },
-    ]},
-  ],
-  // RAG: flattened from group
-  rag: [
-    { labelKey: 'settings.items.ragBaseUrl', descriptionKey: 'settings.items.ragBaseUrlDesc', key: 'rag.base_url', type: 'text', source: 'server' },
-    { labelKey: 'settings.items.ragModel', descriptionKey: 'settings.items.ragModelDesc', key: 'rag.model', type: 'text', source: 'server' },
-    { labelKey: 'settings.items.ragApiKey', descriptionKey: 'settings.items.ragApiKeyDesc', key: 'rag.api_key', type: 'password', source: 'server' },
-    { labelKey: 'settings.items.ragChunkSize', descriptionKey: 'settings.items.ragChunkSizeDesc', key: 'rag.chunk_size', type: 'number', source: 'server' },
-    { labelKey: 'settings.items.ragSearchLimit', descriptionKey: 'settings.items.ragSearchLimitDesc', key: 'rag.search_limit', type: 'number', source: 'server' },
-    { labelKey: 'settings.items.ragSearchPoolSize', descriptionKey: 'settings.items.ragSearchPoolSizeDesc', key: 'rag.search_pool_size', type: 'number', source: 'server' },
-    { labelKey: 'settings.items.ragRetentionDays', descriptionKey: 'settings.items.ragRetentionDaysDesc', key: 'rag.retention_days', type: 'number', source: 'server' },
-  ],
-  // Port Forward: flattened from group
-  portForward: [
-    { labelKey: 'settings.items.portForwardEnabled', descriptionKey: 'settings.items.portForwardEnabledDesc', key: 'port_forward.enabled', type: 'switch', source: 'server', needsRestart: true },
-    { labelKey: 'settings.items.portForwardPort', descriptionKey: 'settings.items.portForwardPortDesc', key: 'port_forward.port', type: 'number', source: 'server', needsRestart: true, displayTransform: (v: any) => v === 0 ? '__auto__' : v },
-  ],
-  // FRP (Fast Reverse Proxy) remote tunnel — flattened from group
-  frp: [
-    { labelKey: 'settings.items.frpEnabled', descriptionKey: 'settings.items.frpEnabledDesc', key: 'frp.enabled', type: 'switch', source: 'server', groupConfig: [
-      { triggerValue: true, dialogTitleKey: 'settings.groupConfig.frpTitle', fields: ['frp.server_addr', 'frp.server_port', 'frp.token', 'frp.auto_port'], requiredFields: ['frp.server_addr'] },
-    ] },
-    { labelKey: 'settings.items.frpServerAddr', descriptionKey: 'settings.items.frpServerAddrDesc', key: 'frp.server_addr', type: 'text', source: 'server', dependsOn: { key: 'frp.enabled', value: true } },
-    { labelKey: 'settings.items.frpServerPort', descriptionKey: 'settings.items.frpServerPortDesc', key: 'frp.server_port', type: 'number', source: 'server', dependsOn: { key: 'frp.enabled', value: true } },
-    { labelKey: 'settings.items.frpToken', descriptionKey: 'settings.items.frpTokenDesc', key: 'frp.token', type: 'password', source: 'server', dependsOn: { key: 'frp.enabled', value: true } },
-    { labelKey: 'settings.items.frpAutoPort', descriptionKey: 'settings.items.frpAutoPortDesc', key: 'frp.auto_port', type: 'switch', source: 'server', dependsOn: { key: 'frp.enabled', value: true } },
-    { labelKey: 'settings.items.frpRemotePort', descriptionKey: 'settings.items.frpRemotePortDesc', key: 'frp.remote_port', type: 'number', source: 'server', dependsOn: [{ key: 'frp.enabled', value: true }, { key: 'frp.auto_port', value: false }] },
-    { labelKey: 'settings.items.frpSSHRemotePort', descriptionKey: 'settings.items.frpSSHRemotePortDesc', key: 'frp.ssh_remote_port', type: 'number', source: 'server', dependsOn: [{ key: 'frp.enabled', value: true }, { key: 'frp.auto_port', value: false }] },
-  ],
   android: [
     { labelKey: 'settings.items.androidLogCapture', descriptionKey: 'settings.items.androidLogCaptureDesc', key: 'androidLogCapture', type: 'switch', source: 'local' },
     { labelKey: 'settings.items.reconfigureServer', descriptionKey: 'settings.items.reconfigureServerDesc', key: 'reconfigureServer', type: 'action', source: 'local' },
@@ -253,48 +122,167 @@ export const categoryItems: Record<string, ItemSpec[]> = {
   ],
 }
 
-// ── Config group definitions ────────────────────────────────
+// ── Drill-down category definitions ────────────────────────
 
-export const categoryGroups: Record<string, ConfigGroup[]> = {}
+export const drillDownCategories: Record<string, DrillDownCategory> = {
+  terminal: {
+    categoryId: 'terminal',
+    enableKey: 'terminal.enabled',
+    enableLabelKey: 'settings.items.terminalEnabled',
+    commonFields: [
+      { labelKey: 'settings.items.terminalFontSize', descriptionKey: 'settings.items.terminalFontSizeDesc', key: 'terminalFontSize', type: 'slider', source: 'local', min: 10, max: 24, step: 1, defaultValue: 12 },
+      { labelKey: 'settings.items.terminalIdleTimeout', descriptionKey: 'settings.items.terminalIdleTimeoutDesc', key: 'terminal.idle_timeout', type: 'text', source: 'server' },
+      { labelKey: 'settings.items.terminalMaxSessions', descriptionKey: 'settings.items.terminalMaxSessionsDesc', key: 'terminal.max_sessions', type: 'number', source: 'server' },
+      { labelKey: 'settings.items.terminalBufferLines', descriptionKey: 'settings.items.terminalBufferLinesDesc', key: 'terminal.buffer_lines', type: 'number', source: 'server' },
+    ],
+  },
+  tts: {
+    categoryId: 'tts',
+    entrySelector: { labelKey: 'settings.items.ttsEngine', descriptionKey: 'settings.items.ttsEngineDesc', key: 'tts.engine', type: 'select', source: 'server', options: [
+      { labelKey: 'settings.items.ttsEngineEdge', value: 'edge' },
+      { labelKey: 'settings.items.ttsEnginePiper', value: 'piper' },
+      { labelKey: 'settings.items.ttsEngineKokoro', value: 'kokoro' },
+      { labelKey: 'settings.items.ttsEngineMossNano', value: 'moss-nano' },
+    ]},
+    commonFields: [
+      { labelKey: 'settings.items.ttsVoice', descriptionKey: 'settings.items.ttsVoiceDesc', key: 'tts.voice', type: 'select', source: 'server' },
+      { labelKey: 'settings.items.ttsSpeed', descriptionKey: 'settings.items.ttsSpeedDesc', key: 'tts.speed', type: 'slider', source: 'server', min: 0.5, max: 3, step: 0.1 },
+      { labelKey: 'settings.items.ttsMaxCacheFiles', descriptionKey: 'settings.items.ttsMaxCacheFilesDesc', key: 'tts.max_cache_files', type: 'number', source: 'server' },
+    ],
+    optionSubFields: [
+      {
+        when: 'piper',
+        fields: [
+          { labelKey: 'settings.items.piperModelPath', descriptionKey: 'settings.items.piperModelPathDesc', key: 'tts.piper.model_path', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsPiperHeader' },
+          { labelKey: 'settings.items.piperNoiseScale', descriptionKey: 'settings.items.piperNoiseScaleDesc', key: 'tts.piper.noise_scale', type: 'number', source: 'server', min: 0, max: 1, step: 0.001 },
+          { labelKey: 'settings.items.piperLengthScale', descriptionKey: 'settings.items.piperLengthScaleDesc', key: 'tts.piper.length_scale', type: 'number', source: 'server', min: 0.1, max: 5, step: 0.1 },
+          { labelKey: 'settings.items.piperSentenceSilence', descriptionKey: 'settings.items.piperSentenceSilenceDesc', key: 'tts.piper.sentence_silence', type: 'number', source: 'server', min: 0, max: 5, step: 0.1 },
+        ],
+      },
+      {
+        when: 'kokoro',
+        fields: [
+          { labelKey: 'settings.items.kokoroModelPath', descriptionKey: 'settings.items.kokoroModelPathDesc', key: 'tts.kokoro.model_path', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsKokoroHeader' },
+          { labelKey: 'settings.items.kokoroVoicesPath', descriptionKey: 'settings.items.kokoroVoicesPathDesc', key: 'tts.kokoro.voices_path', type: 'text', source: 'server' },
+          { labelKey: 'settings.items.kokoroLang', descriptionKey: 'settings.items.kokoroLangDesc', key: 'tts.kokoro.lang', type: 'text', source: 'server' },
+        ],
+      },
+      {
+        when: 'moss-nano',
+        fields: [
+          { labelKey: 'settings.items.mossNanoModelDir', descriptionKey: 'settings.items.mossNanoModelDirDesc', key: 'tts.moss_nano.model_dir', type: 'text', source: 'server', sectionHeader: 'settings.items.ttsMossNanoHeader' },
+          { labelKey: 'settings.items.mossNanoBackend', descriptionKey: 'settings.items.mossNanoBackendDesc', key: 'tts.moss_nano.backend', type: 'select', source: 'server', options: [
+            { labelKey: 'settings.items.mossNanoBackendOnnx', value: 'onnx' },
+            { labelKey: 'settings.items.mossNanoBackendPytorch', value: 'pytorch' },
+          ]},
+        ],
+      },
+    ],
+    requiredFields: ['tts.piper.model_path', 'tts.kokoro.model_path', 'tts.kokoro.voices_path'],
+  },
+  summarization: {
+    categoryId: 'summarization',
+    entrySelector: { labelKey: 'settings.items.summarizeBackend', descriptionKey: 'settings.items.summarizeBackendDesc', key: 'summarize.backend', type: 'select', source: 'server', options: [
+      { labelKey: 'settings.items.summarizeDisabled', value: '' },
+      { labelKey: 'settings.items.summarizeSimple', value: 'simple' },
+      { labelKey: 'settings.items.summarizeApi', value: 'api' },
+      { labelKey: 'settings.items.summarizeClaude', value: 'claude' },
+      { labelKey: 'settings.items.summarizeCodebuddy', value: 'codebuddy' },
+      { labelKey: 'settings.items.summarizeOpencode', value: 'opencode' },
+      { labelKey: 'settings.items.summarizeCodex', value: 'codex' },
+      { labelKey: 'settings.items.summarizeQoder', value: 'qoder' },
+      { labelKey: 'settings.items.summarizeVecli', value: 'vecli' },
+      { labelKey: 'settings.items.summarizeDeepseek', value: 'deepseek' },
+      { labelKey: 'settings.items.summarizePi', value: 'pi' },
+    ]},
+    commonFields: [],
+    optionSubFields: [
+      {
+        when: 'api',
+        fields: [
+          { labelKey: 'settings.items.summarizeModel', descriptionKey: 'settings.items.summarizeModelDesc', key: 'summarize.model', type: 'text', source: 'server' },
+          { labelKey: 'settings.items.apiBaseUrl', descriptionKey: 'settings.items.apiBaseUrlDesc', key: 'summarize.api.base_url', type: 'text', source: 'server', sectionHeader: 'settings.items.apiHeader' },
+          { labelKey: 'settings.items.apiKey', descriptionKey: 'settings.items.apiKeyDesc', key: 'summarize.api.key', type: 'password', source: 'server' },
+          { labelKey: 'settings.items.apiFormat', descriptionKey: 'settings.items.apiFormatDesc', key: 'summarize.api.format', type: 'select', source: 'server', options: [
+            { labelKey: 'settings.items.apiFormatOpenai', value: 'openai' },
+            { labelKey: 'settings.items.apiFormatAnthropic', value: 'anthropic' },
+          ]},
+        ],
+      },
+      ...CLI_BACKENDS.map(backend => ({
+        when: backend,
+        fields: [
+          { labelKey: 'settings.items.summarizeModel', descriptionKey: 'settings.items.summarizeModelDesc', key: 'summarize.model', type: 'text' as const, source: 'server' as const },
+        ],
+      })),
+    ],
+    requiredFields: ['summarize.api.base_url'],
+  },
+  rag: {
+    categoryId: 'rag',
+    commonFields: [
+      { labelKey: 'settings.items.ragBaseUrl', descriptionKey: 'settings.items.ragBaseUrlDesc', key: 'rag.base_url', type: 'text', source: 'server' },
+      { labelKey: 'settings.items.ragModel', descriptionKey: 'settings.items.ragModelDesc', key: 'rag.model', type: 'text', source: 'server' },
+      { labelKey: 'settings.items.ragApiKey', descriptionKey: 'settings.items.ragApiKeyDesc', key: 'rag.api_key', type: 'password', source: 'server' },
+      { labelKey: 'settings.items.ragChunkSize', descriptionKey: 'settings.items.ragChunkSizeDesc', key: 'rag.chunk_size', type: 'number', source: 'server' },
+      { labelKey: 'settings.items.ragSearchLimit', descriptionKey: 'settings.items.ragSearchLimitDesc', key: 'rag.search_limit', type: 'number', source: 'server' },
+      { labelKey: 'settings.items.ragSearchPoolSize', descriptionKey: 'settings.items.ragSearchPoolSizeDesc', key: 'rag.search_pool_size', type: 'number', source: 'server' },
+      { labelKey: 'settings.items.ragRetentionDays', descriptionKey: 'settings.items.ragRetentionDaysDesc', key: 'rag.retention_days', type: 'number', source: 'server' },
+    ],
+    requiredFields: ['rag.base_url'],
+  },
+  portForward: {
+    categoryId: 'portForward',
+    enableKey: 'port_forward.enabled',
+    enableLabelKey: 'settings.items.portForwardEnabled',
+    commonFields: [
+      { labelKey: 'settings.items.portForwardPort', descriptionKey: 'settings.items.portForwardPortDesc', key: 'port_forward.port', type: 'number', source: 'server', needsRestart: true, displayTransform: (v: any) => v === 0 ? '__auto__' : v },
+    ],
+  },
+  frp: {
+    categoryId: 'frp',
+    enableKey: 'frp.enabled',
+    enableLabelKey: 'settings.items.frpEnabled',
+    commonFields: [
+      { labelKey: 'settings.items.frpServerAddr', descriptionKey: 'settings.items.frpServerAddrDesc', key: 'frp.server_addr', type: 'text', source: 'server' },
+      { labelKey: 'settings.items.frpServerPort', descriptionKey: 'settings.items.frpServerPortDesc', key: 'frp.server_port', type: 'number', source: 'server' },
+      { labelKey: 'settings.items.frpToken', descriptionKey: 'settings.items.frpTokenDesc', key: 'frp.token', type: 'password', source: 'server' },
+      { labelKey: 'settings.items.frpAutoPort', descriptionKey: 'settings.items.frpAutoPortDesc', key: 'frp.auto_port', type: 'switch', source: 'server' },
+    ],
+    optionSubFields: [
+      {
+        when: false,
+        fields: [
+          { labelKey: 'settings.items.frpRemotePort', descriptionKey: 'settings.items.frpRemotePortDesc', key: 'frp.remote_port', type: 'number', source: 'server' },
+          { labelKey: 'settings.items.frpSSHRemotePort', descriptionKey: 'settings.items.frpSSHRemotePortDesc', key: 'frp.ssh_remote_port', type: 'number', source: 'server' },
+        ],
+      },
+    ],
+    requiredFields: ['frp.server_addr'],
+  },
+}
 
 // ── Helpers ─────────────────────────────────────────────────
-
-/** Flatten all fields from a ConfigGroup into a single array. */
-export function getAllGroupFields(group: ConfigGroup): ItemSpec[] {
-  const fields: ItemSpec[] = [group.entryField]
-  for (const f of group.commonFields ?? []) fields.push(f as ItemSpec)
-  for (const osf of group.optionSubFields ?? []) {
-    for (const f of osf.fields) fields.push(f as ItemSpec)
-  }
-  return fields
-}
-
-/** Check if a field key belongs to any group in a category. */
-export function fieldBelongsToGroup(group: ConfigGroup, key: string): boolean {
-  if (group.entryField.key === key) return true
-  if ((group.commonFields ?? []).some(f => f.key === key)) return true
-  if ((group.optionSubFields ?? []).some(osf => osf.fields.some(f => f.key === key))) return true
-  return false
-}
 
 /** Build and return the mapping from server config dot-path keys to i18n label keys. */
 export function getServerFieldToLabelKey(): Record<string, string> {
   const map: Record<string, string> = {}
-  // Standalone items
+  // Flat category items
   for (const items of Object.values(categoryItems)) {
     for (const item of items) {
-      if (item.source === 'server') {
-        map[item.key] = item.labelKey
-      }
+      if (item.source === 'server') map[item.key] = item.labelKey
     }
   }
-  // Group items
-  for (const groups of Object.values(categoryGroups)) {
-    for (const group of groups) {
-      for (const field of getAllGroupFields(group)) {
-        if (field.source === 'server') {
-          map[field.key] = field.labelKey
-        }
+  // Drill-down category items
+  for (const dd of Object.values(drillDownCategories)) {
+    if (dd.enableKey && dd.enableLabelKey) map[dd.enableKey] = dd.enableLabelKey
+    if (dd.entrySelector?.source === 'server') map[dd.entrySelector.key] = dd.entrySelector.labelKey
+    for (const f of dd.commonFields) {
+      if (f.source === 'server') map[f.key] = f.labelKey
+    }
+    for (const osf of dd.optionSubFields ?? []) {
+      for (const f of osf.fields) {
+        if (f.source === 'server') map[f.key] = f.labelKey
       }
     }
   }
@@ -304,21 +292,11 @@ export function getServerFieldToLabelKey(): Record<string, string> {
 /** Pre-computed singleton — used by SettingsRestartDialog to translate field paths. */
 export const serverFieldToLabelKey: Record<string, string> = getServerFieldToLabelKey()
 
-/** Find a group by its groupId across all categories. */
-export function getGroupById(groupId: string): ConfigGroup | undefined {
-  for (const groups of Object.values(categoryGroups)) {
-    const found = groups.find(g => g.groupId === groupId)
-    if (found) return found
-  }
-  return undefined
-}
+/** Check if a category ID is a drill-down category. */
+const DRILL_DOWN_IDS = new Set(Object.keys(drillDownCategories))
 
-/** Find the category key that contains a given groupId. */
-export function getCategoryForGroup(groupId: string): string | undefined {
-  for (const [category, groups] of Object.entries(categoryGroups)) {
-    if (groups.some(g => g.groupId === groupId)) return category
-  }
-  return undefined
+export function isDrillDownCategory(categoryId: string): boolean {
+  return DRILL_DOWN_IDS.has(categoryId)
 }
 
 /**
