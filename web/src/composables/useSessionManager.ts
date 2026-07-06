@@ -230,6 +230,21 @@ export function useSessionManager(options: UseSessionManagerOptions) {
   async function switchSession(sessionId: string) {
     cleanupActiveStream()
     _clearInputState()
+    // Clear pending messages BEFORE switching session. These belong to the
+    // current (old) session — they're in the backend queue for that session
+    // and will be drained by its AI goroutine. If we don't clear them here,
+    // they remain in messages.value during the session switch, which causes:
+    //   1. The watch(loading) handler fires after currentSessionId changes,
+    //      sees pending messages, and fetches the NEW session's queue (wrong!)
+    //   2. The watch(currentSessionId) handler fetches the new session's
+    //      queue, but syncPendingFromBackendQueue clears all pending and
+    //      re-pushes from the new session's queue (which may be empty),
+    //      making old session's pending messages vanish from UI.
+    //   3. Stuck-queue recovery in watch(loading) may call sendMessageNow
+    //      against the wrong session.
+    // The old session's pending messages are safely in its backend queue;
+    // they'll be drained when its AI finishes or shown if user switches back.
+    clearPendingMessages()
     await switchSessionCore(sessionId)
     // pending messages are synced by the watch on currentSessionId below
   }
@@ -308,6 +323,11 @@ export function useSessionManager(options: UseSessionManagerOptions) {
   // (e.g. user left the page on mobile). Sync queue from backend to clear stale items.
   // If the backend still has queued items (stuck-queue race: message enqueued after
   // the drain loop exited), auto-resubmit the first one.
+  // IMPORTANT: We must guard against the session having changed between the
+  // loading transition and this async callback. If the user switched sessions,
+  // identity.currentSessionId.value points to the NEW session, but the pending
+  // messages belong to the OLD session. We must NOT call sendMessageNow against
+  // the wrong session.
   watch(loading, async (newVal, oldVal) => {
     if (oldVal && !newVal && messages.value.some((m: any) => m.pending) && identity.currentSessionId.value) {
       const sessionId = identity.currentSessionId.value
@@ -316,11 +336,17 @@ export function useSessionManager(options: UseSessionManagerOptions) {
         if (resp.ok) {
           const data = await resp.json()
           const queue = data.queue || []
+          // Guard: if session changed while we were fetching, don't sync —
+          // the pending messages belong to the old session and will be
+          // handled by its own fetchQueue or queue_drain events.
+          if (sessionId !== identity.currentSessionId.value) return
           syncPendingFromBackendQueue(queue)
           // Stuck-queue recovery: if backend queue still has items after
           // loading went false, the drain loop missed them. Dequeue and
-          // resubmit the first one.
-          if (queue.length > 0 && !loading.value) {
+          // resubmit the first one. Only do this if the session hasn't
+          // changed — sendMessageNow reads identity.currentSessionId.value
+          // which must match the queue's session.
+          if (queue.length > 0 && !loading.value && sessionId === identity.currentSessionId.value) {
             const firstItem = queue[0]
             // Remove the pending message locally — sendMessageNow will push its own
             const idx = messages.value.findIndex(

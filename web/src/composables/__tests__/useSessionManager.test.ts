@@ -168,6 +168,32 @@ describe('useSessionManager', () => {
             expect(opts.disconnectStream).toHaveBeenCalled()
             expect(opts.switchSessionCore).toHaveBeenCalledWith('session-2')
         })
+
+        it('clears pending messages before switching session', async () => {
+            // Bug: pending messages from the old session must be cleared
+            // before switching, otherwise watch(loading) fires with the
+            // new session's ID and fetches the wrong queue.
+            const opts = createMockOptions()
+            opts.messages.value.push({
+                role: 'user', content: 'queued in old session', blocks: [],
+                files: [], createdAt: '', pending: true,
+            })
+            // Mock fetch to return empty queue (new session has no pending messages)
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ queue: [] }),
+            } as Response)
+            const mgr = useSessionManager(opts)
+            fetchSpy.mockClear()
+
+            await mgr.switchSession('session-2')
+
+            // Pending messages from old session should be cleared
+            expect(opts.messages.value.some((m: any) => m.pending)).toBe(false)
+            expect(opts.switchSessionCore).toHaveBeenCalledWith('session-2')
+
+            fetchSpy.mockRestore()
+        })
     })
 
     // ── createSession ──
@@ -568,7 +594,7 @@ describe('useSessionManager', () => {
             } as Response)
             const mgr = useSessionManager(opts)
 
-            const result = await mgr.enqueueMessage('hello')
+            const result = await mgr.enqueueMessage('session-1', 'hello')
 
             expect(result.needsStart).toBe(false)
 
