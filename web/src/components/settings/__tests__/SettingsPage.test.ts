@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { mount, shallowMount } from '@vue/test-utils'
+import { shallowMount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, nextTick, computed, reactive } from 'vue'
 import SettingsPage from '@/components/settings/SettingsPage.vue'
