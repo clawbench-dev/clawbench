@@ -759,6 +759,8 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		emitTaskEvent(fmt.Sprintf("%d", task.ID), "cancelled", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
 		// Only update stats, not status — don't overwrite user-initiated pauses (ISS-013)
 		UpdateTaskStats(task)
+		// Finalize orphaned streaming messages since executor.Finalize() was skipped
+		FinalizeOrphanedMessages(sessionID, "")
 		return
 	}
 
@@ -775,6 +777,8 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		emitTaskEvent(fmt.Sprintf("%d", task.ID), "failed", fmt.Sprintf("%d", executionID), sessionID, projectPath, task.Name)
 		// Only update stats, not status — don't overwrite user-initiated pauses (ISS-013)
 		UpdateTaskStats(task)
+		// Finalize orphaned streaming messages since executor.Finalize() was skipped
+		FinalizeOrphanedMessages(sessionID, "")
 		return
 	}
 

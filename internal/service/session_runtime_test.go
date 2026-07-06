@@ -2140,9 +2140,9 @@ func TestFinalizeOrphanedStreamingMessages_MultipleOrphans(t *testing.T) {
 	assert.Equal(t, 2, count, "both orphaned messages should be finalized")
 }
 
-// --- SetSessionRunning triggers finalizeOrphanedStreamingMessages ---
+// --- SetSessionRunning no longer triggers orphan finalization ---
 
-func TestSetSessionRunning_FalseTriggersOrphanFinalization(t *testing.T) {
+func TestSetSessionRunning_False_NoOrphanFinalization(t *testing.T) {
 	cleanupActiveSessions()
 	defer cleanupActiveSessions()
 
@@ -2150,12 +2150,7 @@ func TestSetSessionRunning_FalseTriggersOrphanFinalization(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	// Disable orphan finalize delay for test speed
-	origDelay := orphanFinalizeDelay.Load()
-	orphanFinalizeDelay.Store(0)
-	defer orphanFinalizeDelay.Store(origDelay)
-
-	sessionID := "session-orphan-trigger"
+	sessionID := "session-no-auto-orphan"
 
 	// Insert a streaming=1 orphan message
 	validContent := `{"blocks":[{"type":"text","text":"orphaned text"}]}`
@@ -2165,11 +2160,43 @@ func TestSetSessionRunning_FalseTriggersOrphanFinalization(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Set running=false triggers go finalizeOrphanedStreamingMessages
+	// Set running=false — should NOT trigger orphan finalization
 	SetSessionRunning(sessionID, false, true)
 
-	// Wait for async goroutine to complete
 	time.Sleep(100 * time.Millisecond)
+
+	// Verify the orphan was NOT finalized — still streaming=1
+	var streaming int
+	err = db.QueryRow(
+		"SELECT streaming FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1",
+		sessionID,
+	).Scan(&streaming)
+	require.NoError(t, err)
+	assert.Equal(t, 1, streaming, "orphan should NOT be auto-finalized by SetSessionRunning(false)")
+}
+
+// Verify explicit FinalizeOrphanedMessages works correctly
+func TestFinalizeOrphanedMessages_ExplicitCall(t *testing.T) {
+	cleanupActiveSessions()
+	defer cleanupActiveSessions()
+
+	db := setupChatTestDB(t)
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	sessionID := "session-explicit-orphan"
+
+	// Insert a streaming=1 orphan message
+	validContent := `{"blocks":[{"type":"text","text":"orphaned text"}]}`
+	_, err := db.Exec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
+		"/test", "assistant", validContent, sessionID,
+	)
+	require.NoError(t, err)
+
+	// Explicit call — should finalize the orphan
+	FinalizeOrphanedMessages(sessionID, "")
+	time.Sleep(50 * time.Millisecond)
 
 	// Verify the orphan was finalized
 	var streaming int
@@ -2178,15 +2205,11 @@ func TestSetSessionRunning_FalseTriggersOrphanFinalization(t *testing.T) {
 		sessionID,
 	).Scan(&streaming)
 	require.NoError(t, err)
-	assert.Equal(t, 0, streaming, "orphan should be finalized when session stops")
+	assert.Equal(t, 0, streaming, "orphan should be finalized by explicit FinalizeOrphanedMessages call")
 }
 
-// Verify the race condition fix: when user cancels, SetSessionRunning captures
-// the cancelReason before launching the goroutine. Even if GetAndClearCancelReason
-// is called after SetSessionRunning (as buildResult would do in the concurrent
-// session executor goroutine), the finalizeOrphanedStreamingMessages goroutine
-// receives the captured reason directly, so it correctly skips the warning.
-func TestSetSessionRunning_UserCancelNoOrphanWarning(t *testing.T) {
+// Verify that FinalizeOrphanedMessages with cancelReason="user" does not add warning block
+func TestFinalizeOrphanedMessages_UserCancelNoWarning(t *testing.T) {
 	cleanupActiveSessions()
 	defer cleanupActiveSessions()
 
@@ -2194,9 +2217,7 @@ func TestSetSessionRunning_UserCancelNoOrphanWarning(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	sessionID := "session-user-cancel-race"
-	cleanupCancelReasons()
-	defer cleanupCancelReasons()
+	sessionID := "session-user-cancel-explicit"
 
 	// Insert a streaming=1 orphan message
 	validContent := `{"blocks":[{"type":"text","text":"partial answer"}]}`
@@ -2206,24 +2227,11 @@ func TestSetSessionRunning_UserCancelNoOrphanWarning(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Disable orphan finalize delay for test speed
-	origDelay := orphanFinalizeDelay.Load()
-	orphanFinalizeDelay.Store(0)
-	defer orphanFinalizeDelay.Store(origDelay)
+	// Explicit call with user cancel reason — should NOT add warning block
+	FinalizeOrphanedMessages(sessionID, "user")
+	time.Sleep(50 * time.Millisecond)
 
-	// Simulate user cancel: set the reason, then call SetSessionRunning(false)
-	// which captures the reason before launching the goroutine.
-	SetCancelReason(sessionID, "user")
-	SetSessionRunning(sessionID, false, true)
-
-	// Simulate concurrent buildResult clearing the reason after the goroutine
-	// was already launched — the goroutine has the captured value, so this is safe.
-	GetAndClearCancelReason(sessionID)
-
-	// Wait for async goroutine to complete
-	time.Sleep(100 * time.Millisecond)
-
-	// Verify: cancelled=true, but NO warning block (user intentionally cancelled)
+	// Verify: cancelled=true, but NO warning block
 	var streaming int
 	var updatedContent string
 	err = db.QueryRow(

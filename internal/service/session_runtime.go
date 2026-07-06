@@ -40,11 +40,6 @@ var (
 	sessionCancelReasons sync.Map // map[string]string — "user", "disconnect"
 )
 
-// orphanFinalizeDelay is the delay before finalizeOrphanedStreamingMessages runs,
-// giving the normal FinalizeStreamingMessage path time to complete first.
-// Default 2s; set to 0 in tests for speed.
-var orphanFinalizeDelay atomic.Int64 // nanoseconds; 0 = no delay
-
 // responsePreviewMaxRunes is an alias for model.ResponsePreviewMaxRunes for local use.
 const responsePreviewMaxRunes = model.ResponsePreviewMaxRunes
 
@@ -190,22 +185,9 @@ func SetSessionRunning(sessionID string, running bool, skipEvent ...bool) {
 	}
 	activeMu.Unlock()
 
-	if !running {
-		// Safety net: finalize any orphaned streaming=1 messages for this session.
-		// This handles the case where FinalizeStreamingMessage failed due to SQLITE_BUSY
-		// during the stream, leaving the message stuck at streaming=1 forever.
-		// Delay gives the normal FinalizeStreamingMessage path time to complete first;
-		// if it succeeds, streaming=0 and the goroutine finds no orphans.
-		// Capture cancel reason before launching the goroutine to avoid a race with
-		// GetAndClearCancelReason in buildResult.
-		cancelReason := GetCancelReason(sessionID)
-		go func() {
-			if d := orphanFinalizeDelay.Load(); d > 0 {
-				time.Sleep(time.Duration(d))
-			}
-			finalizeOrphanedStreamingMessages(sessionID, cancelReason)
-		}()
-	}
+	// Note: orphan finalization is NOT triggered here automatically.
+	// It must be called explicitly from paths where FinalizeStreamingMessage
+	// is known to have failed or will not be called. See FinalizeOrphanedMessages.
 
 	// Emit event unless caller explicitly skips (e.g. CancelSession sends its own event)
 	if len(skipEvent) == 0 || !skipEvent[0] {
@@ -290,6 +272,16 @@ func finalizeOrphanedStreamingMessages(sessionID string, cancelReason string) {
 				slog.String("session", sessionID))
 		}
 	}
+}
+
+// FinalizeOrphanedMessages finalizes any streaming=1 assistant messages left behind
+// for a session. This should only be called from code paths where
+// FinalizeStreamingMessage is known to have failed (e.g. SQLITE_BUSY) or will
+// not be called (e.g. scheduler cancel/crash, ForceCancelSession).
+// cancelReason controls the warning block: "user" suppresses it (clean cancel),
+// "" or "disconnect" adds a warning.
+func FinalizeOrphanedMessages(sessionID string, cancelReason string) {
+	finalizeOrphanedStreamingMessages(sessionID, cancelReason)
 }
 
 // TrySetSessionRunning atomically checks and sets running state.
@@ -379,6 +371,8 @@ func CancelSession(sessionID string) bool {
 			slog.String("session_id", sessionID))
 		ClearQueue(sessionID)
 		SetSessionRunning(sessionID, false, true)
+		// Stuck session: nothing will finalize its streaming messages.
+		FinalizeOrphanedMessages(sessionID, "user")
 		return true
 	}
 	cancel, ok := val.(context.CancelFunc)
@@ -431,6 +425,15 @@ func ForceCancelSession(sessionID string) {
 	// Skip the "completed" event (true) — ForceCancelSession is for disconnected clients
 	// that won't see it anyway, and we don't want to emit a stale event on reconnection.
 	SetSessionRunning(sessionID, false, true)
+
+	// ForceCancel: the AI goroutine may still be running and may or may not
+	// complete FinalizeStreamingMessage. Launch orphan cleanup with a delay
+	// to give the goroutine a chance to finalize normally. If Finalize
+	// succeeds, streaming=0 and the orphan check is a no-op.
+	go func() {
+		time.Sleep(2 * time.Second)
+		FinalizeOrphanedMessages(sessionID, "disconnect")
+	}()
 }
 
 // sessionStreamBufferSize is the buffer capacity for the per-session event channel.
@@ -516,7 +519,6 @@ var chatSummaryMode atomic.Value // stores string
 
 func init() {
 	chatSummaryEnabled.Store(true) // default enabled
-	orphanFinalizeDelay.Store(int64(2 * time.Second)) // 2s delay for orphan finalizer
 }
 
 // SetChatSummaryEnabled configures whether chat messages are auto-summarized on completion.
