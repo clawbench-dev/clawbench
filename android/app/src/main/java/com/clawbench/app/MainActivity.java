@@ -1913,14 +1913,21 @@ public class MainActivity extends AppCompatActivity {
 
         /**
          * Download a file from the ClawBench server to the Downloads directory.
-         * @param path Relative file path (as used in /api/local-file/ URL)
+         * @param path File path — relative (project-internal) or absolute (external, starts with /)
          */
         @JavascriptInterface
         public void downloadFile(String path) {
             activity.runOnUiThread(() -> {
                 String serverUrl = activity.prefs.getString(KEY_SERVER_URL, "");
                 if (serverUrl.isEmpty()) return;
-                String url = serverUrl + "/api/local-file/" + Uri.encode(path, "/") + "?download=1";
+                String url;
+                if (path.startsWith("/")) {
+                    // External file: use ?path= query param
+                    url = serverUrl + "/api/local-file/?download=1&path=" + Uri.encode(path);
+                } else {
+                    // Project-relative: use URL path
+                    url = serverUrl + "/api/local-file/" + Uri.encode(path, "/") + "?download=1";
+                }
                 // Trigger the DownloadListener by asking WebView to load the URL
                 // The ?download=1 param makes the server return Content-Disposition: attachment
                 // which forces WebView to trigger the DownloadListener instead of rendering inline
@@ -2125,19 +2132,19 @@ public class MainActivity extends AppCompatActivity {
          * Share a file from the ClawBench server with another app via ACTION_SEND.
          * Downloads the file to a temp directory, then creates a share intent
          * with a FileProvider content URI.
-         * @param path Relative file path (as used in /api/local-file/ URL)
+         * @param path File path — relative (project-internal) or absolute (external, starts with /)
          * @param mimeType MIME type for the share intent (e.g. "image/png", "application/pdf")
          */
         @JavascriptInterface
         public void shareFile(String path, String mimeType) {
-            // Path safety: reject traversal attempts (both raw and URL-decoded forms)
-            if (path == null || path.isEmpty() || path.contains("..") || path.startsWith("/")) {
+            // Path safety: reject traversal attempts
+            if (path == null || path.isEmpty() || path.contains("..")) {
                 AppLog.w(TAG, "shareFile: invalid path: " + path);
                 return;
             }
             try {
                 String decoded = java.net.URLDecoder.decode(path, "UTF-8");
-                if (decoded.contains("..") || decoded.startsWith("/")) {
+                if (decoded.contains("..")) {
                     AppLog.w(TAG, "shareFile: invalid decoded path: " + path);
                     return;
                 }
@@ -2165,8 +2172,15 @@ public class MainActivity extends AppCompatActivity {
                     }
 
                     // Download file from server
-                    String encodedPath = Uri.encode(path, "/");
-                    String downloadUrl = serverUrl + "/api/local-file/" + encodedPath + "?download=1";
+                    String downloadUrl;
+                    if (path.startsWith("/")) {
+                        // External file: use ?path= query param
+                        downloadUrl = serverUrl + "/api/local-file/?download=1&path=" + Uri.encode(path);
+                    } else {
+                        // Project-relative: use URL path
+                        String encodedPath = Uri.encode(path, "/");
+                        downloadUrl = serverUrl + "/api/local-file/" + encodedPath + "?download=1";
+                    }
 
                     OkHttpClient client = activity.buildTrustingOkHttpClient();
                     Request request = new Request.Builder()
