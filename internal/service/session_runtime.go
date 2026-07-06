@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unicode/utf8"
 
 	"clawbench/internal/ai"
@@ -38,6 +39,11 @@ var (
 	sessionCancels       sync.Map // map[string]context.CancelFunc
 	sessionCancelReasons sync.Map // map[string]string — "user", "disconnect"
 )
+
+// orphanFinalizeDelay is the delay before finalizeOrphanedStreamingMessages runs,
+// giving the normal FinalizeStreamingMessage path time to complete first.
+// Default 2s; set to 0 in tests for speed.
+var orphanFinalizeDelay atomic.Int64 // nanoseconds; 0 = no delay
 
 // responsePreviewMaxRunes is an alias for model.ResponsePreviewMaxRunes for local use.
 const responsePreviewMaxRunes = model.ResponsePreviewMaxRunes
@@ -188,10 +194,17 @@ func SetSessionRunning(sessionID string, running bool, skipEvent ...bool) {
 		// Safety net: finalize any orphaned streaming=1 messages for this session.
 		// This handles the case where FinalizeStreamingMessage failed due to SQLITE_BUSY
 		// during the stream, leaving the message stuck at streaming=1 forever.
-		// Capture cancel reason now — GetAndClearCancelReason in buildResult may
-		// clear it before the goroutine runs, causing a false warning for user cancels.
+		// Delay gives the normal FinalizeStreamingMessage path time to complete first;
+		// if it succeeds, streaming=0 and the goroutine finds no orphans.
+		// Capture cancel reason before launching the goroutine to avoid a race with
+		// GetAndClearCancelReason in buildResult.
 		cancelReason := GetCancelReason(sessionID)
-		go finalizeOrphanedStreamingMessages(sessionID, cancelReason)
+		go func() {
+			if d := orphanFinalizeDelay.Load(); d > 0 {
+				time.Sleep(time.Duration(d))
+			}
+			finalizeOrphanedStreamingMessages(sessionID, cancelReason)
+		}()
 	}
 
 	// Emit event unless caller explicitly skips (e.g. CancelSession sends its own event)
@@ -503,6 +516,7 @@ var chatSummaryMode atomic.Value // stores string
 
 func init() {
 	chatSummaryEnabled.Store(true) // default enabled
+	orphanFinalizeDelay.Store(int64(2 * time.Second)) // 2s delay for orphan finalizer
 }
 
 // SetChatSummaryEnabled configures whether chat messages are auto-summarized on completion.

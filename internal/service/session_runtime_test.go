@@ -2150,6 +2150,11 @@ func TestSetSessionRunning_FalseTriggersOrphanFinalization(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
+	// Disable orphan finalize delay for test speed
+	origDelay := orphanFinalizeDelay.Load()
+	orphanFinalizeDelay.Store(0)
+	defer orphanFinalizeDelay.Store(origDelay)
+
 	sessionID := "session-orphan-trigger"
 
 	// Insert a streaming=1 orphan message
@@ -2200,6 +2205,11 @@ func TestSetSessionRunning_UserCancelNoOrphanWarning(t *testing.T) {
 		"/test", "assistant", validContent, sessionID,
 	)
 	require.NoError(t, err)
+
+	// Disable orphan finalize delay for test speed
+	origDelay := orphanFinalizeDelay.Load()
+	orphanFinalizeDelay.Store(0)
+	defer orphanFinalizeDelay.Store(origDelay)
 
 	// Simulate user cancel: set the reason, then call SetSessionRunning(false)
 	// which captures the reason before launching the goroutine.
