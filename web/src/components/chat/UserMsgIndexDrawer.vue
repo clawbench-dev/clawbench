@@ -70,14 +70,15 @@ function truncateText(msg) {
   return truncateUserMsg(msg, t('chat.messageList.userMsgIndexAttachment'))
 }
 
-// Scroll the active message into view when the drawer opens
-watch(() => props.open, async (val) => {
-  if (val) {
-    await nextTick()
-    const activeEl = listRef.value?.querySelector('.msg-item.active')
-    if (activeEl) {
-      activeEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-    }
+// Scroll the active message into view when the drawer opens.
+// Must wait for loading/jumping to finish so .panel-list is rendered (listRef is non-null).
+// Also wait one nextTick after data ready for Vue to mount the DOM.
+watch([() => props.open, () => props.loading, () => props.jumping], async ([isOpen, isLoading, isJumping]) => {
+  if (!isOpen || isLoading || isJumping) return
+  await nextTick()
+  const activeEl = listRef.value?.querySelector('.msg-item.active')
+  if (activeEl) {
+    activeEl.scrollIntoView({ block: 'center', behavior: 'smooth' })
   }
 })
 </script>

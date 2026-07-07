@@ -102,5 +102,37 @@ describe('UserMsgIndexDrawer', () => {
       const wrapper = mountSheet({ jumping: true })
       expect(wrapper.find('.panel-loading').exists()).toBe(true)
     })
+
+    it('scrolls active message into view after loading finishes', async () => {
+      // JSDOM doesn't implement scrollIntoView — mock it
+      Element.prototype.scrollIntoView = vi.fn()
+
+      const messages = Array.from({ length: 20 }, (_, i) => ({
+        id: i + 1,
+        content: `Message ${i + 1}`,
+        role: 'user',
+      }))
+      // Mount with loading=true so .panel-list is not rendered yet
+      const wrapper = mountSheet({ open: true, messages, activeId: 10, loading: true })
+      // No .panel-list rendered while loading
+      expect(wrapper.find('.panel-list').exists()).toBe(false)
+
+      // Transition loading to false — this triggers the scroll watch
+      await wrapper.setProps({ loading: false })
+      await wrapper.vm.$nextTick()
+      // After loading=false, .panel-list is rendered
+      const listEl = wrapper.find('.panel-list')
+      expect(listEl.exists()).toBe(true)
+
+      // Find the active item and verify the correct item is active
+      const activeItem = wrapper.find('.msg-item.active')
+      expect(activeItem.exists()).toBe(true)
+      expect(activeItem.find('.msg-index').text()).toBe('10')
+
+      // Verify scrollIntoView was called with block: 'center'
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith(
+        { block: 'center', behavior: 'smooth' },
+      )
+    })
   })
 })
