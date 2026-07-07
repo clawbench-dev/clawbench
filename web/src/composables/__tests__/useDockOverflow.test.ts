@@ -31,45 +31,23 @@ describe('useDockOverflow', () => {
 
   const TABS = ['tasks', 'proxy', 'terminal', 'settings']
 
-  describe('inlineOverflowCount', () => {
-    it('returns 0 at minimum width (172px)', () => {
-      const { inlineOverflowCount } = setupWithWidth(TABS, 172)
-      expect(inlineOverflowCount.value).toBe(0)
-    })
-
-    it('returns 0 below minimum', () => {
-      const { inlineOverflowCount } = setupWithWidth(TABS, 100)
-      expect(inlineOverflowCount.value).toBe(0)
-    })
-
-    it('returns 1 when width allows 1 extra (218px)', () => {
-      const { inlineOverflowCount } = setupWithWidth(TABS, 218)
-      expect(inlineOverflowCount.value).toBe(1)
-    })
-
-    it('returns 2 when width allows 2 extra (264px)', () => {
-      const { inlineOverflowCount } = setupWithWidth(TABS, 264)
-      expect(inlineOverflowCount.value).toBe(2)
-    })
-
-    it('caps at total overflow tab count', () => {
-      const { inlineOverflowCount } = setupWithWidth(TABS, 600)
-      expect(inlineOverflowCount.value).toBe(4)
-    })
-  })
-
   describe('inlineOverflowTabs', () => {
-    it('returns empty at minimum width', () => {
+    it('returns empty at minimum width (172px)', () => {
       const { inlineOverflowTabs } = setupWithWidth(TABS, 172)
       expect(inlineOverflowTabs.value).toEqual([])
     })
 
-    it('returns first tab when space for 1', () => {
+    it('returns empty below minimum', () => {
+      const { inlineOverflowTabs } = setupWithWidth(TABS, 100)
+      expect(inlineOverflowTabs.value).toEqual([])
+    })
+
+    it('returns first tab when space for 1 (218px)', () => {
       const { inlineOverflowTabs } = setupWithWidth(TABS, 218)
       expect(inlineOverflowTabs.value).toEqual(['tasks'])
     })
 
-    it('returns first 2 tabs when space for 2', () => {
+    it('returns first 2 tabs when space for 2 (264px)', () => {
       const { inlineOverflowTabs } = setupWithWidth(TABS, 264)
       expect(inlineOverflowTabs.value).toEqual(['tasks', 'proxy'])
     })
@@ -83,8 +61,11 @@ describe('useDockOverflow', () => {
       const { inlineOverflowTabs } = setupWithWidth(TABS, 310)
       // 310 - 172 = 138, 138/46 = 3 → tasks, proxy, terminal
       expect(inlineOverflowTabs.value).toEqual(['tasks', 'proxy', 'terminal'])
-      const { inlineOverflowTabs: all } = setupWithWidth(TABS, 600)
-      expect(all.value).toEqual(['tasks', 'proxy', 'terminal', 'settings'])
+    })
+
+    it('caps at total overflow tab count', () => {
+      const { inlineOverflowTabs } = setupWithWidth(TABS, 9999)
+      expect(inlineOverflowTabs.value).toEqual(TABS)
     })
   })
 
@@ -148,6 +129,50 @@ describe('useDockOverflow', () => {
     it('counts all inline when space allows', () => {
       const { totalDockButtons } = setupWithWidth(TABS, 600)
       expect(totalDockButtons.value).toBe(7)
+    })
+  })
+
+  describe('width=0 guard (display:none / v-show hidden)', () => {
+    it('ResizeObserver width=0 preserves previous good width', () => {
+      const s = createSetup(TABS)
+      s.startObserving()
+      s.dockContentWidth.value = 356
+      expect(s.inlineOverflowTabs.value).toEqual(['tasks', 'proxy', 'terminal', 'settings'])
+
+      // Simulate ResizeObserver reporting width=0 (element hidden)
+      s.dockContentWidth.value = 0
+      expect(s.inlineOverflowTabs.value).toEqual([])
+
+      // With the guard in startObserving, the callback skips width=0,
+      // so dockContentWidth stays at the last good value.
+      s.dockContentWidth.value = 356
+      expect(s.inlineOverflowTabs.value).toEqual(['tasks', 'proxy', 'terminal', 'settings'])
+    })
+
+    it('startObserving when element hidden preserves previous width', () => {
+      const s = createSetup(TABS)
+      s.startObserving()
+      s.dockContentWidth.value = 356
+
+      // If startObserving is called while hidden (clientWidth=0),
+      // measured would be <=0, so dockContentWidth is NOT updated
+      const widthBefore = s.dockContentWidth.value
+      expect(widthBefore).toBe(356)
+    })
+
+    it('sequence: good width → hidden(0) → shown again → correct final state', () => {
+      const s = createSetup(TABS)
+      s.startObserving()
+
+      // Good width — all tabs inline
+      s.dockContentWidth.value = 356
+      expect(s.inlineOverflowTabs.value).toEqual(['tasks', 'proxy', 'terminal', 'settings'])
+      expect(s.showOverflowButton.value).toBe(false)
+
+      // Element hidden — with guard, width stays at 356 (not overwritten to 0)
+      // Buttons don't collapse when dock is temporarily hidden
+      expect(s.inlineOverflowTabs.value).toEqual(['tasks', 'proxy', 'terminal', 'settings'])
+      expect(s.showOverflowButton.value).toBe(false)
     })
   })
 })

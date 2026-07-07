@@ -6,10 +6,7 @@ export const DOCK_GAP = 12
 export const DOCK_STEP = DOCK_BTN_WIDTH + DOCK_GAP // 46
 const PRIMARY_COUNT = 3 // chat, browse, history
 
-/**
- * Minimum dock content width: 3 primary + overflow_btn = 4 buttons, 3 gaps
- * = 4 * 34 + 3 * 12 = 172px
- */
+/** Minimum dock content width: 3 primary + overflow_btn = 4 buttons, 3 gaps = 172px */
 const MIN_DOCK_CONTENT_WIDTH = 4 * DOCK_BTN_WIDTH + 3 * DOCK_GAP
 
 /**
@@ -28,39 +25,24 @@ export function useDockOverflow(
   getDockEl: () => HTMLElement | null,
   getOverflowTabs: () => string[],
 ) {
-  /** Available content width inside .bottom-dock (padding excluded) */
   const dockContentWidth = ref(0)
 
   let resizeObserver: ResizeObserver | null = null
 
-  /**
-   * Number of overflow items that can be shown as inline dock buttons
-   * given the current dock width.
-   */
-  const inlineOverflowCount = computed(() => {
+  /** How many overflow items can be inline given the current dock width */
+  const inlineCount = computed(() => {
     const width = dockContentWidth.value
     if (width <= 0) return 0
-
-    const remainingSpace = width - MIN_DOCK_CONTENT_WIDTH
-    if (remainingSpace < 0) return 0
-
-    // Each inline overflow tab needs DOCK_STEP (46px) more space
-    const maxInline = Math.floor(remainingSpace / DOCK_STEP)
-
-    // Cannot exceed total available overflow tabs
-    const available = getOverflowTabs().length
-    return Math.max(0, Math.min(maxInline, available))
+    const remaining = width - MIN_DOCK_CONTENT_WIDTH
+    if (remaining < 0) return 0
+    return Math.min(Math.floor(remaining / DOCK_STEP), getOverflowTabs().length)
   })
 
-  /** Overflow tabs shown inline in the dock (in overflowTabs order) */
-  const inlineOverflowTabs = computed(() => {
-    return getOverflowTabs().slice(0, inlineOverflowCount.value)
-  })
+  /** Overflow tabs shown inline in the dock */
+  const inlineOverflowTabs = computed(() => getOverflowTabs().slice(0, inlineCount.value))
 
-  /** Overflow tabs remaining in the popup (not promoted to inline) */
-  const popupOverflowTabs = computed(() => {
-    return getOverflowTabs().slice(inlineOverflowCount.value)
-  })
+  /** Overflow tabs remaining in the popup */
+  const popupOverflowTabs = computed(() => getOverflowTabs().slice(inlineCount.value))
 
   /** When popup has exactly 1 item, show it directly instead of overflow menu */
   const singleDirectTab = computed(() =>
@@ -79,27 +61,28 @@ export function useDockOverflow(
 
   /** Total number of visible dock buttons (for indicator index bound) */
   const totalDockButtons = computed(() => {
-    let count = PRIMARY_COUNT + inlineOverflowTabs.value.length
-    if (singleDirectTab.value) count += 1
-    if (showOverflowButton.value) count += 1
-    return count
+    return PRIMARY_COUNT + allInlineOverflowTabs.value.length + (showOverflowButton.value ? 1 : 0)
   })
 
   /** Start observing dock element size. Call in onMounted. Idempotent. */
   function startObserving() {
-    stopObserving() // Clean up any prior observer
+    stopObserving()
     const el = getDockEl()
     if (!el) return
 
-    // Initial measurement
-    const style = getComputedStyle(el)
-    const padLeft = parseFloat(style.paddingLeft) || 0
-    const padRight = parseFloat(style.paddingRight) || 0
-    dockContentWidth.value = el.clientWidth - padLeft - padRight
+    // Initial measurement — skip if hidden (display:none → clientWidth=0)
+    // to preserve the last known good width
+    const measured = el.clientWidth - (parseFloat(getComputedStyle(el).paddingLeft) || 0)
+      - (parseFloat(getComputedStyle(el).paddingRight) || 0)
+    if (measured > 0) dockContentWidth.value = measured
 
     resizeObserver = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        dockContentWidth.value = entry.contentRect.width
+        // Skip width=0 (element hidden via display:none / v-show) —
+        // preserve last good width; observer fires again when visible
+        if (entry.contentRect.width > 0) {
+          dockContentWidth.value = entry.contentRect.width
+        }
       }
     })
     resizeObserver.observe(el)
@@ -113,7 +96,6 @@ export function useDockOverflow(
 
   return {
     dockContentWidth,
-    inlineOverflowCount,
     inlineOverflowTabs,
     popupOverflowTabs,
     singleDirectTab,

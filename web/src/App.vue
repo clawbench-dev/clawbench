@@ -1083,6 +1083,15 @@ watch(() => inlineOverflowTabs.value.length, () => {
   overflowMenuOpen.value = false
 })
 
+// Safety net: re-measure dock when it becomes visible again after keyboard closes.
+// ResizeObserver should handle this, but Android WebView may miss the callback
+// after display:none → display:flex transitions (especially with CSS zoom applied).
+watch(anyKeyboardActive, (active) => {
+  if (!active) {
+    nextTick(() => startDockResize())
+  }
+})
+
 // Helpers for dynamic inline overflow buttons
 function dockTabIcon(tab) {
   return overflowTabMeta[tab]?.icon ?? CalendarClock
