@@ -207,7 +207,7 @@ func TestGetLocalIPs_MultipleInterfaces(t *testing.T) {
 		}, nil
 	}
 	addrMap := map[string][]net.Addr{
-		"eth0": {&net.IPNet{IP: net.ParseIP("192.168.1.100"), Mask: net.CIDRMask(24, 32)}},
+		"eth0":  {&net.IPNet{IP: net.ParseIP("192.168.1.100"), Mask: net.CIDRMask(24, 32)}},
 		"wlan0": {&net.IPNet{IP: net.ParseIP("10.0.0.5"), Mask: net.CIDRMask(24, 32)}},
 	}
 	ifaceAddrs = func(iface *net.Interface) ([]net.Addr, error) {

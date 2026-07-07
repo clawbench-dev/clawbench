@@ -52,6 +52,8 @@ var ifaceAddrs = func(iface *net.Interface) ([]net.Addr, error) {
 // GetLocalIPs returns all non-loopback IP addresses on all active network
 // interfaces, sorted with IPv4 before IPv6 and by address value within each family.
 // Returns nil if no addresses are found.
+//
+//nolint:gocyclo // network interface filtering is inherently multi-branch
 func GetLocalIPs() []string {
 	ifaces, err := netInterfaces()
 	if err != nil {

@@ -2798,7 +2798,7 @@ func TestPruneRawResponses(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "Prune Test")
 
 	// Insert 10 raw responses
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		_, err := service.AddChatMessage("/project", "claude", sid, "assistant", fmt.Sprintf("msg %d", i), nil, false, "")
 		assert.NoError(t, err)
 		msgID := service.GetStreamingMessageID(sid)
@@ -2830,6 +2830,7 @@ func TestPruneRawResponses(t *testing.T) {
 		assert.NoError(t, rows.Scan(&o))
 		outputs = append(outputs, o)
 	}
+	assert.NoError(t, rows.Err())
 	assert.Equal(t, []string{"raw 7", "raw 8", "raw 9"}, outputs)
 
 	// Prune with limit larger than count — no-op

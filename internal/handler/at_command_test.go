@@ -119,6 +119,70 @@ func TestProcessAtCommand_TaskContainsScheduledTaskTag(t *testing.T) {
 	assert.Contains(t, result, "--agent-id")
 }
 
+// TestProcessAtCommand_PortAndDataDirInjected verifies that --port and --data-dir
+// are injected into @chatsearch and @task templates so spawned CLI subprocesses
+// can connect to the server even with non-default configuration.
+func TestProcessAtCommand_PortAndDataDirInjected(t *testing.T) {
+	model.ClawbenchBin = "/usr/local/bin/clawbench"
+	model.ServerPort = 8080
+	model.DataDir = "/custom/data"
+	defer func() {
+		model.ClawbenchBin = ""
+		model.ServerPort = 0
+		model.DataDir = ""
+	}()
+
+	t.Run("chatsearch", func(t *testing.T) {
+		result := processAtCommand("@chatsearch auth bug", "/project", "sess-1")
+		assert.Contains(t, result, "--port 8080")
+		assert.Contains(t, result, "--data-dir /custom/data")
+		assert.NotContains(t, result, "{{PORT}}")
+		assert.NotContains(t, result, "{{DATA_DIR}}")
+	})
+
+	t.Run("task", func(t *testing.T) {
+		result := processAtCommand("@task daily build", "/project", "sess-1")
+		assert.Contains(t, result, "--port 8080")
+		assert.Contains(t, result, "--data-dir /custom/data")
+		assert.NotContains(t, result, "{{PORT}}")
+		assert.NotContains(t, result, "{{DATA_DIR}}")
+	})
+}
+
+// TestProcessAtCommand_PortAndDataDirDefault verifies that default port (20000)
+// and default DataDir are correctly injected.
+func TestProcessAtCommand_PortAndDataDirDefault(t *testing.T) {
+	model.ClawbenchBin = "/usr/local/bin/clawbench"
+	model.ServerPort = 20000
+	model.DataDir = "/home/user/.clawbench"
+	defer func() {
+		model.ClawbenchBin = ""
+		model.ServerPort = 0
+		model.DataDir = ""
+	}()
+
+	result := processAtCommand("@task test", "/project", "sess-1")
+	assert.Contains(t, result, "--port 20000")
+	assert.Contains(t, result, "--data-dir /home/user/.clawbench")
+}
+
+// TestProcessAtCommand_TaskListAgentsIncludesPortAndDataDir verifies that the
+// list-agents discovery command in the @task template also includes --port and --data-dir.
+func TestProcessAtCommand_TaskListAgentsIncludesPortAndDataDir(t *testing.T) {
+	model.ClawbenchBin = "/usr/local/bin/clawbench"
+	model.ServerPort = 3000
+	model.DataDir = "/tmp/cb"
+	defer func() {
+		model.ClawbenchBin = ""
+		model.ServerPort = 0
+		model.DataDir = ""
+	}()
+
+	result := processAtCommand("@task something", "/project", "sess-1")
+	// The template contains a list-agents command that must also have port/data-dir
+	assert.Contains(t, result, "list-agents --project /project --port 3000 --data-dir /tmp/cb")
+}
+
 // TestProcessAtCommand_NoMessageDuplication verifies the fix for ISS-287:
 // processAtCommand must return ONLY the template without appending the
 // original message, because the caller already prepends the result to a

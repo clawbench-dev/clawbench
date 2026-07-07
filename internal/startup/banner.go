@@ -23,8 +23,8 @@ type BannerConfig struct {
 	Scheme          string // "http" or "https"
 	Port            int
 	LocalIPs        []string // non-loopback LAN IPs; nil/empty = not available
-	AutoPassword    string // plaintext auto-generated password; empty = user configured
-	DataDir         string // .clawbench/ absolute path
+	AutoPassword    string   // plaintext auto-generated password; empty = user configured
+	DataDir         string   // .clawbench/ absolute path
 	Agents          []AgentInfo
 	SSHEnabled      bool
 	SSHPort         int
@@ -114,6 +114,8 @@ func padRight(s string, width int) string {
 
 // buildLines constructs the content lines (without borders).
 // Each line is a plain string; the caller pads them to equal rune-width.
+//
+//nolint:gocyclo // banner assembly is inherently multi-branch; splitting hurts readability
 func buildLines(cfg BannerConfig) []string {
 	labelW := 14 // display width for label alignment
 	label := func(prefix, text string) string {

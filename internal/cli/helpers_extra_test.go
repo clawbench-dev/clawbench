@@ -127,7 +127,103 @@ func TestHTTPDoWithProject_UnreachableServer(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// --- resolveDataDir ---
+
+func TestResolveDataDir_AlreadySet(t *testing.T) {
+	origDataDir := model.DataDir
+	t.Cleanup(func() { model.DataDir = origDataDir })
+
+	model.DataDir = "/custom/data"
+	dir, err := resolveDataDir()
+	assert.NoError(t, err)
+	assert.Equal(t, "/custom/data", dir)
+}
+
+func TestResolveDataDir_DefaultFromHome(t *testing.T) {
+	origDataDir := model.DataDir
+	t.Cleanup(func() { model.DataDir = origDataDir })
+
+	model.DataDir = ""
+	dir, err := resolveDataDir()
+	assert.NoError(t, err)
+	homeDir, _ := os.UserHomeDir()
+	if homeDir != "" {
+		assert.Equal(t, filepath.Join(homeDir, ".clawbench"), dir)
+	}
+}
+
+func TestResolveDataDir_EmptyHome(t *testing.T) {
+	origDataDir := model.DataDir
+	origHome := os.Getenv("HOME")
+	t.Cleanup(func() {
+		model.DataDir = origDataDir
+		_ = os.Setenv("HOME", origHome)
+	})
+
+	model.DataDir = ""
+	_ = os.Unsetenv("HOME")
+	_ = os.Unsetenv("USERPROFILE")
+
+	dir, err := resolveDataDir()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot determine home directory")
+	assert.Empty(t, dir)
+}
+
 // --- loadConfig additional coverage ---
+
+func TestLoadConfig_HomeDirFallback(t *testing.T) {
+	// Verify that loadConfig sets DataDir to ~/.clawbench using platform.UserHomeDir()
+	origCfg := model.ConfigInstance
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	origServerPort := model.ServerPort
+	t.Cleanup(func() {
+		model.ConfigInstance = origCfg
+		model.BinDir = origBinDir
+		model.DataDir = origDataDir
+		model.ServerPort = origServerPort
+	})
+
+	model.ConfigInstance = model.Config{}
+	model.DataDir = "" // empty to trigger homeDir fallback
+
+	// We can't easily test the os.Exit(1) path (homeDir == ""),
+	// but we can verify the normal path sets DataDir to ~/.clawbench.
+	loadConfig()
+	homeDir, _ := os.UserHomeDir()
+	if homeDir != "" {
+		expected := filepath.Join(homeDir, ".clawbench")
+		assert.Equal(t, expected, model.DataDir, "DataDir should default to ~/.clawbench")
+	}
+}
+
+func TestLoadConfig_CheckLegacyLayoutCalled(t *testing.T) {
+	// Verify that loadConfig calls CheckLegacyLayout by checking it doesn't panic
+	// when a legacy BinDir layout exists. CheckLegacyLayout just prints a warning.
+	origCfg := model.ConfigInstance
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	origServerPort := model.ServerPort
+	t.Cleanup(func() {
+		model.ConfigInstance = origCfg
+		model.BinDir = origBinDir
+		model.DataDir = origDataDir
+		model.ServerPort = origServerPort
+	})
+
+	tmpDir := t.TempDir()
+	// Create a legacy .clawbench dir next to a fake binary dir
+	legacyDataDir := filepath.Join(tmpDir, ".clawbench")
+	assert.NoError(t, os.MkdirAll(legacyDataDir, 0o755))
+
+	model.ConfigInstance = model.Config{}
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, "newdata")
+
+	// loadConfig should not panic even with legacy layout
+	loadConfig()
+}
 
 func TestLoadConfig_SetsServerPort(t *testing.T) {
 	origCfg := model.ConfigInstance

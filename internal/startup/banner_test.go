@@ -77,7 +77,7 @@ func TestBannerBasic(t *testing.T) {
 		Version:      "v1.0.0",
 		Scheme:       "http",
 		Port:         20000,
-		LocalIPs:       []string{"192.168.1.100"},
+		LocalIPs:     []string{"192.168.1.100"},
 		AutoPassword: "a1b2c3d4",
 		DataDir:      "/home/user/clawbench/.clawbench",
 		Agents: []AgentInfo{
@@ -183,7 +183,7 @@ func TestBannerCJKWidth(t *testing.T) {
 		Version:      "v1.0.0",
 		Scheme:       "http",
 		Port:         20000,
-		LocalIPs:       []string{"192.168.1.100"},
+		LocalIPs:     []string{"192.168.1.100"},
 		AutoPassword: "测试密码",                // CJK password (unlikely but tests alignment)
 		DataDir:      "/home/用户/.clawbench", // CJK path
 		Agents: []AgentInfo{
@@ -355,7 +355,7 @@ func TestBannerBorderAlignmentWithCJK(t *testing.T) {
 		Version:      "v1.0.0",
 		Scheme:       "http",
 		Port:         20000,
-		LocalIPs:       []string{"192.168.1.100"},
+		LocalIPs:     []string{"192.168.1.100"},
 		AutoPassword: "测试密码",                // CJK
 		DataDir:      "/home/用户/.clawbench", // CJK
 		Agents: []AgentInfo{
