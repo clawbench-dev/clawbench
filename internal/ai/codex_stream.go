@@ -474,7 +474,7 @@ func (c *CodexBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-ch
 	if req.ScheduledExecution {
 		cmd.Env = append(os.Environ(), "CLAWBENCH_SCHEDULED=1")
 	} else {
-		cmd.Env = os.Environ() // inherit current environment (includes API keys from .env)
+		cmd.Env = os.Environ() // inherit current environment
 	}
 
 	isResume := req.Resume && req.SessionID != ""

@@ -16,6 +16,7 @@ import (
 
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
+	"clawbench/internal/startup"
 
 	"gopkg.in/yaml.v3"
 )
@@ -49,6 +50,9 @@ func loadConfig() {
 		}
 		model.DataDir = filepath.Join(homeDir, ".clawbench")
 	}
+
+	// Auto-migrate from legacy BinDir layout
+	startup.MigrateFromBinDir(model.BinDir, model.DataDir)
 
 	var cfg model.Config
 	var presence map[string]bool

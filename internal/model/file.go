@@ -45,7 +45,6 @@ func IsTextFile(name string) bool {
 		".nginx",
 		".gitignore", ".gitattributes", ".gitconfig",
 		".editorconfig",
-		".env", ".env.example", ".env.local",
 		".ignore",
 		".txt", ".text",
 		".log",

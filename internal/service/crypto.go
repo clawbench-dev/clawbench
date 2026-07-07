@@ -80,7 +80,7 @@ func deriveKeyFromPassword() []byte {
 // readAutoPassword reads the auto-password from .clawbench/auto-password.
 // Returns empty string if not found.
 func readAutoPassword() string {
-	if model.BinDir == "" {
+	if model.DataDir == "" {
 		return ""
 	}
 	data, err := os.ReadFile(filepath.Join(model.DataDir, "auto-password"))

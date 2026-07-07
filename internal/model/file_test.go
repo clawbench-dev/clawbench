@@ -180,11 +180,7 @@ func TestIsTextFile(t *testing.T) {
 		// Editor
 		{"editorconfig", ".editorconfig", true},
 
-		// Env
-		{"env", ".env", true},
-		{"env.example", ".env.example", true},
-		{"env.local", ".env.local", true},
-
+		// EditorConfig -> Ignore (next category)
 		// Ignore
 		{"ignore", ".ignore", true},
 

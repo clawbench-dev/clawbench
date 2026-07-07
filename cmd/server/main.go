@@ -225,6 +225,11 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		model.DataDir = filepath.Join(homeDir, ".clawbench")
 	}
 
+	// Auto-migrate from legacy BinDir layout if --data-dir was not specified
+	if cliDataDir == "" {
+		startup.MigrateFromBinDir(model.BinDir, model.DataDir)
+	}
+
 	// Load configuration — config/config.yaml is optional
 	var cfg model.Config
 	var presence map[string]bool
@@ -420,20 +425,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	}
 	slog.SetDefault(slog.New(multiHandler))
 	slog.Info("server starting")
-
-	// Load .env file into process environment (before loading agents,
-	// so agent env ${VAR} references can be resolved at request time)
-	dotenvPath := filepath.Join(model.DataDir, ".env")
-	if _, err := os.Stat(dotenvPath); os.IsNotExist(err) {
-		dotenvPath = ".env"
-	}
-	if _, err := os.Stat(dotenvPath); err == nil {
-		if err := model.LoadDotEnv(dotenvPath); err != nil {
-			slog.Warn("failed to load .env file", slog.String("path", dotenvPath), slog.String("err", err.Error()))
-		} else {
-			slog.Info("loaded .env file", slog.String("path", dotenvPath))
-		}
-	}
 
 	// Ensure $SHELL reflects the user's login shell (from /etc/passwd).
 	// On Debian/Ubuntu, $SHELL may be /bin/sh (dash) when started from

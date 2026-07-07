@@ -622,31 +622,6 @@ func requireCodexEnv(t *testing.T) {
 	t.Helper()
 	requireCLIAvailable(t, "codex")
 
-	dotenvPaths := []string{}
-	if dir, _ := os.Getwd(); dir != "" {
-		for d := dir; d != "/"; d = filepath.Dir(d) {
-			if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
-				dotenvPaths = append(dotenvPaths, filepath.Join(d, ".env"))
-				break
-			}
-		}
-	}
-	if model.BinDir != "" {
-		dotenvPaths = append(dotenvPaths, filepath.Join(model.BinDir, ".env"))
-	}
-	dotenvPaths = append(dotenvPaths, ".env")
-
-	for _, p := range dotenvPaths {
-		if _, err := os.Stat(p); err == nil {
-			if err := model.LoadDotEnv(p); err != nil {
-				t.Logf("warning: failed to load .env from %s: %v", p, err)
-			} else {
-				t.Logf("loaded .env from %s", p)
-			}
-			break
-		}
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "codex", "exec", "--profile", "m27", "--json",
