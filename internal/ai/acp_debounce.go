@@ -63,7 +63,18 @@ func (d *toolCallDebouncer) handleToolCallUpdate(tcu acp.SessionToolCallUpdate) 
 	defer d.mu.Unlock()
 
 	if existing, ok := d.pending[toolCallID]; ok {
-		// Merge: overwrite with latest data.
+		// Merge: overwrite with latest data, but preserve input/ToolMeta
+		// if the new event doesn't carry them. ACP agents send _meta.toolResponse
+		// updates without rawInput, which would otherwise zero out the input
+		// extracted from an earlier rawInput-carrying update.
+		if event.Tool != nil && existing.event.Tool != nil {
+			if len(event.Tool.Input) == 0 && len(existing.event.Tool.Input) > 0 {
+				event.Tool.Input = existing.event.Tool.Input
+			}
+		}
+		if event.ToolMeta == nil && existing.event.ToolMeta != nil {
+			event.ToolMeta = existing.event.ToolMeta
+		}
 		existing.event = event
 		if tcu.RawInput != nil {
 			existing.rawInput = tcu.RawInput
