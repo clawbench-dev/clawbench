@@ -3,9 +3,9 @@
    Shared by: .markdown-body (file preview), .chat-message.assistant and .chat-message.user (chat), .table-row-value (table row modal)
    ========================================================================== */
 
-/* Strong / Bold — font-weight + text-shadow for cross-device consistency
- * -webkit-text-stroke is unreliable in Android WebView.
- * text-shadow is universally supported and creates a visible glow/thicken effect. */
+/* Strong / Bold — traditional font-weight bold;
+ * Android WebView font-weight:700 often doesn't thicken glyphs, so add text-shadow
+ * via [data-app-mode] (set by useAppMode) as visual compensation. */
 .markdown-body strong,
 .markdown-body b,
 .chat-message.assistant strong,
@@ -13,15 +13,28 @@
 .table-row-value strong,
 .table-row-value b {
     font-weight: bold;
-    text-shadow: 0 0 1px currentColor;
     color: var(--text-bold);
 }
 
 .chat-message.user strong,
 .chat-message.user b {
     font-weight: bold;
-    text-shadow: 0 0 0.8px currentColor;
     color: #ffffff;
+}
+
+/* WebView bold compensation — text-shadow thickens glyphs where font-weight alone fails */
+[data-app-mode] .markdown-body strong,
+[data-app-mode] .markdown-body b,
+[data-app-mode] .chat-message.assistant strong,
+[data-app-mode] .chat-message.assistant b,
+[data-app-mode] .table-row-value strong,
+[data-app-mode] .table-row-value b {
+    text-shadow: 0 0 1px currentColor;
+}
+
+[data-app-mode] .chat-message.user strong,
+[data-app-mode] .chat-message.user b {
+    text-shadow: 0 0 0.8px currentColor;
 }
 
 /* Links */

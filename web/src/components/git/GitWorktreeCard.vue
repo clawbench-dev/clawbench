@@ -66,6 +66,9 @@ defineEmits(['switch', 'delete'])
 .git-worktree-row.current .wt-row-name {
   color: var(--accent-color, #4a90d9);
   font-weight: bold;
+}
+
+[data-app-mode] .git-worktree-row.current .wt-row-name {
   text-shadow: 0 0 1px currentColor;
 }
 
