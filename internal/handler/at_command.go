@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"strings"
 
 	"clawbench/internal/model"
@@ -9,10 +10,10 @@ import (
 // chatSearchInjectTemplate is the on-demand instruction template injected when
 // the user sends a message starting with "@chatsearch ". It provides the AI
 // with RAG search command usage and XML output format requirements.
-// Placeholders: {{CLAWBENCH_BIN}}, {{PROJECT_PATH}}, {{SESSION_ID}}
+// Placeholders: {{CLAWBENCH_BIN}}, {{PROJECT_PATH}}, {{SESSION_ID}}, {{PORT}}, {{DATA_DIR}}
 const chatSearchInjectTemplate = `[You have access to historical conversation search for this request. Use the Bash tool to execute commands.]
 
-Search historical conversations: {{CLAWBENCH_BIN}} rag search -q "search terms" --project {{PROJECT_PATH}} --exclude-session-id {{SESSION_ID}}
+Search historical conversations: {{CLAWBENCH_BIN}} rag search -q "search terms" --project {{PROJECT_PATH}} --exclude-session-id {{SESSION_ID}} --port {{PORT}} --data-dir {{DATA_DIR}}
 
 Command flags:
 - -q: Search query (required)
@@ -43,14 +44,14 @@ If no results found, answer based on your own knowledge — do NOT mention the s
 // taskInjectTemplate is the on-demand instruction template injected when
 // the user sends a message starting with "@task ". It provides the AI
 // with scheduled task management command usage.
-// Placeholders: {{CLAWBENCH_BIN}}, {{PROJECT_PATH}}
+// Placeholders: {{CLAWBENCH_BIN}}, {{PROJECT_PATH}}, {{PORT}}, {{DATA_DIR}}
 const taskInjectTemplate = `[You have access to scheduled task management for this request. Use the Bash tool to execute commands.]
 
-Task management: {{CLAWBENCH_BIN}} task --project {{PROJECT_PATH}}
+Task management: {{CLAWBENCH_BIN}} task --project {{PROJECT_PATH}} --port {{PORT}} --data-dir {{DATA_DIR}}
 
 Available subcommands: create / list / get / list-exec / update / delete / pause / resume / trigger / list-agents
 
-When creating a task, use the --agent-id flag. Run "{{CLAWBENCH_BIN}} task list-agents --project {{PROJECT_PATH}}" to discover available agent IDs. You may use the current session's agent if appropriate.
+When creating a task, use the --agent-id flag. Run "{{CLAWBENCH_BIN}} task list-agents --project {{PROJECT_PATH}} --port {{PORT}} --data-dir {{DATA_DIR}}" to discover available agent IDs. You may use the current session's agent if appropriate.
 
 After creating a task, you MUST include in your response: <scheduled-task id="task-id" />
 
@@ -79,12 +80,16 @@ func processAtCommand(rawMsg, projectPath, sessionID string) string {
 		tmpl := strings.ReplaceAll(chatSearchInjectTemplate, "{{CLAWBENCH_BIN}}", model.ClawbenchBin)
 		tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)
 		tmpl = strings.ReplaceAll(tmpl, "{{SESSION_ID}}", sessionID)
+		tmpl = strings.ReplaceAll(tmpl, "{{PORT}}", fmt.Sprintf("%d", model.ServerPort))
+		tmpl = strings.ReplaceAll(tmpl, "{{DATA_DIR}}", model.DataDir)
 		// Return only the template; the caller appends the original prompt separately
 		return tmpl
 	}
 	if strings.HasPrefix(rawMsg, "@task ") {
 		tmpl := strings.ReplaceAll(taskInjectTemplate, "{{CLAWBENCH_BIN}}", model.ClawbenchBin)
 		tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)
+		tmpl = strings.ReplaceAll(tmpl, "{{PORT}}", fmt.Sprintf("%d", model.ServerPort))
+		tmpl = strings.ReplaceAll(tmpl, "{{DATA_DIR}}", model.DataDir)
 		return tmpl
 	}
 	return rawMsg

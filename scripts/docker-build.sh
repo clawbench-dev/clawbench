@@ -46,7 +46,7 @@ docker logs "$NAME" 2>&1 | tail -5
 
 # Extract auto-password
 echo ""
-PASS=$(docker exec "$NAME" cat /data/.clawbench/auto-password 2>/dev/null || docker exec "$NAME" cat /app/.clawbench/auto-password 2>/dev/null || echo "")
+PASS=$(docker exec "$NAME" cat /data/.clawbench/auto-password 2>/dev/null || echo "")
 if [ -n "$PASS" ]; then
     echo "╔══════════════════════════════════════╗"
     echo "║  Auto-generated password: $PASS  ║"
