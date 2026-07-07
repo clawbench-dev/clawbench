@@ -6,6 +6,9 @@
       <button class="header-btn refresh-btn" :class="{ spinning: loading }" :disabled="loading" @click="refresh" :title="t('common.refresh')">
         <RefreshCw :size="14" />
       </button>
+      <button class="header-btn clear-unread-btn" :class="{ active: hasUnread }" :disabled="!hasUnread" @click="markAllTasksRead" :title="t('task.clearUnread')">
+        <Brush :size="14" />
+      </button>
       <button class="create-btn" @click="$emit('create')" :title="t('task.form.createTitle')">
         <Plus :size="16" />
       </button>
@@ -69,7 +72,7 @@
 </template>
 
 <script setup lang="ts">
-import { Plus, Loader2, CalendarX, Clock, Repeat, CalendarClock, History, RefreshCw } from 'lucide-vue-next'
+import { Plus, Loader2, CalendarX, Clock, Repeat, CalendarClock, History, RefreshCw, Brush } from 'lucide-vue-next'
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTaskTab } from '@/composables/useTaskTab'
@@ -79,10 +82,11 @@ import { store } from '@/stores/app'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 
 const { t } = useI18n()
-const { loadTasks } = useTaskTab()
+const { loadTasks, markAllTasksRead } = useTaskTab()
 const { loadAgents, getAgentIcon } = useAgents()
 
 const tasks = computed(() => store.state.tasks)
+const hasUnread = computed(() => store.state.taskUnreadCount > 0)
 const loading = ref(false)
 
 defineEmits<{
@@ -170,6 +174,12 @@ onMounted(refresh)
 
 .header-btn:active:not(:disabled) {
   transform: scale(0.9);
+}
+
+/* Clear-unread button accent when unread messages exist */
+.clear-unread-btn.active {
+  color: var(--accent-color, #0066cc);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, var(--bg-secondary, #f1f3f5));
 }
 
 .header-btn.spinning svg {
