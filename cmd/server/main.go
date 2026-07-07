@@ -142,6 +142,12 @@ func makeRestartFunc(shutdown func()) func() {
 func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	startTime := time.Now()
 
+	// Root --version flag
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		fmt.Println(version.Get())
+		os.Exit(0)
+	}
+
 	// Root --help handler
 	if len(os.Args) > 1 && (os.Args[1] == "--help" || os.Args[1] == "-h") {
 		fmt.Println("ClawBench - Mobile-first AI workstation")
@@ -157,6 +163,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		fmt.Println("Server options:")
 		fmt.Println("  --port PORT       Server port (overrides config file, default: 20000)")
 		fmt.Println("  --data-dir DIR    Runtime data directory (default: <binary_dir>/.clawbench)")
+		fmt.Println("  --version         Print version and exit")
 		os.Exit(0)
 	}
 
