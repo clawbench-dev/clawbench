@@ -77,7 +77,7 @@ func TestBannerBasic(t *testing.T) {
 		Version:      "v1.0.0",
 		Scheme:       "http",
 		Port:         20000,
-		LocalIP:      "192.168.1.100",
+		LocalIPs:       []string{"192.168.1.100"},
 		AutoPassword: "a1b2c3d4",
 		DataDir:      "/home/user/clawbench/.clawbench",
 		Agents: []AgentInfo{
@@ -183,7 +183,7 @@ func TestBannerCJKWidth(t *testing.T) {
 		Version:      "v1.0.0",
 		Scheme:       "http",
 		Port:         20000,
-		LocalIP:      "192.168.1.100",
+		LocalIPs:       []string{"192.168.1.100"},
 		AutoPassword: "测试密码",                // CJK password (unlikely but tests alignment)
 		DataDir:      "/home/用户/.clawbench", // CJK path
 		Agents: []AgentInfo{
@@ -355,7 +355,7 @@ func TestBannerBorderAlignmentWithCJK(t *testing.T) {
 		Version:      "v1.0.0",
 		Scheme:       "http",
 		Port:         20000,
-		LocalIP:      "192.168.1.100",
+		LocalIPs:       []string{"192.168.1.100"},
 		AutoPassword: "测试密码",                // CJK
 		DataDir:      "/home/用户/.clawbench", // CJK
 		Agents: []AgentInfo{
@@ -533,6 +533,75 @@ func TestFormatDuration_ExactlyOneSecond(t *testing.T) {
 }
 
 // ---------- FRP banner section ----------
+
+func TestBannerMultipleIPs(t *testing.T) {
+	cfg := BannerConfig{
+		Version:      "v1.0.0",
+		Scheme:       "http",
+		Port:         20000,
+		LocalIPs:     []string{"192.168.1.100", "10.0.0.5", "fd00::1"},
+		AutoPassword: "test1234",
+		DataDir:      "/tmp/.clawbench",
+		Agents: []AgentInfo{
+			{Name: "codebuddy", Models: 5},
+		},
+		TTSEngine:       "edge",
+		TaskCount:       0,
+		StartupDuration: 100 * time.Millisecond,
+	}
+	lines := buildLines(cfg)
+	joined := strings.Join(lines, "\n")
+
+	if !strings.Contains(joined, "http://localhost:20000") {
+		t.Error("banner should contain local URL")
+	}
+	if !strings.Contains(joined, "http://192.168.1.100:20000") {
+		t.Error("banner should contain first network URL")
+	}
+	if !strings.Contains(joined, "http://10.0.0.5:20000") {
+		t.Error("banner should contain second network URL")
+	}
+	if !strings.Contains(joined, "http://[fd00::1]:20000") {
+		t.Error("banner should contain IPv6 network URL with brackets")
+	}
+
+	// Verify alignment
+	maxW := 0
+	for _, l := range lines {
+		if rw := runeWidth(l); rw > maxW {
+			maxW = rw
+		}
+	}
+	for i, l := range lines {
+		padded := padRight(l, maxW)
+		if rw := runeWidth(padded); rw != maxW {
+			t.Errorf("padded line %d runeWidth=%d, want %d: %q", i, rw, maxW, padded)
+		}
+	}
+}
+
+func TestBannerNoIPs(t *testing.T) {
+	cfg := BannerConfig{
+		Version:         "v1.0.0",
+		Scheme:          "http",
+		Port:            20000,
+		LocalIPs:        nil,
+		AutoPassword:    "test1234",
+		DataDir:         "/tmp/.clawbench",
+		TTSEngine:       "edge",
+		TaskCount:       0,
+		StartupDuration: 100 * time.Millisecond,
+	}
+	lines := buildLines(cfg)
+	joined := strings.Join(lines, "\n")
+
+	if !strings.Contains(joined, "http://localhost:20000") {
+		t.Error("banner should contain local URL")
+	}
+	if strings.Contains(joined, "Network:") {
+		t.Error("banner should NOT contain Network line when no IPs")
+	}
+}
 
 func TestBanner_FRPEnabledWithRemoteURL(t *testing.T) {
 	cfg := BannerConfig{

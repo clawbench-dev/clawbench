@@ -123,3 +123,151 @@ func TestGetOutboundIP_ContextCanceled(t *testing.T) {
 		t.Errorf("GetOutboundIP() = %q, want empty string on canceled context", ip)
 	}
 }
+
+func TestGetLocalIPs_Basic(t *testing.T) {
+	ips := GetLocalIPs()
+	// On any real machine we expect at least one non-loopback IP,
+	// but in some CI containers there may be none, so just validate format.
+	for _, ip := range ips {
+		parsed := net.ParseIP(ip)
+		if parsed == nil {
+			t.Errorf("GetLocalIPs() returned invalid IP %q", ip)
+		}
+		if parsed.IsLoopback() {
+			t.Errorf("GetLocalIPs() returned loopback IP %q", ip)
+		}
+	}
+}
+
+func TestGetLocalIPs_InterfaceError(t *testing.T) {
+	origI := netInterfaces
+	defer func() { netInterfaces = origI }()
+
+	netInterfaces = func() ([]net.Interface, error) {
+		return nil, errors.New("interface error")
+	}
+
+	ips := GetLocalIPs()
+	if ips != nil {
+		t.Errorf("GetLocalIPs() = %v, want nil on interface error", ips)
+	}
+}
+
+func TestGetLocalIPs_SkipsLoopback(t *testing.T) {
+	origI, origA := netInterfaces, ifaceAddrs
+	defer func() { netInterfaces = origI; ifaceAddrs = origA }()
+
+	netInterfaces = func() ([]net.Interface, error) {
+		return []net.Interface{
+			{Name: "lo", Flags: net.FlagUp | net.FlagLoopback},
+		}, nil
+	}
+	ifaceAddrs = func(iface *net.Interface) ([]net.Addr, error) {
+		return []net.Addr{
+			&net.IPNet{IP: net.ParseIP("127.0.0.1"), Mask: net.CIDRMask(8, 32)},
+		}, nil
+	}
+
+	ips := GetLocalIPs()
+	if len(ips) != 0 {
+		t.Errorf("GetLocalIPs() = %v, want empty (loopback skipped)", ips)
+	}
+}
+
+func TestGetLocalIPs_SkipsLinkLocal(t *testing.T) {
+	origI, origA := netInterfaces, ifaceAddrs
+	defer func() { netInterfaces = origI; ifaceAddrs = origA }()
+
+	netInterfaces = func() ([]net.Interface, error) {
+		return []net.Interface{
+			{Name: "eth0", Flags: net.FlagUp},
+		}, nil
+	}
+	ifaceAddrs = func(iface *net.Interface) ([]net.Addr, error) {
+		return []net.Addr{
+			&net.IPNet{IP: net.ParseIP("169.254.1.1"), Mask: net.CIDRMask(16, 32)},
+			&net.IPNet{IP: net.ParseIP("192.168.1.100"), Mask: net.CIDRMask(24, 32)},
+		}, nil
+	}
+
+	ips := GetLocalIPs()
+	if len(ips) != 1 || ips[0] != "192.168.1.100" {
+		t.Errorf("GetLocalIPs() = %v, want [192.168.1.100] (link-local skipped)", ips)
+	}
+}
+
+func TestGetLocalIPs_MultipleInterfaces(t *testing.T) {
+	origI, origA := netInterfaces, ifaceAddrs
+	defer func() { netInterfaces = origI; ifaceAddrs = origA }()
+
+	netInterfaces = func() ([]net.Interface, error) {
+		return []net.Interface{
+			{Name: "eth0", Flags: net.FlagUp},
+			{Name: "wlan0", Flags: net.FlagUp},
+		}, nil
+	}
+	addrMap := map[string][]net.Addr{
+		"eth0": {&net.IPNet{IP: net.ParseIP("192.168.1.100"), Mask: net.CIDRMask(24, 32)}},
+		"wlan0": {&net.IPNet{IP: net.ParseIP("10.0.0.5"), Mask: net.CIDRMask(24, 32)}},
+	}
+	ifaceAddrs = func(iface *net.Interface) ([]net.Addr, error) {
+		return addrMap[iface.Name], nil
+	}
+
+	ips := GetLocalIPs()
+	if len(ips) != 2 {
+		t.Errorf("GetLocalIPs() = %v, want 2 IPs", ips)
+	}
+	// Should be sorted: 10.0.0.5 before 192.168.1.100
+	if ips[0] != "10.0.0.5" || ips[1] != "192.168.1.100" {
+		t.Errorf("GetLocalIPs() = %v, want [10.0.0.5, 192.168.1.100]", ips)
+	}
+}
+
+func TestGetLocalIPs_IPv4BeforeIPv6(t *testing.T) {
+	origI, origA := netInterfaces, ifaceAddrs
+	defer func() { netInterfaces = origI; ifaceAddrs = origA }()
+
+	netInterfaces = func() ([]net.Interface, error) {
+		return []net.Interface{
+			{Name: "eth0", Flags: net.FlagUp},
+		}, nil
+	}
+	ifaceAddrs = func(iface *net.Interface) ([]net.Addr, error) {
+		return []net.Addr{
+			&net.IPNet{IP: net.ParseIP("fd00::1"), Mask: net.CIDRMask(64, 128)},
+			&net.IPNet{IP: net.ParseIP("192.168.1.100"), Mask: net.CIDRMask(24, 32)},
+		}, nil
+	}
+
+	ips := GetLocalIPs()
+	if len(ips) != 2 {
+		t.Errorf("GetLocalIPs() = %v, want 2 IPs", ips)
+	}
+	// IPv4 should come before IPv6
+	if ips[0] != "192.168.1.100" {
+		t.Errorf("GetLocalIPs()[0] = %q, want IPv4 first", ips[0])
+	}
+}
+
+func TestGetLocalIPs_Deduplicates(t *testing.T) {
+	origI, origA := netInterfaces, ifaceAddrs
+	defer func() { netInterfaces = origI; ifaceAddrs = origA }()
+
+	netInterfaces = func() ([]net.Interface, error) {
+		return []net.Interface{
+			{Name: "eth0", Flags: net.FlagUp},
+		}, nil
+	}
+	ifaceAddrs = func(iface *net.Interface) ([]net.Addr, error) {
+		return []net.Addr{
+			&net.IPNet{IP: net.ParseIP("192.168.1.100"), Mask: net.CIDRMask(24, 32)},
+			&net.IPNet{IP: net.ParseIP("192.168.1.100"), Mask: net.CIDRMask(24, 32)},
+		}, nil
+	}
+
+	ips := GetLocalIPs()
+	if len(ips) != 1 {
+		t.Errorf("GetLocalIPs() = %v, want 1 IP (deduplicated)", ips)
+	}
+}

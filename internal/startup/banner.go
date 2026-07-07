@@ -22,7 +22,7 @@ type BannerConfig struct {
 	Version         string
 	Scheme          string // "http" or "https"
 	Port            int
-	LocalIP         string // non-loopback LAN IP; empty = not available
+	LocalIPs        []string // non-loopback LAN IPs; nil/empty = not available
 	AutoPassword    string // plaintext auto-generated password; empty = user configured
 	DataDir         string // .clawbench/ absolute path
 	Agents          []AgentInfo
@@ -128,8 +128,12 @@ func buildLines(cfg BannerConfig) []string {
 	// --- URLs ---
 	localURL := fmt.Sprintf("%s://localhost:%d", cfg.Scheme, cfg.Port)
 	lines = append(lines, label("💻 Local:", localURL))
-	if cfg.LocalIP != "" {
-		networkURL := fmt.Sprintf("%s://%s:%d", cfg.Scheme, cfg.LocalIP, cfg.Port)
+	for _, ip := range cfg.LocalIPs {
+		host := ip
+		if strings.Contains(host, ":") {
+			host = "[" + host + "]" // IPv6 literal bracket for URL
+		}
+		networkURL := fmt.Sprintf("%s://%s:%d", cfg.Scheme, host, cfg.Port)
 		lines = append(lines, label("🌐 Network:", networkURL))
 	}
 
@@ -164,7 +168,7 @@ func buildLines(cfg BannerConfig) []string {
 
 	// --- SSH (conditional) ---
 	if cfg.SSHEnabled {
-		sshCmd := fmt.Sprintf("ssh -p %d clawbench@%s", cfg.SSHPort, firstNonEmpty(cfg.LocalIP, "localhost"))
+		sshCmd := fmt.Sprintf("ssh -p %d clawbench@%s", cfg.SSHPort, firstNonEmpty(firstIP(cfg.LocalIPs), "localhost"))
 		lines = append(lines, label("🔒 SSH:", sshCmd), "")
 	}
 
@@ -226,6 +230,14 @@ func firstNonEmpty(ss ...string) string {
 		if s != "" {
 			return s
 		}
+	}
+	return ""
+}
+
+// firstIP returns the first IP from the slice, or "".
+func firstIP(ips []string) string {
+	if len(ips) > 0 {
+		return ips[0]
 	}
 	return ""
 }

@@ -924,7 +924,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		Version:         version.Get(),
 		Scheme:          scheme,
 		Port:            port,
-		LocalIP:         platform.GetOutboundIP(),
+		LocalIPs:        platform.GetLocalIPs(),
 		AutoPassword:    autoPassword,
 		DataDir:         model.DataDir,
 		Agents:          agentInfos,
