@@ -540,16 +540,16 @@ describe('SettingsDrillDown', () => {
   // ─── 10. needsRestart hint ─────────────────────────
 
   describe('needsRestart hint', () => {
-    it('shows needsRestart hint when changing a needsRestart field', async () => {
+    it('does not show hint when no needsRestart field is changed', async () => {
       const wrapper = mountDrillDown('portForward')
       const vm = wrapper.vm as any
-      // port_forward.port has needsRestart: true
+      // port_forward.port no longer has needsRestart:true (hot-reload)
       vm.localValues['port_forward.port'] = 12345
       await nextTick()
-      expect(vm.$.setupState.needsRestartHint).toBe(true)
+      expect(vm.$.setupState.needsRestartHint).toBe(false)
     })
 
-    it('does not show hint when no needsRestart field is changed', async () => {
+    it('does not show hint when no needsRestart field is changed (terminal)', async () => {
       const wrapper = mountDrillDown('terminal')
       const vm = wrapper.vm as any
       // terminal.max_sessions does NOT have needsRestart

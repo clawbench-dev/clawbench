@@ -1037,6 +1037,9 @@ func hotReloadReconfigure(port int) {
 	// --- Terminal: reconfigure or toggle enabled ---
 	hotReloadTerminal(cfg, port)
 
+	// --- SSH/Port-Forward: reconfigure or toggle enabled ---
+	hotReloadSSH(cfg, port)
+
 	// --- FRP: reconfigure or toggle enabled ---
 	hotReloadFRP(cfg, port)
 }
@@ -1168,6 +1171,64 @@ func hotReloadTaskSummarizer(cfg model.Config) {
 		service.SetChatSummaryMode("")
 		service.SetChatSummaryEnabled(false)
 		slog.Info("hot-reload: summarizer disabled")
+	}
+}
+
+// hotReloadSSH reconfigures or toggles the SSH tunnel / port-forward server on hot-reload.
+func hotReloadSSH(cfg model.Config, port int) {
+	sshRef := handler.GetSSHServer()
+
+	if cfg.PortForward.Enabled {
+		if sshRef != nil {
+			// SSH is running — check if port changed
+			newPort := cfg.PortForward.Port
+			if newPort == 0 {
+				newPort = port + 1
+			}
+			if sshRef.Port() != newPort {
+				// Port changed — close old server, start new one
+				sshRef.Close()
+				newSrv := ssh.NewServer(cfg.PortForward, port, cfg.Password, service.ProxyService)
+				handler.SetSSHServer(newSrv)
+				go func() {
+					if err := newSrv.ListenAndServe(); err != nil {
+						slog.Error("SSH server failed", slog.String("err", err.Error()))
+					}
+				}()
+				slog.Info("hot-reload: SSH tunnel restarted on new port", slog.Int("port", newPort))
+			} else {
+				// Port unchanged — just update allowed ports if ProxyService exists
+				if service.ProxyService != nil {
+					service.ProxyService.SetAllowedPorts(cfg.PortForward.AllowedPorts)
+				}
+				slog.Info("hot-reload: SSH tunnel reconfigured (allowed_ports)")
+			}
+		} else {
+			// SSH was disabled, now enabled — create ProxyRegistry + SSH server
+			proxySvc := service.NewProxyRegistry(port)
+			proxySvc.SetAllowedPorts(cfg.PortForward.AllowedPorts)
+			service.ProxyService = proxySvc
+
+			newSrv := ssh.NewServer(cfg.PortForward, port, cfg.Password, proxySvc)
+			handler.SetSSHServer(newSrv)
+			go func() {
+				if err := newSrv.ListenAndServe(); err != nil {
+					slog.Error("SSH server failed", slog.String("err", err.Error()))
+				}
+			}()
+			slog.Info("hot-reload: SSH tunnel enabled")
+		}
+	} else {
+		// SSH should be disabled
+		if sshRef != nil {
+			sshRef.Close()
+			handler.SetSSHServer(nil)
+			if service.ProxyService != nil {
+				service.ProxyService.Stop()
+				service.ProxyService = nil
+			}
+			slog.Info("hot-reload: SSH tunnel disabled")
+		}
 	}
 }
 

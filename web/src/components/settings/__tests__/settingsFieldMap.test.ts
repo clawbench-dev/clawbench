@@ -184,13 +184,14 @@ describe('settingsFieldMap', () => {
 
   // ── Port Forward drill-down ──
 
-  it('portForward drill-down has enableKey and commonFields with needsRestart', () => {
+  it('portForward drill-down has enableKey and commonFields (hot-reload, no needsRestart)', () => {
     const dd = drillDownCategories['portForward']
     expect(dd.enableKey).toBe('port_forward.enabled')
     expect(dd.enableLabelKey).toBe('settings.items.portForwardEnabled')
     expect(dd.commonFields.length).toBe(1)
     expect(dd.commonFields[0].key).toBe('port_forward.port')
-    expect(dd.commonFields[0].needsRestart).toBe(true)
+    // port_forward.enabled and port are hot-reload fields — no needsRestart flag
+    expect(dd.commonFields[0].needsRestart).toBeFalsy()
   })
 
   // ── FRP drill-down ──

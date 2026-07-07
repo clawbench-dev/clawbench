@@ -131,6 +131,7 @@ type Server struct {
 	passwordIsSHA256 bool
 	portReg          *service.ProxyRegistry
 	done             chan struct{}
+	closeOnce        sync.Once
 	fingerprint      string
 	addr             string
 	cfg              model.PortForwardConfig
@@ -241,13 +242,15 @@ func (s *Server) ListenAndServe() error {
 	}
 }
 
-// Close shuts down the SSH server.
+// Close shuts down the SSH server. Safe to call multiple times.
 func (s *Server) Close() {
-	close(s.done)
-	if s.listener != nil {
-		_ = s.listener.Close()
-	}
-	slog.Info("SSH tunnel server stopped")
+	s.closeOnce.Do(func() {
+		close(s.done)
+		if s.listener != nil {
+			_ = s.listener.Close()
+		}
+		slog.Info("SSH tunnel server stopped")
+	})
 }
 
 // Fingerprint returns the SSH host key fingerprint.

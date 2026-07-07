@@ -80,6 +80,10 @@ var hotReloadFields = map[string]bool{
 	"frp.auto_port":       true,
 	"frp.remote_port":     true,
 	"frp.ssh_remote_port": true,
+	// Port Forward — SSH tunnel; enabled and port can be hot-reloaded
+	"port_forward.enabled":       true,
+	"port_forward.port":          true,
+	"port_forward.allowed_ports": true,
 }
 
 // restartGracePeriod is the delay before shutting down the server after a restart
@@ -260,6 +264,7 @@ var PatchableConfigPaths = map[string]bool{
 	"rag.retention_days":          true,
 	"port_forward.enabled":        true,
 	"port_forward.port":           true,
+	"port_forward.allowed_ports":  true,
 	"frp.enabled":                 true,
 	"frp.server_addr":             true,
 	"frp.server_port":             true,
@@ -919,6 +924,9 @@ func applyConfigPatch(patch map[string]any) error { //nolint:gocognit,gocyclo //
 		}
 		if v, ok := pf["port"].(float64); ok {
 			cfg.PortForward.Port = int(v)
+		}
+		if v, ok := pf["allowed_ports"].(string); ok {
+			cfg.PortForward.AllowedPorts = v
 		}
 	}
 

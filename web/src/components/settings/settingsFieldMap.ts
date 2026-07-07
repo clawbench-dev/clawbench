@@ -236,7 +236,7 @@ export const drillDownCategories: Record<string, DrillDownCategory> = {
     enableKey: 'port_forward.enabled',
     enableLabelKey: 'settings.items.portForwardEnabled',
     commonFields: [
-      { labelKey: 'settings.items.portForwardPort', descriptionKey: 'settings.items.portForwardPortDesc', key: 'port_forward.port', type: 'number', source: 'server', needsRestart: true, displayTransform: (v: any) => v === 0 ? '__auto__' : v },
+      { labelKey: 'settings.items.portForwardPort', descriptionKey: 'settings.items.portForwardPortDesc', key: 'port_forward.port', type: 'number', source: 'server', displayTransform: (v: any) => v === 0 ? '__auto__' : v },
     ],
   },
   frp: {

@@ -887,7 +887,7 @@ func TestServeConfig_Patch_ColdFields_NeedRestart(t *testing.T) {
 	cfg.RAG.BaseURL = "http://localhost:11434"
 	model.ConfigInstance = cfg
 
-	// port_forward.enabled and rag.base_url are cold fields — restart should be needed
+	// port_forward.enabled is now hot-reload; rag.base_url is still a cold field — restart should be needed
 	body := `{"port_forward":{"enabled":true},"rag":{"base_url":"http://other:11434"}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -902,13 +902,12 @@ func TestServeConfig_Patch_ColdFields_NeedRestart(t *testing.T) {
 	assert.True(t, resp["needs_restart"].(bool), "needs_restart should be true when cold fields are changed")
 	changed, ok := resp["changed_cold_fields"].([]any)
 	assert.True(t, ok)
-	assert.GreaterOrEqual(t, len(changed), 2)
-	// Should contain the cold field paths
+	assert.GreaterOrEqual(t, len(changed), 1)
+	// Should contain the cold field path (rag.base_url); port_forward.enabled is hot-reload
 	changedStr := make([]string, len(changed))
 	for i, v := range changed {
 		changedStr[i] = fmt.Sprint(v)
 	}
-	assert.Contains(t, changedStr, "port_forward.enabled")
 	assert.Contains(t, changedStr, "rag.base_url")
 }
 
@@ -921,7 +920,8 @@ func TestServeConfig_Patch_MixedHotAndColdFields(t *testing.T) {
 	cfg.PortForward.Enabled = false
 	model.ConfigInstance = cfg
 
-	// Mix of hot (chat.system_prompt_interval) and cold (port_forward.enabled) fields
+	// Mix of hot (chat.system_prompt_interval, port_forward.enabled) fields
+	// port_forward.enabled is now a hot-reload field (SSH tunnel can be toggled at runtime)
 	body := `{"chat":{"system_prompt_interval":20},"port_forward":{"enabled":true}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -933,11 +933,10 @@ func TestServeConfig_Patch_MixedHotAndColdFields(t *testing.T) {
 	var resp map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	assert.NoError(t, err)
-	assert.True(t, resp["needs_restart"].(bool), "needs_restart should be true when any cold field is changed")
+	assert.False(t, resp["needs_restart"].(bool), "needs_restart should be false when all changed fields are hot-reload")
 	changed, ok := resp["changed_cold_fields"].([]any)
 	assert.True(t, ok)
-	assert.Equal(t, 1, len(changed), "only cold fields should appear in changed_cold_fields")
-	assert.Equal(t, "port_forward.enabled", fmt.Sprint(changed[0]))
+	assert.Equal(t, 0, len(changed), "no cold fields should appear when all are hot-reload")
 }
 
 func TestServeConfig_Patch_SessionMaxCount_IsHotField(t *testing.T) {
