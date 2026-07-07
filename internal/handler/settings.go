@@ -84,6 +84,14 @@ var hotReloadFields = map[string]bool{
 	"port_forward.enabled":       true,
 	"port_forward.port":          true,
 	"port_forward.allowed_ports": true,
+	// RAG — reconfigure embedder, indexer, cleanup worker
+	"rag.base_url":         true,
+	"rag.model":            true,
+	"rag.api_key":          true,
+	"rag.chunk_size":       true,
+	"rag.search_limit":     true,
+	"rag.search_pool_size": true,
+	"rag.retention_days":   true,
 }
 
 // restartGracePeriod is the delay before shutting down the server after a restart

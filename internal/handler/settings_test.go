@@ -887,7 +887,7 @@ func TestServeConfig_Patch_ColdFields_NeedRestart(t *testing.T) {
 	cfg.RAG.BaseURL = "http://localhost:11434"
 	model.ConfigInstance = cfg
 
-	// port_forward.enabled is now hot-reload; rag.base_url is still a cold field — restart should be needed
+	// All patchable fields are now hot-reload — no restart should be needed
 	body := `{"port_forward":{"enabled":true},"rag":{"base_url":"http://other:11434"}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -899,16 +899,10 @@ func TestServeConfig_Patch_ColdFields_NeedRestart(t *testing.T) {
 	var resp map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	assert.NoError(t, err)
-	assert.True(t, resp["needs_restart"].(bool), "needs_restart should be true when cold fields are changed")
+	assert.False(t, resp["needs_restart"].(bool), "needs_restart should be false when all changed fields are hot-reload")
 	changed, ok := resp["changed_cold_fields"].([]any)
 	assert.True(t, ok)
-	assert.GreaterOrEqual(t, len(changed), 1)
-	// Should contain the cold field path (rag.base_url); port_forward.enabled is hot-reload
-	changedStr := make([]string, len(changed))
-	for i, v := range changed {
-		changedStr[i] = fmt.Sprint(v)
-	}
-	assert.Contains(t, changedStr, "rag.base_url")
+	assert.Equal(t, 0, len(changed), "no cold fields should remain")
 }
 
 func TestServeConfig_Patch_MixedHotAndColdFields(t *testing.T) {

@@ -93,3 +93,43 @@ func Shutdown() {
 		GlobalStore = nil
 	}
 }
+
+// Reconfigure applies new RAG config at runtime (hot-reload).
+// It recreates the embedding client if needed, and restarts the
+// indexer and cleanup worker with the new config.
+func Reconfigure(cfg model.RAGConfig) {
+	// Update or create embedding client
+	if cfg.BaseURL != "" && cfg.Model != "" {
+		if GlobalEmbedder != nil {
+			GlobalEmbedder.BaseURL = cfg.BaseURL
+			GlobalEmbedder.Model = cfg.Model
+			GlobalEmbedder.APIKey = cfg.APIKey
+		} else {
+			GlobalEmbedder = NewEmbeddingClient(cfg.BaseURL, cfg.Model, cfg.APIKey)
+		}
+		embedderHealthyFlag.Store(false)
+	} else {
+		GlobalEmbedder = nil
+		embedderHealthyFlag.Store(false)
+	}
+
+	// Restart indexer with new config
+	if globalIndexer != nil {
+		globalIndexer.Stop()
+		globalIndexer = nil
+	}
+	if GlobalStore != nil {
+		StartIndexer(cfg)
+	}
+
+	// Restart cleanup worker with new config
+	if globalCleanup != nil {
+		globalCleanup.Stop()
+		globalCleanup = nil
+	}
+	if GlobalStore != nil {
+		StartCleanupWorker(cfg)
+	}
+
+	slog.Info("hot-reload: RAG reconfigured", slog.String("base_url", cfg.BaseURL), slog.String("model", cfg.Model))
+}

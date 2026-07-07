@@ -1040,6 +1040,9 @@ func hotReloadReconfigure(port int) {
 	// --- SSH/Port-Forward: reconfigure or toggle enabled ---
 	hotReloadSSH(cfg, port)
 
+	// --- RAG: reconfigure embedder, indexer, cleanup worker ---
+	rag.Reconfigure(cfg.RAG)
+
 	// --- FRP: reconfigure or toggle enabled ---
 	hotReloadFRP(cfg, port)
 }
