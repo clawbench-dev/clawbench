@@ -1214,6 +1214,10 @@ func hotReloadSSH(cfg model.Config, port int) {
 			go func() {
 				if err := newSrv.ListenAndServe(); err != nil {
 					slog.Error("SSH server failed", slog.String("err", err.Error()))
+					// Clean up: SSH failed, stop the proxy registry we just created
+					proxySvc.Stop()
+					service.ProxyService = nil
+					handler.SetSSHServer(nil)
 				}
 			}()
 			slog.Info("hot-reload: SSH tunnel enabled")
