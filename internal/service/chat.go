@@ -1000,6 +1000,25 @@ func UpdateMessageContent(messageID int, content string) error {
 	return err
 }
 
+// PruneRawResponses keeps only the most recent maxRows rows in ai_raw_responses.
+// Called at server startup to prevent unbounded growth of this debug-only table.
+func PruneRawResponses(maxRows int) {
+	if maxRows <= 0 {
+		return
+	}
+	result, err := WriteExec(
+		"DELETE FROM ai_raw_responses WHERE id NOT IN (SELECT id FROM ai_raw_responses ORDER BY id DESC LIMIT ?)",
+		maxRows,
+	)
+	if err != nil {
+		slog.Error("failed to prune ai_raw_responses", slog.String("err", err.Error()))
+		return
+	}
+	if n, _ := result.RowsAffected(); n > 0 {
+		slog.Info("pruned ai_raw_responses", slog.Int64("deleted", n), slog.Int("kept", maxRows))
+	}
+}
+
 // SaveRawResponse saves the raw AI backend output for debugging/analysis.
 // Called only after the AI response is fully complete.
 func SaveRawResponse(sessionID, backend string, messageID int64, rawOutput string) error {

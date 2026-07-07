@@ -2792,6 +2792,57 @@ func TestSaveRawResponse(t *testing.T) {
 	assert.Equal(t, "raw output data", rawOutput)
 }
 
+func TestPruneRawResponses(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Prune Test")
+
+	// Insert 10 raw responses
+	for i := 0; i < 10; i++ {
+		_, err := service.AddChatMessage("/project", "claude", sid, "assistant", fmt.Sprintf("msg %d", i), nil, false, "")
+		assert.NoError(t, err)
+		msgID := service.GetStreamingMessageID(sid)
+		err = service.SaveRawResponse(sid, "claude", msgID, fmt.Sprintf("raw %d", i))
+		assert.NoError(t, err)
+	}
+
+	// Count before prune
+	var countBefore int
+	err := service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM ai_raw_responses").Scan(&countBefore)
+	assert.NoError(t, err)
+	assert.Equal(t, 10, countBefore)
+
+	// Prune to keep 3 most recent
+	service.PruneRawResponses(3)
+
+	var countAfter int
+	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM ai_raw_responses").Scan(&countAfter)
+	assert.NoError(t, err)
+	assert.Equal(t, 3, countAfter)
+
+	// Verify the 3 kept are the newest (IDs 8, 9, 10 — raw "7", "8", "9")
+	var outputs []string
+	rows, err := service.UnsafeDBForTest().Query("SELECT raw_output FROM ai_raw_responses ORDER BY id ASC")
+	assert.NoError(t, err)
+	defer rows.Close()
+	for rows.Next() {
+		var o string
+		assert.NoError(t, rows.Scan(&o))
+		outputs = append(outputs, o)
+	}
+	assert.Equal(t, []string{"raw 7", "raw 8", "raw 9"}, outputs)
+
+	// Prune with limit larger than count — no-op
+	service.PruneRawResponses(100)
+	var countAfter2 int
+	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM ai_raw_responses").Scan(&countAfter2)
+	assert.NoError(t, err)
+	assert.Equal(t, 3, countAfter2)
+
+	// Prune with zero — no-op
+	service.PruneRawResponses(0)
+}
+
 // ---------- GetUnindexedMessages / MarkMessageIndexed / UnindexedCount ----------
 
 func TestGetUnindexedMessages_Empty(t *testing.T) {

@@ -587,6 +587,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Prune ai_raw_responses: keep only recent 200 rows for debugging.
+	if isServerStartup {
+		PruneRawResponses(200)
+	}
+
 	// Migrate: add ACP transport columns to agents table.
 	var hasTransportCol int
 	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='transport'").Scan(&hasTransportCol)
