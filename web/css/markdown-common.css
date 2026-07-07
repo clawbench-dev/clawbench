@@ -397,6 +397,10 @@
 
 .table-row-value img {
     margin: 6px 0;
+    width: 200px;
+    height: auto;
+    max-width: none;
+    max-height: none;
 }
 
 .table-row-value hr {
