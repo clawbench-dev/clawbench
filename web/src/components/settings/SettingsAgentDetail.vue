@@ -14,19 +14,31 @@
       @update:model-value="(v: any) => handleUpdate(item, v)"
       @edit-toggle="(open: boolean) => handleEditToggle(item.key, open)"
     />
+    <!-- Copy agent -->
+    <div class="settings-agent-detail__action-row" @click="startCopy">
+      <Copy :size="16" class="settings-agent-detail__action-icon" />
+      <span class="settings-agent-detail__action-label">{{ t('settings.items.agentCopy') }}</span>
+    </div>
     <!-- Delete agent -->
     <div class="settings-agent-detail__delete-row" @click="handleDelete">
       <Trash2 :size="16" class="settings-agent-detail__delete-icon" />
       <span class="settings-agent-detail__delete-label">{{ t('settings.items.agentDelete') }}</span>
     </div>
+    <CopyAgentDialog
+      v-if="copying"
+      :source-name="agent?.name ?? ''"
+      @close="copying = false"
+      @confirmed="handleCopyConfirmed"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
-import { Trash2 } from 'lucide-vue-next'
+import { Copy, Trash2 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
+import CopyAgentDialog from './CopyAgentDialog.vue'
 import { useAgents } from '@/composables/useAgents'
 import { patchAgentField } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
@@ -44,11 +56,12 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const toast = useToast()
 const dialog = useDialog()
-const { loadAgents, getAgent, deleteAgent, defaultAgentId } = useAgents()
+const { loadAgents, getAgent, deleteAgent, duplicateAgent, defaultAgentId, setDefaultAgent } = useAgents()
 
 const activeKey = ref<string | null>(null)
 const commonPrompt = ref('')
 const commonPromptLoaded = ref(false)
+const copying = ref(false)
 
 onMounted(() => {
   loadAgents(true)
@@ -94,6 +107,14 @@ const items = computed<AgentItem[]>(() => {
   const result: AgentItem[] = []
 
   // -- Preference section --
+  // Set as Default Agent
+  result.push({
+    key: 'is_default_agent',
+    label: t('settings.items.agentIsDefault'),
+    description: t('settings.items.agentIsDefaultDesc'),
+    type: 'switch',
+  })
+
   // Preferred Model
   if (a.models && a.models.length > 0) {
     result.push({
@@ -127,6 +148,17 @@ const items = computed<AgentItem[]>(() => {
         { label: 'ACP-stdio', value: 'acp-stdio' },
       ],
       patchField: 'transport',
+    })
+  }
+
+  // Preferred Mode (only for ACP agents with available modes)
+  if (a.acpCommand && a.acpAvailableModes && a.acpAvailableModes.length > 0) {
+    result.push({
+      key: 'preferred_mode',
+      label: t('settings.items.agentPreferredMode'),
+      type: 'select',
+      options: a.acpAvailableModes.map((m: any) => ({ label: m.name || m.id, value: m.id })),
+      patchField: 'preferred_mode',
     })
   }
 
@@ -226,12 +258,16 @@ function getItemValue(item: AgentItem): any {
   if (!a) return ''
 
   switch (item.key) {
+    case 'is_default_agent':
+      return a.id === defaultAgentId.value
     case 'preferred_model':
       return a.preferredModel || (a.models?.length ? a.models.find((m: any) => m.default)?.id || a.models[0]?.id : '')
     case 'preferred_thinking_effort':
       return a.preferredThinkingEffort || ''
+    case 'preferred_mode':
+      return a.preferredMode || ''
     case 'transport':
-      return a.transport || 'cli'
+      return a.transport || (a.acpCommand ? 'acp-stdio' : 'cli')
     case 'name':
       return a.name || ''
     case 'icon':
@@ -260,6 +296,18 @@ function getItemValue(item: AgentItem): any {
 }
 
 async function handleUpdate(item: AgentItem, value: any) {
+  // Handle set-as-default toggle
+  if (item.key === 'is_default_agent') {
+    if (value) {
+      try {
+        await setDefaultAgent(props.agentId)
+      } catch {
+        toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+      }
+    }
+    return
+  }
+
   if (!item.patchField) return
 
   // Lazy-load common prompt before editing system prompt
@@ -293,6 +341,20 @@ function isLastInSection(items: AgentItem[], index: number): boolean {
   return nextItem?.type === 'header'
 }
 
+function startCopy() {
+  copying.value = true
+}
+
+async function handleCopyConfirmed(newName: string) {
+  copying.value = false
+  try {
+    await duplicateAgent(props.agentId, newName)
+    toast.show(t('settings.items.agentCopied'), { icon: '✓', type: 'success', duration: 3000 })
+  } catch {
+    toast.show(t('settings.items.agentCopyFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+  }
+}
+
 async function handleDelete() {
   const a = agent.value
   if (!a) return
@@ -320,6 +382,38 @@ async function handleDelete() {
   padding: 8px 0;
   background: var(--bg-secondary);
   min-height: 100%;
+}
+
+.settings-agent-detail__action-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 48px;
+  padding: 8px 16px;
+  cursor: pointer;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+@media (hover: hover) {
+  .settings-agent-detail__action-row:hover {
+    background: var(--bg-secondary);
+  }
+}
+
+.settings-agent-detail__action-row:active {
+  background: var(--bg-tertiary);
+}
+
+.settings-agent-detail__action-icon {
+  flex-shrink: 0;
+}
+
+.settings-agent-detail__action-label {
+  white-space: nowrap;
 }
 
 .settings-agent-detail__delete-row {

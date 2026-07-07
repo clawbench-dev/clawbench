@@ -1,4 +1,4 @@
-//nolint:noctx,govet,rowserrcheck // DB global, context not applicable; shadowed err is acceptable; legacy DB.Query pattern
+//nolint:noctx,govet,rowserrcheck // db global, context not applicable; shadowed err is acceptable; legacy db.Query pattern
 package service
 
 import (
@@ -15,7 +15,7 @@ import (
 // Messages in chat_history are not affected — only the session record needs restoring
 // since session-level soft-delete controls visibility.
 func restoreDeletedSession(sessionID string) error {
-	_, err := DB.Exec(
+	_, err := WriteExec(
 		"UPDATE chat_sessions SET deleted = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 		sessionID,
 	)
@@ -32,7 +32,7 @@ func restoreDeletedSession(sessionID string) error {
 // Returns (exists, sessionID, error).
 func CheckContinueSession(execID int64) (bool, string, error) {
 	var sourceSessionID string
-	err := DBRead.QueryRow("SELECT session_id FROM task_executions WHERE id = ?", execID).Scan(&sourceSessionID)
+	err := dbRead.QueryRow("SELECT session_id FROM task_executions WHERE id = ?", execID).Scan(&sourceSessionID)
 	if err == sql.ErrNoRows {
 		return false, "", fmt.Errorf("execution %d not found", execID)
 	}
@@ -42,7 +42,7 @@ func CheckContinueSession(execID int64) (bool, string, error) {
 
 	var existingID string
 	var existingDeleted int
-	err = DBRead.QueryRow(
+	err = dbRead.QueryRow(
 		"SELECT id, deleted FROM chat_sessions WHERE source_session_id = ? AND session_type = 'chat' ORDER BY deleted ASC, updated_at DESC LIMIT 1",
 		sourceSessionID,
 	).Scan(&existingID, &existingDeleted)
@@ -77,7 +77,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	var taskID int64
 	var execStatus string
 	var execCreatedAt time.Time
-	err = DB.QueryRow(
+	err = dbRead.QueryRow(
 		"SELECT session_id, task_id, status, created_at FROM task_executions WHERE id = ?",
 		execID,
 	).Scan(&sourceSessionID, &taskID, &execStatus, &execCreatedAt)
@@ -96,7 +96,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// 3. Get task name and validate project ownership
 	var taskName string
 	var taskProjectPath string
-	err = DB.QueryRow(
+	err = dbRead.QueryRow(
 		"SELECT name, project_path FROM scheduled_tasks WHERE id = ?",
 		taskID,
 	).Scan(&taskName, &taskProjectPath)
@@ -114,7 +114,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 
 	// 5. Get source session metadata (without deleted=0 — soft-deleted sessions still have valid metadata)
 	var backend, agentID, agentSource, modelName, sessProjectPath, externalSessionID string
-	err = DB.QueryRow(
+	err = dbRead.QueryRow(
 		"SELECT backend, agent_id, agent_source, model, project_path, external_session_id FROM chat_sessions WHERE id = ?",
 		sourceSessionID,
 	).Scan(&backend, &agentID, &agentSource, &modelName, &sessProjectPath, &externalSessionID)
@@ -128,7 +128,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// 6. Dedup check — if a continued session already exists (even soft-deleted), restore it
 	var existingID string
 	var existingDeleted int
-	err = DB.QueryRow(
+	err = dbRead.QueryRow(
 		"SELECT id, deleted FROM chat_sessions WHERE source_session_id = ? AND session_type = 'chat' ORDER BY deleted ASC, updated_at DESC LIMIT 1",
 		sourceSessionID,
 	).Scan(&existingID, &existingDeleted)
@@ -148,7 +148,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// 7. Max session count check
 	if model.SessionMaxCount > 0 {
 		var count int
-		err = DB.QueryRow(
+		err = dbRead.QueryRow(
 			"SELECT COUNT(*) FROM chat_sessions WHERE project_path = ? AND deleted = 0 AND session_type = 'chat'",
 			sessProjectPath,
 		).Scan(&count)
@@ -168,7 +168,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// Copy external_session_id from the source session so that --resume works correctly.
 	// The continued session inherits the CLI backend's session context, allowing the
 	// same resume flow as a normal session (no special-casing needed).
-	_, err = DB.Exec(
+	_, err = WriteExec(
 		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, source_session_id, external_session_id, last_read_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?, ?, CURRENT_TIMESTAMP)",
 		newSessionID, sessProjectPath, backend, displayTitle, agentID, agentSource, modelName, sourceSessionID, externalSessionID,
 	)
@@ -190,7 +190,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// back would break string-based time comparisons (e.g. unread count query uses
 	// h.created_at > s2.last_read_at). Instead, we let the database assign CURRENT_TIMESTAMP,
 	// which guarantees format consistency. Message ordering relies on auto-increment id, not created_at.
-	rows, err := DB.Query(
+	rows, err := dbRead.Query(
 		"SELECT id, project_path, role, content, files, backend FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id",
 		sourceSessionID,
 	)
@@ -219,7 +219,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// Insert messages and build old ID -> new ID mapping for summaries
 	idMap := make(map[int64]int64)
 	for _, m := range messages {
-		result, err := DB.Exec(
+		result, err := WriteExec(
 			"INSERT INTO chat_history (project_path, role, content, files, session_id, backend, streaming) VALUES (?, ?, ?, ?, ?, ?, 0)",
 			m.projectPath, m.role, m.content, m.files, newSessionID, m.backend,
 		)
@@ -235,7 +235,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// keyed by the assistant message ID, same as interactive sessions).
 	for oldID, newID := range idMap {
 		var summary string
-		err := DB.QueryRow(
+		err := dbRead.QueryRow(
 			"SELECT summary FROM summaries WHERE target_type = 'chat_message' AND target_id = ?",
 			oldID,
 		).Scan(&summary)
@@ -245,7 +245,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 		if err != nil {
 			return "", false, fmt.Errorf("failed to query summary for message %d: %w", oldID, err)
 		}
-		_, err = DB.Exec(
+		_, err = WriteExec(
 			"INSERT OR REPLACE INTO summaries (target_type, target_id, summary, created_at) VALUES ('chat_message', ?, ?, CURRENT_TIMESTAMP)",
 			newID, summary,
 		)
@@ -265,7 +265,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int64) (string, error) {
 	// 1. Get source session metadata
 	var backend, agentID, agentSource, modelName, sessProjectPath string
-	err := DB.QueryRow(
+	err := dbRead.QueryRow(
 		"SELECT backend, agent_id, agent_source, model, project_path FROM chat_sessions WHERE id = ? AND deleted = 0",
 		sourceSessionID,
 	).Scan(&backend, &agentID, &agentSource, &modelName, &sessProjectPath)
@@ -285,7 +285,7 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 	cutBeforeID := beforeMessageID
 	if beforeMessageID > 0 {
 		var role string
-		err = DB.QueryRow(
+		err = dbRead.QueryRow(
 			"SELECT role FROM chat_history WHERE id = ? AND session_id = ?",
 			beforeMessageID, sourceSessionID,
 		).Scan(&role)
@@ -295,12 +295,12 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 		if err != nil {
 			return "", err
 		}
-		if role != "user" {
+		if role != cancelReasonUser {
 			return "", fmt.Errorf("fork point must be a user message, message %d is role %q", beforeMessageID, role)
 		}
 		// Find the next non-streaming assistant message after this user message
 		var asstID int64
-		err = DB.QueryRow(
+		err = dbRead.QueryRow(
 			"SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0 AND id > ? ORDER BY id LIMIT 1",
 			sourceSessionID, beforeMessageID,
 		).Scan(&asstID)
@@ -320,7 +320,7 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 
 	// 5. Create new session (no external_session_id inheritance)
 	newSessionID := generateSessionID()
-	_, err = DB.Exec(
+	_, err = WriteExec(
 		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, source_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?)",
 		newSessionID, sessProjectPath, backend, title, agentID, agentSource, modelName, sourceSessionID,
 	)
@@ -351,7 +351,7 @@ func checkSessionLimit(projectPath string) error {
 		return nil
 	}
 	var count int
-	err := DB.QueryRow(
+	err := dbRead.QueryRow(
 		"SELECT COUNT(*) FROM chat_sessions WHERE project_path = ? AND deleted = 0 AND session_type = 'chat'",
 		projectPath,
 	).Scan(&count)
@@ -375,7 +375,7 @@ func copySessionMessages(sourceSessionID, newSessionID string, beforeMessageID i
 		args = append(args, beforeMessageID)
 	}
 	query += " ORDER BY id"
-	rows, err := DB.Query(query, args...)
+	rows, err := dbRead.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query source messages: %w", err)
 	}
@@ -400,7 +400,7 @@ func copySessionMessages(sourceSessionID, newSessionID string, beforeMessageID i
 
 	idMap := make(map[int64]int64)
 	for _, m := range messages {
-		result, err := DB.Exec(
+		result, err := WriteExec(
 			"INSERT INTO chat_history (project_path, role, content, files, session_id, backend, streaming) VALUES (?, ?, ?, ?, ?, ?, 0)",
 			m.projectPath, m.role, m.content, m.files, newSessionID, m.backend,
 		)
@@ -417,7 +417,7 @@ func copySessionMessages(sourceSessionID, newSessionID string, beforeMessageID i
 func copySessionSummaries(idMap map[int64]int64) error {
 	for oldID, newID := range idMap {
 		var summary string
-		err := DB.QueryRow(
+		err := dbRead.QueryRow(
 			"SELECT summary FROM summaries WHERE target_type = 'chat_message' AND target_id = ?",
 			oldID,
 		).Scan(&summary)
@@ -427,7 +427,7 @@ func copySessionSummaries(idMap map[int64]int64) error {
 		if err != nil {
 			return fmt.Errorf("failed to query summary for message %d: %w", oldID, err)
 		}
-		_, err = DB.Exec(
+		_, err = WriteExec(
 			"INSERT OR REPLACE INTO summaries (target_type, target_id, summary, created_at) VALUES ('chat_message', ?, ?, CURRENT_TIMESTAMP)",
 			newID, summary,
 		)

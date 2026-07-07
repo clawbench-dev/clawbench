@@ -3,7 +3,9 @@ import { useSessionIdentity, runningSessions } from '@/composables/useSessionIde
 import { cancelChat } from '@/utils/api'
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
-import { usePendingStore } from '@/composables/usePendingStore.ts'
+import { appLog } from '@/utils/appLog'
+
+const TAG = 'SessionManager'
 
 /**
  * Unified session manager — a thin coordination layer that ensures
@@ -13,22 +15,17 @@ import { usePendingStore } from '@/composables/usePendingStore.ts'
  * identity proxy from App.vue/QuoteQuestionBar, ChatPanel handlers)
  * MUST go through this manager so that:
  *   1. cleanupActiveStream() is always called before switching
- *   2. pending messages are synced via pendingStore on session change
+ *   2. pending messages in messages.value are cleaned up on session change
  *   3. backend queue is cleared on session deletion
  *
- * This composable does NOT own useChatSession or useChatStream.
- * It receives their functions as options and wraps them.
- *
- * Pending messages live in a per-session pendingStore (usePendingStore),
- * completely separate from messages.value which only contains persisted
- * (DB) messages.
+ * Pending messages live in messages.value with pending: true flag.
+ * No separate pendingStore — one source of truth.
  */
 
 export interface UseSessionManagerOptions {
   // Core state refs (owned by ChatPanel)
   messages: Ref<any[]>
   loading: Ref<boolean>
-  pendingStore: ReturnType<typeof usePendingStore>
 
   // Session operations (from useChatSession)
   switchSessionCore: (sessionId: string) => Promise<void>
@@ -59,7 +56,6 @@ export function useSessionManager(options: UseSessionManagerOptions) {
   const {
     messages,
     loading,
-    pendingStore,
     switchSessionCore,
     createSessionCore,
     deleteSessionCore,
@@ -77,35 +73,67 @@ export function useSessionManager(options: UseSessionManagerOptions) {
   const identity = useSessionIdentity()
   const toast = useToast()
 
-  // ── Pending message queue ──
-  // Pending messages live in pendingStore (per-session), separate from messages.value.
+  // ── Pending message helpers ──
+  // Pending messages are in messages.value with pending: true.
 
-  /** Fetch the current queue for a session from the backend and sync to pendingStore. */
+  /** Remove all pending messages from messages.value */
+  function clearPendingMessages() {
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      if (messages.value[i].pending) messages.value.splice(i, 1)
+    }
+  }
+
+  /** Sync pending messages from backend queue into messages.value.
+   *  Removes stale local pending messages and adds missing ones from backend. */
+  function syncPendingFromBackendQueue(backendQueue: any[]) {
+    // Remove all existing pending messages
+    clearPendingMessages()
+    // Push backend queue items as pending messages
+    for (const item of backendQueue) {
+      const itemFiles = [...(item.files || []), ...(item.filePaths || [])]
+      messages.value.push({
+        role: 'user',
+        id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        content: item.text || '',
+        blocks: item.text ? [{ type: 'text', text: item.text }] : [],
+        files: itemFiles.map((p: string) => ({ path: p })),
+        createdAt: item.createdAt || new Date().toISOString(),
+        pending: true,
+      })
+    }
+  }
+
+  /** Fetch the current queue for a session from the backend and sync pending messages. */
   async function fetchQueue(sessionId: string) {
     if (!sessionId) return
     try {
       const resp = await fetch(`/api/ai/queue?session_id=${encodeURIComponent(sessionId)}`)
       if (resp.ok) {
         const data = await resp.json()
-        pendingStore.syncFromBackendQueue(sessionId, data.queue || [])
+        syncPendingFromBackendQueue(data.queue || [])
       }
     } catch (_) {
-      // Non-critical — queue will be empty until next SSE queue_update
+      // Non-critical — queue will be empty until next SSE event
     }
   }
 
   /** Enqueue a message for later delivery while AI is generating.
    *  Returns the enqueue result which may contain `needs_start` if the
    *  session is no longer running (race condition: user enqueues right
-   *  as AI finishes). The caller should resubmit via sendMessageNow. */
-  async function enqueueMessage(text: string, extraFilePaths: string[] = [], attachedFiles: string[] = [], pendingFilePaths: string[] = []): Promise<{ needsStart: boolean; message?: string; filePaths?: string[]; files?: string[] }> {
+   *  as AI finishes). The caller should resubmit via sendMessageNow.
+   *
+   *  IMPORTANT: sessionId MUST be captured by the caller BEFORE any async
+   *  boundary. */
+  async function enqueueMessage(sessionId: string, text: string, extraFilePaths: string[] = [], attachedFiles: string[] = [], pendingFilePaths: string[] = []): Promise<{ needsStart: boolean; message?: string; filePaths?: string[]; files?: string[] }> {
     const inputText = text !== undefined ? text : ''
     const filePaths = [...(extraFilePaths || []), ...(attachedFiles.length > 0 ? attachedFiles : [])]
     const allFiles = [...(pendingFilePaths || []), ...filePaths]
 
+    appLog.d(TAG, `[enqueueMessage] targetSid=${sessionId.slice(0,8)} currentSid=${identity.currentSessionId.value.slice(0,8)} text="${inputText.slice(0,40)}" same=${sessionId === identity.currentSessionId.value}`)
+
     try {
       const resp = await fetch(
-        `/api/ai/queue?session_id=${encodeURIComponent(identity.currentSessionId.value)}`,
+        `/api/ai/queue?session_id=${encodeURIComponent(sessionId)}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -121,10 +149,11 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       // Race condition fix: backend detected session is not running and
       // dequeued the message. The frontend must resubmit as a new chat.
       if (data.needs_start) {
-        // Remove the pending message from pendingStore — it will be
-        // sent as a normal (non-pending) message via sendMessageNow.
-        pendingStore.removePending(identity.currentSessionId.value, data.message || inputText)
-        pendingStore.syncFromBackendQueue(identity.currentSessionId.value, data.queue || [])
+        // Remove the pending message from messages.value
+        const idx = messages.value.findLastIndex(
+          (m: any) => m.role === 'user' && m.pending && m.content === (data.message || inputText)
+        )
+        if (idx !== -1) messages.value.splice(idx, 1)
         scrollBottom(true)
         return {
           needsStart: true,
@@ -134,23 +163,33 @@ export function useSessionManager(options: UseSessionManagerOptions) {
         }
       }
 
-      // Sync pending messages in pendingStore with backend queue state
-      pendingStore.syncFromBackendQueue(identity.currentSessionId.value, data.queue || [])
+      // Don't full-sync the queue here. The optimistically pushed pending
+      // message is already in messages.value with correct order. Full sync
+      // (clear all + re-push from backend) causes races when two enqueueMessage
+      // calls overlap: the first sync clears the second's optimistic message.
+      // The queue will be synced by fetchQueue (session switch),
+      // handleVisibilityChange (mobile unlock), watch(loading), and SSE events.
     } catch (err) {
       toast.show(gt('session.queueFailed'), { icon: '⚠️', type: 'error' })
       // On enqueue failure, remove the pending message we just added
-      pendingStore.removePending(identity.currentSessionId.value, inputText)
+      const idx = messages.value.findLastIndex(
+        (m: any) => m.role === 'user' && m.pending && m.content === inputText
+      )
+      if (idx !== -1) messages.value.splice(idx, 1)
     }
 
     scrollBottom(true)
     return { needsStart: false }
   }
 
-  /** Remove a pending message by its index in the pending list for the current session. */
+  /** Remove a pending message by its index in the pending list for the current session.
+   *  The index is computed by the caller BEFORE the optimistic splice, so it's
+   *  valid against the pre-splice messages array. We must NOT re-validate against
+   *  the current messages.value (which has already been spliced) — that would
+   *  reject the index as out-of-range and silently skip the backend DELETE. */
   async function handleRemovePending(pendingIndex: number) {
+    if (pendingIndex < 0) return  // Negative index is always invalid
     const sessionId = identity.currentSessionId.value
-    const pending = pendingStore.getPending(sessionId)
-    if (pendingIndex < 0 || pendingIndex >= pending.length) return
 
     try {
       const resp = await fetch(
@@ -159,7 +198,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       )
       const data = await resp.json()
       // Sync remaining pending messages with backend queue
-      pendingStore.syncFromBackendQueue(sessionId, data.queue || [])
+      syncPendingFromBackendQueue(data.queue || [])
     } catch (err) {
       toast.show(gt('session.removeFailed'), { icon: '⚠️', type: 'error' })
     }
@@ -190,13 +229,30 @@ export function useSessionManager(options: UseSessionManagerOptions) {
 
   async function switchSession(sessionId: string) {
     cleanupActiveStream()
+    _clearInputState()
+    // Clear pending messages BEFORE switching session. These belong to the
+    // current (old) session — they're in the backend queue for that session
+    // and will be drained by its AI goroutine. If we don't clear them here,
+    // they remain in messages.value during the session switch, which causes:
+    //   1. The watch(loading) handler fires after currentSessionId changes,
+    //      sees pending messages, and fetches the NEW session's queue (wrong!)
+    //   2. The watch(currentSessionId) handler fetches the new session's
+    //      queue, but syncPendingFromBackendQueue clears all pending and
+    //      re-pushes from the new session's queue (which may be empty),
+    //      making old session's pending messages vanish from UI.
+    //   3. Stuck-queue recovery in watch(loading) may call sendMessageNow
+    //      against the wrong session.
+    // The old session's pending messages are safely in its backend queue;
+    // they'll be drained when its AI finishes or shown if user switches back.
+    clearPendingMessages()
     await switchSessionCore(sessionId)
     // pending messages are synced by the watch on currentSessionId below
   }
 
   async function createSession(agentId?: string) {
     cleanupActiveStream()
-    pendingStore.clearPending(identity.currentSessionId.value)
+    _clearInputState()
+    clearPendingMessages()
     await createSessionCore(agentId)
   }
 
@@ -210,7 +266,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     try {
       await fetch(`/api/ai/queue?session_id=${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
     } catch (_) {}
-    pendingStore.clearPending(sessionId)
+    clearPendingMessages()
     await deleteSessionCore(sessionId, backend)
   }
 
@@ -226,7 +282,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     try {
       await fetch(`/api/ai/queue?session_id=${encodeURIComponent(deletedId)}`, { method: 'DELETE' })
     } catch (_) {}
-    pendingStore.clearPending(deletedId)
+    clearPendingMessages()
     await deleteSessionCore(deletedId, identity.currentBackend.value)
     deleteDraft(deletedId)
   }
@@ -240,7 +296,8 @@ export function useSessionManager(options: UseSessionManagerOptions) {
   /** Fork the current session — create a new session with copied messages. */
   async function forkSession(sessionId: string, beforeMessageId?: number): Promise<boolean> {
     cleanupActiveStream()
-    pendingStore.clearPending(identity.currentSessionId.value)
+    _clearInputState()
+    clearPendingMessages()
     return await forkSessionCore(sessionId, beforeMessageId)
   }
 
@@ -266,22 +323,36 @@ export function useSessionManager(options: UseSessionManagerOptions) {
   // (e.g. user left the page on mobile). Sync queue from backend to clear stale items.
   // If the backend still has queued items (stuck-queue race: message enqueued after
   // the drain loop exited), auto-resubmit the first one.
+  // IMPORTANT: We must guard against the session having changed between the
+  // loading transition and this async callback. If the user switched sessions,
+  // identity.currentSessionId.value points to the NEW session, but the pending
+  // messages belong to the OLD session. We must NOT call sendMessageNow against
+  // the wrong session.
   watch(loading, async (newVal, oldVal) => {
-    if (oldVal && !newVal && pendingStore.hasPending(identity.currentSessionId.value) && identity.currentSessionId.value) {
+    if (oldVal && !newVal && messages.value.some((m: any) => m.pending) && identity.currentSessionId.value) {
       const sessionId = identity.currentSessionId.value
       try {
         const resp = await fetch(`/api/ai/queue?session_id=${encodeURIComponent(sessionId)}`)
         if (resp.ok) {
           const data = await resp.json()
           const queue = data.queue || []
-          pendingStore.syncFromBackendQueue(sessionId, queue)
+          // Guard: if session changed while we were fetching, don't sync —
+          // the pending messages belong to the old session and will be
+          // handled by its own fetchQueue or queue_drain events.
+          if (sessionId !== identity.currentSessionId.value) return
+          syncPendingFromBackendQueue(queue)
           // Stuck-queue recovery: if backend queue still has items after
           // loading went false, the drain loop missed them. Dequeue and
-          // resubmit the first one.
-          if (queue.length > 0 && !loading.value) {
-            // Remove the pending message locally — sendMessageNow will push its own
+          // resubmit the first one. Only do this if the session hasn't
+          // changed — sendMessageNow reads identity.currentSessionId.value
+          // which must match the queue's session.
+          if (queue.length > 0 && !loading.value && sessionId === identity.currentSessionId.value) {
             const firstItem = queue[0]
-            pendingStore.removePending(sessionId, firstItem.text || '')
+            // Remove the pending message locally — sendMessageNow will push its own
+            const idx = messages.value.findIndex(
+              (m: any) => m.pending && m.content === (firstItem.text || '')
+            )
+            if (idx !== -1) messages.value.splice(idx, 1)
             // Dequeue from backend
             try {
               await fetch(`/api/ai/queue?session_id=${encodeURIComponent(sessionId)}&index=0`, { method: 'DELETE' })
@@ -295,18 +366,18 @@ export function useSessionManager(options: UseSessionManagerOptions) {
           }
         }
       } catch (_) {
-        // Non-critical — queue will be empty until next SSE queue_update
+        // Non-critical — queue will be empty until next SSE event
       }
     }
   })
 
   // When the page becomes visible after being in the background (e.g. mobile screen
   // unlock), sync pending messages with the backend. SSE events (queue_drain,
-  // queue_update) are dropped while the page is hidden, so local
+  // queue_queued) are dropped while the page is hidden, so local
   // pending messages may be stale — showing ghost "queuing" items that the backend
   // has already consumed.
   function handleVisibilityChange() {
-    if (document.visibilityState === 'visible' && pendingStore.hasPending(identity.currentSessionId.value) && identity.currentSessionId.value) {
+    if (document.visibilityState === 'visible' && messages.value.some((m: any) => m.pending) && identity.currentSessionId.value) {
       fetchQueue(identity.currentSessionId.value)
     }
   }

@@ -1,5 +1,5 @@
 /* ── Shared annotation button styles ── */
-/* Used by ContentBlocks, ChatMessageItem, ToolDetailOverlay, TableRowModal, etc. */
+/* Used by ContentBlocks, ChatMessageItem, ToolDetailDrawer, TableRowModal, etc. */
 /* These classes are injected by useFilePathAnnotation, useCommitHashAnnotation, */
 /* useLocalhostAnnotation, and useWorktreeAnnotation composables into v-html content. */
 /* NOTE: These are global (non-scoped) styles. Context-specific overrides MUST use */

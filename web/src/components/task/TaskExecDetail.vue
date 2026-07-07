@@ -44,7 +44,7 @@
     </div>
 
     <!-- Tool Detail Overlay -->
-    <ToolDetailOverlay
+    <ToolDetailDrawer
       :show="toolDetailOverlay.show"
       :toolName="toolDetailOverlay.name"
       :toolSubagentType="toolDetailOverlay.subagentType"
@@ -89,18 +89,19 @@ import { useI18n } from 'vue-i18n'
 import { RefreshCw, MessageSquare } from 'lucide-vue-next'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
-import ToolDetailOverlay from '@/components/chat/ToolDetailOverlay.vue'
+import ToolDetailDrawer from '@/components/chat/ToolDetailDrawer.vue'
 import ChatMetadataModal from '@/components/chat/ChatMetadataModal.vue'
 import SummaryToggle from '@/components/common/SummaryToggle.vue'
 import { useChatRender } from '@/composables/useChatRender.ts'
 import { useAgents } from '@/composables/useAgents'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
+import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { store as appStore } from '@/stores/app.ts'
 import { useAutoSpeech } from '@/composables/useAutoSpeech.ts'
 import { useTaskTab } from '@/composables/useTaskTab.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
-import { useToolDetailOverlay } from '@/composables/useToolDetailOverlay.ts'
+import { useToolDetailDrawer } from '@/composables/useToolDetailDrawer.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import { useTaskExecStream } from '@/composables/useTaskExecStream.ts'
 import TableRowModal from '@/components/common/TableRowModal.vue'
@@ -277,7 +278,7 @@ const {
   handleShowToolDetail,
   handleOverlayRetryClick,
   handleFileOpenInOverlay,
-} = useToolDetailOverlay({
+} = useToolDetailDrawer({
   chatRender,
   onFileOpen: (path, lineStart, lineEnd) => {
     openFilePath(path, lineStart, lineEnd)
@@ -314,6 +315,12 @@ function showMetadata() {
 const contentRef = ref(null)
 
 function handleContentClick(event) {
+  // 0. Code block header buttons (copy/wrap)
+  if (handleCodeBlockClick(event)) return
+
+  // 0.5. Table block header buttons (copy/wrap)
+  if (handleTableBlockClick(event)) return
+
   // 1. Handle localhost URL clicks (icon button or <a> tag) — App mode only
   if (handleLocalhostUrlClick(event)) return
 

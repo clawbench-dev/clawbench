@@ -20,7 +20,16 @@
 
     <div class="chat-messages-list">
       <div v-if="messages.length === 0" class="chat-empty">
-      <template v-if="currentAgent">
+      <template v-if="agents && agents.length === 0">
+        <Bot :size="40" class="no-agents-icon" />
+        <span class="no-agents-title">{{ t('chat.messageList.noAgentsTitle') }}</span>
+        <span class="no-agents-desc">{{ t('chat.messageList.noAgentsDesc') }}</span>
+        <button class="no-agents-btn" @click="openWelcome">
+          <Settings :size="16" />
+          <span>{{ t('chat.messageList.noAgentsAction') }}</span>
+        </button>
+      </template>
+      <template v-else-if="currentAgent">
         <div class="agent-welcome">
           <span class="agent-welcome-icon">{{ currentAgent.icon }}</span>
           <div class="agent-welcome-info">
@@ -96,7 +105,7 @@
   </Transition>
 
   <!-- User message index drawer -->
-  <UserMsgIndexSheet
+  <UserMsgIndexDrawer
     :open="userMsgIndexDrawer.effectiveOpen.value"
     :messages="userMsgIndexList"
     :active-id="nearestUserMsgId"
@@ -121,12 +130,13 @@
 <script setup>
 import { ref, nextTick, inject, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown } from 'lucide-vue-next'
+import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown, Bot, Settings } from 'lucide-vue-next'
 import ChatMessageItem from './ChatMessageItem.vue'
-import UserMsgIndexSheet from './UserMsgIndexSheet.vue'
+import UserMsgIndexDrawer from './UserMsgIndexDrawer.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
+import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { useDialog } from '@/composables/useDialog'
 import { useUserMsgIndex } from '@/composables/useUserMsgIndex.ts'
@@ -136,6 +146,10 @@ import { store } from '@/stores/app.ts'
 import { computeRemainingCount } from '@/utils/messageListUtils.ts'
 
 const { t } = useI18n()
+
+function openWelcome() {
+  window.dispatchEvent(new CustomEvent('clawbench-show-welcome'))
+}
 
 const props = defineProps({
   messages: Array,
@@ -199,6 +213,12 @@ const chatUI = inject('chatUI', {})
 const hotSwitchProject = inject('hotSwitchProject', null)
 
 async function handleChatClick(event) {
+  // 0. Code block header buttons (copy/wrap)
+  if (handleCodeBlockClick(event)) return
+
+  // 0.5. Table block header buttons (copy/wrap)
+  if (handleTableBlockClick(event)) return
+
   // 1. Handle localhost URL clicks (icon button or <a> tag) — App mode only
   if (handleLocalhostUrlClick(event)) return
 
@@ -593,7 +613,7 @@ defineExpose({
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 10px;
+  padding: 12px 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -603,7 +623,7 @@ defineExpose({
 .chat-messages-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 20px;
 }
 
 .chat-empty {
@@ -698,6 +718,52 @@ defineExpose({
 .agent-welcome-hint {
     font-size: 12px;
     color: color-mix(in srgb, var(--text-muted) 70%, transparent);
+}
+
+/* No agents empty state */
+.no-agents-icon {
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+
+.no-agents-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.no-agents-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  max-width: 240px;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.no-agents-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.no-agents-btn:active {
+  background: var(--bg-tertiary);
+}
+
+@media (hover: hover) {
+  .no-agents-btn:hover {
+    background: var(--bg-tertiary);
+    border-color: var(--accent-color);
+  }
 }
 
 /* Lazy load feedback area */

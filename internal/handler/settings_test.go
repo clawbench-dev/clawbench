@@ -50,8 +50,6 @@ func TestServeConfig_Get(t *testing.T) {
 	cfg.RAG.RetentionDays = 30
 	cfg.PortForward.Enabled = true
 	cfg.PortForward.Port = 20001
-	cfg.Push.JPush.Enabled = true
-	cfg.Push.JPush.AppKey = "test-app-key"
 	cfg.Summarize.Backend = "simple"
 	cfg.Summarize.Model = ""
 	model.ConfigInstance = cfg
@@ -78,7 +76,6 @@ func TestServeConfig_Get(t *testing.T) {
 	assert.Contains(t, resp, "tts")
 	assert.Contains(t, resp, "rag")
 	assert.Contains(t, resp, "port_forward")
-	assert.Contains(t, resp, "push")
 	assert.Contains(t, resp, "summarize")
 
 	// Verify specific values
@@ -123,11 +120,6 @@ func TestServeConfig_Get(t *testing.T) {
 	// Verify port_forward doesn't expose host_key
 	pf, _ := resp["port_forward"].(map[string]any)
 	assert.NotContains(t, pf, "host_key")
-
-	// Verify Push exposes master_secret (masked)
-	push, _ := resp["push"].(map[string]any)
-	jpush, _ := push["jpush"].(map[string]any)
-	assert.Contains(t, jpush, "master_secret")
 }
 
 func TestServeConfig_Get_ConditionalPiperSubConfig(t *testing.T) {
@@ -198,7 +190,7 @@ func TestServeConfig_Get_ConditionalMossNanoSubConfig(t *testing.T) {
 	cfg := model.Config{}
 	cfg.TTS.Engine = "moss-nano"
 	cfg.TTS.MossNano.ModelDir = "/path/to/models"
-	cfg.TTS.MossNano.Voice = "Junhao"
+	cfg.TTS.Voice = "Junhao"
 	cfg.TTS.MossNano.Backend = "onnx"
 	model.ConfigInstance = cfg
 
@@ -218,7 +210,8 @@ func TestServeConfig_Get_ConditionalMossNanoSubConfig(t *testing.T) {
 
 	mossNano, _ := tts["moss_nano"].(map[string]any)
 	assert.Equal(t, "onnx", mossNano["backend"])
-	assert.Equal(t, "Junhao", mossNano["voice"])
+	// voice is now the shared tts.voice field, not moss_nano.voice
+	assert.Equal(t, "Junhao", tts["voice"])
 }
 
 func TestServeConfig_Get_ConditionalAPISubConfig(t *testing.T) {
@@ -501,21 +494,6 @@ func TestServeConfig_Patch_ForbiddenField_TLS(t *testing.T) {
 	w := callHandler(ServeConfig, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestServeConfig_Patch_MasterSecret(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	// master_secret is now patchable and should be accepted
-	body := `{"push":{"jpush":{"master_secret":"newsecret1234567890"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "newsecret1234567890", model.ConfigInstance.Push.JPush.MasterSecret)
 }
 
 func TestServeConfig_Patch_InvalidEngine(t *testing.T) {
@@ -834,16 +812,16 @@ func TestServeConfig_Patch_MossNanoSubConfigWithoutModelDir(t *testing.T) {
 	cfg.TTS.MossNano.ModelDir = ""
 	model.ConfigInstance = cfg
 
-	// Saving sub-config when engine is already moss-nano and model_dir is empty should succeed
-	// (model_dir is optional — empty value is valid, ResolveMossNanoModelDir handles it)
-	body := `{"tts":{"moss_nano":{"voice":"Junhao"}}}`
+	// Saving voice when engine is already moss-nano should succeed
+	// (voice is now the shared tts.voice field)
+	body := `{"tts":{"voice":"Junhao"}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "Junhao", model.ConfigInstance.TTS.MossNano.Voice)
+	assert.Equal(t, "Junhao", model.ConfigInstance.TTS.Voice)
 }
 
 func TestServeConfig_Patch_InvalidDefaultAgent(t *testing.T) {
@@ -909,7 +887,7 @@ func TestServeConfig_Patch_ColdFields_NeedRestart(t *testing.T) {
 	cfg.RAG.BaseURL = "http://localhost:11434"
 	model.ConfigInstance = cfg
 
-	// port_forward.enabled and rag.base_url are cold fields — restart should be needed
+	// All patchable fields are now hot-reload — no restart should be needed
 	body := `{"port_forward":{"enabled":true},"rag":{"base_url":"http://other:11434"}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -921,17 +899,10 @@ func TestServeConfig_Patch_ColdFields_NeedRestart(t *testing.T) {
 	var resp map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	assert.NoError(t, err)
-	assert.True(t, resp["needs_restart"].(bool), "needs_restart should be true when cold fields are changed")
+	assert.False(t, resp["needs_restart"].(bool), "needs_restart should be false when all changed fields are hot-reload")
 	changed, ok := resp["changed_cold_fields"].([]any)
 	assert.True(t, ok)
-	assert.GreaterOrEqual(t, len(changed), 2)
-	// Should contain the cold field paths
-	changedStr := make([]string, len(changed))
-	for i, v := range changed {
-		changedStr[i] = fmt.Sprint(v)
-	}
-	assert.Contains(t, changedStr, "port_forward.enabled")
-	assert.Contains(t, changedStr, "rag.base_url")
+	assert.Equal(t, 0, len(changed), "no cold fields should remain")
 }
 
 func TestServeConfig_Patch_MixedHotAndColdFields(t *testing.T) {
@@ -943,7 +914,8 @@ func TestServeConfig_Patch_MixedHotAndColdFields(t *testing.T) {
 	cfg.PortForward.Enabled = false
 	model.ConfigInstance = cfg
 
-	// Mix of hot (chat.system_prompt_interval) and cold (port_forward.enabled) fields
+	// Mix of hot (chat.system_prompt_interval, port_forward.enabled) fields
+	// port_forward.enabled is now a hot-reload field (SSH tunnel can be toggled at runtime)
 	body := `{"chat":{"system_prompt_interval":20},"port_forward":{"enabled":true}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -955,11 +927,10 @@ func TestServeConfig_Patch_MixedHotAndColdFields(t *testing.T) {
 	var resp map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	assert.NoError(t, err)
-	assert.True(t, resp["needs_restart"].(bool), "needs_restart should be true when any cold field is changed")
+	assert.False(t, resp["needs_restart"].(bool), "needs_restart should be false when all changed fields are hot-reload")
 	changed, ok := resp["changed_cold_fields"].([]any)
 	assert.True(t, ok)
-	assert.Equal(t, 1, len(changed), "only cold fields should appear in changed_cold_fields")
-	assert.Equal(t, "port_forward.enabled", fmt.Sprint(changed[0]))
+	assert.Equal(t, 0, len(changed), "no cold fields should appear when all are hot-reload")
 }
 
 func TestServeConfig_Patch_SessionMaxCount_IsHotField(t *testing.T) {
@@ -1564,7 +1535,7 @@ func TestServeConfig_Patch_MossNanoModelDirInPatch(t *testing.T) {
 	model.ConfigInstance = cfg
 
 	// Patch model_dir when engine is already moss-nano
-	body := `{"tts":{"moss_nano":{"model_dir":"/path/to/models","voice":"Test","backend":"onnx"}}}`
+	body := `{"tts":{"moss_nano":{"model_dir":"/path/to/models","backend":"onnx"}}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
@@ -1572,7 +1543,6 @@ func TestServeConfig_Patch_MossNanoModelDirInPatch(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "/path/to/models", model.ConfigInstance.TTS.MossNano.ModelDir)
-	assert.Equal(t, "Test", model.ConfigInstance.TTS.MossNano.Voice)
 	assert.Equal(t, "onnx", model.ConfigInstance.TTS.MossNano.Backend)
 }
 
@@ -1784,8 +1754,10 @@ func TestServeConfigPassword_WithAutoPasswordFile(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(binDir, "config"), 0o755))
 
 	origBinDir := model.BinDir
+	origDataDir := model.DataDir
 	model.BinDir = binDir
-	defer func() { model.BinDir = origBinDir }()
+	model.DataDir = clawbenchDir
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
 	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
 		"current_password": password,
@@ -1922,24 +1894,6 @@ func TestServeConfigPatch_PortForward(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.True(t, model.ConfigInstance.PortForward.Enabled)
 	assert.Equal(t, 2222, model.ConfigInstance.PortForward.Port)
-}
-
-func TestServeConfigPatch_PushJPush(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	model.ConfigInstance = cfg
-
-	body := `{"push":{"jpush":{"enabled":true,"app_key":"test-key","master_secret":"test-secret-1234567890"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.True(t, model.ConfigInstance.Push.JPush.Enabled)
-	assert.Equal(t, "test-key", model.ConfigInstance.Push.JPush.AppKey)
 }
 
 func TestServeConfigPatch_TerminalFields(t *testing.T) {
@@ -2339,4 +2293,338 @@ func TestServeConfig_Patch_LocalhostAuthExempt_IsHotField(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	assert.NoError(t, err)
 	assert.False(t, resp["needs_restart"].(bool), "localhost_auth_exempt is hot-reloadable, should not need restart")
+}
+
+// --- FRP config validation tests ---
+
+func TestServeConfig_Patch_FRPEnabledWithoutServerAddr_SwitchOn(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.FRP.Enabled = false
+	cfg.FRP.ServerAddr = ""
+	model.ConfigInstance = cfg
+
+	// Switching FRP on without server_addr should succeed — user fills sub-config later
+	body := `{"frp":{"enabled":true}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestServeConfig_Patch_FRPEnabledWithServerAddr(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.FRP.Enabled = true
+	cfg.FRP.ServerAddr = "frp.example.com"
+	model.ConfigInstance = cfg
+
+	// FRP already enabled with server_addr — changing server_addr should work
+	body := `{"frp":{"server_addr":"new-frp.example.com"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "new-frp.example.com", model.ConfigInstance.FRP.ServerAddr)
+}
+
+func TestServeConfig_Patch_FRPEnabledNoAddr_NotSwitchingOn(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.FRP.Enabled = true
+	cfg.FRP.ServerAddr = ""
+	model.ConfigInstance = cfg
+
+	// FRP is already enabled but server_addr is empty — changing other field should fail
+	body := `{"frp":{"auto_port":true}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "frp.server_addr is required")
+}
+
+func TestServeConfig_Patch_FRPServerPortOutOfRange(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.FRP.Enabled = true
+	cfg.FRP.ServerAddr = "frp.example.com"
+	model.ConfigInstance = cfg
+
+	body := `{"frp":{"server_port":70000}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "frp.server_port must be between 0 and 65535")
+}
+
+func TestServeConfig_Patch_FRPRemotePortOutOfRange(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.FRP.Enabled = true
+	cfg.FRP.ServerAddr = "frp.example.com"
+	model.ConfigInstance = cfg
+
+	body := `{"frp":{"remote_port":-1}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "frp.remote_port must be between 0 and 65535")
+}
+
+func TestServeConfig_Patch_FRPSSHRemotePortOutOfRange(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.FRP.Enabled = true
+	cfg.FRP.ServerAddr = "frp.example.com"
+	model.ConfigInstance = cfg
+
+	body := `{"frp":{"ssh_remote_port":99999}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "frp.ssh_remote_port must be between 0 and 65535")
+}
+
+func TestServeConfig_Patch_FRPFields(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.FRP.Enabled = true
+	cfg.FRP.ServerAddr = "frp.example.com"
+	model.ConfigInstance = cfg
+
+	body := `{"frp":{"server_addr":"frp2.example.com","server_port":7001,"token":"new-token","auto_port":true,"remote_port":0,"ssh_remote_port":0}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "frp2.example.com", model.ConfigInstance.FRP.ServerAddr)
+	assert.Equal(t, 7001, model.ConfigInstance.FRP.ServerPort)
+	assert.Equal(t, "new-token", model.ConfigInstance.FRP.Token)
+	assert.True(t, model.ConfigInstance.FRP.AutoPort)
+}
+
+// --- ServeConfigPassword: validation tests ---
+
+func TestServeConfigPassword_Validation_EmptyPassword(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	globalLoginLimiter = &loginLimiter{records: make(map[string]*ipRecord)}
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
+		"current_password": "",
+		"new_password":     "brand-new1",
+	})
+	req.RemoteAddr = "192.0.2.1:1234"
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfigPassword, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "empty_password")
+}
+
+func TestServeConfigPassword_Validation_TooShort(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	globalLoginLimiter = &loginLimiter{records: make(map[string]*ipRecord)}
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
+		"current_password": "test",
+		"new_password":     "short1",
+	})
+	req.RemoteAddr = "192.0.2.1:1234"
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfigPassword, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "password_too_short")
+}
+
+func TestServeConfigPassword_Validation_TooLong(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	globalLoginLimiter = &loginLimiter{records: make(map[string]*ipRecord)}
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
+		"current_password": "test",
+		"new_password":     strings.Repeat("a", 33) + "1",
+	})
+	req.RemoteAddr = "192.0.2.1:1234"
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfigPassword, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "password_too_long")
+}
+
+func TestServeConfigPassword_Validation_NoDigit(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	globalLoginLimiter = &loginLimiter{records: make(map[string]*ipRecord)}
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
+		"current_password": "test",
+		"new_password":     "onlylettershere",
+	})
+	req.RemoteAddr = "192.0.2.1:1234"
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfigPassword, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "password_no_letter_digit")
+}
+
+func TestServeConfigPassword_Validation_NoLetter(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	globalLoginLimiter = &loginLimiter{records: make(map[string]*ipRecord)}
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
+		"current_password": "test",
+		"new_password":     "12345678",
+	})
+	req.RemoteAddr = "192.0.2.1:1234"
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfigPassword, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "password_no_letter_digit")
+}
+
+func TestServeConfigPassword_Validation_InvalidJSON(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	globalLoginLimiter = &loginLimiter{records: make(map[string]*ipRecord)}
+	defer teardown()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/config/password", strings.NewReader(`{invalid json`))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "192.0.2.1:1234"
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfigPassword, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeConfigPassword_Validation_MethodNotAllowed(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config/password", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfigPassword, req)
+
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+// --- maskAPIKey tests ---
+
+func TestMaskAPIKey_FullKey(t *testing.T) {
+	assert.Equal(t, "sk-1***xyz", maskAPIKey("sk-1234567890abcdefghijklmnopqrstuvwxyz"))
+}
+
+func TestMaskAPIKey_ShortKey(t *testing.T) {
+	assert.Equal(t, "****", maskAPIKey("short"))
+}
+
+func TestMaskAPIKey_EmptyKey(t *testing.T) {
+	assert.Equal(t, "", maskAPIKey(""))
+}
+
+func TestMaskAPIKey_ExactlyEight(t *testing.T) {
+	assert.Equal(t, "abcd***xyz", maskAPIKey("abcd12xyz"))
+}
+
+// --- shellQuote tests ---
+
+func TestShellQuote_NoSpecial(t *testing.T) {
+	assert.Equal(t, "'hello'", shellQuote("hello"))
+}
+
+func TestShellQuote_WithSingleQuote(t *testing.T) {
+	assert.Equal(t, "'it'\\''s'", shellQuote("it's"))
+}
+
+func TestShellQuote_Empty(t *testing.T) {
+	assert.Equal(t, "''", shellQuote(""))
+}
+
+// --- joinArgs tests ---
+
+func TestJoinArgs_Settings(t *testing.T) {
+	assert.Equal(t, "'a' 'b' 'c'", joinArgs([]string{"a", "b", "c"}))
+}
+
+func TestJoinArgs_SettingsEmpty(t *testing.T) {
+	assert.Equal(t, "", joinArgs([]string{}))
+}
+
+func TestJoinArgs_SettingsSingleArg(t *testing.T) {
+	assert.Equal(t, "'hello'", joinArgs([]string{"hello"}))
+}
+
+// --- copyFile tests (indirectly via writeConfigYAML backup) ---
+
+func TestServeConfig_Get_FRPFields(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	cfg.FRP.Enabled = true
+	cfg.FRP.ServerAddr = "frp.example.com"
+	cfg.FRP.ServerPort = 7000
+	cfg.FRP.Token = "long-secret-token-value-here"
+	cfg.FRP.AutoPort = true
+	cfg.FRP.RemotePort = 20050
+	cfg.FRP.SSHRemotePort = 20051
+	model.ConfigInstance = cfg
+
+	req := newRequest(t, http.MethodGet, "/api/config", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+
+	frp, ok := resp["frp"].(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, true, frp["enabled"])
+	assert.Equal(t, "frp.example.com", frp["server_addr"])
+	assert.Equal(t, float64(7000), frp["server_port"])
+	// Token should be masked
+	assert.Contains(t, frp["token"], "***")
+	assert.NotEqual(t, "long-secret-token-value-here", frp["token"])
+	assert.Equal(t, true, frp["auto_port"])
 }

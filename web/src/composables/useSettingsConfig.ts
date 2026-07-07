@@ -137,16 +137,6 @@ const legacyKeys: Record<string, {
     key: '',
     format: 'raw',
   },
-  pushPersistentNotification: {
-    key: '',
-    format: 'raw',
-    sideEffect(value: boolean) {
-      try {
-        const native = (window as any).AndroidNative
-        if (native?.setPushPersistentNotification) native.setPushPersistentNotification(value)
-      } catch { /* not in app mode */ }
-    },
-  },
   sortField: {
     key: '',
     format: 'raw',
@@ -165,6 +155,13 @@ const legacyKeys: Record<string, {
     format: 'raw',
     sideEffect(value: string) {
       window.dispatchEvent(new CustomEvent('clawbench-sort-change', { detail: { dir: value } }))
+    },
+  },
+  uiScale: {
+    key: '',
+    format: 'raw',
+    sideEffect(value: number) {
+      applyUIScale(value)
     },
   },
 }
@@ -200,6 +197,61 @@ function readLocalValue(settingsKey: string, defaultValue: any): any {
   return defaultValue
 }
 
+/** Apply global UI scale via CSS zoom — true browser-zoom behavior, no position:fixed breakage. */
+export function applyUIScale(scale: number) {
+  const el = document.documentElement
+  const s = Math.max(0.5, Math.min(2, scale))
+  if (s === 1) {
+    el.style.zoom = ''
+  } else {
+    el.style.zoom = String(s)
+  }
+}
+
+/** Read the current CSS zoom factor applied to <html>. Returns 1 if not set. */
+export function getUIScale(): number {
+  const z = document.documentElement.style.zoom
+  if (!z) return 1
+  const n = Number(z)
+  return isNaN(n) ? 1 : n
+}
+
+/**
+ * Convert a value from getBoundingClientRect() / window.innerWidth coordinate
+ * space to position:fixed CSS pixel value.
+ *
+ * Under CSS zoom on <html>, getBoundingClientRect() returns zoom-scaled
+ * coordinates and window.innerWidth/innerHeight are NOT scaled, while
+ * position:fixed CSS values are in the pre-zoom layout space:
+ *   - fixed left:100px under zoom:2 visually appears at 200px
+ *   - getBoundingClientRect().left of that element returns 200
+ *
+ * Therefore: fixedCSS = viewportCoord / zoom
+ *
+ * Example: to right-align a fixed popup to an anchor:
+ *   right: toFixedCSS(innerWidth - anchorRect.right) + 'px'
+ */
+export function toFixedCSS(viewportCoord: number): number {
+  const z = getUIScale()
+  return viewportCoord / z
+}
+
+/**
+ * Get viewport dimensions for position:fixed calculations under CSS zoom.
+ *
+ * Returns window.innerWidth/innerHeight (NOT affected by CSS zoom),
+ * in the same coordinate space as getBoundingClientRect().
+ *
+ * IMPORTANT: Values from this function are in getBoundingClientRect() space.
+ * To use them as position:fixed CSS values, pass through toFixedCSS().
+ */
+export function getZoomedViewport(): { width: number; height: number } {
+  return {
+    width: window.innerWidth,
+    height: window.innerHeight,
+  }
+}
+
 const localDefaults: Record<string, any> = {
   theme: 'auto',
   locale: 'zh',
@@ -213,9 +265,9 @@ const localDefaults: Record<string, any> = {
   androidLogCapture: false,
   swipeSession: false,
   preventScreenLock: true,
-  pushPersistentNotification: true,
   sortField: null,
   sortDir: 'asc',
+  uiScale: 1,
 }
 
 // Build reactive local config from legacy localStorage + defaults
@@ -277,23 +329,27 @@ const serverDefaults: Record<string, any> = {
   'tts.format': '',
   'tts.speed': 1.0,
   'tts.max_cache_files': 100,
-  'rag.ollama_base_url': 'http://localhost:11434',
-  'rag.ollama_model': 'bge-m3',
+  'rag.base_url': 'http://localhost:11434',
+  'rag.model': 'bge-m3',
+  'rag.api_key': '',
   'rag.chunk_size': 512,
   'rag.search_limit': 5,
   'rag.search_pool_size': 20,
   'rag.retention_days': 90,
-  'push.jpush.enabled': false,
   'tts.piper.noise_scale': 0.667,
   'tts.piper.length_scale': 1.0,
   'tts.piper.sentence_silence': 0.2,
   'tts.kokoro.lang': 'cmn',
-  'tts.moss_nano.voice': 'Junhao',
   'tts.moss_nano.backend': 'onnx',
   'summarize.backend': 'simple',
   'summarize.model': '',
   'summarize.api.format': 'openai',
   'port_forward.allowed_ports': '1024-65535',
+  'frp.enabled': false,
+  'frp.server_port': 7000,
+  'frp.auto_port': true,
+  'frp.remote_port': 0,
+  'frp.ssh_remote_port': 0,
 }
 
 // ── Agent preference helpers ──────────────────────────────
@@ -301,13 +357,14 @@ const serverDefaults: Record<string, any> = {
 // in agent YAML files via PATCH /api/agents.
 
 /** Patch an agent's preferred_model or preferred_thinking_effort on the server. */
-export async function patchAgentPref(agentId: string, field: 'preferred_model' | 'preferred_thinking_effort' | 'transport', value: string): Promise<void> {
+export async function patchAgentPref(agentId: string, field: 'preferred_model' | 'preferred_thinking_effort' | 'preferred_mode' | 'transport', value: string): Promise<void> {
   await apiPatch('/api/agents', { id: agentId, [field]: value })
   // Also update the agent object in useAgents so the UI reflects immediately
   const { updateAgentField } = useAgents()
   const fieldMap: Record<string, string> = {
     preferred_model: 'preferredModel',
     preferred_thinking_effort: 'preferredThinkingEffort',
+    preferred_mode: 'preferredMode',
     transport: 'transport',
   }
   updateAgentField(agentId, fieldMap[field] || field, value)
@@ -324,6 +381,7 @@ export async function patchAgentField(agentId: string, field: string, value: any
   const fieldMap: Record<string, string> = {
     preferred_model: 'preferredModel',
     preferred_thinking_effort: 'preferredThinkingEffort',
+    preferred_mode: 'preferredMode',
     transport: 'transport',
     custom_system_prompt: 'customSystemPrompt',
     sort_order: 'sortOrder',
@@ -355,18 +413,7 @@ function getAgentThinkingPref(agentId: string): string | null {
 export function useSettingsConfig() {
   /** Sync local-only settings from Android native to keep WebView and native state in sync. */
   function syncNativeSettings() {
-    try {
-      const native = (window as any).AndroidNative
-      if (native?.isPushPersistentNotification) {
-        const nativeValue = native.isPushPersistentNotification()
-        if (localConfig.pushPersistentNotification !== nativeValue) {
-          localConfig.pushPersistentNotification = nativeValue
-          try {
-            localStorage.setItem(LOCAL_PREFIX + 'pushPersistentNotification', JSON.stringify(nativeValue))
-          } catch { /* ignore */ }
-        }
-      }
-    } catch { /* not in app mode */ }
+    // No native settings to sync currently
   }
 
   async function loadConfig() {

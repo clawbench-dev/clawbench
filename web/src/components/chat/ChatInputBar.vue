@@ -4,7 +4,6 @@
     <div class="chat-top-actions">
       <div class="chat-action-group">
         <span class="chat-group-label" :title="t('chat.actions.session')">
-          <MessageSquare :size="12" />
           {{ t('chat.actions.session') }}
         </span>
         <button class="chat-action-btn" :class="{ 'has-unread': chatUnreadCount > 0, 'has-running': chatRunning }"
@@ -54,27 +53,34 @@
           <div class="upload-progress-bar" :style="{ width: f.progress + '%' }"></div>
         </div>
       </div>
-      <!-- Attachment tags -->
+      <!-- Attachment tags (horizontal scrollable cards) -->
       <div v-if="quoteData || attachedFiles.length > 0 || pendingFiles.length > 0" class="chat-attachment-tags">
-        <!-- Quote selection chip -->
+        <!-- Quote selection card -->
         <span v-if="quoteData" class="chat-file-attachment attachment-quote" :title="quoteData.filePath" @click="$emit('quote-click')">
-          <MessageSquare :size="12" :stroke-width="1.5" />
-          <span class="chat-file-name">{{ truncateQuoteText(quoteData.text, 20) }}</span>
-          <span v-if="quoteData.startLine" class="quote-line-info">L{{ quoteData.startLine }}</span>
-          <button class="attachment-tag-remove" @click.stop="$emit('remove-quote')" :title="t('common.remove')">×</button>
+          <MessageSquare :size="14" :stroke-width="1.5" class="attachment-quote-icon" />
+          <span class="attachment-filename">{{ truncateQuoteText(quoteData.text, 20) }}</span>
+          <span v-if="quoteData.startLine" class="attachment-filesize">L{{ quoteData.startLine }}</span>
+          <button class="attachment-close-btn" @click.stop="$emit('remove-quote')" :title="t('common.remove')">×</button>
         </span>
-        <span v-for="(filePath, idx) in attachedFiles" :key="'att-' + filePath" class="chat-file-attachment attachment-ref" @click="$emit('file-tag-click', filePath)" :title="t('chat.attach.openFile')">
-          <Folder v-if="isDirPath(filePath)" :size="12" :stroke-width="1.5" />
-          <Paperclip v-else :size="12" :stroke-width="1.5" />
-          <span class="chat-file-name">{{ getFileName(filePath) }}</span>
-          <button class="attachment-tag-remove" @click.stop="$emit('remove-attached', idx)" :title="t('common.remove')">×</button>
+        <!-- Attached file reference cards -->
+        <span v-for="(filePath, idx) in attachedFiles" :key="'att-' + filePath" class="chat-file-attachment attachment-ref" :class="{ 'attachment-image-only': isImageFile(filePath) && (isThumbableExt(filePath) || thumbErrors.has(filePath)) }" @click="$emit('file-tag-click', filePath)" :title="t('chat.attach.openFile')">
+          <img v-if="isImageFile(filePath) && isThumbableExt(filePath) && !thumbErrors.has(filePath)"
+            class="attachment-thumb-img"
+            :src="attachmentThumbUrl(filePath)" loading="lazy" @error="onThumbError(filePath)" />
+          <component v-if="!isImageFile(filePath)" :is="getFileIcon(filePath)" :size="14" :stroke-width="1.5" class="attachment-file-icon" />
+          <span v-if="!isImageFile(filePath)" class="attachment-filename">{{ getFileName(filePath) }}</span>
+          <button class="attachment-close-btn" @click.stop="$emit('remove-attached', idx)" :title="t('common.remove')">×</button>
         </span>
-        <span v-for="(f, idx) in pendingFiles" :key="'upload-' + idx" class="chat-file-attachment attachment-upload" :class="{ 'is-uploading': f.uploading }">
-          <FileImage v-if="f.isImage" :size="12" :stroke-width="1.5" />
-          <FileText v-else :size="12" :stroke-width="1.5" />
-          <span class="chat-file-name">{{ getFileName(f.path) || t('chat.attach.uploading') }}</span>
-          <span v-if="f.uploading" class="attachment-progress-pct">{{ f.progress }}%</span>
-          <button class="attachment-tag-remove" @click.stop="$emit('remove-file', idx)" :title="t('common.remove')">×</button>
+        <!-- Pending upload cards -->
+        <span v-for="(f, idx) in pendingFiles" :key="'upload-' + idx" class="chat-file-attachment attachment-upload" :class="{ 'is-uploading': f.uploading, 'attachment-image-only': f.isImage }">
+          <img v-if="f.isImage && f.previewUrl" class="attachment-thumb-img" :src="f.previewUrl" loading="lazy" />
+          <img v-else-if="f.isImage && !thumbErrors.has(f.path)"
+            class="attachment-thumb-img"
+            :src="attachmentThumbUrl(f.path)" loading="lazy" @error="onThumbError(f.path)" />
+          <component v-if="!f.isImage" :is="getFileIcon(f.path)" :size="14" :stroke-width="1.5" class="attachment-file-icon" />
+          <span v-if="!f.isImage" class="attachment-filename">{{ getFileName(f.path) || t('chat.attach.uploading') }}</span>
+          <span v-if="!f.isImage" class="attachment-filesize">{{ f.uploading ? f.progress + '%' : formatFileSize(f.size) }}</span>
+          <button class="attachment-close-btn" @click.stop="$emit('remove-file', idx)" :title="t('common.remove')">×</button>
         </span>
       </div>
       <!-- Input row: attach + clear + textarea + stop + send -->
@@ -167,7 +173,7 @@
       </PopupMenu>
       <!-- Session settings modal -->
       <SessionSettingModal
-        :show="showSettingsModal"
+        :show="settingsDrawer.effectiveOpen.value"
         :agent-id="currentAgentId"
         :initial-tab="settingsModalInitialTab"
         @update:show="showSettingsModal = $event"
@@ -176,7 +182,7 @@
         @switch-mode="handleSwitchMode"
         @switch-transport="handleSwitchTransport"
       />
-      <QuickSendDialog :open="quickSendDrawer.effectiveOpen.value" @close="quickSendStore.showEditDialog.value = false" />
+      <QuickSendDrawer :open="quickSendDrawer.effectiveOpen.value" @close="quickSendStore.showEditDialog.value = false" />
       <!-- @ command autocomplete menu (ClawBench built-in) -->
       <PopupMenu v-model:show="showAtMenu" :target-element="textareaRef" anchor="left" :max-width="260" :max-height="200" :menu-items-count="atMenuItems.length">
         <div class="at-menu-title">{{ t('chat.atCommand.title') }}</div>
@@ -256,11 +262,14 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, FileImage, FileText, Folder, XCircle, Inbox, Send, Square, Settings, Zap, Loader2, Cpu, Compass, Brain, Cable, Activity, MessagesSquare } from 'lucide-vue-next'
+import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, FileText, Folder, XCircle, Inbox, Send, Square, Settings, Zap, Loader2, Cpu, Compass, Brain, Cable, Activity, MessagesSquare, FileImage, FileVideo, FileMusic } from 'lucide-vue-next'
 import { baseName } from '@/utils/path.ts'
+import { formatFileSize, getFileType } from '@/utils/fileType.ts'
+import { isThumbableExt } from '@/utils/fileManager.ts'
+import { isImageFile } from '@/utils/fileAttachmentUtils.ts'
 import { computeRecentReferencedFiles, computeHasFileGroups, computeAttachMenuItemCount } from '@/utils/chatInputUtils.ts'
 import PopupMenu from '@/components/common/PopupMenu.vue'
-import QuickSendDialog from '@/components/chat/QuickSendDialog.vue'
+import QuickSendDrawer from '@/components/chat/QuickSendDrawer.vue'
 import SessionSettingModal from '@/components/chat/SessionSettingModal.vue'
 import { createStopButtonMachine } from '@/utils/stopButtonMachine.ts'
 import { useDialog } from '@/composables/useDialog.ts'
@@ -317,7 +326,10 @@ const usageTooltip = computed(() => {
 const dialog = useDialog()
 const quickSendStore = useQuickSend()
 const { items: quickSendItems, fetchItems } = quickSendStore
+const showSettingsModal = ref(false)
+const settingsModalInitialTab = ref('model')
 const quickSendDrawer = useTabDrawer('chat', quickSendStore.showEditDialog)
+const settingsDrawer = useTabDrawer('chat', showSettingsModal)
 
 // ── Rotating placeholder ──
 const placeholderIndex = ref(0)
@@ -420,8 +432,6 @@ const showAttachMenu = ref(false)
 const attachMenuRef = ref(null)
 const showQuickMenu = ref(false)
 const sendBtnRef = ref(null)
-const showSettingsModal = ref(false)
-const settingsModalInitialTab = ref('model')
 
 function openSettingsModal(tab) {
   settingsModalInitialTab.value = tab
@@ -579,8 +589,12 @@ function getFileName(path) {
   return baseName(path)
 }
 
-function isDirPath(filePath) {
-  return props.currentDir && filePath === props.currentDir
+function getFileIcon(path) {
+  const ft = getFileType(path)
+  if (ft.isImage) return FileImage
+  if (ft.isAudio) return FileMusic
+  if (ft.isVideo) return FileVideo
+  return FileText
 }
 
 function truncateQuoteText(text, maxLen) {
@@ -588,6 +602,27 @@ function truncateQuoteText(text, maxLen) {
   const oneLine = text.replace(/\n/g, ' ')
   return oneLine.length > maxLen ? oneLine.slice(0, maxLen) + '...' : oneLine
 }
+
+/** Build thumbnail URL for a file path. */
+function attachmentThumbUrl(filePath) {
+  return `/api/file/thumb?path=${encodeURIComponent(filePath)}&w=80`
+}
+
+// Track thumbnail load errors so fallback icon is shown
+// Must replace the Set (not mutate in-place) to trigger Vue reactivity
+const thumbErrors = ref(new Set())
+function onThumbError(path) {
+  const next = new Set(thumbErrors.value)
+  next.add(path)
+  thumbErrors.value = next
+}
+
+// Clear thumb errors when all attachments are removed
+watch([() => props.attachedFiles.length, () => props.pendingFiles.length], ([attLen, pendLen]) => {
+  if (attLen === 0 && pendLen === 0 && thumbErrors.value.size > 0) {
+    thumbErrors.value = new Set()
+  }
+})
 
 function autoResizeTextarea() {
   const el = textareaRef.value
@@ -856,9 +891,9 @@ defineExpose({
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  margin: 0 8px 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border-color, #e5e5e5);
+  margin: 0 0 8px;
+  padding: 8px 8px 0;
+  box-shadow: inset 0 1px 0 var(--border-color, #e5e5e5);
 }
 
 /* Session info bar (model + mode + thinking + transport, below input box) */
@@ -977,19 +1012,19 @@ defineExpose({
 
 .chat-action-group .chat-action-btn {
     border-radius: 0;
+    height: auto;
 }
 
 .chat-action-group .chat-action-btn:first-child {
     border-radius: 0;
 }
 
-/* Group label: subtle icon identifying the button group */
+/* Group label: subtle text identifying the button group */
 .chat-group-label {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 3px;
-    padding: 5px 6px 5px 8px;
+    padding: 5px 6px;
     color: var(--text-muted, #999);
     background: var(--bg-tertiary, #f0f0f0);
     pointer-events: none;
@@ -1196,15 +1231,9 @@ defineExpose({
   transition: width 0.15s ease;
 }
 
-/* Uploading state for attachment tag */
+/* Uploading state for attachment card */
 .attachment-upload.is-uploading {
   opacity: 0.7;
-}
-
-.attachment-progress-pct {
-  font-size: 10px;
-  color: var(--accent-color, #0066cc);
-  font-variant-numeric: tabular-nums;
 }
 
 /* Attach button (inside input row) */
@@ -1257,92 +1286,128 @@ defineExpose({
   background: color-mix(in srgb, var(--danger-color, #dc3545) 8%, transparent);
 }
 
-/* Attachment tags row */
+/* Attachment tags row — horizontal scroll, no wrap */
 .chat-attachment-tags {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 4px 8px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  gap: 6px;
+  padding: 4px 6px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
 }
 
-/* Base attachment tag styles */
+.chat-attachment-tags::-webkit-scrollbar {
+  display: none;
+}
+
+/* Base attachment card styles */
 .chat-file-attachment {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  border-radius: 8px;
-  padding: 1px 6px;
-  margin-bottom: 4px;
+  border-radius: 12px;
+  height: 40px;
+  padding: 0 8px;
+  padding-right: 24px;
+  flex-shrink: 0;
+  position: relative;
   font-size: 12px;
   text-decoration: none;
   cursor: pointer;
   transition: opacity 0.15s;
-  white-space: nowrap;
-  max-width: 200px;
+  box-sizing: border-box;
 }
 
-.chat-file-attachment svg {
+.attachment-file-icon {
   flex-shrink: 0;
 }
 
-.chat-file-name {
+.attachment-filename {
   font-family: monospace;
-  flex: 1;
-  min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
 }
 
-.chat-file-name::-webkit-scrollbar {
-  display: none;
+.attachment-filesize {
+  font-size: 10px;
+  color: var(--text-muted, #999);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* Input area attachment tags */
-.chat-attachment-tags .chat-file-attachment {
-  max-width: 200px;
+/* Image-only card: square thumbnail */
+.chat-file-attachment.attachment-image-only {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 10px;
 }
 
-.chat-attachment-tags .attachment-upload {
+.attachment-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Quote icon */
+.attachment-quote-icon {
+  flex-shrink: 0;
+}
+
+/* Close button — inside card top-right, small circle */
+.attachment-close-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+  z-index: 1;
+}
+
+.attachment-close-btn:hover {
+  background: var(--danger-color, #dc3545);
+}
+
+/* Input area attachment card style (both upload and ref use same style) */
+.chat-attachment-tags .attachment-upload,
+.chat-attachment-tags .attachment-ref {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 20%, transparent);
   color: var(--accent-color, #0066cc);
-  cursor: default;
 }
 
-.chat-attachment-tags .attachment-upload .chat-file-name {
+.chat-attachment-tags .attachment-upload .attachment-filename,
+.chat-attachment-tags .attachment-ref .attachment-filename {
   color: var(--accent-color, #0066cc);
 }
 
-.chat-attachment-tags .attachment-upload svg {
-  stroke: var(--accent-color, #0066cc);
+.chat-attachment-tags .attachment-upload .attachment-filesize {
+  color: color-mix(in srgb, var(--accent-color, #0066cc) 60%, transparent);
 }
 
-.chat-attachment-tags .attachment-upload:hover {
+.chat-attachment-tags .attachment-upload:hover,
+.chat-attachment-tags .attachment-ref:hover {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent);
 }
 
-.chat-attachment-tags .attachment-ref {
-  background: color-mix(in srgb, var(--text-muted, #999) 8%, transparent);
-  border: 1px dashed var(--text-secondary, #666);
-  color: var(--text-secondary, #666);
-}
-
-.chat-attachment-tags .attachment-ref .chat-file-name {
-  color: var(--text-secondary, #666);
-}
-
-.chat-attachment-tags .attachment-ref svg {
-  stroke: var(--text-secondary, #666);
-}
-
-.chat-attachment-tags .attachment-ref:hover {
-  background: color-mix(in srgb, var(--text-muted, #999) 15%, transparent);
-}
-
-/* Quote chip */
+/* Quote card */
 .chat-attachment-tags .attachment-quote {
   background: color-mix(in srgb, var(--accent-color, #4f9cf7) 8%, transparent);
   border: 1px dashed var(--accent-color, #4f9cf7);
@@ -1350,42 +1415,16 @@ defineExpose({
   cursor: pointer;
 }
 
-.chat-attachment-tags .attachment-quote .chat-file-name {
+.chat-attachment-tags .attachment-quote .attachment-filename {
   color: var(--accent-color, #4f9cf7);
 }
 
-.chat-attachment-tags .attachment-quote svg {
-  stroke: var(--accent-color, #4f9cf7);
+.chat-attachment-tags .attachment-quote .attachment-filesize {
+  color: color-mix(in srgb, var(--accent-color, #4f9cf7) 60%, transparent);
 }
 
 .chat-attachment-tags .attachment-quote:hover {
   background: color-mix(in srgb, var(--accent-color, #4f9cf7) 15%, transparent);
-}
-
-.quote-line-info {
-  font-size: 10px;
-  opacity: 0.7;
-  margin-left: 2px;
-}
-
-.attachment-tag-remove {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--text-muted, #999);
-  padding: 0;
-  font-size: 14px;
-  line-height: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 2px;
-  transition: color 0.15s, background 0.15s;
-}
-
-.attachment-tag-remove:hover {
-  color: var(--danger-color, #dc3545);
-  background: color-mix(in srgb, var(--danger-color, #dc3545) 10%, transparent);
 }
 
 /* Input row */
@@ -1468,6 +1507,12 @@ defineExpose({
   flex-shrink: 0;
 }
 .chat-stop-btn:active { opacity: 0.75; }
+
+/* Light theme: boost stop button default visibility */
+:not([data-theme="dark"]) .chat-stop-btn:not(.primed):not(.cancelling) {
+  background: color-mix(in srgb, var(--danger-color, #dc3545) 55%, transparent);
+  color: color-mix(in srgb, #fff 75%, var(--danger-color, #dc3545));
+}
 
 /* Stop button — primed (first click, awaiting confirmation): bright red + heartbeat */
 .chat-stop-btn.primed {

@@ -130,7 +130,7 @@
   />
 
   <!-- Tool Detail Overlay -->
-  <ToolDetailOverlay
+  <ToolDetailDrawer
     :show="toolDetailDrawer.effectiveOpen.value"
     :toolName="toolDetailOverlay.name"
     :toolSubagentType="toolDetailOverlay.subagentType"
@@ -146,7 +146,7 @@
     @click="handleOverlayRetryClick"
   />
   <!-- RAG search result detail drawer -->
-  <RagDetailSheet :item="ragDetailDrawer.effectiveOpen.value ? ragDetailItem : null" @close="ragDetailShow = false; ragDetailItem.value = null" @resume="handleResumeFromDetail" />
+  <RagDetailDrawer :item="ragDetailDrawer.effectiveOpen.value ? ragDetailItem : null" @close="ragDetailShow = false; ragDetailItem.value = null" @resume="handleResumeFromDetail" />
 </template>
 
 <script setup>
@@ -156,9 +156,9 @@ import { appLog } from '@/utils/appLog'
 import { gt } from '@/composables/useLocale'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
-import RagDetailSheet from './RagDetailSheet.vue'
+import RagDetailDrawer from './RagDetailDrawer.vue'
 import ChatMetadataModal from './ChatMetadataModal.vue'
-import ToolDetailOverlay from './ToolDetailOverlay.vue'
+import ToolDetailDrawer from './ToolDetailDrawer.vue'
 import ChatInputBar from './ChatInputBar.vue'
 import ChatMessageList from './ChatMessageList.vue'
 import PlanPanel from './PlanPanel.vue'
@@ -187,7 +187,7 @@ import { renderMarkdown } from '@/composables/useMarkdownRenderer.ts'
 import { useDialog } from '@/composables/useDialog'
 
 import '@/assets/loading-mask.css'
-import { useToolDetailOverlay } from '@/composables/useToolDetailOverlay.ts'
+import { useToolDetailDrawer } from '@/composables/useToolDetailDrawer.ts'
 
 const { t } = useI18n()
 const TAG = 'ChatPanel'
@@ -287,7 +287,7 @@ const {
   fetchToolCallDetail,
   handleFileOpenInOverlay,
   closeOverlay,
-} = useToolDetailOverlay({
+} = useToolDetailDrawer({
   chatRender: render,
   onFileOpen: async (path, lineStart, lineEnd) => {
     const ok = await openFilePath(path, lineStart, lineEnd)

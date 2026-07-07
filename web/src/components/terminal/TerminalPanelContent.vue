@@ -145,7 +145,7 @@
     />
 
     <!-- Quick command edit dialog — only open when terminal tab is active -->
-    <QuickCommandDialog :open="quickCmdDrawer.effectiveOpen.value" @close="showEditDialog = false" />
+    <QuickCommandDrawer :open="quickCmdDrawer.effectiveOpen.value" @close="showEditDialog = false" />
 
     <!-- Key config drawer — only open when terminal tab is active -->
     <KeyConfigDrawer
@@ -170,7 +170,7 @@ import { useI18n } from 'vue-i18n'
 import '@xterm/xterm/css/xterm.css'
 
 import PopupMenu from '@/components/common/PopupMenu.vue'
-import QuickCommandDialog from '@/components/terminal/QuickCommandDialog.vue'
+import QuickCommandDrawer from '@/components/terminal/QuickCommandDrawer.vue'
 import KeyConfigDrawer from '@/components/terminal/KeyConfigDrawer.vue'
 import OutputDrawer from '@/components/terminal/OutputDrawer.vue'
 import TerminalTabMenu from '@/components/terminal/TerminalTabMenu.vue'
@@ -321,11 +321,18 @@ function handleGestureToggle() {
   focusTerminal()
 }
 
-// Build WS URL for a given CWD
-function getWsUrl(cwd?: string) {
+// Build WS URL for a given CWD, with optional initial terminal dimensions.
+// cols/rows are sent as query params so the PTY starts at the correct size
+// instead of the default 80×24 — TUI apps (vim, claude, htop) then render
+// full-size from the start without waiting for fit()+resize.
+function getWsUrl(cwd?: string, cols?: number, rows?: number) {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const cwdParam = cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''
-  return `${proto}//${location.host}/api/terminal/ws${cwdParam}`
+  const params: string[] = []
+  if (cwd) params.push(`cwd=${encodeURIComponent(cwd)}`)
+  if (cols && cols > 0) params.push(`cols=${cols}`)
+  if (rows && rows > 0) params.push(`rows=${rows}`)
+  const query = params.length ? `?${params.join('&')}` : ''
+  return `${proto}//${location.host}/api/terminal/ws${query}`
 }
 
 // Theme
@@ -573,11 +580,10 @@ function handleTabClick(tabId: string) {
   // Connect the newly active tab if it's disconnected (e.g. after panel reactivation)
   const tab = tabManager.getTab(tabId)
   if (tab && (tab.session.connectionState as unknown as string) === 'disconnected') {
+    // Fit before connect so cols/rows are correct for the WS URL
+    try { tab.fitAddon?.fit() } catch { /* ignore */ }
     tab.session.connect().then(() => {
       tabManager.syncTabSessionId(tabId)
-      requestAnimationFrame(() => {
-        try { tab.fitAddon?.fit() } catch { /* ignore */ }
-      })
     }).catch(() => { /* error shown via overlay */ })
   }
 }
@@ -592,13 +598,12 @@ function handleCreateTab() {
     if (container && !tab.container) {
       mountTabToContainer(tab, container)
     }
+    // Fit before connect so cols/rows are correct for the WS URL
+    try { tab.fitAddon?.fit() } catch { /* ignore */ }
     // Connect the new tab
     if (props.active && (tab.session.connectionState as unknown as string) === 'disconnected') {
       tab.session.connect().then(() => {
         tabManager.syncTabSessionId(tab.id)
-        requestAnimationFrame(() => {
-          try { tab.fitAddon?.fit() } catch { /* ignore */ }
-        })
       }).catch(() => { /* error shown via overlay */ })
     }
   })
@@ -625,11 +630,10 @@ function handleTabMenuClose() {
         mountTabToContainer(tab, container)
       }
       if (props.active && tab && (tab.session.connectionState as unknown as string) === 'disconnected') {
+        // Fit before connect so cols/rows are correct for the WS URL
+        try { tab.fitAddon?.fit() } catch { /* ignore */ }
         tab.session.connect().then(() => {
           tabManager.syncTabSessionId(tab.id)
-          requestAnimationFrame(() => {
-            try { tab.fitAddon?.fit() } catch { /* ignore */ }
-          })
         }).catch(() => {})
       }
     })
@@ -746,6 +750,9 @@ watch(() => props.active, async (isActive) => {
       if (container && !tab.container) {
         mountTabToContainer(tab, container)
       }
+      // Fit BEFORE connect so term.cols/rows are correct when the WS URL
+      // is built with initial dimensions for the PTY.
+      try { tab.fitAddon?.fit() } catch { /* ignore */ }
       if ((tab.session.connectionState as unknown as string) === 'disconnected') {
         try {
           await tab.session.connect()
@@ -755,9 +762,6 @@ watch(() => props.active, async (isActive) => {
       viewport.startWatching()
       gestures.attach()
       focusTerminal()
-      requestAnimationFrame(() => {
-        try { tab.fitAddon?.fit() } catch { /* ignore */ }
-      })
     }
   } else {
     disableVolumeKeys()
@@ -782,11 +786,10 @@ watch(() => props.requestedCwd, async (cwd) => {
     mountTabToContainer(tab, container)
   }
   if ((tab.session.connectionState as unknown as string) === 'disconnected') {
+    // Fit before connect so cols/rows are correct for the WS URL
+    try { tab.fitAddon?.fit() } catch { /* ignore */ }
     tab.session.connect().then(() => {
       tabManager.syncTabSessionId(tab.id)
-      requestAnimationFrame(() => {
-        try { tab.fitAddon?.fit() } catch { /* ignore */ }
-      })
     }).catch(() => { /* error shown via overlay */ })
   }
   // Signal parent to clear requestedCwd so re-triggering the same directory works
@@ -828,6 +831,9 @@ onMounted(async () => {
       if (container && !tab.container) {
         mountTabToContainer(tab, container)
       }
+      // Fit BEFORE connect so term.cols/rows are correct when the WS URL
+      // is built with initial dimensions for the PTY.
+      try { tab.fitAddon?.fit() } catch { /* ignore */ }
       if ((tab.session.connectionState as unknown as string) === 'disconnected') {
         try {
           await tab.session.connect()
@@ -837,9 +843,6 @@ onMounted(async () => {
       viewport.startWatching()
       gestures.attach()
       focusTerminal()
-      requestAnimationFrame(() => {
-        try { tab.fitAddon?.fit() } catch { /* ignore */ }
-      })
     }
   }
 })
@@ -908,11 +911,12 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
 /* Tab bar */
 .terminal-tab-bar {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   height: 28px;
-  padding: 0 4px;
+  padding: 0;
   flex-shrink: 0;
   background: var(--bg-secondary);
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 8%, transparent);
   position: relative;
   z-index: 2;
   gap: 0;
@@ -920,14 +924,14 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
 
 .terminal-tab-list {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: 0;
   flex: 1;
   min-width: 0;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
-  padding: 2px 0;
+  padding: 0;
 }
 
 .terminal-tab-list::-webkit-scrollbar {
@@ -938,12 +942,11 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 6px 2px 10px;
-  height: 24px;
-  border-radius: 2px;
+  padding: 0 6px 0 10px;
+  border-radius: 0;
   cursor: pointer;
   flex-shrink: 0;
-  transition: background 0.15s ease;
+  transition: background 0.1s ease;
   user-select: none;
   -webkit-user-select: none;
   max-width: 120px;
@@ -954,7 +957,8 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
 }
 
 .terminal-tab.active {
-  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  box-shadow: inset 0 -2px 0 var(--accent-color);
 }
 
 .terminal-tab-title {
@@ -969,7 +973,7 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
 
 .terminal-tab.active .terminal-tab-title {
   color: var(--text-primary);
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .terminal-tab-menu-btn {
@@ -979,14 +983,14 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
   width: 16px;
   height: 16px;
   border: none;
-  border-radius: 4px;
+  border-radius: 0;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
   flex-shrink: 0;
   padding: 0;
   opacity: 0;
-  transition: opacity 0.15s ease, background 0.15s ease;
+  transition: opacity 0.1s ease, background 0.1s ease;
 }
 
 .terminal-tab:hover .terminal-tab-menu-btn,
@@ -1003,21 +1007,25 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   border: none;
-  border-radius: 2px;
+  border-radius: 0;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
   flex-shrink: 0;
-  margin: 0 2px;
-  transition: background 0.15s ease, color 0.15s ease;
+  margin: 0 6px 0 0;
+  transition: background 0.1s ease, color 0.1s ease;
 }
 
 .terminal-tab-add:hover:not(.disabled) {
   background: var(--bg-tertiary);
   color: var(--text-primary);
+}
+
+.terminal-tab-add:active:not(.disabled) {
+  transform: scale(0.9);
 }
 
 .terminal-tab-add.disabled {
@@ -1199,8 +1207,9 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
 
 .symbol-bar {
   padding: 3px 6px 0;
-  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
-  border-radius: 6px 6px 0 0;
+  background: color-mix(in srgb, var(--bg-primary) 60%, var(--bg-secondary));
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
+  border-radius: 0;
 }
 
 .symbol-bar-scroll {
@@ -1256,7 +1265,7 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
   gap: 2px;
 }
 
-.gesture-toggle { flex-shrink: 0; margin-right: 2px; }
+.gesture-toggle { flex-shrink: 0; }
 
 .toolbar-scroll {
   display: flex;
@@ -1289,7 +1298,7 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
   height: 32px;
   padding: 0 5px;
   border: none;
-  border-radius: 8px;
+  border-radius: 0;
   background: transparent;
   color: var(--toolbar-key-text);
   font-size: 13px;
@@ -1300,18 +1309,18 @@ defineExpose({ activate: () => {}, deactivate: () => {}, keyboardHeight: viewpor
   user-select: none;
   -webkit-user-select: none;
   touch-action: manipulation;
-  transition: background 140ms ease, color 140ms ease, transform 90ms ease;
+  transition: background 100ms ease, color 100ms ease;
 }
 .toolbar-btn:hover { background: var(--toolbar-key-hover); }
-.toolbar-btn:active { background: var(--toolbar-key-active); transform: translateY(1px) scale(0.98); }
+.toolbar-btn:active { background: var(--toolbar-key-active); }
 .toolbar-btn:focus-visible { outline: 2px solid color-mix(in srgb, var(--text-primary) 36%, transparent); outline-offset: 2px; }
-.toolbar-btn.modifier.active { background: var(--toolbar-key-selected-bg); color: var(--toolbar-key-selected-text); }
-.toolbar-btn.modifier.locked { background: var(--toolbar-key-selected-bg); color: var(--toolbar-key-selected-text); box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--toolbar-key-selected-text) 36%, transparent); }
+.toolbar-btn.modifier.active { background: var(--toolbar-key-selected-bg); color: var(--accent-color); box-shadow: inset 0 -2px 0 var(--accent-color); }
+.toolbar-btn.modifier.locked { background: var(--toolbar-key-selected-bg); color: var(--accent-color); box-shadow: inset 0 -2px 0 var(--accent-color); }
 .toolbar-btn.shortcut { background: transparent; color: var(--toolbar-key-text); font-weight: 800; font-size: 11px; }
 .toolbar-btn.shortcut:active { background: var(--toolbar-key-active); }
 .toolbar-btn.danger { color: var(--toolbar-key-text); opacity: 0.78; }
 .toolbar-btn.danger:hover { opacity: 1; background: var(--toolbar-key-hover); }
-.toolbar-btn.gesture-toggle { min-width: 32px; border-radius: 9px; }
+.toolbar-btn.gesture-toggle { min-width: 32px; border-radius: 0; }
 
 .btn-shift-tab {
   display: flex !important;

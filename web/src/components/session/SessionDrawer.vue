@@ -90,7 +90,7 @@
 <script setup>
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
-import { Bot, Plus, Star, RotateCcw } from 'lucide-vue-next'
+import { Bot, Plus, Star, RotateCcw, MessageSquare } from 'lucide-vue-next'
 import { ref, watch, computed, onUnmounted, nextTick } from 'vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'

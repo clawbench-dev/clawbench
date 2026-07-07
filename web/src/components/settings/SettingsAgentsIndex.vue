@@ -1,18 +1,5 @@
 <template>
   <div class="settings-agents-index">
-    <!-- Default agent select -->
-    <SettingsItem
-      label-key="settings.items.defaultAgent"
-      :label="t('settings.items.defaultAgent')"
-      :description="t('settings.items.defaultAgentDesc')"
-      type="select"
-      :model-value="defaultAgentId"
-      :options="defaultAgentOptions"
-      :force-close="activeKey !== null && activeKey !== 'default_agent'"
-      no-divider
-      @update:model-value="handleDefaultAgentChange"
-      @edit-toggle="(open: boolean) => handleEditToggle('default_agent', open)"
-    />
     <!-- Rescan row -->
     <div class="settings-agents-index__rescan-row" :class="{ 'settings-agents-index__rescan-row--disabled': rescanning }" @click="handleRescan">
       <span class="settings-agents-index__rescan-label">{{ rescanning ? t('settings.items.agentRescanning') : t('settings.items.agentRescan') }}</span>
@@ -27,41 +14,27 @@
       <div class="settings-agents-index__left">
         <span class="settings-agents-index__icon">{{ agent.icon }}</span>
         <div class="settings-agents-index__text">
-          <span class="settings-agents-index__name">{{ agent.name }}</span>
+          <div class="settings-agents-index__name-row">
+            <span class="settings-agents-index__name">{{ agent.name }}</span>
+            <span v-if="agent.id === defaultAgentId" class="settings-agents-index__default-badge">{{ t('chat.sessionSetting.defaultBadge') }}</span>
+          </div>
           <span v-if="agent.specialty" class="settings-agents-index__specialty">{{ agent.specialty }}</span>
         </div>
       </div>
-      <div class="settings-agents-index__actions">
-        <button
-          class="settings-agents-index__icon-btn"
-          :title="t('settings.items.agentCopy')"
-          @click.stop="startCopy(agent)"
-        >
-          <Copy :size="16" />
-        </button>
-        <ChevronRight class="settings-agents-index__arrow" :size="18" />
-      </div>
+      <ChevronRight class="settings-agents-index__arrow" :size="18" />
     </div>
     <div v-if="agentList.length === 0" class="settings-agents-index__empty">
       {{ t('settings.items.agentNoAgents') }}
     </div>
-    <CopyAgentDialog
-      v-if="copyingAgent"
-      :source-name="copyingAgent.name"
-      @close="copyingAgent = null"
-      @confirmed="handleCopyConfirmed"
-    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ChevronRight, Copy, RefreshCw } from 'lucide-vue-next'
+import { ChevronRight, RefreshCw } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useAgents } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast'
-import SettingsItem from './SettingsItem.vue'
-import CopyAgentDialog from './CopyAgentDialog.vue'
 
 defineEmits<{
   navigate: [categoryId: string]
@@ -69,9 +42,9 @@ defineEmits<{
 
 const { t } = useI18n()
 const toast = useToast()
-const { agents, defaultAgentId, loadAgents, duplicateAgent, rescanAgents, setDefaultAgent } = useAgents()
+const { agents, defaultAgentId, loadAgents, rescanAgents } = useAgents()
 
-const activeKey = ref<string | null>(null)
+const rescanning = ref(false)
 
 onMounted(() => {
   loadAgents(true)
@@ -80,48 +53,6 @@ onMounted(() => {
 const agentList = computed(() =>
   [...agents.value].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
 )
-
-const defaultAgentOptions = computed(() =>
-  agents.value.map(a => ({
-    label: `${a.icon} ${a.name}`,
-    value: a.id,
-  }))
-)
-
-const copyingAgent = ref<{ id: string; name: string } | null>(null)
-const rescanning = ref(false)
-
-function startCopy(agent: { id: string; name: string }) {
-  copyingAgent.value = { id: agent.id, name: agent.name }
-}
-
-async function handleCopyConfirmed(newName: string) {
-  if (!copyingAgent.value) return
-  const sourceId = copyingAgent.value.id
-  copyingAgent.value = null
-  try {
-    await duplicateAgent(sourceId, newName)
-    toast.show(t('settings.items.agentCopied'), { icon: '✓', type: 'success', duration: 3000 })
-  } catch {
-    toast.show(t('settings.items.agentCopyFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
-  }
-}
-
-async function handleDefaultAgentChange(agentId: string) {
-  try {
-    await setDefaultAgent(agentId)
-  } catch {
-    toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
-  }
-}
-
-function handleEditToggle(key: string, open: boolean) {
-  if (open) {
-    activeKey.value = key
-  } else if (activeKey.value === key) {
-    activeKey.value = null
-  }
-}
 
 async function handleRescan() {
   rescanning.value = true
@@ -252,6 +183,13 @@ async function handleRescan() {
   min-width: 0;
 }
 
+.settings-agents-index__name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .settings-agents-index__name {
   font-size: 15px;
   color: var(--text-primary);
@@ -260,42 +198,24 @@ async function handleRescan() {
   text-overflow: ellipsis;
 }
 
+.settings-agents-index__default-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--accent-color, #0066cc);
+  color: #fff;
+  white-space: nowrap;
+}
+
 .settings-agents-index__specialty {
   font-size: 12px;
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.settings-agents-index__actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-}
-
-.settings-agents-index__icon-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  padding: 0;
-}
-
-.settings-agents-index__icon-btn:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-}
-
-.settings-agents-index__icon-btn:active {
-  background: var(--bg-secondary);
 }
 
 .settings-agents-index__arrow {

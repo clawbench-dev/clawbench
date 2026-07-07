@@ -24,9 +24,11 @@ import ModalDialog from '@/components/common/ModalDialog.vue'
 import { copyText } from '@/utils/clipboard.ts'
 import { gt } from '@/composables/useLocale'
 import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
+import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { useDialog } from '@/composables/useDialog.ts'
 import { store } from '@/stores/app.ts'
+import { extractImageName } from '@/utils/lightbox.ts'
 
 defineProps({
   data: Object,  // { headers: string[], rows: string[][], currentIndex: number } | null
@@ -40,6 +42,8 @@ const switchTab = inject('switchTab', null)
 const hotSwitchProject = inject('hotSwitchProject', null)
 const dialog = useDialog()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
+const openLightbox = inject('openLightbox', null)
+const openMdImages = inject('openMdImages', null)
 
 function handleValueDblClick(event) {
   const el = event.target
@@ -61,10 +65,46 @@ function handleValueDblClick(event) {
 async function handleValueClick(event) {
   const target = event.target
 
-  // 1. Localhost URL button
+  // 0. Lightbox image click (ModalDialog @click.stop prevents bubbling to Lightbox's global listener)
+  const lightboxImg = target.closest('.lightbox-img')
+  if (lightboxImg) {
+    if (openLightbox) {
+      event.preventDefault()
+      // Collect sibling images in the modal for navigation
+      const modalBody = lightboxImg.closest('.table-row-form')
+      if (modalBody && openMdImages) {
+        const allImgs = modalBody.querySelectorAll('img.lightbox-img')
+        if (allImgs.length > 1) {
+          const list = []
+          let startIdx = 0
+          allImgs.forEach((img) => {
+            const src = img.src
+            if (!src) return
+            const name = img.alt || extractImageName(src)
+            list.push({ src, name })
+            if (img === lightboxImg) startIdx = list.length - 1
+          })
+          if (list.length > 1) {
+            openMdImages(list, startIdx)
+            return
+          }
+        }
+      }
+      openLightbox(lightboxImg.src)
+    }
+    return
+  }
+
+  // 1. Code block copy/wrap button
+  if (handleCodeBlockClick(event)) return
+
+  // 2. Table block copy/wrap button
+  if (handleTableBlockClick(event)) return
+
+  // 3. Localhost URL button
   if (handleLocalhostUrlClick(event)) return
 
-  // 2. Worktree button
+  // 4. Worktree button
   const wtBtn = target.closest('.chat-worktree-btn')
   if (wtBtn) {
     event.preventDefault()
@@ -97,7 +137,7 @@ async function handleValueClick(event) {
     return
   }
 
-  // 3. Commit hash
+  // 5. Commit hash
   const commitEl = target.closest('.chat-commit-hash, .chat-commit-open-btn')
   if (commitEl) {
     event.preventDefault()
@@ -110,7 +150,7 @@ async function handleValueClick(event) {
     return
   }
 
-  // 4. File-open button
+  // 6. File-open button
   const fileBtn = target.closest('.chat-file-open-btn')
   if (fileBtn) {
     event.preventDefault()
