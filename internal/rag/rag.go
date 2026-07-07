@@ -95,18 +95,14 @@ func Shutdown() {
 }
 
 // Reconfigure applies new RAG config at runtime (hot-reload).
-// It recreates the embedding client if needed, and restarts the
-// indexer and cleanup worker with the new config.
+// It recreates the embedding client (pointer swap, no field mutation)
+// and restarts the indexer and cleanup worker with the new config.
 func Reconfigure(cfg model.RAGConfig) {
-	// Update or create embedding client
+	// Create a new EmbeddingClient instead of mutating the existing one.
+	// This eliminates data races: in-flight requests on the old client
+	// complete on their own http.Client; the pointer swap is atomic.
 	if cfg.BaseURL != "" && cfg.Model != "" {
-		if GlobalEmbedder != nil {
-			GlobalEmbedder.BaseURL = cfg.BaseURL
-			GlobalEmbedder.Model = cfg.Model
-			GlobalEmbedder.APIKey = cfg.APIKey
-		} else {
-			GlobalEmbedder = NewEmbeddingClient(cfg.BaseURL, cfg.Model, cfg.APIKey)
-		}
+		GlobalEmbedder = NewEmbeddingClient(cfg.BaseURL, cfg.Model, cfg.APIKey)
 		embedderHealthyFlag.Store(false)
 	} else {
 		GlobalEmbedder = nil
@@ -131,5 +127,5 @@ func Reconfigure(cfg model.RAGConfig) {
 		StartCleanupWorker(cfg)
 	}
 
-	slog.Info("hot-reload: RAG reconfigured", slog.String("base_url", cfg.BaseURL), slog.String("model", cfg.Model))
+	slog.Info("hot-reload: RAG reconfigured", slog.String("base_url", cfg.BaseURL), slog.String("model", cfg.Model), slog.Bool("has_api_key", cfg.APIKey != ""))
 }
