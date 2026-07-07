@@ -955,7 +955,8 @@ func TestUploadFile_ValidFile(t *testing.T) {
 
 	path, ok := result["path"].(string)
 	assert.True(t, ok)
-	assert.Contains(t, path, ".clawbench"+string([]byte{filepath.Separator})+"uploads")
+	// Path may use forward slashes even on Windows (from URL or Go path joining)
+	assert.Contains(t, filepath.ToSlash(path), ".clawbench/uploads")
 }
 
 func TestUploadFile_NoProjectCookie(t *testing.T) {
