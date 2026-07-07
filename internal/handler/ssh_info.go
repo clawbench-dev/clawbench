@@ -86,7 +86,7 @@ func ServeSSHInfo(w http.ResponseWriter, r *http.Request) {
 
 	command := ""
 	if len(forwardArgs) > 0 {
-		command = fmt.Sprintf("ssh %s clawbench@%s -p %d",
+		command = fmt.Sprintf("ssh -N %s clawbench@%s -p %d",
 			strings.Join(forwardArgs, " "), host, port)
 	}
 

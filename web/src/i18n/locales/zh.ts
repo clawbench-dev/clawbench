@@ -439,6 +439,7 @@ export default {
     run: '执行',
     history: '记录',
     delete: '删除',
+    clearUnread: '清除未读',
     actionFailed: '操作失败',
     actionFailedDetail: '操作失败: {error}',
     status: {
@@ -674,7 +675,7 @@ export default {
     tunnelGuideIntro: '在本地终端执行以下命令，将服务器端口转发到本地：',
     tunnelGuideStep1: '1. 先添加需要转发的端口',
     tunnelGuideStep2: '2. 复制生成的 SSH 命令',
-    tunnelGuideStep3: '3. 在本地终端中粘贴并执行，转发端口即可通过 localhost 访问',
+    tunnelGuideStep3: '3. 在本地终端中粘贴并执行，使用登录密码作为 SSH 密码',
     tunnelNoCommand: '请先添加转发端口，SSH 隧道命令将自动生成',
     tunnelNoSsh: 'SSH 隧道未启用，请在服务器端 config.yaml 中配置 port_forward.enabled: true',
     portItem: {

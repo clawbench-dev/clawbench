@@ -109,6 +109,9 @@ func TestServeSSHInfo_Enabled(t *testing.T) {
 	if !containsStr(cmd, "-p 20001") {
 		t.Errorf("command should contain -p 20001, got: %s", cmd)
 	}
+	if !containsStr(cmd, "ssh -N ") {
+		t.Errorf("command should start with 'ssh -N ', got: %s", cmd)
+	}
 }
 
 func TestServeSSHInfo_NonLocalhostTarget_UsesReverseProxyRoute(t *testing.T) {

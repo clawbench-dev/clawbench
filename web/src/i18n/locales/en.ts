@@ -439,6 +439,7 @@ export default {
     run: 'Run',
     history: 'History',
     delete: 'Delete',
+    clearUnread: 'Mark all read',
     actionFailed: 'Action failed',
     actionFailedDetail: 'Action failed: {error}',
     status: {
@@ -674,7 +675,7 @@ export default {
     tunnelGuideIntro: 'Run the following command in your local terminal to forward server ports:',
     tunnelGuideStep1: '1. Add the ports you want to forward',
     tunnelGuideStep2: '2. Copy the generated SSH command',
-    tunnelGuideStep3: '3. Paste and run it in your local terminal — forwarded ports will be accessible via localhost',
+    tunnelGuideStep3: '3. Paste and run it in your local terminal — use your login password as the SSH password',
     tunnelNoCommand: 'Add forwarded ports first, the SSH tunnel command will be generated automatically',
     tunnelNoSsh: 'SSH tunnel is not enabled. Set port_forward.enabled: true in the server config.yaml',
     portItem: {
