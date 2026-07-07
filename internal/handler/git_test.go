@@ -1903,6 +1903,66 @@ func TestParseGitStatusPorcelain_QuotedPath(t *testing.T) {
 	assert.Equal(t, "path with spaces.txt", files[0].Path)
 }
 
+func TestParseGitStatusPorcelain_QuotedPathWithChinese(t *testing.T) {
+	// Git outputs Chinese paths as: ?? "\350\256\276\350\256\241.md"
+	// where \350\256\276 = 设, \350\256\241 = 计
+	output := `?? "\350\256\276\350\256\241.md"` + "\n"
+	files := parseGitStatusPorcelain(output)
+	assert.Len(t, files, 1)
+	assert.Equal(t, "设计.md", files[0].Path)
+}
+
+// --- unescapeGitPath ---
+
+func TestUnescapeGitPath_Unquoted(t *testing.T) {
+	assert.Equal(t, "README.md", unescapeGitPath("README.md"))
+}
+
+func TestUnescapeGitPath_QuotedNoEscapes(t *testing.T) {
+	assert.Equal(t, "path with spaces.txt", unescapeGitPath(`"path with spaces.txt"`))
+}
+
+func TestUnescapeGitPath_ChineseOctalEscapes(t *testing.T) {
+	// 设计 = \350\256\276\350\256\241
+	assert.Equal(t, "设计.md", unescapeGitPath(`"\350\256\276\350\256\241.md"`))
+}
+
+func TestUnescapeGitPath_MixedASCIIOctal(t *testing.T) {
+	// src/设计/组件.tsx = src/\350\256\276\350\256\241/\347\273\204\344\273\266.tsx
+	assert.Equal(t, "src/设计/组件.tsx", unescapeGitPath(`"src/\350\256\276\350\256\241/\347\273\204\344\273\266.tsx"`))
+}
+
+func TestUnescapeGitPath_InvalidOctal(t *testing.T) {
+	// \899 is not valid octal — should be left as-is
+	assert.Equal(t, `\899.txt`, unescapeGitPath(`"\899.txt"`))
+}
+
+func TestUnescapeGitPath_PartialOctalAtEnd(t *testing.T) {
+	// Not enough digits for a full \NNN at end — left as-is
+	assert.Equal(t, `\34`, unescapeGitPath(`"\34"`))
+}
+
+func TestUnescapeGitPath_JapaneseOctalEscapes(t *testing.T) {
+	// 日本 = \346\227\245\346\234\254
+	assert.Equal(t, "日本.md", unescapeGitPath(`"\346\227\245\346\234\254.md"`))
+}
+
+func TestParseOctalByte(t *testing.T) {
+	b, ok := parseOctalByte("350")
+	assert.True(t, ok)
+	assert.Equal(t, byte(0o350), b)
+
+	b, ok = parseOctalByte("000")
+	assert.True(t, ok)
+	assert.Equal(t, byte(0), b)
+
+	_, ok = parseOctalByte("899")
+	assert.False(t, ok)
+
+	_, ok = parseOctalByte("12")
+	assert.False(t, ok) // not 3 digits
+}
+
 // --- gitDiff staged + unstaged combination ---
 
 func TestGitDiff_StagedAndUnstaged(t *testing.T) {

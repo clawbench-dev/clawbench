@@ -16,6 +16,56 @@ import (
 	"time"
 )
 
+// unescapeGitPath decodes git's C-style octal escape sequences in quoted paths.
+// Git wraps paths containing non-ASCII or special characters in double quotes
+// and replaces each non-ASCII byte with \NNN (octal). For example:
+//
+//	"\350\256\276\350\256\241.md" → "设计.md"
+//
+// If the path is not quoted, it is returned unchanged.
+func unescapeGitPath(path string) string {
+	if len(path) < 2 || path[0] != '"' || path[len(path)-1] != '"' {
+		return path
+	}
+	// Strip surrounding quotes
+	inner := path[1 : len(path)-1]
+
+	var buf strings.Builder
+	buf.Grow(len(inner))
+	i := 0
+	for i < len(inner) {
+		if inner[i] == '\\' && i+3 < len(inner) {
+			// Try to parse \NNN as octal byte value
+			b, ok := parseOctalByte(inner[i+1 : i+4])
+			if ok {
+				buf.WriteByte(b)
+				i += 4
+				continue
+			}
+		}
+		buf.WriteByte(inner[i])
+		i++
+	}
+	return buf.String()
+}
+
+// parseOctalByte parses a 3-digit octal string into a byte.
+// Returns false if s is not exactly 3 octal digits.
+func parseOctalByte(s string) (byte, bool) {
+	if len(s) != 3 {
+		return 0, false
+	}
+	var n byte
+	for i := 0; i < 3; i++ {
+		ch := s[i]
+		if ch < '0' || ch > '7' {
+			return 0, false
+		}
+		n = n*8 + (ch - '0')
+	}
+	return n, true
+}
+
 // validGitSHA matches a hex commit SHA (6-40 hex chars, abbreviated or full).
 // Prevents argument injection where a malicious SHA starting with "-" could be
 // interpreted as a git flag. (ISS-132)
@@ -480,7 +530,8 @@ func ServeGitCommitFiles(w http.ResponseWriter, r *http.Request) {
 
 	// Regular commit (or orphan): use diff-tree as before
 	// -m splits merge commits so their diffs are shown (otherwise empty)
-	cmd := exec.Command("git", "diff-tree", "-m", "--no-commit-id", "--name-status", "-r", sha)
+	// -c core.quotePath=false prevents octal escaping of non-ASCII paths
+	cmd := exec.Command("git", "-c", "core.quotePath=false", "diff-tree", "-m", "--no-commit-id", "--name-status", "-r", sha)
 	cmd.Dir = projectPath
 	output, err := cmd.CombinedOutput()
 
@@ -494,7 +545,7 @@ func ServeGitCommitFiles(w http.ResponseWriter, r *http.Request) {
 			if len(parts) == 2 {
 				files = append(files, fileInfo{
 					Type: parts[0],
-					Path: parts[1],
+					Path: unescapeGitPath(parts[1]),
 				})
 			}
 		}
@@ -556,7 +607,8 @@ func buildMergeFileGroups(projectPath, sha string, parents []string) map[string]
 	groups := make([]mergeFileGroup, 0, len(parents))
 
 	for i, parent := range parents {
-		diffCmd := exec.Command("git", "diff", "--name-status", mergeBase, parent)
+		// -c core.quotePath=false prevents octal escaping of non-ASCII paths
+		diffCmd := exec.Command("git", "-c", "core.quotePath=false", "diff", "--name-status", mergeBase, parent)
 		diffCmd.Dir = projectPath
 		diffOutput, diffErr := diffCmd.Output()
 		if diffErr != nil {
@@ -572,7 +624,7 @@ func buildMergeFileGroups(projectPath, sha string, parents []string) map[string]
 			if len(parts) != 2 {
 				continue
 			}
-			path := parts[1]
+			path := unescapeGitPath(parts[1])
 			if seen[path] {
 				continue
 			}
@@ -595,7 +647,8 @@ func buildMergeFileGroups(projectPath, sha string, parents []string) map[string]
 	}
 
 	// Also include files only in the merge result (conflict resolutions)
-	cmd = exec.Command("git", "diff", "--name-status", mergeBase, sha)
+	// -c core.quotePath=false prevents octal escaping of non-ASCII paths
+	cmd = exec.Command("git", "-c", "core.quotePath=false", "diff", "--name-status", mergeBase, sha)
 	cmd.Dir = projectPath
 	output, err = cmd.Output()
 	if err == nil {
@@ -608,7 +661,7 @@ func buildMergeFileGroups(projectPath, sha string, parents []string) map[string]
 			if len(parts) != 2 {
 				continue
 			}
-			path := parts[1]
+			path := unescapeGitPath(parts[1])
 			if seen[path] {
 				continue
 			}
@@ -700,7 +753,8 @@ func extractMergeLabels(projectPath, sha string, parents []string) []string { //
 
 // fallbackMergeFiles uses diff-tree -m with dedup when merge-base fails.
 func fallbackMergeFiles(projectPath, sha string) map[string]interface{} {
-	cmd := exec.Command("git", "diff-tree", "-m", "--no-commit-id", "--name-status", "-r", sha)
+	// -c core.quotePath=false prevents octal escaping of non-ASCII paths
+	cmd := exec.Command("git", "-c", "core.quotePath=false", "diff-tree", "-m", "--no-commit-id", "--name-status", "-r", sha)
 	cmd.Dir = projectPath
 	output, err := cmd.CombinedOutput()
 
@@ -717,11 +771,12 @@ func fallbackMergeFiles(projectPath, sha string) map[string]interface{} {
 				continue
 			}
 			parts := strings.SplitN(line, "\t", 2)
-			if len(parts) == 2 && !seen[parts[1]] {
-				seen[parts[1]] = true
+			path := unescapeGitPath(parts[1])
+			if len(parts) == 2 && !seen[path] {
+				seen[path] = true
 				files = append(files, fileInfo{
 					Type: parts[0],
-					Path: parts[1],
+					Path: path,
 				})
 			}
 		}
@@ -874,8 +929,11 @@ func parseGitStatusPorcelain(output string) []wtFileInfo {
 		y := line[1] // worktree (unstaged) status
 		// Skip the 2-char XY status, then skip leading whitespace to get path
 		path := strings.TrimLeft(line[2:], " \t")
-		// Handle quoted paths (git quotes paths with special chars)
-		path = strings.Trim(path, "\"")
+		// Handle quoted paths with possible octal escapes (git core.quotePath)
+		path = unescapeGitPath(path)
+		// If path was not quoted, TrimLeft may have left it as-is —
+		// but unescapeGitPath only processes quoted paths, so unquoted
+		// paths (no special chars) pass through unchanged.
 
 		// Determine display type and staged status
 		switch {
@@ -1046,7 +1104,8 @@ func ServeGitWorkingTreeFiles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// For project: return all uncommitted files using git status --porcelain
-	cmd := exec.Command("git", "status", "--porcelain")
+	// -c core.quotePath=false prevents octal escaping of non-ASCII paths
+	cmd := exec.Command("git", "-c", "core.quotePath=false", "status", "--porcelain")
 	cmd.Dir = projectPath
 	output, _ := cmd.CombinedOutput()
 	allFiles := parseGitStatusPorcelain(string(output))
