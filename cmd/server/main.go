@@ -225,9 +225,9 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		model.DataDir = filepath.Join(homeDir, ".clawbench")
 	}
 
-	// Auto-migrate from legacy BinDir layout if --data-dir was not specified
+	// Warn about legacy BinDir layout if detected
 	if cliDataDir == "" {
-		startup.MigrateFromBinDir(model.BinDir, model.DataDir)
+		startup.CheckLegacyLayout(model.BinDir, model.DataDir)
 	}
 
 	// Load configuration — config/config.yaml is optional
