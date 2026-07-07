@@ -141,8 +141,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-RUN npm config set registry https://registry.npmmirror.com && \
-    npm install @xulongzhe/clawbench@$NPM_VER
+RUN npm install @xulongzhe/clawbench@$NPM_VER @xulongzhe/clawbench-linux-x64@$NPM_VER
 RUN mkdir -p /data/.clawbench
 EXPOSE 20500
 CMD ["npx", "clawbench", "--port", "20500", "--data-dir", "/data/.clawbench"]
@@ -189,12 +188,12 @@ docker stop clawbench-image 2>/dev/null && docker rm clawbench-image 2>/dev/null
 ### 5.3 拉取镜像并启动
 
 ```bash
-docker pull ghcr.io/xulongzhe/clawbench:$NEW_TAG
+docker pull ghcr.io/clawbench-dev/clawbench:$NEW_TAG
 docker run -d \
   --name clawbench-image \
   -p 20400:20000 \
   -v clawbench-image-data:/data \
-  ghcr.io/xulongzhe/clawbench:$NEW_TAG
+  ghcr.io/clawbench-dev/clawbench:$NEW_TAG
 ```
 
 注意：容器内部服务监听 20000，通过 `-p 20400:20000` 映射到宿主机 20400。
@@ -234,4 +233,6 @@ echo "Docker 镜像版 (port 20400) 密码: $IMG_PASS"
 - **杀进程时绝对不要用 `pkill` 或 `killall`**，必须用 `lsof -i :PORT -t | xargs kill` 按端口精确杀
 - **绝对不要碰端口 20000**——那是用户的主服务
 - Docker 镜像版容器内监听 20000，宿主机映射到 20400；绿色版和 NPM 版容器内直接监听各自端口
-- NPM 安装使用国内镜像源 `https://registry.npmmirror.com`
+- NPM 安装使用官方 registry `https://registry.npmjs.org`（不使用国内镜像，因 npmmirror 同步延迟可能导致平台包 404）
+- NPM 安装需显式安装平台包 `@xulongzhe/clawbench-linux-x64`，主包不会自动安装可选依赖
+- Docker 镜像的 GHCR 地址是 `ghcr.io/clawbench-dev/clawbench`（GitHub 仓库的 organization 是 `clawbench-dev`）
