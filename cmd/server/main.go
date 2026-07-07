@@ -230,9 +230,9 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	var presence map[string]bool
 
 	// Search for config in priority order:
-	// 1. <BinDir>/config/config.yaml (green portable: next to binary)
+	// 1. <DataDir>/config/config.yaml (data directory)
 	// 2. config/config.yaml (CWD-relative, standard layout)
-	configPath := cli.FindConfigPath(model.BinDir)
+	configPath := cli.FindConfigPath(model.DataDir)
 
 	data, err := os.ReadFile(configPath)
 	if err == nil {
@@ -423,7 +423,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Load .env file into process environment (before loading agents,
 	// so agent env ${VAR} references can be resolved at request time)
-	dotenvPath := filepath.Join(model.BinDir, ".env")
+	dotenvPath := filepath.Join(model.DataDir, ".env")
 	if _, err := os.Stat(dotenvPath); os.IsNotExist(err) {
 		dotenvPath = ".env"
 	}

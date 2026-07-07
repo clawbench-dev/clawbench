@@ -52,7 +52,7 @@ func captureStdout(t *testing.T, fn func()) string {
 
 // ---------- FindConfigPath ----------
 
-func TestFindConfigPath_BinDirConfig(t *testing.T) {
+func TestFindConfigPath_DataDirConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	configDir := filepath.Join(tmpDir, "config")
 	_ = os.MkdirAll(configDir, 0o755)
@@ -566,9 +566,9 @@ func TestLoadConfig_FromFile(t *testing.T) {
 	_ = os.MkdirAll(configDir, 0o755)
 	_ = os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte("port: 12345\nwatch_dir: /tmp"), 0o644)
 
-	// loadConfig() reads os.Args[0] to compute BinDir, then calls FindConfigPath.
+	// loadConfig() reads os.Args[0] to compute BinDir, then calls FindConfigPath(DataDir).
 	// Since we can't easily control os.Args[0] in tests, just test that
-	// the idempotent path works and FindConfigPath works with BinDir.
+	// the idempotent path works and FindConfigPath works with DataDir.
 	// The full loadConfig path is tested indirectly by integration tests.
 	// Here, just verify FindConfigPath resolves correctly with a valid config dir.
 	path := FindConfigPath(tmpDir)

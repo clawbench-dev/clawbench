@@ -272,16 +272,16 @@ func TestWriteConfigYAML_MkdirFail(t *testing.T) {
 		t.Skip("skipping as root")
 	}
 
-	origBinDir := model.BinDir
+	origDataDir := model.DataDir
 	// Use a path that cannot be created on any OS:
 	// - Linux: /proc is a procfs mount, mkdir inside it fails with EROFS
 	// - Windows: CON is a reserved device name, mkdir fails
 	if runtime.GOOS == "windows" {
-		model.BinDir = `CON\cannot-create-here`
+		model.DataDir = `CON\cannot-create-here`
 	} else {
-		model.BinDir = "/proc/cannot-create-here"
+		model.DataDir = "/proc/cannot-create-here"
 	}
-	defer func() { model.BinDir = origBinDir }()
+	defer func() { model.DataDir = origDataDir }()
 
 	err := writeConfigYAML(map[string]any{"test": "value"})
 	assert.Error(t, err)

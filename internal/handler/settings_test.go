@@ -1641,9 +1641,9 @@ func TestServeConfigPatch_WriteConfigYAMLError(t *testing.T) {
 	cfg := model.Config{}
 	model.ConfigInstance = cfg
 
-	origBinDir := model.BinDir
-	model.BinDir = "/nonexistent/path/that/cannot/be/created"
-	defer func() { model.BinDir = origBinDir }()
+	origDataDir := model.DataDir
+	model.DataDir = "/nonexistent/path/that/cannot/be/created"
+	defer func() { model.DataDir = origDataDir }()
 
 	body := `{"chat":{"system_prompt_interval":20}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
@@ -1810,7 +1810,8 @@ func TestServeConfigPassword_RemoteAddrNoPort(t *testing.T) {
 	model.PasswordHash = bcryptHash
 	model.ConfigInstance = model.Config{}
 	model.BinDir = t.TempDir()
-	_ = os.MkdirAll(filepath.Join(model.BinDir, "config"), 0o755)
+	model.DataDir = model.BinDir
+	_ = os.MkdirAll(filepath.Join(model.DataDir, "config"), 0o755)
 
 	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
 		"current_password": password,
@@ -2074,9 +2075,9 @@ func TestServeConfigPatch_WithExistingConfigBackup(t *testing.T) {
 	require.NoError(t, os.MkdirAll(configDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte("chat:\n  system_prompt_interval: 5\n"), 0o644))
 
-	origBinDir := model.BinDir
-	model.BinDir = binDir
-	defer func() { model.BinDir = origBinDir }()
+	origDataDir := model.DataDir
+	model.DataDir = binDir
+	defer func() { model.DataDir = origDataDir }()
 
 	body := `{"chat":{"system_prompt_interval":20}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))

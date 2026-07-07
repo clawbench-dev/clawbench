@@ -21,10 +21,10 @@ import (
 )
 
 // FindConfigPath searches for config.yaml in priority order:
-//  1. <BinDir>/config/config.yaml (green portable: next to binary)
+//  1. <DataDir>/config/config.yaml (data directory)
 //  2. config/config.yaml (CWD-relative, standard layout)
-func FindConfigPath(binDir string) string {
-	configPath := filepath.Join(binDir, "config", "config.yaml")
+func FindConfigPath(dataDir string) string {
+	configPath := filepath.Join(dataDir, "config", "config.yaml")
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		configPath = filepath.Join("config", "config.yaml")
 	}
@@ -52,7 +52,7 @@ func loadConfig() {
 
 	var cfg model.Config
 	var presence map[string]bool
-	configPath := FindConfigPath(model.BinDir)
+	configPath := FindConfigPath(model.DataDir)
 
 	data, err := os.ReadFile(configPath)
 	if err == nil {

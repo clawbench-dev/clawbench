@@ -32,7 +32,8 @@ func TestServeConfigPassword_Success(t *testing.T) {
 	model.PasswordHash = bcryptHash
 	model.ConfigInstance = model.Config{}
 	model.BinDir = t.TempDir()
-	_ = os.MkdirAll(filepath.Join(model.BinDir, "config"), 0o755)
+	model.DataDir = model.BinDir
+	_ = os.MkdirAll(filepath.Join(model.DataDir, "config"), 0o755)
 
 	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
 		"current_password": password,
@@ -48,7 +49,7 @@ func TestServeConfigPassword_Success(t *testing.T) {
 	assert.Equal(t, false, resp["needs_restart"])
 
 	// Verify config.yaml was written with sha256: prefix
-	configData, err := os.ReadFile(filepath.Join(model.BinDir, "config", "config.yaml"))
+	configData, err := os.ReadFile(filepath.Join(model.DataDir, "config", "config.yaml"))
 	require.NoError(t, err)
 	assert.Contains(t, string(configData), "sha256:")
 
@@ -142,7 +143,8 @@ func TestServeConfigPassword_SHA256StoredPassword(t *testing.T) {
 	model.PasswordHash = nil // No bcrypt when stored as SHA-256
 	model.ConfigInstance = model.Config{}
 	model.BinDir = t.TempDir()
-	_ = os.MkdirAll(filepath.Join(model.BinDir, "config"), 0o755)
+	model.DataDir = model.BinDir
+	_ = os.MkdirAll(filepath.Join(model.DataDir, "config"), 0o755)
 
 	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
 		"current_password": password,
@@ -158,7 +160,7 @@ func TestServeConfigPassword_SHA256StoredPassword(t *testing.T) {
 	assert.Equal(t, false, resp["needs_restart"])
 
 	// Verify config.yaml was written with sha256: prefix
-	configData, err := os.ReadFile(filepath.Join(model.BinDir, "config", "config.yaml"))
+	configData, err := os.ReadFile(filepath.Join(model.DataDir, "config", "config.yaml"))
 	require.NoError(t, err)
 	assert.Contains(t, string(configData), "sha256:")
 }
@@ -353,15 +355,15 @@ func TestServeConfigPassword_WriteFailure(t *testing.T) {
 	model.ConfigInstance = model.Config{Password: password}
 
 	// Create a temp dir and make its config subdirectory read-only to trigger write failure
-	origBinDir := model.BinDir
+	origDataDir := model.DataDir
 	failDir := t.TempDir()
 	configDir := filepath.Join(failDir, "config")
 	_ = os.MkdirAll(configDir, 0o755)
 	_ = os.Chmod(configDir, 0o555)
-	model.BinDir = failDir
+	model.DataDir = failDir
 	defer func() {
 		_ = os.Chmod(configDir, 0o755) // restore for cleanup
-		model.BinDir = origBinDir
+		model.DataDir = origDataDir
 	}()
 
 	req := newRequest(t, http.MethodPost, "/api/config/password", map[string]string{
@@ -448,7 +450,8 @@ func TestServeConfigPassword_Boundary32(t *testing.T) {
 	model.PasswordHash = bcryptHash
 	model.ConfigInstance = model.Config{}
 	model.BinDir = t.TempDir()
-	_ = os.MkdirAll(filepath.Join(model.BinDir, "config"), 0o755)
+	model.DataDir = model.BinDir
+	_ = os.MkdirAll(filepath.Join(model.DataDir, "config"), 0o755)
 
 	// Exactly 32 chars with letter+digit — should succeed
 	boundaryPassword := "a1" + strings.Repeat("a", 30) // 32 chars

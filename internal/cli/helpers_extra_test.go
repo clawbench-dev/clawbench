@@ -144,18 +144,16 @@ func TestLoadConfig_SetsServerPort(t *testing.T) {
 	// Reset ConfigInstance so loadConfig actually runs
 	model.ConfigInstance = model.Config{}
 
-	// loadConfig() resets BinDir from os.Args[0] and then calls FindConfigPath(BinDir).
-	// We create a config file relative to the test binary's directory.
-	binDir := filepath.Dir(os.Args[0])
-	configDir := filepath.Join(binDir, "config")
+	// loadConfig() calls FindConfigPath(DataDir).
+	// We create a config file relative to DataDir.
+	dataDir := t.TempDir()
+	model.DataDir = dataDir
+	configDir := filepath.Join(dataDir, "config")
 	_ = os.MkdirAll(configDir, 0o755)
 	configPath := filepath.Join(configDir, "config.yaml")
 
 	// Write a config with a non-default port
 	_ = os.WriteFile(configPath, []byte("port: 9999\n"), 0o644)
-	defer os.Remove(configPath)
-	// Also try to remove the config dir if we created it
-	defer os.Remove(configDir)
 
 	loadConfig()
 
@@ -177,21 +175,22 @@ func TestLoadConfig_InvalidYAML(t *testing.T) {
 
 func TestLoadConfig_FullPathWithConfigFile(t *testing.T) {
 	// Test the full loadConfig path with Port=0 and a valid config file
-	// placed relative to the test binary (since loadConfig resets BinDir from os.Args[0])
+	// placed relative to DataDir (since loadConfig calls FindConfigPath(DataDir))
 	origCfg := model.ConfigInstance
 	origServerPort := model.ServerPort
+	origDataDir := model.DataDir
 	t.Cleanup(func() {
 		model.ConfigInstance = origCfg
 		model.ServerPort = origServerPort
+		model.DataDir = origDataDir
 	})
 
-	binDir := filepath.Dir(os.Args[0])
-	configDir := filepath.Join(binDir, "config")
+	dataDir := t.TempDir()
+	model.DataDir = dataDir
+	configDir := filepath.Join(dataDir, "config")
 	_ = os.MkdirAll(configDir, 0o755)
 	configPath := filepath.Join(configDir, "config.yaml")
 	_ = os.WriteFile(configPath, []byte("port: 12345\n"), 0o644)
-	defer os.Remove(configPath)
-	defer os.Remove(configDir)
 
 	model.ConfigInstance = model.Config{}
 

@@ -1056,7 +1056,7 @@ func applyHotReloadGlobals() {
 // generic map, patches only the changed fields, and writes back. This preserves
 // user comments, field ordering, and absent-as-default semantics for untouched fields.
 func writeConfigYAML(patch map[string]any) error {
-	configDir := filepath.Join(model.BinDir, "config")
+	configDir := filepath.Join(model.DataDir, "config")
 	configPath := filepath.Join(configDir, "config.yaml")
 	tmpPath := configPath + ".tmp"
 	bakPath := configPath + ".bak"

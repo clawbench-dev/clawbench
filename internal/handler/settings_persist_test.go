@@ -16,18 +16,18 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// setupPersistTestEnv sets up a test environment with BinDir configured
+// setupPersistTestEnv sets up a test environment with DataDir configured
 // so that writeConfigYAML actually writes to disk.
 func setupPersistTestEnv(t *testing.T) (*testEnv, func()) { //nolint:unparam // test helper: testEnv used implicitly via global state
 	t.Helper()
 	env, teardown := setupTestEnv(t)
 
-	// Set BinDir to a temp directory so config.yaml gets written there
+	// Set DataDir to a temp directory so config.yaml gets written there
 	origBinDir := model.BinDir
 	origDataDir := model.DataDir
 	tmpDir := t.TempDir()
 	model.BinDir = tmpDir
-	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	model.DataDir = tmpDir
 
 	// Also need config dir
 	_ = os.MkdirAll(filepath.Join(tmpDir, "config"), 0o755)
@@ -56,7 +56,7 @@ func patchAndReadConfig(t *testing.T, body string) map[string]any {
 	assert.Equal(t, http.StatusOK, w.Code, "PATCH should succeed: %s", w.Body.String())
 
 	// Read config.yaml from disk
-	configPath := filepath.Join(model.BinDir, "config", "config.yaml")
+	configPath := filepath.Join(model.DataDir, "config", "config.yaml")
 	data, err := os.ReadFile(configPath)
 	require.NoError(t, err, "config.yaml should exist after PATCH")
 
@@ -551,7 +551,7 @@ func TestPersist_InMemoryAndDiskMatch(t *testing.T) {
 	assert.Equal(t, "claude", model.ConfigInstance.DefaultAgent)
 
 	// Verify on-disk
-	configPath := filepath.Join(model.BinDir, "config", "config.yaml")
+	configPath := filepath.Join(model.DataDir, "config", "config.yaml")
 	data, err := os.ReadFile(configPath)
 	require.NoError(t, err)
 
@@ -578,7 +578,7 @@ func TestPersist_CreatesBackup(t *testing.T) {
 	// Second PATCH should create .bak
 	patchAndReadConfig(t, `{"chat":{"system_prompt_interval":20}}`)
 
-	bakPath := filepath.Join(model.BinDir, "config", "config.yaml.bak")
+	bakPath := filepath.Join(model.DataDir, "config", "config.yaml.bak")
 	_, err := os.Stat(bakPath)
 	assert.NoError(t, err, "config.yaml.bak should exist after second PATCH")
 }
@@ -631,7 +631,7 @@ func TestPersist_CorruptYAMLRecovery(t *testing.T) {
 	_, cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
-	configDir := filepath.Join(model.BinDir, "config")
+	configDir := filepath.Join(model.DataDir, "config")
 	configPath := filepath.Join(configDir, "config.yaml")
 
 	// Write corrupt YAML
@@ -651,7 +651,7 @@ func TestPersist_EmptyYAMLRecovery(t *testing.T) {
 	_, cleanup := setupPersistTestEnv(t)
 	defer cleanup()
 
-	configDir := filepath.Join(model.BinDir, "config")
+	configDir := filepath.Join(model.DataDir, "config")
 	configPath := filepath.Join(configDir, "config.yaml")
 
 	// Write empty file
@@ -671,7 +671,7 @@ func TestPersist_MergeCreatesNestedMap(t *testing.T) {
 	defer cleanup()
 
 	// Create minimal config.yaml with no nested sections
-	configDir := filepath.Join(model.BinDir, "config")
+	configDir := filepath.Join(model.DataDir, "config")
 	configPath := filepath.Join(configDir, "config.yaml")
 	require.NoError(t, os.WriteFile(configPath, []byte("default_agent: claude\n"), 0o644))
 
@@ -692,7 +692,7 @@ func TestPersist_CreatesConfigDir(t *testing.T) {
 	defer cleanup()
 
 	// Remove the config directory that setupPersistTestEnv created
-	configDir := filepath.Join(model.BinDir, "config")
+	configDir := filepath.Join(model.DataDir, "config")
 	_ = os.RemoveAll(configDir)
 
 	model.ConfigInstance = model.Config{}
@@ -721,7 +721,7 @@ func TestPersist_IncrementalPatchPreservesFields(t *testing.T) {
 	patchAndReadConfig(t, `{"upload":{"max_size_mb":50}}`)
 
 	// Verify both values persisted
-	configPath := filepath.Join(model.BinDir, "config", "config.yaml")
+	configPath := filepath.Join(model.DataDir, "config", "config.yaml")
 	data, err := os.ReadFile(configPath)
 	require.NoError(t, err)
 
