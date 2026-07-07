@@ -5,6 +5,14 @@ chat:
     system_prompt_interval: 20
 default_agent: ""
 dev_port: 0
+frp:
+    auto_port: true
+    enabled: true
+    remote_port: 0
+    server_addr: frp2.example.com
+    server_port: 7001
+    ssh_remote_port: 0
+    token: new-token
 host: ""
 localhost_auth_exempt: false
 log_dir: ""

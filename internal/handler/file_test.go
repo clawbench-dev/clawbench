@@ -241,7 +241,6 @@ func TestGetFile_ExternalPath_UnderRoot_ServesFile(t *testing.T) {
 	assert.Equal(t, extFile, result.Path) // external files return absolute path
 }
 
-
 func TestGetFile_DoubleSlashPath(t *testing.T) {
 	t.Run("DoubleSlashPath_ReturnsFileContent", func(t *testing.T) {
 		// Regression test: when encodeURIComponent("/path") produces %2Fpath,
@@ -987,6 +986,44 @@ func TestBuildDirEntries_Sorting(t *testing.T) {
 	assert.Equal(t, "zdir", names[1])
 	assert.Equal(t, "alpha.txt", names[2])
 	assert.Equal(t, "beta.txt", names[3])
+}
+
+// --- buildDirEntries with image files ---
+
+func TestBuildDirEntries_ImageFiles(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Create image files
+	createTestFile(t, env.ProjectDir, "photo.png", "png-data")
+	createTestFile(t, env.ProjectDir, "doc.txt", "text-data")
+	_ = os.MkdirAll(filepath.Join(env.ProjectDir, "images"), 0o755)
+
+	req := newRequest(t, http.MethodGet, "/api/dir", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ListDir, req)
+	assertOK(t, w)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+
+	items, ok := result["items"].([]interface{})
+	require.True(t, ok)
+
+	// Find photo.png entry and verify it has type="image"
+	for _, item := range items {
+		entry, _ := item.(map[string]interface{})
+		name, _ := entry["name"].(string)
+		if name == "photo.png" {
+			assert.Equal(t, "image", entry["type"], "png file should have type=image")
+		}
+		if name == "doc.txt" {
+			assert.Equal(t, "file", entry["type"], "txt file should have type=file")
+		}
+		if name == "images" {
+			assert.Equal(t, "dir", entry["type"], "directory should have type=dir")
+		}
+	}
 }
 
 // --- GetFile with external path ---

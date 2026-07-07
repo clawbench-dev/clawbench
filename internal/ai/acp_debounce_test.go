@@ -568,6 +568,60 @@ func TestDebounceInterval(t *testing.T) {
 	assert.Equal(t, 50*time.Millisecond, toolDebounceInterval)
 }
 
+// --- ToolMeta preservation during merge ---
+
+func TestHandleToolCallUpdate_ToolMetaPreservedWhenNewEventLacksMeta(t *testing.T) {
+	d, ch := newTestDebouncer()
+
+	// First update with ToolMeta
+	tcu1 := makeToolCallUpdate("tool-meta-1", false)
+	d.handleToolCallUpdate(tcu1)
+	// Manually set ToolMeta on the pending event to simulate a meta update
+	d.mu.Lock()
+	if p, ok := d.pending["tool-meta-1"]; ok {
+		p.event.ToolMeta = &ToolCallMeta{ToolID: "tool-meta-1", Summary: "test summary"}
+	}
+	d.mu.Unlock()
+
+	// Second update without ToolMeta — should preserve existing
+	tcu2 := makeToolCallUpdate("tool-meta-1", false)
+	tcu2.RawInput = nil
+	d.handleToolCallUpdate(tcu2)
+
+	// After merge, ToolMeta should be preserved
+	d.mu.Lock()
+	pending, ok := d.pending["tool-meta-1"]
+	d.mu.Unlock()
+	require.True(t, ok)
+	assert.NotNil(t, pending.event.ToolMeta, "ToolMeta should be preserved when new event lacks it")
+
+	// Drain
+	d.flushToolID("tool-meta-1")
+	collectEvents(ch, 1, 200*time.Millisecond)
+}
+
+// --- handleToolCallUpdate with nil conn ---
+
+func TestHandleToolCallUpdate_NilConn(t *testing.T) {
+	// Debouncer with nil conn — backendID should be empty
+	ch := make(chan StreamEvent, 64)
+	d := newToolCallDebouncer(ch, nil)
+
+	tcu := makeToolCallUpdate("tool-nil-conn", false)
+	result := d.handleToolCallUpdate(tcu)
+	assert.True(t, result)
+
+	// Should still work, just with empty backendID
+	d.flushToolID("tool-nil-conn")
+	select {
+	case ev := <-ch:
+		assert.Equal(t, "tool_use", ev.Type)
+		assert.Equal(t, "tool-nil-conn", ev.Tool.ID)
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("event should be forwarded even with nil conn")
+	}
+}
+
 // --- helpers ---
 
 func collectEvents(ch <-chan StreamEvent, count int, timeout time.Duration) []StreamEvent {

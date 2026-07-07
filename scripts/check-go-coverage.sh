@@ -122,6 +122,7 @@ exempt_files = {
     "internal/rag/rag.go",                  # Init/Shutdown/StartIndexer/StartCleanupWorker require real DB + filesystem setup
     "internal/rag/store_sqlite.go",         # SQLite internal error paths (file open, transaction rollback, FTS5 query errors)
     "internal/rag/cleanup.go",              # realCleanupService delegates to service.DB which requires integration setup
+    "internal/frp/manager.go",              # Start/runService/pollStatus/checkProxyStatus require real FRP server for proxy status paths
     "internal/rag/search.go",              # RAGSearch strategy branching requires mock embedder + cache state orchestration
     "internal/speech/common_tts.go",        # MkdirAll/temp file write error paths untestable as root
     "internal/terminal/session.go",         # WebSocket kick/PTY close paths require integration testing

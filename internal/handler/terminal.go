@@ -67,7 +67,23 @@ func TerminalWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Get optional session ID for reconnect
 	sessionID := r.URL.Query().Get("session")
 
-	if err := mgr.HandleWebSocket(w, r, projectPath, cwd, sessionID); err != nil {
+	// Get optional initial terminal dimensions from frontend.
+	// When provided, the PTY starts at the correct size instead of the
+	// default 80x24, so TUI apps (vim, claude, htop) render full-size
+	// from the start without waiting for the first fit()+resize round-trip.
+	var initialCols, initialRows uint16
+	if v := r.URL.Query().Get("cols"); v != "" {
+		if n, err := strconv.ParseUint(v, 10, 16); err == nil && n > 0 {
+			initialCols = uint16(n)
+		}
+	}
+	if v := r.URL.Query().Get("rows"); v != "" {
+		if n, err := strconv.ParseUint(v, 10, 16); err == nil && n > 0 {
+			initialRows = uint16(n)
+		}
+	}
+
+	if err := mgr.HandleWebSocket(w, r, projectPath, cwd, sessionID, initialCols, initialRows); err != nil {
 		slog.Error("terminal: websocket handler error", slog.String("error", err.Error()))
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "TerminalError")
 	}

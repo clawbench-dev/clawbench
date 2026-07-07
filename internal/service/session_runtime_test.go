@@ -134,6 +134,67 @@ func TestSetCancelReason_OverwritesPrevious(t *testing.T) {
 	assert.Equal(t, "user", reason)
 }
 
+// --- GetCancelReason ---
+
+func TestGetCancelReason_ReturnsReasonWithoutClearing(t *testing.T) {
+	cleanupCancelReasons()
+	defer cleanupCancelReasons()
+
+	SetCancelReason("session-getreason-1", "user")
+
+	reason := GetCancelReason("session-getreason-1")
+	assert.Equal(t, "user", reason)
+
+	// Should NOT be cleared after GetCancelReason (unlike GetAndClearCancelReason)
+	reason2 := GetCancelReason("session-getreason-1")
+	assert.Equal(t, "user", reason2)
+}
+
+func TestGetCancelReason_NoReason(t *testing.T) {
+	cleanupCancelReasons()
+
+	reason := GetCancelReason("nonexistent")
+	assert.Equal(t, "", reason)
+}
+
+func TestGetCancelReason_NonStringValue(t *testing.T) {
+	cleanupCancelReasons()
+	defer cleanupCancelReasons()
+
+	// Store a non-string value to trigger the safe type assertion path
+	sessionCancelReasons.Store("session-getreason-nonstring", 42)
+
+	reason := GetCancelReason("session-getreason-nonstring")
+	assert.Equal(t, "", reason)
+}
+
+// --- ChatSummary mode tests ---
+
+func TestSetChatSummaryMode_GetChatSummaryMode(t *testing.T) {
+	origMode := GetChatSummaryMode()
+	defer SetChatSummaryMode(origMode)
+
+	SetChatSummaryMode("simple")
+	assert.Equal(t, "simple", GetChatSummaryMode())
+
+	SetChatSummaryMode("ai")
+	assert.Equal(t, "ai", GetChatSummaryMode())
+
+	SetChatSummaryMode("")
+	assert.Equal(t, "", GetChatSummaryMode())
+}
+
+func TestSetChatSummaryEnabled_Runtime(t *testing.T) {
+	origEnabled := chatSummaryEnabled.Load()
+	defer chatSummaryEnabled.Store(origEnabled)
+
+	SetChatSummaryEnabled(false)
+	assert.False(t, chatSummaryEnabled.Load())
+
+	SetChatSummaryEnabled(true)
+	assert.True(t, chatSummaryEnabled.Load())
+}
+
 // --- CancelSession ---
 
 func TestCancelSession_WithCancelFunc(t *testing.T) {

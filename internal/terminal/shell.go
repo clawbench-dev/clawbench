@@ -51,7 +51,8 @@ func (e *PlatformError) Error() string {
 // startPTY starts a new PTY session with the given working directory.
 // Returns the PTY file, the command, and any error.
 // The shell process is started in its own process group for clean cleanup.
-func startPTY(cwd string) (*os.File, *exec.Cmd, error) {
+// cols and rows set the initial terminal size; if either is 0, 80x24 is used.
+func startPTY(cwd string, cols, rows uint16) (*os.File, *exec.Cmd, error) {
 	// creack/pty does not support Windows — ConPTY is not implemented.
 	// Return PlatformError so the manager can send the correct error code.
 	if runtimeGOOS == "windows" {
@@ -87,11 +88,14 @@ func startPTY(cwd string) (*os.File, *exec.Cmd, error) {
 	// on Linux (returns EPERM: "operation not permitted").
 	// Setsid already creates a new session and process group.
 
-	// Use StartWithSize to provide a reasonable default (80x24) so that
-	// the shell and any TUI apps see correct dimensions from the start.
-	// Without this, the PTY starts at 0x0 and TUI apps may render with
-	// wrong layout until the first frontend fit() + resize arrives.
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: 80, Rows: 24})
+	// Use StartWithSize to provide initial terminal dimensions.
+	// The frontend sends cols/rows based on the actual container size so TUI
+	// apps (vim, claude, htop) render at full size from the start instead of
+	// getting 80x24 and waiting for the first fit()+resize round-trip.
+	if cols == 0 || rows == 0 {
+		cols, rows = 80, 24
+	}
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: cols, Rows: rows})
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to start PTY: %w", err)
 	}

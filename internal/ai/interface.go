@@ -207,12 +207,12 @@ func truncateToolOutput(output string) string {
 // queue_drain: atomically finalizes current streaming, starts next queued message.
 // queue_update: sent when a new message is enqueued while a session is running.
 type QueueEventData struct {
-	SessionID  string                `json:"sessionId,omitempty"` // Session this event belongs to (for frontend routing)
-	Text       string                `json:"text,omitempty"`
-	MessageID  int64                 `json:"messageId,omitempty"` // DB ID of the drained user message (queue_drain only)
-	FilePaths  []string              `json:"filePaths,omitempty"`
-	Files      []string              `json:"files,omitempty"`
-	Queue      []model.QueuedMessage `json:"queue,omitempty"`
+	SessionID string                `json:"sessionId,omitempty"` // Session this event belongs to (for frontend routing)
+	Text      string                `json:"text,omitempty"`
+	MessageID int64                 `json:"messageId,omitempty"` // DB ID of the drained user message (queue_drain only)
+	FilePaths []string              `json:"filePaths,omitempty"`
+	Files     []string              `json:"files,omitempty"`
+	Queue     []model.QueuedMessage `json:"queue,omitempty"`
 }
 
 // AIBackend defines the interface for AI backend implementations

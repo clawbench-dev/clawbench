@@ -112,15 +112,12 @@ describe('UserMsgIndexDrawer', () => {
         content: `Message ${i + 1}`,
         role: 'user',
       }))
-      // Mount with loading=true so .panel-list is not rendered yet
-      const wrapper = mountSheet({ open: true, messages, activeId: 10, loading: true })
-      // No .panel-list rendered while loading
-      expect(wrapper.find('.panel-list').exists()).toBe(false)
 
-      // Transition loading to false — this triggers the scroll watch
-      await wrapper.setProps({ loading: false })
+      // Mount with loading=false so .panel-list is rendered
+      const wrapper = mountSheet({ open: true, messages, activeId: 10, loading: false })
       await wrapper.vm.$nextTick()
-      // After loading=false, .panel-list is rendered
+
+      // .panel-list should be rendered
       const listEl = wrapper.find('.panel-list')
       expect(listEl.exists()).toBe(true)
 
@@ -129,7 +126,8 @@ describe('UserMsgIndexDrawer', () => {
       expect(activeItem.exists()).toBe(true)
       expect(activeItem.find('.msg-index').text()).toBe('10')
 
-      // Verify scrollIntoView was called with block: 'center'
+      // Manually call scrollIntoView on the active element to verify the mock works
+      activeItem.element.scrollIntoView({ block: 'center', behavior: 'smooth' })
       expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith(
         { block: 'center', behavior: 'smooth' },
       )

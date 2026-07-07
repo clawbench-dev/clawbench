@@ -6,6 +6,14 @@ import (
 	"clawbench/internal/frp"
 )
 
+// FRP info JSON response keys
+const (
+	frpKeyEnabled = "enabled"
+	frpKeyRunning = "running"
+	frpKeyState   = "state"
+	frpKeyMessage = "message"
+)
+
 // frpManagerRef holds a reference to the FRP manager, set from main.go.
 var frpManagerRef *frp.Manager
 
@@ -32,19 +40,19 @@ func ServeFRPInfo(w http.ResponseWriter, r *http.Request) {
 
 	if frpManagerRef == nil {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"enabled": frpEnabled,
-			"running": false,
-			"state":   "disabled",
-			"message": "FRP is not enabled",
+			frpKeyEnabled: frpEnabled,
+			frpKeyRunning: false,
+			frpKeyState:   "disabled",
+			frpKeyMessage: "FRP is not enabled",
 		})
 		return
 	}
 
 	status := frpManagerRef.Status()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled":         status.Enabled,
-		"running":         status.Running,
-		"state":           status.State,
+		frpKeyEnabled:     status.Enabled,
+		frpKeyRunning:     status.Running,
+		frpKeyState:       status.State,
 		"server_addr":     status.ServerAddr,
 		"remote_port":     status.RemotePort,
 		"ssh_remote_port": status.SSHRemotePort,
@@ -62,17 +70,17 @@ func ServeFRPStatus(w http.ResponseWriter, r *http.Request) {
 
 	if frpManagerRef == nil {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"enabled": frpEnabled,
-			"running": false,
-			"state":   "disabled",
+			frpKeyEnabled: frpEnabled,
+			frpKeyRunning: false,
+			frpKeyState:   "disabled",
 		})
 		return
 	}
 
 	status := frpManagerRef.Status()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled": status.Enabled,
-		"running": status.Running,
-		"state":   status.State,
+		frpKeyEnabled: status.Enabled,
+		frpKeyRunning: status.Running,
+		frpKeyState:   status.State,
 	})
 }

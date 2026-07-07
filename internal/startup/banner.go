@@ -181,10 +181,8 @@ func buildLines(cfg BannerConfig) []string {
 	}
 
 	// --- Data directory ---
-	lines = append(lines, label("📁 Data:", cfg.DataDir))
-
 	// --- Frontend mode ---
-	lines = append(lines, label("🎨 Frontend:", cfg.FrontendMode), "")
+	lines = append(lines, label("📁 Data:", cfg.DataDir), label("🎨 Frontend:", cfg.FrontendMode), "")
 
 	// --- Service status line ---
 	// Note: use single-codepoint emoji only to avoid combining-sequence width issues.

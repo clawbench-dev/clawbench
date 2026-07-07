@@ -9,6 +9,8 @@ import (
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 	"clawbench/internal/ssh"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestServeSSHInfo_Disabled(t *testing.T) {
@@ -370,4 +372,62 @@ func findSubstr(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// --- SetSSHServer / GetSSHServer ---
+
+func TestSetSSHServer_GetSSHServer(t *testing.T) {
+	origMu := sshServerMu
+	origRef := sshServerRef
+	defer func() {
+		sshServerMu = origMu
+		sshServerRef = origRef
+	}()
+
+	// Initially nil
+	assert.Nil(t, GetSSHServer())
+
+	// Set a server
+	srv := ssh.NewServer(model.PortForwardConfig{Enabled: true, Port: 20001}, 20000, "test", nil)
+	SetSSHServer(srv)
+	assert.Equal(t, srv, GetSSHServer())
+
+	// Reset
+	SetSSHServer(nil)
+	assert.Nil(t, GetSSHServer())
+}
+
+// --- ServeSSHInfo with nil ProxyService ---
+
+func TestServeSSHInfo_NilProxyService(t *testing.T) {
+	origProxy := service.ProxyService
+	service.ProxyService = nil
+	defer func() { service.ProxyService = origProxy }()
+
+	srv := ssh.NewServer(model.PortForwardConfig{Enabled: true, Port: 20001}, 20000, "test", nil)
+	if err := srv.InitHostKey(); err != nil {
+		t.Fatalf("failed to init host key: %v", err)
+	}
+	origSSH := sshServerRef
+	sshServerRef = srv
+	defer func() { sshServerRef = origSSH }()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/ssh/info", http.NoBody)
+	req.Host = "server:20000"
+	w := httptest.NewRecorder()
+	ServeSSHInfo(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d", w.Code)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to parse JSON: %v", err)
+	}
+	assert.Equal(t, true, result["enabled"])
+	// No ports → command should be empty
+	if result["command"] != "" {
+		t.Errorf("expected empty command with nil ProxyService, got: %v", result["command"])
+	}
 }

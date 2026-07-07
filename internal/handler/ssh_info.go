@@ -14,8 +14,8 @@ import (
 
 // sshServerRef holds a reference to the SSH server, set from main.go.
 var (
-	sshServerMu   sync.RWMutex
-	sshServerRef  *ssh.Server
+	sshServerMu  sync.RWMutex
+	sshServerRef *ssh.Server
 )
 
 // SetSSHServer stores a reference to the SSH server for handler access.

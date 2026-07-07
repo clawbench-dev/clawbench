@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestGetFS_EmbedFallback(t *testing.T) {
@@ -315,4 +317,109 @@ func (r *readFileErrorFS) Open(name string) (fs.File, error) {
 
 func (r *readFileErrorFS) ReadFile(name string) ([]byte, error) {
 	return nil, os.ErrPermission
+}
+
+// --- ModeLabel tests ---
+
+func TestModeLabel_Embedded(t *testing.T) {
+	// Save and restore CWD
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origDir) }()
+
+	// Chdir to a temp dir without public/ → ModeLabel should say "embedded"
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+
+	label := ModeLabel()
+	assert.Equal(t, "embedded", label)
+}
+
+func TestModeLabel_Disk(t *testing.T) {
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origDir) }()
+
+	tmpDir := t.TempDir()
+	publicDir := filepath.Join(tmpDir, "public")
+	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+
+	label := ModeLabel()
+	assert.Equal(t, "disk (public/)", label)
+}
+
+func TestDiskPublicExists_NonexistentDir(t *testing.T) {
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origDir) }()
+
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+
+	assert.False(t, DiskPublicExists())
+}
+
+func TestDiskPublicExists_ExistingDir(t *testing.T) {
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origDir) }()
+
+	tmpDir := t.TempDir()
+	publicDir := filepath.Join(tmpDir, "public")
+	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+
+	assert.True(t, DiskPublicExists())
+}
+
+func TestGetFS_ConsistencyWithModeLabel(t *testing.T) {
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origDir) }()
+
+	tmpDir := t.TempDir()
+	publicDir := filepath.Join(tmpDir, "public")
+	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Write a file to verify DirFS is returned
+	if err := os.WriteFile(filepath.Join(publicDir, "test.txt"), []byte("disk-content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// When public/ exists, ModeLabel should say disk and GetFS should return DirFS
+	assert.Equal(t, "disk (public/)", ModeLabel())
+
+	fsys := GetFS()
+	data, err := fs.ReadFile(fsys, "test.txt")
+	if err != nil {
+		t.Fatalf("failed to read test.txt from disk FS: %v", err)
+	}
+	assert.Equal(t, "disk-content", string(data))
 }

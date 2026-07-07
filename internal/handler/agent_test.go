@@ -1345,4 +1345,3 @@ func TestAgentDelete_EmptyID(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
-

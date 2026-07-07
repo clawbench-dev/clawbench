@@ -32,7 +32,7 @@ function cwdToTitle(cwd: string): string {
 }
 
 export function useTerminalTabs(
-  getWsUrl: (cwd?: string) => string,
+  getWsUrl: (cwd?: string, cols?: number, rows?: number) => string,
   opts: {
     fontSize: Ref<number>
     getXtermTheme: () => Record<string, unknown>
@@ -76,7 +76,7 @@ export function useTerminalTabs(
     const id = generateTabId()
     const resolvedCwd = cwd || ''
     const title = cwdToTitle(resolvedCwd)
-    const session = useTerminalSession(() => getWsUrl(resolvedCwd), opts.errorMessages)
+    const session = useTerminalSession(() => getWsUrl(resolvedCwd, term.cols, term.rows), opts.errorMessages)
     const { term, fit } = createXtermInstance()
 
     // Mark xterm/addon instances as raw so Vue's reactive() does NOT wrap

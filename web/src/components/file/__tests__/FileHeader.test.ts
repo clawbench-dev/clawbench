@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { nextTick } from 'vue'
+import { nextTick, computed, ref } from 'vue'
 import { createI18n } from 'vue-i18n'
 import FileHeader from '../FileHeader.vue'
 
@@ -65,6 +65,17 @@ vi.mock('@/composables/useChatContext.ts', () => ({
 // Mock useToast
 vi.mock('@/composables/useToast.ts', () => ({
   useToast: () => ({ show: vi.fn() }),
+}))
+
+// Mock useToolbarOverflow — simulate wide toolbar: all demotable items inline
+vi.mock('@/composables/useToolbarOverflow', () => ({
+  useToolbarOverflow: (_getEl, getDemotableIds) => ({
+    inlineIds: computed(() => getDemotableIds()),
+    collapsedIds: computed(() => []),
+    contentWidth: ref(800),
+    startObserving: vi.fn(),
+    stopObserving: vi.fn(),
+  }),
 }))
 
 // Mock getFileType
@@ -276,9 +287,10 @@ describe('FileHeader', () => {
       expect(ids).not.toContain('lineNumbers')
       expect(ids).not.toContain('stickyScroll')
       expect(ids).not.toContain('toggleView')
-      // attach and refresh should still be available
+      // attach should still be available
       expect(ids).toContain('attach')
-      expect(ids).toContain('refresh')
+      // refresh is not included for media files without text content
+      expect(ids).not.toContain('refresh')
     })
 
     it('hides code-only toolbar items for audio files', async () => {

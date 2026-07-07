@@ -261,8 +261,12 @@ describe('ChatInputBar', () => {
 
   it('emits send when Enter is pressed in textarea', async () => {
     const wrapper = mountBar()
+    // Set inputText directly via the exposed ref since v-model may not
+    // work reliably with setValue in the test environment with mock composables
+    wrapper.vm.inputText = 'hello'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('hello')
     const textarea = wrapper.find('.chat-textarea')
-    await textarea.setValue('hello')
     await textarea.trigger('keydown.enter', { key: 'Enter' })
     expect(wrapper.emitted('send')).toBeTruthy()
     expect(wrapper.emitted('send')![0]).toEqual(['hello'])

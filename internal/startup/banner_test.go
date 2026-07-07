@@ -395,3 +395,242 @@ func TestBannerBorderAlignmentWithCJK(t *testing.T) {
 		t.Errorf("horizontal border runeWidth=%d, want %d", runeWidth(horiz), maxW)
 	}
 }
+
+// ---------- charWidth tests ----------
+
+func TestCharWidth_ASCII(t *testing.T) {
+	for _, r := range "hello" {
+		if w := charWidth(r); w != 1 {
+			t.Errorf("charWidth(%q) = %d, want 1", r, w)
+		}
+	}
+}
+
+func TestCharWidth_CJK(t *testing.T) {
+	for _, r := range "中文" {
+		if w := charWidth(r); w != 2 {
+			t.Errorf("charWidth(%q) = %d, want 2", r, w)
+		}
+	}
+}
+
+func TestCharWidth_Hangul(t *testing.T) {
+	// Hangul syllable 가 (U+AC00)
+	if w := charWidth('가'); w != 2 {
+		t.Errorf("charWidth('가') = %d, want 2", w)
+	}
+}
+
+func TestCharWidth_Fullwidth(t *testing.T) {
+	// Fullwidth A (U+FF21)
+	if w := charWidth('Ａ'); w != 2 {
+		t.Errorf("charWidth('Ａ') = %d, want 2", w)
+	}
+}
+
+func TestCharWidth_Emoji(t *testing.T) {
+	// Emoji 🐾 (U+1F43E)
+	if w := charWidth('🐾'); w != 2 {
+		t.Errorf("charWidth('🐾') = %d, want 2", w)
+	}
+}
+
+func TestCharWidth_ExcludedCodepoint(t *testing.T) {
+	// U+303F is in the wide range (0x2E80..0xA4CF) but explicitly excluded (narrow)
+	if w := charWidth(0x303F); w != 1 {
+		t.Errorf("charWidth(U+303F) = %d, want 1 (excluded codepoint)", w)
+	}
+}
+
+func TestCharWidth_LowCodepoint(t *testing.T) {
+	// Codepoints below 0x1100 are narrow
+	if w := charWidth('A'); w != 1 {
+		t.Errorf("charWidth('A') = %d, want 1", w)
+	}
+}
+
+// ---------- firstNonEmpty tests ----------
+
+func TestFirstNonEmpty_First(t *testing.T) {
+	if got := firstNonEmpty("a", "b", "c"); got != "a" {
+		t.Errorf("firstNonEmpty(a,b,c) = %q, want %q", got, "a")
+	}
+}
+
+func TestFirstNonEmpty_SkipEmpty(t *testing.T) {
+	if got := firstNonEmpty("", "b", "c"); got != "b" {
+		t.Errorf("firstNonEmpty('',b,c) = %q, want %q", got, "b")
+	}
+}
+
+func TestFirstNonEmpty_AllEmpty(t *testing.T) {
+	if got := firstNonEmpty("", "", ""); got != "" {
+		t.Errorf("firstNonEmpty('','','') = %q, want empty", got)
+	}
+}
+
+func TestFirstNonEmpty_NoArgs(t *testing.T) {
+	if got := firstNonEmpty(); got != "" {
+		t.Errorf("firstNonEmpty() = %q, want empty", got)
+	}
+}
+
+// ---------- FprintBanner tests ----------
+
+func TestFprintBanner_WritesBox(t *testing.T) {
+	var buf strings.Builder
+	cfg := BannerConfig{
+		Version:         "v1.0.0",
+		Scheme:          "http",
+		Port:            20000,
+		AutoPassword:    "test1234",
+		DataDir:         "/tmp/.clawbench",
+		Agents:          []AgentInfo{{Name: "test", Models: 1}},
+		TTSEngine:       "edge",
+		TaskCount:       0,
+		StartupDuration: 100 * time.Millisecond,
+	}
+	FprintBanner(&buf, cfg)
+
+	output := buf.String()
+	// Should contain box borders
+	if !strings.Contains(output, "┌") {
+		t.Error("banner should contain top-left border")
+	}
+	if !strings.Contains(output, "┐") {
+		t.Error("banner should contain top-right border")
+	}
+	if !strings.Contains(output, "└") {
+		t.Error("banner should contain bottom-left border")
+	}
+	if !strings.Contains(output, "┘") {
+		t.Error("banner should contain bottom-right border")
+	}
+	// Should contain version
+	if !strings.Contains(output, "v1.0.0") {
+		t.Error("banner should contain version")
+	}
+}
+
+// ---------- formatDuration edge cases ----------
+
+func TestFormatDuration_Zero(t *testing.T) {
+	if got := formatDuration(0); got != "0ns" {
+		t.Errorf("formatDuration(0) = %q, want %q", got, "0ns")
+	}
+}
+
+func TestFormatDuration_SubMicrosecond(t *testing.T) {
+	if got := formatDuration(50 * time.Nanosecond); got != "50ns" {
+		t.Errorf("formatDuration(50ns) = %q, want %q", got, "50ns")
+	}
+}
+
+func TestFormatDuration_ExactlyOneSecond(t *testing.T) {
+	if got := formatDuration(1 * time.Second); got != "1.0s" {
+		t.Errorf("formatDuration(1s) = %q, want %q", got, "1.0s")
+	}
+}
+
+// ---------- FRP banner section ----------
+
+func TestBanner_FRPEnabledWithRemoteURL(t *testing.T) {
+	cfg := BannerConfig{
+		Version:        "v1.0.0",
+		Scheme:         "http",
+		Port:           20000,
+		DataDir:        "/tmp/.clawbench",
+		TTSEngine:      "edge",
+		FRPEnabled:     true,
+		FRPRemoteURL:   "http://120.26.168.245:20050",
+		FRPServerAddr:  "120.26.168.245",
+		FRPRemotePort:  20050,
+		TaskCount:      0,
+		StartupDuration: 100 * time.Millisecond,
+	}
+	lines := buildLines(cfg)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "http://120.26.168.245:20050") {
+		t.Error("banner should contain FRP remote URL when provided")
+	}
+}
+
+func TestBanner_FRPEnabledWaitingForPort(t *testing.T) {
+	cfg := BannerConfig{
+		Version:        "v1.0.0",
+		Scheme:         "http",
+		Port:           20000,
+		DataDir:        "/tmp/.clawbench",
+		TTSEngine:      "edge",
+		FRPEnabled:     true,
+		FRPRemoteURL:   "",
+		FRPServerAddr:  "frp-server",
+		FRPRemotePort:  0,
+		TaskCount:      0,
+		StartupDuration: 100 * time.Millisecond,
+	}
+	lines := buildLines(cfg)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "waiting for port") {
+		t.Error("banner should show 'waiting for port' when FRP enabled but no remote URL")
+	}
+}
+
+func TestBanner_FRPEnabledNoServerAddr(t *testing.T) {
+	cfg := BannerConfig{
+		Version:        "v1.0.0",
+		Scheme:         "http",
+		Port:           20000,
+		DataDir:        "/tmp/.clawbench",
+		TTSEngine:      "edge",
+		FRPEnabled:     true,
+		FRPRemoteURL:   "",
+		FRPServerAddr:  "",
+		FRPRemotePort:  0,
+		TaskCount:      0,
+		StartupDuration: 100 * time.Millisecond,
+	}
+	lines := buildLines(cfg)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "enabled") {
+		t.Error("banner should show 'enabled' for FRP when no server addr or URL")
+	}
+}
+
+func TestBanner_FRPDisabled(t *testing.T) {
+	cfg := BannerConfig{
+		Version:         "v1.0.0",
+		Scheme:          "http",
+		Port:            20000,
+		DataDir:         "/tmp/.clawbench",
+		TTSEngine:       "edge",
+		FRPEnabled:      false,
+		TaskCount:       0,
+		StartupDuration: 100 * time.Millisecond,
+	}
+	lines := buildLines(cfg)
+	joined := strings.Join(lines, "\n")
+	if strings.Contains(joined, "FRP:") {
+		t.Error("banner should NOT contain FRP section when disabled")
+	}
+}
+
+// ---------- FrontendMode banner ----------
+
+func TestBanner_FrontendMode(t *testing.T) {
+	cfg := BannerConfig{
+		Version:         "v1.0.0",
+		Scheme:          "http",
+		Port:            20000,
+		DataDir:         "/tmp/.clawbench",
+		TTSEngine:       "edge",
+		FrontendMode:    "embedded",
+		TaskCount:       0,
+		StartupDuration: 100 * time.Millisecond,
+	}
+	lines := buildLines(cfg)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "embedded") {
+		t.Error("banner should contain frontend mode")
+	}
+}

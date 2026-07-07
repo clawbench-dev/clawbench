@@ -3,16 +3,15 @@ package frp
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"strconv"
 	"sync"
 	"time"
 
-	"log/slog"
-
 	"github.com/fatedier/frp/client"
-	v1 "github.com/fatedier/frp/pkg/config/v1"
 	"github.com/fatedier/frp/pkg/config/source"
+	v1 "github.com/fatedier/frp/pkg/config/v1"
 
 	"clawbench/internal/model"
 	"clawbench/internal/ws"
@@ -56,10 +55,10 @@ type Manager struct {
 	remotePort    int
 	sshRemotePort int
 
-	readyCh chan Status   // receives Status once when port is assigned
-	done    chan struct{} // closed when manager stops (via sync.Once)
-	closeOnce sync.Once  // ensures done is closed exactly once
-	stopped bool         // user called Stop()
+	readyCh   chan Status   // receives Status once when port is assigned
+	done      chan struct{} // closed when manager stops (via sync.Once)
+	closeOnce sync.Once     // ensures done is closed exactly once
+	stopped   bool          // user called Stop()
 }
 
 // NewManager creates a new FRP manager. Call Start() to launch the in-process frp service.
@@ -335,7 +334,9 @@ func buildClientCommonConfig(cfg model.FRPConfig) *v1.ClientCommonConfig {
 		},
 		LoginFailExit: &loginFailExit,
 	}
-	cc.Complete() // populate defaults
+	if err := cc.Complete(); err != nil {
+		slog.Error("frp: complete client common config", slog.String("err", err.Error()))
+	}
 	return cc
 }
 
@@ -353,25 +354,33 @@ func buildProxyConfigs(cfg model.FRPConfig, httpLocalPort, sshLocalPort int) []v
 
 	// HTTP proxy — main ClawBench web interface
 	httpCfg := v1.NewProxyConfigurerByType(v1.ProxyTypeTCP)
-	tcpCfg := httpCfg.(*v1.TCPProxyConfig)
-	tcpCfg.ProxyBaseConfig.Name = "clawbench-http"
-	tcpCfg.ProxyBaseConfig.LocalIP = "127.0.0.1"
-	tcpCfg.ProxyBaseConfig.LocalPort = httpLocalPort
+	tcpCfg, ok := httpCfg.(*v1.TCPProxyConfig)
+	if !ok {
+		slog.Error("frp: HTTP proxy config is not TCPProxyConfig")
+		return nil
+	}
+	tcpCfg.Name = "clawbench-http"
+	tcpCfg.LocalIP = "127.0.0.1"
+	tcpCfg.LocalPort = httpLocalPort
 	tcpCfg.RemotePort = httpRemotePort
-	tcpCfg.ProxyBaseConfig.Transport.UseCompression = true
-	tcpCfg.ProxyBaseConfig.Complete()
+	tcpCfg.Transport.UseCompression = true
+	tcpCfg.Complete()
 	proxies = append(proxies, httpCfg)
 
 	// SSH proxy — optional, only if SSH tunnel is running
 	if sshLocalPort > 0 {
 		sshCfg := v1.NewProxyConfigurerByType(v1.ProxyTypeTCP)
-		sshTcpCfg := sshCfg.(*v1.TCPProxyConfig)
-		sshTcpCfg.ProxyBaseConfig.Name = "clawbench-ssh"
-		sshTcpCfg.ProxyBaseConfig.LocalIP = "127.0.0.1"
-		sshTcpCfg.ProxyBaseConfig.LocalPort = sshLocalPort
-		sshTcpCfg.RemotePort = sshRemotePort
-		sshTcpCfg.ProxyBaseConfig.Transport.UseCompression = true
-		sshTcpCfg.ProxyBaseConfig.Complete()
+		sshTCPCfg, ok := sshCfg.(*v1.TCPProxyConfig)
+		if !ok {
+			slog.Error("frp: SSH proxy config is not TCPProxyConfig")
+			return proxies
+		}
+		sshTCPCfg.Name = "clawbench-ssh"
+		sshTCPCfg.LocalIP = "127.0.0.1"
+		sshTCPCfg.LocalPort = sshLocalPort
+		sshTCPCfg.RemotePort = sshRemotePort
+		sshTCPCfg.Transport.UseCompression = true
+		sshTCPCfg.Complete()
 		proxies = append(proxies, sshCfg)
 	}
 

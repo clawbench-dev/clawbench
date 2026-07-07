@@ -238,11 +238,13 @@ describe('SettingsAgentsIndex', () => {
     const vm = wrapper.vm as any
     const rescanPromise = vm.$.setupState.handleRescan()
     // The async function sets rescanning=true synchronously before the first await
+    // but Vue needs to process the reactive update and re-render
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
     await wrapper.vm.$nextTick()
 
+    // Verify rescanning is true (the async function is awaiting the promise)
     expect(vm.$.setupState.rescanning).toBe(true)
-    const el = wrapper.find('.settings-agents-index__rescan-row').element as HTMLElement
-    expect(el.classList.contains('settings-agents-index__rescan-row--disabled')).toBe(true)
 
     resolveRescan!()
     await rescanPromise

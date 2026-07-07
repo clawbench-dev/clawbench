@@ -74,7 +74,7 @@ func (m *Manager) Close() {
 // HandleWebSocket handles a WebSocket connection request.
 // If sessionID is provided and the session still exists, the client reconnects
 // to that session. Otherwise, a new session is created.
-func (m *Manager) HandleWebSocket(w http.ResponseWriter, r *http.Request, projectPath, cwd, sessionID string) error {
+func (m *Manager) HandleWebSocket(w http.ResponseWriter, r *http.Request, projectPath, cwd, sessionID string, initialCols, initialRows uint16) error {
 	m.mu.Lock()
 
 	// Check if terminal is disabled
@@ -125,7 +125,7 @@ func (m *Manager) HandleWebSocket(w http.ResponseWriter, r *http.Request, projec
 			return nil
 		}
 
-		newSession, err := NewSession(projectPath, cwd, m.cfg)
+		newSession, err := NewSession(projectPath, cwd, m.cfg, initialCols, initialRows)
 		if err != nil {
 			m.mu.Unlock()
 			// Send platform_unsupported instead of shell_start_failed

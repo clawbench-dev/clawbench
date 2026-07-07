@@ -37,7 +37,7 @@ func isChinaMainland() bool {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://ip-api.com/line/?fields=countryCode", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://ip-api.com/line/?fields=countryCode", http.NoBody)
 	if err != nil {
 		chinaMirrorChecked.Store(2)
 		return false
@@ -47,7 +47,7 @@ func isChinaMainland() bool {
 		chinaMirrorChecked.Store(2)
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 16))
 	if err != nil {
 		chinaMirrorChecked.Store(2)
@@ -76,7 +76,6 @@ func prepareInstallCmd(installCmd string) string {
 	}
 	return installCmd
 }
-
 
 // ServeAgentSubRoutes handles /api/agents/* sub-routes (e.g. /api/agents/{id}/refresh-models).
 func ServeAgentSubRoutes(w http.ResponseWriter, r *http.Request) {

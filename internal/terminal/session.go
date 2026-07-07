@@ -67,7 +67,9 @@ func generateSessionID() string {
 }
 
 // NewSession creates a new terminal session by starting a PTY in the given directory.
-func NewSession(projectPath, cwd string, cfg TerminalConfig) (*Session, error) {
+// initialCols and initialRows set the PTY's starting terminal size; if either is 0,
+// startPTY falls back to 80x24.
+func NewSession(projectPath, cwd string, cfg TerminalConfig, initialCols, initialRows uint16) (*Session, error) {
 	idleTimeout, err := time.ParseDuration(cfg.IdleTimeout)
 	if err != nil || idleTimeout == 0 {
 		// 0 = never timeout; PTY lives until process exits or user explicitly closes.
@@ -75,7 +77,7 @@ func NewSession(projectPath, cwd string, cfg TerminalConfig) (*Session, error) {
 		idleTimeout = 0
 	}
 
-	ptmx, cmd, err := startPTY(cwd)
+	ptmx, cmd, err := startPTY(cwd, initialCols, initialRows)
 	if err != nil {
 		return nil, err
 	}

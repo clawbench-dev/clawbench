@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { nextTick, reactive, ref, defineComponent } from 'vue'
+import { nextTick, reactive, ref, computed, defineComponent } from 'vue'
 import { createI18n } from 'vue-i18n'
 import FileManagerContent from '@/components/file/FileManagerContent.vue'
 // Plugin to register the long-press directive globally
@@ -69,6 +69,16 @@ vi.mock('@/composables/useFileUpload', () => ({
 vi.mock('@/composables/useFileNavStack', () => ({
   useFileNavStack: () => ({
     overlayOpen: { value: false },
+  }),
+}))
+
+vi.mock('@/composables/useToolbarOverflow', () => ({
+  useToolbarOverflow: () => ({
+    inlineIds: computed(() => ['refresh', 'newFile', 'newFolder', 'upload', 'viewToggle', 'multiselect', 'hidden']),
+    collapsedIds: computed(() => []),
+    contentWidth: ref(800),
+    startObserving: vi.fn(),
+    stopObserving: vi.fn(),
   }),
 }))
 
@@ -287,11 +297,14 @@ describe('FileManagerContent — handleItemClick', () => {
 describe('FileManagerContent — toolbar', () => {
   it('emits toggleHidden when eye button clicked', async () => {
     const wrapper = mountContent()
-    // Find the eye/eye-off button (second toolbar button after sort)
+    // Find the hidden toggle button by its title attribute
     const btns = wrapper.findAll('.toolbar-btn')
-    // The hidden toggle button
-    const toggleBtn = btns.find(b => b.find('[data-lucide="eye-off"], [data-lucide="eye"]').exists()) || btns[1]
-    await toggleBtn.trigger('click')
+    const toggleBtn = btns.find(b => {
+      const title = b.attributes('title')
+      return title === '显示隐藏文件' || title === '隐藏隐藏文件'
+    })
+    expect(toggleBtn).toBeTruthy()
+    await toggleBtn!.trigger('click')
 
     expect(wrapper.emitted('toggleHidden')).toBeTruthy()
   })
@@ -299,9 +312,10 @@ describe('FileManagerContent — toolbar', () => {
   it('emits refresh when refresh button clicked', async () => {
     const wrapper = mountContent()
     const btns = wrapper.findAll('.toolbar-btn')
-    // Find the refresh button (RotateCw icon)
-    const refreshBtn = btns[2]
-    await refreshBtn.trigger('click')
+    // Find the refresh button by its title attribute
+    const refreshBtn = btns.find(b => b.attributes('title') === '刷新')
+    expect(refreshBtn).toBeTruthy()
+    await refreshBtn!.trigger('click')
 
     expect(wrapper.emitted('refresh')).toBeTruthy()
   })

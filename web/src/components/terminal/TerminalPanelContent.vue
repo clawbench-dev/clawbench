@@ -321,11 +321,18 @@ function handleGestureToggle() {
   focusTerminal()
 }
 
-// Build WS URL for a given CWD
-function getWsUrl(cwd?: string) {
+// Build WS URL for a given CWD, with optional initial terminal dimensions.
+// cols/rows are sent as query params so the PTY starts at the correct size
+// instead of the default 80×24 — TUI apps (vim, claude, htop) then render
+// full-size from the start without waiting for fit()+resize.
+function getWsUrl(cwd?: string, cols?: number, rows?: number) {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const cwdParam = cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''
-  return `${proto}//${location.host}/api/terminal/ws${cwdParam}`
+  const params: string[] = []
+  if (cwd) params.push(`cwd=${encodeURIComponent(cwd)}`)
+  if (cols && cols > 0) params.push(`cols=${cols}`)
+  if (rows && rows > 0) params.push(`rows=${rows}`)
+  const query = params.length ? `?${params.join('&')}` : ''
+  return `${proto}//${location.host}/api/terminal/ws${query}`
 }
 
 // Theme
@@ -573,11 +580,10 @@ function handleTabClick(tabId: string) {
   // Connect the newly active tab if it's disconnected (e.g. after panel reactivation)
   const tab = tabManager.getTab(tabId)
   if (tab && (tab.session.connectionState as unknown as string) === 'disconnected') {
+    // Fit before connect so cols/rows are correct for the WS URL
+    try { tab.fitAddon?.fit() } catch { /* ignore */ }
     tab.session.connect().then(() => {
       tabManager.syncTabSessionId(tabId)
-      requestAnimationFrame(() => {
-        try { tab.fitAddon?.fit() } catch { /* ignore */ }
-      })
     }).catch(() => { /* error shown via overlay */ })
   }
 }
@@ -592,13 +598,12 @@ function handleCreateTab() {
     if (container && !tab.container) {
       mountTabToContainer(tab, container)
     }
+    // Fit before connect so cols/rows are correct for the WS URL
+    try { tab.fitAddon?.fit() } catch { /* ignore */ }
     // Connect the new tab
     if (props.active && (tab.session.connectionState as unknown as string) === 'disconnected') {
       tab.session.connect().then(() => {
         tabManager.syncTabSessionId(tab.id)
-        requestAnimationFrame(() => {
-          try { tab.fitAddon?.fit() } catch { /* ignore */ }
-        })
       }).catch(() => { /* error shown via overlay */ })
     }
   })
@@ -625,11 +630,10 @@ function handleTabMenuClose() {
         mountTabToContainer(tab, container)
       }
       if (props.active && tab && (tab.session.connectionState as unknown as string) === 'disconnected') {
+        // Fit before connect so cols/rows are correct for the WS URL
+        try { tab.fitAddon?.fit() } catch { /* ignore */ }
         tab.session.connect().then(() => {
           tabManager.syncTabSessionId(tab.id)
-          requestAnimationFrame(() => {
-            try { tab.fitAddon?.fit() } catch { /* ignore */ }
-          })
         }).catch(() => {})
       }
     })
@@ -746,6 +750,9 @@ watch(() => props.active, async (isActive) => {
       if (container && !tab.container) {
         mountTabToContainer(tab, container)
       }
+      // Fit BEFORE connect so term.cols/rows are correct when the WS URL
+      // is built with initial dimensions for the PTY.
+      try { tab.fitAddon?.fit() } catch { /* ignore */ }
       if ((tab.session.connectionState as unknown as string) === 'disconnected') {
         try {
           await tab.session.connect()
@@ -755,9 +762,6 @@ watch(() => props.active, async (isActive) => {
       viewport.startWatching()
       gestures.attach()
       focusTerminal()
-      requestAnimationFrame(() => {
-        try { tab.fitAddon?.fit() } catch { /* ignore */ }
-      })
     }
   } else {
     disableVolumeKeys()
@@ -782,11 +786,10 @@ watch(() => props.requestedCwd, async (cwd) => {
     mountTabToContainer(tab, container)
   }
   if ((tab.session.connectionState as unknown as string) === 'disconnected') {
+    // Fit before connect so cols/rows are correct for the WS URL
+    try { tab.fitAddon?.fit() } catch { /* ignore */ }
     tab.session.connect().then(() => {
       tabManager.syncTabSessionId(tab.id)
-      requestAnimationFrame(() => {
-        try { tab.fitAddon?.fit() } catch { /* ignore */ }
-      })
     }).catch(() => { /* error shown via overlay */ })
   }
   // Signal parent to clear requestedCwd so re-triggering the same directory works
@@ -828,6 +831,9 @@ onMounted(async () => {
       if (container && !tab.container) {
         mountTabToContainer(tab, container)
       }
+      // Fit BEFORE connect so term.cols/rows are correct when the WS URL
+      // is built with initial dimensions for the PTY.
+      try { tab.fitAddon?.fit() } catch { /* ignore */ }
       if ((tab.session.connectionState as unknown as string) === 'disconnected') {
         try {
           await tab.session.connect()
@@ -837,9 +843,6 @@ onMounted(async () => {
       viewport.startWatching()
       gestures.attach()
       focusTerminal()
-      requestAnimationFrame(() => {
-        try { tab.fitAddon?.fit() } catch { /* ignore */ }
-      })
     }
   }
 })

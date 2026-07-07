@@ -68,7 +68,7 @@ func (d *toolCallDebouncer) handleToolCallUpdate(tcu acp.SessionToolCallUpdate) 
 		// updates without rawInput, which would otherwise zero out the input
 		// extracted from an earlier rawInput-carrying update.
 		if event.Tool != nil && existing.event.Tool != nil {
-			if len(event.Tool.Input) == 0 && len(existing.event.Tool.Input) > 0 {
+			if event.Tool.Input == "" && existing.event.Tool.Input != "" {
 				event.Tool.Input = existing.event.Tool.Input
 			}
 		}

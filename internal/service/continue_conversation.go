@@ -295,7 +295,7 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 		if err != nil {
 			return "", err
 		}
-		if role != "user" {
+		if role != cancelReasonUser {
 			return "", fmt.Errorf("fork point must be a user message, message %d is role %q", beforeMessageID, role)
 		}
 		// Find the next non-streaming assistant message after this user message
