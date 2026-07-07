@@ -44,7 +44,8 @@ import android.widget.Toast;
 import android.content.pm.PackageManager;
 import android.Manifest;
 
-
+import cn.jpush.android.api.JPushInterface;
+import cn.jpush.android.data.JPushConfig;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -54,16 +55,14 @@ import androidx.core.content.ContextCompat;
 import org.json.JSONArray;
 
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
+import java.net.HttpURLConnection;
 import java.security.cert.X509Certificate;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
@@ -98,9 +97,6 @@ public class MainActivity extends AppCompatActivity {
     private static final String LOGIN_HTML_URL = "file:///android_asset/login.html";
 
     static MainActivity instance;
-
-    /** Whether the app is currently in the foreground (between onResume and onPause). */
-    static volatile boolean isForeground = false;
 
     WebView webView;
     private ProgressBar progressBar;
@@ -203,6 +199,15 @@ public class MainActivity extends AppCompatActivity {
     // as JS calls instead of adjusting system volume. Controlled by the terminal panel.
     private volatile boolean volumeKeyMode = false;
 
+    // Whether JPush push notifications are available (fetched from server config).
+    // When true, WebSocket can be disconnected on background (push will notify the user).
+    // When false, WebSocket stays alive in background for real-time events.
+    volatile boolean pushAvailable = false;
+    // When true, the server has JPush enabled (even if JPush SDK hasn't finished
+    // initializing yet). Used by native WS to suppress duplicate notifications
+    // during the window between JPush config fetch and SDK initialization.
+    volatile boolean jpushEnabledOnServer = false;
+
     // Pending navigation from a notification tap that occurred before the WebView
     // was loaded (cold start). Consumed by WebAppInterface.getPendingNavigation().
     public org.json.JSONObject pendingNavigation = null;
@@ -245,23 +250,20 @@ public class MainActivity extends AppCompatActivity {
         // This preserves the original behavior: returning users go straight
         // to the app. Only first-time users see the login page.
 
+        // Fetch JPush config from server and init JPush at runtime.
+        // AppKey is no longer baked into the APK — it comes from /api/push/config.
+        fetchPushConfig();
+
         // Load saved URL or show configuration dialog
-        // Migration: clear QR-auth sentinel ("__qr__") from previous QR scan login feature.
-        // Treat it as "no password" — rely on session cookie instead.
-        String savedPassword = prefs.getString(KEY_SSH_PASSWORD, null);
-        if ("__qr__".equals(savedPassword)) {
-            prefs.edit().remove(KEY_SSH_PASSWORD).apply();
-            savedPassword = null;
-        }
         String savedUrl = prefs.getString(KEY_SERVER_URL, null);
         if (savedUrl != null) {
             // Auto-reconnect: use pre-authentication to verify server is reachable
             // before loading the WebView. This prevents Chrome's built-in error page.
+            String savedPassword = prefs.getString(KEY_SSH_PASSWORD, null);
             if (savedPassword != null && !savedPassword.isEmpty()) {
                 webView.setVisibility(View.INVISIBLE);
                 authenticateAndNavigate(savedUrl, savedPassword);
             } else {
-                // No password: rely on session cookie
                 webView.setVisibility(View.INVISIBLE);
                 checkConnectivityAndNavigate(savedUrl);
             }
@@ -661,6 +663,12 @@ public class MainActivity extends AppCompatActivity {
             BackgroundService.setPassword(this, password);
         }
 
+        // Fetch JPush config now that we have a server URL.
+        // On first launch, onCreate's fetchPushConfig() skips because URL is empty.
+        if (!pushAvailable) {
+            fetchPushConfig();
+        }
+
         if (isNetworkAvailable()) {
             if (password != null && !password.isEmpty()) {
                 authenticateAndNavigate(url, password);
@@ -689,20 +697,15 @@ public class MainActivity extends AppCompatActivity {
         new Thread(() -> {
             try {
                 AuthResult result = performLoginRequest(url, password);
-                OkHttpClient standardClient = new OkHttpClient.Builder()
-                        .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-                        .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-                        .build();
-                handleAuthResponse(result.statusCode, url, password, result.cookies, standardClient);
+                handleAuthResponse(result.statusCode, url, password, result.cookies);
             } catch (javax.net.ssl.SSLException e) {
                 // SSL error (self-signed cert, hostname mismatch, etc.)
                 // Show native confirmation dialog on UI thread, then retry with trusting client
                 AppLog.w(TAG, "SSL error during pre-auth, showing confirmation dialog", e);
                 runOnUiThread(() -> showSslConfirmationDialog(() -> {
                     try {
-                        OkHttpClient trustClient = buildTrustingOkHttpClient();
-                        AuthResult result = performLoginRequestWithClient(trustClient, url, password);
-                        handleAuthResponse(result.statusCode, url, password, result.cookies, trustClient);
+                        AuthResult result = performLoginRequestWithClient(buildTrustingOkHttpClient(), url, password);
+                        handleAuthResponse(result.statusCode, url, password, result.cookies);
                     } catch (Exception retryEx) {
                         AppLog.w(TAG, "SSL retry failed", retryEx);
                         runOnUiThread(() -> showLoginPage(getNetworkErrorMessage(retryEx)));
@@ -912,7 +915,7 @@ public class MainActivity extends AppCompatActivity {
      * @param url        the server URL to navigate to on success/fallback
      * @param cookies    Set-Cookie headers from the response (may be empty)
      */
-    void handleAuthResponse(int statusCode, String url, String password, java.util.List<String> cookies, OkHttpClient client) {
+    void handleAuthResponse(int statusCode, String url, String password, java.util.List<String> cookies) {
         if (statusCode == 200) {
             // Extract Set-Cookie and inject into WebView CookieManager.
             // Before injecting, clear all ClawBench cookies for the target domain
@@ -937,7 +940,11 @@ public class MainActivity extends AppCompatActivity {
             }
             // Auth success — verify this is a ClawBench server before navigating WebView
             try {
-                String healthError = performHealthCheck(url, client);
+                OkHttpClient healthClient = new OkHttpClient.Builder()
+                        .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .build();
+                String healthError = performHealthCheck(url, healthClient);
                 if (healthError != null) {
                     runOnUiThread(() -> showLoginPage(healthError));
                     return;
@@ -1124,7 +1131,6 @@ public class MainActivity extends AppCompatActivity {
         // Do NOT stop BackgroundService here — it should survive Activity lifecycle
         // so the SSH tunnel continues running when the app is in background.
         cancelConnectionTimeout();
-        cleanupSharedCacheDir();
         instance = null; // Clear static reference to prevent memory leak / stale access
         super.onDestroy();
     }
@@ -1132,11 +1138,12 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         super.onPause();
-        isForeground = false;
         pauseWebView();
-        // App going to background — start native WS so we still get
-        // notifications when Android kills the WebView process.
-        if (webViewConnected) {
+        // App going to background — if JPush is not available, start native WS
+        // so we still get notifications when Android kills the WebView process.
+        // Check both pushAvailable (SDK ready) and jpushEnabledOnServer (config fetched)
+        // to avoid starting native WS when JPush will handle notifications anyway.
+        if (!pushAvailable && !jpushEnabledOnServer && webViewConnected) {
             BackgroundService.startNativeEventWs(this);
         }
     }
@@ -1144,7 +1151,6 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        isForeground = true;
         resumeWebView();
         // App returning to foreground — stop native WS (WebView WS handles events)
         BackgroundService.stopNativeEventWs(this);
@@ -1308,18 +1314,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // --- Share Out ---
-
-    /** Get or create the shared temp files directory under cacheDir. */
-    private File getSharedCacheDir() {
-        return SharedCacheUtils.getSharedCacheDir(getCacheDir());
-    }
-
-    /** Clean up all files in the shared cache directory. Called in onDestroy. */
-    private void cleanupSharedCacheDir() {
-        SharedCacheUtils.cleanupSharedCacheDir(getCacheDir());
-    }
-
     /**
      * Log launch intent extras (session_id/project_path from notification).
      * Extracted from onCreate() for testability.
@@ -1352,6 +1346,111 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         return super.dispatchKeyEvent(event);
+    }
+
+    // --- JPush Runtime Init ---
+
+    /**
+     * Fetch JPush configuration (AppKey, enabled flag) from the server's /api/push/config endpoint.
+     * If JPush is enabled on the server, initializes JPush with the runtime AppKey.
+     * If JPush is not configured, skips init — the app will keep WebSocket alive in background
+     * instead of relying on push notifications.
+     *
+     * This runs on a background thread (OkHttp callback) and posts JPush init back to main thread.
+     */
+    // Guards against double JPush init (onCreate + connectToServer race).
+    private volatile boolean jpushInitStarted = false;
+
+    void fetchPushConfig() {
+        String serverUrl = prefs.getString(KEY_SERVER_URL, "");
+        if (serverUrl.isEmpty()) {
+            AppLog.w(TAG, "No server URL configured, skipping push config fetch");
+            return;
+        }
+
+        if (jpushInitStarted) {
+            AppLog.i(TAG, "JPush init already started, skipping duplicate fetchPushConfig");
+            return;
+        }
+        jpushInitStarted = true;
+
+        new Thread(() -> {
+            try {
+                java.net.URL url = new java.net.URL(serverUrl + "/api/push/config");
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+
+                // Trust self-signed certs for localhost connections (SSH tunnel / dev)
+                // Same logic as WebViewClient.onReceivedSslError — cert hostname won't match localhost
+                if (conn instanceof HttpsURLConnection && isLocalhostUrl(serverUrl)) {
+                    TrustManager[] trustAll = { new X509TrustManager() {
+                        public void checkClientTrusted(X509Certificate[] c, String a) {}
+                        public void checkServerTrusted(X509Certificate[] c, String a) {}
+                        public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
+                    }};
+                    SSLContext sc = SSLContext.getInstance("TLS");
+                    sc.init(null, trustAll, new java.security.SecureRandom());
+                    ((HttpsURLConnection) conn).setSSLSocketFactory(sc.getSocketFactory());
+                    ((HttpsURLConnection) conn).setHostnameVerifier((hostname, session) -> true);
+                }
+
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(5000);
+                conn.setReadTimeout(5000);
+
+                int responseCode = conn.getResponseCode();
+                if (responseCode != 200) {
+                    AppLog.w(TAG, "Push config endpoint returned " + responseCode);
+                    conn.disconnect();
+                    return;
+                }
+
+                java.io.BufferedReader reader = new java.io.BufferedReader(
+                        new java.io.InputStreamReader(conn.getInputStream()));
+                StringBuilder response = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    response.append(line);
+                }
+                reader.close();
+                conn.disconnect();
+
+                // Parse JSON response
+                String jsonStr = response.toString();
+                org.json.JSONObject json = new org.json.JSONObject(jsonStr);
+                boolean jpushEnabled = json.optBoolean("jpush_enabled", false);
+                String jpushAppKey = json.optString("jpush_app_key", "");
+
+                // Mark server-side JPush status immediately, even before SDK init.
+                // This lets native WS suppress notifications during the init window.
+                if (jpushEnabled && !jpushAppKey.isEmpty()) {
+                    jpushEnabledOnServer = true;
+                    AppLog.i(TAG, "JPush enabled on server, initializing with AppKey: " + jpushAppKey.substring(0, 4) + "...");
+                    runOnUiThread(() -> {
+                        JPushInterface.setDebugMode(false);
+                        JPushConfig config = new JPushConfig();
+                        config.setjAppKey(jpushAppKey);
+                        JPushInterface.init(this, config);
+                        // NOTE: pushAvailable is NOT set to true here.
+                        // JPushInterface.init() is asynchronous — the SDK validates the AppKey
+                        // with the JPush server before registration succeeds. Setting
+                        // pushAvailable=true now would cause BackgroundService to disconnect
+                        // the native WS prematurely, even if init fails (e.g. 1005 error).
+                        // Instead, pushAvailable is set in JPushReceiver.onRegister() only
+                        // after the SDK confirms successful registration.
+                        AppLog.i(TAG, "JPush init called with server-provided AppKey, awaiting onRegister callback");
+                    });
+                } else {
+                    AppLog.i(TAG, "JPush not configured on server — will keep WebSocket alive in background");
+                }
+            } catch (Exception e) {
+                AppLog.w(TAG, "Failed to fetch push config: " + e.getMessage());
+            }
+        }).start();
+    }
+
+    /** Check if a URL points to localhost (SSH tunnel / local dev). */
+    private boolean isLocalhostUrl(String url) {
+        return url != null && (url.contains("//localhost:") || url.contains("//127.0.0.1:"));
     }
 
     // --- WebView Client ---
@@ -1405,15 +1504,6 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
             Uri url = request.getUrl();
-
-            // Allow content:// URIs only from our own FileProvider (camera capture, etc.)
-            if ("content".equals(url.getScheme())) {
-                if (url.getAuthority().equals(getPackageName() + ".fileprovider")) {
-                    return false;
-                }
-                return true; // Block other content:// URIs
-            }
-
             String host = url.getHost();
 
             // Allow localhost and the configured server
@@ -1618,7 +1708,8 @@ public class MainActivity extends AppCompatActivity {
                 activity.forwardedPorts.put(localPort, host != null ? host : "");
                 BackgroundService.addForwardedPort(activity, localPort, targetPort, host != null ? host : "");
 
-                // Request battery optimization exemption on first port forward.
+                // Request battery optimization exemption if not already granted.
+                // Re-check every time in case the user previously dismissed the dialog.
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     PowerManager pm = (PowerManager) activity.getSystemService(Context.POWER_SERVICE);
                     if (pm != null && !pm.isIgnoringBatteryOptimizations(activity.getPackageName())) {
@@ -1648,6 +1739,7 @@ public class MainActivity extends AppCompatActivity {
                         AppLog.w(TAG, "Failed to request battery optimization exemption", e);
                     }
                 } else {
+                    // Already whitelisted, just mark as requested
                     BackgroundService.setBatteryOptRequested(activity);
                 }
             }
@@ -1848,21 +1940,14 @@ public class MainActivity extends AppCompatActivity {
 
         /**
          * Download a file from the ClawBench server to the Downloads directory.
-         * @param path File path — relative (project-internal) or absolute (external, starts with /)
+         * @param path Relative file path (as used in /api/local-file/ URL)
          */
         @JavascriptInterface
         public void downloadFile(String path) {
             activity.runOnUiThread(() -> {
                 String serverUrl = activity.prefs.getString(KEY_SERVER_URL, "");
                 if (serverUrl.isEmpty()) return;
-                String url;
-                if (path.startsWith("/")) {
-                    // External file: use ?path= query param
-                    url = serverUrl + "/api/local-file/?download=1&path=" + Uri.encode(path);
-                } else {
-                    // Project-relative: use URL path
-                    url = serverUrl + "/api/local-file/" + Uri.encode(path, "/") + "?download=1";
-                }
+                String url = serverUrl + "/api/local-file/" + Uri.encode(path, "/") + "?download=1";
                 // Trigger the DownloadListener by asking WebView to load the URL
                 // The ?download=1 param makes the server return Content-Disposition: attachment
                 // which forces WebView to trigger the DownloadListener instead of rendering inline
@@ -1889,31 +1974,12 @@ public class MainActivity extends AppCompatActivity {
                     java.io.FileOutputStream fos = new java.io.FileOutputStream(outFile);
                     fos.write(data);
                     fos.close();
-
-                    // Register with DownloadManager so the system shows a completed
-                    // notification and the file appears in the Downloads app.
-                    try {
-                        DownloadManager dm = (DownloadManager) activity.getSystemService(Context.DOWNLOAD_SERVICE);
-                        // Infer MIME type from file extension (simple extraction, not URL parsing)
-                        int dot = fileName.lastIndexOf('.');
-                        String ext = (dot >= 0 && dot < fileName.length() - 1)
-                                ? fileName.substring(dot + 1).toLowerCase() : "";
-                        String mimeType = android.webkit.MimeTypeMap.getSingleton()
-                                .getMimeTypeFromExtension(ext);
-                        if (mimeType == null) mimeType = "application/octet-stream";
-                        dm.addCompletedDownload(fileName, activity.getString(R.string.download_description),
-                                true, mimeType, outFile.getAbsolutePath(), data.length,
-                                true /* show notification */);
-                    } catch (Exception e) {
-                        // addCompletedDownload may fail on some devices/scopes;
-                        // the file is already saved, just skip the notification.
-                        AppLog.w(TAG, "addCompletedDownload failed, file already saved", e);
-                    }
-
                     // Notify MediaScanner so the file appears in Downloads app
                     Intent scanIntent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
                     scanIntent.setData(Uri.fromFile(outFile));
                     activity.sendBroadcast(scanIntent);
+                    activity.runOnUiThread(() ->
+                            Toast.makeText(activity, R.string.download_completed, Toast.LENGTH_SHORT).show());
                 } catch (Exception e) {
                     AppLog.e(TAG, "downloadBlob failed", e);
                     activity.runOnUiThread(() ->
@@ -1935,8 +2001,48 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
+         * Get the JPush registration ID for push notifications.
+         * The WebView calls this on WS connect to register the device for push.
+         */
+        @JavascriptInterface
+        public String getPushRegistrationId() {
+            return JPushInterface.getRegistrationID(activity);
+        }
+
+        /**
+         * Check whether push notifications are available.
+         * Returns true if JPush was initialized with a valid AppKey from the server.
+         * When push is available, the frontend can safely disconnect WebSocket on background;
+         * when not available, WebSocket must stay alive for real-time events.
+         */
+        @JavascriptInterface
+        public boolean isPushAvailable() {
+            return activity.pushAvailable;
+        }
+
+        /**
+         * Toggle the push service persistent notification (foreground service).
+         * When enabled, PushService shows a persistent notification that prevents
+         * the :pushcore process from being killed. When disabled, PushService runs
+         * as a background service without a notification (less resistant to being killed).
+         */
+        @JavascriptInterface
+        public void setPushPersistentNotification(boolean enabled) {
+            PushService.setPersistentNotification(activity, enabled);
+        }
+
+        /**
+         * Check whether the push persistent notification is enabled.
+         * Returns true by default.
+         */
+        @JavascriptInterface
+        public boolean isPushPersistentNotification() {
+            return PushService.isPersistentNotificationEnabled(activity);
+        }
+
+        /**
          * Open a chat session by dispatching an event to the WebView.
-         * Called when a notification is tapped.
+         * Called by JPushReceiver when a push notification is tapped.
          */
         @JavascriptInterface
         public void openSession(String sessionId) {
@@ -2061,222 +2167,6 @@ public class MainActivity extends AppCompatActivity {
                     AppLog.i(TAG, "setKeepScreenOn: FLAG_KEEP_SCREEN_ON cleared");
                 }
             });
-        }
-
-        /**
-         * Share a file from the ClawBench server with another app via ACTION_SEND.
-         * Downloads the file to a temp directory, then creates a share intent
-         * with a FileProvider content URI.
-         * @param path File path — relative (project-internal) or absolute (external, starts with /)
-         * @param mimeType MIME type for the share intent (e.g. "image/png", "application/pdf")
-         */
-        @JavascriptInterface
-        public void shareFile(String path, String mimeType) {
-            // Path safety: reject traversal attempts
-            if (path == null || path.isEmpty() || path.contains("..")) {
-                AppLog.w(TAG, "shareFile: invalid path: " + path);
-                return;
-            }
-            try {
-                String decoded = java.net.URLDecoder.decode(path, "UTF-8");
-                if (decoded.contains("..")) {
-                    AppLog.w(TAG, "shareFile: invalid decoded path: " + path);
-                    return;
-                }
-            } catch (Exception e) {
-                AppLog.w(TAG, "shareFile: invalid path encoding: " + path);
-                return;
-            }
-
-            new Thread(() -> {
-                try {
-                    String serverUrl = activity.prefs.getString(KEY_SERVER_URL, "");
-                    if (serverUrl.isEmpty()) {
-                        AppLog.w(TAG, "shareFile: no server URL");
-                        return;
-                    }
-
-                    // Flush cookies and get auth cookie
-                    CookieManager.getInstance().flush();
-                    String cookie = CookieManager.getInstance().getCookie(serverUrl);
-                    if (cookie == null || cookie.isEmpty()) {
-                        AppLog.w(TAG, "shareFile: no auth cookie");
-                        activity.runOnUiThread(() ->
-                                Toast.makeText(activity, R.string.share_file_failed, Toast.LENGTH_SHORT).show());
-                        return;
-                    }
-
-                    // Download file from server
-                    String downloadUrl;
-                    if (path.startsWith("/")) {
-                        // External file: use ?path= query param
-                        downloadUrl = serverUrl + "/api/local-file/?download=1&path=" + Uri.encode(path);
-                    } else {
-                        // Project-relative: use URL path
-                        String encodedPath = Uri.encode(path, "/");
-                        downloadUrl = serverUrl + "/api/local-file/" + encodedPath + "?download=1";
-                    }
-
-                    OkHttpClient client = activity.buildTrustingOkHttpClient();
-                    Request request = new Request.Builder()
-                            .url(downloadUrl)
-                            .addHeader("Cookie", cookie)
-                            .build();
-
-                    // Stream to temp file in shared cache dir
-                    String fileName = path.contains("/") ? path.substring(path.lastIndexOf("/") + 1) : path;
-                    fileName = fileName.replaceAll("[\\\\/:*?\"<>|]", "_");
-                    if (fileName.length() > 200) fileName = fileName.substring(0, 200);
-                    final String safeFileName = fileName;
-                    File tempFile = new File(activity.getSharedCacheDir(), UUID.randomUUID().toString() + "_" + safeFileName);
-
-                    try (Response response = client.newCall(request).execute()) {
-                        if (!response.isSuccessful() || response.body() == null) {
-                            AppLog.w(TAG, "shareFile: download failed, code=" + response.code());
-                            activity.runOnUiThread(() ->
-                                    Toast.makeText(activity, R.string.share_file_failed, Toast.LENGTH_SHORT).show());
-                            return;
-                        }
-                        try (InputStream is = response.body().byteStream();
-                             FileOutputStream fos = new FileOutputStream(tempFile)) {
-                            byte[] buffer = new byte[8192];
-                            int len;
-                            while ((len = is.read(buffer)) != -1) {
-                                fos.write(buffer, 0, len);
-                            }
-                        }
-                    }
-
-                    tempFile.deleteOnExit();
-
-                    // Get FileProvider content URI
-                    String authority = activity.getPackageName() + ".fileprovider";
-                    Uri contentUri = androidx.core.content.FileProvider.getUriForFile(activity, authority, tempFile);
-
-                    // Build share intent
-                    Intent shareIntent = new Intent(Intent.ACTION_SEND);
-                    shareIntent.setType(mimeType != null && !mimeType.isEmpty() ? mimeType : "*/*");
-                    shareIntent.putExtra(Intent.EXTRA_STREAM, contentUri);
-                    shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-
-                    activity.runOnUiThread(() -> {
-                        try {
-                            activity.startActivity(Intent.createChooser(shareIntent, safeFileName));
-                        } catch (Exception e) {
-                            AppLog.w(TAG, "shareFile: chooser failed", e);
-                            Toast.makeText(activity, R.string.share_file_failed, Toast.LENGTH_SHORT).show();
-                        }
-                    });
-
-                } catch (Exception e) {
-                    AppLog.e(TAG, "shareFile failed", e);
-                    activity.runOnUiThread(() ->
-                            Toast.makeText(activity, R.string.share_file_failed, Toast.LENGTH_SHORT).show());
-                }
-            }).start();
-        }
-
-        /**
-         * Share text with another app via ACTION_SEND.
-         * @param text Text content to share
-         */
-        @JavascriptInterface
-        public void shareText(String text) {
-            if (text == null || text.isEmpty()) return;
-            activity.runOnUiThread(() -> {
-                try {
-                    Intent shareIntent = new Intent(Intent.ACTION_SEND);
-                    shareIntent.setType("text/plain");
-                    shareIntent.putExtra(Intent.EXTRA_TEXT, text);
-                    activity.startActivity(Intent.createChooser(shareIntent, "Share"));
-                } catch (Exception e) {
-                    AppLog.w(TAG, "shareText: chooser failed", e);
-                }
-            });
-        }
-
-        /**
-         * Check if the device is a Chinese OEM with aggressive background process
-         * management (Xiaomi, Huawei, OPPO, vivo). The frontend uses this to
-         * prompt the user to enable auto-start / battery optimization whitelisting.
-         */
-        @JavascriptInterface
-        public boolean isChineseOem() {
-            return OemUtils.isChineseOem();
-        }
-
-        /**
-         * Get the detected OEM name for display purposes.
-         * Returns one of: "xiaomi", "huawei", "oppo", "vivo", "samsung", "other".
-         */
-        @JavascriptInterface
-        public String getOemName() {
-            return OemUtils.detectOem().name().toLowerCase();
-        }
-
-        /**
-         * Check if the auto-start prompt has been shown to the user.
-         */
-        @JavascriptInterface
-        public boolean isOemAutoStartPrompted() {
-            return OemUtils.isAutoStartPrompted(activity);
-        }
-
-        /**
-         * Mark the auto-start prompt as shown (don't prompt again).
-         */
-        @JavascriptInterface
-        public void setOemAutoStartPrompted() {
-            OemUtils.setAutoStartPrompted(activity);
-        }
-
-        /**
-         * Open the OEM-specific auto-start / startup manager settings.
-         * Returns true if an intent was launched, false if not supported.
-         */
-        @JavascriptInterface
-        public boolean openOemAutoStartSettings() {
-            Intent intent = OemUtils.getAutoStartIntent(activity);
-            if (intent != null) {
-                try {
-                    activity.startActivity(intent);
-                    return true;
-                } catch (Exception e) {
-                    AppLog.w(TAG, "Failed to open OEM auto-start settings", e);
-                }
-            }
-            return false;
-        }
-
-        /**
-         * Open the OEM-specific battery optimization settings.
-         * Returns true if an intent was launched, false if not supported.
-         */
-        @JavascriptInterface
-        public boolean openOemBatterySettings() {
-            Intent intent = OemUtils.getBatterySettingsIntent(activity);
-            if (intent != null) {
-                try {
-                    activity.startActivity(intent);
-                    return true;
-                } catch (Exception e) {
-                    AppLog.w(TAG, "Failed to open OEM battery settings", e);
-                }
-            }
-            return false;
-        }
-
-        /**
-         * Sync the last seen event ID cursor from the WebView WS to
-         * SharedPreferences. Called by the frontend when it receives a
-         * terminal-state event (completed/cancelled/failed/permission_pending)
-         * while the app is in the foreground. This prevents the native WS
-         * fetchPendingEvents() from re-delivering already-seen events when
-         * the app switches to background.
-         */
-        @JavascriptInterface
-        public void updateLastSeenEventId(String eventId) {
-            BackgroundService.updateLastSeenEventId(activity, eventId);
         }
     }
 

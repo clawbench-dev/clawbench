@@ -11,37 +11,32 @@
   />
   <!-- Standard settings category -->
   <div v-else class="settings-category">
-    <template v-for="entry in renderList" :key="entry.key">
-      <SettingsItem
-        :label="(entry as any).label || t(entry.labelKey)"
-        :description="entry.descriptionKey ? t(entry.descriptionKey) : ''"
-        :type="entry.type"
-        :model-value="getItemValue(entry)"
-        :options="resolveItemOptions(entry)"
-        :min="entry.min"
-        :max="entry.max"
-        :step="entry.step"
-        :needs-restart="entry.needsRestart"
-        :force-close="activeKey !== null && activeKey !== entry.key"
-        :no-divider="false"
-        :default-value="entry.defaultValue"
-        :display-format="entry.displayFormat"
-        :display-transform="entry.displayTransform"
-        @update:model-value="(v: any) => handleUpdate(entry, v)"
-        @click="handleClick(entry)"
-        @edit-toggle="(open: boolean) => handleEditToggle(entry.key, open)"
-        @desc-toggle="(open: boolean) => handleDescToggle(entry.key, open)"
-        @discard="handleDiscard"
-      />
-    </template>
+    <SettingsItem
+      v-for="(item, index) in items"
+      :key="item.key"
+      :label="item.label"
+      :description="item.description"
+      :type="item.type"
+      :model-value="getItemValue(item)"
+      :options="item.options"
+      :min="item.min"
+      :max="item.max"
+      :step="item.step"
+      :needs-restart="item.needsRestart"
+      :force-close="activeKey !== null && activeKey !== item.key"
+      :no-divider="isLastInSection(items, index)"
+      @update:model-value="(v: any) => handleUpdate(item, v)"
+      @click="handleClick(item)"
+      @edit-toggle="(open: boolean) => handleEditToggle(item.key, open)"
+      @desc-toggle="(open: boolean) => handleDescToggle(item.key, open)"
+      @discard="handleDiscard"
+    />
     <!-- Password change dialog -->
     <PasswordChangeDialog
       v-if="showPasswordDialog"
       @close="showPasswordDialog = false"
       @changed="handlePasswordChanged"
     />
-    <!-- iOS install instructions sheet -->
-    <IosInstallDrawer :open="showIosSheet" @close="showIosSheet = false" />
   </div>
 </template>
 
@@ -52,14 +47,13 @@ import SettingsItem from './SettingsItem.vue'
 import PasswordChangeDialog from './PasswordChangeDialog.vue'
 import SettingsAgentsIndex from './SettingsAgentsIndex.vue'
 import SettingsAgentDetail from './SettingsAgentDetail.vue'
-import IosInstallDrawer from '@/components/common/IosInstallDrawer.vue'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useAgents } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
 import { useAppMode } from '@/composables/useAppMode'
-import { usePwaInstall } from '@/composables/usePwaInstall'
-import { categoryItems, type ItemSpec, type DependsOn } from './settingsFieldMap'
+import { useGlobalEvents } from '@/composables/useGlobalEvents'
+import { categoryItems, engineVoiceOptions, type ItemSpec, type DependsOn } from './settingsFieldMap'
 
 const props = defineProps<{
   categoryId: string
@@ -75,12 +69,12 @@ const { t } = useI18n()
 const toast = useToast()
 const dialog = useDialog()
 const { localConfig, serverConfig, setLocalConfig, getServerValueWithDefault, setServerValue } = useSettingsConfig()
-const { loadAgents } = useAgents()
+const { agents, loadAgents } = useAgents()
 const { isAppMode } = useAppMode()
-const pwaInstall = usePwaInstall()
+const { pushRegistered } = useGlobalEvents()
+
 const activeKey = ref<string | null>(null)
 const showPasswordDialog = ref(false)
-const showIosSheet = ref(false)
 
 // Load agents when chat or agents category is shown
 watch(() => props.categoryId, (id) => {
@@ -104,58 +98,82 @@ function isDependsOnMet(dependsOn: ItemSpec['dependsOn']): boolean {
   return isSingleDependsOnMet(dependsOn)
 }
 
-// ── Render list: standalone items with dependsOn filtering ──
+// categoryItems is imported from the shared settingsFieldMap module
+// (single source of truth — also used by SettingsRestartDialog for field translation)
 
-const renderList = computed(() => {
+// Resolve i18n labels at runtime, and dynamically inject agent options
+const items = computed(() => {
   const raw = categoryItems[props.categoryId] ?? []
-  const result: ItemSpec[] = []
-
+  // Filter by dependsOn and inject header pseudo-items
+  const expanded: any[] = []
   for (const item of raw) {
     if (!isDependsOnMet(item.dependsOn)) continue
-    // Hide appVersion row when not in Android App mode
+    // Hide appVersion row when not in Android App mode (no AndroidNative bridge)
     if (item.key === 'appVersion' && !isAppMode.value) continue
-    if (item.key === 'addToHomeScreen' && !pwaInstall.showPwaInstall.value) continue
-    if (item.key === 'downloadAndroidApp' && !pwaInstall.showApkDownload.value) continue
-
-    // Inject section header pseudo-item before the field
+    // Inject push registration status as a standalone info row at the top of push category
+    if (item.key === 'push.jpush.enabled') {
+      expanded.push({
+        key: 'push-registration-status',
+        label: t('settings.items.pushStatus'),
+        labelKey: 'settings.items.pushStatus',
+        type: 'info' as const,
+        source: 'local' as const,
+        modelValue: pushRegistered.value ? t('settings.items.pushStatusRegistered') : t('settings.items.pushStatusNotRegistered'),
+      })
+    }
     if (item.sectionHeader) {
-      result.push({
+      expanded.push({
         key: `header-${item.key}`,
         label: t(item.sectionHeader),
         labelKey: item.sectionHeader,
-        type: 'header',
-        source: 'local',
-      } as any)
+        type: 'header' as const,
+        source: 'local' as const,
+      })
     }
-    result.push(item)
+    expanded.push(item)
   }
+  return expanded.map(item => {
+    // Dynamically build options for default_agent from the agents list
+    let resolvedOptions = item.options
+    if (item.key === 'default_agent') {
+      resolvedOptions = agents.value.map(a => ({
+        labelKey: '',
+        value: a.id,
+        label: `${a.icon} ${a.name}`,
+      }))
+    }
+    // Dynamically build options for tts.voice based on current engine
+    if (item.key === 'tts.voice') {
+      const engine = resolveConfigValue('tts.engine') || 'edge'
+      resolvedOptions = engineVoiceOptions[engine] ?? []
+    }
 
-  return result
+    return {
+      ...item,
+      label: item.label || t(item.labelKey),
+      description: item.descriptionKey ? t(item.descriptionKey) : '',
+      options: resolvedOptions?.map((opt: any) => ({
+        ...opt,
+        label: opt.label || resolveOptionLabel(item.key, opt),
+      })),
+    }
+  })
 })
 
-// ── Standalone item helpers ──
-
-function resolveItemOptions(item: any): any {
-  const resolvedOptions = item.options
-  if (resolvedOptions) {
-    return resolvedOptions.map((opt: any) => ({
-      ...opt,
-      label: opt.label || resolveOptionLabel(item.key, opt),
-    }))
-  }
-  return undefined
-}
-
 function resolveOptionLabel(_itemKey: string, opt: { labelKey: string; value: any }): string {
+  // All select options should have labelKey set to the i18n key
   if (opt.labelKey) return t(opt.labelKey)
   return String(opt.value)
 }
 
 function getItemValue(item: any): any {
+  // Header pseudo-items have no value
   if (item.type === 'header') return undefined
+  // Dynamically injected items with explicit modelValue (e.g. push-registration-status)
   if (item.modelValue !== undefined && item.source === 'local' && item.type === 'info') {
     return item.modelValue
   }
+  // Version info items
   if (item.key === 'serverVersion') {
     return serverConfig.value?.version ?? '-'
   }
@@ -166,6 +184,11 @@ function getItemValue(item: any): any {
     } catch { /* not in app mode */ }
     return '-'
   }
+  // Port forward port: 0 means auto-assign
+  if (item.key === 'port_forward.port') {
+    const val = getServerValueWithDefault(item.key)
+    return val === 0 ? t('settings.items.portForwardPortAuto') : val
+  }
   if (item.source === 'local') {
     return localConfig[item.key]
   }
@@ -173,10 +196,11 @@ function getItemValue(item: any): any {
 }
 
 async function handleUpdate(item: any, value: any) {
+  // Password type: skip if empty or still masked (contains bullet chars)
   if (item.type === 'password') {
     if (!value || value.includes('•')) return
   }
-
+  // Confirm before disabling localhost auth exempt (CLI tools will be affected)
   if (item.key === 'localhost_auth_exempt' && value === false) {
     const confirmed = await dialog.confirm(
       t('settings.items.localhostAuthExemptConfirm'),
@@ -186,6 +210,7 @@ async function handleUpdate(item: any, value: any) {
   }
   if (item.source === 'local') {
     setLocalConfig(item.key, value)
+    // Bridge androidLogCapture switch to Android native AppLog
     if (item.key === 'androidLogCapture') {
       try {
         if (value) {
@@ -197,6 +222,7 @@ async function handleUpdate(item: any, value: any) {
     }
     return
   }
+  // Server config: auto-save immediately
   try {
     const result = await setServerValue(item.key, value)
     if (result.needsRestart && result.changedColdFields.length > 0) {
@@ -218,23 +244,6 @@ function handleClick(item: any) {
   }
   if (item.key === 'restartServer') {
     handleRestartServer()
-  }
-  if (item.key === 'addToHomeScreen') {
-    handleAddToHomeScreen()
-  }
-  if (item.key === 'downloadAndroidApp') {
-    window.location.href = '/api/apk'
-  }
-  if (item.key === 'showWelcome') {
-    window.dispatchEvent(new CustomEvent('clawbench-show-welcome'))
-  }
-}
-
-async function handleAddToHomeScreen() {
-  if (pwaInstall.canInstallPwa.value) {
-    await pwaInstall.installPwa()
-  } else if (pwaInstall.isIOS.value) {
-    showIosSheet.value = true
   }
 }
 
@@ -274,6 +283,13 @@ function handleDescToggle(key: string, open: boolean) {
 
 function handleDiscard() {
   toast.show(t('settings.passwordDiscarded'), { icon: 'ℹ️', type: 'info', duration: 3000 })
+}
+
+/** Check if item at index is the last in its section (last item overall, or next item is a header). */
+function isLastInSection(items: any[], index: number): boolean {
+  if (index >= items.length - 1) return true
+  const nextItem = items[index + 1]
+  return nextItem?.type === 'header'
 }
 </script>
 

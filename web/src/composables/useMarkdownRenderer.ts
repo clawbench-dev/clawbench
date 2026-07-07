@@ -1,7 +1,6 @@
 import { marked, katex, mermaid, DOMPurify } from '@/utils/globals.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { injectTableRowAttrs } from '@/utils/tableRowExpand.ts'
-import { annotateTableBlockHeaders } from '@/composables/useCodeBlockHeader.ts'
 
 /**
  * Markdown渲染选项
@@ -105,7 +104,7 @@ export function renderMarkdown(
     // 3. 净化HTML（防止XSS攻击）
     // 注意：KaTeX渲染后的HTML需要 ADD_TAGS:['math'] 保留 <math> 标签
     if (sanitize) {
-        html = DOMPurify.sanitize(html, { ADD_TAGS: ['math', 'button'], ADD_ATTR: ['data-action', 'aria-label', 'title', 'data-file-path', 'data-line-start', 'data-line-end', 'data-fallback-path', 'data-commit-sha', 'data-worktree-path'] })
+        html = DOMPurify.sanitize(html, { ADD_TAGS: ['math'] })
     }
 
     // 4. 修复图片路径
@@ -122,10 +121,7 @@ export function renderMarkdown(
     // 6. 注入表格行属性标识
     html = injectTableRowAttrs(html)
 
-    // 7. 表格块头部（label + copy/wrap 按钮）
-    html = annotateTableBlockHeaders(html)
-
-    // 8. 自定义后处理
+    // 7. 自定义后处理
     if (postProcess) {
         html = postProcess(html)
     }

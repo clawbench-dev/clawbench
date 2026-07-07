@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-message" :class="[msg.role, { 'has-metadata': msg.role === 'assistant' && msg.metadata, pending: msg.pending }]" :data-msg-key="msg.id ? 'db-' + msg.id : null">
+  <div class="chat-message" :class="[msg.role, { 'has-metadata': msg.role === 'assistant' && msg.metadata, pending: msg.pending }]">
 
     <!-- Collapsible content wrapper -->
     <div ref="wrapperRef" class="msg-content-wrapper">
@@ -76,10 +76,6 @@
             <span>{{ t('chat.message.readAloud') }}</span>
           </template>
         </button>
-        <button v-if="!msg.streaming" class="chat-action-btn" @click="handleCopyMessage" :title="t('chat.message.copy')">
-          <Check v-if="copied" :size="14" class="copy-check" />
-          <Copy v-else :size="14" />
-        </button>
         <button v-if="!msg.streaming" class="chat-action-btn" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
           <Info :size="14" />
         </button>
@@ -87,29 +83,37 @@
     </div>
 
     <!-- File changes sheet -->
-    <FileChangesDrawer
+    <FileChangesSheet
       :open="fileChangesDrawer.effectiveOpen.value"
       :created="fileChanges.created"
       :modified="fileChanges.modified"
       @close="fileChangesOpen = false"
       @open-file="handleOpenFile"
     />
+    <!-- Bottom bar for user messages -->
+    <div v-if="msg.role === 'user' && !msg.pending" class="chat-meta-bar chat-meta-bar-user">
+      <span class="chat-meta-info">
+      </span>
+      <button class="chat-action-btn chat-info-btn-user" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
+        <Info :size="14" />
+      </button>
+    </div>
+
   </div>
 </template>
 
 <script setup>
 import { ref, inject, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Pause, Volume2, Info, FileDiff, Copy, Check } from 'lucide-vue-next'
+import { Clock, Pause, Volume2, Info, FileDiff } from 'lucide-vue-next'
 import { formatDuration } from '@/utils/format.ts'
-import { copyText } from '@/utils/clipboard.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
 import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
 import { store } from '@/stores/app.ts'
 import ContentBlocks from './ContentBlocks.vue'
 import FileAttachmentList from './FileAttachmentList.vue'
-import FileChangesDrawer from './FileChangesDrawer.vue'
+import FileChangesSheet from './FileChangesSheet.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import SummaryToggle from '@/components/common/SummaryToggle.vue'
 
@@ -173,25 +177,6 @@ function handleOpenFile(path) {
   const relPath = root && path.startsWith(root + '/') ? path.slice(root.length + 1) : path
   openFilePath(relPath)
 }
-
-// Copy message markdown — only the final conclusion (last text block)
-const copied = ref(false)
-function handleCopyMessage() {
-  const blocks = props.msg?.blocks || []
-  // Find the last text block (the conclusion)
-  let lastText = ''
-  for (let i = blocks.length - 1; i >= 0; i--) {
-    if (blocks[i].type === 'text' && blocks[i].text?.trim()) {
-      lastText = blocks[i].text
-      break
-    }
-  }
-  if (!lastText) return
-  copyText(lastText, () => {
-    copied.value = true
-    setTimeout(() => { copied.value = false }, 1500)
-  })
-}
 </script>
 
 <style scoped>
@@ -218,17 +203,12 @@ function handleCopyMessage() {
 }
 
 /* Image thumbnail style */
-.chat-message .chat-img {
-  cursor: pointer;
-  vertical-align: middle;
-}
-
-.chat-message .lightbox-img {
+.chat-message .chat-img-thumbnail {
   cursor: pointer;
   transition: transform 0.15s, box-shadow 0.15s;
 }
 
-.chat-message .lightbox-img:hover {
+.chat-message .chat-img-thumbnail:hover {
   transform: scale(1.02);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
@@ -272,11 +252,6 @@ function handleCopyMessage() {
     color: var(--accent-color, #0066cc);
 }
 
-/* Copy confirmed check icon */
-.chat-action-btn .copy-check {
-    color: #22c55e;
-}
-
 .chat-action-btn.active:hover {
     background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent);
 }
@@ -289,7 +264,7 @@ function handleCopyMessage() {
 }
 
 /* Speak button loading spinner animation */
-.chat-action-btn.loading .speak-spinner {
+.chat-speak-btn.loading .speak-spinner {
     animation: speak-spin 1s linear infinite;
 }
 
@@ -376,6 +351,7 @@ function handleCopyMessage() {
 /* Chat message - non-scoped for v-html penetration */
 .chat-message {
     padding: 8px 12px;
+    border-radius: var(--radius-md);
     font-size: 13px;
     line-height: 1.4;
     min-width: 0;
@@ -418,66 +394,35 @@ function handleCopyMessage() {
 /* ── File attachment in messages ── */
 .chat-files {
   display: flex;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 4px;
   margin: 4px 0;
-  scrollbar-width: none;
-  -webkit-overflow-scrolling: touch;
 }
 
-.chat-files::-webkit-scrollbar {
-  display: none;
-}
-
-/* File card: filename pill */
-.chat-message .chat-file-tag,
-.chat-message .chat-file-attachment {
+/* Common file tag styles - shared by both current file and uploaded attachments */
+.chat-file-tag,
+.chat-file-attachment {
   display: inline-flex;
   align-items: center;
-  border-radius: 6px;
-  height: 40px;
-  padding: 0 10px;
+  gap: 4px;
+  border-radius: 8px;
+  padding: 1px 6px;
+  margin-bottom: 4px;
   font-size: 12px;
   text-decoration: none;
   cursor: pointer;
   transition: opacity 0.15s;
+  white-space: nowrap;
+  max-width: 200px;
+}
+
+.chat-file-tag-icon,
+.chat-file-attachment svg {
   flex-shrink: 0;
-  box-sizing: border-box;
 }
 
-.chat-message .attachment-filename {
-  font-family: monospace;
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.chat-message .attachment-filesize {
-  font-size: 10px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Image card: square thumbnail */
-.chat-message .chat-file-attachment.attachment-image-only {
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  overflow: hidden;
-  border-radius: 8px;
-}
-
-.chat-message .attachment-thumb-img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-
-.chat-file-tag-path {
+.chat-file-tag-path,
+.chat-file-name {
   font-family: monospace;
   flex: 1;
   min-width: 0;
@@ -488,7 +433,8 @@ function handleCopyMessage() {
   -ms-overflow-style: none;
 }
 
-.chat-file-tag-path::-webkit-scrollbar {
+.chat-file-tag-path::-webkit-scrollbar,
+.chat-file-name::-webkit-scrollbar {
   display: none;
 }
 
@@ -499,18 +445,27 @@ function handleCopyMessage() {
 }
 
 .chat-message.user .chat-file-tag-path,
-.chat-message.user .attachment-filename {
+.chat-message.user .chat-file-name {
   color: rgba(255, 255, 255, 0.95);
 }
 
-/* User message: solid border (both upload and ref) */
-.chat-message.user .attachment-upload,
-.chat-message.user .attachment-ref {
+.chat-message.user .chat-file-tag-icon,
+.chat-message.user .chat-file-attachment svg {
+  stroke: rgba(255, 255, 255, 0.95);
+}
+
+/* User message: uploaded - solid border */
+.chat-message.user .attachment-upload {
   background: rgba(255, 255, 255, 0.15);
   border: 1px solid rgba(255, 255, 255, 0.35);
 }
 
-.chat-message.user .attachment-upload:hover,
+/* User message: referenced - dashed border */
+.chat-message.user .attachment-ref {
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px dashed rgba(255, 255, 255, 0.6);
+}
+
 .chat-message.user .attachment-ref:hover,
 .chat-message.user .chat-file-tag:hover {
   background: rgba(255, 255, 255, 0.25);
@@ -523,18 +478,27 @@ function handleCopyMessage() {
 }
 
 .chat-message.assistant .chat-file-tag-path,
-.chat-message.assistant .attachment-filename {
+.chat-message.assistant .chat-file-name {
   color: var(--text-secondary);
 }
 
-/* Assistant message: solid border (both upload and ref) */
-.chat-message.assistant .attachment-upload,
-.chat-message.assistant .attachment-ref {
+.chat-message.assistant .chat-file-tag-icon,
+.chat-message.assistant .chat-file-attachment svg {
+  stroke: var(--text-secondary);
+}
+
+/* Assistant message: uploaded - solid border */
+.chat-message.assistant .attachment-upload {
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
 }
 
-.chat-message.assistant .attachment-upload:hover,
+/* Assistant message: referenced - dashed border */
+.chat-message.assistant .attachment-ref {
+  background: color-mix(in srgb, var(--text-muted, #999) 8%, transparent);
+  border: 1px dashed var(--text-secondary);
+}
+
 .chat-message.assistant .attachment-ref:hover,
 .chat-message.assistant .chat-file-tag:hover {
   background: var(--bg-secondary);
@@ -544,9 +508,7 @@ function handleCopyMessage() {
     background: var(--user-msg-color);
     color: white;
     align-self: flex-end;
-    border-radius: 20px 20px 0 20px;
-    margin-right: 10px;
-    max-width: calc(100% - 20px);
+    border-radius: 16px 16px 0 16px;
     overflow: hidden;
 }
 
@@ -554,7 +516,7 @@ function handleCopyMessage() {
     background: var(--bg-tertiary);
     color: var(--text-primary);
     align-self: stretch;
-    border-radius: 0;
+    border-radius: 16px 16px 16px 0;
     position: relative;
     min-width: 0;
     overflow: hidden;
@@ -638,11 +600,6 @@ function handleCopyMessage() {
     margin: 0.75em 0;
 }
 
-.chat-message.user .table-block-wrapper .table-wrap {
-    margin: 0;
-    border-radius: 0;
-}
-
 .chat-message.user table {
     display: block;
     margin: 0;
@@ -715,18 +672,6 @@ function handleCopyMessage() {
     word-break: normal;
 }
 
-/* Word-wrap mode: override pre/code white-space from rules above */
-.chat-message.assistant .code-block-wrapper.word-wrap pre {
-    overflow: visible;
-    white-space: pre-wrap;
-}
-
-.chat-message.assistant .code-block-wrapper.word-wrap pre code {
-    white-space: pre-wrap;
-    word-break: break-all;
-    overflow-wrap: break-word;
-}
-
 .chat-message.assistant code {
     padding: 2px 6px;
     font-size: 13px;
@@ -775,11 +720,6 @@ function handleCopyMessage() {
     border: none;
     border-radius: 6px;
     margin: 0.75em 0;
-}
-
-.chat-message.assistant .table-block-wrapper .table-wrap {
-    margin: 0;
-    border-radius: 0;
 }
 
 .chat-message.assistant table {

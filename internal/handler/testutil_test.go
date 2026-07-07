@@ -52,6 +52,8 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 	origToken := model.SessionToken
 	origCookieToken := model.CookieToken
 	origRootPaths := model.RootPaths
+	origDB := service.DB
+	origDBRead := service.DBRead
 	origAgents := model.Agents
 	origAgentList := model.AgentList
 	origDefaultAgentID := model.DefaultAgentID
@@ -240,7 +242,8 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		t.Fatalf("failed to create agent tables: %v", err)
 	}
 
-	service.SetDBForTest(db, db)
+	service.DB = db
+	service.DBRead = db // Same instance for :memory: SQLite — data is shared
 
 	// Register mock agents so GetDefaultAgentID() works
 	model.Agents = map[string]*model.Agent{
@@ -256,7 +259,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		OrigToken:       origToken,
 		OrigCookieToken: origCookieToken,
 		OrigRootPaths:   origRootPaths,
-		OrigDB:          service.UnsafeDBForTest(),
+		OrigDB:          origDB,
 	}
 
 	teardown := func() {
@@ -267,7 +270,8 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		model.AgentList = origAgentList
 		model.DefaultAgentID = origDefaultAgentID
 		model.LocalhostAuthExempt = origLocalhostAuthExempt
-		service.SetDBForTest(env.OrigDB, env.OrigDB)
+		service.DB = origDB
+		service.DBRead = origDBRead
 		_ = db.Close()
 	}
 

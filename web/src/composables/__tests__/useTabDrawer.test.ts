@@ -26,7 +26,7 @@ describe('useTabDrawer', () => {
     expect(drawer.effectiveOpen.value).toBe(true)
   })
 
-  it('effectiveOpen becomes false when tab switches away but openRef is preserved', async () => {
+  it('effectiveOpen becomes false when tab switches away and openRef is closed', async () => {
     const openRef = ref(false)
     const drawer = useTabDrawer('browse', openRef)
 
@@ -35,16 +35,11 @@ describe('useTabDrawer', () => {
     await nextTick()
     expect(drawer.effectiveOpen.value).toBe(true)
 
-    // Switch away from browse — effectiveOpen becomes false but openRef is preserved
+    // Switch away from browse — onTabSwitch closes the drawer
     onTabSwitch('chat')
     await nextTick()
-    expect(openRef.value).toBe(true)   // preserved — not force-closed
-    expect(drawer.effectiveOpen.value).toBe(false) // visually hidden via computed
-
-    // Switch back — drawer re-opens automatically
-    onTabSwitch('browse')
-    await nextTick()
-    expect(drawer.effectiveOpen.value).toBe(true)
+    expect(openRef.value).toBe(false)  // closed by onTabSwitch
+    expect(drawer.effectiveOpen.value).toBe(false)
   })
 
   it('effectiveOpen guards against opening on wrong tab', async () => {
@@ -72,49 +67,36 @@ describe('useTabDrawer', () => {
 })
 
 describe('onTabSwitch', () => {
-  it('preserves openRef values; effectiveOpen handles visibility', async () => {
+  it('closes all drawers not belonging to the new tab', () => {
     const browseDrawer = ref(false)
     const chatDrawer = ref(false)
     const terminalDrawer = ref(false)
 
-    const browse = useTabDrawer('browse', browseDrawer)
-    const chat = useTabDrawer('chat', chatDrawer)
-    const terminal = useTabDrawer('terminal', terminalDrawer)
+    useTabDrawer('browse', browseDrawer)
+    useTabDrawer('chat', chatDrawer)
+    useTabDrawer('terminal', terminalDrawer)
 
     // Open all drawers
     browseDrawer.value = true
     chatDrawer.value = true
     terminalDrawer.value = true
 
-    // Switch to chat — openRefs are preserved, effectiveOpen hides non-chat drawers
+    // Switch to chat — browse and terminal drawers should close
     onTabSwitch('chat')
-    await nextTick()
 
-    expect(browseDrawer.value).toBe(true)   // preserved
-    expect(chatDrawer.value).toBe(true)     // preserved
-    expect(terminalDrawer.value).toBe(true) // preserved
-
-    expect(browse.effectiveOpen.value).toBe(false)  // visually hidden
-    expect(chat.effectiveOpen.value).toBe(true)     // visible
-    expect(terminal.effectiveOpen.value).toBe(false) // visually hidden
-
-    // Switch back to browse — browse drawer re-appears
-    onTabSwitch('browse')
-    await nextTick()
-    expect(browse.effectiveOpen.value).toBe(true)
-    expect(chat.effectiveOpen.value).toBe(false)
+    expect(browseDrawer.value).toBe(false)  // closed
+    expect(chatDrawer.value).toBe(true)      // stays open
+    expect(terminalDrawer.value).toBe(false) // closed
   })
 
-  it('handles switching to a tab with no registered drawers', async () => {
+  it('handles switching to a tab with no registered drawers', () => {
     const chatDrawer = ref(true)
-    const chat = useTabDrawer('chat', chatDrawer)
+    useTabDrawer('chat', chatDrawer)
 
-    // Switch to 'settings' which has no drawers — openRef preserved
+    // Switch to 'settings' which has no drawers
     onTabSwitch('settings')
-    await nextTick()
 
-    expect(chatDrawer.value).toBe(true)           // preserved
-    expect(chat.effectiveOpen.value).toBe(false)  // visually hidden
+    expect(chatDrawer.value).toBe(false)  // closed because not matching
   })
 })
 

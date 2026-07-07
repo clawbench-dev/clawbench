@@ -15,6 +15,7 @@ export interface UseChatStreamOptions {
   currentSessionId: Ref<string>
   currentBackend: Ref<string>
   loading: Ref<boolean>
+  pendingStore: ReturnType<typeof import('@/composables/usePendingStore').usePendingStore>
   onRenderNeeded: (forceFull?: boolean) => void
   onScrollBottom: (force?: boolean) => void
   onLoadHistory: () => Promise<void>
@@ -35,6 +36,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     currentSessionId,
     currentBackend,
     loading,
+    pendingStore,
     onRenderNeeded,
     onScrollBottom,
     onLoadHistory,
@@ -272,36 +274,17 @@ export function useChatStream(options: UseChatStreamOptions) {
     }
 
     // Ensure a streaming assistant message exists — create one if needed
-    const existingStreaming = findStreamingMsg(messages.value)
-    if (!existingStreaming) {
-      const newStreaming = {
-        role: 'assistant' as const,
-        id: `drain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    if (!findStreamingMsg(messages.value)) {
+      messages.value.push({
+        role: 'assistant',
         content: '',
-        blocks: [] as any[],
+        blocks: [],
         streaming: true,
         createdAt: new Date().toISOString(),
         backend: currentBackend.value
-      }
-      // Insert after the last non-pending user message, not at the end.
-      // Pending messages (queued) come after the active conversation,
-      // so push() would place the streaming assistant after them,
-      // making the AI reply appear below the queued messages.
-      const lastUserIdx = messages.value.findLastIndex(
-        (m: any) => m.role === 'user' && !m.pending
-      )
-      if (lastUserIdx !== -1) {
-        messages.value.splice(lastUserIdx + 1, 0, newStreaming)
-      } else {
-        messages.value.push(newStreaming)
-      }
+      })
       thinkingBlockCounter = 0
       onRenderNeeded()
-    } else if ((existingStreaming as any).fromDB) {
-      // DB streaming message from a previous incomplete finalize —
-      // convert it to a live streaming placeholder by clearing fromDB
-      // so SSE events can update it properly.
-      delete (existingStreaming as any).fromDB
     }
     onScrollBottom()
 
@@ -358,10 +341,6 @@ export function useChatStream(options: UseChatStreamOptions) {
       debouncedRender()
     })
 
-    // Track whether we've seen the first content event for the current streaming
-    // message — used for diagnostic logging on queue_drain timing
-    let firstContentSeen = false
-
     eventSource.addEventListener('content', (e) => {
       if (sessionChanged()) return
       const sm = findStreamingMsg(messages.value)
@@ -369,10 +348,6 @@ export function useChatStream(options: UseChatStreamOptions) {
       resetStreamTimeout()
       let data: any
       try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE content: invalid JSON, skipping'); return }
-      if (!firstContentSeen) {
-        firstContentSeen = true
-        appLog.d(TAG, `[content: first] streamingMsg.id=${sm.id ?? 'none'} len=${(data.content || '').length} totalMsgs=${messages.value.length}`)
-      }
       const blocks = sm.blocks
       const existingText = findLastBlockOfType(blocks, 'text')
       if (existingText) {
@@ -551,28 +526,16 @@ export function useChatStream(options: UseChatStreamOptions) {
       clearToolUseTimeouts()
       thinkingBlockCounter = 0
 
-      // Finalize streaming state BEFORE loadHistory replaces the array.
-      // This ensures: (1) streaming flag removed immediately (no stuck "three dots"),
-      // (2) unfinished tool_use blocks marked done (no stuck spinners),
-      // (3) if loadHistory is slow/fails, UI is already in a clean state.
-      _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
-
       // Diagnostic: log message state when done event received
       const doneSummary = messages.value.map((m: any, i: number) =>
         `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
       ).join(' | ')
-      const pendingCount = messages.value.filter((m: any) => m.pending).length
-      appLog.d(TAG, `[done] pending msgs: ${pendingCount}; messages: ${doneSummary}`)
+      const pendingCount = pendingStore.getPending(currentSessionId.value).length
+      appLog.d(TAG, `[done] pendingStore has ${pendingCount} item(s); messages: ${doneSummary}`)
 
       disconnectStream()
       reconnect.reset()
-      onLoadHistory().then(() => {
-        // Diagnostic: log message state after loadHistory replaces the array
-        const afterSummary = messages.value.map((m: any, i: number) =>
-          `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
-        ).join(' | ')
-        appLog.d(TAG, `[done→loadHistory] messages(${messages.value.length}): ${afterSummary}`)
-      }).finally(() => {
+      onLoadHistory().finally(() => {
         loading.value = false
         onMessage()
         if (isOpen.value) {
@@ -602,8 +565,9 @@ export function useChatStream(options: UseChatStreamOptions) {
       if (!sm) return
       disconnectStream()
       sm.cancelled = true
-      // No error block needed — sm.cancelled already shows the neutral "已中断" marker.
-      // User cancellation is intentional, not an error.
+      if ((!sm.blocks || sm.blocks.length === 0) && !sm.content) {
+        sm.blocks = [{ type: 'error', text: gt('chat.stream.userCancelled') }]
+      }
       _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
       loading.value = false
       onStreamEnd?.('cancelled')
@@ -697,123 +661,57 @@ export function useChatStream(options: UseChatStreamOptions) {
       let data: any
       try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE usage_update: invalid JSON, skipping'); return }
       if (data.size > 0) {
-        updateUsageState(data.used ?? 0, data.size, data.cost, data.currency, sessionId)
-      }
-    })
-
-    // ── Queue queued — new message was enqueued while session is running ──
-    // Pushes a pending user message into messages.value. Deduplicates against
-    // optimistically pushed pending messages (by content text match).
-    eventSource.addEventListener('queue_queued', (e) => {
-      resetStreamTimeout()
-      let data: any
-      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE queue_queued: invalid JSON, skipping'); return }
-
-      const eventSessionId = data.sessionId || sessionId
-      if (eventSessionId !== currentSessionId.value) return
-
-      const queueText = data.text || ''
-      // Dedup: if a pending message with this content already exists, skip
-      const alreadyPending = messages.value.some(
-        (m: any) => m.role === 'user' && m.pending && m.content === queueText
-      )
-      if (!alreadyPending && queueText) {
-        const queueFiles = [...(data.filePaths || []), ...(data.files || [])]
-        messages.value.push({
-          role: 'user',
-          id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          content: queueText,
-          blocks: queueText ? [{ type: 'text', text: queueText }] : [],
-          files: queueFiles.map((p: string) => ({ path: p })),
-          createdAt: new Date().toISOString(),
-          pending: true,
-        })
-        appLog.d(TAG, `[queue_queued] text="${queueText.slice(0,40)}" pushed to messages`)
-        onRenderNeeded()
-        if (isOpen.value) onScrollBottom(true)
-      } else {
-        appLog.d(TAG, `[queue_queued] text="${queueText.slice(0,40)}" dedup (already pending)`)
+        updateUsageState(data.used ?? 0, data.size, data.cost, data.currency)
       }
     })
 
     // ── Queue drain — atomic replacement for old queue_done + queue_consume ──
     // Single event that atomically: finalizes current streaming, creates new
-    // streaming placeholder. Pending messages are in messages.value with pending: true.
+    // streaming placeholder. Pending messages are handled by pendingStore.
     eventSource.addEventListener('queue_drain', (e) => {
       resetStreamTimeout()
       let data: any
       try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE queue_drain: invalid JSON, skipping'); return }
 
-      const eventSessionId = data.sessionId || sessionId
-
-      // Diagnostic: snapshot messages BEFORE drain
-      const beforeLen = messages.value.length
-      const beforeStreamingCount = messages.value.filter((m: any) => m.streaming).length
-
-      // Only update messages.value if this event is for the currently viewed session.
-      if (eventSessionId === currentSessionId.value) {
+      if (!sessionChanged()) {
+        // Push the drain message to messages.value BEFORE removing from pendingStore.
+        // This ensures the formal user message is already rendered when the
+        // pending message disappears, making the transition atomic — the user
+        // never sees a gap where neither is visible.
         const drainText = data.text || ''
         const drainFiles = [...(data.filePaths || []), ...(data.files || [])]
         drainQueueMessage(
           messages.value, drainText, drainFiles, currentBackend.value,
-          { onRenderNeeded, onExtractScheduledTasks },
-          undefined,
-          data.messageId || undefined
+          { onRenderNeeded, onExtractScheduledTasks }
         )
-
-        // Diagnostic: snapshot messages AFTER drain
-        const afterLen = messages.value.length
-        const afterStreamingCount = messages.value.filter((m: any) => m.streaming).length
-        appLog.d(TAG, `[queue_drain] sid=${eventSessionId.slice(0,8)} msgId=${data.messageId || 'none'} text="${drainText.slice(0,40)}" | before(${beforeLen},streaming=${beforeStreamingCount}) after(${afterLen},streaming=${afterStreamingCount})`)
 
         if (isOpen.value) {
           onRenderNeeded()
           onScrollBottom(true)
         }
-      } else {
-        // Event for a background session — skip. Pending messages in
-        // messages.value belong to the current session; background session's
-        // pending messages will be synced via fetchQueue when user switches.
-        appLog.d(TAG, `[queue_drain] sid=${eventSessionId.slice(0,8)} background session, skipped`)
       }
+
+      // After pushing the drain message, sync pendingStore.
+      // The drained message is removed from the backend queue, so syncFromBackendQueue
+      // will remove it from pendingStore[sessionId].
+      // Always update pendingStore — this is per-session so no cross-session contamination.
+      pendingStore.syncFromBackendQueue(sessionId, data.queue || [])
     })
 
     // queue_update: sent when a new message is enqueued while a session is running.
-    // queue_update: sent when queue state changes (e.g. another client enqueues).
-    // Replaces pending portion of messages.value with backend queue state.
+    // Syncs pendingStore with the authoritative backend queue state.
     eventSource.addEventListener('queue_update', (e) => {
       resetStreamTimeout()
       let data: any
       try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE queue_update: invalid JSON, skipping'); return }
 
-      // Route by event's explicit sessionId (fallback to captured sessionId)
-      const eventSessionId = data.sessionId || sessionId
+      // Always update pendingStore — per-session, no contamination possible.
+      pendingStore.syncFromBackendQueue(sessionId, data.queue || [])
 
-      // Replace pending portion of messages.value with backend queue state.
-      // The backend queue is the source of truth for pending messages.
-      if (eventSessionId === currentSessionId.value) {
-        const backendQueue = data.queue || []
-        // Remove all existing pending messages from messages.value
-        for (let i = messages.value.length - 1; i >= 0; i--) {
-          if (messages.value[i].pending) messages.value.splice(i, 1)
-        }
-        // Push backend queue items as pending messages
-        for (const item of backendQueue) {
-          const itemFiles = [...(item.files || []), ...(item.filePaths || [])]
-          messages.value.push({
-            role: 'user',
-            id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            content: item.text || '',
-            blocks: item.text ? [{ type: 'text', text: item.text }] : [],
-            files: itemFiles.map((p: string) => ({ path: p })),
-            createdAt: item.createdAt || new Date().toISOString(),
-            pending: true,
-          })
-        }
-        appLog.d(TAG, `[queue_update] sid=${eventSessionId.slice(0,8)} synced ${backendQueue.length} pending msgs from backend`)
-        onRenderNeeded()
-      }
+      if (sessionChanged()) return
 
+      // Trigger render when pending messages are added/removed for the current session
+      onRenderNeeded()
     })
 
     eventSource.addEventListener('error', (e) => {

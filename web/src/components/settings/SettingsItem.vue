@@ -5,7 +5,6 @@
       <div class="settings-item__text">
         <span class="settings-item__label">{{ label }}</span>
         <span v-if="needsRestart" class="settings-item__badge">{{ t('settings.needsRestart') }}</span>
-        <span v-if="statusDot" class="settings-item__status-dot" :class="'settings-item__status-dot--' + statusDot" />
       </div>
     </div>
     <div class="settings-item__right">
@@ -23,7 +22,6 @@
         </label>
       </template>
       <template v-else-if="type === 'slider'">
-        <span class="settings-item__slider-value">{{ sliderDisplayValue }}</span>
         <input
           type="range"
           class="settings-item__slider"
@@ -35,7 +33,6 @@
           @input="onSliderInput"
           @click.stop
         />
-        <button v-if="defaultValue !== undefined && modelValue !== defaultValue" class="settings-item__slider-reset" @click.stop="resetSlider" :title="t('settings.items.resetToDefault')">↺</button>
       </template>
       <template v-else-if="type === 'password'">
         <span class="settings-item__value">{{ displayValue }}</span>
@@ -59,10 +56,23 @@
   <div v-if="descriptionExpanded && description" class="settings-item__desc-panel">
     <div class="settings-item__desc-panel-inner">{{ description }}</div>
   </div>
-  <!-- Inline editor (non-select types) -->
-  <div v-if="editing && type !== 'select'" class="settings-item__editor" @click.stop>
+  <!-- Inline editor -->
+  <div v-if="editing" class="settings-item__editor" @click.stop>
+    <!-- Select editor: radio-style option list -->
+    <template v-if="type === 'select'">
+      <div
+        v-for="opt in options"
+        :key="opt.value"
+        class="settings-item__option"
+        :class="{ 'settings-item__option--active': editValue === opt.value }"
+        @click="selectOption(opt.value)"
+      >
+        <span class="settings-item__option-label">{{ opt.label }}</span>
+        <span v-if="editValue === opt.value" class="settings-item__option-check">✓</span>
+      </div>
+    </template>
     <!-- Number editor -->
-    <template v-if="type === 'number'">
+    <template v-else-if="type === 'number'">
       <div class="settings-item__input-row">
         <input
           type="number"
@@ -126,33 +136,12 @@
       <div v-if="warning" class="settings-item__textarea-warning">{{ warning }}</div>
     </template>
   </div>
-  <!-- Select option picker BottomSheet -->
-  <BottomSheet
-    v-if="type === 'select'"
-    :open="selectPicker.effectiveOpen.value"
-    :title="label"
-    compact
-    @close="selectPicker.close()"
-  >
-    <div
-      v-for="opt in options"
-      :key="opt.value"
-      class="settings-item__option"
-      :class="{ 'settings-item__option--active': modelValue === opt.value }"
-      @click="selectOption(opt.value)"
-    >
-      <span class="settings-item__option-label">{{ opt.label }}</span>
-      <span v-if="modelValue === opt.value" class="settings-item__option-check">✓</span>
-    </div>
-  </BottomSheet>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Eye, EyeOff } from 'lucide-vue-next'
-import BottomSheet from '@/components/common/BottomSheet.vue'
-import { useTabDrawer } from '@/composables/useTabDrawer'
 
 const { t } = useI18n()
 
@@ -171,10 +160,6 @@ interface Props {
   forceClose?: boolean
   warning?: string
   noDivider?: boolean
-  defaultValue?: any
-  displayFormat?: 'percent' | 'raw'
-  displayTransform?: (value: any) => any
-  statusDot?: 'green' | 'gray' | 'red' | 'yellow'
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -190,7 +175,6 @@ const props = withDefaults(defineProps<Props>(), {
   forceClose: false,
   warning: '',
   noDivider: false,
-  defaultValue: undefined,
 })
 
 const emit = defineEmits<{
@@ -205,17 +189,6 @@ const editing = ref(false)
 const editValue = ref<any>(null)
 const showPassword = ref(false)
 const descriptionExpanded = ref(false)
-const selectPickerOpen = ref(false)
-const selectPicker = useTabDrawer('settings', selectPickerOpen)
-
-// Guard against useTabDrawer preserving openRef on tab switch back.
-// Reset openRef when effectiveOpen becomes false (tab deactivated)
-// so the picker doesn't auto-reopen.
-watch(() => selectPicker.effectiveOpen.value, (val) => {
-  if (!val && selectPickerOpen.value) {
-    selectPickerOpen.value = false
-  }
-})
 
 // Slider debounce: only emit final value after 300ms of inactivity
 let sliderDebounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -236,10 +209,6 @@ watch(() => props.forceClose, (val) => {
       emit('discard')
     }
     editing.value = false
-    emit('editToggle', false)
-  }
-  if (val && selectPickerOpen.value) {
-    selectPicker.close()
     emit('editToggle', false)
   }
   if (val && descriptionExpanded.value) {
@@ -266,8 +235,7 @@ const displayValue = computed(() => {
     return opt?.label ?? props.modelValue ?? props.placeholder
   }
   if (props.modelValue !== undefined && props.modelValue !== '') {
-    const v = props.displayTransform ? props.displayTransform(props.modelValue) : props.modelValue
-    return String(v)
+    return String(props.modelValue)
   }
   return props.placeholder
 })
@@ -287,20 +255,6 @@ function onSliderInput(e: Event) {
   }, SLIDER_DEBOUNCE_MS)
 }
 
-const sliderDisplayValue = computed(() => {
-  if (props.modelValue == null) return ''
-  if (props.displayFormat === 'percent') return `${Math.round(props.modelValue * 100)}%`
-  return String(props.modelValue)
-})
-
-function resetSlider() {
-  if (sliderDebounceTimer) {
-    clearTimeout(sliderDebounceTimer)
-    sliderDebounceTimer = null
-  }
-  emit('update:modelValue', props.defaultValue)
-}
-
 function handleClick() {
   if (props.type === 'header') return
   if (props.type === 'action') {
@@ -316,17 +270,7 @@ function handleClick() {
     }
     return
   }
-  // select: open BottomSheet picker instead of inline editor
-  if (props.type === 'select') {
-    if (hasDescription) {
-      descriptionExpanded.value = !descriptionExpanded.value
-      emit('descToggle', descriptionExpanded.value)
-    }
-    selectPicker.open()
-    emit('editToggle', true)
-    return
-  }
-  // number / text / password: toggle inline editor + description
+  // select / number / text / password: toggle inline editor + description
   if (hasDescription) {
     descriptionExpanded.value = !descriptionExpanded.value
     emit('descToggle', descriptionExpanded.value)
@@ -341,8 +285,9 @@ function handleClick() {
 }
 
 function selectOption(value: any) {
+  editValue.value = value
   emit('update:modelValue', value)
-  selectPicker.close()
+  editing.value = false
   emit('editToggle', false)
 }
 
@@ -423,36 +368,6 @@ function confirmEdit() {
   color: var(--text-muted);
   white-space: nowrap;
   flex-shrink: 0;
-}
-
-/* Status dot indicator (inline next to label) */
-.settings-item__status-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-left: 6px;
-  vertical-align: middle;
-  flex-shrink: 0;
-}
-.settings-item__status-dot--green {
-  background: #22c55e;
-}
-.settings-item__status-dot--yellow {
-  background: #eab308;
-  animation: status-dot-pulse 1.5s ease-in-out infinite;
-}
-.settings-item__status-dot--red {
-  background: #ef4444;
-}
-.settings-item__status-dot--gray {
-  background: var(--text-muted);
-  opacity: 0.5;
-}
-
-@keyframes status-dot-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
 }
 
 /* Description panel (expanded on click) */
@@ -551,31 +466,10 @@ function confirmEdit() {
 }
 
 /* Slider */
-.settings-item__slider-value {
-  font-size: 13px;
-  color: var(--text-secondary);
-  min-width: 36px;
-  text-align: right;
-}
-
 .settings-item__slider {
   width: 120px;
   cursor: pointer;
   accent-color: var(--accent-color);
-}
-
-.settings-item__slider-reset {
-  font-size: 14px;
-  color: var(--text-muted);
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 2px 4px;
-  line-height: 1;
-}
-
-.settings-item__slider-reset:active {
-  color: var(--accent-color);
 }
 
 /* ── Inline Editor ── */
@@ -583,6 +477,41 @@ function confirmEdit() {
   background: var(--bg-primary);
   border-top: 0.5px solid var(--border-color);
   padding: 4px 0;
+}
+
+/* Select options */
+.settings-item__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  cursor: pointer;
+  min-height: 40px;
+}
+
+@media (hover: hover) {
+  .settings-item__option:hover {
+    background: var(--bg-secondary);
+  }
+}
+
+.settings-item__option:active {
+  background: var(--bg-tertiary);
+}
+
+.settings-item__option--active {
+  background: var(--bg-secondary);
+}
+
+.settings-item__option-label {
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.settings-item__option-check {
+  font-size: 15px;
+  color: var(--accent-color);
+  font-weight: 600;
 }
 
 /* Input row (number / text / password) */
@@ -682,57 +611,5 @@ function confirmEdit() {
   color: var(--text-muted);
   padding: 4px 16px 8px;
   line-height: 1.4;
-}
-</style>
-
-<!-- Non-scoped styles for BottomSheet-teleported select option rows -->
-<style>
-.settings-item__option {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  cursor: pointer;
-  min-height: 44px;
-  position: relative;
-}
-
-.settings-item__option::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 0.5px;
-  background: var(--border-color);
-}
-
-.settings-item__option:last-child::after {
-  display: none;
-}
-
-@media (hover: hover) {
-  .settings-item__option:hover {
-    background: var(--bg-tertiary);
-  }
-}
-
-.settings-item__option:active {
-  background: var(--bg-tertiary);
-}
-
-.settings-item__option--active {
-  background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, var(--bg-primary, #fff));
-}
-
-.settings-item__option-label {
-  font-size: 15px;
-  color: var(--text-primary);
-}
-
-.settings-item__option-check {
-  font-size: 15px;
-  color: var(--accent-color);
-  font-weight: 600;
 }
 </style>
