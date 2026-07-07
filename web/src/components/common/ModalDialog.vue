@@ -11,7 +11,7 @@
       @click.self="handleClose"
       @keydown.escape="handleClose"
     >
-      <div class="modal-dialog" :class="{ 'modal-leaving': leaving, 'modal-full-height': fullHeight }" @click.stop>
+      <div class="modal-dialog" :class="{ 'modal-leaving': leaving, 'modal-full-height': fullHeight }" :style="maxWidthStyle" @click.stop>
         <div class="modal-header">
           <slot name="header">
             <span class="modal-title">{{ title }}</span>
@@ -33,16 +33,19 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, computed } from 'vue'
 
 const props = defineProps({
   open: Boolean,
   title: { type: String, default: '' },
   zIndex: { type: Number, default: 2100 },
   fullHeight: { type: Boolean, default: false },
+  maxWidth: { type: Number, default: 480 },
 })
 
 const emit = defineEmits(['close'])
+
+const maxWidthStyle = computed(() => props.maxWidth ? { maxWidth: `${props.maxWidth}px` } : {})
 
 const leaving = ref(false)
 const everOpened = ref(false)
