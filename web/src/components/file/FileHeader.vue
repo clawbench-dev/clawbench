@@ -186,11 +186,11 @@ const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObs
     if (hasToc.value) ids.push('toc')
     if (hasToc.value) ids.push('search')
     ids.push('attach')
-    ids.push('refresh')
-    if (!isMediaFile.value && (isMarkdown.value || isHtml.value)) ids.push('toggleView')
-    if (!isMediaFile.value && !isMarkdownRendered.value) ids.push('wordWrap')
-    if (!isMediaFile.value && !isMarkdownRendered.value) ids.push('lineNumbers')
-    if (!isMediaFile.value && !isMarkdownRendered.value) ids.push('stickyScroll')
+    if (hasTextContent.value) ids.push('refresh')
+    if (hasTextContent.value && !isMediaFile.value && (isMarkdown.value || isHtml.value)) ids.push('toggleView')
+    if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) ids.push('wordWrap')
+    if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) ids.push('lineNumbers')
+    if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) ids.push('stickyScroll')
     return ids
   },
   { inlineCount: 1, gap: 8 },
@@ -223,6 +223,8 @@ const isMediaFile = computed(() => {
     const ft = fileType.value
     return ft?.isImage || ft?.isAudio || ft?.isVideo || ft?.isPdf || false
 })
+// File has usable text content for code-specific features
+const hasTextContent = computed(() => !!props.file?.content && !props.file?.tooLarge && !props.file?.isBinary)
 const hasToc = computed(() => {
     if (!props.file) return false
     const ft = fileType.value
