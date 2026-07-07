@@ -44,6 +44,9 @@
           <button v-if="toolbarInlineIds.includes('newFile')" class="toolbar-btn" @click="doNewFile()" :title="t('file.context.newFile')">
             <FilePlus :size="16" />
           </button>
+          <button v-if="toolbarInlineIds.includes('newFolder')" class="toolbar-btn" @click="doNewFolder()" :title="t('file.context.newFolder')">
+            <FolderPlus :size="16" />
+          </button>
           <button v-if="toolbarInlineIds.includes('upload')" class="toolbar-btn" :disabled="dirUploading" @click="triggerUpload()" :title="t('file.uploadHere')">
             <Upload :size="16" />
           </button>
@@ -58,12 +61,7 @@
             <EyeOff v-if="!showHidden" :size="16" />
             <Eye v-else :size="16" />
           </button>
-          <template v-if="!showMoreDropdown">
-            <button class="toolbar-btn" @click="doNewFolder()" :title="t('file.context.newFolder')">
-              <FolderPlus :size="16" />
-            </button>
-          </template>
-          <template v-else>
+          <template v-if="showMoreDropdown">
           <div ref="moreDropdownWrapRef" class="toolbar-dropdown-wrap">
             <button class="toolbar-btn" @click="moreMenuOpen = !moreMenuOpen" :title="t('nav.more')">
               <MoreHorizontal :size="16" />
@@ -82,10 +80,12 @@
                   <span>{{ t('file.context.newFile') }}</span>
                 </button>
               </template>
-              <button class="toolbar-dropdown-item" @click="doNewFolder(); moreMenuOpen = false">
-                <FolderPlus :size="14" />
-                <span>{{ t('file.context.newFolder') }}</span>
-              </button>
+              <template v-if="toolbarCollapsedIds.includes('newFolder')">
+                <button class="toolbar-dropdown-item" @click="doNewFolder(); moreMenuOpen = false">
+                  <FolderPlus :size="14" />
+                  <span>{{ t('file.context.newFolder') }}</span>
+                </button>
+              </template>
               <template v-if="toolbarCollapsedIds.includes('upload')">
                 <button class="toolbar-dropdown-item" :disabled="dirUploading" @click="triggerUpload(); moreMenuOpen = false">
                   <Upload :size="14" />
@@ -474,13 +474,12 @@ watch(moreMenuOpen, (open) => {
 const dirToolbarRef = ref(null)
 const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
   () => dirToolbarRef.value,
-  () => ['refresh', 'newFile', 'upload', 'viewToggle', 'multiselect', 'hidden'],
+  () => ['refresh', 'newFile', 'newFolder', 'upload', 'viewToggle', 'multiselect', 'hidden'],
   { inlineCount: 2, gap: 6, hasSearch: true },
 )
 
-// newFolder is always-in-dropdown; collapsed items are conditional
-const moreDropdownItemCount = computed(() => toolbarCollapsedIds.value.length + 1)
-const showMoreDropdown = computed(() => moreDropdownItemCount.value > 1)
+const moreDropdownItemCount = computed(() => toolbarCollapsedIds.value.length)
+const showMoreDropdown = computed(() => moreDropdownItemCount.value > 0)
 
 // ── View mode (list / grid) from settings config ──
 const viewMode = ref(localConfig.fileView || 'list')
