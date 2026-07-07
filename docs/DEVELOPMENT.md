@@ -104,7 +104,7 @@ cd clawbench
 |--------|--------|------|
 | `port` | 20000 | 服务端口 |
 | `password` | 自动生成 8 位 hex | 首次生成后保存到 `.clawbench/auto-password`，重启复用 |
-| `log_dir` | `<BinDir>/.clawbench/logs` | 二进制同级目录下 |
+| `log_dir` | `~/.clawbench/logs` | 用户家目录下 |
 | `log_max_days` | 7 | 日志保留天数 |
 | `upload.max_size_mb` | 100 | 上传大小上限 MB |
 | `upload.max_files` | 20 | 单次上传文件数上限 |
@@ -312,12 +312,12 @@ GitHub Release 中的 Linux 二进制使用动态链接（CGO_ENABLED=1），依
 
 | 数据 | 路径 | 说明 |
 |------|------|------|
-| 数据库 | `二进制同级/.clawbench/ClawBench.db` | SQLite，会话/历史/项目/定时任务 |
-| 日志 | `二进制同级/.clawbench/logs/` | 按天轮转，自动清理 |
-| 自动密码 | `二进制同级/.clawbench/auto-password` | 未配置 password 时自动生成，重启复用 |
+| 数据库 | `~/.clawbench/ClawBench.db` | SQLite，会话/历史/项目/定时任务 |
+| 日志 | `~/.clawbench/logs/` | 按天轮转，自动清理 |
+| 自动密码 | `~/.clawbench/auto-password` | 未配置 password 时自动生成，重启复用 |
 | 上传文件 | `项目目录/.clawbench/uploads/` | 用户上传的文件，属于具体项目 |
 
-> 所有运行时数据存放在二进制同级目录下的 `.clawbench/`，实现绿色便携部署，删除程序目录即可彻底卸载。当项目目录与二进制目录相同时，上传文件也在同一个 `.clawbench/` 下。
+> 所有运行时数据存放在用户家目录下的 `~/.clawbench/`（Windows 为 `%USERPROFILE%\.clawbench\`）。可通过 `--data-dir` 指定其他数据目录。当项目目录与家目录相同时，上传文件也在同一个 `.clawbench/` 下。
 
 ### 开发调试模式
 

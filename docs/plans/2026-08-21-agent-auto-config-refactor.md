@@ -726,7 +726,7 @@ if _, err := os.Stat(agentsDir); os.IsNotExist(err) {
 }
 
 // Model cache directory
-modelCacheDir := filepath.Join(model.BinDir, ".clawbench", "model-cache")
+modelCacheDir := filepath.Join(model.DataDir, "model-cache")
 
 // 1. Load existing agent YAMLs
 if err := model.LoadAgents(agentsDir); err != nil {

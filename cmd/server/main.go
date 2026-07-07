@@ -162,7 +162,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		fmt.Println()
 		fmt.Println("Server options:")
 		fmt.Println("  --port PORT       Server port (overrides config file, default: 20000)")
-		fmt.Println("  --data-dir DIR    Runtime data directory (default: <binary_dir>/.clawbench)")
+		fmt.Println("  --data-dir DIR    Runtime data directory (default: ~/.clawbench)")
 		fmt.Println("  --version         Print version and exit")
 		os.Exit(0)
 	}
@@ -204,11 +204,11 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		}
 	}
 
-	// Determine binary directory for data storage (green portable layout)
+	// Determine binary directory for config search path
 	absBinPath, _ := filepath.Abs(os.Args[0])
 	model.BinDir = filepath.Dir(absBinPath)
 
-	// Set data directory: --data-dir flag > default BinDir/.clawbench
+	// Set data directory: --data-dir flag > default ~/.clawbench
 	if cliDataDir != "" {
 		absDataDir, err := filepath.Abs(cliDataDir)
 		if err != nil {
@@ -217,7 +217,12 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		}
 		model.DataDir = absDataDir
 	} else {
-		model.DataDir = filepath.Join(model.BinDir, ".clawbench")
+		homeDir := platform.UserHomeDir()
+		if homeDir == "" {
+			fmt.Fprintf(os.Stderr, "Error: cannot determine home directory (set $HOME or $USERPROFILE)\n")
+			os.Exit(1)
+		}
+		model.DataDir = filepath.Join(homeDir, ".clawbench")
 	}
 
 	// Load configuration — config/config.yaml is optional

@@ -180,7 +180,7 @@ summarize:
 default_agent: "codebuddy"
 
 # Logging configuration (optional) / 日志配置（可选）
-# Default: .clawbench/logs under the binary directory / 默认：二进制同级目录下的 .clawbench/logs/
+# Default: ~/.clawbench/logs / 默认：用户家目录下的 ~/.clawbench/logs/
 log_dir: ".clawbench/logs"
 log_max_days: 7            # Log retention in days (default/默认: 7) / 日志保留天数，默认 7
 

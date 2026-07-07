@@ -97,11 +97,11 @@ rag:
 
 | Data | Location | Description |
 |------|----------|-------------|
-| Vector index | `<binary_dir>/.clawbench/rag.duckdb` | DuckDB database with embeddings and chunked text |
-| Vector index (dev mode) | `<binary_dir>/.clawbench/rag-dev.duckdb` | Separate DuckDB for dev mode, avoids conflict with production |
-| Chat records | `<binary_dir>/.clawbench/ClawBench.db` | SQLite database; `indexed` column tracks indexing status |
+| Vector index | `~/.clawbench/rag.duckdb` | DuckDB database with embeddings and chunked text |
+| Vector index (dev mode) | `~/.clawbench/rag-dev.duckdb` | Separate DuckDB for dev mode, avoids conflict with production |
+| Chat records | `~/.clawbench/ClawBench.db` | SQLite database; `indexed` column tracks indexing status |
 
-> **Clean uninstall**: Delete the `.clawbench/` directory to remove all RAG data completely.
+> **Clean uninstall**: Delete the `~/.clawbench/` directory to remove all RAG data completely.
 
 ## Startup Sequence
 

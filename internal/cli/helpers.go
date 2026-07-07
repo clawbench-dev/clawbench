@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"clawbench/internal/model"
+	"clawbench/internal/platform"
 
 	"gopkg.in/yaml.v3"
 )
@@ -41,7 +42,12 @@ func loadConfig() {
 	absBinPath, _ := filepath.Abs(os.Args[0])
 	model.BinDir = filepath.Dir(absBinPath)
 	if model.DataDir == "" {
-		model.DataDir = filepath.Join(model.BinDir, ".clawbench")
+		homeDir := platform.UserHomeDir()
+		if homeDir == "" {
+			fmt.Fprintf(os.Stderr, "Error: cannot determine home directory (set $HOME or $USERPROFILE)\n")
+			os.Exit(1)
+		}
+		model.DataDir = filepath.Join(homeDir, ".clawbench")
 	}
 
 	var cfg model.Config

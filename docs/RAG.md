@@ -97,11 +97,11 @@ rag:
 
 | 数据 | 位置 | 说明 |
 |------|------|------|
-| 向量索引 | `<二进制目录>/.clawbench/rag.duckdb` | DuckDB 数据库，含嵌入向量和分块文本 |
-| 向量索引（开发模式） | `<二进制目录>/.clawbench/rag-dev.duckdb` | 开发模式独立 DuckDB，避免与正式版冲突 |
-| 聊天记录 | `<二进制目录>/.clawbench/ClawBench.db` | SQLite 数据库，`indexed` 列标记索引状态 |
+| 向量索引 | `~/.clawbench/rag.duckdb` | DuckDB 数据库，含嵌入向量和分块文本 |
+| 向量索引（开发模式） | `~/.clawbench/rag-dev.duckdb` | 开发模式独立 DuckDB，避免与正式版冲突 |
+| 聊天记录 | `~/.clawbench/ClawBench.db` | SQLite 数据库，`indexed` 列标记索引状态 |
 
-> **卸载清理**：删除 `.clawbench/` 目录即可完全移除所有 RAG 数据。
+> **卸载清理**：删除 `~/.clawbench/` 目录即可完全移除所有 RAG 数据。
 
 ## 启动流程
 

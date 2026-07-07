@@ -35,7 +35,7 @@ The TTS engine itself also supports local offline solutions (piper / kokoro / mo
 
 **Q: Can I run multiple ClawBench instances simultaneously?**
 
-A: Yes. Copy the entire release directory to a different location — each copy gets its own `BinDir`, config, and `.clawbench/` data directory for complete isolation. Just configure different ports in each copy's `config/config.yaml`.
+A: Yes. Each instance needs a separate `--data-dir` to specify a different data directory, and different ports in `config/config.yaml`. The default data directory is `~/.clawbench/`, so multiple instances under the same user require explicit `--data-dir` for data isolation.
 
 **Q: Do I need a config file to start?**
 
@@ -47,11 +47,11 @@ A: Check the `.clawbench/auto-password` file to retrieve the password. You can a
 
 **Q: Where is data stored?**
 
-A: Data is stored in the `.clawbench/` directory alongside the binary, including the database file (`ClawBench.db`), log files (`logs/`), and auto-password (`auto-password`). Uploaded files are stored in `.clawbench/uploads/` within the project directory. It's a green portable deployment — deleting the program directory completely uninstalls everything.
+A: Data is stored in `~/.clawbench/` under the user's home directory (`%USERPROFILE%\.clawbench\` on Windows), including the database file (`ClawBench.db`), log files (`logs/`), and auto-password (`auto-password`). Uploaded files are stored in `.clawbench/uploads/` within the project directory. You can override the location with `--data-dir`.
 
 **Q: How do I back up data?**
 
-A: Back up the `.clawbench/ClawBench.db` database file in the directory alongside the binary.
+A: Back up the `~/.clawbench/ClawBench.db` database file.
 
 **Q: How are agents managed?**
 

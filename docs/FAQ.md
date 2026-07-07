@@ -35,7 +35,7 @@ TTS 引擎本身也支持本地离线方案（piper / kokoro / moss-nano），�
 
 **Q: 可以同时运行多个 ClawBench 实例吗？**
 
-A: 可以。将整个发布目录复制到不同位置，每个副本拥有独立的 `BinDir`、配置和 `.clawbench/` 数据目录，完全隔离。只需在各副本的 `config/config.yaml` 中配置不同端口即可。
+A: 可以。每个实例使用独立的 `--data-dir` 指定不同的数据目录，并在 `config/config.yaml` 中配置不同端口即可。默认数据目录为 `~/.clawbench/`，同一用户下的多实例需要显式指定不同的 `--data-dir` 以实现数据隔离。
 
 **Q: 是否需要配置文件才能启动？**
 
@@ -47,11 +47,11 @@ A: 查看 `.clawbench/auto-password` 文件即可获取密码。也可以在 `co
 
 **Q: 数据存储在哪里？**
 
-A: 数据存储在二进制文件同级目录下的 `.clawbench/` 中，包括数据库文件（`ClawBench.db`）、日志文件（`logs/`）和自动密码（`auto-password`）。上传的文件存放在项目目录的 `.clawbench/uploads/` 中。绿色便携，删除程序目录即可彻底卸载。
+A: 数据存储在用户家目录下的 `~/.clawbench/` 中（Windows 为 `%USERPROFILE%\.clawbench\`），包括数据库文件（`ClawBench.db`）、日志文件（`logs/`）和自动密码（`auto-password`）。上传的文件存放在项目目录的 `.clawbench/uploads/` 中。可通过 `--data-dir` 指定其他数据目录。
 
 **Q: 如何备份数据？**
 
-A: 备份二进制同级目录下 `.clawbench/ClawBench.db` 数据库文件即可。
+A: 备份 `~/.clawbench/ClawBench.db` 数据库文件即可。
 
 **Q: 如何管理智能体？**
 

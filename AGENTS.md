@@ -85,8 +85,8 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 - **Agent install:** `BackendSpec.InstallCmd` defines the install command for each backend (e.g., `npm install -g @anthropic-ai/claude-code`). Frontend shows install button for undetected backends — clicking it displays the command in a dialog with a copy button for the user to run manually.
 - **External session ID:** All backends write CLI session ID to `external_session_id` at creation. Continued sessions inherit from source.
 - **Cancel reason:** `"user"` (explicit) vs `"disconnect"` (SSE gone). `ForceCancelSession` kills zombie CLI processes.
-- **Green portable deployment:** All runtime data under `.clawbench/`. Multi-instance on different ports with auto-scoped cookies (`ScopedCookieName()`).
-- **Zero-config startup:** `config/config.yaml` optional. Auto-password persisted to `.clawbench/auto-password`. Filesystem root paths via `platform.ListRootPaths()`.
+- **Data directory:** Default `~/.clawbench/` (Windows: `%USERPROFILE%\.clawbench\`). Override with `--data-dir`. Multi-instance on different ports with auto-scoped cookies (`ScopedCookieName()`); use distinct `--data-dir` for data isolation.
+- **Zero-config startup:** `config/config.yaml` optional. Auto-password persisted to `~/.clawbench/auto-password`. Filesystem root paths via `platform.ListRootPaths()`.
 - **Versioned schema migration:** Auto-incrementing version numbers in `schema_migrations` table. Dirty flag prevents silent corruption. New migrations: append function + next version number.
 - **Coverage gate (CI 合入门槛):** Two-tier. Tier 1: per-package coverage `>= baseline% - 1.5%`. Tier 2: changed lines coverage `>= 80%`. CI enforces on every PR/push to main.
 - **Bugfix workflow (GitHub Issues):** Report bugs as GitHub Issues. Scheduled auto-fix task (Task #27): classify → fix in isolated worktree → write tests → verify → PR + CI → auto-merge → close issue. Labels track state: `bugfix:in-progress`, `bugfix:awaiting-review`, `bugfix:needs-design`, `bugfix:failed`, `bugfix:needs-verification`.

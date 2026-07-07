@@ -104,7 +104,7 @@ cd clawbench
 |-------------|---------|-------------|
 | `port` | 20000 | Server port |
 | `password` | Auto-generated 8-char hex | Generated on first run, saved to `.clawbench/auto-password`, reused on restart |
-| `log_dir` | `<BinDir>/.clawbench/logs` | Under the binary's directory |
+| `log_dir` | `~/.clawbench/logs` | Under the user's home directory |
 | `log_max_days` | 7 | Log retention days |
 | `upload.max_size_mb` | 100 | Upload size limit in MB |
 | `upload.max_files` | 20 | Max files per upload |
@@ -312,12 +312,12 @@ The Linux binary in GitHub Releases uses dynamic linking (CGO_ENABLED=1) and req
 
 | Data | Path | Description |
 |------|------|-------------|
-| Database | `Binary directory/.clawbench/ClawBench.db` | SQLite, sessions/history/projects/scheduled tasks |
-| Logs | `Binary directory/.clawbench/logs/` | Daily rotation, auto-cleanup |
-| Auto-password | `Binary directory/.clawbench/auto-password` | Auto-generated when password is not configured, reused on restart |
+| Database | `~/.clawbench/ClawBench.db` | SQLite, sessions/history/projects/scheduled tasks |
+| Logs | `~/.clawbench/logs/` | Daily rotation, auto-cleanup |
+| Auto-password | `~/.clawbench/auto-password` | Auto-generated when password is not configured, reused on restart |
 | Uploaded files | `Project directory/.clawbench/uploads/` | User-uploaded files, belonging to specific projects |
 
-> All runtime data is stored under `.clawbench/` next to the binary, enabling green portable deployment — delete the program directory to completely uninstall. When the project directory is the same as the binary directory, uploaded files are also in the same `.clawbench/` directory.
+> All runtime data is stored under `~/.clawbench/` in the user's home directory (`%USERPROFILE%\.clawbench\` on Windows). Override with `--data-dir` to use a different location. When the project directory is the same as the home directory, uploaded files are also in the same `.clawbench/` directory.
 
 ### Dev Debug Mode
 

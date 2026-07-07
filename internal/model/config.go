@@ -163,7 +163,7 @@ var ConfigInstance Config
 // Global application state
 var (
 	BinDir              string   // Directory of the running binary
-	DataDir             string   // Runtime data directory (default: BinDir/.clawbench; override with --data-dir)
+	DataDir             string   // Runtime data directory (default: ~/.clawbench; override with --data-dir)
 	RootPaths           []string // Filesystem root paths (Linux/macOS: ["/"], Windows: drive list)
 	SessionToken        string   // Legacy: stores the password-derived token for "has password" check; NOT used for cookie validation when CookieToken is set
 	CookieToken         string   // Cryptographically random session token for cookie validation (ISS-117, ISS-131, ISS-183)
