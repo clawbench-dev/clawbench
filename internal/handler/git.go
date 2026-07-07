@@ -56,7 +56,7 @@ func parseOctalByte(s string) (byte, bool) {
 		return 0, false
 	}
 	var n byte
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		ch := s[i]
 		if ch < '0' || ch > '7' {
 			return 0, false

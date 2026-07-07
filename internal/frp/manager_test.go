@@ -1112,56 +1112,6 @@ func TestStartStop_Lifecycle(t *testing.T) {
 	assert.Equal(t, StateStopped, state)
 }
 
-// --- checkProxyStatus with mock exporter ---
-
-type mockExporter struct {
-	statuses map[string]struct {
-		phase      string
-		remoteAddr string
-	}
-}
-
-func (e *mockExporter) GetProxyStatus(name string) (struct {
-	Phase      string
-	RemoteAddr string
-	Status     string
-	Err        string
-}, bool) {
-	s, ok := e.statuses[name]
-	result := struct {
-		Phase      string
-		RemoteAddr string
-		Status     string
-		Err        string
-	}{Phase: s.phase, RemoteAddr: s.remoteAddr}
-	return result, ok
-}
-
-type mockStatusExporter struct {
-	proxyStatuses map[string]struct {
-		phase      string
-		remoteAddr string
-	}
-}
-
-func (se *mockStatusExporter) GetProxyStatus(name string) (frpProxyStatus, bool) {
-	s, ok := se.proxyStatuses[name]
-	return frpProxyStatus{Phase: s.phase, RemoteAddr: s.remoteAddr}, ok
-}
-
-type frpProxyStatus struct {
-	Phase      string
-	RemoteAddr string
-}
-
-type mockService struct {
-	exporter *mockStatusExporter
-}
-
-func (s *mockService) StatusExporter() *mockStatusExporter {
-	return s.exporter
-}
-
 // --- Start test (integration — may fail if frp server not available) ---
 
 func TestStart_InvalidServer(t *testing.T) {

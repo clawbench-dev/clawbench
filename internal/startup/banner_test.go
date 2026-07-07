@@ -536,16 +536,16 @@ func TestFormatDuration_ExactlyOneSecond(t *testing.T) {
 
 func TestBanner_FRPEnabledWithRemoteURL(t *testing.T) {
 	cfg := BannerConfig{
-		Version:        "v1.0.0",
-		Scheme:         "http",
-		Port:           20000,
-		DataDir:        "/tmp/.clawbench",
-		TTSEngine:      "edge",
-		FRPEnabled:     true,
-		FRPRemoteURL:   "http://120.26.168.245:20050",
-		FRPServerAddr:  "120.26.168.245",
-		FRPRemotePort:  20050,
-		TaskCount:      0,
+		Version:         "v1.0.0",
+		Scheme:          "http",
+		Port:            20000,
+		DataDir:         "/tmp/.clawbench",
+		TTSEngine:       "edge",
+		FRPEnabled:      true,
+		FRPRemoteURL:    "http://120.26.168.245:20050",
+		FRPServerAddr:   "120.26.168.245",
+		FRPRemotePort:   20050,
+		TaskCount:       0,
 		StartupDuration: 100 * time.Millisecond,
 	}
 	lines := buildLines(cfg)
@@ -557,16 +557,16 @@ func TestBanner_FRPEnabledWithRemoteURL(t *testing.T) {
 
 func TestBanner_FRPEnabledWaitingForPort(t *testing.T) {
 	cfg := BannerConfig{
-		Version:        "v1.0.0",
-		Scheme:         "http",
-		Port:           20000,
-		DataDir:        "/tmp/.clawbench",
-		TTSEngine:      "edge",
-		FRPEnabled:     true,
-		FRPRemoteURL:   "",
-		FRPServerAddr:  "frp-server",
-		FRPRemotePort:  0,
-		TaskCount:      0,
+		Version:         "v1.0.0",
+		Scheme:          "http",
+		Port:            20000,
+		DataDir:         "/tmp/.clawbench",
+		TTSEngine:       "edge",
+		FRPEnabled:      true,
+		FRPRemoteURL:    "",
+		FRPServerAddr:   "frp-server",
+		FRPRemotePort:   0,
+		TaskCount:       0,
 		StartupDuration: 100 * time.Millisecond,
 	}
 	lines := buildLines(cfg)
@@ -578,16 +578,16 @@ func TestBanner_FRPEnabledWaitingForPort(t *testing.T) {
 
 func TestBanner_FRPEnabledNoServerAddr(t *testing.T) {
 	cfg := BannerConfig{
-		Version:        "v1.0.0",
-		Scheme:         "http",
-		Port:           20000,
-		DataDir:        "/tmp/.clawbench",
-		TTSEngine:      "edge",
-		FRPEnabled:     true,
-		FRPRemoteURL:   "",
-		FRPServerAddr:  "",
-		FRPRemotePort:  0,
-		TaskCount:      0,
+		Version:         "v1.0.0",
+		Scheme:          "http",
+		Port:            20000,
+		DataDir:         "/tmp/.clawbench",
+		TTSEngine:       "edge",
+		FRPEnabled:      true,
+		FRPRemoteURL:    "",
+		FRPServerAddr:   "",
+		FRPRemotePort:   0,
+		TaskCount:       0,
 		StartupDuration: 100 * time.Millisecond,
 	}
 	lines := buildLines(cfg)
