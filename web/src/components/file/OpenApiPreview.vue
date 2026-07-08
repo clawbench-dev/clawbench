@@ -7,7 +7,7 @@
       v-show="!loading"
       ref="iframeRef"
       class="openapi-iframe"
-      :srcdoc="redocSrcdoc"
+      :srcdoc="swaggerSrcdoc"
       sandbox="allow-scripts"
       @load="onIframeLoad"
     />
@@ -16,7 +16,7 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { buildRedocSrcdoc } from '@/utils/redocHtml.ts'
+import { buildSwaggerSrcdoc } from '@/utils/redocHtml.ts'
 
 const props = defineProps({
   file: Object,
@@ -29,7 +29,7 @@ const loading = ref(true)
 // Detect ClawBench dark mode from data-theme attribute
 const isDark = computed(() => document.documentElement.getAttribute('data-theme') === 'dark')
 
-// Determine the spec data for ReDoc:
+// Determine the spec data for Swagger UI:
 // - YAML files: backend returns specJson (YAML→JSON conversion)
 // - JSON files: use content directly
 const specData = computed(() => {
@@ -37,7 +37,7 @@ const specData = computed(() => {
   return props.file.content || ''
 })
 
-const redocSrcdoc = computed(() => buildRedocSrcdoc(specData.value, isDark.value))
+const swaggerSrcdoc = computed(() => buildSwaggerSrcdoc(specData.value, isDark.value))
 
 function onIframeLoad() {
   loading.value = false
@@ -87,6 +87,6 @@ watch(() => [props.file?.content, props.file?.specJson], () => {
 }
 
 [data-theme="dark"] .openapi-iframe {
-  background: #1e1e2e;
+  background: #1a1a2e;
 }
 </style>
