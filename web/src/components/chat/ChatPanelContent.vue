@@ -184,7 +184,7 @@ import { useAutoSpeech, extractSpeakableText } from '@/composables/useAutoSpeech
 import { useSwipeSession } from '@/composables/useSwipeSession.ts'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { store } from '@/stores/app.ts'
-import { renderMarkdown } from '@/composables/useMarkdownRenderer.ts'
+import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
 import { useDialog } from '@/composables/useDialog'
 
 import '@/assets/loading-mask.css'
@@ -524,7 +524,7 @@ watch(
     if (thinkingRenderTimer) clearTimeout(thinkingRenderTimer)
     thinkingRenderTimer = setTimeout(() => {
       const b = findThinkingBlock(activeThinkingOverlay.value)
-      toolDetailData.value.inputHtml = `<div class="thinking-overlay-md">${renderMarkdown(text)}</div>`
+      toolDetailData.value.inputHtml = `<div class="thinking-overlay-md">${renderMarkdownHtml(text)}</div>`
       toolDetailData.value.done = b ? !!b.done : !loading.value
     }, 300)
   }
@@ -575,7 +575,7 @@ function startStreamingRefresh() {
     if (activeThinkingOverlay.value) {
       const block = findThinkingBlock(activeThinkingOverlay.value)
       if (block) {
-        toolDetailData.value.inputHtml = `<div class="thinking-overlay-md">${renderMarkdown(block.text)}</div>`
+        toolDetailData.value.inputHtml = `<div class="thinking-overlay-md">${renderMarkdownHtml(block.text)}</div>`
         toolDetailData.value.done = !!block.done
         // Block is done — no further updates needed
         if (block.done) {
@@ -910,7 +910,7 @@ function handleShowThinkingDetail({ text, msgId, blockKey }) {
     name: 'DeepThink',
     displayNameOverride: t('chat.message.deepThinking'),
     summary: '',
-    inputHtml: `<div class="thinking-overlay-md">${renderMarkdown(currentText)}</div>`,
+    inputHtml: `<div class="thinking-overlay-md">${renderMarkdownHtml(currentText)}</div>`,
     outputHtml: '',
     status: '',
     done: block ? !!block.done : !loading.value,

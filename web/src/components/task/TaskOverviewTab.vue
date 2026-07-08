@@ -102,21 +102,18 @@ import { ref, computed, watch, nextTick } from 'vue'
 import { Pencil, Pause, Play, Zap, Trash2, History, CalendarClock, MessageSquare } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useTaskOverview } from '@/composables/useTaskOverview.ts'
-import { useMarkdownRenderer } from '@/composables/useMarkdownRenderer'
+import { renderMarkdown } from '@/composables/useMarkdownRenderer'
 import { useAgents } from '@/composables/useAgents'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
-import { useWorktreeAnnotation } from '@/composables/useWorktreeAnnotation.ts'
-import { annotateCommitHashes, verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
-import { annotateLocalhostUrls, useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
-import { annotateCodeBlockHeaders, handleCodeBlockClick, annotateTableBlockHeaders, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
+import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
+import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
+import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { store } from '@/stores/app.ts'
 import { humanizeCron, repeatLabel, formatDateTime } from '@/utils/format'
 
 const { t } = useI18n()
-const { renderMarkdown } = useMarkdownRenderer()
 const { getAgentIcon, getAgentName } = useAgents()
-const { annotateFilePaths, verifyFilePaths, openFilePath } = useFilePathAnnotation()
-const { annotateWorktreePaths } = useWorktreeAnnotation()
+const { verifyFilePaths, openFilePath } = useFilePathAnnotation()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 
 const props = defineProps<{
@@ -161,29 +158,18 @@ const statusText = computed(() => {
 
 watch(
   () => [props.task.prompt, store.state.projectRoot, store.state.homeDir] as const,
-  ([prompt, projectRoot, homeDir]) => {
+  ([prompt]) => {
     const renderId = ++promptRenderId
-    let html = renderMarkdown(prompt || '', { sanitize: true })
-    // Add code block headers (language label + copy/wrap buttons)
-    html = annotateCodeBlockHeaders(html)
-    // Add table block headers (label + copy/wrap buttons)
-    html = annotateTableBlockHeaders(html)
-    // Annotate worktree paths BEFORE file paths — prevents partial matches
-    const { html: worktreeHtml } = annotateWorktreePaths(html, { projectRoot })
-    html = worktreeHtml
-    // Annotate file paths
-    const { html: annotatedHtml, detectedPaths } = annotateFilePaths(html, { projectRoot, homeDir })
-    // Annotate commit hashes
-    const { html: commitHtml, detectedSHAs } = annotateCommitHashes(annotatedHtml)
-    // Annotate localhost URLs
-    html = annotateLocalhostUrls(commitHtml)
+    // Unified pipeline: renderMarkdown handles KaTeX, DOMPurify, code/table headers,
+    // path/commit/localhost annotations, and image/audio conversion automatically.
+    const { html, detectedPaths, detectedSHAs } = renderMarkdown(prompt || '', { sanitize: true })
     // Add lightbox-img class to all <img> tags for lightbox activation
-    html = html.replace(/<img(\s+[^>]*?)>/gi, (_match, attrs) => {
+    const finalHtml = html.replace(/<img(\s+[^>]*?)>/gi, (_match, attrs) => {
       const clean = attrs.replace(/\s*class="[^"]*"/i, '')
       return `<img${clean} class="lightbox-img">`
     })
 
-    renderedPrompt.value = html
+    renderedPrompt.value = finalHtml
 
     // Async verify file paths after DOM update
     if (detectedPaths.length > 0) {

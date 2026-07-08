@@ -13,7 +13,7 @@ import { appLog } from '@/utils/appLog'
 const TAG = 'renderToolDetail'
 import { gt } from '@/composables/useLocale'
 import { store } from '@/stores/app.ts'
-import { renderMarkdown } from '@/composables/useMarkdownRenderer.ts'
+import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
 import { getSessionId } from '@/composables/useSessionIdentity.ts'
 
 // ────────────────────────────────────────────────────────────
@@ -472,10 +472,9 @@ function renderAgentCall(input: Record<string, any>): string {
 
   // Prompt (full content, markdown rendered)
   if (prompt) {
-    const rendered = renderMarkdown(prompt, {
+    const rendered = renderMarkdownHtml(prompt, {
       sanitize: true,
-      renderKatex: false,
-      renderMermaid: false,
+      skipEnhancements: true,
       wrapTables: false,
     })
     html += `<div class="agent-call-prompt">${rendered}</div>`

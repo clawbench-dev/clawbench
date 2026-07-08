@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { renderKatexInString, renderMarkdown, renderMermaidInElement, useMarkdownRenderer } from '@/composables/useMarkdownRenderer'
+import { renderKatexInString, renderMarkdown, renderMarkdownHtml, renderMermaidInElement, useMarkdownRenderer } from '@/composables/useMarkdownRenderer'
 
 // Mock globals
 const mockMarkedParse = vi.fn((s: string) => `<p>${s}</p>`)
@@ -19,6 +19,46 @@ vi.mock('@/utils/globals', () => ({
 
 vi.mock('@/utils/html', () => ({
   escapeHtml: (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;'),
+}))
+
+vi.mock('@/utils/tableRowExpand', () => ({
+  injectTableRowAttrs: (html: string) => html,
+}))
+
+vi.mock('@/composables/useCodeBlockHeader', () => ({
+  annotateCodeBlockHeaders: (html: string) => html,
+  annotateTableBlockHeaders: (html: string) => html,
+}))
+
+vi.mock('@/utils/chatRenderUtils', () => ({
+  rewriteImageUrls: (html: string) => html,
+  convertAudioLinks: (html: string) => html,
+  parseAskQuestionContent: vi.fn(),
+  parseRagResultsContent: vi.fn(),
+}))
+
+vi.mock('@/composables/useFilePathAnnotation', () => ({
+  annotateFilePaths: (html: string) => ({ html, detectedPaths: [] }),
+  useFilePathAnnotation: () => ({ verifyFilePaths: vi.fn(), openFilePath: vi.fn() }),
+}))
+
+vi.mock('@/composables/useCommitHashAnnotation', () => ({
+  annotateCommitHashes: (html: string) => ({ html, detectedSHAs: [] }),
+  useCommitHashAnnotation: () => ({ verifyCommitHashes: vi.fn() }),
+}))
+
+vi.mock('@/composables/useWorktreeAnnotation', () => ({
+  annotateWorktreePaths: (html: string) => ({ html }),
+  useWorktreeAnnotation: () => ({}),
+}))
+
+vi.mock('@/composables/useLocalhostAnnotation', () => ({
+  annotateLocalhostUrls: (html: string) => html,
+  useLocalhostAnnotation: () => ({}),
+}))
+
+vi.mock('@/stores/app', () => ({
+  store: { state: { projectRoot: '/test', homeDir: '/home/test' } },
 }))
 
 // --- renderKatexInString ---
@@ -67,7 +107,6 @@ describe('renderKatexInString', () => {
   it('handles KaTeX errors gracefully in display math', () => {
     const input = '<p>$$ERROR_MATH$$</p>'
     const result = renderKatexInString(input)
-    // Should not throw, should return something (escaped fallback)
     expect(result).toBeDefined()
   })
 
@@ -84,10 +123,8 @@ describe('renderKatexInString', () => {
   })
 
   it('does not match $$ inside display math', () => {
-    // $$...$$ should be matched as display, not $...$ as inline
     const input = '<p>$$x^2 + y^2$$</p>'
     renderKatexInString(input)
-    // Should be called with display mode, not inline
     expect(mockKatexRenderToString).toHaveBeenCalledWith('x^2 + y^2', expect.objectContaining({ displayMode: true }))
   })
 })
@@ -131,10 +168,9 @@ describe('renderMarkdown', () => {
     mockDOMPurifySanitize.mockImplementation((s: string) => s)
 
     const result = renderMarkdown('table content')
-    // injectTableRowAttrs adds data-table-idx and data-row-idx after wrapping
-    expect(result).toContain('table-wrap')
-    expect(result).toContain('<table')
-    expect(result).toContain('</table></div>')
+    expect(result.html).toContain('table-wrap')
+    expect(result.html).toContain('<table')
+    expect(result.html).toContain('</table></div>')
   })
 
   it('skips table wrapping when wrapTables=false', () => {
@@ -142,7 +178,7 @@ describe('renderMarkdown', () => {
     mockDOMPurifySanitize.mockImplementation((s: string) => s)
 
     const result = renderMarkdown('table content', { wrapTables: false })
-    expect(result).not.toContain('table-wrap')
+    expect(result.html).not.toContain('table-wrap')
   })
 
   it('calls fixImagePaths when provided', () => {
@@ -152,15 +188,6 @@ describe('renderMarkdown', () => {
 
     renderMarkdown('img', { fixImagePaths: fixFn })
     expect(fixFn).toHaveBeenCalled()
-  })
-
-  it('calls postProcess when provided', () => {
-    mockMarkedParse.mockReturnValue('<p>content</p>')
-    mockDOMPurifySanitize.mockImplementation((s: string) => s)
-    const postFn = vi.fn((html: string) => html)
-
-    renderMarkdown('content', { postProcess: postFn })
-    expect(postFn).toHaveBeenCalled()
   })
 
   it('applies DOMPurify by default', () => {
@@ -186,23 +213,46 @@ describe('renderMarkdown', () => {
     expect(mockDOMPurifySanitize).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ ADD_TAGS: expect.arrayContaining(['math', 'button']), ADD_ATTR: expect.arrayContaining(['data-action', 'aria-label', 'title']) }))
   })
 
-  it('renders KaTeX before sanitizing', () => {
+  it('renders KaTeX before sanitizing when skipEnhancements=false', () => {
     mockMarkedParse.mockReturnValue('<p>$$x^2$$</p>')
     mockDOMPurifySanitize.mockImplementation((s: string) => s)
 
     renderMarkdown('content')
-    // KaTeX should have been called before DOMPurify
     expect(mockKatexRenderToString).toHaveBeenCalled()
     expect(mockDOMPurifySanitize).toHaveBeenCalled()
   })
 
-  it('applies fixImagePaths after sanitizing', () => {
-    mockMarkedParse.mockReturnValue('<img src="old.png">')
+  it('skips KaTeX when skipEnhancements=true', () => {
+    mockMarkedParse.mockReturnValue('<p>$$x^2$$</p>')
     mockDOMPurifySanitize.mockImplementation((s: string) => s)
-    const fixFn = vi.fn((html: string) => html.replace('old.png', 'new.png'))
 
-    const result = renderMarkdown('img', { fixImagePaths: fixFn })
-    expect(fixFn).toHaveBeenCalled()
+    renderMarkdown('content', { skipEnhancements: true })
+    expect(mockKatexRenderToString).not.toHaveBeenCalled()
+  })
+
+  it('returns RenderResult with html, detectedPaths, detectedSHAs', () => {
+    mockMarkedParse.mockReturnValue('<p>content</p>')
+    mockDOMPurifySanitize.mockImplementation((s: string) => s)
+
+    const result = renderMarkdown('content')
+    expect(result).toHaveProperty('html')
+    expect(result).toHaveProperty('detectedPaths')
+    expect(result).toHaveProperty('detectedSHAs')
+  })
+})
+
+// --- renderMarkdownHtml ---
+
+describe('renderMarkdownHtml', () => {
+  beforeEach(() => {
+    mockMarkedParse.mockClear()
+    mockDOMPurifySanitize.mockImplementation((s: string) => s)
+  })
+
+  it('returns html string only', () => {
+    mockMarkedParse.mockReturnValue('<p>test</p>')
+    const result = renderMarkdownHtml('test')
+    expect(typeof result).toBe('string')
   })
 })
 
@@ -223,7 +273,6 @@ describe('renderMermaidInElement', () => {
 
     await renderMermaidInElement(el)
 
-    // The pre should be replaced by a div.mermaid
     expect(el.querySelector('pre.mermaid')).toBeNull()
     expect(el.querySelector('div.mermaid')).toBeTruthy()
   })
@@ -261,7 +310,6 @@ describe('renderMermaidInElement', () => {
 
     await renderMermaidInElement(el)
 
-    // Should replace with error pre, not throw
     expect(el.querySelector('pre.mermaid')).toBeNull()
     expect(el.querySelector('div.mermaid')).toBeTruthy()
   })
@@ -288,9 +336,10 @@ describe('useMarkdownRenderer', () => {
     mockDOMPurifySanitize.mockImplementation((s: string) => s)
   })
 
-  it('exposes renderMarkdown and renderMermaidInElement', () => {
-    const { renderMarkdown: rm, renderMermaidInElement: rme } = useMarkdownRenderer()
+  it('exposes renderMarkdown, renderMarkdownHtml and renderMermaidInElement', () => {
+    const { renderMarkdown: rm, renderMarkdownHtml: rmh, renderMermaidInElement: rme } = useMarkdownRenderer()
     expect(typeof rm).toBe('function')
+    expect(typeof rmh).toBe('function')
     expect(typeof rme).toBe('function')
   })
 

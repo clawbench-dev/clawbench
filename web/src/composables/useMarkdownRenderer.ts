@@ -1,7 +1,13 @@
 import { marked, katex, mermaid, DOMPurify } from '@/utils/globals.ts'
 import { escapeHtml } from '@/utils/html.ts'
 import { injectTableRowAttrs } from '@/utils/tableRowExpand.ts'
-import { annotateTableBlockHeaders } from '@/composables/useCodeBlockHeader.ts'
+import { annotateCodeBlockHeaders, annotateTableBlockHeaders } from '@/composables/useCodeBlockHeader.ts'
+import { rewriteImageUrls, convertAudioLinks } from '@/utils/chatRenderUtils.ts'
+import { annotateFilePaths } from '@/composables/useFilePathAnnotation.ts'
+import { annotateCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
+import { annotateWorktreePaths } from '@/composables/useWorktreeAnnotation.ts'
+import { annotateLocalhostUrls } from '@/composables/useLocalhostAnnotation.ts'
+import { store } from '@/stores/app.ts'
 
 /**
  * Markdown渲染选项
@@ -9,16 +15,22 @@ import { annotateTableBlockHeaders } from '@/composables/useCodeBlockHeader.ts'
 export interface MarkdownRenderOptions {
     /** 是否净化HTML（防XSS），默认true */
     sanitize?: boolean
-    /** 是否渲染KaTeX数学公式，默认true */
-    renderKatex?: boolean
-    /** 是否渲染Mermaid图表，默认true */
-    renderMermaid?: boolean
     /** 是否包装表格（添加滚动容器），默认true */
     wrapTables?: boolean
-    /** 图片路径修复函数，可选 */
+    /** 跳过增强步骤（KaTeX、图片/音频/路径注解），流式模式用 */
+    skipEnhancements?: boolean
+    /** 图片路径修复函数，MarkdownPreview 用 */
     fixImagePaths?: (html: string) => string
-    /** 自定义HTML后处理函数，可选 */
-    postProcess?: (html: string) => string
+}
+
+/** renderMarkdown 返回的检测结果，供调用方做异步 verify */
+export interface RenderResult {
+    /** 渲染后的 HTML */
+    html: string
+    /** 检测到的文件路径列表（需 nextTick verifyFilePaths） */
+    detectedPaths: string[]
+    /** 检测到的 commit SHA 列表（需 nextTick verifyCommitHashes） */
+    detectedSHAs: string[]
 }
 
 /**
@@ -35,10 +47,6 @@ export interface MarkdownRenderOptions {
  * 相比之下，Mermaid 可以用 DOM 级渲染，因为它是整个节点替换
  * （<pre> → <div>+SVG），Vue 下次 innerHTML 覆盖后 Mermaid
  * 重新渲染即可，是幂等的，不会产生冲突。
- *
- * 渲染顺序：marked.parse() → renderKatexInString() → DOMPurify.sanitize()
- * @param html 包含公式分隔符的HTML字符串
- * @returns 公式已渲染为KaTeX HTML的字符串
  */
 export function renderKatexInString(html: string): string {
     if (!html) return html
@@ -79,73 +87,114 @@ export function renderKatexInString(html: string): string {
     return html
 }
 
+// DOMPurify 配置：取所有调用方的并集
+const DOMPURIFY_ADD_TAGS = ['math', 'button', 'rag-results', 'rag-item', 'session-id', 'session-title', 'created-at', 'summary']
+const DOMPURIFY_ADD_ATTR = ['data-action', 'aria-label', 'title', 'data-file-path', 'data-fallback-path', 'data-line-start', 'data-line-end', 'data-commit-sha', 'data-worktree-path', 'data-url', 'data-port', 'data-protocol', 'data-table-idx', 'data-row-idx']
+
 /**
- * 渲染Markdown内容为HTML
+ * 渲染Markdown内容为HTML（统一管线，所有调用方共用）
+ *
+ * 管线：marked.parse → [KaTeX] → DOMPurify → fixImagePaths → table-wrap
+ *       → injectTableRowAttrs → annotateCodeBlockHeaders → annotateTableBlockHeaders
+ *       → [rewriteImageUrls → convertAudioLinks → annotateWorktreePaths
+ *          → annotateFilePaths → annotateCommitHashes → annotateLocalhostUrls]
+ *
+ * 方括号内的步骤在 skipEnhancements=true 时跳过（流式模式用）。
+ *
  * @param content Markdown内容
  * @param options 渲染选项
- * @returns 渲染后的HTML字符串
+ * @returns 渲染结果（html + detectedPaths/detectedSHAs 供调用方 verify）
  */
 export function renderMarkdown(
     content: string,
     options: MarkdownRenderOptions = {}
-): string {
+): RenderResult {
     const {
         sanitize = true,
         wrapTables = true,
+        skipEnhancements = false,
         fixImagePaths,
-        postProcess
     } = options
 
-    // 1. 解析Markdown
+    let detectedPaths: string[] = []
+    let detectedSHAs: string[] = []
+
+    // 1. Parse markdown
     let html = marked.parse((content || '').trim()) as string
 
-    // 2. 渲染KaTeX数学公式（字符串级别，不能改用DOM级渲染，见 renderKatexInString 注释）
-    html = renderKatexInString(html) as string
-
-    // 3. 净化HTML（防止XSS攻击）
-    // 注意：KaTeX渲染后的HTML需要 ADD_TAGS:['math'] 保留 <math> 标签
-    if (sanitize) {
-        html = DOMPurify.sanitize(html, { ADD_TAGS: ['math', 'button'], ADD_ATTR: ['data-action', 'aria-label', 'title', 'data-file-path', 'data-line-start', 'data-line-end', 'data-fallback-path', 'data-commit-sha', 'data-worktree-path'] })
+    // 2. KaTeX (skip during streaming — formula may be incomplete)
+    if (!skipEnhancements) {
+        html = renderKatexInString(html)
     }
 
-    // 4. 修复图片路径
+    // 3. Sanitize HTML (XSS prevention)
+    if (sanitize) {
+        html = DOMPurify.sanitize(html, { ADD_TAGS: DOMPURIFY_ADD_TAGS, ADD_ATTR: DOMPURIFY_ADD_ATTR })
+    }
+
+    // 4. Fix image paths (MarkdownPreview-specific)
     if (fixImagePaths) {
         html = fixImagePaths(html)
     }
 
-    // 5. 包装表格
+    // 5. Wrap tables
     if (wrapTables) {
         html = html.replace(/<table>/g, '<div class="table-wrap"><table>')
                    .replace(/<\/table>/g, '</table></div>')
     }
 
-    // 6. 注入表格行属性标识
+    // 6. Inject table row attrs
     html = injectTableRowAttrs(html)
 
-    // 7. 表格块头部（label + copy/wrap 按钮）
+    // 7. Code block headers (language label + copy/wrap buttons)
+    html = annotateCodeBlockHeaders(html)
+
+    // 8. Table block headers (label + copy/wrap buttons)
     html = annotateTableBlockHeaders(html)
 
-    // 8. 自定义后处理
-    if (postProcess) {
-        html = postProcess(html)
+    // 9. Chat enhancements (all skipped during streaming)
+    if (!skipEnhancements) {
+        const projectRoot = store.state.projectRoot
+        const homeDir = store.state.homeDir
+
+        html = rewriteImageUrls(html, projectRoot)
+        html = convertAudioLinks(html)
+
+        // Annotate worktree paths BEFORE file paths — prevents file-path regex from
+        // partially matching worktree directory paths
+        const { html: worktreeHtml } = annotateWorktreePaths(html, { projectRoot })
+        html = worktreeHtml
+
+        const { html: annotatedHtml, detectedPaths: paths } = annotateFilePaths(html, { projectRoot, homeDir })
+        html = annotatedHtml
+        detectedPaths = paths
+
+        const { html: commitAnnotatedHtml, detectedSHAs: shas } = annotateCommitHashes(html)
+        html = commitAnnotatedHtml
+        detectedSHAs = shas
+
+        html = annotateLocalhostUrls(html)
     }
 
-    return html
+    return { html, detectedPaths, detectedSHAs }
+}
+
+/**
+ * Convenience: render markdown to HTML string only (no detections).
+ * For callers that don't need path/commit verification.
+ */
+export function renderMarkdownHtml(content: string, options: MarkdownRenderOptions = {}): string {
+    return renderMarkdown(content, options).html
 }
 
 /**
  * 在DOM元素中渲染Mermaid图表
- * @param el DOM元素
- * @param prefix 图表ID前缀，默认 'mermaid'
- * @param specificBlocks 可选：只渲染指定的块（NodeList）
  */
 export async function renderMermaidInElement(
     el: HTMLElement,
     prefix: string = 'mermaid',
     specificBlocks?: NodeList
 ): Promise<void> {
-    // marked配置会将 ```mermaid 渲染为 <pre class="mermaid">
-    // 而不是 <pre><code class="language-mermaid">
     const blocks = specificBlocks || el.querySelectorAll('pre.mermaid:not([data-rendered])')
     if (blocks.length === 0) return
 
@@ -173,11 +222,11 @@ export async function renderMermaidInElement(
 
 /**
  * 组合式函数：Markdown渲染器
- * 提供统一的Markdown渲染功能，可被多个组件复用
  */
 export function useMarkdownRenderer() {
     return {
         renderMarkdown,
+        renderMarkdownHtml,
         renderMermaidInElement,
     }
 }

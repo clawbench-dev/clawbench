@@ -18,7 +18,7 @@ import { ref, shallowRef } from 'vue'
 import { diffArrays } from 'diff'
 import { diffChars } from 'diff'
 import type { Change } from 'diff'
-import { renderMarkdown } from '@/composables/useMarkdownRenderer.ts'
+import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
 import type { DiffLine } from '@/utils/diff.ts'
 
 // ─── Types ───
@@ -764,7 +764,7 @@ const domParser = new DOMParser()
  * so the block structure matches the live DOM.
  */
 export function offscreenExtractBlocks(content: string): BlockInfo[] {
-    const html = renderMarkdown(content, { sanitize: false })
+    const html = renderMarkdownHtml(content, { sanitize: false })
     const doc = domParser.parseFromString(html, 'text/html')
 
     // Simulate mermaid transformation: <pre class="mermaid"> → <div class="mermaid" data-mermaid="source">

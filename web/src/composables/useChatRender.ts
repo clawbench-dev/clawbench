@@ -1,12 +1,8 @@
 import { ref, reactive, nextTick, watch } from 'vue'
-import { marked, DOMPurify } from '@/utils/globals.ts'
+import { renderMarkdown as baseRenderMarkdown, renderMarkdownHtml, renderMermaidInElement } from '@/composables/useMarkdownRenderer.ts'
 import { formatToolInput } from '@/utils/renderToolDetail.ts'
-import { renderKatexInString, renderMermaidInElement } from '@/composables/useMarkdownRenderer.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useCommitHashAnnotation } from '@/composables/useCommitHashAnnotation.ts'
-import { useWorktreeAnnotation } from '@/composables/useWorktreeAnnotation.ts'
-import { useLocalhostAnnotation } from '@/composables/useLocalhostAnnotation.ts'
-import { injectTableRowAttrs } from '@/utils/tableRowExpand.ts'
 import { store } from '@/stores/app.ts'
 import { apiGet } from '@/utils/api'
 import { createTaskBlockStore } from '@/utils/taskBlockStore.ts'
@@ -19,10 +15,7 @@ import {
   taskChanged,
   StaticBlockCache,
 } from '@/utils/streamPerf.ts'
-import { annotateCodeBlockHeaders, annotateTableBlockHeaders } from '@/composables/useCodeBlockHeader.ts'
 import {
-  rewriteImageUrls,
-  convertAudioLinks,
   parseAskQuestionContent,
   parseRagResultsContent,
 } from '@/utils/chatRenderUtils.ts'
@@ -41,10 +34,8 @@ import {
 
 export function useChatRender(options: { messages: any; theme: any; currentSessionId: any }) {
   const { messages, theme, currentSessionId } = options
-  const { annotateFilePaths, verifyFilePaths } = useFilePathAnnotation()
-  const { annotateCommitHashes, verifyCommitHashes } = useCommitHashAnnotation()
-  const { annotateWorktreePaths } = useWorktreeAnnotation()
-  const { annotateLocalhostUrls } = useLocalhostAnnotation()
+  const { verifyFilePaths } = useFilePathAnnotation()
+  const { verifyCommitHashes } = useCommitHashAnnotation()
 
   const blockTasks: Record<string, any> = reactive({})
   const blockAskQuestions: Record<string, any> = reactive({})
@@ -162,59 +153,27 @@ export function useChatRender(options: { messages: any; theme: any; currentSessi
   }
 
   /**
-   * Render markdown to HTML.
-   * When skipEnhancements=true (streaming mode), only marked + DOMPurify + table-wrap runs.
-   * When skipEnhancements=false (post-streaming), the full pipeline runs:
-   * marked → KaTeX → DOMPurify → table-wrap → img → audio → annotateFilePaths → verifyFilePaths.
+   * Render markdown to HTML using the unified pipeline.
+   * When skipEnhancements=true (streaming mode), KaTeX and path annotations are skipped.
+   * After rendering, schedules nextTick verifyFilePaths/verifyCommitHashes if detected.
    */
-  function renderMarkdown(text: string, { skipEnhancements = false }: { skipEnhancements?: boolean } = {}) {
-    let html = marked.parse((text || '').trim()) as string
+  function renderMarkdown(text: string, { skipEnhancements = false }: { skipEnhancements?: boolean } = {}): string {
+    const { html, detectedPaths, detectedSHAs } = baseRenderMarkdown(text, { skipEnhancements })
 
-    if (!skipEnhancements) {
-      // KaTeX: deferred to post-streaming — formula may be incomplete during streaming
-      html = renderKatexInString(html)
+    // Schedule async verification for detected paths/commits
+    if (detectedPaths.length > 0) {
+      const uniquePaths = [...new Set(detectedPaths)]
+      nextTick(() => {
+        const el = document.getElementById('aiChatMessages')
+        if (el) verifyFilePaths(uniquePaths, el)
+      })
     }
-
-    html = DOMPurify.sanitize(html, { ADD_TAGS: ['math', 'button', 'rag-results', 'rag-item', 'session-id', 'session-title', 'created-at', 'summary'], ADD_ATTR: ['data-file-path', 'data-fallback-path', 'data-line-start', 'data-line-end', 'data-commit-sha', 'data-worktree-path', 'data-url', 'data-port', 'data-protocol', 'data-table-idx', 'data-row-idx', 'data-action', 'aria-label', 'title'] })
-    html = html.replace(/<table>/g, '<div class="table-wrap"><table>').replace(/<\/table>/g, '</table></div>')
-    html = injectTableRowAttrs(html)
-    // Code block headers: add language label + copy/wrap buttons
-    html = annotateCodeBlockHeaders(html)
-    // Table block headers: add label + copy/wrap buttons
-    html = annotateTableBlockHeaders(html)
-
-    if (!skipEnhancements) {
-      // Image styling, audio links, annotations: deferred to post-streaming
-      const projectRoot = store.state.projectRoot
-      const homeDir = store.state.homeDir
-      html = rewriteImageUrls(html, projectRoot)
-      html = convertAudioLinks(html)
-      // Annotate worktree paths BEFORE file paths — prevents file-path regex from
-      // partially matching worktree directory paths (e.g. matching
-      // /home/x/project/.worktrees instead of the full /home/x/project/.worktrees/fix)
-      const { html: worktreeHtml } = annotateWorktreePaths(html, { projectRoot })
-      html = worktreeHtml
-      const { html: annotatedHtml, detectedPaths } = annotateFilePaths(html, { projectRoot, homeDir })
-      html = annotatedHtml
-      if (detectedPaths.length > 0) {
-        const uniquePaths = [...new Set(detectedPaths)]
-        nextTick(() => {
-          const el = document.getElementById('aiChatMessages')
-          if (el) verifyFilePaths(uniquePaths, el)
-        })
-      }
-      // Annotate commit hashes (7-40 hex chars with at least one a-f letter)
-      const { html: commitAnnotatedHtml, detectedSHAs } = annotateCommitHashes(html)
-      html = commitAnnotatedHtml
-      if (detectedSHAs.length > 0) {
-        const uniqueSHAs = [...new Set(detectedSHAs)]
-        nextTick(() => {
-          const el = document.getElementById('aiChatMessages')
-          if (el) verifyCommitHashes(uniqueSHAs, el)
-        })
-      }
-      // Annotate localhost URLs (e.g. http://localhost:30080) with clickable tags
-      html = annotateLocalhostUrls(html)
+    if (detectedSHAs.length > 0) {
+      const uniqueSHAs = [...new Set(detectedSHAs)]
+      nextTick(() => {
+        const el = document.getElementById('aiChatMessages')
+        if (el) verifyCommitHashes(uniqueSHAs, el)
+      })
     }
 
     return html
@@ -238,9 +197,9 @@ export function useChatRender(options: { messages: any; theme: any; currentSessi
    *   The cache upgrade mechanism will later re-render with full enhancements.
    */
   function renderTextBlock(text: string, msgId: string, blockIdx: number, streaming = false, deferEnhancements = false) {
-    // ── Streaming: pure markdown only ──
+    // ── Streaming: pure markdown only (no detections/verification) ──
     if (streaming) {
-      return renderMarkdown(text, { skipEnhancements: true })
+      return renderMarkdownHtml(text, { skipEnhancements: true })
     }
 
     // ── Post-streaming: full pipeline ──

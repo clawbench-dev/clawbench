@@ -43,11 +43,11 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import CodePreview from './CodePreview.vue'
-import { useMarkdownRenderer } from '@/composables/useMarkdownRenderer.ts'
+import { renderMarkdownHtml, renderMermaidInElement } from '@/composables/useMarkdownRenderer.ts'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
-import { annotateCodeBlockHeaders, handleCodeBlockClick, annotateTableBlockHeaders, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
+import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import { store } from '@/stores/app.ts'
 import { dirName, splitPath, joinPath } from '@/utils/path.ts'
 import { flashRanges, flashType } from '@/composables/useFileRefresh.ts'
@@ -124,7 +124,7 @@ const { handleDblClick } = useDoubleClickCopy({
         })
     },
 })
-const { renderMarkdown, renderMermaidInElement } = useMarkdownRenderer()
+
 const { annotateFilePaths, verifyFilePaths, resolveRelativePath, openFilePath } = useFilePathAnnotation()
 
 function handleClick(event: MouseEvent) {
@@ -269,15 +269,11 @@ function computeMarkerPositions() {
 async function doRender(f: { content: string; path?: string; error?: boolean }) {
     const renderId = ++currentRenderId
     imageTimestamp.value = Date.now()
-    let html = renderMarkdown(f.content, {
+    let html = renderMarkdownHtml(f.content, {
         sanitize: false,
+        skipEnhancements: true,
         fixImagePaths: fixLocalImagePaths
     })
-
-    // Add code block headers (language label + copy/wrap buttons)
-    html = annotateCodeBlockHeaders(html)
-    // Add table block headers (label + copy/wrap buttons)
-    html = annotateTableBlockHeaders(html)
 
     const currentDir = f?.path ? dirName(f.path) : ''
     const { html: annotatedHtml, detectedPaths } = annotateFilePaths(html, {
