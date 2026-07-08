@@ -24,7 +24,12 @@ jobs:
           cache: 'npm'
 
       - name: Build frontend (for go:embed)
-        run: npm ci && npm run build && rm -rf internal/frontend/dist && cp -r public internal/frontend/dist
+        run: |
+          npm ci
+          npm run build
+          rm -rf internal/frontend/dist
+          cp -r public internal/frontend/dist
+        shell: bash
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v7
@@ -52,7 +57,12 @@ jobs:
           cache: 'npm'
 
       - name: Build frontend (for go:embed)
-        run: npm ci && npm run build && rm -rf internal/frontend/dist && cp -r public internal/frontend/dist
+        run: |
+          npm ci
+          npm run build
+          rm -rf internal/frontend/dist
+          cp -r public internal/frontend/dist
+        shell: bash
 
       - name: Go test
         run: go test ./...
@@ -88,7 +98,12 @@ jobs:
           cache: 'npm'
 
       - name: Build frontend (for go:embed)
-        run: npm ci && npm run build && rm -rf internal/frontend/dist && cp -r public internal/frontend/dist
+        run: |
+          npm ci
+          npm run build
+          rm -rf internal/frontend/dist
+          cp -r public internal/frontend/dist
+        shell: bash
 
       - name: Run coverage gate check
         run: |
