@@ -135,7 +135,6 @@ jobs:
         run: |
           mkdir -p pkg-linux/clawbench
           cp clawbench-linux pkg-linux/clawbench/clawbench
-          cp -r config pkg-linux/clawbench/config
           chmod +x pkg-linux/clawbench/clawbench
           cd pkg-linux && zip -r clawbench-linux-amd64.zip clawbench/
 
@@ -198,7 +197,6 @@ jobs:
         run: |
           mkdir -p pkg-linux-arm64/clawbench
           cp clawbench-linux-arm64 pkg-linux-arm64/clawbench/clawbench
-          cp -r config pkg-linux-arm64/clawbench/config
           chmod +x pkg-linux-arm64/clawbench/clawbench
           cd pkg-linux-arm64 && zip -r clawbench-linux-arm64.zip clawbench/
 
@@ -257,7 +255,6 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path pkg-windows/clawbench
           Copy-Item clawbench.exe pkg-windows/clawbench/
-          Copy-Item -Recurse config pkg-windows/clawbench/config
           Compress-Archive -Path pkg-windows/clawbench -DestinationPath pkg-windows/clawbench-windows-amd64.zip
 
       - uses: softprops/action-gh-release@v2
@@ -312,7 +309,6 @@ jobs:
         run: |
           mkdir -p pkg-mac-arm64/clawbench
           cp clawbench-darwin-arm64 pkg-mac-arm64/clawbench/clawbench
-          cp -r config pkg-mac-arm64/clawbench/config
           chmod +x pkg-mac-arm64/clawbench/clawbench
           cd pkg-mac-arm64 && zip -r clawbench-darwin-arm64.zip clawbench/
 
@@ -371,7 +367,6 @@ jobs:
         run: |
           mkdir -p pkg-mac-amd64/clawbench
           cp clawbench-darwin-amd64 pkg-mac-amd64/clawbench/clawbench
-          cp -r config pkg-mac-amd64/clawbench/config
           chmod +x pkg-mac-amd64/clawbench/clawbench
           cd pkg-mac-amd64 && zip -r clawbench-darwin-amd64.zip clawbench/
 
@@ -573,7 +568,6 @@ jobs:
           mkdir -p "$PLATFORM_DIR/bin"
           cp pkg-linux/clawbench/clawbench "$PLATFORM_DIR/bin/clawbench"
           chmod +x "$PLATFORM_DIR/bin/clawbench"
-          cp -r config "$PLATFORM_DIR/config"
           node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$PLATFORM_DIR/package.json','utf8'));p.version='$VERSION';fs.writeFileSync('$PLATFORM_DIR/package.json',JSON.stringify(p,null,2)+'\n')"
 
           # --- @xulongzhe/clawbench-linux-arm64 ---
@@ -581,7 +575,6 @@ jobs:
           mkdir -p "$PLATFORM_DIR/bin"
           cp pkg-linux-arm64/clawbench/clawbench "$PLATFORM_DIR/bin/clawbench"
           chmod +x "$PLATFORM_DIR/bin/clawbench"
-          cp -r config "$PLATFORM_DIR/config"
           node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$PLATFORM_DIR/package.json','utf8'));p.version='$VERSION';fs.writeFileSync('$PLATFORM_DIR/package.json',JSON.stringify(p,null,2)+'\n')"
 
           # --- @xulongzhe/clawbench-darwin-x64 ---
@@ -589,7 +582,6 @@ jobs:
           mkdir -p "$PLATFORM_DIR/bin"
           cp pkg-mac-amd64/clawbench/clawbench "$PLATFORM_DIR/bin/clawbench"
           chmod +x "$PLATFORM_DIR/bin/clawbench"
-          cp -r config "$PLATFORM_DIR/config"
           node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$PLATFORM_DIR/package.json','utf8'));p.version='$VERSION';fs.writeFileSync('$PLATFORM_DIR/package.json',JSON.stringify(p,null,2)+'\n')"
 
           # --- @xulongzhe/clawbench-darwin-arm64 ---
@@ -597,14 +589,12 @@ jobs:
           mkdir -p "$PLATFORM_DIR/bin"
           cp pkg-mac-arm64/clawbench/clawbench "$PLATFORM_DIR/bin/clawbench"
           chmod +x "$PLATFORM_DIR/bin/clawbench"
-          cp -r config "$PLATFORM_DIR/config"
           node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$PLATFORM_DIR/package.json','utf8'));p.version='$VERSION';fs.writeFileSync('$PLATFORM_DIR/package.json',JSON.stringify(p,null,2)+'\n')"
 
           # --- @xulongzhe/clawbench-win32-x64 ---
           PLATFORM_DIR="npm/platforms/win32-x64"
           mkdir -p "$PLATFORM_DIR/bin"
           cp pkg-windows/clawbench/clawbench.exe "$PLATFORM_DIR/bin/clawbench.exe"
-          cp -r config "$PLATFORM_DIR/config"
           node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('$PLATFORM_DIR/package.json','utf8'));p.version='$VERSION';fs.writeFileSync('$PLATFORM_DIR/package.json',JSON.stringify(p,null,2)+'\n')"
 
           # --- Update main package ---
