@@ -26,6 +26,9 @@ const props = defineProps({
 const iframeRef = ref<HTMLIFrameElement | null>(null)
 const loading = ref(true)
 
+// Detect ClawBench dark mode from data-theme attribute
+const isDark = computed(() => document.documentElement.getAttribute('data-theme') === 'dark')
+
 // Determine the spec data for ReDoc:
 // - YAML files: backend returns specJson (YAML→JSON conversion)
 // - JSON files: use content directly
@@ -34,7 +37,7 @@ const specData = computed(() => {
   return props.file.content || ''
 })
 
-const redocSrcdoc = computed(() => buildRedocSrcdoc(specData.value))
+const redocSrcdoc = computed(() => buildRedocSrcdoc(specData.value, isDark.value))
 
 function onIframeLoad() {
   loading.value = false
@@ -81,5 +84,9 @@ watch(() => [props.file?.content, props.file?.specJson], () => {
   height: 100%;
   border: none;
   background: #fff;
+}
+
+[data-theme="dark"] .openapi-iframe {
+  background: #1e1e2e;
 }
 </style>

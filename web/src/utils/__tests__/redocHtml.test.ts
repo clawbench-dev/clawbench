@@ -39,4 +39,20 @@ describe('buildRedocSrcdoc', () => {
     const result = buildRedocSrcdoc(spec)
     expect(result).toContain('charset="utf-8"')
   })
+
+  it('uses light theme by default', () => {
+    const spec = '{"openapi":"3.0.0"}'
+    const result = buildRedocSrcdoc(spec)
+    expect(result).toContain("primary: { main: '#1890ff' }")
+    expect(result).toContain('background: #fff')
+  })
+
+  it('uses dark theme when isDark is true', () => {
+    const spec = '{"openapi":"3.0.0"}'
+    const result = buildRedocSrcdoc(spec, true)
+    expect(result).toContain("primary: { main: '#409eff' }")
+    expect(result).toContain('background: #1e1e2e')
+    expect(result).toContain("backgroundColor: '#1e1e2e'")
+    expect(result).toContain("backgroundColor: '#11111b'")
+  })
 })
