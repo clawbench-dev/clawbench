@@ -852,12 +852,25 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (sid) { runningSessions.value.delete(sid); runningSessionsVersion.value++ }
       // Update global boolean from remaining set
       store.state.chatRunning = runningSessions.value.size > 0
-      // Recalculate chatUnread from backend instead of optimistically setting true.
-      // The old code unconditionally set chatUnread=true here, which caused phantom
-      // flashing: a session that was already read (last_read_at set) would trigger
-      // the flash, and the button kept blinking until loadSessionsOnce() corrected it.
-      // Now we debounce-load the real unread state from the server.
-      if (sid && sid !== currentSessionId.value) {
+
+      const isTerminal = data.status === 'completed' || data.status === 'cancelled'
+      if (sid && sid === currentSessionId.value && isTerminal) {
+        // WS completion fallback: SSE `done` normally calls loadHistory, but when
+        // SSE is disconnected (background tab / Android WebView) this is the only
+        // refresh path for the session the user is viewing.
+        appLog.d(TAG, `[session_update:${data.status}] current session — reloading history`)
+        loading.value = false
+        onDisconnectStream()
+        onStopPolling()
+        loadHistory(false, false, false).catch(() => {
+          loading.value = false
+        })
+      } else if (sid && sid !== currentSessionId.value) {
+        // Recalculate chatUnread from backend instead of optimistically setting true.
+        // The old code unconditionally set chatUnread=true here, which caused phantom
+        // flashing: a session that was already read (last_read_at set) would trigger
+        // the flash, and the button kept blinking until loadSessionsOnce() corrected it.
+        // Now we debounce-load the real unread state from the server.
         if (sessionEventDebounce) clearTimeout(sessionEventDebounce)
         sessionEventDebounce = setTimeout(() => {
           sessionEventDebounce = null
@@ -877,15 +890,20 @@ export function useChatSession(options: UseChatSessionOptions) {
   // prevents runningSessions from being updated.
 
   function handleVisibilityChange() {
-    if (document.visibilityState === 'visible' && loading.value) {
-      // Page became visible while streaming - reconnect
-      onDisconnectStream()
-      onStopPolling()
-      loadHistory(true, false, true).catch(() => {
-        // loadHistory failed — reset loading state so user isn't stuck
-        loading.value = false
-      })
-    }
+    if (document.visibilityState !== 'visible' || !currentSessionId.value) return
+    const hasStreamingMsg = messages.value.some((m: any) => m.streaming)
+    const sessionWasRunning = loading.value
+      || hasStreamingMsg
+      || runningSessions.value.has(currentSessionId.value)
+    if (!sessionWasRunning) return
+    // Page became visible while a response may still be in flight (or stale after
+    // SSE disconnect on background) — reload from REST to catch up.
+    onDisconnectStream()
+    onStopPolling()
+    loadHistory(true, false, !hasStreamingMsg).catch(() => {
+      // loadHistory failed — reset loading state so user isn't stuck
+      loading.value = false
+    })
   }
 
   /**

@@ -231,7 +231,7 @@ const mockClearUsageState = vi.hoisted(() => vi.fn())
 
 // ── Helpers ──
 
-function createSession() {
+function createSession(overrides: Partial<Parameters<typeof useChatSession>[0]> = {}) {
   const options = {
     currentSessionId: ref('current-s1'),
     messages: ref([]),
@@ -249,6 +249,7 @@ function createSession() {
     onStopPolling: vi.fn(),
     onDisconnectStream: vi.fn(),
     onOpen: vi.fn(),
+    ...overrides,
   }
   return useChatSession(options)
 }
@@ -256,9 +257,16 @@ function createSession() {
 // ── Tests ──
 
 describe('onSessionEvent', () => {
+  let originalFetch: typeof globalThis.fetch
+
   beforeEach(() => {
     resetMockState()
     resetChatSessionState()
+    originalFetch = globalThis.fetch
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
   })
 
   it('does nothing when data is null', () => {
@@ -329,13 +337,115 @@ describe('onSessionEvent', () => {
     expect(mockState.chatUnreadCount).toBe(0)
   })
 
-  it('does not mark chatUnread when the current session completes', () => {
+  it('does not mark chatUnread when the current session completes', async () => {
     const session = createSession()
     mockState.currentSessionId = 'current-s1'
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1',
+        messages: [{ id: 1, role: 'assistant', content: 'done' }],
+        total: 1,
+        running: false,
+      }),
+    })
 
     session.onSessionEvent({ session_id: 'current-s1', status: 'running' })
     session.onSessionEvent({ session_id: 'current-s1', status: 'completed' })
     expect(mockState.chatUnreadCount).toBe(0)
+
+    await vi.waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/ai/chat?session_id=current-s1'),
+        expect.any(Object),
+      )
+    })
+  })
+
+  it('calls loadHistory when the current session completes', async () => {
+    const onDisconnectStream = vi.fn()
+    const onStopPolling = vi.fn()
+    const loading = ref(true)
+    const session = createSession({
+      loading,
+      onDisconnectStream,
+      onStopPolling,
+    })
+    mockState.currentSessionId = 'current-s1'
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1',
+        messages: [{ id: 1, role: 'assistant', content: 'Hello' }],
+        total: 1,
+        running: false,
+      }),
+    })
+
+    session.onSessionEvent({ session_id: 'current-s1', status: 'running' })
+    session.onSessionEvent({ session_id: 'current-s1', status: 'completed' })
+
+    await vi.waitFor(() => {
+      expect(onDisconnectStream).toHaveBeenCalled()
+      expect(onStopPolling).toHaveBeenCalled()
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/ai/chat?session_id=current-s1'),
+        expect.any(Object),
+      )
+    })
+    expect(loading.value).toBe(false)
+  })
+
+  it('calls loadHistory when the current session is cancelled', async () => {
+    const onDisconnectStream = vi.fn()
+    const loading = ref(true)
+    const session = createSession({ loading, onDisconnectStream })
+    mockState.currentSessionId = 'current-s1'
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1',
+        messages: [{ id: 1, role: 'assistant', content: 'partial', cancelled: true }],
+        total: 1,
+        running: false,
+      }),
+    })
+
+    session.onSessionEvent({ session_id: 'current-s1', status: 'running' })
+    session.onSessionEvent({ session_id: 'current-s1', status: 'cancelled' })
+
+    await vi.waitFor(() => {
+      expect(onDisconnectStream).toHaveBeenCalled()
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/ai/chat?session_id=current-s1'),
+        expect.any(Object),
+      )
+    })
+    expect(loading.value).toBe(false)
+  })
+
+  it('does not call loadHistory when a different session completes', async () => {
+    vi.useFakeTimers()
+    const session = createSession()
+    mockState.currentSessionId = 'current-s1'
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ sessions: [] }),
+    })
+
+    session.onSessionEvent({ session_id: 'other-s1', status: 'completed' })
+
+    await vi.advanceTimersByTimeAsync(600)
+    const chatCalls = vi.mocked(globalThis.fetch).mock.calls.filter(
+      ([url]) => typeof url === 'string' && url.includes('/api/ai/chat?session_id='),
+    )
+    expect(chatCalls).toHaveLength(0)
+
+    vi.useRealTimers()
   })
 
   it('handles status=cancelled by removing from runningSessions', () => {
@@ -2574,7 +2684,54 @@ describe('handleVisibilityChange', () => {
     vi.restoreAllMocks()
   })
 
-  it('when visible and loading=false: does nothing', async () => {
+  it('when visible and loading=false but message is streaming: reloads history', async () => {
+    const loading = ref(false)
+    const onDisconnectStream = vi.fn()
+    const onStopPolling = vi.fn()
+    const options = {
+      currentSessionId: ref('s1'),
+      messages: ref([{ role: 'assistant', streaming: true, blocks: [] }]),
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+    blockRagResults: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onStopPolling,
+      onDisconnectStream,
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 's1', messages: [], total: 0, running: false,
+      }),
+    })
+
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+
+    session.handleVisibilityChange()
+
+    await vi.waitFor(() => {
+      expect(onDisconnectStream).toHaveBeenCalled()
+    })
+    expect(onStopPolling).toHaveBeenCalled()
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/ai/chat?session_id=s1'),
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
+
+    vi.restoreAllMocks()
+  })
+
+  it('when visible and loading=false with no streaming message: does nothing', async () => {
     const loading = ref(false)
     const onDisconnectStream = vi.fn()
     const options = {

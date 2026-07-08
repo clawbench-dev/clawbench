@@ -896,6 +896,22 @@ export function useChatStream(options: UseChatStreamOptions) {
     if (document.visibilityState === 'hidden') {
       disconnectStream()
       stopPolling()
+      return
+    }
+    if (!currentSessionId.value) return
+    const hasStreamingMsg = messages.value.some((m: any) => m.streaming)
+    if (!loading.value && !hasStreamingMsg) return
+    appLog.d(TAG, 'Page visible while streaming — recovering SSE or reloading history')
+    if (loading.value && !eventSource) {
+      if (reconnect.shouldReconnect()) {
+        reconnect.scheduleReconnect()
+      } else {
+        onLoadHistory().catch(() => {
+          loading.value = false
+        })
+      }
+    } else if (hasStreamingMsg) {
+      onLoadHistory().catch(() => {})
     }
   }
 

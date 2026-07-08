@@ -1004,6 +1004,11 @@ async function handleResumeSession({ sessionId, sessionTitle }) {
     }
 }
 
+function handleForegroundRefresh() {
+    if (!identity.currentSessionId.value) return
+    session.loadHistory(false, false, true).catch(() => {})
+}
+
 // Start one-time session load when component mounts
 onMounted(() => {
     // Request notification permission on mount
@@ -1014,6 +1019,7 @@ onMounted(() => {
     session.loadSessionsOnce()
     document.addEventListener('visibilitychange', session.handleVisibilityChange)
     window.addEventListener('clawbench-summary-update', handleSummaryUpdate)
+    window.addEventListener('clawbench-foreground', handleForegroundRefresh)
 })
 
 // Cleanup preview URLs on unmount
@@ -1027,6 +1033,7 @@ onUnmounted(() => {
     document.removeEventListener('visibilitychange', session.handleVisibilityChange)
     document.removeEventListener('visibilitychange', manager._visibilityHandler)
     window.removeEventListener('clawbench-summary-update', handleSummaryUpdate)
+    window.removeEventListener('clawbench-foreground', handleForegroundRefresh)
     notification.closeAll()
 })
 </script>
