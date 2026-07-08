@@ -1031,7 +1031,7 @@ export default {
       preventScreenLock: 'No Screen Lock During Output',
       preventScreenLockDesc: 'Prevent the screen from turning off during AI output',
       swipeSession: 'Swipe to Switch Session',
-      swipeSessionDesc: 'Swipe left/right in the chat area to switch to the previous/next session',
+      swipeSessionDesc: 'Swipe left/right or Ctrl+←/→ to switch to the previous/next session',
       defaultAgent: 'Default Agent',
       defaultAgentDesc: 'AI agent used by default when starting a new chat',
       agentIsDefault: 'Default Agent',

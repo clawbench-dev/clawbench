@@ -152,6 +152,7 @@
 <script setup>
 import { ref, computed, watch, onUnmounted, onMounted, inject, provide, toRef, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { localConfig } from '@/composables/useSettingsConfig'
 import { appLog } from '@/utils/appLog'
 import { gt } from '@/composables/useLocale'
 import { useTabDrawer } from '@/composables/useTabDrawer'
@@ -1004,6 +1005,23 @@ async function handleResumeSession({ sessionId, sessionTitle }) {
     }
 }
 
+// Desktop: Ctrl+Left/Right to switch sessions (same as mobile swipe)
+function handleCtrlArrowSessionSwitch(e) {
+  if (!localConfig.swipeSession) return
+  if (!props.active) return
+  const tag = e.target?.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return
+  if (e.target?.closest?.('.terminal-panel')) return
+  if (!(e.ctrlKey || e.metaKey)) return
+  if (e.key === 'ArrowLeft') {
+    e.preventDefault()
+    swipeSession.swipeToPrev()
+  } else if (e.key === 'ArrowRight') {
+    e.preventDefault()
+    swipeSession.swipeToNext()
+  }
+}
+
 // Start one-time session load when component mounts
 onMounted(() => {
     // Request notification permission on mount
@@ -1014,6 +1032,7 @@ onMounted(() => {
     session.loadSessionsOnce()
     document.addEventListener('visibilitychange', session.handleVisibilityChange)
     window.addEventListener('clawbench-summary-update', handleSummaryUpdate)
+    document.addEventListener('keydown', handleCtrlArrowSessionSwitch)
 })
 
 // Cleanup preview URLs on unmount
@@ -1027,6 +1046,7 @@ onUnmounted(() => {
     document.removeEventListener('visibilitychange', session.handleVisibilityChange)
     document.removeEventListener('visibilitychange', manager._visibilityHandler)
     window.removeEventListener('clawbench-summary-update', handleSummaryUpdate)
+    document.removeEventListener('keydown', handleCtrlArrowSessionSwitch)
     notification.closeAll()
 })
 </script>
