@@ -859,7 +859,7 @@ const currentFileIsMarkdown = computed(() => {
     const f = currentFile.value
     if (!f) return false
     const ft = getFileType(f.name)
-    return ft?.isMarkdown || ft?.isHtml || false
+    return ft?.isMarkdown || ft?.isHtml || f.subtype === 'openapi' || false
 })
 const projectRoot = computed(() => store.state.projectRoot)
 const homeDir = computed(() => store.state.homeDir)

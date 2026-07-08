@@ -1,6 +1,21 @@
 package model
 
-import "strings"
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Subtype constants for FileContent.Subtype
+const (
+	SubtypeOpenAPI = "openapi"
+)
+
+// maxSpecSniffSize is the maximum file content size (1MB) for subtype detection.
+// Files larger than this are skipped to avoid expensive parsing.
+const maxSpecSniffSize = 1 << 20
 
 // IsSupportedFile returns true if the filename has a supported file extension
 // (text, image, audio, or video).
@@ -103,4 +118,111 @@ func IsVideoFile(name string) bool {
 		}
 	}
 	return false
+}
+
+// DetectSubtype examines file content to determine its subtype (e.g., "openapi").
+// Returns ("", "") for unrecognized or malformed content.
+// Files larger than maxSpecSniffSize are skipped for performance.
+func DetectSubtype(filename, content string) (subtype string) {
+	if len(content) > maxSpecSniffSize {
+		return ""
+	}
+	lower := strings.ToLower(filename)
+	switch {
+	case strings.HasSuffix(lower, ".yaml") || strings.HasSuffix(lower, ".yml"):
+		return detectSubtypeYAML(content)
+	case strings.HasSuffix(lower, ".json") || strings.HasSuffix(lower, ".jsonc") || strings.HasSuffix(lower, ".json5"):
+		return detectSubtypeJSON(content)
+	default:
+		return ""
+	}
+}
+
+// detectSubtypeYAML parses YAML content and checks for openapi/swagger top-level keys.
+func detectSubtypeYAML(content string) string {
+	var root map[string]interface{}
+	if err := yaml.Unmarshal([]byte(content), &root); err != nil {
+		return ""
+	}
+	if _, ok := root["openapi"]; ok {
+		return SubtypeOpenAPI
+	}
+	if _, ok := root["swagger"]; ok {
+		return SubtypeOpenAPI
+	}
+	return ""
+}
+
+// detectSubtypeJSON parses JSON content and checks for openapi/swagger top-level keys.
+func detectSubtypeJSON(content string) string {
+	var root map[string]interface{}
+	if err := json.Unmarshal([]byte(content), &root); err != nil {
+		return ""
+	}
+	if _, ok := root["openapi"]; ok {
+		return SubtypeOpenAPI
+	}
+	if _, ok := root["swagger"]; ok {
+		return SubtypeOpenAPI
+	}
+	return ""
+}
+
+// ConvertSpecToJSON converts YAML content to JSON for ReDoc consumption.
+// Returns the JSON string or empty string on failure.
+// Handles non-string map keys from YAML by recursive normalization.
+func ConvertSpecToJSON(content string) string {
+	if content == "" {
+		return ""
+	}
+	var root interface{}
+	if err := yaml.Unmarshal([]byte(content), &root); err != nil {
+		return ""
+	}
+	if root == nil {
+		return ""
+	}
+	normalized := normalizeYAMLTypes(root)
+	jsonBytes, err := json.Marshal(normalized)
+	if err != nil {
+		return ""
+	}
+	return string(jsonBytes)
+}
+
+// normalizeYAMLTypes recursively converts map[interface{}]interface{} to
+// map[string]interface{} so json.Marshal can handle it.
+func normalizeYAMLTypes(v interface{}) interface{} {
+	switch val := v.(type) {
+	case map[interface{}]interface{}:
+		out := make(map[string]interface{}, len(val))
+		for k, v := range val {
+			// Non-string keys are formatted via fmt.Sprint for safety.
+			key, ok := k.(string)
+			if !ok {
+				key = anyToString(k)
+			}
+			out[key] = normalizeYAMLTypes(v)
+		}
+		return out
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(val))
+		for k, v := range val {
+			out[k] = normalizeYAMLTypes(v)
+		}
+		return out
+	case []interface{}:
+		out := make([]interface{}, len(val))
+		for i, v := range val {
+			out[i] = normalizeYAMLTypes(v)
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+// anyToString converts a value to string for non-string YAML map keys.
+func anyToString(v interface{}) string {
+	return fmt.Sprint(v)
 }

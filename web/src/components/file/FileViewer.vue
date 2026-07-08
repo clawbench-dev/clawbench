@@ -146,6 +146,28 @@
         />
       </template>
 
+      <!-- OpenAPI / Swagger spec file -->
+      <template v-else-if="isOpenapi">
+        <OpenApiPreview
+          v-if="markdownViewMode === 'rendered'"
+          :file="file"
+          :view-mode="markdownViewMode"
+        />
+        <div v-else class="raw-content-viewer">
+          <CodePreview
+            :content="file.content"
+            :language="rawFileLanguage"
+            :file-path="file.path"
+            :word-wrap="wordWrap"
+            :show-line-numbers="showLineNumbers"
+            :sticky-scroll="stickyScroll"
+            :flash-ranges="flashRanges"
+            :flash-type="flashType"
+            @open-file="emit('openFile', $event)"
+          />
+        </div>
+      </template>
+
       <!-- Code / plain text -->
       <div v-else class="raw-content-viewer">
         <div v-if="file.truncated" class="truncated-notice">
@@ -188,6 +210,7 @@ import AudioPreview from '@/components/media/AudioPreview.vue'
 import VideoPreview from '@/components/media/VideoPreview.vue'
 import MarkdownPreview from './MarkdownPreview.vue'
 import CodePreview from './CodePreview.vue'
+import OpenApiPreview from './OpenApiPreview.vue'
 import DiffDrawer from './DiffDrawer.vue'
 import { useDiffDrawer } from '@/composables/useDiffDrawer.ts'
 import { diffDrawerVisible } from '@/composables/useMarkdownDiff.ts'
@@ -223,6 +246,7 @@ const fileType = computed(() => props.file ? getFileType(props.file.name) : null
 const rawFileLanguage = computed(() => getFileType(props.file?.name)?.lang || 'plaintext')
 const isMarkdown = computed(() => fileType.value?.isMarkdown || false)
 const isHtml = computed(() => fileType.value?.isHtml || false)
+const isOpenapi = computed(() => props.file?.subtype === 'openapi')
 const loading = ref(false)
 const contentRef = ref(null)
 const pdfPreviewRef = ref(null)
@@ -277,6 +301,9 @@ function getScrollEl() {
     /* v8 ignore next - trivial prop access fix, tested via integration */
     if (isHtml.value && props.markdownViewMode === 'rendered') {
         return null // iframe handles its own scrolling
+    }
+    if (isOpenapi.value && props.markdownViewMode === 'rendered') {
+        return null // ReDoc iframe handles its own scrolling
     }
     return el.querySelector('.raw-content-pre')
 }

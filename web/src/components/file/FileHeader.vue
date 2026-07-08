@@ -187,7 +187,7 @@ const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObs
     if (hasToc.value) ids.push('search')
     ids.push('attach')
     if (hasTextContent.value) ids.push('refresh')
-    if (hasTextContent.value && !isMediaFile.value && (isMarkdown.value || isHtml.value)) ids.push('toggleView')
+    if (hasTextContent.value && !isMediaFile.value && (isMarkdown.value || isHtml.value || isOpenapi.value)) ids.push('toggleView')
     if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) ids.push('wordWrap')
     if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) ids.push('lineNumbers')
     if (hasTextContent.value && !isMediaFile.value && !isMarkdownRendered.value) ids.push('stickyScroll')
@@ -218,7 +218,8 @@ function updateMenuPosition() {
 const fileType = computed(() => props.file ? getFileType(props.file.name) : null)
 const isMarkdown = computed(() => fileType.value?.isMarkdown || false)
 const isHtml = computed(() => fileType.value?.isHtml || false)
-const isMarkdownRendered = computed(() => (isMarkdown.value || isHtml.value) && props.viewMode === 'rendered')
+const isOpenapi = computed(() => props.file?.subtype === 'openapi')
+const isMarkdownRendered = computed(() => (isMarkdown.value || isHtml.value || isOpenapi.value) && props.viewMode === 'rendered')
 const isMediaFile = computed(() => {
     const ft = fileType.value
     return ft?.isImage || ft?.isAudio || ft?.isVideo || ft?.isPdf || false

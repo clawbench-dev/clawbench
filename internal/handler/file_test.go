@@ -118,6 +118,62 @@ func TestListDir(t *testing.T) {
 	})
 }
 
+func TestGetFile_OpenAPIYAML_ReturnsSubtype(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	yamlContent := "openapi: '3.0.0'\ninfo:\n  title: Test API\n  version: '1.0'\npaths: {}"
+	createTestFile(t, env.ProjectDir, "openapi.yaml", yamlContent)
+
+	req := newRequest(t, http.MethodGet, "/api/file/openapi.yaml", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(GetFile, req)
+	assertOK(t, w)
+
+	var fc FileContent
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+	assert.Equal(t, model.SubtypeOpenAPI, fc.Subtype)
+	assert.NotEmpty(t, fc.SpecJson, "specJson should be populated for YAML OpenAPI files")
+}
+
+func TestGetFile_OpenAPIJSON_ReturnsSubtype(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	jsonContent := `{"openapi":"3.0.0","info":{"title":"Test API","version":"1.0"},"paths":{}}`
+	createTestFile(t, env.ProjectDir, "openapi.json", jsonContent)
+
+	req := newRequest(t, http.MethodGet, "/api/file/openapi.json", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(GetFile, req)
+	assertOK(t, w)
+
+	var fc FileContent
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+	assert.Equal(t, model.SubtypeOpenAPI, fc.Subtype)
+	assert.Empty(t, fc.SpecJson, "specJson should be empty for JSON OpenAPI files (content is already JSON)")
+}
+
+func TestGetFile_RegularYAML_ReturnsNoSubtype(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createTestFile(t, env.ProjectDir, "config.yaml", "foo: bar\nbaz: 123")
+
+	req := newRequest(t, http.MethodGet, "/api/file/config.yaml", nil)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(GetFile, req)
+	assertOK(t, w)
+
+	var fc FileContent
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
+	assert.Empty(t, fc.Subtype)
+	assert.Empty(t, fc.SpecJson)
+}
+
 // --- ServeLocalFile with external ?path= query param ---
 
 func TestServeLocalFile_ExternalPath_ServesFile(t *testing.T) {

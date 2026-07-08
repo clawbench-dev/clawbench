@@ -266,6 +266,17 @@ func GetFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respPath := responsePath(absPath, projectPath, isExternal)
+
+	// Detect file subtype (e.g., OpenAPI spec) and convert YAML→JSON for ReDoc.
+	subtype := model.DetectSubtype(info.Name(), string(content))
+	var specJson string
+	if subtype == model.SubtypeOpenAPI {
+		lower := strings.ToLower(info.Name())
+		if strings.HasSuffix(lower, ".yaml") || strings.HasSuffix(lower, ".yml") {
+			specJson = model.ConvertSpecToJSON(string(content))
+		}
+	}
+
 	writeJSON(w, http.StatusOK, FileContent{
 		Content:   string(content),
 		Name:      info.Name(),
@@ -273,6 +284,8 @@ func GetFile(w http.ResponseWriter, r *http.Request) {
 		Supported: model.IsSupportedFile(info.Name()),
 		Size:      info.Size(),
 		Truncated: truncated,
+		Subtype:   subtype,
+		SpecJson:  specJson,
 	})
 }
 
@@ -771,6 +784,8 @@ type FileContent struct {
 	IsBinary  bool   `json:"isBinary,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
 	Size      int64  `json:"size"`
+	Subtype   string `json:"subtype,omitempty"`
+	SpecJson  string `json:"specJson,omitempty"`
 }
 
 // buildDirEntries builds a sorted list of directory entries

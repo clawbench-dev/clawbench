@@ -1,6 +1,8 @@
 package model_test
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"clawbench/internal/model"
@@ -28,6 +30,106 @@ func TestIsSupportedFile(t *testing.T) {
 			assert.Equal(t, tt.want, got, "IsSupportedFile(%q)", tt.input)
 		})
 	}
+}
+
+func TestDetectSubtype(t *testing.T) {
+	t.Run("YAML with openapi key", func(t *testing.T) {
+		got := model.DetectSubtype("openapi.yaml", "openapi: '3.0.0'\ninfo:\n  title: Test\npaths: {}")
+		assert.Equal(t, model.SubtypeOpenAPI, got)
+	})
+
+	t.Run("YAML with swagger key", func(t *testing.T) {
+		got := model.DetectSubtype("swagger.yaml", "swagger: '2.0'\ninfo:\n  title: Test\npaths: {}")
+		assert.Equal(t, model.SubtypeOpenAPI, got)
+	})
+
+	t.Run("YAML without openapi/swagger", func(t *testing.T) {
+		got := model.DetectSubtype("config.yaml", "foo: bar\nbaz: 123")
+		assert.Equal(t, "", got)
+	})
+
+	t.Run("YML extension with openapi", func(t *testing.T) {
+		got := model.DetectSubtype("api.yml", "openapi: '3.1.0'\ninfo:\n  title: Test\npaths: {}")
+		assert.Equal(t, model.SubtypeOpenAPI, got)
+	})
+
+	t.Run("JSON with openapi key", func(t *testing.T) {
+		got := model.DetectSubtype("openapi.json", `{"openapi":"3.0.0","info":{"title":"Test"},"paths":{}}`)
+		assert.Equal(t, model.SubtypeOpenAPI, got)
+	})
+
+	t.Run("JSON with swagger key", func(t *testing.T) {
+		got := model.DetectSubtype("swagger.json", `{"swagger":"2.0","info":{"title":"Test"},"paths":{}}`)
+		assert.Equal(t, model.SubtypeOpenAPI, got)
+	})
+
+	t.Run("JSON without openapi/swagger", func(t *testing.T) {
+		got := model.DetectSubtype("package.json", `{"name":"test","version":"1.0.0"}`)
+		assert.Equal(t, "", got)
+	})
+
+	t.Run("JSONC extension with openapi", func(t *testing.T) {
+		got := model.DetectSubtype("api.jsonc", `{"openapi":"3.0.0","info":{"title":"Test"}}`)
+		assert.Equal(t, model.SubtypeOpenAPI, got)
+	})
+
+	t.Run("Non YAML/JSON file", func(t *testing.T) {
+		got := model.DetectSubtype("main.go", "package main")
+		assert.Equal(t, "", got)
+	})
+
+	t.Run("Malformed YAML", func(t *testing.T) {
+		got := model.DetectSubtype("bad.yaml", "openapi: '3.0.0'\n  bad indent: here\n    broken")
+		assert.Equal(t, "", got)
+	})
+
+	t.Run("Malformed JSON", func(t *testing.T) {
+		got := model.DetectSubtype("bad.json", `{openapi: invalid}`)
+		assert.Equal(t, "", got)
+	})
+
+	t.Run("Empty content", func(t *testing.T) {
+		got := model.DetectSubtype("empty.yaml", "")
+		assert.Equal(t, "", got)
+	})
+
+	t.Run("Content exceeds size limit", func(t *testing.T) {
+		largeContent := strings.Repeat("x", 1<<20+1)
+		got := model.DetectSubtype("openapi.yaml", largeContent)
+		assert.Equal(t, "", got)
+	})
+}
+
+func TestConvertSpecToJSON(t *testing.T) {
+	t.Run("Valid YAML to JSON", func(t *testing.T) {
+		yaml := "openapi: '3.0.0'\ninfo:\n  title: Test\n  version: '1.0'\npaths: {}"
+		got := model.ConvertSpecToJSON(yaml)
+		assert.NotEmpty(t, got)
+
+		// Verify the result is valid JSON
+		var parsed map[string]interface{}
+		assert.NoError(t, json.Unmarshal([]byte(got), &parsed))
+		assert.Equal(t, "3.0.0", parsed["openapi"])
+	})
+
+	t.Run("YAML with non-string map keys", func(t *testing.T) {
+		yaml := "openapi: '3.0.0'\ninfo:\n  title: Test\nx-custom:\n  1: one\n  2: two"
+		got := model.ConvertSpecToJSON(yaml)
+		assert.NotEmpty(t, got)
+
+		var parsed map[string]interface{}
+		assert.NoError(t, json.Unmarshal([]byte(got), &parsed))
+	})
+
+	t.Run("Invalid YAML", func(t *testing.T) {
+		got := model.ConvertSpecToJSON("not: valid\n  yaml: []\n broken")
+		assert.Equal(t, "", got)
+	})
+
+	t.Run("Empty content", func(t *testing.T) {
+		got := model.ConvertSpecToJSON("")
+		assert.Equal(t, "", got)
+	})
 }
 
 func TestIsTextFile(t *testing.T) {

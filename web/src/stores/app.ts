@@ -47,6 +47,8 @@ interface CurrentFile {
     truncated?: boolean
     size?: number
     error?: string
+    subtype?: string
+    specJson?: string
 }
 
 interface AppState {

@@ -1,0 +1,235 @@
+openapi: "3.0.3"
+info:
+  title: ClawBench Pet Store API
+  description: |
+    A sample API that uses a pet store as an example to demonstrate
+    features in the OpenAPI 3.0 specification.
+  version: "1.0.0"
+  contact:
+    name: ClawBench Team
+    url: https://cnb.cool/codebuddy/codebuddy-code
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://petstore.example.com/v1
+    description: Production server
+  - url: https://staging-petstore.example.com/v1
+    description: Staging server
+
+tags:
+  - name: pets
+    description: Pet operations
+  - name: store
+    description: Store operations
+
+paths:
+  /pets:
+    get:
+      tags: [pets]
+      operationId: listPets
+      summary: List all pets
+      description: Returns all pets from the system that the user has access to.
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of pets to return
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          description: Number of pets to skip
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: status
+          in: query
+          description: Filter by pet status
+          required: false
+          schema:
+            type: string
+            enum: [available, pending, sold]
+      responses:
+        "200":
+          description: A list of pets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Pet"
+              example:
+                - id: 1
+                  name: "Buddy"
+                  tag: "dog"
+                  status: "available"
+                - id: 2
+                  name: "Whiskers"
+                  tag: "cat"
+                  status: "pending"
+        "400":
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      tags: [pets]
+      operationId: createPet
+      summary: Create a pet
+      description: Creates a new pet in the store.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PetInput"
+            example:
+              name: "Buddy"
+              tag: "dog"
+      responses:
+        "201":
+          description: Pet created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Pet"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /pets/{petId}:
+    get:
+      tags: [pets]
+      operationId: getPetById
+      summary: Get a pet by ID
+      description: Returns a single pet by its ID.
+      parameters:
+        - name: petId
+          in: path
+          description: The ID of the pet to retrieve
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: A single pet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Pet"
+        "404":
+          description: Pet not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags: [pets]
+      operationId: deletePet
+      summary: Delete a pet by ID
+      description: Deletes a single pet by its ID.
+      parameters:
+        - name: petId
+          in: path
+          description: The ID of the pet to delete
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "204":
+          description: Pet deleted successfully
+        "404":
+          description: Pet not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /store/inventory:
+    get:
+      tags: [store]
+      operationId: getInventory
+      summary: Get store inventory
+      description: Returns a map of status codes to quantities.
+      responses:
+        "200":
+          description: A map of inventory statuses
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: integer
+                example:
+                  available: 42
+                  pending: 7
+                  sold: 13
+
+components:
+  schemas:
+    Pet:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Unique identifier
+          example: 1
+        name:
+          type: string
+          description: Name of the pet
+          example: "Buddy"
+        tag:
+          type: string
+          description: Category tag
+          example: "dog"
+        status:
+          type: string
+          description: Pet availability status
+          enum: [available, pending, sold]
+          default: available
+
+    PetInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: Name of the pet
+          example: "Buddy"
+        tag:
+          type: string
+          description: Category tag
+          example: "dog"
+        status:
+          type: string
+          description: Initial status
+          enum: [available, pending]
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: integer
+          format: int32
+          description: Error code
+          example: 400
+        message:
+          type: string
+          description: Error message
+          example: "Invalid request"
