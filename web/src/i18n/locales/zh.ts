@@ -1031,7 +1031,7 @@ export default {
       preventScreenLock: '输出期间不锁屏',
       preventScreenLockDesc: 'AI 输出期间抑制屏幕休眠，防止黑屏错过内容',
       swipeSession: '滑动切换会话',
-      swipeSessionDesc: '左右滑动或 Ctrl+←/→ 切换到上/下一个会话',
+      swipeSessionDesc: '聊天区域左右滑动切换会话（桌面 Ctrl+←/→ 始终可用）',
       defaultAgent: '默认智能体',
       defaultAgentDesc: '新建聊天时默认使用的 AI 智能体',
       agentIsDefault: '默认智能体',
