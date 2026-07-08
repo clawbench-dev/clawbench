@@ -69,8 +69,9 @@
       @toggle-collapse="togglePlanCollapse"
     />
 
-    <!-- Unified input container -->
+    <!-- Unified input container — hidden when no agents configured -->
     <ChatInputBar
+      v-if="agentsList.length > 0"
       ref="inputBarRef"
       :inputDisabled="inputDisabled"
       :loading="loading"
