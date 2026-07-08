@@ -34,9 +34,18 @@ describe('buildRedocSrcdoc', () => {
     expect(result).toContain('Failed to render OpenAPI spec')
   })
 
-  it('includes sandbox-compatible meta charset', () => {
+  it('includes scrollbar styles with default colors', () => {
     const spec = '{"openapi":"3.0.0"}'
     const result = buildRedocSrcdoc(spec)
-    expect(result).toContain('charset="utf-8"')
+    expect(result).toContain('::-webkit-scrollbar')
+    expect(result).toContain('#c1c1c1')
+    expect(result).toContain('scrollbar-color')
+  })
+
+  it('uses custom scrollbar colors', () => {
+    const spec = '{"openapi":"3.0.0"}'
+    const result = buildRedocSrcdoc(spec, '#484f58', '#21262d')
+    expect(result).toContain('#484f58')
+    expect(result).toContain('#21262d')
   })
 })

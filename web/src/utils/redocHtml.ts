@@ -7,7 +7,7 @@
  */
 
 /** Construct the full srcdoc HTML for ReDoc */
-export function buildRedocSrcdoc(specJson: string): string {
+export function buildRedocSrcdoc(specJson: string, scrollbarThumb: string = '#c1c1c1', scrollbarTrack: string = 'transparent'): string {
   if (!specJson) return ''
 
   return `<!DOCTYPE html>
@@ -19,6 +19,13 @@ export function buildRedocSrcdoc(specJson: string): string {
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif; }
   #redoc-container { height: 100%; }
   .redoc-loading { display: flex; align-items: center; justify-content: center; height: 100vh; color: #666; }
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: ${scrollbarTrack}; }
+  ::-webkit-scrollbar-thumb { background: ${scrollbarThumb}; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #999; }
+  ::-webkit-scrollbar-button { display: none; }
+  ::-webkit-scrollbar-corner { background: transparent; }
+  * { scrollbar-color: ${scrollbarThumb} ${scrollbarTrack}; }
 </style>
 </head><body>
 <div id="redoc-container"><div class="redoc-loading">Loading API docs...</div></div>

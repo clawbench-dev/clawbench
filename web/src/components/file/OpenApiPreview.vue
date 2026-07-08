@@ -34,7 +34,11 @@ const specData = computed(() => {
   return props.file.content || ''
 })
 
-const redocSrcdoc = computed(() => buildRedocSrcdoc(specData.value))
+// Read scrollbar colors from CSS variables (same as project-wide scrollbar style)
+const scrollbarThumb = getComputedStyle(document.documentElement).getPropertyValue('--scrollbar-thumb').trim() || '#c1c1c1'
+const scrollbarTrack = getComputedStyle(document.documentElement).getPropertyValue('--scrollbar-track').trim() || 'transparent'
+
+const redocSrcdoc = computed(() => buildRedocSrcdoc(specData.value, scrollbarThumb, scrollbarTrack))
 
 function onIframeLoad() {
   loading.value = false
