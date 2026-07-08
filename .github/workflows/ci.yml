@@ -24,7 +24,7 @@ jobs:
           cache: 'npm'
 
       - name: Build frontend (for go:embed)
-        run: npm ci && npm run build
+        run: npm ci && npm run build && rm -rf internal/frontend/dist && cp -r public internal/frontend/dist
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v7
