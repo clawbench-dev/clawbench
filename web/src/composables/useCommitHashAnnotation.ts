@@ -146,10 +146,10 @@ export function annotateCommitHashes(
 // Cache of verified commit SHAs: sha -> commit info object (or null if not a commit)
 // LRU eviction: when cache exceeds MAX_CACHE_SIZE, the oldest entry is deleted.
 const MAX_CACHE_SIZE = 500
-const verifiedCommitCache = new Map<string, any>()
+const verifiedCommitCache = new Map<string, Record<string, unknown> | null>()
 
 /** Set a cache entry with LRU eviction — deletes oldest entry when limit exceeded */
-function commitCacheSet(key: string, value: any): void {
+function commitCacheSet(key: string, value: Record<string, unknown> | null): void {
     if (verifiedCommitCache.size >= MAX_CACHE_SIZE && !verifiedCommitCache.has(key)) {
         const oldest = verifiedCommitCache.keys().next().value
         if (oldest !== undefined) verifiedCommitCache.delete(oldest)
@@ -169,7 +169,7 @@ export async function verifyCommitHashes(shas: string[], containerEl: HTMLElemen
     if (unique.length === 0) return
 
     // Batch verify: send all SHAs in one request
-    let results: Map<string, any>
+    let results: Map<string, Record<string, unknown> | null>
     try {
         const resp = await fetch('/api/git/verify-commits', {
             method: 'POST',
@@ -203,7 +203,7 @@ export async function verifyCommitHashes(shas: string[], containerEl: HTMLElemen
  * Get cached commit info for a SHA (populated by verifyCommitHashes).
  * Returns null if not cached or not a valid commit.
  */
-export function getCachedCommitInfo(sha: string): any | null {
+export function getCachedCommitInfo(sha: string): Record<string, unknown> | null {
     return verifiedCommitCache.get(sha) || null
 }
 

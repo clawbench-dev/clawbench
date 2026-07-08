@@ -11,7 +11,7 @@
       :warning="item.warning"
       :force-close="activeKey !== null && activeKey !== item.key"
       :no-divider="isLastInSection(items, index)"
-      @update:model-value="(v: any) => handleUpdate(item, v)"
+      @update:model-value="(v: unknown) => handleUpdate(item, v)"
       @edit-toggle="(open: boolean) => handleEditToggle(item.key, open)"
     />
     <!-- Copy agent -->
@@ -94,9 +94,9 @@ interface AgentItem {
   label: string
   description?: string
   type: 'switch' | 'select' | 'number' | 'text' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea'
-  options?: { label: string; value: any }[]
+  options?: { label: string; value: unknown }[]
   warning?: string
-  value?: any
+  value?: unknown
   patchField?: string
 }
 
@@ -121,7 +121,7 @@ const items = computed<AgentItem[]>(() => {
       key: 'preferred_model',
       label: t('settings.items.agentPreferredModel'),
       type: 'select',
-      options: a.models.map((m: any) => ({ label: m.name || m.id, value: m.id })),
+      options: a.models.map((m: { name: string; id: string }) => ({ label: m.name || m.id, value: m.id })),
       patchField: 'preferred_model',
     })
   }
@@ -157,7 +157,7 @@ const items = computed<AgentItem[]>(() => {
       key: 'preferred_mode',
       label: t('settings.items.agentPreferredMode'),
       type: 'select',
-      options: a.acpAvailableModes.map((m: any) => ({ label: m.name || m.id, value: m.id })),
+      options: a.acpAvailableModes.map((m: { name: string; id: string }) => ({ label: m.name || m.id, value: m.id })),
       patchField: 'preferred_mode',
     })
   }
@@ -250,7 +250,7 @@ const items = computed<AgentItem[]>(() => {
   return result
 })
 
-function getItemValue(item: AgentItem): any {
+function getItemValue(item: AgentItem): unknown {
   if (item.type === 'header') return undefined
   if (item.value !== undefined) return item.value
 
@@ -261,7 +261,7 @@ function getItemValue(item: AgentItem): any {
     case 'is_default_agent':
       return a.id === defaultAgentId.value
     case 'preferred_model':
-      return a.preferredModel || (a.models?.length ? a.models.find((m: any) => m.default)?.id || a.models[0]?.id : '')
+      return a.preferredModel || (a.models?.length ? a.models.find((m: { default: boolean }) => m.default)?.id || a.models[0]?.id : '')
     case 'preferred_thinking_effort':
       return a.preferredThinkingEffort || ''
     case 'preferred_mode':
@@ -295,7 +295,7 @@ function getItemValue(item: AgentItem): any {
   }
 }
 
-async function handleUpdate(item: AgentItem, value: any) {
+async function handleUpdate(item: AgentItem, value: unknown) {
   // Handle set-as-default toggle
   if (item.key === 'is_default_agent') {
     if (value) {
@@ -316,7 +316,7 @@ async function handleUpdate(item: AgentItem, value: any) {
   }
 
   try {
-    await patchAgentField(props.agentId, item.patchField, value)
+    await patchAgentField(props.agentId, item.patchField, value as string | number | boolean | null)
   } catch {
     toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
   }

@@ -367,7 +367,7 @@ function stableBlockKey(bi, block) {
   return `${block.type || 'other'}-${bi}`
 }
 
-function handleThinkingClick(block, bi) {
+function handleThinkingClick(block, _bi) {
   emit('show-thinking-detail', { text: block.text, msgId: props.msgId, blockKey: block._key })
 }
 

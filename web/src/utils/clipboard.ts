@@ -6,7 +6,7 @@ export function copyText(text: string, onSuccess?: () => void, onError?: () => v
         document.body.appendChild(ta)
         ta.focus()
         ta.select()
-        try { return document.execCommand('copy') } catch (_) { return false }
+        try { return document.execCommand('copy') } catch { return false }
         finally { document.body.removeChild(ta) }
     }
 

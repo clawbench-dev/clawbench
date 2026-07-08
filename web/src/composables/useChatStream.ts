@@ -6,12 +6,12 @@ import { gt } from '@/composables/useLocale'
 import { updateModeState, updateCommandState, updateAvailableThinkingEfforts, currentAgentId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
-import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, drainQueueMessage } from '@/utils/chatStreamUtils.ts'
+import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, drainQueueMessage, type ChatMessage, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type SseJsonData, type QueueEventData, type QueueUpdateEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
 
 const TAG = 'ChatStream'
 
 export interface UseChatStreamOptions {
-  messages: Ref<any[]>
+  messages: Ref<ChatMessage[]>
   currentSessionId: Ref<string>
   currentBackend: Ref<string>
   loading: Ref<boolean>
@@ -21,12 +21,12 @@ export interface UseChatStreamOptions {
   onMessage: () => void
   onOpen: () => void
   isOpen: Ref<boolean>
-  onParseAssistantContent: (content: string) => { blocks: any[]; metadata?: any; cancelled?: boolean }
-  onToast: (msg: string, opts?: any) => void
-  onNotification: (title: string, opts?: any) => void
+  onParseAssistantContent: (content: string) => { blocks: ContentBlock[]; metadata?: Record<string, unknown>; cancelled?: boolean }
+  onToast: (msg: string, opts?: { icon?: string; type?: string; duration?: number; onClick?: () => void }) => void
+  onNotification: (title: string, opts?: { body?: string; onClick?: () => void }) => void
   onStreamEnd?: (reason: 'done' | 'cancelled' | 'error') => void
   onFileModified?: (filePath: string) => void
-  onExtractScheduledTasks?: (msgs: any[]) => void
+  onExtractScheduledTasks?: (msgs: ChatMessage[]) => void
 }
 
 export function useChatStream(options: UseChatStreamOptions) {
@@ -90,7 +90,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     const sm = findStreamingMsg(messages.value)
     if (!sm?.blocks) return false
     return sm.blocks.some(
-      (b: any) =>
+      (b) =>
         b.type === 'tool_use' &&
         b.name === 'PermissionApproval' &&
         !b.done &&
@@ -179,9 +179,10 @@ export function useChatStream(options: UseChatStreamOptions) {
           return
         }
         // Parse messages from server response
-        const latestMsgs = (data.messages || []).map((msg: any) => {
+        const latestMsgs = (data.messages || []).map((m: Record<string, unknown>) => {
+          const msg = m as ChatMessage
           if (msg.role === 'assistant') {
-            const { blocks, metadata, cancelled } = onParseAssistantContent(msg.content)
+            const { blocks, metadata, cancelled } = onParseAssistantContent(msg.content ?? '')
             msg.blocks = blocks
             if (metadata) msg.metadata = metadata
             if (cancelled) msg.cancelled = cancelled
@@ -216,7 +217,7 @@ export function useChatStream(options: UseChatStreamOptions) {
           return
         }
         // Session still running — incremental update
-        const lastAssistant = latestMsgs.findLast((m: any) => m.role === 'assistant')
+        const lastAssistant = latestMsgs.findLast((m: ChatMessage) => m.role === 'assistant')
         const existingStreaming = findStreamingMsg(messages.value)
 
         if (lastAssistant && existingStreaming) {
@@ -225,7 +226,7 @@ export function useChatStream(options: UseChatStreamOptions) {
           if (lastAssistant.cancelled) existingStreaming.cancelled = lastAssistant.cancelled
         } else if (lastAssistant && !existingStreaming) {
           const existingById = lastAssistant.id
-            ? messages.value.find((m: any) => m.id === lastAssistant.id)
+            ? messages.value.find((m) => m.id === lastAssistant.id)
             : null
           if (existingById) {
             existingById.streaming = true
@@ -242,7 +243,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (isOpen.value) {
           debouncedRender()
         }
-      } catch (err) {
+      } catch (err: unknown) {
         appLog.e(TAG, 'Polling error:', err)
         stopPolling()
         const sm = findStreamingMsg(messages.value)
@@ -274,11 +275,11 @@ export function useChatStream(options: UseChatStreamOptions) {
     // Ensure a streaming assistant message exists — create one if needed
     const existingStreaming = findStreamingMsg(messages.value)
     if (!existingStreaming) {
-      const newStreaming = {
+      const newStreaming: ChatMessage = {
         role: 'assistant' as const,
         id: `drain-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         content: '',
-        blocks: [] as any[],
+        blocks: [] as ContentBlock[],
         streaming: true,
         createdAt: new Date().toISOString(),
         backend: currentBackend.value
@@ -288,7 +289,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       // so push() would place the streaming assistant after them,
       // making the AI reply appear below the queued messages.
       const lastUserIdx = messages.value.findLastIndex(
-        (m: any) => m.role === 'user' && !m.pending
+        (m) => m.role === 'user' && !m.pending
       )
       if (lastUserIdx !== -1) {
         messages.value.splice(lastUserIdx + 1, 0, newStreaming)
@@ -297,11 +298,11 @@ export function useChatStream(options: UseChatStreamOptions) {
       }
       thinkingBlockCounter = 0
       onRenderNeeded()
-    } else if ((existingStreaming as any).fromDB) {
+    } else if ((existingStreaming as ChatMessage).fromDB) {
       // DB streaming message from a previous incomplete finalize —
       // convert it to a live streaming placeholder by clearing fromDB
       // so SSE events can update it properly.
-      delete (existingStreaming as any).fromDB
+      delete (existingStreaming as ChatMessage).fromDB
     }
     onScrollBottom()
 
@@ -338,8 +339,9 @@ export function useChatStream(options: UseChatStreamOptions) {
       // Finalize Phase 1 message
       delete sm.streaming
       // Create Phase 2 streaming message
-      const phase2 = {
+      const phase2: ChatMessage = {
         role: 'assistant',
+        id: `resume-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         content: '',
         blocks: [],
         streaming: true,
@@ -350,7 +352,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       let data
       try { data = JSON.parse(e.data) } catch { /* empty */ }
       if (data?.message_id) {
-        (phase2 as any).id = data.message_id
+        phase2.id = data.message_id
       }
       messages.value.push(phase2)
       thinkingBlockCounter = 0
@@ -367,18 +369,18 @@ export function useChatStream(options: UseChatStreamOptions) {
       const sm = findStreamingMsg(messages.value)
       if (!sm) return
       resetStreamTimeout()
-      let data: any
+      let data: ContentEventData
       try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE content: invalid JSON, skipping'); return }
       if (!firstContentSeen) {
         firstContentSeen = true
         appLog.d(TAG, `[content: first] streamingMsg.id=${sm.id ?? 'none'} len=${(data.content || '').length} totalMsgs=${messages.value.length}`)
       }
-      const blocks = sm.blocks
+      const blocks = sm.blocks!
       const existingText = findLastBlockOfType(blocks, 'text')
       if (existingText) {
-        existingText.text += data.content
+        existingText.text += data.content ?? ''
       } else {
-        blocks.push({ type: 'text', text: data.content })
+        blocks.push({ type: 'text', text: data.content ?? '' })
       }
       debouncedRender()
     })
@@ -388,14 +390,14 @@ export function useChatStream(options: UseChatStreamOptions) {
       const sm = findStreamingMsg(messages.value)
       if (!sm) return
       resetStreamTimeout()
-      let data: any
+      let data: ThinkingEventData
       try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE thinking: invalid JSON, skipping'); return }
-      const blocks = sm.blocks
+      const blocks = sm.blocks!
       const existingThinking = findLastBlockOfType(blocks, 'thinking')
       if (existingThinking) {
-        existingThinking.text += data.text
+        existingThinking.text += data.text ?? ''
       } else {
-        blocks.push({ type: 'thinking', text: data.text, _key: `thinking-${thinkingBlockCounter++}` })
+        blocks.push({ type: 'thinking', text: data.text ?? '', _key: `thinking-${thinkingBlockCounter++}` })
       }
       debouncedRender()
       if (isOpen.value) {
@@ -407,7 +409,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       if (sessionChanged()) return
       const sm = findStreamingMsg(messages.value)
       if (!sm) return
-      const blocks = sm.blocks
+      const blocks = sm.blocks!
       for (let i = blocks.length - 1; i >= 0; i--) {
         if (blocks[i].type === 'thinking') {
           blocks[i].done = true
@@ -422,10 +424,10 @@ export function useChatStream(options: UseChatStreamOptions) {
       const sm = findStreamingMsg(messages.value)
       if (!sm) return
       resetStreamTimeout()
-      let data: any
+      let data: ToolUseEventData
       try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE tool_use: invalid JSON, skipping'); return }
-      const blocks = sm.blocks
-      const existing = blocks.find((b: any) => b.type === 'tool_use' && b.id === data.id)
+      const blocks = sm.blocks!
+      const existing = blocks.find((b) => b.type === 'tool_use' && b.id === data.id)
       if (data.done) {
         if (existing) {
           // Slim SSE: only input present for interactive tools
@@ -442,8 +444,8 @@ export function useChatStream(options: UseChatStreamOptions) {
           // No existing block — create a new done tool_use block.
           // This happens when the backend sends tool_use with done=true
           // (e.g. Pi's toolcall_end provides complete arguments in one event).
-          const newBlock: any = {
-            type: 'tool_use', name: data.name, id: data.id, done: true,
+          const newBlock: ContentBlock = {
+            type: 'tool_use', name: data.name!, id: data.id!, done: true,
             status: data.status || '',
           }
           if (data.input && Object.keys(data.input).length > 0) {
@@ -454,11 +456,11 @@ export function useChatStream(options: UseChatStreamOptions) {
           if (data.file_path) newBlock.file_path = data.file_path
           blocks.push(newBlock)
         }
-        const timer = toolUseTimeouts.get(data.id)
-        if (timer) { clearTimeout(timer); toolUseTimeouts.delete(data.id) }
+        const timer = toolUseTimeouts.get(data.id!)
+        if (timer) { clearTimeout(timer); toolUseTimeouts.delete(data.id!) }
 
         // Use file_path from slim meta (no need to read input)
-        if (FILE_MODIFYING_TOOLS.has(data.name) && onFileModified) {
+        if (data.name && FILE_MODIFYING_TOOLS.has(data.name) && onFileModified) {
           const filePath = data.file_path || existing?.file_path
           if (filePath) {
             onFileModified(filePath)
@@ -477,8 +479,8 @@ export function useChatStream(options: UseChatStreamOptions) {
           if (data.display_name !== undefined) existing.display_name = data.display_name
           if (data.file_path !== undefined) existing.file_path = data.file_path
         } else {
-          const newBlock: any = {
-            type: 'tool_use', name: data.name, id: data.id, done: false,
+          const newBlock: ContentBlock = {
+            type: 'tool_use', name: data.name!, id: data.id!, done: false,
             status: data.status || '',
           }
           // Slim SSE: only input present for interactive tools (AskUserQuestion, PermissionApproval)
@@ -497,9 +499,9 @@ export function useChatStream(options: UseChatStreamOptions) {
                 newBlock.done = true
                 onRenderNeeded()
               }
-              toolUseTimeouts.delete(data.id)
+              toolUseTimeouts.delete(data.id!)
             }, TOOL_USE_TIMEOUT_MS)
-            toolUseTimeouts.set(data.id, timer)
+            toolUseTimeouts.set(data.id!, timer)
           }
         }
       }
@@ -513,18 +515,18 @@ export function useChatStream(options: UseChatStreamOptions) {
       const sm = findStreamingMsg(messages.value)
       if (!sm) return
       resetStreamTimeout()
-      let data: any
+      let data: ToolUseEventData
       try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE tool_result: invalid JSON, skipping'); return }
-      const blocks = sm.blocks
-      const existing = blocks.find((b: any) => b.type === 'tool_use' && b.id === data.id)
+      const blocks = sm.blocks!
+      const existing = blocks.find((b) => b.type === 'tool_use' && b.id === data.id)
       if (existing) {
         // Slim SSE: no input/output in tool_result events
         if (data.name) existing.name = data.name
         if (data.status !== undefined) existing.status = data.status
         existing.done = true
       }
-      const timer = toolUseTimeouts.get(data.id)
-      if (timer) { clearTimeout(timer); toolUseTimeouts.delete(data.id) }
+      const timer = toolUseTimeouts.get(data.id!)
+      if (timer) { clearTimeout(timer); toolUseTimeouts.delete(data.id!) }
       onRenderNeeded()
       if (isOpen.value) {
         onScrollBottom()
@@ -536,8 +538,9 @@ export function useChatStream(options: UseChatStreamOptions) {
       const sm = findStreamingMsg(messages.value)
       if (!sm) return
       resetStreamTimeout()
-      let data: any
-      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE metadata: invalid JSON, skipping'); return }
+      let data: Record<string, unknown>
+      // JSON.parse returns untyped data
+      try { data = JSON.parse(e.data) as Record<string, unknown> } catch { appLog.w(TAG, 'SSE metadata: invalid JSON, skipping'); return }
       sm.metadata = data
     })
 
@@ -558,17 +561,17 @@ export function useChatStream(options: UseChatStreamOptions) {
       _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
 
       // Diagnostic: log message state when done event received
-      const doneSummary = messages.value.map((m: any, i: number) =>
+      const doneSummary = messages.value.map((m, i: number) =>
         `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
       ).join(' | ')
-      const pendingCount = messages.value.filter((m: any) => m.pending).length
+      const pendingCount = messages.value.filter((m) => m.pending).length
       appLog.d(TAG, `[done] pending msgs: ${pendingCount}; messages: ${doneSummary}`)
 
       disconnectStream()
       reconnect.reset()
       onLoadHistory().then(() => {
         // Diagnostic: log message state after loadHistory replaces the array
-        const afterSummary = messages.value.map((m: any, i: number) =>
+        const afterSummary = messages.value.map((m, i: number) =>
           `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
         ).join(' | ')
         appLog.d(TAG, `[done→loadHistory] messages(${messages.value.length}): ${afterSummary}`)
@@ -614,15 +617,16 @@ export function useChatStream(options: UseChatStreamOptions) {
       const sm = findStreamingMsg(messages.value)
       if (!sm) return
       resetStreamTimeout()
-      let data: any
-      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE warning: invalid JSON, skipping'); return }
+      let data: { text?: string; reason?: string }
+      // JSON.parse returns untyped data
+      try { data = JSON.parse(e.data) as { text?: string; reason?: string } } catch { appLog.w(TAG, 'SSE warning: invalid JSON, skipping'); return }
       if (sm.streamingText) {
-        sm.blocks.push({ type: 'text', text: sm.streamingText })
+        sm.blocks!.push({ type: 'text', text: sm.streamingText as string })
         sm.streamingText = ''
       }
-      const warningBlock: any = { type: 'warning', text: data.text }
+      const warningBlock: ContentBlock = { type: 'warning', text: data.text }
       if (data.reason) warningBlock.reason = data.reason
-      sm.blocks.push(warningBlock)
+      sm.blocks!.push(warningBlock)
       if (isOpen.value) {
         onRenderNeeded()
       }
@@ -630,21 +634,23 @@ export function useChatStream(options: UseChatStreamOptions) {
 
     eventSource.addEventListener('mode_update', (e) => {
       if (sessionChanged()) return
-      let data: any
-      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE mode_update: invalid JSON, skipping'); return }
-      if (data.currentModeId || data.availableModes?.length > 0) {
-        updateModeState(data.currentModeId || '', data.availableModes || [])
+      let data: SseJsonData
+      // JSON.parse returns untyped data
+      try { data = JSON.parse(e.data) as SseJsonData } catch { appLog.w(TAG, 'SSE mode_update: invalid JSON, skipping'); return }
+      if (data.currentModeId || (data.availableModes as unknown[])?.length > 0) {
+        updateModeState(data.currentModeId as string || '', (data.availableModes || []) as { id: string; name: string }[])
       }
     })
 
     eventSource.addEventListener('config_update', (e) => {
       if (sessionChanged()) return
-      let data: any
-      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE config_update: invalid JSON, skipping'); return }
-      for (const opt of (data.options || [])) {
-        if (opt.category === 'mode' || opt.id === 'mode') {
-          const modes = (opt.values || []).map((v: any) => ({ id: v.id, name: v.name || v.id }))
-          const currentModeId = data.currentValueId || ''
+      let data: SseJsonData
+      // JSON.parse returns untyped data
+      try { data = JSON.parse(e.data) as SseJsonData } catch { appLog.w(TAG, 'SSE config_update: invalid JSON, skipping'); return }
+      for (const opt of (data.options as Record<string, unknown>[] || [])) {
+        if ((opt.category as string) === 'mode' || (opt.id as string) === 'mode') {
+          const modes = ((opt.values as Record<string, string>[]) || []).map((v) => ({ id: v.id, name: v.name || v.id }))
+          const currentModeId = (data.currentValueId as string) || ''
           if (currentModeId || modes.length > 0) {
             updateModeState(currentModeId, modes)
           }
@@ -654,50 +660,55 @@ export function useChatStream(options: UseChatStreamOptions) {
 
     eventSource.addEventListener('thinking_effort_update', (e) => {
       if (sessionChanged()) return
-      let data: any
-      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE thinking_effort_update: invalid JSON, skipping'); return }
-      if (data.availableLevels?.length > 0) {
-        const levels = (data.availableLevels || []).map((l: any) => ({ id: l.id, name: l.name || l.id }))
+      let data: SseJsonData
+      // JSON.parse returns untyped data
+      try { data = JSON.parse(e.data) as SseJsonData } catch { appLog.w(TAG, 'SSE thinking_effort_update: invalid JSON, skipping'); return }
+      if ((data.availableLevels as unknown[])?.length > 0) {
+        const levels = ((data.availableLevels as Record<string, string>[]) || []).map((l) => ({ id: l.id, name: l.name || l.id }))
         updateAvailableThinkingEfforts(levels)
       }
     })
 
     eventSource.addEventListener('commands_update', (e) => {
       if (sessionChanged()) return
-      let data: any
-      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE commands_update: invalid JSON, skipping'); return }
+      let data: { commands?: unknown[] }
+      // JSON.parse returns untyped data
+      try { data = JSON.parse(e.data) as { commands?: unknown[] } } catch { appLog.w(TAG, 'SSE commands_update: invalid JSON, skipping'); return }
       if (Array.isArray(data.commands)) {
-        updateCommandState(data.commands)
+        updateCommandState(data.commands as { name: string; description: string; inputHint?: string }[])
       }
     })
 
     eventSource.addEventListener('model_list_update', (e) => {
       if (sessionChanged()) return
-      let data: any
-      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE model_list_update: invalid JSON, skipping'); return }
+      let data: { models?: unknown[] }
+      // JSON.parse returns untyped data
+      try { data = JSON.parse(e.data) as { models?: unknown[] } } catch { appLog.w(TAG, 'SSE model_list_update: invalid JSON, skipping'); return }
       if (Array.isArray(data.models) && data.models.length > 0) {
         const aid = currentAgentId.value
         if (aid) {
-          updateACPModelList(aid, data.models)
+          updateACPModelList(aid, data.models as { id: string; name: string }[])
         }
       }
     })
 
     eventSource.addEventListener('plan_update', (e) => {
       if (sessionChanged()) return
-      let data: any
-      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE plan_update: invalid JSON, skipping'); return }
+      let data: { entries?: unknown[] }
+      // JSON.parse returns untyped data
+      try { data = JSON.parse(e.data) as { entries?: unknown[] } } catch { appLog.w(TAG, 'SSE plan_update: invalid JSON, skipping'); return }
       if (Array.isArray(data.entries)) {
-        updatePlanEntries(data.entries)
+        updatePlanEntries(data.entries as import('@/composables/usePlanProgress').PlanEntry[])
       }
     })
 
     eventSource.addEventListener('usage_update', (e) => {
       if (sessionChanged()) return
-      let data: any
-      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE usage_update: invalid JSON, skipping'); return }
-      if (data.size > 0) {
-        updateUsageState(data.used ?? 0, data.size, data.cost, data.currency, sessionId)
+      let data: { size?: number; used?: number; cost?: number; currency?: string }
+      // JSON.parse returns untyped data
+      try { data = JSON.parse(e.data) as { size?: number; used?: number; cost?: number; currency?: string } } catch { appLog.w(TAG, 'SSE usage_update: invalid JSON, skipping'); return }
+      if ((data.size ?? 0) > 0) {
+        updateUsageState(data.used ?? 0, data.size!, data.cost, data.currency, sessionId)
       }
     })
 
@@ -706,8 +717,9 @@ export function useChatStream(options: UseChatStreamOptions) {
     // optimistically pushed pending messages (by content text match).
     eventSource.addEventListener('queue_queued', (e) => {
       resetStreamTimeout()
-      let data: any
-      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE queue_queued: invalid JSON, skipping'); return }
+      let data: QueueEventData
+      // JSON.parse returns untyped data
+      try { data = JSON.parse(e.data) as QueueEventData } catch { appLog.w(TAG, 'SSE queue_queued: invalid JSON, skipping'); return }
 
       const eventSessionId = data.sessionId || sessionId
       if (eventSessionId !== currentSessionId.value) return
@@ -715,7 +727,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       const queueText = data.text || ''
       // Dedup: if a pending message with this content already exists, skip
       const alreadyPending = messages.value.some(
-        (m: any) => m.role === 'user' && m.pending && m.content === queueText
+        (m) => m.role === 'user' && m.pending && m.content === queueText
       )
       if (!alreadyPending && queueText) {
         const queueFiles = [...(data.filePaths || []), ...(data.files || [])]
@@ -741,14 +753,15 @@ export function useChatStream(options: UseChatStreamOptions) {
     // streaming placeholder. Pending messages are in messages.value with pending: true.
     eventSource.addEventListener('queue_drain', (e) => {
       resetStreamTimeout()
-      let data: any
-      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE queue_drain: invalid JSON, skipping'); return }
+      let data: QueueEventData
+      // JSON.parse returns untyped data
+      try { data = JSON.parse(e.data) as QueueEventData } catch { appLog.w(TAG, 'SSE queue_drain: invalid JSON, skipping'); return }
 
       const eventSessionId = data.sessionId || sessionId
 
       // Diagnostic: snapshot messages BEFORE drain
       const beforeLen = messages.value.length
-      const beforeStreamingCount = messages.value.filter((m: any) => m.streaming).length
+      const beforeStreamingCount = messages.value.filter((m) => m.streaming).length
 
       // Only update messages.value if this event is for the currently viewed session.
       if (eventSessionId === currentSessionId.value) {
@@ -763,7 +776,7 @@ export function useChatStream(options: UseChatStreamOptions) {
 
         // Diagnostic: snapshot messages AFTER drain
         const afterLen = messages.value.length
-        const afterStreamingCount = messages.value.filter((m: any) => m.streaming).length
+        const afterStreamingCount = messages.value.filter((m) => m.streaming).length
         appLog.d(TAG, `[queue_drain] sid=${eventSessionId.slice(0,8)} msgId=${data.messageId || 'none'} text="${drainText.slice(0,40)}" | before(${beforeLen},streaming=${beforeStreamingCount}) after(${afterLen},streaming=${afterStreamingCount})`)
 
         if (isOpen.value) {
@@ -783,8 +796,9 @@ export function useChatStream(options: UseChatStreamOptions) {
     // Replaces pending portion of messages.value with backend queue state.
     eventSource.addEventListener('queue_update', (e) => {
       resetStreamTimeout()
-      let data: any
-      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE queue_update: invalid JSON, skipping'); return }
+      let data: QueueUpdateEventData
+      // JSON.parse returns untyped data
+      try { data = JSON.parse(e.data) as QueueUpdateEventData } catch { appLog.w(TAG, 'SSE queue_update: invalid JSON, skipping'); return }
 
       // Route by event's explicit sessionId (fallback to captured sessionId)
       const eventSessionId = data.sessionId || sessionId
@@ -822,8 +836,9 @@ export function useChatStream(options: UseChatStreamOptions) {
       // Mark this connection as terminated by a server-sent error event.
       sseErrorHandled = true
       disconnectStream()
-      let errorData: any
-      try { errorData = JSON.parse((e as MessageEvent).data) } catch { /* ignore parse failure */ }
+      let errorData: ErrorEventData | undefined
+      // JSON.parse returns untyped data
+      try { errorData = JSON.parse((e as MessageEvent).data) as ErrorEventData } catch { /* ignore parse failure */ }
       if (errorData?.reason === 'sse_busy') {
         sseErrorHandled = false
         return
@@ -833,7 +848,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (sessionChanged()) return
         const sm = findStreamingMsg(messages.value)
         if (sm) {
-          const errorBlock: any = { type: 'error', text: errorData?.error || 'Unknown error' }
+          const errorBlock: ContentBlock = { type: 'error', text: errorData?.error || 'Unknown error' }
           if (errorData?.reason) errorBlock.reason = errorData.reason
           sm.blocks = [errorBlock]
         }
@@ -874,7 +889,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     if (!currentSessionId.value || !loading.value) return
     try {
       await cancelChat(currentSessionId.value)
-    } catch (err) {
+    } catch (err: unknown) {
       appLog.e(TAG, 'Failed to cancel:', err)
       disconnectStream()
       forceCleanupStreamingState()

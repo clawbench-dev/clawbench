@@ -21,7 +21,7 @@ function safeStringify(a: unknown): string {
 
 function relay(level: string, tag: string, args: unknown[]): void {
   try {
-    const native = (window as any).AndroidNative
+    const native = (window as unknown as { AndroidNative?: { log: (level: string, tag: string, msg: string) => void; isNativeApp?: () => boolean } }).AndroidNative
     if (!native || !native.log) return
     // Check isNativeApp() + top-frame to avoid iframe false positives
     if (native.isNativeApp?.() !== true) return

@@ -433,7 +433,7 @@ async function handleExportHtml() {
         if (result.skippedImages > 0) msgs.push(t('file.header.exportHtmlSkippedImages', { n: result.skippedImages }))
         if (result.externalImages > 0) msgs.push(t('file.header.exportHtmlSkippedImages', { n: result.externalImages }))
         toast.show(msgs.join('. '), { icon: '✅', type: 'success', duration: 3000 })
-    } catch (e) {
+    } catch {
         toast.show(t('file.header.exportHtmlFailed'), { icon: '❌', type: 'error', duration: 3000 })
     }
 }

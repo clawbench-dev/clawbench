@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { ref, type Ref } from 'vue'
 import { getCachedCommitInfo } from '@/composables/useCommitHashAnnotation.ts'
 
 // Module-level pending SHA — set by chat click, consumed by Git history components
@@ -69,9 +69,9 @@ export { pendingManageView }
  * Takes the component's reactive state and functions as parameters.
  */
 export function useCommitNavigation(options: {
-    commits: any              // ref([])
-    selectedSHA: any          // ref(null)
-    currentView: any          // ref('commits')
+    commits: Ref<Record<string, unknown>[]>
+    selectedSHA: Ref<string | null>
+    currentView: Ref<string>
     loadCommitFiles: (sha: string) => Promise<void>
     loadProjectHistory?: () => Promise<void>
 }) {
@@ -80,7 +80,7 @@ export function useCommitNavigation(options: {
     /**
      * Fetch a single commit's info via verify-commits API.
      */
-    async function fetchCommitInfo(sha: string): Promise<any | null> {
+    async function fetchCommitInfo(sha: string): Promise<Record<string, unknown> | null> {
         try {
             const resp = await fetch('/api/git/verify-commits', {
                 method: 'POST',
@@ -104,7 +104,7 @@ export function useCommitNavigation(options: {
     async function navigateToCommit(sha: string) {
         // Resolve short SHA to full SHA and get commit info BEFORE switching view
         // to avoid showing an empty files view while the async fetch is in progress.
-        let commitInfo = commits.value.find((c: any) => c.sha === sha || c.sha.startsWith(sha))
+        let commitInfo = commits.value.find((c: Record<string, unknown>) => c.sha === sha || (typeof c.sha === 'string' && c.sha.startsWith(sha)))
         if (!commitInfo) {
             // Try annotation cache first
             const cached = getCachedCommitInfo(sha)
@@ -116,7 +116,7 @@ export function useCommitNavigation(options: {
                 const fetched = await fetchCommitInfo(sha)
                 if (fetched && fetched.sha) {
                     commitInfo = fetched
-                    if (!commits.value.find((c: any) => c.sha === fetched.sha)) {
+                    if (!commits.value.find((c: Record<string, unknown>) => c.sha === fetched.sha)) {
                         commits.value.unshift(fetched)
                     }
                 }
@@ -124,13 +124,13 @@ export function useCommitNavigation(options: {
         }
 
         // Use the full SHA from commit info for consistent state
-        const fullSha = commitInfo?.sha || sha
+        const fullSha = (commitInfo?.sha as string) || sha
         selectedSHA.value = fullSha
 
         // Switch to files view only after commit info is resolved
         currentView.value = 'files'
 
-        loadCommitFiles(fullSha).catch(() => {})
+        loadCommitFiles(fullSha as string).catch(() => {})
     }
 
     /**

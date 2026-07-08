@@ -1,10 +1,10 @@
 <template>
   <div class="task-tab" v-show="active">
     <TaskListPage v-if="currentView === 'list' && !formViewOpen" ref="listPageRef" @create="onCreate" @select="onTaskSelect" @history="onTaskHistoryFromList" />
-    <TaskDetailPage v-else-if="currentView === 'settings' && !execDetailOpen && !formViewOpen" :task="selectedTaskData" @edit="onEdit" @deleted="onTaskDeleted" @history="onTaskHistory" />
+    <TaskDetailPage v-else-if="currentView === 'settings' && !execDetailOpen && !formViewOpen && selectedTaskData" :task="selectedTaskData" @edit="onEdit" @deleted="onTaskDeleted" @history="onTaskHistory" />
     <TaskHistoryTab v-else-if="currentView === 'history' && !execDetailOpen && !formViewOpen" :task="selectedTaskData" @open-file="onOpenFile" />
     <TaskExecDetail v-else-if="execDetailOpen && !formViewOpen" :execDetail="selectedExecData" :taskName="selectedTaskData?.name" :taskId="selectedTaskId" @close="closeExecDetail" @open-file="onOpenFile" />
-    <TaskFormPage v-else-if="formViewOpen" :mode="formMode" :task="formMode === 'edit' ? selectedTaskData : null" @close="closeForm" @saved="onFormSaved" />
+    <TaskFormPage v-else-if="formViewOpen" :mode="formMode" :task="(formMode === 'edit' ? selectedTaskData : null) as Record<string, unknown> | null" @close="closeForm" @saved="onFormSaved" />
   </div>
 </template>
 
@@ -40,7 +40,7 @@ useFeatureBackHandler(
 
 // Read from store directly — NOT from listPageRef (Vue refs don't expose internal computed)
 const selectedTaskData = computed(() =>
-  (store.state.tasks || []).find((t: any) => t.id === selectedTaskId.value) || null
+  (store.state.tasks || []).find((t: Record<string, unknown>) => t.id === selectedTaskId.value) || null
 )
 
 const listPageRef = ref<InstanceType<typeof TaskListPage> | null>(null)

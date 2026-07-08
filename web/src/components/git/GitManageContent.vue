@@ -80,7 +80,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, inject, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { GitBranch, FolderTree, Tag } from 'lucide-vue-next'
+import { GitBranch as GitBranchIcon, FolderTree, Tag } from 'lucide-vue-next'
 import { store } from '@/stores/app.ts'
 import { apiGet, apiPost, apiDelete } from '@/utils/api'
 import { useDialog } from '@/composables/useDialog.ts'
@@ -93,9 +93,24 @@ const { t } = useI18n()
 const dialog = useDialog()
 const hotSwitchProject = inject('hotSwitchProject', null) as ((path: string, pendingSessionId?: string) => Promise<void>) | null
 
-const worktrees = ref<any[]>([])
-const branches = ref<any[]>([])
-const tags = ref<any[]>([])
+interface GitWorktree {
+  path: string
+  branch?: string
+}
+
+interface BranchInfo {
+  name: string
+}
+
+type GitBranchItem = BranchInfo
+
+interface GitTag {
+  name: string
+}
+
+const worktrees = ref<GitWorktree[]>([])
+const branches = ref<BranchInfo[]>([])
+const tags = ref<GitTag[]>([])
 const stashCount = ref(0)
 
 const worktreesLoading = ref(false)
@@ -139,7 +154,7 @@ const tabs = computed(() => [
   {
     key: 'branches' as const,
     label: t('git.manage.tabBranches'),
-    icon: GitBranch,
+    icon: GitBranchIcon,
     count: branches.value.length,
   },
   {
@@ -154,7 +169,7 @@ async function loadWorktrees() {
   worktreesLoading.value = true
   worktreesError.value = false
   try {
-    const data = await apiGet<{ isGit: boolean; worktrees: any[] }>('/api/git/worktrees')
+    const data = await apiGet<{ isGit: boolean; worktrees: GitWorktree[] }>('/api/git/worktrees')
     worktrees.value = data.worktrees || []
   } catch {
     worktreesError.value = true
@@ -167,7 +182,7 @@ async function loadBranches() {
   branchesLoading.value = true
   branchesError.value = false
   try {
-    const data = await apiGet<{ isGit: boolean; branches: any[]; stashCount?: number }>('/api/git/branches')
+    const data = await apiGet<{ isGit: boolean; branches: GitBranchItem[]; stashCount?: number }>('/api/git/branches')
     branches.value = data.branches || []
     stashCount.value = data.stashCount || 0
   } catch {
@@ -181,7 +196,7 @@ async function loadTags() {
   tagsLoading.value = true
   tagsError.value = false
   try {
-    const data = await apiGet<{ isGit: boolean; tags: any[] }>('/api/git/tags')
+    const data = await apiGet<{ isGit: boolean; tags: GitTag[] }>('/api/git/tags')
     tags.value = data.tags || []
   } catch {
     tagsError.value = true
@@ -194,7 +209,7 @@ onMounted(() => {
   Promise.all([loadWorktrees(), loadBranches(), loadTags()])
 })
 
-async function onSwitchWorktree(wt: any) {
+async function onSwitchWorktree(wt: GitWorktree) {
   if (hotSwitchProject) {
     await hotSwitchProject(wt.path)
   } else {
@@ -229,7 +244,7 @@ async function doDirtyCheckout(mode: 'stash' | 'force') {
   }
 }
 
-async function onSwitchBranch(branch: any) {
+async function onSwitchBranch(branch: GitBranchItem) {
   checkoutInProgress.value = true
   try {
     const result = await apiPost<{ success: boolean; error?: string; untrackedCount?: number; errorDetail?: string }>('/api/git/checkout', { branch: branch.name })
@@ -259,7 +274,7 @@ async function onSwitchBranch(branch: any) {
   }
 }
 
-async function onSwitchTag(tag: any) {
+async function onSwitchTag(tag: GitTag) {
   checkoutInProgress.value = true
   try {
     const result = await apiPost<{ success: boolean; error?: string; untrackedCount?: number; errorDetail?: string }>('/api/git/checkout', { branch: tag.name })
@@ -289,7 +304,7 @@ async function onSwitchTag(tag: any) {
   }
 }
 
-async function onDeleteBranch(branch: any) {
+async function onDeleteBranch(branch: GitBranchItem) {
   const confirmed = await dialog.confirm(
     t('git.manage.deleteBranchConfirm', { name: branch.name }),
     { title: t('git.manage.deleteBranch'), dangerous: true },
@@ -313,7 +328,7 @@ async function onDeleteBranch(branch: any) {
   }
 }
 
-async function onDeleteWorktree(wt: any) {
+async function onDeleteWorktree(wt: GitWorktree) {
   const confirmed = await dialog.confirm(
     t('git.manage.deleteWorktreeConfirm', { name: wt.branch || wt.path }),
     { title: t('git.manage.deleteWorktree'), dangerous: true },
@@ -356,7 +371,7 @@ async function onDeleteWorktree(wt: any) {
   }
 }
 
-async function onDeleteTag(tag: any) {
+async function onDeleteTag(tag: GitTag) {
   const confirmed = await dialog.confirm(
     t('git.manage.deleteTagConfirm', { name: tag.name }),
     { title: t('git.manage.deleteTag'), dangerous: true },

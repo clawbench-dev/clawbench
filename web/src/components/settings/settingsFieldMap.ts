@@ -11,8 +11,8 @@
 
 export interface DependsOn {
   key: string
-  value?: any
-  values?: any[]
+  value?: unknown
+  values?: unknown[]
 }
 
 export interface ItemSpec {
@@ -22,15 +22,15 @@ export interface ItemSpec {
   type: 'switch' | 'select' | 'number' | 'text' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea'
   source: 'server' | 'local'
   needsRestart?: boolean
-  options?: { labelKey: string; value: any }[]
+  options?: { labelKey: string; value: unknown }[]
   min?: number
   max?: number
   step?: number
   dependsOn?: DependsOn | DependsOn[]
   sectionHeader?: string
   /** Transform raw value for display (e.g., 0 → 'auto' for port_forward.port) */
-  displayTransform?: (value: any) => any
-  defaultValue?: any
+  displayTransform?: (value: unknown) => unknown
+  defaultValue?: unknown
   displayFormat?: 'percent' | 'raw'
 }
 
@@ -42,7 +42,7 @@ export interface DrillDownCategory {
   enableLabelKey?: string
   entrySelector?: ItemSpec
   commonFields: ItemSpec[]
-  optionSubFields?: { when: any; fields: ItemSpec[] }[]
+  optionSubFields?: { when: unknown; fields: ItemSpec[] }[]
   requiredFields?: string[]
 }
 
@@ -236,7 +236,7 @@ export const drillDownCategories: Record<string, DrillDownCategory> = {
     enableKey: 'port_forward.enabled',
     enableLabelKey: 'settings.items.portForwardEnabled',
     commonFields: [
-      { labelKey: 'settings.items.portForwardPort', descriptionKey: 'settings.items.portForwardPortDesc', key: 'port_forward.port', type: 'number', source: 'server', displayTransform: (v: any) => v === 0 ? '__auto__' : v },
+      { labelKey: 'settings.items.portForwardPort', descriptionKey: 'settings.items.portForwardPortDesc', key: 'port_forward.port', type: 'number', source: 'server', displayTransform: (v: unknown) => v === 0 ? '__auto__' : v },
     ],
   },
   frp: {

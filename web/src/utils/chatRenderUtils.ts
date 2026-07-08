@@ -70,8 +70,8 @@ export function convertAudioLinks(html: string): string {
  * Tries XML first, falls back to JSON if XML fails.
  * Returns null if parsing fails or no valid questions found.
  */
-export function parseAskQuestionContent(rawContent: string): { questions: any[] } | null {
-  return parseAskQuestionXML(rawContent)
+export function parseAskQuestionContent(rawContent: string): { questions: Array<Record<string, unknown>> } | null {
+  return parseAskQuestionXML(rawContent) as { questions: Array<Record<string, unknown>> } | null
 }
 
 /**

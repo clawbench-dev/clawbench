@@ -94,7 +94,7 @@ interface AppState {
     portForwardActiveCount: number
 
     // Task list (kept in sync by global polling)
-    tasks: any[]
+    tasks: Array<Record<string, unknown>>
 
     // File browser
     currentDir: string
@@ -209,13 +209,13 @@ async function setProject(path: string): Promise<string> {
     }
     if (data.homeDir) state.homeDir = data.homeDir
     if (data.roots?.length) state.rootPaths = data.roots
-    if ((data as any).uploadMaxSizeMB > 0) state.uploadMaxSizeMB = (data as any).uploadMaxSizeMB
-    if ((data as any).uploadMaxFiles > 0) state.uploadMaxFiles = (data as any).uploadMaxFiles
-    if ((data as any).chatInitialMessages > 0) state.chatInitialMessages = (data as any).chatInitialMessages
-    if ((data as any).chatPageSize > 0) state.chatPageSize = (data as any).chatPageSize
-    if ((data as any).chatSessionPageSize > 0) state.chatSessionPageSize = (data as any).chatSessionPageSize
-    if ((data as any).sessionMaxCount > 0) state.sessionMaxCount = (data as any).sessionMaxCount
-    if ((data as any).recentProjectsMaxCount > 0) state.recentProjectsMaxCount = (data as any).recentProjectsMaxCount
+    if ((data.uploadMaxSizeMB ?? 0) > 0) state.uploadMaxSizeMB = data.uploadMaxSizeMB!
+    if ((data.uploadMaxFiles ?? 0) > 0) state.uploadMaxFiles = data.uploadMaxFiles!
+    if ((data.chatInitialMessages ?? 0) > 0) state.chatInitialMessages = data.chatInitialMessages!
+    if ((data.chatPageSize ?? 0) > 0) state.chatPageSize = data.chatPageSize!
+    if ((data.chatSessionPageSize ?? 0) > 0) state.chatSessionPageSize = data.chatSessionPageSize!
+    if ((data.sessionMaxCount ?? 0) > 0) state.sessionMaxCount = data.sessionMaxCount!
+    if ((data.recentProjectsMaxCount ?? 0) > 0) state.recentProjectsMaxCount = data.recentProjectsMaxCount!
     return data.path || path
 }
 
@@ -268,7 +268,7 @@ async function loadGitBranch(): Promise<{ isGit: boolean; branch: string; head: 
         state.gitDirty = !!data.dirty
         state.gitWorkingTreeChangeCount = data.changeCount || 0
         return data
-    } catch (_) {
+    } catch {
         state.gitBranch = ''
         state.gitHead = ''
         state.gitDirty = false
@@ -304,7 +304,7 @@ async function loadFiles(dir = '', silent = false): Promise<void> {
         state.currentDir = dir
         state.dirEntries = data.items || []
         saveBrowseDir()
-    } catch (err) {
+    } catch (err: unknown) {
         // A newer loadFiles call started — don't corrupt its state
         if (seq !== loadFilesSeq) return
         // Roll back to previous state on failure
@@ -405,7 +405,7 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
             state.currentFile = data
         }
         return true
-    } catch (err) {
+    } catch (err: unknown) {
         // Don't replace currentFile — keep the previously opened file visible.
         useToast().show((err as Error).message, { type: 'error', icon: '⚠️' })
         return false
@@ -427,7 +427,7 @@ async function deleteFile(filePath: string): Promise<void> {
     try {
         await apiPost('/api/file/delete', { path: filePath })
         appLog.d(TAG, '[deleteFile] API success')
-    } catch (err) {
+    } catch (err: unknown) {
         // File not found = already deleted (e.g. concurrent delete), treat as success
         const msgKey = (err as Error & { msgKey?: string })?.msgKey
         if (msgKey !== 'FileNotFoundShort') {
@@ -468,7 +468,7 @@ async function deleteFiles(paths: string[]): Promise<void> {
 async function renameFile(path: string, newName: string): Promise<void> {
     try {
         await apiPost('/api/file/rename', { path, name: newName })
-    } catch (err) {
+    } catch (err: unknown) {
         const msgKey = (err as Error & { msgKey?: string })?.msgKey
         if (msgKey === 'FileNotFoundShort') {
             // File already gone — treat as success

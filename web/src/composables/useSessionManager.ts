@@ -24,7 +24,7 @@ const TAG = 'SessionManager'
 
 export interface UseSessionManagerOptions {
   // Core state refs (owned by ChatPanel)
-  messages: Ref<any[]>
+  messages: Ref<Record<string, unknown>[]>
   loading: Ref<boolean>
 
   // Session operations (from useChatSession)
@@ -85,12 +85,12 @@ export function useSessionManager(options: UseSessionManagerOptions) {
 
   /** Sync pending messages from backend queue into messages.value.
    *  Removes stale local pending messages and adds missing ones from backend. */
-  function syncPendingFromBackendQueue(backendQueue: any[]) {
+  function syncPendingFromBackendQueue(backendQueue: Array<Record<string, unknown>>) {
     // Remove all existing pending messages
     clearPendingMessages()
     // Push backend queue items as pending messages
     for (const item of backendQueue) {
-      const itemFiles = [...(item.files || []), ...(item.filePaths || [])]
+      const itemFiles = [...(item.files as string[] || []), ...(item.filePaths as string[] || [])]
       messages.value.push({
         role: 'user',
         id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -112,7 +112,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
         const data = await resp.json()
         syncPendingFromBackendQueue(data.queue || [])
       }
-    } catch (_) {
+    } catch {
       // Non-critical — queue will be empty until next SSE event
     }
   }
@@ -151,7 +151,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       if (data.needs_start) {
         // Remove the pending message from messages.value
         const idx = messages.value.findLastIndex(
-          (m: any) => m.role === 'user' && m.pending && m.content === (data.message || inputText)
+          (m) => m.role === 'user' && m.pending && m.content === (data.message || inputText)
         )
         if (idx !== -1) messages.value.splice(idx, 1)
         scrollBottom(true)
@@ -169,11 +169,11 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       // calls overlap: the first sync clears the second's optimistic message.
       // The queue will be synced by fetchQueue (session switch),
       // handleVisibilityChange (mobile unlock), watch(loading), and SSE events.
-    } catch (err) {
+    } catch {
       toast.show(gt('session.queueFailed'), { icon: '⚠️', type: 'error' })
       // On enqueue failure, remove the pending message we just added
       const idx = messages.value.findLastIndex(
-        (m: any) => m.role === 'user' && m.pending && m.content === inputText
+        (m) => m.role === 'user' && m.pending && m.content === inputText
       )
       if (idx !== -1) messages.value.splice(idx, 1)
     }
@@ -199,7 +199,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       const data = await resp.json()
       // Sync remaining pending messages with backend queue
       syncPendingFromBackendQueue(data.queue || [])
-    } catch (err) {
+    } catch {
       toast.show(gt('session.removeFailed'), { icon: '⚠️', type: 'error' })
     }
   }
@@ -216,7 +216,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     if (sm) {
       delete sm.streaming
       if (sm.blocks) {
-        for (const block of sm.blocks) {
+        for (const block of sm.blocks as Array<Record<string, unknown>>) {
           if (block.type === 'tool_use' && !block.done) block.done = true
         }
       }
@@ -260,12 +260,12 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     cleanupActiveStream()
     // Cancel running session before deleting to kill the CLI process
     if (runningSessions.value.has(sessionId)) {
-      try { await cancelChat(sessionId) } catch (_) {}
+      try { await cancelChat(sessionId) } catch {}
     }
     // Clear backend queue for deleted session
     try {
       await fetch(`/api/ai/queue?session_id=${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
-    } catch (_) {}
+    } catch {}
     clearPendingMessages()
     await deleteSessionCore(sessionId, backend)
   }
@@ -277,11 +277,11 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     cleanupActiveStream()
     // Cancel running session before deleting to kill the CLI process
     if (runningSessions.value.has(deletedId)) {
-      try { await cancelChat(deletedId) } catch (_) {}
+      try { await cancelChat(deletedId) } catch {}
     }
     try {
       await fetch(`/api/ai/queue?session_id=${encodeURIComponent(deletedId)}`, { method: 'DELETE' })
-    } catch (_) {}
+    } catch {}
     clearPendingMessages()
     await deleteSessionCore(deletedId, identity.currentBackend.value)
     deleteDraft(deletedId)
@@ -329,7 +329,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
   // messages belong to the OLD session. We must NOT call sendMessageNow against
   // the wrong session.
   watch(loading, async (newVal, oldVal) => {
-    if (oldVal && !newVal && messages.value.some((m: any) => m.pending) && identity.currentSessionId.value) {
+    if (oldVal && !newVal && messages.value.some((m) => m.pending) && identity.currentSessionId.value) {
       const sessionId = identity.currentSessionId.value
       try {
         const resp = await fetch(`/api/ai/queue?session_id=${encodeURIComponent(sessionId)}`)
@@ -350,13 +350,13 @@ export function useSessionManager(options: UseSessionManagerOptions) {
             const firstItem = queue[0]
             // Remove the pending message locally — sendMessageNow will push its own
             const idx = messages.value.findIndex(
-              (m: any) => m.pending && m.content === (firstItem.text || '')
+              (m) => m.pending && m.content === (firstItem.text || '')
             )
             if (idx !== -1) messages.value.splice(idx, 1)
             // Dequeue from backend
             try {
               await fetch(`/api/ai/queue?session_id=${encodeURIComponent(sessionId)}&index=0`, { method: 'DELETE' })
-            } catch (_) {}
+            } catch {}
             // Resubmit as new chat
             await sendMessageNow(
               firstItem.text || '',
@@ -365,7 +365,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
             )
           }
         }
-      } catch (_) {
+      } catch {
         // Non-critical — queue will be empty until next SSE event
       }
     }
@@ -377,7 +377,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
   // pending messages may be stale — showing ghost "queuing" items that the backend
   // has already consumed.
   function handleVisibilityChange() {
-    if (document.visibilityState === 'visible' && messages.value.some((m: any) => m.pending) && identity.currentSessionId.value) {
+    if (document.visibilityState === 'visible' && messages.value.some((m) => m.pending) && identity.currentSessionId.value) {
       fetchQueue(identity.currentSessionId.value)
     }
   }

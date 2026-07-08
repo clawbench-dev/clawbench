@@ -40,7 +40,7 @@ function migrateLegacyKeys() {
 migrateLegacyKeys()
 
 /** Deep-merge source into target (mutates target). Only overwrites leaf values. */
-function deepAssign(target: Record<string, any>, source: Record<string, any>) {
+function deepAssign(target: Record<string, unknown>, source: Record<string, unknown>) {
   for (const key of Object.keys(source)) {
     if (
       source[key] !== null &&
@@ -50,7 +50,7 @@ function deepAssign(target: Record<string, any>, source: Record<string, any>) {
       typeof target[key] === 'object' &&
       !Array.isArray(target[key])
     ) {
-      deepAssign(target[key], source[key])
+      deepAssign(target[key] as Record<string, unknown>, source[key] as Record<string, unknown>)
     } else {
       target[key] = source[key]
     }
@@ -65,6 +65,7 @@ function deepAssign(target: Record<string, any>, source: Record<string, any>) {
 const legacyKeys: Record<string, {
   key: string                    // legacy localStorage key
   format: 'raw' | 'json'        // raw = string value, json = JSON.stringify
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- contravariant: specific sideEffect types (string, boolean, number) must be assignable
   sideEffect?: (value: any) => void  // runtime side-effect for immediate effect
 }> = {
   theme: {
@@ -85,6 +86,7 @@ const legacyKeys: Record<string, {
     key: LOCALE_KEY,  // 'clawbench-locale'
     format: 'raw',
     sideEffect(value: string) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- vue-i18n locale type mismatch
       i18n.global.locale.value = value as any
       setLocaleCookie(value)
     },
@@ -167,7 +169,7 @@ const legacyKeys: Record<string, {
 }
 
 /** Read initial value from prefixed key (falls back to legacy key, then default) */
-function readLocalValue(settingsKey: string, defaultValue: any): any {
+function readLocalValue(settingsKey: string, defaultValue: string | boolean | number | null): string | boolean | number | null {
   // Try our own prefixed key first (canonical location after migration)
   try {
     const saved = localStorage.getItem(LOCAL_PREFIX + settingsKey)
@@ -252,7 +254,7 @@ export function getZoomedViewport(): { width: number; height: number } {
   }
 }
 
-const localDefaults: Record<string, any> = {
+const localDefaults: Record<string, string | boolean | number | null> = {
   theme: 'auto',
   locale: 'zh',
   autoSpeech: false,
@@ -271,13 +273,13 @@ const localDefaults: Record<string, any> = {
 }
 
 // Build reactive local config from legacy localStorage + defaults
-const localConfig = reactive<Record<string, any>>({})
+const localConfig = reactive<Record<string, string | boolean | number | null>>({})
 for (const key of Object.keys(localDefaults)) {
   localConfig[key] = readLocalValue(key, localDefaults[key])
 }
 
 /** Set a local config value, persisting to both prefixed and legacy localStorage keys. */
-export function setLocalConfig(key: string, value: any) {
+export function setLocalConfig(key: string, value: string | boolean | number | null) {
   localConfig[key] = value
 
   // Write to our own prefixed key (for persistence)
@@ -305,13 +307,13 @@ export function setLocalConfig(key: string, value: any) {
 
 export { localConfig }
 
-const serverConfig = ref<Record<string, any>>({})
+const serverConfig = ref<Record<string, unknown>>({})
 
 /**
  * Server config defaults mirroring backend ApplyDefaults() in internal/model/defaults.go.
  * Used as fallback when the API hasn't loaded yet, so items always display meaningful values.
  */
-const serverDefaults: Record<string, any> = {
+const serverDefaults: Record<string, unknown> = {
   'chat.initial_messages': 20,
   'chat.page_size': 20,
   'chat.system_prompt_interval': 10,
@@ -375,7 +377,7 @@ export async function patchAgentPref(agentId: string, field: 'preferred_model' |
  * Supports: name, icon, specialty, custom_system_prompt, sort_order,
  * plus the original preferred_model/preferred_thinking_effort/transport.
  */
-export async function patchAgentField(agentId: string, field: string, value: any): Promise<void> {
+export async function patchAgentField(agentId: string, field: string, value: string | boolean | number | null): Promise<void> {
   await apiPatch('/api/agents', { id: agentId, [field]: value })
   const { updateAgentField } = useAgents()
   const fieldMap: Record<string, string> = {
@@ -418,7 +420,7 @@ export function useSettingsConfig() {
 
   async function loadConfig() {
     try {
-      const data = await apiGet<Record<string, any>>('/api/config')
+      const data = await apiGet<Record<string, unknown>>('/api/config')
       serverConfig.value = data
     } catch {
       // Server may be unreachable — keep existing cached values
@@ -427,7 +429,7 @@ export function useSettingsConfig() {
     syncNativeSettings()
   }
 
-  async function patchConfig(changes: Record<string, any>): Promise<{ needsRestart: boolean; changedColdFields: string[] }> {
+  async function patchConfig(changes: Record<string, unknown>): Promise<{ needsRestart: boolean; changedColdFields: string[] }> {
     const result = await apiPatch<{ needs_restart?: boolean; changed_cold_fields?: string[] }>('/api/config', changes)
     // Deep-merge patched values into local cache after successful response.
     // Using Object.assign would overwrite nested objects (e.g. {chat: {page_size: 50}}
@@ -444,32 +446,32 @@ export function useSettingsConfig() {
   }
 
   /** Read a server config value by dot-path (e.g. "server.port") */
-  function getServerValue(dotPath: string): any {
+  function getServerValue(dotPath: string): unknown {
     const parts = dotPath.split('.')
-    let current: any = serverConfig.value
+    let current: unknown = serverConfig.value
     for (const p of parts) {
       if (current == null || typeof current !== 'object') return undefined
-      current = current[p]
+      current = (current as Record<string, unknown>)[p]
     }
     return current
   }
 
   /** Read a server config value by dot-path, falling back to built-in defaults */
-  function getServerValueWithDefault(dotPath: string): any {
+  function getServerValueWithDefault(dotPath: string): unknown {
     const value = getServerValue(dotPath)
     if (value !== undefined) return value
     return serverDefaults[dotPath]
   }
 
   /** Write a server config value by dot-path and patch the server */
-  async function setServerValue(dotPath: string, value: any): Promise<{ needsRestart: boolean; changedColdFields: string[] }> {
+  async function setServerValue(dotPath: string, value: unknown): Promise<{ needsRestart: boolean; changedColdFields: string[] }> {
     const parts = dotPath.split('.')
-    const changes: Record<string, any> = {}
+    const changes: Record<string, unknown> = {}
     // Build nested object for patch (e.g. "server.port" → { server: { port: val } })
-    let obj: any = changes
+    let obj: Record<string, unknown> = changes
     for (let i = 0; i < parts.length - 1; i++) {
       obj[parts[i]] = {}
-      obj = obj[parts[i]]
+      obj = obj[parts[i]] as Record<string, unknown>
     }
     obj[parts[parts.length - 1]] = value
 
@@ -477,24 +479,25 @@ export function useSettingsConfig() {
     const oldValue = getServerValue(dotPath)
 
     // Optimistic local cache update
-    let current: any = serverConfig.value
+    let current: Record<string, unknown> = serverConfig.value
     for (let i = 0; i < parts.length - 1; i++) {
       if (current[parts[i]] == null) current[parts[i]] = {}
-      current = current[parts[i]]
+      current = current[parts[i]] as Record<string, unknown>
     }
     current[parts[parts.length - 1]] = value
 
     try {
       return await patchConfig(changes)
-    } catch (err) {
+    } catch (err: unknown) {
       // Rollback local cache on failure
-      let rollbackTarget: any = serverConfig.value
+      let rollbackTarget: unknown = serverConfig.value
       for (let i = 0; i < parts.length - 1; i++) {
-        if (rollbackTarget[parts[i]] == null) break
-        rollbackTarget = rollbackTarget[parts[i]]
+        if (typeof rollbackTarget !== 'object' || rollbackTarget === null) break
+        if ((rollbackTarget as Record<string, unknown>)[parts[i]] == null) break
+        rollbackTarget = (rollbackTarget as Record<string, unknown>)[parts[i]]
       }
       if (rollbackTarget && typeof rollbackTarget === 'object') {
-        rollbackTarget[parts[parts.length - 1]] = oldValue
+        (rollbackTarget as Record<string, unknown>)[parts[parts.length - 1]] = oldValue
       }
       throw err
     }

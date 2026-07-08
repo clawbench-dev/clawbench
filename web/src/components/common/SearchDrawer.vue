@@ -41,7 +41,6 @@ import { useI18n } from 'vue-i18n'
 import BottomSheet from './BottomSheet.vue'
 import HeaderMarquee from './HeaderMarquee.vue'
 import SearchInput from './SearchInput.vue'
-import { escapeHtml } from '@/utils/html.ts'
 import { getFileType } from '@/utils/fileType.ts'
 import { searchRawContent, highlightText, BLOCK_TAGS } from '@/utils/searchUtils.ts'
 

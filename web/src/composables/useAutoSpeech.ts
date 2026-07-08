@@ -26,22 +26,22 @@ import { appLog } from '@/utils/appLog'
  * Includes both text blocks and AskUserQuestion tool_use blocks
  * (structured questions) so TTS can read the question and options.
  */
-export function extractSpeakableText(blocks: any[]): string {
+export function extractSpeakableText(blocks: Array<Record<string, unknown>>): string {
   const parts: string[] = []
   for (const b of blocks) {
     if (b.type === 'text') {
-      const t = (b.text || '').trim()
+      const t = ((b.text as string) || '').trim()
       if (t) parts.push(t)
-    } else if (b.type === 'tool_use' && b.name === 'AskUserQuestion' && b.input?.questions) {
-      const questions = b.input.questions
+    } else if (b.type === 'tool_use' && b.name === 'AskUserQuestion' && (b.input as Record<string, unknown>)?.questions) {
+      const questions = (b.input as Record<string, unknown>).questions as Array<Record<string, unknown>>
       for (const q of questions) {
-        let s = q.question || ''
+        let s = (q.question as string) || ''
         if (q.header) s += ` (${q.header})`
         const opts = Array.isArray(q.options) ? q.options : []
         if (opts.length > 0) {
-          s += ': ' + opts.map((o: any) => {
-            const label = typeof o === 'string' ? o : (o.label || '')
-            const desc = typeof o === 'object' ? (o.description || '') : ''
+          s += ': ' + opts.map((o: unknown) => {
+            const label = typeof o === 'string' ? o : ((o as Record<string, unknown>)?.label || '')
+            const desc = typeof o === 'object' ? ((o as Record<string, unknown>)?.description || '') : ''
             return desc && desc !== label ? `${label} — ${desc}` : label
           }).join(', ')
         }
@@ -177,10 +177,11 @@ export function useAutoSpeech() {
       }
     }
 
-    audio.play().catch((err: any) => {
-      if (err?.name === 'AbortError') return
+    audio.play().catch((err: unknown) => {
+      const errName = (err as Error)?.name
+      if (errName === 'AbortError') return
       let message = gt('autoSpeech.generateFailedGeneric')
-      if (err?.name === 'NotAllowedError') {
+      if (errName === 'NotAllowedError') {
         message = gt('autoSpeech.autoplayBlocked')
       }
       reportError(message)
@@ -215,7 +216,7 @@ export function useAutoSpeech() {
 
     try {
       // Step 1: POST to create TTS job (or get cached result)
-      const body: any = { text, language: i18n.global.locale.value }
+      const body: Record<string, unknown> = { text, language: i18n.global.locale.value }
       const msgId = parseInt(id, 10)
       if (!isNaN(msgId)) body.messageId = msgId
       const resp = await fetch('/api/tts/generate', {
@@ -255,7 +256,7 @@ export function useAutoSpeech() {
       const es = new EventSource(`/api/tts/stream/${data.jobId}`)
       currentEventSource = es
 
-      let resultData: any = null
+      let resultData: Record<string, unknown> | null = null
 
       es.addEventListener('phase', (e: MessageEvent) => {
         try {
@@ -301,7 +302,7 @@ export function useAutoSpeech() {
         }
       }
 
-      function handleResult(result: any) {
+      function handleResult(result: Record<string, unknown> | null) {
         if (!result) {
           reportError(gt('autoSpeech.noResult'))
           activeId.value = ''
@@ -337,20 +338,22 @@ export function useAutoSpeech() {
 
         // Store the AI-generated summary for display
         if (result.summary) {
-          playingSummary.value = result.summary
+          playingSummary.value = result.summary as string
         }
 
-        playAudio(result.audioPath)
+        playAudio(result.audioPath as string)
       }
 
-    } catch (err: any) {
-      if (err?.name === 'AbortError') return
+    } catch (err: unknown) {
+      const errName = (err as Error)?.name
+      const errMsg = (err as Error)?.message
+      if (errName === 'AbortError') return
 
       let message = gt('autoSpeech.generateFailedGeneric')
-      if (err?.name === 'NotAllowedError') {
+      if (errName === 'NotAllowedError') {
         message = gt('autoSpeech.autoplayBlocked')
-      } else if (err?.message) {
-        message = gt('autoSpeech.generateFailedDetail', { error: err.message })
+      } else if (errMsg) {
+        message = gt('autoSpeech.generateFailedDetail', { error: errMsg })
       }
       reportError(message)
       activeId.value = ''

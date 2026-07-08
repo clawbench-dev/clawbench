@@ -224,8 +224,8 @@ async function submit() {
       new_password: newPassword.value,
     })
     emit('changed', result.needs_restart ?? true)
-  } catch (err: any) {
-    const errorCode = err?.message || ''
+  } catch (err: unknown) {
+    const errorCode = (err as { message?: string })?.message || ''
     if (errorCode === 'wrong_password') {
       serverError.value = t('settings.wrongCurrentPassword')
     } else if (errorCode === 'password_too_short') {
@@ -236,7 +236,7 @@ async function submit() {
       serverError.value = t('settings.passwordNoLetterDigit')
     } else if (errorCode === 'empty_password') {
       serverError.value = t('settings.currentPasswordRequired')
-    } else if (err?.message?.includes('Too Many Requests') || errorCode === 'TooManyLoginAttempts') {
+    } else if ((err as { message?: string })?.message?.includes('Too Many Requests') || errorCode === 'TooManyLoginAttempts') {
       serverError.value = t('settings.passwordTooManyAttempts')
     } else {
       serverError.value = t('settings.passwordChangeFailed')

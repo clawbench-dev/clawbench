@@ -134,7 +134,7 @@ const props = defineProps({
   collapsed: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['update:collapsed'])
+defineEmits(['update:collapsed'])
 
 const scrollRef = ref(null)
 

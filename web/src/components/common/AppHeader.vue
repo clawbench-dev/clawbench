@@ -218,7 +218,7 @@ async function loadRecentProjects() {
                 : p
             return { name, path: p, displayPath }
         })
-    } catch (_) {
+    } catch {
         recentItems.value = []
     } finally {
         loadingRecent.value = false
@@ -249,7 +249,7 @@ async function selectRecent(item) {
                 const parsed = JSON.parse(text)
                 msg = parsed.error || msg
                 msgKey = parsed.msgKey || ''
-            } catch (_) {}
+            } catch {}
             if (msgKey === 'NotADirectory') {
                 toast?.show(t('appHeader.projectPathNotFound'), { icon: '⚠️', type: 'error', duration: 3000 })
                 fetch('/api/recent-projects', {
@@ -262,7 +262,7 @@ async function selectRecent(item) {
                 toast?.show(t('appHeader.switchProjectFailed', { error: msg }), { icon: '⚠️', type: 'error', duration: 3000 })
             }
         }
-    } catch (err) {
+    } catch {
         toast?.show(t('appHeader.switchProjectNetworkError'), { icon: '⚠️', type: 'error', duration: 3000 })
     }
 }

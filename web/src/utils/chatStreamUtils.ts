@@ -6,6 +6,104 @@
  * No separate pendingStore — one source of truth.
  */
 
+// ── Core chat types ──
+
+/** A content block within a chat message (text, thinking, tool_use, error, warning). */
+export interface ContentBlock {
+  type: string
+  text?: string
+  name?: string
+  id?: string
+  done?: boolean
+  status?: string
+  input?: Record<string, unknown>
+  output?: string
+  summary?: string
+  display_name?: string
+  file_path?: string
+  _key?: string
+  reason?: string
+  [key: string]: unknown
+}
+
+/** A chat message in the messages array. */
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'system'
+  id: string | number
+  content: string
+  blocks?: ContentBlock[]
+  metadata?: Record<string, unknown>
+  cancelled?: boolean
+  streaming?: boolean
+  pending?: boolean
+  backend?: string
+  createdAt?: string
+  files?: { path: string }[]
+  [key: string]: unknown
+}
+
+/** SSE event data for content events */
+export interface ContentEventData {
+  content?: string
+}
+
+/** SSE event data for thinking events */
+export interface ThinkingEventData {
+  text?: string
+}
+
+/** SSE event data for tool_use/tool_result events */
+export interface ToolUseEventData {
+  id?: string
+  name?: string
+  input?: Record<string, unknown>
+  done?: boolean
+  status?: string
+  summary?: string
+  display_name?: string
+  file_path?: string
+}
+
+/** SSE event data for mode/config/thinking_effort events */
+export interface SseJsonData {
+  [key: string]: unknown
+}
+
+/** Polling response data */
+export interface PollResponseData {
+  messages?: ChatMessage[]
+  running?: boolean
+  sessionId?: string
+}
+
+/** Queue event data */
+export interface QueueEventData {
+  text?: string
+  sessionId?: string
+  filePaths?: string[]
+  files?: string[]
+  messageId?: number
+}
+
+/** Queue update event data */
+export interface QueueUpdateEventData {
+  sessionId?: string
+  queue?: QueueItem[]
+}
+
+export interface QueueItem {
+  text?: string
+  files?: string[]
+  filePaths?: string[]
+  createdAt?: string
+}
+
+/** Error event data */
+export interface ErrorEventData {
+  reason?: string
+  error?: string
+}
+
 /**
  * Detect garbage output values that come from intermediate ACP ToolCallUpdate
  * events (e.g., a lone "}" from partial JSON streaming). Real tool output
@@ -32,12 +130,12 @@ export const FILE_MODIFYING_TOOLS = new Set(['Write', 'Edit'])
  * Write → created, Edit → modified. Deduplicates by file path.
  * Only considers blocks where done=true.
  */
-export function extractFileChanges(blocks: any[]): { created: string[]; modified: string[] } {
+export function extractFileChanges(blocks: ContentBlock[]): { created: string[]; modified: string[] } {
   const createdSet = new Set<string>()
   const modifiedSet = new Set<string>()
   for (const block of blocks) {
     if (block.type !== 'tool_use' || !block.done) continue
-    const filePath = block.file_path || block.input?.file_path
+    const filePath = (block.file_path || (block.input as Record<string, unknown>)?.file_path) as string | undefined
     if (!filePath) continue
     if (block.name === 'Write') {
       createdSet.add(filePath)
@@ -53,7 +151,7 @@ export function extractFileChanges(blocks: any[]): { created: string[]; modified
  * tool_use blocks act as natural boundaries — text/thinking after a tool_use
  * should not be merged with text/thinking before it.
  */
-export function findLastBlockOfType(blocks: any[], type: string): any | undefined {
+export function findLastBlockOfType(blocks: ContentBlock[], type: string): ContentBlock | undefined {
   for (let i = blocks.length - 1; i >= 0; i--) {
     if (blocks[i].type === type) return blocks[i]
     // tool_use blocks are natural boundaries — don't merge across them
@@ -68,13 +166,13 @@ export function findLastBlockOfType(blocks: any[], type: string): any | undefine
  * Returns the streaming message if found (for caller to do further processing).
  */
 export function forceCleanupStreamingState(
-  messages: any[],
+  messages: ChatMessage[],
   callbacks: {
     onRenderNeeded: (forceFull?: boolean) => void
-    onExtractScheduledTasks?: (msgs: any[]) => void
+    onExtractScheduledTasks?: (msgs: ChatMessage[]) => void
   }
-): any | undefined {
-  const streamingMsg = messages.find((m: any) => m.role === 'assistant' && m.streaming)
+): ChatMessage | undefined {
+  const streamingMsg = messages.find((m) => m.role === 'assistant' && m.streaming)
   if (streamingMsg) {
     const hasContent = streamingMsg.content || (streamingMsg.blocks && streamingMsg.blocks.length > 0)
     delete streamingMsg.streaming
@@ -116,8 +214,8 @@ export function forceCleanupStreamingState(
  * Replaces the old closure-captured streamingMsg variable — this lookup
  * is always fresh and never goes stale after loadHistory replaces the array.
  */
-export function findStreamingMsg(messages: any[]): any | undefined {
-  return messages.find((m: any) => m.role === 'assistant' && m.streaming)
+export function findStreamingMsg(messages: ChatMessage[]): ChatMessage | undefined {
+  return messages.find((m) => m.role === 'assistant' && m.streaming)
 }
 
 /**
@@ -152,19 +250,19 @@ export function generateDrainId(): string {
  * Returns the new streaming assistant message.
  */
 export function drainQueueMessage(
-  messages: any[],
+  messages: ChatMessage[],
   userContent: string,
   userFiles: string[],
   currentBackend: string,
   callbacks: {
     onRenderNeeded: (forceFull?: boolean) => void
-    onExtractScheduledTasks?: (msgs: any[]) => void
+    onExtractScheduledTasks?: (msgs: ChatMessage[]) => void
   },
   drainId?: string,
   dbMessageId?: number
-): any {
+): ChatMessage {
   // 1. Finalize any streaming assistant message — never delete to avoid key shifts
-  const streamingMsg = messages.find((m: any) => m.role === 'assistant' && m.streaming)
+  const streamingMsg = messages.find((m) => m.role === 'assistant' && m.streaming)
   if (streamingMsg) {
     delete streamingMsg.streaming
     // Mark unfinished tool_use blocks as done (except PermissionApproval)
@@ -195,7 +293,7 @@ export function drainQueueMessage(
   //    the second. Any transient ordering mismatch is corrected by the next
   //    queue_update event which replaces the entire pending portion.
   const pendingIdx = messages.findIndex(
-    (m: any) => m.role === 'user' && m.pending && m.content === userContent
+    (m) => m.role === 'user' && m.pending && m.content === userContent
   )
   if (pendingIdx !== -1) {
     // Found the pending message — clear pending flag, update id to stable DB id
@@ -211,7 +309,7 @@ export function drainQueueMessage(
     // Push it directly. Deduplicate by ID to avoid race with loadHistory.
     const effectiveDrainId = dbMessageId || drainId || generateDrainId()
     const alreadyExists = messages.some(
-      (m: any) => m.id === effectiveDrainId
+      (m) => m.id === effectiveDrainId
     )
     if (!alreadyExists) {
       messages.push({
@@ -237,7 +335,7 @@ export function drainQueueMessage(
     role: 'assistant' as const,
     id: generateDrainId(),
     content: '',
-    blocks: [] as any[],
+    blocks: [] as ContentBlock[],
     streaming: true,
     createdAt: new Date().toISOString(),
     backend: currentBackend,
@@ -245,7 +343,7 @@ export function drainQueueMessage(
   // Find the user message that was just drained (pending flag cleared or fallback pushed)
   const drainUserIdx = pendingIdx !== -1
     ? pendingIdx
-    : messages.findLastIndex((m: any) => m.role === 'user' && m.content === userContent)
+    : messages.findLastIndex((m) => m.role === 'user' && m.content === userContent)
   if (drainUserIdx !== -1) {
     messages.splice(drainUserIdx + 1, 0, newStreamingMsg)
   } else {
@@ -283,7 +381,7 @@ export function shouldRetryToolFetch(
  * Pure function — no Vue reactivity dependencies.
  */
 export function resolveEffectiveMsgId(
-  liveBlock: any | undefined,
+  liveBlock: ContentBlock | undefined,
   overlayMsgId: number | string | undefined,
   originalMsgId: number | string,
 ): number | string {

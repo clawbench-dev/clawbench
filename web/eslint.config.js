@@ -13,6 +13,8 @@ export default tseslint.config(
             'coverage/**',
             '*.config.ts',
             '*.config.js',
+            '**/*.test.ts',
+            '**/*.test.tsx',
         ],
     },
 
@@ -67,8 +69,8 @@ export default tseslint.config(
     // Custom rule overrides
     {
         rules: {
-            '@typescript-eslint/no-explicit-any': 'warn',
-            '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+            '@typescript-eslint/no-explicit-any': 'error',
+            '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
             'no-console': 'off',
             'no-empty': ['error', { allowEmptyCatch: true }],
         },

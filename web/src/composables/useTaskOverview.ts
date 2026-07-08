@@ -6,7 +6,7 @@ import { useDialog } from '@/composables/useDialog.ts'
 import { gt } from '@/composables/useLocale'
 
 interface UseTaskOverviewOptions {
-  task: Ref<any>
+  task: Ref<Record<string, unknown>>
   emit: {
     deleted: () => void
     edit: () => void
@@ -42,8 +42,8 @@ export function useTaskOverview(options: UseTaskOverviewOptions) {
         await apiPut(`/api/tasks/${taskId}`, { action })
         await loadTasks()
       }
-    } catch (err: any) {
-      const _msg = err?.message || ''
+    } catch (err: unknown) {
+      const _msg = (err as { message?: string })?.message || ''
       toast.show(_msg ? gt('task.actionFailedDetail', { error: _msg }) : gt('task.actionFailed'), { icon: '⚠️', type: 'error' })
     } finally {
       actionLoading.value = false

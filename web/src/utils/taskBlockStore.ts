@@ -3,7 +3,7 @@ import { apiGet } from '@/utils/api'
 
 interface TaskBlockEntry {
   taskId: number
-  task: any | null
+  task: Record<string, unknown> | null
   loading: boolean
   deleted: boolean
   error?: boolean
@@ -29,7 +29,8 @@ export function createTaskBlockStore() {
     }
 
     try {
-      const data = await apiGet<{ tasks: any[] }>('/api/tasks')
+      const data = await apiGet<{ tasks: Record<string, unknown>[] }>('/api/tasks')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const taskMap = new Map((data.tasks || []).map((t: any) => [t.id, t]))
 
       for (const { key, taskId } of pending) {

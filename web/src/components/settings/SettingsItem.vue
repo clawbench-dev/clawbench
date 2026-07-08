@@ -67,7 +67,7 @@
         <input
           type="number"
           class="settings-item__number-input"
-          :value="editValue"
+          :value="String(editValue ?? '')"
           :min="min"
           :max="max"
           :step="step"
@@ -83,7 +83,7 @@
         <input
           type="text"
           class="settings-item__text-input"
-          :value="editValue"
+          :value="(editValue as string | number | readonly string[] | null | undefined)"
           :placeholder="placeholder"
           @input="editValue = ($event.target as HTMLInputElement).value"
           @keydown.enter="confirmEdit"
@@ -114,7 +114,7 @@
       <div class="settings-item__textarea-row">
         <textarea
           class="settings-item__textarea-input"
-          :value="editValue"
+          :value="editValue as string | number | readonly string[] | null | undefined"
           :placeholder="placeholder"
           rows="6"
           @input="editValue = ($event.target as HTMLTextAreaElement).value"
@@ -136,7 +136,7 @@
   >
     <div
       v-for="opt in options"
-      :key="opt.value"
+      :key="opt.value as PropertyKey"
       class="settings-item__option"
       :class="{ 'settings-item__option--active': modelValue === opt.value }"
       @click="selectOption(opt.value)"
@@ -160,8 +160,8 @@ interface Props {
   label: string
   description?: string
   type: 'switch' | 'select' | 'number' | 'text' | 'slider' | 'action' | 'info' | 'header' | 'password' | 'textarea'
-  modelValue?: any
-  options?: { label: string; value: any }[]
+  modelValue?: unknown
+  options?: { label: string; value: unknown }[]
   min?: number
   max?: number
   step?: number
@@ -171,9 +171,9 @@ interface Props {
   forceClose?: boolean
   warning?: string
   noDivider?: boolean
-  defaultValue?: any
+  defaultValue?: unknown
   displayFormat?: 'percent' | 'raw'
-  displayTransform?: (value: any) => any
+  displayTransform?: (value: unknown) => unknown
   statusDot?: 'green' | 'gray' | 'red' | 'yellow'
 }
 
@@ -194,7 +194,7 @@ const props = withDefaults(defineProps<Props>(), {
 })
 
 const emit = defineEmits<{
-  'update:modelValue': [value: any]
+  'update:modelValue': [value: unknown]
   click: []
   editToggle: [open: boolean]
   descToggle: [open: boolean]
@@ -202,7 +202,7 @@ const emit = defineEmits<{
 }>()
 
 const editing = ref(false)
-const editValue = ref<any>(null)
+const editValue = ref<unknown>(null)
 const showPassword = ref(false)
 const descriptionExpanded = ref(false)
 const selectPickerOpen = ref(false)
@@ -289,7 +289,7 @@ function onSliderInput(e: Event) {
 
 const sliderDisplayValue = computed(() => {
   if (props.modelValue == null) return ''
-  if (props.displayFormat === 'percent') return `${Math.round(props.modelValue * 100)}%`
+  if (props.displayFormat === 'percent') return `${Math.round((props.modelValue as number) * 100)}%`
   return String(props.modelValue)
 })
 
@@ -340,7 +340,7 @@ function handleClick() {
   emit('editToggle', editing.value)
 }
 
-function selectOption(value: any) {
+function selectOption(value: unknown) {
   emit('update:modelValue', value)
   selectPicker.close()
   emit('editToggle', false)

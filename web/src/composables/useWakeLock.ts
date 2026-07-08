@@ -55,6 +55,7 @@ async function _doAcquire() {
 
   // 2. Android native bridge (extra safety — works even when WebView doesn't focus)
   try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const native = (window as any).AndroidNative
     if (native?.setKeepScreenOn) {
       native.setKeepScreenOn(true)
@@ -91,6 +92,7 @@ function release() {
 
   // Android native bridge
   try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const native = (window as any).AndroidNative
     if (native?.setKeepScreenOn) {
       native.setKeepScreenOn(false)

@@ -86,7 +86,7 @@ const props = defineProps({
   task: Object,
 })
 
-const emit = defineEmits(['open-file'])
+defineEmits(['open-file'])
 
 const { t } = useI18n()
 
@@ -115,10 +115,8 @@ const {
   executions,
   isRunning,
   isJustCompleted,
-  locallyReadIds,
   loadExecutions,
   loadMoreExecutions,
-  reloadExecutions,
   loadRunningStatus,
   cancelExecution,
   deleteExecution,
@@ -162,10 +160,6 @@ function stopPolling() {
     clearInterval(pollTimer)
     pollTimer = null
   }
-}
-
-function onOpenFile(filePath) {
-  emit('open-file', filePath)
 }
 
 watch(() => props.task?.id, (newId) => {

@@ -73,7 +73,7 @@ const props = defineProps({
   open: Boolean,
 })
 
-const emit = defineEmits(['close'])
+defineEmits(['close'])
 
 const { t } = useI18n()
 const toast = useToast()

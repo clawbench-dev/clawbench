@@ -24,7 +24,9 @@ export function useAppMode() {
     try {
       // Must be in the top-level frame — iframe is always web mode
       if (window !== window.top) return { isAppMode }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       if (typeof (window as any).AndroidNative !== 'undefined') {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         isAppMode.value = (window as any).AndroidNative.isNativeApp() === true
       }
     } catch {

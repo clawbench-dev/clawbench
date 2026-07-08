@@ -144,7 +144,7 @@
 </template>
 
 <script setup>
-import { GitBranch, Plus, Minus, FileText } from 'lucide-vue-next'
+import { Plus, Minus, FileText } from 'lucide-vue-next'
 import { ref, computed, inject, onMounted, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitCommitList from './GitCommitList.vue'

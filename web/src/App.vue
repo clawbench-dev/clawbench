@@ -276,10 +276,7 @@ import TerminalPanelContent from './components/terminal/TerminalPanelContent.vue
 import ProjectDialog from './components/ProjectDialog.vue'
 import LoginView from './components/LoginView.vue'
 import WelcomeOverlay from './components/WelcomeOverlay.vue'
-import TocDrawer from './components/TocDrawer.vue'
 import FileDetailsDrawer from './components/file/FileDetailsDrawer.vue'
-import GitHistoryDrawer from './components/git/GitHistoryDrawer.vue'
-import SearchDrawer from './components/common/SearchDrawer.vue'
 import ToastNotification from './components/common/ToastNotification.vue'
 import DialogOverlay from './components/common/DialogOverlay.vue'
 import SessionDrawer from './components/session/SessionDrawer.vue'
@@ -378,7 +375,7 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   const restoreBrowseDir = async () => {
     const savedDir = loadBrowseDir()
     if (savedDir) {
-      try { await store.loadFiles(savedDir, true) } catch (_) {
+      try { await store.loadFiles(savedDir, true) } catch {
         // Directory no longer exists — fall back to project root
         await store.loadFiles('')
       }
@@ -555,7 +552,7 @@ const sessionIdentity = useSessionIdentity()
 const sessionDrawer = useTabDrawer('chat', sessionIdentity.sessionDrawerOpen)
 
 const showHidden = ref(false)
-const { localConfig, setLocalConfig: setSetting, loadConfig, getServerValueWithDefault } = useSettingsConfig()
+const { localConfig, setLocalConfig: setSetting, loadConfig } = useSettingsConfig()
 // Initialize from settings config (which handles legacy key migration)
 showHidden.value = !!localConfig.showHidden
 const sortField = ref(localConfig.sortField || null)
@@ -694,7 +691,7 @@ watch(sessionDrawerRef, (ref) => {
 // openAgentSelector is NOT registered here — it's handled via
 // registerSessionDrawerRef above, which is independent.
 
-function handleSessionSelect(sessionId, backend) {
+function handleSessionSelect(sessionId, _backend) {
   sessionIdentity.switchSession(sessionId)
   sessionIdentity.sessionDrawerOpen.value = false
 }
@@ -773,7 +770,7 @@ async function initializeApp() {
   // 1. Prerequisite data — must complete before UI renders
   //    loadProject sets clawbench_project cookie (needed by loadHistory).
   //    initSessionFromAPI sets session identity (needed by ChatPanelContent).
-  try { await store.loadProject() } catch (_) {
+  try { await store.loadProject() } catch {
       toast.show(t('toast.projectLoadFailed'), { icon: '⚠️', type: 'error', duration: 0, onClick: () => location.reload() }); return false
   }
   await sessionIdentity.initSessionFromAPI()
@@ -803,12 +800,12 @@ async function initializeApp() {
   // Restore last browsed directory; fall back to project root if the dir no longer exists
   const savedDir = loadBrowseDir()
   if (savedDir) {
-    try { await store.loadFiles(savedDir, true) } catch (_) {
+    try { await store.loadFiles(savedDir, true) } catch {
       // Directory no longer exists — fall back to project root
-      try { await store.loadFiles('') } catch (_) {}
+      try { await store.loadFiles('') } catch {}
     }
   } else {
-    try { await store.loadFiles('') } catch (_) {
+    try { await store.loadFiles('') } catch {
       toast.show(t('toast.fileListLoadFailed'), { icon: '⚠️', type: 'error', duration: 6000 })
     }
   }
@@ -855,12 +852,6 @@ const theme = ref(localConfig.theme === 'auto'
 const dirEntries = computed(() => store.state.dirEntries)
 const currentDir = computed(() => store.state.currentDir)
 const currentFile = computed(() => store.state.currentFile)
-const currentFileIsMarkdown = computed(() => {
-    const f = currentFile.value
-    if (!f) return false
-    const ft = getFileType(f.name)
-    return ft?.isMarkdown || ft?.isHtml || f.subtype === 'openapi' || false
-})
 const projectRoot = computed(() => store.state.projectRoot)
 const homeDir = computed(() => store.state.homeDir)
 
@@ -883,7 +874,7 @@ function handleJumpPdfPage(pageNum) {
     fileOverlayRef.value?.pdfScrollToPage(pageNum)
 }
 
-watch(() => currentFile.value, (f) => {
+watch(() => currentFile.value, (_f) => {
     tocOpen.value = false
     detailsOpen.value = false
     markdownViewMode.value = 'rendered'
@@ -1275,10 +1266,7 @@ function scrollToLine(line, lineEnd) {
     nextTick(tryScroll)
 }
 
-function toggleTheme() {
-    theme.value = theme.value === 'dark' ? 'light' : 'dark'
-    applyTheme(theme.value)
-}
+
 
 function applyTheme(t) {
     document.documentElement.setAttribute('data-theme', t)
@@ -1356,7 +1344,7 @@ onMounted(async () => {
     let resp
     try {
         resp = await fetch('/api/me')
-    } catch (_) {
+    } catch {
         isAuthenticated.value = false
         if (isAppMode.value) {
             toast.show(t('toast.serverUnreachableApp'), { icon: '⚠️', type: 'error', duration: 5000 })
@@ -1365,30 +1353,28 @@ onMounted(async () => {
         }
         return
     }
-    let authed = false
-    if (resp.ok) {
-        authed = true
-    } else if (resp.status === 401 || resp.status === 403) {
-        if (isAppMode.value && window.AndroidNative?.getPassword?.()) {
-            const savedPwd = window.AndroidNative.getPassword()
-            if (savedPwd) {
-                try {
-                    const loginRes = await fetch('/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: savedPwd }) })
-                    if (loginRes.ok) {
-                        authed = true
-                        if (window.AndroidNative?.setSSHPassword) window.AndroidNative.setSSHPassword(savedPwd)
-                    } else { isAuthenticated.value = false; return }
-                } catch (_) { isAuthenticated.value = false; return }
+    if (!resp.ok) {
+        if (resp.status === 401 || resp.status === 403) {
+            if (isAppMode.value && window.AndroidNative?.getPassword?.()) {
+                const savedPwd = window.AndroidNative.getPassword()
+                if (savedPwd) {
+                    try {
+                        const loginRes = await fetch('/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: savedPwd }) })
+                        if (loginRes.ok) {
+                            if (window.AndroidNative?.setSSHPassword) window.AndroidNative.setSSHPassword(savedPwd)
+                        } else { isAuthenticated.value = false; return }
+                    } catch { isAuthenticated.value = false; return }
+                } else { isAuthenticated.value = false; return }
             } else { isAuthenticated.value = false; return }
-        } else { isAuthenticated.value = false; return }
-    } else {
-        isAuthenticated.value = false
-        if (isAppMode.value) {
-            toast.show(t('toast.serverError'), { icon: '⚠️', type: 'error', duration: 5000 })
         } else {
-            toast.show(t('toast.serverError'), { icon: '⚠️', type: 'error', duration: 0, onClick: () => location.reload() })
+            isAuthenticated.value = false
+            if (isAppMode.value) {
+                toast.show(t('toast.serverError'), { icon: '⚠️', type: 'error', duration: 5000 })
+            } else {
+                toast.show(t('toast.serverError'), { icon: '⚠️', type: 'error', duration: 0, onClick: () => location.reload() })
+            }
+            return
         }
-        return
     }
 
     // ── Main app initialization ──
@@ -1424,7 +1410,7 @@ onMounted(async () => {
       // Ensure tasks are loaded before navigating
       try {
         await loadTasks()
-      } catch (_) {
+      } catch {
         // Proceed anyway — the task list may already be populated
       }
       switchTab('tasks')
@@ -1446,7 +1432,7 @@ onMounted(async () => {
         } else if (nav.sessionId) {
           processPendingSessionNav(nav.sessionId)
         }
-      } catch (_) {}
+      } catch {} // for cold-start pending navigation
     }
 
     // Check AndroidNative bridge for cold-start pending navigation
@@ -1485,7 +1471,7 @@ onMounted(async () => {
               }
             }
           }
-        } catch (_) {}
+        } catch {} // and then every 500ms for up to 3 seconds
       }
       // Poll immediately and then every 500ms for up to 3 seconds
       pollPendingNav()

@@ -51,7 +51,7 @@ onMounted(() => {
 })
 
 const agentList = computed(() =>
-  [...agents.value].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+  [...agents.value].sort((a, b) => ((a as Record<string, unknown>).sortOrder as number ?? 0) - ((b as Record<string, unknown>).sortOrder as number ?? 0))
 )
 
 async function handleRescan() {

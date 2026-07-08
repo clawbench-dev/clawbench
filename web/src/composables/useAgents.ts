@@ -33,7 +33,29 @@ export function registerIdentityUpdaters(opts: {
 }
 
 // Singleton state — shared across the whole app
-const agents = ref<any[]>([])
+interface AgentRecord {
+  id: string
+  name: string
+  icon: string
+  backend: string
+  command?: string
+  source?: string
+  specialty?: string
+  models?: Array<{ id: string; name: string; default: boolean }>
+  preferredModel?: string
+  thinkingEffort?: string
+  thinkingEffortLevels?: string[]
+  preferredThinkingEffort?: string
+  preferredMode?: string
+  acpCommand?: string
+  acpAvailableModes?: Array<{ id: string; name: string }>
+  transport?: string
+  systemPrompt?: string
+  customSystemPrompt?: string
+  canRefreshModels?: boolean
+}
+
+const agents = ref<AgentRecord[]>([])
 const defaultAgentId = ref('')
 let loadPromise: Promise<void> | null = null
 
@@ -41,12 +63,23 @@ let loadPromise: Promise<void> | null = null
 // mode/thinking/command chips after clearing state for a new session.
 // Without this cache, chips only reappear after the first message triggers
 // an SSE mode_update event, even though the data is already in memory.
-let acpStatesCache: Record<string, any> = {}
+let acpStatesCache: Record<string, Record<string, unknown>> = {}
+
+// Type for nested ACP state access (used by loadAgents and populateACPStateFromCache)
+interface AcpState {
+  modeState?: { availableModes?: Array<{ id: string; name: string }>; currentModeId?: string }
+  thinkingEffortState?: { availableLevels?: Array<{ id: string; name: string }>; currentId?: string }
+  commands?: Array<{ name: string; description: string; inputHint?: string }>
+  modelListState?: { models?: Array<{ id: string; name: string }>; currentModelId?: string }
+  planState?: { entries?: Array<Record<string, unknown>> }
+  usageState?: { used?: number; size?: number; cost?: number; currency?: string }
+  loadSession?: boolean
+}
 
 // originalModels stores CLI-discovered model lists for each agent.
 // When ACP provides a model list, we override agent.models but keep
 // the original here so we can restore it when switching away from ACP.
-const originalModels = new Map<string, any[]>()
+const originalModels = new Map<string, Array<{ id: string; name: string; default: boolean }>>()
 
 /** Reset all module-level singleton refs — used by SPA hot project switch. */
 export function resetAgents(): void {
@@ -67,7 +100,7 @@ async function loadAgents(force = false): Promise<void> {
 
     loadPromise = (async () => {
         try {
-            const data = await apiGet<{ agents: any[]; defaultAgent?: string; acpStates?: Record<string, any> }>('/api/agents')
+            const data = await apiGet<{ agents: AgentRecord[]; defaultAgent?: string; acpStates?: Record<string, Record<string, unknown>> }>('/api/agents')
             agents.value = data.agents || []
             if (data.defaultAgent) {
                 defaultAgentId.value = data.defaultAgent
@@ -85,16 +118,16 @@ async function loadAgents(force = false): Promise<void> {
             // or SSE events).
             if (data.acpStates) {
                 const activeAgentId = _currentAgentId?.value || ''
-                const activeState = activeAgentId ? data.acpStates[activeAgentId] : null
+                const activeState = activeAgentId ? data.acpStates[activeAgentId] as AcpState : null
                 if (activeState) {
                     // Only update available modes/levels — currentModeId and
                     // currentThinkingEffort are managed by user action + DB,
                     // not by agent cache (which reflects the agent's runtime
                     // state, not the user's selection).
-                    if (activeState.modeState?.availableModes?.length > 0) {
+                    if (activeState.modeState?.availableModes && activeState.modeState.availableModes.length > 0) {
                         _updateAvailableModes?.(activeState.modeState.availableModes)
                     }
-                    if (activeState.thinkingEffortState?.availableLevels?.length > 0) {
+                    if (activeState.thinkingEffortState?.availableLevels && activeState.thinkingEffortState.availableLevels.length > 0) {
                         _updateAvailableThinkingEfforts?.(activeState.thinkingEffortState.availableLevels)
                     } else {
                         // Fallback: agent config (e.g. OpenCode/Kimi ACP don't expose thought_level)
@@ -108,19 +141,19 @@ async function loadAgents(force = false): Promise<void> {
                     }
                     // When ACP provides a model list, override agent.models
                     // so the frontend SessionSettingModal shows ACP models.
-                    if (activeState.modelListState?.models?.length > 0) {
+                    if (activeState.modelListState?.models && activeState.modelListState.models.length > 0) {
                         updateACPModelList(activeAgentId, activeState.modelListState.models, activeState.modelListState.currentModelId)
                     }
-                    if (activeState.planState?.entries?.length > 0) {
-                        updatePlanEntries(activeState.planState.entries)
+                    if (activeState.planState?.entries && activeState.planState.entries.length > 0) {
+                        updatePlanEntries(activeState.planState.entries as unknown as import('@/composables/usePlanProgress').PlanEntry[])
                     }
                     // Restore usage state from agent-level cache (best-effort fallback).
-                    if (activeState.usageState && activeState.usageState.size > 0) {
-                        _updateUsageState?.(activeState.usageState.used ?? 0, activeState.usageState.size, activeState.usageState.cost, activeState.usageState.currency)
+                    if (activeState.usageState && (activeState.usageState.size ?? 0) > 0) {
+                        _updateUsageState?.(activeState.usageState.used ?? 0, activeState.usageState.size!, activeState.usageState.cost, activeState.usageState.currency)
                     }
                 }
             }
-        } catch (err) {
+        } catch (err: unknown) {
             appLog.e(TAG, 'Failed to load agents:', err)
         } finally {
             loadPromise = null
@@ -148,7 +181,7 @@ function getDefaultModelId(agentId: string): string {
     const agent = agents.value.find(a => a.id === agentId)
     if (agent?.preferredModel) return agent.preferredModel
     if (!agent?.models?.length) return ''
-    const defaultModel = agent.models.find((m: any) => m.default)
+    const defaultModel = agent.models.find((m: { default: boolean }) => m.default)
     return defaultModel ? defaultModel.id : agent.models[0].id
 }
 
@@ -212,7 +245,7 @@ export function getAgentThinkingEffortLevels(agentId: string): string[] {
 
 /** Check if an agent supports @resume (LoadSession + ListSessions capabilities). */
 export function agentCanResume(agentId: string): boolean {
-    const state = acpStatesCache[agentId]
+    const state = acpStatesCache[agentId] as AcpState | undefined
     // If cache has explicit loadSession, use it
     if (state?.loadSession) return true
     // If agent supports ACP (has acpCommand) but pool hasn't been initialized yet,
@@ -240,10 +273,10 @@ function getEffectiveModeId(agentId: string): string {
 }
 
 /** Update a single field on an agent in the reactive store (for immediate UI feedback after PATCH). */
-function updateAgentField(agentId: string, field: string, value: any): void {
+function updateAgentField(agentId: string, field: string, value: unknown): void {
     const agent = agents.value.find(a => a.id === agentId)
     if (agent) {
-        (agent as any)[field] = value
+        (agent as unknown as Record<string, unknown>)[field] = value
     }
 }
 
@@ -259,7 +292,7 @@ export function updateACPModelList(agentId: string, models: Array<{ id: string; 
     if (!agent) return
     // Save original CLI models if not already saved
     if (!originalModels.has(agentId)) {
-        originalModels.set(agentId, [...agent.models])
+        originalModels.set(agentId, [...agent.models!])
     }
     const mapped = models.map((m, i) => ({
         id: m.id,
@@ -321,15 +354,15 @@ export async function populateACPStateFromCache(agentId: string): Promise<void> 
     if (!acpStatesCache[agentId]) {
         await loadAgents(true)
     }
-    const state = acpStatesCache[agentId]
+    const state = acpStatesCache[agentId] as AcpState | undefined
     if (!state) return
     // Only update available modes/levels — currentModeId and currentThinkingEffort
     // are managed by user action + DB, not by agent cache (which reflects the
     // agent's runtime state, not the user's selection).
-    if (state.modeState?.availableModes?.length > 0) {
+    if (state.modeState?.availableModes && state.modeState.availableModes.length > 0) {
         _updateAvailableModes?.(state.modeState.availableModes)
     }
-    if (state.thinkingEffortState?.availableLevels?.length > 0) {
+    if (state.thinkingEffortState?.availableLevels && state.thinkingEffortState.availableLevels.length > 0) {
         _updateAvailableThinkingEfforts?.(state.thinkingEffortState.availableLevels)
     } else {
         // Fallback: agent config (e.g. OpenCode/Kimi ACP don't expose thought_level)
@@ -339,19 +372,19 @@ export async function populateACPStateFromCache(agentId: string): Promise<void> 
         }
     }
     if (Array.isArray(state.commands) && state.commands.length > 0) {
-        _updateCommandState?.(state.commands)
+        _updateCommandState?.(state.commands as { name: string; description: string; inputHint?: string }[])
     }
-    if (state.modelListState?.models?.length > 0) {
+    if (state.modelListState?.models && state.modelListState.models.length > 0) {
         updateACPModelList(agentId, state.modelListState.models, state.modelListState.currentModelId)
     }
-    if (state.planState?.entries?.length > 0) {
-        updatePlanEntries(state.planState.entries)
+    if (state.planState?.entries && state.planState.entries.length > 0) {
+        updatePlanEntries(state.planState.entries as unknown as import('@/composables/usePlanProgress').PlanEntry[])
     }
     // Restore usage state from agent-level cache (best-effort fallback).
     // This ensures usage chips appear immediately on session switch /
     // reconnect without waiting for a new SSE usage_update event.
-    if (state.usageState && state.usageState.size > 0) {
-        _updateUsageState?.(state.usageState.used ?? 0, state.usageState.size, state.usageState.cost, state.usageState.currency)
+    if (state.usageState && (state.usageState.size ?? 0) > 0) {
+        _updateUsageState?.(state.usageState.used ?? 0, state.usageState.size!, state.usageState.cost, state.usageState.currency)
     }
 }
 

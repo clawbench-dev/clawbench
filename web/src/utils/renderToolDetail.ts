@@ -17,6 +17,23 @@ import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
 import { getSessionId } from '@/composables/useSessionIdentity.ts'
 
 // ────────────────────────────────────────────────────────────
+// Type helpers for tool input
+// ────────────────────────────────────────────────────────────
+
+/** Type for tool input JSON objects — values are unknown at rest, use str()/num()/bool() to narrow. */
+type ToolInput = Record<string, unknown>
+
+/** Extract a string from unknown tool input value, defaulting to '' */
+function str(val: unknown, def = ''): string {
+  return typeof val === 'string' ? val : def
+}
+
+/** Extract a number from unknown tool input value, defaulting to undefined */
+function num(val: unknown): number | undefined {
+  return typeof val === 'number' ? val : undefined
+}
+
+// ────────────────────────────────────────────────────────────
 // Tool renderer functions
 // ────────────────────────────────────────────────────────────
 
@@ -26,10 +43,10 @@ import { getSessionId } from '@/composables/useSessionIdentity.ts'
  * No line numbers, no +/- prefix — color-only distinction.
  * File path is clickable to open the file.
  */
-function renderEditDiff(input: Record<string, any>): string {
-  const filePath = input.file_path || ''
-  const oldStr = input.old_string || ''
-  const newStr = input.new_string || ''
+function renderEditDiff(input: ToolInput): string {
+  const filePath = str(input.file_path)
+  const oldStr = str(input.old_string)
+  const newStr = str(input.new_string)
   const replaceAll = input.replace_all
 
   // Resolve file path for click-to-open
@@ -80,11 +97,11 @@ function renderEditDiff(input: Record<string, any>): string {
  * Render Bash tool input as a terminal-style view.
  * Shows description (if any) and command with $ prefix.
  */
-function renderBashTerminal(input: Record<string, any>): string {
-  const command = input.command || ''
-  const description = input.description || ''
-  const workdir = input.workdir || input.dir_path || ''
-  const timeout = input.timeout
+function renderBashTerminal(input: ToolInput): string {
+  const command = str(input.command)
+  const description = str(input.description)
+  const workdir = str(input.workdir) || str(input.dir_path)
+  const timeout = num(input.timeout)
   const runInBackground = input.run_in_background || input.is_background
 
   let html = '<div class="bash-terminal-view">'
@@ -128,8 +145,8 @@ function renderBashTerminal(input: Record<string, any>): string {
 /**
  * Build a clickable file path header used by Read/Write/Edit views.
  */
-function filePathHeader(input: Record<string, any>, extraBadge = ''): string {
-  const filePath = input.file_path || ''
+function filePathHeader(input: ToolInput, extraBadge = ''): string {
+  const filePath = str(input.file_path)
   const projectRoot = store.state.projectRoot || ''
   const homeDir = store.state.homeDir || ''
   const resolvedPath = resolveFilePath(filePath, projectRoot, homeDir)
@@ -149,8 +166,8 @@ function filePathHeader(input: Record<string, any>, extraBadge = ''): string {
  * Render Read tool input as a file preview view.
  * Shows clickable file path + syntax-highlighted content preview.
  */
-function renderReadPreview(input: Record<string, any>): string {
-  const filePath = input.file_path || ''
+function renderReadPreview(input: ToolInput): string {
+  const filePath = str(input.file_path)
   const lang = detectLang(filePath)
 
   let html = '<div class="file-preview-view">'
@@ -158,7 +175,7 @@ function renderReadPreview(input: Record<string, any>): string {
 
   // Content preview body
   html += '<div class="file-preview-body">'
-  const content = input.content || ''
+  const content = str(input.content)
   if (content) {
     const lines = content.split('\n')
     for (const line of lines) {
@@ -182,15 +199,15 @@ function renderReadPreview(input: Record<string, any>): string {
  * Render Write tool input as a file write view.
  * Shows clickable file path + syntax-highlighted content to write.
  */
-function renderWritePreview(input: Record<string, any>): string {
-  const filePath = input.file_path || ''
+function renderWritePreview(input: ToolInput): string {
+  const filePath = str(input.file_path)
   const lang = detectLang(filePath)
 
   let html = '<div class="file-write-view">'
   html += filePathHeader(input, `<span class="file-write-badge">${gt('tool.write.badge')}</span>`)
 
   html += '<div class="file-write-body">'
-  const content = input.content || ''
+  const content = str(input.content)
   if (content) {
     const lines = content.split('\n')
     for (const line of lines) {
@@ -208,7 +225,7 @@ function renderWritePreview(input: Record<string, any>): string {
  * Clicking an option is handled by the AskUserQuestion action handler
  * registered at the bottom of this file.
  */
-function renderAskUserQuestion(input: Record<string, any>): string {
+function renderAskUserQuestion(input: ToolInput): string {
   const questions = input.questions
   if (!Array.isArray(questions) || questions.length === 0) {
     return `<div class="ask-question-view"><div class="ask-question-empty">${gt('tool.askUser.noQuestions')}</div></div>`
@@ -269,15 +286,15 @@ function renderAskUserQuestion(input: Record<string, any>): string {
  * Render Grep tool input as a search view.
  * Shows search pattern (highlighted) + search path + output_mode tag.
  */
-function renderGrepSearch(input: Record<string, any>): string {
-  const pattern = input.pattern || ''
-  const path = input.path || ''
-  const outputMode = input.output_mode || ''
-  const globFilter = input.glob || input.include_pattern || input.include || ''
+function renderGrepSearch(input: ToolInput): string {
+  const pattern = str(input.pattern)
+  const path = str(input.path)
+  const outputMode = str(input.output_mode)
+  const globFilter = str(input.glob) || str(input.include_pattern) || str(input.include)
   const caseInsensitive = input['-i'] || input.ignoreCase || input.case_sensitive === false
-  const contextLines = input.context || ''
-  const afterLines = input['-A'] || input.after || ''
-  const beforeLines = input['-B'] || input.before || ''
+  const contextLines = str(input.context)
+  const afterLines = str(input['-A']) || str(input.after)
+  const beforeLines = str(input['-B']) || str(input.before)
 
   let html = '<div class="grep-search-view">'
 
@@ -330,9 +347,9 @@ function renderGrepSearch(input: Record<string, any>): string {
  * Render Glob tool input as a file pattern view.
  * Shows glob pattern + search directory.
  */
-function renderGlobPattern(input: Record<string, any>): string {
-  const pattern = input.pattern || ''
-  const path = input.path || ''
+function renderGlobPattern(input: ToolInput): string {
+  const pattern = str(input.pattern)
+  const path = str(input.path)
   const caseSensitive = input.case_sensitive
 
   let html = '<div class="glob-pattern-view">'
@@ -373,11 +390,11 @@ function renderGlobPattern(input: Record<string, any>): string {
  * Render WebSearch tool input as a search query view.
  * Shows the search query text.
  */
-function renderWebSearch(input: Record<string, any>): string {
-  const query = input.query || ''
-  const allowedDomains = input.allowed_domains as string[] | undefined
-  const blockedDomains = input.blocked_domains as string[] | undefined
-  const topic = input.topic || ''
+function renderWebSearch(input: ToolInput): string {
+  const query = str(input.query)
+  const allowedDomains = Array.isArray(input.allowed_domains) ? input.allowed_domains as string[] : undefined
+  const blockedDomains = Array.isArray(input.blocked_domains) ? input.blocked_domains as string[] : undefined
+  const topic = str(input.topic)
 
   let html = '<div class="web-search-view">'
   html += '<div class="web-search-query">'
@@ -406,10 +423,10 @@ function renderWebSearch(input: Record<string, any>): string {
  * Render WebFetch tool input as a URL fetch view.
  * Shows the URL (clickable) and optional prompt.
  */
-function renderWebFetch(input: Record<string, any>): string {
-  const url = input.url || input.prompt || ''
-  const format = input.format || ''
-  const timeout = input.timeout
+function renderWebFetch(input: ToolInput): string {
+  const url = str(input.url) || str(input.prompt)
+  const format = str(input.format)
+  const timeout = num(input.timeout)
 
   let html = '<div class="web-fetch-view">'
 
@@ -428,7 +445,7 @@ function renderWebFetch(input: Record<string, any>): string {
   }
 
   // Prompt (if present and different from url)
-  const prompt = input.prompt && input.url ? input.prompt : ''
+  const prompt = input.prompt && input.url ? str(input.prompt) : ''
   if (prompt) {
     html += `<div class="web-fetch-prompt">${escapeHtml(prompt)}</div>`
   }
@@ -453,10 +470,10 @@ function renderWebFetch(input: Record<string, any>): string {
  * Render Agent tool input as a sub-agent call view.
  * Shows agent type badge + description + full markdown-rendered prompt.
  */
-function renderAgentCall(input: Record<string, any>): string {
-  const description = input.description || ''
-  const prompt = input.prompt || ''
-  const subagentType = input.subagent_type || input.mode || ''
+function renderAgentCall(input: ToolInput): string {
+  const description = str(input.description)
+  const prompt = str(input.prompt)
+  const subagentType = str(input.subagent_type) || str(input.mode)
 
   let html = '<div class="agent-call-view">'
 
@@ -488,8 +505,8 @@ function renderAgentCall(input: Record<string, any>): string {
  * Render Skill tool input as a skill call view.
  * Shows skill name + optional arguments (full content).
  */
-function renderSkillCall(input: Record<string, any>): string {
-  const skill = input.skill || input.command || ''
+function renderSkillCall(input: ToolInput): string {
+  const skill = str(input.skill) || str(input.command)
   const args = input.args || input.arguments || ''
 
   let html = '<div class="skill-call-view">'
@@ -515,10 +532,10 @@ function renderSkillCall(input: Record<string, any>): string {
  * Shows tool name + description, permission options as buttons.
  * Clicking an option calls POST /api/ai/permission/respond.
  */
-function renderPermissionApproval(input: Record<string, any>, blockCtx?: ToolBlockCtx): string {
-  const options = Array.isArray(input.options) ? input.options : []
-  const toolName = input.toolName || ''
-  const toolInput = input.toolInput || ''
+function renderPermissionApproval(input: ToolInput, blockCtx?: ToolBlockCtx): string {
+  const options = Array.isArray(input.options) ? input.options as Array<Record<string, unknown>> : []
+  const toolName = str(input.toolName)
+  const toolInput = str(input.toolInput)
   const isAutoApproved = input.autoApproved === true
   const isDone = blockCtx?.done
   // Require explicit output to consider this genuinely responded.
@@ -556,9 +573,9 @@ function renderPermissionApproval(input: Record<string, any>, blockCtx?: ToolBlo
   }
   if (toolInput) {
     try {
-      const parsed = JSON.parse(toolInput)
-      const filePath = parsed.file_path || parsed.path || ''
-      const command = parsed.command || ''
+      const parsed = JSON.parse(toolInput) as Record<string, unknown>
+      const filePath = str(parsed.file_path) || str(parsed.path)
+      const command = str(parsed.command)
       if (filePath) {
         html += `<div class="permission-tool-detail"><span class="permission-detail-label">${escapeHtml(gt('tool.permission.file'))}</span><code>${escapeHtml(filePath)}</code></div>`
       }
@@ -586,9 +603,9 @@ function renderPermissionApproval(input: Record<string, any>, blockCtx?: ToolBlo
     html += '<div class="permission-options">'
     for (let i = 0; i < options.length; i++) {
       const opt = options[i]
-      const label = opt.name || ''
-      const kind = opt.kind || ''
-      const optionId = opt.optionId || ''
+      const label = str(opt.name)
+      const kind = str(opt.kind)
+      const optionId = str(opt.optionId)
       let btnClass = 'permission-btn'
       if (kind === 'allow_once' || kind === 'allow_always') {
         btnClass += ' permission-btn-allow'
@@ -608,8 +625,8 @@ function renderPermissionApproval(input: Record<string, any>, blockCtx?: ToolBlo
  * Render LS tool input as a directory listing view.
  * Shows the directory path (clickable).
  */
-function renderLSView(input: Record<string, any>): string {
-  const path = input.path || input.dir_path || ''
+function renderLSView(input: ToolInput): string {
+  const path = str(input.path) || str(input.dir_path)
 
   let html = '<div class="ls-dir-view">'
   html += '<div class="ls-dir-header">'
@@ -636,16 +653,16 @@ function renderLSView(input: Record<string, any>): string {
  * Render TodoWrite tool input as a structured task list.
  * Shows todo items with their status.
  */
-function renderTodoWrite(input: Record<string, any>): string {
-  const todos = Array.isArray(input.todos) ? input.todos : []
+function renderTodoWrite(input: ToolInput): string {
+  const todos = Array.isArray(input.todos) ? input.todos as Array<Record<string, unknown>> : []
 
   let html = '<div class="todo-write-view">'
 
   if (todos.length > 0) {
     html += '<div class="todo-write-list">'
     for (const todo of todos) {
-      const content = todo.content || ''
-      const status = todo.status || ''
+      const content = str(todo.content)
+      const status = str(todo.status)
       const isActive = status === 'in_progress'
       const isDone = status === 'completed'
       let icon = '○'
@@ -667,7 +684,7 @@ function renderTodoWrite(input: Record<string, any>): string {
 /**
  * Render TodoRead tool input as a task read view.
  */
-function renderTodoRead(_input: Record<string, any>): string {
+function renderTodoRead(_input: ToolInput): string {
   let html = '<div class="todo-read-view">'
   html += `<span class="todo-read-icon">📋</span>`
   html += `<span class="todo-read-label">${escapeHtml(gt('tool.todoRead.label'))}</span>`
@@ -679,7 +696,7 @@ function renderTodoRead(_input: Record<string, any>): string {
  * Render a Task management tool input with a key-value summary.
  * Used for TaskCreate, TaskUpdate, TaskList, TaskGet, TaskStop, TaskOutput.
  */
-function renderTaskTool(input: Record<string, any>): string {
+function renderTaskTool(input: ToolInput): string {
   let html = '<div class="task-tool-view">'
 
   // Show the most relevant fields based on what's present
@@ -727,10 +744,10 @@ function renderTaskTool(input: Record<string, any>): string {
 /**
  * Render mode switch tools (EnterPlanMode/ExitPlanMode) as a simple badge view.
  */
-function renderModeSwitch(input: Record<string, any>): string {
+function renderModeSwitch(input: ToolInput): string {
   let html = '<div class="mode-switch-view">'
   html += `<span class="mode-switch-icon">🔄</span>`
-  const mode = input.mode || input.mode_id || ''
+  const mode = str(input.mode) || str(input.mode_id)
   if (mode) {
     html += `<span class="mode-switch-mode">${escapeHtml(mode)}</span>`
   }
@@ -741,8 +758,8 @@ function renderModeSwitch(input: Record<string, any>): string {
 /**
  * Render worktree switch tools (EnterWorktree/LeaveWorktree) as a path view.
  */
-function renderWorktreeSwitch(input: Record<string, any>): string {
-  const path = input.path || input.worktree_path || ''
+function renderWorktreeSwitch(input: ToolInput): string {
+  const path = str(input.path) || str(input.worktree_path)
   let html = '<div class="worktree-switch-view">'
   html += `<span class="worktree-switch-icon">🌳</span>`
   if (path) {
@@ -762,9 +779,9 @@ function renderWorktreeSwitch(input: Record<string, any>): string {
 /**
  * Render SendMessage tool input as a message card.
  */
-function renderSendMessage(input: Record<string, any>): string {
-  const recipient = input.recipient || ''
-  const content = input.content || input.message || ''
+function renderSendMessage(input: ToolInput): string {
+  const recipient = str(input.recipient)
+  const content = str(input.content) || str(input.message)
 
   let html = '<div class="send-message-view">'
   html += '<div class="send-message-header">'
@@ -784,9 +801,9 @@ function renderSendMessage(input: Record<string, any>): string {
 /**
  * Render ComputerUse tool input as a computer action view.
  */
-function renderComputerUse(input: Record<string, any>): string {
-  const action = input.action || ''
-  const description = input.description || input.text || ''
+function renderComputerUse(input: ToolInput): string {
+  const action = str(input.action)
+  const description = str(input.description) || str(input.text)
 
   let html = '<div class="computer-use-view">'
   html += '<div class="computer-use-header">'
@@ -806,8 +823,8 @@ function renderComputerUse(input: Record<string, any>): string {
 /**
  * Render team management tools (TeamCreate/TeamDelete) as a simple card.
  */
-function renderTeamTool(input: Record<string, any>): string {
-  const name = input.name || input.team_name || ''
+function renderTeamTool(input: ToolInput): string {
+  const name = str(input.name) || str(input.team_name)
 
   let html = '<div class="team-tool-view">'
   html += '<span class="team-tool-icon">👥</span>'
@@ -821,9 +838,9 @@ function renderTeamTool(input: Record<string, any>): string {
 /**
  * Render chat reply tools (WeChatReply/WeComReply) as a message card.
  */
-function renderChatReply(input: Record<string, any>): string {
-  const message = input.message || input.content || ''
-  const recipient = input.recipient || input.user || ''
+function renderChatReply(input: ToolInput): string {
+  const message = str(input.message) || str(input.content)
+  const recipient = str(input.recipient) || str(input.user)
 
   let html = '<div class="chat-reply-view">'
   html += '<div class="chat-reply-header">'
@@ -843,9 +860,9 @@ function renderChatReply(input: Record<string, any>): string {
 /**
  * Render save_memory tool input as a key-value card.
  */
-function renderSaveMemory(input: Record<string, any>): string {
-  const key = input.key || input.name || ''
-  const value = input.value || input.content || ''
+function renderSaveMemory(input: ToolInput): string {
+  const key = str(input.key) || str(input.name)
+  const value = str(input.value) || str(input.content)
 
   let html = '<div class="save-memory-view">'
   html += '<span class="save-memory-icon">💾</span>'
@@ -863,8 +880,8 @@ function renderSaveMemory(input: Record<string, any>): string {
 /**
  * Render DeepThink tool input as a thinking indicator.
  */
-function renderDeepThink(input: Record<string, any>): string {
-  const topic = input.topic || input.query || input.prompt || ''
+function renderDeepThink(input: ToolInput): string {
+  const topic = str(input.topic) || str(input.query) || str(input.prompt)
 
   let html = '<div class="deep-think-view">'
   html += '<span class="deep-think-icon">🧠</span>'
@@ -879,8 +896,8 @@ function renderDeepThink(input: Record<string, any>): string {
 /**
  * Render StructuredOutput tool input as a schema preview.
  */
-function renderStructuredOutput(input: Record<string, any>): string {
-  const prompt = input.prompt || input.instruction || ''
+function renderStructuredOutput(input: ToolInput): string {
+  const prompt = str(input.prompt) || str(input.instruction)
 
   let html = '<div class="structured-output-view">'
   html += '<span class="structured-output-icon">📋</span>'
@@ -895,9 +912,9 @@ function renderStructuredOutput(input: Record<string, any>): string {
 /**
  * Render SkillManage tool input as a skill management card.
  */
-function renderSkillManage(input: Record<string, any>): string {
-  const action = input.action || input.operation || ''
-  const skill = input.skill || input.name || ''
+function renderSkillManage(input: ToolInput): string {
+  const action = str(input.action) || str(input.operation)
+  const skill = str(input.skill) || str(input.name)
 
   let html = '<div class="skill-manage-view">'
   html += '<span class="skill-manage-icon">⚡</span>'
@@ -914,9 +931,9 @@ function renderSkillManage(input: Record<string, any>): string {
 /**
  * Render Monitor tool input as a monitor view.
  */
-function renderMonitor(input: Record<string, any>): string {
-  const command = input.command || ''
-  const target = input.target || ''
+function renderMonitor(input: ToolInput): string {
+  const command = str(input.command)
+  const target = str(input.target)
 
   let html = '<div class="monitor-view">'
   html += '<span class="monitor-icon">📡</span>'
@@ -940,9 +957,9 @@ function renderMonitor(input: Record<string, any>): string {
 /**
  * Render ImageGen tool input as an image generation card.
  */
-function renderImageGen(input: Record<string, any>): string {
-  const prompt = input.prompt || input.description || ''
-  const size = input.size || ''
+function renderImageGen(input: ToolInput): string {
+  const prompt = str(input.prompt) || str(input.description)
+  const size = str(input.size)
 
   let html = '<div class="image-gen-view">'
   html += '<span class="image-gen-icon">🎨</span>'
@@ -960,9 +977,9 @@ function renderImageGen(input: Record<string, any>): string {
 /**
  * Render LSP tool input as a language service card.
  */
-function renderLSP(input: Record<string, any>): string {
-  const method = input.method || ''
-  const filePath = input.file_path || input.path || ''
+function renderLSP(input: ToolInput): string {
+  const method = str(input.method)
+  const filePath = str(input.file_path) || str(input.path)
 
   let html = '<div class="lsp-view">'
   html += '<span class="lsp-icon">🔮</span>'
@@ -986,8 +1003,8 @@ function renderLSP(input: Record<string, any>): string {
 /**
  * Render Git tool input as a git command card.
  */
-function renderGit(input: Record<string, any>): string {
-  const command = input.command || input.subcommand || ''
+function renderGit(input: ToolInput): string {
+  const command = str(input.command) || str(input.subcommand)
   const args = input.args || input.arguments || ''
 
   let html = '<div class="git-tool-view">'
@@ -1007,11 +1024,11 @@ function renderGit(input: Record<string, any>): string {
 /**
  * Render NotebookEdit tool input — same as Edit with cell context.
  */
-function renderNotebookEdit(input: Record<string, any>): string {
+function renderNotebookEdit(input: ToolInput): string {
   // NotebookEdit has same diff structure as Edit plus cell info
-  const filePath = input.file_path || ''
+  const filePath = str(input.file_path)
   const cellIndex = input.cell_index ?? input.cellIndex ?? ''
-  const newStr = input.new_source || input.new_string || ''
+  const newStr = str(input.new_source) || str(input.new_string)
 
   const projectRoot = store.state.projectRoot || ''
   const homeDir = store.state.homeDir || ''
@@ -1046,8 +1063,8 @@ function renderNotebookEdit(input: Record<string, any>): string {
 /**
  * Render input as JSON (the fallback for unregistered tools).
  */
-function renderJsonFallback(input: any): string {
-  if (!input || (typeof input === 'object' && Object.keys(input).length === 0)) {
+function renderJsonFallback(input: unknown): string {
+  if (!input || (typeof input === 'object' && !Array.isArray(input) && Object.keys(input as Record<string, unknown>).length === 0)) {
     try {
       const highlighted = hljs.highlight('{}', { language: 'json' }).value
       return `<div class="tool-json-body"><code>${highlighted}</code></div>`
@@ -1082,11 +1099,11 @@ export interface ToolBlockCtx {
   output?: string
 }
 
-export type ToolRenderer = (input: Record<string, any>, blockCtx?: ToolBlockCtx) => string
+export type ToolRenderer = (input: ToolInput, blockCtx?: ToolBlockCtx) => string
 
 export type ToolActionHandler = (
   event: Event,
-  emit: (type: string, payload?: any) => void
+  emit: (type: string, payload?: unknown) => void
 ) => boolean
 
 const TOOL_RENDERERS: Record<string, ToolRenderer> = {}
@@ -1113,7 +1130,7 @@ export function registerToolActionHandler(toolName: string, handler: ToolActionH
  * Dispatch a click event to the registered tool action handler.
  * Returns true if a handler consumed the event, false otherwise.
  */
-export function handleToolAction(toolName: string, event: Event, emit: (type: string, payload?: any) => void): boolean {
+export function handleToolAction(toolName: string, event: Event, emit: (type: string, payload?: unknown) => void): boolean {
   const handler = TOOL_ACTION_HANDLERS[toolName.toLowerCase()]
   if (!handler) return false
   return handler(event, emit)
@@ -1131,11 +1148,11 @@ export function shouldAutoExpandTool(toolName: string): boolean {
  * Format tool_use input for display in the expanded tool detail area.
  * Looks up the tool name in the renderer registry; falls back to JSON.
  */
-export function formatToolInput(input: any, toolName?: string, blockCtx?: ToolBlockCtx): string {
+export function formatToolInput(input: unknown, toolName?: string, blockCtx?: ToolBlockCtx): string {
   if (toolName) {
     const renderer = TOOL_RENDERERS[toolName.toLowerCase()]
     if (renderer && input && typeof input === 'object') {
-      return renderer(input, blockCtx)
+      return renderer(input as ToolInput, blockCtx)
     }
   }
   return renderJsonFallback(input)

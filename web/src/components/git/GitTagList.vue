@@ -40,7 +40,7 @@ import SwipeToDeleteRow from './SwipeToDeleteRow.vue'
 const { t } = useI18n()
 
 defineProps<{
-  tags: Record<string, any>[]
+  tags: Array<Record<string, unknown> & { name: string; msg?: string; date?: string }>
   loading?: boolean
   error?: boolean
 }>()

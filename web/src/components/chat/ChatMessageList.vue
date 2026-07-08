@@ -529,7 +529,6 @@ function scrollToBottomSmooth() {
 
 // ── User message index ──
 const {
-  hasUserMessages,
   userMsgIndexList,
   showUserMsgIndex,
   loadingTarget,

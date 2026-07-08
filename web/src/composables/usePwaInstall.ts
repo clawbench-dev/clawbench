@@ -62,7 +62,7 @@ export function usePwaInstall() {
       const accepted = result.outcome === 'accepted'
       appLog.i(TAG, accepted ? 'PWA install accepted' : 'PWA install dismissed')
       return accepted
-    } catch (err) {
+    } catch (err: unknown) {
       appLog.e(TAG, 'PWA install prompt failed', err)
       deferredPrompt.value = null
       return false

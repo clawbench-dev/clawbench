@@ -211,7 +211,7 @@ const dialog = useDialog()
 const { getServerValueWithDefault } = useSettingsConfig()
 
 // Font size with persistence
-const fontSize = ref<number>(localConfig.terminalFontSize || DEFAULT_FONT_SIZE)
+const fontSize = ref<number>((localConfig.terminalFontSize as number) || DEFAULT_FONT_SIZE)
 
 // Max sessions from server config
 const maxSessions = computed(() => {
@@ -461,17 +461,17 @@ const { isAppMode } = useAppMode()
 
 function enableVolumeKeys() {
   if (!isAppMode.value) return
-  const native = (window as any).AndroidNative
+  const native = (window as unknown as { AndroidNative?: { setVolumeKeyMode?: (enabled: boolean) => void; setTerminalSessionCount?: (count: number) => void } }).AndroidNative
   if (native?.setVolumeKeyMode) native.setVolumeKeyMode(true)
 }
 
 function disableVolumeKeys() {
   if (!isAppMode.value) return
-  const native = (window as any).AndroidNative
+  const native = (window as unknown as { AndroidNative?: { setVolumeKeyMode?: (enabled: boolean) => void } }).AndroidNative
   if (native?.setVolumeKeyMode) native.setVolumeKeyMode(false)
 }
 
-;(window as any).__onVolumeKey = (direction: 'up' | 'down') => {
+;(window as unknown as { __onVolumeKey?: (direction: 'up' | 'down') => void }).__onVolumeKey = (direction: 'up' | 'down') => {
   if (direction === 'up') terminalKeys.sendArrowUp()
   else terminalKeys.sendArrowDown()
 }
@@ -484,7 +484,7 @@ watch(() => tabs.value.length, (count) => {
   store.state.terminalSessionCount = count
   if (isAppMode.value) {
     try {
-      const native = (window as any).AndroidNative
+      const native = (window as unknown as { AndroidNative?: { setTerminalSessionCount?: (count: number) => void } }).AndroidNative
       if (native?.setTerminalSessionCount) native.setTerminalSessionCount(count)
     } catch { /* ignore */ }
   }
@@ -529,15 +529,15 @@ function setTabContainer(tabId: string, el: HTMLElement | null) {
 
 function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
   // Clean up previous handlers from a prior mount on the same container
-  const oldWheel = (container as any).__terminalWheelHandler
+  const oldWheel = (container as unknown as { __terminalWheelHandler?: ((e: Event) => void) | null }).__terminalWheelHandler
   if (oldWheel) {
     container.removeEventListener('wheel', oldWheel)
-    delete (container as any).__terminalWheelHandler
+    delete (container as unknown as { __terminalWheelHandler?: ((e: Event) => void) | null }).__terminalWheelHandler
   }
-  const oldCtx = (container as any).__terminalContextMenuHandler
+  const oldCtx = (container as unknown as { __terminalContextMenuHandler?: ((e: Event) => void) | null }).__terminalContextMenuHandler
   if (oldCtx) {
     container.removeEventListener('contextmenu', oldCtx)
-    delete (container as any).__terminalContextMenuHandler
+    delete (container as unknown as { __terminalContextMenuHandler?: ((e: Event) => void) | null }).__terminalContextMenuHandler
   }
 
   tabManager.mountTabXterm(tab, container)
@@ -551,7 +551,7 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
     }
   }
   container.addEventListener('wheel', wheelHandler, { passive: false })
-  ;(container as any).__terminalWheelHandler = wheelHandler
+  ;(container as unknown as { __terminalWheelHandler?: ((e: WheelEvent) => void) | null }).__terminalWheelHandler = wheelHandler
 
   // Context menu handler — suppress long-press context menu while gestures are enabled
   const contextMenuHandler = (e: Event) => {
@@ -560,7 +560,7 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
     }
   }
   container.addEventListener('contextmenu', contextMenuHandler)
-  ;(container as any).__terminalContextMenuHandler = contextMenuHandler
+  ;(container as unknown as { __terminalContextMenuHandler?: ((e: Event) => void) | null }).__terminalContextMenuHandler = contextMenuHandler
 
   // Fit the terminal after mounting
   requestAnimationFrame(() => {
@@ -852,7 +852,7 @@ onBeforeUnmount(() => {
   viewport.stopWatching()
   gestures.detach()
   disableVolumeKeys()
-  delete (window as any).__onVolumeKey
+  delete (window as unknown as { __onVolumeKey?: unknown }).__onVolumeKey
   tabManager.disposeAll()
 })
 

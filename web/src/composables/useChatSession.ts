@@ -27,10 +27,10 @@ export async function loadSessionsOnce(): Promise<void> {
       const res = await fetch('/api/ai/sessions')
       if (res.ok) {
         const data = await res.json()
-        const sessions = data.sessions || []
-        const hasRunning = sessions.some((s: any) => s.running)
-        const unreadCount = sessions.filter((s: any) =>
-          (s.unreadCount > 0 || s.pendingApproval) && s.id !== identity.currentSessionId.value
+        const sessions: Array<{ running?: boolean; unreadCount?: number; pendingApproval?: boolean; id: string }> = data.sessions || []
+        const hasRunning = sessions.some(s => s.running)
+        const unreadCount = sessions.filter(s =>
+          (s.unreadCount! > 0 || s.pendingApproval) && s.id !== identity.currentSessionId.value
         ).length
         store.state.chatRunning = hasRunning
         store.state.chatUnreadCount = unreadCount
@@ -60,16 +60,16 @@ export function resetChatSessionState(): void {
 
 export interface UseChatSessionOptions {
   currentSessionId: Ref<string>
-  messages: Ref<any[]>
+  messages: Ref<Array<Record<string, unknown>>>
   loading: Ref<boolean>
   inputDisabled: Ref<boolean>
-  blockTasks: Record<string, any>
-  blockAskQuestions: Record<string, any>
-  blockRagResults: Record<string, any>
+  blockTasks: Record<string, unknown>
+  blockAskQuestions: Record<string, unknown>
+  blockRagResults: Record<string, unknown>
   expandedTools: Ref<Record<string, boolean>>
   switching?: Ref<boolean>
-  onParseAssistantContent: (content: string) => any
-  onExtractScheduledTasks: (msgs: any[]) => void
+  onParseAssistantContent: (content: string) => Record<string, unknown>
+  onExtractScheduledTasks: (msgs: Array<Record<string, unknown>>) => void
   onRenderUpdate: (forceFull: boolean) => void
   onScrollBottom: (force?: boolean) => void
   onConnectStream: (sessionId: string) => void
@@ -322,7 +322,7 @@ export function useChatSession(options: UseChatSessionOptions) {
               lastMessageSnapshot = newSnapshot
               const prevCount = messages.value.length
               const newCount = recoverMsgs.length
-              const sameCore = prevCount === newCount && prevCount > 0 && recoverMsgs.slice(0, -1).every((m: any, i: number) => m.id === messages.value[i]?.id)
+              const sameCore = prevCount === newCount && prevCount > 0 && recoverMsgs.slice(0, -1).every((m: Record<string, unknown>, i: number) => m.id === messages.value[i]?.id)
               if (!sameCore) {
                 expandedTools.value = {}
               }
@@ -330,11 +330,11 @@ export function useChatSession(options: UseChatSessionOptions) {
               Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
               // Replace messages — preserve pending messages from messages.value
               // (they're not in DB, so parseMessages won't include them)
-              const _pendingMsgs = messages.value.filter((m: any) => m.pending)
+              const _pendingMsgs = messages.value.filter((m: Record<string, unknown>) => m.pending)
               messages.value = parseMessages(recoverMsgs, onParseAssistantContent, messages.value, recoverData.running)
               // Re-append pending messages that aren't already represented in DB data
               for (const pm of _pendingMsgs) {
-                if (!messages.value.some((m: any) => m.role === 'user' && m.content === pm.content && !m.pending)) {
+                if (!messages.value.some((m: Record<string, unknown>) => m.role === 'user' && m.content === pm.content && !m.pending)) {
                   messages.value.push(pm)
                 }
               }
@@ -443,7 +443,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       // Only reset when message count or non-last message identities differ.
       const prevCount = messages.value.length
       const newCount = rawMsgs.length
-      const sameCore = prevCount === newCount && prevCount > 0 && rawMsgs.slice(0, -1).every((m: any, i: number) => m.id === messages.value[i]?.id)
+      const sameCore = prevCount === newCount && prevCount > 0 && rawMsgs.slice(0, -1).every((m: Record<string, unknown>, i: number) => m.id === messages.value[i]?.id)
       if (!sameCore) {
         expandedTools.value = {}
       }
@@ -455,11 +455,11 @@ export function useChatSession(options: UseChatSessionOptions) {
 
       // Replace messages with server data. Pending messages are in
       // messages.value with pending:true — preserve them across the replacement.
-      const _pendingMsgs = messages.value.filter((m: any) => m.pending)
+      const _pendingMsgs = messages.value.filter((m: Record<string, unknown>) => m.pending)
       messages.value = parseMessages(rawMsgs, onParseAssistantContent, messages.value, data.running)
       // Re-append pending messages that aren't already represented in DB data
       for (const pm of _pendingMsgs) {
-        if (!messages.value.some((m: any) => m.role === 'user' && m.content === pm.content && !m.pending)) {
+        if (!messages.value.some((m: Record<string, unknown>) => m.role === 'user' && m.content === pm.content && !m.pending)) {
           messages.value.push(pm)
         }
       }
@@ -536,7 +536,7 @@ export function useChatSession(options: UseChatSessionOptions) {
         resolveDeferred!()
         loadHistoryDeferred = null
       }
-    } catch (err) {
+    } catch (err: unknown) {
       appLog.e(TAG, 'Failed to load chat history:', err)
       const _msg = err instanceof Error ? err.message : ''
       toast.show(_msg ? gt('chat.session.loadHistoryFailedDetail', { error: _msg }) : gt('chat.session.loadHistoryFailed'), { icon: '⚠️', type: 'error' })
@@ -569,7 +569,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       const pageSize = store.state.chatPageSize
       // Use cursor-based pagination: pass the id of the oldest loaded message
       const oldestMsg = messages.value[0]
-      const beforeId = oldestMsg?.id || ''
+      const beforeId = (oldestMsg?.id as string) || ''
       const resp = await fetch(`/api/ai/chat?session_id=${encodeURIComponent(currentSessionId.value)}&limit=${pageSize}&before_id=${encodeURIComponent(beforeId)}`)
       if (!resp.ok) return
       const data = await resp.json()
@@ -580,7 +580,7 @@ export function useChatSession(options: UseChatSessionOptions) {
         onExtractScheduledTasks(olderMsgs)
         onRenderUpdate(true)
       }
-    } catch (err) {
+    } catch (err: unknown) {
       appLog.e(TAG, 'Failed to load more messages:', err)
     } finally {
       loadingMore.value = false
@@ -631,7 +631,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       const limit = store.state.chatInitialMessages
       const chatUrl = `/api/ai/chat?session_id=${encodeURIComponent(sessionId)}&limit=${limit}`
       const agentsPromise = agents.value.length === 0 ? loadAgents() : Promise.resolve()
-      const [_, resp] = await Promise.all([
+      const [, resp] = await Promise.all([
         agentsPromise,
         fetch(chatUrl),
       ])
@@ -715,7 +715,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       // when the user is already on the chat tab (switchTab early-returns).
       // Fire-and-forget: don't block the switching overlay on this secondary call.
       loadSessionsOnce()
-    } catch (err) {
+    } catch (err: unknown) {
       // If another switch happened, don't touch state
       if (switchSessionSeq !== mySeq) return
       appLog.e(TAG, 'Failed to switch session:', err)
@@ -757,7 +757,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       const maxCount = store.state.sessionMaxCount
       if (typeof data.sessionCount === 'number') store.state.sessionCount = data.sessionCount
       toast.show(gt('chat.session.created', { count: data.sessionCount ?? '', max: maxCount }), { icon: '✨', type: 'success', duration: 1500 })
-    } catch (err) {
+    } catch (err: unknown) {
       appLog.e(TAG, 'Failed to create session:', err)
       const _msg = err instanceof Error ? err.message : ''
       toast.show(_msg ? gt('chat.session.createSessionFailedDetail', { error: _msg }) : gt('chat.session.createSessionFailed'), { icon: '⚠️', type: 'error' })
@@ -796,7 +796,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       } else {
         toast.show(gt('chat.session.deleteFailed'), { icon: '⚠️', type: 'error' })
       }
-    } catch (err) {
+    } catch (err: unknown) {
       appLog.e(TAG, 'Failed to delete session:', err)
       toast.show(gt('chat.session.deleteFailed'), { icon: '⚠️', type: 'error' })
     } finally {
@@ -819,7 +819,7 @@ export function useChatSession(options: UseChatSessionOptions) {
           // Reload history to pick up new messages (don't force scroll, skip if unchanged)
           await loadHistory(false, false, true)
         }
-      } catch (err) {
+      } catch {
         // Silently ignore polling errors
       }
     }, 15000)
@@ -957,7 +957,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       await switchSession(sessionId)
       switchTabFn('chat')
       return true
-    } catch (err) {
+    } catch (err: unknown) {
       appLog.e(TAG, 'Failed to continue from execution:', err)
       toast.show(gt('chat.session.continueFailed'), { icon: '⚠️', type: 'error' })
       return false
@@ -997,7 +997,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       toast.show(gt('chat.session.forked', { count: data.sessionCount ?? '', max: maxCount }), { icon: '🔀', type: 'success', duration: 1500 })
       await switchSession(data.sessionId)
       return true
-    } catch (err) {
+    } catch (err: unknown) {
       appLog.e(TAG, 'Failed to fork session:', err)
       toast.show(gt('chat.session.forkFailed'), { icon: '⚠️', type: 'error' })
       return false

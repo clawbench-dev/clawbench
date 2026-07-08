@@ -77,7 +77,7 @@ export function playNotificationSound() {
 
     // Trigger haptic vibration alongside the sound
     vibrateNotification()
-  } catch (err) {
+  } catch (err: unknown) {
     // Silently fail — sound is non-critical
     appLog.w(TAG, 'Failed to play notification sound:', err)
   }

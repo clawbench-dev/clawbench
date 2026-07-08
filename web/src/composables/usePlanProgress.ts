@@ -53,6 +53,7 @@ export function setPlanCollapsed(collapsed: boolean) {
 // so Playwright/browser-automation can inject plan data.
 // ───────────────────────────────────────────────────────────
 if (typeof window !== 'undefined') {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const bridge = (window as any).__clawbench || ((window as any).__clawbench = {})
   bridge.updatePlanEntries = updatePlanEntries
   bridge.clearPlanState = clearPlanState

@@ -360,12 +360,11 @@ import { getFileType } from '@/utils/fileType.ts'
 import {
   buildThumbUrl,
   isImage as isImageEntry, isAudio as isAudioEntry, isVideo as isVideoEntry,
-  isThumbable as isThumbableEntry, formatSize as formatFileSize, THUMBABLE_EXTS,
+  isThumbable as isThumbableEntry, formatSize as formatFileSize,
   createMultiSelect as _createMultiSelect, createClipboard as _createClipboard,
-  resolveClickAction,
 } from '@/utils/fileManager.ts'
 import { store } from '@/stores/app.ts'
-import { localConfig, setLocalConfig, useSettingsConfig, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
+import { localConfig, setLocalConfig, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useTerminalStatus } from '@/composables/useTerminalStatus.ts'
@@ -373,7 +372,6 @@ import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipe
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { downloadFileByPath } from '@/utils/download.ts'
-import { useToast } from '@/composables/useToast.ts'
 import { useFileNavStack } from '@/composables/useFileNavStack'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
 import SearchInput from '@/components/common/SearchInput.vue'
@@ -517,10 +515,6 @@ function entryIconColor(entry) {
     if (isVideoEntry(entry)) return '#ef4444'
     return getFileType(entry.name).color
 }
-function isVideo(entry) {
-    return isVideoEntry(entry)
-}
-
 function onSortSelect(field) {
   emit('toggleSort', field)
   sortMenuOpen.value = false
@@ -634,7 +628,7 @@ function handleCtxMenu(e) {
 }
 
 // Clipboard now supports multiple entries
-const { clipboard, clear: clearClipboard } = _createClipboard()
+const { clipboard } = _createClipboard()
 
 // Check if a given path is in clipboard as cut (for visual half-transparent effect)
 const cutPaths = computed(() => {
@@ -748,7 +742,7 @@ async function doNewFile() {
             const err = await resp.json()
             if (toast) toast.show(t('file.toast.createFailedDetail', { error: err.error || '' }), { icon: '❌', type: 'error', duration: 2000 })
         }
-    } catch (err) {
+    } catch {
         if (toast) toast.show(t('file.toast.createFailed'), { icon: '❌', type: 'error', duration: 2000 })
     }
 }
@@ -773,7 +767,7 @@ async function doNewFolder() {
             const err = await resp.json()
             if (toast) toast.show(t('file.toast.createFailedDetail', { error: err.error || '' }), { icon: '❌', type: 'error', duration: 2000 })
         }
-    } catch (err) {
+    } catch {
         if (toast) toast.show(t('file.toast.createFailed'), { icon: '❌', type: 'error', duration: 2000 })
     }
 }
@@ -922,7 +916,7 @@ function doOpenAsProject() {
         } else {
             resp.text().then(text => {
                 let msg = text
-                try { msg = JSON.parse(text).error || msg } catch (_) {}
+                try { msg = JSON.parse(text).error || msg } catch {}
                 if (toast) toast.show(t('file.toast.switchProjectFailed', { error: msg }), { icon: '❌', type: 'error', duration: 2000 })
             })
         }
@@ -995,7 +989,7 @@ async function doArchive(paths, zipName) {
             URL.revokeObjectURL(url)
         }
         if (toast) toast.show(t('file.toast.archiveDone'), { icon: '✅', type: 'success', duration: 1500 })
-    } catch (err) {
+    } catch {
         if (toast) toast.show(t('file.toast.archiveFailed'), { icon: '❌', type: 'error', duration: 2000 })
     }
 }

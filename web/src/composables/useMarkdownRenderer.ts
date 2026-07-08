@@ -211,8 +211,8 @@ export async function renderMermaidInElement(
             container.innerHTML = result.svg
             container.dataset.mermaid = source
             ;(block as Element).replaceWith(container)
-        } catch (err: any) {
-            container.innerHTML = `<pre style="padding:12px;background:var(--code-bg);border-radius:6px;font-size:13px;overflow-x:auto;">Mermaid Error: ${escapeHtml(err.message)}</pre>`
+        } catch (err: unknown) {
+            container.innerHTML = `<pre style="padding:12px;background:var(--code-bg);border-radius:6px;font-size:13px;overflow-x:auto;">Mermaid Error: ${escapeHtml((err as { message?: string })?.message || String(err))}</pre>`
             ;(block as Element).replaceWith(container)
         }
     })

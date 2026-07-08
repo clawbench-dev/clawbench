@@ -49,6 +49,7 @@ export function buildLocalFileUrl(
  */
 export function downloadFileByPath(path: string, fileName?: string): void {
     if (!path) return
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const native = (window as any).AndroidNative
     if (typeof native !== 'undefined' && native?.downloadFile) {
         native.downloadFile(path)
@@ -72,6 +73,7 @@ export function downloadFileByPath(path: string, fileName?: string): void {
  */
 export function downloadBlob(content: string, filename: string, mimeType: string) {
     const blob = new Blob([content], { type: mimeType })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const native = (window as any).AndroidNative
     const isApp = typeof native !== 'undefined' && native?.downloadBlob
 

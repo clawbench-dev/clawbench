@@ -156,7 +156,6 @@ import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { gt } from '@/composables/useLocale'
 import { useTabDrawer } from '@/composables/useTabDrawer'
-import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import RagDetailDrawer from './RagDetailDrawer.vue'
 import ChatMetadataModal from './ChatMetadataModal.vue'
 import ToolDetailDrawer from './ToolDetailDrawer.vue'
@@ -203,10 +202,7 @@ const emit = defineEmits(['open', 'message', 'open-file', 'task-card-click'])
 // ── Singletons ──
 const identity = useSessionIdentity()
 const agentsComposable = useAgents()
-const { agents: agentsList, getAgent, getAgentIcon, getAgentName, getAgentModels, isMultiModel, getDefaultModelId } = agentsComposable
-// Expose as `agents` for template access to getAgentModels/isMultiModel
-const agents = agentsComposable
-
+const { agents: agentsList, getAgent, getAgentIcon, getAgentName } = agentsComposable
 const messages = ref([])
 const pendingStore = usePendingStore()
 /** Rendered messages = persisted messages + pending messages for current session */
@@ -257,7 +253,7 @@ function handleQuoteClick() {
     }
 }
 
-const { planEntries, planCollapsed, planHasUpdate, hasPlan, togglePlanCollapse, clearPlanState } = usePlanProgress()
+const { planEntries, planCollapsed, planHasUpdate, togglePlanCollapse } = usePlanProgress()
 
 const render = useChatRender({ messages, theme, currentSessionId: identity.currentSessionId })
 
@@ -287,7 +283,6 @@ const {
   handleOverlayRetryClick,
   fetchToolCallDetail,
   handleFileOpenInOverlay,
-  closeOverlay,
 } = useToolDetailDrawer({
   chatRender: render,
   onFileOpen: async (path, lineStart, lineEnd) => {
@@ -975,7 +970,7 @@ async function handleResumeFromDetail(item) {
             return
         }
         await session.switchSession(item.sessionId)
-    } catch (err) {
+    } catch {
         toast.show(t('chat.contentBlocks.ragResumeFailed'), { icon: '⚠️', type: 'error' })
     }
 }
@@ -1000,7 +995,7 @@ async function handleResumeSession({ sessionId, sessionTitle }) {
             return
         }
         await session.switchSession(sessionId)
-    } catch (err) {
+    } catch {
         toast.show(t('chat.contentBlocks.ragResumeFailed'), { icon: '⚠️', type: 'error' })
     }
 }

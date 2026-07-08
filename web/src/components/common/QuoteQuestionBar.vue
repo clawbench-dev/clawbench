@@ -107,12 +107,6 @@ async function expand() {
   inputRef.value?.focus()
 }
 
-function collapse() {
-  expanded.value = false
-  inputText.value = ''
-  emit('unpin')
-}
-
 function autoResizeTextarea() {
   const el = inputRef.value
   if (!el) return

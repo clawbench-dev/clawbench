@@ -455,7 +455,7 @@ function handleTouchMove(e) {
     }
 }
 
-function handleTouchEnd(e) {
+function handleTouchEnd(_e) {
     // Check for swipe navigation (only at scale 1)
     if (scale.value === 1 && showNav.value && !hasMoved.value) {
         const dx = touchStartX.value - touchLastX.value
@@ -492,7 +492,7 @@ function collectMdImages(container, clickedImg) {
     const imgs = container.querySelectorAll('img')
     const list = []
     let startIdx = 0
-    imgs.forEach((img, i) => {
+    imgs.forEach((img) => {
         const src = img.src
         if (!src) return
         const alt = img.alt || ''

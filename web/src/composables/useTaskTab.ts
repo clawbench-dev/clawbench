@@ -5,11 +5,27 @@ import { showBrowserNotification } from '@/composables/useNotification'
 import { useToast } from '@/composables/useToast'
 import { gt } from '@/composables/useLocale'
 
+interface TaskItem {
+  id: number
+  name: string
+  status: string
+  unreadCount: number
+  runningCount: number
+  runCount: number
+}
+
+interface TaskExecData {
+  id: number
+  sessionId?: string
+  content?: string
+  [key: string]: unknown
+}
+
 // Module-level singleton refs (shared across all consumers)
 const currentView = ref<'list' | 'settings' | 'history'>('list')
 const selectedTaskId = ref<number | null>(null)
 const selectedExecId = ref<string | null>(null)
-const selectedExecData = ref<any>(null)
+const selectedExecData = ref<TaskExecData | null>(null)
 const execDetailOpen = ref(false)
 const formViewOpen = ref(false)
 const formMode = ref<'create' | 'edit'>('create')
@@ -57,7 +73,7 @@ export function resetTaskTabState() {
 }
 
 /** Called when a task execution completes (runningCount drops to 0) */
-function onTaskCompleted(task: any) {
+function onTaskCompleted(task: TaskItem) {
     // Sound + haptic
     playNotificationSound()
 
@@ -110,15 +126,15 @@ async function loadTasks() {
     try {
         const resp = await fetch('/api/tasks', { signal: controller.signal })
         if (!resp.ok) return
-        const data = await resp.json()
-        const newTasks = data.tasks || []
+        const data = await resp.json() as { tasks: TaskItem[] }
+        const newTasks: TaskItem[] = data.tasks || []
         // Race condition guard: if markAllTasksRead is in progress,
         // don't let a stale response flip taskUnreadCount back to non-zero
         if (!markingReadInProgress) {
-            store.state.taskUnreadCount = newTasks.reduce((sum: number, t: any) => sum + (t.unreadCount || 0), 0)
+            store.state.taskUnreadCount = newTasks.reduce((sum, t) => sum + (t.unreadCount || 0), 0)
         }
         // Derive running state from runningCount
-        const hasRunning = newTasks.some((t: any) => t.runningCount > 0)
+        const hasRunning = newTasks.some(t => t.runningCount > 0)
         store.state.taskRunning = hasRunning
 
         // ── Detect task completion (runningCount dropped to 0) ──
@@ -138,7 +154,7 @@ async function loadTasks() {
             prevRunningCounts.set(id, currCount)
         }
         // Clean up dedup set for deleted tasks
-        const currentIds = new Set(newTasks.map((t: any) => t.id))
+        const currentIds = new Set(newTasks.map(t => t.id))
         for (const key of prevRunningCounts.keys()) {
             if (!currentIds.has(key)) prevRunningCounts.delete(key)
         }
@@ -146,7 +162,7 @@ async function loadTasks() {
         // (they will be re-added if the task runs again)
         for (const key of [...notifiedTaskCompletions]) {
             const taskId = parseInt(key.split('-')[0])
-            const task = newTasks.find((t: any) => t.id === taskId)
+            const task = newTasks.find(t => t.id === taskId)
             if (task && task.runningCount === 0) {
                 notifiedTaskCompletions.delete(key)
             }
@@ -156,31 +172,31 @@ async function loadTasks() {
         if (
             store.state.tasks.length !== newTasks.length ||
             newTasks.some(
-                (t: any, i: number) =>
-                    t.id !== store.state.tasks[i]?.id ||
-                    t.status !== store.state.tasks[i]?.status ||
-                    t.runCount !== store.state.tasks[i]?.runCount ||
-                    t.unreadCount !== store.state.tasks[i]?.unreadCount ||
-                    t.runningCount !== store.state.tasks[i]?.runningCount
+                (t, i) =>
+                    t.id !== (store.state.tasks[i] as unknown as TaskItem)?.id ||
+                    t.status !== (store.state.tasks[i] as unknown as TaskItem)?.status ||
+                    t.runCount !== (store.state.tasks[i] as unknown as TaskItem)?.runCount ||
+                    t.unreadCount !== (store.state.tasks[i] as unknown as TaskItem)?.unreadCount ||
+                    t.runningCount !== (store.state.tasks[i] as unknown as TaskItem)?.runningCount
             )
         ) {
-            store.state.tasks = newTasks
+            store.state.tasks = newTasks as unknown as Array<Record<string, unknown>>
         }
-    } catch (e: any) {
+    } catch (e: unknown) {
         // AbortError is expected when a newer request supersedes this one
-        if (e?.name === 'AbortError') return
+        if (e instanceof Error && e.name === 'AbortError') return
         // Silently ignore fetch errors (network down, server restart, etc.)
     }
 }
 
 async function markAllTasksRead() {
-    const unreadTasks = store.state.tasks.filter((t: any) => t.unreadCount > 0)
+    const unreadTasks = store.state.tasks.filter(t => (t as unknown as TaskItem).unreadCount > 0)
     if (unreadTasks.length === 0) return
     markingReadInProgress = true
     try {
         await Promise.all(
-            unreadTasks.map((t: any) =>
-                fetch(`/api/tasks/${t.id}`, {
+            unreadTasks.map(t =>
+                fetch(`/api/tasks/${(t as unknown as TaskItem).id}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ action: 'read' }),
@@ -191,8 +207,8 @@ async function markAllTasksRead() {
         )
         // Optimistically clear unread counts in local store
         for (const t of store.state.tasks) {
-            if ((t as any).unreadCount > 0) {
-                (t as any).unreadCount = 0
+            if ((t as unknown as TaskItem).unreadCount > 0) {
+                (t as Record<string, unknown>).unreadCount = 0
             }
         }
         store.state.taskUnreadCount = 0
@@ -205,8 +221,8 @@ async function markAllTasksRead() {
 
 /** Mark a single task as read — clears unread badge for that task only */
 async function markTaskRead(taskId: number) {
-    const task = store.state.tasks.find((t: any) => t.id === taskId)
-    if (!task || (task as any).unreadCount <= 0) return
+    const task = store.state.tasks.find(t => (t as unknown as TaskItem).id === taskId)
+    if (!task || (task as unknown as TaskItem).unreadCount <= 0) return
     try {
         const resp = await fetch(`/api/tasks/${taskId}`, {
             method: 'PUT',
@@ -215,9 +231,9 @@ async function markTaskRead(taskId: number) {
         })
         if (!resp.ok) return
         // Optimistically clear unread count for this task
-        ;(task as any).unreadCount = 0
+        ;(task as Record<string, unknown>).unreadCount = 0
         // Re-derive taskUnreadCount from remaining unread tasks
-        store.state.taskUnreadCount = store.state.tasks.reduce((sum: number, t: any) => sum + (t.unreadCount || 0), 0)
+        store.state.taskUnreadCount = store.state.tasks.reduce((sum, t) => sum + ((t as unknown as TaskItem).unreadCount || 0), 0)
     } catch {
         // Silently ignore — next poll will correct
     }
@@ -277,9 +293,9 @@ export function useTaskTab() {
         selectedTaskId.value = null
     }
 
-    function openExecDetail(execId: string, execData?: any) {
+    function openExecDetail(execId: string, execData?: unknown) {
         selectedExecId.value = execId
-        selectedExecData.value = execData || null
+        selectedExecData.value = (execData as TaskExecData | null) ?? null
         execDetailOpen.value = true
         // If no execData provided, auto-fetch from API (e.g. from push notification deep link)
         if (!execData) {
@@ -299,12 +315,12 @@ export function useTaskTab() {
         try {
             const resp = await fetch(`/api/tasks/${selectedTaskId.value}/executions?limit=50`)
             if (!resp.ok) return
-            const data = await resp.json()
-            const exec = (data.executions || []).find((e: any) => String(e.id) === String(selectedExecId.value) || String(e.sessionId) === String(selectedExecId.value))
+            const data = await resp.json() as { executions: TaskExecData[] }
+            const exec = (data.executions || []).find(e => String(e.id) === String(selectedExecId.value) || String(e.sessionId) === String(selectedExecId.value))
             if (exec) {
                 // Preserve existing content/blocks/metadata/preview if API returns null
                 // (LEFT JOIN may return null content when chat_history has no matching row)
-                const { content: _apiContent, blocks: _apiBlocks, metadata: _apiMetadata, preview: _apiPreview, ...safeFields } = exec
+                const { ...safeFields } = exec
                 const merged = { ...selectedExecData.value, ...safeFields }
                 // Only overwrite content if API returned a non-null value
                 if (exec.content != null) merged.content = exec.content

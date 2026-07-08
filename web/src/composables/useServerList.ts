@@ -13,6 +13,7 @@ function getNative(): {
   saveServer?: (url: string, password: string) => void
   removeServer?: (url: string) => void
 } | undefined {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (window as any).AndroidNative
 }
 
@@ -21,6 +22,7 @@ function parseList(json: string): ServerEntry[] {
   try {
     const arr = JSON.parse(json)
     if (!Array.isArray(arr)) return []
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return arr.filter((e: any) => e && typeof e.url === 'string').map((e: any) => ({
       url: e.url,
       password: typeof e.password === 'string' ? e.password : '',

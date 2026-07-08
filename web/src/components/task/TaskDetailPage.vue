@@ -26,7 +26,7 @@ const { t } = useI18n()
 const { loadTasks } = useTaskTab()
 
 defineProps<{
-  task: any
+  task: Record<string, unknown>
 }>()
 
 defineEmits<{

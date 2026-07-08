@@ -106,7 +106,7 @@ export function resetIdentity(): void {
   _sessionDrawerRef = null
   // Clean up E2E test bridge
   if (typeof window !== 'undefined') {
-    const bridge = (window as any).__clawbench
+    const bridge = (window as unknown as { __clawbench?: Record<string, unknown> }).__clawbench
     if (bridge) {
       bridge.createSession = null
       bridge.switchSession = null
@@ -316,7 +316,7 @@ let _continueFromExecution: ((taskId: number, execId: number, switchTabFn: (tab:
 let _checkContinueSession: ((taskId: number, execId: number) => Promise<{ exists: boolean; sessionId: string }>) | null = null
 // SessionDrawer component ref — set by App.vue. Allows any component to
 // trigger openAgentSelector() on the global drawer without coupling.
-let _sessionDrawerRef: any = null
+let _sessionDrawerRef: { openAgentSelector: () => void } | null = null
 
 export interface SessionActions {
   switchSession: (sessionId: string) => Promise<void>
@@ -351,7 +351,7 @@ export function registerSessionActions(actions: SessionActions) {
   // These allow tests to create/switch sessions without page reload,
   // which is essential for ACP tests that need to switch agents mid-test.
   if (typeof window !== 'undefined') {
-    const bridge = (window as any).__clawbench || ((window as any).__clawbench = {})
+    const bridge = (window as unknown as { __clawbench?: Record<string, unknown> }).__clawbench || ((window as unknown as { __clawbench: Record<string, unknown> }).__clawbench = {})
     bridge.createSession = actions.createSession
     bridge.switchSession = actions.switchSession
     bridge.deleteSession = actions.deleteSession
@@ -359,7 +359,7 @@ export function registerSessionActions(actions: SessionActions) {
 }
 
 /** Register the SessionDrawer component ref so openAgentSelector() works. */
-export function registerSessionDrawerRef(drawerRef: any) {
+export function registerSessionDrawerRef(drawerRef: { openAgentSelector: () => void }) {
   _sessionDrawerRef = drawerRef
 }
 
@@ -375,7 +375,7 @@ export async function initSessionFromAPI() {
     const initTimer = setTimeout(() => initCtrl.abort(), 60000)
     const [chatResp] = await Promise.all([
       fetch('/api/ai/chat?limit=1', { signal: initCtrl.signal }).catch((e) => {
-        if (initCtrl.signal.aborted) return null as any
+        if (initCtrl.signal.aborted) return null as unknown as Response
         throw e
       }),
       agentsApi.loadAgents(),
@@ -449,7 +449,7 @@ export async function initSessionFromAPI() {
           updateAvailableModes(data.modeState.availableModes)
           // Set mode name from available modes now that the list is populated
           if (currentModeId.value) {
-            const mode = data.modeState.availableModes.find((m: any) => m.id === currentModeId.value)
+            const mode = data.modeState.availableModes.find((m: { id: string; name: string }) => m.id === currentModeId.value)
             currentModeName.value = mode?.name || currentModeId.value
           }
         }
@@ -477,7 +477,7 @@ export async function initSessionFromAPI() {
         }
       }
     }
-  } catch (_) {
+  } catch {
     // Silently ignore — ChatPanel will load properly when opened
   }
 }
@@ -552,7 +552,7 @@ export function useSessionIdentity() {
         // Initialize thinking effort from localStorage pref
         currentThinkingEffort.value = loadThinkingPref(currentAgentId.value) || ''
       }
-    } catch (err) {
+    } catch (err: unknown) {
       appLog.e(TAG, 'Failed to create session:', err)
     }
   }
@@ -602,7 +602,7 @@ export function useSessionIdentity() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: text, filePaths: filePaths || [], modelId: currentModelId.value || undefined, thinkingEffort: currentThinkingEffort.value || undefined, transport: currentTransport.value || undefined }),
       })
-    } catch (err) {
+    } catch (err: unknown) {
       appLog.e(TAG, 'Failed to send message:', err)
     }
   }

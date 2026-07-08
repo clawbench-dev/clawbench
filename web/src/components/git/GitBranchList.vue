@@ -40,8 +40,10 @@ import GitBranchRow from './GitBranchRow.vue'
 
 const { t } = useI18n()
 
+type BranchItem = Record<string, unknown> & { name: string }
+
 const props = withDefaults(defineProps<{
-  branches: Record<string, any>[]
+  branches: BranchItem[]
   stashCount?: number
   loading?: boolean
   error?: boolean

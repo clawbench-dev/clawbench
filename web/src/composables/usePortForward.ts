@@ -26,6 +26,25 @@ interface DetectedPort {
   processArgs: string
 }
 
+interface AndroidNativeBridge {
+  addForwardedPort?: (localPort: number, targetPort: number, host: string) => void
+  removeForwardedPort?: (localPort: number) => void
+  stopBackgroundService?: () => void
+  isTunnelConnected?: () => boolean | null
+  getTunnelError?: () => string
+  getTunnelErrorType?: () => string
+  setVolumeKeyMode?: (enabled: boolean) => void
+  openInSandbox?: (localPort: number, protocol: string, host: string) => void
+  openInBrowser?: (localPort: number, protocol: string, host: string) => void
+  testPortReachable?: (localPort: number) => boolean
+  reconnectTunnel?: () => boolean
+}
+
+/** Get the Android native bridge from window, if available. */
+function getAndroidNative(): AndroidNativeBridge | undefined {
+  return (window as unknown as { AndroidNative?: AndroidNativeBridge }).AndroidNative
+}
+
 export interface SSHConnectionStats {
   connected: boolean
   clientCount: number
@@ -176,7 +195,7 @@ export function usePortForward() {
     // Register with Android native layer: pass localPort, targetPort, host
     if (isAppMode.value) {
       appLog.d(TAG, 'registerPort: localPort=' + localPort + ', targetPort=' + port + ', host=' + (host || ''))
-      ;(window as any).AndroidNative?.addForwardedPort(localPort, port, host || '')
+      ;getAndroidNative()?.addForwardedPort?.(localPort, port, host || '')
     }
     // Silent refresh: don't flicker the port list with loading state
     await Promise.all([loadPorts(true), loadSSHInfo()])
@@ -186,8 +205,8 @@ export function usePortForward() {
     await apiPut('/api/proxy/ports', { localPort, port, host, name, protocol })
     // Re-sync native layer after update: remove old, add new with correct localPort
     if (isAppMode.value) {
-      ;(window as any).AndroidNative?.removeForwardedPort(localPort)
-      ;(window as any).AndroidNative?.addForwardedPort(localPort, port, host || '')
+      ;getAndroidNative()?.removeForwardedPort?.(localPort)
+      ;getAndroidNative()?.addForwardedPort?.(localPort, port, host || '')
     }
     await Promise.all([loadPorts(true), loadSSHInfo()])
   }
@@ -195,7 +214,7 @@ export function usePortForward() {
   async function unregisterPort(localPort: number) {
     await apiDelete(`/api/proxy/ports?port=${localPort}`)
     if (isAppMode.value) {
-      ;(window as any).AndroidNative?.removeForwardedPort(localPort)
+      ;getAndroidNative()?.removeForwardedPort?.(localPort)
     }
     await Promise.all([loadPorts(true), loadSSHInfo()])
   }
@@ -213,11 +232,11 @@ export function usePortForward() {
     await loadPorts()
     if (ports.value.length === 0) {
       // No ports on server — stop the native service (clears stale SharedPreferences)
-      ;(window as any).AndroidNative?.stopBackgroundService()
+      ;getAndroidNative()?.stopBackgroundService?.()
       return
     }
     for (const p of ports.value) {
-      ;(window as any).AndroidNative?.addForwardedPort(p.localPort, p.port, p.host || '')
+      ;getAndroidNative()?.addForwardedPort?.(p.localPort, p.port, p.host || '')
     }
   }
 
@@ -322,7 +341,7 @@ export function usePortForward() {
    */
   function getNativeTunnelStatus(): boolean | null {
     if (!isAppMode.value) return null
-    const native = (window as any).AndroidNative
+    const native = getAndroidNative()
     if (!native || typeof native.isTunnelConnected !== 'function') return null
     try {
       const result = native.isTunnelConnected()
@@ -339,7 +358,7 @@ export function usePortForward() {
    */
   function getNativeTunnelError(): string {
     if (!isAppMode.value) return ''
-    const native = (window as any).AndroidNative
+    const native = getAndroidNative()
     if (!native || typeof native.getTunnelError !== 'function') return ''
     try {
       const result = native.getTunnelError()
@@ -355,7 +374,7 @@ export function usePortForward() {
    */
   function getNativeTunnelErrorType(): TunnelErrorType {
     if (!isAppMode.value) return ''
-    const native = (window as any).AndroidNative
+    const native = getAndroidNative()
     if (!native || typeof native.getTunnelErrorType !== 'function') return ''
     try {
       const result = native.getTunnelErrorType()
@@ -425,7 +444,7 @@ export function usePortForward() {
   }
 
   /** Internal helper: actually open the port in sandbox or external browser */
-  function doOpen(native: any, localPort: number, protocol?: string, hostArg?: string) {
+  function doOpen(native: AndroidNativeBridge | undefined, localPort: number, protocol?: string, hostArg?: string) {
     if (native?.openInSandbox) {
       native.openInSandbox(localPort, protocol === 'https' ? 'https' : 'http', hostArg || '')
     } else if (native?.openInBrowser) {
@@ -441,7 +460,7 @@ export function usePortForward() {
     appLog.d(TAG, 'openPort: localPort=' + localPort + ', protocol=' + protocol + ', host=' + (host || ''))
 
     if (isAppMode.value) {
-      const native = (window as any).AndroidNative
+      const native = getAndroidNative()
       const hostArg = host || ''
 
       if (native?.testPortReachable) {
@@ -490,7 +509,7 @@ export function usePortForward() {
    *  The caller tracks which ports are reconnecting and shows a spinning icon.
    *  Shows toast on success or failure. */
   async function reconnectPort(localPort: number) {
-    const native = (window as any).AndroidNative
+    const native = getAndroidNative()
     const toast = useToast()
 
     // Yield to let Vue render the spinning button before any blocking bridge calls
@@ -530,7 +549,7 @@ export function usePortForward() {
   /** Open a forwarded port in external/system browser */
   function openInExternalBrowser(localPort: number, protocol?: string, host?: string) {
     if (isAppMode.value) {
-      const native = (window as any).AndroidNative
+      const native = getAndroidNative()
       if (native?.openInBrowser) {
         native.openInBrowser(localPort, protocol === 'https' ? 'https' : 'http', host || '')
       }

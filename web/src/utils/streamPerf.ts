@@ -69,7 +69,7 @@ export function isValidAskContent(raw: string): boolean {
     try {
       const data = JSON.parse(probe)
       return Array.isArray(data.questions) && data.questions.length > 0
-        && data.questions.some((q: any) => q.question && Array.isArray(q.options) && q.options.length > 0)
+        && data.questions.some((q: Record<string, unknown>) => q.question && Array.isArray(q.options) && q.options.length > 0)
     } catch {
       return false
     }
@@ -144,7 +144,7 @@ const TASK_COMPARE_KEYS = [
  * Compare two task objects by semantic key fields.
  * Returns true if any key field differs (or either is null).
  */
-export function taskChanged(oldTask: any, newTask: any): boolean {
+export function taskChanged(oldTask: Record<string, unknown>, newTask: Record<string, unknown>): boolean {
   if (!oldTask || !newTask) return true
   for (const key of TASK_COMPARE_KEYS) {
     if (oldTask[key] !== newTask[key]) return true

@@ -85,7 +85,21 @@ const { t } = useI18n()
 const { loadTasks, markAllTasksRead } = useTaskTab()
 const { loadAgents, getAgentIcon } = useAgents()
 
-const tasks = computed(() => store.state.tasks)
+interface TaskItem {
+  id: number
+  name: string
+  agentId: string
+  status: string
+  cronExpr: string
+  repeatMode: string
+  maxRuns: number
+  runCount: number
+  runningCount: number
+  unreadCount: number
+  nextRunAt?: string
+}
+
+const tasks = computed(() => store.state.tasks as unknown as TaskItem[])
 const hasUnread = computed(() => store.state.taskUnreadCount > 0)
 const loading = ref(false)
 

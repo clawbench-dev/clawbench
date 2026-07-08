@@ -218,7 +218,7 @@ const emit = defineEmits(['close', 'saved'])
 const { agents, loadAgents } = useAgents()
 
 // Task form composable (ISS-011 + ISS-012)
-const { form, errors, formError, saving, validate, submit: _submit, init } = useTaskForm({
+const { form, errors, formError, saving, submit: _submit, init } = useTaskForm({
   mode: computed(() => props.mode),
   onSuccess: (taskId) => emit('saved', taskId),
 })

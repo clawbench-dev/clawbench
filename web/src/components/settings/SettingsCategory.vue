@@ -13,7 +13,7 @@
   <div v-else class="settings-category">
     <template v-for="entry in renderList" :key="entry.key">
       <SettingsItem
-        :label="(entry as any).label || t(entry.labelKey)"
+        :label="getItemLabel(entry)"
         :description="entry.descriptionKey ? t(entry.descriptionKey) : ''"
         :type="entry.type"
         :model-value="getItemValue(entry)"
@@ -27,7 +27,7 @@
         :default-value="entry.defaultValue"
         :display-format="entry.displayFormat"
         :display-transform="entry.displayTransform"
-        @update:model-value="(v: any) => handleUpdate(entry, v)"
+        @update:model-value="(v: unknown) => handleUpdate(entry, v)"
         @click="handleClick(entry)"
         @edit-toggle="(open: boolean) => handleEditToggle(entry.key, open)"
         @desc-toggle="(open: boolean) => handleDescToggle(entry.key, open)"
@@ -87,7 +87,7 @@ watch(() => props.categoryId, (id) => {
   if (id === 'chat' || id === 'agents' || id.startsWith('agents:')) loadAgents(true)
 }, { immediate: true })
 
-function resolveConfigValue(key: string): any {
+function resolveConfigValue(key: string): unknown {
   if (key in localConfig) return localConfig[key]
   return getServerValueWithDefault(key)
 }
@@ -95,7 +95,7 @@ function resolveConfigValue(key: string): any {
 function isSingleDependsOnMet(dep: DependsOn): boolean {
   const currentValue = resolveConfigValue(dep.key)
   if ('value' in dep) return currentValue === dep.value
-  return dep.values!.includes(currentValue)
+  return dep.values!.includes(currentValue as unknown)
 }
 
 function isDependsOnMet(dependsOn: ItemSpec['dependsOn']): boolean {
@@ -125,7 +125,7 @@ const renderList = computed(() => {
         labelKey: item.sectionHeader,
         type: 'header',
         source: 'local',
-      } as any)
+      } as ItemSpec & { label: string })
     }
     result.push(item)
   }
@@ -135,33 +135,39 @@ const renderList = computed(() => {
 
 // ── Standalone item helpers ──
 
-function resolveItemOptions(item: any): any {
+function getItemLabel(entry: ItemSpec): string {
+  // Section header items have a 'label' field set at runtime
+  const extended = entry as ItemSpec & { label?: string }
+  return extended.label || t(entry.labelKey)
+}
+
+function resolveItemOptions(item: ItemSpec): { label: string; value: unknown }[] | undefined {
   const resolvedOptions = item.options
   if (resolvedOptions) {
-    return resolvedOptions.map((opt: any) => ({
+    return resolvedOptions.map((opt) => ({
       ...opt,
-      label: opt.label || resolveOptionLabel(item.key, opt),
+      label: (opt as { label?: string }).label || resolveOptionLabel(item.key, opt),
     }))
   }
   return undefined
 }
 
-function resolveOptionLabel(_itemKey: string, opt: { labelKey: string; value: any }): string {
+function resolveOptionLabel(_itemKey: string, opt: { labelKey: string; value: unknown }): string {
   if (opt.labelKey) return t(opt.labelKey)
   return String(opt.value)
 }
 
-function getItemValue(item: any): any {
+function getItemValue(item: ItemSpec): unknown {
   if (item.type === 'header') return undefined
-  if (item.modelValue !== undefined && item.source === 'local' && item.type === 'info') {
-    return item.modelValue
+  if ((item as ItemSpec & { modelValue?: unknown }).modelValue !== undefined && item.source === 'local' && item.type === 'info') {
+    return (item as ItemSpec & { modelValue?: unknown }).modelValue
   }
   if (item.key === 'serverVersion') {
     return serverConfig.value?.version ?? '-'
   }
   if (item.key === 'appVersion') {
     try {
-      const native = (window as any).AndroidNative
+      const native = (window as unknown as { AndroidNative?: { getAppVersion?: () => string } }).AndroidNative
       if (native?.getAppVersion) return native.getAppVersion() ?? '-'
     } catch { /* not in app mode */ }
     return '-'
@@ -172,9 +178,9 @@ function getItemValue(item: any): any {
   return getServerValueWithDefault(item.key)
 }
 
-async function handleUpdate(item: any, value: any) {
+async function handleUpdate(item: ItemSpec, value: unknown) {
   if (item.type === 'password') {
-    if (!value || value.includes('•')) return
+    if (!value || (value as string).includes('•')) return
   }
 
   if (item.key === 'localhost_auth_exempt' && value === false) {
@@ -185,20 +191,20 @@ async function handleUpdate(item: any, value: any) {
     if (!confirmed) return
   }
   if (item.source === 'local') {
-    setLocalConfig(item.key, value)
+    setLocalConfig(item.key, value as string | number | boolean)
     if (item.key === 'androidLogCapture') {
       try {
         if (value) {
-          ;(window as any).AndroidNative?.startLogCapture?.()
+          ;(window as unknown as { AndroidNative?: { startLogCapture?: () => void; stopLogCapture?: () => void } }).AndroidNative?.startLogCapture?.()
         } else {
-          ;(window as any).AndroidNative?.stopLogCapture?.()
+          ;(window as unknown as { AndroidNative?: { startLogCapture?: () => void; stopLogCapture?: () => void } }).AndroidNative?.stopLogCapture?.()
         }
       } catch { /* not in app mode */ }
     }
     return
   }
   try {
-    const result = await setServerValue(item.key, value)
+    const result = await setServerValue(item.key, value as string | number | boolean)
     if (result.needsRestart && result.changedColdFields.length > 0) {
       emit('restartNeeded', result.changedColdFields)
     }
@@ -207,10 +213,10 @@ async function handleUpdate(item: any, value: any) {
   }
 }
 
-function handleClick(item: any) {
+function handleClick(item: ItemSpec) {
   if (item.key === 'reconfigureServer') {
     try {
-      ;(window as any).AndroidNative?.showServerDialog?.()
+      ;(window as unknown as { AndroidNative?: { showServerDialog?: () => void } }).AndroidNative?.showServerDialog?.()
     } catch { /* not in app mode */ }
   }
   if (item.key === 'changePassword') {

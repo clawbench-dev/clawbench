@@ -206,7 +206,7 @@ async function handleLogin() {
     } else {
       error.value = t('login.wrongPassword')
     }
-  } catch (_) {
+  } catch {
     error.value = t('login.networkError')
     networkError.value = true
   } finally {
@@ -250,7 +250,7 @@ async function handleAddServer() {
     } else {
       error.value = t('login.wrongPassword')
     }
-  } catch (_) {
+  } catch {
     error.value = t('login.networkError')
   } finally {
     loading.value = false

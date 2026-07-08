@@ -63,7 +63,6 @@ import { useI18n } from 'vue-i18n'
 import ModalDialog from './common/ModalDialog.vue'
 import SearchInput from './common/SearchInput.vue'
 import DirBreadcrumb from './file/DirBreadcrumb.vue'
-import { baseName } from '@/utils/path.ts'
 import { useDialog } from '@/composables/useDialog.ts'
 
 const { t } = useI18n()
@@ -164,7 +163,7 @@ async function loadBrowse() {
         currentBrowseAbs.value = data.path ?? ''
         browsePath.value = currentBrowseAbs.value || '/'
         browseItems.value = (data.items || []).filter(i => i.type === 'dir')
-    } catch (_) {
+    } catch {
         browseItems.value = []
         if (toast) toast.show(t('projectDialog.loadFailed'), { icon: '⚠️', type: 'error', duration: 5000 })
     } finally {
@@ -184,7 +183,7 @@ async function doNewFolder() {
         })
         if (resp.ok) await loadBrowse()
         else await dialog.alert(t('projectDialog.createFailed'))
-    } catch (_) { await dialog.alert(t('projectDialog.createFailed')) }
+    } catch { await dialog.alert(t('projectDialog.createFailed')) }
 }
 
 async function doRename(item) {
@@ -201,7 +200,7 @@ async function doRename(item) {
             const err = await resp.json()
             await dialog.alert(t('projectDialog.renameFailedDetail', { error: err.error || '' }))
         }
-    } catch (_) { await dialog.alert(t('projectDialog.renameFailed')) }
+    } catch { await dialog.alert(t('projectDialog.renameFailed')) }
 }
 
 async function doDelete(item) {
@@ -219,7 +218,7 @@ async function doDelete(item) {
             const err = await resp.json()
             await dialog.alert(t('projectDialog.deleteFailedDetail', { error: err.error || '' }))
         }
-    } catch (_) { await dialog.alert(t('projectDialog.deleteFailed')) }
+    } catch { await dialog.alert(t('projectDialog.deleteFailed')) }
 }
 
 async function confirm() {
@@ -244,7 +243,7 @@ async function confirm() {
             } else {
                 const text = await resp.text()
                 let msg = text
-                try { msg = JSON.parse(text).error || msg } catch (_) {}
+                try { msg = JSON.parse(text).error || msg } catch {}
                 await dialog.alert(t('projectDialog.setProjectFailedDetail', { error: msg }))
             }
         }

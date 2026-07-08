@@ -76,8 +76,6 @@ const absPath = computed(() => {
 const modified = computed(() => {
   if (!props.file) return ''
   const dir = store.state.currentDir
-  const name = props.file.name
-  const fullPath = dir ? dir + '/' + name : name
   const entry = store.state.dirEntries?.find(e => {
     const ep = dir ? dir + '/' + e.name : e.name
     return ep === props.file.path

@@ -62,7 +62,7 @@ export function statusClass(task: { status: string }): string {
  */
 export function statusLabel(
   task: { status: string; runCount: number; runningCount: number },
-  t: (key: string, params?: Record<string, any>) => string
+  t: (key: string, params?: Record<string, unknown>) => string
 ): string {
   if (task.status === 'active') {
     const execLabel = t('chat.contentBlocks.statusExecutions', { count: task.runCount })
@@ -97,7 +97,7 @@ export function statusLabelSimple(
 export function formatTime(
   iso: string | null | undefined,
   locale: string,
-  t: (key: string, params?: Record<string, any>) => string
+  t: (key: string, params?: Record<string, unknown>) => string
 ): string {
   if (!iso) return ''
   const d = new Date(iso)
@@ -124,7 +124,7 @@ export function formatTime(
  * Generate a short summary for an ask-question block.
  * Returns the first question's header if available, otherwise the question text.
  */
-export function askQuestionSummary(input: any): string {
+export function askQuestionSummary(input: Record<string, unknown>): string {
   if (!input || !Array.isArray(input.questions) || input.questions.length === 0) return ''
   const q = input.questions[0]
   const header = q.header || ''
@@ -155,7 +155,7 @@ export function blockTaskKey(msgId: string | number, bi: number): string {
  */
 export function buildTaskKeyIndex(
   msgId: string | number | undefined,
-  blockTasks: Record<string, any>
+  blockTasks: Record<string, unknown>
 ): Record<string, string[]> {
   if (!msgId) return {}
   const index: Record<string, string[]> = {}

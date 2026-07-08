@@ -1,6 +1,6 @@
 import { ref, onUnmounted, type Ref } from 'vue'
 import { appLog } from '@/utils/appLog'
-import { findLastBlockOfType } from '@/utils/chatStreamUtils.ts'
+import { findLastBlockOfType, type ContentBlock } from '@/utils/chatStreamUtils.ts'
 
 const TAG = 'TaskExecStream'
 
@@ -25,7 +25,18 @@ export interface UseTaskExecStreamOptions {
 export function useTaskExecStream(options: UseTaskExecStreamOptions) {
   const { sessionId, status, onRefresh, onComplete } = options
 
-  const streamingMsg = ref<any>(null)
+interface StreamingMsg {
+  id?: number
+  role: string
+  content: string
+  blocks: Array<Record<string, unknown>>
+  streaming?: boolean
+  cancelled?: boolean
+  metadata?: unknown
+  createdAt: string
+}
+
+const streamingMsg = ref<StreamingMsg | null>(null)
   const isStreaming = ref(false)
   const isPolling = ref(false)
 
@@ -38,7 +49,7 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
   const TOOL_USE_TIMEOUT_MS = 30000
   const POLL_INTERVAL_MS = 3000
 
-  function ensureStreamingMsg() {
+  function ensureStreamingMsg(): StreamingMsg {
     if (!streamingMsg.value) {
       streamingMsg.value = {
         role: 'assistant',
@@ -107,7 +118,7 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
 
     // stream_start
     eventSource.addEventListener('stream_start', (e) => {
-      let data: any
+      let data: { message_id?: number }
       try { data = JSON.parse(e.data) } catch { return }
       if (data.message_id) sm.id = data.message_id
     })
@@ -123,9 +134,9 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
         streaming: true,
         createdAt: new Date().toISOString(),
       }
-      let data: any
+      let data: { message_id?: number } | undefined
       try { data = JSON.parse(e.data) } catch { /* empty */ }
-      if (data?.message_id) (phase2 as any).id = data.message_id
+      if (data?.message_id) (phase2 as Record<string, unknown>).id = data.message_id
       streamingMsg.value = phase2
     })
 
@@ -134,14 +145,14 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
       resetStreamTimeout()
       const msg = streamingMsg.value
       if (!msg) return
-      let data: any
+      let data: { content?: string }
       try { data = JSON.parse(e.data) } catch { return }
-      const blocks = msg.blocks
+      const blocks = msg.blocks as ContentBlock[]
       const existingText = findLastBlockOfType(blocks, 'text')
       if (existingText) {
-        existingText.text += data.content
+        existingText.text += data.content ?? ''
       } else {
-        blocks.push({ type: 'text', text: data.content })
+        blocks.push({ type: 'text', text: data.content ?? '' })
       }
     })
 
@@ -150,14 +161,14 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
       resetStreamTimeout()
       const msg = streamingMsg.value
       if (!msg) return
-      let data: any
+      let data: { text?: string }
       try { data = JSON.parse(e.data) } catch { return }
-      const blocks = msg.blocks
+      const blocks = msg.blocks as ContentBlock[]
       const existingThinking = findLastBlockOfType(blocks, 'thinking')
       if (existingThinking) {
-        existingThinking.text += data.text
+        existingThinking.text += data.text ?? ''
       } else {
-        blocks.push({ type: 'thinking', text: data.text })
+        blocks.push({ type: 'thinking', text: data.text ?? '' })
       }
     })
 
@@ -179,10 +190,11 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
       resetStreamTimeout()
       const msg = streamingMsg.value
       if (!msg) return
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SSE data shape is dynamic
       let data: any
       try { data = JSON.parse(e.data) } catch { return }
       const blocks = msg.blocks
-      const existing = blocks.find((b: any) => b.type === 'tool_use' && b.id === data.id)
+      const existing = blocks.find((b: Record<string, unknown>) => b.type === 'tool_use' && b.id === data.id)
       if (data.done) {
         if (existing) {
           existing.done = true
@@ -201,6 +213,7 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
           if (data.display_name !== undefined) existing.display_name = data.display_name
           if (data.file_path !== undefined) existing.file_path = data.file_path
         } else {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- tool_use block shape is dynamic
           const newBlock: any = {
             type: 'tool_use', name: data.name, id: data.id, done: false,
             status: data.status || '',
@@ -225,10 +238,11 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
       resetStreamTimeout()
       const msg = streamingMsg.value
       if (!msg) return
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SSE data shape is dynamic
       let data: any
       try { data = JSON.parse(e.data) } catch { return }
       const blocks = msg.blocks
-      const existing = blocks.find((b: any) => b.type === 'tool_use' && b.id === data.id)
+      const existing = blocks.find((b: Record<string, unknown>) => b.type === 'tool_use' && b.id === data.id)
       if (existing) {
         if (data.name) existing.name = data.name
         if (data.status !== undefined) existing.status = data.status
@@ -243,6 +257,7 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
       resetStreamTimeout()
       const msg = streamingMsg.value
       if (!msg) return
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- metadata shape is dynamic
       let data: any
       try { data = JSON.parse(e.data) } catch { return }
       msg.metadata = data
@@ -270,7 +285,7 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
     // error
     eventSource.addEventListener('error', (e) => {
       if (streamTimeout) { clearTimeout(streamTimeout); streamTimeout = null }
-      let errorData: any
+      let errorData: { reason?: string } | undefined
       try { errorData = JSON.parse((e as MessageEvent).data) } catch { /* ignore */ }
       if (errorData?.reason === 'sse_busy') {
         // Another client is consuming the SSE stream — fall back to polling

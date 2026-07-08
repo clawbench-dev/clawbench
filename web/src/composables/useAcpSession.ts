@@ -57,6 +57,7 @@ export function useAcpSession(options: UseAcpSessionOptions) {
         return
       }
       const data = await resp.json()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const sessions: AcpSessionInfo[] = (data.sessions || []).map((s: any) => ({
         sessionId: s.sessionId || s.session_id || '',
         title: s.title || '',
@@ -69,7 +70,7 @@ export function useAcpSession(options: UseAcpSessionOptions) {
         acpSessions.value = sessions
       }
       nextCursor.value = data.nextCursor || null
-    } catch (err) {
+    } catch (err: unknown) {
       appLog.e(TAG, 'loadAcpSessions failed:', err)
     } finally {
       acpSessionsLoading.value = false
@@ -115,7 +116,7 @@ export function useAcpSession(options: UseAcpSessionOptions) {
       }
       const data = await resp.json()
       return data.sessionId || ''
-    } catch (err) {
+    } catch (err: unknown) {
       appLog.e(TAG, 'acpLoadSession failed:', err)
       toast.show(gt('chat.acpSession.loadFailed'), { type: 'error', icon: '⚠️' })
       return null

@@ -10,8 +10,27 @@ import { appLog } from '@/utils/appLog'
 
 const TAG = 'TaskHistory'
 
+interface TaskRef {
+  id: number
+}
+
+interface TaskExecution {
+  id: number
+  status: string
+  createdAt: string
+  sessionId: string
+  content: string
+  summary: string
+  isUnread: boolean
+  startedAt?: string
+  ID?: number
+  blocks?: unknown
+  metadata?: unknown
+  preview?: string
+}
+
 interface UseTaskHistoryOptions {
-  task: Ref<any>
+  task: Ref<TaskRef | null>
 }
 
 const PAGE_SIZE = 10
@@ -27,8 +46,8 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
   const loading = ref(false)
   const loadingMore = ref(false)
   const hasMore = ref(false)
-  const executions = ref<any[]>([])
-  const runningExecutions = ref<any[]>([])
+  const executions = ref<TaskExecution[]>([])
+  const runningExecutions = ref<TaskExecution[]>([])
 
   // Unified list: running executions first (normalized to same shape), then completed
   // Filter out running records from DB list to avoid duplication with runningExecutions
@@ -45,7 +64,7 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
     return [...running, ...completed]
   })
 
-  function isRunning(exec: any): boolean {
+  function isRunning(exec: TaskExecution): boolean {
     return exec.status === 'running'
   }
 
@@ -85,17 +104,17 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
     justCompletedIds.clear()
   }
 
-  function isUnreadDisplay(exec: any): boolean {
+  function isUnreadDisplay(exec: TaskExecution): boolean {
     return exec.isUnread && !locallyReadIds.has(exec.id)
   }
 
-  function isJustCompleted(exec: any): boolean {
+  function isJustCompleted(exec: TaskExecution): boolean {
     // Running executions use 'id' (session ID), completed use 'sessionId'
-    const sessionId = exec.sessionId || exec.id
+    const sessionId = exec.sessionId || String(exec.id)
     return !!sessionId && justCompletedIds.has(sessionId)
   }
 
-  function parseExecution(exec: any): any {
+  function parseExecution(exec: TaskExecution): TaskExecution {
     const { blocks, metadata } = chatRender.parseAssistantContent(exec.content)
     const preview = extractPreview(exec)
     return { ...exec, blocks, metadata, preview }
@@ -108,16 +127,16 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
     loadExecutionsInFlight = true
     loading.value = true
     try {
-      const data = await apiGet<{ executions: any[]; hasMore?: boolean }>(
+      const data = await apiGet<{ executions: TaskExecution[]; hasMore?: boolean }>(
         `/api/tasks/${task.value.id}/executions?limit=${PAGE_SIZE}`,
         { signal: abortController.signal },
       )
       const rawExecutions = data.executions || []
       executions.value = rawExecutions.map(parseExecution)
       hasMore.value = !!data.hasMore
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Don't report AbortError (expected when switching tasks)
-      if (err?.name !== 'AbortError') {
+      if (err instanceof Error && err.name !== 'AbortError') {
         appLog.e(TAG, 'Failed to load executions:', err)
       }
     } finally {
@@ -137,7 +156,7 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
       if (!last) return
       const cursor = encodeURIComponent(last.createdAt)
       const cursorId = encodeURIComponent(last.id)
-      const data = await apiGet<{ executions: any[]; hasMore?: boolean }>(
+      const data = await apiGet<{ executions: TaskExecution[]; hasMore?: boolean }>(
         `/api/tasks/${task.value.id}/executions?limit=${PAGE_SIZE}&cursor=${cursor}&cursor_id=${cursorId}`,
         { signal: abortController.signal },
       )
@@ -147,8 +166,8 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
         executions.value = [...executions.value, ...more.filter(e => e.status !== 'running')]
       }
       hasMore.value = !!data.hasMore
-    } catch (err: any) {
-      if (err?.name !== 'AbortError') {
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name !== 'AbortError') {
         appLog.e(TAG, 'Failed to load more executions:', err)
       }
     } finally {
@@ -160,15 +179,15 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
   async function reloadExecutions(): Promise<void> {
     if (!task.value?.id) return
     try {
-      const data = await apiGet<{ executions: any[]; hasMore?: boolean }>(
+      const data = await apiGet<{ executions: TaskExecution[]; hasMore?: boolean }>(
         `/api/tasks/${task.value.id}/executions?limit=${PAGE_SIZE}`,
         { signal: abortController.signal },
       )
       const rawExecutions = data.executions || []
       executions.value = rawExecutions.map(parseExecution)
       hasMore.value = !!data.hasMore
-    } catch (err: any) {
-      if (err?.name !== 'AbortError') {
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name !== 'AbortError') {
         appLog.e(TAG, 'Failed to reload executions:', err)
       }
     }
@@ -177,7 +196,7 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
   async function loadRunningStatus(): Promise<void> {
     if (!task.value?.id) return
     try {
-      const data = await apiGet<{ runningExecutions: any[] }>(
+      const data = await apiGet<{ runningExecutions: TaskExecution[] }>(
         `/api/tasks/${task.value.id}`,
         { signal: abortController.signal },
       )
@@ -187,7 +206,7 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
       if (prevRunningCount > 0 && newCount < prevRunningCount) {
         // Mark previous running executions as just-completed for entry animation
         for (const exec of runningExecutions.value) {
-          const execId = exec.id || exec.ID
+          const execId = String(exec.id || exec.ID || '')
           if (execId && !justCompletedIds.has(execId)) {
             justCompletedIds.add(execId)
             // Auto-clear after 3s
@@ -216,8 +235,8 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
         executionId: execId,
       })
       toast.show(gt('task.exec.cancelled'), { type: 'success' })
-    } catch (err: any) {
-      if (err?.message?.includes('404')) {
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message.includes('404')) {
         toast.show(gt('task.exec.alreadyFinished'), { type: 'info' })
       }
     }
@@ -233,7 +252,7 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
         executionId: String(execId),
       })
       toast.show(gt('task.exec.executionDeleted'), { type: 'success' })
-    } catch (err: any) {
+    } catch {
       toast.show(gt('task.exec.actionFailed'), { type: 'error' })
       return
     }
@@ -248,7 +267,7 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
         action: 'deleteAllExecutions',
       })
       toast.show(gt('task.exec.allExecutionsDeleted'), { type: 'success' })
-    } catch (err: any) {
+    } catch {
       toast.show(gt('task.exec.actionFailed'), { type: 'error' })
       return
     }
@@ -267,17 +286,17 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
     }
   }
 
-  function openDetail(exec: any): void {
+  function openDetail(exec: TaskExecution): void {
     if (exec.isUnread && !locallyReadIds.has(exec.id)) {
       locallyReadIds.add(exec.id)
-      markExecRead(exec.id)
+      markExecRead(String(exec.id))
     }
-    openExecDetail(exec.id, exec)
+    openExecDetail(String(exec.id), exec)
   }
 
   /** Extract a short preview string for the execution list.
    *  Keeps the original `summary` field intact for the detail view. */
-  function extractPreview(exec: any): string {
+  function extractPreview(exec: TaskExecution): string {
     // Prefer backend-provided summary (truncated for list preview)
     if (exec.summary != null && exec.summary !== '') {
       return stripMarkdownPreview(exec.summary, 120)
@@ -286,7 +305,8 @@ export function useTaskHistory(options: UseTaskHistoryOptions) {
     const { blocks } = chatRender.parseAssistantContent(exec.content)
     for (const block of blocks) {
       if (block.type === 'text' && block.text) {
-        const clean = block.text
+        const text = String(block.text)
+        const clean = text
           .replace(/<scheduled-task\s+id="[^"]+"\s*\/>/g, '')
           .replace(/[#*`_~[\]()]/g, '')
           .trim()

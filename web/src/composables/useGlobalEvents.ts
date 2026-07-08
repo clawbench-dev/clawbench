@@ -138,6 +138,7 @@ async function fetchPendingEvents() {
             localStorage.setItem(LAST_SEEN_KEY, latestId)
             // Sync cursor to Android SharedPreferences
             try {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 ;(window as any).AndroidNative?.updateLastSeenEventId(latestId)
             } catch {}
         }
@@ -191,7 +192,7 @@ function connect() {
                 }
 
                 // Dispatch summary_update as a custom event for ChatPanelContent
-                if (msg.event === 'summary_update' && (msg.data as any)?.targetType === 'chat_message') {
+                if (msg.event === 'summary_update' && (msg.data as Record<string, unknown>)?.targetType === 'chat_message') {
                     window.dispatchEvent(new CustomEvent('clawbench-summary-update', { detail: msg.data }))
                 }
 
@@ -205,7 +206,7 @@ function connect() {
                     send({ type: 'ack', id: msg.id })
                     // Update last seen event cursor for offline recovery
                     // Only update for terminal-state events that are persisted server-side
-                    const status = (msg.data as any)?.status as string | undefined
+                    const status = (msg.data as Record<string, unknown>)?.status as string | undefined
                     const isTerminal = (msg.event === 'session_update' && (status === 'completed' || status === 'cancelled' || status === 'permission_pending'))
                         || (msg.event === 'task_update' && (status === 'completed' || status === 'failed' || status === 'cancelled'))
                     if (isTerminal) {
@@ -214,6 +215,7 @@ function connect() {
                         // fetchPendingEvents() won't re-deliver these events when
                         // the app switches to background.
                         try {
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
                             ;(window as any).AndroidNative?.updateLastSeenEventId(msg.id)
                         } catch {}
                     }

@@ -7,7 +7,7 @@ import { truncateUserMsg } from '@/utils/userMsgIndexUtils.ts'
  * Extracted from ChatMessageList.vue for testability.
  */
 export function useUserMsgIndex(options: {
-  getMessages: () => any[]
+  getMessages: () => Record<string, unknown>[]
   getCurrentSessionId: () => string
   getHasMore: () => boolean
   getLoadingMore: () => boolean
@@ -19,7 +19,7 @@ export function useUserMsgIndex(options: {
   const { t } = useI18n()
 
   const hasUserMessages = computed(() => options.getMessages().some(m => m.role === 'user'))
-  const userMsgIndexList = ref<any[]>([])
+  const userMsgIndexList = ref<Record<string, unknown>[]>([])
   const showUserMsgIndex = ref(false)
   const loadingTarget = ref(false)
   const loadingIndex = ref(false)

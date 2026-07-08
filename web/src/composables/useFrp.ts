@@ -24,15 +24,15 @@ const frpState = reactive<FrpState>({
 })
 
 /** Map snake_case API response to camelCase FrpState */
-function mapFrpInfo(data: Record<string, any>): Partial<FrpState> {
+function mapFrpInfo(data: Record<string, unknown>): Partial<FrpState> {
   return {
-    enabled: data.enabled,
-    running: data.running,
-    state: data.state,
-    serverAddr: data.server_addr,
-    remotePort: data.remote_port,
-    sshRemotePort: data.ssh_remote_port,
-    remoteUrl: data.remote_url,
+    enabled: data.enabled as boolean | undefined,
+    running: data.running as boolean | undefined,
+    state: data.state as string | undefined,
+    serverAddr: data.server_addr as string | undefined,
+    remotePort: data.remote_port as number | undefined,
+    sshRemotePort: data.ssh_remote_port as number | undefined,
+    remoteUrl: data.remote_url as string | undefined,
   }
 }
 
@@ -42,7 +42,7 @@ export function useFrp() {
   const frpConnected = computed(() => frpState.state === 'running')
 
   function fetchFrpInfo() {
-    apiGet<Record<string, any>>('/api/frp/info').then(data => {
+    apiGet<Record<string, unknown>>('/api/frp/info').then(data => {
       Object.assign(frpState, mapFrpInfo(data))
     }).catch(() => {
       // FRP info not available — leave state as-is
@@ -53,9 +53,10 @@ export function useFrp() {
   if (!wsListenerRegistered) {
     wsListenerRegistered = true
     const { onEvent } = useGlobalEvents()
-    onEvent((event: string, data: any) => {
+    onEvent((event: string, data) => {
       if (event !== 'frp_status') return
-      const status = data?.status as string | undefined
+      const d = data as Record<string, unknown>
+      const status = d?.status as string | undefined
       if (!status) return
 
       frpState.state = status
@@ -64,10 +65,10 @@ export function useFrp() {
 
       // WS event uses snake_case keys
       if (data) {
-        if (data.remote_url) frpState.remoteUrl = data.remote_url as string
-        if (data.remote_port) frpState.remotePort = data.remote_port as number
-        if (data.ssh_remote_port) frpState.sshRemotePort = data.ssh_remote_port as number
-        if (data.server_addr) frpState.serverAddr = data.server_addr as string
+        if (d.remote_url) frpState.remoteUrl = d.remote_url as string
+        if (d.remote_port) frpState.remotePort = d.remote_port as number
+        if (d.ssh_remote_port) frpState.sshRemotePort = d.ssh_remote_port as number
+        if (d.server_addr) frpState.serverAddr = d.server_addr as string
       }
     })
   }

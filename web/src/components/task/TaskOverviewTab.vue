@@ -5,17 +5,17 @@
       <!-- Header section -->
       <div class="task-header">
         <div class="task-title-row">
-          <span class="agent-icon">{{ getAgentIcon(task.agentId) }}</span>
-          <h2 class="task-name">{{ task.name }}</h2>
-          <span class="status-badge" :class="task.status">
-            <span v-if="task.runningCount > 0" class="status-dot running"></span>
-            <span v-else class="status-dot" :class="task.status"></span>
+          <span class="agent-icon">{{ getAgentIcon(taskAgentId) }}</span>
+          <h2 class="task-name">{{ taskName }}</h2>
+          <span class="status-badge" :class="taskStatus">
+            <span v-if="taskRunningCount > 0" class="status-dot running"></span>
+            <span v-else class="status-dot" :class="taskStatus"></span>
             {{ statusText }}
           </span>
         </div>
         <div class="task-meta-row">
-          <span class="task-id-value" @click="copyId" :title="t('common.copy')">#{{ task.id }}</span>
-          <span class="agent-name">{{ getAgentName(task.agentId) }}</span>
+          <span class="task-id-value" @click="copyId" :title="t('common.copy')">#{{ taskId }}</span>
+          <span class="agent-name">{{ getAgentName(taskAgentId) }}</span>
         </div>
       </div>
 
@@ -26,20 +26,20 @@
           {{ t('task.form.frequency') }}
         </h3>
         <div class="overview-row">
-          <span class="overview-value font-mono">{{ task.cronExpr }}</span>
-          <span class="overview-subtext">{{ humanizeCron(task.cronExpr) }}</span>
+          <span class="overview-value font-mono">{{ taskCronExpr }}</span>
+          <span class="overview-subtext">{{ humanizeCron(taskCronExpr) }}</span>
         </div>
         <div class="overview-divider"></div>
         <div class="overview-row">
           <span class="overview-label">{{ t('chat.contentBlocks.repeat') }}</span>
-          <span class="overview-value">{{ repeatLabel(task.repeatMode, task.maxRuns) }}</span>
+          <span class="overview-value">{{ repeatLabel(taskRepeatMode, taskMaxRuns) }}</span>
         </div>
-        <div v-if="task.runCount > 0" class="overview-row">
-          <span class="overview-label">{{ t('chat.contentBlocks.statusExecutions', { count: task.runCount }) }}</span>
+        <div v-if="taskRunCount > 0" class="overview-row">
+          <span class="overview-label">{{ t('chat.contentBlocks.statusExecutions', { count: taskRunCount }) }}</span>
         </div>
-        <div v-if="task.nextRunAt" class="overview-row highlight">
+        <div v-if="taskNextRunAt" class="overview-row highlight">
           <span class="overview-label">{{ t('chat.contentBlocks.nextRun') }}</span>
-          <span class="overview-value">{{ formatDateTime(task.nextRunAt) }}</span>
+          <span class="overview-value">{{ formatDateTime(taskNextRunAt) }}</span>
         </div>
       </div>
 
@@ -59,13 +59,13 @@
         <Pencil :size="14" />
         <span class="action-text">{{ t('common.edit') }}</span>
       </button>
-      <button v-if="task.runCount > 0 || task.runningCount > 0" class="action-btn" :class="{ 'has-unread-flash': task.unreadCount > 0 }" @click="$emit('history')" :title="t('task.history')">
+      <button v-if="taskRunCount > 0 || taskRunningCount > 0" class="action-btn" :class="{ 'has-unread-flash': taskUnreadCount > 0 }" @click="$emit('history')" :title="t('task.history')">
         <History :size="14" />
         <span class="action-text">{{ t('task.history') }}</span>
       </button>
       <span class="actions-spacer"></span>
-      <template v-if="task.status === 'active'">
-        <button class="action-btn accent" :disabled="actionLoading || task.runningCount > 0" @click="triggerTask" :title="task.runningCount > 0 ? t('chat.contentBlocks.statusRunning') : t('task.run')">
+      <template v-if="taskStatus === 'active'">
+        <button class="action-btn accent" :disabled="actionLoading || taskRunningCount > 0" @click="triggerTask" :title="taskRunningCount > 0 ? t('chat.contentBlocks.statusRunning') : t('task.run')">
           <Zap :size="14" />
           <span class="action-text">{{ t('task.run') }}</span>
         </button>
@@ -76,8 +76,8 @@
           <Trash2 :size="14" />
         </button>
       </template>
-      <template v-else-if="task.status === 'paused'">
-        <button class="action-btn accent" :disabled="actionLoading || task.runningCount > 0" @click="triggerTask" :title="task.runningCount > 0 ? t('chat.contentBlocks.statusRunning') : t('task.run')">
+      <template v-else-if="taskStatus === 'paused'">
+        <button class="action-btn accent" :disabled="actionLoading || taskRunningCount > 0" @click="triggerTask" :title="taskRunningCount > 0 ? t('chat.contentBlocks.statusRunning') : t('task.run')">
           <Zap :size="14" />
           <span class="action-text">{{ t('task.run') }}</span>
         </button>
@@ -88,7 +88,7 @@
           <Trash2 :size="14" />
         </button>
       </template>
-      <template v-else-if="task.status === 'completed'">
+      <template v-else-if="taskStatus === 'completed'">
         <button class="action-btn danger icon-only" :disabled="actionLoading" @click="deleteTask" :title="t('task.delete')">
           <Trash2 :size="14" />
         </button>
@@ -117,8 +117,23 @@ const { verifyFilePaths, openFilePath } = useFilePathAnnotation()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 
 const props = defineProps<{
-  task: any
+  task: Record<string, unknown>
 }>()
+
+// Typed accessors for task Record<string, unknown>
+const task = computed(() => props.task)
+const taskId = computed(() => task.value.id as number)
+const taskName = computed(() => task.value.name as string)
+const taskAgentId = computed(() => task.value.agentId as string)
+const taskStatus = computed(() => task.value.status as string)
+const taskCronExpr = computed(() => task.value.cronExpr as string)
+const taskRepeatMode = computed(() => task.value.repeatMode as string)
+const taskMaxRuns = computed(() => task.value.maxRuns as number)
+const taskRunCount = computed(() => task.value.runCount as number)
+const taskRunningCount = computed(() => task.value.runningCount as number)
+const taskUnreadCount = computed(() => task.value.unreadCount as number)
+const taskNextRunAt = computed(() => task.value.nextRunAt as string | undefined)
+const taskPrompt = computed(() => task.value.prompt as string)
 
 const emit = defineEmits<{
   (e: 'deleted'): void
@@ -141,23 +156,23 @@ const renderedPrompt = ref('')
 let promptRenderId = 0
 
 function copyId() {
-  if (props.task.id) {
-    navigator.clipboard.writeText(String(props.task.id)).catch(() => {})
+  if (taskId.value) {
+    navigator.clipboard.writeText(String(taskId.value)).catch(() => {})
   }
 }
 
 const statusText = computed(() => {
-  if (props.task.runningCount > 0) return t('chat.contentBlocks.statusRunning')
+  if (taskRunningCount.value > 0) return t('chat.contentBlocks.statusRunning')
   const map: Record<string, string> = {
     active: t('chat.contentBlocks.statusActive'),
     paused: t('chat.contentBlocks.statusPaused'),
     completed: t('chat.contentBlocks.statusCompleted'),
   }
-  return map[props.task.status] || props.task.status
+  return map[taskStatus.value] || taskStatus.value
 })
 
 watch(
-  () => [props.task.prompt, store.state.projectRoot, store.state.homeDir] as const,
+  () => [taskPrompt.value, store.state.projectRoot, store.state.homeDir] as const,
   ([prompt]) => {
     const renderId = ++promptRenderId
     // Unified pipeline: renderMarkdown handles KaTeX, DOMPurify, code/table headers,

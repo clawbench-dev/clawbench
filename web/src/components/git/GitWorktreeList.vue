@@ -39,7 +39,7 @@ import GitWorktreeCard from './GitWorktreeCard.vue'
 const { t } = useI18n()
 
 const props = withDefaults(defineProps<{
-  worktrees: Record<string, any>[]
+  worktrees: Array<Record<string, unknown> & { path: string }>
   loading?: boolean
   error?: boolean
   initialCollapsed?: boolean

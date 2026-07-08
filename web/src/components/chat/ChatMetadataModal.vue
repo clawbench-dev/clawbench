@@ -92,7 +92,7 @@ import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 
 const { t } = useI18n()
 
-const props = defineProps({
+defineProps({
   show: Boolean,
   data: { type: Object, default: () => ({}) },
   backend: String,
@@ -104,7 +104,7 @@ const props = defineProps({
   formatDetailTime: Function,
 })
 
-const emit = defineEmits(['close'])
+defineEmits(['close'])
 
 const toast = useToast()
 

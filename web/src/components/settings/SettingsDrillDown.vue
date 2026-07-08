@@ -55,7 +55,7 @@
         :display-format="entry.field.displayFormat"
         :display-transform="entry.field.displayTransform"
         :no-divider="false"
-        @update:model-value="(v: any) => setLocalValue(entry.field.key, v)"
+        @update:model-value="(v: unknown) => setLocalValue(entry.field.key, v)"
         @edit-toggle="(open: boolean) => handleEditToggle(entry.field.key, open)"
         @desc-toggle="(open: boolean) => handleEditToggle(entry.field.key, open)"
       />
@@ -109,7 +109,7 @@
     >
       <div
         v-for="opt in entryOptions"
-        :key="opt.value"
+        :key="opt.value as PropertyKey"
         class="drill-down__option"
         :class="{ 'drill-down__option--active': localValues[config.entrySelector!.key] === opt.value }"
         @click="handleEntrySelect(opt.value)"
@@ -161,8 +161,8 @@ const config = computed((): DrillDownCategory => {
 
 // ── State ──
 
-const localValues = reactive<Record<string, any>>({})
-const snapshot = ref<Record<string, any>>({})
+const localValues = reactive<Record<string, unknown>>({})
+const snapshot = ref<Record<string, unknown>>({})
 const saving = ref(false)
 const serverError = ref('')
 const hasFailedSave = ref(false)
@@ -181,7 +181,7 @@ watch(() => entryPicker.effectiveOpen.value, (val) => {
 
 onMounted(() => {
   const cfg = config.value
-  const snap: Record<string, any> = {}
+  const snap: Record<string, unknown> = {}
 
   // Enable key
   if (cfg.enableKey) {
@@ -247,7 +247,7 @@ const entryDisplayLabel = computed(() => {
   return opt ? t(opt.labelKey) : String(val ?? '')
 })
 
-function handleEntrySelect(value: any) {
+function handleEntrySelect(value: unknown) {
   const es = config.value.entrySelector
   if (!es) return
   const prevValue = localValues[es.key]
@@ -255,7 +255,7 @@ function handleEntrySelect(value: any) {
 
   // Auto-reset TTS voice when engine changes
   if (sideEffects.needsVoiceReset.value && es.key === 'tts.engine' && value !== prevValue) {
-    const voiceOpts = engineVoiceOptions[value] ?? []
+    const voiceOpts = engineVoiceOptions[value as string] ?? []
     localValues['tts.voice'] = voiceOpts.length > 0 ? voiceOpts[0].value : ''
   }
 
@@ -309,23 +309,23 @@ const renderList = computed((): RenderEntry[] => {
 
 // ── Field value helpers ──
 
-function getLocalValue(field: ItemSpec): any {
+function getLocalValue(field: ItemSpec): unknown {
   const k = field.key
   if (k in localValues) return localValues[k]
   return field.source === 'server' ? getServerValueWithDefault(k) : localConfig[k]
 }
 
-function setLocalValue(key: string, value: any) {
+function setLocalValue(key: string, value: unknown) {
   localValues[key] = value
 }
 
-function resolveFieldOptions(field: ItemSpec): { label: string; value: any }[] | undefined {
+function resolveFieldOptions(field: ItemSpec): { label: string; value: unknown }[] | undefined {
   // Dynamic voice options based on current engine
   if (field.key === 'tts.voice') {
-    const engine = localValues['tts.engine'] || 'edge'
-    const voiceOpts = engineVoiceOptions[engine] ?? []
+    const engine = (localValues['tts.engine'] as string) || 'edge'
+    const voiceOpts = engineVoiceOptions[engine as string] ?? []
     if (voiceOpts.length > 0) {
-      return voiceOpts.map(o => ({ label: t(o.labelKey), value: o.value }))
+      return voiceOpts.map((o: Record<string, unknown>) => ({ label: t(o.labelKey as string), value: o.value }))
     }
   }
   // Static options from field spec
@@ -434,12 +434,12 @@ const needsRestartHint = computed(() => {
 
 // ── Deep set by dot-path ──
 
-function deepSetByDotPath(obj: Record<string, any>, dotPath: string, value: any) {
+function deepSetByDotPath(obj: Record<string, unknown>, dotPath: string, value: unknown) {
   const parts = dotPath.split('.')
-  let current: any = obj
+  let current: Record<string, unknown> = obj
   for (let i = 0; i < parts.length - 1; i++) {
     if (current[parts[i]] == null) current[parts[i]] = {}
-    current = current[parts[i]]
+    current = current[parts[i]] as Record<string, unknown>
   }
   current[parts[parts.length - 1]] = value
 }
@@ -451,8 +451,8 @@ async function handleSave() {
   serverError.value = ''
 
   const allKeys = getAllFieldKeys()
-  const serverChanges: Record<string, any> = {}
-  const localChanges: [string, any][] = []
+  const serverChanges: Record<string, unknown> = {}
+  const localChanges: [string, unknown][] = []
   const changedKeys: string[] = []
 
   for (const key of allKeys) {
@@ -475,7 +475,7 @@ async function handleSave() {
 
   // Flush local changes
   for (const [key, value] of localChanges) {
-    setLocalConfig(key, value)
+    setLocalConfig(key, value as string | number | boolean | null)
   }
 
   // Flush server changes
@@ -502,9 +502,9 @@ async function handleSave() {
 
       hasFailedSave.value = false
       emit('back')
-    } catch (err: any) {
+    } catch (err: unknown) {
       saving.value = false
-      serverError.value = err?.message || t('settings.saveFailed')
+      serverError.value = (err instanceof Error ? err.message : '') || t('settings.saveFailed')
       hasFailedSave.value = true
       // Stay on page so user can retry
     }

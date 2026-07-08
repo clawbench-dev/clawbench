@@ -68,6 +68,7 @@ export function useTerminalTabs(
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.loadAddon(new WebLinksAddon())
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ;(term as any).fitAddon = fit
     return { term, fit }
   }

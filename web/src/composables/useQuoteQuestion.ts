@@ -142,7 +142,7 @@ export function useQuoteQuestion() {
           }
         }))
       }
-    } catch (err) {
+    } catch (err: unknown) {
       toast.show(gt('quoteBar.sendFailed', { error: (err as Error).message }), { icon: '⚠️', type: 'error' })
     }
 

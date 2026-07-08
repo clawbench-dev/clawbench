@@ -43,19 +43,19 @@ export function useTaskForm(options: UseTaskFormOptions) {
   const errors = ref<Record<string, string>>({})
 
   /** Initialize form from task data (called on mount or when task changes) */
-  function init(taskData?: any) {
+  function init(taskData?: Record<string, unknown>) {
     errors.value = {}
     formError.value = ''
 
     if (taskData) {
       form.value = {
-        id: taskData.id || 0,
-        name: taskData.name || '',
-        cronExpr: taskData.cronExpr || '',
-        agentId: taskData.agentId || '',
-        prompt: taskData.prompt || '',
-        repeatMode: taskData.repeatMode || 'unlimited',
-        maxRuns: taskData.maxRuns || 0,
+        id: (taskData.id as number) || 0,
+        name: (taskData.name as string) || '',
+        cronExpr: (taskData.cronExpr as string) || '',
+        agentId: (taskData.agentId as string) || '',
+        prompt: (taskData.prompt as string) || '',
+        repeatMode: (taskData.repeatMode as string) || 'unlimited',
+        maxRuns: (taskData.maxRuns as number) || 0,
       }
     } else {
       form.value = {
@@ -95,15 +95,17 @@ export function useTaskForm(options: UseTaskFormOptions) {
     }
 
     try {
-      let result: any
+      let result: Record<string, unknown>
       if (mode.value === 'create') {
         result = await apiPost('/api/tasks', payload)
       } else {
         result = await apiPut(`/api/tasks/${form.value.id}`, payload)
       }
-      onSuccess(result.task?.id)
-    } catch (err: any) {
-      const message = err?.message || 'common.networkError'
+      const res = result as unknown as Record<string, unknown>
+      const task = res.task as Record<string, unknown> | undefined
+      onSuccess(task?.id as number)
+    } catch (err: unknown) {
+      const message = (err as { message?: string })?.message || 'common.networkError'
       const mapped = mapServerError(message)
       if (mapped.field) {
         errors.value = { ...errors.value, [mapped.field]: mapped.message }

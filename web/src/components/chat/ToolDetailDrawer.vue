@@ -38,10 +38,9 @@ import { computed } from 'vue'
 import { CheckCircle2, XCircle } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
-import { getToolIcon, toolDisplayName } from '@/utils/icons'
+import { getToolIcon } from '@/utils/icons'
 import { handleToolAction } from '@/utils/renderToolDetail.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
-import { useI18n } from 'vue-i18n'
 import { store } from '@/stores/app.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 
@@ -71,7 +70,6 @@ const displayName = computed(() => {
 })
 
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
-const { t } = useI18n()
 const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTableRowClick, onTableMouseDown, onTableTouchStart } = useTableRowExpand()
 
 function handleBodyClick(event) {

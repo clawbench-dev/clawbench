@@ -248,7 +248,7 @@ watch(showForm, (val) => {
   }
 })
 
-const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelMessage, tunnelChecking, tunnelError, tunnelErrorType, connectingPorts, registerPort, updatePort, unregisterPort, detectPorts, checkTunnelHealth, openPort, openInExternalBrowser, reconnectPort } = usePortForward()
+const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, connectingPorts, registerPort, updatePort, unregisterPort, detectPorts, checkTunnelHealth, openPort, openInExternalBrowser, reconnectPort } = usePortForward()
 const toast = useToast()
 
 const sshCopied = ref(false)

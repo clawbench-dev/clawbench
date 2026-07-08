@@ -212,7 +212,7 @@ const emit = defineEmits(['update:show', 'switch-model', 'switch-thinking-effort
 
 const { t } = useI18n()
 const toast = useToast()
-const { getAgentModels, getAgentThinkingEffortLevels, getAgent, updateAgentField, getDefaultModelId, canRefreshModels, supportsDualTransport, getAgentTransport } = useAgents()
+const { getAgentModels, getAgentThinkingEffortLevels, getAgent, updateAgentField, canRefreshModels, supportsDualTransport, getAgentTransport } = useAgents()
 const { currentModelId, currentThinkingEffort, currentModeId, currentTransport, availableThinkingEfforts, availableModes, autoApprove, toggleAutoApprove } = useSessionIdentity()
 
 const activeTab = ref('model')
@@ -376,7 +376,7 @@ async function setDefaultModel(model) {
   try {
     await patchAgentPref(props.agentId, 'preferred_model', model.id)
     updateAgentField(props.agentId, 'preferredModel', model.id)
-  } catch (err) {
+  } catch {
     toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
   }
 }
@@ -385,7 +385,7 @@ async function setDefaultThinkingEffort(level) {
   try {
     await patchAgentPref(props.agentId, 'preferred_thinking_effort', level)
     updateAgentField(props.agentId, 'preferredThinkingEffort', level)
-  } catch (err) {
+  } catch {
     toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
   }
 }
@@ -394,7 +394,7 @@ async function setDefaultTransport(transport) {
   try {
     await patchAgentPref(props.agentId, 'transport', transport)
     updateAgentField(props.agentId, 'transport', transport)
-  } catch (err) {
+  } catch {
     toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
   }
 }
@@ -403,7 +403,7 @@ async function setDefaultMode(mode) {
   try {
     await patchAgentPref(props.agentId, 'preferred_mode', mode.id)
     updateAgentField(props.agentId, 'preferredMode', mode.id)
-  } catch (err) {
+  } catch {
     toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
   }
 }
@@ -502,7 +502,7 @@ async function setAsDefault() {
       await patchAgentPref(props.agentId, 'preferred_mode', pendingDefaultMode.value)
       updateAgentField(props.agentId, 'preferredMode', pendingDefaultMode.value)
     }
-  } catch (err) {
+  } catch {
     toast.show(t('settings.saveFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
   }
 }

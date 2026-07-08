@@ -19,6 +19,7 @@ export function parseAssistantContent(content: string) {
       return { blocks: [], metadata: parsed.metadata || null, cancelled: parsed.cancelled || false }
     }
     if (parsed.blocks && Array.isArray(parsed.blocks)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const mapped = parsed.blocks.map((b: any) => {
         if (b.type === 'tool_use') {
           if (!b.name) b.name = ''
@@ -30,7 +31,7 @@ export function parseAssistantContent(content: string) {
         }
         return b
       })
-      const result: any[] = []
+      const result: Record<string, unknown>[] = []
       const toolIndex = new Map()
       let thinkingIdx = 0
       for (const b of mapped) {
@@ -77,7 +78,7 @@ export function parseAssistantContent(content: string) {
  * Uses a priority chain: description > file_path > command > pattern > query > url > skill > prompt > path > src_path+dst_path > firstVal
  * Shows full content — no artificial truncation.
  */
-export function toolCallSummary(block: { input?: any; name?: string; summary?: string }): string {
+export function toolCallSummary(block: { input?: Record<string, unknown>; name?: string; summary?: string }): string {
   // Prefer pre-extracted summary from slim SSE/DB (avoids reading input)
   if (block.summary) return block.summary
   // Fallback: compute from input (old data or interactive tools)
@@ -90,17 +91,17 @@ export function toolCallSummary(block: { input?: any; name?: string; summary?: s
     if (header) return header
     return question
   }
-  if (block.input.description) return block.input.description
+  if (block.input.description) return block.input.description as string
   const obj = block.input
-  if (obj.file_path) return baseName(obj.file_path)
-  if (obj.command) return obj.command
-  if (obj.pattern) return obj.pattern
-  if (obj.query) return obj.query
-  if (obj.url) return obj.url
-  if (obj.skill) return obj.skill
-  if (obj.prompt && name === 'agent') return obj.prompt
-  if (obj.path) return baseName(obj.path)
-  if (obj.src_path && obj.dst_path) return `${baseName(obj.src_path)} → ${baseName(obj.dst_path)}`
+  if (obj.file_path) return baseName(obj.file_path as string)
+  if (obj.command) return obj.command as string
+  if (obj.pattern) return obj.pattern as string
+  if (obj.query) return obj.query as string
+  if (obj.url) return obj.url as string
+  if (obj.skill) return obj.skill as string
+  if (obj.prompt && name === 'agent') return obj.prompt as string
+  if (obj.path) return baseName(obj.path as string)
+  if (obj.src_path && obj.dst_path) return `${baseName(obj.src_path as string)} → ${baseName(obj.dst_path as string)}`
   const firstVal = Object.values(obj)[0]
   if (typeof firstVal === 'string') return firstVal
   return ''

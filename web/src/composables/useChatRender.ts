@@ -1,4 +1,4 @@
-import { ref, reactive, nextTick, watch } from 'vue'
+import { ref, reactive, nextTick, watch, type Ref } from 'vue'
 import { renderMarkdown as baseRenderMarkdown, renderMarkdownHtml, renderMermaidInElement } from '@/composables/useMarkdownRenderer.ts'
 import { formatToolInput } from '@/utils/renderToolDetail.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
@@ -32,15 +32,18 @@ import {
   repeatLabel,
 } from '@/utils/format.ts'
 
-export function useChatRender(options: { messages: any; theme: any; currentSessionId: any }) {
+export function useChatRender(options: { messages: { value: Array<Record<string, unknown>> }; theme: { value: unknown }; currentSessionId: { value: unknown } }) {
   const { messages, theme, currentSessionId } = options
   const { verifyFilePaths } = useFilePathAnnotation()
   const { verifyCommitHashes } = useCommitHashAnnotation()
 
-  const blockTasks: Record<string, any> = reactive({})
-  const blockAskQuestions: Record<string, any> = reactive({})
-  const blockRagResults: Record<string, any> = reactive({})
-  const expandedTools: Record<string, any> = ref({})
+  // Local type for accessing message properties with known types
+  type RenderMessage = { id?: string | number; role?: string; blocks?: Array<{ type?: string; text?: string } & Record<string, unknown>>; streaming?: boolean; [key: string]: unknown }
+
+  const blockTasks: Record<string, unknown> = reactive({})
+  const blockAskQuestions: Record<string, unknown> = reactive({})
+  const blockRagResults: Record<string, unknown> = reactive({})
+  const expandedTools = ref({}) as Ref<Record<string, boolean>>
   let lastRenderedCount = 0
 
   // ── Task block store for batch fetching (ISS-013) ──
@@ -60,12 +63,12 @@ export function useChatRender(options: { messages: any; theme: any; currentSessi
   // Called via requestIdleCallback after initial fast render for instant display.
   staticBlockCache.setUpgradeFn(() => {
     let upgraded = 0
-    for (const msg of messages.value) {
+    for (const msg of messages.value as RenderMessage[]) {
       if (msg.role !== 'assistant' || !msg.blocks || msg.streaming) continue
       for (let bi = 0; bi < msg.blocks.length && upgraded < 5; bi++) {
         const block = msg.blocks[bi]
         if (block.type !== 'text' || !block.text) continue
-        if (staticBlockCache.isDeferred(msg.id, bi, block.text)) {
+        if (staticBlockCache.isDeferred(msg.id!, bi, block.text)) {
           // Re-render with full pipeline and replace cache entry
           const fullHtml = renderTextBlock(block.text, String(msg.id), bi, false, false)
           staticBlockCache.set(String(msg.id), bi, block.text, fullHtml, false)
@@ -95,6 +98,8 @@ export function useChatRender(options: { messages: any; theme: any; currentSessi
     staticBlockCache.clear()
   })
 
+  type BlockTaskEntry = { taskId?: number; deleted?: boolean; loading?: boolean; task?: unknown; [key: string]: unknown }
+
   // Sync blockTasks with latest task data from store (global polling updates store.state.tasks).
   // Use a tasks Map for O(1) lookup, and taskChanged() for semantic comparison.
   watch(() => store.state.tasks, (tasks) => {
@@ -103,20 +108,21 @@ export function useChatRender(options: { messages: any; theme: any; currentSessi
     // Empty tasks list means all tasks were deleted — mark all blockTasks as deleted
     if (!tasks || tasks.length === 0) {
       for (const key of keys) {
-        if (!blockTasks[key].deleted) blockTasks[key].deleted = true
-        blockTasks[key].loading = false
+        const e = blockTasks[key] as BlockTaskEntry
+        if (!e.deleted) e.deleted = true
+        e.loading = false
       }
       return
     }
-    const taskMap = new Map(tasks.map(t => [t.id, t]))
+    const taskMap = new Map(tasks.map((t: Record<string, unknown>) => [t.id, t]))
     for (const key of keys) {
-      const entry = blockTasks[key]
+      const entry = blockTasks[key] as BlockTaskEntry
       if (entry.deleted) continue
       const updated = taskMap.get(entry.taskId)
       if (!updated) {
         entry.deleted = true
         entry.loading = false
-      } else if (entry.task && taskChanged(entry.task, updated)) {
+      } else if (entry.task && taskChanged(entry.task as Record<string, unknown>, updated as Record<string, unknown>)) {
         entry.task = updated
       } else if (!entry.task) {
         entry.task = updated
@@ -137,14 +143,16 @@ export function useChatRender(options: { messages: any; theme: any; currentSessi
 
   async function refreshTaskData(taskId: number) {
     for (const key of Object.keys(blockTasks)) {
-      if (blockTasks[key].taskId === taskId && !blockTasks[key].deleted) {
+      const entry = blockTasks[key] as BlockTaskEntry
+      if (entry.taskId === taskId && !entry.deleted) {
         try {
           const data = await apiGet(`/api/tasks/${taskId}`)
-          blockTasks[key].task = data
-        } catch (err: any) {
-          if (err?.message?.includes('404') || err?.message?.toLowerCase().includes('not found')) {
-            blockTasks[key].deleted = true
-            blockTasks[key].task = null
+          const bk = blockTasks[key] as BlockTaskEntry
+          bk.task = data
+        } catch (err: unknown) {
+          if ((err instanceof Error && (err.message.includes('404') || err.message.toLowerCase().includes('not found')))) {
+            entry.deleted = true
+            entry.task = null
           }
           // Other errors: leave existing data, don't mark deleted
         }
@@ -294,10 +302,10 @@ export function useChatRender(options: { messages: any; theme: any; currentSessi
     return cleanText ? renderMarkdown(cleanText, { skipEnhancements: deferEnhancements }) : ''
   }
 
-  function extractScheduledTasks(msgs: any[]) {
+  function extractScheduledTasks(msgs: Array<Record<string, unknown>>) {
     // Collect all task keys across messages for a single batch fetch
     const allTaskKeys = []
-    for (const msg of msgs) {
+    for (const msg of msgs as RenderMessage[]) {
       if (msg.role === 'assistant' && msg.blocks && !msg.streaming) {
         for (let bi = 0; bi < msg.blocks.length; bi++) {
           const block = msg.blocks[bi]

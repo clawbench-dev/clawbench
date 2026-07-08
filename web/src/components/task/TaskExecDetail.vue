@@ -168,7 +168,7 @@ async function onRefresh() {
 }
 
 // ── Agents (for getAgentIcon/getAgentName) ──
-const { agents: agentsList, getAgentIcon, getAgentName } = useAgents()
+const { getAgentIcon, getAgentName } = useAgents()
 
 // ── ChatRender — full pipeline for markdown rendering ──
 const messages = ref([])

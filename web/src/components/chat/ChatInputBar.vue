@@ -262,7 +262,7 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, FileText, Folder, XCircle, Inbox, Send, Square, Settings, Zap, Loader2, Cpu, Compass, Brain, Cable, Activity, MessagesSquare, FileImage, FileVideo, FileMusic } from 'lucide-vue-next'
+import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, FileText, Folder, XCircle, Inbox, Send, Square, Zap, Loader2, Cpu, Compass, Brain, Cable, Activity, MessagesSquare, FileImage, FileVideo, FileMusic } from 'lucide-vue-next'
 import { baseName } from '@/utils/path.ts'
 import { formatFileSize, getFileType } from '@/utils/fileType.ts'
 import { isThumbableExt } from '@/utils/fileManager.ts'
@@ -307,21 +307,6 @@ const usageColor = computed(() => {
   if (pct >= 90) return '#f97316'
   if (pct >= 75) return '#eab308'
   return '#22c55e'
-})
-const usageText = computed(() => {
-  const fmt = (n) => {
-    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
-    if (n >= 1000) return (n / 1000).toFixed(0) + 'K'
-    return String(n)
-  }
-  return `${fmt(contextUsed.value)}/${fmt(contextSize.value)}`
-})
-const usageTooltip = computed(() => {
-  let tip = `${usageText.value} tokens (${usagePct.value}%)`
-  if (contextCost.value > 0) {
-    tip += ` | $${contextCost.value.toFixed(2)} ${contextCurrency.value || 'USD'}`
-  }
-  return tip
 })
 const dialog = useDialog()
 const quickSendStore = useQuickSend()

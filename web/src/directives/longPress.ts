@@ -74,6 +74,7 @@ function mounted(el: HTMLElement, binding: DirectiveBinding) {
   // touchcancel just cleans up — no preventDefault needed
   el.addEventListener('touchcancel', onTouchCancel, { passive: true })
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ;(el as any)._longPress_cleanup = () => {
     el.removeEventListener('touchstart', onTouchStart)
     el.removeEventListener('touchmove', onTouchMove)
@@ -84,7 +85,9 @@ function mounted(el: HTMLElement, binding: DirectiveBinding) {
 }
 
 function unmounted(el: HTMLElement) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ;(el as any)._longPress_cleanup?.()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   delete (el as any)._longPress_cleanup
 }
 

@@ -7,9 +7,9 @@
  * Build a lightweight fingerprint of messages for change detection.
  * Used by polling to skip UI refresh when data is unchanged.
  */
-export function buildMessageSnapshot(rawMsgs: any[]): string {
+export function buildMessageSnapshot(rawMsgs: Record<string, unknown>[]): string {
   return rawMsgs.map(m =>
-    `${m.id ?? ''}:${m.role}:${(m.content || '').length}:${m.createdAt || ''}:${m.streaming ? 1 : 0}`
+    `${m.id ?? ''}:${m.role}:${((m.content as string) || '').length}:${m.createdAt || ''}:${m.streaming ? 1 : 0}`
   ).join('|')
 }
 
@@ -28,11 +28,11 @@ export function buildMessageSnapshot(rawMsgs: any[]): string {
  *   stripped so the loading indicator doesn't appear on completed sessions.
  */
 export function parseMessages(
-  rawMsgs: any[],
-  onParseAssistantContent: (content: string) => any,
-  existingMessages?: any[],
+  rawMsgs: Record<string, unknown>[],
+  onParseAssistantContent: (content: string) => Record<string, unknown>,
+  existingMessages?: Record<string, unknown>[],
   sessionRunning?: boolean
-): any[] {
+): Record<string, unknown>[] {
   // Build lookup of existing showingSummary state by message ID
   const existingSummaryState = existingMessages
     ? new Map(existingMessages.map(m => [m.id, m.showingSummary]))
@@ -40,7 +40,7 @@ export function parseMessages(
 
   return rawMsgs.map(msg => {
     if (msg.role === 'assistant') {
-      const { blocks, metadata, cancelled } = onParseAssistantContent(msg.content)
+      const { blocks, metadata, cancelled } = onParseAssistantContent(msg.content as string)
       msg.blocks = blocks
       if (metadata) msg.metadata = metadata
       if (cancelled) msg.cancelled = cancelled
@@ -96,7 +96,7 @@ export function parseMessages(
  * @param summary - The summary text from the WebSocket event
  * @param atBottom - Whether the user is currently at the bottom of the chat
  */
-export function applySummaryUpdate(msg: any, summary: string | null | undefined, _atBottom: boolean): void {
+export function applySummaryUpdate(msg: Record<string, unknown>, summary: string | null | undefined, _atBottom: boolean): void {
   msg.summary = summary
   // Only set default when showingSummary hasn't been set yet.
   // If the user has already toggled (or parseMessages initialized it), don't override.

@@ -26,5 +26,6 @@ export function useLocale() {
 
 /** Global t function for use outside components (composables, utils) */
 export function gt(key: string, params?: Record<string, unknown>): string {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return i18n.global.t(key, params as any)
 }

@@ -39,6 +39,7 @@ export function useSwipeSession(options: UseSwipeSessionOptions) {
       const resp = await fetch('/api/ai/sessions')
       if (!resp.ok) return sessionCache
       const data = await resp.json()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       sessionCache = (data.sessions || []).map((s: any) => ({
         id: s.id,
         title: s.title || gt('session.unnamed'),
