@@ -18,6 +18,19 @@ jobs:
         with:
           go-version: '1.25'
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Build frontend (for go:embed)
+        run: |
+          npm ci
+          npm run build
+          rm -rf internal/frontend/dist
+          cp -r public internal/frontend/dist
+        shell: bash
+
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v7
         with:
@@ -35,16 +48,21 @@ jobs:
         with:
           go-version: '1.25'
 
-      - name: Go coverage gate
-        run: ./scripts/check-go-coverage.sh
-
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
           cache: 'npm'
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Build frontend (for go:embed)
+        run: |
+          npm ci
+          npm run build
+          rm -rf internal/frontend/dist
+          cp -r public internal/frontend/dist
+        shell: bash
+
+      - name: Go coverage gate
+        run: ./scripts/check-go-coverage.sh
 
       - name: Frontend coverage gate
         run: ./scripts/check-frontend-coverage.sh
