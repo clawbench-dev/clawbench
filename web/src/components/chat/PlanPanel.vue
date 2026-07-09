@@ -4,14 +4,14 @@
     <div v-if="collapsed" class="plan-chip" :class="{ 'plan-chip--updated': hasUpdate }" @click="$emit('toggle-collapse')">
       <span class="plan-chip__pulse"></span>
       <span class="plan-chip__text">{{ chipText }}</span>
-      <span class="plan-chip__toggle">▼</span>
+      <ChevronDown :size="12" class="plan-chip__toggle" />
     </div>
 
     <!-- Expanded timeline -->
     <div v-else class="plan-expanded">
       <div class="plan-expanded__header">
         <span class="plan-expanded__title">{{ t('chat.plan.title') }}</span>
-        <span class="plan-expanded__toggle" @click="$emit('toggle-collapse')">▲</span>
+        <ChevronUp :size="12" class="plan-expanded__toggle" @click="$emit('toggle-collapse')" />
       </div>
       <div class="plan-expanded__timeline">
         <div v-for="(entry, idx) in entries" :key="idx" class="plan-entry" :class="'plan-entry--' + entry.status">
@@ -42,6 +42,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { ChevronDown, ChevronUp } from 'lucide-vue-next'
 import type { PlanEntry } from '@/composables/usePlanProgress'
 
 const props = defineProps<{
@@ -116,7 +117,6 @@ const chipText = computed(() => {
 }
 
 .plan-chip__toggle {
-  font-size: 10px;
   color: var(--text-muted, #6c757d);
   flex-shrink: 0;
 }
@@ -143,7 +143,6 @@ const chipText = computed(() => {
 }
 
 .plan-expanded__toggle {
-  font-size: 10px;
   color: var(--text-muted, #6c757d);
   cursor: pointer;
 }
