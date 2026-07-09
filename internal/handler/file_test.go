@@ -134,7 +134,7 @@ func TestGetFile_OpenAPIYAML_ReturnsSubtype(t *testing.T) {
 	var fc FileContent
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
 	assert.Equal(t, model.SubtypeOpenAPI, fc.Subtype)
-	assert.NotEmpty(t, fc.SpecJson, "specJson should be populated for YAML OpenAPI files")
+	assert.NotEmpty(t, fc.SpecJSON, "specJson should be populated for YAML OpenAPI files")
 }
 
 func TestGetFile_OpenAPIJSON_ReturnsSubtype(t *testing.T) {
@@ -153,7 +153,7 @@ func TestGetFile_OpenAPIJSON_ReturnsSubtype(t *testing.T) {
 	var fc FileContent
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
 	assert.Equal(t, model.SubtypeOpenAPI, fc.Subtype)
-	assert.Empty(t, fc.SpecJson, "specJson should be empty for JSON OpenAPI files (content is already JSON)")
+	assert.Empty(t, fc.SpecJSON, "specJson should be empty for JSON OpenAPI files (content is already JSON)")
 }
 
 func TestGetFile_RegularYAML_ReturnsNoSubtype(t *testing.T) {
@@ -171,7 +171,7 @@ func TestGetFile_RegularYAML_ReturnsNoSubtype(t *testing.T) {
 	var fc FileContent
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &fc))
 	assert.Empty(t, fc.Subtype)
-	assert.Empty(t, fc.SpecJson)
+	assert.Empty(t, fc.SpecJSON)
 }
 
 // --- ServeLocalFile with external ?path= query param ---

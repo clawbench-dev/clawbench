@@ -2124,7 +2124,7 @@ describe('useChatStream', () => {
       expect(phase2Msg.id).toBe(12345)
     })
 
-    it('should create Phase 2 without id when resume_split data has no message_id (backward compat)', () => {
+    it('should create Phase 2 with resume- id when resume_split data has no message_id (backward compat)', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
@@ -2139,7 +2139,7 @@ describe('useChatStream', () => {
         (m: any) => m.role === 'assistant' && m.streaming
       )
       expect(phase2Msg).toBeDefined()
-      expect(phase2Msg.id).toBeUndefined()
+      expect(phase2Msg.id).toMatch(/^resume-/)
     })
 
     it('should handle resume_split with malformed JSON gracefully', () => {
@@ -2159,10 +2159,11 @@ describe('useChatStream', () => {
         (m: any) => m.role === 'assistant' && m.streaming
       )
       expect(phase2Msg).toBeDefined()
-      expect(phase2Msg.id).toBeUndefined()
+      // No message_id → auto-generated resume- prefix id
+      expect(phase2Msg.id).toMatch(/^resume-/)
     })
 
-    it('should not set Phase 2 id when message_id is 0 (falsy)', () => {
+    it('should set Phase 2 resume- id when message_id is 0 (falsy)', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
@@ -2170,14 +2171,14 @@ describe('useChatStream', () => {
       const es = getLatestEs()
       es.simulateOpen()
 
-      // message_id: 0 is falsy — should not set phase2.id
+      // message_id: 0 is falsy — should generate resume- prefix id
       es.simulate('resume_split', { message_id: 0 })
 
       const phase2Msg = options.messages.value.find(
         (m: any) => m.role === 'assistant' && m.streaming
       )
       expect(phase2Msg).toBeDefined()
-      expect(phase2Msg.id).toBeUndefined()
+      expect(phase2Msg.id).toMatch(/^resume-/)
     })
   })
 

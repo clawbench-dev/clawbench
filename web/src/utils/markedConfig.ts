@@ -16,21 +16,21 @@ import { escapeHtml } from '@/utils/html.ts'
 export function configureMarkedRenderer(): void {
     marked.use({
         renderer: {
-            heading(...args: any[]): string {
+            heading(...args: unknown[]): string {
                 // v18: heading({ text, depth })  |  v4: heading(text, depth)
                 const token = args[0]
                 const isObj = token != null && typeof token === 'object'
-                const text = isObj ? token.text : token
-                const depth = isObj ? token.depth : args[1]
-                const id = slugify(text || '')
-                return `<h${depth} id="${id}">${marked.parseInline(text || '')}</h${depth}>`
+                const text = isObj ? (token as Record<string, unknown>).text : token
+                const depth = isObj ? (token as Record<string, unknown>).depth : args[1]
+                const id = slugify(String(text || ''))
+                return `<h${depth} id="${id}">${marked.parseInline(String(text || ''))}</h${depth}>`
             },
-            code(...args: any[]): string {
+            code(...args: unknown[]): string {
                 // v18: code({ text, lang })  |  v4: code(text, lang)
                 const token = args[0]
                 const isObj = token != null && typeof token === 'object'
-                const code = isObj ? (token.text || '') : String(token || '')
-                const lang = isObj ? (token.lang || '') : (args[1] || '')
+                const code = isObj ? (String((token as Record<string, unknown>).text || '')) : String(token || '')
+                const lang = isObj ? (String((token as Record<string, unknown>).lang || '')) : (String(args[1] || ''))
                 if (lang === 'mermaid') {
                     return '<pre class="mermaid">' + escapeHtml(code) + '</pre>'
                 }

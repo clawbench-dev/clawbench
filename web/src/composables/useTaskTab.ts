@@ -320,7 +320,8 @@ export function useTaskTab() {
             if (exec) {
                 // Preserve existing content/blocks/metadata/preview if API returns null
                 // (LEFT JOIN may return null content when chat_history has no matching row)
-                const { ...safeFields } = exec
+                // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                const { content: _execContent, ...safeFields } = exec
                 const merged = { ...selectedExecData.value, ...safeFields }
                 // Only overwrite content if API returned a non-null value
                 if (exec.content != null) merged.content = exec.content
