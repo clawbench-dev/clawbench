@@ -169,7 +169,7 @@ import { useChatStream } from '@/composables/useChatStream.ts'
 import { useChatSession, loadSessionsOnce } from '@/composables/useChatSession.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useSessionManager } from '@/composables/useSessionManager.ts'
-import { usePendingStore, createPendingMessage } from '@/composables/usePendingStore.ts'
+
 import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
@@ -204,12 +204,8 @@ const identity = useSessionIdentity()
 const agentsComposable = useAgents()
 const { agents: agentsList, getAgent, getAgentIcon, getAgentName } = agentsComposable
 const messages = ref([])
-const pendingStore = usePendingStore()
-/** Rendered messages = persisted messages + pending messages for current session */
-const renderedMessages = computed(() => [
-  ...messages.value,
-  ...pendingStore.getPending(identity.currentSessionId.value),
-])
+/** Rendered messages = persisted messages (pending messages already in messages.value with pending: true) */
+const renderedMessages = computed(() => messages.value)
 const inputDisabled = ref(false)
 const loading = ref(false)
 // Incremented when the panel reopens, so ChatMessageItem can re-check
@@ -351,7 +347,9 @@ function onStreamEnd(reason) {
     store.loadGitBranch().catch(() => {})
   } else if (reason === 'cancelled') {
     // Backend already cleared queue; clear locally for immediate UI response
-    pendingStore.clearPending(identity.currentSessionId.value)
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      if (messages.value[i].pending) messages.value.splice(i, 1)
+    }
     // Restore screen lock — output was cancelled, no TTS will play
     autoSpeech.onOutputEndNoSpeech()
   }
@@ -377,7 +375,6 @@ const stream = useChatStream({
   currentSessionId: identity.currentSessionId,
   currentBackend: identity.currentBackend,
   loading,
-  pendingStore,
   onRenderNeeded: (forceFull) => render.updateRenderedContents(forceFull),
   onScrollBottom: (force) => scrollBottom(force),
   onLoadHistory: () => session.loadHistory(),
@@ -422,7 +419,6 @@ const { quoteData, setQuoteData, clearAll } = useChatContext()
 const manager = useSessionManager({
   messages,
   loading,
-  pendingStore,
   switchSessionCore: session.switchSession,
   createSessionCore: session.createSession,
   deleteSessionCore: session.deleteSession,
@@ -706,8 +702,17 @@ async function sendMessage(text, extraFilePaths) {
       clearAll()
       inputBarRef.value?.clearInput()
       clearPendingFiles()
-      // Push a pending user message into pendingStore (per-session)
-      pendingStore.addPending(identity.currentSessionId.value, createPendingMessage(inputText || '', allFiles))
+      // Push a pending user message directly into messages.value
+      // (pendingStore.addPending was a no-op stub — use messages.value directly)
+      messages.value.push({
+        role: 'user',
+        id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        content: inputText || '',
+        blocks: (inputText || '') ? [{ type: 'text', text: inputText }] : [],
+        files: allFiles.map(p => ({ path: p })),
+        createdAt: new Date().toISOString(),
+        pending: true,
+      })
       render.updateRenderedContents()
       scrollBottom(true)
       // Capture session ID before any async boundary
@@ -799,9 +804,34 @@ async function sendMessageNow(text, filePaths, files) {
             if (localIdx !== -1) {
                 messages.value.splice(localIdx, 1)
             }
-            pendingStore.addPending(identity.currentSessionId.value, createPendingMessage(text || '', files || []))
+            // Push pending message directly into messages.value
+            // (pendingStore.addPending was a no-op stub)
+            messages.value.push({
+                role: 'user',
+                id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                content: text || '',
+                blocks: (text || '') ? [{ type: 'text', text }] : [],
+                files: (files || []).map(p => ({ path: p })),
+                createdAt: new Date().toISOString(),
+                pending: true,
+            })
             if (data.queued && data.queue) {
-                pendingStore.syncFromBackendQueue(identity.currentSessionId.value, data.queue)
+                // Sync backend queue state: remove all pending, re-push from backend
+                for (let i = messages.value.length - 1; i >= 0; i--) {
+                    if (messages.value[i].pending) messages.value.splice(i, 1)
+                }
+                for (const item of data.queue) {
+                    const itemFiles = [...(item.files || []), ...(item.filePaths || [])]
+                    messages.value.push({
+                        role: 'user',
+                        id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                        content: item.text || '',
+                        blocks: item.text ? [{ type: 'text', text: item.text }] : [],
+                        files: itemFiles.map(p => ({ path: p })),
+                        createdAt: item.createdAt || new Date().toISOString(),
+                        pending: true,
+                    })
+                }
             }
             stream.connectStream(identity.currentSessionId.value)
             // Proactively sync ACP state for the running session
@@ -845,8 +875,16 @@ async function sendMessageNow(text, filePaths, files) {
 async function handleToolSendMessage(text) {
     if (!text) return
     if (loading.value) {
-      // Push a pending user message into pendingStore (per-session)
-      pendingStore.addPending(identity.currentSessionId.value, createPendingMessage(text))
+      // Push a pending user message directly into messages.value
+      // (pendingStore.addPending was a no-op stub)
+      messages.value.push({
+        role: 'user',
+        id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        content: text,
+        blocks: text ? [{ type: 'text', text }] : [],
+        createdAt: new Date().toISOString(),
+        pending: true,
+      })
       render.updateRenderedContents()
       scrollBottom(true)
       manager.enqueueMessage(identity.currentSessionId.value, text)
@@ -873,12 +911,10 @@ async function handleLoadMore() {
 
 /** Handle remove-pending event from ChatMessageItem.
  *  The event passes the pending message's content text (not index).
- *  We look up the pendingIndex by content in the pendingStore for the
- *  backend API, and also remove from pendingStore optimistically. */
+ *  We look up the pendingIndex in messages.value for the backend API. */
 function handleRemovePending(content) {
-    const sessionId = identity.currentSessionId.value
-    const pending = pendingStore.getPending(sessionId)
-    const pendingIndex = pending.findIndex(m => m.content === content)
+    const pendingMessages = messages.value.filter(m => m.pending)
+    const pendingIndex = pendingMessages.findIndex(m => m.content === content)
     if (pendingIndex < 0) return
     manager.handleRemovePending(pendingIndex)
 }
