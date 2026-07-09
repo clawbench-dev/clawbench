@@ -710,8 +710,10 @@ async function sendMessage(text, extraFilePaths) {
       pendingStore.addPending(identity.currentSessionId.value, createPendingMessage(inputText || '', allFiles))
       render.updateRenderedContents()
       scrollBottom(true)
+      // Capture session ID before any async boundary
+      const capturedSessionId = identity.currentSessionId.value
       // Enqueue to backend (POST /api/ai/queue)
-      const result = await manager.enqueueMessage(inputText, extraFilePaths, capturedAttached, capturedPending)
+      const result = await manager.enqueueMessage(capturedSessionId, inputText, extraFilePaths, capturedAttached, capturedPending)
       // Race condition: if AI finished right as we enqueued, the backend
       // dequeued the message and wants us to resubmit as a new chat.
       if (result.needsStart) {
@@ -847,7 +849,7 @@ async function handleToolSendMessage(text) {
       pendingStore.addPending(identity.currentSessionId.value, createPendingMessage(text))
       render.updateRenderedContents()
       scrollBottom(true)
-      manager.enqueueMessage(text)
+      manager.enqueueMessage(identity.currentSessionId.value, text)
     } else {
       await sendMessage(text)
     }
