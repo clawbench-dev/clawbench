@@ -551,7 +551,7 @@ watch(() => toolDetailShow.value, (show) => {
   }
 })
 
-// Streaming refresh: when overlay is open and streaming is not done, poll every 1s
+// Streaming refresh: when overlay is open and streaming is not done, poll every 2s
 // to refresh content. This supplements the passive watch — SSE doesn't push tool output,
 // and thinking text updates may be missed during SSE reconnection/buffering.
 function startStreamingRefresh() {
@@ -589,15 +589,12 @@ function startStreamingRefresh() {
         streamingRefreshTimer = null
         return
       }
-      if (block && block.tool_id && block.msgId) {
-        fetchToolCallDetail(block.tool_id, block.msgId, block)
-      }
-      if (!loading.value && block && block.done) {
-        clearInterval(streamingRefreshTimer)
-        streamingRefreshTimer = null
+      // ContentBlock.id is the tool_id; msgId is stored on activeToolOverlay
+      if (block && block.id) {
+        fetchToolCallDetail(block.id, activeToolOverlay.value.msgId, block)
       }
     }
-  }, 1000)
+  }, 2000)
 }
 
 watch(

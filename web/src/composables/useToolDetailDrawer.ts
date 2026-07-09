@@ -54,12 +54,21 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
   // Tracks which tool block is being shown for reactive updates (ChatPanelContent only)
   const activeToolOverlay = ref<{ msgId: string; blockIdx: number } | null>(null)
 
+  // Fetch-in-flight guard: prevents concurrent fetchToolCallDetail calls from polling timer
+  let _fetchInFlight = false
+  // If user clicks retry while a fetch is in flight, flag to re-fetch after current one completes
+  let _retryRequested = false
+
   function toolCallEmptyState(msg: string) {
     return `<div class="tool-call-empty"><span class="tool-call-empty-msg">${msg}</span><button class="tool-call-retry-btn" onclick="this.closest('.tool-call-empty').dataset.retry='1'">${t('chat.contentBlocks.retry')}</button></div>`
   }
 
   function handleShowToolDetail(block: ToolBlock) {
     const { formatToolInput, toolCallSummary } = chatRender
+
+    // Reset fetch-in-flight guard for new tool detail
+    _fetchInFlight = false
+    _retryRequested = false
 
     // Store identifiers for reactive lookup (survives messages array replacement on loadHistory)
     if (block.blockIdx !== undefined) {
@@ -97,6 +106,10 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
     empty.dataset.retry = ''
     const ids = toolDetailData.value._fetchIds
     if (!ids) return
+    if (_fetchInFlight) {
+      _retryRequested = true
+      return
+    }
     let block: ToolBlock | null = null
     if (findLiveBlock && activeToolOverlay.value) {
       block = findLiveBlock(activeToolOverlay.value)
@@ -105,6 +118,8 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
   }
 
   async function fetchToolCallDetail(toolId: string | number, msgId: string | number, block: ToolBlock, _retryCount = 0) {
+    if (_fetchInFlight) return
+    _fetchInFlight = true
     if (!toolDetailData.value.inputHtml) {
       toolDetailData.value.inputHtml = '<div class="tool-call-loading"></div>'
     }
@@ -113,6 +128,7 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
       if (!resp.ok) {
         // Retry on 404 (tool call may not yet be persisted during streaming)
         if (shouldRetryToolFetch(resp.status, _retryCount, show.value)) {
+          _fetchInFlight = false
           setTimeout(() => {
             if (!show.value) return
             let liveBlock: ToolBlock | null = null
@@ -140,9 +156,30 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
       if (data.output) {
         toolDetailData.value.outputHtml = formatToolOutput(data.output, block.name || data.name || '')
       }
+      // Sync done/status from API response so the polling watcher can stop
+      if (data.done !== undefined) {
+        toolDetailData.value.done = !!data.done
+      }
+      if (data.status !== undefined && data.status !== null) {
+        toolDetailData.value.status = data.status
+      }
     } catch (e) {
       appLog.w(TAG, 'Failed to fetch tool call detail:', e)
       toolDetailData.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsLoadFailed'))
+    } finally {
+      _fetchInFlight = false
+      // If user clicked retry while fetch was in flight, re-fetch immediately
+      if (_retryRequested) {
+        _retryRequested = false
+        if (show.value && toolDetailData.value._fetchIds) {
+          const { toolId, msgId } = toolDetailData.value._fetchIds
+          let block: ToolBlock | null = null
+          if (findLiveBlock && activeToolOverlay.value) {
+            block = findLiveBlock(activeToolOverlay.value)
+          }
+          fetchToolCallDetail(toolId, msgId, block || { name: toolDetailData.value.name })
+        }
+      }
     }
   }
 
@@ -156,6 +193,8 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
 
   function closeOverlay() {
     show.value = false
+    _fetchInFlight = false
+    _retryRequested = false
   }
 
   // Backward-compatible computed that merges show + data (consumers that read .show/.name etc still work)
