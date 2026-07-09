@@ -29,7 +29,9 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, onBeforeUnmount } from 'vue'
+import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
+import { appLog } from '@/utils/appLog'
 
 const props = defineProps({
   open: Boolean,
@@ -44,6 +46,7 @@ const props = defineProps({
   handleOnly: Boolean, // 仅显示拖拽手柄，无标题栏
   transparentOverlay: Boolean, // 透明遮罩（可点击关闭但可见底层内容）
   fullscreen: Boolean, // 全屏模式，覆盖 app header，用于无 header 的页面（如终端）
+  noSwipeClose: Boolean, // 禁用边缘滑动关闭（用于有自定义返回逻辑的抽屉）
 })
 
 const emit = defineEmits(['close'])
@@ -52,16 +55,52 @@ const leaving = ref(false)
 const everOpened = ref(false)
 let leaveTimer = null
 
+// ── Back handler: edge-swipe / Android back closes the topmost drawer ──
+// Module-level counter gives each BottomSheet instance a unique sequence number.
+// Higher sequence = more recently opened = topmost = closed first by back gesture.
+let _drawerSeq = 0
+function nextDrawerSeq() { return ++_drawerSeq }
+const instanceSeq = nextDrawerSeq()
+let unregisterBack = null
+
 watch(() => props.open, (val) => {
   clearTimeout(leaveTimer)
   if (val) {
     everOpened.value = true
     leaving.value = false
+    // Register back handler so edge-swipe / Android back closes this drawer
+    if (!props.noSwipeClose && !unregisterBack) {
+      const id = `bs-drawer-${instanceSeq}`
+      // Encode sequence in priority fraction so higher seq (newer drawer)
+      // wins among same-tier PRIORITY_OVERLAY handlers.
+      const priority = PRIORITY_OVERLAY + instanceSeq * 0.001
+      unregisterBack = registerBackHandler({
+        id,
+        canGoBack: () => props.open && !leaving.value,
+        goBack: () => {
+          appLog.d('BottomSheet', `back gesture closing drawer: ${id}`)
+          handleClose()
+        },
+        priority,
+      })
+    }
   } else if (leaving.value) {
     // Close triggered externally while animating — cancel animation, hide now
     leaving.value = false
   }
+  // Unregister back handler when drawer fully closes
+  if (!val && unregisterBack) {
+    unregisterBack()
+    unregisterBack = null
+  }
 }, { immediate: true })
+
+onBeforeUnmount(() => {
+  if (unregisterBack) {
+    unregisterBack()
+    unregisterBack = null
+  }
+})
 
 function handleClose() {
   if (leaving.value) return
