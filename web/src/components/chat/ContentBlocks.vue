@@ -88,9 +88,9 @@
           'thinking-expanded-done': isThinkingExpandedDone(block, bi),
           'thinking-collapsed': isThinkingCollapsed(block, bi),
           'thinking-collapsing': !!collapsingThinking[stableBlockKey(bi, block)],
+          'thinking-expanding': !!expandingThinking[stableBlockKey(bi, block)],
         }"
-        :style="collapsingThinking[stableBlockKey(bi, block)] ? { maxHeight: collapsingMaxHeight[stableBlockKey(bi, block)] + 'px' } : {}"
-        @click.stop="isThinkingCollapsed(block, bi) && handleThinkingClick(block, bi)"
+        @click.stop="handleThinkingClick(block, bi)"
       >
         <div class="thinking-header">
           <Brain :size="12" class="thinking-icon" />
@@ -100,10 +100,17 @@
           <!-- Cancelled marker: show inline in thinking header when this is the last block and message was cancelled.
                Prevents the cancelled mark from being visually hidden/trapped under the collapsed thinking chip. -->
           <span v-else-if="isLastBlock(bi) && cancelled" class="chat-cancelled-mark-inline">{{ t('chat.contentBlocks.cancelled') }}</span>
-          <CheckCircle2 v-else :size="14" color="#22c55e" class="thinking-check" />
+          <ChevronUp v-else-if="isThinkingExpandedDone(block, bi) || expandingThinking[stableBlockKey(bi, block)]" :size="12" class="thinking-chevron" />
+          <ChevronDown v-else :size="12" class="thinking-chevron" />
         </div>
-        <!-- Inline streaming content: visible during streaming, expanded-done, or collapse animation -->
-        <div v-if="isThinkingStreaming(block) || isThinkingExpandedDone(block, bi) || !!collapsingThinking[stableBlockKey(bi, block)]" class="thinking-inline-content" v-html="getThinkingHtml(bi, block)"></div>
+        <!-- Content wrapper: CSS grid 0fr/1fr transition for smooth expand/collapse -->
+        <div class="thinking-content-wrapper"
+          :class="{
+            'thinking-content-open': isThinkingStreaming(block) || isThinkingExpandedDone(block, bi) || !!expandingThinking[stableBlockKey(bi, block)],
+          }"
+        >
+          <div class="thinking-inline-content" v-html="getThinkingHtml(bi, block)"></div>
+        </div>
       </div>
       <!-- Tool use block -->
       <template v-else-if="block.type === 'tool_use'">
@@ -215,7 +222,7 @@ import { ref, watch, onUnmounted, computed, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { handleToolAction, shouldAutoExpandTool } from '@/utils/renderToolDetail.ts'
 import { getToolIcon, toolDisplayName } from '@/utils/icons'
-import { Brain, ChevronRight, CheckCircle2, AlertCircle, AlertTriangle, XCircle } from 'lucide-vue-next'
+import { Brain, ChevronRight, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle } from 'lucide-vue-next'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
 import {
   isSevereWarning,
@@ -332,7 +339,7 @@ const props = defineProps({
   active: { type: Boolean, default: true },
 })
 
-const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-thinking-detail', 'task-card-click', 'send-message', 'render-flush', 'resume-session', 'show-rag-detail'])
+const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'task-card-click', 'send-message', 'render-flush', 'resume-session', 'show-rag-detail'])
 
 // Key helper: use msgId if available, otherwise msgIndex
 function key(bi) {
@@ -368,8 +375,29 @@ function stableBlockKey(bi, block) {
   return `${block.type || 'other'}-${bi}`
 }
 
-function handleThinkingClick(block, _bi) {
-  emit('show-thinking-detail', { text: block.text, msgId: props.msgId, blockKey: block._key })
+function handleThinkingClick(block, bi) {
+  const blockKey = stableBlockKey(bi, block)
+  if (isThinkingCollapsed(block, bi)) {
+    // Expand inline with animation
+    expandingThinking.value[blockKey] = true
+    thinkingExpanded.value[blockKey] = true
+    blockHtmlCache.value = {}
+    nextTick(() => {
+      const el = _collapseElRefs[blockKey] || document.querySelector(`[data-thinking-key="${blockKey}"]`)
+      if (el && el.isConnected) {
+        _collapseElRefs[blockKey] = el
+        observeThinkingEl(blockKey, el)
+      }
+    })
+    // Clean up expanding state after animation
+    const t = setTimeout(() => {
+      delete expandingThinking.value[blockKey]
+    }, EXPAND_TRANSITION_MS)
+    _collapseTimers.push(t)
+  } else if (isThinkingExpandedDone(block, bi)) {
+    // Collapse inline with animation
+    triggerThinkingCollapse(blockKey)
+  }
 }
 
 /** Whether a thinking block should show inline streaming content.
@@ -409,18 +437,17 @@ const isLastBlockThinking = computed(() => {
   return blocks[blocks.length - 1].type === 'thinking'
 })
 
-// ── Thinking block collapse animation state ──
+// ── Thinking block collapse/expand animation state ──
 const collapsingThinking = ref({})   // { [blockKey]: true } for blocks mid-collapse
-const collapsingMaxHeight = ref({})  // { [blockKey]: maxHeightPx } for animation
+const expandingThinking = ref({})    // { [blockKey]: true } for blocks mid-expand
 const thinkingExpanded = ref({})     // { [blockKey]: true } — completed blocks that are still expanded (will collapse when leaving viewport)
 let _collapseElRefs = {}             // { [blockKey]: HTMLElement } tracked during streaming
 let _collapseTimers = []             // setTimeout IDs for collapse animation (cleaned up on unmount)
 
-// Collapse animation constants — must stay in sync with CSS
-const COLLAPSED_CHIP_HEIGHT = 28     // px — matches .thinking-collapsed { max-height: 28px }
+// Animation constants
 const COLLAPSE_VIEWPORT_DELAY = 3000 // ms — time after leaving viewport before collapsing
-const COLLAPSE_TRANSITION_MS = 400   // ms — must match CSS transition-duration + buffer
-const COLLAPSE_PLACEHOLDER_MAX = 99999 // large sentinel to keep content visible during nextTick
+const EXPAND_TRANSITION_MS = 300     // ms — expand animation duration
+const COLLAPSE_TRANSITION_MS = 350   // ms — collapse animation duration
 
 // ── IntersectionObserver for viewport-based collapse ──
 let _viewportObserver = null         // IntersectionObserver instance
@@ -481,41 +508,24 @@ function unobserveThinkingEl(blockKey) {
 function triggerThinkingCollapse(blockKey) {
   // Find the element — prefer tracked ref, fall back to DOM query
   const el = _collapseElRefs[blockKey] || document.querySelector(`[data-thinking-key="${blockKey}"]`)
-  if (!el || !el.isConnected || !el.scrollHeight) {
+  if (!el || !el.isConnected) {
     // Element gone — just mark as collapsed directly
     delete thinkingExpanded.value[blockKey]
     unobserveThinkingEl(blockKey)
     return
   }
-  // Mark as collapsing with placeholder maxHeight to prevent flash
+  // Mark as collapsing — this removes thinking-content-open from the wrapper,
+  // triggering the CSS grid 0fr transition. We also clear thinkingExpanded so
+  // the wrapper transitions from 1fr→0fr immediately.
   collapsingThinking.value[blockKey] = true
-  collapsingMaxHeight.value[blockKey] = COLLAPSE_PLACEHOLDER_MAX
-  // Clear throttle cache so DOM re-renders with complete thinking content
+  delete thinkingExpanded.value[blockKey]
   blockHtmlCache.value = {}
-  // Wait for Vue to flush DOM, then measure scrollHeight of complete content
-  nextTick(() => {
-    if (el && el.isConnected && el.scrollHeight) {
-      collapsingMaxHeight.value[blockKey] = el.scrollHeight
-      // Start collapse animation immediately (no read delay — user already read it while it was visible)
-      const t1 = setTimeout(() => {
-        collapsingMaxHeight.value[blockKey] = COLLAPSED_CHIP_HEIGHT
-        // After transition completes, clean up animation state
-        const t2 = setTimeout(() => {
-          delete collapsingThinking.value[blockKey]
-          delete collapsingMaxHeight.value[blockKey]
-          delete thinkingExpanded.value[blockKey]
-          unobserveThinkingEl(blockKey)
-        }, COLLAPSE_TRANSITION_MS)
-        _collapseTimers.push(t2)
-      }, 0) // nextTick-like: allow browser to paint the measured height before starting transition
-      _collapseTimers.push(t1)
-    } else {
-      delete collapsingThinking.value[blockKey]
-      delete collapsingMaxHeight.value[blockKey]
-      delete thinkingExpanded.value[blockKey]
-      unobserveThinkingEl(blockKey)
-    }
-  })
+  // After transition completes, clean up collapsing state
+  const t = setTimeout(() => {
+    delete collapsingThinking.value[blockKey]
+    unobserveThinkingEl(blockKey)
+  }, COLLAPSE_TRANSITION_MS)
+  _collapseTimers.push(t)
 }
 
 /** Track thinking block element refs during streaming for collapse animation. */
@@ -861,14 +871,15 @@ onUnmounted(() => {
   color: #fcd34d;
 }
 
-/* Thinking block */
+/* Thinking block — callout style distinct from tool calls */
 .chat-thinking {
   --thinking-accent: #8b5cf6;
-  background: color-mix(in srgb, var(--thinking-accent) 6%, var(--bg-secondary));
-  border: 1px solid color-mix(in srgb, var(--thinking-accent) 15%, var(--border-color));
-  border-radius: 4px;
-  margin: 4px 0;
-  overflow: hidden;
+  --thinking-transition: 300ms ease;
+  background: color-mix(in srgb, var(--thinking-accent) 4%, transparent);
+  border: none;
+  border-left: 3px solid color-mix(in srgb, var(--thinking-accent) 50%, transparent);
+  border-radius: 0 6px 6px 0;
+  margin: 6px 0;
   width: 100%;
 }
 
@@ -876,38 +887,77 @@ onUnmounted(() => {
   --thinking-accent: #a78bfa;
 }
 
-/* Collapsed state: clickable chip (header only) */
+/* Collapsed state: pill-shaped clickable chip */
 .chat-thinking.thinking-collapsed {
   cursor: pointer;
-  max-height: 28px;
-  transition: max-height 0.35s ease-out;
+  border-radius: 12px;
+  border-left: none;
+  border: 1px solid color-mix(in srgb, var(--thinking-accent) 20%, var(--border-color));
+  background: color-mix(in srgb, var(--thinking-accent) 6%, var(--bg-secondary));
 }
 
 .chat-thinking.thinking-collapsed:hover {
   background: color-mix(in srgb, var(--thinking-accent) 12%, var(--bg-secondary));
+  border-color: color-mix(in srgb, var(--thinking-accent) 35%, var(--border-color));
 }
 
-/* Expanded-done state: inline content visible, no height constraint (same as streaming but without spinner) */
+/* Expanded-done state: callout style, clickable to collapse */
 .chat-thinking.thinking-expanded-done {
-  max-height: none;
+  cursor: pointer;
 }
 
-/* Streaming state: inline content visible, no height constraint */
+.chat-thinking.thinking-expanded-done:hover {
+  background: color-mix(in srgb, var(--thinking-accent) 7%, transparent);
+  border-left-color: color-mix(in srgb, var(--thinking-accent) 65%, transparent);
+}
+
+/* Streaming state: callout style */
 .chat-thinking.thinking-streaming {
-  max-height: none;
+  /* no extra rules needed — base callout style applies */
 }
 
-/* Collapse animation state: transitioning from full to collapsed */
+/* Collapse animation state: transitioning border from callout to pill */
 .chat-thinking.thinking-collapsing {
-  transition: max-height 0.35s ease-out;
+  cursor: pointer;
+  border-radius: 12px;
+  border-left: none;
+  border: 1px solid color-mix(in srgb, var(--thinking-accent) 20%, var(--border-color));
+  background: color-mix(in srgb, var(--thinking-accent) 6%, var(--bg-secondary));
+}
+
+/* Expand animation state: transitioning border from pill to callout */
+.chat-thinking.thinking-expanding {
+  /* Uses base callout style — border transition handled by content wrapper */
+}
+
+/* Content wrapper: CSS grid 0fr↔1fr transition for buttery smooth expand/collapse */
+.thinking-content-wrapper {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows var(--thinking-transition), opacity 200ms ease, padding 200ms ease;
+}
+
+.thinking-content-wrapper.thinking-content-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  padding: 0 10px 3px;
+}
+
+.thinking-inline-content {
   overflow: hidden;
+  min-height: 0;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--text-secondary);
+  word-break: break-word;
 }
 
 .thinking-header {
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 3px 8px;
+  padding: 3px 10px;
   font-size: 12px;
   color: var(--text-secondary);
 }
@@ -921,12 +971,13 @@ onUnmounted(() => {
   font-weight: 600;
   color: var(--thinking-accent);
   font-size: 11px;
+  letter-spacing: 0.02em;
 }
 
 .thinking-spinner {
   width: 12px;
   height: 12px;
-  border: 2px solid var(--border-color);
+  border: 2px solid color-mix(in srgb, var(--thinking-accent) 20%, var(--border-color));
   border-top-color: var(--thinking-accent);
   border-radius: 50%;
   animation: tool-spin 0.6s linear infinite;
@@ -934,21 +985,21 @@ onUnmounted(() => {
   margin-left: auto;
 }
 
-.thinking-check {
+.thinking-chevron {
   flex-shrink: 0;
   margin-left: auto;
+  color: var(--text-tertiary, #999);
+  transition: color 0.15s;
 }
 
-.thinking-inline-content {
-  padding: 0 8px 6px;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-  word-break: break-word;
+.chat-thinking.thinking-expanded-done:hover .thinking-chevron,
+.chat-thinking.thinking-collapsed:hover .thinking-chevron {
+  color: var(--thinking-accent);
 }
 
 /* Markdown styles inside thinking inline content */
 .thinking-inline-content p { margin: 0 0 0.5em; }
+.thinking-inline-content p:last-child { margin-bottom: 0; }
 .thinking-inline-content pre {
   margin: 0.5em 0;
   padding: 6px 8px;

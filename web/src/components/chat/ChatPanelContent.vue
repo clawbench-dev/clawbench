@@ -19,7 +19,6 @@
       @touchend="swipeSession.onTouchEnd"
       @toggle-tool="render.toggleToolDetail"
       @show-tool-detail="handleShowToolDetail"
-      @show-thinking-detail="handleShowThinkingDetail"
       @show-metadata="showMetadata"
       @file-tag-click="handleFileTagClick"
       @load-more="handleLoadMore"
@@ -183,7 +182,7 @@ import { useAutoSpeech, extractSpeakableText } from '@/composables/useAutoSpeech
 import { useSwipeSession } from '@/composables/useSwipeSession.ts'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { store } from '@/stores/app.ts'
-import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
+
 import { useDialog } from '@/composables/useDialog'
 
 import '@/assets/loading-mask.css'
@@ -253,15 +252,6 @@ const { planEntries, planCollapsed, planHasUpdate, togglePlanCollapse } = usePla
 
 const render = useChatRender({ messages, theme, currentSessionId: identity.currentSessionId })
 
-/** Look up the thinking block from the live messages array by msgId + blockKey */
-function findThinkingBlock({ msgId, blockKey }) {
-  if (!blockKey) return null
-  const msg = messages.value.find(m => String(m.id) === msgId)
-  if (!msg || !msg.blocks) return null
-  const block = msg.blocks.find(b => b._key === blockKey)
-  return (block && block.type === 'thinking') ? block : null
-}
-
 /** Look up the tool_use block from the live messages array by msgId + blockIdx */
 function findToolBlock({ msgId, blockIdx }) {
   const msg = messages.value.find(m => String(m.id) === msgId)
@@ -289,9 +279,7 @@ const {
 })
 const toolDetailDrawer = useTabDrawer('chat', toolDetailShow)
 
-// Active thinking overlay: tracks which block is being shown so we can reactively update
-const activeThinkingOverlay = ref(null) // { msgId, blockKey } or null
-let thinkingRenderTimer = null
+// Thinking overlay removed — thinking blocks now expand/collapse inline
 let streamingRefreshTimer = null
 
 const session = useChatSession({
@@ -502,25 +490,6 @@ watch(() => props.active, async (val) => {
   }
 }, { immediate: true })
 
-// Reactively update thinking overlay content as block.text changes during streaming
-watch(
-  () => {
-    if (!activeThinkingOverlay.value || !toolDetailOverlay.value.show) return null
-    const block = findThinkingBlock(activeThinkingOverlay.value)
-    return block ? block.text : null
-  },
-  (text) => {
-    if (text === null) return
-    // Debounce: avoid re-rendering markdown on every SSE event
-    if (thinkingRenderTimer) clearTimeout(thinkingRenderTimer)
-    thinkingRenderTimer = setTimeout(() => {
-      const b = findThinkingBlock(activeThinkingOverlay.value)
-      toolDetailData.value.inputHtml = `<div class="thinking-overlay-md">${renderMarkdownHtml(text)}</div>`
-      toolDetailData.value.done = b ? !!b.done : !loading.value
-    }, 300)
-  }
-)
-
 // Reactively update tool overlay content as block.output/done/status changes during streaming
 watch(
   () => {
@@ -544,9 +513,7 @@ watch(
 // Clean up overlay state when overlay closes
 watch(() => toolDetailShow.value, (show) => {
   if (!show) {
-    activeThinkingOverlay.value = null
     activeToolOverlay.value = null
-    if (thinkingRenderTimer) { clearTimeout(thinkingRenderTimer); thinkingRenderTimer = null }
     if (streamingRefreshTimer) { clearInterval(streamingRefreshTimer); streamingRefreshTimer = null }
   }
 })
@@ -560,25 +527,6 @@ function startStreamingRefresh() {
     if (!toolDetailShow.value) {
       clearInterval(streamingRefreshTimer)
       streamingRefreshTimer = null
-      return
-    }
-    // Thinking overlay: re-render from live block text
-    if (activeThinkingOverlay.value) {
-      const block = findThinkingBlock(activeThinkingOverlay.value)
-      if (block) {
-        toolDetailData.value.inputHtml = `<div class="thinking-overlay-md">${renderMarkdownHtml(block.text)}</div>`
-        toolDetailData.value.done = !!block.done
-        // Block is done — no further updates needed
-        if (block.done) {
-          clearInterval(streamingRefreshTimer)
-          streamingRefreshTimer = null
-          return
-        }
-      }
-      if (!loading.value) {
-        clearInterval(streamingRefreshTimer)
-        streamingRefreshTimer = null
-      }
       return
     }
     // Tool overlay: fetch output from API if not done
@@ -927,27 +875,6 @@ function showMetadata(msg) {
     metadataShow.value = true
 }
 
-function handleShowThinkingDetail({ text, msgId, blockKey }) {
-  // Store identifiers for reactive lookup (survives messages array replacement on loadHistory)
-  activeThinkingOverlay.value = { msgId: String(msgId), blockKey }
-
-  // Initial render
-  const block = findThinkingBlock(activeThinkingOverlay.value)
-  const currentText = block ? block.text : text // fallback to snapshot if lookup fails
-
-  toolDetailShow.value = true
-  toolDetailData.value = {
-    name: 'DeepThink',
-    displayNameOverride: t('chat.message.deepThinking'),
-    summary: '',
-    inputHtml: `<div class="thinking-overlay-md">${renderMarkdownHtml(currentText)}</div>`,
-    outputHtml: '',
-    status: '',
-    done: block ? !!block.done : !loading.value,
-    _fetchIds: toolDetailData.value._fetchIds,
-  }
-}
-
 // Wire up WS event handler for session_update
 const { onEvent } = useGlobalEvents()
 const removeEventHandler = onEvent((event, data) => {
@@ -1071,7 +998,6 @@ onUnmounted(() => {
     stream.disconnectStream()
     stream.stopPolling()
     session.stopMsgCountPolling()
-    if (thinkingRenderTimer) { clearTimeout(thinkingRenderTimer); thinkingRenderTimer = null }
     document.removeEventListener('visibilitychange', session.handleVisibilityChange)
     document.removeEventListener('visibilitychange', manager._visibilityHandler)
     window.removeEventListener('clawbench-summary-update', handleSummaryUpdate)

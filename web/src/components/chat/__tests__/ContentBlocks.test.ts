@@ -265,7 +265,20 @@ describe('ContentBlocks', () => {
       expect(wrapper.find('.chat-thinking').classes()).toContain('thinking-collapsed')
     })
 
-    it('emits show-thinking-detail on thinking click when collapsed', async () => {
+    it('expands inline on thinking click when collapsed', async () => {
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'thinking', text: 'Deep thought', done: true }],
+        streaming: false,
+      })
+
+      expect(wrapper.find('.chat-thinking').classes()).toContain('thinking-collapsed')
+      await wrapper.find('.chat-thinking').trigger('click')
+      // After click, block should be expanded (not collapsed)
+      expect(wrapper.find('.chat-thinking').classes()).not.toContain('thinking-collapsed')
+      expect(wrapper.find('.chat-thinking').classes()).toContain('thinking-expanded-done')
+    })
+
+    it('does not emit show-thinking-detail on thinking click', async () => {
       const wrapper = mountBlocks({
         blocks: [{ type: 'thinking', text: 'Deep thought', done: true }],
         streaming: false,
@@ -273,7 +286,7 @@ describe('ContentBlocks', () => {
 
       await wrapper.find('.chat-thinking').trigger('click')
 
-      expect(wrapper.emitted('show-thinking-detail')).toBeTruthy()
+      expect(wrapper.emitted('show-thinking-detail')).toBeFalsy()
     })
 
     it('shows spinner when streaming and not done', () => {
