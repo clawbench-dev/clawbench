@@ -17,7 +17,7 @@ const localConfig = reactive<Record<string, any>>({
   locale: 'zh',
   autoSpeech: false,
   showHidden: false,
-  wordWrap: false,
+  wordWrap: true,
   lineNumbers: true,
   fileView: 'list',
   terminalFontSize: 12,

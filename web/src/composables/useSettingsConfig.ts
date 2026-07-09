@@ -259,7 +259,7 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   locale: 'zh',
   autoSpeech: false,
   showHidden: false,
-  wordWrap: false,
+  wordWrap: true,
   lineNumbers: true,
   stickyScroll: true,
   fileView: 'list',

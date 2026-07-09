@@ -74,7 +74,7 @@ vi.mock('@/composables/useFileRefresh.ts', () => ({
 
 vi.mock('@/composables/useSettingsConfig.ts', () => ({
   useSettingsConfig: () => ({
-    localConfig: { wordWrap: false, lineNumbers: true, stickyScroll: true },
+    localConfig: { wordWrap: true, lineNumbers: true, stickyScroll: true },
     setLocalConfig: vi.fn(),
   }),
   getZoomedViewport: () => ({ width: 1024, height: 768 }),

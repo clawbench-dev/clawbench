@@ -99,7 +99,7 @@ describe('FileHeader', () => {
         viewMode: 'source',
         tocOpen: false,
         searchOpen: false,
-        wordWrap: false,
+        wordWrap: true,
         showLineNumbers: true,
         stickyScroll: true,
         overlayOpen: false,

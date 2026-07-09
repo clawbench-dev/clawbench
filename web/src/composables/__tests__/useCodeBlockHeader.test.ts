@@ -25,6 +25,8 @@ describe('annotateCodeBlockHeaders', () => {
     expect(result).toContain('language-go')
     // Lang label should show "go"
     expect(result).toContain('go')
+    // Default: word-wrap on
+    expect(result).toContain('word-wrap')
   })
 
   it('adds copy and wrap buttons', () => {
@@ -34,6 +36,8 @@ describe('annotateCodeBlockHeaders', () => {
     expect(result).toContain('code-block-wrap-btn')
     expect(result).toContain('data-action="copy"')
     expect(result).toContain('data-action="wrap"')
+    // Default: wrap on, so button has is-wrapped class
+    expect(result).toContain('is-wrapped')
   })
 
   it('skips mermaid blocks', () => {
@@ -95,10 +99,10 @@ describe('handleCodeBlockClick', () => {
 
   it('returns true and toggles word-wrap for wrap button click', () => {
     const wrapper = document.createElement('div')
-    wrapper.className = 'code-block-wrapper'
+    wrapper.className = 'code-block-wrapper word-wrap'
     const pre = document.createElement('pre')
     const btn = document.createElement('button')
-    btn.className = 'code-block-wrap-btn'
+    btn.className = 'code-block-wrap-btn is-wrapped'
     btn.setAttribute('data-action', 'wrap')
     wrapper.appendChild(btn)
     wrapper.appendChild(pre)
@@ -106,13 +110,14 @@ describe('handleCodeBlockClick', () => {
 
     const event = createClickEvent(btn)
     expect(handleCodeBlockClick(event)).toBe(true)
-    expect(wrapper.classList.contains('word-wrap')).toBe(true)
-    expect(btn.classList.contains('is-wrapped')).toBe(true)
+    // Click toggles off: word-wrap removed
+    expect(wrapper.classList.contains('word-wrap')).toBe(false)
+    expect(btn.classList.contains('is-wrapped')).toBe(false)
 
-    // Toggle back
+    // Toggle back on
     const event2 = createClickEvent(btn)
     handleCodeBlockClick(event2)
-    expect(wrapper.classList.contains('word-wrap')).toBe(false)
+    expect(wrapper.classList.contains('word-wrap')).toBe(true)
 
     wrapper.remove()
   })

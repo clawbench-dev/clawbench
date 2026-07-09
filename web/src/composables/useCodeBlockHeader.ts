@@ -41,9 +41,9 @@ export function annotateCodeBlockHeaders(html: string): string {
             }
         }
 
-        // Build wrapper div
+        // Build wrapper div (default: word-wrap on)
         const wrapper = doc.createElement('div')
-        wrapper.className = 'code-block-wrapper'
+        wrapper.className = 'code-block-wrapper word-wrap'
 
         // Build header div
         const header = doc.createElement('div')
@@ -69,12 +69,12 @@ export function annotateCodeBlockHeaders(html: string): string {
         copyBtn.innerHTML = COPY_ICON_SVG
         actions.appendChild(copyBtn)
 
-        // Wrap toggle button
+        // Wrap toggle button (default: wrap on, so button shows "wrapOn" state)
         const wrapBtn = doc.createElement('button')
-        wrapBtn.className = 'code-block-wrap-btn'
+        wrapBtn.className = 'code-block-wrap-btn is-wrapped'
         wrapBtn.setAttribute('data-action', 'wrap')
-        wrapBtn.setAttribute('title', gt('codeBlock.wrapOff'))
-        wrapBtn.setAttribute('aria-label', gt('codeBlock.wrapOff'))
+        wrapBtn.setAttribute('title', gt('codeBlock.wrapOn'))
+        wrapBtn.setAttribute('aria-label', gt('codeBlock.wrapOn'))
         wrapBtn.setAttribute('type', 'button')
         wrapBtn.innerHTML = WRAP_ICON_SVG
         actions.appendChild(wrapBtn)
