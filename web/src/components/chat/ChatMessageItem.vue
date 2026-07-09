@@ -31,7 +31,6 @@
         :active="active"
         @toggle-tool="$emit('toggle-tool', $event)"
         @show-tool-detail="$emit('show-tool-detail', $event)"
-        @show-thinking-detail="$emit('show-thinking-detail', $event)"
         @task-card-click="$emit('task-card-click', $event)"
         @send-message="$emit('send-message', $event)"
         @render-flush="$emit('render-flush')"
@@ -76,8 +75,8 @@
             <span>{{ t('chat.message.readAloud') }}</span>
           </template>
         </button>
-        <button v-if="!msg.streaming" class="chat-action-btn" @click="handleCopyMessage" :title="t('chat.message.copy')">
-          <Check v-if="copied" :size="14" class="copy-check" />
+        <button v-if="!msg.streaming" class="chat-action-btn" :class="{ 'is-copied': copied }" @click="handleCopyMessage" :title="copied ? t('common.copied') : t('chat.message.copy')" :aria-label="copied ? t('common.copied') : t('chat.message.copy')">
+          <span v-if="copied" class="chat-copy-copied-text">{{ t('common.copied') }}</span>
           <Copy v-else :size="14" />
         </button>
         <button v-if="!msg.streaming" class="chat-action-btn" @click="$emit('show-metadata', msg)" :title="t('chat.message.viewDetails')">
@@ -100,7 +99,7 @@
 <script setup>
 import { ref, inject, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Pause, Volume2, Info, FileDiff, Copy, Check } from 'lucide-vue-next'
+import { Clock, Pause, Volume2, Info, FileDiff, Copy } from 'lucide-vue-next'
 import { formatDuration } from '@/utils/format.ts'
 import { copyText } from '@/utils/clipboard.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
@@ -128,7 +127,7 @@ const props = defineProps({
   active: { type: Boolean, default: true },
 })
 
-defineEmits(['toggle-tool', 'show-tool-detail', 'show-thinking-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'resume-session', 'show-rag-detail', 'remove-pending'])
+defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'resume-session', 'show-rag-detail', 'remove-pending'])
 
 const autoSpeech = inject('autoSpeech')
 const wrapperRef = ref(null)
@@ -177,6 +176,7 @@ function handleOpenFile(path) {
 // Copy message markdown — only the final conclusion (last text block)
 const copied = ref(false)
 function handleCopyMessage() {
+  if (copied.value) return
   const blocks = props.msg?.blocks || []
   // Find the last text block (the conclusion)
   let lastText = ''
@@ -272,9 +272,15 @@ function handleCopyMessage() {
     color: var(--accent-color, #0066cc);
 }
 
-/* Copy confirmed check icon */
-.chat-action-btn .copy-check {
-    color: #22c55e;
+/* Copy button "Copied" feedback state */
+.chat-action-btn.is-copied {
+    opacity: 1;
+    color: var(--accent-color);
+}
+
+.chat-copy-copied-text {
+    font-size: 11px;
+    font-weight: 500;
 }
 
 .chat-action-btn.active:hover {
@@ -577,6 +583,18 @@ function handleCopyMessage() {
 .chat-message.user pre code {
     white-space: pre;
     word-break: normal;
+}
+
+/* Word-wrap mode: override pre/code white-space from rules above */
+.chat-message.user .code-block-wrapper.word-wrap pre {
+    overflow: visible;
+    white-space: pre-wrap;
+}
+
+.chat-message.user .code-block-wrapper.word-wrap pre code {
+    white-space: pre-wrap;
+    word-break: break-all;
+    overflow-wrap: break-word;
 }
 
 .chat-message.user code {
