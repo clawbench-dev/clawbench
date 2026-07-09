@@ -4,6 +4,30 @@ import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 import ContentBlocks from '@/components/chat/ContentBlocks.vue'
 
+// ── IntersectionObserver polyfill for jsdom ──
+class MockIntersectionObserver {
+  callback: IntersectionObserverCallback
+  elements: Set<Element>
+  static instances: MockIntersectionObserver[] = []
+
+  constructor(callback: IntersectionObserverCallback) {
+    this.callback = callback
+    this.elements = new Set()
+    MockIntersectionObserver.instances.push(this)
+  }
+  observe(el: Element) { this.elements.add(el) }
+  unobserve(el: Element) { this.elements.delete(el) }
+  disconnect() { this.elements.clear() }
+  takeRecords(): IntersectionObserverEntry[] { return [] }
+}
+beforeEach(() => {
+  MockIntersectionObserver.instances = []
+  vi.stubGlobal('IntersectionObserver', MockIntersectionObserver)
+})
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
 // ── Mocks ──
 
 vi.mock('@/utils/renderToolDetail.ts', () => ({
@@ -26,6 +50,11 @@ vi.mock('@/utils/icons', () => ({
 
 vi.mock('@/composables/useMarkdownRenderer.ts', () => ({
   renderMarkdown: (text: string) => `<p>${text}</p>`,
+  renderMarkdownHtml: (text: string) => `<p>${text}</p>`,
+}))
+
+vi.mock('@/utils/appLog', () => ({
+  appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
 }))
 
 vi.mock('@/utils/contentBlocks.ts', () => ({
@@ -220,7 +249,7 @@ describe('ContentBlocks', () => {
       expect(wrapper.find('.chat-thinking').exists()).toBe(true)
     })
 
-    it('adds thinking-streaming class when streaming and not done', () => {
+    it('adds thinking-expanded-done class when streaming and not done', () => {
       const wrapper = mountBlocks({
         blocks: [{ type: 'thinking', text: 'Thinking...', done: false }],
         streaming: true,
@@ -389,7 +418,7 @@ describe('ContentBlocks', () => {
       expect(thinking.exists()).toBe(false)
     })
 
-    it('transitions from streaming to collapsed when streaming ends', async () => {
+    it('transitions from streaming to expanded-done when streaming ends', async () => {
       const wrapper = mountBlocks({
         blocks: [{ type: 'thinking', text: 'Deep thought content', done: false }],
         streaming: true,
@@ -398,18 +427,18 @@ describe('ContentBlocks', () => {
       // The thinking block should have streaming class
       expect(wrapper.find('.chat-thinking').classes()).toContain('thinking-streaming')
 
-      // End streaming — triggers collapse animation
+      // End streaming — block becomes expanded-done (will collapse when leaving viewport)
       await wrapper.setProps({ streaming: false })
       await nextTick()
 
       // After streaming ends, block should NOT have thinking-streaming anymore
       const thinking = wrapper.find('.chat-thinking')
       expect(thinking.classes()).not.toContain('thinking-streaming')
-      // Should have thinking-collapsed (CSS class when not streaming)
-      expect(thinking.classes()).toContain('thinking-collapsed')
+      // Should have thinking-expanded-done (visible with inline content until it leaves viewport)
+      expect(thinking.classes()).toContain('thinking-expanded-done')
     })
 
-    it('transitions to collapsed chip when thinking_done fires mid-stream', async () => {
+    it('transitions to expanded-done when thinking_done fires mid-stream', async () => {
       const wrapper = mountBlocks({
         blocks: [{ type: 'thinking', text: 'Thinking...', done: false }],
         streaming: true,
@@ -426,11 +455,8 @@ describe('ContentBlocks', () => {
       // Should no longer be streaming (done=true overrides streaming prop)
       const thinking = wrapper.find('.chat-thinking')
       expect(thinking.classes()).not.toContain('thinking-streaming')
-      // Should have thinking-collapsed or thinking-collapsing
-      expect(
-        thinking.classes().includes('thinking-collapsed') ||
-        thinking.classes().includes('thinking-collapsing')
-      ).toBe(true)
+      // Should have thinking-expanded-done (visible until it leaves viewport)
+      expect(thinking.classes()).toContain('thinking-expanded-done')
     })
 
     it('cleans up timers on unmount to prevent leaks', async () => {
@@ -449,7 +475,7 @@ describe('ContentBlocks', () => {
       vi.advanceTimersByTime(10000)
     })
 
-    it('shows thinking-collapsed class when not streaming and done', () => {
+    it('shows thinking-collapsed class when not streaming and done (DB-loaded)', () => {
       // Static state: not streaming, block done — should show collapsed chip
       const wrapper = mountBlocks({
         blocks: [{ type: 'thinking', text: 'Final thought', done: true }],
@@ -458,6 +484,25 @@ describe('ContentBlocks', () => {
       const thinking = wrapper.find('.chat-thinking')
       expect(thinking.classes()).toContain('thinking-collapsed')
       expect(thinking.classes()).not.toContain('thinking-streaming')
+    })
+
+    it('stays expanded-done after streaming ends (collapses on viewport leave, not tested here)', async () => {
+      // Verify the new behavior: after streaming ends, block stays expanded-done
+      // rather than immediately collapsing. Viewport-based collapse is tested
+      // via integration/E2E tests since IntersectionObserver is hard to test in jsdom.
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'thinking', text: 'Deep thought', done: false, _key: 'thinking-0' }],
+        streaming: true,
+      })
+
+      expect(wrapper.find('.chat-thinking').classes()).toContain('thinking-streaming')
+
+      await wrapper.setProps({ streaming: false })
+      await nextTick()
+
+      // Block should stay expanded (visible inline) after streaming ends
+      expect(wrapper.find('.chat-thinking').classes()).toContain('thinking-expanded-done')
+      expect(wrapper.find('.chat-thinking').classes()).not.toContain('thinking-collapsed')
     })
   })
 })

@@ -79,17 +79,18 @@
     <!-- Original content mode -->
     <template v-if="!showingSummary || !summary">
     <template v-for="(block, bi) in blocks" :key="stableBlockKey(bi, block)">
-      <!-- Thinking block: streaming shows inline content, collapsed shows clickable chip -->
+      <!-- Thinking block: streaming or expanded shows inline content, collapsed shows clickable chip -->
       <div v-if="block.type === 'thinking'"
-        :ref="isThinkingStreaming(block) ? (el) => setThinkingRef(stableBlockKey(bi, block), el) : undefined"
+        :ref="(el) => setThinkingRef(stableBlockKey(bi, block), el)"
         class="chat-thinking"
         :class="{
           'thinking-streaming': isThinkingStreaming(block),
-          'thinking-collapsed': !isThinkingStreaming(block),
+          'thinking-expanded-done': isThinkingExpandedDone(block, bi),
+          'thinking-collapsed': isThinkingCollapsed(block, bi),
           'thinking-collapsing': !!collapsingThinking[stableBlockKey(bi, block)],
         }"
         :style="collapsingThinking[stableBlockKey(bi, block)] ? { maxHeight: collapsingMaxHeight[stableBlockKey(bi, block)] + 'px' } : {}"
-        @click.stop="!isThinkingStreaming(block) && handleThinkingClick(block, bi)"
+        @click.stop="isThinkingCollapsed(block, bi) && handleThinkingClick(block, bi)"
       >
         <div class="thinking-header">
           <Brain :size="12" class="thinking-icon" />
@@ -101,8 +102,8 @@
           <span v-else-if="isLastBlock(bi) && cancelled" class="chat-cancelled-mark-inline">{{ t('chat.contentBlocks.cancelled') }}</span>
           <CheckCircle2 v-else :size="14" color="#22c55e" class="thinking-check" />
         </div>
-        <!-- Inline streaming content: only visible during streaming or collapse animation -->
-        <div v-if="isThinkingStreaming(block) || !!collapsingThinking[stableBlockKey(bi, block)]" class="thinking-inline-content" v-html="getThinkingHtml(bi, block)"></div>
+        <!-- Inline streaming content: visible during streaming, expanded-done, or collapse animation -->
+        <div v-if="isThinkingStreaming(block) || isThinkingExpandedDone(block, bi) || !!collapsingThinking[stableBlockKey(bi, block)]" class="thinking-inline-content" v-html="getThinkingHtml(bi, block)"></div>
       </div>
       <!-- Tool use block -->
       <template v-else-if="block.type === 'tool_use'">
@@ -381,6 +382,21 @@ function isThinkingStreaming(block) {
   return props.streaming
 }
 
+/** Whether a thinking block is done (not streaming) but still expanded with inline content visible. */
+function isThinkingExpandedDone(block, bi) {
+  if (isThinkingStreaming(block)) return false
+  if (collapsingThinking.value[stableBlockKey(bi, block)]) return false
+  return !!thinkingExpanded.value[stableBlockKey(bi, block)]
+}
+
+/** Whether a thinking block is collapsed to a chip (done, not streaming, not expanded, not collapsing). */
+function isThinkingCollapsed(block, bi) {
+  if (isThinkingStreaming(block)) return false
+  if (collapsingThinking.value[stableBlockKey(bi, block)]) return false
+  if (thinkingExpanded.value[stableBlockKey(bi, block)]) return false
+  return !props.streaming || block.done // block is done
+}
+
 /** Whether the given block index is the last block in the blocks array. */
 function isLastBlock(bi) {
   return bi === (props.blocks?.length || 0) - 1
@@ -396,14 +412,111 @@ const isLastBlockThinking = computed(() => {
 // ── Thinking block collapse animation state ──
 const collapsingThinking = ref({})   // { [blockKey]: true } for blocks mid-collapse
 const collapsingMaxHeight = ref({})  // { [blockKey]: maxHeightPx } for animation
+const thinkingExpanded = ref({})     // { [blockKey]: true } — completed blocks that are still expanded (will collapse when leaving viewport)
 let _collapseElRefs = {}             // { [blockKey]: HTMLElement } tracked during streaming
 let _collapseTimers = []             // setTimeout IDs for collapse animation (cleaned up on unmount)
 
 // Collapse animation constants — must stay in sync with CSS
 const COLLAPSED_CHIP_HEIGHT = 28     // px — matches .thinking-collapsed { max-height: 28px }
-const COLLAPSE_READ_DELAY = 3000     // ms — time to read thinking output before collapsing
+const COLLAPSE_VIEWPORT_DELAY = 3000 // ms — time after leaving viewport before collapsing
 const COLLAPSE_TRANSITION_MS = 400   // ms — must match CSS transition-duration + buffer
 const COLLAPSE_PLACEHOLDER_MAX = 99999 // large sentinel to keep content visible during nextTick
+
+// ── IntersectionObserver for viewport-based collapse ──
+let _viewportObserver = null         // IntersectionObserver instance
+let _viewportOutTimers = {}          // { [blockKey]: timeoutId } — timers for blocks that left viewport
+let _observedThinkingKeys = new Set() // blockKeys currently being observed
+
+/** Called when a thinking block enters/leaves the viewport. */
+function onThinkingViewportChange(entries) {
+  for (const entry of entries) {
+    const blockKey = entry.target.dataset?.thinkingKey
+    if (!blockKey) continue
+    if (entry.isIntersecting) {
+      // Re-entered viewport: cancel any pending collapse timer
+      if (_viewportOutTimers[blockKey]) {
+        clearTimeout(_viewportOutTimers[blockKey])
+        delete _viewportOutTimers[blockKey]
+      }
+    } else {
+      // Left viewport: start 3s timer to collapse
+      if (thinkingExpanded.value[blockKey] && !collapsingThinking.value[blockKey] && !_viewportOutTimers[blockKey]) {
+        _viewportOutTimers[blockKey] = setTimeout(() => {
+          delete _viewportOutTimers[blockKey]
+          triggerThinkingCollapse(blockKey)
+        }, COLLAPSE_VIEWPORT_DELAY)
+      }
+    }
+  }
+}
+
+/** Start observing a thinking block element for viewport changes. */
+function observeThinkingEl(blockKey, el) {
+  if (!el || !blockKey) return
+  if (!_viewportObserver) {
+    _viewportObserver = new IntersectionObserver(onThinkingViewportChange, { threshold: 0 })
+  }
+  // Tag the element for lookup in the callback
+  el.dataset.thinkingKey = blockKey
+  _viewportObserver.observe(el)
+  _observedThinkingKeys.add(blockKey)
+}
+
+/** Stop observing a thinking block element. */
+function unobserveThinkingEl(blockKey) {
+  // Find and unobserve the DOM element by data attribute
+  if (_viewportObserver) {
+    const el = document.querySelector(`[data-thinking-key="${blockKey}"]`)
+    if (el) _viewportObserver.unobserve(el)
+  }
+  _observedThinkingKeys.delete(blockKey)
+  // Cancel any pending viewport-out timer
+  if (_viewportOutTimers[blockKey]) {
+    clearTimeout(_viewportOutTimers[blockKey])
+    delete _viewportOutTimers[blockKey]
+  }
+}
+
+/** Trigger the collapse animation for a completed thinking block. */
+function triggerThinkingCollapse(blockKey) {
+  // Find the element — prefer tracked ref, fall back to DOM query
+  const el = _collapseElRefs[blockKey] || document.querySelector(`[data-thinking-key="${blockKey}"]`)
+  if (!el || !el.isConnected || !el.scrollHeight) {
+    // Element gone — just mark as collapsed directly
+    delete thinkingExpanded.value[blockKey]
+    unobserveThinkingEl(blockKey)
+    return
+  }
+  // Mark as collapsing with placeholder maxHeight to prevent flash
+  collapsingThinking.value[blockKey] = true
+  collapsingMaxHeight.value[blockKey] = COLLAPSE_PLACEHOLDER_MAX
+  // Clear throttle cache so DOM re-renders with complete thinking content
+  blockHtmlCache.value = {}
+  // Wait for Vue to flush DOM, then measure scrollHeight of complete content
+  nextTick(() => {
+    if (el && el.isConnected && el.scrollHeight) {
+      collapsingMaxHeight.value[blockKey] = el.scrollHeight
+      // Start collapse animation immediately (no read delay — user already read it while it was visible)
+      const t1 = setTimeout(() => {
+        collapsingMaxHeight.value[blockKey] = COLLAPSED_CHIP_HEIGHT
+        // After transition completes, clean up animation state
+        const t2 = setTimeout(() => {
+          delete collapsingThinking.value[blockKey]
+          delete collapsingMaxHeight.value[blockKey]
+          delete thinkingExpanded.value[blockKey]
+          unobserveThinkingEl(blockKey)
+        }, COLLAPSE_TRANSITION_MS)
+        _collapseTimers.push(t2)
+      }, 0) // nextTick-like: allow browser to paint the measured height before starting transition
+      _collapseTimers.push(t1)
+    } else {
+      delete collapsingThinking.value[blockKey]
+      delete collapsingMaxHeight.value[blockKey]
+      delete thinkingExpanded.value[blockKey]
+      unobserveThinkingEl(blockKey)
+    }
+  })
+}
 
 /** Track thinking block element refs during streaming for collapse animation. */
 function setThinkingRef(key, el) {
@@ -532,67 +645,27 @@ watch(() => props.streaming, (streaming, wasStreaming) => {
     if (_throttleTimer) { clearTimeout(_throttleTimer); _throttleTimer = null }
     _throttlePending = false
     // Snapshot element refs before Vue clears them
-    // (isThinkingStreaming becomes false → :ref becomes undefined → ref cleared).
     const refSnapshot = { ..._collapseElRefs }
     _collapseElRefs = {}
-    // Only process blocks not already being collapsed by Trigger B (thinking_done)
-    const collapsingKeys = Object.keys(refSnapshot).filter(
-      idxStr => !collapsingThinking.value[idxStr]
+    // Mark all completed thinking blocks as expanded (will collapse when leaving viewport)
+    const expandedKeys = Object.keys(refSnapshot).filter(
+      idxStr => !collapsingThinking.value[idxStr] && !thinkingExpanded.value[idxStr]
     )
-    if (collapsingKeys.length > 0) {
-      // Immediately mark as "collapsing" with a large maxHeight so the template
-      // keeps showing inline content and doesn't flash to the 28px collapsed chip.
-      const placeholderCollapsing = {}
-      const placeholderMaxHeight = {}
-      for (const idxStr of collapsingKeys) {
-        placeholderCollapsing[idxStr] = true
-        placeholderMaxHeight[idxStr] = COLLAPSE_PLACEHOLDER_MAX
+    if (expandedKeys.length > 0) {
+      for (const blockKey of expandedKeys) {
+        thinkingExpanded.value[blockKey] = true
       }
-      Object.assign(collapsingThinking.value, placeholderCollapsing)
-      Object.assign(collapsingMaxHeight.value, placeholderMaxHeight)
     }
     // Clear throttle cache and force a full re-render of thinking HTML
-    // so the DOM reflects the complete block.text before we measure scrollHeight.
-    // Without this, scrollHeight may reflect stale throttled HTML (up to 300ms old),
-    // causing the collapse animation to clip the bottom of the content.
     blockHtmlCache.value = {}
-    // Wait for Vue to flush the DOM with complete content, then measure heights.
+    // After Vue flushes DOM, set up IntersectionObserver for expanded thinking blocks
     nextTick(() => {
-      const newCollapsing = {}
-      const newMaxHeights = {}
-      for (const idxStr of collapsingKeys) {
-        const el = refSnapshot[idxStr]
-        // el.isConnected: defensive check — element must still be in the document
-        if (el && el.isConnected && el.scrollHeight) {
-          newCollapsing[idxStr] = true
-          newMaxHeights[idxStr] = el.scrollHeight
-        }
-      }
-      if (Object.keys(newCollapsing).length > 0) {
-        Object.assign(collapsingThinking.value, newCollapsing)
-        Object.assign(collapsingMaxHeight.value, newMaxHeights)
-        // Delay before starting collapse animation so user can read the thinking output
-        const t1 = setTimeout(() => {
-          const updatedMaxHeights = {}
-          Object.keys(newCollapsing).forEach(idx => {
-            updatedMaxHeights[idx] = COLLAPSED_CHIP_HEIGHT
-          })
-          Object.assign(collapsingMaxHeight.value, updatedMaxHeights)
-          // After transition completes, clean up animation state
-          const t2 = setTimeout(() => {
-            for (const idx of Object.keys(newCollapsing)) {
-              delete collapsingThinking.value[idx]
-              delete collapsingMaxHeight.value[idx]
-            }
-          }, COLLAPSE_TRANSITION_MS)
-          _collapseTimers.push(t2)
-        }, COLLAPSE_READ_DELAY)
-        _collapseTimers.push(t1)
-      } else {
-        // No measurable elements — clean up placeholder state
-        for (const idxStr of collapsingKeys) {
-          delete collapsingThinking.value[idxStr]
-          delete collapsingMaxHeight.value[idxStr]
+      for (const blockKey of expandedKeys) {
+        const el = refSnapshot[blockKey]
+        if (el && el.isConnected) {
+          // Re-track the ref since Vue cleared it during the streaming→done transition
+          _collapseElRefs[blockKey] = el
+          observeThinkingEl(blockKey, el)
         }
       }
     })
@@ -600,74 +673,31 @@ watch(() => props.streaming, (streaming, wasStreaming) => {
 })
 
 // Watch for thinking blocks that become "done" mid-stream (via thinking_done SSE event).
-// This triggers the collapse animation immediately instead of waiting for streaming to end.
+// Instead of collapsing immediately, mark as expanded and set up viewport observer.
 watch(() => props.blocks.filter(b => b.type === 'thinking' && b.done).map(b => b.done), (_newDones, _oldDones) => {
   if (!props.streaming) return // Only relevant during streaming
-  // Find thinking blocks that just became done (newly true), not already collapsing
-  const refSnapshot = {}
+  // Find thinking blocks that just became done (newly true), not already expanded/collapsing
+  const newDoneBlocks = {}
   for (let i = 0; i < props.blocks.length; i++) {
     const block = props.blocks[i]
     if (block.type === 'thinking' && block.done) {
       const key = stableBlockKey(i, block)
       const el = _collapseElRefs[key]
-      if (el && !collapsingThinking.value[key]) {
-        refSnapshot[key] = el
-        delete _collapseElRefs[key]
+      if (el && !collapsingThinking.value[key] && !thinkingExpanded.value[key]) {
+        newDoneBlocks[key] = el
       }
     }
   }
-  const collapsingKeys = Object.keys(refSnapshot)
-  if (collapsingKeys.length === 0) return
-  // Immediately mark as collapsing with placeholder maxHeight to prevent
-  // flash to 28px collapsed chip while we wait for nextTick.
-  const placeholderCollapsing = {}
-  const placeholderMaxHeight = {}
-  for (const idxStr of collapsingKeys) {
-    placeholderCollapsing[idxStr] = true
-    placeholderMaxHeight[idxStr] = COLLAPSE_PLACEHOLDER_MAX
+  const doneKeys = Object.keys(newDoneBlocks)
+  if (doneKeys.length === 0) return
+  // Mark as expanded and observe for viewport changes
+  for (const blockKey of doneKeys) {
+    thinkingExpanded.value[blockKey] = true
+    observeThinkingEl(blockKey, newDoneBlocks[blockKey])
+    // Don't delete from _collapseElRefs — keep tracking for later collapse
   }
-  Object.assign(collapsingThinking.value, placeholderCollapsing)
-  Object.assign(collapsingMaxHeight.value, placeholderMaxHeight)
   // Clear throttle cache so DOM re-renders with complete thinking content
   blockHtmlCache.value = {}
-  // Wait for Vue to flush DOM, then measure scrollHeight of complete content
-  nextTick(() => {
-    const newCollapsing = {}
-    const newMaxHeights = {}
-    for (const idxStr of collapsingKeys) {
-      const el = refSnapshot[idxStr]
-      if (el && el.isConnected && el.scrollHeight) {
-        newCollapsing[idxStr] = true
-        newMaxHeights[idxStr] = el.scrollHeight
-      }
-    }
-    if (Object.keys(newCollapsing).length > 0) {
-      Object.assign(collapsingThinking.value, newCollapsing)
-      Object.assign(collapsingMaxHeight.value, newMaxHeights)
-      // Delay before starting collapse animation so user can read the thinking output
-      const t1 = setTimeout(() => {
-        const updatedMaxHeights = {}
-        Object.keys(newCollapsing).forEach(idx => {
-          updatedMaxHeights[idx] = COLLAPSED_CHIP_HEIGHT
-        })
-        Object.assign(collapsingMaxHeight.value, updatedMaxHeights)
-        const t2 = setTimeout(() => {
-          for (const idx of Object.keys(newCollapsing)) {
-            delete collapsingThinking.value[idx]
-            delete collapsingMaxHeight.value[idx]
-          }
-        }, COLLAPSE_TRANSITION_MS)
-        _collapseTimers.push(t2)
-      }, COLLAPSE_READ_DELAY)
-      _collapseTimers.push(t1)
-    } else {
-      // No measurable elements — clean up placeholder state
-      for (const idxStr of collapsingKeys) {
-        delete collapsingThinking.value[idxStr]
-        delete collapsingMaxHeight.value[idxStr]
-      }
-    }
-  })
 })
 
 // Reset cache when panel becomes active — allows re-render with fresh markdown
@@ -679,10 +709,39 @@ watch(() => props.active, (active) => {
   }
 })
 
+// Re-observe expanded thinking blocks when elements change (Vue may re-create DOM nodes on re-render)
+watch(() => props.blocks, () => {
+  // On next tick, re-observe any expanded thinking blocks whose elements may have been replaced
+  nextTick(() => {
+    for (const blockKey of Object.keys(thinkingExpanded.value)) {
+      if (thinkingExpanded.value[blockKey] && !collapsingThinking.value[blockKey]) {
+        const el = _collapseElRefs[blockKey]
+        if (el && el.isConnected) {
+          // Only re-observe if not already being observed
+          if (!_observedThinkingKeys.has(blockKey)) {
+            observeThinkingEl(blockKey, el)
+          }
+        }
+      }
+    }
+  })
+}, { flush: 'post' })
+
 onUnmounted(() => {
   if (_throttleTimer) { clearTimeout(_throttleTimer); _throttleTimer = null }
   _collapseTimers.forEach(t => clearTimeout(t))
   _collapseTimers = []
+  // Clean up IntersectionObserver
+  if (_viewportObserver) {
+    _viewportObserver.disconnect()
+    _viewportObserver = null
+  }
+  // Clean up viewport-out timers
+  for (const key of Object.keys(_viewportOutTimers)) {
+    clearTimeout(_viewportOutTimers[key])
+  }
+  _viewportOutTimers = {}
+  _observedThinkingKeys.clear()
 })
 </script>
 
@@ -826,6 +885,11 @@ onUnmounted(() => {
 
 .chat-thinking.thinking-collapsed:hover {
   background: color-mix(in srgb, var(--thinking-accent) 12%, var(--bg-secondary));
+}
+
+/* Expanded-done state: inline content visible, no height constraint (same as streaming but without spinner) */
+.chat-thinking.thinking-expanded-done {
+  max-height: none;
 }
 
 /* Streaming state: inline content visible, no height constraint */
