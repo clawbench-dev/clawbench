@@ -265,6 +265,8 @@ export function useChatStream(options: UseChatStreamOptions) {
   }
 
   function connectStream(sessionId: string, isRetry = false) {
+    // Guard: EventSource may not be available (e.g. after test cleanup)
+    if (typeof EventSource !== 'function') return
     disconnectStream()
     stopPolling()
     disconnectedByCleanup = false
