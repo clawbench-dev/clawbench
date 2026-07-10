@@ -118,6 +118,7 @@ export function useChatStream(options: UseChatStreamOptions) {
   function disconnectStream(calledFromCleanup = false) {
     if (streamTimeout) { clearTimeout(streamTimeout); streamTimeout = null }
     clearToolUseTimeouts()
+    reconnect.reset()
     if (eventSource) {
       eventSource.close()
       eventSource = null
