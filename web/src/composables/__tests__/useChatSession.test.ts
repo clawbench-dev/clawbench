@@ -997,7 +997,7 @@ describe('switchSession', () => {
     // With per-session usage cache, switchSession no longer calls clearUsageState.
     // The computed refs automatically read from the new session's cache entry.
     // updateUsageState is called to write the API response data into the cache.
-    expect(mockUpdateUsageState).toHaveBeenCalledWith(50000, 200000, 1.5, 'USD', 's2')
+    expect(mockUpdateUsageState).toHaveBeenCalledWith(50000, 200000, 1.5, 'USD', 's2', undefined, undefined)
   })
 
   it('does not call updateUsageState when API response has no usageState', async () => {
@@ -2772,7 +2772,7 @@ describe('syncUsageFromData', () => {
     const session = createSession()
     await session.loadHistory(true, false, false)
 
-    expect(mockUpdateUsageState).toHaveBeenCalledWith(100000, 200000, 2.5, 'EUR', 's1')
+    expect(mockUpdateUsageState).toHaveBeenCalledWith(100000, 200000, 2.5, 'EUR', 's1', undefined, undefined)
   })
 
   it('does not call updateUsageState when usageState is missing', async () => {

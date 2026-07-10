@@ -21,13 +21,13 @@ describe('computeDiff', () => {
     })
 
     it('detects single line addition', () => {
-        const result = computeDiff('line1', 'line1\nline2')
+        const result = computeDiff('line1\n', 'line1\nline2\n')
         expect(result.deletedInOld).toEqual([])
         expect(result.addedInNew).toEqual([2])
     })
 
     it('detects single line deletion', () => {
-        const result = computeDiff('line1\nline2', 'line1')
+        const result = computeDiff('line1\nline2\n', 'line1\n')
         expect(result.deletedInOld).toEqual([2])
         expect(result.addedInNew).toEqual([])
     })
