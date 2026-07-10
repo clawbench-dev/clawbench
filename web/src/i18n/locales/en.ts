@@ -1142,7 +1142,7 @@ export default {
       summarizeBackendDesc: 'Summarize AI output messages for easier browsing and speech',
       summarizeDisabled: 'No Summary',
       summarizeSimple: 'Extract Conclusion',
-      summarizeApi: 'API Summary',
+      summarizeApi: 'LLM Summary',
       summarizeClaude: 'Claude',
       summarizeCodebuddy: 'CodeBuddy',
       summarizeOpencode: 'OpenCode',
