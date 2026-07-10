@@ -119,10 +119,6 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - **Phone App**: Native integration, auto-connect, full feature support
 - **Mobile Browser**: **Chrome** recommended — supports installing as a PWA app (Add to Home Screen) for a near-native experience
 
-### Customize Agents
-
-Auto-discovered agent configs use minimal defaults (no model lists or thinking effort levels — these are auto-discovered at runtime). To customize model lists, system prompts, etc., create new agents from the Web UI. Agent configs are stored in the database.
-
 > For build instructions, advanced configuration, deployment, and architecture details, see **[Build & Development Guide](docs/DEVELOPMENT.en.md)**.
 
 > 📡 **Public Access**: To access ClawBench from the public internet (commuting, traveling, etc.), see the **[Public Access Guide](docs/PUBLIC_ACCESS.md)** — supports IPv6 direct connection and FRP tunnel.
