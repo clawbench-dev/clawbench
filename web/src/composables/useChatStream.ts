@@ -6,7 +6,7 @@ import { gt } from '@/composables/useLocale'
 import { updateModeState, updateCommandState, updateAvailableThinkingEfforts, currentAgentId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
-import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, drainQueueMessage } from '@/utils/chatStreamUtils.ts'
+import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, drainQueueMessage, mergeStreamingAssistantBlocks } from '@/utils/chatStreamUtils.ts'
 
 const TAG = 'ChatStream'
 
@@ -225,25 +225,11 @@ export function useChatStream(options: UseChatStreamOptions) {
 
         if (lastAssistant && existingStreaming) {
           const pollBlocks = lastAssistant.blocks
-          const hasNonText = pollBlocks.some((b: any) => b.type !== 'text')
-          const hasThinking = existingStreaming.blocks.some((b: any) => b.type === 'thinking')
-          if (!hasNonText && hasThinking && existingStreaming.blocks.length > 0) {
+          const merged = mergeStreamingAssistantBlocks(existingStreaming.blocks, pollBlocks)
+          if (merged !== pollBlocks) {
             appLog.d(TAG, `[poll] raw-text fallback — preserving ${existingStreaming.blocks.filter((b: any) => b.type === 'thinking').length} thinking blocks`)
-            // Poll response is raw-text fallback (DB not yet flushed with blocks).
-            // Preserve SSE-accumulated thinking blocks; only update text blocks.
-            for (const pb of pollBlocks) {
-              if (pb.type === 'text') {
-                const existingText = findLastBlockOfType(existingStreaming.blocks, 'text')
-                if (existingText) {
-                  existingText.text = pb.text
-                } else {
-                  existingStreaming.blocks.push(pb)
-                }
-              }
-            }
-          } else {
-            existingStreaming.blocks = pollBlocks
           }
+          existingStreaming.blocks = merged
           if (lastAssistant.metadata) existingStreaming.metadata = lastAssistant.metadata
           if (lastAssistant.cancelled) existingStreaming.cancelled = lastAssistant.cancelled
         } else if (lastAssistant && !existingStreaming) {
@@ -253,22 +239,7 @@ export function useChatStream(options: UseChatStreamOptions) {
           if (existingById) {
             existingById.streaming = true
             const pollBlocks = lastAssistant.blocks
-            const hasNonText = pollBlocks.some((b: any) => b.type !== 'text')
-            const hasThinking = existingById.blocks?.some((b: any) => b.type === 'thinking')
-            if (!hasNonText && hasThinking && existingById.blocks?.length > 0) {
-              for (const pb of pollBlocks) {
-                if (pb.type === 'text') {
-                  const existingText = existingById.blocks ? findLastBlockOfType(existingById.blocks, 'text') : undefined
-                  if (existingText) {
-                    existingText.text = pb.text
-                  } else {
-                    existingById.blocks.push(pb)
-                  }
-                }
-              }
-            } else {
-              existingById.blocks = pollBlocks
-            }
+            existingById.blocks = mergeStreamingAssistantBlocks(existingById.blocks || [], pollBlocks)
             if (lastAssistant.metadata) existingById.metadata = lastAssistant.metadata
             if (lastAssistant.cancelled) existingById.cancelled = lastAssistant.cancelled
           } else {
@@ -443,6 +414,9 @@ export function useChatStream(options: UseChatStreamOptions) {
       } else {
         blocks.push({ type: 'thinking', text: data.text, _key: `thinking-${thinkingBlockCounter++}` })
         appLog.d(TAG, `[thinking] new block _key=${blocks[blocks.length - 1]._key} textLen=${data.text.length} blocks=${blocks.length} isLoading=${loading.value}`)
+        // Reassign blocks array so Vue re-renders on Android WebView where deep
+        // mutations alone may not trigger ContentBlocks updates during SSE.
+        sm.blocks = [...blocks]
       }
       debouncedRender()
       if (isOpen.value) {
@@ -964,6 +938,11 @@ export function useChatStream(options: UseChatStreamOptions) {
       }
     } else if (hasStreamingMsg) {
       onLoadHistory().catch(() => {})
+    }
+    // After background disconnect, SSE reconnect does not replay missed events.
+    // Poll as a backup so thinking blocks flushed to DB are picked up on Android.
+    if (loading.value && !eventSource) {
+      pollUntilDone()
     }
   }
 

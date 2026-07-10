@@ -10,6 +10,7 @@ import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress
 import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
+import { preserveStreamingBlocksAfterReload } from '@/utils/chatStreamUtils.ts'
 import { warmWorktreeCache } from '@/composables/useWorktreeAnnotation.ts'
 
 // Module-level one-time session list load (replaces continuous polling)
@@ -331,7 +332,11 @@ export function useChatSession(options: UseChatSessionOptions) {
               // Replace messages — preserve pending messages from messages.value
               // (they're not in DB, so parseMessages won't include them)
               const _pendingMsgs = messages.value.filter((m: any) => m.pending)
+              const prevMessages = messages.value
               messages.value = parseMessages(recoverMsgs, onParseAssistantContent, messages.value, recoverData.running)
+              if (recoverData.running) {
+                preserveStreamingBlocksAfterReload(prevMessages, messages.value)
+              }
               // Re-append pending messages that aren't already represented in DB data
               for (const pm of _pendingMsgs) {
                 if (!messages.value.some((m: any) => m.role === 'user' && m.content === pm.content && !m.pending)) {
@@ -456,7 +461,11 @@ export function useChatSession(options: UseChatSessionOptions) {
       // Replace messages with server data. Pending messages are in
       // messages.value with pending:true — preserve them across the replacement.
       const _pendingMsgs = messages.value.filter((m: any) => m.pending)
+      const prevMessages = messages.value
       messages.value = parseMessages(rawMsgs, onParseAssistantContent, messages.value, data.running)
+      if (data.running) {
+        preserveStreamingBlocksAfterReload(prevMessages, messages.value)
+      }
       // Re-append pending messages that aren't already represented in DB data
       for (const pm of _pendingMsgs) {
         if (!messages.value.some((m: any) => m.role === 'user' && m.content === pm.content && !m.pending)) {

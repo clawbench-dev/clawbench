@@ -63,6 +63,53 @@ export function findLastBlockOfType(blocks: any[], type: string): any | undefine
 }
 
 /**
+ * Merge incoming poll/REST blocks into existing SSE-accumulated streaming blocks.
+ * When the server response is a raw-text fallback (text blocks only) but the client
+ * already holds thinking/tool blocks from SSE, preserve the richer in-memory state.
+ * Used by pollUntilDone and loadHistory during active sessions.
+ */
+export function mergeStreamingAssistantBlocks(
+  existingBlocks: any[],
+  incomingBlocks: any[]
+): any[] {
+  const hasNonText = incomingBlocks.some((b: any) => b.type !== 'text')
+  const hasThinking = existingBlocks.some((b: any) => b.type === 'thinking')
+  if (!hasNonText && hasThinking && existingBlocks.length > 0) {
+    const merged = existingBlocks.map((b: any) => ({ ...b }))
+    for (const pb of incomingBlocks) {
+      if (pb.type === 'text') {
+        const existingText = findLastBlockOfType(merged, 'text')
+        if (existingText) {
+          existingText.text = pb.text
+        } else {
+          merged.push({ ...pb })
+        }
+      }
+    }
+    return merged
+  }
+  return incomingBlocks
+}
+
+/**
+ * After loadHistory replaces messages, preserve SSE thinking blocks on the streaming
+ * assistant when the DB snapshot is still a raw-text fallback.
+ */
+export function preserveStreamingBlocksAfterReload(
+  prevMessages: any[],
+  nextMessages: any[]
+): void {
+  const prevStreaming = prevMessages.find((m: any) => m.role === 'assistant' && m.streaming)
+  if (!prevStreaming?.blocks?.length) return
+  const nextStreaming = nextMessages.find((m: any) => m.role === 'assistant' && m.streaming)
+  if (!nextStreaming) return
+  nextStreaming.blocks = mergeStreamingAssistantBlocks(
+    prevStreaming.blocks,
+    nextStreaming.blocks || []
+  )
+}
+
+/**
  * Clean up streaming state for the current assistant message.
  * Marks all unfinished tool_use blocks as done, removes streaming flag.
  * Returns the streaming message if found (for caller to do further processing).

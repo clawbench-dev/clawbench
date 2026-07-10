@@ -9,6 +9,8 @@ import {
   shouldRetryToolFetch,
   resolveEffectiveMsgId,
   extractFileChanges,
+  mergeStreamingAssistantBlocks,
+  preserveStreamingBlocksAfterReload,
 } from '@/utils/chatStreamUtils.ts'
 
 describe('FILE_MODIFYING_TOOLS', () => {
@@ -136,6 +138,63 @@ describe('findLastBlockOfType', () => {
       { type: 'tool_use', name: 'Write', id: '2', input: {} },
     ]
     expect(findLastBlockOfType(blocks, 'thinking')).toBeUndefined()
+  })
+})
+
+describe('mergeStreamingAssistantBlocks', () => {
+  it('preserves thinking blocks when incoming poll data is text-only', () => {
+    const existing = [
+      { type: 'thinking', text: 'Deep thought', _key: 'thinking-0' },
+    ]
+    const incoming = [{ type: 'text', text: 'Answer so far' }]
+    const merged = mergeStreamingAssistantBlocks(existing, incoming)
+    expect(merged).toHaveLength(2)
+    expect(merged[0].type).toBe('thinking')
+    expect(merged[1].text).toBe('Answer so far')
+  })
+
+  it('replaces blocks when incoming has non-text blocks from DB', () => {
+    const existing = [{ type: 'thinking', text: 'stale', _key: 'thinking-0' }]
+    const incoming = [
+      { type: 'thinking', text: 'from DB', _key: 'thinking-0', done: true },
+      { type: 'text', text: 'done' },
+    ]
+    expect(mergeStreamingAssistantBlocks(existing, incoming)).toBe(incoming)
+  })
+
+  it('updates text on existing thinking when incoming is text-only', () => {
+    const existing = [
+      { type: 'thinking', text: 'think', _key: 'thinking-0' },
+      { type: 'text', text: 'old' },
+    ]
+    const incoming = [{ type: 'text', text: 'new answer chunk' }]
+    const merged = mergeStreamingAssistantBlocks(existing, incoming)
+    expect(merged[0].type).toBe('thinking')
+    expect(merged[1].text).toBe('new answer chunk')
+  })
+})
+
+describe('preserveStreamingBlocksAfterReload', () => {
+  it('merges thinking into streaming assistant after loadHistory replace', () => {
+    const prev = [
+      { role: 'user', content: 'hi' },
+      {
+        role: 'assistant',
+        streaming: true,
+        blocks: [{ type: 'thinking', text: 'reasoning...', _key: 'thinking-0' }],
+      },
+    ]
+    const next = [
+      { role: 'user', content: 'hi' },
+      {
+        role: 'assistant',
+        streaming: true,
+        blocks: [{ type: 'text', text: 'partial' }],
+      },
+    ]
+    preserveStreamingBlocksAfterReload(prev, next)
+    expect(next[1].blocks[0].type).toBe('thinking')
+    expect(next[1].blocks[1].text).toBe('partial')
   })
 })
 
