@@ -39,7 +39,7 @@ fi
 
 result=0
 if [ "$SKIP_TEST" = false ]; then
-  npx --prefix "$WEB_DIR" vitest run --coverage || result=$?
+  "$SCRIPT_DIR/vitest-run.sh" --coverage || result=$?
   if [ $result -ne 0 ]; then
     echo "ERROR: Frontend tests failed. Fix test failures before checking coverage."
     exit 1

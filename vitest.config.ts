@@ -47,6 +47,26 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     css: true,
+    // Detect async resource leaks (unclosed timers, sockets) in test files.
+    // Helps identify which tests cause worker processes to hang on exit.
+    detectAsyncLeaks: true,
+    // Reduce teardown timeout from default 10s to 5s so vitest's own
+    // safety net (exit() method's unref'd timer) fires sooner.
+    teardownTimeout: 5_000,
+    // Force-exit safety net for vitest 4.x pool cleanup hang bug.
+    // See vitest-dev/vitest#8766, #9494, #8861, #9123.
+    globalSetup: [resolve(__dirname, 'vitest-globalSetup.ts')],
+    // 'hanging-process' reporter warns when tests leave open handles
+    // (timers, sockets, etc.) that prevent worker processes from exiting.
+    reporters: ['default', 'hanging-process'],
+    // Limit fork workers to 4 to reduce zombie accumulation on high-core
+    // machines. Default is CPU count (16 here), which spawns too many
+    // workers when pool cleanup hangs.
+    // Note: In Vitest 4, poolOptions was removed; maxWorkers is now
+    // top-level. minWorkers was removed (only maxWorkers has effect).
+    // See: https://vitest.dev/guide/migration#pool-rework
+    pool: 'forks',
+    maxWorkers: 4,
     exclude: [
       '**/.worktrees/**',
       '**/.codebuddy/worktrees/**',
