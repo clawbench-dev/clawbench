@@ -52,8 +52,12 @@ process.on('unhandledRejection', unhandledRejectionHandler)
 // Remove the listener when vitest teardown runs, so the worker process
 // can exit cleanly. Without this, the IPC channel keeps ref=true and
 // the event loop never becomes empty.
-if (typeof afterAll === 'function') {
-  afterAll(() => {
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { afterAll: vitestAfterAll } = require('vitest') as { afterAll: (fn: () => void) => void }
+  vitestAfterAll(() => {
     process.off('unhandledRejection', unhandledRejectionHandler)
   })
+} catch {
+  // vitest not available (e.g. typecheck-only mode) — skip cleanup
 }
