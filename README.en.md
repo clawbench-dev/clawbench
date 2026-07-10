@@ -69,50 +69,6 @@ Core Advantage: Native passthrough of AI capabilities (tool calls, extended thin
 
 ---
 
-## Technical Architecture
-
-ClawBench's core philosophy:
-
-- **Zero-Adaptation Passthrough**: Instead of reimplementing AI capabilities, ClawBench uses AI coding agent CLIs as backend engines, wrapping them as HTTP API + SSE streaming interfaces via a web server. This fully preserves tool calls, extended thinking, Skills, MCP, and all other capabilities with zero adaptation cost. The frontend only handles rendering and interaction — all intelligent logic is natively provided by the CLI.
-- **AI Handles Changes, I Handle Review**: The project does not provide direct file editing capabilities — all modifications are done through AI. The focus is on building an excellent Markdown and code preview experience, along with interaction with AI during preview — select code or text to ask AI questions or request modifications for rapid iteration.
-
-```mermaid
-graph LR
-    Client["📱 Phone / PWA / Pad"] -->|HTTP / SSE| Server["🏗️ ClawBench\nGo Web Server"]
-    Server -->|CLI Invocation · Stream Output| CB["🤖 CodeBuddy CLI"]
-    Server -->|CLI Invocation · Stream Output| CC["🤖 Claude Code CLI"]
-    Server -->|CLI Invocation · Stream Output| OC["🤖 OpenCode CLI"]
-    Server -->|CLI Invocation · Stream Output| CX["🤖 Codex CLI"]
-    Server -->|CLI Invocation · Stream Output| QR["🤖 Qoder CLI"]
-    Server -->|CLI Invocation · Stream Output| VC["🤖 VeCLI"]
-    Server -->|CLI Invocation · Stream Output| DS["🐋 CodeWhale"]
-    Server -->|CLI Invocation · Stream Output| MM["🚀 MiMo-Code"]
-    Server -->|CLI Invocation · Stream Output| PI["🥧 Pi"]
-    Server -->|CLI Invocation · Stream Output| CL["🤖 Cline"]
-    Server -->|CLI Invocation · Stream Output| CP["🤖 Copilot"]
-    Server -->|CLI Invocation · Stream Output| KM["🤖 Kimi"]
-    Server -->|Read/Write| DB[("💾 SQLite\nSessions · History · Scheduled Tasks")]
-    CB -->|Native Support| Tools["🔧 Tool Calls"]
-    CB -->|Native Support| Think["🧠 Extended Thinking"]
-    CB -->|Native Support| Skills["🎯 Skill"]
-    CB -->|Native Support| MCP["🔌 MCP"]
-    CC -->|Native Support| Tools
-    CC -->|Native Support| Think
-    CC -->|Native Support| Skills
-    CC -->|Native Support| MCP
-    OC -->|Native Support| Tools
-    CX -->|Native Support| Tools
-    QR -->|Native Support| Tools
-    VC -->|Native Support| Tools
-    DS -->|Native Support| Tools
-    MM -->|Native Support| Tools
-    MM -->|Native Support| Think
-    PI -->|Native Support| Tools
-    PI -->|Native Support| Think
-```
-
----
-
 ## Quick Start
 
 ### Prerequisites
