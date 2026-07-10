@@ -218,7 +218,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onUnmounted, computed, nextTick, onMounted } from 'vue'
+import { ref, watch, onUnmounted, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { handleToolAction, shouldAutoExpandTool } from '@/utils/renderToolDetail.ts'
 import { getToolIcon, toolDisplayName } from '@/utils/icons'
@@ -382,13 +382,6 @@ function handleThinkingClick(block, bi) {
     expandingThinking.value[blockKey] = true
     thinkingExpanded.value[blockKey] = true
     blockHtmlCache.value = {}
-    nextTick(() => {
-      const el = _collapseElRefs[blockKey] || document.querySelector(`[data-thinking-key="${blockKey}"]`)
-      if (el && el.isConnected) {
-        _collapseElRefs[blockKey] = el
-        observeThinkingEl(blockKey, el)
-      }
-    })
     // Clean up expanding state after animation
     const t = setTimeout(() => {
       delete expandingThinking.value[blockKey]
@@ -440,80 +433,16 @@ const isLastBlockThinking = computed(() => {
 // ── Thinking block collapse/expand animation state ──
 const collapsingThinking = ref({})   // { [blockKey]: true } for blocks mid-collapse
 const expandingThinking = ref({})    // { [blockKey]: true } for blocks mid-expand
-const thinkingExpanded = ref({})     // { [blockKey]: true } — completed blocks that are still expanded (will collapse when leaving viewport)
-let _collapseElRefs = {}             // { [blockKey]: HTMLElement } tracked during streaming
+const thinkingExpanded = ref({})     // { [blockKey]: true } — completed blocks that are still expanded (only collapses on manual click)
+let _collapseElKeys = new Set()       // blockKeys of thinking blocks tracked during streaming
 let _collapseTimers = []             // setTimeout IDs for collapse animation (cleaned up on unmount)
 
 // Animation constants
-const COLLAPSE_VIEWPORT_DELAY = 3000 // ms — time after leaving viewport before collapsing
 const EXPAND_TRANSITION_MS = 300     // ms — expand animation duration
 const COLLAPSE_TRANSITION_MS = 350   // ms — collapse animation duration
 
-// ── IntersectionObserver for viewport-based collapse ──
-let _viewportObserver = null         // IntersectionObserver instance
-let _viewportOutTimers = {}          // { [blockKey]: timeoutId } — timers for blocks that left viewport
-let _observedThinkingKeys = new Set() // blockKeys currently being observed
-
-/** Called when a thinking block enters/leaves the viewport. */
-function onThinkingViewportChange(entries) {
-  for (const entry of entries) {
-    const blockKey = entry.target.dataset?.thinkingKey
-    if (!blockKey) continue
-    if (entry.isIntersecting) {
-      // Re-entered viewport: cancel any pending collapse timer
-      if (_viewportOutTimers[blockKey]) {
-        clearTimeout(_viewportOutTimers[blockKey])
-        delete _viewportOutTimers[blockKey]
-      }
-    } else {
-      // Left viewport: start 3s timer to collapse
-      if (thinkingExpanded.value[blockKey] && !collapsingThinking.value[blockKey] && !_viewportOutTimers[blockKey]) {
-        _viewportOutTimers[blockKey] = setTimeout(() => {
-          delete _viewportOutTimers[blockKey]
-          triggerThinkingCollapse(blockKey)
-        }, COLLAPSE_VIEWPORT_DELAY)
-      }
-    }
-  }
-}
-
-/** Start observing a thinking block element for viewport changes. */
-function observeThinkingEl(blockKey, el) {
-  if (!el || !blockKey) return
-  if (!_viewportObserver) {
-    _viewportObserver = new IntersectionObserver(onThinkingViewportChange, { threshold: 0 })
-  }
-  // Tag the element for lookup in the callback
-  el.dataset.thinkingKey = blockKey
-  _viewportObserver.observe(el)
-  _observedThinkingKeys.add(blockKey)
-}
-
-/** Stop observing a thinking block element. */
-function unobserveThinkingEl(blockKey) {
-  // Find and unobserve the DOM element by data attribute
-  if (_viewportObserver) {
-    const el = document.querySelector(`[data-thinking-key="${blockKey}"]`)
-    if (el) _viewportObserver.unobserve(el)
-  }
-  _observedThinkingKeys.delete(blockKey)
-  // Cancel any pending viewport-out timer
-  if (_viewportOutTimers[blockKey]) {
-    clearTimeout(_viewportOutTimers[blockKey])
-    delete _viewportOutTimers[blockKey]
-  }
-}
-
 /** Trigger the collapse animation for a completed thinking block. */
 function triggerThinkingCollapse(blockKey) {
-  // Find the element — prefer tracked ref, fall back to DOM query
-  const el = _collapseElRefs[blockKey] || document.querySelector(`[data-thinking-key="${blockKey}"]`)
-  if (!el || !el.isConnected) {
-    // Element gone — just mark as collapsed directly
-    delete thinkingExpanded.value[blockKey]
-    unobserveThinkingEl(blockKey)
-    return
-  }
   // Mark as collapsing — this removes thinking-content-open from the wrapper,
   // triggering the CSS grid 0fr transition. We also clear thinkingExpanded so
   // the wrapper transitions from 1fr→0fr immediately.
@@ -523,17 +452,16 @@ function triggerThinkingCollapse(blockKey) {
   // After transition completes, clean up collapsing state
   const t = setTimeout(() => {
     delete collapsingThinking.value[blockKey]
-    unobserveThinkingEl(blockKey)
   }, COLLAPSE_TRANSITION_MS)
   _collapseTimers.push(t)
 }
 
-/** Track thinking block element refs during streaming for collapse animation. */
+/** Track thinking block keys during streaming for collapse animation. */
 function setThinkingRef(key, el) {
   if (el) {
-    _collapseElRefs[key] = el
+    _collapseElKeys.add(key)
   } else {
-    delete _collapseElRefs[key]
+    _collapseElKeys.delete(key)
   }
 }
 
@@ -654,57 +582,30 @@ watch(() => props.streaming, (streaming, wasStreaming) => {
   if (wasStreaming && !streaming) {
     if (_throttleTimer) { clearTimeout(_throttleTimer); _throttleTimer = null }
     _throttlePending = false
-    // Snapshot element refs before Vue clears them
-    const refSnapshot = { ..._collapseElRefs }
-    _collapseElRefs = {}
-    // Mark all completed thinking blocks as expanded (will collapse when leaving viewport)
-    const expandedKeys = Object.keys(refSnapshot).filter(
-      idxStr => !collapsingThinking.value[idxStr] && !thinkingExpanded.value[idxStr]
-    )
-    if (expandedKeys.length > 0) {
-      for (const blockKey of expandedKeys) {
-        thinkingExpanded.value[blockKey] = true
-      }
+    // Collapse all completed thinking blocks when message ends
+    for (const blockKey of _collapseElKeys) {
+      delete thinkingExpanded.value[blockKey]
+      delete expandingThinking.value[blockKey]
+      delete collapsingThinking.value[blockKey]
     }
     // Clear throttle cache and force a full re-render of thinking HTML
     blockHtmlCache.value = {}
-    // After Vue flushes DOM, set up IntersectionObserver for expanded thinking blocks
-    nextTick(() => {
-      for (const blockKey of expandedKeys) {
-        const el = refSnapshot[blockKey]
-        if (el && el.isConnected) {
-          // Re-track the ref since Vue cleared it during the streaming→done transition
-          _collapseElRefs[blockKey] = el
-          observeThinkingEl(blockKey, el)
-        }
-      }
-    })
   }
 })
 
 // Watch for thinking blocks that become "done" mid-stream (via thinking_done SSE event).
-// Instead of collapsing immediately, mark as expanded and set up viewport observer.
-watch(() => props.blocks.filter(b => b.type === 'thinking' && b.done).map(b => b.done), (_newDones, _oldDones) => {
+// Mark as expanded — only collapses on manual click.
+watch(() => props.blocks.filter(b => b.type === 'thinking' && b.done).map(b => b.done), () => {
   if (!props.streaming) return // Only relevant during streaming
   // Find thinking blocks that just became done (newly true), not already expanded/collapsing
-  const newDoneBlocks = {}
   for (let i = 0; i < props.blocks.length; i++) {
     const block = props.blocks[i]
     if (block.type === 'thinking' && block.done) {
       const key = stableBlockKey(i, block)
-      const el = _collapseElRefs[key]
-      if (el && !collapsingThinking.value[key] && !thinkingExpanded.value[key]) {
-        newDoneBlocks[key] = el
+      if (!collapsingThinking.value[key] && !thinkingExpanded.value[key]) {
+        thinkingExpanded.value[key] = true
       }
     }
-  }
-  const doneKeys = Object.keys(newDoneBlocks)
-  if (doneKeys.length === 0) return
-  // Mark as expanded and observe for viewport changes
-  for (const blockKey of doneKeys) {
-    thinkingExpanded.value[blockKey] = true
-    observeThinkingEl(blockKey, newDoneBlocks[blockKey])
-    // Don't delete from _collapseElRefs — keep tracking for later collapse
   }
   // Clear throttle cache so DOM re-renders with complete thinking content
   blockHtmlCache.value = {}
@@ -719,39 +620,10 @@ watch(() => props.active, (active) => {
   }
 })
 
-// Re-observe expanded thinking blocks when elements change (Vue may re-create DOM nodes on re-render)
-watch(() => props.blocks, () => {
-  // On next tick, re-observe any expanded thinking blocks whose elements may have been replaced
-  nextTick(() => {
-    for (const blockKey of Object.keys(thinkingExpanded.value)) {
-      if (thinkingExpanded.value[blockKey] && !collapsingThinking.value[blockKey]) {
-        const el = _collapseElRefs[blockKey]
-        if (el && el.isConnected) {
-          // Only re-observe if not already being observed
-          if (!_observedThinkingKeys.has(blockKey)) {
-            observeThinkingEl(blockKey, el)
-          }
-        }
-      }
-    }
-  })
-}, { flush: 'post' })
-
 onUnmounted(() => {
   if (_throttleTimer) { clearTimeout(_throttleTimer); _throttleTimer = null }
   _collapseTimers.forEach(t => clearTimeout(t))
   _collapseTimers = []
-  // Clean up IntersectionObserver
-  if (_viewportObserver) {
-    _viewportObserver.disconnect()
-    _viewportObserver = null
-  }
-  // Clean up viewport-out timers
-  for (const key of Object.keys(_viewportOutTimers)) {
-    clearTimeout(_viewportOutTimers[key])
-  }
-  _viewportOutTimers = {}
-  _observedThinkingKeys.clear()
 })
 </script>
 
