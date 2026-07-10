@@ -208,7 +208,7 @@ func SetSessionRunning(sessionID string, running bool, skipEvent ...bool) {
 // cancelReason is captured at the time SetSessionRunning(false) is called to avoid
 // a race with GetAndClearCancelReason in buildResult clearing the value first.
 func finalizeOrphanedStreamingMessages(sessionID string, cancelReason string) {
-	if db == nil {
+	if db == nil || dbRead == nil {
 		return
 	}
 	// Find streaming=1 messages for this session
