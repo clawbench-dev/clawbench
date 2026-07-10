@@ -127,6 +127,8 @@ docker exec $(docker ps -qf ancestor=ghcr.io/clawbench-dev/clawbench) cat /data/
 
 > 编译构建、高级配置、部署说明、架构设计等详细文档请参阅 **[编译与开发指南](docs/DEVELOPMENT.md)**。
 
+> 📡 **公网访问**：如需从外网访问 ClawBench（通勤途中、出差等场景），请参阅 **[公网访问指南](docs/PUBLIC_ACCESS.md)**，支持 IPv6 直连和 FRP 内网穿透两种方式。
+
 ---
 
 ## 功能详解

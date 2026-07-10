@@ -161,6 +161,8 @@ Auto-discovered agent configs use minimal defaults (no model lists or thinking e
 
 > For build instructions, advanced configuration, deployment, and architecture details, see **[Build & Development Guide](docs/DEVELOPMENT.en.md)**.
 
+> 📡 **Public Access**: To access ClawBench from the public internet (commuting, traveling, etc.), see the **[Public Access Guide](docs/PUBLIC_ACCESS.md)** — supports IPv6 direct connection and FRP tunnel.
+
 ---
 
 ## Features
