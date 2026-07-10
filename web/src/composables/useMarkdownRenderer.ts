@@ -143,21 +143,24 @@ export function renderMarkdown(
                    .replace(/<\/table>/g, '</table></div>')
     }
 
-    // 6. Inject table row attrs
+    // 6. Rewrite image URLs + inject chat-img class (always, even during streaming)
+    //    so images get proper sizing constraints and local-file API paths immediately.
+    const projectRoot = store.state.projectRoot
+    html = rewriteImageUrls(html, projectRoot)
+
+    // 7. Inject table row attrs
     html = injectTableRowAttrs(html)
 
-    // 7. Code block headers (language label + copy/wrap buttons)
+    // 8. Code block headers (language label + copy/wrap buttons)
     html = annotateCodeBlockHeaders(html)
 
-    // 8. Table block headers (label + copy/wrap buttons)
+    // 9. Table block headers (label + copy/wrap buttons)
     html = annotateTableBlockHeaders(html)
 
-    // 9. Chat enhancements (all skipped during streaming)
+    // 10. Chat enhancements (skipped during streaming, except rewriteImageUrls which ran above)
     if (!skipEnhancements) {
-        const projectRoot = store.state.projectRoot
         const homeDir = store.state.homeDir
 
-        html = rewriteImageUrls(html, projectRoot)
         html = convertAudioLinks(html)
 
         // Annotate worktree paths BEFORE file paths — prevents file-path regex from

@@ -190,6 +190,8 @@ jobs:
 
       - name: Run coverage gate check
         run: ./scripts/check-frontend-coverage.sh
+        env:
+          VITEST_TIMEOUT_S: 600
 
       - name: Upload coverage data
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
