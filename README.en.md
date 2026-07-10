@@ -23,9 +23,9 @@ Core Advantage: Native passthrough of AI capabilities (tool calls, extended thin
 
 ### Login & Navigation
 
-| Login | Home | Select Project |
-|-------|------|----------------|
-| ![Login](docs/screenshots/login.png) | ![Home](docs/screenshots/home.png) | ![Select Project](docs/screenshots/project-select.png) |
+| Login | Home | Select Project | Settings Panel |
+|-------|------|----------------|----------------|
+| ![Login](docs/screenshots/login.png) | ![Home](docs/screenshots/home.png) | ![Select Project](docs/screenshots/project-select.png) | ![Settings Panel](docs/screenshots/settings-panel.png) |
 
 ### File Browsing & Code Editing
 
@@ -41,9 +41,9 @@ Core Advantage: Native passthrough of AI capabilities (tool calls, extended thin
 
 ### AI Agents
 
-| Agent Selection | AI Conversation | Structured Question | Session Manager |
-|-----------------|-----------------|---------------------|-----------------|
-| ![Agent Selection](docs/screenshots/agent-selector.png) | ![AI Conversation](docs/screenshots/chat-panel.png) | ![Structured Question](docs/screenshots/ask-question.png) | ![Session Manager](docs/screenshots/session-manager.png) |
+| Agent Selection | AI Conversation | ACP Permission | RAG Search | Session Manager |
+|-----------------|-----------------|----------------|------------|-----------------|
+| ![Agent Selection](docs/screenshots/agent-selector.png) | ![AI Conversation](docs/screenshots/chat-panel.png) | ![ACP Permission](docs/screenshots/acp-permission.png) | ![RAG Search](docs/screenshots/rag-search.png) | ![Session Manager](docs/screenshots/session-manager.png) |
 
 | Scheduled Tasks | Create Task | Task Card |
 |-----------------|-------------|-----------|
@@ -51,9 +51,9 @@ Core Advantage: Native passthrough of AI capabilities (tool calls, extended thin
 
 ### Git Integration
 
-| Commit History & Branch Graph | Commit Detail | Comparison Report |
-|-------------------------------|---------------|-------------------|
-| ![Commit History & Branch Graph](docs/screenshots/git-history.png) | ![Commit Detail](docs/screenshots/git-commit-detail.png) | ![Comparison Report](docs/screenshots/git-comparison-report.png) |
+| Commit History & Branch Graph | Branch Management | Commit Detail | Comparison Report |
+|-------------------------------|-------------------|---------------|-------------------|
+| ![Commit History & Branch Graph](docs/screenshots/git-history.png) | ![Branch Management](docs/screenshots/git-branches.png) | ![Commit Detail](docs/screenshots/git-commit-detail.png) | ![Comparison Report](docs/screenshots/git-comparison-report.png) |
 
 ### Media Preview
 
@@ -63,9 +63,9 @@ Core Advantage: Native passthrough of AI capabilities (tool calls, extended thin
 
 ### SSH Tunnel & Web Terminal
 
-| Port Forwarding | Interactive Terminal |
-|----------------|---------------------|
-| ![Port Forwarding](docs/screenshots/port-forwarding.png) | ![Interactive Terminal](docs/screenshots/terminal.png) |
+| Port Forwarding | Interactive Terminal | Key/Symbol Configuration |
+|----------------|---------------------|-------------------------|
+| ![Port Forwarding](docs/screenshots/port-forwarding.png) | ![Interactive Terminal](docs/screenshots/terminal.png) | ![Key/Symbol Configuration](docs/screenshots/terminal-key-config.png) |
 
 ---
 
@@ -120,14 +120,11 @@ graph LR
 - **A PC (Linux / macOS / Windows)**: To run the ClawBench server, with at least one AI coding agent CLI installed (CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Cline, Copilot, or Kimi)
 - **A phone**: Install the [ClawBench Android App](https://github.com/xulongzhe/clawbench/releases), or use a mobile browser (Chrome recommended) to access the server address
 
-### npm Install (with China mirror acceleration)
+### npm Install
 
-Install via npm in one command. Users in China can use the npmmirror registry for fast downloads:
+Install via npm in one command:
 
 ```bash
-# Configure npmmirror (one-time setup)
-npm config set registry https://registry.npmmirror.com/
-# Install globally
 npm install -g @xulongzhe/clawbench
 # Start
 clawbench
@@ -146,7 +143,18 @@ cd clawbench
 ./clawbench
 ```
 
-That's it — on every startup, ClawBench automatically scans for installed AI CLI tools, generates minimal agent configs for each detected backend, and auto-discovers available models and thinking effort levels. No manual configuration needed.
+### Docker Deployment
+
+```bash
+docker pull ghcr.io/clawbench-dev/clawbench:latest
+docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawbench:latest
+```
+
+Customize the host port with `-p` (e.g., `-p 20300:20000`). The `clawbench-data` volume persists all data. To view the auto-generated password:
+
+```bash
+docker exec $(docker ps -qf ancestor=ghcr.io/clawbench-dev/clawbench) cat /data/.clawbench/auto-password
+```
 
 > A random 8-character hex password is auto-generated on first startup and printed to the console in a bordered box. Save it securely.
 
@@ -217,19 +225,6 @@ Auto-discovered agent configs use minimal defaults (no model lists or thinking e
 - **Inline Thinking Streaming**: Thinking process streams inline during active session; auto-collapses to clickable chip on completion
 - **Session Progress Indicator**: Session drawer shows capsule progress bar with color-coded fill (blue/orange/red) based on usage
 
-### ⏰ Scheduled Tasks
-- **Cron Scheduling**: AI creates Cron schedules via CLI subcommands, executes automatically
-- **Independent Tab Management**: 4-level breadcrumb navigation, quickly switch between task lists
-- **Frequency Presets**: Hourly / Daily / Weekly / Monthly — one-click selection of common frequencies
-- **Custom Cron Expressions**: Full 5-field Cron syntax support, flexibly customize execution timing
-- **Task Cards**: Embedded chat message preview, at-a-glance task content and recent execution results
-- **Execution Tracking**: Per-execution read status tracking, unread message badge alerts
-- **TTS Playback**: Auto-summarize after task completion with voice playback, listen while reviewing
-- **Execution Summary**: Auto-generated summary for each completed execution (configurable summarization backend)
-- **Completion Notification**: Sound + haptic + toast alert when task execution completes
-- **Instant Trigger**: Support immediate manual execution without affecting next scheduled time
-- **Lifecycle Management**: Pause / Resume / Delete — flexibly control task state
-
 ### 🤖 AI Conversation
 - **Tool Call Visualization**: Name, parameters, execution results displayed in real time with success/error status
 - **Extended Thinking**: Complex tasks auto-trigger extended thinking, reasoning visible in real time
@@ -274,9 +269,12 @@ Auto-discovered agent configs use minimal defaults (no model lists or thinking e
 ### 💻 Web Terminal
 - **Interactive Terminal**: PTY + WebSocket + xterm.js, operate server terminal directly in browser
 - **Concurrent Sessions**: Each client gets an independent PTY session, no interference
+- **Multi-Tab Management**: Close all tabs, empty state with create button, dock icon shows active session count
 - **Virtual Key Toolbar**: Color-coded key groups (modifiers, shortcuts, navigation, arrows, actions), three-state modifier toggle
+- **Key/Symbol Configuration**: Full-screen configuration drawer with keys and symbols dual tabs; supports tap-to-add, drag-to-reorder, gesture mode auto-hides certain keys; configuration persisted to database
 - **Symbol Bar**: Expandable symbol input row with 19 high-frequency terminal symbols, smart sorting using exponential decay (balances frequency and recency)
 - **Touch Gestures**: Termius-style gestures (swipe→arrow keys, hold-to-repeat, double-tap→Tab, pinch-to-zoom), touch scroll when gestures disabled
+- **Selected Text Auto-Copy**: Selected terminal text automatically copied to clipboard with toast feedback
 - **Quick Commands**: CRUD management of common commands with drag reorder, hidden flag, auto-execute (auto-run on every connect/reconnect)
 - **Android Volume Keys**: Volume up/down remapped to arrow keys when terminal is open in the app
 - See [Web Terminal User Guide](docs/TERMINAL.en.md)
