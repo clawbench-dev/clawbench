@@ -200,7 +200,7 @@
         </button>
       </PopupMenu>
       <!-- Context usage detail popup -->
-      <PopupMenu v-if="showUsageInfo" v-model:show="showUsagePopup" :target-element="usageElRef" :max-width="220" :max-height="240" :menu-items-count="4">
+      <PopupMenu v-if="showUsageInfo" v-model:show="showUsagePopup" :target-element="usageElRef" :max-width="220" :max-height="280" :menu-items-count="6">
         <div class="usage-popup">
           <div class="usage-popup-header">
             <Activity :size="14" />
@@ -223,6 +223,14 @@
           <div class="usage-popup-row">
             <span class="usage-popup-label">{{ t('chat.sessionInfo.remaining') }}</span>
             <span class="usage-popup-value">{{ Math.max(contextSize - contextUsed, 0).toLocaleString() }}</span>
+          </div>
+          <div v-if="contextInputTokens > 0" class="usage-popup-row">
+            <span class="usage-popup-label">{{ t('chat.sessionInfo.inputTokens') }}</span>
+            <span class="usage-popup-value">{{ contextInputTokens.toLocaleString() }}</span>
+          </div>
+          <div v-if="contextOutputTokens > 0" class="usage-popup-row">
+            <span class="usage-popup-label">{{ t('chat.sessionInfo.outputTokens') }}</span>
+            <span class="usage-popup-value">{{ contextOutputTokens.toLocaleString() }}</span>
           </div>
           <div v-if="contextCost > 0" class="usage-popup-row">
             <span class="usage-popup-label">{{ t('chat.sessionInfo.contextCost') }}</span>
@@ -280,7 +288,7 @@ import { useSessionIdentity } from '@/composables/useSessionIdentity'
 import { useAgents } from '@/composables/useAgents'
 
 const { t } = useI18n()
-const { availableCommands, availableModes, availableThinkingEfforts, currentThinkingEffortName, currentTransport: sessionTransport, autoApprove, contextUsed, contextSize, contextCost, contextCurrency } = useSessionIdentity()
+const { availableCommands, availableModes, availableThinkingEfforts, currentThinkingEffortName, currentTransport: sessionTransport, autoApprove, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextCost, contextCurrency } = useSessionIdentity()
 const { supportsDualTransport, hasThinkingEffortLevels } = useAgents()
 
 // isACP: true when the current agent supports ACP (has acpCommand).

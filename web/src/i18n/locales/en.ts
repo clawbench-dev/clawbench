@@ -158,6 +158,8 @@ export default {
       used: 'Used',
       size: 'Total',
       remaining: 'Remaining',
+      inputTokens: 'Input',
+      outputTokens: 'Output',
     },
     create: {
       selectAgentOrLongPress: 'Select agent (long press to create new)',

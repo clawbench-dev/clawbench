@@ -190,9 +190,9 @@ export function useChatSession(options: UseChatSessionOptions) {
   // Helper: sync usage state from server data.
   // When usageStateData is missing or size=0, clears the target session's
   // cache entry so the context bar doesn't show stale data.
-  function syncUsageFromData(usageStateData?: { used?: number; size?: number; cost?: number; currency?: string }, sessionId?: string) {
+  function syncUsageFromData(usageStateData?: { used?: number; size?: number; cost?: number; currency?: string; inputTokens?: number; outputTokens?: number }, sessionId?: string) {
     if (usageStateData && (usageStateData.size ?? 0) > 0) {
-      updateUsageState(usageStateData.used ?? 0, usageStateData.size ?? 0, usageStateData.cost, usageStateData.currency, sessionId)
+      updateUsageState(usageStateData.used ?? 0, usageStateData.size ?? 0, usageStateData.cost, usageStateData.currency, sessionId, usageStateData.inputTokens, usageStateData.outputTokens)
     } else {
       clearUsageState()
     }

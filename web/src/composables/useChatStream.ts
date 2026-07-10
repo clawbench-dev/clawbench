@@ -704,11 +704,11 @@ export function useChatStream(options: UseChatStreamOptions) {
 
     eventSource.addEventListener('usage_update', (e) => {
       if (sessionChanged()) return
-      let data: { size?: number; used?: number; cost?: number; currency?: string }
+      let data: { size?: number; used?: number; cost?: number; currency?: string; inputTokens?: number; outputTokens?: number }
       // JSON.parse returns untyped data
-      try { data = JSON.parse(e.data) as { size?: number; used?: number; cost?: number; currency?: string } } catch { appLog.w(TAG, 'SSE usage_update: invalid JSON, skipping'); return }
+      try { data = JSON.parse(e.data) as { size?: number; used?: number; cost?: number; currency?: string; inputTokens?: number; outputTokens?: number } } catch { appLog.w(TAG, 'SSE usage_update: invalid JSON, skipping'); return }
       if ((data.size ?? 0) > 0) {
-        updateUsageState(data.used ?? 0, data.size!, data.cost, data.currency, sessionId)
+        updateUsageState(data.used ?? 0, data.size!, data.cost, data.currency, sessionId, data.inputTokens, data.outputTokens)
       }
     })
 

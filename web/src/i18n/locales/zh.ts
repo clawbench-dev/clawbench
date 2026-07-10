@@ -158,6 +158,8 @@ export default {
       used: '已用',
       size: '总量',
       remaining: '剩余',
+      inputTokens: '输入',
+      outputTokens: '输出',
     },
     create: {
       selectAgentOrLongPress: '选择智能体（长按直接新建）',

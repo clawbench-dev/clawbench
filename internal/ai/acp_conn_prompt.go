@@ -83,7 +83,7 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 
 	promptStart := time.Now()
 	slog.Info("acp conn: conn.Prompt starting", "clawbench_sid", c.clawbenchSID, "acp_sid", acpSID)
-	_, err := conn.Prompt(promptCtx, acp.PromptRequest{
+	resp, err := conn.Prompt(promptCtx, acp.PromptRequest{
 		SessionId: acp.SessionId(acpSID),
 		Prompt:    prompt,
 	})
@@ -117,7 +117,51 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 		return fmt.Errorf("acp: prompt: %w", err)
 	}
 
+	// PromptResponse.Usage (UNSTABLE): emit metadata and usage_update events
+	// so input/output token counts are persisted and shown in the context chip.
+	if resp.Usage != nil {
+		c.emitPromptResponseUsage(resp.Usage, streamCh)
+	}
+
 	return nil
+}
+
+// emitPromptResponseUsage emits metadata and usage_update events from a
+// PromptResponse.Usage (UNSTABLE ACP feature). The metadata event ensures
+// InputTokens/OutputTokens are persisted to chat_metadata and embedded in
+// chat_history.content JSON. The usage_update event updates the frontend's
+// context usage chip in real time.
+func (c *ACPConn) emitPromptResponseUsage(usage *acp.Usage, streamCh chan<- StreamEvent) {
+	meta := &Metadata{
+		InputTokens:  usage.InputTokens,
+		OutputTokens: usage.OutputTokens,
+	}
+	slog.Info("acp conn: PromptResponse.Usage",
+		"clawbench_sid", c.clawbenchSID,
+		"input_tokens", usage.InputTokens,
+		"output_tokens", usage.OutputTokens,
+		"total_tokens", usage.TotalTokens)
+
+	// Emit metadata event for persistence (SessionExecutor captures these)
+	forwardACPEvent(streamCh, StreamEvent{Type: "metadata", Meta: meta})
+
+	// Also update UsageState so the context chip shows input/output tokens
+	c.mu.Lock()
+	cached := c.cachedUsageState
+	c.mu.Unlock()
+	usageState := &UsageState{
+		Used:         cached.Used,
+		Size:         cached.Size,
+		InputTokens:  usage.InputTokens,
+		OutputTokens: usage.OutputTokens,
+		Cost:         cached.Cost,
+		Currency:     cached.Currency,
+	}
+	forwardACPEvent(streamCh, StreamEvent{Type: "usage_update", Usage: usageState})
+	c.SetCachedUsageState(usageState)
+	if agentID := c.AgentID(); agentID != "" {
+		GetAgentCapabilityRegistry().UpdateUsageState(agentID, usageState)
+	}
 }
 
 // setConfigOptionWithCrashCheck sets a config option, checking whether it killed
