@@ -354,6 +354,7 @@ else:
             "src/components/file/FileViewer.vue",  # PDF/image/video/audio previews, heavy component mocking
             "src/components/file/FileHeader.vue",  # Menu with many action handlers, needs full app context
             "src/components/media/PdfPreview.vue",  # PDF.js worker integration, needs real browser
+            "src/stores/app.ts",  # Reactive store: 1000+ lines with heavy deps, integration-level testing only
         )
         if any(file_path.endswith(s) for s in TIER2_EXCLUDED_SUFFIXES):
             continue
