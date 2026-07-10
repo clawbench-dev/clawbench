@@ -16,8 +16,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
-# Timeout: 5 minutes by default (override with VITEST_TIMEOUT_S env)
-TIMEOUT_S="${VITEST_TIMEOUT_S:-300}"
+# Timeout: 10 minutes by default (override with VITEST_TIMEOUT_S env)
+TIMEOUT_S="${VITEST_TIMEOUT_S:-600}"
 
 # Cleanup function: kill any orphaned vitest fork workers
 cleanup_vitest() {

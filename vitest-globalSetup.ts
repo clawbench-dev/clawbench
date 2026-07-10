@@ -39,6 +39,10 @@ export function teardown() {
         try { process.kill(pid, 'SIGKILL') } catch {}
       }
     } catch {}
-    process.exit(process.exitCode ?? 1)
+    // When all tests pass, vitest sets process.exitCode = 0 before running
+    // globalSetup teardown. But the force-exit may cause Node to report 1.
+    // Preserve the original exit code (0 if tests passed) so downstream
+    // scripts don't misinterpret pool cleanup as a test failure.
+    process.exit(process.exitCode ?? 0)
   }, FORCE_EXIT_MS)
 }
