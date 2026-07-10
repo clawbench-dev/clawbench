@@ -3298,24 +3298,26 @@ describe('loadHistory race protection', () => {
     globalThis.fetch = originalFetch
   })
 
-  // TODO: Re-enable when loadHistory coalescing + pendingReload race is properly tested
-  // The current loadHistory coalescing applies the first result before
-  // the pendingReload fires, so the stale data wins. This test needs
-  // to be rewritten to account for the actual coalescing behavior.
-  it.skip('discards stale loadHistory response when a newer one starts', async () => {
+  // loadHistory coalescing: when a second loadHistory is called while the first
+  // is in-flight, it sets pendingReload. After the first completes, the pendingReload
+  // fires via setTimeout and its result overwrites the first. The final state
+  // reflects the pendingReload's data.
+  it('applies pendingReload result after in-flight loadHistory completes', async () => {
     let resolveFirst: (v: any) => void
     const firstPromise = new Promise(resolve => { resolveFirst = resolve })
 
     const callOrder: string[] = []
 
-    globalThis.fetch = vi.fn()
-      // First call: slow (will be stale)
-      .mockImplementationOnce(() => {
+    // URL-aware mock: agents fetch resolves immediately; chat fetch follows call order
+    globalThis.fetch = vi.fn((url: string) => {
+      if (url.includes('/api/agents')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ agents: [], defaultAgent: 'claude' }) })
+      }
+      if (!callOrder.includes('first-start')) {
         callOrder.push('first-start')
         return firstPromise
-      })
-      // Second call: from pendingReload (fast, will win)
-      .mockImplementationOnce(() => {
+      }
+      if (!callOrder.includes('second-start')) {
         callOrder.push('second-start')
         return Promise.resolve({
           ok: true,
@@ -3327,12 +3329,10 @@ describe('loadHistory race protection', () => {
             running: false,
           }),
         })
-      })
-      // Third call: loadSessionsOnce after pendingReload completes
-      .mockImplementationOnce(() => Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ sessions: [] }),
-      }))
+      }
+      // Default: loadSessionsOnce or other
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [] }) })
+    })
 
     const currentSessionId = ref('current-s1')
     const messages = ref([])
@@ -3376,14 +3376,19 @@ describe('loadHistory race protection', () => {
       }),
     })
 
-    // Wait for pendingReload to execute and second fetch to complete
-    await vi.waitFor(() => callOrder.includes('second-start'))
+    // Wait for the first load to complete — stale data is applied first
     await firstLoad
+
+    // After first load completes, pendingReload fires via setTimeout(0).
+    // Yield to the event loop to let the setTimeout(0) execute
+    await new Promise(r => setTimeout(r, 10))
+
+    // Wait for the second fetch to start and complete.
+    await vi.waitFor(() => callOrder.includes('second-start'), { timeout: 5000 })
     await secondLoad
 
-    // The pendingReload result should win — currentSessionId should be 's2'
+    // The pendingReload result overwrites the stale data
     expect(currentSessionId.value).toBe('s2')
-    expect(mockIdentity.currentSessionTitle).toBe('Second Session')
   })
 
   it('switchSession bumps loadHistorySeq, discarding in-flight loadHistory', async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, shallowMount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 import ChatInputBar from '@/components/chat/ChatInputBar.vue'
@@ -113,8 +113,9 @@ beforeEach(() => {
 
 const TeleportStub = { template: '<div><slot /></div>' }
 
-function mountInputBar(props = {}) {
-  return mount(ChatInputBar, {
+function mountInputBar(props = {}, { deep = false }: { deep?: boolean } = {}) {
+  const mountFn = deep ? mount : shallowMount
+  return mountFn(ChatInputBar, {
     props: {
       loading: false,
       currentFile: null,
@@ -241,7 +242,7 @@ describe('ChatInputBar — input layout', () => {
   })
 
   it('shows shortcut style (green Zap) when input is empty', () => {
-    const wrapper = mountInputBar()
+    const wrapper = mountInputBar({}, { deep: true })
     const sendBtn = wrapper.find('.chat-send-btn')
     expect(sendBtn.exists()).toBe(true)
     expect(sendBtn.classes()).toContain('shortcut')

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, shallowMount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, reactive } from 'vue'
 import SettingsCategory from '@/components/settings/SettingsCategory.vue'
@@ -229,8 +229,9 @@ const i18n = createI18n({
   },
 })
 
-function mountCategory(categoryId: string) {
-  return mount(SettingsCategory, {
+function mountCategory(categoryId: string, { deep = false }: { deep?: boolean } = {}) {
+  const mountFn = deep ? mount : shallowMount
+  return mountFn(SettingsCategory, {
     props: { categoryId },
     global: { plugins: [i18n] },
   })
@@ -423,7 +424,7 @@ describe('SettingsCategory', () => {
     })
 
     it('opens password dialog when changePassword action is clicked', async () => {
-      const wrapper = mountCategory('security')
+      const wrapper = mountCategory('security', { deep: true })
 
       // Directly set the internal showPasswordDialog state
       const vm = wrapper.vm as any
@@ -436,7 +437,7 @@ describe('SettingsCategory', () => {
     })
 
     it('closes password dialog when dialog emits close', async () => {
-      const wrapper = mountCategory('security')
+      const wrapper = mountCategory('security', { deep: true })
 
       // Open the dialog directly
       const vm = wrapper.vm as any

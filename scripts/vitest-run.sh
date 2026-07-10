@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# vitest-run.sh — Run vitest with timeout, zombie cleanup, and watchdog.
+# vitest-run.sh — Run vitest with timeout, zombie cleanup, and force-exit.
 #
-# Vitest 4.x has a known bug where fork workers can become zombies
-# when pool cleanup hangs (vitest-dev/vitest#8766). This wrapper:
-# 1. Runs vitest in the background
-# 2. Starts a watchdog that monitors for zombie workers after vitest exits
-# 3. Kills orphaned worker processes and reports the exit code
+# Vitest 4.x can hang on pool cleanup (vitest-dev/vitest#8766). Some test
+# files also leave open handles (timers, observers, EventSource) that prevent
+# the process from exiting. This wrapper:
+# 1. Runs vitest with a hard timeout
+# 2. Kills the entire vitest process tree on timeout
+# 3. Cleans up orphaned worker processes after exit
 #
 # Usage: ./scripts/vitest-run.sh [args passed to vitest]
 
@@ -15,12 +16,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
-# Timeout: 10 minutes by default (override with VITEST_TIMEOUT_S env)
-# CI runners are slower than local; 300s was too short.
-TIMEOUT_S="${VITEST_TIMEOUT_S:-600}"
+# Timeout: 5 minutes by default (override with VITEST_TIMEOUT_S env)
+TIMEOUT_S="${VITEST_TIMEOUT_S:-300}"
 
-# Cleanup function: kill any orphaned vitest workers
-cleanup_workers() {
+# Cleanup function: kill any orphaned vitest fork workers
+cleanup_vitest() {
   local pids
   pids=$(pgrep -f "vitest/dist/workers/forks" 2>/dev/null || true)
   if [ -n "$pids" ]; then
@@ -31,21 +31,34 @@ cleanup_workers() {
   fi
 }
 
-# Run vitest with a hard timeout. On timeout (exit 124), the timeout
-# command sends SIGTERM then SIGKILL after 5s to the vitest process.
-set +e
-timeout --signal=TERM --kill-after=5s "$TIMEOUT_S" npx vitest run "$@"
+# Run vitest in a new process group so we can kill the entire tree.
+set -m  # Enable job control for process group
+npx vitest run "$@" &
+VITEST_PID=$!
+
+# Watchdog: wait for vitest, kill process group on timeout
+WAITED=0
+while kill -0 "$VITEST_PID" 2>/dev/null; do
+  sleep 1
+  WAITED=$((WAITED + 1))
+  if [ "$WAITED" -ge "$TIMEOUT_S" ]; then
+    echo "[vitest-run] VITEST TIMED OUT after ${TIMEOUT_S}s — killing process tree" >&2
+    # Kill the entire process group
+    kill -TERM -- -"$VITEST_PID" 2>/dev/null || true
+    sleep 2
+    kill -9 -- -"$VITEST_PID" 2>/dev/null || true
+    sleep 1
+    cleanup_vitest
+    exit 124
+  fi
+done
+set +m
+
+# Get vitest exit code
+wait "$VITEST_PID"
 EXIT_CODE=$?
-set -e
 
-# Timeout exit code is 124
-if [ "$EXIT_CODE" -eq 124 ]; then
-  echo "[vitest-run] VITEST TIMED OUT after ${TIMEOUT_S}s — killing orphaned workers" >&2
-fi
-
-# Always clean up orphaned vitest workers. They outlive the main process
-# because PoolRunner.stop() fails to force-kill fork workers that don't
-# respond to the stop RPC within 60s (vitest 4.x pool cleanup bug).
-cleanup_workers
+# Always clean up orphaned vitest workers.
+cleanup_vitest
 
 exit "$EXIT_CODE"

@@ -157,10 +157,10 @@ describe('SessionSettingModal', () => {
     expect(wrapper.find('.model-tab.active').text()).toContain('chat.modelSwitcher.title')
   })
 
-  // TODO: Re-enable when Vue 3.5 + @vue/test-utils compatibility is resolved
-  // Mocked ModalDialog doesn't propagate click events for tab switching
-  it.skip('switches to thinking tab when clicked', async () => {
-    const wrapper = mountModal({ initialTab: 'thinking' })
+  it('switches to thinking tab when clicked', async () => {
+    const wrapper = mountModal()
+    wrapper.vm._setActiveTab('thinking')
+    await nextTick()
     const tabs = wrapper.findAll('.model-tab')
     expect(tabs[1].classes()).toContain('active')
   })
@@ -189,10 +189,8 @@ describe('SessionSettingModal', () => {
 
   // --- Search ---
 
-  // TODO: Re-enable when Vue 3.5 + @vue/test-utils compatibility is resolved
-  it.skip('filters models by search query', async () => {
+  it('filters models by search query', async () => {
     const wrapper = mountModal()
-    // Set search query directly since v-model doesn't work through mocked ModalDialog
     wrapper.vm.searchQuery = 'opus'
     await nextTick()
 
@@ -210,7 +208,7 @@ describe('SessionSettingModal', () => {
     expect(wrapper.find('.model-empty').exists() || wrapper.text()).toBeTruthy()
   })
 
-  it.skip('filters models by id when search matches id but not name', async () => {
+  it('filters models by id when search matches id but not name', async () => {
     const wrapper = mountModal()
     wrapper.vm.searchQuery = 'haiku-3'
     await nextTick()
@@ -220,7 +218,7 @@ describe('SessionSettingModal', () => {
     expect(items[0].text()).toContain('Haiku')
   })
 
-  it.skip('shows no-search-results message when search yields nothing', async () => {
+  it('shows no-search-results message when search yields nothing', async () => {
     const wrapper = mountModal()
     wrapper.vm.searchQuery = 'xyz'
     await nextTick()
@@ -250,16 +248,18 @@ describe('SessionSettingModal', () => {
 
   // --- Thinking effort ---
 
-  it.skip('renders thinking effort levels on thinking tab', async () => {
-    const wrapper = mountModal({ initialTab: 'thinking' })
+  it('renders thinking effort levels on thinking tab', async () => {
+    const wrapper = mountModal()
+    wrapper.vm._setActiveTab('thinking')
     await nextTick()
 
     const items = wrapper.findAll('.thinking-item')
     expect(items.length).toBe(5)
   })
 
-  it.skip('highlights current thinking effort', async () => {
-    const wrapper = mountModal({ initialTab: 'thinking' })
+  it('highlights current thinking effort', async () => {
+    const wrapper = mountModal()
+    wrapper.vm._setActiveTab('thinking')
     await nextTick()
 
     const items = wrapper.findAll('.thinking-item')
@@ -268,8 +268,9 @@ describe('SessionSettingModal', () => {
     expect(highItem?.classes()).toContain('current')
   })
 
-  it.skip('emits switch-thinking-effort when clicking a level', async () => {
-    const wrapper = mountModal({ initialTab: 'thinking' })
+  it('emits switch-thinking-effort when clicking a level', async () => {
+    const wrapper = mountModal()
+    wrapper.vm._setActiveTab('thinking')
     await nextTick()
 
     const items = wrapper.findAll('.thinking-item')
@@ -280,8 +281,9 @@ describe('SessionSettingModal', () => {
     expect(wrapper.emitted('switch-thinking-effort')).toBeTruthy()
   })
 
-  it.skip('closes modal after selecting thinking effort', async () => {
-    const wrapper = mountModal({ initialTab: 'thinking' })
+  it('closes modal after selecting thinking effort', async () => {
+    const wrapper = mountModal()
+    wrapper.vm._setActiveTab('thinking')
     await nextTick()
 
     const items = wrapper.findAll('.thinking-item')
@@ -292,11 +294,12 @@ describe('SessionSettingModal', () => {
     expect(wrapper.emitted('update:show')![0][0]).toBe(false)
   })
 
-  it.skip('shows default badge on default thinking effort level', async () => {
+  it('shows default badge on default thinking effort level', async () => {
     const claudeAgent = mockAgents.agents.value.find(a => a.id === 'claude')!
     claudeAgent.preferredThinkingEffort = 'high'
 
-    const wrapper = mountModal({ initialTab: 'thinking' })
+    const wrapper = mountModal()
+    wrapper.vm._setActiveTab('thinking')
     await nextTick()
 
     const items = wrapper.findAll('.thinking-item')
@@ -372,7 +375,7 @@ describe('SessionSettingModal', () => {
     expect(mockToastShow).toHaveBeenCalledWith('chat.sessionSetting.refreshFailed', expect.any(Object))
   })
 
-  it.skip('disables refresh button while refreshing', async () => {
+  it('disables refresh button while refreshing', async () => {
     let resolveRefresh: (v: any) => void
     vi.mocked(apiPost).mockReturnValue(new Promise(r => { resolveRefresh = r }))
 
@@ -452,8 +455,9 @@ describe('SessionSettingModal', () => {
 
   // --- Thinking effort default ---
 
-  it.skip('sets default thinking effort via star button on thinking tab', async () => {
-    const wrapper = mountModal({ initialTab: 'thinking' })
+  it('sets default thinking effort via star button on thinking tab', async () => {
+    const wrapper = mountModal()
+    wrapper.vm._setActiveTab('thinking')
     await nextTick()
 
     // Click the star on the medium item to set default
@@ -465,10 +469,11 @@ describe('SessionSettingModal', () => {
     expect(mockAgents.updateAgentField).toHaveBeenCalledWith('claude', 'preferredThinkingEffort', 'medium')
   })
 
-  it.skip('shows error toast when setDefaultThinkingEffort fails', async () => {
+  it('shows error toast when setDefaultThinkingEffort fails', async () => {
     vi.mocked(patchAgentPref).mockRejectedValueOnce(new Error('fail'))
 
-    const wrapper = mountModal({ initialTab: 'thinking' })
+    const wrapper = mountModal()
+    wrapper.vm._setActiveTab('thinking')
     await nextTick()
 
     const items = wrapper.findAll('.thinking-item')
@@ -544,8 +549,9 @@ describe('SessionSettingModal', () => {
 
   // --- Thinking tab dividers ---
 
-  it.skip('renders dividers between thinking items', async () => {
-    const wrapper = mountModal({ initialTab: 'thinking' })
+  it('renders dividers between thinking items', async () => {
+    const wrapper = mountModal()
+    wrapper.vm._setActiveTab('thinking')
     await nextTick()
 
     const dividers = wrapper.findAll('.model-divider')
@@ -562,11 +568,12 @@ describe('SessionSettingModal', () => {
     expect(items[0].classes()).toContain('is-default')
   })
 
-  it.skip('adds is-default class to default thinking effort', async () => {
+  it('adds is-default class to default thinking effort', async () => {
     const claudeAgent = mockAgents.agents.value.find(a => a.id === 'claude')!
     claudeAgent.preferredThinkingEffort = 'high'
 
-    const wrapper = mountModal({ initialTab: 'thinking' })
+    const wrapper = mountModal()
+    wrapper.vm._setActiveTab('thinking')
     await nextTick()
 
     const items = wrapper.findAll('.thinking-item')
@@ -578,7 +585,7 @@ describe('SessionSettingModal', () => {
 
   // --- Search resets on reopen ---
 
-  it.skip('resets search query when modal reopens', async () => {
+  it('resets search query when modal reopens', async () => {
     const wrapper = mountModal()
     wrapper.vm.searchQuery = 'opus'
     await nextTick()
@@ -595,8 +602,9 @@ describe('SessionSettingModal', () => {
 
   // --- No thinking tab for agents without levels ---
 
-  it.skip('shows empty hint in thinking tab for agents without thinking effort levels', async () => {
-    const wrapper = mountModal({ agentId: 'kimi', initialTab: 'thinking' })
+  it('shows empty hint in thinking tab for agents without thinking effort levels', async () => {
+    const wrapper = mountModal({ agentId: 'kimi' })
+    wrapper.vm._setActiveTab('thinking')
     await nextTick()
     // All 4 tabs are always visible (model, thinking, mode, transport)
     const tabs = wrapper.findAll('.model-tab')

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { mount, shallowMount, flushPromises } from '@vue/test-utils'
 import { ref, nextTick } from 'vue'
 import GitManageContent from '@/components/git/GitManageContent.vue'
 
@@ -51,7 +51,7 @@ vi.mock('@/components/git/GitTagList.vue', () => ({
 }))
 
 function mountContent(props = {}) {
-  return mount(GitManageContent, {
+  return shallowMount(GitManageContent, {
     props,
     global: {
       stubs: { Teleport: { template: '<div><slot /></div>' } },

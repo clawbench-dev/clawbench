@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, shallowMount } from '@vue/test-utils'
 import { nextTick, reactive } from 'vue'
 import { createI18n } from 'vue-i18n'
 import FileManagerContent from '@/components/file/FileManagerContent.vue'
@@ -149,8 +149,9 @@ const sampleEntries = [
   { name: 'test.ts', type: 'file', modified: '2025-01-01T00:00:00Z', size: 100 },
 ]
 
-function mountContent(props = {}) {
-  return mount(FileManagerContent, {
+function mountContent(props = {}, { deep = false }: { deep?: boolean } = {}) {
+  const mountFn = deep ? mount : shallowMount
+  return mountFn(FileManagerContent, {
     props: {
       entries: sampleEntries,
       currentDir: '',
@@ -603,7 +604,7 @@ describe('FileManagerContent — viewMode', () => {
   })
 
   it('defaults to list view', async () => {
-    const wrapper = mountContent()
+    const wrapper = mountContent({}, { deep: true })
     expect(wrapper.vm.viewMode).toBe('list')
     expect(wrapper.find('.file-list').exists()).toBe(true)
   })

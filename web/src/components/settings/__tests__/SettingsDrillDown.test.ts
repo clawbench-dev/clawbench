@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, shallowMount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, reactive, nextTick } from 'vue'
 import SettingsDrillDown from '@/components/settings/SettingsDrillDown.vue'
@@ -201,7 +201,7 @@ function resolveServerValue(key: string): any {
 }
 
 function mountDrillDown(categoryId: string) {
-  return mount(SettingsDrillDown, {
+  return shallowMount(SettingsDrillDown, {
     props: { categoryId },
     global: {
       plugins: [i18n],
