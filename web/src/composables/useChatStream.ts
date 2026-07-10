@@ -159,12 +159,16 @@ export function useChatStream(options: UseChatStreamOptions) {
     stopPolling()
     let jsonParseFailures = 0
     const MAX_JSON_PARSE_FAILURES = 5
+    let httpFailures = 0
+    const MAX_HTTP_FAILURES = 3
     pollingInterval = window.setInterval(async () => {
       try {
         const resp = await fetch(`/api/ai/chat?session_id=${encodeURIComponent(currentSessionId.value)}&limit=1`, { credentials: 'same-origin' })
         if (!resp.ok) {
           throw new Error(`HTTP ${resp.status}`)
         }
+        // Reset HTTP failure count on success
+        httpFailures = 0
         let data
         try {
           data = await resp.json()
@@ -220,7 +224,26 @@ export function useChatStream(options: UseChatStreamOptions) {
         const existingStreaming = findStreamingMsg(messages.value)
 
         if (lastAssistant && existingStreaming) {
-          existingStreaming.blocks = lastAssistant.blocks
+          const pollBlocks = lastAssistant.blocks
+          const hasNonText = pollBlocks.some((b: any) => b.type !== 'text')
+          const hasThinking = existingStreaming.blocks.some((b: any) => b.type === 'thinking')
+          if (!hasNonText && hasThinking && existingStreaming.blocks.length > 0) {
+            appLog.d(TAG, `[poll] raw-text fallback — preserving ${existingStreaming.blocks.filter((b: any) => b.type === 'thinking').length} thinking blocks`)
+            // Poll response is raw-text fallback (DB not yet flushed with blocks).
+            // Preserve SSE-accumulated thinking blocks; only update text blocks.
+            for (const pb of pollBlocks) {
+              if (pb.type === 'text') {
+                const existingText = findLastBlockOfType(existingStreaming.blocks, 'text')
+                if (existingText) {
+                  existingText.text = pb.text
+                } else {
+                  existingStreaming.blocks.push(pb)
+                }
+              }
+            }
+          } else {
+            existingStreaming.blocks = pollBlocks
+          }
           if (lastAssistant.metadata) existingStreaming.metadata = lastAssistant.metadata
           if (lastAssistant.cancelled) existingStreaming.cancelled = lastAssistant.cancelled
         } else if (lastAssistant && !existingStreaming) {
@@ -229,7 +252,23 @@ export function useChatStream(options: UseChatStreamOptions) {
             : null
           if (existingById) {
             existingById.streaming = true
-            existingById.blocks = lastAssistant.blocks
+            const pollBlocks = lastAssistant.blocks
+            const hasNonText = pollBlocks.some((b: any) => b.type !== 'text')
+            const hasThinking = existingById.blocks?.some((b: any) => b.type === 'thinking')
+            if (!hasNonText && hasThinking && existingById.blocks?.length > 0) {
+              for (const pb of pollBlocks) {
+                if (pb.type === 'text') {
+                  const existingText = existingById.blocks ? findLastBlockOfType(existingById.blocks, 'text') : undefined
+                  if (existingText) {
+                    existingText.text = pb.text
+                  } else {
+                    existingById.blocks.push(pb)
+                  }
+                }
+              }
+            } else {
+              existingById.blocks = pollBlocks
+            }
             if (lastAssistant.metadata) existingById.metadata = lastAssistant.metadata
             if (lastAssistant.cancelled) existingById.cancelled = lastAssistant.cancelled
           } else {
@@ -244,6 +283,13 @@ export function useChatStream(options: UseChatStreamOptions) {
         }
       } catch (err) {
         appLog.e(TAG, 'Polling error:', err)
+        httpFailures++
+        if (httpFailures < MAX_HTTP_FAILURES) {
+          // Transient error — retry on next interval
+          return
+        }
+        // Persistent failure — stop polling and show error
+        appLog.e(TAG, 'Polling: too many HTTP failures, giving up')
         stopPolling()
         const sm = findStreamingMsg(messages.value)
         if (sm) {
@@ -396,6 +442,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         existingThinking.text += data.text
       } else {
         blocks.push({ type: 'thinking', text: data.text, _key: `thinking-${thinkingBlockCounter++}` })
+        appLog.d(TAG, `[thinking] new block _key=${blocks[blocks.length - 1]._key} textLen=${data.text.length} blocks=${blocks.length} isLoading=${loading.value}`)
       }
       debouncedRender()
       if (isOpen.value) {
@@ -854,8 +901,10 @@ export function useChatStream(options: UseChatStreamOptions) {
       }
       if (sseErrorHandled) {
         sseErrorHandled = false
-        disconnectStream()
-        reconnect.reset()
+        // Server error already handled — start polling if still loading
+        if (loading.value && currentSessionId.value) {
+          pollUntilDone()
+        }
         return
       }
       const wasRecoverable = esRef.readyState !== EventSource.CLOSED
@@ -902,6 +951,9 @@ export function useChatStream(options: UseChatStreamOptions) {
     const hasStreamingMsg = messages.value.some((m: any) => m.streaming)
     if (!loading.value && !hasStreamingMsg) return
     appLog.d(TAG, 'Page visible while streaming — recovering SSE or reloading history')
+    // Reset reconnect retries on visibility restore — keyboard flicker or
+    // app switch may have exhausted them; the network is available now.
+    reconnect.reset()
     if (loading.value && !eventSource) {
       if (reconnect.shouldReconnect()) {
         reconnect.scheduleReconnect()

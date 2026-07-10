@@ -102,3 +102,6 @@ skills-lock.json
 npm/tmp/
 npm/platforms/*/bin/
 npm/platforms/*/config/
+
+# Troubleshooting notes (keep across rollbacks)
+troubleshoot/
