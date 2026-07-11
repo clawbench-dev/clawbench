@@ -163,33 +163,25 @@ func UploadFile(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mu
 	})
 }
 
-// shareInFile represents a file in the share-in directory.
-type shareInFile struct {
+// recentFile represents a file in an uploads directory.
+type recentFile struct {
 	Name    string `json:"name"`
 	Path    string `json:"path"`
 	Size    int64  `json:"size"`
 	ModTime string `json:"modTime"`
 }
 
-// ShareInRecent handles GET /api/share-in/recent
-// Returns the 5 most recently modified files in .clawbench/share-in/.
-func ShareInRecent(w http.ResponseWriter, r *http.Request) {
-	projectPath, ok := requireProject(w, r)
-	if !ok {
-		return
-	}
+// listRecentFiles lists up to limit files in dirPath (under projectPath),
+// sorted by modification time descending. Returns empty slice if dir doesn't exist.
+func listRecentFiles(projectPath, dirPath string, limit int) []recentFile {
+	fullDir := filepath.Join(projectPath, dirPath)
 
-	shareInDir := filepath.Join(projectPath, ".clawbench", "share-in")
-
-	entries, err := os.ReadDir(shareInDir)
+	entries, err := os.ReadDir(fullDir)
 	if err != nil {
-		// Directory doesn't exist yet — return empty list
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode([]shareInFile{})
-		return
+		return []recentFile{}
 	}
 
-	var files []shareInFile
+	var files []recentFile
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -198,8 +190,8 @@ func ShareInRecent(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		relPath := filepath.ToSlash(filepath.Join(".clawbench", "share-in", entry.Name()))
-		files = append(files, shareInFile{
+		relPath := filepath.ToSlash(filepath.Join(dirPath, entry.Name()))
+		files = append(files, recentFile{
 			Name:    entry.Name(),
 			Path:    relPath,
 			Size:    info.Size(),
@@ -207,15 +199,40 @@ func ShareInRecent(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Sort by modification time descending (most recent first)
 	sort.Slice(files, func(i, j int) bool {
 		return files[i].ModTime > files[j].ModTime
 	})
 
-	// Limit to 20
-	if len(files) > 20 {
-		files = files[:20]
+	if len(files) > limit {
+		files = files[:limit]
 	}
+
+	return files
+}
+
+// ShareInRecent handles GET /api/share-in/recent
+// Returns the 20 most recently modified files in .clawbench/share-in/.
+func ShareInRecent(w http.ResponseWriter, r *http.Request) {
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+
+	files := listRecentFiles(projectPath, filepath.Join(".clawbench", "share-in"), 20)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(files)
+}
+
+// UploadRecent handles GET /api/upload/recent
+// Returns the 20 most recently modified files in .clawbench/uploads/.
+func UploadRecent(w http.ResponseWriter, r *http.Request) {
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+
+	files := listRecentFiles(projectPath, filepath.Join(".clawbench", "uploads"), 20)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(files)

@@ -242,6 +242,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ai/chat/tool-call", middleware.Auth(ServeToolCallDetail))
 	register("/api/ai/permission/respond", middleware.Auth(ServePermissionRespond))
 	register("/api/upload/file", middleware.Auth(UploadFile))
+	register("/api/upload/recent", middleware.Auth(UploadRecent))
 	register("/api/share-in/recent", middleware.Auth(ShareInRecent))
 	register("/api/dir", middleware.Auth(ListDir))
 	register("/api/files", middleware.Auth(ListFiles))

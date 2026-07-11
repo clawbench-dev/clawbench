@@ -222,6 +222,8 @@ export default {
       drawerTitle: '附件',
       emptyReferences: '暂无最近引用文件',
       emptyShares: '暂无最近分享文件',
+      recentUploads: '最近上传',
+      emptyUploads: '暂无最近上传文件',
       dropToUpload: '松开上传文件',
       uploading: '上传中...',
       openFile: '打开文件',

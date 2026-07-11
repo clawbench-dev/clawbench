@@ -72,6 +72,23 @@
           <Check :size="14" class="ad-file-check" />
         </button>
       </template>
+
+      <!-- Recently uploaded -->
+      <template v-if="activeTab === 'uploads'">
+        <div v-if="recentUploads.length === 0" class="ad-empty">{{ t('chat.attach.emptyUploads') }}</div>
+        <button
+          v-for="item in recentUploads" :key="item.path"
+          class="ad-file-row" :class="{ 'ad-file-attached': isAttached(item.path) }"
+          @click="$emit('add-attached', item.path)"
+        >
+          <Upload :size="16" class="ad-file-icon" />
+          <div class="ad-file-info">
+            <span class="ad-file-name">{{ item.name }}</span>
+            <span class="ad-file-meta">{{ dirName(item.path) }} · {{ formatModTime(item.modTime) }} · {{ formatFileSize(item.size) }}</span>
+          </div>
+          <Check :size="14" class="ad-file-check" />
+        </button>
+      </template>
     </div>
   </BottomSheet>
 </template>
@@ -82,6 +99,7 @@ import { Paperclip, Upload, FileText, Folder, Share2, Check } from 'lucide-vue-n
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import { useI18n } from 'vue-i18n'
 import { useShareIn } from '@/composables/useShareIn'
+import { useUploadRecent } from '@/composables/useUploadRecent'
 import { baseName, dirName } from '@/utils/path'
 import { formatFileSize } from '@/utils/fileType'
 
@@ -111,17 +129,20 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const { recentShares, fetchRecentShares } = useShareIn()
+const { recentUploads, fetchRecentUploads } = useUploadRecent()
 
 const activeTab = ref('references')
 
 const tabs = [
   { key: 'references', label: '' },
   { key: 'shares', label: '' },
+  { key: 'uploads', label: '' },
 ]
 
 // Lazy-init tab labels
 tabs[0].label = t('chat.attach.recentReferences')
 tabs[1].label = t('chat.attach.recentShares')
+tabs[2].label = t('chat.attach.recentUploads')
 
 function isAttached(path: string) {
   return props.attachedFiles?.includes(path) ?? false
@@ -146,9 +167,12 @@ function handleUpload() {
   emit('upload')
 }
 
-// Fetch share-in data when drawer opens
+// Fetch data when drawer opens
 watch(() => props.open, (v) => {
-  if (v) fetchRecentShares()
+  if (v) {
+    fetchRecentShares()
+    fetchRecentUploads()
+  }
 })
 </script>
 

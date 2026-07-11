@@ -223,7 +223,7 @@ func TestShareInRecent(t *testing.T) {
 		w := callHandler(ShareInRecent, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var result []shareInFile
+		var result []recentFile
 		err := json.Unmarshal(w.Body.Bytes(), &result)
 		assert.NoError(t, err)
 		assert.Empty(t, result)
@@ -251,7 +251,7 @@ func TestShareInRecent(t *testing.T) {
 		w := callHandler(ShareInRecent, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var result []shareInFile
+		var result []recentFile
 		err := json.Unmarshal(w.Body.Bytes(), &result)
 		assert.NoError(t, err)
 		assert.Len(t, result, 2)
@@ -276,10 +276,56 @@ func TestShareInRecent(t *testing.T) {
 		w := callHandler(ShareInRecent, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		var result []shareInFile
+		var result []recentFile
 		err := json.Unmarshal(w.Body.Bytes(), &result)
 		assert.NoError(t, err)
 		assert.Len(t, result, 20)
+	})
+}
+
+func TestUploadRecent(t *testing.T) {
+	t.Run("NoUploadsDir_ReturnsEmptyArray", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := httptest.NewRequest(http.MethodGet, "/api/upload/recent", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(UploadRecent, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var result []recentFile
+		err := json.Unmarshal(w.Body.Bytes(), &result)
+		assert.NoError(t, err)
+		assert.Empty(t, result)
+	})
+
+	t.Run("ReturnsFilesSortedByModTime", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		uploadsDir := filepath.Join(env.ProjectDir, ".clawbench", "uploads")
+		_ = os.MkdirAll(uploadsDir, 0o755)
+
+		_ = os.WriteFile(filepath.Join(uploadsDir, "old.txt"), []byte("old"), 0o644)
+		_ = os.WriteFile(filepath.Join(uploadsDir, "new.txt"), []byte("new file"), 0o644)
+		oldTime := time.Now().Add(-2 * time.Hour)
+		newTime := time.Now()
+		_ = os.Chtimes(filepath.Join(uploadsDir, "old.txt"), oldTime, oldTime)
+		_ = os.Chtimes(filepath.Join(uploadsDir, "new.txt"), newTime, newTime)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/upload/recent", nil)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(UploadRecent, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var result []recentFile
+		err := json.Unmarshal(w.Body.Bytes(), &result)
+		assert.NoError(t, err)
+		assert.Len(t, result, 2)
+		assert.Equal(t, "new.txt", result[0].Name)
+		assert.Equal(t, "old.txt", result[1].Name)
 	})
 }
 

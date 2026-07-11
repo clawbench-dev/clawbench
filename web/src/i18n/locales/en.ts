@@ -222,6 +222,8 @@ export default {
       drawerTitle: 'Attachments',
       emptyReferences: 'No recently referenced files',
       emptyShares: 'No recently shared files',
+      recentUploads: 'Recently uploaded',
+      emptyUploads: 'No recently uploaded files',
       dropToUpload: 'Drop to upload',
       uploading: 'Uploading...',
       openFile: 'Open file',
