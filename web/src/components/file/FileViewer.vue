@@ -27,6 +27,7 @@
       @overlay-go-back="emit('overlayGoBack')"
       @share-external="emit('shareExternal')"
       @export-html="handleExportHtml"
+      @fit-width="handleFitWidth"
     />
 
     <div class="file-viewer-content" ref="contentRef">
@@ -262,6 +263,11 @@ const htmlPreviewRef = ref(null)
 // Expose PDF outline and scrollToPage for TOC integration
 const pdfOutline = computed(() => pdfPreviewRef.value?.outline || [])
 const pdfScrollToPage = (pageNum) => pdfPreviewRef.value?.scrollToPage(pageNum)
+
+// Fit-width: reset zoom to fit container width
+function handleFitWidth() {
+    pdfPreviewRef.value?.fitWidth()
+}
 
 // Word wrap & line numbers preferences from settings config
 const { localConfig, setLocalConfig } = useSettingsConfig()

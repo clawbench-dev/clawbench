@@ -24,8 +24,9 @@
       <!-- Current (file + directory) -->
       <template v-if="activeTab === 'current'">
         <!-- Current directory -->
-        <button v-if="effectiveCurrentDir && !isAttached(effectiveCurrentDir)"
-          class="ad-file-row ad-current-item" @click="toggleAttached(effectiveCurrentDir)">
+        <button v-if="effectiveCurrentDir"
+          class="ad-file-row ad-current-item" :class="{ 'ad-file-attached': isAttached(effectiveCurrentDir) }"
+          @click="toggleAttached(effectiveCurrentDir)">
           <Folder :size="16" class="ad-file-icon" />
           <div class="ad-file-info">
             <span class="ad-file-name">
@@ -38,8 +39,9 @@
           <Check :size="14" class="ad-file-check" />
         </button>
         <!-- Current file -->
-        <button v-if="currentFile && !isAttached(currentFile)"
-          class="ad-file-row ad-current-item" @click="toggleAttached(currentFile)">
+        <button v-if="currentFile"
+          class="ad-file-row ad-current-item" :class="{ 'ad-file-attached': isAttached(currentFile) }"
+          @click="toggleAttached(currentFile)">
           <FileText :size="16" class="ad-file-icon" />
           <div class="ad-file-info">
             <span class="ad-file-name">
