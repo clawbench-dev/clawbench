@@ -92,8 +92,9 @@ vi.mock('@/utils/fileType.ts', () => ({
     if (name.endsWith('.png')) return { isMarkdown: false, isHtml: false, isImage: true, isAudio: false, isVideo: false, isPdf: false, lang: '' }
     if (name.endsWith('.pdf')) return { isMarkdown: false, isHtml: false, isImage: false, isAudio: false, isVideo: false, isPdf: true, lang: '' }
     if (name.endsWith('.mp3')) return { isMarkdown: false, isHtml: false, isImage: false, isAudio: true, isVideo: false, isPdf: false, lang: '' }
-    if (name.endsWith('.mp4')) return { isMarkdown: false, isHtml: false, isImage: false, isAudio: false, isVideo: true, isPdf: false, lang: '' }
-    return { isMarkdown: false, isHtml: false, isImage: false, isAudio: false, isVideo: false, isPdf: false, lang: 'plaintext' }
+    if (name.endsWith('.mp4')) return { isMarkdown: false, isHtml: false, isImage: false, isAudio: false, isVideo: true, isPdf: false, isOffice: false, lang: '' }
+    if (name.endsWith('.docx') || name.endsWith('.xlsx') || name.endsWith('.pptx')) return { isMarkdown: false, isHtml: false, isImage: false, isAudio: false, isVideo: false, isPdf: false, isOffice: true, lang: '' }
+    return { isMarkdown: false, isHtml: false, isImage: false, isAudio: false, isVideo: false, isPdf: false, isOffice: false, lang: 'plaintext' }
   },
   formatFileSize: (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`
@@ -118,6 +119,7 @@ const stubs = {
   ImagePreview: true,
   AudioPreview: true,
   VideoPreview: true,
+  OfficePreview: true,
   MarkdownPreview: true,
   CodePreview: true,
   DiffDrawer: true,
@@ -170,6 +172,11 @@ describe('FileViewer', () => {
   it('shows VideoPreview for video files', () => {
     const wrapper = mountViewer({ file: { name: 'clip.mp4', path: 'clip.mp4', isVideo: true, content: null } })
     expect(wrapper.findComponent({ name: 'VideoPreview' }).exists() || wrapper.find('.file-viewer-content').exists()).toBe(true)
+  })
+
+  it('shows OfficePreview for office files', () => {
+    const wrapper = mountViewer({ file: { name: 'report.docx', path: 'report.docx', isOffice: true, content: null } })
+    expect(wrapper.findComponent({ name: 'OfficePreview' }).exists() || wrapper.find('.file-viewer-content').exists()).toBe(true)
   })
 
   it('shows binary file placeholder for binary files', () => {

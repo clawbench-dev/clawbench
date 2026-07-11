@@ -10,6 +10,7 @@ export interface FileType {
     isPdf?: boolean
     isAudio?: boolean
     isVideo?: boolean
+    isOffice?: boolean
 }
 
 const FILE_TYPES: FileType[] = [
@@ -82,6 +83,12 @@ const FILE_TYPES: FileType[] = [
     { exts: ['.m4v'], lang: 'video', label: 'M4V', color: '#ef4444', isMarkdown: false, isVideo: true },
     { exts: ['.3gp'], lang: 'video', label: '3GP', color: '#ef4444', isMarkdown: false, isVideo: true },
     { exts: ['.m3u8'], lang: 'video', label: 'M3U8', color: '#ef4444', isMarkdown: false, isVideo: true },
+    { exts: ['.docx'], lang: 'docx', label: 'DOCX', color: '#2b5797', isMarkdown: false, isOffice: true },
+    { exts: ['.xlsx'], lang: 'xlsx', label: 'XLSX', color: '#217346', isMarkdown: false, isOffice: true },
+    { exts: ['.pptx'], lang: 'pptx', label: 'PPTX', color: '#d24726', isMarkdown: false, isOffice: true },
+    { exts: ['.doc'], lang: 'doc', label: 'DOC', color: '#2b5797', isMarkdown: false, isOffice: true },
+    { exts: ['.xls'], lang: 'xls', label: 'XLS', color: '#217346', isMarkdown: false, isOffice: true },
+    { exts: ['.ppt'], lang: 'ppt', label: 'PPT', color: '#d24726', isMarkdown: false, isOffice: true },
 ]
 
 export function getFileType(name: string): FileType {

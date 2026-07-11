@@ -18,9 +18,9 @@ const (
 const maxSpecSniffSize = 1 << 20
 
 // IsSupportedFile returns true if the filename has a supported file extension
-// (text, image, audio, or video).
+// (text, image, audio, video, or office document).
 func IsSupportedFile(name string) bool {
-	return IsTextFile(name) || IsImageFile(name) || IsAudioFile(name) || IsVideoFile(name)
+	return IsTextFile(name) || IsImageFile(name) || IsAudioFile(name) || IsVideoFile(name) || IsOfficeFile(name)
 }
 
 // IsTextFile returns true if the filename has a supported text file extension.
@@ -113,6 +113,20 @@ func IsVideoFile(name string) bool {
 		".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".wmv", ".m4v", ".3gp", ".m3u8",
 	}
 	for _, ext := range videoExts {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsOfficeFile returns true if the filename has a supported office document extension.
+func IsOfficeFile(name string) bool {
+	lower := strings.ToLower(name)
+	officeExts := []string{
+		".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt",
+	}
+	for _, ext := range officeExts {
 		if strings.HasSuffix(lower, ext) {
 			return true
 		}
