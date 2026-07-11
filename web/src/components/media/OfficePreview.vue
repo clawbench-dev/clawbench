@@ -115,12 +115,22 @@ const fileUrl = computed(() =>
   `/api/local-file/${encodeURIComponent(props.file.path)}?t=${mediaTimestamp.value}`
 )
 
-// Zoom: apply CSS transform + transform-origin to the body container
-const bodyStyle = computed(() => ({
-  transform: `scale(${scale.value})`,
-  transformOrigin: 'top left',
-  width: `${100 / scale.value}%`,
-}))
+// Zoom: Word/PPT use CSS transform (page-like content), Excel uses width resize
+// (x-data-spreadsheet calculates height from width, so transform:scale would
+// leave the layout height unchanged → empty space below)
+const bodyStyle = computed(() => {
+  if (isExcel.value) {
+    // Excel: resize actual width, let x-data-spreadsheet recalculate layout
+    const pct = 100 * scale.value
+    return { width: `${pct}%` }
+  }
+  // Word/PPT: CSS transform (visual zoom only, content is page-like)
+  return {
+    transform: `scale(${scale.value})`,
+    transformOrigin: 'top left',
+    width: `${100 / scale.value}%`,
+  }
+})
 
 // Zoom controls
 function zoomIn() {
@@ -336,6 +346,17 @@ onUnmounted(() => {
 
 .office-preview-body :deep(.x-spreadsheet-toolbar) {
   display: none !important;
+}
+
+/* Excel: force spreadsheet to fill available height (x-data-spreadsheet
+   sets a fixed height based on row count; we need it to stretch) */
+.office-preview-body :deep(.x-spreadsheet) {
+  height: auto !important;
+  min-height: 100% !important;
+}
+
+.office-preview-body :deep(.x-spreadsheet-main) {
+  height: auto !important;
 }
 
 /* PPT overrides: slides full width, vertical scroll */
