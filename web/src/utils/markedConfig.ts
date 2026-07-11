@@ -3,6 +3,19 @@ import { slugify } from '@/utils/toc.ts'
 import { escapeHtml } from '@/utils/html.ts'
 
 /**
+ * Heading ID deduplication counter.
+ * Reset before each render pass to ensure duplicate headings within a single
+ * document get unique IDs (e.g., two "## Introduction" → id="introduction" and id="introduction-2").
+ * Cross-document persistence is fine because we reset before every renderMarkdown() call.
+ */
+export let headingIdCounts: Record<string, number> = {}
+
+/** Reset heading ID counter — call before each marked.parse() */
+export function resetHeadingIds(): void {
+    headingIdCounts = {}
+}
+
+/**
  * Configure marked's custom renderer for code blocks and headings.
  *
  * CRITICAL: marked v4 passes positional args (code, lang) / (text, depth)
@@ -22,7 +35,11 @@ export function configureMarkedRenderer(): void {
                 const isObj = token != null && typeof token === 'object'
                 const text = isObj ? (token as Record<string, unknown>).text : token
                 const depth = isObj ? (token as Record<string, unknown>).depth : args[1]
-                const id = slugify(String(text || ''))
+                const baseId = slugify(String(text || ''))
+                // Deduplicate: first occurrence keeps base ID, subsequent get -2, -3, etc.
+                const count = (headingIdCounts[baseId] || 0) + 1
+                headingIdCounts[baseId] = count
+                const id = count > 1 ? `${baseId}-${count}` : baseId
                 return `<h${depth} id="${id}">${marked.parseInline(String(text || ''))}</h${depth}>`
             },
             code(...args: unknown[]): string {

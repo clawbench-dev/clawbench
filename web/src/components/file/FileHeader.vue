@@ -235,6 +235,8 @@ const hasToc = computed(() => {
     // Other file types: need content
     if (!props.file.content) return false
     if (ft.isImage || ft.isAudio || ft.isVideo) return false
+    // OpenAPI rendered mode: ReDoc has its own sidebar, TOC/Search would operate on raw text
+    if (isOpenapi.value && props.viewMode === 'rendered') return false
     return true
 })
 

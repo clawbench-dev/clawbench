@@ -23,11 +23,16 @@ export function extractToc(content: string, lang: string): TocItem[] {
 function extractTocMarkdown(content: string): TocItem[] {
     const toc: TocItem[] = []
     const headerRegex = /^(#{1,6})\s+(.+)$/gm
+    const idCounts: Record<string, number> = {}
     let match
     while ((match = headerRegex.exec(content)) !== null) {
         const level = match[1].length
         const text = match[2].trim()
-        const id = slugify(text)
+        const baseId = slugify(text)
+        // Deduplicate: match markedConfig.ts heading ID logic
+        const count = (idCounts[baseId] || 0) + 1
+        idCounts[baseId] = count
+        const id = count > 1 ? `${baseId}-${count}` : baseId
         const line = content.substring(0, match.index).split('\n').length
         toc.push({ level, text, id, line })
     }

@@ -114,13 +114,26 @@ watch([() => props.file, () => props.pdfOutline], ([file, pdfOut]) => {
         fetchCodeSymbols(file.path).then(result => {
             if (result && result.symbols.length > 0) {
                 // Convert backend symbols to TocItem format
-                toc.value = result.symbols.map(s => ({
-                    level: s.level,
-                    text: s.name,
-                    kind: s.kind,
-                    id: s.kind === 'heading' ? slugify(s.name) : 'toc-l' + s.line,
-                    line: s.line,
-                }))
+                // Deduplicate heading IDs to match markedConfig.ts logic
+                const headingIdCounts = {}
+                toc.value = result.symbols.map(s => {
+                    let id
+                    if (s.kind === 'heading') {
+                        const baseId = slugify(s.name)
+                        const count = (headingIdCounts[baseId] || 0) + 1
+                        headingIdCounts[baseId] = count
+                        id = count > 1 ? `${baseId}-${count}` : baseId
+                    } else {
+                        id = 'toc-l' + s.line
+                    }
+                    return {
+                        level: s.level,
+                        text: s.name,
+                        kind: s.kind,
+                        id,
+                        line: s.line,
+                    }
+                })
             } else {
                 // Fallback to regex-based extraction
                 toc.value = extractToc(file.content, lang)

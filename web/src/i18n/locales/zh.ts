@@ -24,6 +24,12 @@ export default {
     wrapOn: '自动换行已开启',
     wrapOff: '自动换行已关闭',
   },
+  diffBlock: {
+    wrapOn: '自动换行已开启',
+    wrapOff: '自动换行已关闭',
+    lineNumOn: '行号已显示',
+    lineNumOff: '行号已隐藏',
+  },
   tableBlock: {
     label: '表格',
     wrapOn: '自动换行已开启',

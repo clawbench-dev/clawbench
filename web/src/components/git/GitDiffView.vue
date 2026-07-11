@@ -3,10 +3,10 @@
     <div class="spinner" style="width:24px;height:24px;border-width:2px;margin:0 auto;" />
   </div>
   <div v-else-if="empty" class="git-diff-empty">{{ t('git.diffView.noChanges') }}</div>
-  <div v-else :class="['git-diff-scroll', { 'no-wrap': noWrap }]" v-html="html" />
+  <div v-else :class="['git-diff-scroll', { 'no-wrap': noWrap }]" v-html="html" @click="onDiffClick" />
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 
@@ -16,6 +16,32 @@ defineProps({
   html: { type: String, default: '' },
   noWrap: Boolean,
 })
+
+function onDiffClick(event: MouseEvent) {
+  const target = event.target as HTMLElement
+  const btn = target.closest('.diff-hunk-wrap-btn, .diff-hunk-linum-btn')
+  if (!btn) return
+
+  event.preventDefault()
+  event.stopPropagation()
+
+  const hunk = btn.closest('.diff-hunk')
+  if (!hunk) return
+
+  const action = btn.getAttribute('data-action')
+
+  if (action === 'wrap') {
+    hunk.classList.toggle('diff-hunk-wrap')
+    btn.classList.toggle('is-wrapped')
+    const isWrapped = hunk.classList.contains('diff-hunk-wrap')
+    btn.setAttribute('title', isWrapped ? t('diffBlock.wrapOn') : t('diffBlock.wrapOff'))
+  } else if (action === 'linum') {
+    hunk.classList.toggle('diff-hunk-no-linum')
+    btn.classList.toggle('is-on')
+    const isOn = !hunk.classList.contains('diff-hunk-no-linum')
+    btn.setAttribute('title', isOn ? t('diffBlock.lineNumOn') : t('diffBlock.lineNumOff'))
+  }
+}
 </script>
 
 <style scoped>
@@ -44,22 +70,93 @@ defineProps({
 .git-diff-scroll :deep(.diff-unified-view) {
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 8px;
 }
 
 .git-diff-scroll :deep(.diff-hunk) {
   border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 0;
-  margin-bottom: 0;
+  border-radius: var(--radius-sm, 4px);
+  overflow: hidden;
 }
 
+/* ─── Header bar (flex: func name + actions) ─── */
 .git-diff-scroll :deep(.diff-hunk-header) {
-  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   font-family: 'SF Mono', 'Fira Code', Menlo, monospace;
-  color: var(--text-muted, #999);
   background: var(--bg-tertiary, #f0f0f0);
-  padding: 2px 8px;
+  padding: 3px 8px;
   user-select: none;
+  min-height: 24px;
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+}
+
+.git-diff-scroll :deep(.diff-hunk-func) {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary, #555);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ─── Header actions ─── */
+.git-diff-scroll :deep(.diff-hunk-actions) {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.git-diff-scroll :deep(.diff-hunk-wrap-btn),
+.git-diff-scroll :deep(.diff-hunk-linum-btn) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted, #999);
+  cursor: pointer;
+  padding: 0;
+  opacity: 0.5;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  outline: none;
+  box-shadow: none;
+}
+
+.git-diff-scroll :deep(.diff-hunk-wrap-btn:hover),
+.git-diff-scroll :deep(.diff-hunk-linum-btn:hover) {
+  opacity: 1;
+  color: var(--text-secondary, #555);
+  background: var(--bg-secondary, #e9ecef);
+}
+
+.git-diff-scroll :deep(.diff-hunk-wrap-btn:active),
+.git-diff-scroll :deep(.diff-hunk-linum-btn:active) {
+  background: var(--border-color, #dee2e6);
+}
+
+.git-diff-scroll :deep(.diff-hunk-wrap-btn.is-wrapped) {
+  opacity: 0.8;
+  color: var(--accent-color, #4a90d9);
+}
+
+.git-diff-scroll :deep(.diff-hunk-wrap-btn.is-wrapped:hover) {
+  opacity: 1;
+}
+
+.git-diff-scroll :deep(.diff-hunk-linum-btn.is-on) {
+  opacity: 0.8;
+  color: var(--accent-color, #4a90d9);
+}
+
+.git-diff-scroll :deep(.diff-hunk-linum-btn.is-on:hover) {
+  opacity: 1;
 }
 
 .git-diff-scroll :deep(.diff-hunk-body) {
@@ -102,6 +199,18 @@ defineProps({
   padding: 0 6px;
   white-space: pre;
   min-width: 0;
+}
+
+/* ─── Word-wrap toggle: wrap mode ─── */
+.git-diff-scroll :deep(.diff-hunk.diff-hunk-wrap .diff-content) {
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: break-word;
+}
+
+/* ─── Line number toggle: hide ─── */
+.git-diff-scroll :deep(.diff-hunk.diff-hunk-no-linum .diff-linum) {
+  display: none;
 }
 
 /* Line type colors */

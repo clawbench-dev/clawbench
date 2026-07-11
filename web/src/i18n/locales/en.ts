@@ -24,6 +24,12 @@ export default {
     wrapOn: 'Word wrap on',
     wrapOff: 'Word wrap off',
   },
+  diffBlock: {
+    wrapOn: 'Word wrap on',
+    wrapOff: 'Word wrap off',
+    lineNumOn: 'Line numbers on',
+    lineNumOff: 'Line numbers off',
+  },
   tableBlock: {
     label: 'Table',
     wrapOn: 'Word wrap on',

@@ -8,6 +8,7 @@ import { annotateCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
 import { annotateWorktreePaths } from '@/composables/useWorktreeAnnotation.ts'
 import { annotateLocalhostUrls } from '@/composables/useLocalhostAnnotation.ts'
 import { store } from '@/stores/app.ts'
+import { resetHeadingIds } from '@/utils/markedConfig.ts'
 
 /**
  * Markdown渲染选项
@@ -119,7 +120,8 @@ export function renderMarkdown(
     let detectedPaths: string[] = []
     let detectedSHAs: string[] = []
 
-    // 1. Parse markdown
+    // 1. Parse markdown (reset heading ID counter for deduplication)
+    resetHeadingIds()
     let html = marked.parse((content || '').trim()) as string
 
     // 2. KaTeX (skip during streaming — formula may be incomplete)

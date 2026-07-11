@@ -118,11 +118,16 @@ function searchRenderedContent(q) {
     const end = Math.min(fullText.length, idx + q.length + 30)
     const snippet = (start > 0 ? '...' : '') + fullText.slice(start, end) + (end < fullText.length ? '...' : '')
 
+    // Find the exact offset of the match within the text node
+    const matchOffsetInNode = textNode.textContent.toLowerCase().indexOf(lowerQ)
+
     out.push({
       line: out.length,
       text: snippet,
       highlighted: highlightText(snippet, q),
-      _blockEl: block,
+      _textNode: textNode,
+      _matchOffset: matchOffsetInNode,
+      _matchLength: q.length,
     })
   }
   return out
@@ -151,11 +156,44 @@ function jumpTo(result) {
 }
 
 function scrollToRenderedMatch(result) {
-  const block = result._blockEl
-  if (!block) return
-  block.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  block.classList.add('line-flash')
-  block.addEventListener('animationend', () => block.classList.remove('line-flash'), { once: true })
+  const textNode = result._textNode
+  if (!textNode || !textNode.parentElement) return
+
+  // Insert a temporary <span> anchor at the exact match position within the text node,
+  // scroll to it, then remove the anchor. This gives pixel-precise scrolling even
+  // inside large block elements where the match may be far from the block center.
+  const offset = Math.max(0, result._matchOffset || 0)
+  const length = result._matchLength || 0
+
+  try {
+    const range = document.createRange()
+    const endOffset = Math.min(offset + length, textNode.textContent.length)
+    range.setStart(textNode, offset)
+    range.setEnd(textNode, endOffset)
+
+    const anchor = document.createElement('span')
+    anchor.className = 'search-match-anchor'
+    range.surroundContents(anchor)
+
+    anchor.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    anchor.classList.add('line-flash')
+    anchor.addEventListener('animationend', () => {
+      anchor.classList.remove('line-flash')
+      // Restore the text node by unwrapping the span
+      const parent = anchor.parentNode
+      if (parent) {
+        while (anchor.firstChild) parent.insertBefore(anchor.firstChild, anchor)
+        parent.removeChild(anchor)
+      }
+    }, { once: true })
+  } catch {
+    // Fallback: if range manipulation fails (e.g., cross-element match),
+    // scroll to the text node's parent element
+    const el = textNode.parentElement
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el.classList.add('line-flash')
+    el.addEventListener('animationend', () => el.classList.remove('line-flash'), { once: true })
+  }
 }
 
 function jumpToFirst() {
