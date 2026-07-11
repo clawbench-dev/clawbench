@@ -47,16 +47,19 @@
       <button class="pending-remove" @click="$emit('remove-pending', msg.content)" :title="t('common.remove')">×</button>
     </div>
 
+    <!-- File changes banner — standalone button above toolbar -->
+    <button v-if="msg.role === 'assistant' && !msg.streaming && hasFileChanges" class="chat-file-changes-banner" @click="fileChangesOpen = true">
+      <FileDiff :size="14" />
+      <span>{{ t('chat.fileChanges.title') }}</span>
+      <span class="chat-file-changes-count">{{ fileChanges.created.length + fileChanges.modified.length }}</span>
+    </button>
+
     <!-- Bottom bar for assistant messages -->
     <div v-if="msg.role === 'assistant' && !msg.streaming && (msgText || msg.blocks?.length)" class="chat-meta-bar">
       <span class="chat-meta-info">
         <span v-if="msg.metadata?.wallMs" class="chat-meta-duration">{{ formatDuration(msg.metadata.wallMs) }}</span>
       </span>
       <div class="chat-meta-actions">
-        <button v-if="hasFileChanges" class="chat-action-btn chat-action-btn--wide" @click="fileChangesOpen = true" :title="t('chat.fileChanges.title')">
-          <FileDiff :size="14" />
-          <span>{{ t('chat.fileChanges.title') }}</span>
-        </button>
         <SummaryToggle v-if="msg.summary && !msg.streaming" mode="button" :showing-summary="msg.showingSummary" i18n-prefix="chat.message" @toggle="$emit('toggle-summary', msg.id)" />
         <button v-if="msgText" ref="speakBtnRef" class="chat-action-btn chat-action-btn--wide" :class="{ active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" @click.stop="handleSpeak">
           <!-- Generating states: summarizing / synthesizing -->
@@ -236,6 +239,45 @@ function handleCopyMessage() {
 /* ── Message content wrapper ── */
 .msg-content-wrapper {
   position: relative;
+}
+
+/* ── File changes banner ── */
+.chat-file-changes-banner {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 6px 10px;
+    margin-top: 6px;
+    border: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 30%, transparent);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 6%, transparent);
+    color: var(--accent-color, #0066cc);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.chat-file-changes-banner:hover {
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+    border-color: color-mix(in srgb, var(--accent-color, #0066cc) 50%, transparent);
+}
+
+.chat-file-changes-banner svg {
+    flex-shrink: 0;
+}
+
+.chat-file-changes-count {
+    margin-left: auto;
+    font-size: 11px;
+    font-weight: 600;
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);
+    border-radius: 10px;
+    padding: 0 6px;
+    min-width: 18px;
+    text-align: center;
+    line-height: 18px;
 }
 
 /* Chat Meta Bar — contains model/duration info + detail button */

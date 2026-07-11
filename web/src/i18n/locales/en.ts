@@ -257,7 +257,7 @@ export default {
       deepThinking: 'Thinking',
     },
     fileChanges: {
-      title: 'Changes',
+      title: 'View Changed Files',
       created: 'Created',
       modified: 'Modified',
     },

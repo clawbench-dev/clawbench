@@ -257,7 +257,7 @@ export default {
       deepThinking: '深度思考',
     },
     fileChanges: {
-      title: '变更',
+      title: '查看变更文件',
       created: '创建',
       modified: '修改',
     },
