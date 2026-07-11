@@ -15,6 +15,7 @@
       :loadingMore="session.loadingMore.value"
       :totalMessages="session.totalMessages.value"
       :active="props.active"
+      :showTurnLoading="showTurnLoading"
       @touchstart="swipeSession.onTouchStart"
       @touchend="swipeSession.onTouchEnd"
       @toggle-tool="render.toggleToolDetail"
@@ -175,6 +176,8 @@ import { useToast } from '@/composables/useToast.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useNotification } from '@/composables/useNotification.ts'
 import { applySummaryUpdate } from '@/utils/chatSessionUtils.ts'
+import { isLocalOptimisticUserMessage, findLastIndexCompat } from '@/utils/chatStreamUtils.ts'
+import { ensureDocumentVisibleForNetwork, isAndroidAppMode } from '@/utils/androidNetwork.ts'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { refreshCurrentFile } from '@/composables/useFileRefresh.ts'
@@ -213,6 +216,9 @@ const renderedMessages = computed(() => [
   ...messages.value,
   ...pendingStore.getPending(identity.currentSessionId.value),
 ])
+const showTurnLoading = computed(() =>
+  loading.value && !messages.value.some((m) => m.role === 'assistant' && m.streaming)
+)
 const inputDisabled = ref(false)
 const loading = ref(false)
 // Incremented when the panel reopens, so ChatMessageItem can re-check
@@ -318,6 +324,8 @@ const session = useChatSession({
   onConnectStream: (sessionId) => stream.connectStream(sessionId),
   onStopPolling: () => stream.stopPolling(),
   onDisconnectStream: () => stream.disconnectStream(),
+  onEnsureAndroidPoll: (sessionId) => stream.connectStream(sessionId),
+  onAndroidPollData: (data) => stream.applyPollPayload(data),
   onOpen: () => emit('open'),
   onStreamDone: playNotificationSound,
 })
@@ -698,6 +706,11 @@ async function sendMessage(text, extraFilePaths) {
 
     if ((!inputText && !hasFiles) || inputDisabled.value) return
 
+    if (loading.value && messages.value.some(isLocalOptimisticUserMessage)) {
+        appLog.w('ChatSend', 'ignored send: prior POST still in flight')
+        return
+    }
+
     // If AI is generating, enqueue the message instead of sending immediately
     if (loading.value) {
       // Capture file arrays before clearing (they're passed by reference)
@@ -722,8 +735,9 @@ async function sendMessage(text, extraFilePaths) {
         // The pending flag was already removed by enqueueMessage.
         // The user message is in messages.value without pending flag —
         // remove it since sendMessageNow will push its own copy.
-        const idx = messages.value.findLastIndex(
-          m => m.role === 'user' && m.content === (result.message || inputText) && !m.pending && typeof m.id === 'string' && m.id.startsWith('local-')
+        const idx = findLastIndexCompat(
+          messages.value,
+          (m) => m.role === 'user' && m.content === (result.message || inputText) && !m.pending && typeof m.id === 'string' && m.id.startsWith('local-')
         )
         if (idx !== -1) messages.value.splice(idx, 1)
         await sendMessageNow(result.message || inputText, result.filePaths || mergedPaths, result.files || allFiles)
@@ -748,6 +762,45 @@ async function sendMessage(text, extraFilePaths) {
 
 /** Actually send a message to the backend (no queue check). */
 async function sendMessageNow(text, filePaths, files) {
+    const effectiveAgentId = identity.currentAgentId.value
+    let sessionId = identity.currentSessionId.value
+
+    if (!sessionId) {
+        try { await session.loadHistory(true, false) } catch { /* best effort */ }
+        sessionId = identity.currentSessionId.value
+        if (!sessionId) {
+            throw new Error(gt('chat.session.requestFailed', { status: 'No session' }))
+        }
+    }
+
+    if (isAndroidAppMode()) {
+        await ensureDocumentVisibleForNetwork(8000)
+    }
+
+    const safeUrl = `/api/ai/chat?session_id=${encodeURIComponent(sessionId)}`
+    const postBody = JSON.stringify({
+        message: text,
+        filePaths,
+        files: files || [],
+        agentId: effectiveAgentId,
+        modelId: identity.currentModelId.value || undefined,
+        thinkingEffort: identity.currentThinkingEffort.value || undefined,
+        modeId: identity.currentModeId.value || undefined,
+        transport: identity.currentTransport.value || undefined,
+    })
+    const postTimeoutMs = isAndroidAppMode() ? 20000 : 45000
+    const postCtrl = new AbortController()
+    const postTimer = setTimeout(() => postCtrl.abort(), postTimeoutMs)
+
+    appLog.i('ChatSend', `POST start session=${sessionId.slice(0, 8)} visible=${document.visibilityState}`)
+    const postPromise = fetch(safeUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: postBody,
+        signal: postCtrl.signal,
+        credentials: 'same-origin',
+    })
+
     messages.value.push({
         role: 'user',
         id: `local-${Date.now()}`,
@@ -760,42 +813,36 @@ async function sendMessageNow(text, filePaths, files) {
 
     render.updateRenderedContents()
     loading.value = true
+    stream.setOutgoingSendInFlight(true)
+    stream.beginOutgoingTurn()
+    // Do not poll before POST completes — Android WebView connection pool
+    // starves EventSource/poll when a GET is queued ahead of/alongside POST.
+    if (!isAndroidAppMode()) {
+      stream.ensureOutboundPoll()
+    }
     scrollBottom(true)
 
     try {
-        const effectiveAgentId = identity.currentAgentId.value
+        const resp = await postPromise
+        clearTimeout(postTimer)
+        appLog.i('ChatSend', `POST done status=${resp.status}`)
 
-        if (!identity.currentSessionId.value) {
-            // No session yet — the user hasn't loaded a session. This shouldn't
-            // happen during normal operation (loadHistory always sets currentSessionId).
-            // Instead of letting the backend auto-create a ghost session, recover first.
-            try { await session.loadHistory(true, false) } catch { /* best effort */ }
-            if (!identity.currentSessionId.value) {
-                throw new Error(gt('chat.session.requestFailed', { status: 'No session' }))
-            }
-        }
-        const safeUrl = `/api/ai/chat?session_id=${encodeURIComponent(identity.currentSessionId.value)}`
-        const resp = await fetch(safeUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: text, filePaths, files: files || [], agentId: effectiveAgentId, modelId: identity.currentModelId.value || undefined, thinkingEffort: identity.currentThinkingEffort.value || undefined, modeId: identity.currentModeId.value || undefined, transport: identity.currentTransport.value || undefined }),
-        })
         const data = await resp.json()
         if (!resp.ok) {
             const err = new Error(data.error || gt('chat.metadata.unknownError'))
             err.msgKey = data.msgKey
             throw err
         }
-        // Update session ID if backend created a new one
+
+        // Use the local sessionId from POST — not identity ref alone — so Android
+        // poll starts even if identity briefly lags.
+        stream.connectStream(sessionId)
         if (data.sessionId && !identity.currentSessionId.value) {
             identity.currentSessionId.value = data.sessionId
         }
-        // Session already running — another request is in progress
         if (data.running) {
-            // Session already running — the message was enqueued.
-            // Move the optimistically pushed user message from messages.value
-            // to pendingStore, since it's now a queued/pending message.
-            const localIdx = messages.value.findLastIndex(
+            const localIdx = findLastIndexCompat(
+                messages.value,
                 (m) => m.role === 'user' && m.content === (text || '') && typeof m.id === 'string' && m.id.startsWith('local-')
             )
             if (localIdx !== -1) {
@@ -805,25 +852,18 @@ async function sendMessageNow(text, filePaths, files) {
             if (data.queued && data.queue) {
                 pendingStore.syncFromBackendQueue(identity.currentSessionId.value, data.queue)
             }
-            stream.connectStream(identity.currentSessionId.value)
-            // Proactively sync ACP state for the running session
             if (effectiveAgentId && agentsComposable.supportsDualTransport(effectiveAgentId)) {
                 populateACPStateFromCache(effectiveAgentId)
             }
             return
         }
-        stream.connectStream(identity.currentSessionId.value)
-        // After connecting stream, proactively sync ACP state (mode, thinking, commands)
-        // from the server cache. For ACP agents, the backend caches mode state after
-        // the first prompt, but the frontend's clearModeState() during session switch
-        // may have cleared availableModes before the SSE mode_update event arrives.
-        // This ensures mode/thinking chips appear immediately.
         if (effectiveAgentId && agentsComposable.supportsDualTransport(effectiveAgentId)) {
             populateACPStateFromCache(effectiveAgentId)
         }
     } catch (err) {
-        // Remove the optimistically pushed local user message on failure
-        const localIdx = messages.value.findLastIndex(
+        appLog.e('ChatSend', 'POST failed', err)
+        const localIdx = findLastIndexCompat(
+            messages.value,
             (m) => m.role === 'user' && m.content === (text || '') && typeof m.id === 'string' && m.id.startsWith('local-')
         )
         if (localIdx !== -1) {
@@ -832,13 +872,14 @@ async function sendMessageNow(text, filePaths, files) {
         stream.stopPolling()
         stream.disconnectStream()
         loading.value = false
-        // Restore screen lock on send failure — output won't proceed
         autoSpeech.onOutputEndNoSpeech()
         toast.show(t('toast.sendFailed'), { icon: '⚠️', type: 'error' })
-        // Clear session ID on error to prevent using invalid session
         if (err.msgKey === 'SessionBackendNotFound' || err.msgKey === 'SessionNotFound') {
             identity.currentSessionId.value = ''
         }
+    } finally {
+        clearTimeout(postTimer)
+        stream.setOutgoingSendInFlight(false)
     }
 }
 
@@ -922,6 +963,8 @@ const { onEvent } = useGlobalEvents()
 const removeEventHandler = onEvent((event, data) => {
     if (event === 'session_update') {
         session.onSessionEvent(data)
+    } else if (event === 'chat_stream_update') {
+        stream.applyChatStreamUpdate(data)
     }
 })
 

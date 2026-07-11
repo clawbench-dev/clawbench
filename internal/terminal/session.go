@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/creack/pty"
 )
 
 // re-export killProcessGroupSig as killProcessGroup for use in session.go
@@ -32,6 +31,9 @@ type Session struct {
 	cwd         string
 	cmd         *exec.Cmd
 	ptmx        *os.File
+	inputWrite  *os.File
+	resizeFn    func(uint16, uint16) error
+	closePty    func()
 	buffer      *RingBuffer
 	wsConn      *websocket.Conn
 	wsMu        sync.Mutex // protects wsConn writes
@@ -77,7 +79,7 @@ func NewSession(projectPath, cwd string, cfg TerminalConfig, initialCols, initia
 		idleTimeout = 0
 	}
 
-	ptmx, cmd, err := startPTY(cwd, initialCols, initialRows)
+	ptmx, cmd, inputWrite, resizeFn, closePty, err := startPTY(cwd, initialCols, initialRows)
 	if err != nil {
 		return nil, err
 	}
@@ -88,6 +90,9 @@ func NewSession(projectPath, cwd string, cfg TerminalConfig, initialCols, initia
 		cwd:         cwd,
 		cmd:         cmd,
 		ptmx:        ptmx,
+		inputWrite:  inputWrite,
+		resizeFn:    resizeFn,
+		closePty:    closePty,
 		buffer:      NewRingBuffer(cfg.BufferLines, cfg.MaxLineBytes, cfg.MaxBufferMB*1024*1024),
 		idleTimeout: idleTimeout,
 		done:        make(chan struct{}),
@@ -197,8 +202,10 @@ func (s *Session) waitProcess() {
 	if s.cancelRead != nil {
 		s.cancelRead()
 	}
-	ptmx := s.ptmx
+	cf := s.closePty
+	s.closePty = nil
 	s.ptmx = nil
+	s.inputWrite = nil
 	onClose := s.onClose
 	s.mu.Unlock()
 
@@ -209,8 +216,8 @@ func (s *Session) waitProcess() {
 		})
 	}
 
-	if ptmx != nil {
-		_ = ptmx.Close()
+	if cf != nil {
+		cf()
 	}
 	s.buffer.Reset()
 	close(s.done)
@@ -329,36 +336,34 @@ func (s *Session) Disconnect(conn *websocket.Conn) {
 // HandleInput processes an input message from the WebSocket client.
 func (s *Session) HandleInput(data string) error {
 	s.mu.Lock()
-	ptmx := s.ptmx
+	w := s.inputWrite
 	s.mu.Unlock()
 
-	if ptmx == nil {
+	if w == nil {
 		return fmt.Errorf("PTY not available")
 	}
 
-	_, err := ptmx.WriteString(data)
+	_, err := w.WriteString(data)
 	return err
 }
 
 // HandleResize processes a resize message from the WebSocket client.
 // After a reconnect (where Connect() set suppressOutput), this is the first
-// message the client sends (via fit()). Setsize() triggers SIGWINCH, which
-// causes the shell to redraw its prompt. We keep suppressOutput=true briefly
-// after Setsize() so readPTY() discards the redraw output, then clear it.
+// message the client sends (via fit()). On POSIX, resize triggers SIGWINCH,
+// which causes the shell to redraw its prompt. On Windows, ResizePseudoConsole
+// adjusts the terminal viewport. We keep suppressOutput=true briefly after
+// resize so readPTY() discards any redraw output, then clear it.
 func (s *Session) HandleResize(cols, rows uint16) error {
 	s.mu.Lock()
-	ptmx := s.ptmx
+	rf := s.resizeFn
 	suppressing := s.suppressOutput
 	s.mu.Unlock()
 
-	if ptmx == nil {
+	if rf == nil {
 		return fmt.Errorf("PTY not available")
 	}
 
-	err := pty.Setsize(ptmx, &pty.Winsize{
-		Cols: cols,
-		Rows: rows,
-	})
+	err := rf(cols, rows)
 
 	if suppressing {
 		// Cancel the safety timer since HandleResize was called normally
@@ -432,10 +437,16 @@ func (s *Session) Close() {
 	}
 
 	s.mu.Lock()
+	cf := s.closePty
+	s.closePty = nil
+	if cf != nil {
+		cf()
+	}
 	if s.ptmx != nil {
 		_ = s.ptmx.Close()
 		s.ptmx = nil
 	}
+	s.inputWrite = nil
 	if s.wsConn != nil {
 		_ = s.wsConn.Close(websocket.StatusNormalClosure, "session closed")
 		s.wsConn = nil

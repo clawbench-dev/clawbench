@@ -1,15 +1,8 @@
 <template>
   <div class="content-blocks">
-    <!-- Summary mode: render summary as a single text block.
-         Using v-show for summary to avoid Vue Fragment patching issues when
-         switching between v-if/v-else branches with nested template v-for.
-         Previously, v-if/v-else with template wrappers caused the v-else
-         branch to render as an empty comment node because Vue 3's patch
-         algorithm fails to correctly transition between different Fragment
-         structures (summary div vs blocks template v-for). -->
-    <div v-show="showingSummary && summary" v-html="renderTextBlock(summary || '', msgId, 0, false)"></div>
-    <!-- Original content mode -->
-    <template v-if="!showingSummary || !summary">
+    <!-- Block list: thinking + tool chips always render (even in summary mode) so
+         Android/desktop still show deep-thinking history after auto-summary.
+         Text/answer blocks are hidden when showingSummary — replaced by summary below. -->
     <template v-for="(block, bi) in blocks" :key="stableBlockKey(bi, block)">
       <!-- Thinking block: streaming shows inline content, collapsed shows clickable chip -->
       <div v-if="block.type === 'thinking'"
@@ -55,22 +48,22 @@
         </div>
       </template>
       <!-- Error block -->
-      <div v-else-if="block.type === 'error'" class="chat-error-card">
+      <div v-else-if="showFullBlocks && block.type === 'error'" class="chat-error-card">
         <AlertTriangle :size="14" class="error-icon" />
         <span class="error-text">{{ getWarningText(block) }}</span>
       </div>
       <!-- Warning block: severe (disconnect/timeout/restart) renders as error-level red -->
-      <div v-else-if="block.type === 'warning' && isSevereWarning(block)" class="chat-error-card">
+      <div v-else-if="showFullBlocks && block.type === 'warning' && isSevereWarning(block)" class="chat-error-card">
         <AlertTriangle :size="14" class="error-icon" />
         <span class="error-text">{{ getWarningText(block) }}</span>
       </div>
       <!-- Warning block: normal (parse errors, stderr) renders as amber -->
-      <div v-else-if="block.type === 'warning'" class="chat-warning-card">
+      <div v-else-if="showFullBlocks && block.type === 'warning'" class="chat-warning-card">
         <AlertCircle :size="14" class="warning-icon" />
         <span class="warning-text">{{ getWarningText(block) }}</span>
       </div>
       <!-- Scheduled task card(s) — simplified: click navigates to Tasks tab -->
-      <template v-else-if="block.type === 'text' && hasScheduledTasks(bi)">
+      <template v-else-if="showFullBlocks && block.type === 'text' && hasScheduledTasks(bi)">
         <div v-if="getBlockHtml(bi, block)" v-html="getBlockHtml(bi, block)"></div>
         <div v-for="(sKey, sIdx) in scheduledTaskKeys(bi)" :key="sIdx" class="scheduled-task-card" :class="{ deleted: blockTasks[sKey].deleted }" @click="!blockTasks[sKey].deleted && !blockTasks[sKey].loading && blockTasks[sKey].task && $emit('task-card-click', blockTasks[sKey].taskId)">
           <div class="stask-header">
@@ -96,7 +89,7 @@
         </div>
       </template>
       <!-- Ask question card (from <ask-question> XML tag in text) — must come before generic text block -->
-      <template v-else-if="block.type === 'text' && blockAskQuestions[blockTaskKey(bi)]">
+      <template v-else-if="showFullBlocks && block.type === 'text' && blockAskQuestions[blockTaskKey(bi)]">
         <!-- Surrounding text (with ask-question tag stripped) -->
         <div v-if="getBlockHtml(bi, block)" v-html="getBlockHtml(bi, block)"></div>
         <div class="chat-tool-call done" data-category="ask" @click.stop="$emit('toggle-tool', key(bi))">
@@ -108,7 +101,7 @@
         <div v-if="expandedTools[key(bi)] || true" class="tool-detail" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" v-html="formatToolInput(blockAskQuestions[blockTaskKey(bi)], 'AskUserQuestion')"></div>
       </template>
       <!-- RAG results card (from <rag-results> XML tag in text) — must come before generic text block -->
-      <template v-else-if="block.type === 'text' && blockRagResults[blockTaskKey(bi)]">
+      <template v-else-if="showFullBlocks && block.type === 'text' && blockRagResults[blockTaskKey(bi)]">
         <!-- Surrounding text (with rag-results tag stripped) -->
         <div v-if="getBlockHtml(bi, block)" v-html="getBlockHtml(bi, block)"></div>
         <div v-for="(ragItem, ragIdx) in blockRagResults[blockTaskKey(bi)]" :key="ragIdx" class="rag-result-card" @click.stop="emit('show-rag-detail', ragItem)">
@@ -121,19 +114,20 @@
         </div>
       </template>
       <!-- Text block with @ command badge (user message starting with @chatsearch/@task) -->
-      <template v-else-if="block.type === 'text' && extractAtCommand(block.text || '')">
+      <template v-else-if="showFullBlocks && block.type === 'text' && extractAtCommand(block.text || '')">
         <span class="at-command-badge">{{ extractAtCommand(block.text).command }}</span>
         <span v-if="extractAtCommand(block.text).rest.trim()" class="at-command-rest">{{ extractAtCommand(block.text).rest.trim() }}</span>
       </template>
       <!-- Text block with slash command badge (user message starting with /command from ACP backend) -->
-      <template v-else-if="block.type === 'text' && extractSlashCommand(block.text || '')">
+      <template v-else-if="showFullBlocks && block.type === 'text' && extractSlashCommand(block.text || '')">
         <span class="slash-command-badge">{{ extractSlashCommand(block.text).command }}</span>
         <span v-if="extractSlashCommand(block.text).rest.trim()" class="at-command-rest">{{ extractSlashCommand(block.text).rest.trim() }}</span>
       </template>
       <!-- Text block: streaming uses throttled render to avoid UI freeze -->
-      <div v-else-if="block.type === 'text'" v-html="getBlockHtml(bi, block)"></div>
+      <div v-else-if="showFullBlocks && block.type === 'text'" v-html="getBlockHtml(bi, block)"></div>
     </template>
-    </template>
+    <!-- Summary replaces answer text only; thinking/tool chips stay above. -->
+    <div v-show="showingSummary && summary" v-html="renderTextBlock(summary || '', msgId, 0, false)"></div>
     <!-- Loading dots while AI is still streaming (not when cancelled, and not when showing summary) -->
     <div v-if="streaming && !cancelled && !(showingSummary && summary)" class="placeholder-dots"><span></span><span></span><span></span></div>
     <!-- Cancelled marker: hidden when the last block is thinking (shown inline in thinking-header instead) -->
@@ -264,6 +258,9 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-thinking-detail', 'task-card-click', 'send-message', 'render-flush', 'resume-session', 'show-rag-detail'])
+
+/** When false, answer text is replaced by summary — thinking/tool chips still render. */
+const showFullBlocks = computed(() => !props.showingSummary || !props.summary)
 
 // Key helper: use msgId if available, otherwise msgIndex
 function key(bi) {

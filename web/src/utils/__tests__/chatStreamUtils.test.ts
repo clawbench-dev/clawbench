@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   FILE_MODIFYING_TOOLS,
   findLastBlockOfType,
+  findLastIndexCompat,
+  findLastCompat,
   forceCleanupStreamingState,
   findStreamingMsg,
   drainQueueMessage,
@@ -11,7 +13,25 @@ import {
   extractFileChanges,
   mergeStreamingAssistantBlocks,
   preserveStreamingBlocksAfterReload,
+  preserveLocalStreamingPlaceholderAfterReload,
+  preserveLocalOptimisticUserMessagesAfterReload,
+  isLocalOptimisticUserMessage,
 } from '@/utils/chatStreamUtils.ts'
+
+describe('findLastIndexCompat / findLastCompat', () => {
+  it('finds last matching index without Array.prototype.findLastIndex', () => {
+    const arr = [{ role: 'user' }, { role: 'assistant' }, { role: 'user' }]
+    expect(findLastIndexCompat(arr, (m) => m.role === 'user')).toBe(2)
+    expect(findLastIndexCompat(arr, (m) => m.role === 'assistant')).toBe(1)
+    expect(findLastIndexCompat(arr, (m) => m.role === 'system')).toBe(-1)
+  })
+
+  it('findLastCompat returns the last matching element', () => {
+    const arr = [{ id: 1 }, { id: 2 }, { id: 3 }]
+    expect(findLastCompat(arr, (m) => m.id > 1)?.id).toBe(3)
+    expect(findLastCompat(arr, (m) => m.id > 9)).toBeUndefined()
+  })
+})
 
 describe('FILE_MODIFYING_TOOLS', () => {
   it('contains Write', () => {
@@ -172,6 +192,11 @@ describe('mergeStreamingAssistantBlocks', () => {
     expect(merged[0].type).toBe('thinking')
     expect(merged[1].text).toBe('new answer chunk')
   })
+
+  it('preserves existing blocks when incoming poll snapshot is empty', () => {
+    const existing = [{ type: 'thinking', text: 'in flight', _key: 'thinking-0' }]
+    expect(mergeStreamingAssistantBlocks(existing, [])).toBe(existing)
+  })
 })
 
 describe('preserveStreamingBlocksAfterReload', () => {
@@ -195,6 +220,69 @@ describe('preserveStreamingBlocksAfterReload', () => {
     preserveStreamingBlocksAfterReload(prev, next)
     expect(next[1].blocks[0].type).toBe('thinking')
     expect(next[1].blocks[1].text).toBe('partial')
+  })
+})
+
+describe('preserveLocalStreamingPlaceholderAfterReload', () => {
+  it('re-inserts local streaming placeholder when DB has no assistant row yet', () => {
+    const prev = [
+      { role: 'user', content: 'hi' },
+      {
+        role: 'assistant',
+        id: 'drain-1',
+        streaming: true,
+        blocks: [{ type: 'thinking', text: '...', _key: 'thinking-0' }],
+      },
+    ]
+    const next = [{ role: 'user', content: 'hi', fromDB: true }]
+    preserveLocalStreamingPlaceholderAfterReload(prev, next, true)
+    expect(next).toHaveLength(2)
+    expect(next[1].role).toBe('assistant')
+    expect(next[1].streaming).toBe(true)
+    expect(next[1].fromDB).toBeUndefined()
+    expect(next[1].blocks[0].type).toBe('thinking')
+  })
+
+  it('does nothing when session is not running', () => {
+    const prev = [{ role: 'assistant', streaming: true, blocks: [] }]
+    const next = [{ role: 'user', content: 'hi' }]
+    preserveLocalStreamingPlaceholderAfterReload(prev, next, false)
+    expect(next).toHaveLength(1)
+  })
+
+  it('does nothing when DB already has streaming assistant', () => {
+    const prev = [{ role: 'assistant', streaming: true, blocks: [] }]
+    const next = [{ role: 'assistant', streaming: true, fromDB: true, blocks: [] }]
+    preserveLocalStreamingPlaceholderAfterReload(prev, next, true)
+    expect(next).toHaveLength(1)
+  })
+})
+
+describe('preserveLocalOptimisticUserMessagesAfterReload', () => {
+  it('re-appends local user message not yet in DB snapshot', () => {
+    const prev = [
+      { role: 'user', id: 'db-1', content: 'old' },
+      { role: 'user', id: 'local-99', content: 'new question' },
+    ]
+    const next = [{ role: 'user', id: 'db-1', content: 'old' }]
+    preserveLocalOptimisticUserMessagesAfterReload(prev, next)
+    expect(next).toHaveLength(2)
+    expect(next[1].id).toBe('local-99')
+    expect(next[1].content).toBe('new question')
+  })
+
+  it('skips when DB already has the same user content', () => {
+    const prev = [{ role: 'user', id: 'local-1', content: 'hi' }]
+    const next = [{ role: 'user', id: 'db-2', content: 'hi' }]
+    preserveLocalOptimisticUserMessagesAfterReload(prev, next)
+    expect(next).toHaveLength(1)
+  })
+})
+
+describe('isLocalOptimisticUserMessage', () => {
+  it('detects local- prefixed user rows', () => {
+    expect(isLocalOptimisticUserMessage({ role: 'user', id: 'local-123' })).toBe(true)
+    expect(isLocalOptimisticUserMessage({ role: 'user', id: 'db-123' })).toBe(false)
   })
 })
 

@@ -352,6 +352,20 @@ describe('ContentBlocks', () => {
       expect(wrapper.html()).toContain('Summary text')
     })
 
+    it('still shows thinking chips when showingSummary is true', () => {
+      const wrapper = mountBlocks({
+        blocks: [
+          { type: 'thinking', text: 'Deep thought', done: true, _key: 'thinking-0' },
+          { type: 'text', text: 'Original content' },
+        ],
+        summary: 'Summary text',
+        showingSummary: true,
+      })
+      expect(wrapper.find('.chat-thinking').exists()).toBe(true)
+      expect(wrapper.html()).toContain('Summary text')
+      expect(wrapper.html()).not.toContain('Original content')
+    })
+
     it('hides summary when showingSummary is false', () => {
       const wrapper = mountBlocks({
         blocks: [{ type: 'text', text: 'Original content' }],

@@ -25,7 +25,9 @@ export function useAppMode() {
       // Must be in the top-level frame — iframe is always web mode
       if (window !== window.top) return { isAppMode }
       if (typeof (window as any).AndroidNative !== 'undefined') {
-        isAppMode.value = (window as any).AndroidNative.isNativeApp() === true
+        const flag = (window as any).AndroidNative.isNativeApp?.()
+        // WebView may box booleans / return 1 — avoid === true
+        isAppMode.value = flag === true || flag === 1 || flag === 'true' || flag === '1'
       }
     } catch {
       // window.top access may throw in cross-origin iframe — treat as web mode

@@ -357,7 +357,11 @@ func (e *SessionExecutor) flushStreamingMessage() {
 		slog.Error("failed to update streaming message",
 			slog.String("session", e.cfg.SessionID),
 			slog.String("err", err.Error()))
+		return
 	}
+	// Fan-out block snapshot over WS so Android (poll/SSE often dead) can
+	// refresh thinking chips without GET /api/ai/chat mid-turn.
+	EmitChatStreamUpdate(e.cfg.SessionID, serializedBlocks)
 }
 
 // handleResumeSplit finalizes the current streaming message and creates a new placeholder.

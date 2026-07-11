@@ -360,13 +360,18 @@ func TestSendSessionEvent_Success(t *testing.T) {
 	cleanupStreams()
 	defer cleanupStreams()
 
-	ch := RegisterSessionStream("session-event-test")
+	_ = RegisterSessionStream("session-event-test")
+	defer UnregisterSessionStream("session-event-test")
+
+	subCh, unsub, ok := SubscribeSessionStream("session-event-test")
+	assert.True(t, ok)
+	defer unsub()
 
 	event := ai.StreamEvent{Type: "content", Content: "hello"}
 	sent := SendSessionEvent("session-event-test", event)
 	assert.True(t, sent)
 
-	received := <-ch
+	received := <-subCh
 	assert.Equal(t, "content", received.Type)
 	assert.Equal(t, "hello", received.Content)
 }
@@ -382,17 +387,30 @@ func TestSendSessionEvent_FullChannel(t *testing.T) {
 	cleanupStreams()
 	defer cleanupStreams()
 
-	RegisterSessionStream("session-full")
+	_ = RegisterSessionStream("session-full")
+	defer UnregisterSessionStream("session-full")
 
-	// Fill the channel buffer (capacity is sessionStreamBufferSize)
-	for range sessionStreamBufferSize {
-		sent := SendSessionEvent("session-full", ai.StreamEvent{Type: "content", Content: "x"})
-		assert.True(t, sent)
+	subCh, unsub, ok := SubscribeSessionStream("session-full")
+	assert.True(t, ok)
+	defer unsub()
+
+	// Fan-out drops when subscriber is full; extras are discarded.
+	for range sessionStreamBufferSize + 10 {
+		_ = SendSessionEvent("session-full", ai.StreamEvent{Type: "content", Content: "x"})
 	}
+	time.Sleep(20 * time.Millisecond)
 
-	// Next send should fail (non-blocking)
-	sent := SendSessionEvent("session-full", ai.StreamEvent{Type: "done"})
-	assert.False(t, sent, "SendSessionEvent should return false when channel is full")
+	n := 0
+drain:
+	for {
+		select {
+		case <-subCh:
+			n++
+		default:
+			break drain
+		}
+	}
+	assert.Equal(t, sessionStreamBufferSize, n)
 }
 
 // --- TrySetSessionRunning ---
@@ -1068,6 +1086,36 @@ func TestEmitSessionEvent_RunningNoPreview(t *testing.T) {
 	}
 	assert.Equal(t, "running", data.Status)
 	assert.Equal(t, "", data.ResponsePreview)
+}
+
+func TestEmitChatStreamUpdate_BroadcastsWithoutPendingStore(t *testing.T) {
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(nil)
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "test-client-stream-upd", "")
+	_ = sub
+
+	blocks := []map[string]any{
+		{"type": "thinking", "text": "mid-turn thought"},
+	}
+	EmitChatStreamUpdate("session-stream-1", blocks)
+
+	buffered := sub.GetBufferedEvents()
+	require.NotEmpty(t, buffered)
+	assert.Equal(t, "chat_stream_update", buffered[0].Event)
+	data, ok := buffered[0].Data.(*ws.ChatStreamUpdateData)
+	require.True(t, ok)
+	assert.Equal(t, "session-stream-1", data.SessionID)
+	assert.NotNil(t, data.Blocks)
+}
+
+func TestEmitChatStreamUpdate_NilManagerNoPanic(t *testing.T) {
+	ws.SetManagerForTest(nil)
+	assert.NotPanics(t, func() {
+		EmitChatStreamUpdate("session-nil", []any{})
+	})
 }
 
 // --- GetSessionStream edge cases ---

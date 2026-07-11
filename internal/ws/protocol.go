@@ -56,3 +56,12 @@ type SummaryUpdateData struct {
 	ProjectPath string `json:"projectPath,omitempty"`
 	SessionID   string `json:"sessionID,omitempty"`
 }
+
+// ChatStreamUpdateData is a throttled mid-turn snapshot of streaming assistant
+// blocks. Used so Android WebView (where EventSource/poll GETs often never hit
+// the server) can update thinking chips over the existing events WebSocket.
+// Not persisted to pending_events — ephemeral live UI only.
+type ChatStreamUpdateData struct {
+	SessionID string      `json:"session_id"`
+	Blocks    interface{} `json:"blocks"` // []model.ContentBlock — avoid ws→model import cycle
+}

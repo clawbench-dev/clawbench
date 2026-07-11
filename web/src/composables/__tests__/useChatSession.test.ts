@@ -2634,7 +2634,7 @@ describe('handleVisibilityChange', () => {
     globalThis.fetch = originalFetch
   })
 
-  it('when visible and loading=true: disconnects stream, reloads history', async () => {
+  it('when visible and loading=true: does not reload history (stream layer owns state)', async () => {
     const loading = ref(true)
     const onDisconnectStream = vi.fn()
     const onStopPolling = vi.fn()
@@ -2662,7 +2662,7 @@ describe('handleVisibilityChange', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
-        sessionId: 's1', messages: [], total: 0, running: false,
+        sessionId: 's1', messages: [], total: 0, running: true,
       }),
     })
 
@@ -2671,15 +2671,13 @@ describe('handleVisibilityChange', () => {
 
     session.handleVisibilityChange()
 
-    // Wait for async loadHistory to complete
+    // Stream layer owns SSE/poll during loading; loadHistory would wipe the
+    // local streaming placeholder before the DB assistant row exists.
     await vi.waitFor(() => {
-      expect(onDisconnectStream).toHaveBeenCalled()
+      expect(globalThis.fetch).not.toHaveBeenCalled()
     })
-    expect(onStopPolling).toHaveBeenCalled()
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      expect.stringContaining('/api/ai/chat?session_id=s1'),
-      expect.objectContaining({ signal: expect.any(AbortSignal) })
-    )
+    expect(onDisconnectStream).not.toHaveBeenCalled()
+    expect(onStopPolling).not.toHaveBeenCalled()
 
     vi.restoreAllMocks()
   })

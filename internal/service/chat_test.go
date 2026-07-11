@@ -15,6 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const schema = `
@@ -828,18 +829,22 @@ func TestCancelSession_WithStreamChannel(t *testing.T) {
 
 	// Register both cancel and stream
 	service.RegisterSessionCancel(sid, cancel)
-	ch := service.RegisterSessionStream(sid)
+	_ = service.RegisterSessionStream(sid)
 	service.SetSessionRunning(sid, true)
 
-	// Cancel in goroutine that also reads the stream
+	// Read via subscriber — producer is owned by the fan-out goroutine.
+	subCh, unsub, ok := service.SubscribeSessionStream(sid)
+	require.True(t, ok)
+	defer unsub()
+
 	done := make(chan struct{})
 	go func() {
-		event := <-ch
+		event := <-subCh
 		assert.Equal(t, "cancelled", event.Type)
 		close(done)
 	}()
 
-	ok := service.CancelSession(sid)
+	ok = service.CancelSession(sid)
 	assert.True(t, ok)
 
 	<-done
@@ -1251,18 +1256,21 @@ func TestForceCancelSession_NoCancelFunc(t *testing.T) {
 func TestSendSessionEvent(t *testing.T) {
 	setupDB(t)
 	sid := "send-event-test"
-	ch := service.RegisterSessionStream(sid)
+	_ = service.RegisterSessionStream(sid)
+	defer service.UnregisterSessionStream(sid)
+
+	subCh, unsub, ok := service.SubscribeSessionStream(sid)
+	require.True(t, ok)
+	defer unsub()
 
 	// Send event
-	ok := service.SendSessionEvent(sid, ai.StreamEvent{Type: "content", Content: "hello"})
+	ok = service.SendSessionEvent(sid, ai.StreamEvent{Type: "content", Content: "hello"})
 	assert.True(t, ok)
 
-	// Receive event
-	event := <-ch
+	// Receive via subscriber (producer is owned by fan-out)
+	event := <-subCh
 	assert.Equal(t, "content", event.Type)
 	assert.Equal(t, "hello", event.Content)
-
-	service.UnregisterSessionStream(sid)
 }
 
 func TestSendSessionEvent_NoStream(t *testing.T) {
@@ -1274,23 +1282,31 @@ func TestSendSessionEvent_NoStream(t *testing.T) {
 func TestSendSessionEvent_FullChannel(t *testing.T) {
 	setupDB(t)
 	sid := "full-channel-test"
-	ch := service.RegisterSessionStream(sid)
+	_ = service.RegisterSessionStream(sid)
+	defer service.UnregisterSessionStream(sid)
 
-	// Fill the channel buffer (capacity is 256)
-	for i := range 256 {
-		ok := service.SendSessionEvent(sid, ai.StreamEvent{Type: "content", Content: fmt.Sprintf("msg-%d", i)})
-		assert.True(t, ok)
+	subCh, unsub, ok := service.SubscribeSessionStream(sid)
+	require.True(t, ok)
+	defer unsub()
+
+	// Fan-out drops when the subscriber buffer is full (non-blocking).
+	// Producer may briefly fill under burst; either outcome is fine.
+	for i := range 300 {
+		_ = service.SendSessionEvent(sid, ai.StreamEvent{Type: "content", Content: fmt.Sprintf("msg-%d", i)})
 	}
+	time.Sleep(20 * time.Millisecond)
 
-	// Next send should fail (non-blocking)
-	ok := service.SendSessionEvent(sid, ai.StreamEvent{Type: "content", Content: "overflow"})
-	assert.False(t, ok)
-
-	// Drain the channel to clean up
-	for range 256 {
-		<-ch
+	n := 0
+drain:
+	for {
+		select {
+		case <-subCh:
+			n++
+		default:
+			break drain
+		}
 	}
-	service.UnregisterSessionStream(sid)
+	assert.Equal(t, 256, n, "subscriber should hold at most buffer capacity; extras dropped")
 }
 
 // ---------- UpdateMessageContent ----------

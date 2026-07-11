@@ -56,23 +56,9 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Claim the SSE stream — only one client can consume the channel at a time.
-	// Go channels deliver each message to exactly one reader (competing consumers),
-	// so multiple SSE goroutines on the same channel would split content randomly.
-	// When a second client is rejected, the frontend falls back to HTTP polling
-	// (pollUntilDone) which reads from DB and is multi-reader safe.
-	if !service.TryClaimSSEStream(sessionID) {
-		errMsg := T(r, "SessionStreamBusy")
-		fmt.Fprintf(w, "event: error\ndata: {\"error\":%q,\"reason\":\"sse_busy\"}\n\n", errMsg)
-		if canFlush, ok := w.(http.Flusher); ok {
-			canFlush.Flush()
-		}
-		return
-	}
-	defer service.ReleaseSSEStream(sessionID)
-
-	// Get the stream channel
-	streamCh, ok := service.GetSessionStream(sessionID)
+	// Subscribe to the fan-out hub — multiple SSE clients (desktop + Android)
+	// each get a full copy of every event. Do not claim a single reader.
+	streamCh, unsub, ok := service.SubscribeSessionStream(sessionID)
 	if !ok {
 		errMsg := T(r, "SessionStreamNotFound")
 		fmt.Fprintf(w, "event: error\ndata: {\"error\":%q}\n\n", errMsg)
@@ -81,6 +67,7 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	defer unsub()
 
 	flusher, canFlush := w.(http.Flusher)
 
@@ -398,25 +385,20 @@ func AIChatStream(w http.ResponseWriter, r *http.Request) {
 				"sse client disconnected, ai session continues",
 				slog.String("session_id", sessionID),
 			)
-			// Drain the channel without writing to SSE. If we return immediately,
-			// the channel fills up because no one is consuming it, which causes
-			// the ACP agent process to block on its SessionUpdate callback and
-			// eventually crash with "peer disconnected before response".
-			drainStreamChannel(streamCh, sessionID)
+			// Unsubscribe only — fan-out keeps feeding other SSE clients.
+			// (defer unsub() also runs; calling here is redundant but harmless
+			// if unsub is idempotent — it is: second call is a no-op delete.)
 			return
 		}
 	}
 }
 
-// drainStreamChannel consumes events from the stream channel without writing
-// them to SSE. This is called after the SSE client disconnects to prevent the
-// channel from filling up and blocking the ACP agent process, which would
-// cause "peer disconnected before response" crashes.
+// drainStreamChannel is retained for tests that still exercise disconnect drain
+// behavior against a dedicated channel. Production SSE disconnect uses unsub.
 func drainStreamChannel(ch <-chan ai.StreamEvent, sessionID string) {
 	for event := range ch {
 		switch event.Type {
 		case "done", "cancelled", "error":
-			// Terminal event — the AI goroutine is finished, channel will be closed.
 			slog.Debug("sse drain: terminal event", "type", event.Type, "session_id", sessionID)
 			return
 		}

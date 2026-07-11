@@ -6,7 +6,8 @@ import { gt } from '@/composables/useLocale'
 import { updateModeState, updateCommandState, updateAvailableThinkingEfforts, currentAgentId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
-import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, drainQueueMessage, mergeStreamingAssistantBlocks } from '@/utils/chatStreamUtils.ts'
+import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, drainQueueMessage, mergeStreamingAssistantBlocks, isLocalOptimisticUserMessage, findLastIndexCompat, findLastCompat } from '@/utils/chatStreamUtils.ts'
+import { isAndroidAppMode, postWebDiagLog } from '@/utils/androidNetwork.ts'
 
 const TAG = 'ChatStream'
 
@@ -53,6 +54,11 @@ export function useChatStream(options: UseChatStreamOptions) {
   let streamTimeout: ReturnType<typeof setTimeout> | null = null
   let renderTimer: number | null = null
   let pollingInterval: number | null = null
+  /** Bumps on every stopPolling — stale in-flight poll ticks must ignore results. */
+  let pollGeneration = 0
+  let pollLoopActive = false
+  /** Session id captured at poll start — survives brief identity ref gaps on Android. */
+  let pollSessionId = ''
   // Flag to indicate the EventSource was closed intentionally by cleanupActiveStream
   // (session switch), so the stale onerror handler should not schedule reconnects.
   let disconnectedByCleanup = false
@@ -64,6 +70,16 @@ export function useChatStream(options: UseChatStreamOptions) {
   const STREAM_TIMEOUT_MS = 30000 // 30 seconds without any SSE event = try reconnect
   const PERMISSION_STREAM_TIMEOUT_MS = 300000 // 5 min when permission approval is pending (user deciding)
   const TOOL_USE_TIMEOUT_MS = 30000 // 30 seconds without 'done' event = mark as done
+  const POLL_HISTORY_LIMIT = 12 // Newest row may be user message when limit=1
+  const POLL_INTERVAL_MS = 2000
+  const POLL_INTERVAL_ANDROID_MS = 800
+  const POLL_FETCH_TIMEOUT_MS = 8000
+  const VISIBILITY_HIDDEN_DEBOUNCE_MS = 400 // Ignore keyboard flicker on Android
+
+  // Secondary client (sse_busy / instant SSE close): poll DB instead of SSE reconnect loop.
+  let preferPollingOnly = false
+  let visibilityHiddenTimer: ReturnType<typeof setTimeout> | null = null
+  let outgoingSendInFlight = false
 
   const reconnect = useReconnect({
     maxAttempts: 3,
@@ -106,7 +122,10 @@ export function useChatStream(options: UseChatStreamOptions) {
       appLog.w(TAG, 'SSE stream timeout - no events received, reconnecting')
       // No SSE event received for too long — reconnect instead of killing the session
       disconnectStream()
-      // The AI session continues on the backend; just reconnect SSE
+      if (preferPollingOnly) {
+        pollUntilDone()
+        return
+      }
       if (currentSessionId.value && loading.value && reconnect.shouldReconnect()) {
         reconnect.scheduleReconnect()
       } else {
@@ -152,143 +171,29 @@ export function useChatStream(options: UseChatStreamOptions) {
   }
 
   function stopPolling() {
+    pollGeneration++
+    pollLoopActive = false
+    pollSessionId = ''
     if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null }
   }
 
-  function pollUntilDone() {
-    stopPolling()
-    let jsonParseFailures = 0
-    const MAX_JSON_PARSE_FAILURES = 5
-    let httpFailures = 0
-    const MAX_HTTP_FAILURES = 3
-    pollingInterval = window.setInterval(async () => {
-      try {
-        const resp = await fetch(`/api/ai/chat?session_id=${encodeURIComponent(currentSessionId.value)}&limit=1`, { credentials: 'same-origin' })
-        if (!resp.ok) {
-          throw new Error(`HTTP ${resp.status}`)
-        }
-        // Reset HTTP failure count on success
-        httpFailures = 0
-        let data
-        try {
-          data = await resp.json()
-          jsonParseFailures = 0
-        } catch {
-          jsonParseFailures++
-          if (jsonParseFailures >= MAX_JSON_PARSE_FAILURES) {
-            appLog.e(TAG, 'Polling: too many invalid JSON responses, giving up')
-            throw new Error('Invalid JSON response')
-          }
-          appLog.e(TAG, 'Polling: invalid JSON response')
-          return
-        }
-        // Parse messages from server response
-        const latestMsgs = (data.messages || []).map((msg: any) => {
-          if (msg.role === 'assistant') {
-            const { blocks, metadata, cancelled } = onParseAssistantContent(msg.content)
-            msg.blocks = blocks
-            if (metadata) msg.metadata = metadata
-            if (cancelled) msg.cancelled = cancelled
-          } else if (msg.role === 'user' && !msg.blocks) {
-            if (msg.content && msg.content.startsWith('{"blocks":')) {
-              const { blocks } = onParseAssistantContent(msg.content)
-              msg.blocks = blocks
-            } else {
-              msg.blocks = msg.content ? [{ type: 'text', text: msg.content }] : []
-            }
-          }
-          return msg
-        })
-
-        if (!data.running) {
-          stopPolling()
-          onLoadHistory().finally(() => {
-            loading.value = false
-            onMessage()
-            onStreamEnd?.('done')
-            if (!isOpen.value) {
-              const lastMsg = messages.value[messages.value.length - 1]
-              if (lastMsg?.role === 'assistant') {
-                onToast(gt('chat.stream.aiReplied'), { icon: '🤖', duration: 5000, onClick: () => onOpen() })
-                onNotification(gt('chat.stream.aiReplied'), {
-                  body: gt('chat.stream.clickToViewReply'),
-                  onClick: () => onOpen()
-                })
-              }
-            }
-          })
-          return
-        }
-        // Session still running — incremental update
-        const lastAssistant = latestMsgs.findLast((m: any) => m.role === 'assistant')
-        const existingStreaming = findStreamingMsg(messages.value)
-
-        if (lastAssistant && existingStreaming) {
-          const pollBlocks = lastAssistant.blocks
-          const merged = mergeStreamingAssistantBlocks(existingStreaming.blocks, pollBlocks)
-          if (merged !== pollBlocks) {
-            appLog.d(TAG, `[poll] raw-text fallback — preserving ${existingStreaming.blocks.filter((b: any) => b.type === 'thinking').length} thinking blocks`)
-          }
-          existingStreaming.blocks = merged
-          if (lastAssistant.metadata) existingStreaming.metadata = lastAssistant.metadata
-          if (lastAssistant.cancelled) existingStreaming.cancelled = lastAssistant.cancelled
-        } else if (lastAssistant && !existingStreaming) {
-          const existingById = lastAssistant.id
-            ? messages.value.find((m: any) => m.id === lastAssistant.id)
-            : null
-          if (existingById) {
-            existingById.streaming = true
-            const pollBlocks = lastAssistant.blocks
-            existingById.blocks = mergeStreamingAssistantBlocks(existingById.blocks || [], pollBlocks)
-            if (lastAssistant.metadata) existingById.metadata = lastAssistant.metadata
-            if (lastAssistant.cancelled) existingById.cancelled = lastAssistant.cancelled
-          } else {
-            lastAssistant.streaming = true
-            messages.value.push(lastAssistant)
-          }
-        }
-
-        currentSessionId.value = data.sessionId || currentSessionId.value
-        if (isOpen.value) {
-          debouncedRender()
-        }
-      } catch (err) {
-        appLog.e(TAG, 'Polling error:', err)
-        httpFailures++
-        if (httpFailures < MAX_HTTP_FAILURES) {
-          // Transient error — retry on next interval
-          return
-        }
-        // Persistent failure — stop polling and show error
-        appLog.e(TAG, 'Polling: too many HTTP failures, giving up')
-        stopPolling()
-        const sm = findStreamingMsg(messages.value)
-        if (sm) {
-          const hasContent = sm.content || (sm.blocks && sm.blocks.length > 0)
-          if (hasContent) {
-            delete sm.streaming
-          } else {
-            const idx = messages.value.indexOf(sm)
-            if (idx !== -1) messages.value.splice(idx, 1)
-          }
-        }
-        onToast(gt('chat.stream.connectionFailed'), { icon: '⚠️' })
-        loading.value = false
-        onRenderNeeded(true)
-        onStreamEnd?.('error')
-      }
-    }, 2000)
+  function activePollSessionId(): string {
+    return currentSessionId.value || pollSessionId
   }
 
-  function connectStream(sessionId: string, isRetry = false) {
-    disconnectStream()
-    stopPolling()
-    disconnectedByCleanup = false
-    if (!isRetry) {
-      reconnect.reset()
+  function clearVisibilityHiddenTimer() {
+    if (visibilityHiddenTimer) {
+      clearTimeout(visibilityHiddenTimer)
+      visibilityHiddenTimer = null
     }
+  }
 
-    // Ensure a streaming assistant message exists — create one if needed
+  function pollDelayMs() {
+    return isAndroidAppMode() ? POLL_INTERVAL_ANDROID_MS : POLL_INTERVAL_MS
+  }
+
+  /** Ensure a local streaming assistant placeholder exists for dots / poll merge target. */
+  function ensureStreamingPlaceholder() {
     const existingStreaming = findStreamingMsg(messages.value)
     if (!existingStreaming) {
       const newStreaming = {
@@ -298,13 +203,10 @@ export function useChatStream(options: UseChatStreamOptions) {
         blocks: [] as any[],
         streaming: true,
         createdAt: new Date().toISOString(),
-        backend: currentBackend.value
+        backend: currentBackend.value,
       }
-      // Insert after the last non-pending user message, not at the end.
-      // Pending messages (queued) come after the active conversation,
-      // so push() would place the streaming assistant after them,
-      // making the AI reply appear below the queued messages.
-      const lastUserIdx = messages.value.findLastIndex(
+      const lastUserIdx = findLastIndexCompat(
+        messages.value,
         (m: any) => m.role === 'user' && !m.pending
       )
       if (lastUserIdx !== -1) {
@@ -313,15 +215,459 @@ export function useChatStream(options: UseChatStreamOptions) {
         messages.value.push(newStreaming)
       }
       thinkingBlockCounter = 0
-      onRenderNeeded()
+      // Force array reassignment — Android WebView may not paint deep mutations on send.
+      messages.value = [...messages.value]
+      onRenderNeeded(true)
     } else if ((existingStreaming as any).fromDB) {
-      // DB streaming message from a previous incomplete finalize —
-      // convert it to a live streaming placeholder by clearing fromDB
-      // so SSE events can update it properly.
       delete (existingStreaming as any).fromDB
     }
-    onScrollBottom()
+    onScrollBottom(true)
+  }
 
+  function enterPollPrimaryMode(reason: string) {
+    appLog.d(TAG, `Poll-primary mode (${reason})`)
+    preferPollingOnly = true
+    reconnect.reset()
+    disconnectStream()
+    ensureStreamingPlaceholder()
+    pollUntilDone()
+  }
+
+  /** DB poll while POST is in flight — desktop only. Android WebView starves
+   *  concurrent fetch/EventSource when a poll starts before POST completes. */
+  function ensureOutboundPoll() {
+    if (isAndroidAppMode()) {
+      appLog.d(TAG, 'ensureOutboundPoll skipped on Android (post-first)')
+      return
+    }
+    if (!loading.value || !currentSessionId.value) {
+      appLog.w(TAG, `ensureOutboundPoll skipped loading=${loading.value} sid=${!!currentSessionId.value}`)
+      return
+    }
+    ensureStreamingPlaceholder()
+    pollUntilDone()
+  }
+
+  async function recoverFromPollingFailures() {
+    try {
+      await onLoadHistory()
+      if (loading.value && currentSessionId.value) {
+        appLog.w(TAG, 'Polling failed but session still running — resuming poll-primary')
+        enterPollPrimaryMode('poll_recover')
+        return
+      }
+    } catch {
+      // fall through to error UI
+    }
+    const sm = findStreamingMsg(messages.value)
+    if (sm) {
+      const hasContent = sm.content || (sm.blocks && sm.blocks.length > 0)
+      if (hasContent) {
+        delete sm.streaming
+      } else {
+        const idx = messages.value.indexOf(sm)
+        if (idx !== -1) messages.value.splice(idx, 1)
+      }
+    }
+    onToast(gt('chat.stream.connectionFailed'), { icon: '⚠️' })
+    loading.value = false
+    onRenderNeeded(true)
+    onStreamEnd?.('error')
+  }
+
+  async function pollOnce(
+    counters: { jsonParseFailures: number; httpFailures: number },
+    limits: { maxJsonParseFailures: number; maxHttpFailures: number },
+    signal?: AbortSignal
+  ): Promise<'continue' | 'done' | 'failed'> {
+    try {
+      const sid = activePollSessionId()
+      appLog.d(TAG, `poll tick session=${sid?.slice(0, 8)} loading=${loading.value}`)
+      // Match the working /api/ai/chat/count fetch style exactly (no custom
+      // Cache-Control headers / credentials opts). Those extras correlated with
+      // zero mid-turn GETs on Android WebView while count polls succeeded.
+      const url =
+        `/api/ai/chat?session_id=${encodeURIComponent(sid)}` +
+        `&limit=${POLL_HISTORY_LIMIT}&_t=${Date.now()}`
+      const resp = await fetch(url, signal ? { signal } : undefined)
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status}`)
+      }
+      counters.httpFailures = 0
+      let data
+      try {
+        data = await resp.json()
+        counters.jsonParseFailures = 0
+      } catch {
+        counters.jsonParseFailures++
+        if (counters.jsonParseFailures >= limits.maxJsonParseFailures) {
+          appLog.e(TAG, 'Polling: too many invalid JSON responses, giving up')
+          throw new Error('Invalid JSON response')
+        }
+        appLog.e(TAG, 'Polling: invalid JSON response')
+        return 'continue'
+      }
+      const latestMsgs = (data.messages || []).map((msg: any) => {
+        if (msg.role === 'assistant') {
+          const { blocks, metadata, cancelled } = onParseAssistantContent(msg.content)
+          msg.blocks = blocks
+          if (metadata) msg.metadata = metadata
+          if (cancelled) msg.cancelled = cancelled
+        } else if (msg.role === 'user' && !msg.blocks) {
+          if (msg.content && msg.content.startsWith('{"blocks":')) {
+            const { blocks } = onParseAssistantContent(msg.content)
+            msg.blocks = blocks
+          } else {
+            msg.blocks = msg.content ? [{ type: 'text', text: msg.content }] : []
+          }
+        }
+        return msg
+      })
+
+      if (!data.running) {
+        // POST may still be in flight — server has not marked session running yet.
+        if (outgoingSendInFlight) {
+          return 'continue'
+        }
+        const localStreaming = findStreamingMsg(messages.value)
+        if (loading.value && localStreaming && !localStreaming.fromDB) {
+          return 'continue'
+        }
+        onLoadHistory().finally(() => {
+          loading.value = false
+          preferPollingOnly = false
+          onMessage()
+          onStreamEnd?.('done')
+          if (!isOpen.value) {
+            const lastMsg = messages.value[messages.value.length - 1]
+            if (lastMsg?.role === 'assistant') {
+              onToast(gt('chat.stream.aiReplied'), { icon: '🤖', duration: 5000, onClick: () => onOpen() })
+              onNotification(gt('chat.stream.aiReplied'), {
+                body: gt('chat.stream.clickToViewReply'),
+                onClick: () => onOpen()
+              })
+            }
+          }
+        })
+        return 'done'
+      }
+
+      const lastAssistant = findLastCompat(latestMsgs, (m: any) => m.role === 'assistant')
+      const existingStreaming = findStreamingMsg(messages.value)
+
+      if (lastAssistant && existingStreaming) {
+        const pollBlocks = lastAssistant.blocks
+        const prevLen = existingStreaming.blocks?.length || 0
+        const merged = mergeStreamingAssistantBlocks(existingStreaming.blocks, pollBlocks)
+        if (merged !== pollBlocks) {
+          appLog.d(TAG, `[poll] raw-text fallback — preserving ${existingStreaming.blocks.filter((b: any) => b.type === 'thinking').length} thinking blocks`)
+        }
+        // New array ref so Android WebView / ContentBlocks pick up thinking chips.
+        existingStreaming.blocks = [...merged]
+        if (lastAssistant.id && !existingStreaming.fromDB) {
+          existingStreaming.id = lastAssistant.id
+        }
+        if (lastAssistant.metadata) existingStreaming.metadata = lastAssistant.metadata
+        if (lastAssistant.cancelled) existingStreaming.cancelled = lastAssistant.cancelled
+        if (merged.length !== prevLen || merged !== pollBlocks) {
+          messages.value = [...messages.value]
+        }
+      } else if (lastAssistant && !existingStreaming) {
+        const existingById = lastAssistant.id
+          ? messages.value.find((m: any) => m.id === lastAssistant.id)
+          : null
+        if (existingById) {
+          existingById.streaming = true
+          const pollBlocks = lastAssistant.blocks
+          existingById.blocks = [...mergeStreamingAssistantBlocks(existingById.blocks || [], pollBlocks)]
+          if (lastAssistant.metadata) existingById.metadata = lastAssistant.metadata
+          if (lastAssistant.cancelled) existingById.cancelled = lastAssistant.cancelled
+          messages.value = [...messages.value]
+        } else {
+          lastAssistant.streaming = true
+          messages.value.push(lastAssistant)
+          messages.value = [...messages.value]
+        }
+      }
+
+      currentSessionId.value = data.sessionId || currentSessionId.value
+      if (data.sessionId) pollSessionId = data.sessionId
+      if (isOpen.value) {
+        debouncedRender()
+      } else {
+        onRenderNeeded()
+      }
+      return 'continue'
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        appLog.w(TAG, 'Polling: fetch timeout/abort')
+        return 'continue'
+      }
+      appLog.e(TAG, 'Polling error:', err)
+      counters.httpFailures++
+      if (counters.httpFailures < limits.maxHttpFailures) {
+        return 'continue'
+      }
+      appLog.e(TAG, 'Polling: too many HTTP failures, giving up')
+      return 'failed'
+    }
+  }
+
+  function pollUntilDone(explicitSessionId?: string) {
+    // setInterval (not async while+await): Android WebView reliably fires
+    // intervals (msg-count poll works) but concurrent await-fetch loops started
+    // mid-POST often never reach the network until B/F.
+    stopPolling()
+    pollLoopActive = true
+    pollSessionId = explicitSessionId || currentSessionId.value || ''
+    const gen = pollGeneration
+    const counters = { jsonParseFailures: 0, httpFailures: 0 }
+    const limits = { maxJsonParseFailures: 5, maxHttpFailures: 5 }
+    let tickInFlight = false
+    appLog.i(TAG, `poll interval start gen=${gen} android=${isAndroidAppMode()} sid=${pollSessionId.slice(0, 8)} every=${pollDelayMs()}ms`)
+
+    const runTick = async () => {
+      if (tickInFlight) return
+      if (gen !== pollGeneration || !pollLoopActive) return
+      if (!activePollSessionId() || !loading.value) {
+        appLog.w(TAG, `poll tick exit sid=${!!activePollSessionId()} loading=${loading.value}`)
+        stopPolling()
+        return
+      }
+      tickInFlight = true
+      const ac = new AbortController()
+      const abortTimer = window.setTimeout(() => ac.abort(), POLL_FETCH_TIMEOUT_MS)
+      let result: 'continue' | 'done' | 'failed' = 'continue'
+      try {
+        result = await pollOnce(counters, limits, ac.signal)
+      } catch (err: any) {
+        if (err?.name === 'AbortError') {
+          appLog.w(TAG, 'poll fetch aborted (timeout) — retrying')
+          result = 'continue'
+        } else {
+          appLog.e(TAG, 'poll tick error:', err)
+          result = 'continue'
+        }
+      } finally {
+        clearTimeout(abortTimer)
+        tickInFlight = false
+      }
+      if (gen !== pollGeneration || !pollLoopActive) return
+      if (result === 'done') {
+        stopPolling()
+        return
+      }
+      if (result === 'failed') {
+        stopPolling()
+        await recoverFromPollingFailures()
+      }
+    }
+
+    void runTick()
+    pollingInterval = window.setInterval(() => { void runTick() }, pollDelayMs())
+  }
+
+  function setOutgoingSendInFlight(inFlight: boolean) {
+    outgoingSendInFlight = inFlight
+  }
+
+  /**
+   * Apply a WS chat_stream_update snapshot (throttled DB flush from server).
+   * Primary live path for Android WebView where EventSource and poll GETs
+   * never reach the server mid-turn, but /api/ai/events/ws stays connected.
+   */
+  function applyChatStreamUpdate(data: { session_id?: string; blocks?: any[] } | undefined) {
+    try {
+      if (!data?.session_id || data.session_id !== currentSessionId.value) {
+        postWebDiagLog(TAG, `ws-stream skip sid mismatch got=${data?.session_id?.slice?.(0, 8)} cur=${currentSessionId.value?.slice?.(0, 8)}`, 'D')
+        return
+      }
+      if (!Array.isArray(data.blocks)) {
+        postWebDiagLog(TAG, `ws-stream skip blocks not array type=${typeof data.blocks}`, 'W')
+        return
+      }
+      if (!loading.value && !findStreamingMsg(messages.value)) return
+
+      ensureStreamingPlaceholder()
+      const existing = findStreamingMsg(messages.value)
+      if (!existing) {
+        postWebDiagLog(TAG, 'ws-stream skip no streaming placeholder', 'W')
+        return
+      }
+
+      const merged = mergeStreamingAssistantBlocks(existing.blocks || [], data.blocks)
+      existing.blocks = [...merged]
+      messages.value = [...messages.value]
+      postWebDiagLog(TAG, `ws-stream applied blocks=${merged.length} thinking=${merged.filter((b: any) => b.type === 'thinking').length}`)
+      if (isOpen.value) {
+        debouncedRender()
+      } else {
+        onRenderNeeded()
+      }
+    } catch (err: any) {
+      postWebDiagLog(TAG, `ws-stream FAIL ${err?.name || 'Error'}: ${err?.message || err}`, 'E')
+      appLog.e(TAG, 'applyChatStreamUpdate failed', err)
+    }
+  }
+
+  /**
+   * Apply a /api/ai/chat poll JSON payload (used by Android count-timer direct fetch).
+   * Same merge path as pollOnce after a successful GET.
+   */
+  function applyPollPayload(data: any): 'continue' | 'done' {
+    if (!data) return 'continue'
+    const latestMsgs = (data.messages || []).map((msg: any) => {
+      if (msg.role === 'assistant') {
+        const { blocks, metadata, cancelled } = onParseAssistantContent(msg.content)
+        msg.blocks = blocks
+        if (metadata) msg.metadata = metadata
+        if (cancelled) msg.cancelled = cancelled
+      } else if (msg.role === 'user' && !msg.blocks) {
+        if (msg.content && msg.content.startsWith('{"blocks":')) {
+          const { blocks } = onParseAssistantContent(msg.content)
+          msg.blocks = blocks
+        } else {
+          msg.blocks = msg.content ? [{ type: 'text', text: msg.content }] : []
+        }
+      }
+      return msg
+    })
+
+    if (!data.running) {
+      if (outgoingSendInFlight) return 'continue'
+      const localStreaming = findStreamingMsg(messages.value)
+      if (loading.value && localStreaming && !localStreaming.fromDB) return 'continue'
+      onLoadHistory().finally(() => {
+        loading.value = false
+        preferPollingOnly = false
+        onMessage()
+        onStreamEnd?.('done')
+        if (!isOpen.value) {
+          const lastMsg = messages.value[messages.value.length - 1]
+          if (lastMsg?.role === 'assistant') {
+            onToast(gt('chat.stream.aiReplied'), { icon: '🤖', duration: 5000, onClick: () => onOpen() })
+            onNotification(gt('chat.stream.aiReplied'), {
+              body: gt('chat.stream.clickToViewReply'),
+              onClick: () => onOpen()
+            })
+          }
+        }
+      })
+      return 'done'
+    }
+
+    ensureStreamingPlaceholder()
+    const lastAssistant = findLastCompat(latestMsgs, (m: any) => m.role === 'assistant')
+    const existingStreaming = findStreamingMsg(messages.value)
+
+    if (lastAssistant && existingStreaming) {
+      const pollBlocks = lastAssistant.blocks
+      const prevLen = existingStreaming.blocks?.length || 0
+      const merged = mergeStreamingAssistantBlocks(existingStreaming.blocks, pollBlocks)
+      existingStreaming.blocks = [...merged]
+      if (lastAssistant.id && !existingStreaming.fromDB) {
+        existingStreaming.id = lastAssistant.id
+      }
+      if (lastAssistant.metadata) existingStreaming.metadata = lastAssistant.metadata
+      if (lastAssistant.cancelled) existingStreaming.cancelled = lastAssistant.cancelled
+      if (merged.length !== prevLen || merged !== pollBlocks) {
+        messages.value = [...messages.value]
+      }
+    } else if (lastAssistant && !existingStreaming) {
+      const existingById = lastAssistant.id
+        ? messages.value.find((m: any) => m.id === lastAssistant.id)
+        : null
+      if (existingById) {
+        existingById.streaming = true
+        existingById.blocks = [...mergeStreamingAssistantBlocks(existingById.blocks || [], lastAssistant.blocks)]
+        if (lastAssistant.metadata) existingById.metadata = lastAssistant.metadata
+        if (lastAssistant.cancelled) existingById.cancelled = lastAssistant.cancelled
+        messages.value = [...messages.value]
+      } else {
+        lastAssistant.streaming = true
+        messages.value.push(lastAssistant)
+        messages.value = [...messages.value]
+      }
+    }
+
+    currentSessionId.value = data.sessionId || currentSessionId.value
+    if (data.sessionId) pollSessionId = data.sessionId
+    if (isOpen.value) {
+      debouncedRender()
+    } else {
+      onRenderNeeded()
+    }
+    return 'continue'
+  }
+
+  function beginOutgoingTurn() {
+    // Fresh turn: clear leftover poll-primary from a prior sse_busy.
+    preferPollingOnly = false
+    try {
+      ensureStreamingPlaceholder()
+    } catch (err: any) {
+      postWebDiagLog(TAG, `beginOutgoingTurn FAIL ${err?.name || 'Error'}: ${err?.message || err}`, 'E')
+      // Last-resort placeholder so turn-loading dots are replaced by a real streaming msg.
+      if (!findStreamingMsg(messages.value)) {
+        messages.value.push({
+          role: 'assistant',
+          id: `drain-${Date.now()}`,
+          content: '',
+          blocks: [],
+          streaming: true,
+          createdAt: new Date().toISOString(),
+          backend: currentBackend.value,
+        })
+        messages.value = [...messages.value]
+        onRenderNeeded(true)
+      }
+    }
+  }
+
+  function connectStream(sessionId: string, isRetry = false) {
+    // Android WebView: EventSource often never hits the server during an active
+    // turn (0 stream requests in logs). Use interval DB poll only — same timer
+    // class as /api/ai/chat/count which does work on device.
+    if (isAndroidAppMode()) {
+      try {
+        preferPollingOnly = true
+        disconnectedByCleanup = false
+        if (!isRetry) reconnect.reset()
+        if (sessionId && !currentSessionId.value) {
+          currentSessionId.value = sessionId
+        }
+        ensureStreamingPlaceholder()
+        appLog.i(TAG, `Android poll-primary session=${sessionId.slice(0, 8)}`)
+        postWebDiagLog(TAG, `poll-primary start sid=${sessionId.slice(0, 8)} loading=${loading.value}`)
+        if (!pollLoopActive) {
+          pollUntilDone(sessionId)
+        }
+      } catch (err: any) {
+        postWebDiagLog(TAG, `poll-primary FAIL ${err?.name || 'Error'}: ${err?.message || err}`, 'E')
+        appLog.e(TAG, 'Android poll-primary failed', err)
+      }
+      return
+    }
+
+    // Desktop / preferPollingOnly (sse_busy): poll DB instead of SSE reconnect loop.
+    if (preferPollingOnly) {
+      ensureStreamingPlaceholder()
+      if (!pollLoopActive) {
+        pollUntilDone()
+      }
+      return
+    }
+
+    disconnectStream()
+    // Keep parallel DB poll running as backup for dropped thinking events.
+    disconnectedByCleanup = false
+    if (!isRetry) {
+      reconnect.reset()
+    }
+
+    ensureStreamingPlaceholder()
+
+    appLog.i(TAG, `EventSource open session=${sessionId.slice(0, 8)}`)
     eventSource = new EventSource(`/api/ai/chat/stream?session_id=${encodeURIComponent(sessionId)}`, { withCredentials: true })
 
     // Capture reference to THIS EventSource instance so event handlers can
@@ -587,6 +933,7 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       disconnectStream()
       reconnect.reset()
+      preferPollingOnly = false
       onLoadHistory().then(() => {
         // Diagnostic: log message state after loadHistory replaces the array
         const afterSummary = messages.value.map((m: any, i: number) =>
@@ -627,6 +974,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       // User cancellation is intentional, not an error.
       _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
       loading.value = false
+      preferPollingOnly = false
       onStreamEnd?.('cancelled')
     })
 
@@ -846,7 +1194,7 @@ export function useChatStream(options: UseChatStreamOptions) {
       let errorData: any
       try { errorData = JSON.parse((e as MessageEvent).data) } catch { /* ignore parse failure */ }
       if (errorData?.reason === 'sse_busy') {
-        sseErrorHandled = false
+        enterPollPrimaryMode('sse_busy')
         return
       }
       // Non-sse_busy errors — reload from DB for final state
@@ -883,6 +1231,10 @@ export function useChatStream(options: UseChatStreamOptions) {
       }
       const wasRecoverable = esRef.readyState !== EventSource.CLOSED
       disconnectStream()
+      if (preferPollingOnly) {
+        pollUntilDone()
+        return
+      }
       if (wasRecoverable && currentSessionId.value && loading.value && reconnect.shouldReconnect()) {
         reconnect.scheduleReconnect()
       } else {
@@ -890,6 +1242,12 @@ export function useChatStream(options: UseChatStreamOptions) {
         loading.value = true  // Keep loading true — session is still running
         pollUntilDone()
       }
+    }
+
+    // Parallel DB poll — Android WebView may defer EventSource until visible; poll
+    // also covers sse_busy and dropped SSE thinking events on desktop.
+    if (loading.value && currentSessionId.value && !pollLoopActive) {
+      pollUntilDone()
     }
   }
 
@@ -907,6 +1265,11 @@ export function useChatStream(options: UseChatStreamOptions) {
 
   function handleOnline() {
     if (!loading.value || !currentSessionId.value) return
+    if (preferPollingOnly) {
+      appLog.i(TAG, 'Network recovered in poll-primary mode — resuming DB poll')
+      pollUntilDone()
+      return
+    }
     if (eventSource) {
       appLog.i(TAG, 'Network recovered, reconnecting SSE stream')
       disconnectStream()
@@ -917,17 +1280,38 @@ export function useChatStream(options: UseChatStreamOptions) {
 
   function handleStreamVisibility() {
     if (document.visibilityState === 'hidden') {
-      disconnectStream()
-      stopPolling()
+      // Keyboard close on Android fires hidden briefly during send — never kill an
+      // active turn; that prevents SSE/poll from ever reaching the server.
+      if (loading.value) {
+        clearVisibilityHiddenTimer()
+        return
+      }
+      if (visibilityHiddenTimer) clearTimeout(visibilityHiddenTimer)
+      visibilityHiddenTimer = setTimeout(() => {
+        visibilityHiddenTimer = null
+        if (document.visibilityState !== 'hidden' || loading.value) return
+        disconnectStream()
+        stopPolling()
+      }, VISIBILITY_HIDDEN_DEBOUNCE_MS)
       return
     }
+    clearVisibilityHiddenTimer()
     if (!currentSessionId.value) return
     const hasStreamingMsg = messages.value.some((m: any) => m.streaming)
+    const hasUnsentLocalUser = messages.value.some(isLocalOptimisticUserMessage)
     if (!loading.value && !hasStreamingMsg) return
+    if (hasUnsentLocalUser) {
+      appLog.d(TAG, 'Page visible while POST in flight — skip loadHistory')
+      return
+    }
     appLog.d(TAG, 'Page visible while streaming — recovering SSE or reloading history')
-    // Reset reconnect retries on visibility restore — keyboard flicker or
-    // app switch may have exhausted them; the network is available now.
     reconnect.reset()
+    // Poll-primary (Android / sse_busy): resume DB interval poll only.
+    if (preferPollingOnly || isAndroidAppMode()) {
+      enterPollPrimaryMode(isAndroidAppMode() ? 'android_visible' : 'visible_poll')
+      return
+    }
+    // Desktop: reconnect EventSource on B/F.
     if (loading.value && !eventSource) {
       if (reconnect.shouldReconnect()) {
         reconnect.scheduleReconnect()
@@ -939,8 +1323,6 @@ export function useChatStream(options: UseChatStreamOptions) {
     } else if (hasStreamingMsg) {
       onLoadHistory().catch(() => {})
     }
-    // After background disconnect, SSE reconnect does not replay missed events.
-    // Poll as a backup so thinking blocks flushed to DB are picked up on Android.
     if (loading.value && !eventSource) {
       pollUntilDone()
     }
@@ -953,15 +1335,21 @@ export function useChatStream(options: UseChatStreamOptions) {
   onUnmounted(() => {
     disconnectStream()
     stopPolling()
+    clearVisibilityHiddenTimer()
     clearToolUseTimeouts()
     window.removeEventListener('online', handleOnline)
     document.removeEventListener('visibilitychange', handleStreamVisibility)
   })
 
   return {
+    beginOutgoingTurn,
+    setOutgoingSendInFlight,
+    ensureOutboundPoll,
     connectStream,
     disconnectStream,
     cancelStream,
     stopPolling,
+    applyChatStreamUpdate,
+    applyPollPayload,
   }
 }

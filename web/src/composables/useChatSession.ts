@@ -3,6 +3,7 @@ import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { appLog } from '@/utils/appLog'
+import { isAndroidAppMode, postWebDiagLog } from '@/utils/androidNetwork.ts'
 
 const TAG = 'ChatSession'
 import { clearModeState, updateAvailableModes, clearCommandState, updateCommandState, updateAvailableThinkingEfforts, clearThinkingEffortState, clearUsageState, clearUsageStateById, updateUsageState, currentAgentId as _currentAgentId } from '@/composables/useSessionIdentity.ts'
@@ -10,7 +11,7 @@ import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress
 import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
-import { preserveStreamingBlocksAfterReload } from '@/utils/chatStreamUtils.ts'
+import { preserveStreamingBlocksAfterReload, preserveLocalStreamingPlaceholderAfterReload, preserveLocalOptimisticUserMessagesAfterReload } from '@/utils/chatStreamUtils.ts'
 import { warmWorktreeCache } from '@/composables/useWorktreeAnnotation.ts'
 
 // Module-level one-time session list load (replaces continuous polling)
@@ -76,6 +77,10 @@ export interface UseChatSessionOptions {
   onConnectStream: (sessionId: string) => void
   onStopPolling: () => void
   onDisconnectStream: () => void
+  /** Android failsafe: re-kick DB poll from the proven msg-count timer while loading. */
+  onEnsureAndroidPoll?: (sessionId: string) => void
+  /** Android: apply a chat history poll payload fetched by the count-timer. */
+  onAndroidPollData?: (data: any) => void
   onOpen: () => void
   onStreamDone?: () => void
 }
@@ -97,6 +102,8 @@ export function useChatSession(options: UseChatSessionOptions) {
     onConnectStream,
     onStopPolling,
     onDisconnectStream,
+    onEnsureAndroidPoll,
+    onAndroidPollData,
   } = options
 
   const toast = useToast()
@@ -336,7 +343,9 @@ export function useChatSession(options: UseChatSessionOptions) {
               messages.value = parseMessages(recoverMsgs, onParseAssistantContent, messages.value, recoverData.running)
               if (recoverData.running) {
                 preserveStreamingBlocksAfterReload(prevMessages, messages.value)
+                preserveLocalStreamingPlaceholderAfterReload(prevMessages, messages.value, true)
               }
+              preserveLocalOptimisticUserMessagesAfterReload(prevMessages, messages.value)
               // Re-append pending messages that aren't already represented in DB data
               for (const pm of _pendingMsgs) {
                 if (!messages.value.some((m: any) => m.role === 'user' && m.content === pm.content && !m.pending)) {
@@ -362,7 +371,9 @@ export function useChatSession(options: UseChatSessionOptions) {
               onScrollBottom(forceScrollBottom)
               if (recoverData.running) {
                 loading.value = true
-                stopMsgCountPolling()
+                // Android: keep msg-count timer alive as mid-turn poll failsafe.
+                if (isAndroidAppMode()) startMsgCountPolling()
+                else stopMsgCountPolling()
                 onConnectStream(currentSessionId.value)
               } else {
                 loading.value = false
@@ -462,10 +473,13 @@ export function useChatSession(options: UseChatSessionOptions) {
       // messages.value with pending:true — preserve them across the replacement.
       const _pendingMsgs = messages.value.filter((m: any) => m.pending)
       const prevMessages = messages.value
+      const wasAlreadyLoading = loading.value
       messages.value = parseMessages(rawMsgs, onParseAssistantContent, messages.value, data.running)
       if (data.running) {
         preserveStreamingBlocksAfterReload(prevMessages, messages.value)
+        preserveLocalStreamingPlaceholderAfterReload(prevMessages, messages.value, true)
       }
+      preserveLocalOptimisticUserMessagesAfterReload(prevMessages, messages.value)
       // Re-append pending messages that aren't already represented in DB data
       for (const pm of _pendingMsgs) {
         if (!messages.value.some((m: any) => m.role === 'user' && m.content === pm.content && !m.pending)) {
@@ -524,9 +538,12 @@ export function useChatSession(options: UseChatSessionOptions) {
       onRenderUpdate(true)
       if (data.running) {
         loading.value = true
-        stopMsgCountPolling()
+        if (isAndroidAppMode()) startMsgCountPolling()
+        else stopMsgCountPolling()
         onScrollBottom(true)
-        onConnectStream(currentSessionId.value)
+        if (!wasAlreadyLoading) {
+          onConnectStream(currentSessionId.value)
+        }
       } else {
         loading.value = false
         startMsgCountPolling()
@@ -712,7 +729,8 @@ export function useChatSession(options: UseChatSessionOptions) {
       onScrollBottom(true)
       if (data.running) {
         loading.value = true
-        stopMsgCountPolling()
+        if (isAndroidAppMode()) startMsgCountPolling()
+        else stopMsgCountPolling()
         onConnectStream(sessionId)
       } else {
         loading.value = false
@@ -817,8 +835,34 @@ export function useChatSession(options: UseChatSessionOptions) {
     stopMsgCountPolling()
     if (!currentSessionId.value) return
     lastMsgCount.value = messages.value.length
+    // Android: 1s interval so mid-turn failsafe can re-kick DB poll while loading.
+    // Desktop: 15s is enough for idle unread detection.
+    const intervalMs = isAndroidAppMode() ? 1000 : 15000
     msgCountInterval = setInterval(async () => {
-      if (!currentSessionId.value || loading.value) return
+      if (!currentSessionId.value) return
+      if (loading.value) {
+        // Proven timer path: do the chat GET here (same fetch style as /count),
+        // instead of only re-entering connectStream (which previously aborted
+        // before poll-primary when findLastIndex threw on older WebViews).
+        if (isAndroidAppMode()) {
+          const sid = currentSessionId.value
+          postWebDiagLog(TAG, `count-timer kick poll sid=${sid.slice(0, 8)}`)
+          onEnsureAndroidPoll?.(sid)
+          try {
+            const resp = await fetch(
+              `/api/ai/chat?session_id=${encodeURIComponent(sid)}&limit=12&_t=${Date.now()}`
+            )
+            postWebDiagLog(TAG, `count-timer chat GET status=${resp.status}`)
+            if (resp.ok) {
+              const data = await resp.json()
+              onAndroidPollData?.(data)
+            }
+          } catch (err: any) {
+            postWebDiagLog(TAG, `count-timer chat GET err=${err?.message || err}`, 'W')
+          }
+        }
+        return
+      }
       try {
         const resp = await fetch(`/api/ai/chat/count?session_id=${encodeURIComponent(currentSessionId.value)}`)
         if (!resp.ok) return
@@ -831,7 +875,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       } catch (err) {
         // Silently ignore polling errors
       }
-    }, 15000)
+    }, intervalMs)
   }
 
   function stopMsgCountPolling() {
@@ -905,6 +949,9 @@ export function useChatSession(options: UseChatSessionOptions) {
       || hasStreamingMsg
       || runningSessions.value.has(currentSessionId.value)
     if (!sessionWasRunning) return
+    // Active turn: stream layer owns SSE/poll; loadHistory here wipes the local
+    // streaming placeholder before the DB assistant row exists (Android keyboard).
+    if (loading.value) return
     // Page became visible while a response may still be in flight (or stale after
     // SSE disconnect on background) — reload from REST to catch up.
     onDisconnectStream()

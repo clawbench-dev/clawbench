@@ -3,12 +3,9 @@ package terminal
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 	"os/exec"
 	"runtime"
-
-	"github.com/creack/pty"
 )
 
 // runtimeGOOS is a variable wrapper around runtime.GOOS so tests can
@@ -46,59 +43,4 @@ type PlatformError struct {
 
 func (e *PlatformError) Error() string {
 	return fmt.Sprintf("terminal not supported on %s", e.OS)
-}
-
-// startPTY starts a new PTY session with the given working directory.
-// Returns the PTY file, the command, and any error.
-// The shell process is started in its own process group for clean cleanup.
-// cols and rows set the initial terminal size; if either is 0, 80x24 is used.
-func startPTY(cwd string, cols, rows uint16) (*os.File, *exec.Cmd, error) {
-	// creack/pty does not support Windows — ConPTY is not implemented.
-	// Return PlatformError so the manager can send the correct error code.
-	if runtimeGOOS == "windows" {
-		return nil, nil, &PlatformError{OS: runtimeGOOS}
-	}
-
-	shell := resolveShell()
-	slog.Info(
-		"terminal: starting PTY",
-		slog.String("shell", shell),
-		slog.String("cwd", cwd),
-	)
-
-	// Verify shell exists and is executable
-	if _, err := exec.LookPath(shell); err != nil {
-		return nil, nil, fmt.Errorf("shell not found: %w", err)
-	}
-
-	cmd := exec.Command(shell)
-	cmd.Dir = cwd
-	// Set terminal environment variables so TUI applications (vim, htop,
-	// OpenCode, etc.) can detect terminal capabilities correctly. Without
-	// TERM, ncurses/Bubble Tea cannot initialize and full-screen TUI apps
-	// fail to render. COLORTERM=truecolor signals 24-bit color support.
-	cmd.Env = append(
-		os.Environ(),
-		"TERM=xterm-256color",
-		"COLORTERM=truecolor",
-	)
-
-	// NOTE: Do NOT set Setpgid here. pty.Start -> StartWithSize sets
-	// Setsid=true + Setctty=true, and Setpgid conflicts with Setsid
-	// on Linux (returns EPERM: "operation not permitted").
-	// Setsid already creates a new session and process group.
-
-	// Use StartWithSize to provide initial terminal dimensions.
-	// The frontend sends cols/rows based on the actual container size so TUI
-	// apps (vim, claude, htop) render at full size from the start instead of
-	// getting 80x24 and waiting for the first fit()+resize round-trip.
-	if cols == 0 || rows == 0 {
-		cols, rows = 80, 24
-	}
-	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: cols, Rows: rows})
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to start PTY: %w", err)
-	}
-
-	return ptmx, cmd, nil
 }

@@ -7,6 +7,30 @@
  */
 
 /**
+ * ES2023 Array#findLastIndex — missing on some Android WebView Chromium builds.
+ * A throw here aborts ensureStreamingPlaceholder → no streaming msg → only
+ * turn-loading dots, and connectStream never reaches poll-primary.
+ */
+export function findLastIndexCompat<T>(
+  arr: ArrayLike<T>,
+  predicate: (item: T, index: number, array: ArrayLike<T>) => boolean
+): number {
+  for (let i = arr.length - 1; i >= 0; i--) {
+    if (predicate(arr[i], i, arr)) return i
+  }
+  return -1
+}
+
+/** ES2023 Array#findLast — same WebView compatibility concern as findLastIndex. */
+export function findLastCompat<T>(
+  arr: ArrayLike<T>,
+  predicate: (item: T, index: number, array: ArrayLike<T>) => boolean
+): T | undefined {
+  const idx = findLastIndexCompat(arr, predicate)
+  return idx === -1 ? undefined : arr[idx]
+}
+
+/**
  * Detect garbage output values that come from intermediate ACP ToolCallUpdate
  * events (e.g., a lone "}" from partial JSON streaming). Real tool output
  * from completed tools is always meaningful — at least a few words long.
@@ -72,6 +96,10 @@ export function mergeStreamingAssistantBlocks(
   existingBlocks: any[],
   incomingBlocks: any[]
 ): any[] {
+  // Between DB flushes the assistant row may exist with empty content — keep SSE/poll state.
+  if (incomingBlocks.length === 0 && existingBlocks.length > 0) {
+    return existingBlocks
+  }
   const hasNonText = incomingBlocks.some((b: any) => b.type !== 'text')
   const hasThinking = existingBlocks.some((b: any) => b.type === 'thinking')
   if (!hasNonText && hasThinking && existingBlocks.length > 0) {
@@ -107,6 +135,70 @@ export function preserveStreamingBlocksAfterReload(
     prevStreaming.blocks,
     nextStreaming.blocks || []
   )
+}
+
+/**
+ * After loadHistory replaces messages during an active turn, the DB may not yet
+ * contain the streaming assistant row (ACP spawn delay). Re-insert the local
+ * placeholder created by beginOutgoingTurn so dots/thinking have a merge target.
+ */
+export function preserveLocalStreamingPlaceholderAfterReload(
+  prevMessages: any[],
+  nextMessages: any[],
+  sessionRunning?: boolean
+): void {
+  if (!sessionRunning) return
+  if (nextMessages.some((m: any) => m.role === 'assistant' && m.streaming)) return
+  const prevLocal = prevMessages.find(
+    (m: any) => m.role === 'assistant' && m.streaming && !m.fromDB
+  )
+  if (!prevLocal) return
+  const placeholder = {
+    ...prevLocal,
+    blocks: [...(prevLocal.blocks || [])],
+    streaming: true,
+  }
+  delete placeholder.fromDB
+  const lastUserIdx = findLastIndexCompat(
+    nextMessages,
+    (m: any) => m.role === 'user' && !m.pending
+  )
+  if (lastUserIdx !== -1) {
+    nextMessages.splice(lastUserIdx + 1, 0, placeholder)
+  } else {
+    nextMessages.push(placeholder)
+  }
+}
+
+/** Optimistic user row pushed in sendMessageNow before POST completes. */
+export function isLocalOptimisticUserMessage(msg: any): boolean {
+  return (
+    msg?.role === 'user' &&
+    typeof msg.id === 'string' &&
+    msg.id.startsWith('local-')
+  )
+}
+
+/**
+ * loadHistory replaces messages from DB; re-append optimistic user rows that
+ * POST has not persisted yet (Android POST can lag behind SSE connect).
+ */
+export function preserveLocalOptimisticUserMessagesAfterReload(
+  prevMessages: any[],
+  nextMessages: any[]
+): void {
+  for (const lm of prevMessages) {
+    if (!isLocalOptimisticUserMessage(lm)) continue
+    const alreadyInDb = nextMessages.some(
+      (m) => m.role === 'user' && m.content === lm.content && !isLocalOptimisticUserMessage(m)
+    )
+    if (alreadyInDb) continue
+    nextMessages.push({
+      ...lm,
+      blocks: lm.blocks ? [...lm.blocks] : [],
+      files: lm.files ? [...lm.files] : lm.files,
+    })
+  }
 }
 
 /**
@@ -292,7 +384,7 @@ export function drainQueueMessage(
   // Find the user message that was just drained (pending flag cleared or fallback pushed)
   const drainUserIdx = pendingIdx !== -1
     ? pendingIdx
-    : messages.findLastIndex((m: any) => m.role === 'user' && m.content === userContent)
+    : findLastIndexCompat(messages, (m: any) => m.role === 'user' && m.content === userContent)
   if (drainUserIdx !== -1) {
     messages.splice(drainUserIdx + 1, 0, newStreamingMsg)
   } else {

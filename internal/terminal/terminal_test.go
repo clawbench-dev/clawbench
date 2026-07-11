@@ -3,7 +3,6 @@ package terminal
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net"
 	"net/http"
 	"os/exec"
@@ -19,6 +18,12 @@ import (
 )
 
 const testIdleTimeout = "10m"
+
+// testCwd returns a valid temp directory for use as the working directory
+// in terminal tests. Avoids hardcoded /tmp which doesn't exist on Windows.
+func testCwd(t testing.TB) string {
+	return t.TempDir()
+}
 
 func TestResolveShell(t *testing.T) {
 	shell := resolveShell()
@@ -37,7 +42,8 @@ func TestNewSessionAndClose(t *testing.T) {
 		MaxBufferMB:  4,
 	}
 
-	session, err := NewSession("/tmp", "/tmp", cfg, 0, 0)
+	cwd := testCwd(t)
+	session, err := NewSession("/tmp", cwd, cfg, 0, 0)
 	if err != nil {
 		t.Skipf("PTY not available in this environment: %v", err)
 	}
@@ -46,8 +52,8 @@ func TestNewSessionAndClose(t *testing.T) {
 	if session.ProjectPath() != "/tmp" {
 		t.Errorf("expected projectPath /tmp, got %s", session.ProjectPath())
 	}
-	if session.Cwd() != "/tmp" {
-		t.Errorf("expected cwd /tmp, got %s", session.Cwd())
+	if session.Cwd() != cwd {
+		t.Errorf("expected cwd %s, got %s", cwd, session.Cwd())
 	}
 	if session.ID() == "" {
 		t.Error("expected non-empty session ID")
@@ -62,7 +68,7 @@ func TestSessionIdleTimeout(t *testing.T) {
 		MaxBufferMB:  4,
 	}
 
-	session, err := NewSession("/tmp", "/tmp", cfg, 0, 0)
+	session, err := NewSession("/tmp", testCwd(t), cfg, 0, 0)
 	if err != nil {
 		t.Skipf("PTY not available in this environment: %v", err)
 	}
@@ -221,7 +227,7 @@ func TestManagerMultipleSessions(t *testing.T) {
 	// Create multiple sessions
 	ids := make(map[string]bool)
 	for range 3 {
-		session, err := NewSession("/tmp", "/tmp", tc, 0, 0)
+		session, err := NewSession("/tmp", testCwd(t), tc, 0, 0)
 		if err != nil {
 			t.Skipf("PTY not available in this environment: %v", err)
 		}
@@ -266,7 +272,7 @@ func TestSession_HandleResize(t *testing.T) {
 		MaxBufferMB:  4,
 	}
 
-	session, err := NewSession("/tmp", "/tmp", cfg, 0, 0)
+	session, err := NewSession("/tmp", testCwd(t), cfg, 0, 0)
 	if err != nil {
 		t.Skipf("PTY not available in this environment: %v", err)
 	}
@@ -285,7 +291,7 @@ func TestSession_HandleResize_ClosedSession(t *testing.T) {
 		MaxBufferMB:  4,
 	}
 
-	session, err := NewSession("/tmp", "/tmp", cfg, 0, 0)
+	session, err := NewSession("/tmp", testCwd(t), cfg, 0, 0)
 	if err != nil {
 		t.Skipf("PTY not available in this environment: %v", err)
 	}
@@ -307,7 +313,7 @@ func TestSession_HandleInput_ClosedSession(t *testing.T) {
 		MaxBufferMB:  4,
 	}
 
-	session, err := NewSession("/tmp", "/tmp", cfg, 0, 0)
+	session, err := NewSession("/tmp", testCwd(t), cfg, 0, 0)
 	if err != nil {
 		t.Skipf("PTY not available in this environment: %v", err)
 	}
@@ -332,7 +338,7 @@ func TestSession_Close_Idempotent(t *testing.T) {
 		MaxBufferMB:  4,
 	}
 
-	session, err := NewSession("/tmp", "/tmp", cfg, 0, 0)
+	session, err := NewSession("/tmp", testCwd(t), cfg, 0, 0)
 	if err != nil {
 		t.Skipf("PTY not available in this environment: %v", err)
 	}
@@ -358,7 +364,8 @@ func TestManager_SessionStatus_Running(t *testing.T) {
 	defer mgr.Close()
 
 	tc := mgr.Config()
-	session, err := NewSession("/tmp", "/tmp", tc, 0, 0)
+	cwd := testCwd(t)
+	session, err := NewSession("/tmp", cwd, tc, 0, 0)
 	if err != nil {
 		t.Skipf("PTY not available in this environment: %v", err)
 	}
@@ -374,12 +381,12 @@ func TestManager_SessionStatus_Running(t *testing.T) {
 	mgr.sessions[sid] = session
 	mgr.mu.Unlock()
 
-	found, cwd, running := mgr.SessionStatus(sid)
+	found, scwd, running := mgr.SessionStatus(sid)
 	if !found {
 		t.Error("expected session to be found")
 	}
-	if cwd != "/tmp" {
-		t.Errorf("expected cwd /tmp, got %s", cwd)
+	if scwd != cwd {
+		t.Errorf("expected cwd %s, got %s", cwd, scwd)
 	}
 	if !running {
 		t.Error("expected session to be running")
@@ -401,7 +408,7 @@ func TestManager_AllSessionStatus_CleansUpStoppedSessions(t *testing.T) {
 	defer mgr.Close()
 
 	tc := mgr.Config()
-	session, err := NewSession("/tmp", "/tmp", tc, 0, 0)
+	session, err := NewSession("/tmp", testCwd(t), tc, 0, 0)
 	if err != nil {
 		t.Skipf("PTY not available in this environment: %v", err)
 	}
@@ -438,7 +445,7 @@ func TestKillProcessGroupSig_NilProcess(t *testing.T) {
 // --- startPTY error path ---
 
 func TestStartPTY_InvalidCwd(t *testing.T) {
-	_, _, err := startPTY("/nonexistent/path/that/does/not/exist", 0, 0)
+	_, _, _, _, _, err := startPTY("/nonexistent/path/that/does/not/exist", 0, 0)
 	if err == nil {
 		t.Error("expected error for nonexistent working directory")
 	}
@@ -458,7 +465,7 @@ func TestStartPTY_SetsTermEnv(t *testing.T) {
 		MaxBufferMB:  4,
 	}
 
-	session, err := NewSession("/tmp", "/tmp", cfg, 0, 0)
+	session, err := NewSession("/tmp", testCwd(t), cfg, 0, 0)
 	if err != nil {
 		t.Skipf("PTY not available in this environment: %v", err)
 	}
@@ -499,7 +506,7 @@ func TestStartPTY_InitialSize(t *testing.T) {
 		MaxBufferMB:  4,
 	}
 
-	session, err := NewSession("/tmp", "/tmp", cfg, 0, 0)
+	session, err := NewSession("/tmp", testCwd(t), cfg, 0, 0)
 	if err != nil {
 		t.Skipf("PTY not available in this environment: %v", err)
 	}
@@ -533,21 +540,13 @@ func TestPlatformError(t *testing.T) {
 	}
 }
 
+// TestPlatformError_SimulatedWindows verifies that PlatformError formatting
+// is correct. The simulated Windows check for startPTY is no longer needed
+// because Windows ConPTY is now fully supported.
 func TestPlatformError_SimulatedWindows(t *testing.T) {
-	orig := runtimeGOOS
-	runtimeGOOS = "windows"
-	defer func() { runtimeGOOS = orig }()
-
-	_, _, err := startPTY("", 0, 0)
-	if err == nil {
-		t.Fatal("expected PlatformError on simulated Windows")
-	}
-	var pe *PlatformError
-	if !errors.As(err, &pe) {
-		t.Errorf("expected *PlatformError, got %T: %v", err, err)
-	}
-	if pe.OS != "windows" {
-		t.Errorf("expected OS=windows, got %s", pe.OS)
+	pe := &PlatformError{OS: "windows"}
+	if pe.Error() != "terminal not supported on windows" {
+		t.Errorf("unexpected error message: %s", pe.Error())
 	}
 }
 
@@ -574,7 +573,7 @@ func TestNewSession_InvalidIdleTimeout(t *testing.T) {
 		MaxBufferMB:  4,
 	}
 
-	session, err := NewSession("/tmp", "/tmp", cfg, 0, 0)
+	session, err := NewSession("/tmp", testCwd(t), cfg, 0, 0)
 	if err != nil {
 		t.Skipf("PTY not available in this environment: %v", err)
 	}
@@ -603,7 +602,7 @@ func TestNewSession_ZeroIdleTimeout(t *testing.T) {
 		MaxBufferMB:  4,
 	}
 
-	session, err := NewSession("/tmp", "/tmp", cfg, 0, 0)
+	session, err := NewSession("/tmp", testCwd(t), cfg, 0, 0)
 	if err != nil {
 		t.Skipf("PTY not available in this environment: %v", err)
 	}
@@ -631,7 +630,7 @@ func TestSession_ExitCode(t *testing.T) {
 		MaxBufferMB:  4,
 	}
 
-	session, err := NewSession("/tmp", "/tmp", cfg, 0, 0)
+	session, err := NewSession("/tmp", testCwd(t), cfg, 0, 0)
 	if err != nil {
 		t.Skipf("PTY not available in this environment: %v", err)
 	}
@@ -668,7 +667,7 @@ func TestSession_Connect_ClosedSession(t *testing.T) {
 		MaxBufferMB:  4,
 	}
 
-	session, err := NewSession("/tmp", "/tmp", cfg, 0, 0)
+	session, err := NewSession("/tmp", testCwd(t), cfg, 0, 0)
 	if err != nil {
 		t.Skipf("PTY not available in this environment: %v", err)
 	}
@@ -697,7 +696,7 @@ func TestManager_Close_WithActiveSessions(t *testing.T) {
 	mgr := NewManager(cfg, 20000)
 	tc := mgr.Config()
 
-	session, err := NewSession("/tmp", "/tmp", tc, 0, 0)
+	session, err := NewSession("/tmp", testCwd(t), tc, 0, 0)
 	if err != nil {
 		t.Skipf("PTY not available in this environment: %v", err)
 	}
@@ -732,7 +731,7 @@ func TestSession_IsRunning_AfterClose(t *testing.T) {
 		MaxBufferMB:  4,
 	}
 
-	session, err := NewSession("/tmp", "/tmp", cfg, 0, 0)
+	session, err := NewSession("/tmp", testCwd(t), cfg, 0, 0)
 	if err != nil {
 		t.Skipf("PTY not available in this environment: %v", err)
 	}
@@ -772,7 +771,7 @@ func startTestServer(t *testing.T, mgr *Manager) string {
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sid := r.URL.Query().Get("session")
-		err := mgr.HandleWebSocket(w, r, "/tmp", "/tmp", sid, 0, 0)
+		err := mgr.HandleWebSocket(w, r, "/tmp", testCwd(t), sid, 0, 0)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -1232,7 +1231,7 @@ func TestSession_SuppressOutputAfterConnect(t *testing.T) {
 		MaxBufferMB:  4,
 	}
 
-	session, err := NewSession("/tmp", "/tmp", cfg, 0, 0)
+	session, err := NewSession("/tmp", testCwd(t), cfg, 0, 0)
 	if err != nil {
 		t.Skipf("PTY not available in this environment: %v", err)
 	}
@@ -1281,7 +1280,7 @@ func TestSession_HandleResize_ClearsSuppressOutput(t *testing.T) {
 		MaxBufferMB:  4,
 	}
 
-	session, err := NewSession("/tmp", "/tmp", cfg, 0, 0)
+	session, err := NewSession("/tmp", testCwd(t), cfg, 0, 0)
 	if err != nil {
 		t.Skipf("PTY not available in this environment: %v", err)
 	}
@@ -1326,7 +1325,7 @@ func TestSession_HandleResize_NoSuppressFlag(t *testing.T) {
 		MaxBufferMB:  4,
 	}
 
-	session, err := NewSession("/tmp", "/tmp", cfg, 0, 0)
+	session, err := NewSession("/tmp", testCwd(t), cfg, 0, 0)
 	if err != nil {
 		t.Skipf("PTY not available in this environment: %v", err)
 	}

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { ref } from 'vue'
+import { defineComponent, ref } from 'vue'
+import { mount } from '@vue/test-utils'
 import { useChatStream } from '@/composables/useChatStream'
 import { forceCleanupStreamingState, FILE_MODIFYING_TOOLS } from '@/utils/chatStreamUtils'
 // usePendingStore removed — pending messages now live in messages.value with pending:true
@@ -68,6 +69,18 @@ vi.mock('@/utils/chatStreamUtils', () => ({
   FILE_MODIFYING_TOOLS: new Set(),
   findLastBlockOfType: (blocks: any[], type: string) =>
     [...blocks].reverse().find(b => b.type === type),
+  findLastIndexCompat: (arr: any[], predicate: (item: any, i: number) => boolean) => {
+    for (let i = arr.length - 1; i >= 0; i--) {
+      if (predicate(arr[i], i)) return i
+    }
+    return -1
+  },
+  findLastCompat: (arr: any[], predicate: (item: any, i: number) => boolean) => {
+    for (let i = arr.length - 1; i >= 0; i--) {
+      if (predicate(arr[i], i)) return arr[i]
+    }
+    return undefined
+  },
   forceCleanupStreamingState: vi.fn((messages: any[]) => {
     // Simplified mock: remove streaming flag from the first streaming assistant message
     const msg = messages.find((m: any) => m.role === 'assistant' && m.streaming)
@@ -76,6 +89,12 @@ vi.mock('@/utils/chatStreamUtils', () => ({
   findStreamingMsg: vi.fn((messages: any[]) => {
     return messages.find((m: any) => m.role === 'assistant' && m.streaming)
   }),
+  mergeStreamingAssistantBlocks: vi.fn((existing: any[], incoming: any[]) => {
+    if (incoming.length === 0 && existing.length > 0) return existing
+    return incoming
+  }),
+  isLocalOptimisticUserMessage: (msg: any) =>
+    msg?.role === 'user' && typeof msg.id === 'string' && msg.id.startsWith('local-'),
   drainQueueMessage: vi.fn((messages: any[], userContent: string, userFiles: string[], currentBackend: string, callbacks: any, _drainId?: string) => {
     // Finalize any streaming message
     const streamingMsg = messages.find((m: any) => m.role === 'assistant' && m.streaming)
@@ -155,119 +174,81 @@ describe('useChatStream', () => {
     mockEsInstances = []
     originalEventSource = globalThis.EventSource
     globalThis.EventSource = MockEventSource as any
+    // Prevent Android poll-primary from leaking across tests
+    delete (globalThis as any).AndroidNative
+    if (typeof window !== 'undefined') delete (window as any).AndroidNative
   })
 
   afterEach(() => {
     globalThis.EventSource = originalEventSource
+    delete (globalThis as any).AndroidNative
+    if (typeof window !== 'undefined') delete (window as any).AndroidNative
+    vi.unstubAllGlobals()
   })
 
-  /**
-   * useChatStream registers its visibility listener in onMounted(),
-   * which doesn't fire outside a Vue component. This helper manually
-   * simulates the registration so we can test visibility behavior.
-   */
-  function setupWithVisibility() {
-    const options = createOptions()
-    const stream = useChatStream(options)
-    // Manually register visibility listener (simulates onMounted behavior)
-    const handler = () => {
-      if (document.visibilityState === 'hidden') {
-        stream.disconnectStream()
-        stream.stopPolling()
-      }
-    }
-    document.addEventListener('visibilitychange', handler)
-    return { options, stream, handler }
+  function mountStream(options = createOptions()) {
+    let streamApi!: ReturnType<typeof useChatStream>
+    const Comp = defineComponent({
+      setup() {
+        streamApi = useChatStream(options)
+        return () => null
+      },
+    })
+    mount(Comp)
+    return { options, stream: streamApi }
   }
 
-  describe('visibility change — always disconnect on background', () => {
-    it('should close SSE when page goes hidden, even without push notifications', () => {
-      const { options, stream, handler } = setupWithVisibility()
-
-      // Start streaming
+  describe('visibility change — background handling', () => {
+    it('keeps SSE open when hidden during an active turn (loading=true)', async () => {
+      vi.useFakeTimers()
+      const { options, stream } = mountStream()
       options.loading.value = true
       stream.connectStream('test-session-1')
       const es = getLatestEs()
       es.simulateOpen()
+
+      Object.defineProperty(document, 'visibilityState', {
+        value: 'hidden',
+        writable: true,
+        configurable: true,
+      })
+      document.dispatchEvent(new Event('visibilitychange'))
+      await vi.advanceTimersByTimeAsync(500)
+
       expect(es.readyState).toBe(MockEventSource.OPEN)
-
-      // Simulate going to background
-      Object.defineProperty(document, 'visibilityState', {
-        value: 'hidden',
-        writable: true,
-        configurable: true,
-      })
-      document.dispatchEvent(new Event('visibilitychange'))
-
-      // SSE should be closed
-      expect(es.readyState).toBe(MockEventSource.CLOSED)
-
-      document.removeEventListener('visibilitychange', handler)
+      vi.useRealTimers()
     })
 
-    it('should stop polling when page goes hidden', () => {
-      const { options, stream, handler } = setupWithVisibility()
-
-      options.loading.value = true
+    it('closes SSE when hidden while idle after debounce', async () => {
+      vi.useFakeTimers()
+      const { options, stream } = mountStream()
+      options.loading.value = false
       stream.connectStream('test-session-1')
       const es = getLatestEs()
       es.simulateOpen()
 
-      // Going to background should call stopPolling without error
       Object.defineProperty(document, 'visibilityState', {
         value: 'hidden',
         writable: true,
         configurable: true,
       })
       document.dispatchEvent(new Event('visibilitychange'))
+      await vi.advanceTimersByTimeAsync(500)
 
       expect(es.readyState).toBe(MockEventSource.CLOSED)
-      document.removeEventListener('visibilitychange', handler)
+      vi.useRealTimers()
     })
+  })
 
-    it('should close SSE on background even when session is actively streaming', () => {
-      const { options, stream, handler } = setupWithVisibility()
-
-      options.loading.value = true
-      stream.connectStream('test-session-1')
-      const es = getLatestEs()
-      es.simulateOpen()
-
-      // Simulate some streaming content
-      es.simulate('content', { content: 'Thinking...' })
-
-      // Go to background mid-stream
-      Object.defineProperty(document, 'visibilityState', {
-        value: 'hidden',
-        writable: true,
-        configurable: true,
-      })
-      document.dispatchEvent(new Event('visibilitychange'))
-
-      // SSE must be closed regardless of active session
-      expect(es.readyState).toBe(MockEventSource.CLOSED)
-      document.removeEventListener('visibilitychange', handler)
-    })
-
-    it('always disconnects on hidden', () => {
-      // Regression guard: disconnectStream is called regardless of any external state.
-      const { options, stream, handler } = setupWithVisibility()
-
-      const disconnectSpy = vi.spyOn(stream, 'disconnectStream')
-
-      options.loading.value = true
-      stream.connectStream('test-session-1')
-      getLatestEs().simulateOpen()
-
-      Object.defineProperty(document, 'visibilityState', {
-        value: 'hidden',
-        writable: true,
-        configurable: true,
-      })
-      document.dispatchEvent(new Event('visibilitychange'))
-
-      expect(disconnectSpy).toHaveBeenCalled()
-      document.removeEventListener('visibilitychange', handler)
+  describe('beginOutgoingTurn', () => {
+    it('creates streaming assistant placeholder before POST completes', () => {
+      const options = createOptions()
+      options.messages.value = [{ role: 'user', content: 'hi' }]
+      const { beginOutgoingTurn } = useChatStream(options)
+      beginOutgoingTurn()
+      const streaming = options.messages.value.find((m: any) => m.role === 'assistant' && m.streaming)
+      expect(streaming).toBeDefined()
+      expect(streaming!.blocks).toEqual([])
     })
   })
 
@@ -946,6 +927,224 @@ describe('useChatStream', () => {
       es.simulate('error', { error: 'session not running' })
 
       expect(options.onStreamEnd).toHaveBeenCalledWith('error')
+    })
+
+    it('should enter poll-primary mode on sse_busy without calling onLoadHistory', async () => {
+      vi.useFakeTimers()
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          running: true,
+          sessionId: 'test-session-1',
+          messages: [
+            { role: 'user', content: 'hi' },
+            { role: 'assistant', content: '{"blocks":[{"type":"thinking","text":"reasoning"}]}' },
+          ],
+        }),
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const options = createOptions()
+      options.loading.value = true
+      options.messages.value = [{ role: 'user', content: 'hi' }]
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+      const es = getLatestEs()
+      es.simulateOpen()
+      const esCountBefore = mockEsInstances.length
+
+      es.simulate('error', { error: 'Session stream busy', reason: 'sse_busy' })
+
+      expect(options.onLoadHistory).not.toHaveBeenCalled()
+      expect(options.messages.value.some((m: any) => m.role === 'assistant' && m.streaming)).toBe(true)
+
+      await vi.runOnlyPendingTimersAsync()
+      expect(fetchMock).toHaveBeenCalled()
+      expect(fetchMock.mock.calls[0][0]).toContain('limit=12')
+
+      connectStream('test-session-1')
+      expect(mockEsInstances.length).toBe(esCountBefore)
+
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    })
+
+    it('should skip EventSource and interval-poll DB on Android', async () => {
+      vi.useFakeTimers()
+      vi.stubGlobal('AndroidNative', { isNativeApp: () => true })
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          running: true,
+          sessionId: 'test-session-1',
+          messages: [
+            { role: 'user', content: 'hi' },
+            { role: 'assistant', content: '{"blocks":[{"type":"thinking","text":"from-db"}]}' },
+          ],
+        }),
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const options = createOptions()
+      options.loading.value = true
+      options.messages.value = [{ role: 'user', content: 'hi' }]
+      const { connectStream } = useChatStream(options)
+      const esBefore = mockEsInstances.length
+      connectStream('test-session-1')
+      expect(mockEsInstances.length).toBe(esBefore)
+      expect(options.messages.value.some((m: any) => m.role === 'assistant' && m.streaming)).toBe(true)
+
+      await vi.runOnlyPendingTimersAsync()
+      expect(fetchMock).toHaveBeenCalled()
+      const pollUrl = String(
+        fetchMock.mock.calls.map((c) => c[0]).find((u) => String(u).includes('limit=12')) || ''
+      )
+      expect(pollUrl).toContain('limit=12')
+      expect(pollUrl).toMatch(/[?&]_t=\d+/)
+
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    })
+
+    it('Android poll accepts isNativeApp returning 1 (WebView bridge quirk)', async () => {
+      vi.useFakeTimers()
+      vi.stubGlobal('AndroidNative', { isNativeApp: () => 1 })
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          running: true,
+          sessionId: 'test-session-1',
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const options = createOptions()
+      options.loading.value = true
+      options.messages.value = [{ role: 'user', content: 'hi' }]
+      const { connectStream } = useChatStream(options)
+      const esBefore = mockEsInstances.length
+      connectStream('test-session-1')
+      expect(mockEsInstances.length).toBe(esBefore)
+
+      await vi.runOnlyPendingTimersAsync()
+      expect(fetchMock).toHaveBeenCalled()
+      expect(
+        fetchMock.mock.calls.some((c) => String(c[0]).includes('_t=') && String(c[0]).includes('limit=12'))
+      ).toBe(true)
+
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    })
+
+    it('applyChatStreamUpdate merges thinking blocks from WS snapshot', () => {
+      const options = createOptions()
+      options.loading.value = true
+      options.currentSessionId.value = 'test-session-1'
+      options.messages.value = [
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', id: 'stream-1', content: '', blocks: [], streaming: true },
+      ]
+      const { applyChatStreamUpdate } = useChatStream(options)
+
+      applyChatStreamUpdate({
+        session_id: 'test-session-1',
+        blocks: [{ type: 'thinking', text: 'via-ws' }],
+      })
+
+      const streaming = options.messages.value.find((m: any) => m.streaming)
+      expect(streaming).toBeDefined()
+      expect(streaming!.blocks.some((b: any) => b.type === 'thinking' && b.text === 'via-ws')).toBe(true)
+    })
+
+    it('applyChatStreamUpdate ignores other sessions', () => {
+      const options = createOptions()
+      options.loading.value = true
+      options.currentSessionId.value = 'test-session-1'
+      options.messages.value = [
+        { role: 'assistant', id: 'stream-1', content: '', blocks: [], streaming: true },
+      ]
+      const { applyChatStreamUpdate } = useChatStream(options)
+
+      applyChatStreamUpdate({
+        session_id: 'other-session',
+        blocks: [{ type: 'thinking', text: 'nope' }],
+      })
+
+      const streaming = options.messages.value.find((m: any) => m.streaming)
+      expect(streaming!.blocks).toEqual([])
+    })
+
+    it('beginOutgoingTurn creates streaming placeholder without native findLastIndex', () => {
+      const original = (Array.prototype as any).findLastIndex
+      // Simulate older Android WebView missing ES2023 Array#findLastIndex
+      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+      delete (Array.prototype as any).findLastIndex
+
+      try {
+        const options = createOptions()
+        options.messages.value = [{ role: 'user', content: 'hi', pending: false }]
+        const { beginOutgoingTurn } = useChatStream(options)
+        beginOutgoingTurn()
+        expect(options.messages.value.some((m: any) => m.role === 'assistant' && m.streaming)).toBe(true)
+      } finally {
+        if (original) (Array.prototype as any).findLastIndex = original
+      }
+    })
+
+    it('applyPollPayload merges assistant blocks from chat GET payload', () => {
+      const options = createOptions()
+      options.loading.value = true
+      options.currentSessionId.value = 'test-session-1'
+      options.messages.value = [
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', id: 'stream-1', content: '', blocks: [], streaming: true },
+      ]
+      options.onParseAssistantContent = () => ({
+        blocks: [{ type: 'thinking', text: 'from-poll' }],
+      })
+      const { applyPollPayload } = useChatStream(options)
+
+      const result = applyPollPayload({
+        running: true,
+        sessionId: 'test-session-1',
+        messages: [
+          { role: 'user', content: 'hi' },
+          { role: 'assistant', id: 'db-1', content: '{"blocks":[]}' },
+        ],
+      })
+
+      expect(result).toBe('continue')
+      const streaming = options.messages.value.find((m: any) => m.streaming)
+      expect(streaming!.blocks.some((b: any) => b.type === 'thinking' && b.text === 'from-poll')).toBe(true)
+    })
+
+    it('ensureOutboundPoll must not lock out EventSource after POST on desktop', async () => {
+      vi.useFakeTimers()
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          running: true,
+          sessionId: 'test-session-1',
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const options = createOptions()
+      options.loading.value = true
+      options.messages.value = [{ role: 'user', content: 'hi' }]
+      const { ensureOutboundPoll, connectStream, beginOutgoingTurn } = useChatStream(options)
+
+      beginOutgoingTurn()
+      ensureOutboundPoll()
+      const esBefore = mockEsInstances.length
+      connectStream('test-session-1')
+      expect(mockEsInstances.length).toBe(esBefore + 1)
+
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
     })
   })
 

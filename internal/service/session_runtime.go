@@ -22,17 +22,71 @@ var (
 	activeMu       sync.Mutex
 )
 
-// Session stream channel management for SSE streaming.
-// Each session has one channel (producer → single SSE consumer).
-// When multiple clients connect to the same session's SSE stream, only the first
-// gets the live channel; subsequent clients receive an SSE error event and fall
-// back to HTTP polling (which reads from DB and is multi-reader safe).
-var sessionStreams sync.Map // map[string]chan ai.StreamEvent
+// Session stream fan-out for SSE streaming.
+// AI producers write to the hub's producer channel; each SSE client gets its own
+// subscriber channel so desktop + Android (and any other clients) all receive
+// every event. A single shared channel cannot do this — Go delivers each send
+// to only one receiver.
+var sessionStreams sync.Map // map[string]*sessionStreamHub
 
-// sessionSSEClaim tracks which sessions have an active SSE connection.
-// Prevents multiple goroutines from competing on the same channel (Go channels
-// deliver each message to exactly one reader, causing split content).
+// sessionSSEClaim is retained for tests/compat but no longer gates SSE connect.
+// Multi-client fan-out replaced the single-claim model.
 var sessionSSEClaim sync.Map // map[string]bool
+
+// sessionStreamHub fans producer events out to N SSE subscribers.
+type sessionStreamHub struct {
+	producer chan ai.StreamEvent
+	mu       sync.Mutex
+	subs     map[uint64]chan ai.StreamEvent
+	nextID   uint64
+	closed   bool
+}
+
+func (h *sessionStreamHub) fanOut() {
+	for event := range h.producer {
+		h.mu.Lock()
+		for id, ch := range h.subs {
+			select {
+			case ch <- event:
+			default:
+				slog.Warn(
+					"session stream subscriber full, dropping event",
+					slog.Uint64("sub_id", id),
+					slog.String("event_type", event.Type),
+				)
+			}
+		}
+		h.mu.Unlock()
+	}
+	h.mu.Lock()
+	h.closed = true
+	for id, ch := range h.subs {
+		close(ch)
+		delete(h.subs, id)
+	}
+	h.mu.Unlock()
+}
+
+func (h *sessionStreamHub) subscribe() (ch <-chan ai.StreamEvent, unsub func(), ok bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed {
+		return nil, nil, false
+	}
+	id := h.nextID
+	h.nextID++
+	sub := make(chan ai.StreamEvent, sessionStreamBufferSize)
+	h.subs[id] = sub
+	unsub = func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if c, exists := h.subs[id]; exists {
+			delete(h.subs, id)
+			close(c)
+		}
+	}
+	return sub, unsub, true
+}
 
 // Session cancel functions for aborting AI responses
 var (
@@ -84,6 +138,38 @@ func EmitSessionEvent(sessionID, status string, hasNewMessages bool, toolName ..
 	}
 	// Write-ahead: persist before broadcast so event log has no gaps
 	StoreNotifiableEvent(msg)
+	mgr.BroadcastEvent(msg)
+}
+
+// EmitChatStreamUpdate broadcasts a mid-turn streaming blocks snapshot over WS.
+// Unlike EmitSessionEvent, this is NOT written to pending_events (ephemeral).
+func EmitChatStreamUpdate(sessionID string, blocks any) {
+	mgr := ws.GetManager()
+	if mgr == nil || sessionID == "" {
+		return
+	}
+	if blocks == nil {
+		blocks = []any{}
+	}
+	blockCount := 0
+	switch b := blocks.(type) {
+	case []model.ContentBlock:
+		blockCount = len(b)
+	case []any:
+		blockCount = len(b)
+	}
+	slog.Debug("chat_stream_update emit",
+		slog.String("session", sessionID),
+		slog.Int("blocks", blockCount))
+	msg := ws.ServerMessage{
+		Type:  ws.MessageTypeEvent,
+		ID:    ws.GenerateEventID(),
+		Event: "chat_stream_update",
+		Data: &ws.ChatStreamUpdateData{
+			SessionID: sessionID,
+			Blocks:    blocks,
+		},
+	}
 	mgr.BroadcastEvent(msg)
 }
 
@@ -391,16 +477,8 @@ func CancelSession(sessionID string) bool {
 
 	EmitSessionEvent(sessionID, "cancelled", false)
 
-	// Send cancelled event to SSE stream after cancelling context (non-blocking)
-	if streamVal, ok := sessionStreams.Load(sessionID); ok {
-		if ch, ok := streamVal.(chan ai.StreamEvent); ok {
-			select {
-			case ch <- ai.StreamEvent{Type: "cancelled"}:
-			default:
-				// Channel full — SSE handler will detect session not running via checkSSE loop
-			}
-		}
-	}
+	// Send cancelled event to all SSE subscribers (non-blocking).
+	SendSessionEvent(sessionID, ai.StreamEvent{Type: "cancelled"})
 
 	// Mark session as not running (skip completed event — we already sent "cancelled")
 	SetSessionRunning(sessionID, false, true)
@@ -436,63 +514,73 @@ func ForceCancelSession(sessionID string) {
 	}()
 }
 
-// sessionStreamBufferSize is the buffer capacity for the per-session event channel.
-// Controls backpressure: when the channel is full, SendSessionEvent drops events.
+// sessionStreamBufferSize is the buffer capacity for the per-session producer
+// and each SSE subscriber channel. Controls backpressure: when full, events drop.
 const sessionStreamBufferSize = 256
 
-// RegisterSessionStream creates and registers a stream channel for a session
+// RegisterSessionStream creates a fan-out hub for a session and returns the
+// producer channel that the AI goroutine writes to.
 func RegisterSessionStream(sessionID string) chan ai.StreamEvent {
-	ch := make(chan ai.StreamEvent, sessionStreamBufferSize)
-	sessionStreams.Store(sessionID, ch)
-	return ch
+	h := &sessionStreamHub{
+		producer: make(chan ai.StreamEvent, sessionStreamBufferSize),
+		subs:     make(map[uint64]chan ai.StreamEvent),
+	}
+	sessionStreams.Store(sessionID, h)
+	go h.fanOut()
+	return h.producer
 }
 
-// TryClaimSSEStream atomically claims the SSE stream for a session.
-// Returns true if the claim was acquired (no other SSE handler is reading).
-// Returns false if another SSE handler is already consuming the stream.
-// The claim is released via ReleaseSSEStream when the handler exits.
+// TryClaimSSEStream is a no-op success for backward compatibility.
+// Multiple SSE clients are supported via fan-out; claiming is no longer required.
 func TryClaimSSEStream(sessionID string) bool {
 	_, loaded := sessionSSEClaim.LoadOrStore(sessionID, true)
 	return !loaded
 }
 
-// ReleaseSSEStream releases the SSE stream claim for a session.
-// Called by the SSE handler on all exit paths (done, cancelled, error, disconnect).
+// ReleaseSSEStream releases a legacy SSE claim (compat with older tests).
 func ReleaseSSEStream(sessionID string) {
 	sessionSSEClaim.Delete(sessionID)
 }
 
-// GetSessionStream returns the stream channel for a session
-func GetSessionStream(sessionID string) (<-chan ai.StreamEvent, bool) {
+// SubscribeSessionStream registers an SSE client to receive all stream events.
+// Caller must invoke unsub when the client disconnects.
+func SubscribeSessionStream(sessionID string) (ch <-chan ai.StreamEvent, unsub func(), ok bool) {
 	val, ok := sessionStreams.Load(sessionID)
 	if !ok {
-		return nil, false
+		return nil, nil, false
 	}
-	ch, ok := val.(chan ai.StreamEvent)
+	h, ok := val.(*sessionStreamHub)
 	if !ok {
-		return nil, false
+		return nil, nil, false
 	}
-	return ch, true
+	return h.subscribe()
 }
 
-// UnregisterSessionStream removes and closes the stream channel for a session
+// GetSessionStream subscribes to the session stream (legacy helper for tests).
+// Prefer SubscribeSessionStream in production code so unsub can be called.
+func GetSessionStream(sessionID string) (<-chan ai.StreamEvent, bool) {
+	ch, _, ok := SubscribeSessionStream(sessionID)
+	return ch, ok
+}
+
+// UnregisterSessionStream removes the hub and closes the producer (fan-out
+// then closes all subscriber channels).
 func UnregisterSessionStream(sessionID string) {
 	if val, ok := sessionStreams.LoadAndDelete(sessionID); ok {
-		if ch, ok := val.(chan ai.StreamEvent); ok {
-			close(ch)
+		if h, ok := val.(*sessionStreamHub); ok {
+			close(h.producer)
 		}
 	}
-	// Also release any lingering SSE claim
 	sessionSSEClaim.Delete(sessionID)
 }
 
-// SendSessionEvent sends an event to the session stream channel (non-blocking).
-// Returns true if the event was sent successfully.
+// SendSessionEvent sends an event to the session stream producer (non-blocking).
+// The fan-out goroutine copies it to every SSE subscriber.
 func SendSessionEvent(sessionID string, event ai.StreamEvent) bool {
 	if streamVal, ok := sessionStreams.Load(sessionID); ok {
-		if ch, ok := streamVal.(chan ai.StreamEvent); ok {
+		if h, ok := streamVal.(*sessionStreamHub); ok {
 			select {
-			case ch <- event:
+			case h.producer <- event:
 				return true
 			default:
 				slog.Warn(

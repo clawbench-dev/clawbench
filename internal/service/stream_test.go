@@ -119,12 +119,16 @@ func TestSSEClaim_DoesNotBlockEventDelivery(t *testing.T) {
 	ch := RegisterSessionStream(sessionID)
 	defer UnregisterSessionStream(sessionID)
 
+	subCh, unsub, ok := SubscribeSessionStream(sessionID)
+	assert.True(t, ok)
+	defer unsub()
+
 	// Claim and send event
 	assert.True(t, TryClaimSSEStream(sessionID))
 	ch <- ai.StreamEvent{Type: "content", Content: "hello"}
 
 	select {
-	case event := <-ch:
+	case event := <-subCh:
 		assert.Equal(t, "content", event.Type)
 		assert.Equal(t, "hello", event.Content)
 	case <-time.After(time.Second):
@@ -180,6 +184,44 @@ func TestTryClaimSSEStream_DifferentSessions(t *testing.T) {
 
 	ReleaseSSEStream("session-a")
 	ReleaseSSEStream("session-b")
+}
+
+func TestSubscribeSessionStream_FanOutMultipleClients(t *testing.T) {
+	cleanupStreams()
+	defer cleanupStreams()
+
+	sessionID := "test-fanout"
+	producer := RegisterSessionStream(sessionID)
+	defer UnregisterSessionStream(sessionID)
+
+	ch1, unsub1, ok1 := SubscribeSessionStream(sessionID)
+	assert.True(t, ok1)
+	defer unsub1()
+	ch2, unsub2, ok2 := SubscribeSessionStream(sessionID)
+	assert.True(t, ok2)
+	defer unsub2()
+
+	producer <- ai.StreamEvent{Type: "thinking", Content: "shared"}
+	producer <- ai.StreamEvent{Type: "done"}
+
+	deadline := time.After(2 * time.Second)
+	gotThinking := func(ch <-chan ai.StreamEvent) bool {
+		for {
+			select {
+			case ev, ok := <-ch:
+				if !ok {
+					return false
+				}
+				if ev.Type == "thinking" && ev.Content == "shared" {
+					return true
+				}
+			case <-deadline:
+				return false
+			}
+		}
+	}
+	assert.True(t, gotThinking(ch1), "first subscriber should receive thinking")
+	assert.True(t, gotThinking(ch2), "second subscriber should receive thinking")
 }
 
 func cleanupStreams() {

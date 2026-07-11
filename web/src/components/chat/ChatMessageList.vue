@@ -77,6 +77,11 @@
       @show-rag-detail="$emit('show-rag-detail', $event)"
       @remove-pending="$emit('remove-pending', $event)"
     />
+    <div v-if="showTurnLoading" class="chat-message assistant turn-loading">
+      <div class="msg-content-wrapper">
+        <div class="placeholder-dots"><span></span><span></span><span></span></div>
+      </div>
+    </div>
     </div>
   </div>
 
@@ -165,6 +170,7 @@ const props = defineProps({
   totalMessages: { type: Number, default: 0 },
   staticBlockCache: Object,
   active: { type: Boolean, default: true },
+  showTurnLoading: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-thinking-detail', 'show-metadata', 'file-tag-click', 'file-open', 'load-more', 'task-card-click', 'send-message', 'remove-pending', 'render-flush', 'toggle-summary', 'resume-session', 'show-rag-detail', 'fork-from-message'])
@@ -928,5 +934,33 @@ defineExpose({
   30%, 45% { box-shadow: inset 0 0 0 2px transparent; }
   60%, 75% { box-shadow: inset 0 0 0 2px var(--accent-color); }
   90%, 100% { box-shadow: inset 0 0 0 2px transparent; }
+}
+
+.turn-loading {
+  opacity: 0.85;
+}
+
+.turn-loading .placeholder-dots {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 8px 0 4px;
+}
+
+.turn-loading .placeholder-dots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted, #999);
+  animation: turn-loading-dot-bounce 1.2s infinite ease-in-out;
+}
+
+.turn-loading .placeholder-dots span:nth-child(1) { animation-delay: 0s; }
+.turn-loading .placeholder-dots span:nth-child(2) { animation-delay: 0.2s; }
+.turn-loading .placeholder-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes turn-loading-dot-bounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
 }
 </style>

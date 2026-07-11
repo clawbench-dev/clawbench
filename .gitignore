@@ -13,8 +13,11 @@ __pycache__/
 
 # Go build output
 /clawbench
+clawbench.exe
 clawbench-dev
 dev-clawbench
+server.exe
+*.exe
 coverage.out
 coverage/
 
@@ -61,6 +64,8 @@ android/.gradle/
 android/build/
 android/app/build/
 android/local.properties
+*.apk
+*.aab
 
 # ACP submodules (local dev only, not tracked in CI)
 acp-go-sdk/

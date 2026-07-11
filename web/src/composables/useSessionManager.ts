@@ -4,6 +4,7 @@ import { cancelChat } from '@/utils/api'
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
 import { appLog } from '@/utils/appLog'
+import { findLastIndexCompat } from '@/utils/chatStreamUtils.ts'
 
 const TAG = 'SessionManager'
 
@@ -150,7 +151,8 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       // dequeued the message. The frontend must resubmit as a new chat.
       if (data.needs_start) {
         // Remove the pending message from messages.value
-        const idx = messages.value.findLastIndex(
+        const idx = findLastIndexCompat(
+          messages.value,
           (m: any) => m.role === 'user' && m.pending && m.content === (data.message || inputText)
         )
         if (idx !== -1) messages.value.splice(idx, 1)
@@ -172,7 +174,8 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     } catch (err) {
       toast.show(gt('session.queueFailed'), { icon: '⚠️', type: 'error' })
       // On enqueue failure, remove the pending message we just added
-      const idx = messages.value.findLastIndex(
+      const idx = findLastIndexCompat(
+        messages.value,
         (m: any) => m.role === 'user' && m.pending && m.content === inputText
       )
       if (idx !== -1) messages.value.splice(idx, 1)

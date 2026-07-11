@@ -2278,6 +2278,24 @@ public class MainActivity extends AppCompatActivity {
         public void updateLastSeenEventId(String eventId) {
             BackgroundService.updateLastSeenEventId(activity, eventId);
         }
+
+        /**
+         * Log a message from the WebView JS layer through AppLog.
+         * Must live on WebAppInterface (AndroidNative), not MainActivity —
+         * only this object's @JavascriptInterface methods are exposed to JS.
+         * @param level One of "D", "I", "W", "E"
+         * @param tag   Log tag (e.g. "ChatStream", "PortForward")
+         * @param msg   Log message
+         */
+        @JavascriptInterface
+        public void log(String level, String tag, String msg) {
+            switch (level) {
+                case "E": AppLog.e(tag, msg); break;
+                case "W": AppLog.w(tag, msg); break;
+                case "I": AppLog.i(tag, msg); break;
+                default:  AppLog.d(tag, msg); break;
+            }
+        }
     }
 
     /**
@@ -2321,24 +2339,6 @@ public class MainActivity extends AppCompatActivity {
             prefs.edit().putString(KEY_SERVER_LIST, result.toString()).apply();
         } catch (Exception e) {
             AppLog.e(TAG, "saveServerInternal failed", e);
-        }
-    }
-
-    /**
-     * Log a message from the WebView JS layer through AppLog.
-     * This gives frontend code explicit control over log relay to the server,
-     * independent of the implicit onConsoleMessage capture.
-     * @param level One of "D", "I", "W", "E"
-     * @param tag   Log tag (e.g. "ChatStream", "PortForward")
-     * @param msg   Log message
-     */
-    @JavascriptInterface
-    public void log(String level, String tag, String msg) {
-        switch (level) {
-            case "E": AppLog.e(tag, msg); break;
-            case "W": AppLog.w(tag, msg); break;
-            case "I": AppLog.i(tag, msg); break;
-            default:  AppLog.d(tag, msg); break;
         }
     }
 }

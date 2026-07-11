@@ -22,10 +22,13 @@ function safeStringify(a: unknown): string {
 function relay(level: string, tag: string, args: unknown[]): void {
   try {
     const native = (window as any).AndroidNative
-    if (!native || !native.log) return
-    // Check isNativeApp() + top-frame to avoid iframe false positives
-    if (native.isNativeApp?.() !== true) return
+    if (!native || typeof native.log !== 'function') return
     if (window !== window.top) return
+    // Accept truthy bridge flags — WebView may box booleans / return 1.
+    if (typeof native.isNativeApp === 'function') {
+      const flag = native.isNativeApp()
+      if (!(flag === true || flag === 1 || flag === 'true' || flag === '1')) return
+    }
     const msg = args.map(safeStringify).join(' ')
     native.log(level, tag, msg)
   } catch {

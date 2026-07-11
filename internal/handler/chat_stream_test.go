@@ -56,6 +56,17 @@ func cleanupStreamSession(sessionID string) {
 	service.UnregisterSessionCancel(sessionID)
 }
 
+// emitStreamEvents sends events after a short delay so AIChatStream has time to
+// SubscribeSessionStream. Fan-out drops events when there are zero subscribers.
+func emitStreamEvents(ch chan<- ai.StreamEvent, events ...ai.StreamEvent) {
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		for _, e := range events {
+			ch <- e
+		}
+	}()
+}
+
 func TestAIChatStream_MethodNotAllowed(t *testing.T) {
 	req := newRequest(t, http.MethodPost, "/api/ai/chat/stream", nil)
 	w := callHandler(AIChatStream, req)
@@ -120,10 +131,10 @@ func TestAIChatStream_ContentEvent(t *testing.T) {
 	ch := setupStreamSession(sessionID)
 	defer cleanupStreamSession(sessionID)
 
-	go func() {
-		ch <- ai.StreamEvent{Type: "content", Content: "hello world"}
-		ch <- ai.StreamEvent{Type: "done"}
-	}()
+	emitStreamEvents(ch,
+		ai.StreamEvent{Type: "content", Content: "hello world"},
+		ai.StreamEvent{Type: "done"},
+	)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -145,10 +156,10 @@ func TestAIChatStream_ThinkingEvent(t *testing.T) {
 	ch := setupStreamSession(sessionID)
 	defer cleanupStreamSession(sessionID)
 
-	go func() {
-		ch <- ai.StreamEvent{Type: "thinking", Content: "let me think..."}
-		ch <- ai.StreamEvent{Type: "done"}
-	}()
+	emitStreamEvents(ch,
+		ai.StreamEvent{Type: "thinking", Content: "let me think..."},
+		ai.StreamEvent{Type: "done"},
+	)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -170,6 +181,7 @@ func TestAIChatStream_ToolUseEvent(t *testing.T) {
 	defer cleanupStreamSession(sessionID)
 
 	go func() {
+		time.Sleep(30 * time.Millisecond)
 		ch <- ai.StreamEvent{
 			Type:     "tool_use",
 			Tool:     &ai.ToolCall{Name: "Read", ID: "t1", Input: `{"file_path":"/foo.go"}`, Done: true},
@@ -205,6 +217,7 @@ func TestAIChatStream_ToolUseEventWithOutput(t *testing.T) {
 	defer cleanupStreamSession(sessionID)
 
 	go func() {
+		time.Sleep(30 * time.Millisecond)
 		ch <- ai.StreamEvent{
 			Type:     "tool_use",
 			Tool:     &ai.ToolCall{Name: "Bash", ID: "t3", Input: `{"command":"ls"}`, Done: true, Output: "file1.go\nfile2.go", Status: "success"},
@@ -237,6 +250,7 @@ func TestAIChatStream_ToolResultEvent(t *testing.T) {
 	defer cleanupStreamSession(sessionID)
 
 	go func() {
+		time.Sleep(30 * time.Millisecond)
 		ch <- ai.StreamEvent{
 			Type:     "tool_result",
 			Tool:     &ai.ToolCall{ID: "t5", Output: "file contents here", Status: "success"},
@@ -269,6 +283,7 @@ func TestAIChatStream_ToolResultEventError(t *testing.T) {
 	defer cleanupStreamSession(sessionID)
 
 	go func() {
+		time.Sleep(30 * time.Millisecond)
 		ch <- ai.StreamEvent{
 			Type:     "tool_result",
 			Tool:     &ai.ToolCall{ID: "t6", Output: "command not found", Status: "error"},
@@ -299,10 +314,10 @@ func TestAIChatStream_ToolResultEventNilTool(t *testing.T) {
 	ch := setupStreamSession(sessionID)
 	defer cleanupStreamSession(sessionID)
 
-	go func() {
-		ch <- ai.StreamEvent{Type: "tool_result", Tool: nil}
-		ch <- ai.StreamEvent{Type: "done"}
-	}()
+	emitStreamEvents(ch,
+		ai.StreamEvent{Type: "tool_result", Tool: nil},
+		ai.StreamEvent{Type: "done"},
+	)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -323,6 +338,7 @@ func TestAIChatStream_ToolResultEventNoOutput(t *testing.T) {
 	defer cleanupStreamSession(sessionID)
 
 	go func() {
+		time.Sleep(30 * time.Millisecond)
 		// tool_result with no output/status — should only emit id
 		ch <- ai.StreamEvent{
 			Type: "tool_result",
@@ -353,6 +369,7 @@ func TestAIChatStream_ToolUseEvent_EmptyInput(t *testing.T) {
 	defer cleanupStreamSession(sessionID)
 
 	go func() {
+		time.Sleep(30 * time.Millisecond)
 		ch <- ai.StreamEvent{
 			Type: "tool_use",
 			Tool: &ai.ToolCall{Name: "Bash", ID: "t2", Input: "", Done: false},
@@ -381,6 +398,7 @@ func TestAIChatStream_ToolUseEvent_StringInput(t *testing.T) {
 	defer cleanupStreamSession(sessionID)
 
 	go func() {
+		time.Sleep(30 * time.Millisecond)
 		// Tool call with input that deserializes to a string (e.g., partial JSON
 		// from input_json_delta's first chunk "{"). With slim SSE, non-interactive
 		// tools don't include input at all, so this no longer needs the coercion.
@@ -415,6 +433,7 @@ func TestAIChatStream_ToolUseEvent_InteractiveToolIncludesInput(t *testing.T) {
 	defer cleanupStreamSession(sessionID)
 
 	go func() {
+		time.Sleep(30 * time.Millisecond)
 		ch <- ai.StreamEvent{
 			Type:     "tool_use",
 			Tool:     &ai.ToolCall{Name: "AskUserQuestion", ID: "t4", Input: `{"questions":[{"header":"Choose","question":"A or B?"}]}`, Done: false},
@@ -447,10 +466,10 @@ func TestAIChatStream_ToolUseEvent_NilTool(t *testing.T) {
 	ch := setupStreamSession(sessionID)
 	defer cleanupStreamSession(sessionID)
 
-	go func() {
-		ch <- ai.StreamEvent{Type: "tool_use", Tool: nil}
-		ch <- ai.StreamEvent{Type: "done"}
-	}()
+	emitStreamEvents(ch,
+		ai.StreamEvent{Type: "tool_use", Tool: nil},
+		ai.StreamEvent{Type: "done"},
+	)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -470,6 +489,7 @@ func TestAIChatStream_MetadataEvent(t *testing.T) {
 	defer cleanupStreamSession(sessionID)
 
 	go func() {
+		time.Sleep(30 * time.Millisecond)
 		ch <- ai.StreamEvent{
 			Type: "metadata",
 			Meta: &ai.Metadata{Model: "gpt-4", InputTokens: 100, OutputTokens: 50},
@@ -496,9 +516,9 @@ func TestAIChatStream_DoneEvent(t *testing.T) {
 	ch := setupStreamSession(sessionID)
 	defer cleanupStreamSession(sessionID)
 
-	go func() {
-		ch <- ai.StreamEvent{Type: "done"}
-	}()
+	emitStreamEvents(ch,
+		ai.StreamEvent{Type: "done"},
+	)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -518,9 +538,9 @@ func TestAIChatStream_CancelledEvent(t *testing.T) {
 	ch := setupStreamSession(sessionID)
 	defer cleanupStreamSession(sessionID)
 
-	go func() {
-		ch <- ai.StreamEvent{Type: "cancelled"}
-	}()
+	emitStreamEvents(ch,
+		ai.StreamEvent{Type: "cancelled"},
+	)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -539,9 +559,9 @@ func TestAIChatStream_ErrorEvent(t *testing.T) {
 	ch := setupStreamSession(sessionID)
 	defer cleanupStreamSession(sessionID)
 
-	go func() {
-		ch <- ai.StreamEvent{Type: "error", Error: "something broke"}
-	}()
+	emitStreamEvents(ch,
+		ai.StreamEvent{Type: "error", Error: "something broke"},
+	)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -562,9 +582,9 @@ func TestAIChatStream_ErrorEventWithReason(t *testing.T) {
 	ch := setupStreamSession(sessionID)
 	defer cleanupStreamSession(sessionID)
 
-	go func() {
-		ch <- ai.StreamEvent{Type: "error", Error: "timeout", Reason: "timeout"}
-	}()
+	emitStreamEvents(ch,
+		ai.StreamEvent{Type: "error", Error: "timeout", Reason: "timeout"},
+	)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -585,12 +605,12 @@ func TestAIChatStream_ResumeSplitEvent(t *testing.T) {
 	ch := setupStreamSession(sessionID)
 	defer cleanupStreamSession(sessionID)
 
-	go func() {
-		ch <- ai.StreamEvent{Type: "content", Content: "phase 1 content"}
-		ch <- ai.StreamEvent{Type: "resume_split"}
-		ch <- ai.StreamEvent{Type: "content", Content: "phase 2 content"}
-		ch <- ai.StreamEvent{Type: "done"}
-	}()
+	emitStreamEvents(ch,
+		ai.StreamEvent{Type: "content", Content: "phase 1 content"},
+		ai.StreamEvent{Type: "resume_split"},
+		ai.StreamEvent{Type: "content", Content: "phase 2 content"},
+		ai.StreamEvent{Type: "done"},
+	)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -634,12 +654,12 @@ func TestAIChatStream_ResumeSplitEventWithMessageID(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, streamingMsgID, int64(0), "streaming message should have a positive ID")
 
-	go func() {
-		ch <- ai.StreamEvent{Type: "content", Content: "phase 1 content"}
-		ch <- ai.StreamEvent{Type: "resume_split"}
-		ch <- ai.StreamEvent{Type: "content", Content: "phase 2 content"}
-		ch <- ai.StreamEvent{Type: "done"}
-	}()
+	emitStreamEvents(ch,
+		ai.StreamEvent{Type: "content", Content: "phase 1 content"},
+		ai.StreamEvent{Type: "resume_split"},
+		ai.StreamEvent{Type: "content", Content: "phase 2 content"},
+		ai.StreamEvent{Type: "done"},
+	)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -676,11 +696,11 @@ func TestAIChatStream_WarningEvent(t *testing.T) {
 	ch := setupStreamSession(sessionID)
 	defer cleanupStreamSession(sessionID)
 
-	go func() {
-		ch <- ai.StreamEvent{Type: "warning", Content: "slow response", Reason: "timeout"}
-		ch <- ai.StreamEvent{Type: "content", Content: "actual content"}
-		ch <- ai.StreamEvent{Type: "done"}
-	}()
+	emitStreamEvents(ch,
+		ai.StreamEvent{Type: "warning", Content: "slow response", Reason: "timeout"},
+		ai.StreamEvent{Type: "content", Content: "actual content"},
+		ai.StreamEvent{Type: "done"},
+	)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -706,6 +726,7 @@ func TestAIChatStream_QueueDrainEvent(t *testing.T) {
 	defer cleanupStreamSession(sessionID)
 
 	go func() {
+		time.Sleep(30 * time.Millisecond)
 		ch <- ai.StreamEvent{
 			Type:       "queue_drain",
 			QueueEvent: &ai.QueueEventData{Text: "hello", FilePaths: []string{"/test.go"}, Files: []string{"/a.txt"}, Queue: []model.QueuedMessage{{Text: "next"}}},
@@ -739,6 +760,7 @@ func TestAIChatStream_QueueUpdateEvent(t *testing.T) {
 	defer cleanupStreamSession(sessionID)
 
 	go func() {
+		time.Sleep(30 * time.Millisecond)
 		ch <- ai.StreamEvent{
 			Type:       "queue_update",
 			QueueEvent: &ai.QueueEventData{Queue: []model.QueuedMessage{{Text: "enqueued"}}},
@@ -763,12 +785,15 @@ func TestAIChatStream_ChannelClosed(t *testing.T) {
 	defer teardown()
 
 	sessionID := "stream-closed"
-	ch := setupStreamSession(sessionID)
+	_ = setupStreamSession(sessionID)
 	service.SetSessionRunning(sessionID, true)
 	defer service.SetSessionRunning(sessionID, false)
+	defer service.UnregisterSessionStream(sessionID)
 
 	go func() {
-		close(ch)
+		time.Sleep(30 * time.Millisecond)
+		// Unregister closes the producer; fan-out then closes subscriber chans.
+		service.UnregisterSessionStream(sessionID)
 	}()
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
@@ -785,7 +810,7 @@ func TestAIChatStream_ClientDisconnect(t *testing.T) {
 	defer teardown()
 
 	sessionID := "stream-disconnect"
-	ch := setupStreamSession(sessionID)
+	_ = setupStreamSession(sessionID)
 	defer cleanupStreamSession(sessionID)
 
 	// Register a cancel function — should NOT be called on SSE disconnect
@@ -796,10 +821,6 @@ func TestAIChatStream_ClientDisconnect(t *testing.T) {
 	go func() {
 		time.Sleep(50 * time.Millisecond)
 		cancel2()
-		// Send a terminal event so drainStreamChannel can exit;
-		// without this the drain goroutine blocks forever.
-		time.Sleep(50 * time.Millisecond)
-		ch <- ai.StreamEvent{Type: "done"}
 	}()
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
@@ -830,23 +851,14 @@ func TestAIChatStream_ClientDisconnectDuringStream(t *testing.T) {
 	_, cancel := context.WithCancel(context.Background())
 	service.RegisterSessionCancel(sessionID, cancel)
 
-	// Send a content event, then cancel the client context to simulate disconnect
-	go func() {
-		ch <- ai.StreamEvent{Type: "content", Content: "partial"}
-		// Give the SSE handler time to receive the content event
-		time.Sleep(100 * time.Millisecond)
-		// Cancel the client context (simulates disconnect)
-		// The SSE handler should detect ctx.Done() and record "disconnect" reason
-	}()
-
 	ctx2, cancel2 := context.WithCancel(context.Background())
-	// Cancel after a short delay to allow content to be sent
+
+	// Send a content event after subscribe, then cancel the client context
 	go func() {
-		time.Sleep(150 * time.Millisecond)
+		time.Sleep(30 * time.Millisecond)
+		ch <- ai.StreamEvent{Type: "content", Content: "partial"}
+		time.Sleep(100 * time.Millisecond)
 		cancel2()
-		// Send terminal event so drainStreamChannel can exit
-		time.Sleep(50 * time.Millisecond)
-		ch <- ai.StreamEvent{Type: "done"}
 	}()
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
@@ -861,31 +873,61 @@ func TestAIChatStream_ClientDisconnectDuringStream(t *testing.T) {
 	assert.Equal(t, "disconnect", reason)
 }
 
-// ---------- SSE claim: reject second client when stream is busy ----------
+// ---------- SSE fan-out: multiple clients can subscribe ----------
 
-func TestAIChatStream_SecondClientRejected(t *testing.T) {
+func TestAIChatStream_SecondClientAlsoReceivesEvents(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	sessionID := "stream-busy"
-	_ = setupStreamSession(sessionID)
+	sessionID := "stream-multi"
+	ch := setupStreamSession(sessionID)
 	defer cleanupStreamSession(sessionID)
 
-	// First client claims the stream
-	require.True(t, service.TryClaimSSEStream(sessionID), "first claim should succeed")
-	defer service.ReleaseSSEStream(sessionID)
+	// First client connects (async) — claim is no longer required.
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	defer cancel1()
+	req1 := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
+	req1 = withProjectCookie(req1, env.ProjectDir).WithContext(ctx1)
 
-	// Second client should get an SSE error event with reason "sse_busy"
-	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
-	req = withProjectCookie(req, env.ProjectDir)
-	w := callHandler(AIChatStream, req)
+	done1 := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		w := callHandler(AIChatStream, req1)
+		done1 <- w
+	}()
 
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "text/event-stream", w.Header().Get("Content-Type"))
-	events := parseSSEEvents(w.Body.String())
-	assert.Len(t, events, 1)
-	assert.Equal(t, "error", events[0]["event"])
-	assert.Contains(t, events[0]["data"], "sse_busy")
+	// Give first client time to subscribe
+	time.Sleep(50 * time.Millisecond)
+
+	// Second client should NOT get sse_busy — fan-out allows both
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		ch <- ai.StreamEvent{Type: "thinking", Content: "shared"}
+		ch <- ai.StreamEvent{Type: "done"}
+	}()
+
+	req2 := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
+	req2 = withProjectCookie(req2, env.ProjectDir)
+	w2 := callHandler(AIChatStream, req2)
+
+	assert.Equal(t, http.StatusOK, w2.Code)
+	events := parseSSEEvents(w2.Body.String())
+	var sawThinking, sawBusy bool
+	for _, e := range events {
+		if e["event"] == "thinking" {
+			sawThinking = true
+		}
+		if e["event"] == "error" && strings.Contains(e["data"], "sse_busy") {
+			sawBusy = true
+		}
+	}
+	assert.False(t, sawBusy, "second client must not receive sse_busy")
+	assert.True(t, sawThinking, "second client should receive thinking via fan-out")
+
+	cancel1()
+	select {
+	case <-done1:
+	case <-time.After(2 * time.Second):
+	}
 }
 
 func TestAIChatStream_ClaimReleasedAfterDisconnect(t *testing.T) {
@@ -902,9 +944,9 @@ func TestAIChatStream_ClaimReleasedAfterDisconnect(t *testing.T) {
 
 	// Second client should now be able to claim the stream.
 	// Send a done event so the handler exits after connecting.
-	go func() {
-		ch <- ai.StreamEvent{Type: "done"}
-	}()
+	emitStreamEvents(ch,
+		ai.StreamEvent{Type: "done"},
+	)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -930,6 +972,7 @@ func TestAIChatStream_PlanUpdateEvent(t *testing.T) {
 	defer cleanupStreamSession(sessionID)
 
 	go func() {
+		time.Sleep(30 * time.Millisecond)
 		ch <- ai.StreamEvent{
 			Type: "plan_update",
 			Plan: &ai.PlanState{
@@ -987,6 +1030,7 @@ func TestAIChatStream_PlanUpdateEventNilPlan(t *testing.T) {
 	defer cleanupStreamSession(sessionID)
 
 	go func() {
+		time.Sleep(30 * time.Millisecond)
 		// plan_update with nil Plan should be silently skipped
 		ch <- ai.StreamEvent{Type: "plan_update", Plan: nil}
 		ch <- ai.StreamEvent{Type: "done"}
@@ -1029,6 +1073,7 @@ func TestAIChatStream_ModeUpdateEvent(t *testing.T) {
 	defer cleanupStreamSession(sessionID)
 
 	go func() {
+		time.Sleep(30 * time.Millisecond)
 		ch <- ai.StreamEvent{
 			Type: "mode_update",
 			Mode: &ai.ModeState{
@@ -1074,6 +1119,7 @@ func TestAIChatStream_ThinkingEffortUpdateEvent(t *testing.T) {
 	defer cleanupStreamSession(sessionID)
 
 	go func() {
+		time.Sleep(30 * time.Millisecond)
 		ch <- ai.StreamEvent{
 			Type: "thinking_effort_update",
 			ThinkingEffort: &ai.ThinkingEffortState{
@@ -1119,6 +1165,7 @@ func TestAIChatStream_CommandsUpdateEvent(t *testing.T) {
 	defer cleanupStreamSession(sessionID)
 
 	go func() {
+		time.Sleep(30 * time.Millisecond)
 		ch <- ai.StreamEvent{
 			Type: "commands_update",
 			Commands: []ai.AvailableCommandInfo{
@@ -1163,6 +1210,7 @@ func TestAIChatStream_ModelListUpdateEvent(t *testing.T) {
 	defer cleanupStreamSession(sessionID)
 
 	go func() {
+		time.Sleep(30 * time.Millisecond)
 		ch <- ai.StreamEvent{
 			Type: "model_list_update",
 			ModelList: &ai.ModelListState{
@@ -1208,6 +1256,7 @@ func TestAIChatStream_SessionCaptureEvent(t *testing.T) {
 	defer cleanupStreamSession(sessionID)
 
 	go func() {
+		time.Sleep(30 * time.Millisecond)
 		// session_capture is NOT handled by the SSE switch — it is consumed
 		// by the chat handler for external_session_id persistence but not
 		// forwarded to the SSE client. So only "done" should appear.
@@ -1236,10 +1285,10 @@ func TestAIChatStream_ThinkingDoneEvent(t *testing.T) {
 	ch := setupStreamSession(sessionID)
 	defer cleanupStreamSession(sessionID)
 
-	go func() {
-		ch <- ai.StreamEvent{Type: "thinking_done"}
-		ch <- ai.StreamEvent{Type: "done"}
-	}()
+	emitStreamEvents(ch,
+		ai.StreamEvent{Type: "thinking_done"},
+		ai.StreamEvent{Type: "done"},
+	)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/stream?session_id="+sessionID, nil)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -1260,6 +1309,7 @@ func TestAIChatStream_ConfigUpdateEvent(t *testing.T) {
 	defer cleanupStreamSession(sessionID)
 
 	go func() {
+		time.Sleep(30 * time.Millisecond)
 		ch <- ai.StreamEvent{
 			Type: "config_update",
 			Config: &ai.ConfigOptionState{
