@@ -25,7 +25,7 @@
       <template v-if="activeTab === 'current'">
         <!-- Current directory -->
         <button v-if="effectiveCurrentDir && !isAttached(effectiveCurrentDir)"
-          class="ad-file-row ad-current-item" @click="$emit('add-attached', effectiveCurrentDir)">
+          class="ad-file-row ad-current-item" @click="toggleAttached(effectiveCurrentDir)">
           <Folder :size="16" class="ad-file-icon" />
           <div class="ad-file-info">
             <span class="ad-file-name">
@@ -38,7 +38,7 @@
         </button>
         <!-- Current file -->
         <button v-if="currentFile && !isAttached(currentFile)"
-          class="ad-file-row ad-current-item" @click="$emit('add-attached', currentFile)">
+          class="ad-file-row ad-current-item" @click="toggleAttached(currentFile)">
           <FileText :size="16" class="ad-file-icon" />
           <div class="ad-file-info">
             <span class="ad-file-name">
@@ -58,7 +58,7 @@
         <button
           v-for="item in recentReferencedFiles" :key="item.path"
           class="ad-file-row" :class="{ 'ad-file-attached': isAttached(item.path) }"
-          @click="$emit('add-attached', item.path)"
+          @click="toggleAttached(item.path)"
         >
           <FileText :size="16" class="ad-file-icon" />
           <div class="ad-file-info">
@@ -75,7 +75,7 @@
         <button
           v-for="item in recentShares" :key="item.path"
           class="ad-file-row" :class="{ 'ad-file-attached': isAttached(item.path) }"
-          @click="$emit('add-attached', item.path)"
+          @click="toggleAttached(item.path)"
         >
           <Share2 :size="16" class="ad-file-icon" />
           <div class="ad-file-info">
@@ -92,7 +92,7 @@
         <button
           v-for="item in recentUploads" :key="item.path"
           class="ad-file-row" :class="{ 'ad-file-attached': isAttached(item.path) }"
-          @click="$emit('add-attached', item.path)"
+          @click="toggleAttached(item.path)"
         >
           <Upload :size="16" class="ad-file-icon" />
           <div class="ad-file-info">
@@ -137,6 +137,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   close: []
   'add-attached': [path: string]
+  'remove-attached': [path: string]
   upload: []
 }>()
 
@@ -161,6 +162,14 @@ tabs[3].label = t('chat.attach.recentUploads')
 
 function isAttached(path: string) {
   return props.attachedFiles?.includes(path) ?? false
+}
+
+function toggleAttached(path: string) {
+  if (isAttached(path)) {
+    emit('remove-attached', path)
+  } else {
+    emit('add-attached', path)
+  }
 }
 
 // Effective current dir: always show something (even at project root)

@@ -125,6 +125,7 @@
         :recent-referenced-files="recentReferencedFiles"
         @close="showAttachDrawer = false"
         @add-attached="handleAttachFile"
+        @remove-attached="handleRemoveAttached"
         @upload="handleUploadClick"
       />
       <!-- Teleported quick-send menu -->
@@ -379,6 +380,7 @@ const emit = defineEmits([
   'remove-file',
   'add-attached',
   'remove-attached',
+  'remove-attached-by-path',
   'remove-quote',
   'quote-click',
   'open-session-tab',
@@ -671,6 +673,10 @@ function clearInput() {
 
 function handleAttachFile(filePath) {
   emit('add-attached', filePath)
+}
+
+function handleRemoveAttached(filePath) {
+  emit('remove-attached-by-path', filePath)
 }
 
 function handleUploadClick() {

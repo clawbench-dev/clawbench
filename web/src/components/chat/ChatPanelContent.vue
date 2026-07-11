@@ -98,6 +98,7 @@
       @remove-file="removeFile"
       @add-attached="addAttachedFile"
       @remove-attached="removeAttachedFile"
+      @remove-attached-by-path="removeAttachedFileByPath"
       @remove-quote="setQuoteData(null)"
       @quote-click="handleQuoteClick"
       @open-session-tab="identity.openSessionTab"
@@ -402,7 +403,7 @@ const stream = useChatStream({
 })
 
 const { pendingFiles, attachedFiles, handleFileSelect, handleFileDrop, removeFile, addAttachedFile, removeAttachedFile, cleanupPreviewUrls, clearPendingFiles } = useFileUpload()
-const { quoteData, setQuoteData, clearAll } = useChatContext()
+const { quoteData, setQuoteData, clearAll, removeAttachedFileByPath } = useChatContext()
 
 const manager = useSessionManager({
   messages,
