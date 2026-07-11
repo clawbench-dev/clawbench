@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"clawbench/internal/model"
 )
@@ -73,6 +75,13 @@ func UploadFile(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mu
 		customDir = true
 		dirAbs, ok := resolveAbsPath(w, r, dir)
 		if !ok {
+			return
+		}
+		// Auto-create the target directory if it doesn't exist (same behavior
+		// as the default uploads dir). This is necessary for share-in uploads
+		// where the directory is created on first use.
+		if err := os.MkdirAll(dirAbs, 0o755); err != nil {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "DirectoryNotFound")
 			return
 		}
 		dirInfo, err := os.Stat(dirAbs)
@@ -152,4 +161,62 @@ func UploadFile(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mu
 		"ok":   true,
 		"path": relativePath,
 	})
+}
+
+// shareInFile represents a file in the share-in directory.
+type shareInFile struct {
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	Size    int64  `json:"size"`
+	ModTime string `json:"modTime"`
+}
+
+// ShareInRecent handles GET /api/share-in/recent
+// Returns the 5 most recently modified files in .clawbench/share-in/.
+func ShareInRecent(w http.ResponseWriter, r *http.Request) {
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+
+	shareInDir := filepath.Join(projectPath, ".clawbench", "share-in")
+
+	entries, err := os.ReadDir(shareInDir)
+	if err != nil {
+		// Directory doesn't exist yet — return empty list
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]shareInFile{})
+		return
+	}
+
+	var files []shareInFile
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		relPath := filepath.ToSlash(filepath.Join(".clawbench", "share-in", entry.Name()))
+		files = append(files, shareInFile{
+			Name:    entry.Name(),
+			Path:    relPath,
+			Size:    info.Size(),
+			ModTime: info.ModTime().Format(time.RFC3339),
+		})
+	}
+
+	// Sort by modification time descending (most recent first)
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].ModTime > files[j].ModTime
+	})
+
+	// Limit to 5
+	if len(files) > 5 {
+		files = files[:5]
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(files)
 }

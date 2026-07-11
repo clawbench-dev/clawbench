@@ -216,6 +216,7 @@ export default {
       currentFile: '当前文件',
       currentDir: '当前目录',
       recentReferences: '最近引用',
+      recentShares: '最近分享',
       uploadFile: '上传文件',
       dropToUpload: '松开上传文件',
       uploading: '上传中...',

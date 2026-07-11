@@ -71,6 +71,7 @@ import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 
 import okhttp3.MediaType;
+import okhttp3.MultipartBody;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
@@ -220,6 +221,9 @@ public class MainActivity extends AppCompatActivity {
 
         // Check if launched from notification
         logLaunchIntent(getIntent());
+
+        // Handle Share In (files shared from other apps)
+        handleShareIntent(getIntent());
 
         // Initialize trust-all SSL for self-signed HTTPS servers (used by BackgroundService)
         BackgroundService.initTrustAllSSL();
@@ -1203,7 +1207,131 @@ public class MainActivity extends AppCompatActivity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        handleShareIntent(intent);
         handleNotificationIntent(intent);
+    }
+
+    /**
+     * Handle Share In: files shared from other apps via ACTION_SEND / ACTION_SEND_MULTIPLE.
+     * Uploads each file to .clawbench/share-in/ directory on the backend server.
+     * No WebView interaction needed — direct OkHttp upload using existing auth cookie.
+     */
+    void handleShareIntent(Intent intent) {
+        if (intent == null) return;
+        String action = intent.getAction();
+        if (!Intent.ACTION_SEND.equals(action) && !Intent.ACTION_SEND_MULTIPLE.equals(action)) return;
+
+        AppLog.i(TAG, "ShareIn: received intent action=" + action);
+
+        // Collect URIs from the share intent
+        java.util.List<Uri> uris = new java.util.ArrayList<>();
+        if (Intent.ACTION_SEND.equals(action)) {
+            Uri uri = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+            if (uri != null) uris.add(uri);
+        } else {
+            android.content.ClipData clipData = intent.getClipData();
+            if (clipData != null) {
+                for (int i = 0; i < clipData.getItemCount(); i++) {
+                    Uri uri = clipData.getItemAt(i).getUri();
+                    if (uri != null) uris.add(uri);
+                }
+            }
+        }
+
+        if (uris.isEmpty()) {
+            AppLog.w(TAG, "ShareIn: no URIs in intent");
+            return;
+        }
+
+        AppLog.i(TAG, "ShareIn: " + uris.size() + " file(s) to upload");
+
+        // Upload in background thread
+        new Thread(() -> {
+            String serverUrl = prefs.getString(KEY_SERVER_URL, "");
+            if (serverUrl.isEmpty()) {
+                AppLog.w(TAG, "ShareIn: no server URL");
+                runOnUiThread(() -> Toast.makeText(this, R.string.share_in_no_server, Toast.LENGTH_SHORT).show());
+                return;
+            }
+
+            CookieManager.getInstance().flush();
+            String cookie = CookieManager.getInstance().getCookie(serverUrl);
+            if (cookie == null || cookie.isEmpty()) {
+                AppLog.w(TAG, "ShareIn: no auth cookie");
+                runOnUiThread(() -> Toast.makeText(this, R.string.share_in_no_server, Toast.LENGTH_SHORT).show());
+                return;
+            }
+
+            OkHttpClient client = buildTrustingOkHttpClient();
+            String uploadUrl = serverUrl + "/api/upload/file";
+            int successCount = 0;
+
+            for (Uri uri : uris) {
+                try {
+                    // Resolve filename from content URI
+                    String fileName = null;
+                    try (android.database.Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
+                        if (cursor != null && cursor.moveToFirst()) {
+                            int nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
+                            if (nameIndex >= 0) fileName = cursor.getString(nameIndex);
+                        }
+                    }
+                    if (fileName == null || fileName.isEmpty()) {
+                        fileName = "shared_file_" + System.currentTimeMillis();
+                    }
+
+                    // Read content into temp file (needed for OkHttp multipart)
+                    File tempFile = new File(getCacheDir(), "share_in_" + System.currentTimeMillis() + "_" + fileName);
+                    try (InputStream is = getContentResolver().openInputStream(uri);
+                         FileOutputStream fos = new FileOutputStream(tempFile)) {
+                        byte[] buffer = new byte[8192];
+                        int len;
+                        while ((len = is.read(buffer)) != -1) {
+                            fos.write(buffer, 0, len);
+                        }
+                    }
+
+                    // Build multipart upload request with dir=.clawbench/share-in
+                    String mimeType = getContentResolver().getType(uri);
+                    if (mimeType == null || mimeType.isEmpty()) mimeType = "application/octet-stream";
+                    okhttp3.MultipartBody multipartBody = new okhttp3.MultipartBody.Builder()
+                            .setType(okhttp3.MultipartBody.FORM)
+                            .addFormDataPart("file", fileName,
+                                    RequestBody.create(tempFile, MediaType.parse(mimeType)))
+                            .addFormDataPart("dir", ".clawbench/share-in")
+                            .build();
+
+                    Request request = new Request.Builder()
+                            .url(uploadUrl)
+                            .addHeader("Cookie", cookie)
+                            .post(multipartBody)
+                            .build();
+
+                    try (Response response = client.newCall(request).execute()) {
+                        if (response.isSuccessful()) {
+                            successCount++;
+                            AppLog.i(TAG, "ShareIn: uploaded " + fileName);
+                        } else {
+                            AppLog.w(TAG, "ShareIn: upload failed for " + fileName + ", code=" + response.code());
+                        }
+                    }
+
+                    // Clean up temp file
+                    tempFile.delete();
+                } catch (Exception e) {
+                    AppLog.e(TAG, "ShareIn: error uploading URI=" + uri, e);
+                }
+            }
+
+            final int count = successCount;
+            runOnUiThread(() -> {
+                if (count > 0) {
+                    Toast.makeText(this, getString(R.string.share_in_success, count), Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(this, R.string.share_in_failed, Toast.LENGTH_SHORT).show();
+                }
+            });
+        }).start();
     }
 
     /**

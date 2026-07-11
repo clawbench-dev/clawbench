@@ -134,6 +134,15 @@
             <span class="attach-menu-item-name">{{ getFileName(currentDir) }}</span>
           </button>
         </template>
+        <!-- Recently shared group (Share In) -->
+        <template v-if="recentShares.length > 0">
+          <div class="attach-menu-group-title">{{ t('chat.attach.recentShares') }}</div>
+          <button v-for="item in recentShares" :key="item.path" class="attach-menu-item" @click="handleAttachFile(item.path)">
+            <Share2 :size="14" :stroke-width="1.5" />
+            <span class="attach-menu-item-name">{{ item.name }}</span>
+            <span class="attach-menu-item-count">{{ formatFileSize(item.size) }}</span>
+          </button>
+        </template>
         <!-- Recently referenced group -->
         <template v-if="recentReferencedFiles.length > 0">
           <div class="attach-menu-group-title">{{ t('chat.attach.recentReferences') }}</div>
@@ -270,12 +279,13 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, FileText, Folder, XCircle, Inbox, Send, Square, Zap, Loader2, Cpu, Compass, Brain, Cable, Activity, MessagesSquare, FileImage, FileVideo, FileMusic } from 'lucide-vue-next'
+import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, FileText, Folder, XCircle, Inbox, Send, Square, Zap, Loader2, Cpu, Compass, Brain, Cable, Activity, MessagesSquare, FileImage, FileVideo, FileMusic, Share2 } from 'lucide-vue-next'
 import { baseName } from '@/utils/path.ts'
 import { formatFileSize, getFileType } from '@/utils/fileType.ts'
 import { isThumbableExt } from '@/utils/fileManager.ts'
 import { isImageFile } from '@/utils/fileAttachmentUtils.ts'
 import { computeRecentReferencedFiles, computeHasFileGroups, computeAttachMenuItemCount } from '@/utils/chatInputUtils.ts'
+import { useShareIn } from '@/composables/useShareIn'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import QuickSendDrawer from '@/components/chat/QuickSendDrawer.vue'
 import SessionSettingModal from '@/components/chat/SessionSettingModal.vue'
@@ -318,6 +328,7 @@ const usageColor = computed(() => {
 })
 const dialog = useDialog()
 const quickSendStore = useQuickSend()
+const { recentShares, fetchRecentShares } = useShareIn()
 const { items: quickSendItems, fetchItems } = quickSendStore
 const showSettingsModal = ref(false)
 const settingsModalInitialTab = ref('model')
@@ -558,11 +569,11 @@ const recentReferencedFiles = computed(() => {
 })
 
 const hasFileGroups = computed(() => {
-  return computeHasFileGroups(props.currentFile?.path, props.currentDir, props.attachedFiles, recentReferencedFiles.value)
+  return computeHasFileGroups(props.currentFile?.path, props.currentDir, props.attachedFiles, recentReferencedFiles.value, recentShares.value.length)
 })
 
 const attachMenuItemCount = computed(() => {
-  return computeAttachMenuItemCount(props.currentFile?.path, props.currentDir, props.attachedFiles, recentReferencedFiles.value)
+  return computeAttachMenuItemCount(props.currentFile?.path, props.currentDir, props.attachedFiles, recentReferencedFiles.value, recentShares.value.length)
 })
 
 function handleCreateClick(e) {
@@ -712,8 +723,11 @@ function handleUploadClick() {
   }
 }
 
-function toggleAttachMenu() {
+async function toggleAttachMenu() {
   showAttachMenu.value = !showAttachMenu.value
+  if (showAttachMenu.value) {
+    fetchRecentShares()
+  }
 }
 
 function handleSendClick() {

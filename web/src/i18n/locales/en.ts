@@ -216,6 +216,7 @@ export default {
       currentFile: 'Current file',
       currentDir: 'Current directory',
       recentReferences: 'Recent references',
+      recentShares: 'Recently shared',
       uploadFile: 'Upload file',
       dropToUpload: 'Drop to upload',
       uploading: 'Uploading...',
