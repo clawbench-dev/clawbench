@@ -211,6 +211,9 @@ onUnmounted(() => {
 
 defineExpose({
   fitWidth,
+  onError,
+  loading,
+  error,
 })
 </script>
 
