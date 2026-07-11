@@ -175,8 +175,25 @@ onUnmounted(() => {
   display: none !important;
 }
 
-/* PPT overrides: slides full width, no extra spacing */
-.office-preview-body :deep([class*="slide"]) {
+/* PPT overrides: wrapper fills container, slides full width, no extra spacing */
+.office-preview-body :deep(.vue-office-pptx) {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.office-preview-body :deep(.pptx-preview-wrapper) {
+  width: 100% !important;
+  background: var(--bg-primary) !important;
+}
+
+.office-preview-body :deep(.pptx-preview-slide-wrapper) {
+  width: 100% !important;
+  margin: 0 auto 10px !important;
+}
+
+.office-preview-body :deep(.slide-wrapper),
+.office-preview-body :deep(.slide-master-wrapper),
+.office-preview-body :deep(.slide-layout-wrapper) {
   width: 100% !important;
   max-width: 100% !important;
   margin: 0 !important;
