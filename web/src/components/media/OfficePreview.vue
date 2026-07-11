@@ -312,15 +312,17 @@ onUnmounted(() => {
   min-height: 100%;
 }
 
-/* Word overrides: remove fixed padding, make responsive */
+/* Word overrides: remove all padding/margin, full-width, match bg */
 .office-preview-body :deep(.docx-wrapper) {
-  padding: 8px 12px !important;
+  padding: 0 !important;
   max-width: 100% !important;
   background: var(--bg-primary) !important;
 }
 
-.office-preview-body :deep(.docx-wrapper > div.docx) {
-  padding: 0 !important;
+.office-preview-body :deep(.docx-wrapper > section.docx) {
+  box-shadow: none !important;
+  margin-bottom: 0 !important;
+  width: 100% !important;
 }
 
 .office-preview-body :deep(.docx img) {
