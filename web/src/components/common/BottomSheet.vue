@@ -149,25 +149,20 @@ defineExpose({
   right: 0;
   top: 0;
   background: var(--bg-secondary, #fff);
-  border-top: 1px solid var(--border-color, #e0e0e0);
+  border-top: none;
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   animation: bs-slideUp 0.25s ease;
 }
 
-/* Compact mode - auto height, no border-radius */
+/* Compact mode - auto height */
 .bs-panel.bs-compact {
   top: auto;
   height: auto;
   max-height: 50%;
-  border-radius: 0;
-  border-top: 1px solid var(--border-color, #e0e0e0);
-  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15);
-}
-
-.bs-panel.bs-compact .bs-header {
-  border-radius: 0;
 }
 
 .bs-panel.bs-leaving {
@@ -291,18 +286,11 @@ defineExpose({
   overflow-y: auto;
 }
 
-/* Auto mode - auto height based on content, max full screen, no border-radius */
+/* Auto mode - auto height based on content, max full screen */
 .bs-panel.bs-auto {
   top: auto;
   height: auto;
   max-height: 100%;
-  border-radius: 0;
-  border-top: 1px solid var(--border-color, #e0e0e0);
-  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15);
-}
-
-.bs-panel.bs-auto .bs-header {
-  border-radius: 0;
 }
 
 .bs-panel.bs-auto .bs-body {
