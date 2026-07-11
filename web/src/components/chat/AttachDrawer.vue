@@ -34,6 +34,7 @@
             </span>
             <span class="ad-file-meta">{{ effectiveCurrentDir }}</span>
           </div>
+          <ExternalLink :size="14" class="ad-file-open" @click.stop="emit('file-open', effectiveCurrentDir)" />
           <Check :size="14" class="ad-file-check" />
         </button>
         <!-- Current file -->
@@ -47,6 +48,7 @@
             </span>
             <span class="ad-file-meta">{{ dirName(currentFile) }}</span>
           </div>
+          <ExternalLink :size="14" class="ad-file-open" @click.stop="emit('file-open', currentFile)" />
           <Check :size="14" class="ad-file-check" />
         </button>
         <div v-if="!currentFile && !effectiveCurrentDir" class="ad-empty">{{ t('chat.attach.emptyCurrent') }}</div>
@@ -65,6 +67,7 @@
             <span class="ad-file-name">{{ baseName(item.path) }}</span>
             <span class="ad-file-meta">{{ dirName(item.path) }} · x{{ item.count }}</span>
           </div>
+          <ExternalLink :size="14" class="ad-file-open" @click.stop="emit('file-open', item.path)" />
           <Check :size="14" class="ad-file-check" />
         </button>
       </template>
@@ -82,6 +85,7 @@
             <span class="ad-file-name">{{ item.name }}</span>
             <span class="ad-file-meta">{{ dirName(item.path) }} · {{ formatModTime(item.modTime) }} · {{ formatFileSize(item.size) }}</span>
           </div>
+          <ExternalLink :size="14" class="ad-file-open" @click.stop="emit('file-open', item.path)" />
           <Check :size="14" class="ad-file-check" />
         </button>
       </template>
@@ -99,6 +103,7 @@
             <span class="ad-file-name">{{ item.name }}</span>
             <span class="ad-file-meta">{{ dirName(item.path) }} · {{ formatModTime(item.modTime) }} · {{ formatFileSize(item.size) }}</span>
           </div>
+          <ExternalLink :size="14" class="ad-file-open" @click.stop="emit('file-open', item.path)" />
           <Check :size="14" class="ad-file-check" />
         </button>
       </template>
@@ -108,7 +113,7 @@
 
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
-import { Paperclip, Upload, FileText, Folder, Share2, Check } from 'lucide-vue-next'
+import { Paperclip, Upload, FileText, Folder, Share2, Check, ExternalLink } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import { useI18n } from 'vue-i18n'
 import { useShareIn } from '@/composables/useShareIn'
@@ -139,6 +144,7 @@ const emit = defineEmits<{
   'add-attached': [path: string]
   'remove-attached': [path: string]
   upload: []
+  'file-open': [path: string]
 }>()
 
 const { t } = useI18n()
@@ -324,6 +330,17 @@ watch(() => props.open, (v) => {
 }
 .ad-file-attached .ad-file-check {
   visibility: visible;
+}
+.ad-file-open {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  opacity: 0.5;
+  transition: opacity 0.15s, color 0.15s;
+}
+.ad-file-row:hover .ad-file-open,
+.ad-file-row:active .ad-file-open {
+  opacity: 1;
+  color: var(--accent-color);
 }
 
 /* Current item label */

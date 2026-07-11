@@ -127,6 +127,7 @@
         @add-attached="handleAttachFile"
         @remove-attached="handleRemoveAttached"
         @upload="handleUploadClick"
+        @file-open="(path) => emit('file-tag-click', path)"
       />
       <!-- Teleported quick-send menu -->
       <PopupMenu v-model:show="showQuickMenu" :target-element="sendBtnRef" :max-width="260" :max-height="280" :menu-items-count="quickSendItems.length + 1">
