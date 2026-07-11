@@ -1,7 +1,7 @@
 <template>
   <div class="office-preview-container">
     <!-- Preview body — component always mounted to avoid dead-lock -->
-    <div class="office-preview-body" ref="bodyRef">
+    <div class="office-preview-body">
       <VueOfficeDocx v-if="isWord" :src="fileUrl" @rendered="onRendered" @error="onError" />
       <VueOfficeExcel v-else-if="isExcel" :src="fileUrl" @rendered="onRendered" @error="onError" />
       <VueOfficePptx v-else-if="isPpt" :src="fileUrl" @rendered="onRendered" @error="onError" />
@@ -65,13 +65,12 @@ const { isAppMode } = useAppMode()
 
 const loading = ref(true)
 const error = ref('')
-const bodyRef = ref(null)
 
 // Determine office sub-type from extension
 const lower = computed(() => (props.file?.name || '').toLowerCase())
-const isWord = computed(() => lower.value.endsWith('.docx') || lower.value.endsWith('.doc'))
+const isWord = computed(() => lower.value.endsWith('.docx'))
 const isExcel = computed(() => lower.value.endsWith('.xlsx') || lower.value.endsWith('.xls'))
-const isPpt = computed(() => lower.value.endsWith('.pptx') || lower.value.endsWith('.ppt'))
+const isPpt = computed(() => lower.value.endsWith('.pptx'))
 
 // File URL via /api/local-file/ (same pattern as ImagePreview/PdfPreview)
 const mediaTimestamp = ref(Date.now())
@@ -160,12 +159,12 @@ onUnmounted(() => {
 }
 
 /* Excel overrides: small font, limit cell width, hide toolbar */
-.office-preview-body :deep(table) {
+.office-preview-body :deep(.x-spreadsheet table) {
   font-size: 11px !important;
 }
 
-.office-preview-body :deep(td),
-.office-preview-body :deep(th) {
+.office-preview-body :deep(.x-spreadsheet td),
+.office-preview-body :deep(.x-spreadsheet th) {
   max-width: 120px;
   word-break: break-all;
 }

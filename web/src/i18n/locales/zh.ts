@@ -9,6 +9,7 @@ export default {
     copy: '复制',
     copied: '已复制',
     download: '下载',
+    retry: '重试',
     rename: '重命名',
     open: '打开',
     save: '保存',
@@ -614,6 +615,7 @@ export default {
     viewer: {
       fileTooLarge: '文件过大，无法在浏览器中预览',
       binaryFile: '二进制文件，无法在浏览器中预览',
+      loadFailed: '文档加载失败',
       truncated: '内容已截断，仅显示部分文本',
     },
     details: {

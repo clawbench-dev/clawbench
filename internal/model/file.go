@@ -124,7 +124,7 @@ func IsVideoFile(name string) bool {
 func IsOfficeFile(name string) bool {
 	lower := strings.ToLower(name)
 	officeExts := []string{
-		".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt",
+		".docx", ".xlsx", ".pptx", ".xls",
 	}
 	for _, ext := range officeExts {
 		if strings.HasSuffix(lower, ext) {

@@ -9,6 +9,7 @@ export default {
     copy: 'Copy',
     copied: 'Copied',
     download: 'Download',
+    retry: 'Retry',
     rename: 'Rename',
     open: 'Open',
     save: 'Save',
@@ -614,6 +615,7 @@ export default {
     viewer: {
       fileTooLarge: 'File too large to preview in browser',
       binaryFile: 'Binary file, cannot preview in browser',
+      loadFailed: 'Failed to load document',
       truncated: 'Content truncated, showing partial text only',
     },
     details: {

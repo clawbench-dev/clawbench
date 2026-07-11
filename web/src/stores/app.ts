@@ -333,7 +333,7 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
     const isImage = isImageFile || imageExts.some(ext => lower.endsWith(ext))
     const isAudio = isAudioFile || audioExts.some(ext => lower.endsWith(ext))
     const isVideo = videoExts.some(ext => lower.endsWith(ext))
-    const officeExts = ['.docx', '.xlsx', '.pptx', '.doc', '.xls', '.ppt']
+    const officeExts = ['.docx', '.xlsx', '.pptx', '.xls']
     const isOffice = officeExts.some(ext => lower.endsWith(ext))
     if (isPdf) {
         const fileName = baseName(path)
