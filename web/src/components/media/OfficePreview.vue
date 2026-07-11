@@ -63,7 +63,7 @@ import '@vue-office/excel/lib/index.css'
 
 const TAG = 'OfficePreview'
 
-const MIN_SCALE = 0.25
+const MIN_SCALE = 1.0
 const MAX_SCALE = 5.0
 
 const props = defineProps({
