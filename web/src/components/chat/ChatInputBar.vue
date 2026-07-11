@@ -118,7 +118,7 @@
       </div>
       <!-- Attach drawer (BottomSheet) -->
       <AttachDrawer
-        :open="showAttachDrawer"
+        :open="attachDrawer.effectiveOpen.value"
         :current-file="currentFile?.path"
         :current-dir="currentDir"
         :attached-files="attachedFiles"
@@ -255,12 +255,12 @@ import { isImageFile } from '@/utils/fileAttachmentUtils.ts'
 import { computeRecentReferencedFiles } from '@/utils/chatInputUtils.ts'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import AttachDrawer from '@/components/chat/AttachDrawer.vue'
+import { useTabDrawer } from '@/composables/useTabDrawer'
 import QuickSendDrawer from '@/components/chat/QuickSendDrawer.vue'
 import SessionSettingModal from '@/components/chat/SessionSettingModal.vue'
 import { createStopButtonMachine } from '@/utils/stopButtonMachine.ts'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useQuickSend } from '@/composables/useQuickSend'
-import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useChatKeyboard } from '@/composables/useChatKeyboard'
 import { useSessionIdentity } from '@/composables/useSessionIdentity'
 import { useAgents } from '@/composables/useAgents'
@@ -400,6 +400,7 @@ const fileInputRef = ref(null)
 const isDragOver = ref(false)
 const dragCounter = ref(0)
 const showAttachDrawer = ref(false)
+const attachDrawer = useTabDrawer('chat', showAttachDrawer)
 const attachMenuRef = ref(null) // kept for ref stability, no longer used for PopupMenu
 const showQuickMenu = ref(false)
 const sendBtnRef = ref(null)

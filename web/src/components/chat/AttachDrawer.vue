@@ -10,24 +10,6 @@
       </div>
     </template>
 
-    <!-- Current file / directory cards (fixed, above tabs) -->
-    <div v-if="currentFile || currentDir" class="ad-current-row">
-      <button v-if="currentFile && !isAttached(currentFile)" class="ad-current-card" @click="$emit('add-attached', currentFile)">
-        <FileText :size="14" />
-        <div class="ad-current-card-info">
-          <span class="ad-current-card-name">{{ baseName(currentFile) }}</span>
-          <span class="ad-current-card-path">{{ dirName(currentFile) }}</span>
-        </div>
-      </button>
-      <button v-if="currentDir && !isAttached(currentDir)" class="ad-current-card" @click="$emit('add-attached', currentDir)">
-        <Folder :size="14" />
-        <div class="ad-current-card-info">
-          <span class="ad-current-card-name">{{ baseName(currentDir) }}</span>
-          <span class="ad-current-card-path">{{ currentDir }}</span>
-        </div>
-      </button>
-    </div>
-
     <!-- Tab bar (horizontal scroll) -->
     <div class="ad-tab-bar">
       <button
@@ -39,6 +21,37 @@
 
     <!-- Tab content -->
     <div class="ad-content">
+      <!-- Current (file + directory) -->
+      <template v-if="activeTab === 'current'">
+        <!-- Current directory -->
+        <button v-if="effectiveCurrentDir && !isAttached(effectiveCurrentDir)"
+          class="ad-file-row ad-current-item" @click="$emit('add-attached', effectiveCurrentDir)">
+          <Folder :size="16" class="ad-file-icon" />
+          <div class="ad-file-info">
+            <span class="ad-file-name">
+              <span class="ad-label">{{ t('chat.attach.currentDir') }}</span>
+              {{ currentDirDisplayName }}
+            </span>
+            <span class="ad-file-meta">{{ effectiveCurrentDir }}</span>
+          </div>
+          <Check :size="14" class="ad-file-check" />
+        </button>
+        <!-- Current file -->
+        <button v-if="currentFile && !isAttached(currentFile)"
+          class="ad-file-row ad-current-item" @click="$emit('add-attached', currentFile)">
+          <FileText :size="16" class="ad-file-icon" />
+          <div class="ad-file-info">
+            <span class="ad-file-name">
+              <span class="ad-label">{{ t('chat.attach.currentFile') }}</span>
+              {{ baseName(currentFile) }}
+            </span>
+            <span class="ad-file-meta">{{ dirName(currentFile) }}</span>
+          </div>
+          <Check :size="14" class="ad-file-check" />
+        </button>
+        <div v-if="!currentFile && !effectiveCurrentDir" class="ad-empty">{{ t('chat.attach.emptyCurrent') }}</div>
+      </template>
+
       <!-- Recently referenced -->
       <template v-if="activeTab === 'references'">
         <div v-if="!recentReferencedFiles?.length" class="ad-empty">{{ t('chat.attach.emptyReferences') }}</div>
@@ -94,7 +107,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import { Paperclip, Upload, FileText, Folder, Share2, Check } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import { useI18n } from 'vue-i18n'
@@ -131,22 +144,31 @@ const { t } = useI18n()
 const { recentShares, fetchRecentShares } = useShareIn()
 const { recentUploads, fetchRecentUploads } = useUploadRecent()
 
-const activeTab = ref('references')
+const activeTab = ref('current')
 
 const tabs = [
+  { key: 'current', label: '' },
   { key: 'references', label: '' },
   { key: 'shares', label: '' },
   { key: 'uploads', label: '' },
 ]
 
 // Lazy-init tab labels
-tabs[0].label = t('chat.attach.recentReferences')
-tabs[1].label = t('chat.attach.recentShares')
-tabs[2].label = t('chat.attach.recentUploads')
+tabs[0].label = t('chat.attach.currentTab')
+tabs[1].label = t('chat.attach.recentReferences')
+tabs[2].label = t('chat.attach.recentShares')
+tabs[3].label = t('chat.attach.recentUploads')
 
 function isAttached(path: string) {
   return props.attachedFiles?.includes(path) ?? false
 }
+
+// Effective current dir: always show something (even at project root)
+const effectiveCurrentDir = computed(() => props.currentDir || '.')
+const currentDirDisplayName = computed(() => {
+  const dir = effectiveCurrentDir.value
+  return dir === '.' ? '/' : baseName(dir)
+})
 
 function formatModTime(iso: string) {
   if (!iso) return ''
@@ -199,53 +221,6 @@ watch(() => props.open, (v) => {
 .ad-upload-btn:active {
   background: var(--accent-color);
   color: #fff;
-}
-
-/* Current file/dir cards */
-.ad-current-row {
-  display: flex;
-  gap: 8px;
-  padding: 8px 12px;
-  overflow-x: auto;
-}
-.ad-current-card {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--border-color);
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  cursor: pointer;
-  white-space: nowrap;
-  flex-shrink: 0;
-  max-width: 50%;
-  overflow: hidden;
-}
-.ad-current-card:active {
-  background: var(--accent-color);
-  color: #fff;
-  border-color: var(--accent-color);
-}
-.ad-current-card-info {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  overflow: hidden;
-}
-.ad-current-card-name {
-  font-size: 13px;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.ad-current-card-path {
-  font-size: 11px;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-family: var(--font-mono);
 }
 
 /* Tab bar */
@@ -340,5 +315,22 @@ watch(() => props.open, (v) => {
 }
 .ad-file-attached .ad-file-check {
   visibility: visible;
+}
+
+/* Current item label */
+.ad-label {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-right: 6px;
+  vertical-align: middle;
+  letter-spacing: 0.3px;
+}
+.ad-current-item {
+  background: var(--bg-secondary);
 }
 </style>
