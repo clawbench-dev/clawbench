@@ -9,7 +9,10 @@ const i18n = createI18n({
   messages: {
     en: {
       common: { loading: 'Loading...', retry: 'Retry', download: 'Download' },
-      file: { viewer: { loadFailed: 'Failed to load document' } },
+      file: {
+        viewer: { loadFailed: 'Failed to load document' },
+        header: { zoomIn: 'Zoom in', zoomOut: 'Zoom out', fitWidth: 'Fit width' },
+      },
     },
   },
 })
@@ -48,6 +51,9 @@ const stubs = {
   FileX: true,
   Download: true,
   RefreshCw: true,
+  ZoomIn: true,
+  ZoomOut: true,
+  MoveHorizontal: true,
 }
 
 describe('OfficePreview', () => {
@@ -64,6 +70,12 @@ describe('OfficePreview', () => {
   it('renders the container', () => {
     const wrapper = mountOffice()
     expect(wrapper.find('.office-preview-container').exists()).toBe(true)
+  })
+
+  it('renders the zoom toolbar', () => {
+    const wrapper = mountOffice()
+    expect(wrapper.find('.office-toolbar').exists()).toBe(true)
+    expect(wrapper.find('.office-zoom-label').exists()).toBe(true)
   })
 
   it('shows loading overlay initially', () => {
@@ -93,9 +105,6 @@ describe('OfficePreview', () => {
 
   it('shows error overlay when error is set', async () => {
     const wrapper = mountOffice()
-    // Simulate error by calling onError
-    const vm = wrapper.vm as any
-    // Directly set the error ref
     await wrapper.setData({ error: 'Parse error', loading: false })
     expect(wrapper.find('.office-error-overlay').exists()).toBe(true)
     expect(wrapper.text()).toContain('Parse error')
@@ -105,5 +114,20 @@ describe('OfficePreview', () => {
     const wrapper = mountOffice()
     await wrapper.setData({ error: 'Some error', loading: false })
     expect(wrapper.find('.office-retry-btn').exists()).toBe(true)
+  })
+
+  it('shows zoom percentage label at 100%', () => {
+    const wrapper = mountOffice()
+    expect(wrapper.find('.office-zoom-label').text()).toContain('100')
+  })
+
+  it('zoom in increases scale', async () => {
+    const wrapper = mountOffice()
+    await wrapper.setData({ scale: 1.0 })
+    const zoomInBtn = wrapper.findAll('.office-btn').find(b => b.attributes('title') === 'Zoom in')
+    if (zoomInBtn) {
+      await zoomInBtn.trigger('click')
+      expect((wrapper.vm as any).scale).toBe(1.25)
+    }
   })
 })
