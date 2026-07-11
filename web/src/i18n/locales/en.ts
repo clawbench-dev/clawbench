@@ -9,6 +9,7 @@ export default {
     copy: 'Copy',
     copied: 'Copied',
     download: 'Download',
+    retry: 'Retry',
     rename: 'Rename',
     open: 'Open',
     save: 'Save',
@@ -23,6 +24,12 @@ export default {
   codeBlock: {
     wrapOn: 'Word wrap on',
     wrapOff: 'Word wrap off',
+  },
+  diffBlock: {
+    wrapOn: 'Word wrap on',
+    wrapOff: 'Word wrap off',
+    lineNumOn: 'Line numbers on',
+    lineNumOff: 'Line numbers off',
   },
   tableBlock: {
     label: 'Table',
@@ -210,7 +217,15 @@ export default {
       currentFile: 'Current file',
       currentDir: 'Current directory',
       recentReferences: 'Recent references',
+      recentShares: 'Recently shared',
+      recentUploads: 'Recently uploaded',
+      currentTab: 'Current',
+      emptyCurrent: 'No current file or directory',
       uploadFile: 'Upload file',
+      drawerTitle: 'Attachments',
+      emptyReferences: 'No recently referenced files',
+      emptyShares: 'No recently shared files',
+      emptyUploads: 'No recently uploaded files',
       dropToUpload: 'Drop to upload',
       uploading: 'Uploading...',
       openFile: 'Open file',
@@ -251,7 +266,7 @@ export default {
       deepThinking: 'Thinking',
     },
     fileChanges: {
-      title: 'Changes',
+      title: 'View Changed Files',
       created: 'Created',
       modified: 'Modified',
     },
@@ -607,6 +622,7 @@ export default {
     viewer: {
       fileTooLarge: 'File too large to preview in browser',
       binaryFile: 'Binary file, cannot preview in browser',
+      loadFailed: 'Failed to load document',
       truncated: 'Content truncated, showing partial text only',
     },
     details: {
@@ -639,6 +655,9 @@ export default {
       exportHtmlSuccess: 'HTML exported',
       exportHtmlFailed: 'Export failed',
       exportHtmlSkippedImages: '{n} images could not be embedded',
+      zoomIn: 'Zoom in',
+      zoomOut: 'Zoom out',
+      fitWidth: 'Fit width',
     },
     overlay: {
       back: 'Back',

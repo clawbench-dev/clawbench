@@ -95,6 +95,19 @@ describe('extractToc - markdown', () => {
     expect(toc[0].id).toBe('hello-world')
   })
 
+  it('deduplicates heading IDs for repeated headings', () => {
+    // Bug: duplicate headings like "## Introduction" appearing twice generated
+    // the same id="introduction", causing getElementById() to always find the first one.
+    // Fix: second occurrence gets id="introduction-2", third gets "introduction-3", etc.
+    const content = '# Introduction\nSome text\n## Details\n## Introduction\nMore text\n## Introduction\nEven more'
+    const toc = extractToc(content, 'markdown')
+    expect(toc).toHaveLength(4)
+    expect(toc[0].id).toBe('introduction')     // first occurrence: base ID
+    expect(toc[1].id).toBe('details')           // unique heading
+    expect(toc[2].id).toBe('introduction-2')    // second occurrence: -2 suffix
+    expect(toc[3].id).toBe('introduction-3')    // third occurrence: -3 suffix
+  })
+
   it('calculates correct line numbers for markdown', () => {
     const content = 'line 1\nline 2\n## Header on line 3'
     const toc = extractToc(content, 'markdown')

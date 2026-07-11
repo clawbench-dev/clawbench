@@ -129,6 +129,7 @@
           :empty="diffState.empty"
           :html="diffState.html"
           :no-wrap="mode === 'project'"
+          :file-path="mode === 'project' ? selectedFilePath : file?.path"
         />
       </div>
     </div>
@@ -420,10 +421,17 @@ const { navigateToCommit, handleDrillBackToCommits } = useCommitNavigation({
 
 // Register back handler for git drill-down navigation
 // canGoBack: active tab AND not on the commit list (root view)
+// goBack: pop one level (diff→files in project mode, otherwise →commits)
 useFeatureBackHandler(
     'git-history',
     () => props.active && currentView.value !== 'commits',
-    () => drillBack('commits'),
+    () => {
+        if (currentView.value === 'diff' && props.mode === 'project') {
+            drillBack('files')
+        } else {
+            drillBack('commits')
+        }
+    },
     PRIORITY_PAGE,
 )
 

@@ -42,6 +42,7 @@ interface CurrentFile {
     isAudio?: boolean
     isVideo?: boolean
     isHtml?: boolean
+    isOffice?: boolean
     isBinary?: boolean
     tooLarge?: boolean
     truncated?: boolean
@@ -332,6 +333,8 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
     const isImage = isImageFile || imageExts.some(ext => lower.endsWith(ext))
     const isAudio = isAudioFile || audioExts.some(ext => lower.endsWith(ext))
     const isVideo = videoExts.some(ext => lower.endsWith(ext))
+    const officeExts = ['.docx', '.xlsx', '.pptx', '.xls']
+    const isOffice = officeExts.some(ext => lower.endsWith(ext))
     if (isPdf) {
         const fileName = baseName(path)
         state.currentFile = { name: fileName, path, content: null, isPdf: true }
@@ -350,6 +353,11 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
     if (isVideo) {
         const fileName = baseName(path)
         state.currentFile = { name: fileName, path, content: null, isVideo: true }
+        return true
+    }
+    if (isOffice) {
+        const fileName = baseName(path)
+        state.currentFile = { name: fileName, path, content: null, isOffice: true }
         return true
     }
 

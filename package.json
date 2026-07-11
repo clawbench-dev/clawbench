@@ -18,6 +18,9 @@
   },
   "dependencies": {
     "@intlify/unplugin-vue-i18n": "^6.0.8",
+    "@vue-office/docx": "^1.6.3",
+    "@vue-office/excel": "^1.7.14",
+    "@vue-office/pptx": "^1.0.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
@@ -30,6 +33,7 @@
     "mermaid": "^11.14.0",
     "pdfjs-dist": "^5.7.284",
     "vue": "^3.5.35",
+    "vue-demi": "^0.14.10",
     "vue-i18n": "^11.4.0",
     "vuedraggable": "^4.1.0"
   },

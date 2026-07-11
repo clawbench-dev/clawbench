@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"clawbench/internal/model"
 )
@@ -73,6 +75,13 @@ func UploadFile(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mu
 		customDir = true
 		dirAbs, ok := resolveAbsPath(w, r, dir)
 		if !ok {
+			return
+		}
+		// Auto-create the target directory if it doesn't exist (same behavior
+		// as the default uploads dir). This is necessary for share-in uploads
+		// where the directory is created on first use.
+		if err := os.MkdirAll(dirAbs, 0o755); err != nil {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "DirectoryNotFound")
 			return
 		}
 		dirInfo, err := os.Stat(dirAbs)
@@ -152,4 +161,79 @@ func UploadFile(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo // mu
 		"ok":   true,
 		"path": relativePath,
 	})
+}
+
+// recentFile represents a file in an uploads directory.
+type recentFile struct {
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	Size    int64  `json:"size"`
+	ModTime string `json:"modTime"`
+}
+
+// listRecentFiles lists up to limit files in dirPath (under projectPath),
+// sorted by modification time descending. Returns empty slice if dir doesn't exist.
+func listRecentFiles(projectPath, dirPath string, limit int) []recentFile {
+	fullDir := filepath.Join(projectPath, dirPath)
+
+	entries, err := os.ReadDir(fullDir)
+	if err != nil {
+		return []recentFile{}
+	}
+
+	var files []recentFile
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		relPath := filepath.ToSlash(filepath.Join(dirPath, entry.Name()))
+		files = append(files, recentFile{
+			Name:    entry.Name(),
+			Path:    relPath,
+			Size:    info.Size(),
+			ModTime: info.ModTime().Format(time.RFC3339),
+		})
+	}
+
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].ModTime > files[j].ModTime
+	})
+
+	if len(files) > limit {
+		files = files[:limit]
+	}
+
+	return files
+}
+
+// ShareInRecent handles GET /api/share-in/recent
+// Returns the 20 most recently modified files in .clawbench/share-in/.
+func ShareInRecent(w http.ResponseWriter, r *http.Request) {
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+
+	files := listRecentFiles(projectPath, filepath.Join(".clawbench", "share-in"), 20)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(files)
+}
+
+// UploadRecent handles GET /api/upload/recent
+// Returns the 20 most recently modified files in .clawbench/uploads/.
+func UploadRecent(w http.ResponseWriter, r *http.Request) {
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+
+	files := listRecentFiles(projectPath, filepath.Join(".clawbench", "uploads"), 20)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(files)
 }

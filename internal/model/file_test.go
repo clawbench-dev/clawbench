@@ -20,6 +20,9 @@ func TestIsSupportedFile(t *testing.T) {
 		{"image file", "photo.png", true},
 		{"audio file", "song.mp3", true},
 		{"video file", "movie.mp4", true},
+		{"office docx", "report.docx", true},
+		{"office xlsx", "data.xlsx", true},
+		{"office pptx", "slides.pptx", true},
 		{"unsupported file", "data.bin", false},
 		{"empty string", "", false},
 	}
@@ -534,6 +537,45 @@ func TestIsVideoFile(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := model.IsVideoFile(tt.input)
 			assert.Equal(t, tt.want, got, "IsVideoFile(%q)", tt.input)
+		})
+	}
+}
+
+func TestIsOfficeFile(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		// Supported extensions
+		{"docx", "report.docx", true},
+		{"xlsx", "data.xlsx", true},
+		{"pptx", "slides.pptx", true},
+		{"xls", "legacy.xls", true},
+
+		// Case insensitivity
+		{"case insensitive .DOCX", "REPORT.DOCX", true},
+		{"case insensitive .XLSX", "DATA.XLSX", true},
+		{"case insensitive .PPTX", "SLIDES.PPTX", true},
+
+		// Multiple dots
+		{"multiple dots report.final.docx", "report.final.docx", true},
+
+		// Legacy formats NOT supported for preview
+		{"doc not supported", "legacy.doc", false},
+		{"ppt not supported", "legacy.ppt", false},
+
+		// Negative cases
+		{"pdf not office", "doc.pdf", false},
+		{"txt not office", "notes.txt", false},
+		{"bin not office", "data.bin", false},
+		{"empty string", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := model.IsOfficeFile(tt.input)
+			assert.Equal(t, tt.want, got, "IsOfficeFile(%q)", tt.input)
 		})
 	}
 }

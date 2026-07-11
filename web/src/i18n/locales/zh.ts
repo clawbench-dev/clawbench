@@ -9,6 +9,7 @@ export default {
     copy: '复制',
     copied: '已复制',
     download: '下载',
+    retry: '重试',
     rename: '重命名',
     open: '打开',
     save: '保存',
@@ -23,6 +24,12 @@ export default {
   codeBlock: {
     wrapOn: '自动换行已开启',
     wrapOff: '自动换行已关闭',
+  },
+  diffBlock: {
+    wrapOn: '自动换行已开启',
+    wrapOff: '自动换行已关闭',
+    lineNumOn: '行号已显示',
+    lineNumOff: '行号已隐藏',
   },
   tableBlock: {
     label: '表格',
@@ -210,7 +217,15 @@ export default {
       currentFile: '当前文件',
       currentDir: '当前目录',
       recentReferences: '最近引用',
+      recentShares: '最近分享',
+      recentUploads: '最近上传',
+      currentTab: '当前',
+      emptyCurrent: '暂无当前文件或目录',
       uploadFile: '上传文件',
+      drawerTitle: '附件',
+      emptyReferences: '暂无最近引用文件',
+      emptyShares: '暂无最近分享文件',
+      emptyUploads: '暂无最近上传文件',
       dropToUpload: '松开上传文件',
       uploading: '上传中...',
       openFile: '打开文件',
@@ -251,7 +266,7 @@ export default {
       deepThinking: '深度思考',
     },
     fileChanges: {
-      title: '变更',
+      title: '查看变更文件',
       created: '创建',
       modified: '修改',
     },
@@ -607,6 +622,7 @@ export default {
     viewer: {
       fileTooLarge: '文件过大，无法在浏览器中预览',
       binaryFile: '二进制文件，无法在浏览器中预览',
+      loadFailed: '文档加载失败',
       truncated: '内容已截断，仅显示部分文本',
     },
     details: {
@@ -639,6 +655,9 @@ export default {
       exportHtmlSuccess: 'HTML 导出成功',
       exportHtmlFailed: '导出失败',
       exportHtmlSkippedImages: '{n} 张图片无法嵌入',
+      zoomIn: '放大',
+      zoomOut: '缩小',
+      fitWidth: '适合宽度',
     },
     overlay: {
       back: '返回',

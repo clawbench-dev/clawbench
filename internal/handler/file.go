@@ -49,6 +49,13 @@ var mimeTypes = map[string]string{
 	".m4v":  "video/mp4",
 	".3gp":  "video/3gpp",
 	".m3u8": "application/vnd.apple.mpegurl",
+	// Office documents
+	".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	".doc":  "application/msword",
+	".xls":  "application/vnd.ms-excel",
+	".ppt":  "application/vnd.ms-powerpoint",
 }
 
 // ListDir returns the contents of a directory within the current project.

@@ -27,6 +27,7 @@
       @overlay-go-back="emit('overlayGoBack')"
       @share-external="emit('shareExternal')"
       @export-html="handleExportHtml"
+      @fit-width="handleFitWidth"
     />
 
     <div class="file-viewer-content" ref="contentRef">
@@ -63,6 +64,13 @@
       <!-- Video -->
       <VideoPreview
         v-else-if="file.isVideo"
+        :file="file"
+      />
+
+      <!-- Office (Word/Excel/PPT) -->
+      <OfficePreview
+        v-else-if="file.isOffice"
+        ref="officePreviewRef"
         :file="file"
       />
 
@@ -208,6 +216,7 @@ import ImagePreview from '@/components/media/ImagePreview.vue'
 import PdfPreview from '@/components/media/PdfPreview.vue'
 import AudioPreview from '@/components/media/AudioPreview.vue'
 import VideoPreview from '@/components/media/VideoPreview.vue'
+import OfficePreview from '@/components/media/OfficePreview.vue'
 import MarkdownPreview from './MarkdownPreview.vue'
 import CodePreview from './CodePreview.vue'
 import OpenApiPreview from './OpenApiPreview.vue'
@@ -250,11 +259,18 @@ const isOpenapi = computed(() => props.file?.subtype === 'openapi')
 const loading = ref(false)
 const contentRef = ref(null)
 const pdfPreviewRef = ref(null)
+const officePreviewRef = ref(null)
 const htmlPreviewRef = ref(null)
 
 // Expose PDF outline and scrollToPage for TOC integration
 const pdfOutline = computed(() => pdfPreviewRef.value?.outline || [])
 const pdfScrollToPage = (pageNum) => pdfPreviewRef.value?.scrollToPage(pageNum)
+
+// Fit-width: reset zoom to fit container width
+function handleFitWidth() {
+    pdfPreviewRef.value?.fitWidth()
+    officePreviewRef.value?.fitWidth()
+}
 
 // Word wrap & line numbers preferences from settings config
 const { localConfig, setLocalConfig } = useSettingsConfig()
@@ -377,7 +393,7 @@ watch(() => props.file, (f, oldF) => {
     clearRestoreTimer()
     if (!f) { currentFilePath = null; loading.value = true; return }
     currentFilePath = f.path
-    if (f.isImage || f.isPdf || f.isAudio || f.isVideo || f.isBinary || f.tooLarge || f.error) {
+    if (f.isImage || f.isPdf || f.isAudio || f.isVideo || f.isOffice || f.isBinary || f.tooLarge || f.error) {
         loading.value = false
     } else {
         loading.value = f.content == null
@@ -394,7 +410,7 @@ watch(() => props.file, (f, oldF) => {
 
 watch(() => props.file?.content, (content) => {
     if (!props.file) return
-    if (props.file.isImage || props.file.isPdf || props.file.isAudio || props.file.isVideo || props.file.isBinary || props.file.tooLarge || props.file.error) return
+    if (props.file.isImage || props.file.isPdf || props.file.isAudio || props.file.isVideo || props.file.isOffice || props.file.isBinary || props.file.tooLarge || props.file.error) return
     loading.value = content == null
     // Content loaded, try restore or attach listener
     if (content != null) {

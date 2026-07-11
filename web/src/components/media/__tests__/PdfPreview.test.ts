@@ -50,15 +50,9 @@ describe('PdfPreview', () => {
     expect(wrapper.find('.pdf-preview-container').exists()).toBe(true)
   })
 
-  it('renders the toolbar with zoom controls', () => {
-    const wrapper = mountPdf()
-    expect(wrapper.find('.pdf-toolbar').exists()).toBe(true)
-  })
-
-  it('renders the page navigation controls', () => {
-    const wrapper = mountPdf()
-    expect(wrapper.find('.pdf-page-info').exists()).toBe(true)
-  })
+  // Note: toolbar (.pdf-toolbar), page info (.pdf-page-info), and zoom label
+  // (.pdf-zoom-label) were removed in a UI redesign. These elements no longer
+  // exist in PdfPreview.vue.
 
   it('shows loading overlay initially', () => {
     const wrapper = mountPdf()
@@ -77,8 +71,5 @@ describe('PdfPreview', () => {
     expect(typeof vm.scrollToPage).toBe('function')
   })
 
-  it('shows zoom percentage label', () => {
-    const wrapper = mountPdf()
-    expect(wrapper.find('.pdf-zoom-label').exists()).toBe(true)
-  })
+  // Zoom label removed with toolbar redesign
 })

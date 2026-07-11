@@ -27,22 +27,23 @@ export function computeRecentReferencedFiles(
   return [...countMap.entries()]
     .filter(([path]) => !exclude.has(path))
     .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
+    .slice(0, 20)
     .map(([path, count]) => ({ path, count }))
 }
 
 /**
- * Check if any file groups (current file, current dir, or recent references) should be shown.
+ * Check if any file groups (current file, current dir, recent shares, or recent references) should be shown.
  */
 export function computeHasFileGroups(
   currentFilePath: string | null | undefined,
   currentDir: string | null | undefined,
   attachedFiles: string[],
-  recentReferencedFiles: { path: string; count: number }[]
+  recentReferencedFiles: { path: string; count: number }[],
+  recentShareCount: number = 0
 ): boolean {
   const hasCurrent = currentFilePath && !attachedFiles.includes(currentFilePath)
   const hasDir = currentDir && !attachedFiles.includes(currentDir)
-  return !!hasCurrent || !!hasDir || recentReferencedFiles.length > 0
+  return !!hasCurrent || !!hasDir || recentShareCount > 0 || recentReferencedFiles.length > 0
 }
 
 /**
@@ -52,9 +53,10 @@ export function computeAttachMenuItemCount(
   currentFilePath: string | null | undefined,
   currentDir: string | null | undefined,
   attachedFiles: string[],
-  recentReferencedFiles: { path: string; count: number }[]
+  recentReferencedFiles: { path: string; count: number }[],
+  recentShareCount: number = 0
 ): number {
-  let count = recentReferencedFiles.length
+  let count = recentReferencedFiles.length + recentShareCount
   if (currentFilePath && !attachedFiles.includes(currentFilePath)) count++
   if (currentDir && !attachedFiles.includes(currentDir)) count++
   count++ // Upload file button

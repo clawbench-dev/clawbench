@@ -135,20 +135,29 @@ export function renderDiff(raw: string, filePath: string): string {
         return `<div class="diff-view"><pre class="diff-raw">${escapeHtml(clean)}</pre></div>`
     }
 
+    // SVG icon for diff block wrap button
+    const WRAP_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M3 6h18"/><path d="M3 12h15a3 3 0 1 1 0 6h-3"/><path d="M18 15l-3 3 3 3"/><path d="M3 18h7"/></svg>'
+
     let html = `<div class="diff-view diff-unified-view">`
     for (const hunk of hunks) {
-        html += `<div class="diff-hunk">`
+        html += `<div class="diff-hunk diff-hunk-wrap diff-hunk-no-linum">`
+        // Header bar: func name (left) + actions (right)
+        html += `<div class="diff-hunk-header">`
         if (hunk.header) {
-            html += `<div class="diff-hunk-header">${escapeHtml(hunk.header)}</div>`
+            html += `<span class="diff-hunk-func">${escapeHtml(hunk.header)}</span>`
+        } else {
+            html += `<span class="diff-hunk-func"></span>`
         }
+        html += `<span class="diff-hunk-actions-row">`
+        html += `<button class="diff-hunk-wrap-btn is-wrapped" data-action="wrap" type="button" title="Word wrap on">${WRAP_ICON}</button>`
+        html += `<button class="diff-hunk-linum-btn" data-action="linum" type="button" title="Line numbers off">#</button>`
+        html += `</span></div>`
         html += `<div class="diff-hunk-body">`
         html += `<table class="diff-table">`
         for (const dl of hunk.lines) {
-            const prefix = dl.type === 'add' ? '+' : dl.type === 'del' ? '-' : ' '
             html += `<tr class="diff-line diff-line-${dl.type}">`
-            html += `<td class="diff-linum diff-linum-old">${dl.oldLine ?? ''}</td>`
-            html += `<td class="diff-linum diff-linum-new">${dl.newLine ?? ''}</td>`
-            html += `<td class="diff-prefix">${escapeHtml(prefix)}</td>`
+            html += `<td class="diff-linum diff-linum-old"${dl.oldLine != null ? ` data-line="${dl.oldLine}"` : ''}>${dl.oldLine ?? ''}</td>`
+            html += `<td class="diff-linum diff-linum-new"${dl.newLine != null ? ` data-line="${dl.newLine}"` : ''}>${dl.newLine ?? ''}</td>`
             html += `<td class="diff-content">${highlightLine(dl.content, lang)}</td>`
             html += `</tr>`
         }

@@ -13,8 +13,13 @@
       </button>
 
       <!-- Search button (only for file types that support search) -->
-      <button v-if="hasToc && toolbarInlineIds.includes('search')" class="file-header-btn" :class="{ active: searchOpen }" :disabled="!file.content" @click.stop="handleToggleSearch" :title="t('file.header.search')">
+      <button v-if="hasSearch && toolbarInlineIds.includes('search')" class="file-header-btn" :class="{ active: searchOpen }" @click.stop="handleToggleSearch" :title="t('file.header.search')">
         <Search :size="14" />
+      </button>
+
+      <!-- Fit-width / reset zoom button (for PDF) -->
+      <button v-if="toolbarInlineIds.includes('fitWidth')" class="file-header-btn" @click.stop="handleFitWidth" :title="t('file.header.fitWidth')">
+        <MoveHorizontal :size="14" />
       </button>
 
       <!-- Attach to chat button -->
@@ -63,6 +68,10 @@
             <button v-if="toolbarCollapsedIds.includes('search')" class="dropdown-item" :class="{ active: searchOpen }" @click="handleToggleSearch(); menuOpen = false">
               <Search :size="14" />
               {{ t('file.header.search') }}
+            </button>
+            <button v-if="toolbarCollapsedIds.includes('fitWidth')" class="dropdown-item" @click="handleFitWidth(); menuOpen = false">
+              <MoveHorizontal :size="14" />
+              {{ t('file.header.fitWidth') }}
             </button>
             <button v-if="toolbarCollapsedIds.includes('attach')" class="dropdown-item" :class="{ active: isAttached }" @click="handleAttachToChat(); menuOpen = false">
               <Paperclip :size="14" />
@@ -142,7 +151,7 @@
 <script setup>
 import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, ChevronLeft, X, Paperclip, Share, FileOutput, Eye } from 'lucide-vue-next'
+import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, ChevronLeft, X, Paperclip, Share, FileOutput, Eye, MoveHorizontal } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
@@ -162,7 +171,7 @@ const props = defineProps({
     overlayOpen: Boolean,
     overlayCanGoBack: Boolean,
 })
-const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'overlayGoBack', 'shareExternal', 'exportHtml'])
+const emit = defineEmits(['delete', 'toggleView', 'showDetails', 'openGitHistory', 'toggleToc', 'toggleSearch', 'openAsText', 'toggleWordWrap', 'toggleLineNumbers', 'toggleStickyScroll', 'refresh', 'overlayClose', 'overlayGoBack', 'shareExternal', 'exportHtml', 'fitWidth'])
 
 const { isAppMode } = useAppMode()
 const { t } = useI18n()
@@ -184,7 +193,8 @@ const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObs
   () => {
     const ids = []
     if (hasToc.value) ids.push('toc')
-    if (hasToc.value) ids.push('search')
+    if (hasSearch.value) ids.push('search')
+    if (hasFitWidth.value) ids.push('fitWidth')
     ids.push('attach')
     if (hasTextContent.value) ids.push('refresh')
     if (hasTextContent.value && !isMediaFile.value && (isMarkdown.value || isHtml.value || isOpenapi.value)) ids.push('toggleView')
@@ -235,7 +245,22 @@ const hasToc = computed(() => {
     // Other file types: need content
     if (!props.file.content) return false
     if (ft.isImage || ft.isAudio || ft.isVideo) return false
+    // OpenAPI rendered mode: ReDoc has its own sidebar, TOC/Search would operate on raw text
+    if (isOpenapi.value && props.viewMode === 'rendered') return false
     return true
+})
+
+// Search requires file.content — PDF/Office don't have it, hide (not disable) search
+const hasSearch = computed(() => {
+    if (!props.file) return false
+    if (props.file.isPdf || props.file.isOffice) return false
+    return hasToc.value
+})
+
+// Show reset-zoom button for zoomable file types (PDF, PPT)
+const hasFitWidth = computed(() => {
+    if (!props.file) return false
+    return fileType.value?.isPdf || (fileType.value?.isOffice && props.file.name?.toLowerCase().endsWith('.pptx')) || false
 })
 
 function handleToggleView() {
@@ -256,6 +281,10 @@ function handleToggleLineNumbers() {
 function handleToggleStickyScroll() {
     menuOpen.value = false
     emit('toggleStickyScroll')
+}
+
+function handleFitWidth() {
+    emit('fitWidth')
 }
 
 function handleToggleToc() {

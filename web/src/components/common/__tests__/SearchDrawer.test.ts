@@ -229,4 +229,75 @@ describe('SearchDrawer', () => {
     wrapper.vm._setQuery('')
     expect(wrapper.vm._getQuery()).toBe('')
   })
+
+  // ── Rendered mode: search results have precise text node refs ──
+
+  it('rendered mode results store _textNode and _matchOffset instead of _blockEl', async () => {
+    // Set up a .markdown-body container in the test DOM so searchRenderedContent can find it
+    const container = document.createElement('div')
+    container.className = 'markdown-body'
+    // A long paragraph where the match is not at the center
+    const p = document.createElement('p')
+    p.textContent = 'AAA ' + 'BBB '.repeat(50) + 'TARGET ' + 'CCC '.repeat(50)
+    container.appendChild(p)
+    document.body.appendChild(container)
+
+    const wrapper = mountDrawer({
+      file: { path: '/src/test.md', name: 'test.md', content: '# Test' },
+      viewMode: 'rendered',
+    })
+
+    // Verify it's in rendered view
+    expect(wrapper.vm.isRenderedView).toBe(true)
+
+    wrapper.vm._setQuery('TARGET')
+    await nextTick()
+
+    const results = wrapper.vm._getResults()
+    expect(results.length).toBe(1)
+
+    // The result should have _textNode and _matchOffset, NOT _blockEl
+    const result = results[0]
+    expect(result._textNode).toBeDefined()
+    expect(typeof result._textNode.textContent).toBe('string')
+    expect(result._textNode.textContent).toContain('TARGET')
+    expect(result._matchOffset).toBeGreaterThanOrEqual(0)
+    expect(result._matchLength).toBe('TARGET'.length)
+    // Should NOT have the old _blockEl property
+    expect(result._blockEl).toBeUndefined()
+
+    // Clean up
+    document.body.removeChild(container)
+  })
+
+  it('rendered mode jump does not emit "jump" (uses direct scroll instead)', async () => {
+    const container = document.createElement('div')
+    container.className = 'markdown-body'
+    const p = document.createElement('p')
+    p.textContent = 'Find this keyword in rendered mode'
+    container.appendChild(p)
+    document.body.appendChild(container)
+
+    // jsdom doesn't support scrollIntoView — mock it
+    const scrollSpy = vi.fn()
+    p.scrollIntoView = scrollSpy
+
+    const wrapper = mountDrawer({
+      file: { path: '/src/test.md', name: 'test.md', content: '# Test' },
+      viewMode: 'rendered',
+    })
+
+    wrapper.vm._setQuery('keyword')
+    await nextTick()
+
+    const results = wrapper.vm._getResults()
+    expect(results.length).toBe(1)
+
+    // In rendered view, jumpTo should NOT emit 'jump' — it uses scrollToRenderedMatch
+    wrapper.vm._jumpTo(results[0])
+    expect(wrapper.emitted('jump')).toBeFalsy()
+    expect(wrapper.emitted('close')).toBeTruthy()
+
+    document.body.removeChild(container)
+  })
 })

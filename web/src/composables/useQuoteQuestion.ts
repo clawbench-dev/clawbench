@@ -30,8 +30,8 @@ function onSelectionChange() {
       return
     }
 
-    // Check if selection is within a code or markdown preview area
-    const container = closestElement(sel.anchorNode, '.raw-content-pre, .markdown-body')
+    // Check if selection is within a code, markdown, or office preview area
+    const container = closestElement(sel.anchorNode, '.raw-content-pre, .markdown-body, .office-preview-body')
     if (!container) {
       if (!barPinned.value) {
         barVisible.value = false

@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -210,6 +212,123 @@ func TestUploadFile_DefaultDir(t *testing.T) {
 	})
 }
 
+func TestShareInRecent(t *testing.T) {
+	t.Run("NoShareInDir_ReturnsEmptyArray", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := httptest.NewRequest(http.MethodGet, "/api/share-in/recent", http.NoBody)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ShareInRecent, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var result []recentFile
+		err := json.Unmarshal(w.Body.Bytes(), &result)
+		assert.NoError(t, err)
+		assert.Empty(t, result)
+	})
+
+	t.Run("ReturnsFilesSortedByModTime", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		// Create share-in dir with files
+		shareInDir := filepath.Join(env.ProjectDir, ".clawbench", "share-in")
+		_ = os.MkdirAll(shareInDir, 0o755)
+
+		_ = os.WriteFile(filepath.Join(shareInDir, "old.txt"), []byte("old"), 0o644)
+		_ = os.WriteFile(filepath.Join(shareInDir, "new.txt"), []byte("new file"), 0o644)
+		// Set different mod times
+		oldTime := time.Now().Add(-2 * time.Hour)
+		newTime := time.Now()
+		_ = os.Chtimes(filepath.Join(shareInDir, "old.txt"), oldTime, oldTime)
+		_ = os.Chtimes(filepath.Join(shareInDir, "new.txt"), newTime, newTime)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/share-in/recent", http.NoBody)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ShareInRecent, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var result []recentFile
+		err := json.Unmarshal(w.Body.Bytes(), &result)
+		assert.NoError(t, err)
+		assert.Len(t, result, 2)
+		assert.Equal(t, "new.txt", result[0].Name)
+		assert.Equal(t, "old.txt", result[1].Name)
+	})
+
+	t.Run("LimitsTo20Files", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		shareInDir := filepath.Join(env.ProjectDir, ".clawbench", "share-in")
+		_ = os.MkdirAll(shareInDir, 0o755)
+
+		for i := range 25 {
+			_ = os.WriteFile(filepath.Join(shareInDir, fmt.Sprintf("file%d.txt", i)), []byte("content"), 0o644)
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/share-in/recent", http.NoBody)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(ShareInRecent, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var result []recentFile
+		err := json.Unmarshal(w.Body.Bytes(), &result)
+		assert.NoError(t, err)
+		assert.Len(t, result, 20)
+	})
+}
+
+func TestUploadRecent(t *testing.T) {
+	t.Run("NoUploadsDir_ReturnsEmptyArray", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := httptest.NewRequest(http.MethodGet, "/api/upload/recent", http.NoBody)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(UploadRecent, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var result []recentFile
+		err := json.Unmarshal(w.Body.Bytes(), &result)
+		assert.NoError(t, err)
+		assert.Empty(t, result)
+	})
+
+	t.Run("ReturnsFilesSortedByModTime", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		uploadsDir := filepath.Join(env.ProjectDir, ".clawbench", "uploads")
+		_ = os.MkdirAll(uploadsDir, 0o755)
+
+		_ = os.WriteFile(filepath.Join(uploadsDir, "old.txt"), []byte("old"), 0o644)
+		_ = os.WriteFile(filepath.Join(uploadsDir, "new.txt"), []byte("new file"), 0o644)
+		oldTime := time.Now().Add(-2 * time.Hour)
+		newTime := time.Now()
+		_ = os.Chtimes(filepath.Join(uploadsDir, "old.txt"), oldTime, oldTime)
+		_ = os.Chtimes(filepath.Join(uploadsDir, "new.txt"), newTime, newTime)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/upload/recent", http.NoBody)
+		withProjectCookie(req, env.ProjectDir)
+
+		w := callHandler(UploadRecent, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var result []recentFile
+		err := json.Unmarshal(w.Body.Bytes(), &result)
+		assert.NoError(t, err)
+		assert.Len(t, result, 2)
+		assert.Equal(t, "new.txt", result[0].Name)
+		assert.Equal(t, "old.txt", result[1].Name)
+	})
+}
+
 func TestUploadFile_CustomDir(t *testing.T) {
 	t.Run("UploadToCustomDir", func(t *testing.T) {
 		env, teardown := setupTestEnv(t)
@@ -241,15 +360,20 @@ func TestUploadFile_CustomDir(t *testing.T) {
 		assert.Equal(t, "custom dir content", string(data))
 	})
 
-	t.Run("DirNotFound_Returns400", func(t *testing.T) {
+	t.Run("CustomDirAutoCreated_Succeeds", func(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()
 
+		// Non-existent dir should be auto-created (same as default uploads dir behavior)
 		req := createMultipartUploadRequest(t, "test.txt", "content", "nonexistent_dir")
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(UploadFile, req)
-		assertStatus(t, w, http.StatusBadRequest)
+		assertOK(t, w)
+
+		var result map[string]interface{}
+		_ = json.Unmarshal(w.Body.Bytes(), &result)
+		assert.Equal(t, true, result["ok"])
 	})
 
 	t.Run("DirIsFile_Returns400", func(t *testing.T) {

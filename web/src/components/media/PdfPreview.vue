@@ -1,48 +1,5 @@
 <template>
   <div class="pdf-preview-container">
-    <!-- Toolbar -->
-    <div class="pdf-toolbar">
-      <div class="pdf-toolbar-left">
-        <button class="pdf-btn" @click="goPrevPage" :disabled="currentPage <= 1" title="上一页">
-          <ChevronLeft :size="14" />
-        </button>
-        <span class="pdf-page-info">
-          <input
-            class="pdf-page-input"
-            type="number"
-            :value="currentPage"
-            :min="1"
-            :max="pageCount"
-            @change="goToPage($event)"
-            @keydown.enter="goToPage($event)"
-          />
-          <span class="pdf-page-sep">/</span>
-          <span class="pdf-page-total">{{ pageCount }}</span>
-        </span>
-        <button class="pdf-btn" @click="goNextPage" :disabled="currentPage >= pageCount" title="下一页">
-          <ChevronRight :size="14" />
-        </button>
-      </div>
-      <div class="pdf-toolbar-right">
-        <button class="pdf-btn" @click="zoomOut" :disabled="scale <= MIN_SCALE" title="缩小">
-          <ZoomOut :size="14" />
-        </button>
-        <span class="pdf-zoom-label">{{ Math.round(scale * 100) }}%</span>
-        <button class="pdf-btn" @click="zoomIn" :disabled="scale >= MAX_SCALE" title="放大">
-          <ZoomIn :size="14" />
-        </button>
-        <button class="pdf-btn" @click="fitWidth" title="适合宽度">
-          <MoveHorizontal :size="14" />
-        </button>
-        <a v-if="!isAppMode" class="pdf-btn" :href="buildLocalFileUrl(file.path, { download: true })" download title="下载">
-          <Download :size="14" />
-        </a>
-        <button v-else class="pdf-btn" @click="handleDownload" title="下载">
-          <Download :size="14" />
-        </button>
-      </div>
-    </div>
-
     <!-- Pages -->
     <div class="pdf-pages-scroll" ref="scrollRef" @scroll="onScroll" @touchstart.passive="onTouchStart" @touchmove="onTouchMove" @touchend="onTouchEnd" @touchcancel="onTouchEnd" @wheel.prevent="onWheel">
       <div class="pdf-pages-inner" :style="pagesInnerStyle">
@@ -82,8 +39,7 @@
 
 <script setup>
 import {
-  ChevronLeft, ChevronRight, ZoomIn, ZoomOut,
-  Download, Loader, FileX, MoveHorizontal,
+  Download, Loader, FileX,
 } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useAppMode } from '@/composables/useAppMode.ts'
@@ -91,7 +47,6 @@ import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 
 const MIN_SCALE = 0.25
 const MAX_SCALE = 5.0
-const SCALE_STEP = 0.25
 const RENDER_PADDING = 1
 
 const props = defineProps({
@@ -304,30 +259,6 @@ function renderVisiblePages() {
 }
 
 // Navigation
-function goPrevPage() {
-  if (currentPage.value > 1) {
-    currentPage.value--
-    scrollToPage(currentPage.value)
-  }
-}
-
-function goNextPage() {
-  if (currentPage.value < pageCount.value) {
-    currentPage.value++
-    scrollToPage(currentPage.value)
-  }
-}
-
-function goToPage(e) {
-  const val = parseInt(e.target.value, 10)
-  if (val >= 1 && val <= pageCount.value) {
-    currentPage.value = val
-    scrollToPage(val)
-  } else {
-    e.target.value = currentPage.value
-  }
-}
-
 function scrollToPage(pageNum) {
   const el = scrollRef.value
   if (!el) return
@@ -335,15 +266,6 @@ function scrollToPage(pageNum) {
   if (pageWrapper) {
     pageWrapper.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
-}
-
-// Zoom
-function zoomIn() {
-  scale.value = Math.min(scale.value + SCALE_STEP, MAX_SCALE)
-}
-
-function zoomOut() {
-  scale.value = Math.max(scale.value - SCALE_STEP, MIN_SCALE)
 }
 
 function fitWidth() {
@@ -489,6 +411,7 @@ watch(scale, () => {
 defineExpose({
   outline,
   scrollToPage,
+  fitWidth,
 })
 </script>
 
@@ -499,96 +422,6 @@ defineExpose({
   height: 100%;
   position: relative;
   background: var(--bg-primary);
-}
-
-/* Toolbar */
-.pdf-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 3px 8px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-color);
-  gap: 4px;
-  flex-shrink: 0;
-  overflow-x: auto;
-}
-
-.pdf-toolbar-left,
-.pdf-toolbar-right {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex-shrink: 0;
-}
-
-.pdf-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all 0.15s;
-  flex-shrink: 0;
-  text-decoration: none;
-}
-
-.pdf-btn:hover:not(:disabled) {
-  background: var(--accent-color);
-  color: #fff;
-}
-
-.pdf-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-
-.pdf-page-info {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.pdf-page-input {
-  width: 32px;
-  text-align: center;
-  border: 1px solid var(--border-color);
-  border-radius: 3px;
-  padding: 1px 2px;
-  font-size: 12px;
-  color: var(--text-primary);
-  background: var(--bg-primary);
-  -moz-appearance: textfield;
-}
-
-.pdf-page-input::-webkit-inner-spin-button,
-.pdf-page-input::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-
-.pdf-page-sep {
-  color: var(--text-muted);
-  font-size: 11px;
-}
-
-.pdf-page-total {
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.pdf-zoom-label {
-  font-size: 11px;
-  color: var(--text-muted);
-  min-width: 30px;
-  text-align: center;
 }
 
 /* Pages scroll area */
@@ -716,23 +549,5 @@ defineExpose({
 
 :global([data-theme="dark"]) .pdf-loading-overlay {
   background: #2a2d30;
-}
-
-/* Mobile-friendly: slightly larger touch targets */
-@media (hover: none) {
-  .pdf-btn {
-    width: 30px;
-    height: 30px;
-  }
-
-  .pdf-page-input {
-    width: 36px;
-    height: 26px;
-    font-size: 12px;
-  }
-
-  .pdf-toolbar {
-    padding: 4px 6px;
-  }
 }
 </style>

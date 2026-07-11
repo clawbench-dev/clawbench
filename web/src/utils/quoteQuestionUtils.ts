@@ -45,6 +45,11 @@ export function getFileInfo(container: HTMLElement): { filePath: string; languag
     const filePath = markdownBody.getAttribute('data-file-path') || ''
     return { filePath, language: '' }
   }
+  const officeBody = container.closest('.office-preview-body')
+  if (officeBody) {
+    const filePath = officeBody.getAttribute('data-file-path') || ''
+    return { filePath, language: '' }
+  }
   return { filePath: '', language: '' }
 }
 

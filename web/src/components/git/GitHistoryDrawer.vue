@@ -135,6 +135,7 @@
           :empty="diffState.empty"
           :html="diffState.html"
           :no-wrap="mode === 'project'"
+          :file-path="mode === 'project' ? selectedFilePath : file?.path"
         />
       </div>
     </div>
@@ -154,6 +155,7 @@ import GitBreadcrumb from './GitBreadcrumb.vue'
 import { renderDiff } from '@/utils/diff.ts'
 import { store } from '@/stores/app.ts'
 import { useCommitNavigation, consumePendingCommitNavigation } from '@/composables/useCommitNavigation.ts'
+import { useFeatureBackHandler, PRIORITY_OVERLAY } from '@/composables/useEdgeSwipeBack'
 const { t } = useI18n()
 
 const props = defineProps({
@@ -441,6 +443,22 @@ function drillBack(view) {
   }
   currentView.value = view
 }
+
+// Register back handler for drill-down navigation inside the drawer.
+// Priority: PRIORITY_OVERLAY + 1 so it wins over BottomSheet's own close handler,
+// allowing us to pop one view level before the sheet closes on the final back.
+useFeatureBackHandler(
+    'git-history-drawer',
+    () => props.open && currentView.value !== 'commits',
+    () => {
+        if (currentView.value === 'diff' && props.mode === 'project') {
+            drillBack('files')
+        } else {
+            drillBack('commits')
+        }
+    },
+    PRIORITY_OVERLAY + 1,
+)
 
 function drillToFile(f) {
   selectedFilePath.value = f.path

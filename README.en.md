@@ -12,7 +12,7 @@
 
 Brings the full power of AI coding agents to browsers and mobile apps, creating a true mobile development environment. File browsing, code editing, AI conversation, Git operations, scheduled tasks — one app does it all.
 
-Core Advantage: Native passthrough of AI capabilities (tool calls, extended thinking, Skills, MCP) with zero adaptation cost, fully preserving the power of coding agents. Unlike other mobile AI tools that are merely "remote controllers," ClawBench is a full-featured mobile workstation — files, code, Git, AI, scheduled tasks, TTS, get real work done on your phone without needing a PC online. ([Similar Projects Comparison](docs/COMPARISON.en.md))
+Core Advantage: Native passthrough of AI capabilities (tool calls, extended thinking, Skills, MCP) with zero adaptation cost, fully preserving the power of coding agents. Unlike other mobile AI tools that are merely "remote controllers," ClawBench is a full-featured mobile workstation — files, code, Git, AI, scheduled tasks, TTS, get real work done on your phone without needing a PC online.
 
 - **Supported Platforms**: Browser (PC / Tablet / Phone), Android App, PWA
 - **AI Backends**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Cline, Copilot, Kimi
@@ -128,14 +128,17 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 ## Features
 
 ### 📁 File Browser
-- Recursive directory browsing with 120+ file extension support
+- Recursive directory browsing with 120+ file extension support (including Office documents .docx/.xlsx/.xls/.pptx)
 - Search filtering, sorting (name/time/extension/size)
+- **Office document preview**: Word, Excel, and PowerPoint documents rendered natively in the browser — no download needed
+- **File Preview Overlay**: Office files open in a preview overlay on top of the browse tab, supporting navigation stack (multi-file switching + back)
 - **List/Grid View Toggle**: Grid view shows image thumbnails for visual file browsing
 - **Image Thumbnails**: Backend generates square thumbnails with dominant-color padding for quick preview
 - Context menu: rename, delete, copy, cut, paste, new file/folder, download, open as project
 - **Multi-Select Operations**: Toggle multi-select mode from toolbar, batch copy/cut/delete; mobile long-press triggers context menu
 - File upload (all file types supported, configurable size and count)
 - Toggle hidden file visibility
+- **Document search exclusion**: Office documents are excluded from file content search to improve performance (same as PDF)
 - **Drill-down Browsing + Edge Swipe Back**: Tap folders to drill down, swipe from right edge to go back — intuitive mobile navigation
 - **File Preview Overlay**: Click a file to open a preview overlay on top of the browse tab, no tab switching needed; supports navigation stack (multi-file switching + back), close to return to file list
 - **Binary File Preview**: Binary files show a placeholder UI with "Open as text" option; large files auto-truncate (64KB binary / 512KB text), truncation notice banner when truncated
@@ -192,6 +195,13 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 ### 🖼️ Media Preview
 - In-app preview of images, audio, video
 - Lightbox zoom, fullscreen view, support for pinch-zoom and drag
+
+### 📄 Office Document Preview
+- **Word (.docx)**: Native document rendering with table and image support
+- **Excel (.xlsx/.xls)**: Spreadsheet preview with multi-sheet switching, toolbar auto-hidden
+- **PowerPoint (.pptx)**: Slide-by-slide preview with pinch-to-zoom (mobile) and Ctrl+scroll zoom (desktop)
+- **Loading & Error Handling**: Skeleton animation on load; retry and download buttons on failure
+- **AI Integration**: Select text from Office documents and one-click ask AI, file path context auto-attached
 
 ### 🔊 TTS Speech Synthesis
 - Auto-summarize and read AI replies aloud, listen while reading

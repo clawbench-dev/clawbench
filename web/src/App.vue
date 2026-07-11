@@ -970,6 +970,7 @@ async function handleOverlayOpenFile(payload) {
     const isExternal = path.startsWith('/')
     const ok = await store.selectFile(path)
     if (ok) {
+        if (lineStart) markdownViewMode.value = 'raw'
         fileNav.openFile(path)
         if (lineStart) scrollToLine(lineStart, lineEnd)
         if (isExternal) {
@@ -982,6 +983,7 @@ function handleOpenFileOverlay(e) {
     const { path, lineStart, lineEnd } = e.detail || {}
     if (!path) return
     switchTab('browse')
+    if (lineStart) markdownViewMode.value = 'raw'
     fileNav.openFile(path)
     if (lineStart) scrollToLine(lineStart, lineEnd)
 }

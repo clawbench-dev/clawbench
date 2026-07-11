@@ -228,6 +228,9 @@ const pendingDefaultMode = ref(null)
 let longPressTimer = null
 const longPressTriggered = ref(false)
 
+// Initialize activeTab from initialTab prop
+activeTab.value = props.initialTab || 'model'
+
 // Computed data
 const models = computed(() => getAgentModels(props.agentId || ''))
 // Thinking levels: prefer ACP-provided levels (with id+name), fallback to agent config
@@ -516,6 +519,12 @@ defineExpose({
   searchQuery,
   showDefaultPopupMenu,
   refreshing,
+  selectTransport,
+  setDefaultTransport,
+  setDefaultModel,
+  setDefaultThinkingEffort,
+  selectMode,
+  selectThinkingEffort,
   _setActiveTab(val) { activeTab.value = val },
   _setSearchQuery(val) { searchQuery.value = val },
   _getActiveTab() { return activeTab.value },

@@ -56,13 +56,13 @@ describe('computeRecentReferencedFiles', () => {
     expect(result[1].path).toBe('/rare.go')
     expect(result[1].count).toBe(1)
   })
-  it('limits to top 5', () => {
-    const msgs = Array.from({ length: 7 }, (_, i) => ({
+  it('limits to top 20', () => {
+    const msgs = Array.from({ length: 25 }, (_, i) => ({
       role: 'user',
       files: [`/file${i}.go`],
     }))
     const result = computeRecentReferencedFiles(msgs, [], null)
-    expect(result).toHaveLength(5)
+    expect(result).toHaveLength(20)
   })
   it('skips files with null/undefined path', () => {
     const msgs = [
@@ -83,47 +83,53 @@ describe('computeRecentReferencedFiles', () => {
 
 describe('computeHasFileGroups', () => {
   it('returns false when nothing to show', () => {
-    expect(computeHasFileGroups(null, null, [], [])).toBe(false)
+    expect(computeHasFileGroups(null, null, [], [], 0)).toBe(false)
   })
   it('returns true when current file is not attached', () => {
-    expect(computeHasFileGroups('/a.go', null, [], [])).toBe(true)
+    expect(computeHasFileGroups('/a.go', null, [], [], 0)).toBe(true)
   })
   it('returns false when current file is already attached', () => {
-    expect(computeHasFileGroups('/a.go', null, ['/a.go'], [])).toBe(false)
+    expect(computeHasFileGroups('/a.go', null, ['/a.go'], [], 0)).toBe(false)
   })
   it('returns true when current dir is not attached', () => {
-    expect(computeHasFileGroups(null, '/src', [], [])).toBe(true)
+    expect(computeHasFileGroups(null, '/src', [], [], 0)).toBe(true)
   })
   it('returns true when recent references exist', () => {
-    expect(computeHasFileGroups(null, null, [], [{ path: '/a.go', count: 1 }])).toBe(true)
+    expect(computeHasFileGroups(null, null, [], [{ path: '/a.go', count: 1 }], 0)).toBe(true)
   })
   it('returns false when current dir is already attached', () => {
-    expect(computeHasFileGroups(null, '/src', ['/src'], [])).toBe(false)
+    expect(computeHasFileGroups(null, '/src', ['/src'], [], 0)).toBe(false)
+  })
+  it('returns true when recent shares exist', () => {
+    expect(computeHasFileGroups(null, null, [], [], 2)).toBe(true)
   })
 })
 
 describe('computeAttachMenuItemCount', () => {
   it('counts upload button only when nothing else', () => {
-    expect(computeAttachMenuItemCount(null, null, [], [])).toBe(1)
+    expect(computeAttachMenuItemCount(null, null, [], [], 0)).toBe(1)
   })
   it('counts current file + upload button', () => {
-    expect(computeAttachMenuItemCount('/a.go', null, [], [])).toBe(2)
+    expect(computeAttachMenuItemCount('/a.go', null, [], [], 0)).toBe(2)
   })
   it('counts current dir + upload button', () => {
-    expect(computeAttachMenuItemCount(null, '/src', [], [])).toBe(2)
+    expect(computeAttachMenuItemCount(null, '/src', [], [], 0)).toBe(2)
   })
   it('does not count already-attached current file', () => {
-    expect(computeAttachMenuItemCount('/a.go', null, ['/a.go'], [])).toBe(1)
+    expect(computeAttachMenuItemCount('/a.go', null, ['/a.go'], [], 0)).toBe(1)
   })
   it('counts recent references', () => {
     expect(computeAttachMenuItemCount(null, null, [], [
       { path: '/a.go', count: 1 },
       { path: '/b.go', count: 2 },
-    ])).toBe(3) // 2 refs + 1 upload button
+    ], 0)).toBe(3) // 2 refs + 1 upload button
   })
   it('counts all groups together', () => {
     expect(computeAttachMenuItemCount('/a.go', '/src', [], [
       { path: '/c.go', count: 1 },
-    ])).toBe(4) // 1 current + 1 dir + 1 ref + 1 upload
+    ], 0)).toBe(4) // 1 current + 1 dir + 1 ref + 1 upload
+  })
+  it('counts recent shares', () => {
+    expect(computeAttachMenuItemCount(null, null, [], [], 3)).toBe(4) // 3 shares + 1 upload
   })
 })

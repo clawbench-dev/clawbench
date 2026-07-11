@@ -194,7 +194,7 @@ describe('getFileInfo', () => {
     expect(getFileInfo(container)).toEqual({ filePath: '/from-raw.go', language: 'go' })
   })
 
-  it('returns empty strings when container is not in .raw-content-pre or .markdown-body', () => {
+  it('returns empty strings when container is not in .raw-content-pre, .markdown-body, or .office-preview-body', () => {
     const container = document.createElement('div')
     expect(getFileInfo(container)).toEqual({ filePath: '', language: '' })
   })
@@ -244,5 +244,51 @@ describe('getFileInfo', () => {
     el.setAttribute('data-language', 'rust')
     // closest('.raw-content-pre') on the element itself returns itself
     expect(getFileInfo(el)).toEqual({ filePath: '/self.rs', language: 'rust' })
+  })
+
+  it('returns filePath and empty language from .office-preview-body', () => {
+    const wrapper = document.createElement('div')
+    wrapper.classList.add('office-preview-body')
+    wrapper.setAttribute('data-file-path', '/docs/report.docx')
+    const container = document.createElement('div')
+    wrapper.appendChild(container)
+    expect(getFileInfo(container)).toEqual({ filePath: '/docs/report.docx', language: '' })
+  })
+
+  it('defaults to empty string when data-file-path is missing on .office-preview-body', () => {
+    const wrapper = document.createElement('div')
+    wrapper.classList.add('office-preview-body')
+    const container = document.createElement('div')
+    wrapper.appendChild(container)
+    expect(getFileInfo(container)).toEqual({ filePath: '', language: '' })
+  })
+
+  it('prioritizes .raw-content-pre over .office-preview-body', () => {
+    const office = document.createElement('div')
+    office.classList.add('office-preview-body')
+    office.setAttribute('data-file-path', '/from-office.docx')
+    const raw = document.createElement('pre')
+    raw.classList.add('raw-content-pre')
+    raw.setAttribute('data-file-path', '/from-raw.go')
+    raw.setAttribute('data-language', 'go')
+    const container = document.createElement('code')
+    raw.appendChild(container)
+    office.appendChild(raw)
+    // .raw-content-pre is checked first and is closer
+    expect(getFileInfo(container)).toEqual({ filePath: '/from-raw.go', language: 'go' })
+  })
+
+  it('prioritizes .markdown-body over .office-preview-body', () => {
+    const office = document.createElement('div')
+    office.classList.add('office-preview-body')
+    office.setAttribute('data-file-path', '/from-office.xlsx')
+    const md = document.createElement('div')
+    md.classList.add('markdown-body')
+    md.setAttribute('data-file-path', '/from-markdown.md')
+    const container = document.createElement('p')
+    md.appendChild(container)
+    office.appendChild(md)
+    // .markdown-body is checked before .office-preview-body
+    expect(getFileInfo(container)).toEqual({ filePath: '/from-markdown.md', language: '' })
   })
 })
