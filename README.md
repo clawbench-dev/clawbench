@@ -12,6 +12,8 @@
 
 将强大的 AI 编程智能体能力完整移植到浏览器与移动端 App，打造真正的移动端工作环境。文件浏览、代码编辑、AI 对话、Git 操作、定时调度、命令行终端 —— 一个应用，全部搞定。
 
+**单文件部署，无任何依赖**
+
 
 - **支持平台**：浏览器（PC / 平板 / 手机）、Android App、PWA
 - **AI 后端**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Cline、Copilot、Kimi
@@ -73,10 +75,10 @@
 
 ### 前置准备
 
-- **一台 PC（Linux / macOS / Windows）**：用于运行 ClawBench 服务端，需已安装至少一种 AI 编程智能体 CLI（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Cline、Copilot、Kimi 均可）
-- **一台手机**：安装 [ClawBench Android App](https://github.com/xulongzhe/clawbench/releases)，或使用手机浏览器（推荐 Chrome）访问服务端地址
+- **一台 PC（Linux / macOS / Windows）**：用于运行 ClawBench 服务端
+- **一台手机**：安装 [ClawBench Android App](https://github.com/xulongzhe/clawbench/releases)，或用手机浏览器访问服务端地址
 
-### npm 安装（国内镜像加速）
+### npm 安装
 
 通过 npm 一键安装，国内用户走淘宝源秒下：
 
@@ -88,8 +90,6 @@ npm install -g @xulongzhe/clawbench
 # 启动
 clawbench
 ```
-
-支持 Linux (x64/arm64)、macOS (Intel/Apple Silicon)、Windows (x64)。npm 根据当前平台自动选择对应的二进制包。
 
 ### 安装包部署
 
@@ -117,13 +117,9 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 docker exec $(docker ps -qf ancestor=ghcr.io/clawbench-dev/clawbench) cat /data/.clawbench/auto-password
 ```
 
-> 首次启动会自动生成8位随机密码，以字符框突出打印到控制台，请妥善保存。
+> 首次启动会自动生成32位随机密码，以字符框突出打印到控制台，请妥善保存。
 
-部署完成后，使用手机 App 或手机浏览器访问 `http://服务器IP:20000` 即可开始使用：
-
-- **手机 App**：原生集成，自动连接，支持完整功能
-- **手机浏览器**：推荐使用 **Chrome 浏览器**访问，支持将网页安装为 PWA 应用（添加到主屏幕），获得接近原生 App 的体验
-
+部署完成后，使用手机 App 或手机浏览器访问 `http://服务器IP:20000` 即可开始使用。
 
 > 编译构建、高级配置、部署说明、架构设计等详细文档请参阅 **[编译与开发指南](docs/DEVELOPMENT.md)**。
 
@@ -134,14 +130,17 @@ docker exec $(docker ps -qf ancestor=ghcr.io/clawbench-dev/clawbench) cat /data/
 ## 功能详解
 
 ### 📁 文件浏览
-- 递归目录浏览，支持 120+ 种文件扩展名
+- 递归目录浏览，支持 120+ 种文件扩展名（含 Office 文档 .docx/.xlsx/.xls/.pptx）
 - 搜索过滤、排序（名称/时间/扩展名/大小）
+- **Office 文档预览**：支持 Word、Excel、PowerPoint 文档直接在浏览器中原生渲染，无需下载到本地
+- **文件预览覆盖层**：点击 Office 文件在文件浏览页上方弹出预览覆盖层，支持导航栈返回
 - **列表/网格视图切换**：网格视图以图片缩略图展示文件，直观浏览图片资源
 - **图片缩略图**：后端生成方形缩略图（主色调填充），快速预览图片内容
 - 右键菜单：重命名、删除、复制、剪切、粘贴、新建文件/文件夹、下载、作为项目打开
 - **多选操作**：工具栏切换多选模式，批量复制/剪切/删除，移动端长按触发右键菜单
 - 文件上传（支持所有文件类型，大小和数量可配置）
 - 隐藏文件显示/隐藏切换
+- **文档搜索排除**：Office 文档不参与文件内容搜索，提升搜索性能（PDF 同理）
 - **下钻浏览 + 边缘滑动回退**：点击文件夹下钻进入，右边缘左滑返回上一级，移动端直觉操作
 - **文件预览覆盖层**：点击文件直接在浏览页上方弹出预览覆盖层，无需切换标签页；支持导航栈（多文件切换 + 返回），关闭即回到文件列表
 - **二进制文件预览**：二进制文件显示占位界面，支持"以文本方式打开"；大文件自动截断（64KB 二进制 / 512KB 文本），截断时显示提示横幅
@@ -198,6 +197,13 @@ docker exec $(docker ps -qf ancestor=ghcr.io/clawbench-dev/clawbench) cat /data/
 ### 🖼️ 媒体预览
 - 图片、音频、视频应用内直接预览
 - 灯箱放大、全屏查看，支持缩放和拖拽
+
+### 📄 Office 文档预览
+- **Word (.docx)**：原生渲染文档内容，支持表格、图片排版
+- **Excel (.xlsx/.xls)**：预览表格数据，支持多 Sheet 切换，自动隐藏工具栏
+- **PowerPoint (.pptx)**：幻灯片翻页预览，支持触摸双指缩放（移动端）和 Ctrl+滚轮缩放（桌面端）
+- **加载与容错**：加载中显示骨架动画，失败时提供重试和下载按钮
+- **与 AI 对话集成**：选中 Office 文档中的文本可一键向 AI 提问，自动附带文件路径上下文
 
 ### 🔊 TTS 语音朗读
 - AI 回复自动总结后朗读，边听边看
