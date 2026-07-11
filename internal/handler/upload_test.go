@@ -217,7 +217,7 @@ func TestShareInRecent(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()
 
-		req := httptest.NewRequest(http.MethodGet, "/api/share-in/recent", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/share-in/recent", http.NoBody)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(ShareInRecent, req)
@@ -245,7 +245,7 @@ func TestShareInRecent(t *testing.T) {
 		_ = os.Chtimes(filepath.Join(shareInDir, "old.txt"), oldTime, oldTime)
 		_ = os.Chtimes(filepath.Join(shareInDir, "new.txt"), newTime, newTime)
 
-		req := httptest.NewRequest(http.MethodGet, "/api/share-in/recent", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/share-in/recent", http.NoBody)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(ShareInRecent, req)
@@ -266,11 +266,11 @@ func TestShareInRecent(t *testing.T) {
 		shareInDir := filepath.Join(env.ProjectDir, ".clawbench", "share-in")
 		_ = os.MkdirAll(shareInDir, 0o755)
 
-		for i := 0; i < 25; i++ {
+		for i := range 25 {
 			_ = os.WriteFile(filepath.Join(shareInDir, fmt.Sprintf("file%d.txt", i)), []byte("content"), 0o644)
 		}
 
-		req := httptest.NewRequest(http.MethodGet, "/api/share-in/recent", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/share-in/recent", http.NoBody)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(ShareInRecent, req)
@@ -288,7 +288,7 @@ func TestUploadRecent(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()
 
-		req := httptest.NewRequest(http.MethodGet, "/api/upload/recent", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/upload/recent", http.NoBody)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(UploadRecent, req)
@@ -314,7 +314,7 @@ func TestUploadRecent(t *testing.T) {
 		_ = os.Chtimes(filepath.Join(uploadsDir, "old.txt"), oldTime, oldTime)
 		_ = os.Chtimes(filepath.Join(uploadsDir, "new.txt"), newTime, newTime)
 
-		req := httptest.NewRequest(http.MethodGet, "/api/upload/recent", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/upload/recent", http.NoBody)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(UploadRecent, req)
