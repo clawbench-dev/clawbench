@@ -85,7 +85,7 @@
           <Share2 :size="16" class="ad-file-icon" />
           <div class="ad-file-info">
             <span class="ad-file-name">{{ item.name }}</span>
-            <span class="ad-file-meta">{{ dirName(item.path) }} · {{ formatModTime(item.modTime) }} · {{ formatFileSize(item.size) }}</span>
+            <span class="ad-file-meta">{{ dirName(item.path) }} · {{ formatRelativeTime(item.modTime) }} · {{ formatFileSize(item.size) }}</span>
           </div>
           <ExternalLink :size="14" class="ad-file-open" @click.stop="emit('file-open', item.path)" />
           <Check :size="14" class="ad-file-check" />
@@ -103,7 +103,7 @@
           <Upload :size="16" class="ad-file-icon" />
           <div class="ad-file-info">
             <span class="ad-file-name">{{ item.name }}</span>
-            <span class="ad-file-meta">{{ dirName(item.path) }} · {{ formatModTime(item.modTime) }} · {{ formatFileSize(item.size) }}</span>
+            <span class="ad-file-meta">{{ dirName(item.path) }} · {{ formatRelativeTime(item.modTime) }} · {{ formatFileSize(item.size) }}</span>
           </div>
           <ExternalLink :size="14" class="ad-file-open" @click.stop="emit('file-open', item.path)" />
           <Check :size="14" class="ad-file-check" />
@@ -122,6 +122,7 @@ import { useShareIn } from '@/composables/useShareIn'
 import { useUploadRecent } from '@/composables/useUploadRecent'
 import { baseName, dirName } from '@/utils/path'
 import { formatFileSize } from '@/utils/fileType'
+import { formatRelativeTime } from '@/utils/format'
 
 interface ReferencedFile {
   path: string
@@ -186,21 +187,6 @@ const currentDirDisplayName = computed(() => {
   const dir = effectiveCurrentDir.value
   return dir === '.' ? '/' : baseName(dir)
 })
-
-function formatModTime(iso: string) {
-  if (!iso) return ''
-  const d = new Date(iso)
-  const now = new Date()
-  const diffMs = now.getTime() - d.getTime()
-  const diffMin = Math.floor(diffMs / 60000)
-  if (diffMin < 1) return 'just now'
-  if (diffMin < 60) return `${diffMin}m`
-  const diffHr = Math.floor(diffMin / 60)
-  if (diffHr < 24) return `${diffHr}h`
-  const diffDay = Math.floor(diffHr / 24)
-  if (diffDay < 7) return `${diffDay}d`
-  return `${d.getMonth() + 1}/${d.getDate()}`
-}
 
 function handleUpload() {
   emit('upload')
