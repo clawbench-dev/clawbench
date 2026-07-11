@@ -4,6 +4,7 @@
     <div
       ref="bodyRef"
       class="office-preview-body"
+      :data-file-path="file?.path || ''"
       @touchstart.passive="onTouchStart"
       @touchmove="onTouchMove"
       @touchend="onTouchEnd"
