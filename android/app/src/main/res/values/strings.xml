@@ -31,7 +31,7 @@
     <string name="press_again_to_exit">再按一次退出应用</string>
     <!-- Share feature -->
     <string name="share_file_failed">分享文件失败</string>
-    <string name="share_in_success">已接收 %d 个文件</string>
+    <string name="share_in_success">已接收 %d 个文件，可通过聊天附件加入会话</string>
     <string name="share_in_failed">接收文件失败</string>
     <string name="share_in_no_server">未连接服务器，无法接收文件</string>
     <!-- Push event notifications (mirrors backend i18n: PushTaskCompleted, PushSessionEnded, PushScheduledTaskDone, PushPermissionPending) -->
