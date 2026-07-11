@@ -129,6 +129,7 @@
           :empty="diffState.empty"
           :html="diffState.html"
           :no-wrap="mode === 'project'"
+          :file-path="mode === 'project' ? selectedFilePath : file?.path"
         />
       </div>
     </div>

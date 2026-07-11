@@ -8,17 +8,33 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
+import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
 const { t } = useI18n()
 
-defineProps({
+const props = defineProps({
   loading: Boolean,
   empty: Boolean,
   html: { type: String, default: '' },
   noWrap: Boolean,
+  filePath: { type: String, default: '' },
 })
 
 function onDiffClick(event: MouseEvent) {
   const target = event.target as HTMLElement
+
+  // New line number click → open file at that line (old line numbers not clickable)
+  const linum = target.closest('.diff-linum-new')
+  if (linum && props.filePath) {
+    const line = linum.getAttribute('data-line')
+    if (line) {
+      event.preventDefault()
+      event.stopPropagation()
+      openFilePath(props.filePath, parseInt(line, 10))
+      return
+    }
+  }
+
+  // Header button clicks (wrap / linum toggle)
   const btn = target.closest('.diff-hunk-wrap-btn, .diff-hunk-linum-btn')
   if (!btn) return
 
@@ -36,9 +52,15 @@ function onDiffClick(event: MouseEvent) {
     const isWrapped = hunk.classList.contains('diff-hunk-wrap')
     btn.setAttribute('title', isWrapped ? t('diffBlock.wrapOn') : t('diffBlock.wrapOff'))
   } else if (action === 'linum') {
-    hunk.classList.toggle('diff-hunk-no-linum')
-    btn.classList.toggle('is-on')
-    const isOn = !hunk.classList.contains('diff-hunk-no-linum')
+    const showing = hunk.classList.contains('diff-hunk-no-linum')
+    if (showing) {
+      hunk.classList.remove('diff-hunk-no-linum')
+      btn.classList.add('is-on')
+    } else {
+      hunk.classList.add('diff-hunk-no-linum')
+      btn.classList.remove('is-on')
+    }
+    const isOn = btn.classList.contains('is-on')
     btn.setAttribute('title', isOn ? t('diffBlock.lineNumOn') : t('diffBlock.lineNumOff'))
   }
 }
@@ -63,6 +85,7 @@ function onDiffClick(event: MouseEvent) {
 
 .git-diff-scroll {
   padding: 0;
+  margin-top: 8px;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -79,7 +102,7 @@ function onDiffClick(event: MouseEvent) {
   overflow: hidden;
 }
 
-/* ─── Header bar (flex: func name + actions) ─── */
+/* ─── Header bar (func name left, actions right) ─── */
 .git-diff-scroll :deep(.diff-hunk-header) {
   display: flex;
   align-items: center;
@@ -93,6 +116,7 @@ function onDiffClick(event: MouseEvent) {
   border-bottom: 1px solid var(--border-color, #e5e5e5);
 }
 
+/* ─── Function name (left side) ─── */
 .git-diff-scroll :deep(.diff-hunk-func) {
   font-size: 12px;
   font-weight: 600;
@@ -102,15 +126,32 @@ function onDiffClick(event: MouseEvent) {
   white-space: nowrap;
 }
 
-/* ─── Header actions ─── */
-.git-diff-scroll :deep(.diff-hunk-actions) {
+/* ─── Actions (right side) ─── */
+.git-diff-scroll :deep(.diff-hunk-actions-row) {
   display: flex;
   align-items: center;
   gap: 2px;
   flex-shrink: 0;
 }
 
-.git-diff-scroll :deep(.diff-hunk-wrap-btn),
+.git-diff-scroll :deep(.diff-hunk-wrap-btn) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted, #999);
+  cursor: pointer;
+  padding: 0;
+  opacity: 0.5;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  outline: none;
+  box-shadow: none;
+}
+
 .git-diff-scroll :deep(.diff-hunk-linum-btn) {
   display: inline-flex;
   align-items: center;
@@ -124,6 +165,9 @@ function onDiffClick(event: MouseEvent) {
   cursor: pointer;
   padding: 0;
   opacity: 0.5;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: 'SF Mono', 'Fira Code', Menlo, monospace;
   transition: opacity 0.15s, color 0.15s, background 0.15s;
   outline: none;
   box-shadow: none;
@@ -173,6 +217,21 @@ function onDiffClick(event: MouseEvent) {
   line-height: 1.5;
 }
 
+/* ─── Word-wrap toggle: wrap mode ─── */
+.git-diff-scroll :deep(.diff-hunk.diff-hunk-wrap .diff-hunk-body) {
+  overflow-x: hidden;
+}
+
+.git-diff-scroll :deep(.diff-hunk.diff-hunk-wrap .diff-table) {
+  width: 100%;
+}
+
+.git-diff-scroll :deep(.diff-hunk.diff-hunk-wrap .diff-content) {
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: break-word;
+}
+
 .git-diff-scroll :deep(.diff-linum) {
   width: 1%;
   min-width: 30px;
@@ -186,13 +245,14 @@ function onDiffClick(event: MouseEvent) {
   border-right: 1px solid var(--border-color, #e5e5e5);
 }
 
-.git-diff-scroll :deep(.diff-prefix) {
-  width: 1%;
-  padding: 0 2px;
-  text-align: center;
-  font-weight: 700;
-  user-select: none;
-  white-space: nowrap;
+/* ─── New line number: clickable when data-line is present ─── */
+.git-diff-scroll :deep(.diff-linum-new[data-line]) {
+  cursor: pointer;
+}
+
+.git-diff-scroll :deep(.diff-linum-new[data-line]:hover) {
+  color: var(--accent-color, #4a90d9);
+  text-decoration: underline;
 }
 
 .git-diff-scroll :deep(.diff-content) {
@@ -201,14 +261,7 @@ function onDiffClick(event: MouseEvent) {
   min-width: 0;
 }
 
-/* ─── Word-wrap toggle: wrap mode ─── */
-.git-diff-scroll :deep(.diff-hunk.diff-hunk-wrap .diff-content) {
-  white-space: pre-wrap;
-  word-break: break-all;
-  overflow-wrap: break-word;
-}
-
-/* ─── Line number toggle: hide ─── */
+/* ─── Line number toggle: show ─── */
 .git-diff-scroll :deep(.diff-hunk.diff-hunk-no-linum .diff-linum) {
   display: none;
 }
@@ -217,9 +270,6 @@ function onDiffClick(event: MouseEvent) {
 .git-diff-scroll :deep(.diff-line-del) {
   background: rgba(239, 68, 68, 0.08);
 }
-.git-diff-scroll :deep(.diff-line-del .diff-prefix) {
-  color: #dc2626;
-}
 .git-diff-scroll :deep(.diff-line-del .diff-linum) {
   color: #dc2626;
   opacity: 0.6;
@@ -227,9 +277,6 @@ function onDiffClick(event: MouseEvent) {
 
 .git-diff-scroll :deep(.diff-line-add) {
   background: rgba(34, 197, 94, 0.08);
-}
-.git-diff-scroll :deep(.diff-line-add .diff-prefix) {
-  color: #16a34a;
 }
 .git-diff-scroll :deep(.diff-line-add .diff-linum) {
   color: #16a34a;
