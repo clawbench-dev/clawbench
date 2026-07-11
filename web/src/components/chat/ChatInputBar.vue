@@ -116,49 +116,17 @@
           <Square v-else :size="16" fill="currentColor" />
         </button>
       </div>
-      <!-- Teleported attach menu (avoids overflow:hidden clipping) -->
-      <PopupMenu v-model:show="showAttachMenu" :target-element="attachMenuRef?.querySelector('.chat-attach-btn')" :max-width="200" :max-height="280" :menu-items-count="attachMenuItemCount">
-        <!-- Current file group -->
-        <template v-if="currentFile?.path && !attachedFiles.includes(currentFile.path)">
-          <div class="attach-menu-group-title">{{ t('chat.attach.currentFile') }}</div>
-          <button class="attach-menu-item" @click="handleAttachFile(currentFile.path)">
-            <FileText :size="14" :stroke-width="1.5" />
-            <span class="attach-menu-item-name">{{ getFileName(currentFile.path) }}</span>
-          </button>
-        </template>
-        <!-- Current directory group -->
-        <template v-if="currentDir && !attachedFiles.includes(currentDir)">
-          <div class="attach-menu-group-title">{{ t('chat.attach.currentDir') }}</div>
-          <button class="attach-menu-item" @click="handleAttachFile(currentDir)">
-            <Folder :size="14" :stroke-width="1.5" />
-            <span class="attach-menu-item-name">{{ getFileName(currentDir) }}</span>
-          </button>
-        </template>
-        <!-- Recently shared group (Share In) -->
-        <template v-if="recentShares.length > 0">
-          <div class="attach-menu-group-title">{{ t('chat.attach.recentShares') }}</div>
-          <button v-for="item in recentShares" :key="item.path" class="attach-menu-item" @click="handleAttachFile(item.path)">
-            <Share2 :size="14" :stroke-width="1.5" />
-            <span class="attach-menu-item-name">{{ item.name }}</span>
-            <span class="attach-menu-item-count">{{ formatFileSize(item.size) }}</span>
-          </button>
-        </template>
-        <!-- Recently referenced group -->
-        <template v-if="recentReferencedFiles.length > 0">
-          <div class="attach-menu-group-title">{{ t('chat.attach.recentReferences') }}</div>
-          <button v-for="item in recentReferencedFiles" :key="item.path" class="attach-menu-item" @click="handleAttachFile(item.path)">
-            <FileText :size="14" :stroke-width="1.5" />
-            <span class="attach-menu-item-name">{{ getFileName(item.path) }}</span>
-            <span class="attach-menu-item-count">×{{ item.count }}</span>
-          </button>
-        </template>
-        <!-- Separator + Upload -->
-        <div v-if="hasFileGroups" class="attach-menu-separator"></div>
-        <button class="attach-menu-item" @click="handleUploadClick">
-          <Upload :size="14" :stroke-width="1.5" />
-          <span>{{ t('chat.attach.uploadFile') }}</span>
-        </button>
-      </PopupMenu>
+      <!-- Attach drawer (BottomSheet) -->
+      <AttachDrawer
+        :open="showAttachDrawer"
+        :current-file="currentFile?.path"
+        :current-dir="currentDir"
+        :attached-files="attachedFiles"
+        :recent-referenced-files="recentReferencedFiles"
+        @close="showAttachDrawer = false"
+        @add-attached="handleAttachFile"
+        @upload="handleUploadClick"
+      />
       <!-- Teleported quick-send menu -->
       <PopupMenu v-model:show="showQuickMenu" :target-element="sendBtnRef" :max-width="260" :max-height="280" :menu-items-count="quickSendItems.length + 1">
         <div class="quick-send-title">{{ t('chat.quickSend.title') }}</div>
@@ -279,14 +247,14 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, FileText, Folder, XCircle, Inbox, Send, Square, Zap, Loader2, Cpu, Compass, Brain, Cable, Activity, MessagesSquare, FileImage, FileVideo, FileMusic, Share2 } from 'lucide-vue-next'
+import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, FileText, XCircle, Inbox, Send, Square, Zap, Loader2, Cpu, Compass, Brain, Cable, Activity, MessagesSquare, FileImage, FileVideo, FileMusic } from 'lucide-vue-next'
 import { baseName } from '@/utils/path.ts'
 import { formatFileSize, getFileType } from '@/utils/fileType.ts'
 import { isThumbableExt } from '@/utils/fileManager.ts'
 import { isImageFile } from '@/utils/fileAttachmentUtils.ts'
-import { computeRecentReferencedFiles, computeHasFileGroups, computeAttachMenuItemCount } from '@/utils/chatInputUtils.ts'
-import { useShareIn } from '@/composables/useShareIn'
+import { computeRecentReferencedFiles } from '@/utils/chatInputUtils.ts'
 import PopupMenu from '@/components/common/PopupMenu.vue'
+import AttachDrawer from '@/components/chat/AttachDrawer.vue'
 import QuickSendDrawer from '@/components/chat/QuickSendDrawer.vue'
 import SessionSettingModal from '@/components/chat/SessionSettingModal.vue'
 import { createStopButtonMachine } from '@/utils/stopButtonMachine.ts'
@@ -328,7 +296,6 @@ const usageColor = computed(() => {
 })
 const dialog = useDialog()
 const quickSendStore = useQuickSend()
-const { recentShares, fetchRecentShares } = useShareIn()
 const { items: quickSendItems, fetchItems } = quickSendStore
 const showSettingsModal = ref(false)
 const settingsModalInitialTab = ref('model')
@@ -432,8 +399,8 @@ const textareaRef = ref(null)
 const fileInputRef = ref(null)
 const isDragOver = ref(false)
 const dragCounter = ref(0)
-const showAttachMenu = ref(false)
-const attachMenuRef = ref(null)
+const showAttachDrawer = ref(false)
+const attachMenuRef = ref(null) // kept for ref stability, no longer used for PopupMenu
 const showQuickMenu = ref(false)
 const sendBtnRef = ref(null)
 
@@ -566,14 +533,6 @@ const hasInputContent = computed(() => inputText.value.trim() || props.pendingFi
 // Extract recently referenced files from message history
 const recentReferencedFiles = computed(() => {
   return computeRecentReferencedFiles(props.messages, props.attachedFiles, props.currentFile?.path)
-})
-
-const hasFileGroups = computed(() => {
-  return computeHasFileGroups(props.currentFile?.path, props.currentDir, props.attachedFiles, recentReferencedFiles.value, recentShares.value.length)
-})
-
-const attachMenuItemCount = computed(() => {
-  return computeAttachMenuItemCount(props.currentFile?.path, props.currentDir, props.attachedFiles, recentReferencedFiles.value, recentShares.value.length)
 })
 
 function handleCreateClick(e) {
@@ -714,7 +673,7 @@ function handleAttachFile(filePath) {
 }
 
 function handleUploadClick() {
-  showAttachMenu.value = false
+  showAttachDrawer.value = false
   if (fileInputRef.value) {
     // Clear previous selection BEFORE opening picker to prevent stale
     // file data on Android WebView when user cancels the picker
@@ -724,10 +683,7 @@ function handleUploadClick() {
 }
 
 async function toggleAttachMenu() {
-  showAttachMenu.value = !showAttachMenu.value
-  if (showAttachMenu.value) {
-    fetchRecentShares()
-  }
+  showAttachDrawer.value = !showAttachDrawer.value
 }
 
 function handleSendClick() {
@@ -848,11 +804,11 @@ function handleSwitchTransport(transport) {
 }
 
 // Menu mutual exclusion: opening one closes the others
-watch(showAttachMenu, (v) => { if (v) { showQuickMenu.value = false; showSettingsModal.value = false; showSlashMenu.value = false; showUsagePopup.value = false } })
-watch(showQuickMenu, (v) => { if (v) { showAttachMenu.value = false; showSettingsModal.value = false; showSlashMenu.value = false; showUsagePopup.value = false } })
-watch(showSettingsModal, (v) => { if (v) { showAttachMenu.value = false; showQuickMenu.value = false; showSlashMenu.value = false; showUsagePopup.value = false } })
-watch(showSlashMenu, (v) => { if (v) { showAttachMenu.value = false; showQuickMenu.value = false; showSettingsModal.value = false; showUsagePopup.value = false } })
-watch(showUsagePopup, (v) => { if (v) { showAttachMenu.value = false; showQuickMenu.value = false; showSettingsModal.value = false; showSlashMenu.value = false } })
+watch(showAttachDrawer, (v) => { if (v) { showQuickMenu.value = false; showSettingsModal.value = false; showSlashMenu.value = false; showUsagePopup.value = false } })
+watch(showQuickMenu, (v) => { if (v) { showAttachDrawer.value = false; showSettingsModal.value = false; showSlashMenu.value = false; showUsagePopup.value = false } })
+watch(showSettingsModal, (v) => { if (v) { showAttachDrawer.value = false; showQuickMenu.value = false; showSlashMenu.value = false; showUsagePopup.value = false } })
+watch(showSlashMenu, (v) => { if (v) { showAttachDrawer.value = false; showQuickMenu.value = false; showSettingsModal.value = false; showUsagePopup.value = false } })
+watch(showUsagePopup, (v) => { if (v) { showAttachDrawer.value = false; showQuickMenu.value = false; showSettingsModal.value = false; showSlashMenu.value = false } })
 
 onMounted(() => {
   fetchItems()
@@ -1244,11 +1200,6 @@ defineExpose({
 }
 
 /* Attach button (inside input row) */
-.attach-menu-wrapper {
-  position: relative;
-  flex-shrink: 0;
-}
-
 .chat-attach-btn {
   background: none;
   border: none;
@@ -1568,74 +1519,6 @@ defineExpose({
 
 <!-- Unscoped styles for teleported menu content (PopupMenu uses Teleport to body, scoped styles won't reach it) -->
 <style>
-/* Attach menu content styles */
-.attach-menu-group-title {
-  padding: 4px 10px 1px;
-  font-size: 11px;
-  color: var(--text-muted, #999);
-  font-weight: 500;
-  letter-spacing: 0.3px;
-}
-
-.attach-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  width: 100%;
-  border: none;
-  background: none;
-  color: var(--text-primary);
-  font-size: 13px;
-  cursor: pointer;
-  white-space: nowrap;
-  text-align: left;
-}
-
-.attach-menu-item:hover {
-  background: var(--accent-color, #0066cc);
-  color: #fff;
-}
-
-.attach-menu-item svg {
-  flex-shrink: 0;
-  width: 14px;
-  height: 14px;
-}
-
-.attach-menu-item-name {
-  font-family: monospace;
-  font-size: 12px;
-  min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  white-space: nowrap;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-
-.attach-menu-item-name::-webkit-scrollbar {
-  display: none;
-}
-
-.attach-menu-item-count {
-  margin-left: auto;
-  font-size: 11px;
-  color: var(--text-muted, #999);
-  font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
-}
-
-.attach-menu-item:hover .attach-menu-item-count {
-  color: rgba(255, 255, 255, 0.7);
-}
-
-.attach-menu-separator {
-  height: 1px;
-  background: var(--border-color, #e5e5e5);
-  margin: 3px 6px;
-}
-
 /* Quick-send menu content styles */
 .quick-send-title {
   padding: 6px 14px 2px;

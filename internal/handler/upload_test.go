@@ -259,14 +259,14 @@ func TestShareInRecent(t *testing.T) {
 		assert.Equal(t, "old.txt", result[1].Name)
 	})
 
-	t.Run("LimitsTo5Files", func(t *testing.T) {
+	t.Run("LimitsTo20Files", func(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()
 
 		shareInDir := filepath.Join(env.ProjectDir, ".clawbench", "share-in")
 		_ = os.MkdirAll(shareInDir, 0o755)
 
-		for i := 0; i < 7; i++ {
+		for i := 0; i < 25; i++ {
 			_ = os.WriteFile(filepath.Join(shareInDir, fmt.Sprintf("file%d.txt", i)), []byte("content"), 0o644)
 		}
 
@@ -279,7 +279,7 @@ func TestShareInRecent(t *testing.T) {
 		var result []shareInFile
 		err := json.Unmarshal(w.Body.Bytes(), &result)
 		assert.NoError(t, err)
-		assert.Len(t, result, 5)
+		assert.Len(t, result, 20)
 	})
 }
 

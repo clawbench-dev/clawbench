@@ -56,13 +56,13 @@ describe('computeRecentReferencedFiles', () => {
     expect(result[1].path).toBe('/rare.go')
     expect(result[1].count).toBe(1)
   })
-  it('limits to top 5', () => {
-    const msgs = Array.from({ length: 7 }, (_, i) => ({
+  it('limits to top 20', () => {
+    const msgs = Array.from({ length: 25 }, (_, i) => ({
       role: 'user',
       files: [`/file${i}.go`],
     }))
     const result = computeRecentReferencedFiles(msgs, [], null)
-    expect(result).toHaveLength(5)
+    expect(result).toHaveLength(20)
   })
   it('skips files with null/undefined path', () => {
     const msgs = [

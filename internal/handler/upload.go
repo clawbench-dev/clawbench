@@ -212,9 +212,9 @@ func ShareInRecent(w http.ResponseWriter, r *http.Request) {
 		return files[i].ModTime > files[j].ModTime
 	})
 
-	// Limit to 5
-	if len(files) > 5 {
-		files = files[:5]
+	// Limit to 20
+	if len(files) > 20 {
+		files = files[:20]
 	}
 
 	w.Header().Set("Content-Type", "application/json")

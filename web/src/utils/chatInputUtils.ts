@@ -27,7 +27,7 @@ export function computeRecentReferencedFiles(
   return [...countMap.entries()]
     .filter(([path]) => !exclude.has(path))
     .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
+    .slice(0, 20)
     .map(([path, count]) => ({ path, count }))
 }
 
