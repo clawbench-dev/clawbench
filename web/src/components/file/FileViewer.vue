@@ -70,6 +70,7 @@
       <!-- Office (Word/Excel/PPT) -->
       <OfficePreview
         v-else-if="file.isOffice"
+        ref="officePreviewRef"
         :file="file"
       />
 
@@ -258,6 +259,7 @@ const isOpenapi = computed(() => props.file?.subtype === 'openapi')
 const loading = ref(false)
 const contentRef = ref(null)
 const pdfPreviewRef = ref(null)
+const officePreviewRef = ref(null)
 const htmlPreviewRef = ref(null)
 
 // Expose PDF outline and scrollToPage for TOC integration
@@ -267,6 +269,7 @@ const pdfScrollToPage = (pageNum) => pdfPreviewRef.value?.scrollToPage(pageNum)
 // Fit-width: reset zoom to fit container width
 function handleFitWidth() {
     pdfPreviewRef.value?.fitWidth()
+    officePreviewRef.value?.fitWidth()
 }
 
 // Word wrap & line numbers preferences from settings config

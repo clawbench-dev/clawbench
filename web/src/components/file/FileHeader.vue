@@ -257,10 +257,10 @@ const hasSearch = computed(() => {
     return hasToc.value
 })
 
-// Show reset-zoom button for zoomable file types (PDF)
+// Show reset-zoom button for zoomable file types (PDF, PPT)
 const hasFitWidth = computed(() => {
     if (!props.file) return false
-    return fileType.value?.isPdf || false
+    return fileType.value?.isPdf || (fileType.value?.isOffice && props.file.name?.toLowerCase().endsWith('.pptx')) || false
 })
 
 function handleToggleView() {

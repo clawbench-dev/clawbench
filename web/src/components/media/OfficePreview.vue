@@ -1,7 +1,14 @@
 <template>
-  <div class="office-preview-container">
+  <div class="office-preview-container" @wheel.prevent="onWheel">
     <!-- Preview body — component always mounted to avoid dead-lock -->
-    <div class="office-preview-body">
+    <div
+      ref="bodyRef"
+      class="office-preview-body"
+      @touchstart.passive="onTouchStart"
+      @touchmove="onTouchMove"
+      @touchend="onTouchEnd"
+      @touchcancel="onTouchEnd"
+    >
       <VueOfficeDocx v-if="isWord" :src="fileUrl" @rendered="onRendered" @error="onError" />
       <VueOfficeExcel v-else-if="isExcel" :src="fileUrl" @rendered="onRendered" @error="onError" />
       <VueOfficePptx v-else-if="isPpt" :src="fileUrl" @rendered="onRendered" @error="onError" />
@@ -37,7 +44,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Loader, FileX, Download, RefreshCw } from 'lucide-vue-next'
 import { useAppMode } from '@/composables/useAppMode.ts'
@@ -56,6 +63,9 @@ import '@vue-office/excel/lib/index.css'
 
 const TAG = 'OfficePreview'
 
+const MIN_SCALE = 0.25
+const MAX_SCALE = 5.0
+
 const props = defineProps({
   file: Object,
 })
@@ -65,6 +75,12 @@ const { isAppMode } = useAppMode()
 
 const loading = ref(true)
 const error = ref('')
+const bodyRef = ref(null)
+
+// --- PPT zoom state ---
+const scale = ref(1.0)
+const pinchStartDist = ref(0)
+const pinchStartScale = ref(1)
 
 // Determine office sub-type from extension
 const lower = computed(() => (props.file?.name || '').toLowerCase())
@@ -78,10 +94,82 @@ const fileUrl = computed(() =>
   `/api/local-file/${encodeURIComponent(props.file.path)}?t=${mediaTimestamp.value}`
 )
 
+// --- PPT zoom: CSS transform on pptx-preview-wrapper ---
+function applyPptScale() {
+  if (!isPpt.value || !bodyRef.value) return
+  const wrapper = bodyRef.value.querySelector('.pptx-preview-wrapper')
+  if (!wrapper) return
+  if (scale.value === 1) {
+    wrapper.style.transform = ''
+    wrapper.style.transformOrigin = ''
+  } else {
+    wrapper.style.transform = `scale(${scale.value})`
+    wrapper.style.transformOrigin = 'top left'
+  }
+  // Scale the wrapper's layout size so the scroll container adjusts correctly
+  wrapper.style.width = `${100 / scale.value}%`
+}
+
+// --- PPT zoom: fit-width (reset zoom) ---
+function fitWidth() {
+  if (!isPpt.value || !bodyRef.value) return
+  // After fit, scale=1 means "fit container width" — that's the default
+  scale.value = 1.0
+  applyPptScale()
+}
+
+// --- PPT zoom: pinch gesture (touch) ---
+function onTouchStart(e) {
+  if (!isPpt.value) return
+  if (e.touches.length === 2) {
+    pinchStartDist.value = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY,
+    )
+    pinchStartScale.value = scale.value
+  }
+}
+
+function onTouchMove(e) {
+  if (!isPpt.value) return
+  if (e.touches.length === 2 && pinchStartDist.value > 0) {
+    e.preventDefault()
+    const dist = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY,
+    )
+    const ratio = dist / pinchStartDist.value
+    scale.value = Math.max(MIN_SCALE, Math.min(pinchStartScale.value * ratio, MAX_SCALE))
+    applyPptScale()
+  }
+}
+
+function onTouchEnd(e) {
+  if (e.touches.length < 2) {
+    pinchStartDist.value = 0
+  }
+}
+
+// --- PPT zoom: Ctrl+scroll (desktop) ---
+function onWheel(e) {
+  if (!isPpt.value) return
+  if (e.ctrlKey || e.metaKey) {
+    const delta = e.deltaY > 0 ? -0.1 : 0.1
+    scale.value = Math.max(MIN_SCALE, Math.min(scale.value + delta, MAX_SCALE))
+    applyPptScale()
+  }
+}
+
 function onRendered() {
   appLog.d(TAG, 'Rendered:', props.file?.name)
   loading.value = false
   error.value = ''
+  // Reset zoom on new render
+  scale.value = 1.0
+  // Apply scale after DOM is ready
+  if (isPpt.value) {
+    nextTick(applyPptScale)
+  }
 }
 
 function onError(err) {
@@ -94,6 +182,7 @@ function onError(err) {
 function reload() {
   loading.value = true
   error.value = ''
+  scale.value = 1.0
   mediaTimestamp.value = Date.now()
 }
 
@@ -106,6 +195,7 @@ watch(() => props.file?.path, (newPath, oldPath) => {
   if (newPath && newPath !== oldPath) {
     loading.value = true
     error.value = ''
+    scale.value = 1.0
     mediaTimestamp.value = Date.now()
   }
 })
@@ -116,6 +206,10 @@ onMounted(() => {
 
 onUnmounted(() => {
   appLog.d(TAG, 'Unmounted')
+})
+
+defineExpose({
+  fitWidth,
 })
 </script>
 
@@ -135,6 +229,11 @@ onUnmounted(() => {
   flex: 1;
   overflow: auto;
   -webkit-overflow-scrolling: touch;
+}
+
+/* PPT zoom: allow pan but disable browser pinch-zoom so our handler takes over */
+.office-preview-body:has(.vue-office-pptx) {
+  touch-action: pan-x pan-y;
 }
 
 /* Word overrides: remove all padding/margin, full-width, match bg */
