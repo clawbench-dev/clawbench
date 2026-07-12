@@ -34,8 +34,6 @@ git log --oneline --since="24 hours ago"
 - `README.md` — 用户面向的功能介绍、截图、功能详解
 - `README.en.md` — 英文版 README
 - `AGENTS.md` — AI Agent 项目指引（架构、组件、配置、模式）
-- `docs/DEVELOPMENT.md` — 开发指南
-- `docs/DEVELOPMENT.en.md` — 英文开发指南
 - `docs/FAQ.md` — 常见问题
 - `docs/FAQ.en.md` — 英文FAQ
 - 其他 `docs/` 下的专题文档
