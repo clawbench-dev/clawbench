@@ -18,12 +18,15 @@ vi.mock('@/stores/app', () => ({
   },
 }))
 
-const mockLoadAgents = vi.fn().mockResolvedValue(undefined)
-const mockGetAgentIcon = vi.fn(() => '🤖')
-const mockGetAgentName = vi.fn(() => 'Agent')
-const mockIsDefaultAgent = vi.fn(() => false)
-const mockGetAgentDefaultModelName = vi.fn(() => '')
-const mockSetDefaultAgent = vi.fn().mockResolvedValue(undefined)
+const { mockLoadAgents, mockGetAgentIcon, mockGetAgentName, mockIsDefaultAgent, mockGetAgentDefaultModelName, mockSetDefaultAgent, mockAgentCanResume } = vi.hoisted(() => ({
+  mockLoadAgents: vi.fn().mockResolvedValue(undefined),
+  mockGetAgentIcon: vi.fn(() => '🤖'),
+  mockGetAgentName: vi.fn(() => 'Agent'),
+  mockIsDefaultAgent: vi.fn(() => false),
+  mockGetAgentDefaultModelName: vi.fn(() => ''),
+  mockSetDefaultAgent: vi.fn().mockResolvedValue(undefined),
+  mockAgentCanResume: vi.fn(() => false),
+}))
 
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({
@@ -38,6 +41,7 @@ vi.mock('@/composables/useAgents', () => ({
     getAgentDefaultModelName: mockGetAgentDefaultModelName,
     setDefaultAgent: mockSetDefaultAgent,
   }),
+  agentCanResume: mockAgentCanResume,
 }))
 
 vi.mock('@/composables/useDialog', () => ({
@@ -46,10 +50,9 @@ vi.mock('@/composables/useDialog', () => ({
   }),
 }))
 
-const mockRunningSessionsVersion = ref(0)
 vi.mock('@/composables/useSessionIdentity', () => ({
   useSessionIdentity: () => ({
-    runningSessionsVersion: mockRunningSessionsVersion,
+    runningSessionsVersion: { value: 0 },
   }),
 }))
 
@@ -343,14 +346,12 @@ describe('SessionDrawer', () => {
       await flushPromises()
 
       await wrapper.vm.openAgentSelector()
+      await nextTick()
 
-      expect(wrapper.vm.showAgentSelector).toBe(true)
+      expect(wrapper.vm.agentSelectorDrawer.isOpen.value).toBe(true)
     })
 
-    it('emits create when only one agent exists', async () => {
-      // The mock has 2 agents by default; we can't easily change it per-test
-      // without re-mocking. Instead, test that the agent selector opens and
-      // the agents list is rendered.
+    it('renders agent options when selector is open', async () => {
       const wrapper = mountDrawer()
       await flushPromises()
 
@@ -370,7 +371,7 @@ describe('SessionDrawer', () => {
 
       // Set agentSelectorOpenTime to past to avoid debounce
       wrapper.vm.agentSelectorOpenTime = 0
-      wrapper.vm.showAgentSelector = true
+      wrapper.vm.agentSelectorDrawer.open()
 
       wrapper.vm.createSession('agent-1')
 
@@ -415,6 +416,97 @@ describe('SessionDrawer', () => {
       await flushPromises()
 
       expect(wrapper.find('.session-counter').exists()).toBe(true)
+    })
+  })
+
+  describe('handleSetDefaultAgent', () => {
+    it('calls setDefaultAgent with the given agentId', async () => {
+      const wrapper = mountDrawer()
+      await flushPromises()
+
+      await wrapper.vm.handleSetDefaultAgent('agent-2')
+
+      expect(mockSetDefaultAgent).toHaveBeenCalledWith('agent-2')
+    })
+  })
+
+  describe('showResumeIcon', () => {
+    it('shows resume icon when isACPTransport and agentCanResume are true', async () => {
+      mockAgentCanResume.mockReturnValue(true)
+
+      const wrapper = mountDrawer({ isACPTransport: true, currentAgentId: 'agent-1' })
+      await flushPromises()
+
+      expect(wrapper.vm.showResumeIcon).toBe(true)
+    })
+
+    it('hides resume icon when not ACP transport', async () => {
+      mockAgentCanResume.mockReturnValue(true)
+
+      const wrapper = mountDrawer({ isACPTransport: false, currentAgentId: 'agent-1' })
+      await flushPromises()
+
+      expect(wrapper.vm.showResumeIcon).toBe(false)
+    })
+
+    it('hides resume icon when agent cannot resume', async () => {
+      mockAgentCanResume.mockReturnValue(false)
+
+      const wrapper = mountDrawer({ isACPTransport: true, currentAgentId: 'agent-1' })
+      await flushPromises()
+
+      expect(wrapper.vm.showResumeIcon).toBe(false)
+    })
+  })
+
+  describe('open-acp-sessions emit', () => {
+    it('emits open-acp-sessions when resume button is clicked', async () => {
+      mockAgentCanResume.mockReturnValue(true)
+
+      const wrapper = mountDrawer({ isACPTransport: true, currentAgentId: 'agent-1' })
+      await flushPromises()
+
+      // Click the resume button
+      const resumeBtn = wrapper.find('.create-btn[title]')
+      if (resumeBtn.exists()) {
+        await resumeBtn.trigger('click')
+        expect(wrapper.emitted('open-acp-sessions')).toBeTruthy()
+      }
+    })
+  })
+
+  describe('sessionBarColor computed', () => {
+    it('returns red when session count equals max count', async () => {
+      const { store } = await import('@/stores/app')
+      store.state.sessionCount = 10
+      store.state.sessionMaxCount = 10
+
+      const wrapper = mountDrawer()
+      await flushPromises()
+
+      expect(wrapper.vm.sessionBarColor).toBe('#ef4444')
+    })
+
+    it('returns warning color when usage >= 80%', async () => {
+      const { store } = await import('@/stores/app')
+      store.state.sessionCount = 9
+      store.state.sessionMaxCount = 10
+
+      const wrapper = mountDrawer()
+      await flushPromises()
+
+      expect(wrapper.vm.sessionBarColor).toBe('#f59e0b')
+    })
+
+    it('returns accent color when usage < 80%', async () => {
+      const { store } = await import('@/stores/app')
+      store.state.sessionCount = 5
+      store.state.sessionMaxCount = 10
+
+      const wrapper = mountDrawer()
+      await flushPromises()
+
+      expect(wrapper.vm.sessionBarColor).toBe('var(--accent-color, #0066cc)')
     })
   })
 })

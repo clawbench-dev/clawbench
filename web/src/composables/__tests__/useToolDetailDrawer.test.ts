@@ -158,4 +158,64 @@ describe('useToolDetailDrawer', () => {
       fetchSpy.mockRestore()
     })
   })
+
+  describe('handleFileOpenInOverlay', () => {
+    it('calls onFileOpen with string payload', () => {
+      const mockOnFileOpen = vi.fn()
+      const d = useToolDetailDrawer({ chatRender: createMockChatRender(), onFileOpen: mockOnFileOpen })
+
+      d.handleFileOpenInOverlay('/path/to/file.ts')
+
+      expect(mockOnFileOpen).toHaveBeenCalledWith('/path/to/file.ts', undefined, undefined)
+      expect(d.drawer.isOpen.value).toBe(false)
+    })
+
+    it('calls onFileOpen with object payload including line range', () => {
+      const mockOnFileOpen = vi.fn()
+      const d = useToolDetailDrawer({ chatRender: createMockChatRender(), onFileOpen: mockOnFileOpen })
+
+      d.handleFileOpenInOverlay({ path: '/src/app.ts', lineStart: 10, lineEnd: 25 })
+
+      expect(mockOnFileOpen).toHaveBeenCalledWith('/src/app.ts', 10, 25)
+      expect(d.drawer.isOpen.value).toBe(false)
+    })
+
+    it('closes drawer even when onFileOpen is not provided', () => {
+      const d = useToolDetailDrawer({ chatRender: createMockChatRender() })
+      d.drawer.open()
+      expect(d.drawer.isOpen.value).toBe(true)
+
+      d.handleFileOpenInOverlay('/some/file.ts')
+
+      expect(d.drawer.isOpen.value).toBe(false)
+    })
+  })
+
+  describe('handleShowToolDetail with fetch trigger', () => {
+    it('fetches tool call detail when input is missing', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+        new Response(JSON.stringify({ input: { cmd: 'ls' }, output: 'ok', done: true, status: 'completed' }), { status: 200 })
+      )
+
+      // Pass block without input but with tool_id and msgId — should trigger fetch
+      drawer.handleShowToolDetail({ name: 'Bash', tool_id: 'tool1', msgId: 1, blockIdx: 0 })
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1)
+      expect(drawer.toolDetailData.value._fetchIds).toEqual({ toolId: 'tool1', msgId: 1 })
+
+      fetchSpy.mockRestore()
+    })
+
+    it('sets activeToolOverlay when blockIdx is provided', () => {
+      drawer.handleShowToolDetail({ name: 'Bash', input: { cmd: 'ls' }, output: 'ok', msgId: 42, blockIdx: 3 })
+
+      expect(drawer.activeToolOverlay.value).toEqual({ msgId: '42', blockIdx: 3 })
+    })
+
+    it('sets DeepThink display name override', () => {
+      drawer.handleShowToolDetail({ name: 'DeepThink', input: {}, output: 'result', msgId: 1, blockIdx: 0 })
+
+      expect(drawer.toolDetailData.value.displayNameOverride).toBe('chat.message.deepThinking')
+    })
+  })
 })

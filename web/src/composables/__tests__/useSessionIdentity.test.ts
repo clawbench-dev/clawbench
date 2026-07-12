@@ -51,7 +51,7 @@ vi.mock('@/utils/chatSessionUtils', () => ({
     parseMessages: vi.fn().mockReturnValue([]),
 }))
 
-import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, clearAllUsageState, toggleAutoApprove, getSessionId, prefetchCommands, registerSessionDrawerRef } from '@/composables/useSessionIdentity'
+import { useSessionIdentity, registerSessionActions, initSessionFromAPI, resetIdentity, updateModeState, updateAvailableModes, clearModeState, updateCommandState, clearCommandState, updateThinkingEffortState, updateAvailableThinkingEfforts, clearThinkingEffortState, updateUsageState, clearUsageState, clearAllUsageState, clearUsageStateById, toggleAutoApprove, getSessionId, prefetchCommands, registerSessionDrawerRef } from '@/composables/useSessionIdentity'
 
 describe('useSessionIdentity', () => {
     beforeEach(() => {
@@ -1404,6 +1404,67 @@ describe('useSessionIdentity', () => {
                 forkSession: vi.fn().mockResolvedValue(true),
             }
             expect(() => registerSessionActions(actions)).not.toThrow()
+        })
+    })
+
+    // ── clearUsageStateById ──
+
+    describe('clearUsageStateById', () => {
+        beforeEach(() => {
+            clearAllUsageState()
+        })
+
+        it('removes usage state for a specific session by ID', () => {
+            const identity = useSessionIdentity()
+            updateUsageState(5000, 200000, 0.05, 'USD', 'session-A')
+            updateUsageState(3000, 100000, 0.02, 'EUR', 'session-B')
+
+            clearUsageStateById('session-A')
+
+            // session-A data is gone
+            identity.currentSessionId.value = 'session-A'
+            expect(identity.contextUsed.value).toBe(0)
+            expect(identity.contextSize.value).toBe(0)
+
+            // session-B data is still there
+            identity.currentSessionId.value = 'session-B'
+            expect(identity.contextUsed.value).toBe(3000)
+            expect(identity.contextSize.value).toBe(100000)
+        })
+
+        it('does nothing when session ID is not in cache', () => {
+            updateUsageState(5000, 200000, 0.05, 'USD', 'session-A')
+
+            // Clearing a non-existent session should not throw or affect existing data
+            expect(() => clearUsageStateById('session-unknown')).not.toThrow()
+
+            const identity = useSessionIdentity()
+            identity.currentSessionId.value = 'session-A'
+            expect(identity.contextUsed.value).toBe(5000)
+        })
+    })
+
+    // ── closeSessionDrawer ──
+
+    describe('closeSessionDrawer', () => {
+        it('closes the session drawer', async () => {
+            const identity = useSessionIdentity()
+            identity.sessionDrawer.open()
+            await nextTick()
+            expect(identity.sessionDrawer.isOpen.value).toBe(true)
+
+            identity.closeSessionDrawer()
+            await nextTick()
+            expect(identity.sessionDrawer.isOpen.value).toBe(false)
+        })
+    })
+
+    // ── loadModePref ──
+
+    describe('loadModePref', () => {
+        it('returns null when agentId is empty', () => {
+            const identity = useSessionIdentity()
+            expect(identity.loadModePref('')).toBeNull()
         })
     })
 })

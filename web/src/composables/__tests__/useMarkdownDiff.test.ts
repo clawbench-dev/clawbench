@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
-import { extractBlocks, computeMarkdownDiff, computeCharDiff, offscreenExtractBlocks, charDiffToLines, contentToDiffLines, contentToDiffLinesWithCtx, isDiffBlock, extractBlockElements, computeCodeDiffMarkers } from '@/composables/useMarkdownDiff'
+import { describe, expect, it, vi, afterEach } from 'vitest'
+import { extractBlocks, computeMarkdownDiff, computeCharDiff, offscreenExtractBlocks, charDiffToLines, contentToDiffLines, contentToDiffLinesWithCtx, isDiffBlock, extractBlockElements, computeCodeDiffMarkers, diffMarkers, diffDrawerVisible, diffDrawerMarker, diffOldContent, diffOldFilePath, openDiffDrawer, closeDiffDrawer, clearDiffMarkers } from '@/composables/useMarkdownDiff'
 
 // Mock globals for renderMarkdown
 vi.mock('@/utils/globals', () => ({
@@ -582,5 +582,56 @@ describe('computeCodeDiffMarkers', () => {
     }
     const markers = computeCodeDiffMarkers(lineDiff, 'same', 'same')
     expect(markers).toHaveLength(0)
+  })
+})
+
+describe('diff drawer state', () => {
+  afterEach(() => {
+    clearDiffMarkers()
+  })
+
+  it('openDiffDrawer sets marker and opens drawer', () => {
+    const marker = {
+      id: 'test-marker',
+      type: 'modified' as const,
+      label: 'M',
+      blockSelector: ':scope',
+      charDiff: null,
+      ariaLabel: 'Modified: P',
+    }
+    openDiffDrawer(marker)
+
+    expect(diffDrawerMarker.value).toBe(marker)
+    expect(diffDrawerVisible.value).toBe(true)
+  })
+
+  it('closeDiffDrawer clears marker and closes drawer', () => {
+    const marker = {
+      id: 'test-marker',
+      type: 'added' as const,
+      label: '+',
+      blockSelector: ':scope',
+      charDiff: null,
+      ariaLabel: 'Added: P',
+    }
+    openDiffDrawer(marker)
+    closeDiffDrawer()
+
+    expect(diffDrawerMarker.value).toBeNull()
+    expect(diffDrawerVisible.value).toBe(false)
+  })
+
+  it('clearDiffMarkers resets all diff state', () => {
+    diffMarkers.value = [{ id: 'm1', type: 'modified', label: 'M', blockSelector: ':scope', charDiff: null, ariaLabel: 'M: P' }]
+    diffOldContent.value = 'old content'
+    diffOldFilePath.value = '/path/to/file'
+
+    clearDiffMarkers()
+
+    expect(diffMarkers.value).toEqual([])
+    expect(diffOldContent.value).toBeNull()
+    expect(diffOldFilePath.value).toBeNull()
+    expect(diffDrawerMarker.value).toBeNull()
+    expect(diffDrawerVisible.value).toBe(false)
   })
 })
