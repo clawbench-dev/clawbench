@@ -76,7 +76,6 @@
       :loading="loading"
       :currentFile="currentFile"
       :currentDir="currentDir"
-      :pendingFiles="pendingFiles"
       :attachedFiles="attachedFiles"
       :quoteData="quoteData"
       :messages="renderedMessages"
@@ -93,9 +92,6 @@
       :active="props.active"
       @send="sendMessage"
       @cancel="stream.cancelStream"
-      @file-select="handleFileSelect"
-      @file-drop="handleFileDrop"
-      @remove-file="removeFile"
       @add-attached="addAttachedFile"
       @remove-attached="removeAttachedFile"
       @remove-attached-by-path="removeAttachedFileByPath"
@@ -402,7 +398,7 @@ const stream = useChatStream({
   },
 })
 
-const { pendingFiles, attachedFiles, handleFileSelect, handleFileDrop, removeFile, addAttachedFile, removeAttachedFile, cleanupPreviewUrls, clearPendingFiles } = useFileUpload()
+const { pendingFiles, attachedFiles, addAttachedFile, removeAttachedFile, cleanupPreviewUrls, clearPendingFiles } = useFileUpload()
 const { quoteData, setQuoteData, clearAll, removeAttachedFileByPath } = useChatContext()
 
 const manager = useSessionManager({

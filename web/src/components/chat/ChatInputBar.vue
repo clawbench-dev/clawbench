@@ -36,25 +36,18 @@
       </button>
     </div>
     <!-- Input container -->
-    <div class="chat-input-container" :class="{ 'drag-over': isDragOver }"
+    <div class="chat-input-container"
       @dragenter="onDragEnter"
       @dragover="onDragOver"
       @dragleave="onDragLeave"
       @drop="onDrop">
-      <input type="file" ref="fileInputRef" @change="onFileSelect" style="display:none" multiple />
-      <!-- Drop overlay -->
+      <!-- Drop overlay (opens the attach drawer on drop) -->
       <div v-if="isDragOver" class="drop-overlay">
         <Upload :size="24" :stroke-width="1.5" />
         <span>{{ t('chat.attach.dropToUpload') }}</span>
       </div>
-      <!-- Upload progress bars -->
-      <div v-if="uploadingFiles.length > 0" class="chat-upload-progress">
-        <div v-for="(f, idx) in uploadingFiles" :key="'prog-' + idx" class="upload-progress-item">
-          <div class="upload-progress-bar" :style="{ width: f.progress + '%' }"></div>
-        </div>
-      </div>
-      <!-- Attachment tags (horizontal scrollable cards) -->
-      <div v-if="quoteData || attachedFiles.length > 0 || pendingFiles.length > 0" class="chat-attachment-tags">
+      <!-- Attachment tags (horizontal scrollable cards — only quote + attached file refs) -->
+      <div v-if="quoteData || attachedFiles.length > 0" class="chat-attachment-tags">
         <!-- Quote selection card -->
         <span v-if="quoteData" class="chat-file-attachment attachment-quote" :title="quoteData.filePath" @click="$emit('quote-click')">
           <MessageSquare :size="14" :stroke-width="1.5" class="attachment-quote-icon" />
@@ -70,17 +63,6 @@
           <component v-if="!isImageFile(filePath)" :is="getFileIcon(filePath)" :size="14" :stroke-width="1.5" :color="getFileIconColor(filePath)" class="attachment-file-icon" />
           <span v-if="!isImageFile(filePath)" class="attachment-filename">{{ getFileName(filePath) }}</span>
           <button class="attachment-close-btn" @click.stop="$emit('remove-attached', idx)" :title="t('common.remove')">×</button>
-        </span>
-        <!-- Pending upload cards -->
-        <span v-for="(f, idx) in pendingFiles" :key="'upload-' + idx" class="chat-file-attachment attachment-upload" :class="{ 'is-uploading': f.uploading, 'attachment-image-only': f.isImage }">
-          <img v-if="f.isImage && f.previewUrl" class="attachment-thumb-img" :src="f.previewUrl" loading="lazy" />
-          <img v-else-if="f.isImage && !thumbErrors.has(f.path)"
-            class="attachment-thumb-img"
-            :src="attachmentThumbUrl(f.path)" loading="lazy" @error="onThumbError(f.path)" />
-          <component v-if="!f.isImage" :is="getFileIcon(f.path)" :size="14" :stroke-width="1.5" :color="f.path ? getFileIconColor(f.path) : undefined" class="attachment-file-icon" />
-          <span v-if="!f.isImage" class="attachment-filename">{{ getFileName(f.path) || t('chat.attach.uploading') }}</span>
-          <span v-if="!f.isImage" class="attachment-filesize">{{ f.uploading ? f.progress + '%' : formatFileSize(f.size) }}</span>
-          <button class="attachment-close-btn" @click.stop="$emit('remove-file', idx)" :title="t('common.remove')">×</button>
         </span>
       </div>
       <!-- Input row: attach + clear + textarea + stop + send -->
@@ -127,7 +109,6 @@
         @close="showAttachDrawer = false"
         @add-attached="handleAttachFile"
         @remove-attached="handleRemoveAttached"
-        @upload="handleUploadClick"
         @file-open="(path) => emit('file-tag-click', path)"
       />
       <!-- Teleported quick-send menu -->
@@ -252,11 +233,9 @@ import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Cpu, Compass, Brain, Cable, Activity, MessagesSquare } from 'lucide-vue-next'
 import { baseName } from '@/utils/path.ts'
-import { formatFileSize } from '@/utils/fileType.ts'
 import { isThumbableExt } from '@/utils/fileManager.ts'
 import { isImageFile } from '@/utils/fileAttachmentUtils.ts'
 import { computeRecentReferencedFiles } from '@/utils/chatInputUtils.ts'
-import { useUploadRecent } from '@/composables/useUploadRecent.ts'
 import { getFileIcon, getFileIconColor, buildPathThumbUrl } from '@/utils/fileIcon.ts'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import AttachDrawer from '@/components/chat/AttachDrawer.vue'
@@ -347,7 +326,6 @@ watch(placeholderHints, () => {
 const isTextareaFocused = ref(false)
 
 const dynamicPlaceholder = computed(() => {
-  if (props.pendingFiles.length > 0) return t('chat.input.placeholderOptional')
   if (props.loading) return t('chat.input.placeholderQueue')
   if (isTextareaFocused.value) return t('chat.input.placeholder')
   // Unfocused & empty: cycle through hints
@@ -359,7 +337,6 @@ const props = defineProps({
   loading: Boolean,
   currentFile: Object,
   currentDir: String,
-  pendingFiles: Array,
   attachedFiles: Array,
   quoteData: Object,
   messages: Array,
@@ -379,9 +356,6 @@ const props = defineProps({
 const emit = defineEmits([
   'send',
   'cancel',
-  'file-select',
-  'file-drop',
-  'remove-file',
   'add-attached',
   'remove-attached',
   'remove-attached-by-path',
@@ -402,7 +376,6 @@ const emit = defineEmits([
 
 const inputText = ref('')
 const textareaRef = ref(null)
-const fileInputRef = ref(null)
 const isDragOver = ref(false)
 const dragCounter = ref(0)
 const showAttachDrawer = ref(false)
@@ -534,32 +507,7 @@ watch(() => props.currentSessionId, (newId, oldId) => {
   // autoResizeTextarea is called automatically by the inputText watcher
 })
 
-const uploadingFiles = computed(() => props.pendingFiles.filter(f => f.uploading))
-
-// When an upload completes (uploading count drops to 0 after being > 0),
-// switch the attach drawer to the uploads tab and refresh recent uploads.
-const { fetchRecentUploads } = useUploadRecent()
-let wasUploading = false
-let uploadRefreshScheduled = false
-watch(uploadingFiles, (now) => {
-  if (wasUploading && now.length === 0 && showAttachDrawer.value) {
-    // Upload just finished — switch to uploads tab and refresh
-    if (attachDrawerRef.value) {
-      attachDrawerRef.value.activeTab = 'uploads'
-    }
-    // Debounce: coalesce rapid completions into a single refresh
-    if (!uploadRefreshScheduled) {
-      uploadRefreshScheduled = true
-      nextTick(() => {
-        uploadRefreshScheduled = false
-        fetchRecentUploads()
-      })
-    }
-  }
-  wasUploading = now.length > 0
-})
-
-const hasInputContent = computed(() => inputText.value.trim() || props.pendingFiles.length > 0 || props.attachedFiles.length > 0 || props.quoteData)
+const hasInputContent = computed(() => inputText.value.trim() || props.attachedFiles.length > 0 || props.quoteData)
 
 // Extract recently referenced files from message history
 const recentReferencedFiles = computed(() => {
@@ -602,8 +550,8 @@ function onThumbError(path) {
 }
 
 // Clear thumb errors when all attachments are removed
-watch([() => props.attachedFiles.length, () => props.pendingFiles.length], ([attLen, pendLen]) => {
-  if (attLen === 0 && pendLen === 0 && thumbErrors.value.size > 0) {
+watch(() => props.attachedFiles.length, (attLen) => {
+  if (attLen === 0 && thumbErrors.value.size > 0) {
     thumbErrors.value = new Set()
   }
 })
@@ -648,10 +596,6 @@ function onTextareaBlur() {
 // to ensure textarea height stays in sync with content
 watch(inputText, () => nextTick(() => autoResizeTextarea()))
 
-function onFileSelect(e) {
-  emit('file-select', e)
-}
-
 function onDragEnter(e) {
   e.preventDefault()
   dragCounter.value++
@@ -677,7 +621,13 @@ function onDrop(e) {
   isDragOver.value = false
   const files = Array.from(e.dataTransfer?.files || [])
   if (files.length > 0) {
-    emit('file-drop', files)
+    // Open the drawer and delegate upload to it
+    if (!showAttachDrawer.value) showAttachDrawer.value = true
+    nextTick(() => {
+      if (attachDrawerRef.value?.handleFileDrop) {
+        attachDrawerRef.value.handleFileDrop(files)
+      }
+    })
   }
 }
 
@@ -697,16 +647,6 @@ function handleRemoveAttached(filePath) {
   emit('remove-attached-by-path', filePath)
 }
 
-function handleUploadClick() {
-  // Don't close the drawer — keep it open so user can see the upload tab after upload
-  if (fileInputRef.value) {
-    // Clear previous selection BEFORE opening picker to prevent stale
-    // file data on Android WebView when user cancels the picker
-    fileInputRef.value.value = ''
-    fileInputRef.value.click()
-  }
-}
-
 async function toggleAttachMenu() {
   showAttachDrawer.value = !showAttachDrawer.value
 }
@@ -714,7 +654,7 @@ async function toggleAttachMenu() {
 function handleSendClick() {
   if (inputText.value.trim()) {
     emit('send', inputText.value.trim())
-  } else if (props.pendingFiles.length > 0 || props.attachedFiles.length > 0) {
+  } else if (props.attachedFiles.length > 0) {
     emit('send', '')
   } else {
     toggleQuickMenu()
@@ -1197,33 +1137,6 @@ defineExpose({
   pointer-events: none;
 }
 
-/* Upload progress bars at top of input */
-.chat-upload-progress {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 4px 8px 0;
-}
-
-.upload-progress-item {
-  height: 3px;
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.upload-progress-bar {
-  height: 100%;
-  background: var(--accent-color, #0066cc);
-  border-radius: 2px;
-  transition: width 0.15s ease;
-}
-
-/* Uploading state for attachment card */
-.attachment-upload.is-uploading {
-  opacity: 0.7;
-}
-
 /* Attach button (inside input row) */
 .chat-attach-btn {
   background: none;
@@ -1368,24 +1281,17 @@ defineExpose({
   background: var(--danger-color, #dc3545);
 }
 
-/* Input area attachment card style (both upload and ref use same style) */
-.chat-attachment-tags .attachment-upload,
+/* Input area attachment card style */
 .chat-attachment-tags .attachment-ref {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 20%, transparent);
   color: var(--accent-color, #0066cc);
 }
 
-.chat-attachment-tags .attachment-upload .attachment-filename,
 .chat-attachment-tags .attachment-ref .attachment-filename {
   color: var(--accent-color, #0066cc);
 }
 
-.chat-attachment-tags .attachment-upload .attachment-filesize {
-  color: color-mix(in srgb, var(--accent-color, #0066cc) 60%, transparent);
-}
-
-.chat-attachment-tags .attachment-upload:hover,
 .chat-attachment-tags .attachment-ref:hover {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent);
 }
