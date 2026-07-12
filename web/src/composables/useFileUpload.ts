@@ -4,20 +4,34 @@ import { gt } from '@/composables/useLocale'
 import { store } from '@/stores/app.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 
+// ── Module-level singleton state ──
+// pendingFiles MUST be shared across all callers (AttachDrawer, ChatPanelContent,
+// FileManagerContent) so that uploads initiated in the drawer are visible to
+// sendMessage in ChatPanelContent. Same pattern as useChatContext.
+
+interface PendingFile {
+  path: string
+  previewUrl: string | null
+  isImage: boolean
+  uploading: boolean
+  progress: number
+  size: number
+}
+
+const pendingFiles = ref<PendingFile[]>([])
+
+// Upload progress for directory uploads (file manager)
+const dirUploading = ref(false)
+const dirUploadProgress = ref(0)
+const dirUploadTotal = ref(0)
+const dirUploadDone = ref(0)
+
 export function useFileUpload() {
   const toast = useToast()
-
-  const pendingFiles = ref<Array<{ path: string; previewUrl: string | null; isImage: boolean; uploading: boolean; progress: number; size: number }>>([])
 
   // attachedFiles is managed globally via useChatContext so any tab
   // (file preview, chat input, quote-question) can read/write it.
   const { attachedFiles, addAttachedFile, removeAttachedFile } = useChatContext()
-
-  // Upload progress for directory uploads (file manager)
-  const dirUploading = ref(false)
-  const dirUploadProgress = ref(0)
-  const dirUploadTotal = ref(0)
-  const dirUploadDone = ref(0)
 
   function uploadOneFile(file: File, dir?: string) {
     return new Promise((resolve) => {
@@ -26,7 +40,7 @@ export function useFileUpload() {
 
       // Push entry then get reactive proxy from array (only for chat upload, not dir upload)
       const isDirUpload = !!dir
-      let entry = null
+      let entry: PendingFile | null = null
       if (!isDirUpload) {
         const idx = pendingFiles.value.length
         pendingFiles.value.push({

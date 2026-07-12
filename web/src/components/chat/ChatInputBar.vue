@@ -621,13 +621,18 @@ function onDrop(e) {
   isDragOver.value = false
   const files = Array.from(e.dataTransfer?.files || [])
   if (files.length > 0) {
-    // Open the drawer and delegate upload to it
+    // Open the drawer and delegate upload to it.
+    // Retry until the drawer ref is available (may take a few ticks
+    // if the BottomSheet enter transition hasn't mounted yet).
     if (!showAttachDrawer.value) showAttachDrawer.value = true
-    nextTick(() => {
+    const tryDrop = () => {
       if (attachDrawerRef.value?.handleFileDrop) {
         attachDrawerRef.value.handleFileDrop(files)
+      } else {
+        nextTick(tryDrop)
       }
-    })
+    }
+    nextTick(tryDrop)
   }
 }
 

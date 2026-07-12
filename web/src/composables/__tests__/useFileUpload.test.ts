@@ -93,6 +93,8 @@ describe('useFileUpload', () => {
     teardownXHR = setupXHRMock()
     // Clear global attachedFiles from useChatContext singleton
     useChatContext().clearAll()
+    // Clear module-level pendingFiles singleton
+    useFileUpload().clearPendingFiles()
   })
 
   afterEach(() => {
