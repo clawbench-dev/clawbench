@@ -54,11 +54,11 @@
     </div>
   </BottomSheet>
 
-  <!-- Agent selector dialog -->
-  <ModalDialog :open="showAgentSelector" :title="t('session.selectAgent')" @close="showAgentSelector = false">
+  <!-- Agent selector drawer -->
+  <BottomSheet :open="agentSelectorDrawer.effectiveOpen.value" auto @close="agentSelectorDrawer.close()">
     <template #header>
-      <Bot :size="16" class="modal-header-icon" />
-      <span class="modal-title">{{ t('session.selectAgent') }}</span>
+      <Bot :size="16" class="bs-header-icon" />
+      <span class="bs-header-title">{{ t('session.selectAgent') }}</span>
     </template>
     <div class="agent-list">
       <button
@@ -84,7 +84,7 @@
         </button>
       </button>
     </div>
-  </ModalDialog>
+  </BottomSheet>
 </template>
 
 <script setup>
@@ -93,11 +93,11 @@ import { appLog } from '@/utils/appLog'
 import { Bot, Plus, Star, RotateCcw } from 'lucide-vue-next'
 import { ref, watch, computed, onUnmounted, nextTick } from 'vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
-import ModalDialog from '@/components/common/ModalDialog.vue'
 import SwipeToDeleteRow from '@/components/git/SwipeToDeleteRow.vue'
 import { useAgents, agentCanResume } from '@/composables/useAgents'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
+import { useTabDrawer } from '@/composables/useTabDrawer'
 import { formatRelativeTime } from '@/utils/format.ts'
 import { store } from '@/stores/app.ts'
 
@@ -143,7 +143,7 @@ const sessionBarColor = computed(() => {
 function agentDefaultModelName(agentId) {
   return getAgentDefaultModelName(agentId)
 }
-const showAgentSelector = ref(false)
+const agentSelectorDrawer = useTabDrawer('chat', { autoRestore: false })
 
 async function handleSetDefaultAgent(agentId) {
   await setDefaultAgent(agentId)
@@ -176,7 +176,7 @@ async function openAgentSelector() {
     bottomSheetRef.value?.close()
     return
   }
-  showAgentSelector.value = true
+  agentSelectorDrawer.open()
   agentSelectorOpenTime = Date.now()
 }
 
@@ -188,7 +188,7 @@ async function handleCreateClick() {
     bottomSheetRef.value?.close()
     return
   }
-  showAgentSelector.value = true
+  agentSelectorDrawer.open()
   agentSelectorOpenTime = Date.now()
 }
 
@@ -256,7 +256,7 @@ function createSession(agentId) {
   // Ignore clicks within 400ms of opening — prevents accidental session creation
   // from touch events that propagate to the newly rendered dialog
   if (Date.now() - agentSelectorOpenTime < 400) return
-  showAgentSelector.value = false
+  agentSelectorDrawer.close()
   emit('create', agentId)
   bottomSheetRef.value?.close()
 }
@@ -551,7 +551,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 0;
-  padding: 2px;
+  padding: 0;
   overflow-y: auto;
 }
 
@@ -574,9 +574,7 @@ onUnmounted(() => {
 }
 
 .agent-option:hover {
-  background: none;
-  border-left: 3px solid var(--accent-color, #0066cc);
-  padding-left: 5px;
+  background: var(--bg-secondary, #f8f9fa);
 }
 
 .agent-option:hover .agent-option-name {
@@ -592,7 +590,7 @@ onUnmounted(() => {
 }
 
 .agent-option:active {
-  border-left-color: color-mix(in srgb, var(--accent-color, #0066cc) 70%, transparent);
+  background: var(--bg-hover, rgba(0,0,0,0.06));
 }
 
 .agent-option-icon {
