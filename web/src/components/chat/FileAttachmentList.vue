@@ -10,7 +10,7 @@
         :src="thumbUrl(normalizeFileEntry(f).path)" loading="lazy"
         @error="onThumbError(normalizeFileEntry(f).path)" />
       <!-- Non-image: icon + filename -->
-      <component v-if="!isImageFile(normalizeFileEntry(f).path)" :is="getFileIcon(normalizeFileEntry(f).path)" :size="14" :stroke-width="1.5" class="attachment-file-icon" />
+      <component v-if="!isImageFile(normalizeFileEntry(f).path)" :is="getFileIcon(normalizeFileEntry(f).path)" :size="14" :stroke-width="1.5" :color="getFileIconColor(normalizeFileEntry(f).path)" class="attachment-file-icon" />
       <span v-if="!isImageFile(normalizeFileEntry(f).path)" class="attachment-filename">{{ getFileName(normalizeFileEntry(f).path) }}</span>
     </span>
   </div>
@@ -19,11 +19,10 @@
 <script setup>
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { FileText, FileImage, FileVideo, FileMusic } from 'lucide-vue-next'
 import { baseName } from '@/utils/path.ts'
 import { normalizeFileEntry, isUploadPath, isImageFile } from '@/utils/fileAttachmentUtils.ts'
 import { isThumbableExt } from '@/utils/fileManager.ts'
-import { getFileType } from '@/utils/fileType.ts'
+import { getFileIcon, getFileIconColor, buildPathThumbUrl } from '@/utils/fileIcon.ts'
 
 const { t } = useI18n()
 
@@ -36,17 +35,7 @@ function getFileName(path) {
   return baseName(path)
 }
 
-function getFileIcon(path) {
-  const ft = getFileType(path)
-  if (ft.isImage) return FileImage
-  if (ft.isAudio) return FileMusic
-  if (ft.isVideo) return FileVideo
-  return FileText
-}
-
-function thumbUrl(path) {
-  return `/api/file/thumb?path=${encodeURIComponent(path)}&w=80`
-}
+const thumbUrl = buildPathThumbUrl
 
 // Track thumbnail load errors — must replace Set to trigger Vue reactivity
 const thumbErrors = ref(new Set())

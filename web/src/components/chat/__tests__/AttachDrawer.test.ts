@@ -7,8 +7,10 @@ vi.mock('lucide-vue-next', () => ({
   Paperclip: { name: 'Paperclip', render: () => h('span', { class: 'icon-paperclip' }) },
   Upload: { name: 'Upload', render: () => h('span', { class: 'icon-upload' }) },
   FileText: { name: 'FileText', render: () => h('span', { class: 'icon-filetext' }) },
+  FileImage: { name: 'FileImage', render: () => h('span', { class: 'icon-fileimage' }) },
+  FileVideo: { name: 'FileVideo', render: () => h('span', { class: 'icon-filevideo' }) },
+  FileMusic: { name: 'FileMusic', render: () => h('span', { class: 'icon-filemusic' }) },
   Folder: { name: 'Folder', render: () => h('span', { class: 'icon-folder' }) },
-  Share2: { name: 'Share2', render: () => h('span', { class: 'icon-share2' }) },
   Check: { name: 'Check', render: () => h('span', { class: 'icon-check' }) },
   ExternalLink: { name: 'ExternalLink', render: () => h('span', { class: 'icon-external-link' }) },
 }))
@@ -47,6 +49,22 @@ vi.mock('@/utils/path', () => ({
 
 vi.mock('@/utils/fileType', () => ({
   formatFileSize: (size: number) => `${size} B`,
+  getFileType: () => ({ isImage: false, isAudio: false, isVideo: false, color: '#8b8b8b' }),
+}))
+
+vi.mock('@/utils/fileIcon', () => ({
+  getFileIcon: () => 'FileText',
+  getFileIconColor: () => '#8b8b8b',
+  buildPathThumbUrl: (path: string) => `/api/file/thumb?path=${encodeURIComponent(path)}&w=80`,
+  Folder: { name: 'Folder', render: () => h('span', { class: 'icon-folder' }) },
+}))
+
+vi.mock('@/utils/fileManager', () => ({
+  isThumbableExt: () => false,
+}))
+
+vi.mock('@/utils/fileAttachmentUtils', () => ({
+  isImageFile: () => false,
 }))
 
 vi.mock('@/utils/format', () => ({

@@ -29,6 +29,12 @@ vi.mock('@/utils/fileManager.ts', () => ({
   isThumbableExt: (p: string) => /\.(png|jpg|jpeg|gif|webp)$/i.test(p),
 }))
 
+vi.mock('@/utils/fileIcon.ts', () => ({
+  getFileIcon: () => 'FileText',
+  getFileIconColor: () => '#8b8b8b',
+  buildPathThumbUrl: (path: string) => `/api/file/thumb?path=${encodeURIComponent(path)}&w=80`,
+}))
+
 describe('FileAttachmentList', () => {
   function mountList(files: any[] = []) {
     return mount(FileAttachmentList, {

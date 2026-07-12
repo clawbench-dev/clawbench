@@ -27,7 +27,9 @@
         <button v-if="effectiveCurrentDir"
           class="ad-file-row ad-current-item" :class="{ 'ad-file-attached': isAttached(effectiveCurrentDir) }"
           @click="toggleAttached(effectiveCurrentDir)">
-          <Folder :size="16" class="ad-file-icon" />
+          <div class="ad-icon-wrap">
+            <Folder :size="28" class="ad-file-icon" />
+          </div>
           <div class="ad-file-info">
             <span class="ad-file-name">
               <span class="ad-label">{{ t('chat.attach.currentDir') }}</span>
@@ -42,7 +44,11 @@
         <button v-if="currentFile"
           class="ad-file-row ad-current-item" :class="{ 'ad-file-attached': isAttached(currentFile) }"
           @click="toggleAttached(currentFile)">
-          <FileText :size="16" class="ad-file-icon" />
+          <div class="ad-icon-wrap">
+            <img v-if="isImageFile(currentFile) && isThumbableExt(currentFile) && !thumbErrors.has(currentFile)"
+              class="ad-thumb" :src="thumbUrl(currentFile)" loading="lazy" @error="onThumbError(currentFile)" />
+            <component v-else :is="getFileIcon(currentFile)" :size="28" class="ad-file-icon" :color="getFileIconColor(currentFile)" />
+          </div>
           <div class="ad-file-info">
             <span class="ad-file-name">
               <span class="ad-label">{{ t('chat.attach.currentFile') }}</span>
@@ -64,7 +70,11 @@
           class="ad-file-row" :class="{ 'ad-file-attached': isAttached(item.path) }"
           @click="toggleAttached(item.path)"
         >
-          <FileText :size="16" class="ad-file-icon" />
+          <div class="ad-icon-wrap">
+            <img v-if="isImageFile(item.path) && isThumbableExt(item.path) && !thumbErrors.has(item.path)"
+              class="ad-thumb" :src="thumbUrl(item.path)" loading="lazy" @error="onThumbError(item.path)" />
+            <component v-else :is="getFileIcon(item.path)" :size="28" class="ad-file-icon" :color="getFileIconColor(item.path)" />
+          </div>
           <div class="ad-file-info">
             <span class="ad-file-name">{{ baseName(item.path) }}</span>
             <span class="ad-file-meta">{{ dirName(item.path) }} · x{{ item.count }}</span>
@@ -82,7 +92,11 @@
           class="ad-file-row" :class="{ 'ad-file-attached': isAttached(item.path) }"
           @click="toggleAttached(item.path)"
         >
-          <Share2 :size="16" class="ad-file-icon" />
+          <div class="ad-icon-wrap">
+            <img v-if="isImageFile(item.path) && isThumbableExt(item.path) && !thumbErrors.has(item.path)"
+              class="ad-thumb" :src="thumbUrl(item.path)" loading="lazy" @error="onThumbError(item.path)" />
+            <component v-else :is="getFileIcon(item.path)" :size="28" class="ad-file-icon" :color="getFileIconColor(item.path)" />
+          </div>
           <div class="ad-file-info">
             <span class="ad-file-name">{{ item.name }}</span>
             <span class="ad-file-meta">{{ dirName(item.path) }} · {{ formatRelativeTime(item.modTime) }} · {{ formatFileSize(item.size) }}</span>
@@ -100,7 +114,11 @@
           class="ad-file-row" :class="{ 'ad-file-attached': isAttached(item.path) }"
           @click="toggleAttached(item.path)"
         >
-          <Upload :size="16" class="ad-file-icon" />
+          <div class="ad-icon-wrap">
+            <img v-if="isImageFile(item.path) && isThumbableExt(item.path) && !thumbErrors.has(item.path)"
+              class="ad-thumb" :src="thumbUrl(item.path)" loading="lazy" @error="onThumbError(item.path)" />
+            <component v-else :is="getFileIcon(item.path)" :size="28" class="ad-file-icon" :color="getFileIconColor(item.path)" />
+          </div>
           <div class="ad-file-info">
             <span class="ad-file-name">{{ item.name }}</span>
             <span class="ad-file-meta">{{ dirName(item.path) }} · {{ formatRelativeTime(item.modTime) }} · {{ formatFileSize(item.size) }}</span>
@@ -115,7 +133,8 @@
 
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
-import { Paperclip, Upload, FileText, Folder, Share2, Check, ExternalLink } from 'lucide-vue-next'
+import { Paperclip, Upload, Check, ExternalLink } from 'lucide-vue-next'
+import { getFileIcon, getFileIconColor, buildPathThumbUrl, Folder } from '@/utils/fileIcon'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import { useI18n } from 'vue-i18n'
 import { useShareIn } from '@/composables/useShareIn'
@@ -123,6 +142,8 @@ import { useUploadRecent } from '@/composables/useUploadRecent'
 import { baseName, dirName } from '@/utils/path'
 import { formatFileSize } from '@/utils/fileType'
 import { formatRelativeTime } from '@/utils/format'
+import { isThumbableExt } from '@/utils/fileManager'
+import { isImageFile } from '@/utils/fileAttachmentUtils'
 
 interface ReferencedFile {
   path: string
@@ -169,6 +190,18 @@ tabs[1].label = t('chat.attach.recentReferences')
 tabs[2].label = t('chat.attach.recentShares')
 tabs[3].label = t('chat.attach.recentUploads')
 
+// ── File icon and thumbnail helpers (imported from utils/fileIcon) ──
+const thumbUrl = buildPathThumbUrl
+
+const thumbErrors = ref(new Set<string>())
+function onThumbError(path: string) {
+  const next = new Set(thumbErrors.value)
+  next.add(path)
+  thumbErrors.value = next
+}
+
+// ── Attachment logic ──
+
 function isAttached(path: string) {
   return props.attachedFiles?.includes(path) ?? false
 }
@@ -197,8 +230,16 @@ watch(() => props.open, (v) => {
   if (v) {
     fetchRecentShares()
     fetchRecentUploads()
+  } else {
+    // Clear thumb errors when drawer closes
+    if (thumbErrors.value.size > 0) {
+      thumbErrors.value = new Set()
+    }
   }
 })
+
+// Expose activeTab so parent can switch to uploads tab after upload
+defineExpose({ activeTab })
 </script>
 
 <style>
@@ -285,6 +326,30 @@ watch(() => props.open, (v) => {
 .ad-file-attached {
   opacity: 0.45;
 }
+
+/* Icon container: holds icon or thumbnail.
+ * 28x28 matches FileManagerContent list-view icon size.
+ * Thumbnails fill the container; icons stay at their :size prop. */
+.ad-icon-wrap {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 6px;
+  position: relative;
+}
+.ad-icon-wrap .ad-thumb {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 6px;
+}
+
 .ad-file-icon {
   flex-shrink: 0;
   color: var(--text-muted);

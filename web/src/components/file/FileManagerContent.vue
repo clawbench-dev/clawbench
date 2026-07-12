@@ -357,6 +357,7 @@ import { appLog } from '@/utils/appLog'
 import { joinPath } from '@/utils/path'
 import { Folder, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, FileText, HardDrive, Eye, EyeOff, FileImage, FileMusic, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, FileVideo, Package, Upload, MoreHorizontal, Paperclip } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
+import { getFileIconColor } from '@/utils/fileIcon.ts'
 import {
   buildThumbUrl,
   isImage as isImageEntry, isAudio as isAudioEntry, isVideo as isVideoEntry,
@@ -510,10 +511,7 @@ function entryIcon(entry) {
 }
 function entryIconColor(entry) {
     if (entry.type === 'dir') return undefined
-    if (isImageEntry(entry)) return '#a855f7'
-    if (isAudioEntry(entry)) return '#22c55e'
-    if (isVideoEntry(entry)) return '#ef4444'
-    return getFileType(entry.name).color
+    return getFileIconColor(entry.name)
 }
 function onSortSelect(field) {
   emit('toggleSort', field)

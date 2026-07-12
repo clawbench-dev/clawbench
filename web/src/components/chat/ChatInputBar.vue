@@ -67,7 +67,7 @@
           <img v-if="isImageFile(filePath) && isThumbableExt(filePath) && !thumbErrors.has(filePath)"
             class="attachment-thumb-img"
             :src="attachmentThumbUrl(filePath)" loading="lazy" @error="onThumbError(filePath)" />
-          <component v-if="!isImageFile(filePath)" :is="getFileIcon(filePath)" :size="14" :stroke-width="1.5" class="attachment-file-icon" />
+          <component v-if="!isImageFile(filePath)" :is="getFileIcon(filePath)" :size="14" :stroke-width="1.5" :color="getFileIconColor(filePath)" class="attachment-file-icon" />
           <span v-if="!isImageFile(filePath)" class="attachment-filename">{{ getFileName(filePath) }}</span>
           <button class="attachment-close-btn" @click.stop="$emit('remove-attached', idx)" :title="t('common.remove')">×</button>
         </span>
@@ -77,7 +77,7 @@
           <img v-else-if="f.isImage && !thumbErrors.has(f.path)"
             class="attachment-thumb-img"
             :src="attachmentThumbUrl(f.path)" loading="lazy" @error="onThumbError(f.path)" />
-          <component v-if="!f.isImage" :is="getFileIcon(f.path)" :size="14" :stroke-width="1.5" class="attachment-file-icon" />
+          <component v-if="!f.isImage" :is="getFileIcon(f.path)" :size="14" :stroke-width="1.5" :color="f.path ? getFileIconColor(f.path) : undefined" class="attachment-file-icon" />
           <span v-if="!f.isImage" class="attachment-filename">{{ getFileName(f.path) || t('chat.attach.uploading') }}</span>
           <span v-if="!f.isImage" class="attachment-filesize">{{ f.uploading ? f.progress + '%' : formatFileSize(f.size) }}</span>
           <button class="attachment-close-btn" @click.stop="$emit('remove-file', idx)" :title="t('common.remove')">×</button>
@@ -118,6 +118,7 @@
       </div>
       <!-- Attach drawer (BottomSheet) -->
       <AttachDrawer
+        ref="attachDrawerRef"
         :open="attachDrawer.effectiveOpen.value"
         :current-file="currentFile?.path"
         :current-dir="currentDir"
@@ -249,12 +250,14 @@
 <script setup>
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, FileText, XCircle, Inbox, Send, Square, Zap, Loader2, Cpu, Compass, Brain, Cable, Activity, MessagesSquare, FileImage, FileVideo, FileMusic } from 'lucide-vue-next'
+import { MessageSquare, List, Plus, Trash2, Volume2, Upload, Paperclip, XCircle, Inbox, Send, Square, Zap, Loader2, Cpu, Compass, Brain, Cable, Activity, MessagesSquare } from 'lucide-vue-next'
 import { baseName } from '@/utils/path.ts'
-import { formatFileSize, getFileType } from '@/utils/fileType.ts'
+import { formatFileSize } from '@/utils/fileType.ts'
 import { isThumbableExt } from '@/utils/fileManager.ts'
 import { isImageFile } from '@/utils/fileAttachmentUtils.ts'
 import { computeRecentReferencedFiles } from '@/utils/chatInputUtils.ts'
+import { useUploadRecent } from '@/composables/useUploadRecent.ts'
+import { getFileIcon, getFileIconColor, buildPathThumbUrl } from '@/utils/fileIcon.ts'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import AttachDrawer from '@/components/chat/AttachDrawer.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'
@@ -403,6 +406,7 @@ const fileInputRef = ref(null)
 const isDragOver = ref(false)
 const dragCounter = ref(0)
 const showAttachDrawer = ref(false)
+const attachDrawerRef = ref(null)
 const attachDrawer = useTabDrawer('chat', showAttachDrawer)
 const attachMenuRef = ref(null) // kept for ref stability, no longer used for PopupMenu
 const showQuickMenu = ref(false)
@@ -532,6 +536,29 @@ watch(() => props.currentSessionId, (newId, oldId) => {
 
 const uploadingFiles = computed(() => props.pendingFiles.filter(f => f.uploading))
 
+// When an upload completes (uploading count drops to 0 after being > 0),
+// switch the attach drawer to the uploads tab and refresh recent uploads.
+const { fetchRecentUploads } = useUploadRecent()
+let wasUploading = false
+let uploadRefreshScheduled = false
+watch(uploadingFiles, (now) => {
+  if (wasUploading && now.length === 0 && showAttachDrawer.value) {
+    // Upload just finished — switch to uploads tab and refresh
+    if (attachDrawerRef.value) {
+      attachDrawerRef.value.activeTab = 'uploads'
+    }
+    // Debounce: coalesce rapid completions into a single refresh
+    if (!uploadRefreshScheduled) {
+      uploadRefreshScheduled = true
+      nextTick(() => {
+        uploadRefreshScheduled = false
+        fetchRecentUploads()
+      })
+    }
+  }
+  wasUploading = now.length > 0
+})
+
 const hasInputContent = computed(() => inputText.value.trim() || props.pendingFiles.length > 0 || props.attachedFiles.length > 0 || props.quoteData)
 
 // Extract recently referenced files from message history
@@ -556,24 +583,14 @@ function getFileName(path) {
   return baseName(path)
 }
 
-function getFileIcon(path) {
-  const ft = getFileType(path)
-  if (ft.isImage) return FileImage
-  if (ft.isAudio) return FileMusic
-  if (ft.isVideo) return FileVideo
-  return FileText
-}
-
 function truncateQuoteText(text, maxLen) {
   if (!text) return ''
   const oneLine = text.replace(/\n/g, ' ')
   return oneLine.length > maxLen ? oneLine.slice(0, maxLen) + '...' : oneLine
 }
 
-/** Build thumbnail URL for a file path. */
-function attachmentThumbUrl(filePath) {
-  return `/api/file/thumb?path=${encodeURIComponent(filePath)}&w=80`
-}
+/** Alias for the shared thumb URL builder. */
+const attachmentThumbUrl = buildPathThumbUrl
 
 // Track thumbnail load errors so fallback icon is shown
 // Must replace the Set (not mutate in-place) to trigger Vue reactivity
@@ -681,7 +698,7 @@ function handleRemoveAttached(filePath) {
 }
 
 function handleUploadClick() {
-  showAttachDrawer.value = false
+  // Don't close the drawer — keep it open so user can see the upload tab after upload
   if (fileInputRef.value) {
     // Clear previous selection BEFORE opening picker to prevent stale
     // file data on Android WebView when user cancels the picker
