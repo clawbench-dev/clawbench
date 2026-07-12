@@ -261,12 +261,11 @@ public class MainActivity extends AppCompatActivity {
         if (savedUrl != null) {
             // Auto-reconnect: use pre-authentication to verify server is reachable
             // before loading the WebView. This prevents Chrome's built-in error page.
+            // WebView is already GONE (set in setupWebView), so no white flash.
             if (savedPassword != null && !savedPassword.isEmpty()) {
-                webView.setVisibility(View.INVISIBLE);
                 authenticateAndNavigate(savedUrl, savedPassword);
             } else {
                 // No password: rely on session cookie
-                webView.setVisibility(View.INVISIBLE);
                 checkConnectivityAndNavigate(savedUrl);
             }
         } else {
@@ -276,6 +275,16 @@ public class MainActivity extends AppCompatActivity {
 
     @SuppressLint("SetJavaScriptEnabled")
     private void setupWebView() {
+        // Set WebView background to transparent to prevent white flash during cold start.
+        // The window background (windowBackground=#0d1117) is visible behind the transparent
+        // WebView, creating a seamless dark-to-content transition.
+        webView.setBackgroundColor(0x00000000);
+
+        // Start with GONE so the WebView is completely excluded from layout/draw
+        // until the first page begins loading. This prevents the default white
+        // background from rendering even a single frame.
+        webView.setVisibility(View.GONE);
+
         WebSettings settings = webView.getSettings();
 
         // Core web features
@@ -657,7 +666,7 @@ public class MainActivity extends AppCompatActivity {
         webViewConnected = false;
         loadErrorPending = false;
         sslCertTrustedByUser = false;
-        webView.setVisibility(View.INVISIBLE);
+        webView.setVisibility(View.GONE);
 
         // Save URL and password
         prefs.edit().putString(KEY_SERVER_URL, url).apply();
@@ -1496,11 +1505,13 @@ public class MainActivity extends AppCompatActivity {
                 loadErrorPending = false;
                 view.setVisibility(View.VISIBLE);
             } else {
-                // Navigating to a remote page — hide WebView until it loads
+                // Navigating to a remote page — keep WebView hidden until it loads
                 // to prevent flashing ugly browser error pages.
+                // Use GONE so the WebView is completely excluded from draw,
+                // avoiding any white-background frame from the WebView widget itself.
                 webViewConnected = false;
                 loadErrorPending = false;
-                view.setVisibility(View.INVISIBLE);
+                view.setVisibility(View.GONE);
             }
         }
 
@@ -1578,7 +1589,7 @@ public class MainActivity extends AppCompatActivity {
             AppLog.w(TAG, "Unexpected SSL error in WebView, returning to login");
             handler.cancel();
             loadErrorPending = true;
-            view.setVisibility(View.INVISIBLE);
+            view.setVisibility(View.GONE);
             view.postDelayed(() -> {
                 if (!isFinishing() && !isDestroyed() && !webViewConnected && loadErrorPending) {
                     showLoginPage("SSL 连接异常，请重新连接。");
@@ -1596,7 +1607,7 @@ public class MainActivity extends AppCompatActivity {
                 // this flag the browser's built-in error page would flash before we can
                 // navigate back to the login page.
                 loadErrorPending = true;
-                view.setVisibility(View.INVISIBLE);
+                view.setVisibility(View.GONE);
 
                 // Defer the navigation to login page: if the connection recovers before
                 // the deferred runnable fires (e.g. screen unlock), we avoid showing a
@@ -1620,7 +1631,7 @@ public class MainActivity extends AppCompatActivity {
                 int statusCode = errorResponse.getStatusCode();
                 AppLog.w(TAG, "Main frame HTTP error during connection: " + statusCode);
                 loadErrorPending = true;
-                view.setVisibility(View.INVISIBLE);
+                view.setVisibility(View.GONE);
                 String msg;
                 if (statusCode == 401 || statusCode == 403) {
                     msg = "认证失败，请检查密码是否正确。";
