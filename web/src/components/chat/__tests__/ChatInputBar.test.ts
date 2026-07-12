@@ -122,7 +122,13 @@ vi.mock('@/composables/useLocale.ts', () => ({
 vi.mock('@/composables/useTabDrawer', () => ({
   useTabDrawer: () => ({
     effectiveOpen: { value: false },
+    isOpen: { value: false },
+    open: vi.fn(),
+    close: vi.fn(),
+    toggle: vi.fn(),
   }),
+  onTabSwitch: vi.fn(),
+  resetTabDrawerState: vi.fn(),
 }))
 
 vi.mock('@/stores/app.ts', () => ({

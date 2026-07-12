@@ -45,6 +45,7 @@ vi.mock('@/composables/useDiffDrawer.ts', () => ({
 vi.mock('@/composables/useMarkdownDiff.ts', () => ({
   diffMarkers: { value: [] },
   diffDrawerVisible: { value: false },
+  diffDrawer: { effectiveOpen: { value: false }, isOpen: { value: false }, open: vi.fn(), close: vi.fn(), toggle: vi.fn() },
   diffDrawerMarker: { value: null },
   diffOldContent: { value: null },
   diffOldFilePath: { value: null },
@@ -56,6 +57,10 @@ vi.mock('@/composables/useMarkdownDiff.ts', () => ({
 vi.mock('@/composables/useTabDrawer', () => ({
   useTabDrawer: () => ({
     effectiveOpen: { value: false },
+    isOpen: { value: false },
+    open: vi.fn(),
+    close: vi.fn(),
+    toggle: vi.fn(),
   }),
 }))
 

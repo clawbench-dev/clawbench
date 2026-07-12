@@ -114,11 +114,11 @@ describe('SettingsItem', () => {
 
     // No picker initially
     const vm = wrapper.vm as any
-    expect(vm.$.setupState.selectPickerOpen).toBe(false)
+    expect(vm.$.setupState.selectPicker.isOpen.value).toBe(false)
 
     // Click row to open picker
     await wrapper.find('.settings-item').trigger('click')
-    expect(vm.$.setupState.selectPickerOpen).toBe(true)
+    expect(vm.$.setupState.selectPicker.isOpen.value).toBe(true)
 
     // Call selectOption directly (simulates clicking an option in the BottomSheet)
     vm.$.setupState.selectOption('dark')
@@ -127,7 +127,7 @@ describe('SettingsItem', () => {
     expect(wrapper.emitted('update:modelValue')).toBeTruthy()
     expect(wrapper.emitted('update:modelValue')![0]).toEqual(['dark'])
     // Picker should close after selecting
-    expect(vm.$.setupState.selectPickerOpen).toBe(false)
+    expect(vm.$.setupState.selectPicker.isOpen.value).toBe(false)
   })
 
   it('opens number editor on click and emits value on confirm', async () => {
@@ -198,11 +198,11 @@ describe('SettingsItem', () => {
 
     // First click opens picker
     await wrapper.find('.settings-item').trigger('click')
-    expect(vm.$.setupState.selectPickerOpen).toBe(true)
+    expect(vm.$.setupState.selectPicker.isOpen.value).toBe(true)
 
     // Second click reopens picker (currently always opens on click)
     await wrapper.find('.settings-item').trigger('click')
-    expect(vm.$.setupState.selectPickerOpen).toBe(true)
+    expect(vm.$.setupState.selectPicker.isOpen.value).toBe(true)
   })
 
   describe('slider debounce', () => {

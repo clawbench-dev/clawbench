@@ -1,5 +1,6 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useTabDrawer } from '@/composables/useTabDrawer'
 import { truncateUserMsg } from '@/utils/userMsgIndexUtils.ts'
 
 /**
@@ -20,7 +21,9 @@ export function useUserMsgIndex(options: {
 
   const hasUserMessages = computed(() => options.getMessages().some(m => m.role === 'user'))
   const userMsgIndexList = ref<Record<string, unknown>[]>([])
-  const showUserMsgIndex = ref(false)
+  const drawer = useTabDrawer('chat')
+  /** Read-only access — use drawer.open()/close()/toggle() to mutate */
+  const showUserMsgIndex = drawer.isOpen
   const loadingTarget = ref(false)
   const loadingIndex = ref(false)
 
@@ -29,11 +32,11 @@ export function useUserMsgIndex(options: {
   }
 
   async function toggleUserMsgIndex() {
-    if (showUserMsgIndex.value) {
-      showUserMsgIndex.value = false
+    if (drawer.isOpen.value) {
+      drawer.close()
       return
     }
-    showUserMsgIndex.value = true
+    drawer.open()
     if (!options.getCurrentSessionId()) return
     loadingIndex.value = true
     try {
@@ -49,7 +52,7 @@ export function useUserMsgIndex(options: {
   }
 
   function closeUserMsgIndex() {
-    showUserMsgIndex.value = false
+    drawer.close()
   }
 
   function highlightMessage(el: Element) {
@@ -140,6 +143,7 @@ export function useUserMsgIndex(options: {
     hasUserMessages,
     userMsgIndexList,
     showUserMsgIndex,
+    drawer,
     loadingTarget,
     loadingIndex,
     formatTruncateUserMsg,

@@ -94,8 +94,10 @@ vi.mock('@/composables/useDialog.ts', () => ({
 vi.mock('@/composables/useTabDrawer', () => ({
   useTabDrawer: () => ({
     effectiveOpen: ref(false),
+    isOpen: ref(false),
     open: vi.fn(),
     close: vi.fn(),
+    toggle: vi.fn(),
   }),
 }))
 

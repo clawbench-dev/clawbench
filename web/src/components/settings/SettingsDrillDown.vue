@@ -122,7 +122,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronRight } from 'lucide-vue-next'
 import SettingsItem from './SettingsItem.vue'
@@ -167,15 +167,7 @@ const saving = ref(false)
 const serverError = ref('')
 const hasFailedSave = ref(false)
 const activeKey = ref<string | null>(null)
-const entryPickerOpen = ref(false)
-const entryPicker = useTabDrawer('settings', entryPickerOpen)
-
-// Guard against useTabDrawer preserving openRef on tab switch back
-watch(() => entryPicker.effectiveOpen.value, (val) => {
-  if (!val && entryPickerOpen.value) {
-    entryPickerOpen.value = false
-  }
-})
+const entryPicker = useTabDrawer('settings', { autoRestore: false })
 
 // ── Snapshot on mount ──
 

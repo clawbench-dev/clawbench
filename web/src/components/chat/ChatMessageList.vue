@@ -139,7 +139,6 @@ import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCo
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { useDialog } from '@/composables/useDialog'
 import { useUserMsgIndex } from '@/composables/useUserMsgIndex.ts'
-import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import { store } from '@/stores/app.ts'
 import { computeRemainingCount } from '@/utils/messageListUtils.ts'
@@ -529,7 +528,7 @@ function scrollToBottomSmooth() {
 // ── User message index ──
 const {
   userMsgIndexList,
-  showUserMsgIndex,
+  drawer: userMsgIndexDrawer,
   loadingTarget,
   loadingIndex,
   toggleUserMsgIndex,
@@ -546,7 +545,6 @@ const {
   hideScrollFab,
   setProgrammaticScrolling: (val) => { programmaticScrolling = val },
 })
-const userMsgIndexDrawer = useTabDrawer('chat', showUserMsgIndex)
 
 // Nearest user message to viewport center — used for activeId highlight in index
 const scrollTick = ref(0)
@@ -578,7 +576,7 @@ watch(() => props.currentSessionId, () => {
   clearTimeout(scrollTickTimer)
   scrollTickTimer = null
   scrollTick.value = 0
-  showUserMsgIndex.value = false
+  userMsgIndexDrawer.close()
   userMsgIndexList.value = []
 })
 

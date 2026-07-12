@@ -20,6 +20,7 @@ import { diffChars } from 'diff'
 import type { Change } from 'diff'
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
 import type { DiffLine } from '@/utils/diff.ts'
+import { useTabDrawer as _useTabDrawer } from '@/composables/useTabDrawer'
 
 // ─── Types ───
 
@@ -787,6 +788,7 @@ export function offscreenExtractBlocks(content: string): BlockInfo[] {
  */
 export const diffMarkers = ref<DiffMarker[]>([])
 export const diffDrawerVisible = ref(false)
+export const diffDrawer = _useTabDrawer('browse', diffDrawerVisible)
 export const diffDrawerMarker = shallowRef<DiffMarker | null>(null)
 /** Full file content before changes (for undo) */
 export const diffOldContent = ref<string | null>(null)
@@ -795,11 +797,11 @@ export const diffOldFilePath = ref<string | null>(null)
 
 export function openDiffDrawer(marker: DiffMarker) {
     diffDrawerMarker.value = marker
-    diffDrawerVisible.value = true
+    diffDrawer.open()
 }
 
 export function closeDiffDrawer() {
-    diffDrawerVisible.value = false
+    diffDrawer.close()
     diffDrawerMarker.value = null
 }
 

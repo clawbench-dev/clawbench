@@ -64,8 +64,10 @@ vi.mock('@/composables/useDrillDownSideEffects', () => ({
 vi.mock('@/composables/useTabDrawer', () => ({
   useTabDrawer: () => ({
     effectiveOpen: ref(false),
+    isOpen: ref(false),
     open: vi.fn(),
     close: vi.fn(),
+    toggle: vi.fn(),
   }),
 }))
 

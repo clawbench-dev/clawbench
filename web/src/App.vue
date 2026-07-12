@@ -70,15 +70,15 @@
                 :toc-file="tocFile"
                 :pdf-outline="pdfOutline"
                 @delete="handleDelete($event)"
-                @show-details="detailsOpen = true"
+                @show-details="detailsDrawer.open()"
                 @open-git-history="openFileHistory"
-                @toggle-toc="tocOpen = !tocOpen"
-                @toggle-search="currentFile?.content && (searchOpen = !searchOpen)"
+                @toggle-toc="tocDrawer.toggle()"
+                @toggle-search="currentFile?.content && searchDrawer.toggle()"
                 @toggle-view="markdownViewMode = markdownViewMode === 'rendered' ? 'raw' : 'rendered'"
                 @refresh="handleRefresh"
                 @jump="scrollToLine"
                 @jump-page="handleJumpPdfPage"
-                @close-git-history="fileHistoryOpen = false"
+                @close-git-history="fileHistoryDrawer.close()"
                 @open-file="handleOverlayOpenFile"
                 @overlay-close="handleOverlayClose"
                 @overlay-go-back="handleOverlayGoBack"
@@ -131,7 +131,7 @@
       <FileDetailsDrawer
         :file="currentFile"
         :open="detailsDrawer.effectiveOpen.value && fileNav.overlayOpen.value"
-        @close="detailsOpen = false"
+        @close="detailsDrawer.close()"
       />
 
       <!-- Quote question floating bar -->
@@ -147,23 +147,23 @@
       <!-- Session drawer — bound to chat tab, auto-closes when leaving chat -->
       <SessionDrawer
         ref="sessionDrawerRef"
-        :open="sessionDrawer.effectiveOpen.value"
+        :open="sessionIdentity.sessionDrawer.effectiveOpen.value"
         :currentSessionId="sessionIdentity.currentSessionId.value"
         :runningSessionIds="sessionIdentity.runningSessions.value"
         :isACPTransport="sessionIdentity.currentTransport.value === 'acp-stdio'"
         :currentAgentId="sessionIdentity.currentAgentId.value"
-        @close="sessionIdentity.sessionDrawerOpen.value = false"
+        @close="sessionIdentity.sessionDrawer.close()"
         @select="handleSessionSelect"
         @create="handleSessionCreate"
         @delete="handleSessionDelete"
-        @open-acp-sessions="showAcpSessionDrawer = true"
+        @open-acp-sessions="acpSessionDrawer.open()"
       />
 
       <!-- ACP session resume drawer -->
       <AcpSessionDrawer
         :open="acpSessionDrawer.effectiveOpen.value"
         :agentId="sessionIdentity.currentAgentId.value"
-        @close="showAcpSessionDrawer = false"
+        @close="acpSessionDrawer.close()"
         @select="handleAcpSessionSelect"
       />
 
@@ -526,19 +526,14 @@ function handleOpenTask(e) {
   }
 }
 
-const detailsOpen = ref(false)
-const tocOpen = ref(false)
-const searchOpen = ref(false)
-const fileHistoryOpen = ref(false)
-
 // Register browse-scoped drawers with tab-drawer binding
-const detailsDrawer = useTabDrawer('browse', detailsOpen)
-const tocDrawer = useTabDrawer('browse', tocOpen)
-const searchDrawer = useTabDrawer('browse', searchOpen)
-const fileHistoryDrawer = useTabDrawer('browse', fileHistoryOpen)
+const detailsDrawer = useTabDrawer('browse')
+const tocDrawer = useTabDrawer('browse')
+const searchDrawer = useTabDrawer('browse')
+const fileHistoryDrawer = useTabDrawer('browse')
 
 function openFileHistory() {
-  fileHistoryOpen.value = true
+  fileHistoryDrawer.open()
 }
 
 const markdownViewMode = ref('rendered')
@@ -549,7 +544,7 @@ provide('toast', toast)
 const sessionIdentity = useSessionIdentity()
 
 // Register chat-scoped drawers with tab-drawer binding
-const sessionDrawer = useTabDrawer('chat', sessionIdentity.sessionDrawerOpen)
+// Session drawer is now owned by useSessionIdentity (encapsulated TabDrawer)
 
 const showHidden = ref(false)
 const { localConfig, setLocalConfig: setSetting, loadConfig } = useSettingsConfig()
@@ -568,10 +563,10 @@ const fileNav = useFileNavStack()
 
 function closeOverlayAndSync() {
   fileNav.closeOverlay()
-  tocOpen.value = false
-  detailsOpen.value = false
-  searchOpen.value = false
-  fileHistoryOpen.value = false
+  tocDrawer.close()
+  detailsDrawer.close()
+  searchDrawer.close()
+  fileHistoryDrawer.close()
 }
 
 const { isAppMode } = useAppMode()
@@ -693,13 +688,13 @@ watch(sessionDrawerRef, (ref) => {
 
 function handleSessionSelect(sessionId, _backend) {
   sessionIdentity.switchSession(sessionId)
-  sessionIdentity.sessionDrawerOpen.value = false
+  sessionIdentity.sessionDrawer.close()
 }
 
 async function handleSessionCreate(agentId) {
   await sessionIdentity.createSession(agentId)
   // If drawer is still open, add the new session to the local list
-  if (sessionDrawerRef.value && sessionIdentity.sessionDrawerOpen.value) {
+  if (sessionDrawerRef.value && sessionIdentity.sessionDrawer.isOpen.value) {
     const id = sessionIdentity.currentSessionId.value
     if (id) {
       sessionDrawerRef.value.addSessionLocally({
@@ -713,7 +708,7 @@ async function handleSessionCreate(agentId) {
       })
     }
   }
-  sessionIdentity.sessionDrawerOpen.value = false
+  sessionIdentity.sessionDrawer.close()
 }
 
 function handleSessionDelete(sessionId, backend) {
@@ -721,12 +716,11 @@ function handleSessionDelete(sessionId, backend) {
 }
 
 // ── ACP Session Resume ──
-const showAcpSessionDrawer = ref(false)
-const acpSessionDrawer = useTabDrawer('chat', showAcpSessionDrawer)
+const acpSessionDrawer = useTabDrawer('chat')
 
 async function handleAcpSessionSelect(sessionId) {
   await sessionIdentity.switchSession(sessionId)
-  showAcpSessionDrawer.value = false
+  acpSessionDrawer.close()
 }
 
 /** Register global DOM event listeners (idempotent — safe to call multiple times). */
@@ -875,8 +869,8 @@ function handleJumpPdfPage(pageNum) {
 }
 
 watch(() => currentFile.value, (_f) => {
-    tocOpen.value = false
-    detailsOpen.value = false
+    tocDrawer.close()
+    detailsDrawer.close()
     markdownViewMode.value = 'rendered'
 })
 

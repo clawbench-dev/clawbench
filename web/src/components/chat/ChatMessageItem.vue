@@ -48,7 +48,7 @@
     </div>
 
     <!-- File changes banner — standalone button above toolbar -->
-    <button v-if="msg.role === 'assistant' && !msg.streaming && hasFileChanges" class="chat-file-changes-banner" @click="fileChangesOpen = true">
+    <button v-if="msg.role === 'assistant' && !msg.streaming && hasFileChanges" class="chat-file-changes-banner" @click="fileChangesDrawer.open()">
       <FileDiff :size="14" />
       <span>{{ t('chat.fileChanges.title') }}</span>
       <span class="chat-file-changes-count">{{ fileChanges.created.length + fileChanges.modified.length }}</span>
@@ -93,7 +93,7 @@
       :open="fileChangesDrawer.effectiveOpen.value"
       :created="fileChanges.created"
       :modified="fileChanges.modified"
-      @close="fileChangesOpen = false"
+      @close="fileChangesDrawer.close()"
       @open-file="handleOpenFile"
     />
   </div>
@@ -165,8 +165,7 @@ const fileChanges = computed(() => {
 })
 const hasFileChanges = computed(() => fileChanges.value.created.length > 0 || fileChanges.value.modified.length > 0)
 
-const fileChangesOpen = ref(false)
-const fileChangesDrawer = useTabDrawer('chat', fileChangesOpen)
+const fileChangesDrawer = useTabDrawer('chat')
 
 function handleOpenFile(path) {
   // AI may return absolute paths (e.g. /home/user/project/src/foo.ts).

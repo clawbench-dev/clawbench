@@ -71,7 +71,7 @@ describe('useSessionIdentity', () => {
             expect(identity.currentModelName).toBeDefined()
             expect(identity.currentThinkingEffort).toBeDefined()
             expect(identity.runningSessions).toBeDefined()
-            expect(identity.sessionDrawerOpen).toBeDefined()
+            expect(identity.sessionDrawer).toBeDefined()
         })
 
         it('shares state across multiple instances (singleton)', () => {
@@ -117,32 +117,32 @@ describe('useSessionIdentity', () => {
         })
     })
 
-    // ── sessionDrawerOpen ──
+    // ── sessionDrawer ──
 
-    describe('sessionDrawerOpen', () => {
-        it('can be toggled', async () => {
-            const { sessionDrawerOpen } = useSessionIdentity()
-            sessionDrawerOpen.value = true
+    describe('sessionDrawer', () => {
+        it('can be opened and closed', async () => {
+            const { sessionDrawer } = useSessionIdentity()
+            sessionDrawer.open()
             await nextTick()
-            expect(sessionDrawerOpen.value).toBe(true)
+            expect(sessionDrawer.isOpen.value).toBe(true)
 
-            sessionDrawerOpen.value = false
+            sessionDrawer.close()
             await nextTick()
-            expect(sessionDrawerOpen.value).toBe(false)
+            expect(sessionDrawer.isOpen.value).toBe(false)
         })
     })
 
     // ── openSessionTab ──
 
     describe('openSessionTab', () => {
-        it('sets sessionDrawerOpen to true', async () => {
+        it('opens the session drawer', async () => {
             const identity = useSessionIdentity()
-            identity.sessionDrawerOpen.value = false
+            identity.sessionDrawer.close()
 
             identity.openSessionTab()
             await nextTick()
 
-            expect(identity.sessionDrawerOpen.value).toBe(true)
+            expect(identity.sessionDrawer.isOpen.value).toBe(true)
         })
     })
 
@@ -509,7 +509,7 @@ describe('useSessionIdentity', () => {
             identity.currentModelName.value = 'Model One'
             identity.currentThinkingEffort.value = 'high'
             identity.runningSessions.value = new Set(['s1', 's2'])
-            identity.sessionDrawerOpen.value = true
+            identity.sessionDrawer.open()
 
             resetIdentity()
 
@@ -521,7 +521,7 @@ describe('useSessionIdentity', () => {
             expect(identity.currentModelName.value).toBe('')
             expect(identity.currentThinkingEffort.value).toBe('')
             expect(identity.runningSessions.value.size).toBe(0)
-            expect(identity.sessionDrawerOpen.value).toBe(false)
+            expect(identity.sessionDrawer.isOpen.value).toBe(false)
         })
 
         it('clears registered session action callbacks', async () => {

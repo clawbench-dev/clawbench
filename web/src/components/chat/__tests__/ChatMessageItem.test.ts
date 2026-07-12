@@ -42,7 +42,7 @@ vi.mock('@/stores/app', () => ({
 }))
 
 vi.mock('@/composables/useTabDrawer', () => ({
-  useTabDrawer: () => ({ effectiveOpen: { value: false } }),
+  useTabDrawer: () => ({ effectiveOpen: { value: false }, isOpen: { value: false }, open: vi.fn(), close: vi.fn(), toggle: vi.fn() }),
 }))
 
 // Mock child components that have complex props/dependencies

@@ -297,18 +297,18 @@ describe('identity refs', () => {
     instance1.currentSessionId.value = ''
   })
 
-  it('sessionDrawerOpen is exposed and defaults to false', () => {
-    const { sessionDrawerOpen } = useSessionIdentity()
-    expect(sessionDrawerOpen.value).toBe(false)
+  it('sessionDrawer defaults to closed', () => {
+    const { sessionDrawer } = useSessionIdentity()
+    expect(sessionDrawer.isOpen.value).toBe(false)
   })
 
-  it('openSessionTab sets sessionDrawerOpen to true', () => {
-    const { sessionDrawerOpen, openSessionTab } = useSessionIdentity()
-    expect(sessionDrawerOpen.value).toBe(false)
+  it('openSessionTab opens the session drawer', () => {
+    const { sessionDrawer, openSessionTab } = useSessionIdentity()
+    expect(sessionDrawer.isOpen.value).toBe(false)
     openSessionTab()
-    expect(sessionDrawerOpen.value).toBe(true)
+    expect(sessionDrawer.isOpen.value).toBe(true)
     // Clean up
-    sessionDrawerOpen.value = false
+    sessionDrawer.close()
   })
 
   it('openAgentSelector delegates to registered drawer ref', () => {
@@ -633,7 +633,7 @@ describe('resetIdentity', () => {
     updateUsageState(5000, 200000, 0.05, 'USD', 's1')
     identity.runningSessions.value = new Set(['s1'])
     identity.runningSessionsVersion.value = 5
-    identity.sessionDrawerOpen.value = true
+    identity.sessionDrawer.open()
 
     resetIdentity()
 
@@ -658,7 +658,7 @@ describe('resetIdentity', () => {
     expect(identity.contextCurrency.value).toBe('')
     expect(identity.runningSessions.value.size).toBe(0)
     expect(identity.runningSessionsVersion.value).toBe(0)
-    expect(identity.sessionDrawerOpen.value).toBe(false)
+    expect(identity.sessionDrawer.isOpen.value).toBe(false)
   })
 
   it('cleans up E2E test bridge on window', () => {

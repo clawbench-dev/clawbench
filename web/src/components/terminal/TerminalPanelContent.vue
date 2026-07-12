@@ -112,7 +112,7 @@
               <CopyIcon :size="14" />
             </button>
             <!-- Settings button (always present) -->
-            <button class="toolbar-btn btn-action" @click="showKeyConfig = true" :title="t('terminal.keyConfigTitle')">
+            <button class="toolbar-btn btn-action" @click="keyConfigDrawer.open()" :title="t('terminal.keyConfigTitle')">
               <Settings :size="14" />
             </button>
           </div>
@@ -145,12 +145,12 @@
     />
 
     <!-- Quick command edit dialog — only open when terminal tab is active -->
-    <QuickCommandDrawer :open="quickCmdDrawer.effectiveOpen.value" @close="showEditDialog = false" />
+    <QuickCommandDrawer :open="quickCmdDrawer.effectiveOpen.value" @close="quickCmdDrawer.close()" />
 
     <!-- Key config drawer — only open when terminal tab is active -->
     <KeyConfigDrawer
       :open="keyConfigDrawer.effectiveOpen.value"
-      @close="showKeyConfig = false"
+      @close="keyConfigDrawer.close()"
       @saved="onKeyConfigSaved"
     />
 
@@ -159,7 +159,7 @@
       :open="outputDrawer.effectiveOpen.value"
       :output-text="outputDrawerText"
       :font-size="fontSize"
-      @close="showOutputDrawer = false"
+      @close="outputDrawer.close()"
     />
   </div>
 </template>
@@ -237,8 +237,7 @@ function applyFontSize(size: number) {
 // Refs
 const gestureHint = ref('')
 let gestureHintTimer: ReturnType<typeof setTimeout> | null = null
-const showOutputDrawer = ref(false)
-const outputDrawer = useTabDrawer('terminal', showOutputDrawer)
+const outputDrawer = useTabDrawer('terminal')
 const outputDrawerText = ref('')
 const showCommands = ref(false)
 const cmdBtnRef = ref<HTMLElement | null>(null)
@@ -291,8 +290,7 @@ const tabMenuCwd = ref('')
 
 // Symbol bar — config-driven
 const { selectedKeys, selectedSymbols, fetchConfig: fetchKeyConfig } = useKeyConfig()
-const showKeyConfig = ref(false)
-const keyConfigDrawer = useTabDrawer('terminal', showKeyConfig)
+const keyConfigDrawer = useTabDrawer('terminal')
 
 /** Keys visible in the toolbar, filtered by gesture mode (Tab/PgUp/PgDn/arrows hidden when gestures on) */
 const GESTURE_HIDDEN_KEYS = new Set(['tab', 'pgup', 'pgdn', 'arrow_up', 'arrow_down', 'arrow_left', 'arrow_right'])
@@ -312,7 +310,7 @@ function toggleSymbolBar() {
 }
 
 function onKeyConfigSaved() {
-  showKeyConfig.value = false
+  keyConfigDrawer.close()
 }
 
 function handleGestureToggle() {
@@ -670,7 +668,7 @@ function handleCopyOutput() {
     return
   }
   outputDrawerText.value = lines.join('\n')
-  showOutputDrawer.value = true
+  outputDrawer.open()
 }
 
 async function handleTabMenuCloseAll() {
@@ -700,7 +698,7 @@ function executeCommand(cmd: { id: number; label: string; command: string }) {
 
 function openEditDialog() {
   showCommands.value = false
-  showEditDialog.value = true
+  quickCmdDrawer.open()
 }
 
 /** Map KeyDef properties to toolbar CSS classes */

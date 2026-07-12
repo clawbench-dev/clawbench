@@ -61,7 +61,10 @@ const runningSessionsVersion = ref(0)
 // Whether the global session drawer is open. Lifted from ChatPanelContent
 // to useSessionIdentity so App.vue can render a single SessionDrawer
 // instance that's accessible from any tab (chat, viewer, QuoteQuestionBar).
-const sessionDrawerOpen = ref(false)
+// Encapsulated via useTabDrawer — use sessionDrawer.open()/close() instead of
+// mutating a raw ref.
+import { useTabDrawer as _useTabDrawer } from '@/composables/useTabDrawer'
+const sessionDrawer = _useTabDrawer('chat')
 
 // Register identity updaters in useAgents to break the circular dependency.
 // This must run at module evaluation time so that useAgents can call the
@@ -99,7 +102,7 @@ export function resetIdentity(): void {
   clearAllUsageState()
   runningSessions.value = new Set()
   runningSessionsVersion.value = 0
-  sessionDrawerOpen.value = false
+  sessionDrawer.close()
   _switchSession = null
   _createSession = null
   _deleteSession = null
@@ -643,9 +646,14 @@ export function useSessionIdentity() {
     return { exists: false, sessionId: '' }
   }
 
-  /** Open the global session drawer (sets sessionDrawerOpen = true). */
+  /** Open the global session drawer. */
   function openSessionTab() {
-    sessionDrawerOpen.value = true
+    sessionDrawer.open()
+  }
+
+  /** Close the global session drawer. */
+  function closeSessionDrawer() {
+    sessionDrawer.close()
   }
 
   /** Open the agent selector inside the session drawer. */
@@ -679,8 +687,8 @@ export function useSessionIdentity() {
     contextCost,
     contextCurrency,
     agentHeaderTitle,
-    // Global session drawer state
-    sessionDrawerOpen,
+    // Global session drawer state (TabDrawer — use .open()/.close()/.effectiveOpen/.isOpen)
+    sessionDrawer,
     // Action proxies
     switchSession,
     createSession,
@@ -688,6 +696,7 @@ export function useSessionIdentity() {
     sendMessage,
     openChatPanel,
     openSessionTab,
+    closeSessionDrawer,
     openAgentSelector,
     continueFromExecution,
     checkContinueSession,

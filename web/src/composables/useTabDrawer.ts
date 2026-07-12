@@ -1,4 +1,4 @@
-import { ref, computed, onUnmounted, type Ref, type ComputedRef } from 'vue'
+import { ref, computed, watch, onUnmounted, getCurrentInstance, type Ref, type ComputedRef, readonly } from 'vue'
 
 /**
  * Tab-drawer declarative binding registry.
@@ -21,6 +21,16 @@ const registry = new Map<string, Set<Ref<boolean>>>()
 // Track current tab as a ref so effectiveOpen computed can react to tab switches
 const currentTab = ref('chat')
 
+/** Options for the encapsulated (new) useTabDrawer API. */
+export interface TabDrawerOptions {
+  /**
+   * If false, the drawer does NOT auto-restore when switching back to its tab.
+   * Use for small pickers/popups that shouldn't surprise-reopen on tab return.
+   * Default: true
+   */
+  autoRestore?: boolean
+}
+
 /** Return type of useTabDrawer — explicit type prevents accidental misuse. */
 export interface TabDrawer {
   /**
@@ -28,20 +38,64 @@ export interface TabDrawer {
    * In templates, bind as `:open="drawer.effectiveOpen.value"` (NOT `.effectiveOpen`).
    */
   effectiveOpen: ComputedRef<boolean>
-  /** Open the drawer (sets openRef = true, does NOT switch tab) */
+  /** Read-only access to the drawer's open state. Use open()/close() to mutate. */
+  isOpen: Readonly<Ref<boolean>>
+  /** Open the drawer (sets internal ref = true, does NOT switch tab) */
   open: () => void
-  /** Close the drawer (sets openRef = false) */
+  /** Close the drawer (sets internal ref = false) */
   close: () => void
+  /** Toggle the drawer open state */
+  toggle: () => void
 }
 
+// Dev-mode warning dedup — tracks which call sites have already warned
+const _legacyWarned = new Set<string>()
+
 /**
- * Register a drawer's open ref as belonging to a tab.
+ * Register a tab-scoped drawer.
+ *
+ * New API (preferred):
+ *   const drawer = useTabDrawer('chat')
+ *   drawer.open()   // open
+ *   drawer.close()  // close
+ *   drawer.toggle() // toggle
+ *   <SomeDrawer :open="drawer.effectiveOpen.value" @close="drawer.close()" />
+ *
+ * Legacy API (backward-compat, will warn in dev):
+ *   const fooOpen = ref(false)
+ *   const drawer = useTabDrawer('chat', fooOpen)
  *
  * @param tabId  The tab this drawer belongs to (e.g. 'browse', 'chat', 'terminal')
- * @param openRef The ref controlling the drawer's open state
- * @returns TabDrawer with effectiveOpen computed, open(), and close()
+ * @param openRefOrOptions  Either a Ref<boolean> (legacy) or TabDrawerOptions (new)
  */
-export function useTabDrawer(tabId: string, openRef: Ref<boolean>): TabDrawer {
+export function useTabDrawer(tabId: string, openRefOrOptions?: Ref<boolean> | TabDrawerOptions): TabDrawer {
+  const isLegacy = openRefOrOptions != null && typeof openRefOrOptions === 'object' && 'value' in openRefOrOptions
+
+  let openRef: Ref<boolean>
+  let autoRestore: boolean
+
+  if (isLegacy) {
+    // Legacy path: external ref
+    openRef = openRefOrOptions as Ref<boolean>
+    autoRestore = true
+    if (import.meta.env.DEV) {
+      const key = `${tabId}:${_getCallerSite()}`
+      if (!_legacyWarned.has(key)) {
+        _legacyWarned.add(key)
+        console.warn(
+          `[useTabDrawer] Legacy call useTabDrawer('${tabId}', openRef) — ` +
+          `migrate to useTabDrawer('${tabId}') and use drawer.open()/close() instead. ` +
+          `This warning fires once per call site.`
+        )
+      }
+    }
+  } else {
+    // New path: internal ref
+    openRef = ref(false)
+    const options = (openRefOrOptions as TabDrawerOptions) || {}
+    autoRestore = options.autoRestore !== false
+  }
+
   let set = registry.get(tabId)
   if (!set) {
     set = new Set()
@@ -49,16 +103,49 @@ export function useTabDrawer(tabId: string, openRef: Ref<boolean>): TabDrawer {
   }
   set.add(openRef)
 
-  onUnmounted(() => {
-    set?.delete(openRef)
-  })
+  // Only register cleanup for component-scoped drawers.
+  // Module-level singletons (useSessionIdentity, useMarkdownDiff) live for
+  // the app's lifetime and are cleaned up by resetTabDrawerState() instead.
+  if (getCurrentInstance()) {
+    onUnmounted(() => {
+      set?.delete(openRef)
+    })
+  }
 
   const effectiveOpen = computed(() => currentTab.value === tabId && openRef.value)
 
+  // For autoRestore: false, close the drawer when tab switches away
+  if (!autoRestore) {
+    watch(() => currentTab.value, (newTab) => {
+      if (newTab !== tabId && openRef.value) {
+        openRef.value = false
+      }
+    })
+  }
+
   return {
     effectiveOpen,
+    isOpen: readonly(openRef),
     open: () => { openRef.value = true },
     close: () => { openRef.value = false },
+    toggle: () => { openRef.value = !openRef.value },
+  }
+}
+
+/** Best-effort caller site identification for dev-mode warnings. */
+function _getCallerSite(): string {
+  try {
+    const stack = new Error().stack
+    if (!stack) return 'unknown'
+    const lines = stack.split('\n')
+    // Skip Error ctor + useTabDrawer + _getCallerSite — find the actual caller
+    for (let i = 3; i < lines.length; i++) {
+      const m = lines[i].match(/(?:at\s+)?(?:.*?\s+\()?(.+?):(\d+):(\d+)/)
+      if (m) return `${m[1]}:${m[2]}`
+    }
+    return 'unknown'
+  } catch {
+    return 'unknown'
   }
 }
 
@@ -66,7 +153,7 @@ export function useTabDrawer(tabId: string, openRef: Ref<boolean>): TabDrawer {
  * Call from switchTab() to update the current tab.
  * Drawers are visually hidden via effectiveOpen (computed) when their tab
  * is inactive; the openRef itself is preserved so the drawer re-opens
- * when the user switches back.
+ * when the user switches back (unless autoRestore: false).
  */
 export function onTabSwitch(newTab: string) {
   currentTab.value = newTab

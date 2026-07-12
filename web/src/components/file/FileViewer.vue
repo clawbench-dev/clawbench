@@ -222,8 +222,7 @@ import CodePreview from './CodePreview.vue'
 import OpenApiPreview from './OpenApiPreview.vue'
 import DiffDrawer from './DiffDrawer.vue'
 import { useDiffDrawer } from '@/composables/useDiffDrawer.ts'
-import { diffDrawerVisible } from '@/composables/useMarkdownDiff.ts'
-import { useTabDrawer } from '@/composables/useTabDrawer'
+import { diffDrawer } from '@/composables/useMarkdownDiff.ts'
 import { flashRanges, flashType } from '@/composables/useFileRefresh.ts'
 import FileHeader from './FileHeader.vue'
 import { getFileType, formatFileSize } from '@/utils/fileType.ts'
@@ -238,7 +237,7 @@ const { t } = useI18n()
 const { isAppMode } = useAppMode()
 const toast = useToast()
 const { drawerMarkerType, drawerCharDiff, drawerDiffLines, closeDrawer } = useDiffDrawer()
-const diffDrawer = useTabDrawer('browse', diffDrawerVisible)
+// diffDrawer is imported from useMarkdownDiff (encapsulated TabDrawer)
 
 const props = defineProps({
     file: Object,

@@ -106,7 +106,7 @@
         :current-dir="currentDir"
         :attached-files="attachedFiles"
         :recent-referenced-files="recentReferencedFiles"
-        @close="showAttachDrawer = false"
+        @close="attachDrawer.close()"
         @add-attached="handleAttachFile"
         @remove-attached="handleRemoveAttached"
         @file-open="(path) => emit('file-tag-click', path)"
@@ -128,7 +128,7 @@
           <div v-if="quickSendPressingId === item.id" class="qs-fill-bar" />
         </button>
         <div class="quick-send-divider" />
-        <button class="quick-send-item" @click="showQuickMenu = false; quickSendStore.showEditDialog.value = true">
+        <button class="quick-send-item" @click="showQuickMenu = false; quickSendDrawer.open()">
           ⚙️ {{ t('chat.quickSend.edit') }}
         </button>
       </PopupMenu>
@@ -137,13 +137,13 @@
         :show="settingsDrawer.effectiveOpen.value"
         :agent-id="currentAgentId"
         :initial-tab="settingsModalInitialTab"
-        @update:show="showSettingsModal = $event"
+        @update:show="$event ? settingsDrawer.open() : settingsDrawer.close()"
         @switch-model="handleSwitchModel"
         @switch-thinking-effort="handleSwitchThinkingEffort"
         @switch-mode="handleSwitchMode"
         @switch-transport="handleSwitchTransport"
       />
-      <QuickSendDrawer :open="quickSendDrawer.effectiveOpen.value" @close="quickSendStore.showEditDialog.value = false" />
+      <QuickSendDrawer :open="quickSendDrawer.effectiveOpen.value" @close="quickSendDrawer.close()" />
       <!-- @ command autocomplete menu (ClawBench built-in) -->
       <PopupMenu v-model:show="showAtMenu" :target-element="textareaRef" anchor="left" :max-width="260" :max-height="200" :menu-items-count="atMenuItems.length">
         <div class="at-menu-title">{{ t('chat.atCommand.title') }}</div>
@@ -281,10 +281,9 @@ const usageColor = computed(() => {
 const dialog = useDialog()
 const quickSendStore = useQuickSend()
 const { items: quickSendItems, fetchItems } = quickSendStore
-const showSettingsModal = ref(false)
 const settingsModalInitialTab = ref('model')
 const quickSendDrawer = useTabDrawer('chat', quickSendStore.showEditDialog)
-const settingsDrawer = useTabDrawer('chat', showSettingsModal)
+const settingsDrawer = useTabDrawer('chat')
 
 // ── Rotating placeholder ──
 const placeholderIndex = ref(0)
@@ -378,16 +377,15 @@ const inputText = ref('')
 const textareaRef = ref(null)
 const isDragOver = ref(false)
 const dragCounter = ref(0)
-const showAttachDrawer = ref(false)
+const attachDrawer = useTabDrawer('chat')
 const attachDrawerRef = ref(null)
-const attachDrawer = useTabDrawer('chat', showAttachDrawer)
 const attachMenuRef = ref(null) // kept for ref stability, no longer used for PopupMenu
 const showQuickMenu = ref(false)
 const sendBtnRef = ref(null)
 
 function openSettingsModal(tab) {
   settingsModalInitialTab.value = tab
-  showSettingsModal.value = true
+  settingsDrawer.open()
 }
 
 // ── @ command autocomplete ──
@@ -624,7 +622,7 @@ function onDrop(e) {
     // Open the drawer and delegate upload to it.
     // Retry until the drawer ref is available (may take a few ticks
     // if the BottomSheet enter transition hasn't mounted yet).
-    if (!showAttachDrawer.value) showAttachDrawer.value = true
+    if (!attachDrawer.isOpen.value) attachDrawer.open()
     const tryDrop = () => {
       if (attachDrawerRef.value?.handleFileDrop) {
         attachDrawerRef.value.handleFileDrop(files)
@@ -653,7 +651,7 @@ function handleRemoveAttached(filePath) {
 }
 
 async function toggleAttachMenu() {
-  showAttachDrawer.value = !showAttachDrawer.value
+  attachDrawer.toggle()
 }
 
 function handleSendClick() {
@@ -774,11 +772,11 @@ function handleSwitchTransport(transport) {
 }
 
 // Menu mutual exclusion: opening one closes the others
-watch(showAttachDrawer, (v) => { if (v) { showQuickMenu.value = false; showSettingsModal.value = false; showSlashMenu.value = false; showUsagePopup.value = false } })
-watch(showQuickMenu, (v) => { if (v) { showAttachDrawer.value = false; showSettingsModal.value = false; showSlashMenu.value = false; showUsagePopup.value = false } })
-watch(showSettingsModal, (v) => { if (v) { showAttachDrawer.value = false; showQuickMenu.value = false; showSlashMenu.value = false; showUsagePopup.value = false } })
-watch(showSlashMenu, (v) => { if (v) { showAttachDrawer.value = false; showQuickMenu.value = false; showSettingsModal.value = false; showUsagePopup.value = false } })
-watch(showUsagePopup, (v) => { if (v) { showAttachDrawer.value = false; showQuickMenu.value = false; showSettingsModal.value = false; showSlashMenu.value = false } })
+watch(() => attachDrawer.isOpen.value, (v) => { if (v) { showQuickMenu.value = false; settingsDrawer.close(); showSlashMenu.value = false; showUsagePopup.value = false } })
+watch(showQuickMenu, (v) => { if (v) { attachDrawer.close(); settingsDrawer.close(); showSlashMenu.value = false; showUsagePopup.value = false } })
+watch(() => settingsDrawer.isOpen.value, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; showSlashMenu.value = false; showUsagePopup.value = false } })
+watch(showSlashMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); showUsagePopup.value = false } })
+watch(showUsagePopup, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); showSlashMenu.value = false } })
 
 onMounted(() => {
   fetchItems()

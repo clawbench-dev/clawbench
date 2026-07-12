@@ -123,7 +123,7 @@
     :sessionId="metadataModal.sessionId"
     :indexed="metadataModal.indexed"
     :formatDetailTime="render.formatDetailTime"
-    @close="metadataShow = false"
+    @close="metadataDrawer.close()"
   />
 
   <!-- Tool Detail Overlay -->
@@ -137,13 +137,13 @@
     :toolStatus="toolDetailOverlay.status"
     :toolDone="toolDetailOverlay.done"
     :displayNameOverride="toolDetailOverlay.displayNameOverride"
-    @close="toolDetailShow = false"
+    @close="toolDetailDrawer.close()"
     @file-open="handleFileOpenInOverlay"
     @send-message="handleToolSendMessage"
     @click="handleOverlayRetryClick"
   />
   <!-- RAG search result detail drawer -->
-  <RagDetailDrawer :item="ragDetailDrawer.effectiveOpen.value ? ragDetailItem : null" @close="ragDetailShow = false; ragDetailItem.value = null" @resume="handleResumeFromDetail" />
+  <RagDetailDrawer :item="ragDetailDrawer.effectiveOpen.value ? ragDetailItem : null" @close="ragDetailDrawer.close(); ragDetailItem.value = null" @resume="handleResumeFromDetail" />
 </template>
 
 <script setup>
@@ -219,8 +219,7 @@ const metadataModal = ref({
   sessionId: '',
   indexed: false
 })
-const metadataShow = ref(false)
-const metadataDrawer = useTabDrawer('chat', metadataShow)
+const metadataDrawer = useTabDrawer('chat')
 const toast = useToast()
 const dialog = useDialog()
 const notification = useNotification()
@@ -259,6 +258,7 @@ function findToolBlock({ msgId, blockIdx }) {
 
 const {
   show: toolDetailShow,
+  drawer: toolDetailDrawer,
   toolDetailData,
   toolDetailOverlay,
   activeToolOverlay,
@@ -274,7 +274,6 @@ const {
   },
   findLiveBlock: (ids) => findToolBlock(ids),
 })
-const toolDetailDrawer = useTabDrawer('chat', toolDetailShow)
 
 // Thinking overlay removed — thinking blocks now expand/collapse inline
 let streamingRefreshTimer = null
@@ -466,16 +465,13 @@ provide('chatUI', { navigateToFileViewer: () => switchTab('browse') })
 provide('autoSpeech', autoSpeech)
 provide('layoutRefreshKey', layoutRefreshKey)
 
-// 子抽屉跟随聊天面板关闭；面板打开时刷新渲染（修复 display:none 期间的过时布局状态）
+// 子抽屉的视觉隐藏由 useTabDrawer.effectiveOpen 自动处理（切换 tab 时
+// effectiveOpen 变 false，openRef 保留原值），不需要在 active 变化时
+// 手动清 openRef，否则切回 chat tab 后抽屉不会恢复。
+// 面板打开时刷新渲染（修复 display:none 期间的过时布局状态）
 // immediate: true 确保首次挂载时（active 已为 true）也会加载历史记录
 watch(() => props.active, async (val) => {
-  if (!val) {
-    identity.sessionDrawerOpen.value = false
-    toolDetailShow.value = false
-    messageListRef.value?.closeUserMsgIndex()
-    ragDetailItem.value = null
-    ragDetailShow.value = false
-  } else {
+  if (val) {
     // Open/Re-open: load history (with overlay, skip if unchanged) and fix stale layout state from v-show display:none
     // skipIfUnchanged=true preserves scroll position when no new messages arrived while tab was hidden
     await session.loadHistory(false, true, true)
@@ -869,7 +865,7 @@ function showMetadata(msg) {
     metadataModal.value.messageId = msg.id || null
     metadataModal.value.sessionId = msg.sessionId || ''
     metadataModal.value.indexed = !!msg.indexed
-    metadataShow.value = true
+    metadataDrawer.open()
 }
 
 // Wire up WS event handler for session_update
@@ -900,17 +896,16 @@ function handleToggleSummary(msgId) {
 
 // RAG detail drawer
 const ragDetailItem = ref(null)
-const ragDetailShow = ref(false)
-const ragDetailDrawer = useTabDrawer('chat', ragDetailShow)
+const ragDetailDrawer = useTabDrawer('chat')
 
 function handleRagDetail(ragItem) {
     ragDetailItem.value = ragItem
-    ragDetailShow.value = true
+    ragDetailDrawer.open()
 }
 
 async function handleResumeFromDetail(item) {
     ragDetailItem.value = null
-    ragDetailShow.value = false
+    ragDetailDrawer.close()
     if (!item?.sessionId) return
     const confirmed = await dialog.confirm(
         t('chat.contentBlocks.ragResumeConfirm', { title: item.sessionTitle || t('chat.contentBlocks.ragUntitled') }),

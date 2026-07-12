@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useTabDrawer } from '@/composables/useTabDrawer'
 import { shouldRetryToolFetch, resolveEffectiveMsgId, type ContentBlock } from '@/utils/chatStreamUtils.ts'
 import { formatToolOutput } from '@/utils/renderToolDetail.ts'
 import { appLog } from '@/utils/appLog'
@@ -38,7 +39,9 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
   const { chatRender, onFileOpen, findLiveBlock } = options
   const { t } = useI18n()
 
-  const show = ref(false)
+  const drawer = useTabDrawer('chat')
+  /** Read-only access — use drawer.open()/close() to mutate */
+  const show = drawer.isOpen
   const toolDetailData = ref({
     name: '' as string,
     subagentType: '' as string,
@@ -78,7 +81,7 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
     const hasInput = block.input && Object.keys(block.input).length > 0
     const hasOutput = !!block.output
 
-    show.value = true
+    drawer.open()
     toolDetailData.value = {
       name: block.name || '',
       subagentType: block.display_name || (block.input as Record<string, unknown>)?.subagent_type as string || '',
@@ -185,14 +188,14 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
 
   function handleFileOpenInOverlay(payload: string | { path: string; lineStart?: number; lineEnd?: number }) {
     const { path, lineStart, lineEnd } = typeof payload === 'string' ? { path: payload } : payload
-    show.value = false
+    drawer.close()
     if (onFileOpen) {
       onFileOpen(path, lineStart, lineEnd)
     }
   }
 
   function closeOverlay() {
-    show.value = false
+    drawer.close()
     _fetchInFlight = false
     _retryRequested = false
   }
@@ -202,6 +205,7 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
 
   return {
     show,
+    drawer,
     toolDetailData,
     toolDetailOverlay,
     activeToolOverlay,

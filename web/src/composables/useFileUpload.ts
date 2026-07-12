@@ -35,6 +35,16 @@ export function useFileUpload() {
 
   function uploadOneFile(file: File, dir?: string) {
     return new Promise((resolve) => {
+      // Pre-flight size check: prevent sending a request that will be
+      // rejected by the server's MaxBytesReader (which causes onerror
+      // instead of a readable error response).
+      const maxSizeBytes = store.state.uploadMaxSizeMB * 1024 * 1024
+      if (file.size > maxSizeBytes) {
+        toast.show(gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB }), { icon: '⚠️', type: 'error' })
+        resolve(false)
+        return
+      }
+
       const isImage = file.type.startsWith('image/')
       const previewUrl = isImage ? URL.createObjectURL(file) : null
 
@@ -107,7 +117,13 @@ export function useFileUpload() {
           const i = pendingFiles.value.indexOf(entry)
           if (i !== -1) pendingFiles.value.splice(i, 1)
         }
-        toast.show(gt('upload.networkError'), { icon: '⚠️', type: 'error' })
+        // When the server's MaxBytesReader rejects the upload, the XHR
+        // gets onerror instead of onload with a parseable response.
+        // If the file exceeds the threshold, show a size-specific error.
+        const msg = file.size > maxSizeBytes
+          ? gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB })
+          : gt('upload.networkError')
+        toast.show(msg, { icon: '⚠️', type: 'error' })
         resolve(false)
       }
 

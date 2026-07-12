@@ -205,17 +205,7 @@ const editing = ref(false)
 const editValue = ref<unknown>(null)
 const showPassword = ref(false)
 const descriptionExpanded = ref(false)
-const selectPickerOpen = ref(false)
-const selectPicker = useTabDrawer('settings', selectPickerOpen)
-
-// Guard against useTabDrawer preserving openRef on tab switch back.
-// Reset openRef when effectiveOpen becomes false (tab deactivated)
-// so the picker doesn't auto-reopen.
-watch(() => selectPicker.effectiveOpen.value, (val) => {
-  if (!val && selectPickerOpen.value) {
-    selectPickerOpen.value = false
-  }
-})
+const selectPicker = useTabDrawer('settings', { autoRestore: false })
 
 // Slider debounce: only emit final value after 300ms of inactivity
 let sliderDebounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -238,7 +228,7 @@ watch(() => props.forceClose, (val) => {
     editing.value = false
     emit('editToggle', false)
   }
-  if (val && selectPickerOpen.value) {
+  if (val && selectPicker.isOpen.value) {
     selectPicker.close()
     emit('editToggle', false)
   }

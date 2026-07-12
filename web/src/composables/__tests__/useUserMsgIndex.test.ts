@@ -103,7 +103,7 @@ describe('useUserMsgIndex — toggleUserMsgIndex', () => {
 
   it('closes overlay when already open', async () => {
     const { vm } = createComposable()
-    vm.showUserMsgIndex = true
+    vm.drawer.open()
     await nextTick()
 
     await vm.toggleUserMsgIndex()
@@ -198,7 +198,7 @@ describe('useUserMsgIndex — toggleUserMsgIndex', () => {
 describe('useUserMsgIndex — closeUserMsgIndex', () => {
   it('closes the overlay', async () => {
     const { vm } = createComposable()
-    vm.showUserMsgIndex = true
+    vm.drawer.open()
     await nextTick()
 
     vm.closeUserMsgIndex()
@@ -299,7 +299,7 @@ describe('useUserMsgIndex — jumpToUserMessage', () => {
     msg.scrollIntoView = vi.fn()
     messagesRef.value = el
 
-    vm.showUserMsgIndex = true
+    vm.drawer.open()
     await nextTick()
 
     await vm.jumpToUserMessage({ id: 1 })
