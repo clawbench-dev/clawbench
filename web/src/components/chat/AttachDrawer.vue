@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet :open="open" :no-swipe-close="filePickerOpen" auto @close="onDrawerClose">
+  <BottomSheet :open="open" :close-guard="filePickerOpen" auto @close="onDrawerClose">
     <template #header>
       <div class="ad-header">
         <Paperclip :size="16" class="bs-header-icon" />
@@ -151,7 +151,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed, onMounted, onUnmounted } from 'vue'
+import { ref, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { Paperclip, Upload, Check, ExternalLink } from 'lucide-vue-next'
 import { getFileIcon, getFileIconColor, buildPathThumbUrl, Folder } from '@/utils/fileIcon'
 import BottomSheet from '@/components/common/BottomSheet.vue'
@@ -236,7 +236,11 @@ function handleUploadClick() {
   if (fileInputRef.value) {
     fileInputRef.value.value = ''
     filePickerOpen.value = true
-    fileInputRef.value.click()
+    // Defer click to nextTick so BottomSheet's closeGuard watch
+    // runs first and blocks all close attempts. Without this,
+    // Android's native file chooser launch can trigger a close event
+    // that closes the drawer before closeGuard takes effect.
+    nextTick(() => { fileInputRef.value?.click() })
   }
 }
 
@@ -303,9 +307,10 @@ watch(() => props.open, (v) => {
 })
 
 // When the native file picker closes (user picks files or cancels),
-// the window regains focus. Reset filePickerOpen so the drawer's
-// back handler is re-enabled. (onFileSelect also resets it, but
-// the cancel path has no JS callback — only the focus event fires.)
+// the window regains focus. Reset filePickerOpen so BottomSheet's
+// closeGuard lifts and the drawer becomes closable again.
+// (onFileSelect also resets it, but the cancel path has no JS
+// callback — only the focus event fires.)
 function onWindowFocus() {
   if (filePickerOpen.value) filePickerOpen.value = false
 }
@@ -314,7 +319,9 @@ onUnmounted(() => window.removeEventListener('focus', onWindowFocus))
 
 // ── Drawer close handler ──
 // BottomSheet emits 'close' → propagate to parent so ChatInputBar
-// sets showAttachDrawer = false, which sets open=false and closes the drawer.
+// sets showAttachDrawer = false. No guard needed here — BottomSheet's
+// closeGuard prop handles all close blocking while the native file
+// picker is open.
 function onDrawerClose() {
   emit('close')
 }

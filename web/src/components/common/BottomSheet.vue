@@ -46,7 +46,7 @@ const props = defineProps({
   handleOnly: Boolean, // 仅显示拖拽手柄，无标题栏
   transparentOverlay: Boolean, // 透明遮罩（可点击关闭但可见底层内容）
   fullscreen: Boolean, // 全屏模式，覆盖 app header，用于无 header 的页面（如终端）
-  noSwipeClose: Boolean, // 禁用边缘滑动关闭（用于有自定义返回逻辑的抽屉）
+  closeGuard: Boolean, // 阻止一切关闭操作（overlay点击/header点击/返回手势），用于内部有原生选择器等场景
 })
 
 const emit = defineEmits(['close'])
@@ -69,7 +69,7 @@ watch(() => props.open, (val) => {
     everOpened.value = true
     leaving.value = false
     // Register back handler so edge-swipe / Android back closes this drawer
-    if (!props.noSwipeClose && !unregisterBack) {
+    if (!props.closeGuard && !unregisterBack) {
       registerDrawerBackHandler()
     }
   } else if (leaving.value) {
@@ -83,14 +83,14 @@ watch(() => props.open, (val) => {
   }
 }, { immediate: true })
 
-// Respond to dynamic noSwipeClose changes (e.g. when a file picker is open
-// inside the drawer, we temporarily disable back-to-close to prevent the
-// Android back button from dismissing the drawer instead of the picker).
-watch(() => props.noSwipeClose, (noSwipe) => {
-  if (noSwipe && unregisterBack) {
+// Respond to dynamic closeGuard changes (e.g. when a native file picker
+// opens inside the drawer, we block all close attempts to prevent the
+// drawer from dismissing while the picker is active).
+watch(() => props.closeGuard, (guard) => {
+  if (guard && unregisterBack) {
     unregisterBack()
     unregisterBack = null
-  } else if (!noSwipe && props.open && !unregisterBack) {
+  } else if (!guard && props.open && !unregisterBack) {
     registerDrawerBackHandler()
   }
 })
@@ -117,6 +117,7 @@ onBeforeUnmount(() => {
 })
 
 function handleClose() {
+  if (props.closeGuard) return
   if (leaving.value) return
   if (props.instant) {
     emit('close')

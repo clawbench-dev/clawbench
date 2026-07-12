@@ -87,12 +87,53 @@ describe('BottomSheet back gesture', () => {
     _resetHandlers()
   })
 
-  it('noSwipeClose prop disables back handler registration', () => {
+  it('closeGuard prop disables back handler registration', () => {
     const wrapper = mount(BottomSheet, {
-      props: { open: true, title: 'Test', noSwipeClose: true },
+      props: { open: true, title: 'Test', closeGuard: true },
     })
 
     expect(canNavigateBack()).toBe(false)
+
+    wrapper.unmount()
+    _resetHandlers()
+  })
+
+  it('closeGuard prop blocks handleClose (no close emitted)', () => {
+    const wrapper = mount(BottomSheet, {
+      props: { open: true, title: 'Test', closeGuard: true },
+    })
+
+    // Directly call the exposed close method (same path as overlay click / header click)
+    wrapper.vm.close()
+    vi.advanceTimersByTime(300)
+    expect(wrapper.emitted('close')).toBeFalsy()
+
+    // Back gesture also blocked (no back handler registered, so nothing happens)
+    handleBackNavigation()
+    vi.advanceTimersByTime(300)
+    expect(wrapper.emitted('close')).toBeFalsy()
+
+    wrapper.unmount()
+    _resetHandlers()
+  })
+
+  it('closeGuard lifting re-enables close', async () => {
+    const wrapper = mount(BottomSheet, {
+      props: { open: true, title: 'Test', closeGuard: true },
+    })
+
+    // Close is blocked
+    wrapper.vm.close()
+    vi.advanceTimersByTime(300)
+    expect(wrapper.emitted('close')).toBeFalsy()
+
+    // Lift guard
+    await wrapper.setProps({ closeGuard: false })
+
+    // Now close works via exposed method
+    wrapper.vm.close()
+    vi.advanceTimersByTime(300)
+    expect(wrapper.emitted('close')).toBeTruthy()
 
     wrapper.unmount()
     _resetHandlers()
