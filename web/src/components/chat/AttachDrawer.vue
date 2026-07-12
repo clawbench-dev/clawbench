@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet :open="open" :no-swipe-close="filePickerOpen" auto @close="$emit('close')">
+  <BottomSheet :open="open" :no-swipe-close="filePickerOpen" auto @close="onDrawerClose">
     <template #header>
       <div class="ad-header">
         <Paperclip :size="16" class="bs-header-icon" />
@@ -9,13 +9,6 @@
         </button>
       </div>
     </template>
-
-    <!-- Upload progress (inside drawer) -->
-    <div v-if="uploadingFiles.length > 0" class="ad-upload-progress">
-      <div v-for="(f, idx) in uploadingFiles" :key="'prog-' + idx" class="ad-progress-item">
-        <div class="ad-progress-bar" :style="{ width: f.progress + '%' }"></div>
-      </div>
-    </div>
 
     <!-- Tab bar (horizontal scroll) -->
     <div class="ad-tab-bar">
@@ -115,26 +108,21 @@
 
       <!-- Recently uploaded + pending uploads -->
       <template v-if="activeTab === 'uploads'">
-        <!-- Pending (in-flight) uploads -->
-        <div v-for="(f, idx) in pendingFiles" :key="'pending-' + idx"
-          class="ad-file-row ad-pending-item" :class="{ 'ad-file-attached': f.path && isAttached(f.path) }"
-          @click="f.path && !f.uploading && toggleAttached(f.path)">
-          <div class="ad-icon-wrap">
-            <img v-if="f.isImage && f.previewUrl" class="ad-thumb" :src="f.previewUrl" loading="lazy" />
-            <img v-else-if="f.isImage && f.path && !thumbErrors.has(f.path)"
-              class="ad-thumb" :src="thumbUrl(f.path)" loading="lazy" @error="onThumbError(f.path)" />
-            <Loader2 v-else-if="f.uploading" :size="20" class="ad-file-icon spin-icon" />
-            <component v-else :is="getFileIcon(f.path || '')" :size="28" class="ad-file-icon" :color="f.path ? getFileIconColor(f.path) : undefined" />
+        <!-- Pending uploads: only show while uploading (failed items removed by useFileUpload) -->
+        <button
+          v-for="(f, idx) in pendingFiles" :key="'pending-' + idx"
+          v-show="f.uploading"
+          class="ad-file-row" :class="{ 'ad-file-attached': f.path && isAttached(f.path) }"
+          @click="f.path && !f.uploading && toggleAttached(f.path)"
+        >
+          <div class="ad-icon-wrap ad-uploading-icon">
+            <span class="ad-upload-pct">{{ f.progress }}%</span>
           </div>
           <div class="ad-file-info">
             <span class="ad-file-name">{{ getFileName(f.path) || t('chat.attach.uploading') }}</span>
-            <span class="ad-file-meta ad-progress-text">{{ f.uploading ? f.progress + '%' : formatFileSize(f.size) }}</span>
+            <span class="ad-file-meta">{{ f.path ? dirName(f.path) + ' · ' : '' + formatFileSize(f.size) }}</span>
           </div>
-          <button v-if="!f.uploading" class="ad-pending-close" @click.stop="removeFile(idx)" :title="t('common.remove')">
-            <X :size="14" />
-          </button>
-          <Check v-if="f.path && isAttached(f.path)" :size="14" class="ad-file-check" />
-        </div>
+        </button>
         <!-- Completed uploads from server -->
         <div v-if="recentUploads.length === 0 && pendingFiles.length === 0" class="ad-empty">{{ t('chat.attach.emptyUploads') }}</div>
         <button
@@ -164,7 +152,7 @@
 
 <script setup lang="ts">
 import { ref, watch, computed, onMounted, onUnmounted } from 'vue'
-import { Paperclip, Upload, Check, ExternalLink, Loader2, X } from 'lucide-vue-next'
+import { Paperclip, Upload, Check, ExternalLink } from 'lucide-vue-next'
 import { getFileIcon, getFileIconColor, buildPathThumbUrl, Folder } from '@/utils/fileIcon'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import { useI18n } from 'vue-i18n'
@@ -207,7 +195,7 @@ const { recentShares, fetchRecentShares } = useShareIn()
 const { recentUploads, fetchRecentUploads } = useUploadRecent()
 
 // ── Upload logic (now lives inside the drawer) ──
-const { pendingFiles, handleFileSelect, handleFileDrop, removeFile } = useFileUpload()
+const { pendingFiles, handleFileSelect, handleFileDrop } = useFileUpload()
 
 const activeTab = ref('current')
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -259,12 +247,15 @@ async function onFileSelect(e: Event) {
   activeTab.value = 'uploads'
 }
 
-// When uploads complete, refresh recent uploads list and stay on uploads tab
+// When uploads complete, remove finished items from pendingFiles
+// (they'll appear in recentUploads after refresh) and fetch the list.
 let wasUploading = false
 let uploadRefreshScheduled = false
 watch(uploadingFiles, (now) => {
   if (wasUploading && now.length === 0) {
-    // Upload just finished — refresh recent uploads
+    // Remove finished (non-uploading) entries from pendingFiles
+    pendingFiles.value = pendingFiles.value.filter(f => f.uploading)
+    // Refresh recent uploads so completed files appear
     if (!uploadRefreshScheduled) {
       uploadRefreshScheduled = true
       Promise.resolve().then(() => {
@@ -321,6 +312,13 @@ function onWindowFocus() {
 onMounted(() => window.addEventListener('focus', onWindowFocus))
 onUnmounted(() => window.removeEventListener('focus', onWindowFocus))
 
+// ── Drawer close handler ──
+// BottomSheet emits 'close' → propagate to parent so ChatInputBar
+// sets showAttachDrawer = false, which sets open=false and closes the drawer.
+function onDrawerClose() {
+  emit('close')
+}
+
 // Expose for parent: activeTab + handleFileDrop (for drag-and-drop from ChatInputBar)
 defineExpose({ activeTab, handleFileDrop })
 </script>
@@ -350,26 +348,6 @@ defineExpose({ activeTab, handleFileDrop })
   color: #fff;
 }
 
-/* Upload progress bars inside drawer */
-.ad-upload-progress {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 4px 14px 0;
-}
-.ad-progress-item {
-  height: 3px;
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);
-  border-radius: 2px;
-  overflow: hidden;
-}
-.ad-progress-bar {
-  height: 100%;
-  background: var(--accent-color, #0066cc);
-  border-radius: 2px;
-  transition: width 0.15s ease;
-}
-
 /* Tab bar */
 .ad-tab-bar {
   display: flex;
@@ -378,6 +356,7 @@ defineExpose({ activeTab, handleFileDrop })
   overflow-x: auto;
   border-bottom: 1px solid var(--border-color);
   -webkit-overflow-scrolling: touch;
+  flex-shrink: 0;
 }
 .ad-tab {
   padding: 8px 14px;
@@ -428,31 +407,6 @@ defineExpose({ activeTab, handleFileDrop })
 }
 .ad-file-attached {
   opacity: 0.45;
-}
-
-/* Pending upload row */
-.ad-pending-item {
-  background: var(--bg-secondary);
-}
-.ad-pending-close {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: none;
-  border-radius: 6px;
-  background: none;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-.ad-pending-close:active {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-.ad-progress-text {
-  color: var(--accent-color);
 }
 
 /* Icon container: holds icon or thumbnail.
@@ -541,12 +495,15 @@ defineExpose({ activeTab, handleFileDrop })
   background: var(--bg-secondary);
 }
 
-/* Spinner */
-.spin-icon {
-  animation: spin 1s linear infinite;
-  color: var(--accent-color);
+/* Upload progress percent in icon slot */
+.ad-uploading-icon {
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+  border-radius: 6px;
 }
-@keyframes spin {
-  to { transform: rotate(360deg); }
+.ad-upload-pct {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent-color);
+  letter-spacing: -0.3px;
 }
 </style>
