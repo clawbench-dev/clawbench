@@ -121,7 +121,11 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		}
 		title := req.Title
 		if title == "" {
-			existingSessions, err := service.GetSessions(projectPath, backend)
+			// Numbering is unified across agents per project — count all chat
+			// sessions regardless of backend so switching agents does not
+			// reset the counter (e.g. two claude sessions then a codebuddy
+			// session should be "New Session 3", not "New Session 1").
+			existingSessions, err := service.GetSessions(projectPath, "")
 			if err == nil {
 				title = T(r, "NewSessionN", map[string]any{"N": len(existingSessions) + 1})
 			} else {

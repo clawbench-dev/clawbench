@@ -448,6 +448,41 @@ func TestServeSessions_Post_DefaultBackendWhenEmpty(t *testing.T) {
 	assert.Equal(t, "codebuddy", result["backend"])
 }
 
+// TestServeSessions_Post_AutoTitleUnifiedAcrossAgents reproduces the bug where
+// the default session name number was scoped per agent/backend. Switching agents
+// would reset the counter to "New Session 1" even when sessions for other
+// agents already existed in the project. The expected behavior is a single,
+// project-wide counter so numbering reads naturally across mixed-agent history.
+func TestServeSessions_Post_AutoTitleUnifiedAcrossAgents(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Existing sessions for two different agents.
+	_, err := service.CreateSession(env.ProjectDir, "codebuddy", "Existing 1", "codebuddy", "", "user", "chat")
+	require.NoError(t, err)
+	_, err = service.CreateSession(env.ProjectDir, "claude", "Existing 2", "claude", "", "user", "chat")
+	require.NoError(t, err)
+
+	// Create a third session with no title and a new agent — should be "New Session 3",
+	// not "New Session 1" (which would happen if numbering were per-backend).
+	req := newRequest(t, http.MethodPost, "/api/ai/sessions", map[string]any{
+		"agentId": "claude",
+	})
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeSessions, req)
+	assertOK(t, w)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, true, result["ok"])
+
+	title, ok := result["title"].(string)
+	require.True(t, ok, "title should be a string")
+	assert.Equal(t, "New Session 3", title,
+		"default session numbering should be unified across agents, not per backend")
+}
+
 func TestServeSessions_MethodNotAllowed(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
