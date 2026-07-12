@@ -9,9 +9,9 @@
 
     <!-- Expanded timeline -->
     <div v-else class="plan-expanded">
-      <div class="plan-expanded__header">
+      <div class="plan-expanded__header" @click="$emit('toggle-collapse')">
         <span class="plan-expanded__title">{{ t('chat.plan.title') }}</span>
-        <ChevronUp :size="12" class="plan-expanded__toggle" @click="$emit('toggle-collapse')" />
+        <ChevronUp :size="12" class="plan-expanded__toggle" />
       </div>
       <div class="plan-expanded__timeline">
         <div v-for="(entry, idx) in entries" :key="idx" class="plan-entry" :class="'plan-entry--' + entry.status">
@@ -86,25 +86,25 @@ const chipText = computed(() => {
 }
 
 .plan-chip--updated {
-  border-color: #8b5cf6;
+  border-color: #06b6d4;
   animation: plan-chip-glow 0.5s ease-out;
 }
 
 :root[data-theme="dark"] .plan-chip--updated {
-  border-color: #a78bfa;
+  border-color: #22d3ee;
 }
 
 .plan-chip__pulse {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #8b5cf6;
+  background: #06b6d4;
   animation: pulse 1.5s ease-in-out infinite;
   flex-shrink: 0;
 }
 
 :root[data-theme="dark"] .plan-chip__pulse {
-  background: #a78bfa;
+  background: #22d3ee;
 }
 
 .plan-chip__text {
@@ -134,6 +134,7 @@ const chipText = computed(() => {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 6px;
+  cursor: pointer;
 }
 
 .plan-expanded__title {
@@ -182,12 +183,12 @@ const chipText = computed(() => {
 
 .plan-entry__line--pulsing {
   border-left-style: solid;
-  border-left-color: var(--color-purple, #8b5cf6);
+  border-left-color: var(--color-cyan, #06b6d4);
   animation: pulse-line 1.5s ease-in-out infinite;
 }
 
 :root[data-theme="dark"] .plan-entry__line--pulsing {
-  border-left-color: #a78bfa;
+  border-left-color: #22d3ee;
 }
 
 /* Status node — neutral, no priority color */
@@ -218,11 +219,11 @@ const chipText = computed(() => {
 }
 
 .plan-entry--in_progress .plan-entry__node {
-  border-color: var(--color-purple, #8b5cf6);
+  border-color: var(--color-cyan, #06b6d4);
 }
 
 :root[data-theme="dark"] .plan-entry--in_progress .plan-entry__node {
-  border-color: #a78bfa;
+  border-color: #22d3ee;
 }
 
 .plan-entry__check {
@@ -235,12 +236,12 @@ const chipText = computed(() => {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--color-purple, #8b5cf6);
+  background: var(--color-cyan, #06b6d4);
   animation: pulse 1.5s ease-in-out infinite;
 }
 
 :root[data-theme="dark"] .plan-entry__dot {
-  background: #a78bfa;
+  background: #22d3ee;
 }
 
 .plan-entry__circle {
@@ -304,12 +305,12 @@ const chipText = computed(() => {
 }
 
 @keyframes plan-chip-glow {
-  0% { border-color: #8b5cf6; box-shadow: 0 0 6px rgba(139, 92, 246, 0.5); }
+  0% { border-color: #06b6d4; box-shadow: 0 0 6px rgba(6, 182, 212, 0.5); }
   100% { border-color: var(--border-color, #dee2e6); box-shadow: none; }
 }
 
 :root[data-theme="dark"] .plan-chip-glow {
-  0% { border-color: #a78bfa; box-shadow: 0 0 6px rgba(167, 139, 250, 0.5); }
+  0% { border-color: #22d3ee; box-shadow: 0 0 6px rgba(34, 211, 238, 0.5); }
   100% { border-color: var(--border-color, #30363d); box-shadow: none; }
 }
 </style>
