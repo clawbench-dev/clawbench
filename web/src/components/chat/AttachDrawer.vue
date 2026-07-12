@@ -6,6 +6,7 @@
         <span class="bs-header-title">{{ t('chat.attach.drawerTitle') }}</span>
         <button class="ad-upload-btn" @click="handleUploadClick" :title="t('chat.attach.uploadFile')">
           <Upload :size="16" />
+          <span class="ad-upload-label">{{ t('chat.attach.uploadFile') }}</span>
         </button>
       </div>
     </template>
@@ -146,7 +147,7 @@
     </div>
 
     <!-- Hidden file input (owned by drawer) -->
-    <input type="file" ref="fileInputRef" @change="onFileSelect" style="display:none" multiple />
+    <input type="file" ref="fileInputRef" @change="onFileSelect" @blur="onFileInputBlur" style="display:none" multiple />
   </BottomSheet>
 </template>
 
@@ -307,15 +308,40 @@ watch(() => props.open, (v) => {
 })
 
 // When the native file picker closes (user picks files or cancels),
-// the window regains focus. Reset filePickerOpen so BottomSheet's
-// closeGuard lifts and the drawer becomes closable again.
+// we need to reset filePickerOpen so BottomSheet's closeGuard lifts
+// and the drawer becomes closable again.
 // (onFileSelect also resets it, but the cancel path has no JS
-// callback — only the focus event fires.)
+// callback — only focus/visibility events fire.)
+// We use multiple redundant events because no single event is
+// reliable across all platforms:
+// - window focus: works on desktop browsers when the picker is a
+//   separate OS dialog that blurs the window
+// - visibilitychange: works on Android WebView where the file
+//   chooser is a separate activity that hides the document
+// - input blur: works in some browsers when the file input loses
+//   focus as the native picker dismisses
 function onWindowFocus() {
   if (filePickerOpen.value) filePickerOpen.value = false
 }
-onMounted(() => window.addEventListener('focus', onWindowFocus))
-onUnmounted(() => window.removeEventListener('focus', onWindowFocus))
+function onVisibilityChange() {
+  if (filePickerOpen.value && document.visibilityState === 'visible') {
+    filePickerOpen.value = false
+  }
+}
+function onFileInputBlur() {
+  // Defer slightly — on some platforms blur fires before the change
+  // event, and we don't want to lift the guard prematurely if the
+  // user actually selected files (onFileSelect will reset it).
+  setTimeout(() => { filePickerOpen.value = false }, 150)
+}
+onMounted(() => {
+  window.addEventListener('focus', onWindowFocus)
+  document.addEventListener('visibilitychange', onVisibilityChange)
+})
+onUnmounted(() => {
+  window.removeEventListener('focus', onWindowFocus)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+})
 
 // ── Drawer close handler ──
 // BottomSheet emits 'close' → propagate to parent so ChatInputBar
@@ -341,14 +367,19 @@ defineExpose({ activeTab, handleFileDrop })
   margin-left: auto;
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 28px;
+  gap: 4px;
+  padding: 0 8px;
   height: 28px;
   border-radius: 8px;
   border: none;
   background: var(--bg-hover);
   color: var(--text-secondary);
   cursor: pointer;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.ad-upload-label {
+  line-height: 1;
 }
 .ad-upload-btn:active {
   background: var(--accent-color);
