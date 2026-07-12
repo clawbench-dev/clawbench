@@ -1289,17 +1289,19 @@ describe('verifyFilePaths', () => {
     vi.unstubAllGlobals()
   })
 
-  it('handles network error gracefully (assumes exists)', async () => {
+  it('handles network error gracefully (assumes not exists, removes annotation)', async () => {
     const mockFetch = vi.fn().mockRejectedValue(new Error('Network error'))
     vi.stubGlobal('fetch', mockFetch)
 
     const container = document.createElement('div')
-    container.innerHTML = '<button class="chat-file-open-btn" data-file-path="test.go">open</button>'
+    container.innerHTML = '<button class="chat-file-open-btn" data-file-path="test.go">open</button><span class="chat-file-path" data-file-path="test.go">test.go</span>'
 
     await verifyFilePaths(['test.go'], container)
 
-    // On network error, assumes exists — button stays
-    expect(container.querySelector('.chat-file-open-btn')).not.toBeNull()
+    // On network error, assumes not exists — annotation removed
+    expect(container.querySelector('.chat-file-open-btn')).toBeNull()
+    expect(container.querySelector('.chat-file-path')).toBeNull()
+    expect(container.textContent).toContain('test.go')
 
     vi.unstubAllGlobals()
   })
@@ -1447,6 +1449,81 @@ describe('verifyFilePaths', () => {
     expect(span).not.toBeNull()
     expect(span!.getAttribute('data-file-path')).toBe('web/src/utils.ts')
     expect(span!.getAttribute('data-fallback-path')).toBe('utils.ts')
+
+    vi.unstubAllGlobals()
+  })
+
+  it('removes annotations on network error (cache as none)', async () => {
+    const mockFetch = vi.fn().mockRejectedValue(new Error('Network error'))
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML = '<button class="chat-file-open-btn" data-file-path="maybe-missing.go">open</button><span class="chat-file-path" data-file-path="maybe-missing.go">maybe-missing.go</span>'
+
+    await verifyFilePaths(['maybe-missing.go'], container)
+
+    // On network error, paths are cached as 'none' → annotation removed
+    expect(container.querySelector('.chat-file-open-btn')).toBeNull()
+    expect(container.querySelector('.chat-file-path')).toBeNull()
+    expect(container.textContent).toContain('maybe-missing.go')
+
+    vi.unstubAllGlobals()
+  })
+
+  it('removes annotation for project-external directory', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { '/home/user/other-project': 'dir' } }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML = '<button class="chat-file-open-btn external" data-file-path="/home/user/other-project">open</button><span class="chat-file-path external" data-file-path="/home/user/other-project" data-external="true">/home/user/other-project</span>'
+
+    await verifyFilePaths(['/home/user/other-project'], container)
+
+    // External directory annotation should be removed
+    expect(container.querySelector('.chat-file-open-btn')).toBeNull()
+    expect(container.querySelector('.chat-file-path')).toBeNull()
+    expect(container.textContent).toContain('/home/user/other-project')
+
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps annotation for project-external file', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { '/home/user/.bashrc': 'file' } }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML = '<button class="chat-file-open-btn external" data-file-path="/home/user/.bashrc">open</button><span class="chat-file-path external" data-file-path="/home/user/.bashrc" data-external="true">/home/user/.bashrc</span>'
+
+    await verifyFilePaths(['/home/user/.bashrc'], container)
+
+    // External file annotation should be kept
+    expect(container.querySelector('.chat-file-open-btn')).not.toBeNull()
+    expect(container.querySelector('.chat-file-path')).not.toBeNull()
+
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps annotation for project-internal directory', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { 'internal/ai': 'dir' } }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML = '<button class="chat-file-open-btn" data-file-path="internal/ai">open</button><span class="chat-file-path" data-file-path="internal/ai">internal/ai</span>'
+
+    await verifyFilePaths(['internal/ai'], container)
+
+    // Internal directory annotation should be kept (valid navigation target)
+    expect(container.querySelector('.chat-file-open-btn')).not.toBeNull()
+    expect(container.querySelector('.chat-file-path')).not.toBeNull()
 
     vi.unstubAllGlobals()
   })

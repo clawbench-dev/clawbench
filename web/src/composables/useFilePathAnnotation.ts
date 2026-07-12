@@ -443,10 +443,13 @@ export function annotateFilePaths(
 
 // ── Async verification with fallback swap ──────────────────────────────────────
 
-const MAX_CACHE_SIZE = 500
-const verifiedCache = new Map<string, boolean>()
+/** Path type from batch-exists API: 'file', 'dir', or 'none' (not found). */
+export type PathType = 'file' | 'dir' | 'none'
 
-function cacheSet(key: string, value: boolean): void {
+const MAX_CACHE_SIZE = 500
+const verifiedCache = new Map<string, PathType>()
+
+function cacheSet(key: string, value: PathType): void {
     if (verifiedCache.size >= MAX_CACHE_SIZE && !verifiedCache.has(key)) {
         const oldest = verifiedCache.keys().next().value
         if (oldest !== undefined) verifiedCache.delete(oldest)
@@ -469,12 +472,18 @@ async function drainBatch(): Promise<void> {
         })
         const data = await resp.json() as { results: Record<string, string> }
         for (const [path, type] of Object.entries(data.results)) {
-            const exists = type === 'file' || type === 'dir'
-            cacheSet(path, exists)
+            if (type === 'file' || type === 'dir') {
+                cacheSet(path, type)
+            } else {
+                cacheSet(path, 'none')
+            }
         }
     } catch {
+        // On network error, assume paths don't exist.
+        // This is safer than assuming they exist (which leaves broken annotations).
+        // Paths will be re-verified on next render if they re-enter the cache.
         for (const p of paths) {
-            cacheSet(p, true)
+            cacheSet(p, 'none')
         }
     }
 }
@@ -483,13 +492,14 @@ async function drainBatch(): Promise<void> {
  * Verify which file paths actually exist on the server.
  * For non-existent paths with a data-fallback-path, swap to the fallback
  * (if it exists) instead of removing the annotation entirely.
+ * For project-external directories, remove the annotation (only external files are annotated).
  */
 export async function verifyFilePaths(paths: string[], containerEl: HTMLElement): Promise<void> {
     const unique = [...new Set(paths)]
     if (unique.length === 0) return
 
     const uncached: string[] = []
-    const results = new Map<string, boolean>()
+    const results = new Map<string, PathType>()
 
     for (const p of unique) {
         if (verifiedCache.has(p)) {
@@ -520,16 +530,29 @@ export async function verifyFilePaths(paths: string[], containerEl: HTMLElement)
         }
     }
 
-    // Process non-existent paths: try fallback swap before removing
-    for (const [path, exists] of results) {
-        if (exists) continue
+    // Process paths based on type
+    for (const [path, pathType] of results) {
+        // Keep existing files
+        if (pathType === 'file') continue
 
-        // Check if any element with this primary path has a fallback that exists
+        // Keep project-internal directories (valid navigation targets)
+        if (pathType === 'dir') {
+            // Remove project-external directory annotations
+            containerEl.querySelectorAll(`.chat-file-open-btn[data-file-path="${CSS.escape(path)}"].external`).forEach(btn => btn.remove())
+            containerEl.querySelectorAll(`.chat-file-path[data-file-path="${CSS.escape(path)}"][data-external="true"]`).forEach(span => span.replaceWith(...span.childNodes))
+            containerEl.querySelectorAll(`.code-file-path[data-file-path="${CSS.escape(path)}"][data-external="true"]`).forEach(span => span.replaceWith(...span.childNodes))
+            continue
+        }
+
+        // pathType === 'none' — try fallback swap before removing
+        // Only swap to file fallbacks — directory fallbacks are excluded because
+        // external directory annotations are unwanted and internal directories
+        // are already handled by the pathType === 'dir' branch above.
         const els = containerEl.querySelectorAll(`[data-file-path="${CSS.escape(path)}"]`)
         let swapped = false
         for (const el of els) {
             const fallback = el.getAttribute('data-fallback-path')
-            if (fallback && results.get(fallback)) {
+            if (fallback && results.get(fallback) === 'file') {
                 // Swap data-file-path to fallback
                 el.setAttribute('data-file-path', fallback)
                 el.removeAttribute('data-fallback-path')
