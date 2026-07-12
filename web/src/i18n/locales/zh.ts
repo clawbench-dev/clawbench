@@ -1466,7 +1466,7 @@ export default {
   welcomeInfo: {
     title: '欢迎使用 ClawBench',
     desc: 'ClawBench 支持以下 AI 智能体，',
-    descHighlight: '安装对应 CLI 后重启即可自动检测。',
+    descHighlight: '安装后手动扫描即可识别。使用前请确保已自行配置模型 API 和秘钥。',
     detected: '已安装',
     notDetected: '未安装',
     install: '安装',

@@ -1466,7 +1466,7 @@ export default {
   welcomeInfo: {
     title: 'Welcome to ClawBench',
     desc: 'ClawBench supports the following AI agents. ',
-    descHighlight: 'Install the CLI and restart to auto-detect.',
+    descHighlight: 'Click rescan after installing. Make sure your model API and key are configured before use.',
     detected: 'Installed',
     notDetected: 'Not installed',
     install: 'Install',
