@@ -70,19 +70,7 @@ watch(() => props.open, (val) => {
     leaving.value = false
     // Register back handler so edge-swipe / Android back closes this drawer
     if (!props.noSwipeClose && !unregisterBack) {
-      const id = `bs-drawer-${instanceSeq}`
-      // Encode sequence in priority fraction so higher seq (newer drawer)
-      // wins among same-tier PRIORITY_OVERLAY handlers.
-      const priority = PRIORITY_OVERLAY + instanceSeq * 0.001
-      unregisterBack = registerBackHandler({
-        id,
-        canGoBack: () => props.open && !leaving.value,
-        goBack: () => {
-          appLog.d('BottomSheet', `back gesture closing drawer: ${id}`)
-          handleClose()
-        },
-        priority,
-      })
+      registerDrawerBackHandler()
     }
   } else if (leaving.value) {
     // Close triggered externally while animating — cancel animation, hide now
@@ -94,6 +82,32 @@ watch(() => props.open, (val) => {
     unregisterBack = null
   }
 }, { immediate: true })
+
+// Respond to dynamic noSwipeClose changes (e.g. when a file picker is open
+// inside the drawer, we temporarily disable back-to-close to prevent the
+// Android back button from dismissing the drawer instead of the picker).
+watch(() => props.noSwipeClose, (noSwipe) => {
+  if (noSwipe && unregisterBack) {
+    unregisterBack()
+    unregisterBack = null
+  } else if (!noSwipe && props.open && !unregisterBack) {
+    registerDrawerBackHandler()
+  }
+})
+
+function registerDrawerBackHandler() {
+  const id = `bs-drawer-${instanceSeq}`
+  const priority = PRIORITY_OVERLAY + instanceSeq * 0.001
+  unregisterBack = registerBackHandler({
+    id,
+    canGoBack: () => props.open && !leaving.value,
+    goBack: () => {
+      appLog.d('BottomSheet', `back gesture closing drawer: ${id}`)
+      handleClose()
+    },
+    priority,
+  })
+}
 
 onBeforeUnmount(() => {
   if (unregisterBack) {

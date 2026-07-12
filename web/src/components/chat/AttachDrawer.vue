@@ -1,5 +1,5 @@
 <template>
-  <BottomSheet :open="open" auto @close="$emit('close')">
+  <BottomSheet :open="open" :no-swipe-close="filePickerOpen" auto @close="$emit('close')">
     <template #header>
       <div class="ad-header">
         <Paperclip :size="16" class="bs-header-icon" />
@@ -163,7 +163,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, onMounted, onUnmounted } from 'vue'
 import { Paperclip, Upload, Check, ExternalLink, Loader2, X } from 'lucide-vue-next'
 import { getFileIcon, getFileIconColor, buildPathThumbUrl, Folder } from '@/utils/fileIcon'
 import BottomSheet from '@/components/common/BottomSheet.vue'
@@ -211,6 +211,7 @@ const { pendingFiles, handleFileSelect, handleFileDrop, removeFile } = useFileUp
 
 const activeTab = ref('current')
 const fileInputRef = ref<HTMLInputElement | null>(null)
+const filePickerOpen = ref(false)
 
 const tabs = [
   { key: 'current', label: '' },
@@ -246,11 +247,13 @@ function getFileName(path: string) {
 function handleUploadClick() {
   if (fileInputRef.value) {
     fileInputRef.value.value = ''
+    filePickerOpen.value = true
     fileInputRef.value.click()
   }
 }
 
 async function onFileSelect(e: Event) {
+  filePickerOpen.value = false
   await handleFileSelect(e)
   // Switch to uploads tab to show the upload progress
   activeTab.value = 'uploads'
@@ -300,12 +303,23 @@ watch(() => props.open, (v) => {
     fetchRecentShares()
     fetchRecentUploads()
   } else {
+    filePickerOpen.value = false
     // Clear thumb errors when drawer closes
     if (thumbErrors.value.size > 0) {
       thumbErrors.value = new Set()
     }
   }
 })
+
+// When the native file picker closes (user picks files or cancels),
+// the window regains focus. Reset filePickerOpen so the drawer's
+// back handler is re-enabled. (onFileSelect also resets it, but
+// the cancel path has no JS callback — only the focus event fires.)
+function onWindowFocus() {
+  if (filePickerOpen.value) filePickerOpen.value = false
+}
+onMounted(() => window.addEventListener('focus', onWindowFocus))
+onUnmounted(() => window.removeEventListener('focus', onWindowFocus))
 
 // Expose for parent: activeTab + handleFileDrop (for drag-and-drop from ChatInputBar)
 defineExpose({ activeTab, handleFileDrop })
