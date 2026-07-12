@@ -318,6 +318,10 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/frp/info", middleware.Auth(ServeFRPInfo)) // Full status, requires auth (exposes public IP)
 	register("/api/frp/status", ServeFRPStatus)              // Minimal status, no auth (only enabled+running)
 
+	// DingTalk push notification subscribers
+	register("/api/dingtalk/subscribers", middleware.Auth(ServeDingTalkSubscribers))
+	register("/api/dingtalk/subscribers/", middleware.Auth(ServeDingTalkSubscribers))
+
 	// Terminal (interactive web terminal with PTY + WebSocket + xterm.js)
 	register("/api/terminal/ws", middleware.Auth(TerminalWebSocket))
 	register("/api/terminal/status", middleware.Auth(TerminalStatus))

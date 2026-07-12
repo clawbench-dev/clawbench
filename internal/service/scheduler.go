@@ -14,6 +14,7 @@ import (
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
+	"clawbench/internal/push/dingtalk"
 	"clawbench/internal/summarize"
 	"clawbench/internal/ws"
 
@@ -541,6 +542,11 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 	}
 	StoreNotifiableEvent(msg)
 	mgr.BroadcastEvent(msg)
+
+	// DingTalk push notification for task events
+	if dingtalk.IsStarted() {
+		dingtalk.PushTaskEvent(taskID, status, data.SessionTitle, data.ResponsePreview, data.ProjectPath)
+	}
 }
 
 // executeTask runs a scheduled task by invoking the AI backend and inserting

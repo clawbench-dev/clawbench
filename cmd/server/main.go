@@ -40,6 +40,7 @@ import (
 	"clawbench/internal/handler"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
+	"clawbench/internal/push/dingtalk"
 	"clawbench/internal/rag"
 	"clawbench/internal/service"
 	"clawbench/internal/speech"
@@ -55,6 +56,75 @@ const (
 	summarizeBackendAPI    = "api"
 	summarizeBackendSimple = "simple"
 )
+
+// dingtalkDBAdapter bridges the dingtalk package's DB interface to service package
+// functions, avoiding import cycles between service → dingtalk → service.
+type dingtalkDBAdapter struct{}
+
+func (dingtalkDBAdapter) MergeConfigSubscribers(users []string) {
+	service.MergeDingTalkConfigSubscribers(users)
+}
+
+func (dingtalkDBAdapter) GetSubscribers() ([]dingtalk.SubscriberInfo, error) {
+	subs, err := service.GetDingTalkSubscribers()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]dingtalk.SubscriberInfo, len(subs))
+	for i, s := range subs {
+		result[i] = dingtalk.SubscriberInfo{
+			UserID:         s.UserID,
+			ConversationID: s.ConversationID,
+			UserName:       s.UserName,
+			Source:         s.Source,
+		}
+	}
+	return result, nil
+}
+
+func (dingtalkDBAdapter) UpsertSubscriber(userID, conversationID, userName, source string) error {
+	return service.UpsertDingTalkSubscriber(userID, conversationID, userName, source)
+}
+
+func (dingtalkDBAdapter) DeleteSubscriber(userID string) error {
+	return service.DeleteDingTalkSubscriber(userID)
+}
+
+func (dingtalkDBAdapter) EnqueueMessage(userID, msgKey, msgParam string, maxRetries int) error {
+	return service.EnqueueDingTalkMessage(userID, msgKey, msgParam, maxRetries)
+}
+
+func (dingtalkDBAdapter) GetPendingMessages(limit int) ([]dingtalk.OutboxMessage, error) {
+	msgs, err := service.GetPendingDingTalkMessages(limit)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]dingtalk.OutboxMessage, len(msgs))
+	for i, m := range msgs {
+		result[i] = dingtalk.OutboxMessage{
+			ID:         m.ID,
+			UserID:     m.UserID,
+			MsgKey:     m.MsgKey,
+			MsgParam:   m.MsgParam,
+			Status:     m.Status,
+			RetryCount: m.RetryCount,
+			MaxRetries: m.MaxRetries,
+		}
+	}
+	return result, nil
+}
+
+func (dingtalkDBAdapter) MarkMessageSent(id int64) error {
+	return service.MarkDingTalkMessageSent(id)
+}
+
+func (dingtalkDBAdapter) MarkMessageFailed(id int64, maxRetries int) error {
+	return service.MarkDingTalkMessageFailed(id, maxRetries)
+}
+
+func (dingtalkDBAdapter) CleanupOutbox() {
+	service.CleanupDingTalkOutbox()
+}
 
 // multiHandler sends log records to multiple handlers
 type multiHandler struct {
@@ -784,6 +854,21 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		cfg.FRP.Enabled = false
 	}
 	handler.SetFRPManager(frpManagerRef, cfg.FRP.Enabled)
+
+	// Initialize DingTalk push notifications (enterprise internal bot via Stream API).
+	// DingTalk is disabled by default; requires app_key + app_secret configuration.
+	if cfg.DingTalk.Enabled && cfg.DingTalk.AppKey != "" && cfg.DingTalk.AppSecret != "" {
+		// Register DB adapter to bridge dingtalk ↔ service without import cycles
+		dingtalk.RegisterDBAdapter(&dingtalkDBAdapter{})
+		dingtalkMgr := dingtalk.NewManager(&cfg.DingTalk)
+		if err := dingtalkMgr.Start(); err != nil {
+			slog.Warn("DingTalk push failed to start", slog.String("err", err.Error()))
+		} else {
+			dingtalk.SetManager(dingtalkMgr)
+			defer dingtalkMgr.Stop()
+			slog.Info("DingTalk push enabled")
+		}
+	}
 
 	// Initialize file watcher for auto-refresh (non-critical — continue on failure)
 	if err := service.InitFileWatcher(); err != nil {

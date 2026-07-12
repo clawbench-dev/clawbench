@@ -1,0 +1,99 @@
+//nolint:noctx // HTTP client context handled internally
+package dingtalk
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"sync"
+	"time"
+)
+
+const (
+	// dingtalkTokenURL is the DingTalk API for getting an access token.
+	dingtalkTokenURL = "https://oapi.dingtalk.com/gettoken"
+	// tokenRefreshBuffer is how long before expiration we refresh.
+	tokenRefreshBuffer = 5 * time.Minute
+)
+
+// tokenResponse is the DingTalk gettoken API response.
+type tokenResponse struct {
+	ErrCode     int    `json:"errcode"`
+	ErrMsg      string `json:"errmsg"`
+	AccessToken string `json:"access_token"`
+	ExpiresIn   int    `json:"expires_in"` // seconds
+}
+
+var (
+	cachedToken string
+	cachedExp   time.Time
+	tokenMu     sync.RWMutex
+)
+
+// getAccessToken returns a valid DingTalk access token, refreshing if needed.
+func (m *Manager) getAccessToken(ctx context.Context) (string, error) {
+	tokenMu.RLock()
+	if cachedToken != "" && time.Now().Add(tokenRefreshBuffer).Before(cachedExp) {
+		token := cachedToken
+		tokenMu.RUnlock()
+		return token, nil
+	}
+	tokenMu.RUnlock()
+
+	// Need to refresh
+	tokenMu.Lock()
+	defer tokenMu.Unlock()
+
+	// Double-check after acquiring write lock
+	if cachedToken != "" && time.Now().Add(tokenRefreshBuffer).Before(cachedExp) {
+		return cachedToken, nil
+	}
+
+	url := fmt.Sprintf("%s?appkey=%s&appsecret=%s", dingtalkTokenURL, m.cfg.AppKey, m.cfg.AppSecret)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("dingtalk: token request: %w", err)
+	}
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("dingtalk: token fetch: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("dingtalk: token read: %w", err)
+	}
+
+	var tokenResp tokenResponse
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return "", fmt.Errorf("dingtalk: token parse: %w", err)
+	}
+
+	if tokenResp.ErrCode != 0 {
+		return "", fmt.Errorf("dingtalk: token error: %s (code %d)", tokenResp.ErrMsg, tokenResp.ErrCode)
+	}
+
+	cachedToken = tokenResp.AccessToken
+	if tokenResp.ExpiresIn > 0 {
+		cachedExp = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+	} else {
+		cachedExp = time.Now().Add(2 * time.Hour) // default 2h
+	}
+
+	slog.Debug("dingtalk: token refreshed", "expires_in", tokenResp.ExpiresIn)
+	return cachedToken, nil
+}
+
+// InvalidateToken clears the cached token (e.g., on 401 errors).
+func InvalidateToken() {
+	tokenMu.Lock()
+	defer tokenMu.Unlock()
+	cachedToken = ""
+	cachedExp = time.Time{}
+}

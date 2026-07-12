@@ -92,6 +92,8 @@ var hotReloadFields = map[string]bool{
 	"rag.search_limit":     true,
 	"rag.search_pool_size": true,
 	"rag.retention_days":   true,
+	"dingtalk.users":       true,
+	"dingtalk.max_retries": true,
 }
 
 // restartGracePeriod is the delay before shutting down the server after a restart
@@ -138,6 +140,7 @@ type configResponse struct {
 	PortForward         configPortForward    `json:"port_forward"`
 	FRP                 configFRP            `json:"frp"`
 	Summarize           configSummarize      `json:"summarize"`
+	DingTalk            configDingTalk       `json:"dingtalk"`
 }
 
 type configChat struct {
@@ -233,6 +236,15 @@ type configSummarize struct {
 	API     *configAPI `json:"api,omitempty"`
 }
 
+type configDingTalk struct {
+	Enabled    bool     `json:"enabled"`
+	AppKey     string   `json:"app_key"`
+	AppSecret  string   `json:"app_secret"`
+	AgentID    int64    `json:"agent_id"`
+	Users      []string `json:"users"`
+	MaxRetries int      `json:"max_retries"`
+}
+
 // PatchableConfigPaths defines the whitelist of config paths that PATCH /api/config accepts.
 // Any path not in this list will be rejected with 400 Bad Request.
 var PatchableConfigPaths = map[string]bool{
@@ -286,6 +298,12 @@ var PatchableConfigPaths = map[string]bool{
 	"summarize.api.key":           true,
 	"summarize.api.format":        true,
 	"localhost_auth_exempt":       true,
+	"dingtalk.enabled":            true,
+	"dingtalk.app_key":            true,
+	"dingtalk.app_secret":         true,
+	"dingtalk.agent_id":           true,
+	"dingtalk.users":              true,
+	"dingtalk.max_retries":        true,
 }
 
 // validTTSEngines is the set of valid TTS engine values.
@@ -412,6 +430,14 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		Summarize: configSummarize{
 			Backend: cfg.Summarize.Backend,
 			Model:   cfg.Summarize.Model,
+		},
+		DingTalk: configDingTalk{
+			Enabled:    cfg.DingTalk.Enabled,
+			AppKey:     cfg.DingTalk.AppKey,
+			AppSecret:  maskAPIKey(cfg.DingTalk.AppSecret),
+			AgentID:    cfg.DingTalk.AgentID,
+			Users:      cfg.DingTalk.Users,
+			MaxRetries: cfg.DingTalk.MaxRetries,
 		},
 	}
 
@@ -980,6 +1006,35 @@ func applyConfigPatch(patch map[string]any) error { //nolint:gocognit,gocyclo //
 			if v, ok := api["format"].(string); ok {
 				cfg.Summarize.API.Format = v
 			}
+		}
+	}
+
+	if dingtalk, ok := patch["dingtalk"].(map[string]any); ok {
+		if v, ok := dingtalk["enabled"].(bool); ok {
+			cfg.DingTalk.Enabled = v
+		}
+		if v, ok := dingtalk["app_key"].(string); ok {
+			cfg.DingTalk.AppKey = v
+		}
+		if v, ok := dingtalk["app_secret"].(string); ok {
+			if !strings.Contains(v, "***") {
+				cfg.DingTalk.AppSecret = v
+			}
+		}
+		if v, ok := dingtalk["agent_id"].(float64); ok {
+			cfg.DingTalk.AgentID = int64(v)
+		}
+		if v, ok := dingtalk["users"].([]any); ok {
+			users := make([]string, 0, len(v))
+			for _, u := range v {
+				if s, ok := u.(string); ok && s != "" {
+					users = append(users, s)
+				}
+			}
+			cfg.DingTalk.Users = users
+		}
+		if v, ok := dingtalk["max_retries"].(float64); ok {
+			cfg.DingTalk.MaxRetries = int(v)
 		}
 	}
 
