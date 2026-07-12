@@ -45,7 +45,7 @@
 
 | 智能体选择 | AI 对话 | ACP 权限审批 | RAG 检索 | 会话管理 |
 |------------|---------|-------------|----------|----------|
-| ![智能体选择](docs/screenshots/agent-selector.png) | ![AI 对话](docs/screenshots/chat-panel.png) | ![ACP 权限审批](docs/screenshots/acp-permission.png) | ![RAG 检索](docs/screenshots/rag-search.png) | ![会话管理](docs/screenshots/session-manager.png) |
+| ![智能体选择](docs/screenshots/agent-selector.png) | ![AI 对话](docs/screenshots/chat-interface.png) | ![ACP 权限审批](docs/screenshots/acp-permission.png) | ![RAG 检索](docs/screenshots/rag-search.png) | ![会话管理](docs/screenshots/session-manager.png) |
 
 | 定时任务 | 创建任务 | 任务卡片 |
 |----------|----------|----------|
@@ -62,6 +62,12 @@
 | 图片查看 | 视频播放 | 音频播放 | PDF 预览 |
 |----------|----------|----------|----------|
 | ![图片查看](docs/screenshots/image-viewer.png) | ![视频播放](docs/screenshots/video-player.png) | ![音频播放](docs/screenshots/audio-player.png) | ![PDF 预览](docs/screenshots/pdf-preview.png) |
+
+### Office 文档与 Open API 预览
+
+| Word 文档 | Open API 预览 | Excel 表格 | PPT 幻灯片 |
+|-----------|---------------|------------|------------|
+| ![Word 文档](docs/screenshots/word-preview.png) | ![Open API 预览](docs/screenshots/openapi-preview.png) | ![Excel 表格](docs/screenshots/excel-preview-2.png) | ![PPT 幻灯片](docs/screenshots/ppt-preview.png) |
 
 ### SSH 隧道与 Web 终端
 
@@ -111,19 +117,13 @@ docker pull ghcr.io/clawbench-dev/clawbench:latest
 docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawbench:latest
 ```
 
-修改 `-p` 可自定义端口（如 `-p 20300:20000`），`clawbench-data` 卷持久化数据。查看自动生成的密码：
-
-```bash
-docker exec $(docker ps -qf ancestor=ghcr.io/clawbench-dev/clawbench) cat /data/.clawbench/auto-password
-```
+修改 `-p` 可自定义端口（如 `-p 20300:20000`），`clawbench-data` 卷持久化数据。
 
 > 首次启动会自动生成32位随机密码，以字符框突出打印到控制台，请妥善保存。
 
 部署完成后，使用手机 App 或手机浏览器访问 `http://服务器IP:20000` 即可开始使用。
 
-> 编译构建、高级配置、部署说明、架构设计等详细文档请参阅 **[编译与开发指南](docs/DEVELOPMENT.md)**。
-
-> 📡 **公网访问**：如需从外网访问 ClawBench（通勤途中、出差等场景），请参阅 **[公网访问指南](docs/PUBLIC_ACCESS.md)**，支持 IPv6 直连和 FRP 内网穿透两种方式。
+> 📡 **公网访问**：如需从外网访问 ClawBench（通勤途中、出差等场景），请参阅 **[公网访问指南](docs/PUBLIC_ACCESS.md)** ，支持 IPv6 直连和 FRP 内网穿透两种方式。
 
 ---
 
@@ -279,7 +279,7 @@ docker exec $(docker ps -qf ancestor=ghcr.io/clawbench-dev/clawbench) cat /data/
 
 ## 常见问题
 
-详见 **[FAQ](docs/FAQ.md)**。
+详见 **[FAQ](docs/FAQ.md)** 。
 
 ---
 
