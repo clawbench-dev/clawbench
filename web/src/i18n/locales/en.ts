@@ -42,6 +42,7 @@ export default {
     chat: 'Chat',
     fileManager: 'File Manager',
     history: 'History',
+    viewLatest: 'View latest run',
     tasks: 'Tasks',
     portForward: 'Port Forward',
     frp: 'NAT Traversal (frp)',

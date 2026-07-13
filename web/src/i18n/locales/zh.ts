@@ -455,6 +455,7 @@ export default {
     resume: '启用',
     run: '执行',
     history: '记录',
+    viewLatest: '查看最新执行',
     delete: '删除',
     clearUnread: '清除未读',
     actionFailed: '操作失败',
