@@ -1210,7 +1210,7 @@ defineExpose({
   padding: 0 8px;
   padding-right: 24px;
   flex-shrink: 0;
-  max-width: 200px;
+  max-width: 150px;
   position: relative;
   font-size: 12px;
   text-decoration: none;

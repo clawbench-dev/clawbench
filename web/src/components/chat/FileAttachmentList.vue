@@ -76,7 +76,7 @@ watch(() => props.files.length, (len) => {
   border-radius: 12px;
   height: 40px;
   padding: 0 10px;
-  max-width: 200px;
+  max-width: 150px;
   font-size: 12px;
   text-decoration: none;
   cursor: pointer;
