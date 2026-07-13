@@ -265,10 +265,9 @@ export const drillDownCategories: Record<string, DrillDownCategory> = {
     enableKey: 'dingtalk.enabled',
     enableLabelKey: 'settings.items.dingtalkEnabled',
     commonFields: [
-      { labelKey: 'settings.items.dingtalkAppKey', descriptionKey: 'settings.items.dingtalkAppKeyDesc', key: 'dingtalk.app_key', type: 'text', source: 'server', needsRestart: true },
-      { labelKey: 'settings.items.dingtalkAppSecret', descriptionKey: 'settings.items.dingtalkAppSecretDesc', key: 'dingtalk.app_secret', type: 'password', source: 'server', needsRestart: true },
-      { labelKey: 'settings.items.dingtalkAgentId', descriptionKey: 'settings.items.dingtalkAgentIdDesc', key: 'dingtalk.agent_id', type: 'number', source: 'server', needsRestart: true },
-      { labelKey: 'settings.items.dingtalkMaxRetries', descriptionKey: 'settings.items.dingtalkMaxRetriesDesc', key: 'dingtalk.max_retries', type: 'number', source: 'server' },
+      { labelKey: 'settings.items.dingtalkAppKey', descriptionKey: 'settings.items.dingtalkAppKeyDesc', key: 'dingtalk.app_key', type: 'text', source: 'server' },
+      { labelKey: 'settings.items.dingtalkAppSecret', descriptionKey: 'settings.items.dingtalkAppSecretDesc', key: 'dingtalk.app_secret', type: 'password', source: 'server' },
+      { labelKey: 'settings.items.dingtalkAgentId', descriptionKey: 'settings.items.dingtalkAgentIdDesc', key: 'dingtalk.agent_id', type: 'number', source: 'server' },
     ],
     optionSubFields: [],
     requiredFields: ['dingtalk.app_key', 'dingtalk.app_secret', 'dingtalk.agent_id'],

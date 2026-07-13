@@ -243,6 +243,23 @@ func (m *Manager) HasDisconnectedClients() bool {
 	return false
 }
 
+// HasConnectedClients returns true if at least one subscription has an
+// active WebSocket connection. Used to suppress push notifications (e.g.
+// DingTalk) when a client is already watching the UI.
+func (m *Manager) HasConnectedClients() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, sub := range m.subscriptions {
+		sub.mu.Lock()
+		connected := sub.conn != nil
+		sub.mu.Unlock()
+		if connected {
+			return true
+		}
+	}
+	return false
+}
+
 // CleanupStale removes stale subscriptions:
 //   - Disconnected for > staleTimeout → remove
 //   - Connected subscriptions are never cleaned up.

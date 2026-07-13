@@ -1615,14 +1615,15 @@ func TestServeConfigPatch_ApplyConfigPatchError(t *testing.T) {
 	cfg := model.Config{}
 	model.ConfigInstance = cfg
 
+	// Masked API key (contains ***) is rejected by validatePatchValues with 400
 	body := `{"rag":{"api_key":"sk-1***xyz"}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "apply_failed")
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "***")
 }
 
 func TestServeConfigPatch_WriteConfigYAMLError(t *testing.T) {

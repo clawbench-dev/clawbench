@@ -1223,8 +1223,6 @@ export default {
       dingtalkAppSecretDesc: '企业应用 ClientSecret（AppSecret），保存后脱敏显示',
       dingtalkAgentId: 'Agent ID',
       dingtalkAgentIdDesc: '钉钉开发者后台的企业应用数字 Agent ID',
-      dingtalkMaxRetries: '最大重试次数',
-      dingtalkMaxRetriesDesc: '消息发送失败后的最大重试次数',
       frpStatusConnecting: '连接中...',
       frpStatusFailed: '连接失败',
       androidLogCapture: '调试日志捕获',

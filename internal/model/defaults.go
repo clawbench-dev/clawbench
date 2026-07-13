@@ -243,9 +243,6 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 
 	// --- DingTalk ---
 	// Bool zero-value: enabled defaults to false (intentional — requires config), no presence check needed.
-	if cfg.DingTalk.MaxRetries <= 0 {
-		cfg.DingTalk.MaxRetries = 3
-	}
 
 	return autoPassword
 }

@@ -1,13 +1,12 @@
 package dingtalk
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 	"unicode/utf8"
-
-	"clawbench/internal/model"
 )
 
 const (
@@ -44,7 +43,7 @@ func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectP
 		return
 	}
 
-	enqueueForAllSubscribers(title, markdown)
+	sendToAllSubscribers(title, markdown)
 }
 
 // PushTaskEvent sends a DingTalk push notification for a task event.
@@ -77,11 +76,18 @@ func PushTaskEvent(taskID, status, taskName, responsePreview, projectPath string
 		return
 	}
 
-	enqueueForAllSubscribers(title, markdown)
+	sendToAllSubscribers(title, markdown)
 }
 
-// enqueueForAllSubscribers creates outbox entries for all subscribed users.
-func enqueueForAllSubscribers(title, markdown string) {
+// sendToAllSubscribers sends a notification to all subscribed users directly.
+// Fire-and-forget: success or failure is logged, no retry or DB persistence.
+// Suppressed when at least one client (web/APP) is online watching the UI.
+func sendToAllSubscribers(title, markdown string) {
+	if clientChecker != nil && clientChecker.HasConnectedClients() {
+		slog.Debug("dingtalk: suppressed push, client is online", "title", title)
+		return
+	}
+
 	subscribers, err := db.GetSubscribers()
 	if err != nil {
 		slog.Warn("dingtalk: get subscribers failed", "error", err)
@@ -91,24 +97,24 @@ func enqueueForAllSubscribers(title, markdown string) {
 		return
 	}
 
-	msgParam := map[string]string{
-		"title": title,
-		"text":  markdown,
-	}
-	msgParamJSON, err := json.Marshal(msgParam)
-	if err != nil {
-		slog.Warn("dingtalk: marshal msg_param failed", "error", err)
+	mgr := GetManager()
+	if mgr == nil {
 		return
 	}
 
-	maxRetries := model.ConfigInstance.DingTalk.MaxRetries
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	sent := 0
 	for _, sub := range subscribers {
-		if err := db.EnqueueMessage(sub.UserID, msgKeyMarkdown, string(msgParamJSON), maxRetries); err != nil {
-			slog.Warn("dingtalk: enqueue failed", "error", err, "user_id", sub.UserID)
+		if err := mgr.SendMarkdownMessage(ctx, sub.UserID, title, markdown); err != nil {
+			slog.Warn("dingtalk: send failed", "error", err, "user_id", sub.UserID)
+		} else {
+			sent++
 		}
 	}
 
-	slog.Debug("dingtalk: enqueued notifications", "count", len(subscribers), "title", title)
+	slog.Debug("dingtalk: sent notifications", "sent", sent, "total", len(subscribers), "title", title)
 }
 
 // escapeMarkdown escapes special Markdown characters in DingTalk messages.

@@ -1223,8 +1223,6 @@ export default {
       dingtalkAppSecretDesc: 'Enterprise app ClientSecret (AppSecret), masked after save',
       dingtalkAgentId: 'Agent ID',
       dingtalkAgentIdDesc: 'Numeric application agent ID from DingTalk developer console',
-      dingtalkMaxRetries: 'Max Retries',
-      dingtalkMaxRetriesDesc: 'Maximum retry attempts for failed message sends',
       frpStatusConnecting: 'Connecting...',
       frpStatusFailed: 'Connection failed',
       androidLogCapture: 'Debug Log Capture',

@@ -3,6 +3,8 @@ package dingtalk
 import (
 	"strings"
 	"testing"
+
+	"clawbench/internal/model"
 )
 
 func TestEscapeMarkdown(t *testing.T) {
@@ -78,3 +80,62 @@ func TestPushSessionEvent_NotStarted(t *testing.T) {
 func TestPushTaskEvent_NotStarted(t *testing.T) {
 	PushTaskEvent("test-task", "completed", "Test Task", "Preview", "/path")
 }
+
+func TestPushSuppressed_WhenClientOnline(t *testing.T) {
+	// Register a client checker that reports an online client
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+
+	RegisterClientChecker(&mockClientChecker{hasConnected: true})
+
+	// Setup DB and manager so the push would otherwise proceed
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{subscribers: []SubscriberInfo{{UserID: "user1"}}}
+
+	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s", AgentID: 1}}
+	mgr.started = true
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	// This should be suppressed (no send attempted)
+	PushSessionEvent("s1", "completed", "Test", "Preview", "/path")
+	PushTaskEvent("t1", "completed", "Test", "Preview", "/path")
+}
+
+func TestPushNotSuppressed_WhenNoClientOnline(t *testing.T) {
+	// Register a client checker that reports no online client
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+
+	RegisterClientChecker(&mockClientChecker{hasConnected: false})
+
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{subscribers: []SubscriberInfo{{UserID: "user1"}}}
+
+	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s", AgentID: 1}}
+	mgr.started = true
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	// This will attempt to send (and fail due to no real token), but won't be suppressed
+	PushSessionEvent("s1", "completed", "Test", "Preview", "/path")
+}
+
+// mockClientChecker implements ConnectedClientChecker for testing.
+type mockClientChecker struct {
+	hasConnected bool
+}
+
+func (m *mockClientChecker) HasConnectedClients() bool { return m.hasConnected }
+
+// mockDB implements DingtalkDB for testing.
+type mockDB struct {
+	subscribers []SubscriberInfo
+}
+
+func (m *mockDB) MergeConfigSubscribers(_ []string) {}
+func (m *mockDB) GetSubscribers() ([]SubscriberInfo, error) { return m.subscribers, nil }
+func (m *mockDB) UpsertSubscriber(_, _, _, _ string) error   { return nil }
+func (m *mockDB) DeleteSubscriber(_ string) error            { return nil }

@@ -373,20 +373,6 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_dingtalk_user ON dingtalk_subscribers(user_id);
-
-		-- DingTalk message outbox for reliable delivery (added 2026-07)
-		CREATE TABLE IF NOT EXISTS dingtalk_outbox (
-			id          INTEGER PRIMARY KEY AUTOINCREMENT,
-			user_id     TEXT NOT NULL,
-			msg_key     TEXT NOT NULL DEFAULT '',
-			msg_param   TEXT NOT NULL,
-			status      TEXT NOT NULL DEFAULT 'pending',
-			retry_count INTEGER NOT NULL DEFAULT 0,
-			max_retries INTEGER NOT NULL DEFAULT 3,
-			next_retry  DATETIME,
-			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
-		);
-		CREATE INDEX IF NOT EXISTS idx_outbox_status ON dingtalk_outbox(status, next_retry);
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)

@@ -375,8 +375,8 @@ func TestServeConfigPatch_RAGMaskedKey(t *testing.T) {
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "apply_failed")
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "***")
 }
 
 // --- ServeConfig PATCH: tts.tts_model ---
