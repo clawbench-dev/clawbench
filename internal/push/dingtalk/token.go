@@ -1,4 +1,3 @@
-//nolint:noctx // HTTP client context handled internally
 package dingtalk
 
 import (
@@ -12,8 +11,9 @@ import (
 	"time"
 )
 
-const (
+var (
 	// dingtalkTokenURL is the DingTalk API for getting an access token.
+	//nolint:gosec // G101: this is a public API endpoint URL, not a credential
 	dingtalkTokenURL = "https://oapi.dingtalk.com/gettoken"
 	// tokenRefreshBuffer is how long before expiration we refresh.
 	tokenRefreshBuffer = 5 * time.Minute
@@ -53,7 +53,7 @@ func (m *Manager) getAccessToken(ctx context.Context) (string, error) {
 	}
 
 	url := fmt.Sprintf("%s?appkey=%s&appsecret=%s", dingtalkTokenURL, m.cfg.AppKey, m.cfg.AppSecret)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return "", fmt.Errorf("dingtalk: token request: %w", err)
 	}

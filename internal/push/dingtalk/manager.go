@@ -1,4 +1,3 @@
-//nolint:noctx // external SDK context handling
 package dingtalk
 
 import (

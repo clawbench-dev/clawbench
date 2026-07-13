@@ -5,6 +5,13 @@ chat:
     system_prompt_interval: 20
 default_agent: ""
 dev_port: 0
+dingtalk:
+    agent_id: 123
+    app_key: test-key
+    app_secret: test-secret
+    enabled: true
+    users:
+        - user1
 host: ""
 localhost_auth_exempt: false
 log_dir: ""

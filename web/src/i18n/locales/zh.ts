@@ -42,6 +42,7 @@ export default {
     chat: '会话',
     fileManager: '文件管理器',
     history: '历史',
+    viewLatest: '查看最新执行',
     tasks: '定时任务',
     portForward: '端口转发',
     frp: '内网穿透 (frp)',

@@ -95,11 +95,11 @@ type TerminalConfig struct {
 
 // DingTalkConfig holds configuration for DingTalk enterprise bot push notifications.
 type DingTalkConfig struct {
-	Enabled   bool     `yaml:"enabled"`      // Enable DingTalk push (default: false)
-	AppKey    string   `yaml:"app_key"`      // Enterprise app AppKey (ClientID)
-	AppSecret string   `yaml:"app_secret"`   // Enterprise app AppSecret (ClientSecret)
-	AgentID   int64    `yaml:"agent_id"`     // Enterprise application agent_id (numeric, from DingTalk developer console)
-	Users     []string `yaml:"users"`        // Static DingTalk userId list for single-chat push
+	Enabled   bool     `yaml:"enabled"`    // Enable DingTalk push (default: false)
+	AppKey    string   `yaml:"app_key"`    // Enterprise app AppKey (ClientID)
+	AppSecret string   `yaml:"app_secret"` // Enterprise app AppSecret (ClientSecret)
+	AgentID   int64    `yaml:"agent_id"`   // Enterprise application agent_id (numeric, from DingTalk developer console)
+	Users     []string `yaml:"users"`      // Static DingTalk userId list for single-chat push
 }
 
 // SummarizeConfig holds unified summarization configuration shared by TTS and scheduled tasks.

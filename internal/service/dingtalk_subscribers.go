@@ -1,4 +1,4 @@
-//nolint:govet,noctx // db global singleton, context not applicable
+//nolint:noctx // db global singleton, context not applicable
 package service
 
 import (
@@ -94,16 +94,20 @@ func MergeDingTalkConfigSubscribers(users []string) {
 		slog.Warn("dingtalk_subscribers: query manual failed", "error", err)
 		return
 	}
+	defer func() { _ = rows.Close() }()
+
 	var existingManual []string
 	for rows.Next() {
 		var uid string
 		if err := rows.Scan(&uid); err != nil {
-			_ = rows.Close()
 			return
 		}
 		existingManual = append(existingManual, uid)
 	}
-	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		slog.Warn("dingtalk_subscribers: rows iteration failed", "error", err)
+		return
+	}
 
 	configSet := make(map[string]bool, len(users))
 	for _, u := range users {

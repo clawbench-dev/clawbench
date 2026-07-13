@@ -143,7 +143,137 @@ type mockDB struct {
 	subscribers []SubscriberInfo
 }
 
-func (m *mockDB) MergeConfigSubscribers(_ []string) {}
+func (m *mockDB) MergeConfigSubscribers(_ []string)         {}
 func (m *mockDB) GetSubscribers() ([]SubscriberInfo, error) { return m.subscribers, nil }
-func (m *mockDB) UpsertSubscriber(_, _, _, _ string) error   { return nil }
-func (m *mockDB) DeleteSubscriber(_ string) error            { return nil }
+func (m *mockDB) UpsertSubscriber(_, _, _, _ string) error  { return nil }
+func (m *mockDB) DeleteSubscriber(_ string) error           { return nil }
+
+func TestPushSessionEvent_UnknownStatus(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{}
+
+	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s"}}
+	mgr.started = true
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	if PushSessionEvent("s1", "unknown_status", "Title", "Preview", "/path") {
+		t.Error("expected false for unknown status")
+	}
+}
+
+func TestPushTaskEvent_UnknownStatus(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{}
+
+	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s"}}
+	mgr.started = true
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	if PushTaskEvent("t1", "unknown_status", "Task", "Preview", "/path") {
+		t.Error("expected false for unknown status")
+	}
+}
+
+func TestPushSessionEvent_Cancelled(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{}
+
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+	RegisterClientChecker(&mockClientChecker{hasConnected: false})
+
+	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s"}}
+	mgr.started = true
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	PushSessionEvent("s1", "cancelled", "Title", "Preview", "/path")
+}
+
+func TestPushSessionEvent_PermissionPending(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{}
+
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+	RegisterClientChecker(&mockClientChecker{hasConnected: false})
+
+	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s"}}
+	mgr.started = true
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	PushSessionEvent("s1", "permission_pending", "Title", "Preview", "/path")
+}
+
+func TestPushTaskEvent_Failed(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{}
+
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+	RegisterClientChecker(&mockClientChecker{hasConnected: false})
+
+	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s"}}
+	mgr.started = true
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	PushTaskEvent("t1", "failed", "Task", "Preview", "/path")
+}
+
+func TestPushTaskEvent_Cancelled(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{}
+
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+	RegisterClientChecker(&mockClientChecker{hasConnected: false})
+
+	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s"}}
+	mgr.started = true
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	PushTaskEvent("t1", "cancelled", "Task", "Preview", "/path")
+}
+
+func TestSendToAllSubscribers_NoSubscribers(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{subscribers: []SubscriberInfo{}}
+
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+	RegisterClientChecker(&mockClientChecker{hasConnected: false})
+
+	if sendToAllSubscribers("Title", "Markdown") {
+		t.Error("expected false when no subscribers")
+	}
+}
+
+func TestSendToAllSubscribers_NilManager(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{subscribers: []SubscriberInfo{{UserID: "user1"}}}
+
+	origMgr := GetManager()
+	SetManager(nil)
+	defer SetManager(origMgr)
+
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+	RegisterClientChecker(&mockClientChecker{hasConnected: false})
+
+	if sendToAllSubscribers("Title", "Markdown") {
+		t.Error("expected false with nil manager")
+	}
+}

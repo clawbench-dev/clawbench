@@ -92,11 +92,11 @@ var hotReloadFields = map[string]bool{
 	"rag.search_limit":     true,
 	"rag.search_pool_size": true,
 	"rag.retention_days":   true,
-	"dingtalk.enabled":    true,
-	"dingtalk.app_key":    true,
-	"dingtalk.app_secret": true,
-	"dingtalk.agent_id":   true,
-	"dingtalk.users":      true,
+	"dingtalk.enabled":     true,
+	"dingtalk.app_key":     true,
+	"dingtalk.app_secret":  true,
+	"dingtalk.agent_id":    true,
+	"dingtalk.users":       true,
 }
 
 // restartGracePeriod is the delay before shutting down the server after a restart
@@ -263,11 +263,11 @@ type configSummarize struct {
 }
 
 type configDingTalk struct {
-	Enabled    bool     `json:"enabled"`
-	AppKey     string   `json:"app_key"`
-	AppSecret  string   `json:"app_secret"`
-	AgentID    int64    `json:"agent_id"`
-	Users      []string `json:"users"`
+	Enabled   bool     `json:"enabled"`
+	AppKey    string   `json:"app_key"`
+	AppSecret string   `json:"app_secret"`
+	AgentID   int64    `json:"agent_id"`
+	Users     []string `json:"users"`
 }
 
 // PatchableConfigPaths defines the whitelist of config paths that PATCH /api/config accepts.
@@ -323,11 +323,11 @@ var PatchableConfigPaths = map[string]bool{
 	"summarize.api.key":           true,
 	"summarize.api.format":        true,
 	"localhost_auth_exempt":       true,
-	"dingtalk.enabled":    true,
-	"dingtalk.app_key":    true,
-	"dingtalk.app_secret": true,
-	"dingtalk.agent_id":   true,
-	"dingtalk.users":      true,
+	"dingtalk.enabled":            true,
+	"dingtalk.app_key":            true,
+	"dingtalk.app_secret":         true,
+	"dingtalk.agent_id":           true,
+	"dingtalk.users":              true,
 }
 
 // validTTSEngines is the set of valid TTS engine values.
@@ -456,11 +456,11 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			Model:   cfg.Summarize.Model,
 		},
 		DingTalk: configDingTalk{
-			Enabled:    cfg.DingTalk.Enabled,
-			AppKey:     cfg.DingTalk.AppKey,
-			AppSecret:  maskAPIKey(cfg.DingTalk.AppSecret),
-			AgentID:    cfg.DingTalk.AgentID,
-			Users:      cfg.DingTalk.Users,
+			Enabled:   cfg.DingTalk.Enabled,
+			AppKey:    cfg.DingTalk.AppKey,
+			AppSecret: maskAPIKey(cfg.DingTalk.AppSecret),
+			AgentID:   cfg.DingTalk.AgentID,
+			Users:     cfg.DingTalk.Users,
 		},
 	}
 
@@ -537,14 +537,7 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 	// Snapshot current config for rollback on write failure
 	snapshot := model.ConfigInstance
 
-	if err := applyConfigPatch(patch); err != nil {
-		model.ConfigInstance = snapshot
-		writeJSON(w, http.StatusInternalServerError, map[string]any{
-			"error":   "apply_failed",
-			"message": err.Error(),
-		})
-		return
-	}
+	applyConfigPatch(patch)
 
 	if err := writeConfigYAML(patch); err != nil {
 		// Rollback memory state — disk write failed
@@ -851,7 +844,7 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	return nil
 }
 
-func applyConfigPatch(patch map[string]any) error { //nolint:gocognit,gocyclo // exhaustive config patch application
+func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhaustive config patch application
 	cfg := &model.ConfigInstance
 
 	// Top-level fields
@@ -1084,8 +1077,6 @@ func applyConfigPatch(patch map[string]any) error { //nolint:gocognit,gocyclo //
 
 	// Also update global variables for hot-reloadable fields
 	applyHotReloadGlobals()
-
-	return nil
 }
 
 // applyHotReloadGlobals syncs the package-level "hot-reload" variables from

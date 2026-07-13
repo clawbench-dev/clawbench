@@ -22,6 +22,7 @@ const i18n = createI18n({
           rag: 'RAG记忆',
           portForward: '端口转发',
           frp: 'FRP内网穿透',
+          notification: '消息通知',
           security: '安全',
           android: 'Android',
           about: '关于',
@@ -45,6 +46,7 @@ const globalStubs = {
   'lucide-brain': true,
   'lucide-arrow-left-right': true,
   'lucide-globe': true,
+  'lucide-bell': true,
   'lucide-shield': true,
   'lucide-smartphone': true,
   'lucide-info': true,
@@ -63,12 +65,12 @@ function mountIndex() {
 }
 
 describe('SettingsIndex', () => {
-  it('renders 13 category rows in web mode (no Android)', () => {
+  it('renders 14 category rows in web mode (no Android)', () => {
     isAppModeRef.value = false
     const wrapper = mountIndex()
 
     const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(13)
+    expect(rows.length).toBe(14)
   })
 
   it('renders category labels in web mode', () => {
@@ -103,7 +105,7 @@ describe('SettingsIndex', () => {
 
     const expectedIds = [
       'appearance', 'project', 'chat', 'agents', 'files', 'terminal',
-      'tts', 'summarization', 'rag', 'portForward', 'frp', 'security', 'about',
+      'tts', 'summarization', 'rag', 'portForward', 'frp', 'notification', 'security', 'about',
     ]
 
     const rows = wrapper.findAll('.settings-index__row')
@@ -113,12 +115,12 @@ describe('SettingsIndex', () => {
     }
   })
 
-  it('shows 14 categories including Android in app mode', () => {
+  it('shows 15 categories including Android in app mode', () => {
     isAppModeRef.value = true
     const wrapper = mountIndex()
 
     const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(14)
+    expect(rows.length).toBe(15)
 
     const labels = wrapper.findAll('.settings-index__label').map(el => el.text())
     expect(labels).toContain('Android')

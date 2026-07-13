@@ -96,3 +96,153 @@ func TestManager_Reconfigure_EnabledChange(t *testing.T) {
 		t.Error("expected NeedsRestart=true for enabled change")
 	}
 }
+
+func TestRegisterDBAdapter(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+
+	m := &mockDB{}
+	RegisterDBAdapter(m)
+
+	if db != m {
+		t.Error("expected db to be set to mock")
+	}
+}
+
+func TestManager_Start_MissingCredentials(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{}
+
+	mgr := NewManager(&model.DingTalkConfig{Enabled: true, AppKey: "", AppSecret: ""})
+	err := mgr.Start()
+	if err != nil {
+		t.Fatalf("expected nil error for missing credentials, got %v", err)
+	}
+	if mgr.started {
+		t.Error("should not start with missing credentials")
+	}
+}
+
+func TestManager_Start_NilDB(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = nil
+
+	mgr := NewManager(&model.DingTalkConfig{Enabled: true, AppKey: "key", AppSecret: "secret"})
+	err := mgr.Start()
+	if err != nil {
+		t.Fatalf("expected nil error for nil DB, got %v", err)
+	}
+	if mgr.started {
+		t.Error("should not start with nil DB")
+	}
+}
+
+func TestManager_Stop_NotStarted(t *testing.T) {
+	mgr := NewManager(&model.DingTalkConfig{})
+	mgr.Stop() // should not panic
+}
+
+func TestManager_Stop_Started(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{}
+
+	mgr := NewManager(&model.DingTalkConfig{AppKey: "key", AppSecret: "secret"})
+	mgr.started = true
+	mgr.Stop()
+
+	if mgr.started {
+		t.Error("should not be started after stop")
+	}
+}
+
+func TestManager_Reconfigure_WithDB(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+
+	mergeCalled := false
+	db = &mockDBWithCallback{
+		mergeFn: func(users []string) {
+			mergeCalled = true
+			if len(users) != 1 || users[0] != "new_user" {
+				t.Errorf("expected merge with [new_user], got %v", users)
+			}
+		},
+	}
+
+	mgr := NewManager(&model.DingTalkConfig{Enabled: true, AppKey: "key", AppSecret: "secret", Users: []string{"old"}})
+	result := mgr.Reconfigure(&model.DingTalkConfig{Enabled: true, AppKey: "key", AppSecret: "secret", Users: []string{"new_user"}})
+
+	if result.NeedsRestart {
+		t.Error("should not need restart for in-place update")
+	}
+	if !mergeCalled {
+		t.Error("expected MergeConfigSubscribers to be called")
+	}
+}
+
+func TestManager_StartedManager_IsStartedTrue(t *testing.T) {
+	origMgr := GetManager()
+	defer SetManager(origMgr)
+
+	mgr := NewManager(&model.DingTalkConfig{})
+	mgr.started = true
+	SetManager(mgr)
+
+	if !IsStarted() {
+		t.Error("should be true with started manager")
+	}
+}
+
+func TestManager_StoppedManager_IsStartedFalse(t *testing.T) {
+	origMgr := GetManager()
+	defer SetManager(origMgr)
+
+	mgr := NewManager(&model.DingTalkConfig{})
+	mgr.started = false
+	SetManager(mgr)
+
+	if IsStarted() {
+		t.Error("should be false with stopped manager")
+	}
+}
+
+func TestRegisterClientChecker_SetsChecker(t *testing.T) {
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+
+	m := &mockClientChecker{hasConnected: true}
+	RegisterClientChecker(m)
+
+	if clientChecker != m {
+		t.Error("expected client checker to be set")
+	}
+}
+
+func TestManager_Start_AlreadyStarted(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{}
+
+	mgr := NewManager(&model.DingTalkConfig{Enabled: true, AppKey: "key", AppSecret: "secret"})
+	mgr.started = true
+	err := mgr.Start()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestManager_Start_StreamFailure(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{}
+
+	mgr := NewManager(&model.DingTalkConfig{Enabled: true, AppKey: "bad_key", AppSecret: "bad_secret"})
+	err := mgr.Start()
+	// Stream connection will fail with invalid credentials, but Start() doesn't return fatal error
+	if err != nil {
+		t.Logf("Start returned: %v", err)
+	}
+}

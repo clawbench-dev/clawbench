@@ -713,7 +713,7 @@ describe('SettingsDrillDown', () => {
     })
 
     it('emits restartNeeded when server responds with needsRestart', async () => {
-      mockPatchConfig.mockResolvedValueOnce({ needsRestart: true, changedColdFields: ['port_forward.port'] })
+      mockPatchConfig.mockResolvedValueOnce({ needsRestart: true, changedColdFields: ['port_forward.port'], warnings: [] })
       const wrapper = mountDrillDown('portForward')
       const vm = wrapper.vm as any
       vm.$.setupState.localValues['port_forward.port'] = 12345

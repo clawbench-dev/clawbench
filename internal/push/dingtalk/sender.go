@@ -1,4 +1,3 @@
-//nolint:noctx // HTTP client context handled internally
 package dingtalk
 
 import (
@@ -12,7 +11,7 @@ import (
 	"time"
 )
 
-const (
+var (
 	// dingtalkRobotSendURL is the DingTalk API for sending robot single-chat messages.
 	// POST /v1.0/robot/oToMessages/batchSend
 	// Uses msgKey + msgParam (JSON string) format, not the work notification "msg" format.
