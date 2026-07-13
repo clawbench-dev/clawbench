@@ -373,7 +373,7 @@ public class MainActivityConnectionRecoveryTest {
         onPageStarted.invoke(client, mockWebView, "https://192.168.1.100:20000", null);
 
         // Remote page should hide WebView during loading
-        verify(mockWebView).setVisibility(android.view.View.INVISIBLE);
+        verify(mockWebView).setVisibility(android.view.View.GONE);
         assertFalse(getBooleanField(activity, "webViewConnected"));
     }
 
@@ -473,7 +473,7 @@ public class MainActivityConnectionRecoveryTest {
         onReceivedError.invoke(client, mockWebView, mockRequest, null);
 
         assertTrue(getBooleanField(activity, "loadErrorPending"));
-        verify(mockWebView).setVisibility(android.view.View.INVISIBLE);
+        verify(mockWebView).setVisibility(android.view.View.GONE);
 
         // Execute the captured runnable to verify showLoginPage is called
         assertNotNull("postDelayed runnable should be captured", capturedRunnable[0]);
@@ -526,7 +526,7 @@ public class MainActivityConnectionRecoveryTest {
         onReceivedHttpError.invoke(client, mockWebView, mockRequest, mockResponse);
 
         assertTrue(getBooleanField(activity, "loadErrorPending"));
-        verify(mockWebView).setVisibility(android.view.View.INVISIBLE);
+        verify(mockWebView).setVisibility(android.view.View.GONE);
 
         // Execute the captured runnable to verify showLoginPage is called
         assertNotNull("postDelayed runnable should be captured", capturedRunnable[0]);
@@ -761,7 +761,7 @@ public class MainActivityConnectionRecoveryTest {
         // Should set loadErrorPending
         assertTrue(getBooleanField(activity, "loadErrorPending"));
         // Should hide WebView
-        verify(mockWebView).setVisibility(android.view.View.INVISIBLE);
+        verify(mockWebView).setVisibility(android.view.View.GONE);
 
         // Execute the captured runnable to verify showLoginPage is called
         assertNotNull(capturedRunnable[0]);
