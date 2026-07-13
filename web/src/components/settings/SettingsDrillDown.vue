@@ -81,6 +81,8 @@
 
     <!-- Fixed bottom save bar -->
     <div class="drill-down__save-bar">
+      <div v-if="serverError" class="drill-down__error">{{ serverError }}</div>
+      <div v-if="hotReloadWarning" class="drill-down__warning">{{ hotReloadWarning }}</div>
       <div v-if="needsRestartHint" class="drill-down__restart-hint">
         {{ t('settings.drillDown.needsRestartHint') }}
       </div>
@@ -93,12 +95,6 @@
         {{ saving ? t('settings.drillDown.saving') : t('settings.drillDown.save') }}
       </button>
     </div>
-
-    <!-- Server error -->
-    <div v-if="serverError" class="drill-down__error">{{ serverError }}</div>
-
-    <!-- Hot-reload warnings (e.g. DingTalk connection failure) -->
-    <div v-if="hotReloadWarning" class="drill-down__warning">{{ hotReloadWarning }}</div>
 
     <!-- Required field empty indicator (visual, no text) -->
 
@@ -802,18 +798,16 @@ defineExpose({ requestBack })
 
 /* Server error */
 .drill-down__error {
-  padding: 8px 16px;
   font-size: 13px;
   color: #ef4444;
-  background: var(--bg-primary);
+  margin-bottom: 6px;
 }
 
 /* Hot-reload warning (e.g. DingTalk connection failure) */
 .drill-down__warning {
-  padding: 8px 16px;
   font-size: 13px;
   color: #f59e0b;
-  background: var(--bg-primary);
+  margin-bottom: 6px;
   white-space: pre-line;
 }
 </style>
