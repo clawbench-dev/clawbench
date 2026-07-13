@@ -87,9 +87,11 @@ func EmitSessionEvent(sessionID, status string, hasNewMessages bool, toolName ..
 	StoreNotifiableEvent(msg)
 	mgr.BroadcastEvent(msg)
 
-	// DingTalk push notification for session events
-	if dingtalk.IsStarted() {
-		dingtalk.PushSessionEvent(sessionID, status, data.SessionTitle, data.ResponsePreview, data.ProjectPath)
+	// DingTalk push notification for session events.
+	// If push succeeds, remove from pending_events to avoid duplicate
+	// Android notification when the app comes back online.
+	if dingtalk.IsStarted() && dingtalk.PushSessionEvent(sessionID, status, data.SessionTitle, data.ResponsePreview, data.ProjectPath) {
+		_ = DeletePendingEvent(msg.ID)
 	}
 }
 

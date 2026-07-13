@@ -116,6 +116,37 @@ func TestStorePendingEventDuplicate(t *testing.T) {
 	assert.Equal(t, 1, count)
 }
 
+func TestDeletePendingEvent(t *testing.T) {
+	db, teardown := setupTestDBForPendingEvents(t)
+	defer teardown()
+	cleanup := SetDBForTest(db, db)
+	defer cleanup()
+
+	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	err := StorePendingEvent("evt_del_1", "session_update", `{"status":"completed"}`, expiresAt)
+	require.NoError(t, err)
+	err = StorePendingEvent("evt_del_2", "task_update", `{"status":"failed"}`, expiresAt)
+	require.NoError(t, err)
+
+	// Delete one event
+	err = DeletePendingEvent("evt_del_1")
+	require.NoError(t, err)
+
+	// Verify only the other event remains
+	events, err := GetPendingEvents("")
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, "evt_del_2", events[0].EventID)
+}
+
+func TestDeletePendingEventNilDB(t *testing.T) {
+	cleanup := SetDBForTest(nil, nil)
+	defer cleanup()
+
+	err := DeletePendingEvent("evt_1")
+	assert.Nil(t, err)
+}
+
 func TestGetPendingEvents(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()

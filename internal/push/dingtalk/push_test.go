@@ -74,11 +74,15 @@ func TestIsStarted_NoManager(t *testing.T) {
 }
 
 func TestPushSessionEvent_NotStarted(t *testing.T) {
-	PushSessionEvent("test-session", "completed", "Test", "Preview", "/path")
+	if PushSessionEvent("test-session", "completed", "Test", "Preview", "/path") {
+		t.Error("expected false when not started")
+	}
 }
 
 func TestPushTaskEvent_NotStarted(t *testing.T) {
-	PushTaskEvent("test-task", "completed", "Test Task", "Preview", "/path")
+	if PushTaskEvent("test-task", "completed", "Test Task", "Preview", "/path") {
+		t.Error("expected false when not started")
+	}
 }
 
 func TestPushSuppressed_WhenClientOnline(t *testing.T) {
@@ -99,8 +103,12 @@ func TestPushSuppressed_WhenClientOnline(t *testing.T) {
 	defer SetManager(nil)
 
 	// This should be suppressed (no send attempted)
-	PushSessionEvent("s1", "completed", "Test", "Preview", "/path")
-	PushTaskEvent("t1", "completed", "Test", "Preview", "/path")
+	if PushSessionEvent("s1", "completed", "Test", "Preview", "/path") {
+		t.Error("expected false when client is online")
+	}
+	if PushTaskEvent("t1", "completed", "Test", "Preview", "/path") {
+		t.Error("expected false when client is online")
+	}
 }
 
 func TestPushNotSuppressed_WhenNoClientOnline(t *testing.T) {

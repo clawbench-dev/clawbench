@@ -15,9 +15,10 @@ const (
 
 // PushSessionEvent sends a DingTalk push notification for a session event.
 // Only processes completed/cancelled/permission_pending statuses.
-func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectPath string) {
+// Returns true if the notification was sent to at least one subscriber.
+func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectPath string) bool {
 	if !IsStarted() || db == nil {
-		return
+		return false
 	}
 
 	var title, markdown string
@@ -40,17 +41,18 @@ func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectP
 			escapeMarkdown(sessionTitle),
 			escapeMarkdown(projectPath))
 	default:
-		return
+		return false
 	}
 
-	sendToAllSubscribers(title, markdown)
+	return sendToAllSubscribers(title, markdown)
 }
 
 // PushTaskEvent sends a DingTalk push notification for a task event.
 // Only processes completed/failed/cancelled statuses.
-func PushTaskEvent(taskID, status, taskName, responsePreview, projectPath string) {
+// Returns true if the notification was sent to at least one subscriber.
+func PushTaskEvent(taskID, status, taskName, responsePreview, projectPath string) bool {
 	if !IsStarted() || db == nil {
-		return
+		return false
 	}
 
 	var title, markdown string
@@ -73,33 +75,34 @@ func PushTaskEvent(taskID, status, taskName, responsePreview, projectPath string
 			escapeMarkdown(taskName),
 			escapeMarkdown(projectPath))
 	default:
-		return
+		return false
 	}
 
-	sendToAllSubscribers(title, markdown)
+	return sendToAllSubscribers(title, markdown)
 }
 
 // sendToAllSubscribers sends a notification to all subscribed users directly.
 // Fire-and-forget: success or failure is logged, no retry or DB persistence.
 // Suppressed when at least one client (web/APP) is online watching the UI.
-func sendToAllSubscribers(title, markdown string) {
+// Returns true if at least one subscriber received the notification.
+func sendToAllSubscribers(title, markdown string) bool {
 	if clientChecker != nil && clientChecker.HasConnectedClients() {
 		slog.Debug("dingtalk: suppressed push, client is online", "title", title)
-		return
+		return false
 	}
 
 	subscribers, err := db.GetSubscribers()
 	if err != nil {
 		slog.Warn("dingtalk: get subscribers failed", "error", err)
-		return
+		return false
 	}
 	if len(subscribers) == 0 {
-		return
+		return false
 	}
 
 	mgr := GetManager()
 	if mgr == nil {
-		return
+		return false
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -115,6 +118,7 @@ func sendToAllSubscribers(title, markdown string) {
 	}
 
 	slog.Debug("dingtalk: sent notifications", "sent", sent, "total", len(subscribers), "title", title)
+	return sent > 0
 }
 
 // escapeMarkdown escapes special Markdown characters in DingTalk messages.

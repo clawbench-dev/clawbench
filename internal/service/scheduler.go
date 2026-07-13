@@ -543,9 +543,11 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 	StoreNotifiableEvent(msg)
 	mgr.BroadcastEvent(msg)
 
-	// DingTalk push notification for task events
-	if dingtalk.IsStarted() {
-		dingtalk.PushTaskEvent(taskID, status, data.SessionTitle, data.ResponsePreview, data.ProjectPath)
+	// DingTalk push notification for task events.
+	// If push succeeds, remove from pending_events to avoid duplicate
+	// Android notification when the app comes back online.
+	if dingtalk.IsStarted() && dingtalk.PushTaskEvent(taskID, status, data.SessionTitle, data.ResponsePreview, data.ProjectPath) {
+		_ = DeletePendingEvent(msg.ID)
 	}
 }
 
