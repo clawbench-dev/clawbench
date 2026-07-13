@@ -14,6 +14,7 @@ import (
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
+	"clawbench/internal/push/dingtalk"
 	"clawbench/internal/summarize"
 	"clawbench/internal/ws"
 
@@ -541,6 +542,13 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 	}
 	StoreNotifiableEvent(msg)
 	mgr.BroadcastEvent(msg)
+
+	// DingTalk push notification for task events.
+	// If push succeeds, remove from pending_events to avoid duplicate
+	// Android notification when the app comes back online.
+	if dingtalk.IsStarted() && dingtalk.PushTaskEvent(taskID, status, data.SessionTitle, data.ResponsePreview, data.ProjectPath) {
+		_ = DeletePendingEvent(msg.ID)
+	}
 }
 
 // executeTask runs a scheduled task by invoking the AI backend and inserting

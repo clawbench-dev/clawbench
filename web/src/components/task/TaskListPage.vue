@@ -7,7 +7,7 @@
         <RefreshCw :size="14" />
       </button>
       <button class="header-btn clear-unread-btn" :class="{ active: hasUnread }" :disabled="!hasUnread" @click="markAllTasksRead" :title="t('task.clearUnread')">
-        <Brush :size="14" />
+        <CheckCheck :size="14" />
       </button>
       <button class="create-btn" @click="$emit('create')" :title="t('task.form.createTitle')">
         <Plus :size="16" />
@@ -59,10 +59,10 @@
               v-if="task.runCount > 0 || task.runningCount > 0"
               class="task-item-history-btn"
               :class="{ 'has-unread-flash': task.unreadCount > 0 }"
-              @click.stop="$emit('history', task.id)"
-              :title="t('task.history')"
+              @click.stop="$emit('latestExec', task.id)"
+              :title="t('task.viewLatest')"
             >
-              <History :size="16" />
+              <Eye :size="16" />
             </button>
           </div>
         </div>
@@ -72,7 +72,7 @@
 </template>
 
 <script setup lang="ts">
-import { Plus, Loader2, CalendarX, Clock, Repeat, CalendarClock, History, RefreshCw, Brush } from 'lucide-vue-next'
+import { Plus, Loader2, CalendarX, Clock, Repeat, CalendarClock, Eye, RefreshCw, CheckCheck } from 'lucide-vue-next'
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useTaskTab } from '@/composables/useTaskTab'
@@ -106,7 +106,7 @@ const loading = ref(false)
 defineEmits<{
   create: []
   select: [taskId: number]
-  history: [taskId: number]
+  latestExec: [taskId: number]
 }>()
 
 async function refresh() {

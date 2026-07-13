@@ -345,8 +345,8 @@ describe('useSettingsConfig', () => {
     })
   })
 
-  describe('deepAssign', () => {
-    it('deep-merges nested objects without losing siblings', async () => {
+  describe('patchConfig reloads serverConfig', () => {
+    it('reloads config from server after patch (password fields get masked)', async () => {
       const { patchConfig, loadConfig, serverConfig } = useSettingsConfig()
 
       mockedApiGet.mockResolvedValue({
@@ -354,10 +354,14 @@ describe('useSettingsConfig', () => {
       })
       await loadConfig()
 
+      // After patch, loadConfig is called again — simulate server returning updated values
       mockedApiPatch.mockResolvedValue({ needs_restart: false, changed_cold_fields: [] })
+      mockedApiGet.mockResolvedValue({
+        chat: { page_size: 50, initial_messages: 20 },
+      })
       await patchConfig({ chat: { page_size: 50 } })
 
-      // page_size should be updated, initial_messages should be preserved
+      // serverConfig should reflect the reloaded values
       expect(serverConfig.value.chat.page_size).toBe(50)
       expect(serverConfig.value.chat.initial_messages).toBe(20)
     })

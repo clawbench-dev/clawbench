@@ -2310,3 +2310,174 @@ func TestFinalizeOrphanedMessages_UserCancelNoWarning(t *testing.T) {
 	// Should have 1 block only — no warning block for user cancel
 	assert.Equal(t, 1, len(blocks))
 }
+
+// --- triggerChatSummarization: enabled=false path ---
+
+func TestTriggerChatSummarization_EnabledFalse(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	origEnabled := chatSummaryEnabled.Load()
+	origMode := GetChatSummaryMode()
+	defer func() {
+		chatSummaryEnabled.Store(origEnabled)
+		SetChatSummaryMode(origMode)
+	}()
+
+	SetChatSummaryMode("simple")
+	chatSummaryEnabled.Store(false)
+
+	sessionID := "test-enabled-false"
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", sessionID)
+	assistantContent := `{"blocks":[{"type":"text","text":"Answer"}]}`
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (601, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
+
+	// Should not create a summary when enabled is false
+	triggerChatSummarization(sessionID)
+
+	_, found := GetSummary("chat_message", 601)
+	assert.False(t, found, "no summary should be created when chatSummaryEnabled is false")
+}
+
+// --- getLastAssistantBlocks tests ---
+
+func TestGetLastAssistantBlocks_NoMessages(t *testing.T) {
+	_, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	msg, blocks := getLastAssistantBlocks("session-no-messages")
+	assert.Nil(t, msg)
+	assert.Nil(t, blocks)
+}
+
+func TestGetLastAssistantBlocks_NoAssistantMessages(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	sessionID := "test-no-assistant-blocks"
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (700, '/test', 'user', 'hello', ?, 0)", sessionID)
+
+	msg, blocks := getLastAssistantBlocks(sessionID)
+	assert.Nil(t, msg)
+	assert.Nil(t, blocks)
+}
+
+func TestGetLastAssistantBlocks_InvalidJSON(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	sessionID := "test-invalid-json-blocks"
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (701, '/test', 'assistant', 'not json', ?, 0)", sessionID)
+
+	msg, blocks := getLastAssistantBlocks(sessionID)
+	assert.NotNil(t, msg, "should return the message even with invalid JSON")
+	assert.Nil(t, blocks, "blocks should be nil when JSON is invalid")
+}
+
+func TestGetLastAssistantBlocks_ValidBlocks(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	sessionID := "test-valid-blocks"
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", sessionID)
+	content := `{"blocks":[{"type":"text","text":"Hello"}]}`
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (702, '/test', 'assistant', ?, ?, 0)", content, sessionID)
+
+	msg, blocks := getLastAssistantBlocks(sessionID)
+	assert.NotNil(t, msg)
+	assert.Len(t, blocks, 1)
+	assert.Equal(t, "text", blocks[0].Type)
+	assert.Equal(t, "Hello", blocks[0].Text)
+}
+
+// --- summarizeChatSimple with nil ws manager ---
+
+func TestSummarizeChatSimple_NilWSManager(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	origMgr := ws.GetManager()
+	ws.SetManagerForTest(nil)
+	defer ws.SetManagerForTest(origMgr)
+
+	// Insert session + messages
+	sessionID := "test-simple-nil-ws"
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", sessionID)
+	assistantContent := `{"blocks":[{"type":"text","text":"The answer."}]}`
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (800, '/test', 'user', 'hello', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (801, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
+
+	messages, err := GetMessagesBySessionID(sessionID)
+	require.NoError(t, err)
+
+	var lastAssistant *model.ChatMessage
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "assistant" {
+			lastAssistant = &messages[i]
+			break
+		}
+	}
+	require.NotNil(t, lastAssistant)
+
+	var content struct {
+		Blocks []model.ContentBlock `json:"blocks"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(lastAssistant.Content), &content))
+
+	// Should not panic with nil ws manager
+	summarizeChatSimple(lastAssistant, content.Blocks, "/test", sessionID)
+
+	// Summary should still be saved even without WS broadcast
+	summary, found := GetSummary("chat_message", lastAssistant.ID)
+	assert.True(t, found)
+	assert.Equal(t, "The answer.", summary)
+}
+
+// --- summarizeChatSimple with empty extracted text ---
+
+func TestSummarizeChatSimple_EmptyExtractedText(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	// Assistant message with only tool_use blocks (no text)
+	toolOnlyContent := `{"blocks":[{"type":"tool_use","name":"Bash","id":"t1"}]}`
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", "test-simple-empty")
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (802, '/test', 'assistant', ?, ?, 0)", toolOnlyContent, "test-simple-empty")
+
+	messages, err := GetMessagesBySessionID("test-simple-empty")
+	require.NoError(t, err)
+
+	var lastAssistant *model.ChatMessage
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "assistant" {
+			lastAssistant = &messages[i]
+			break
+		}
+	}
+	require.NotNil(t, lastAssistant)
+
+	var content struct {
+		Blocks []model.ContentBlock `json:"blocks"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(lastAssistant.Content), &content))
+
+	// ExtractLastAnswerFromBlocks returns "" for tool_use only blocks
+	summarizeChatSimple(lastAssistant, content.Blocks, "/test", "test-simple-empty")
+
+	// No summary should be saved
+	_, found := GetSummary("chat_message", lastAssistant.ID)
+	assert.False(t, found, "no summary should be created for empty extracted text")
+}
+
+// --- GetChatSummaryMode nil value (defensive) ---
+
+func TestGetChatSummaryMode_EmptyString(t *testing.T) {
+	origMode := GetChatSummaryMode()
+	defer SetChatSummaryMode(origMode)
+
+	SetChatSummaryMode("")
+	mode := GetChatSummaryMode()
+	assert.Equal(t, "", mode, "should return empty string when mode is empty")
+}

@@ -1,6 +1,6 @@
 <template>
   <div class="task-tab" v-show="active">
-    <TaskListPage v-if="currentView === 'list' && !formViewOpen" ref="listPageRef" @create="onCreate" @select="onTaskSelect" @history="onTaskHistoryFromList" />
+    <TaskListPage v-if="currentView === 'list' && !formViewOpen" ref="listPageRef" @create="onCreate" @select="onTaskSelect" @latest-exec="onTaskLatestExec" />
     <TaskDetailPage v-else-if="currentView === 'settings' && !execDetailOpen && !formViewOpen && selectedTaskData" :task="selectedTaskData" @edit="onEdit" @deleted="onTaskDeleted" @history="onTaskHistory" />
     <TaskHistoryTab v-else-if="currentView === 'history' && !execDetailOpen && !formViewOpen" :task="selectedTaskData" @open-file="onOpenFile" />
     <TaskExecDetail v-else-if="execDetailOpen && !formViewOpen" :execDetail="selectedExecData" :taskName="selectedTaskData?.name" :taskId="selectedTaskId" @close="closeExecDetail" @open-file="onOpenFile" />
@@ -27,7 +27,7 @@ const emit = defineEmits<{
   'open-file': [filePath: string, lineStart?: number]
 }>()
 
-const { currentView, selectedTaskId, selectedExecData, execDetailOpen, formViewOpen, formMode, goBack, navigateToTaskSettings, navigateToTaskHistory, navigateToList, closeExecDetail, openCreateForm, openEditForm, closeForm, loadTasks } = useTaskTab()
+const { currentView, selectedTaskId, selectedExecData, execDetailOpen, formViewOpen, formMode, goBack, navigateToTaskSettings, navigateToTaskHistory, navigateToList, closeExecDetail, openLatestExecDetail, openCreateForm, openEditForm, closeForm, loadTasks } = useTaskTab()
 
 // Register back handler for task drill-down navigation
 // canGoBack checks: only when this tab is active AND has a drill-down view
@@ -80,8 +80,8 @@ function onTaskHistory() {
   navigateToTaskHistory(selectedTaskId.value!)
 }
 
-function onTaskHistoryFromList(taskId: number) {
-  navigateToTaskHistory(taskId)
+function onTaskLatestExec(taskId: number) {
+  openLatestExecDetail(taskId)
 }
 </script>
 

@@ -362,6 +362,17 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_event_id ON pending_events(event_id);
 		CREATE INDEX IF NOT EXISTS idx_pending_expires ON pending_events(expires_at);
 		CREATE INDEX IF NOT EXISTS idx_pending_created ON pending_events(created_at);
+
+		-- DingTalk subscriber management (added 2026-07)
+		CREATE TABLE IF NOT EXISTS dingtalk_subscribers (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id         TEXT NOT NULL UNIQUE,
+			conversation_id TEXT NOT NULL DEFAULT '',
+			user_name       TEXT NOT NULL DEFAULT '',
+			source          TEXT NOT NULL DEFAULT 'stream',
+			created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_dingtalk_user ON dingtalk_subscribers(user_id);
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)

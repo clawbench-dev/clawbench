@@ -92,6 +92,11 @@ var hotReloadFields = map[string]bool{
 	"rag.search_limit":     true,
 	"rag.search_pool_size": true,
 	"rag.retention_days":   true,
+	"dingtalk.enabled":     true,
+	"dingtalk.app_key":     true,
+	"dingtalk.app_secret":  true,
+	"dingtalk.agent_id":    true,
+	"dingtalk.users":       true,
 }
 
 // restartGracePeriod is the delay before shutting down the server after a restart
@@ -120,6 +125,29 @@ func SetReconfigureFunc(f func()) {
 	reconfigureOnHotReload = f
 }
 
+// hotReloadWarnings stores warnings produced during hot-reload (e.g. DingTalk
+// connection failure). Collected by applyHotReloadWarnings() after patch.
+var (
+	hotReloadWarnings []string
+	hotReloadWarnMu   sync.Mutex
+)
+
+// AddHotReloadWarning appends a warning message produced during hot-reload.
+func AddHotReloadWarning(msg string) {
+	hotReloadWarnMu.Lock()
+	hotReloadWarnings = append(hotReloadWarnings, msg)
+	hotReloadWarnMu.Unlock()
+}
+
+// applyHotReloadWarnings returns and clears accumulated hot-reload warnings.
+func applyHotReloadWarnings() []string {
+	hotReloadWarnMu.Lock()
+	w := hotReloadWarnings
+	hotReloadWarnings = nil
+	hotReloadWarnMu.Unlock()
+	return w
+}
+
 // configResponse is the sanitized config returned to clients via GET /api/config.
 // It only contains fields safe for frontend display — no passwords, keys, or
 // internal paths.
@@ -138,6 +166,7 @@ type configResponse struct {
 	PortForward         configPortForward    `json:"port_forward"`
 	FRP                 configFRP            `json:"frp"`
 	Summarize           configSummarize      `json:"summarize"`
+	DingTalk            configDingTalk       `json:"dingtalk"`
 }
 
 type configChat struct {
@@ -233,6 +262,14 @@ type configSummarize struct {
 	API     *configAPI `json:"api,omitempty"`
 }
 
+type configDingTalk struct {
+	Enabled   bool     `json:"enabled"`
+	AppKey    string   `json:"app_key"`
+	AppSecret string   `json:"app_secret"`
+	AgentID   int64    `json:"agent_id"`
+	Users     []string `json:"users"`
+}
+
 // PatchableConfigPaths defines the whitelist of config paths that PATCH /api/config accepts.
 // Any path not in this list will be rejected with 400 Bad Request.
 var PatchableConfigPaths = map[string]bool{
@@ -286,6 +323,11 @@ var PatchableConfigPaths = map[string]bool{
 	"summarize.api.key":           true,
 	"summarize.api.format":        true,
 	"localhost_auth_exempt":       true,
+	"dingtalk.enabled":            true,
+	"dingtalk.app_key":            true,
+	"dingtalk.app_secret":         true,
+	"dingtalk.agent_id":           true,
+	"dingtalk.users":              true,
 }
 
 // validTTSEngines is the set of valid TTS engine values.
@@ -413,6 +455,13 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			Backend: cfg.Summarize.Backend,
 			Model:   cfg.Summarize.Model,
 		},
+		DingTalk: configDingTalk{
+			Enabled:   cfg.DingTalk.Enabled,
+			AppKey:    cfg.DingTalk.AppKey,
+			AppSecret: maskAPIKey(cfg.DingTalk.AppSecret),
+			AgentID:   cfg.DingTalk.AgentID,
+			Users:     cfg.DingTalk.Users,
+		},
 	}
 
 	// Conditionally populate Summarize API sub-config when backend is "api"
@@ -488,14 +537,7 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 	// Snapshot current config for rollback on write failure
 	snapshot := model.ConfigInstance
 
-	if err := applyConfigPatch(patch); err != nil {
-		model.ConfigInstance = snapshot
-		writeJSON(w, http.StatusInternalServerError, map[string]any{
-			"error":   "apply_failed",
-			"message": err.Error(),
-		})
-		return
-	}
+	applyConfigPatch(patch)
 
 	if err := writeConfigYAML(patch); err != nil {
 		// Rollback memory state — disk write failed
@@ -522,9 +564,13 @@ func serveConfigPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(coldFields)
 
+	// Collect warnings from hot-reload (e.g. DingTalk connection failure)
+	warnings := applyHotReloadWarnings()
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"needs_restart":       len(coldFields) > 0,
 		"changed_cold_fields": coldFields,
+		"warnings":            warnings,
 	})
 }
 
@@ -751,6 +797,13 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 
 	// FRP: when enabled, server_addr must be non-empty (skip when just switching enabled on —
 	// user hasn't had a chance to fill in the address yet, frontend auto-saves one field at a time).
+	// RAG — reject masked API key
+	if rag, ok := patch["rag"].(map[string]any); ok {
+		if v, ok := rag["api_key"].(string); ok && strings.Contains(v, "***") {
+			return fmt.Errorf("rag.api_key must not contain '***' — please provide the full key value")
+		}
+	}
+
 	if frp, ok := patch["frp"].(map[string]any); ok {
 		effectiveEnabled := cfg.FRP.Enabled
 		enabledSwitchedOn := false
@@ -767,6 +820,9 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		if effectiveEnabled && !enabledSwitchedOn && effectiveAddr == "" {
 			return fmt.Errorf("frp.server_addr is required when FRP is enabled")
 		}
+		if v, ok := frp["token"].(string); ok && strings.Contains(v, "***") {
+			return fmt.Errorf("frp.token must not contain '***' — please provide the full token value")
+		}
 		if v, ok := frp["server_port"].(float64); ok && (v < 0 || v > 65535) {
 			return fmt.Errorf("frp.server_port must be between 0 and 65535")
 		}
@@ -778,10 +834,17 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 	}
 
+	// DingTalk — reject masked secrets
+	if dingtalk, ok := patch["dingtalk"].(map[string]any); ok {
+		if v, ok := dingtalk["app_secret"].(string); ok && strings.Contains(v, "***") {
+			return fmt.Errorf("dingtalk.app_secret must not contain '***' — please provide the full secret value")
+		}
+	}
+
 	return nil
 }
 
-func applyConfigPatch(patch map[string]any) error { //nolint:gocognit,gocyclo // exhaustive config patch application
+func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhaustive config patch application
 	cfg := &model.ConfigInstance
 
 	// Top-level fields
@@ -907,10 +970,9 @@ func applyConfigPatch(patch map[string]any) error { //nolint:gocognit,gocyclo //
 			cfg.RAG.Model = v
 		}
 		if v, ok := rag["api_key"].(string); ok {
-			if strings.Contains(v, "***") {
-				return fmt.Errorf("rag.api_key must not contain '***' — please provide the full key value")
+			if !strings.Contains(v, "***") {
+				cfg.RAG.APIKey = v
 			}
-			cfg.RAG.APIKey = v
 		}
 		if v, ok := rag["chunk_size"].(float64); ok {
 			cfg.RAG.ChunkSize = int(v)
@@ -949,7 +1011,9 @@ func applyConfigPatch(patch map[string]any) error { //nolint:gocognit,gocyclo //
 			cfg.FRP.ServerPort = int(v)
 		}
 		if v, ok := frp["token"].(string); ok {
-			cfg.FRP.Token = v
+			if !strings.Contains(v, "***") {
+				cfg.FRP.Token = v
+			}
 		}
 		if v, ok := frp["auto_port"].(bool); ok {
 			cfg.FRP.AutoPort = v
@@ -975,7 +1039,9 @@ func applyConfigPatch(patch map[string]any) error { //nolint:gocognit,gocyclo //
 				cfg.Summarize.API.BaseURL = v
 			}
 			if v, ok := api["key"].(string); ok {
-				cfg.Summarize.API.Key = v
+				if !strings.Contains(v, "***") {
+					cfg.Summarize.API.Key = v
+				}
 			}
 			if v, ok := api["format"].(string); ok {
 				cfg.Summarize.API.Format = v
@@ -983,10 +1049,34 @@ func applyConfigPatch(patch map[string]any) error { //nolint:gocognit,gocyclo //
 		}
 	}
 
+	if dingtalk, ok := patch["dingtalk"].(map[string]any); ok {
+		if v, ok := dingtalk["enabled"].(bool); ok {
+			cfg.DingTalk.Enabled = v
+		}
+		if v, ok := dingtalk["app_key"].(string); ok {
+			cfg.DingTalk.AppKey = v
+		}
+		if v, ok := dingtalk["app_secret"].(string); ok {
+			if !strings.Contains(v, "***") {
+				cfg.DingTalk.AppSecret = v
+			}
+		}
+		if v, ok := dingtalk["agent_id"].(float64); ok {
+			cfg.DingTalk.AgentID = int64(v)
+		}
+		if v, ok := dingtalk["users"].([]any); ok {
+			users := make([]string, 0, len(v))
+			for _, u := range v {
+				if s, ok := u.(string); ok && s != "" {
+					users = append(users, s)
+				}
+			}
+			cfg.DingTalk.Users = users
+		}
+	}
+
 	// Also update global variables for hot-reloadable fields
 	applyHotReloadGlobals()
-
-	return nil
 }
 
 // applyHotReloadGlobals syncs the package-level "hot-reload" variables from

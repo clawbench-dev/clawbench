@@ -80,6 +80,19 @@ func StorePendingEvent(eventID, eventType, payload, expiresAt string) error {
 	return err
 }
 
+// DeletePendingEvent removes a specific event from the pending event log.
+// Used after DingTalk push succeeds to prevent duplicate Android notifications.
+func DeletePendingEvent(eventID string) error {
+	if db == nil {
+		return nil
+	}
+	_, err := WriteExec(
+		`DELETE FROM pending_events WHERE event_id = ?`,
+		eventID,
+	)
+	return err
+}
+
 // GetPendingEvents returns non-expired events optionally after a cursor event_id.
 // Results are ordered by id ASC. If the cursor event_id has expired and been
 // cleaned up, returns an empty slice (client should reset cursor and re-fetch).

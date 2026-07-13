@@ -692,13 +692,13 @@ describe('SettingsDrillDown', () => {
       expect(mockToastShow).toHaveBeenCalledWith('已保存', expect.any(Object))
     })
 
-    it('emits back after successful save', async () => {
+    it('stays on page after successful save', async () => {
       const wrapper = mountDrillDown('terminal')
       const vm = wrapper.vm as any
       vm.$.setupState.localValues['terminal.max_sessions'] = 5
       await nextTick()
       await vm.$.setupState.handleSave()
-      expect(wrapper.emitted('back')).toBeTruthy()
+      expect(wrapper.emitted('back')).toBeFalsy()
     })
 
     it('shows error on patchConfig failure', async () => {
@@ -713,7 +713,7 @@ describe('SettingsDrillDown', () => {
     })
 
     it('emits restartNeeded when server responds with needsRestart', async () => {
-      mockPatchConfig.mockResolvedValueOnce({ needsRestart: true, changedColdFields: ['port_forward.port'] })
+      mockPatchConfig.mockResolvedValueOnce({ needsRestart: true, changedColdFields: ['port_forward.port'], warnings: [] })
       const wrapper = mountDrillDown('portForward')
       const vm = wrapper.vm as any
       vm.$.setupState.localValues['port_forward.port'] = 12345

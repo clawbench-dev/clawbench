@@ -303,6 +303,25 @@ export function useTaskTab() {
         }
     }
 
+    /** Open the latest execution detail for a task directly (skip history list) */
+    async function openLatestExecDetail(taskId: number) {
+        selectedTaskId.value = taskId
+        currentView.value = 'settings'
+        formViewOpen.value = false
+        markTaskRead(taskId)
+        try {
+            const resp = await fetch(`/api/tasks/${taskId}/executions?limit=1`)
+            if (!resp.ok) return
+            const data = await resp.json() as { executions: TaskExecData[] }
+            const latest = (data.executions || [])[0]
+            if (latest) {
+                openExecDetail(String(latest.id), latest)
+            }
+        } catch {
+            // Silently ignore
+        }
+    }
+
     function closeExecDetail() {
         execDetailOpen.value = false
         selectedExecId.value = null
@@ -377,6 +396,7 @@ export function useTaskTab() {
         navigateToList,
         goBack,
         openExecDetail,
+        openLatestExecDetail,
         closeExecDetail,
         refreshExecDetail,
         openCreateForm,

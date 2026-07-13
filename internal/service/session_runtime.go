@@ -12,6 +12,7 @@ import (
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
+	"clawbench/internal/push/dingtalk"
 	"clawbench/internal/summarize"
 	"clawbench/internal/ws"
 )
@@ -85,6 +86,13 @@ func EmitSessionEvent(sessionID, status string, hasNewMessages bool, toolName ..
 	// Write-ahead: persist before broadcast so event log has no gaps
 	StoreNotifiableEvent(msg)
 	mgr.BroadcastEvent(msg)
+
+	// DingTalk push notification for session events.
+	// If push succeeds, remove from pending_events to avoid duplicate
+	// Android notification when the app comes back online.
+	if dingtalk.IsStarted() && dingtalk.PushSessionEvent(sessionID, status, data.SessionTitle, data.ResponsePreview, data.ProjectPath) {
+		_ = DeletePendingEvent(msg.ID)
+	}
 }
 
 // getSessionResponsePreview returns a preview of the AI's final reply text.

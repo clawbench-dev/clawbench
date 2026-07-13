@@ -241,5 +241,8 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		cfg.Terminal.MaxSessions = 10
 	}
 
+	// --- DingTalk ---
+	// Bool zero-value: enabled defaults to false (intentional — requires config), no presence check needed.
+
 	return autoPassword
 }

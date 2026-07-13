@@ -80,6 +80,7 @@ type Config struct {
 	FRP         FRPConfig         `yaml:"frp"`          // FRP (Fast Reverse Proxy) client configuration
 	RAG         RAGConfig         `yaml:"rag"`          // RAG history memory configuration
 	Terminal    TerminalConfig    `yaml:"terminal"`     // Interactive web terminal configuration
+	DingTalk    DingTalkConfig    `yaml:"dingtalk"`     // DingTalk enterprise bot push notifications
 }
 
 // TerminalConfig holds configuration for the interactive web terminal.
@@ -90,6 +91,15 @@ type TerminalConfig struct {
 	MaxLineBytes int    `yaml:"max_line_bytes"` // Per-line byte cap to prevent memory bloat (default: 65536 = 64KB)
 	MaxBufferMB  int    `yaml:"max_buffer_mb"`  // Total buffer memory cap in MB (default: 4)
 	MaxSessions  int    `yaml:"max_sessions"`   // Max concurrent terminal sessions (default: 10)
+}
+
+// DingTalkConfig holds configuration for DingTalk enterprise bot push notifications.
+type DingTalkConfig struct {
+	Enabled   bool     `yaml:"enabled"`    // Enable DingTalk push (default: false)
+	AppKey    string   `yaml:"app_key"`    // Enterprise app AppKey (ClientID)
+	AppSecret string   `yaml:"app_secret"` // Enterprise app AppSecret (ClientSecret)
+	AgentID   int64    `yaml:"agent_id"`   // Enterprise application agent_id (numeric, from DingTalk developer console)
+	Users     []string `yaml:"users"`      // Static DingTalk userId list for single-chat push
 }
 
 // SummarizeConfig holds unified summarization configuration shared by TTS and scheduled tasks.

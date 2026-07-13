@@ -40,6 +40,7 @@ import (
 	"clawbench/internal/handler"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
+	"clawbench/internal/push/dingtalk"
 	"clawbench/internal/rag"
 	"clawbench/internal/service"
 	"clawbench/internal/speech"
@@ -55,6 +56,39 @@ const (
 	summarizeBackendAPI    = "api"
 	summarizeBackendSimple = "simple"
 )
+
+// dingtalkDBAdapter bridges the dingtalk package's DB interface to service package
+// functions, avoiding import cycles between service → dingtalk → service.
+type dingtalkDBAdapter struct{}
+
+func (dingtalkDBAdapter) MergeConfigSubscribers(users []string) {
+	service.MergeDingTalkConfigSubscribers(users)
+}
+
+func (dingtalkDBAdapter) GetSubscribers() ([]dingtalk.SubscriberInfo, error) {
+	subs, err := service.GetDingTalkSubscribers()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]dingtalk.SubscriberInfo, len(subs))
+	for i, s := range subs {
+		result[i] = dingtalk.SubscriberInfo{
+			UserID:         s.UserID,
+			ConversationID: s.ConversationID,
+			UserName:       s.UserName,
+			Source:         s.Source,
+		}
+	}
+	return result, nil
+}
+
+func (dingtalkDBAdapter) UpsertSubscriber(userID, conversationID, userName, source string) error {
+	return service.UpsertDingTalkSubscriber(userID, conversationID, userName, source)
+}
+
+func (dingtalkDBAdapter) DeleteSubscriber(userID string) error {
+	return service.DeleteDingTalkSubscriber(userID)
+}
 
 // multiHandler sends log records to multiple handlers
 type multiHandler struct {
@@ -785,6 +819,25 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	}
 	handler.SetFRPManager(frpManagerRef, cfg.FRP.Enabled)
 
+	// Initialize DingTalk push notifications (enterprise internal bot via Stream API).
+	// DingTalk is disabled by default; requires app_key + app_secret configuration.
+	// DB adapter is always registered (needed for hot-reload enable/disable).
+	dingtalk.RegisterDBAdapter(&dingtalkDBAdapter{})
+	if cfg.DingTalk.Enabled && cfg.DingTalk.AppKey != "" && cfg.DingTalk.AppSecret != "" {
+		dingtalkMgr := dingtalk.NewManager(&cfg.DingTalk)
+		if err := dingtalkMgr.Start(); err != nil {
+			slog.Warn("DingTalk push failed to start", slog.String("err", err.Error()))
+		} else {
+			dingtalk.SetManager(dingtalkMgr)
+			slog.Info("DingTalk push enabled")
+		}
+	}
+	defer func() {
+		if mgr := dingtalk.GetManager(); mgr != nil {
+			mgr.Stop()
+		}
+	}()
+
 	// Initialize file watcher for auto-refresh (non-critical — continue on failure)
 	if err := service.InitFileWatcher(); err != nil {
 		slog.Warn(
@@ -814,6 +867,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Initialize WS event manager
 	ws.InitManager()
+	dingtalk.RegisterClientChecker(ws.GetManager())
 
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -1048,6 +1102,53 @@ func hotReloadReconfigure(port int) {
 
 	// --- FRP: reconfigure or toggle enabled ---
 	hotReloadFRP(cfg, port)
+
+	// --- DingTalk: reconfigure or toggle enabled ---
+	hotReloadDingTalk(cfg)
+}
+
+// hotReloadDingTalk reconfigures or toggles the DingTalk push subsystem on hot-reload.
+func hotReloadDingTalk(cfg model.Config) {
+	mgr := dingtalk.GetManager()
+
+	if cfg.DingTalk.Enabled && cfg.DingTalk.AppKey != "" && cfg.DingTalk.AppSecret != "" {
+		if mgr != nil {
+			// Manager is running — try in-place reconfigure
+			result := mgr.Reconfigure(&cfg.DingTalk)
+			if result.NeedsRestart {
+				// Credentials or enabled changed — stop old + start new
+				mgr.Stop()
+				dingtalk.SetManager(nil)
+				newMgr := dingtalk.NewManager(&cfg.DingTalk)
+				if err := newMgr.Start(); err != nil {
+					slog.Warn("hot-reload: DingTalk restart failed", slog.String("err", err.Error()))
+					handler.AddHotReloadWarning(fmt.Sprintf("DingTalk: %s", err.Error()))
+				} else {
+					dingtalk.SetManager(newMgr)
+					slog.Info("hot-reload: DingTalk restarted (credentials changed)")
+				}
+			} else {
+				slog.Info("hot-reload: DingTalk reconfigured (in-place update)")
+			}
+		} else {
+			// DingTalk was disabled, now enabled — create new Manager
+			newMgr := dingtalk.NewManager(&cfg.DingTalk)
+			if err := newMgr.Start(); err != nil {
+				slog.Warn("hot-reload: DingTalk failed to start", slog.String("err", err.Error()))
+				handler.AddHotReloadWarning(fmt.Sprintf("DingTalk: %s", err.Error()))
+			} else {
+				dingtalk.SetManager(newMgr)
+				slog.Info("hot-reload: DingTalk enabled")
+			}
+		}
+	} else {
+		// DingTalk should be disabled
+		if mgr != nil {
+			mgr.Stop()
+			dingtalk.SetManager(nil)
+			slog.Info("hot-reload: DingTalk disabled")
+		}
+	}
 }
 
 // newTTSProvider creates a SpeechProvider from TTS config.

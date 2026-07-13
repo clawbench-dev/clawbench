@@ -131,6 +131,53 @@ func TestManager_HasDisconnectedClients(t *testing.T) {
 	}
 }
 
+func TestManager_HasConnectedClients(t *testing.T) {
+	m := NewManagerForTest()
+
+	// No subscriptions → false
+	if m.HasConnectedClients() {
+		t.Error("expected false with no subscriptions")
+	}
+
+	// Disconnected subscription → false
+	var writeMu sync.Mutex
+	m.Subscribe(nil, &writeMu, "disc-client", "")
+	m.DisconnectClient("disc-client")
+	if m.HasConnectedClients() {
+		t.Error("expected false with only disconnected subscription")
+	}
+
+	// Add a connected client via real WS
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		var wmu sync.Mutex
+		m.Subscribe(conn, &wmu, "conn-client", "")
+		time.Sleep(500 * time.Millisecond)
+		_ = conn.Close(websocket.StatusNormalClosure, "done")
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	wsURL := "ws" + server.URL[4:]
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	time.Sleep(150 * time.Millisecond)
+
+	// At least one connected client → true
+	if !m.HasConnectedClients() {
+		t.Error("expected true when at least one client is connected")
+	}
+}
+
 func TestManager_BroadcastEvent_NoSubscription(_ *testing.T) {
 	mgr := newTestManager()
 	// Should not panic

@@ -375,8 +375,8 @@ func TestServeConfigPatch_RAGMaskedKey(t *testing.T) {
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "apply_failed")
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "***")
 }
 
 // --- ServeConfig PATCH: tts.tts_model ---
@@ -416,4 +416,65 @@ func TestServeConfigPatch_LocalhostAuthExemptFalse(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.False(t, model.ConfigInstance.LocalhostAuthExempt)
 	assert.False(t, model.LocalhostAuthExempt)
+}
+
+// --- hotReloadWarnings ---
+
+func TestAddHotReloadWarning_AndApply(t *testing.T) {
+	// Clear any existing warnings
+	_ = applyHotReloadWarnings()
+
+	AddHotReloadWarning("test warning 1")
+	AddHotReloadWarning("test warning 2")
+
+	warnings := applyHotReloadWarnings()
+	assert.Equal(t, []string{"test warning 1", "test warning 2"}, warnings)
+
+	// Second call should return empty (cleared)
+	warnings2 := applyHotReloadWarnings()
+	assert.Nil(t, warnings2)
+}
+
+func TestApplyHotReloadWarnings_Empty(t *testing.T) {
+	// Clear any existing warnings
+	_ = applyHotReloadWarnings()
+
+	warnings := applyHotReloadWarnings()
+	assert.Nil(t, warnings)
+}
+
+// --- DingTalk config patch ---
+
+func TestServeConfigPatch_DingTalkConfig(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	model.ConfigInstance = cfg
+
+	body := `{"dingtalk":{"enabled":true,"app_key":"test-key","app_secret":"test-secret","agent_id":123,"users":["user1"]}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, model.ConfigInstance.DingTalk.Enabled)
+	assert.Equal(t, "test-key", model.ConfigInstance.DingTalk.AppKey)
+}
+
+func TestServeConfigPatch_DingTalkMaskedSecret(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	cfg := model.Config{}
+	model.ConfigInstance = cfg
+
+	body := `{"dingtalk":{"app_secret":"***masked***"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
