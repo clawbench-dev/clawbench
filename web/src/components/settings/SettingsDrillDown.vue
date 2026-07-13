@@ -513,10 +513,6 @@ async function handleSave() {
       }
 
       hasFailedSave.value = false
-      // Go back only if no warnings to show
-      if (result.warnings.length === 0) {
-        emit('back')
-      }
     } catch (err: unknown) {
       saving.value = false
       serverError.value = (err instanceof Error ? err.message : '') || t('settings.saveFailed')
@@ -532,7 +528,6 @@ async function handleSave() {
     toast.show(t('settings.drillDown.saved'), { icon: '✓', type: 'success', duration: 3000 })
     sideEffects.afterSave(changedKeys)
     hasFailedSave.value = false
-    emit('back')
   }
 }
 
