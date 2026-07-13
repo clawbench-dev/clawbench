@@ -43,12 +43,18 @@ func (m *Manager) onChatBotMessage(ctx context.Context, data *chatbot.BotCallbac
 		return []byte(""), nil
 	}
 
-	// Auto-subscribe: save senderId + conversationId
+	// Auto-subscribe: use SenderStaffId (real userId) not SenderId (encrypted LWCP format)
+	// The robot single-chat API requires real userId for userIds parameter.
+	staffID := data.SenderStaffId
+	if staffID == "" {
+		slog.Warn("dingtalk: senderStaffId is empty, falling back to senderId", "sender_id", data.SenderId)
+		staffID = data.SenderId
+	}
 	if db != nil {
-		if err := db.UpsertSubscriber(data.SenderId, data.ConversationId, data.SenderNick, "stream"); err != nil {
-			slog.Warn("dingtalk: auto-subscribe failed", "error", err, "sender_id", data.SenderId)
+		if err := db.UpsertSubscriber(staffID, data.ConversationId, data.SenderNick, "stream"); err != nil {
+			slog.Warn("dingtalk: auto-subscribe failed", "error", err, "staff_id", staffID)
 		} else {
-			slog.Info("dingtalk: auto-subscribed user", "user_id", data.SenderId, "nick", data.SenderNick)
+			slog.Info("dingtalk: auto-subscribed user", "user_id", staffID, "nick", data.SenderNick)
 		}
 	}
 

@@ -13,40 +13,45 @@ import (
 )
 
 const (
-	// dingtalkSendMsgURL is the DingTalk API for sending single-chat messages
-	// via enterprise internal application robot.
-	// POST /topapi/message/corpconversation/asyncsend_v2
-	dingtalkSendMsgURL = "https://oapi.dingtalk.com/topapi/message/corpconversation/asyncsend_v2"
+	// dingtalkRobotSendURL is the DingTalk API for sending robot single-chat messages.
+	// POST /v1.0/robot/oToMessages/batchSend
+	// Uses msgKey + msgParam (JSON string) format, not the work notification "msg" format.
+	dingtalkRobotSendURL = "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend"
 
-	// msgKeyMarkdown is the message key for Markdown single-chat messages.
+	// msgKeyMarkdown is the message key for Markdown messages.
 	msgKeyMarkdown = "sampleMarkdown"
 )
 
-// sendResult is the DingTalk send message API response.
-type sendResult struct {
-	ErrCode int    `json:"errcode"`
-	ErrMsg  string `json:"errmsg"`
-	TaskID  int64  `json:"task_id,omitempty"`
+// robotSendResult is the DingTalk robot send API response.
+type robotSendResult struct {
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	RequestID string `json:"requestid,omitempty"`
 }
 
-// SendMarkdownMessage sends a Markdown message to a DingTalk user via single-chat.
-// It uses the corpconversation asyncsend_v2 API.
+// SendMarkdownMessage sends a Markdown message to a DingTalk user via robot single-chat.
+// It uses the /v1.0/robot/oToMessages/batchSend API.
+// userID must be a real staffId, NOT the encrypted $:LWCP_v1:$ format.
 func (m *Manager) SendMarkdownMessage(ctx context.Context, userID, title, markdown string) error {
 	token, err := m.getAccessToken(ctx)
 	if err != nil {
 		return fmt.Errorf("dingtalk: get token: %w", err)
 	}
 
-	// Build the request body for asyncsend_v2
-	// agent_id is the numeric application agent ID from DingTalk developer console.
+	// Build the request body for robot single-chat API.
+	// msgParam must be a JSON string (not a nested object).
+	msgParam, err := json.Marshal(map[string]string{
+		"title": title,
+		"text":  markdown,
+	})
+	if err != nil {
+		return fmt.Errorf("dingtalk: marshal msg_param: %w", err)
+	}
 	reqBody := map[string]any{
-		"agent_id":    m.cfg.AgentID,
-		"userid_list": userID,
-		"msg_key":     msgKeyMarkdown,
-		"msg_param": map[string]any{
-			"title": title,
-			"text":  markdown,
-		},
+		"robotCode": m.cfg.AppKey,
+		"userIds":   []string{userID},
+		"msgKey":    msgKeyMarkdown,
+		"msgParam":  string(msgParam),
 	}
 
 	bodyJSON, err := json.Marshal(reqBody)
@@ -54,12 +59,12 @@ func (m *Manager) SendMarkdownMessage(ctx context.Context, userID, title, markdo
 		return fmt.Errorf("dingtalk: marshal request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s?access_token=%s", dingtalkSendMsgURL, token)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyJSON))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, dingtalkRobotSendURL, bytes.NewReader(bodyJSON))
 	if err != nil {
 		return fmt.Errorf("dingtalk: send request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-acs-dingtalk-access-token", token)
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 	resp, err := httpClient.Do(req)
@@ -79,19 +84,19 @@ func (m *Manager) SendMarkdownMessage(ctx context.Context, userID, title, markdo
 		return fmt.Errorf("dingtalk: token expired (401), invalidated for retry")
 	}
 
-	var result sendResult
+	var result robotSendResult
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return fmt.Errorf("dingtalk: send parse: %w", err)
 	}
 
-	if result.ErrCode != 0 {
+	if result.Code != "" && result.Code != "0" {
 		// Token invalid — invalidate for retry
-		if result.ErrCode == 40014 || result.ErrCode == 42001 {
+		if result.Code == "InvalidAuthentication" {
 			InvalidateToken()
 		}
-		return fmt.Errorf("dingtalk: send error: %s (code %d)", result.ErrMsg, result.ErrCode)
+		return fmt.Errorf("dingtalk: send error: %s (code %s)", result.Message, result.Code)
 	}
 
-	slog.Debug("dingtalk: message sent", "user_id", userID, "task_id", result.TaskID)
+	slog.Debug("dingtalk: message sent", "user_id", userID)
 	return nil
 }
