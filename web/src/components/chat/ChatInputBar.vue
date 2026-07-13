@@ -1210,6 +1210,7 @@ defineExpose({
   padding: 0 8px;
   padding-right: 24px;
   flex-shrink: 0;
+  max-width: 200px;
   position: relative;
   font-size: 12px;
   text-decoration: none;
@@ -1228,6 +1229,7 @@ defineExpose({
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 
 .attachment-filesize {

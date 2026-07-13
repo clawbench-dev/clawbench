@@ -39,24 +39,6 @@ function migrateLegacyKeys() {
 // Run migration on module load
 migrateLegacyKeys()
 
-/** Deep-merge source into target (mutates target). Only overwrites leaf values. */
-function deepAssign(target: Record<string, unknown>, source: Record<string, unknown>) {
-  for (const key of Object.keys(source)) {
-    if (
-      source[key] !== null &&
-      typeof source[key] === 'object' &&
-      !Array.isArray(source[key]) &&
-      target[key] !== null &&
-      typeof target[key] === 'object' &&
-      !Array.isArray(target[key])
-    ) {
-      deepAssign(target[key] as Record<string, unknown>, source[key] as Record<string, unknown>)
-    } else {
-      target[key] = source[key]
-    }
-  }
-}
-
 /**
  * Mapping from settings key → legacy localStorage key + write format.
  * Each entry tells setLocalConfig() how to also write to the key that
@@ -429,15 +411,16 @@ export function useSettingsConfig() {
     syncNativeSettings()
   }
 
-  async function patchConfig(changes: Record<string, unknown>): Promise<{ needsRestart: boolean; changedColdFields: string[] }> {
-    const result = await apiPatch<{ needs_restart?: boolean; changed_cold_fields?: string[] }>('/api/config', changes)
-    // Deep-merge patched values into local cache after successful response.
-    // Using Object.assign would overwrite nested objects (e.g. {chat: {page_size: 50}}
-    // would lose the existing initial_messages), so we deep-merge instead.
-    deepAssign(serverConfig.value, changes)
+  async function patchConfig(changes: Record<string, unknown>): Promise<{ needsRestart: boolean; changedColdFields: string[]; warnings: string[] }> {
+    const result = await apiPatch<{ needs_restart?: boolean; changed_cold_fields?: string[]; warnings?: string[] }>('/api/config', changes)
+    // Reload config from server to get accurate values (e.g. password fields
+    // are masked server-side and must be re-fetched rather than using the
+    // plaintext value the user just submitted).
+    await loadConfig()
     return {
       needsRestart: result.needs_restart ?? false,
       changedColdFields: result.changed_cold_fields ?? [],
+      warnings: result.warnings ?? [],
     }
   }
 
@@ -464,7 +447,7 @@ export function useSettingsConfig() {
   }
 
   /** Write a server config value by dot-path and patch the server */
-  async function setServerValue(dotPath: string, value: unknown): Promise<{ needsRestart: boolean; changedColdFields: string[] }> {
+  async function setServerValue(dotPath: string, value: unknown): Promise<{ needsRestart: boolean; changedColdFields: string[]; warnings: string[] }> {
     const parts = dotPath.split('.')
     const changes: Record<string, unknown> = {}
     // Build nested object for patch (e.g. "server.port" → { server: { port: val } })

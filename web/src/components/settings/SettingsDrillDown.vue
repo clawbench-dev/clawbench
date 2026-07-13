@@ -97,6 +97,9 @@
     <!-- Server error -->
     <div v-if="serverError" class="drill-down__error">{{ serverError }}</div>
 
+    <!-- Hot-reload warnings (e.g. DingTalk connection failure) -->
+    <div v-if="hotReloadWarning" class="drill-down__warning">{{ hotReloadWarning }}</div>
+
     <!-- Required field empty indicator (visual, no text) -->
 
     <!-- Entry selector BottomSheet -->
@@ -165,6 +168,7 @@ const localValues = reactive<Record<string, unknown>>({})
 const snapshot = ref<Record<string, unknown>>({})
 const saving = ref(false)
 const serverError = ref('')
+const hotReloadWarning = ref('')
 const hasFailedSave = ref(false)
 const activeKey = ref<string | null>(null)
 const entryPicker = useTabDrawer('settings', { autoRestore: false })
@@ -441,6 +445,7 @@ function deepSetByDotPath(obj: Record<string, unknown>, dotPath: string, value: 
 async function handleSave() {
   const snap = snapshot.value
   serverError.value = ''
+  hotReloadWarning.value = ''
 
   const allKeys = getAllFieldKeys()
   const serverChanges: Record<string, unknown> = {}
@@ -457,7 +462,8 @@ async function handleSave() {
 
     if (localVal !== snapVal) {
       changedKeys.push(key)
-      if (spec?.source === 'server') {
+      // enableKey is always a server-side field (e.g. dingtalk.enabled, terminal.enabled)
+      if (spec?.source === 'server' || key === config.value.enableKey) {
         deepSetByDotPath(serverChanges, key, localVal)
       } else {
         localChanges.push([key, localVal])
@@ -477,12 +483,26 @@ async function handleSave() {
       const result = await patchConfig(serverChanges)
       saving.value = false
 
-      // Update snapshot to committed state
+      // Update snapshot to committed state.
+      // For password fields, use the server value (masked) instead of the
+      // plaintext the user entered, so snapshot stays consistent with serverConfig.
       for (const key of changedKeys) {
-        snapshot.value[key] = localValues[key]
+        const spec = findFieldSpec(key)
+        if (spec?.type === 'password') {
+          const serverVal = getServerValueWithDefault(key)
+          snapshot.value[key] = serverVal
+          localValues[key] = serverVal
+        } else {
+          snapshot.value[key] = localValues[key]
+        }
       }
 
       toast.show(t('settings.drillDown.saved'), { icon: '✓', type: 'success', duration: 3000 })
+
+      // Show warnings from hot-reload inline (e.g. DingTalk connection failure)
+      if (result.warnings.length > 0) {
+        hotReloadWarning.value = result.warnings.join('\n')
+      }
 
       // Side effects
       sideEffects.afterSave(changedKeys)
@@ -493,7 +513,10 @@ async function handleSave() {
       }
 
       hasFailedSave.value = false
-      emit('back')
+      // Go back only if no warnings to show
+      if (result.warnings.length === 0) {
+        emit('back')
+      }
     } catch (err: unknown) {
       saving.value = false
       serverError.value = (err instanceof Error ? err.message : '') || t('settings.saveFailed')
@@ -788,6 +811,15 @@ defineExpose({ requestBack })
   font-size: 13px;
   color: #ef4444;
   background: var(--bg-primary);
+}
+
+/* Hot-reload warning (e.g. DingTalk connection failure) */
+.drill-down__warning {
+  padding: 8px 16px;
+  font-size: 13px;
+  color: #f59e0b;
+  background: var(--bg-primary);
+  white-space: pre-line;
 }
 </style>
 
