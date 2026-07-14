@@ -86,10 +86,84 @@ type ttsGenerateRequest struct {
 	MessageID int64  `json:"messageId"` // chat_history.id for TTS summary caching
 }
 
+// ttsSynthesizeFunc is the signature for TTS synthesis operations (streaming or non-streaming).
+type ttsSynthesizeFunc func(ctx context.Context, summary, absAudioPath, language string) error
+
+// ttsRunJob runs the summarize + synthesize pipeline in a background goroutine.
+// It unifies the streaming and non-streaming code paths.
+func ttsRunJob(
+	ctx context.Context,
+	job *service.TTSJob,
+	cacheKey string,
+	projectPath, relAudioPath, absAudioPath string,
+	req ttsGenerateRequest,
+	curSummarizer summarize.Summarizer,
+	errSummarizeFailed, errSynthesizeFailed string,
+	isStreaming bool,
+	synthesizeFunc ttsSynthesizeFunc,
+) {
+	go func() {
+		defer service.UnregisterTTSJob(cacheKey)
+		defer service.CloseTTSJobDone(cacheKey)
+		defer job.Cancel()
+
+		// Phase 1: Summarize
+		summary, ok := ttsSummarize(ctx, curSummarizer, cacheKey, req.Text, req.Language, req.MessageID, errSummarizeFailed, isStreaming)
+		if !ok {
+			return
+		}
+
+		// Phase 2: Synthesize
+		service.SendTTSEvent(cacheKey, service.TTSEvent{Type: "phase", Phase: "synthesizing", Streaming: isStreaming})
+
+		synthesizeCtx, synthesizeCancel := context.WithTimeout(ctx, ttsSynthesizeTimeout)
+		err := synthesizeFunc(synthesizeCtx, summary, absAudioPath, req.Language)
+		synthesizeCancel()
+
+		// Close AudioCh BEFORE sending result event (streaming only).
+		if job.AudioCh != nil {
+			close(job.AudioCh)
+		}
+
+		if err != nil {
+			logMsg := "tts synthesize failed"
+			if isStreaming {
+				logMsg = "tts stream synthesize failed"
+			}
+			slog.Error(logMsg, slog.String("error", err.Error()), slog.String("cache_key", cacheKey))
+			service.SendTTSEvent(cacheKey, service.TTSEvent{
+				Type: "result", SynthesizeFailed: true, SynthesizeError: errSynthesizeFailed, Summary: summary, Streaming: isStreaming,
+			})
+			return
+		}
+
+		logMsg := "tts generate completed"
+		if isStreaming {
+			logMsg = "tts stream generate completed"
+		}
+		slog.Info(logMsg, slog.String("cache_key", cacheKey), slog.String("path", relAudioPath))
+		service.EvictTTSCache(projectPath, model.TTSMaxCacheFiles)
+		service.SendTTSEvent(cacheKey, service.TTSEvent{
+			Type: "result", AudioPath: relAudioPath, Summary: summary, Streaming: isStreaming,
+		})
+	}()
+}
+
+// audioExtForProvider returns the audio file extension for the given provider.
+// Piper, Kokoro, and MOSS-Nano produce WAV; all others produce MP3.
+func audioExtForProvider(p speech.SpeechProvider) string {
+	switch p.(type) {
+	case *speech.PiperProvider, *speech.KokoroProvider, *speech.MossNanoProvider:
+		return ".wav"
+	default:
+		return ".mp3"
+	}
+}
+
 // TTSGenerate handles POST /api/tts/generate.
 // It validates input, checks cache, and either returns cached audio immediately
 // or starts an async TTS job and returns a jobId for SSE streaming.
-func TTSGenerate(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,gocognit // multi-mode TTS generation
+func TTSGenerate(w http.ResponseWriter, r *http.Request) {
 	projectPath, ok := requireProject(w, r)
 	if !ok {
 		return
@@ -147,16 +221,7 @@ func TTSGenerate(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,goco
 	curSummarizer := GetSummarizer()
 
 	// Determine audio file extension based on TTS engine
-	audioExt := ".mp3"
-	if _, ok := curProvider.(*speech.PiperProvider); ok { //nolint:govet // shadowed ok is standard type-assertion idiom
-		audioExt = ".wav"
-	}
-	if _, ok := curProvider.(*speech.KokoroProvider); ok { //nolint:govet // shadowed ok is standard type-assertion idiom
-		audioExt = ".wav"
-	}
-	if _, ok := curProvider.(*speech.MossNanoProvider); ok { //nolint:govet // shadowed ok is standard type-assertion idiom
-		audioExt = ".wav"
-	}
+	audioExt := audioExtForProvider(curProvider)
 	// Project-relative path (not server DataDir)
 	relAudioPath := filepath.Join(".clawbench", "generated", "tts", cacheKey+audioExt)
 
@@ -198,122 +263,23 @@ func TTSGenerate(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,goco
 	if isStreaming {
 		ctx, cancel := context.WithCancel(context.Background())
 		job := service.RegisterStreamingTTSJob(cacheKey, cancel)
-
-		// Start background goroutine to perform summarize + stream synthesize
-		go func() {
-			defer service.UnregisterTTSJob(cacheKey)
-			defer service.CloseTTSJobDone(cacheKey)
-			defer cancel()
-
-			// Phase 1: Summarize
-			summary, ok := ttsSummarize(ctx, curSummarizer, cacheKey, req.Text, req.Language, req.MessageID, errSummarizeFailed, true)
-			if !ok {
-				return
-			}
-
-			// Phase 2: Stream synthesize — audio chunks go to job.AudioCh while file is written
-			service.SendTTSEvent(cacheKey, service.TTSEvent{Type: "phase", Phase: "synthesizing", Streaming: true})
-
-			synthesizeCtx, synthesizeCancel := context.WithTimeout(ctx, ttsSynthesizeTimeout)
-			err := streamingProvider.SynthesizeStream(synthesizeCtx, summary, absAudioPath, req.Language, job.AudioCh)
-			synthesizeCancel()
-
-			// CRITICAL: Close AudioCh BEFORE sending result event.
-			// This signals the WS handler that no more audio chunks are coming.
-			close(job.AudioCh)
-
-			if err != nil {
-				slog.Error(
-					"tts stream synthesize failed",
-					slog.String("error", err.Error()),
-					slog.String("cache_key", cacheKey),
-				)
-				service.SendTTSEvent(cacheKey, service.TTSEvent{
-					Type:             "result",
-					SynthesizeFailed: true,
-					SynthesizeError:  errSynthesizeFailed,
-					Summary:          summary,
-					Streaming:        true,
-				})
-				return
-			}
-
-			slog.Info(
-				"tts stream generate completed",
-				slog.String("cache_key", cacheKey),
-				slog.String("path", relAudioPath),
-			)
-
-			service.EvictTTSCache(projectPath, model.TTSMaxCacheFiles)
-
-			service.SendTTSEvent(cacheKey, service.TTSEvent{
-				Type:      "result",
-				AudioPath: relAudioPath,
-				Summary:   summary,
-				Streaming: true,
-			})
-		}()
-
-		writeJSON(w, http.StatusOK, map[string]any{
-			"jobId":     cacheKey,
-			"streaming": true,
-		})
+		ttsRunJob(ctx, job, cacheKey, projectPath, relAudioPath, absAudioPath,
+			req, curSummarizer, errSummarizeFailed, errSynthesizeFailed, true,
+			func(sCtx context.Context, summary, outPath, lang string) error {
+				return streamingProvider.SynthesizeStream(sCtx, summary, outPath, lang, job.AudioCh)
+			},
+		)
+		writeJSON(w, http.StatusOK, map[string]any{"jobId": cacheKey, "streaming": true})
 	} else {
-		// Non-streaming path (Piper, Kokoro, MOSS-Nano)
 		ctx, cancel := context.WithCancel(context.Background())
-		service.RegisterTTSJob(cacheKey, cancel)
-
-		go func() {
-			defer service.UnregisterTTSJob(cacheKey)
-			defer service.CloseTTSJobDone(cacheKey)
-			defer cancel()
-
-			// Phase 1: Summarize
-			summary, ok := ttsSummarize(ctx, curSummarizer, cacheKey, req.Text, req.Language, req.MessageID, errSummarizeFailed, false)
-			if !ok {
-				return
-			}
-
-			// Phase 2: Synthesize
-			service.SendTTSEvent(cacheKey, service.TTSEvent{Type: "phase", Phase: "synthesizing"})
-
-			synthesizeCtx, synthesizeCancel := context.WithTimeout(ctx, ttsSynthesizeTimeout)
-			err := curProvider.Synthesize(synthesizeCtx, summary, absAudioPath, req.Language)
-			synthesizeCancel()
-			if err != nil {
-				slog.Error(
-					"tts synthesize failed",
-					slog.String("error", err.Error()),
-					slog.String("cache_key", cacheKey),
-				)
-				service.SendTTSEvent(cacheKey, service.TTSEvent{
-					Type:             "result",
-					SynthesizeFailed: true,
-					SynthesizeError:  errSynthesizeFailed,
-					Summary:          summary,
-				})
-				return
-			}
-
-			slog.Info(
-				"tts generate completed",
-				slog.String("cache_key", cacheKey),
-				slog.String("path", relAudioPath),
-			)
-
-			service.EvictTTSCache(projectPath, model.TTSMaxCacheFiles)
-
-			service.SendTTSEvent(cacheKey, service.TTSEvent{
-				Type:      "result",
-				AudioPath: relAudioPath,
-				Summary:   summary,
-			})
-		}()
-
-		writeJSON(w, http.StatusOK, map[string]any{
-			"jobId":     cacheKey,
-			"streaming": false,
-		})
+		job := service.RegisterTTSJob(cacheKey, cancel)
+		ttsRunJob(ctx, job, cacheKey, projectPath, relAudioPath, absAudioPath,
+			req, curSummarizer, errSummarizeFailed, errSynthesizeFailed, false,
+			func(sCtx context.Context, summary, outPath, lang string) error {
+				return curProvider.Synthesize(sCtx, summary, outPath, lang)
+			},
+		)
+		writeJSON(w, http.StatusOK, map[string]any{"jobId": cacheKey, "streaming": false})
 	}
 }
 
