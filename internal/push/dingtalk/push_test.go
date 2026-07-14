@@ -3,10 +3,29 @@ package dingtalk
 import (
 	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"clawbench/internal/model"
 )
+
+func TestShortSessionID(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"standard UUID", "a1b2c3d4-e5f6-7890-abcd-ef1234567890", "a1b2c3d4"},
+		{"short ID", "abcdef12", "abcdef12"},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shortSessionID(tt.input)
+			if got != tt.expected {
+				t.Errorf("shortSessionID(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
 
 func TestEscapeMarkdown(t *testing.T) {
 	tests := []struct {
@@ -33,38 +52,34 @@ func TestEscapeMarkdown(t *testing.T) {
 	}
 }
 
-func TestTruncatePreview(t *testing.T) {
+func TestTruncateForDingTalk(t *testing.T) {
 	t.Run("short", func(t *testing.T) {
-		got := truncatePreview("hello")
+		got := truncateForDingTalk("hello")
 		if got != "hello" {
 			t.Errorf("expected 'hello', got %q", got)
 		}
 	})
-
 	t.Run("empty", func(t *testing.T) {
-		got := truncatePreview("")
+		got := truncateForDingTalk("")
 		if got != "" {
 			t.Errorf("expected empty, got %q", got)
 		}
 	})
-
-	t.Run("exact limit", func(t *testing.T) {
-		input := strings.Repeat("x", 200)
-		got := truncatePreview(input)
-		if len(got) != 200 {
-			t.Errorf("expected 200 chars, got %d", len(got))
+	t.Run("under limit", func(t *testing.T) {
+		input := strings.Repeat("x", 1000)
+		got := truncateForDingTalk(input)
+		if got != input {
+			t.Error("expected no truncation for content under limit")
 		}
 	})
-
 	t.Run("over limit", func(t *testing.T) {
-		input := strings.Repeat("x", 250)
-		got := truncatePreview(input)
-		// 200 'x' + "…" (U+2026, 3 bytes in UTF-8) = 203 bytes, 201 runes
-		if utf8.RuneCountInString(got) != 201 {
-			t.Errorf("expected 201 runes (200 + …), got %d", utf8.RuneCountInString(got))
+		input := strings.Repeat("x", 20000)
+		got := truncateForDingTalk(input)
+		if len(got) > 18000+100 {
+			t.Errorf("expected truncation, got %d bytes", len(got))
 		}
-		if !strings.HasSuffix(got, "…") {
-			t.Error("expected … suffix for truncated preview")
+		if !strings.HasSuffix(got, "...(内容过长已截断)") {
+			t.Error("expected truncation suffix")
 		}
 	})
 }
