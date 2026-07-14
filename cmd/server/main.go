@@ -90,6 +90,53 @@ func (dingtalkDBAdapter) DeleteSubscriber(userID string) error {
 	return service.DeleteDingTalkSubscriber(userID)
 }
 
+// dingtalkSessionMessenger bridges the dingtalk package's SessionMessenger interface
+// to service package functions, avoiding import cycles (service → dingtalk → service).
+type dingtalkSessionMessenger struct{}
+
+func (dingtalkSessionMessenger) FindSessionsByPrefix(prefix string, runningOnly bool) ([]dingtalk.SessionInfo, error) {
+	var sessions []service.DingTalkSessionInfo
+	var err error
+	if runningOnly {
+		sessions, err = service.FindRunningSessionsByPrefix(prefix)
+	} else {
+		sessions, err = service.FindSessionsByPrefix(prefix)
+	}
+	if err != nil {
+		return nil, err
+	}
+	result := make([]dingtalk.SessionInfo, len(sessions))
+	for i, s := range sessions {
+		result[i] = dingtalk.SessionInfo{
+			ID:          s.ID,
+			Title:       s.Title,
+			ProjectPath: s.ProjectPath,
+			Backend:     s.Backend,
+			AgentID:     s.AgentID,
+			Model:       s.Model,
+		}
+	}
+	return result, nil
+}
+
+func (dingtalkSessionMessenger) IsSessionRunning(sessionID string) bool {
+	return service.IsSessionRunning(sessionID)
+}
+
+// EnqueueMessage appends a message to the session's in-memory queue.
+// Always succeeds — the underlying service.EnqueueMessage is an in-memory append.
+func (dingtalkSessionMessenger) EnqueueMessage(sessionID, message string) error {
+	service.EnqueueMessage(sessionID, model.QueuedMessage{
+		Text:      message,
+		CreatedAt: time.Now().Format(time.RFC3339),
+	})
+	return nil
+}
+
+func (dingtalkSessionMessenger) SendMessageToSession(sessionID, message string) error {
+	return service.SendMessageToSessionFromDingTalk(sessionID, message)
+}
+
 // multiHandler sends log records to multiple handlers
 type multiHandler struct {
 	handlers []slog.Handler
@@ -821,8 +868,9 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Initialize DingTalk push notifications (enterprise internal bot via Stream API).
 	// DingTalk is disabled by default; requires app_key + app_secret configuration.
-	// DB adapter is always registered (needed for hot-reload enable/disable).
+	// DB adapter and session messenger are always registered (needed for hot-reload enable/disable).
 	dingtalk.RegisterDBAdapter(&dingtalkDBAdapter{})
+	dingtalk.RegisterSessionMessenger(&dingtalkSessionMessenger{})
 	if cfg.DingTalk.Enabled && cfg.DingTalk.AppKey != "" && cfg.DingTalk.AppSecret != "" {
 		dingtalkMgr := dingtalk.NewManager(&cfg.DingTalk)
 		if err := dingtalkMgr.Start(); err != nil {

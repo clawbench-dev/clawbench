@@ -91,6 +91,18 @@ func (m *Manager) handleSessionCommand(ctx context.Context, data *chatbot.BotCal
 			_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("消息入队失败: "+err.Error()))
 			return
 		}
+		// Verify the session still has a consumer. If it ended between IsSessionRunning
+		// and EnqueueMessage, the queued message would be orphaned — fallback to resume path.
+		if !sessionMessenger.IsSessionRunning(sessionID) {
+			slog.Info("dingtalk: session ended after enqueue, falling back to send", "session_id", sessionID)
+			if err := sessionMessenger.SendMessageToSession(sessionID, msg); err != nil {
+				slog.Warn("dingtalk: fallback send failed", "error", err, "session_id", sessionID)
+				_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("发送消息失败: "+err.Error()))
+				return
+			}
+			_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("消息已发送到会话，AI 正在处理"))
+			return
+		}
 		slog.Info("dingtalk: message enqueued to running session", "session_id", sessionID, "msg", msg)
 		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("消息已发送到运行中的会话"))
 		return

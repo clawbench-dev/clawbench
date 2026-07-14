@@ -423,3 +423,118 @@ func TestOnChatBotMessage_SessionCommand_AutoSubscribe(t *testing.T) {
 		t.Errorf("expected source 'stream', got %q", upsertedSource)
 	}
 }
+
+func TestOnChatBotMessage_SessionCommand_EndedSession(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDBWithCallback{
+		upsertFn: func(_, _, _, _ string) error { return nil },
+	}
+
+	origMessenger := sessionMessenger
+	defer func() { sessionMessenger = origMessenger }()
+
+	var sentID, sentMsg string
+	sessionMessenger = &mockSessionMessenger{
+		runningSessions: []SessionInfo{},
+		allSessions: []SessionInfo{
+			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Ended Session"},
+		},
+		SendMessageFn: func(sid, msg string) error {
+			sentID = sid
+			sentMsg = msg
+			return nil
+		},
+	}
+
+	replyReceived := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		replyReceived = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	mgr := &Manager{}
+	data := &chatbot.BotCallbackDataModel{
+		ConversationType: "1",
+		SenderStaffId:    "staff123",
+		SenderNick:       "TestUser",
+		ConversationId:   "conv1",
+		SessionWebhook:   server.URL,
+		Text:             chatbot.BotCallbackDataTextModel{Content: "@a1b2c3d4 继续修改"},
+	}
+
+	_, err := mgr.onChatBotMessage(context.Background(), data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !replyReceived {
+		t.Error("expected reply to be sent")
+	}
+	if sentID != "a1b2c3d4-1111-1111-1111-111111111111" {
+		t.Errorf("expected send to ended session, got %q", sentID)
+	}
+	if sentMsg != "继续修改" {
+		t.Errorf("expected message '继续修改', got %q", sentMsg)
+	}
+}
+
+func TestOnChatBotMessage_SessionCommand_EnqueueThenSessionEnds(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDBWithCallback{
+		upsertFn: func(_, _, _, _ string) error { return nil },
+	}
+
+	origMessenger := sessionMessenger
+	defer func() { sessionMessenger = origMessenger }()
+
+	var sentID, sentMsg string
+	sessionMessenger = &mockSessionMessenger{
+		runningSessions: []SessionInfo{
+			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Test Session"},
+		},
+		allSessions: []SessionInfo{
+			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Test Session"},
+		},
+		EnqueueMessageFn: func(sid, msg string) error {
+			// Simulate session ending right after enqueue
+			sessionMessenger.(*mockSessionMessenger).runningSessions = []SessionInfo{}
+			return nil
+		},
+		SendMessageFn: func(sid, msg string) error {
+			sentID = sid
+			sentMsg = msg
+			return nil
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	mgr := &Manager{}
+	data := &chatbot.BotCallbackDataModel{
+		ConversationType: "1",
+		SenderStaffId:    "staff123",
+		SenderNick:       "TestUser",
+		ConversationId:   "conv1",
+		SessionWebhook:   server.URL,
+		Text:             chatbot.BotCallbackDataTextModel{Content: "@a1b2c3d4 继续修改"},
+	}
+
+	_, err := mgr.onChatBotMessage(context.Background(), data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should have fallen back to SendMessageToSession
+	if sentID != "a1b2c3d4-1111-1111-1111-111111111111" {
+		t.Errorf("expected fallback send after session ended, got sentID=%q", sentID)
+	}
+	if sentMsg != "继续修改" {
+		t.Errorf("expected message '继续修改', got %q", sentMsg)
+	}
+}

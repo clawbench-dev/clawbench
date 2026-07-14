@@ -98,6 +98,7 @@ func scanDingTalkSessionInfos(rows *sql.Rows) ([]DingTalkSessionInfo, error) {
 	for rows.Next() {
 		var info DingTalkSessionInfo
 		if err := rows.Scan(&info.ID, &info.Title, &info.ProjectPath, &info.Backend, &info.AgentID, &info.Model); err != nil {
+			slog.Warn("scanDingTalkSessionInfos: skipping row", "error", err)
 			continue
 		}
 		results = append(results, info)
