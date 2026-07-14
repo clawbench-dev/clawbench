@@ -290,6 +290,12 @@ describe('annotateWorktreePaths', () => {
         expect(result.detectedWorktreePaths).toEqual([])
     })
 
+    it('skips <code> with chat-commit-hash-pending class', async () => {
+        await seedCache(PROJECT_ROOT, MOCK_WORKTREES)
+        const result = annotateWorktreePaths('<code class="chat-commit-hash-pending">.worktrees/feature-x</code>', { projectRoot: PROJECT_ROOT })
+        expect(result.detectedWorktreePaths).toEqual([])
+    })
+
     it('does NOT annotate when cache is empty (triggers background fetch)', () => {
         const result = annotateWorktreePaths('<p>.worktrees/feature-x</p>', { projectRoot: PROJECT_ROOT })
         expect(result.detectedWorktreePaths).toEqual([])
