@@ -582,7 +582,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         loading.value = false
         onMessage()
         if (isOpen.value) {
-          onScrollBottom(true)
+          onScrollBottom() // Respect user scroll position — don't force if user scrolled up
         }
         onStreamEnd?.('done')
         if (!isOpen.value) {
@@ -745,7 +745,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         })
         appLog.d(TAG, `[queue_queued] text="${queueText.slice(0,40)}" pushed to messages`)
         onRenderNeeded()
-        if (isOpen.value) onScrollBottom(true)
+        if (isOpen.value) onScrollBottom() // Respect user scroll position
       } else {
         appLog.d(TAG, `[queue_queued] text="${queueText.slice(0,40)}" dedup (already pending)`)
       }
@@ -784,7 +784,7 @@ export function useChatStream(options: UseChatStreamOptions) {
 
         if (isOpen.value) {
           onRenderNeeded()
-          onScrollBottom(true)
+          onScrollBottom() // Respect user scroll position
         }
       } else {
         // Event for a background session — skip. Pending messages in

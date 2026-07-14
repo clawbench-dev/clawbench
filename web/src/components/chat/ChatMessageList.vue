@@ -193,16 +193,7 @@ watch(() => props.hasMore, (hasMore, prevHasMore) => {
   }
 })
 
-// Reset isAtBottom so auto-scroll re-engages for the new session
-watch(() => props.messages, () => {
-  isAtBottom.value = true
-  scrolledUp.value = false
-  scrolledDown.value = false
-  lastScrollTop = 0
-  programmaticScrolling = false
-  clearTimeout(scrollUpTimer)
-  clearTimeout(scrollDownTimer)
-})
+// Note: isAtBottom reset on session switch is handled by the currentSessionId watcher below.
 
 // Clear user message index on session switch — handled by useUserMsgIndex
 
@@ -571,8 +562,15 @@ const nearestUserMsgId = computed(() => {
   return props.messages[nearestUserIdx].id
 })
 
-// Watch session switch to reset user msg index
+// Watch session switch to reset scroll state and user msg index
 watch(() => props.currentSessionId, () => {
+  isAtBottom.value = true
+  scrolledUp.value = false
+  scrolledDown.value = false
+  lastScrollTop = 0
+  programmaticScrolling = false
+  clearTimeout(scrollUpTimer)
+  clearTimeout(scrollDownTimer)
   clearTimeout(scrollTickTimer)
   scrollTickTimer = null
   scrollTick.value = 0

@@ -602,7 +602,7 @@ describe('useChatStream', () => {
       expect(lastMsg.content).toBe('')
     })
 
-    it('should call onRenderNeeded and onScrollBottom(true)', () => {
+    it('should call onRenderNeeded and onScrollBottom()', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
@@ -613,7 +613,7 @@ describe('useChatStream', () => {
       es.simulate('queue_drain', { queue: [] })
 
       expect(options.onRenderNeeded).toHaveBeenCalled()
-      expect(options.onScrollBottom).toHaveBeenCalledWith(true)
+      expect(options.onScrollBottom).toHaveBeenCalledWith()
     })
 
     it('should replace pending messages in messages.value on queue_drain', () => {
@@ -1591,7 +1591,7 @@ describe('useChatStream', () => {
 
       // Wait for onLoadHistory().finally() to resolve
       await vi.waitFor(() => {
-        expect(options.onScrollBottom).toHaveBeenCalledWith(true)
+        expect(options.onScrollBottom).toHaveBeenCalledWith()
       })
     })
 
@@ -1644,7 +1644,7 @@ describe('useChatStream', () => {
 
       es.simulate('queue_drain', { queue: [] })
 
-      expect(options.onScrollBottom).toHaveBeenCalledWith(true)
+      expect(options.onScrollBottom).toHaveBeenCalledWith()
     })
 
     it('should still call onToast and onNotification on done when isOpen=false', async () => {

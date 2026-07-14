@@ -7,6 +7,26 @@ import (
 	"clawbench/internal/model"
 )
 
+func TestShortSessionID(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"standard UUID", "a1b2c3d4-e5f6-7890-abcd-ef1234567890", "a1b2c3d4"},
+		{"short ID", "abcdef12", "abcdef12"},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shortSessionID(tt.input)
+			if got != tt.expected {
+				t.Errorf("shortSessionID(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestEscapeMarkdown(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -32,37 +52,34 @@ func TestEscapeMarkdown(t *testing.T) {
 	}
 }
 
-func TestTruncatePreview(t *testing.T) {
+func TestTruncateForDingTalk(t *testing.T) {
 	t.Run("short", func(t *testing.T) {
-		got := truncatePreview("hello")
+		got := truncateForDingTalk("hello")
 		if got != "hello" {
 			t.Errorf("expected 'hello', got %q", got)
 		}
 	})
-
 	t.Run("empty", func(t *testing.T) {
-		got := truncatePreview("")
+		got := truncateForDingTalk("")
 		if got != "" {
 			t.Errorf("expected empty, got %q", got)
 		}
 	})
-
-	t.Run("exact limit", func(t *testing.T) {
-		input := strings.Repeat("x", 200)
-		got := truncatePreview(input)
-		if len(got) != 200 {
-			t.Errorf("expected 200 chars, got %d", len(got))
+	t.Run("under limit", func(t *testing.T) {
+		input := strings.Repeat("x", 1000)
+		got := truncateForDingTalk(input)
+		if got != input {
+			t.Error("expected no truncation for content under limit")
 		}
 	})
-
 	t.Run("over limit", func(t *testing.T) {
-		input := strings.Repeat("x", 250)
-		got := truncatePreview(input)
-		if len(got) != 203 { // 200 + "..."
-			t.Errorf("expected 203 chars (200 + ...), got %d", len(got))
+		input := strings.Repeat("x", 20000)
+		got := truncateForDingTalk(input)
+		if len(got) > 18000+100 {
+			t.Errorf("expected truncation, got %d bytes", len(got))
 		}
-		if !strings.HasSuffix(got, "...") {
-			t.Error("expected ... suffix for truncated preview")
+		if !strings.HasSuffix(got, "...(内容过长已截断)") {
+			t.Error("expected truncation suffix")
 		}
 	})
 }
@@ -74,7 +91,7 @@ func TestIsStarted_NoManager(t *testing.T) {
 }
 
 func TestPushSessionEvent_NotStarted(t *testing.T) {
-	if PushSessionEvent("test-session", "completed", "Test", "Preview", "/path") {
+	if PushSessionEvent("test-session", "completed", "Test", "Preview", "/path", "Bash") {
 		t.Error("expected false when not started")
 	}
 }
@@ -103,7 +120,7 @@ func TestPushSuppressed_WhenClientOnline(t *testing.T) {
 	defer SetManager(nil)
 
 	// This should be suppressed (no send attempted)
-	if PushSessionEvent("s1", "completed", "Test", "Preview", "/path") {
+	if PushSessionEvent("s1", "completed", "Test", "Preview", "/path", "Bash") {
 		t.Error("expected false when client is online")
 	}
 	if PushTaskEvent("t1", "completed", "Test", "Preview", "/path") {
@@ -128,7 +145,7 @@ func TestPushNotSuppressed_WhenNoClientOnline(t *testing.T) {
 	defer SetManager(nil)
 
 	// This will attempt to send (and fail due to no real token), but won't be suppressed
-	PushSessionEvent("s1", "completed", "Test", "Preview", "/path")
+	PushSessionEvent("s1", "completed", "Test", "Preview", "/path", "Bash")
 }
 
 // mockClientChecker implements ConnectedClientChecker for testing.
@@ -158,7 +175,7 @@ func TestPushSessionEvent_UnknownStatus(t *testing.T) {
 	SetManager(mgr)
 	defer SetManager(nil)
 
-	if PushSessionEvent("s1", "unknown_status", "Title", "Preview", "/path") {
+	if PushSessionEvent("s1", "unknown_status", "Title", "Preview", "/path", "Bash") {
 		t.Error("expected false for unknown status")
 	}
 }
@@ -192,7 +209,7 @@ func TestPushSessionEvent_Cancelled(t *testing.T) {
 	SetManager(mgr)
 	defer SetManager(nil)
 
-	PushSessionEvent("s1", "cancelled", "Title", "Preview", "/path")
+	PushSessionEvent("s1", "cancelled", "Title", "Preview", "/path", "")
 }
 
 func TestPushSessionEvent_PermissionPending(t *testing.T) {
@@ -209,7 +226,7 @@ func TestPushSessionEvent_PermissionPending(t *testing.T) {
 	SetManager(mgr)
 	defer SetManager(nil)
 
-	PushSessionEvent("s1", "permission_pending", "Title", "Preview", "/path")
+	PushSessionEvent("s1", "permission_pending", "Title", "Preview", "/path", "Bash")
 }
 
 func TestPushTaskEvent_Failed(t *testing.T) {
@@ -244,6 +261,23 @@ func TestPushTaskEvent_Cancelled(t *testing.T) {
 	defer SetManager(nil)
 
 	PushTaskEvent("t1", "cancelled", "Task", "Preview", "/path")
+}
+
+func TestPushTaskEvent_Started(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{}
+
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+	RegisterClientChecker(&mockClientChecker{hasConnected: false})
+
+	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s"}}
+	mgr.started = true
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	PushTaskEvent("t1", "running", "Task", "", "/path")
 }
 
 func TestSendToAllSubscribers_NoSubscribers(t *testing.T) {

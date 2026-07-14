@@ -525,14 +525,18 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 		SessionID:   sessionID,
 		ProjectPath: projectPath,
 	}
-	// For completed tasks, include session title (task name) and response preview
-	if status == "completed" || status == "cancelled" {
+	// For completed/failed/cancelled tasks, include session title (task name) and response preview
+	if status == "completed" || status == "cancelled" || status == "failed" {
 		if taskName != "" {
 			data.SessionTitle = taskName
 		}
-		if status == "completed" && sessionID != "" {
+		if sessionID != "" {
 			data.ResponsePreview = getSessionResponsePreview(sessionID)
 		}
+	}
+	// For running tasks, include task name as session title
+	if status == "running" && taskName != "" {
+		data.SessionTitle = taskName
 	}
 	msg := ws.ServerMessage{
 		Type:  ws.MessageTypeEvent,

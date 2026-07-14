@@ -93,10 +93,10 @@ describe('TaskOverviewTab prompt preview annotation pipeline', () => {
   })
 
   describe('commit hash annotation', () => {
-    it('annotates commit hashes in prompt text', () => {
+    it('annotates commit hashes in prompt text with pending class', () => {
       const input = '<p>Fixed in abc123def456789012345678901234567890abc</p>'
       const result = renderAnnotatedPrompt(input)
-      expect(result.html).toContain('chat-commit-hash')
+      expect(result.html).toContain('chat-commit-hash-pending')
       expect(result.detectedSHAs.length).toBeGreaterThan(0)
     })
 
@@ -104,7 +104,7 @@ describe('TaskOverviewTab prompt preview annotation pipeline', () => {
       const input = '<p>See src/main.go and commit abc123def456789012345678901234567890abc</p>'
       const result = renderAnnotatedPrompt(input)
       expect(result.html).toContain('chat-file-open-btn')
-      expect(result.html).toContain('chat-commit-hash')
+      expect(result.html).toContain('chat-commit-hash-pending')
     })
   })
 
@@ -113,7 +113,7 @@ describe('TaskOverviewTab prompt preview annotation pipeline', () => {
       const input = '<p>Run the task every 5 minutes</p>'
       const result = renderAnnotatedPrompt(input)
       expect(result.html).not.toContain('chat-file-open-btn')
-      expect(result.html).not.toContain('chat-commit-hash')
+      expect(result.html).not.toContain('chat-commit-hash-pending')
     })
   })
 

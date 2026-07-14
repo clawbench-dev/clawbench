@@ -2,7 +2,9 @@ package dingtalk
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/chatbot"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/client"
@@ -27,6 +29,8 @@ func (m *Manager) startStream(ctx context.Context) error {
 
 // onChatBotMessage handles incoming messages from DingTalk users.
 // When a user sends a message to the bot, we auto-subscribe them.
+// If the message matches the "@{shortID} message" format, it is
+// forwarded to the corresponding session.
 func (m *Manager) onChatBotMessage(ctx context.Context, data *chatbot.BotCallbackDataModel) ([]byte, error) {
 	slog.Info("dingtalk: received message",
 		"sender_id", data.SenderId,
@@ -36,19 +40,18 @@ func (m *Manager) onChatBotMessage(ctx context.Context, data *chatbot.BotCallbac
 		"text", data.Text.Content,
 	)
 
-	// Only handle single-chat (1=单聊, 2=群聊)
 	if data.ConversationType != "1" {
 		slog.Debug("dingtalk: ignoring non-single-chat message", "type", data.ConversationType)
 		return []byte(""), nil
 	}
 
-	// Auto-subscribe: use SenderStaffId (real userId) not SenderId (encrypted LWCP format)
-	// The robot single-chat API requires real userId for userIds parameter.
 	staffID := data.SenderStaffId
 	if staffID == "" {
 		slog.Warn("dingtalk: senderStaffId is empty, falling back to senderId", "sender_id", data.SenderId)
 		staffID = data.SenderId
 	}
+
+	// Always auto-subscribe regardless of command outcomes
 	if db != nil {
 		if err := db.UpsertSubscriber(staffID, data.ConversationId, data.SenderNick, "stream"); err != nil {
 			slog.Warn("dingtalk: auto-subscribe failed", "error", err, "staff_id", staffID)
@@ -57,12 +60,134 @@ func (m *Manager) onChatBotMessage(ctx context.Context, data *chatbot.BotCallbac
 		}
 	}
 
-	// Reply to confirm subscription
-	replier := chatbot.NewChatbotReplier()
-	replyText := []byte("已订阅 ClawBench 通知。后续 AI 会话完成、定时任务完成、权限审批等事件将推送到此对话。")
-	if err := replier.SimpleReplyText(ctx, data.SessionWebhook, replyText); err != nil {
-		slog.Warn("dingtalk: reply failed", "error", err)
+	// Try to parse as session command: "@{8hex} message"
+	if shortID, msg, ok := parseSessionCommand(data.Text.Content); ok {
+		m.handleSessionCommand(ctx, data, shortID, msg)
+		return []byte(""), nil
 	}
 
+	// No @ prefix — list recent sessions for the user to pick from
+	m.handleSessionList(ctx, data)
 	return []byte(""), nil
+}
+
+// handleSessionCommand processes a "@{shortID} message" command from DingTalk.
+func (m *Manager) handleSessionCommand(ctx context.Context, data *chatbot.BotCallbackDataModel, shortID, msg string) {
+	replier := chatbot.NewChatbotReplier()
+
+	sessionID, sessionTitle, err := resolveShortSessionID(shortID)
+	if err != nil {
+		slog.Warn("dingtalk: session command resolve failed", "error", err, "short_id", shortID)
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(err.Error()))
+		return
+	}
+
+	sessionLabel := formatSessionLabel(sessionID, sessionTitle)
+
+	if sessionMessenger.IsSessionRunning(sessionID) {
+		if err := sessionMessenger.EnqueueMessage(sessionID, msg); err != nil {
+			slog.Warn("dingtalk: enqueue message failed", "error", err, "session_id", sessionID)
+			_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("消息入队失败: "+err.Error()))
+			return
+		}
+		// Verify the session still has a consumer. If it ended between IsSessionRunning
+		// and EnqueueMessage, the queued message would be orphaned — clear it and
+		// resend via the resume path to avoid duplicate delivery.
+		if !sessionMessenger.IsSessionRunning(sessionID) {
+			slog.Info("dingtalk: session ended after enqueue, falling back to send", "session_id", sessionID)
+			sessionMessenger.ClearQueue(sessionID)
+			if err := sessionMessenger.SendMessageToSession(sessionID, msg); err != nil {
+				slog.Warn("dingtalk: fallback send failed", "error", err, "session_id", sessionID)
+				_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("发送消息失败: "+err.Error()))
+				return
+			}
+			_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook,
+				[]byte("消息已发送"), []byte(fmt.Sprintf("### 消息已发送\n已发送到会话 **%s**，AI 正在处理", escapeMarkdown(sessionLabel))))
+			return
+		}
+		slog.Info("dingtalk: message enqueued to running session", "session_id", sessionID, "msg", msg)
+		_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook,
+			[]byte("消息已发送"), []byte(fmt.Sprintf("### 消息已发送\n已发送到运行中的会话 **%s**", escapeMarkdown(sessionLabel))))
+		return
+	}
+
+	if err := sessionMessenger.SendMessageToSession(sessionID, msg); err != nil {
+		slog.Warn("dingtalk: send message to session failed", "error", err, "session_id", sessionID)
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("发送消息失败: "+err.Error()))
+		return
+	}
+	slog.Info("dingtalk: message sent to session", "session_id", sessionID, "msg", msg)
+	_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook,
+		[]byte("消息已发送"), []byte(fmt.Sprintf("### 消息已发送\n已发送到会话 **%s**，AI 正在处理", escapeMarkdown(sessionLabel))))
+}
+
+// handleSessionList lists recent sessions so the user can pick one to send a message to.
+func (m *Manager) handleSessionList(ctx context.Context, data *chatbot.BotCallbackDataModel) {
+	replier := chatbot.NewChatbotReplier()
+
+	if sessionMessenger == nil {
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("已订阅 ClawBench 通知。暂无可用会话。"))
+		return
+	}
+
+	sessions, err := sessionMessenger.ListRecentSessions(10)
+	if err != nil {
+		slog.Warn("dingtalk: list sessions failed", "error", err)
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("已订阅 ClawBench 通知。获取会话列表失败。"))
+		return
+	}
+
+	if len(sessions) == 0 {
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("已订阅 ClawBench 通知。暂无会话。"))
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString("### 会话列表\n发送 **@会话ID <消息>** 向会话发送消息：\n\n")
+
+	// Group sessions by project path
+	type group struct {
+		project string
+		items   []SessionInfo
+	}
+	var groups []group
+	groupIdx := map[string]int{}
+	for _, s := range sessions {
+		project := s.ProjectPath
+		if project == "" {
+			project = "（无项目）"
+		}
+		if idx, ok := groupIdx[project]; ok {
+			groups[idx].items = append(groups[idx].items, s)
+		} else {
+			groupIdx[project] = len(groups)
+			groups = append(groups, group{project: project, items: []SessionInfo{s}})
+		}
+	}
+
+	for _, g := range groups {
+		fmt.Fprintf(&sb, "**%s**\n", escapeMarkdown(g.project))
+		for _, s := range g.items {
+			id := shortSessionID(s.ID)
+			title := s.Title
+			if title == "" {
+				title = "（无标题）"
+			}
+			running := ""
+			if sessionMessenger.IsSessionRunning(s.ID) {
+				running = " 🟢"
+			}
+			fmt.Fprintf(&sb, "- **@%s** %s%s\n", id, escapeMarkdown(title), running)
+		}
+		sb.WriteString("\n")
+	}
+	_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook, []byte("会话列表"), []byte(sb.String()))
+}
+
+// formatSessionLabel returns a human-readable label for a session.
+func formatSessionLabel(sessionID, sessionTitle string) string {
+	if sessionTitle != "" {
+		return sessionTitle
+	}
+	return "会话 " + shortSessionID(sessionID)
 }

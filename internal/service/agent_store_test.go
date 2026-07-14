@@ -739,3 +739,70 @@ func TestMigrateCustomSystemPrompt_AlreadyMigrated(t *testing.T) {
 	require.Len(t, agents, 1)
 	assert.Equal(t, custom, agents[0].CustomSystemPrompt) // unchanged
 }
+
+func TestDuplicateAgent_NotFound(t *testing.T) {
+	_ = setupTestDBForAgents(t)
+
+	_, err := service.DuplicateAgent("nonexistent", "Copy")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestDuplicateAgent_Success(t *testing.T) {
+	db := setupTestDBForAgents(t)
+
+	// Insert source agent with all fields
+	agent := &model.Agent{
+		ID:                      "pi",
+		Name:                    "Pi",
+		Icon:                    "🥧",
+		Specialty:               "极简编程智能体",
+		Backend:                 "pi",
+		Command:                 "/path/to/pi",
+		ThinkingEffort:          "medium",
+		ThinkingEffortLevels:    []string{"off", "low", "medium", "high"},
+		PreferredMode:           "code",
+		PreferredModel:          "openai/gpt-5.5",
+		PreferredThinkingEffort: "high",
+		CustomSystemPrompt:      "You are helpful.",
+		Transport:               "acp-stdio",
+		AcpCommand:              "pi --acp",
+		Models: []model.AgentModel{
+			{ID: "openai/gpt-5.5", Name: "GPT-5.5", Default: true},
+		},
+		Source: "setup",
+	}
+	require.NoError(t, service.SaveAgent(db, agent))
+
+	// Load into memory so DuplicateAgent can find the source
+	service.LoadAgentsIntoMemory()
+
+	// Duplicate
+	clone, err := service.DuplicateAgent("pi", "Pi Copy")
+	require.NoError(t, err)
+	assert.Contains(t, clone.ID, "pi-copy-")
+	assert.Equal(t, "Pi Copy", clone.Name)
+	assert.Equal(t, "🥧", clone.Icon)
+	assert.Equal(t, "pi", clone.Backend)
+	assert.Equal(t, "manual", clone.Source)
+
+	// Verify both agents in DB
+	agents, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	assert.Len(t, agents, 2)
+}
+
+func TestLoadAgentsIntoMemory(t *testing.T) {
+	db := setupTestDBForAgents(t)
+
+	// Insert agents
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "test-1", Name: "Test 1", Backend: "pi", Source: "auto"}))
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "test-2", Name: "Test 2", Backend: "pi", Source: "auto"}))
+
+	// Load into memory
+	service.LoadAgentsIntoMemory()
+
+	// Verify they're in model.Agents
+	assert.Contains(t, model.Agents, "test-1")
+	assert.Contains(t, model.Agents, "test-2")
+}

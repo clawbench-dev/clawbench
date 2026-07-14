@@ -50,6 +50,14 @@
 
 /* ── Commit hash annotation ── */
 
+/* Pending state — neutral styling, no interactive affordance until verified */
+.chat-commit-hash-pending {
+  font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
+  font-size: 0.95em;
+  color: inherit;
+}
+
+/* Verified state — accent color + clickable */
 .chat-commit-hash {
   font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
   font-size: 0.95em;

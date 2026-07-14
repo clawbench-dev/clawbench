@@ -194,7 +194,7 @@ export function annotateWorktreePaths(
     // but the stale span's text node would be inside it — this is acceptable
     // because on re-render the full pipeline replaces the HTML from scratch).
     for (const el of doc.querySelectorAll('code')) {
-        if (el.classList.contains('chat-commit-hash')) continue
+        if (el.classList.contains('chat-commit-hash') || el.classList.contains('chat-commit-hash-pending')) continue
         if (el.classList.contains('chat-worktree-path')) continue
         const stripped = (el.textContent || '').trim()
         const match = findWorktreeMatch(stripped, searchEntries)
@@ -218,7 +218,7 @@ export function annotateWorktreePaths(
             if (parent.tagName === 'A' || parent.closest('a')) return NodeFilter.FILTER_REJECT
             // Skip elements already annotated by step 2
             if (parent.classList.contains('chat-worktree-path')) return NodeFilter.FILTER_REJECT
-            if (parent.classList.contains('chat-file-path') || parent.classList.contains('chat-commit-hash')) return NodeFilter.FILTER_REJECT
+            if (parent.classList.contains('chat-file-path') || parent.classList.contains('chat-commit-hash') || parent.classList.contains('chat-commit-hash-pending')) return NodeFilter.FILTER_REJECT
             return NodeFilter.FILTER_ACCEPT
         }
     })

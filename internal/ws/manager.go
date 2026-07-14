@@ -31,8 +31,8 @@ type ClientSubscription struct {
 // resource exhaustion. Matches the original SSE limit of 20.
 const maxSubscriptions = 20
 
-// pushAlertMaxRunes is an alias for model.ResponsePreviewMaxRunes for local use.
-const pushAlertMaxRunes = model.ResponsePreviewMaxRunes
+// pushAlertMaxRunes is the max rune count for push notification previews.
+const pushAlertMaxRunes = model.PushPreviewMaxRunes
 
 // wsWriteTimeout is the maximum time to wait for a WebSocket write to complete.
 const wsWriteTimeout = 5 * time.Second

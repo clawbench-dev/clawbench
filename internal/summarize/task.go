@@ -147,7 +147,7 @@ func ExtractTextFromBlocks(blocks []model.ContentBlock) string {
 
 // ExtractLastAnswerFromBlocks extracts text from blocks after the last tool_use block.
 // This captures the AI's final answer rather than intermediate reasoning or tool-call commentary.
-// If no tool_use blocks exist, falls back to the first non-empty text block.
+// If no text exists after the last tool_use, falls back to the longest text block.
 // Returns empty string if no suitable text is found.
 func ExtractLastAnswerFromBlocks(blocks []model.ContentBlock) string {
 	lastToolIdx := -1

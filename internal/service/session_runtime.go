@@ -90,7 +90,7 @@ func EmitSessionEvent(sessionID, status string, hasNewMessages bool, toolName ..
 	// DingTalk push notification for session events.
 	// If push succeeds, remove from pending_events to avoid duplicate
 	// Android notification when the app comes back online.
-	if dingtalk.IsStarted() && dingtalk.PushSessionEvent(sessionID, status, data.SessionTitle, data.ResponsePreview, data.ProjectPath) {
+	if dingtalk.IsStarted() && dingtalk.PushSessionEvent(sessionID, status, data.SessionTitle, data.ResponsePreview, data.ProjectPath, data.ToolName) {
 		_ = DeletePendingEvent(msg.ID)
 	}
 }
@@ -124,31 +124,10 @@ func getSessionResponsePreview(sessionID string) string {
 }
 
 // extractPreviewFromBlocks returns a preview string from content blocks.
-// It first tries text after the last tool_use block, then falls back to the
-// longest text block (handles AskUserQuestion-style terminal tool_use).
+// Delegates to summarize.ExtractLastAnswerFromBlocks for the extraction logic,
+// then truncates for display in push notifications and WS events.
 func extractPreviewFromBlocks(blocks []model.ContentBlock) string {
-	// Find the last tool_use block index to skip intermediate text
-	lastToolIdx := -1
-	for j, b := range blocks {
-		if b.Type == "tool_use" {
-			lastToolIdx = j
-		}
-	}
-	// Extract text from blocks after the last tool_use
-	for j := lastToolIdx + 1; j < len(blocks); j++ {
-		b := blocks[j]
-		if b.Type == "text" && b.Text != "" {
-			return truncatePreview(b.Text)
-		}
-	}
-	// Fallback: longest text block
-	var bestText string
-	for _, b := range blocks {
-		if b.Type == "text" && b.Text != "" && utf8.RuneCountInString(b.Text) > utf8.RuneCountInString(bestText) {
-			bestText = b.Text
-		}
-	}
-	return truncatePreview(bestText)
+	return truncatePreview(summarize.ExtractLastAnswerFromBlocks(blocks))
 }
 
 // truncatePreview truncates text to responsePreviewMaxRunes with ellipsis if needed.

@@ -71,6 +71,12 @@ describe('looksLikeCommitHash', () => {
     it('accepts 7-char all-letter hex', () => {
         expect(looksLikeCommitHash('abcdefa')).toBe(true)
     })
+
+    it('rejects all-same-character strings', () => {
+        expect(looksLikeCommitHash('aaaaaaa')).toBe(false)
+        expect(looksLikeCommitHash('0000000')).toBe(false)
+        expect(looksLikeCommitHash('fffffff')).toBe(false)
+    })
 })
 
 // ── commitOpenButtonHtml ──
@@ -106,19 +112,20 @@ describe('annotateCommitHashes', () => {
         expect(result.detectedSHAs).toEqual([])
     })
 
-    it('annotates commit hash in <code> tag', () => {
+    it('annotates commit hash in <code> tag with pending class (no button)', () => {
         const result = annotateCommitHashes('<code>abc1234</code>')
         expect(result.detectedSHAs).toContain('abc1234')
-        expect(result.html).toContain('chat-commit-hash')
-        expect(result.html).toContain('chat-commit-open-btn')
+        expect(result.html).toContain('chat-commit-hash-pending')
         expect(result.html).toContain('data-commit-sha="abc1234"')
+        // Button should NOT be inserted yet (deferred to verification)
+        expect(result.html).not.toContain('chat-commit-open-btn')
     })
 
     it('annotates commit hash inside <pre> block', () => {
         const html = '<pre><code>abc1234</code></pre>'
         const result = annotateCommitHashes(html)
         expect(result.detectedSHAs).toContain('abc1234')
-        expect(result.html).toContain('chat-commit-hash')
+        expect(result.html).toContain('chat-commit-hash-pending')
     })
 
     it('does NOT annotate <code> with chat-file-path class', () => {
@@ -132,10 +139,11 @@ describe('annotateCommitHashes', () => {
         expect(result.detectedSHAs).toEqual([])
     })
 
-    it('annotates commit hash in plain text (outside tags)', () => {
+    it('annotates commit hash in plain text with pending class (no button)', () => {
         const result = annotateCommitHashes('<p>commit abc1234 was merged</p>')
         expect(result.detectedSHAs).toContain('abc1234')
-        expect(result.html).toContain('chat-commit-hash')
+        expect(result.html).toContain('chat-commit-hash-pending')
+        expect(result.html).not.toContain('chat-commit-open-btn')
     })
 
     it('does NOT annotate commit hash inside <a> tag', () => {
@@ -157,29 +165,73 @@ describe('annotateCommitHashes', () => {
         expect(result.detectedSHAs).toContain('def5678')
     })
 
-    it('does NOT re-annotate already-annotated chat-commit-hash spans', () => {
-        // Pre-annotated HTML
-        const html = '<span class="chat-commit-hash" data-commit-sha="abc1234">abc1234</span>'
+    it('does NOT re-annotate already-annotated chat-commit-hash-pending spans', () => {
+        const html = '<span class="chat-commit-hash-pending" data-commit-sha="abc1234">abc1234</span>'
         const result = annotateCommitHashes(html)
         // Should not add additional annotations
-        const matches = result.html.match(/chat-commit-hash/g)
-        // The original class + possibly the re-annotation attempt
-        expect(result.detectedSHAs.length).toBeLessThanOrEqual(2)
+        const matches = result.html.match(/chat-commit-hash-pending/g)
+        expect(matches).toHaveLength(1)
     })
 
-    it('adds class to <code> element', () => {
+    it('adds pending class to <code> element', () => {
         const result = annotateCommitHashes('<code>abc1234</code>')
-        expect(result.html).toContain('class="chat-commit-hash"')
+        expect(result.html).toContain('class="chat-commit-hash-pending"')
     })
 
-    it('inserts open button after <code> tag', () => {
+    it('does NOT insert open button after <code> tag (deferred)', () => {
         const result = annotateCommitHashes('<code>abc1234</code>')
-        expect(result.html).toContain('chat-commit-open-btn')
+        expect(result.html).not.toContain('chat-commit-open-btn')
     })
 
-    it('wraps plain text hash in span with class', () => {
+    it('wraps plain text hash in span with pending class', () => {
         const result = annotateCommitHashes('<p>abc1234</p>')
-        expect(result.html).toContain('chat-commit-hash')
+        expect(result.html).toContain('chat-commit-hash-pending')
+        expect(result.html).not.toContain('chat-commit-hash"')
+    })
+
+    it('does NOT annotate CSS color values (# prefix)', () => {
+        const result = annotateCommitHashes('<code>#abcdef0</code>')
+        expect(result.detectedSHAs).toEqual([])
+    })
+
+    it('does NOT annotate hex literals (0x prefix)', () => {
+        const result = annotateCommitHashes('<p>0xabcdef0</p>')
+        expect(result.detectedSHAs).toEqual([])
+    })
+
+    it('does NOT annotate 0X prefix (uppercase hex literal)', () => {
+        const result = annotateCommitHashes('<p>0Xabcdef0</p>')
+        expect(result.detectedSHAs).toEqual([])
+    })
+
+    it('does NOT annotate Unicode escapes (\\u prefix)', () => {
+        const result = annotateCommitHashes('<p>\\uabcdef0</p>')
+        expect(result.detectedSHAs).toEqual([])
+    })
+
+    it('does NOT annotate URL-encoded segments (% prefix)', () => {
+        const result = annotateCommitHashes('<p>%abcdef0</p>')
+        expect(result.detectedSHAs).toEqual([])
+    })
+
+    it('does NOT annotate URL scheme hex (:// prefix)', () => {
+        const result = annotateCommitHashes('<p>http://abcdef01</p>')
+        expect(result.detectedSHAs).toEqual([])
+    })
+
+    it('STILL annotates commit:sha format (colon is allowed)', () => {
+        const result = annotateCommitHashes('<p>commit:abc1234</p>')
+        expect(result.detectedSHAs).toContain('abc1234')
+    })
+
+    it('does NOT annotate all-same-character hashes', () => {
+        const result = annotateCommitHashes('<p>aaaaaaa</p>')
+        expect(result.detectedSHAs).toEqual([])
+    })
+
+    it('still annotates real-looking commit hashes', () => {
+        const result = annotateCommitHashes('<p>commit a1b2c3d modified the file</p>')
+        expect(result.detectedSHAs).toContain('a1b2c3d')
     })
 })
 
@@ -209,6 +261,7 @@ describe('verifyCommitHashes', () => {
         vi.stubGlobal('fetch', mockFetch)
 
         const container = document.createElement('div')
+        container.innerHTML = '<span class="chat-commit-hash-pending" data-commit-sha="abc1234">abc1234</span>'
         await verifyCommitHashes(['abc1234'], container)
 
         expect(mockFetch).toHaveBeenCalledWith('/api/git/verify-commits', expect.objectContaining({
@@ -219,28 +272,7 @@ describe('verifyCommitHashes', () => {
         vi.unstubAllGlobals()
     })
 
-    it('removes buttons for invalid SHAs', async () => {
-        const mockFetch = vi.fn().mockResolvedValue({
-            ok: true,
-            json: () => Promise.resolve({ results: { abc1234: null } }),
-        })
-        vi.stubGlobal('fetch', mockFetch)
-
-        const container = document.createElement('div')
-        container.innerHTML = '<button class="chat-commit-open-btn" data-commit-sha="abc1234">X</button><span class="chat-commit-hash" data-commit-sha="abc1234">abc1234</span>'
-
-        await verifyCommitHashes(['abc1234'], container)
-
-        // Button should be removed
-        expect(container.querySelectorAll('.chat-commit-open-btn')).toHaveLength(0)
-        // Span should be unwrapped (text remains)
-        expect(container.textContent).toContain('abc1234')
-        expect(container.querySelectorAll('.chat-commit-hash')).toHaveLength(0)
-
-        vi.unstubAllGlobals()
-    })
-
-    it('keeps buttons for valid SHAs', async () => {
+    it('upgrades valid SHAs: pending → verified with button', async () => {
         const mockFetch = vi.fn().mockResolvedValue({
             ok: true,
             json: () => Promise.resolve({ results: { abc1234: { hash: 'abc1234', subject: 'test' } } }),
@@ -248,42 +280,108 @@ describe('verifyCommitHashes', () => {
         vi.stubGlobal('fetch', mockFetch)
 
         const container = document.createElement('div')
-        container.innerHTML = '<button class="chat-commit-open-btn" data-commit-sha="abc1234">X</button><span class="chat-commit-hash" data-commit-sha="abc1234">abc1234</span>'
+        container.innerHTML = '<span class="chat-commit-hash-pending" data-commit-sha="abc1234">abc1234</span>'
 
         await verifyCommitHashes(['abc1234'], container)
 
-        // Both should remain
-        expect(container.querySelectorAll('.chat-commit-open-btn')).toHaveLength(1)
+        // Pending class should be replaced with verified class
+        expect(container.querySelectorAll('.chat-commit-hash-pending')).toHaveLength(0)
         expect(container.querySelectorAll('.chat-commit-hash')).toHaveLength(1)
+        // Button should be inserted
+        expect(container.querySelectorAll('.chat-commit-open-btn')).toHaveLength(1)
+        // Text should remain
+        expect(container.textContent).toContain('abc1234')
 
         vi.unstubAllGlobals()
     })
 
-    it('handles network error gracefully (leaves buttons as-is)', async () => {
+    it('upgrades valid SHAs in <code> elements', async () => {
+        const mockFetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: () => Promise.resolve({ results: { abc1234: { hash: 'abc1234' } } }),
+        })
+        vi.stubGlobal('fetch', mockFetch)
+
+        const container = document.createElement('div')
+        container.innerHTML = '<code class="chat-commit-hash-pending" data-commit-sha="abc1234">abc1234</code>'
+
+        await verifyCommitHashes(['abc1234'], container)
+
+        expect(container.querySelectorAll('.chat-commit-hash-pending')).toHaveLength(0)
+        expect(container.querySelectorAll('code.chat-commit-hash')).toHaveLength(1)
+        expect(container.querySelectorAll('.chat-commit-open-btn')).toHaveLength(1)
+
+        vi.unstubAllGlobals()
+    })
+
+    it('removes pending annotations for invalid SHAs', async () => {
+        const mockFetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: () => Promise.resolve({ results: { abc1234: null } }),
+        })
+        vi.stubGlobal('fetch', mockFetch)
+
+        const container = document.createElement('div')
+        container.innerHTML = '<span class="chat-commit-hash-pending" data-commit-sha="abc1234">abc1234</span>'
+
+        await verifyCommitHashes(['abc1234'], container)
+
+        // Span should be unwrapped (text remains, class/attribute removed)
+        expect(container.textContent).toContain('abc1234')
+        expect(container.querySelectorAll('.chat-commit-hash-pending')).toHaveLength(0)
+        expect(container.querySelectorAll('.chat-commit-hash')).toHaveLength(0)
+        expect(container.querySelectorAll('.chat-commit-open-btn')).toHaveLength(0)
+
+        vi.unstubAllGlobals()
+    })
+
+    it('removes pending code annotations for invalid SHAs', async () => {
+        const mockFetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: () => Promise.resolve({ results: { abc1234: null } }),
+        })
+        vi.stubGlobal('fetch', mockFetch)
+
+        const container = document.createElement('div')
+        container.innerHTML = '<code class="chat-commit-hash-pending" data-commit-sha="abc1234">abc1234</code>'
+
+        await verifyCommitHashes(['abc1234'], container)
+
+        // Code should still exist but without pending class and data attribute
+        expect(container.querySelectorAll('code')).toHaveLength(1)
+        expect(container.querySelectorAll('.chat-commit-hash-pending')).toHaveLength(0)
+        expect(container.querySelector('code')!.hasAttribute('data-commit-sha')).toBe(false)
+
+        vi.unstubAllGlobals()
+    })
+
+    it('handles network error — leaves pending annotations as-is', async () => {
         const mockFetch = vi.fn().mockRejectedValue(new Error('Network error'))
         vi.stubGlobal('fetch', mockFetch)
 
         const container = document.createElement('div')
-        container.innerHTML = '<button class="chat-commit-open-btn" data-commit-sha="abc1234">X</button>'
+        container.innerHTML = '<span class="chat-commit-hash-pending" data-commit-sha="abc1234">abc1234</span>'
 
         await verifyCommitHashes(['abc1234'], container)
 
-        // Button should remain
-        expect(container.querySelectorAll('.chat-commit-open-btn')).toHaveLength(1)
+        // Pending annotation should remain (will retry on next render)
+        expect(container.querySelectorAll('.chat-commit-hash-pending')).toHaveLength(1)
+        expect(container.querySelectorAll('.chat-commit-open-btn')).toHaveLength(0)
 
         vi.unstubAllGlobals()
     })
 
-    it('handles non-ok response gracefully', async () => {
+    it('handles non-ok response — leaves pending annotations as-is', async () => {
         const mockFetch = vi.fn().mockResolvedValue({ ok: false })
         vi.stubGlobal('fetch', mockFetch)
 
         const container = document.createElement('div')
-        container.innerHTML = '<button class="chat-commit-open-btn" data-commit-sha="abc1234">X</button>'
+        container.innerHTML = '<span class="chat-commit-hash-pending" data-commit-sha="abc1234">abc1234</span>'
 
         await verifyCommitHashes(['abc1234'], container)
 
-        expect(container.querySelectorAll('.chat-commit-open-btn')).toHaveLength(1)
+        // Pending annotation should remain
+        expect(container.querySelectorAll('.chat-commit-hash-pending')).toHaveLength(1)
 
         vi.unstubAllGlobals()
     })
@@ -303,9 +401,58 @@ describe('verifyCommitHashes', () => {
 
         vi.unstubAllGlobals()
     })
-})
 
-// ── getCachedCommitInfo / clearCommitHashCache ──
+    it('handles mixed valid/invalid SHAs in single batch', async () => {
+        const mockFetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: () => Promise.resolve({
+                results: {
+                    abc1234: { hash: 'abc1234', subject: 'valid' },
+                    def5678: null,
+                },
+            }),
+        })
+        vi.stubGlobal('fetch', mockFetch)
+
+        const container = document.createElement('div')
+        container.innerHTML = '<span class="chat-commit-hash-pending" data-commit-sha="abc1234">abc1234</span><span class="chat-commit-hash-pending" data-commit-sha="def5678">def5678</span>'
+
+        await verifyCommitHashes(['abc1234', 'def5678'], container)
+
+        // Valid SHA should be upgraded
+        expect(container.querySelectorAll('.chat-commit-hash')).toHaveLength(1)
+        expect(container.querySelectorAll('.chat-commit-open-btn')).toHaveLength(1)
+        // Invalid SHA should be removed
+        expect(container.querySelectorAll('.chat-commit-hash-pending')).toHaveLength(0)
+
+        vi.unstubAllGlobals()
+    })
+
+    it('does not insert duplicate buttons on repeated verification of already-verified element', async () => {
+        const commitInfo = { hash: 'abc1234', subject: 'test' }
+        const mockFetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: () => Promise.resolve({ results: { abc1234: commitInfo } }),
+        })
+        vi.stubGlobal('fetch', mockFetch)
+
+        const container = document.createElement('div')
+        container.innerHTML = '<span class="chat-commit-hash-pending" data-commit-sha="abc1234">abc1234</span>'
+
+        // First verification upgrades pending → verified
+        await verifyCommitHashes(['abc1234'], container)
+        expect(container.querySelectorAll('.chat-commit-hash')).toHaveLength(1)
+        expect(container.querySelectorAll('.chat-commit-open-btn')).toHaveLength(1)
+
+        // Second verification — element is already verified (no longer pending)
+        // The querySelector for pending won't find it, so no duplicate button
+        await verifyCommitHashes(['abc1234'], container)
+        expect(container.querySelectorAll('.chat-commit-hash')).toHaveLength(1)
+        expect(container.querySelectorAll('.chat-commit-open-btn')).toHaveLength(1)
+
+        vi.unstubAllGlobals()
+    })
+})
 
 describe('getCachedCommitInfo and clearCommitHashCache', () => {
     beforeEach(() => {
@@ -325,7 +472,7 @@ describe('getCachedCommitInfo and clearCommitHashCache', () => {
         vi.stubGlobal('fetch', mockFetch)
 
         const container = document.createElement('div')
-        container.innerHTML = '<span class="chat-commit-hash" data-commit-sha="abc1234">abc1234</span>'
+        container.innerHTML = '<span class="chat-commit-hash-pending" data-commit-sha="abc1234">abc1234</span>'
         await verifyCommitHashes(['abc1234'], container)
 
         expect(getCachedCommitInfo('abc1234')).toEqual(commitInfo)
@@ -341,7 +488,7 @@ describe('getCachedCommitInfo and clearCommitHashCache', () => {
         vi.stubGlobal('fetch', mockFetch)
 
         const container = document.createElement('div')
-        container.innerHTML = '<span class="chat-commit-hash" data-commit-sha="abc1234">abc1234</span>'
+        container.innerHTML = '<span class="chat-commit-hash-pending" data-commit-sha="abc1234">abc1234</span>'
         await verifyCommitHashes(['abc1234'], container)
 
         expect(getCachedCommitInfo('abc1234')).not.toBeNull()

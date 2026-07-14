@@ -744,6 +744,10 @@ function handleCopyMessage() {
     color: #f0a04b;
 }
 
+.chat-message.user .chat-commit-hash-pending {
+    color: inherit;
+}
+
 .chat-message.user .chat-commit-hash {
     color: rgba(255, 255, 255, 0.9);
 }

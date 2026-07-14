@@ -85,8 +85,8 @@ function isDuplicate(id: string): boolean {
     return processedEventIds.has(id)
 }
 
-// Same as backend model.ResponsePreviewMaxRunes = 512
-const PUSH_ALERT_MAX_CODE_POINTS = 512
+// Aligned with backend model.ResponsePreviewMaxRunes = 200
+const PUSH_ALERT_MAX_CODE_POINTS = 200
 
 /**
  * Truncate text for notification alert.
@@ -281,15 +281,19 @@ function stopHeartbeat() {
 }
 
 /**
- * Show browser notification for WS events when page is in background.
- * - session_update: completed, cancelled, permission_pending
- * - task_update: completed, failed, cancelled
- * Title/alert formatting follows the same rules as the backend:
- *   1. Initial defaults: title=PushTaskCompleted, alert=PushSessionEnded
- *      (task_update: alert=PushScheduledTaskDone)
- *   2. permission_pending: title=PushPermissionPending, alert=toolName||PushPermissionPending
- *   3. If sessionTitle non-empty && not permission_pending: title="Done:"+sessionTitle
- *   4. If responsePreview non-empty: alert=truncate(responsePreview)
+ * Push notification title/alert formatting.
+ * Aligned with DingTalk templates (the canonical source of truth).
+ *
+ * session_update:
+ *   completed:          title=SessionCompleted, alert=responsePreview || SessionCompleted
+ *   cancelled:          title=SessionCancelled, alert=responsePreview || SessionCancelled
+ *   permission_pending: title=ActionRequired,  alert=toolName || ActionRequired
+ *
+ * task_update:
+ *   running:            title=TaskStarted,     alert=taskName
+ *   completed:          title=TaskCompleted,   alert=responsePreview || TaskCompleted
+ *   failed:             title=TaskFailed,      alert=responsePreview || TaskFailed
+ *   cancelled:          title=TaskCancelled,   alert=responsePreview || TaskCancelled
  */
 function showEventBrowserNotification(event: string, data: ServerEvent['data']) {
     if (!data) return
@@ -305,27 +309,20 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data']) 
         const status = data.status
         if (status !== 'completed' && status !== 'cancelled' && status !== 'permission_pending') return
 
-        // Default title/alert (same as backend, with cancelled-specific defaults)
-        title = gt('chat.push.taskCompleted')
-        alert_ = status === 'cancelled' ? gt('chat.push.sessionCancelled') : gt('chat.push.sessionEnded')
-
-        const sessionTitle = data.session_title || ''
         const responsePreview = data.response_preview || ''
+        const toolName = data.tool_name || ''
 
-        // Permission pending: override title/alert
-        if (status === 'permission_pending') {
-            title = gt('chat.push.permissionPending')
-            alert_ = data.tool_name || gt('chat.push.permissionPending')
-        }
-
-        // If sessionTitle non-empty and not permission_pending: "Done:"+sessionTitle
-        if (sessionTitle && status !== 'permission_pending') {
-            title = 'Done:' + sessionTitle
-        }
-
-        // If responsePreview non-empty: use as alert
-        if (responsePreview) {
-            alert_ = truncateForPush(responsePreview)
+        // Default title/alert per status
+        if (status === 'completed') {
+            title = gt('chat.push.sessionCompleted')
+            alert_ = responsePreview ? truncateForPush(responsePreview) : gt('chat.push.sessionCompleted')
+        } else if (status === 'cancelled') {
+            title = gt('chat.push.sessionCancelled')
+            alert_ = responsePreview ? truncateForPush(responsePreview) : gt('chat.push.sessionCancelled')
+        } else {
+            // permission_pending
+            title = gt('chat.push.actionRequired')
+            alert_ = toolName || gt('chat.push.actionRequired')
         }
 
         // Click: navigate to the session
@@ -340,29 +337,24 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data']) 
         }
     } else if (event === 'task_update') {
         const status = data.status
-        if (status !== 'completed' && status !== 'failed' && status !== 'cancelled') return
+        if (status !== 'running' && status !== 'completed' && status !== 'failed' && status !== 'cancelled') return
 
-        // Default title/alert (with status-specific defaults)
-        title = gt('chat.push.taskCompleted')
-        if (status === 'failed') {
-            alert_ = gt('chat.push.taskFailed')
-        } else if (status === 'cancelled') {
-            alert_ = gt('chat.push.taskCancelled')
-        } else {
-            alert_ = gt('chat.push.scheduledTaskDone')
-        }
-
-        const sessionTitle = data.session_title || ''
         const responsePreview = data.response_preview || ''
+        const sessionTitle = data.session_title || ''
 
-        // If sessionTitle non-empty: "Done:"+sessionTitle
-        if (sessionTitle) {
-            title = 'Done:' + sessionTitle
-        }
-
-        // If responsePreview non-empty: use as alert
-        if (responsePreview) {
-            alert_ = truncateForPush(responsePreview)
+        if (status === 'running') {
+            title = gt('chat.push.taskStarted')
+            alert_ = sessionTitle || gt('chat.push.taskStarted')
+        } else if (status === 'completed') {
+            title = gt('chat.push.taskCompleted')
+            alert_ = responsePreview ? truncateForPush(responsePreview) : gt('chat.push.taskCompleted')
+        } else if (status === 'failed') {
+            title = gt('chat.push.taskFailed')
+            alert_ = responsePreview ? truncateForPush(responsePreview) : gt('chat.push.taskFailed')
+        } else {
+            // cancelled
+            title = gt('chat.push.taskCancelled')
+            alert_ = responsePreview ? truncateForPush(responsePreview) : gt('chat.push.taskCancelled')
         }
 
         // Click: navigate to the task

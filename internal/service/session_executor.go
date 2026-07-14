@@ -34,6 +34,21 @@ const (
 	cancelReasonUser = "user"
 	// blockTypeWarning is the content block type for warning messages.
 	blockTypeWarning = "warning"
+
+	// transportACPStdio is the ACP stdio transport type.
+	transportACPStdio = "acp-stdio"
+	// transportCLI is the CLI transport type.
+	transportCLI = "cli"
+	// eventTypeError is the stream event type for errors.
+	eventTypeError = "error"
+	// roleAssistant is the assistant role for chat messages.
+	roleAssistant = "assistant"
+	// roleUser is the user role for chat messages.
+	roleUser = "user"
+	// contentKeyText is the JSON key for text in content blocks.
+	contentKeyText = "text"
+	// contentKeyType is the JSON key for type in content blocks.
+	contentKeyType = "type"
 )
 
 // RunConfig configures a single SessionExecutor execution.
@@ -210,11 +225,11 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 				// Channel closed without a terminal event — CLI process crash
 				return e.buildResult(false, wallStart)
 			}
-			if event.Type == "done" || event.Type == "error" {
+			if event.Type == "done" || event.Type == eventTypeError {
 				e.receivedTerminal = true
 				// For "error" events, AccumulateBlock handles them.
 				// We process the error event but still finalize.
-				if event.Type == "error" {
+				if event.Type == eventTypeError {
 					ai.AccumulateBlock(&e.blocks, event)
 					e.upsertToolCallToDB(event)
 				}
@@ -403,7 +418,7 @@ func (e *SessionExecutor) handleResumeSplit() {
 
 	// Create new streaming assistant placeholder
 	emptyContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{}})
-	if newMsgID, err := AddChatMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, "assistant", string(emptyContent), nil, true, ""); err != nil {
+	if newMsgID, err := AddChatMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, roleAssistant, string(emptyContent), nil, true, ""); err != nil {
 		slog.Error("failed to create resume streaming message",
 			slog.String("session", e.cfg.SessionID),
 			slog.String("err", err.Error()))
@@ -423,7 +438,7 @@ func (e *SessionExecutor) injectSessionMetadata(meta *ai.Metadata) {
 			meta.ThinkingEffort = s.Effort.CurrentID
 		}
 	}
-	effectiveTransport := "cli"
+	effectiveTransport := transportCLI
 	if t := GetSessionTransport(e.cfg.SessionID); t != "" {
 		effectiveTransport = t
 	} else if agent, ok := model.Agents[e.cfg.AgentID]; ok && agent.Transport != "" {

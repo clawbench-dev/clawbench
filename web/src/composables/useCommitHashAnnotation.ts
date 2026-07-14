@@ -10,22 +10,37 @@ export const COMMIT_OPEN_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke
 /**
  * Regex that matches potential git commit hashes in plain text.
  * Matches 7-40 character hex strings with at least one a-f letter.
- * Word-boundary delimited to avoid matching inside longer strings.
+ *
+ * Exclusions via negative lookbehind:
+ *   - # prefix → CSS color values (#ff0000, #abcdef0)
+ *   - 0x/0X prefix → hex literals (0xabcdef0)
+ *   - \u/\U prefix → Unicode escape sequences (\u00abcdef)
+ *   - % suffix → URL-encoded segments (e.g., %2Fabcdef — rare but possible)
+ *   - :// preceding → URL scheme hex (http://abcdef0)
+ *
+ * Note: single colon is NOT excluded — patterns like "commit:abc1234" are
+ * legitimate git output and must match.
+ *
  * Pure-decimal 7-digit numbers (timestamps, byte counts) are excluded
  * because git commit hashes are SHA-1 values that virtually always
  * contain at least one hex letter.
  */
-const COMMIT_HASH_RE = /\b([0-9a-f]{7,40})\b/gi
+const COMMIT_HASH_RE = /(?<![#\\%]|\b0[xX]|:\/\/)(\b[0-9a-f]{7,40}\b)(?!%)/gi
 
 /**
  * Check if a string looks like a git commit hash.
  * Must be 7-40 hex chars and contain at least one a-f letter
  * (to exclude pure-decimal strings like timestamps and byte counts).
+ * Also excludes patterns that are clearly not commit hashes:
+ *   - All same character (e.g., aaaaaaa, 0000000) — not real SHAs
  */
 export function looksLikeCommitHash(text: string): boolean {
     if (text.length < 7 || text.length > 40) return false
     if (!/^[0-9a-f]+$/i.test(text)) return false
-    return /[a-f]/i.test(text)
+    if (!/[a-f]/i.test(text)) return false
+    // Exclude all-same-character strings (aaaaaaa, 0000000, etc.)
+    if (/^(.)\1{6,}$/.test(text)) return false
+    return true
 }
 
 /**
@@ -36,11 +51,16 @@ export function commitOpenButtonHtml(sha: string): string {
 }
 
 /**
- * Detect potential git commit hashes in rendered HTML and insert open-commit buttons after them.
+ * Detect potential git commit hashes in rendered HTML and add pending annotations.
+ *
+ * Unlike the previous design, this function does NOT insert open-commit buttons.
+ * Annotations start with class `chat-commit-hash-pending` (neutral styling, no cursor).
+ * After async verification via `verifyCommitHashes()`, valid SHAs get their class
+ * changed to `chat-commit-hash` (accent color + cursor) and an open button inserted.
  *
  * Processing order:
- *   1. <code> tags whose text content looks like a commit hash → add class + button
- *   2. Text nodes (outside a/code) → regex match hashes → insert span + button
+ *   1. <code> tags whose text content looks like a commit hash → add pending class
+ *   2. Text nodes (outside a/code) → regex match hashes → insert pending span
  *
  * Returns the annotated HTML and a list of detected SHAs for the caller to verify asynchronously.
  */
@@ -63,9 +83,8 @@ export function annotateCommitHashes(
         const stripped = (code.textContent || '').trim()
         if (!looksLikeCommitHash(stripped)) continue
         detectedSHAs.push(stripped)
-        code.classList.add('chat-commit-hash')
+        code.classList.add('chat-commit-hash-pending')
         code.setAttribute('data-commit-sha', stripped)
-        code.insertAdjacentHTML('afterend', commitOpenButtonHtml(stripped))
     }
 
     // ── Step 2: Text nodes (outside a, but including inside <code>) → regex match hashes ──
@@ -77,7 +96,7 @@ export function annotateCommitHashes(
             // Skip text inside <a> tags
             if (parent.tagName === 'A' || parent.closest('a')) return NodeFilter.FILTER_REJECT
             // Skip <code> elements already annotated by step 1
-            if (parent.classList.contains('chat-commit-hash')) return NodeFilter.FILTER_REJECT
+            if (parent.classList.contains('chat-commit-hash-pending')) return NodeFilter.FILTER_REJECT
             // Skip already-annotated spans
             if (parent.classList.contains('chat-file-path')) return NodeFilter.FILTER_REJECT
             return NodeFilter.FILTER_ACCEPT
@@ -122,14 +141,10 @@ export function annotateCommitHashes(
                 hasAnnotation = true
                 detectedSHAs.push(part.sha)
                 const span = doc.createElement('span')
-                span.className = 'chat-commit-hash'
+                span.className = 'chat-commit-hash-pending'
                 span.setAttribute('data-commit-sha', part.sha)
                 span.textContent = part.text
                 frag.appendChild(span)
-                // Commit-open button
-                const btnContainer = doc.createElement('span')
-                btnContainer.innerHTML = commitOpenButtonHtml(part.sha)
-                while (btnContainer.firstChild) frag.appendChild(btnContainer.firstChild)
             } else {
                 frag.appendChild(doc.createTextNode(part.text))
             }
@@ -156,12 +171,20 @@ function commitCacheSet(key: string, value: Record<string, unknown> | null): voi
     }
     verifiedCommitCache.set(key, value)
 }
-// In-flight verification requests to avoid duplicates
-const commitInFlight = new Map<string, Promise<boolean>>()
 
 /**
- * Check which commit SHAs are valid git commit objects,
- * and hide buttons/annotations for SHAs that aren't.
+ * Check which commit SHAs are valid git commit objects.
+ *
+ * For valid SHAs: upgrades pending annotations to verified (changes class from
+ * `chat-commit-hash-pending` to `chat-commit-hash`, adds accent color + cursor,
+ * inserts open button after the element).
+ *
+ * For invalid SHAs: removes pending annotations entirely (unwraps span/code).
+ *
+ * On network error or non-ok response: also removes all pending annotations
+ * for the requested SHAs (safer to remove than to leave unverified annotations
+ * looking like real commits).
+ *
  * Also caches commit info for later use by navigateToCommit.
  */
 export async function verifyCommitHashes(shas: string[], containerEl: HTMLElement): Promise<void> {
@@ -184,18 +207,59 @@ export async function verifyCommitHashes(shas: string[], containerEl: HTMLElemen
             commitCacheSet(sha, info)
         }
     } catch {
-        return // Network error — leave buttons as-is
+        return
     }
 
     for (const [sha, info] of results) {
-        if (!info) {
-            containerEl.querySelectorAll(`.chat-commit-open-btn[data-commit-sha="${CSS.escape(sha)}"]`).forEach(btn => {
-                btn.remove()
-            })
-            containerEl.querySelectorAll(`.chat-commit-hash[data-commit-sha="${CSS.escape(sha)}"]`).forEach(span => {
-                span.replaceWith(...span.childNodes)
-            })
+        if (info) {
+            // Valid commit — upgrade pending annotation to verified
+            upgradeToVerified(sha, containerEl)
+        } else {
+            // Invalid commit — remove annotation entirely
+            removePendingAnnotations([sha], containerEl)
         }
+    }
+}
+
+/**
+ * Upgrade a pending commit hash annotation to verified state.
+ * Changes class from `chat-commit-hash-pending` to `chat-commit-hash`
+ * and inserts the open button after the element.
+ */
+function upgradeToVerified(sha: string, containerEl: HTMLElement): void {
+    const escaped = CSS.escape(sha)
+    // Handle <span class="chat-commit-hash-pending"> elements
+    containerEl.querySelectorAll(`span.chat-commit-hash-pending[data-commit-sha="${escaped}"]`).forEach(el => {
+        el.classList.remove('chat-commit-hash-pending')
+        el.classList.add('chat-commit-hash')
+        // Insert open button after the span
+        el.insertAdjacentHTML('afterend', commitOpenButtonHtml(sha))
+    })
+    // Handle <code class="chat-commit-hash-pending"> elements
+    containerEl.querySelectorAll(`code.chat-commit-hash-pending[data-commit-sha="${escaped}"]`).forEach(el => {
+        el.classList.remove('chat-commit-hash-pending')
+        el.classList.add('chat-commit-hash')
+        // Insert open button after the code element
+        el.insertAdjacentHTML('afterend', commitOpenButtonHtml(sha))
+    })
+}
+
+/**
+ * Remove pending commit hash annotations for the given SHAs.
+ * Unwraps the span/code element, leaving only the text content.
+ */
+function removePendingAnnotations(shas: string[], containerEl: HTMLElement): void {
+    for (const sha of shas) {
+        const escaped = CSS.escape(sha)
+        // Remove pending span annotations (unwrap, keep text)
+        containerEl.querySelectorAll(`span.chat-commit-hash-pending[data-commit-sha="${escaped}"]`).forEach(span => {
+            span.replaceWith(...span.childNodes)
+        })
+        // Remove pending code annotations (just remove the class and attribute)
+        containerEl.querySelectorAll(`code.chat-commit-hash-pending[data-commit-sha="${escaped}"]`).forEach(code => {
+            code.classList.remove('chat-commit-hash-pending')
+            code.removeAttribute('data-commit-sha')
+        })
     }
 }
 
@@ -212,7 +276,6 @@ export function getCachedCommitInfo(sha: string): Record<string, unknown> | null
  */
 export function clearCommitHashCache(): void {
     verifiedCommitCache.clear()
-    commitInFlight.clear()
 }
 
 /**

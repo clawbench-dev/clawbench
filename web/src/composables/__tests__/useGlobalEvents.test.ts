@@ -484,7 +484,7 @@ describe('useGlobalEvents', () => {
 
             expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
             expect(mockShowBrowserNotification).toHaveBeenCalledWith(
-                'Done:My Task',
+                'chat.push.sessionCompleted',
                 expect.objectContaining({
                     body: 'Done!',
                     tag: expect.stringContaining('clawbench-session_update-s1'),
@@ -522,7 +522,7 @@ describe('useGlobalEvents', () => {
 
             expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
             expect(mockShowBrowserNotification).toHaveBeenCalledWith(
-                'chat.push.permissionPending',
+                'chat.push.actionRequired',
                 expect.objectContaining({ body: 'Bash' })
             )
         })
@@ -541,7 +541,7 @@ describe('useGlobalEvents', () => {
 
             expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
             expect(mockShowBrowserNotification).toHaveBeenCalledWith(
-                'Done:Nightly build',
+                'chat.push.taskCompleted',
                 expect.objectContaining({ body: 'All tests pass' })
             )
         })
@@ -574,10 +574,10 @@ describe('useGlobalEvents', () => {
             })
 
             expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
-            // Backend default: title = "AI Task Completed", alert = "AI session ended"
+            // title = SessionCompleted, body = SessionCompleted (no preview)
             expect(mockShowBrowserNotification).toHaveBeenCalledWith(
-                'chat.push.taskCompleted',
-                expect.objectContaining({ body: 'chat.push.sessionEnded' })
+                'chat.push.sessionCompleted',
+                expect.objectContaining({ body: 'chat.push.sessionCompleted' })
             )
         })
 
@@ -594,10 +594,10 @@ describe('useGlobalEvents', () => {
             })
 
             expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
-            // Backend default: title = "AI Task Completed", alert = "Scheduled task completed"
+            // title = TaskCompleted, body = TaskCompleted (no preview)
             expect(mockShowBrowserNotification).toHaveBeenCalledWith(
                 'chat.push.taskCompleted',
-                expect.objectContaining({ body: 'chat.push.scheduledTaskDone' })
+                expect.objectContaining({ body: 'chat.push.taskCompleted' })
             )
         })
 
@@ -615,7 +615,7 @@ describe('useGlobalEvents', () => {
 
             expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
             expect(mockShowBrowserNotification).toHaveBeenCalledWith(
-                'chat.push.taskCompleted',
+                'chat.push.taskFailed',
                 expect.objectContaining({ body: 'chat.push.taskFailed' })
             )
         })
@@ -633,28 +633,28 @@ describe('useGlobalEvents', () => {
             })
 
             expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
-            // Backend: title = "Approval Required", alert = "Approval Required"
+            // title = ActionRequired, body = ActionRequired (no tool_name)
             expect(mockShowBrowserNotification).toHaveBeenCalledWith(
-                'chat.push.permissionPending',
-                expect.objectContaining({ body: 'chat.push.permissionPending' })
+                'chat.push.actionRequired',
+                expect.objectContaining({ body: 'chat.push.actionRequired' })
             )
         })
 
-        it('truncates long response_preview to 512 code points (mirrors backend truncateForPush)', () => {
+        it('truncates long response_preview to 200 code points (aligned with backend)', () => {
             vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
             vi.spyOn(document, 'hasFocus').mockReturnValue(false)
 
-            const longPreview = 'A'.repeat(600)
+            const longPreview = 'A'.repeat(300)
             const ws = connectAndGetWs()
             ws.receive({
                 type: 'event',
                 id: nextId(),
                 event: 'session_update',
-                data: { session_id: 's1', status: 'completed', session_title: 'Test', response_preview: longPreview },
+                data: { session_id: 's1', status: 'completed', response_preview: longPreview },
             })
 
             const body = mockShowBrowserNotification.mock.calls[0][1].body
-            expect(body.length).toBeLessThan(600)
+            expect(body.length).toBeLessThan(300)
             expect(body.endsWith('…')).toBe(true)
         })
 
@@ -664,19 +664,19 @@ describe('useGlobalEvents', () => {
 
             // Each emoji is 2 UTF-16 code units but 1 code point
             const emoji = '🎉'
-            const longPreview = emoji.repeat(600) // 600 code points, 1200 UTF-16 units
+            const longPreview = emoji.repeat(300) // 300 code points, 600 UTF-16 units
             const ws = connectAndGetWs()
             ws.receive({
                 type: 'event',
                 id: nextId(),
                 event: 'session_update',
-                data: { session_id: 's1', status: 'completed', session_title: 'Test', response_preview: longPreview },
+                data: { session_id: 's1', status: 'completed', response_preview: longPreview },
             })
 
             const body = mockShowBrowserNotification.mock.calls[0][1].body
-            // Should be 512 emoji + "…", NOT truncated at 512 UTF-16 units (256 emoji)
+            // Should be 200 emoji + "…", NOT truncated at 200 UTF-16 units (100 emoji)
             const emojiCount = [...body.replace('…', '')].length
-            expect(emojiCount).toBe(512)
+            expect(emojiCount).toBe(200)
         })
 
         it('does not show notification for non-terminal session statuses', () => {
@@ -690,14 +690,35 @@ describe('useGlobalEvents', () => {
             expect(mockShowBrowserNotification).not.toHaveBeenCalled()
         })
 
-        it('does not show notification for non-terminal task statuses', () => {
+        it('does not show notification for non-notifiable task statuses', () => {
             vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
             vi.spyOn(document, 'hasFocus').mockReturnValue(false)
 
             const ws = connectAndGetWs()
-            ws.receive({ type: 'event', id: nextId(), event: 'task_update', data: { status: 'running' } })
+            // "running" IS a notifiable status now (triggers "task started" notification)
+            // Only truly non-notifiable statuses like "paused" should be filtered
+            ws.receive({ type: 'event', id: nextId(), event: 'task_update', data: { status: 'paused' } })
 
             expect(mockShowBrowserNotification).not.toHaveBeenCalled()
+        })
+
+        it('shows browser notification for task started', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'task_update',
+                data: { task_id: '7', status: 'running', session_title: 'Nightly build' },
+            })
+
+            expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+            expect(mockShowBrowserNotification).toHaveBeenCalledWith(
+                'chat.push.taskStarted',
+                expect.objectContaining({ body: 'Nightly build' })
+            )
         })
 
         it('notification onClick dispatches clawbench-open-session for session_update', () => {

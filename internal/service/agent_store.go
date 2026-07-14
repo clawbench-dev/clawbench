@@ -145,9 +145,9 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 	transport := agent.Transport
 	if transport == "" {
 		if agent.AcpCommand != "" {
-			transport = "acp-stdio"
+			transport = transportACPStdio
 		} else {
-			transport = "cli"
+			transport = transportCLI
 		}
 	}
 
@@ -251,7 +251,7 @@ func PatchAgentFields(id string, patch AgentPatch) error { //nolint:gocyclo // m
 	if patch.Transport != nil {
 		transport := *patch.Transport
 		if transport == "" {
-			transport = "cli"
+			transport = transportCLI
 		}
 		setClauses = append(setClauses, "transport = ?")
 		args = append(args, transport)

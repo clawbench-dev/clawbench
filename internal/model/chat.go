@@ -7,8 +7,12 @@ import (
 )
 
 // ResponsePreviewMaxRunes is the maximum number of runes included in the
-// response preview sent via WS session_update events.
+// response_preview field of WS session_update/task_update events.
 const ResponsePreviewMaxRunes = 512
+
+// PushPreviewMaxRunes is the maximum number of runes for push notification
+// previews (browser, Android, DingTalk). Shorter than WS preview for readability.
+const PushPreviewMaxRunes = 200
 
 // ChatMessage represents a single message in the chat history
 type ChatMessage struct {

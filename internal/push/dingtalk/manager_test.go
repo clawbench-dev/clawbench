@@ -246,3 +246,17 @@ func TestManager_Start_StreamFailure(t *testing.T) {
 		t.Logf("Start returned: %v", err)
 	}
 }
+
+func TestManager_Reconfigure_NilDB(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = nil
+
+	mgr := NewManager(&model.DingTalkConfig{Enabled: true, AppKey: "key", AppSecret: "secret", Users: []string{"old"}})
+	result := mgr.Reconfigure(&model.DingTalkConfig{Enabled: true, AppKey: "key", AppSecret: "secret", Users: []string{"new_user"}})
+
+	if result.NeedsRestart {
+		t.Error("should not need restart for in-place update")
+	}
+	// Should not panic when db is nil — MergeConfigSubscribers is skipped
+}

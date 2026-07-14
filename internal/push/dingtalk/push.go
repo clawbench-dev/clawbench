@@ -10,36 +10,45 @@ import (
 )
 
 const (
-	responsePreviewMaxLen = 200
+	dingtalkMarkdownMaxBytes = 18000
 )
 
 // PushSessionEvent sends a DingTalk push notification for a session event.
 // Only processes completed/cancelled/permission_pending statuses.
 // Returns true if the notification was sent to at least one subscriber.
-func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectPath string) bool {
+func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectPath, toolName string) bool {
 	if !IsStarted() || db == nil {
 		return false
 	}
 
 	var title, markdown string
+	shortID := shortSessionID(sessionID)
 
 	switch status {
 	case "completed":
-		title = "AI 会话已完成"
-		markdown = fmt.Sprintf("### AI 会话已完成\n**会话**: %s\n**项目**: %s\n\n%s",
+		title = "会话已完成"
+		replyHint := fmt.Sprintf("\n\n---\n发送 @%s <消息> 向会话发送消息", shortID)
+		markdown = fmt.Sprintf("### 会话已完成\n**会话**: %s\n**项目**: %s\n\n%s%s",
 			escapeMarkdown(sessionTitle),
 			escapeMarkdown(projectPath),
-			truncatePreview(responsePreview))
+			responsePreview,
+			replyHint)
 	case "cancelled":
-		title = "AI 会话已取消"
-		markdown = fmt.Sprintf("### AI 会话已取消\n**会话**: %s\n**项目**: %s",
+		title = "会话已取消"
+		replyHint := fmt.Sprintf("\n\n---\n发送 @%s <消息> 向会话发送消息", shortID)
+		markdown = fmt.Sprintf("### 会话已取消\n**会话**: %s\n**项目**: %s\n\n%s%s",
 			escapeMarkdown(sessionTitle),
-			escapeMarkdown(projectPath))
+			escapeMarkdown(projectPath),
+			responsePreview,
+			replyHint)
 	case "permission_pending":
-		title = "需要审批"
-		markdown = fmt.Sprintf("### 需要审批\n**会话**: %s\n**项目**: %s",
+		title = "操作需批准"
+		replyHint := fmt.Sprintf("\n\n---\n发送 @%s <消息> 追加消息到队列", shortID)
+		markdown = fmt.Sprintf("### 操作需批准\n**会话**: %s\n**项目**: %s\n**操作**: %s%s",
 			escapeMarkdown(sessionTitle),
-			escapeMarkdown(projectPath))
+			escapeMarkdown(projectPath),
+			escapeMarkdown(toolName),
+			replyHint)
 	default:
 		return false
 	}
@@ -48,7 +57,7 @@ func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectP
 }
 
 // PushTaskEvent sends a DingTalk push notification for a task event.
-// Only processes completed/failed/cancelled statuses.
+// Only processes started/completed/failed/cancelled statuses.
 // Returns true if the notification was sent to at least one subscriber.
 func PushTaskEvent(taskID, status, taskName, responsePreview, projectPath string) bool {
 	if !IsStarted() || db == nil {
@@ -58,22 +67,29 @@ func PushTaskEvent(taskID, status, taskName, responsePreview, projectPath string
 	var title, markdown string
 
 	switch status {
+	case "running":
+		title = "定时任务已启动"
+		markdown = fmt.Sprintf("### 定时任务已启动\n**任务**: %s\n**项目**: %s",
+			escapeMarkdown(taskName),
+			escapeMarkdown(projectPath))
 	case "completed":
 		title = "定时任务已完成"
 		markdown = fmt.Sprintf("### 定时任务已完成\n**任务**: %s\n**项目**: %s\n\n%s",
 			escapeMarkdown(taskName),
 			escapeMarkdown(projectPath),
-			truncatePreview(responsePreview))
+			responsePreview)
 	case "failed":
 		title = "定时任务失败"
-		markdown = fmt.Sprintf("### 定时任务失败\n**任务**: %s\n**项目**: %s",
+		markdown = fmt.Sprintf("### 定时任务失败\n**任务**: %s\n**项目**: %s\n\n%s",
 			escapeMarkdown(taskName),
-			escapeMarkdown(projectPath))
+			escapeMarkdown(projectPath),
+			responsePreview)
 	case "cancelled":
 		title = "定时任务已取消"
-		markdown = fmt.Sprintf("### 定时任务已取消\n**任务**: %s\n**项目**: %s",
+		markdown = fmt.Sprintf("### 定时任务已取消\n**任务**: %s\n**项目**: %s\n\n%s",
 			escapeMarkdown(taskName),
-			escapeMarkdown(projectPath))
+			escapeMarkdown(projectPath),
+			responsePreview)
 	default:
 		return false
 	}
@@ -90,6 +106,8 @@ func sendToAllSubscribers(title, markdown string) bool {
 		slog.Debug("dingtalk: suppressed push, client is online", "title", title)
 		return false
 	}
+
+	markdown = truncateForDingTalk(markdown)
 
 	subscribers, err := db.GetSubscribers()
 	if err != nil {
@@ -121,6 +139,15 @@ func sendToAllSubscribers(title, markdown string) bool {
 	return sent > 0
 }
 
+// shortSessionID returns the first 8 characters of a session ID for display.
+// Session IDs are always ASCII hex (UUID format), so byte slicing is safe.
+func shortSessionID(id string) string {
+	if len(id) < 8 {
+		return id
+	}
+	return id[:8]
+}
+
 // escapeMarkdown escapes special Markdown characters in DingTalk messages.
 func escapeMarkdown(s string) string {
 	r := strings.NewReplacer(
@@ -135,11 +162,14 @@ func escapeMarkdown(s string) string {
 	return r.Replace(s)
 }
 
-// truncatePreview limits response preview length for push messages (rune-safe).
-func truncatePreview(preview string) string {
-	if utf8.RuneCountInString(preview) > responsePreviewMaxLen {
-		runes := []rune(preview)
-		return string(runes[:responsePreviewMaxLen]) + "..."
+// truncateForDingTalk truncates markdown to DingTalk's platform byte limit (rune-safe).
+func truncateForDingTalk(markdown string) string {
+	if len(markdown) <= dingtalkMarkdownMaxBytes {
+		return markdown
 	}
-	return preview
+	trunc := markdown[:dingtalkMarkdownMaxBytes]
+	for trunc != "" && !utf8.RuneStart(trunc[len(trunc)-1]) {
+		trunc = trunc[:len(trunc)-1]
+	}
+	return trunc + "\n\n...(内容过长已截断)"
 }

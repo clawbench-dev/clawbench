@@ -184,6 +184,7 @@ function serializeCss(_markdownBodyEl: HTMLElement): string {
                     sel.includes('.chat-file-path') ||
                     sel.includes('.chat-file-open-btn') ||
                     sel.includes('.chat-commit-hash') ||
+                    sel.includes('.chat-commit-hash-pending') ||
                     sel.includes('.chat-commit-open-btn') ||
                     sel.includes('.chat-url-open-btn') ||
                     sel.includes('.chat-worktree-btn') ||

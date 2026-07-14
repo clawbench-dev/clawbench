@@ -39,6 +39,34 @@ var clientChecker ConnectedClientChecker
 // RegisterClientChecker sets the client checker (called from main.go).
 func RegisterClientChecker(c ConnectedClientChecker) { clientChecker = c }
 
+// SessionInfo carries session metadata across the interface boundary.
+type SessionInfo struct {
+	ID          string
+	Title       string
+	ProjectPath string
+	Backend     string
+	AgentID     string
+	Model       string
+}
+
+// SessionMessenger abstracts session operations needed by the DingTalk package.
+// Implemented in main.go to avoid import cycles (service → dingtalk → service).
+type SessionMessenger interface {
+	FindSessionsByPrefix(prefix string, runningOnly bool) ([]SessionInfo, error)
+	ListRecentSessions(limit int) ([]SessionInfo, error)
+	IsSessionRunning(sessionID string) bool
+	EnqueueMessage(sessionID, message string) error
+	ClearQueue(sessionID string)
+	SendMessageToSession(sessionID, message string) error
+}
+
+// sessionMessenger is set once at startup via RegisterSessionMessenger before Manager.Start(),
+// then read-only. Safe for concurrent reads after initialization.
+var sessionMessenger SessionMessenger
+
+// RegisterSessionMessenger sets the session messenger (called from main.go).
+func RegisterSessionMessenger(m SessionMessenger) { sessionMessenger = m }
+
 // SetDB sets the DB adapter (called from main.go after service.InitDB).
 // RegisterDBAdapter is the only way to set the DB adapter — see adapter.go.
 // Must be called before Manager.Start() (guaranteed by call order in main.go).
