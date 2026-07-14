@@ -516,7 +516,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (data.running) {
         loading.value = true
         stopMsgCountPolling()
-        onScrollBottom(true)
+        onScrollBottom(forceScrollBottom)
         onConnectStream(currentSessionId.value)
       } else {
         loading.value = false
@@ -879,9 +879,10 @@ export function useChatSession(options: UseChatSessionOptions) {
   function handleVisibilityChange() {
     if (document.visibilityState === 'visible' && loading.value) {
       // Page became visible while streaming - reconnect
+      // Don't force scroll to bottom — user may have scrolled up to read history
       onDisconnectStream()
       onStopPolling()
-      loadHistory(true, false, true).catch(() => {
+      loadHistory(false, false, true).catch(() => {
         // loadHistory failed — reset loading state so user isn't stuck
         loading.value = false
       })

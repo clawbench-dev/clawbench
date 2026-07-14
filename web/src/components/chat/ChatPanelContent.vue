@@ -361,7 +361,7 @@ const stream = useChatStream({
   loading,
   onRenderNeeded: (forceFull) => render.updateRenderedContents(forceFull),
   onScrollBottom: (force) => scrollBottom(force),
-  onLoadHistory: () => session.loadHistory(),
+  onLoadHistory: () => session.loadHistory(false),
   onMessage: () => emit('message'),
   onOpen: () => emit('open'),
   isOpen: toRef(props, 'active'),
