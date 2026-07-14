@@ -66,13 +66,13 @@ tls:
     key_file: ""
 tts:
     engine: moss-nano
-    format: ""
+    format: mp3
     inline_code_max_len: 0
     kokoro:
         lang: ""
         model_path: /path/to/kokoro.onnx
         voices_path: /path/to/voices.bin
-    max_cache_files: 0
+    max_cache_files: 200
     max_summarize_runes: 0
     moss_nano:
         backend: ""
@@ -84,9 +84,9 @@ tts:
         model_path: /path/to/model.onnx
         noise_scale: 0.5
         sentence_silence: 0.3
-    speed: 0
+    speed: 1.5
     tts_model: test-tts-model
-    voice: ""
+    voice: test-voice
 upload:
     max_files: 0
     max_size_mb: 50

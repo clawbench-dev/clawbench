@@ -308,7 +308,42 @@ func TestAsyncSummarize_BackendError(t *testing.T) {
 
 	time.Sleep(200 * time.Millisecond)
 
-	// No summary saved on error
-	_, found := GetSummary("chat_message", 4)
-	assert.False(t, found)
+	// Fallback: SimpleSummarizer should be used as fallback on backend error
+	summary, found := GetSummary("chat_message", 4)
+	assert.True(t, found, "summary should exist as fallback on backend error")
+	assert.NotEmpty(t, summary, "fallback summary should not be empty")
+	// SimpleSummarizer strips markdown (no-op for plain text) and truncates
+	assert.Equal(t, longText, summary, "plain text below 1000 runes should pass through SimpleSummarizer unchanged")
+}
+
+func TestAsyncSummarize_BackendError_ExtractsConclusion(t *testing.T) {
+	_, dbTeardown := setupTestDBForAsyncSummary(t)
+	defer dbTeardown()
+
+	origInstance := taskSummarizerInstance
+	defer func() { taskSummarizerInstance = origInstance }()
+
+	// Mock backend that returns error
+	mock := &mockAsyncSummarizerBackend{executeErr: context.DeadlineExceeded}
+	taskSummarizerInstance = &summarize.TaskSummarizer{Backend: mock}
+
+	// Multi-block with tool_use — fallback should extract the conclusion
+	// (text after last tool_use), not the intro text
+	conclusionText := strings.Repeat("这是最终结论内容，比较长。", 30)
+	blocks := []model.ContentBlock{
+		{Type: "text", Text: "让我检查一下..."},
+		{Type: "tool_use", Text: "read_file"},
+		{Type: "text", Text: conclusionText},
+	}
+
+	AsyncSummarize("chat_message", 5, blocks, "/test", "session-5")
+
+	time.Sleep(200 * time.Millisecond)
+
+	summary, found := GetSummary("chat_message", 5)
+	assert.True(t, found, "summary should exist as fallback on backend error")
+	assert.NotEmpty(t, summary, "fallback summary should not be empty")
+	// SimpleSummarizer processes the conclusion text (stripped markdown + truncated),
+	// but for plain Chinese text below 1000 runes it should be unchanged.
+	assert.Equal(t, conclusionText, summary, "fallback should use ExtractLastAnswerFromBlocks + SimpleSummarizer")
 }

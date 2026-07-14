@@ -58,12 +58,20 @@ func AsyncSummarize(targetType string, targetID int64, blocks []model.ContentBlo
 		summary, err := taskSummarizerInstance.Summarize(sumCtx, text, "")
 		if err != nil {
 			slog.Warn(
-				"summarization failed",
+				"summarization failed, falling back to simple summarizer",
 				slog.String("target_type", targetType),
 				slog.Int64("target_id", targetID),
 				slog.String("err", err.Error()),
 			)
-			return // summary stays non-existent, frontend shows original
+			// Fallback: use SimpleSummarizer which strips markdown and truncates.
+			// This produces a readable subset rather than saving the full raw text
+			// that would make the summary toggle meaningless.
+			var fallbackErr error
+			summary, fallbackErr = summarize.NewSimple().Summarize(context.Background(), text, "")
+			if fallbackErr != nil || summary == "" {
+				// SimpleSummarizer should never fail, but last resort: save raw text
+				summary = text
+			}
 		}
 
 		if err := SaveSummary(targetType, targetID, summary); err != nil {

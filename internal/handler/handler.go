@@ -281,6 +281,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/backends", middleware.Auth(ServeBackends))
 	register("/api/tts/generate", middleware.Auth(TTSGenerate))
 	register("/api/tts/stream/", middleware.Auth(TTSStream))
+	register("/api/tts/audio/ws", middleware.Auth(TTSAudioWS))
 	register("/api/tasks", middleware.Auth(ServeTasks))
 	register("/api/tasks/", middleware.Auth(ServeTaskByID))
 	register("/api/rag/search", middleware.Auth(ServeRAGSearch))

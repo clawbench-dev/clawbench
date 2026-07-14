@@ -345,3 +345,112 @@ describe('useAutoSpeech — autospeech-change event toast', () => {
     expect(toastShowMock).toHaveBeenCalledWith('autoSpeech.disabled', expect.objectContaining({ icon: '🔇' }))
   })
 })
+
+// ── Streaming TTS path ──
+
+const { mseIsSupportedMock } = vi.hoisted(() => ({
+  mseIsSupportedMock: vi.fn(() => false),
+}))
+
+vi.mock('@/composables/useMseAudio', () => {
+  return {
+    MseAudioPlayer: Object.assign(
+      vi.fn(() => ({
+        init: vi.fn(() => ({ play: vi.fn().mockResolvedValue(undefined), pause: vi.fn() })),
+        appendChunk: vi.fn(),
+        endOfStream: vi.fn(),
+        cleanup: vi.fn(),
+        isReady: false,
+      })),
+      { isSupported: mseIsSupportedMock },
+    ),
+  }
+})
+
+describe('useAutoSpeech — streaming TTS path', () => {
+  let fetchSpy: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchSpy = vi.fn()
+    globalThis.fetch = fetchSpy
+    toastShowMock.mockClear()
+    mseIsSupportedMock.mockReturnValue(false) // default: no MSE → SSE fallback
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('creates EventSource for SSE fallback when streaming but no MSE', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ streaming: true, jobId: 'deadbeef1234' }),
+    })
+
+    const mockEs = { close: vi.fn(), addEventListener: vi.fn() }
+    const EventSourceMock = vi.fn(() => mockEs)
+    vi.stubGlobal('EventSource', EventSourceMock)
+
+    const { speakText } = useAutoSpeech()
+    speakText('1', 'Stream this')
+
+    // _speak is fire-and-forget, so we need to wait for async resolution
+    await vi.waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledTimes(1)
+      expect(EventSourceMock).toHaveBeenCalledWith('/api/tts/stream/deadbeef1234')
+    })
+  })
+
+  it('uses SSE path when data.streaming is false', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ streaming: false, jobId: 'cafebabe5678' }),
+    })
+
+    const mockEs = { close: vi.fn(), addEventListener: vi.fn() }
+    const EventSourceMock = vi.fn(() => mockEs)
+    vi.stubGlobal('EventSource', EventSourceMock)
+
+    const { speakText } = useAutoSpeech()
+    speakText('2', 'Non-stream TTS')
+
+    await vi.waitFor(() => {
+      expect(EventSourceMock).toHaveBeenCalledWith('/api/tts/stream/cafebabe5678')
+    })
+  })
+
+  it('stopAudio pauses audio and resets state', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ cached: true, audioPath: '/tts/test.mp3' }),
+    })
+
+    const pauseFn = vi.fn()
+    const playFn = vi.fn().mockResolvedValue(undefined)
+    // Use a class-style mock so 'new Audio()' works correctly
+    const audioInstances: any[] = []
+    vi.stubGlobal('Audio', vi.fn(function(this: any) {
+      this.play = playFn
+      this.pause = pauseFn
+      this.onended = null
+      this.onerror = null
+      this.currentTime = 0
+      audioInstances.push(this)
+    }))
+
+    const { speakText, stopAudio, state } = useAutoSpeech()
+    // Reset any leftover singleton state from previous tests
+    stopAudio()
+
+    speakText('3', 'Stop test')
+
+    await vi.waitFor(() => {
+      expect(audioInstances.length).toBeGreaterThan(0)
+    })
+
+    stopAudio()
+
+    expect(pauseFn).toHaveBeenCalled()
+    expect(state.value).toBe('idle')
+  })
+})

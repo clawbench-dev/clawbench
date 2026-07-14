@@ -200,7 +200,7 @@ func TestTTSGenerate_Success(t *testing.T) {
 	assert.True(t, mockProvider.synthesizeCalled)
 }
 
-// --- TTSGenerate: summarize failure returns error, does not synthesize ---
+// --- TTSGenerate: summarize failure falls back to SimpleSummarizer ---
 
 func TestTTSGenerate_SummarizeFailure(t *testing.T) {
 	mockProvider := &mockSpeechProvider{}
@@ -228,9 +228,10 @@ func TestTTSGenerate_SummarizeFailure(t *testing.T) {
 		}
 	}
 
-	// Summarizer was called, but synthesize should NOT be called
+	// Summarizer was called, and since it failed, the fallback SimpleSummarizer
+	// is used — synthesize SHOULD be called with the fallback text
 	assert.True(t, mockSum.called)
-	assert.False(t, mockProvider.synthesizeCalled)
+	assert.True(t, mockProvider.synthesizeCalled, "synthesize should be called with fallback summary when LLM summarizer fails")
 }
 
 // --- TTSGenerate: synthesize failure returns error via SSE stream ---

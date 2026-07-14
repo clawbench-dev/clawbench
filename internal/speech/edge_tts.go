@@ -6,12 +6,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -99,7 +101,7 @@ func (p *EdgeTTSProvider) Synthesize(ctx context.Context, text string, outputPat
 // and writes the received audio data to w.
 //
 //nolint:gocognit,gocyclo // WebSocket protocol requires sequential message handling with multiple error paths
-func (p *EdgeTTSProvider) synthesizeViaWebSocket(ctx context.Context, ssml string, w *os.File) error {
+func (p *EdgeTTSProvider) synthesizeViaWebSocket(ctx context.Context, ssml string, w io.Writer) error {
 	// Generate DRM token and connection ID
 	secMsGec := generateSecMsGec()
 	secMsGecVersion := fmt.Sprintf("1-%s", edgeChromiumVersion)
@@ -298,4 +300,98 @@ func removeIncompatibleChars(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// --- Streaming Support ---
+
+// Compile-time assertion that EdgeTTSProvider implements StreamingSpeechProvider.
+var _ StreamingSpeechProvider = (*EdgeTTSProvider)(nil)
+
+// SynthesizeStream generates audio from text using Microsoft Edge TTS, streaming
+// audio chunks to chunkCh while simultaneously writing the complete file to outputPath
+// for caching. The caller is responsible for closing chunkCh after this method returns.
+func (p *EdgeTTSProvider) SynthesizeStream(ctx context.Context, text string, outputPath string, language string, chunkCh chan<- []byte) error {
+	// Ensure output directory exists
+	dir := filepath.Dir(outputPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("edge-tts: failed to create output directory: %w", err)
+	}
+
+	slog.Info(
+		"edge-tts stream synthesize",
+		slog.String("output", outputPath),
+		slog.Int("text_len", len([]rune(text))),
+	)
+
+	// Clean text — remove control characters that the service doesn't support.
+	cleaned := removeIncompatibleChars(text)
+
+	// Open output file
+	f, err := os.Create(outputPath)
+	if err != nil {
+		return fmt.Errorf("edge-tts: failed to create output file: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	// Build SSML
+	rate := p.Rate
+	if rate == "" {
+		rate = "+0%"
+	}
+	ssml := buildSSML(p.Voice, rate, cleaned)
+
+	// Create multi-writer: write to file AND send chunks to channel
+	var writer io.Writer = f
+	if chunkCh != nil {
+		writer = io.MultiWriter(f, &chunkWriter{ch: chunkCh})
+	}
+
+	// Connect and synthesize
+	if err := p.synthesizeViaWebSocket(ctx, ssml, writer); err != nil {
+		// Remove the empty/broken output file on error
+		_ = f.Close()
+		_ = os.Remove(outputPath)
+		return fmt.Errorf("edge-tts: %w", err)
+	}
+
+	slog.Info(
+		"edge-tts stream synthesize completed",
+		slog.String("output", outputPath),
+		slog.Int("text_len", len([]rune(text))),
+	)
+	return nil
+}
+
+// chunkWriter sends each Write as a copied []byte on the channel.
+// Uses a short timeout to handle transient client backpressure while
+// preventing indefinite blocking of the Edge TTS WebSocket read loop.
+type chunkWriter struct {
+	ch      chan<- []byte
+	dropped atomic.Int64
+}
+
+func (w *chunkWriter) Write(p []byte) (int, error) {
+	cp := make([]byte, len(p))
+	copy(cp, p)
+	select {
+	case w.ch <- cp:
+		// Chunk sent successfully
+	default:
+		// Channel full — try with 1s timeout to handle transient backpressure
+		timer := time.NewTimer(1 * time.Second)
+		defer timer.Stop()
+		select {
+		case w.ch <- cp:
+			// Sent after brief wait
+		case <-timer.C:
+			// Client too slow — drop chunk. File still gets complete data.
+			dropped := w.dropped.Add(1)
+			if dropped <= 3 || dropped%10 == 0 {
+				slog.Warn("tts streaming: audio chunk dropped, client too slow",
+					slog.Int64("dropped_total", dropped),
+					slog.Int("chunk_size", len(p)))
+			}
+		}
+	}
+	return len(p), nil
 }
