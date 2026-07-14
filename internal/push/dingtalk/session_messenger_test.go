@@ -10,7 +10,7 @@ func TestResolveShortSessionID_NoMessenger(t *testing.T) {
 	defer func() { sessionMessenger = orig }()
 	sessionMessenger = nil
 
-	_, err := resolveShortSessionID("a1b2c3d4")
+	_, _, err := resolveShortSessionID("a1b2c3d4")
 	if err == nil {
 		t.Error("expected error when no session messenger")
 	}
@@ -30,7 +30,7 @@ func TestResolveShortSessionID_RunningFirst(t *testing.T) {
 		},
 	}
 
-	id, err := resolveShortSessionID("a1b2c3d4")
+	id, _, err := resolveShortSessionID("a1b2c3d4")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestResolveShortSessionID_ConflictInRunning(t *testing.T) {
 		},
 	}
 
-	_, err := resolveShortSessionID("a1b2c3d4")
+	_, _, err := resolveShortSessionID("a1b2c3d4")
 	if err == nil {
 		t.Error("expected error for conflicting short IDs in running sessions")
 	}
@@ -67,7 +67,7 @@ func TestResolveShortSessionID_FallbackToAll(t *testing.T) {
 		},
 	}
 
-	id, err := resolveShortSessionID("a1b2c3d4")
+	id, _, err := resolveShortSessionID("a1b2c3d4")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestResolveShortSessionID_NotFound(t *testing.T) {
 		allSessions:     []SessionInfo{},
 	}
 
-	_, err := resolveShortSessionID("deadbeef")
+	_, _, err := resolveShortSessionID("deadbeef")
 	if err == nil {
 		t.Error("expected error for not found session")
 	}
@@ -102,7 +102,7 @@ func TestResolveShortSessionID_CaseInsensitive(t *testing.T) {
 		},
 	}
 
-	id, err := resolveShortSessionID("A1B2C3D4")
+	id, _, err := resolveShortSessionID("A1B2C3D4")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -170,6 +170,10 @@ func (m *mockSessionMessenger) FindSessionsByPrefix(prefix string, runningOnly b
 		}
 	}
 	return result, nil
+}
+
+func (m *mockSessionMessenger) ListRecentSessions(limit int) ([]SessionInfo, error) {
+	return m.allSessions, nil
 }
 
 func (m *mockSessionMessenger) IsSessionRunning(sessionID string) bool {

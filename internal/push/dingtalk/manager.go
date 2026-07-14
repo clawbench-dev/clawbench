@@ -53,6 +53,7 @@ type SessionInfo struct {
 // Implemented in main.go to avoid import cycles (service → dingtalk → service).
 type SessionMessenger interface {
 	FindSessionsByPrefix(prefix string, runningOnly bool) ([]SessionInfo, error)
+	ListRecentSessions(limit int) ([]SessionInfo, error)
 	IsSessionRunning(sessionID string) bool
 	EnqueueMessage(sessionID, message string) error
 	SendMessageToSession(sessionID, message string) error

@@ -193,3 +193,50 @@ func TestFindRunningSessionsByPrefix(t *testing.T) {
 		t.Errorf("wrong session ID: %s", results[0].ID)
 	}
 }
+
+func TestListRecentSessions(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	// Empty — should return no results
+	results, err := ListRecentSessions(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for empty DB, got %d", len(results))
+	}
+
+	// Insert two sessions
+	_, err = WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'Session A', 'agent1', 'default', '', 'chat')",
+		"a1b2c3d4-1111-1111-1111-111111111111",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'Session B', 'agent2', 'default', '', 'chat')",
+		"b2c3d4e5-2222-2222-2222-222222222222",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	results, err = ListRecentSessions(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	// Limit works
+	results, err = ListRecentSessions(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 result with limit=1, got %d", len(results))
+	}
+}

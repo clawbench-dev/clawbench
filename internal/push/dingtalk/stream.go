@@ -2,7 +2,9 @@ package dingtalk
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/chatbot"
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/client"
@@ -64,13 +66,8 @@ func (m *Manager) onChatBotMessage(ctx context.Context, data *chatbot.BotCallbac
 		return []byte(""), nil
 	}
 
-	// Not a session command — reply with help (includes @{8hex} syntax)
-	replier := chatbot.NewChatbotReplier()
-	replyText := []byte("已订阅 ClawBench 通知。发送 @{会话ID前8位} <消息> 向会话发送消息。")
-	if err := replier.SimpleReplyText(ctx, data.SessionWebhook, replyText); err != nil {
-		slog.Warn("dingtalk: reply failed", "error", err)
-	}
-
+	// No @ prefix — list recent sessions for the user to pick from
+	m.handleSessionList(ctx, data)
 	return []byte(""), nil
 }
 
@@ -78,12 +75,14 @@ func (m *Manager) onChatBotMessage(ctx context.Context, data *chatbot.BotCallbac
 func (m *Manager) handleSessionCommand(ctx context.Context, data *chatbot.BotCallbackDataModel, shortID, msg string) {
 	replier := chatbot.NewChatbotReplier()
 
-	sessionID, err := resolveShortSessionID(shortID)
+	sessionID, sessionTitle, err := resolveShortSessionID(shortID)
 	if err != nil {
 		slog.Warn("dingtalk: session command resolve failed", "error", err, "short_id", shortID)
 		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(err.Error()))
 		return
 	}
+
+	sessionLabel := formatSessionLabel(sessionID, sessionTitle)
 
 	if sessionMessenger.IsSessionRunning(sessionID) {
 		if err := sessionMessenger.EnqueueMessage(sessionID, msg); err != nil {
@@ -100,11 +99,11 @@ func (m *Manager) handleSessionCommand(ctx context.Context, data *chatbot.BotCal
 				_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("发送消息失败: "+err.Error()))
 				return
 			}
-			_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("消息已发送到会话，AI 正在处理"))
+			_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(fmt.Sprintf("消息已发送到会话「%s」，AI 正在处理", sessionLabel)))
 			return
 		}
 		slog.Info("dingtalk: message enqueued to running session", "session_id", sessionID, "msg", msg)
-		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("消息已发送到运行中的会话"))
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(fmt.Sprintf("消息已发送到运行中的会话「%s」", sessionLabel)))
 		return
 	}
 
@@ -114,5 +113,51 @@ func (m *Manager) handleSessionCommand(ctx context.Context, data *chatbot.BotCal
 		return
 	}
 	slog.Info("dingtalk: message sent to session", "session_id", sessionID, "msg", msg)
-	_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("消息已发送到会话，AI 正在处理"))
+	_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(fmt.Sprintf("消息已发送到会话「%s」，AI 正在处理", sessionLabel)))
+}
+
+// handleSessionList lists recent sessions so the user can pick one to send a message to.
+func (m *Manager) handleSessionList(ctx context.Context, data *chatbot.BotCallbackDataModel) {
+	replier := chatbot.NewChatbotReplier()
+
+	if sessionMessenger == nil {
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("已订阅 ClawBench 通知。暂无可用会话。"))
+		return
+	}
+
+	sessions, err := sessionMessenger.ListRecentSessions(10)
+	if err != nil {
+		slog.Warn("dingtalk: list sessions failed", "error", err)
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("已订阅 ClawBench 通知。获取会话列表失败。"))
+		return
+	}
+
+	if len(sessions) == 0 {
+		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("已订阅 ClawBench 通知。暂无会话。"))
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString("已订阅通知。发送 @会话ID <消息> 向会话发送消息：\n\n")
+	for _, s := range sessions {
+		id := shortSessionID(s.ID)
+		title := s.Title
+		if title == "" {
+			title = "（无标题）"
+		}
+		running := ""
+		if sessionMessenger.IsSessionRunning(s.ID) {
+			running = " [运行中]"
+		}
+		sb.WriteString(fmt.Sprintf("- @%s %s%s\n", id, title, running))
+	}
+	_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(sb.String()))
+}
+
+// formatSessionLabel returns a human-readable label for a session.
+func formatSessionLabel(sessionID, sessionTitle string) string {
+	if sessionTitle != "" {
+		return sessionTitle
+	}
+	return shortSessionID(sessionID)
 }

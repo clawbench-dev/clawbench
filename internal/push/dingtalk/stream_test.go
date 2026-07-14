@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/open-dingtalk/dingtalk-stream-sdk-go/chatbot"
@@ -477,6 +478,63 @@ func TestOnChatBotMessage_SessionCommand_EndedSession(t *testing.T) {
 	}
 	if sentMsg != "继续修改" {
 		t.Errorf("expected message '继续修改', got %q", sentMsg)
+	}
+}
+
+func TestOnChatBotMessage_SessionList(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDBWithCallback{
+		upsertFn: func(_, _, _, _ string) error { return nil },
+	}
+
+	origMessenger := sessionMessenger
+	defer func() { sessionMessenger = origMessenger }()
+
+	sessionMessenger = &mockSessionMessenger{
+		runningSessions: []SessionInfo{
+			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Running Session"},
+		},
+		allSessions: []SessionInfo{
+			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Running Session"},
+			{ID: "b2c3d4e5-2222-2222-2222-222222222222", Title: "Old Session"},
+		},
+	}
+
+	var replyBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		replyBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	mgr := &Manager{}
+	data := &chatbot.BotCallbackDataModel{
+		ConversationType: "1",
+		SenderStaffId:    "staff123",
+		SenderNick:       "TestUser",
+		ConversationId:   "conv1",
+		SessionWebhook:   server.URL,
+		Text:             chatbot.BotCallbackDataTextModel{Content: "hello"},
+	}
+
+	_, err := mgr.onChatBotMessage(context.Background(), data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(replyBody) == 0 {
+		t.Error("expected reply with session list")
+	}
+	body := string(replyBody)
+	if !strings.Contains(body, "@a1b2c3d4") {
+		t.Error("expected session list to contain @a1b2c3d4")
+	}
+	if !strings.Contains(body, "Running Session") {
+		t.Error("expected session list to contain 'Running Session'")
+	}
+	if !strings.Contains(body, "运行中") {
+		t.Error("expected running session to be marked with '运行中'")
 	}
 }
 

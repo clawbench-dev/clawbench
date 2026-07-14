@@ -119,6 +119,25 @@ func (dingtalkSessionMessenger) FindSessionsByPrefix(prefix string, runningOnly 
 	return result, nil
 }
 
+func (dingtalkSessionMessenger) ListRecentSessions(limit int) ([]dingtalk.SessionInfo, error) {
+	sessions, err := service.ListRecentSessions(limit)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]dingtalk.SessionInfo, len(sessions))
+	for i, s := range sessions {
+		result[i] = dingtalk.SessionInfo{
+			ID:          s.ID,
+			Title:       s.Title,
+			ProjectPath: s.ProjectPath,
+			Backend:     s.Backend,
+			AgentID:     s.AgentID,
+			Model:       s.Model,
+		}
+	}
+	return result, nil
+}
+
 func (dingtalkSessionMessenger) IsSessionRunning(sessionID string) bool {
 	return service.IsSessionRunning(sessionID)
 }

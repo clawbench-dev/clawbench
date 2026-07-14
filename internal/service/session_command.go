@@ -45,6 +45,30 @@ func FindSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
 	return scanDingTalkSessionInfos(rows)
 }
 
+// ListRecentSessions returns the most recently updated non-deleted chat sessions.
+// Running sessions are listed first, then recent completed sessions.
+func ListRecentSessions(limit int) ([]DingTalkSessionInfo, error) {
+	if dbRead == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := dbRead.Query(
+		`SELECT id, title, project_path, backend, agent_id, model
+		 FROM chat_sessions
+		 WHERE deleted = 0 AND session_type = 'chat'
+		 ORDER BY updated_at DESC
+		 LIMIT ?`,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	return scanDingTalkSessionInfos(rows)
+}
+
 // FindRunningSessionsByPrefix finds currently-running sessions whose ID starts with the given prefix.
 // Case-insensitive matching.
 func FindRunningSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
