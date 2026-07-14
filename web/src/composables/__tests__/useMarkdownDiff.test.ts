@@ -300,6 +300,19 @@ describe('offscreenExtractBlocks', () => {
     expect(mermaidBlock).toBeTruthy()
     expect(mermaidBlock!.mermaidSource).toContain('graph TD')
   })
+
+  it('uses skipEnhancements=true to match live DOM rendering', () => {
+    // KaTeX display math ($$...$$) is skipped when skipEnhancements=true,
+    // so offscreen rendering should NOT produce div.katex-display blocks.
+    // This ensures block indices align with MarkdownPreview's live DOM.
+    const content = '# Title\n\nSome text\n\n$$x^2$$\n\nMore text'
+    const blocks = offscreenExtractBlocks(content)
+    // Should have H1 and two P blocks (no katex-display block)
+    const katexBlocks = blocks.filter(b => b.tag === 'DIV' && b.innerHTML?.includes('katex'))
+    expect(katexBlocks.length).toBe(0)
+    // Should still find the title and text blocks
+    expect(blocks.some(b => b.tag === 'H1')).toBe(true)
+  })
 })
 
 describe('charDiffToLines', () => {
