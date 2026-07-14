@@ -101,11 +101,13 @@ func (m *Manager) handleSessionCommand(ctx context.Context, data *chatbot.BotCal
 				_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("发送消息失败: "+err.Error()))
 				return
 			}
-			_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(fmt.Sprintf("消息已发送到会话「%s」，AI 正在处理", sessionLabel)))
+			_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook,
+				[]byte("消息已发送"), []byte(fmt.Sprintf("### 消息已发送\n已发送到会话 **%s**，AI 正在处理", escapeMarkdown(sessionLabel))))
 			return
 		}
 		slog.Info("dingtalk: message enqueued to running session", "session_id", sessionID, "msg", msg)
-		_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(fmt.Sprintf("消息已发送到运行中的会话「%s」", sessionLabel)))
+		_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook,
+			[]byte("消息已发送"), []byte(fmt.Sprintf("### 消息已发送\n已发送到运行中的会话 **%s**", escapeMarkdown(sessionLabel))))
 		return
 	}
 
@@ -115,7 +117,8 @@ func (m *Manager) handleSessionCommand(ctx context.Context, data *chatbot.BotCal
 		return
 	}
 	slog.Info("dingtalk: message sent to session", "session_id", sessionID, "msg", msg)
-	_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(fmt.Sprintf("消息已发送到会话「%s」，AI 正在处理", sessionLabel)))
+	_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook,
+		[]byte("消息已发送"), []byte(fmt.Sprintf("### 消息已发送\n已发送到会话 **%s**，AI 正在处理", escapeMarkdown(sessionLabel))))
 }
 
 // handleSessionList lists recent sessions so the user can pick one to send a message to.
@@ -140,7 +143,7 @@ func (m *Manager) handleSessionList(ctx context.Context, data *chatbot.BotCallba
 	}
 
 	var sb strings.Builder
-	sb.WriteString("已订阅通知。发送 @会话ID <消息> 向会话发送消息：\n\n")
+	sb.WriteString("### 会话列表\n发送 **@会话ID <消息>** 向会话发送消息：\n\n")
 	for _, s := range sessions {
 		id := shortSessionID(s.ID)
 		title := s.Title
@@ -149,11 +152,11 @@ func (m *Manager) handleSessionList(ctx context.Context, data *chatbot.BotCallba
 		}
 		running := ""
 		if sessionMessenger.IsSessionRunning(s.ID) {
-			running = " [运行中]"
+			running = " 🟢"
 		}
-		sb.WriteString(fmt.Sprintf("- @%s %s%s\n", id, title, running))
+		sb.WriteString(fmt.Sprintf("- **@%s** %s%s\n", id, escapeMarkdown(title), running))
 	}
-	_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte(sb.String()))
+	_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook, []byte("会话列表"), []byte(sb.String()))
 }
 
 // formatSessionLabel returns a human-readable label for a session.

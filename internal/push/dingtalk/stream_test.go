@@ -533,8 +533,8 @@ func TestOnChatBotMessage_SessionList(t *testing.T) {
 	if !strings.Contains(body, "Running Session") {
 		t.Error("expected session list to contain 'Running Session'")
 	}
-	if !strings.Contains(body, "运行中") {
-		t.Error("expected running session to be marked with '运行中'")
+	if !strings.Contains(body, "🟢") {
+		t.Error("expected running session to be marked with running indicator")
 	}
 }
 
