@@ -91,9 +91,11 @@ func (m *Manager) handleSessionCommand(ctx context.Context, data *chatbot.BotCal
 			return
 		}
 		// Verify the session still has a consumer. If it ended between IsSessionRunning
-		// and EnqueueMessage, the queued message would be orphaned — fallback to resume path.
+		// and EnqueueMessage, the queued message would be orphaned — clear it and
+		// resend via the resume path to avoid duplicate delivery.
 		if !sessionMessenger.IsSessionRunning(sessionID) {
 			slog.Info("dingtalk: session ended after enqueue, falling back to send", "session_id", sessionID)
+			sessionMessenger.ClearQueue(sessionID)
 			if err := sessionMessenger.SendMessageToSession(sessionID, msg); err != nil {
 				slog.Warn("dingtalk: fallback send failed", "error", err, "session_id", sessionID)
 				_ = replier.SimpleReplyText(ctx, data.SessionWebhook, []byte("发送消息失败: "+err.Error()))
@@ -159,5 +161,5 @@ func formatSessionLabel(sessionID, sessionTitle string) string {
 	if sessionTitle != "" {
 		return sessionTitle
 	}
-	return shortSessionID(sessionID)
+	return "会话 " + shortSessionID(sessionID)
 }

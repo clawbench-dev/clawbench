@@ -56,6 +56,7 @@ type SessionMessenger interface {
 	ListRecentSessions(limit int) ([]SessionInfo, error)
 	IsSessionRunning(sessionID string) bool
 	EnqueueMessage(sessionID, message string) error
+	ClearQueue(sessionID string)
 	SendMessageToSession(sessionID, message string) error
 }
 

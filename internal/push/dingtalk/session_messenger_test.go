@@ -127,7 +127,7 @@ func TestParseSessionCommand(t *testing.T) {
 		{"exactly 8 hex", "@deadbeef test", "deadbeef", "test", true},
 		{"uppercase hex", "@A1B2C3D4 test", "A1B2C3D4", "test", true},
 		{"7 chars not match", "@abcdef1 test", "", "", false},
-		{"9 chars not match", "@a1b2c3d4e test", "", "", false},
+		{"9 chars now matches", "@a1b2c3d4e test", "a1b2c3d4e", "test", true},
 	}
 
 	for _, tt := range tests {
@@ -191,6 +191,8 @@ func (m *mockSessionMessenger) EnqueueMessage(sessionID, message string) error {
 	}
 	return m.sendErr
 }
+
+func (m *mockSessionMessenger) ClearQueue(sessionID string) {}
 
 func (m *mockSessionMessenger) SendMessageToSession(sessionID, message string) error {
 	if m.SendMessageFn != nil {

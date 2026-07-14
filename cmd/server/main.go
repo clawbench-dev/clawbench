@@ -152,6 +152,10 @@ func (dingtalkSessionMessenger) EnqueueMessage(sessionID, message string) error 
 	return nil
 }
 
+func (dingtalkSessionMessenger) ClearQueue(sessionID string) {
+	service.ClearQueue(sessionID)
+}
+
 func (dingtalkSessionMessenger) SendMessageToSession(sessionID, message string) error {
 	return service.SendMessageToSessionFromDingTalk(sessionID, message)
 }

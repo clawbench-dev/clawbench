@@ -46,7 +46,6 @@ func FindSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
 }
 
 // ListRecentSessions returns the most recently updated non-deleted chat sessions.
-// Running sessions are listed first, then recent completed sessions.
 func ListRecentSessions(limit int) ([]DingTalkSessionInfo, error) {
 	if dbRead == nil {
 		return nil, fmt.Errorf("database not initialized")

@@ -6,8 +6,9 @@ import (
 	"strings"
 )
 
-// sessionCmdRe matches "@{8-hex-chars}" followed by optional message text.
-var sessionCmdRe = regexp.MustCompile(`^@([0-9a-fA-F]{8})(?:[\s]|$)(.*)`)
+// sessionCmdRe matches "@{8+hex-chars}" followed by optional message text.
+// Allows 8+ hex chars so users can type longer prefixes for disambiguation.
+var sessionCmdRe = regexp.MustCompile(`^@([0-9a-fA-F]{8,})(?:[\s]|$)(.*)`)
 
 // parseSessionCommand parses the "@{shortID} message" format from DingTalk messages.
 // Returns (shortID, message, true) if matched, or ("", "", false) if not.
