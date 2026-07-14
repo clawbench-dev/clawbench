@@ -89,10 +89,13 @@ CustomURLInvalid: URL 格式无效
 CustomURLInvalidScheme: URL 必须以 http:// 或 https:// 开头
 CustomURLInvalidHost: URL 缺少有效的主机名
 CustomURLUnrecognizedFormat: URL 路径须以 /chat/completions（OpenAI）或 /v1/messages（Anthropic）结尾
-PushTaskCompleted: AI任务完成
-PushSessionEnded: AI会话已结束
-PushScheduledTaskDone: 计划任务已完成
-PushPermissionPending: 需要审批
+PushTaskCompleted: 定时任务已完成
+PushTaskFailed: 定时任务失败
+PushTaskCancelled: 定时任务已取消
+PushTaskStarted: 定时任务已启动
+PushSessionCompleted: 会话已完成
+PushSessionCancelled: 会话已取消
+PushActionRequired: 操作需批准
 NotFound: 未找到
 PermissionNotFound: 未找到待审批的权限请求
 ACPSessionNotFound: 该会话在智能体端已不存在

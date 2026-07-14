@@ -424,13 +424,13 @@ export default {
       nextRow: 'Next',
     },
     push: {
-      taskCompleted: 'AI Task Completed',
-      sessionEnded: 'AI session ended',
-      sessionCancelled: 'AI session cancelled',
-      scheduledTaskDone: 'Scheduled task completed',
+      sessionCompleted: 'Session completed',
+      sessionCancelled: 'Session cancelled',
+      actionRequired: 'Action requires approval',
+      taskCompleted: 'Scheduled task completed',
       taskFailed: 'Scheduled task failed',
       taskCancelled: 'Scheduled task cancelled',
-      permissionPending: 'Approval Required',
+      taskStarted: 'Scheduled task started',
     },
   },
   session: {

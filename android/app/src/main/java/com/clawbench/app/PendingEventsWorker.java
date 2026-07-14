@@ -143,7 +143,7 @@ public class PendingEventsWorker extends Worker {
                         && ("completed".equals(status) || "cancelled".equals(status) || "permission_pending".equals(status))) {
                     shouldNotify = true;
                 } else if ("task_update".equals(eventType)
-                        && ("completed".equals(status) || "failed".equals(status) || "cancelled".equals(status))) {
+                        && ("running".equals(status) || "completed".equals(status) || "failed".equals(status) || "cancelled".equals(status))) {
                     shouldNotify = true;
                 }
                 if (shouldNotify) {

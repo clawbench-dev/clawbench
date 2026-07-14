@@ -2041,7 +2041,7 @@ public class BackgroundService extends Service {
                         && ("completed".equals(status) || "cancelled".equals(status) || "permission_pending".equals(status))) {
                     shouldNotify = true;
                 } else if ("task_update".equals(event)
-                        && ("completed".equals(status) || "failed".equals(status) || "cancelled".equals(status))) {
+                        && ("running".equals(status) || "completed".equals(status) || "failed".equals(status) || "cancelled".equals(status))) {
                     shouldNotify = true;
                 }
 
@@ -2109,12 +2109,16 @@ public class BackgroundService extends Service {
 
     /**
      * Post a system notification for an AI event.
-     * Title/alert formatting:
-     *   1. Default: title = PushTaskCompleted, alert = PushSessionEnded
-     *      (task_update: alert = PushScheduledTaskDone)
-     *   2. permission_pending: title = PushPermissionPending, alert = toolName || PushPermissionPending
-     *   3. If sessionTitle non-empty && NOT permission_pending: title = "Done:" + sessionTitle
-     *   4. If responsePreview non-empty: alert = truncateForPush(responsePreview, 512)
+     * Title/alert formatting aligned with DingTalk templates:
+     *   session_update:
+     *     completed:          title=会话已完成, alert=responsePreview || 会话已完成
+     *     cancelled:          title=会话已取消, alert=responsePreview || 会话已取消
+     *     permission_pending: title=操作需批准, alert=toolName || 操作需批准
+     *   task_update:
+     *     running:            title=定时任务已启动, alert=sessionTitle || 定时任务已启动
+     *     completed:          title=定时任务已完成, alert=responsePreview || 定时任务已完成
+     *     failed:             title=定时任务失败, alert=responsePreview || 定时任务失败
+     *     cancelled:          title=定时任务已取消, alert=responsePreview || 定时任务已取消
      */
     private void postEventNotification(String eventType, JSONObject data) {
         // Suppress notifications when app is in the foreground
@@ -2134,51 +2138,44 @@ public class BackgroundService extends Service {
 
             AppLog.i(TAG, "NativeWS: postEventNotification called, eventType=" + eventType + ", data=" + data.toString());
 
-            // --- Title/alert formatting (mirrors backend ws/manager.go) ---
+            // --- Title/alert formatting (aligned with DingTalk templates) ---
 
-            String title = getString(R.string.push_task_completed);
+            String title;
             String alert;
 
             if ("session_update".equals(eventType)) {
-                // Cancelled-specific default alert
-                alert = "cancelled".equals(status)
-                        ? getString(R.string.push_session_cancelled)
-                        : getString(R.string.push_session_ended);
-
-                // Permission pending: override title/alert
-                if ("permission_pending".equals(status)) {
-                    title = getString(R.string.push_permission_pending);
-                    alert = toolName.isEmpty() ? getString(R.string.push_permission_pending) : toolName;
-                }
-
-                // If sessionTitle non-empty and not permission_pending: "Done:"+sessionTitle
-                if (!sessionTitle.isEmpty() && !"permission_pending".equals(status)) {
-                    title = "Done:" + sessionTitle;
-                }
-
-                // If responsePreview non-empty: use as alert (truncated)
-                if (!responsePreview.isEmpty()) {
-                    alert = truncateForPush(responsePreview);
+                // Status-specific title/alert
+                if ("completed".equals(status)) {
+                    title = getString(R.string.push_session_completed);
+                    alert = responsePreview.isEmpty() ? getString(R.string.push_session_completed) : truncateForPush(responsePreview);
+                } else if ("cancelled".equals(status)) {
+                    title = getString(R.string.push_session_cancelled);
+                    alert = responsePreview.isEmpty() ? getString(R.string.push_session_cancelled) : truncateForPush(responsePreview);
+                } else if ("permission_pending".equals(status)) {
+                    title = getString(R.string.push_action_required);
+                    alert = toolName.isEmpty() ? getString(R.string.push_action_required) : toolName;
+                } else {
+                    AppLog.i(TAG, "NativeWS: postEventNotification - unhandled session status=" + status + ", skipping");
+                    return;
                 }
 
             } else if ("task_update".equals(eventType)) {
-                // Status-specific default alert
-                if ("failed".equals(status)) {
-                    alert = getString(R.string.push_task_failed);
+                // Status-specific title/alert
+                if ("running".equals(status)) {
+                    title = getString(R.string.push_task_started);
+                    alert = sessionTitle.isEmpty() ? getString(R.string.push_task_started) : sessionTitle;
+                } else if ("completed".equals(status)) {
+                    title = getString(R.string.push_task_completed);
+                    alert = responsePreview.isEmpty() ? getString(R.string.push_task_completed) : truncateForPush(responsePreview);
+                } else if ("failed".equals(status)) {
+                    title = getString(R.string.push_task_failed);
+                    alert = responsePreview.isEmpty() ? getString(R.string.push_task_failed) : truncateForPush(responsePreview);
                 } else if ("cancelled".equals(status)) {
-                    alert = getString(R.string.push_task_cancelled);
+                    title = getString(R.string.push_task_cancelled);
+                    alert = responsePreview.isEmpty() ? getString(R.string.push_task_cancelled) : truncateForPush(responsePreview);
                 } else {
-                    alert = getString(R.string.push_scheduled_task_done);
-                }
-
-                // If sessionTitle non-empty: "Done:"+sessionTitle
-                if (!sessionTitle.isEmpty()) {
-                    title = "Done:" + sessionTitle;
-                }
-
-                // If responsePreview non-empty: use as alert (truncated)
-                if (!responsePreview.isEmpty()) {
-                    alert = truncateForPush(responsePreview);
+                    AppLog.i(TAG, "NativeWS: postEventNotification - unhandled task status=" + status + ", skipping");
+                    return;
                 }
 
             } else {
@@ -2340,7 +2337,7 @@ public class BackgroundService extends Service {
                         && ("completed".equals(status) || "cancelled".equals(status) || "permission_pending".equals(status))) {
                     shouldNotify = true;
                 } else if ("task_update".equals(eventType)
-                        && ("completed".equals(status) || "failed".equals(status) || "cancelled".equals(status))) {
+                        && ("running".equals(status) || "completed".equals(status) || "failed".equals(status) || "cancelled".equals(status))) {
                     shouldNotify = true;
                 }
                 if (shouldNotify) {
@@ -2367,9 +2364,9 @@ public class BackgroundService extends Service {
 
     /**
      * Truncate text for push notification alert.
-     * Mirrors backend ws/manager.go truncateForPush: max 512 code points + "…".
+     * Aligned with backend model.ResponsePreviewMaxRunes = 200.
      */
-    private static final int PUSH_ALERT_MAX_CODE_POINTS = 512;
+    private static final int PUSH_ALERT_MAX_CODE_POINTS = 200;
 
     private static String truncateForPush(String s) {
         if (s.codePointCount(0, s.length()) <= PUSH_ALERT_MAX_CODE_POINTS) {
@@ -2416,40 +2413,37 @@ public class BackgroundService extends Service {
                 }
             }
 
-            // Title/alert formatting (same logic as postEventNotification, using R.string resources)
+            // Title/alert formatting (aligned with DingTalk templates, same logic as postEventNotification)
             String title;
             String alert;
             if ("session_update".equals(eventType)) {
-                title = context.getString(R.string.push_session_ended);
-                alert = "cancelled".equals(status)
-                        ? context.getString(R.string.push_session_cancelled)
-                        : context.getString(R.string.push_session_ended);
-                if ("permission_pending".equals(status)) {
-                    title = context.getString(R.string.push_permission_pending);
-                    alert = toolName.isEmpty()
-                            ? context.getString(R.string.push_permission_pending)
-                            : toolName;
-                }
-                if (!sessionTitle.isEmpty() && !"permission_pending".equals(status)) {
-                    title = "Done:" + sessionTitle;
-                }
-                if (!responsePreview.isEmpty()) {
-                    alert = truncateForPush(responsePreview);
+                if ("completed".equals(status)) {
+                    title = context.getString(R.string.push_session_completed);
+                    alert = responsePreview.isEmpty() ? context.getString(R.string.push_session_completed) : truncateForPush(responsePreview);
+                } else if ("cancelled".equals(status)) {
+                    title = context.getString(R.string.push_session_cancelled);
+                    alert = responsePreview.isEmpty() ? context.getString(R.string.push_session_cancelled) : truncateForPush(responsePreview);
+                } else if ("permission_pending".equals(status)) {
+                    title = context.getString(R.string.push_action_required);
+                    alert = toolName.isEmpty() ? context.getString(R.string.push_action_required) : toolName;
+                } else {
+                    return;
                 }
             } else if ("task_update".equals(eventType)) {
-                title = context.getString(R.string.push_task_completed);
-                if ("failed".equals(status)) {
-                    alert = context.getString(R.string.push_task_failed);
+                if ("running".equals(status)) {
+                    title = context.getString(R.string.push_task_started);
+                    alert = sessionTitle.isEmpty() ? context.getString(R.string.push_task_started) : sessionTitle;
+                } else if ("completed".equals(status)) {
+                    title = context.getString(R.string.push_task_completed);
+                    alert = responsePreview.isEmpty() ? context.getString(R.string.push_task_completed) : truncateForPush(responsePreview);
+                } else if ("failed".equals(status)) {
+                    title = context.getString(R.string.push_task_failed);
+                    alert = responsePreview.isEmpty() ? context.getString(R.string.push_task_failed) : truncateForPush(responsePreview);
                 } else if ("cancelled".equals(status)) {
-                    alert = context.getString(R.string.push_task_cancelled);
+                    title = context.getString(R.string.push_task_cancelled);
+                    alert = responsePreview.isEmpty() ? context.getString(R.string.push_task_cancelled) : truncateForPush(responsePreview);
                 } else {
-                    alert = context.getString(R.string.push_scheduled_task_done);
-                }
-                if (!sessionTitle.isEmpty()) {
-                    title = "Done:" + sessionTitle;
-                }
-                if (!responsePreview.isEmpty()) {
-                    alert = truncateForPush(responsePreview);
+                    return;
                 }
             } else {
                 return;

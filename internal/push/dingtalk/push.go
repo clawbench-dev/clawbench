@@ -16,7 +16,7 @@ const (
 // PushSessionEvent sends a DingTalk push notification for a session event.
 // Only processes completed/cancelled/permission_pending statuses.
 // Returns true if the notification was sent to at least one subscriber.
-func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectPath string) bool {
+func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectPath, toolName string) bool {
 	if !IsStarted() || db == nil {
 		return false
 	}
@@ -25,21 +25,23 @@ func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectP
 
 	switch status {
 	case "completed":
-		title = "AI 会话已完成"
-		markdown = fmt.Sprintf("### AI 会话已完成\n**会话**: %s\n**项目**: %s\n\n%s",
+		title = "会话已完成"
+		markdown = fmt.Sprintf("### 会话已完成\n**会话**: %s\n**项目**: %s\n\n%s",
 			escapeMarkdown(sessionTitle),
 			escapeMarkdown(projectPath),
 			truncatePreview(responsePreview))
 	case "cancelled":
-		title = "AI 会话已取消"
-		markdown = fmt.Sprintf("### AI 会话已取消\n**会话**: %s\n**项目**: %s",
+		title = "会话已取消"
+		markdown = fmt.Sprintf("### 会话已取消\n**会话**: %s\n**项目**: %s\n\n%s",
 			escapeMarkdown(sessionTitle),
-			escapeMarkdown(projectPath))
+			escapeMarkdown(projectPath),
+			truncatePreview(responsePreview))
 	case "permission_pending":
-		title = "需要审批"
-		markdown = fmt.Sprintf("### 需要审批\n**会话**: %s\n**项目**: %s",
+		title = "操作需批准"
+		markdown = fmt.Sprintf("### 操作需批准\n**会话**: %s\n**项目**: %s\n**操作**: %s",
 			escapeMarkdown(sessionTitle),
-			escapeMarkdown(projectPath))
+			escapeMarkdown(projectPath),
+			escapeMarkdown(toolName))
 	default:
 		return false
 	}
@@ -48,7 +50,7 @@ func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectP
 }
 
 // PushTaskEvent sends a DingTalk push notification for a task event.
-// Only processes completed/failed/cancelled statuses.
+// Only processes started/completed/failed/cancelled statuses.
 // Returns true if the notification was sent to at least one subscriber.
 func PushTaskEvent(taskID, status, taskName, responsePreview, projectPath string) bool {
 	if !IsStarted() || db == nil {
@@ -58,6 +60,11 @@ func PushTaskEvent(taskID, status, taskName, responsePreview, projectPath string
 	var title, markdown string
 
 	switch status {
+	case "running":
+		title = "定时任务已启动"
+		markdown = fmt.Sprintf("### 定时任务已启动\n**任务**: %s\n**项目**: %s",
+			escapeMarkdown(taskName),
+			escapeMarkdown(projectPath))
 	case "completed":
 		title = "定时任务已完成"
 		markdown = fmt.Sprintf("### 定时任务已完成\n**任务**: %s\n**项目**: %s\n\n%s",
@@ -66,14 +73,16 @@ func PushTaskEvent(taskID, status, taskName, responsePreview, projectPath string
 			truncatePreview(responsePreview))
 	case "failed":
 		title = "定时任务失败"
-		markdown = fmt.Sprintf("### 定时任务失败\n**任务**: %s\n**项目**: %s",
+		markdown = fmt.Sprintf("### 定时任务失败\n**任务**: %s\n**项目**: %s\n\n%s",
 			escapeMarkdown(taskName),
-			escapeMarkdown(projectPath))
+			escapeMarkdown(projectPath),
+			truncatePreview(responsePreview))
 	case "cancelled":
 		title = "定时任务已取消"
-		markdown = fmt.Sprintf("### 定时任务已取消\n**任务**: %s\n**项目**: %s",
+		markdown = fmt.Sprintf("### 定时任务已取消\n**任务**: %s\n**项目**: %s\n\n%s",
 			escapeMarkdown(taskName),
-			escapeMarkdown(projectPath))
+			escapeMarkdown(projectPath),
+			truncatePreview(responsePreview))
 	default:
 		return false
 	}
@@ -139,7 +148,7 @@ func escapeMarkdown(s string) string {
 func truncatePreview(preview string) string {
 	if utf8.RuneCountInString(preview) > responsePreviewMaxLen {
 		runes := []rune(preview)
-		return string(runes[:responsePreviewMaxLen]) + "..."
+		return string(runes[:responsePreviewMaxLen]) + "…"
 	}
 	return preview
 }
