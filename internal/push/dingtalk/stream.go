@@ -144,17 +144,42 @@ func (m *Manager) handleSessionList(ctx context.Context, data *chatbot.BotCallba
 
 	var sb strings.Builder
 	sb.WriteString("### 会话列表\n发送 **@会话ID <消息>** 向会话发送消息：\n\n")
+
+	// Group sessions by project path
+	type group struct {
+		project string
+		items   []SessionInfo
+	}
+	var groups []group
+	groupIdx := map[string]int{}
 	for _, s := range sessions {
-		id := shortSessionID(s.ID)
-		title := s.Title
-		if title == "" {
-			title = "（无标题）"
+		project := s.ProjectPath
+		if project == "" {
+			project = "（无项目）"
 		}
-		running := ""
-		if sessionMessenger.IsSessionRunning(s.ID) {
-			running = " 🟢"
+		if idx, ok := groupIdx[project]; ok {
+			groups[idx].items = append(groups[idx].items, s)
+		} else {
+			groupIdx[project] = len(groups)
+			groups = append(groups, group{project: project, items: []SessionInfo{s}})
 		}
-		sb.WriteString(fmt.Sprintf("- **@%s** %s%s\n", id, escapeMarkdown(title), running))
+	}
+
+	for _, g := range groups {
+		sb.WriteString(fmt.Sprintf("**%s**\n", escapeMarkdown(g.project)))
+		for _, s := range g.items {
+			id := shortSessionID(s.ID)
+			title := s.Title
+			if title == "" {
+				title = "（无标题）"
+			}
+			running := ""
+			if sessionMessenger.IsSessionRunning(s.ID) {
+				running = " 🟢"
+			}
+			sb.WriteString(fmt.Sprintf("- **@%s** %s%s\n", id, escapeMarkdown(title), running))
+		}
+		sb.WriteString("\n")
 	}
 	_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook, []byte("会话列表"), []byte(sb.String()))
 }
