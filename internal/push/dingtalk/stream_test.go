@@ -3,6 +3,7 @@ package dingtalk
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -272,3 +273,153 @@ func (m *mockDBWithCallback) DeleteSubscriber(userID string) error {
 }
 
 var errTestFailure = fmt.Errorf("test failure")
+
+func TestOnChatBotMessage_SessionCommand_Enqueue(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDBWithCallback{
+		upsertFn: func(_, _, _, _ string) error { return nil },
+	}
+
+	origMessenger := sessionMessenger
+	defer func() { sessionMessenger = origMessenger }()
+
+	var enqueuedSession, enqueuedMsg string
+	sessionMessenger = &mockSessionMessenger{
+		runningSessions: []SessionInfo{
+			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Test Session"},
+		},
+		allSessions: []SessionInfo{
+			{ID: "a1b2c3d4-1111-1111-1111-111111111111", Title: "Test Session"},
+		},
+		EnqueueMessageFn: func(sid, msg string) error {
+			enqueuedSession = sid
+			enqueuedMsg = msg
+			return nil
+		},
+	}
+
+	replyReceived := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		replyReceived = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	mgr := &Manager{}
+	data := &chatbot.BotCallbackDataModel{
+		ConversationType: "1",
+		SenderStaffId:    "staff123",
+		SenderNick:       "TestUser",
+		ConversationId:   "conv1",
+		SessionWebhook:   server.URL,
+		Text:             chatbot.BotCallbackDataTextModel{Content: "@a1b2c3d4 继续修改"},
+	}
+
+	_, err := mgr.onChatBotMessage(context.Background(), data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !replyReceived {
+		t.Error("expected reply to be sent")
+	}
+	if enqueuedSession != "a1b2c3d4-1111-1111-1111-111111111111" {
+		t.Errorf("expected enqueue to running session, got %q", enqueuedSession)
+	}
+	if enqueuedMsg != "继续修改" {
+		t.Errorf("expected message '继续修改', got %q", enqueuedMsg)
+	}
+}
+
+func TestOnChatBotMessage_SessionCommand_NotFound(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDBWithCallback{
+		upsertFn: func(_, _, _, _ string) error { return nil },
+	}
+
+	origMessenger := sessionMessenger
+	defer func() { sessionMessenger = origMessenger }()
+
+	sessionMessenger = &mockSessionMessenger{
+		runningSessions: []SessionInfo{},
+		allSessions:     []SessionInfo{},
+	}
+
+	var replyBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		replyBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	mgr := &Manager{}
+	data := &chatbot.BotCallbackDataModel{
+		ConversationType: "1",
+		SenderStaffId:    "staff123",
+		SenderNick:       "TestUser",
+		ConversationId:   "conv1",
+		SessionWebhook:   server.URL,
+		Text:             chatbot.BotCallbackDataTextModel{Content: "@deadbeef hello"},
+	}
+
+	_, err := mgr.onChatBotMessage(context.Background(), data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(replyBody) == 0 {
+		t.Error("expected error reply")
+	}
+}
+
+func TestOnChatBotMessage_SessionCommand_AutoSubscribe(t *testing.T) {
+	origDB := db
+	defer func() { db = origDB }()
+
+	var upsertedID, upsertedSource string
+	db = &mockDBWithCallback{
+		upsertFn: func(userID, _, _, source string) error {
+			upsertedID = userID
+			upsertedSource = source
+			return nil
+		},
+	}
+
+	origMessenger := sessionMessenger
+	defer func() { sessionMessenger = origMessenger }()
+
+	sessionMessenger = &mockSessionMessenger{
+		runningSessions: []SessionInfo{},
+		allSessions:     []SessionInfo{},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	mgr := &Manager{}
+	data := &chatbot.BotCallbackDataModel{
+		ConversationType: "1",
+		SenderStaffId:    "staff123",
+		SenderNick:       "TestUser",
+		ConversationId:   "conv1",
+		SessionWebhook:   server.URL,
+		Text:             chatbot.BotCallbackDataTextModel{Content: "@deadbeef hello"},
+	}
+
+	_, err := mgr.onChatBotMessage(context.Background(), data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// User should be auto-subscribed even though session command failed
+	if upsertedID != "staff123" {
+		t.Errorf("expected auto-subscribe with staff123, got %q", upsertedID)
+	}
+	if upsertedSource != "stream" {
+		t.Errorf("expected source 'stream', got %q", upsertedSource)
+	}
+}
