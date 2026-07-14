@@ -168,7 +168,7 @@ func truncateForDingTalk(markdown string) string {
 		return markdown
 	}
 	trunc := markdown[:dingtalkMarkdownMaxBytes]
-	for len(trunc) > 0 && !utf8.RuneStart(trunc[len(trunc)-1]) {
+	for trunc != "" && !utf8.RuneStart(trunc[len(trunc)-1]) {
 		trunc = trunc[:len(trunc)-1]
 	}
 	return trunc + "\n\n...(内容过长已截断)"

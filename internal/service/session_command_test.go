@@ -1,9 +1,17 @@
 package service
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"testing"
+	"time"
 
+	"clawbench/internal/ai"
+	"clawbench/internal/model"
+
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 )
@@ -26,11 +34,32 @@ func setupTestDBForSessionCommand(t *testing.T) *sql.DB {
 			model TEXT DEFAULT '',
 			session_type TEXT NOT NULL DEFAULT 'chat',
 			external_session_id TEXT DEFAULT '',
+			transport TEXT DEFAULT '',
 			deleted INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			last_read_at DATETIME,
 			UNIQUE(project_path, backend, id)
+		);
+		CREATE TABLE IF NOT EXISTS chat_history (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			project_path TEXT NOT NULL,
+			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+			content TEXT NOT NULL,
+			files TEXT,
+			session_id TEXT,
+			backend TEXT NOT NULL DEFAULT 'claude',
+			streaming INTEGER NOT NULL DEFAULT 0,
+			indexed INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE IF NOT EXISTS summaries (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			target_type TEXT NOT NULL,
+			target_id   INTEGER NOT NULL,
+			summary     TEXT NOT NULL,
+			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(target_type, target_id)
 		);
 	`)
 	require.NoError(t, err)
@@ -239,4 +268,1657 @@ func TestListRecentSessions(t *testing.T) {
 	if len(results) != 1 {
 		t.Errorf("expected 1 result with limit=1, got %d", len(results))
 	}
+}
+
+// ============================================================================
+// resolveAgentConfig tests
+// ============================================================================
+
+func TestResolveAgentConfig_UnknownAgentID(t *testing.T) {
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{}
+	defer func() { model.Agents = origAgents }()
+
+	result := resolveAgentConfig("nonexistent", "/proj", "", "", "")
+	assert.Equal(t, "", result.systemPrompt)
+	assert.Equal(t, "", result.agentModel)
+	assert.Equal(t, "", result.agentCommand)
+	assert.Equal(t, "", result.effectiveThinkingEffort)
+	assert.Equal(t, "", result.effectiveMode)
+}
+
+func TestResolveAgentConfig_AgentWithAllFields(t *testing.T) {
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {
+			ID:             "test-agent",
+			SystemPrompt:   "You are at {{PROJECT_PATH}}",
+			Command:        "/usr/bin/test-cli",
+			ThinkingEffort: "high",
+			PreferredMode:  "code",
+			Models:         []model.AgentModel{{ID: "model-1", Default: true}},
+		},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	result := resolveAgentConfig("test-agent", "/home/user/proj", "", "", "")
+	assert.Equal(t, "You are at /home/user/proj", result.systemPrompt)
+	assert.Equal(t, "model-1", result.agentModel)
+	assert.Equal(t, "/usr/bin/test-cli", result.agentCommand)
+	assert.Equal(t, "high", result.effectiveThinkingEffort)
+	assert.Equal(t, "code", result.effectiveMode)
+}
+
+func TestResolveAgentConfig_ModelOverride(t *testing.T) {
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {
+			ID:           "test-agent",
+			SystemPrompt: "hello",
+			Models:       []model.AgentModel{{ID: "default-model", Default: true}},
+		},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	// modelOverride takes precedence over agent's default model
+	result := resolveAgentConfig("test-agent", "", "custom-model", "", "")
+	assert.Equal(t, "custom-model", result.agentModel)
+}
+
+func TestResolveAgentConfig_NoModelOverride_NoDefaultModel(t *testing.T) {
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {
+			ID:           "test-agent",
+			SystemPrompt: "hello",
+			Models:       []model.AgentModel{},
+		},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	result := resolveAgentConfig("test-agent", "", "", "", "")
+	assert.Equal(t, "", result.agentModel)
+}
+
+func TestResolveAgentConfig_ProjectPathReplacement(t *testing.T) {
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {
+			ID:           "test-agent",
+			SystemPrompt: "Work on {{PROJECT_PATH}} and {{PROJECT_PATH}} again",
+		},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	result := resolveAgentConfig("test-agent", "/my/path", "", "", "")
+	assert.Equal(t, "Work on /my/path and /my/path again", result.systemPrompt)
+}
+
+func TestResolveAgentConfig_EmptyProjectPath_NoReplacement(t *testing.T) {
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {
+			ID:           "test-agent",
+			SystemPrompt: "Work on {{PROJECT_PATH}}",
+		},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	result := resolveAgentConfig("test-agent", "", "", "", "")
+	assert.Equal(t, "Work on {{PROJECT_PATH}}", result.systemPrompt)
+}
+
+func TestResolveAgentConfig_ThinkingEffortOverridePrecedence(t *testing.T) {
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {
+			ID:             "test-agent",
+			SystemPrompt:   "hello",
+			ThinkingEffort: "low",
+		},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	// Override takes precedence over agent default
+	result := resolveAgentConfig("test-agent", "", "", "high", "")
+	assert.Equal(t, "high", result.effectiveThinkingEffort)
+}
+
+func TestResolveAgentConfig_ThinkingEffortFromAgent(t *testing.T) {
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {
+			ID:                      "test-agent",
+			SystemPrompt:            "hello",
+			ThinkingEffort:          "low",
+			PreferredThinkingEffort: "medium",
+		},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	// No override → use agent's EffectiveThinkingEffort (PreferredThinkingEffort > ThinkingEffort)
+	result := resolveAgentConfig("test-agent", "", "", "", "")
+	assert.Equal(t, "medium", result.effectiveThinkingEffort)
+}
+
+func TestResolveAgentConfig_ModeOverridePrecedence(t *testing.T) {
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {
+			ID:            "test-agent",
+			SystemPrompt:  "hello",
+			PreferredMode: "code",
+		},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	result := resolveAgentConfig("test-agent", "", "", "", "plan")
+	assert.Equal(t, "plan", result.effectiveMode)
+}
+
+func TestResolveAgentConfig_ModeFromAgent(t *testing.T) {
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {
+			ID:            "test-agent",
+			SystemPrompt:  "hello",
+			PreferredMode: "code",
+		},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	result := resolveAgentConfig("test-agent", "", "", "", "")
+	assert.Equal(t, "code", result.effectiveMode)
+}
+
+func TestResolveAgentConfig_NoCommand(t *testing.T) {
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {
+			ID:           "test-agent",
+			SystemPrompt: "hello",
+		},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	result := resolveAgentConfig("test-agent", "", "", "", "")
+	assert.Equal(t, "", result.agentCommand)
+}
+
+func TestResolveAgentConfig_DefaultModelFromPreferredModel(t *testing.T) {
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {
+			ID:             "test-agent",
+			SystemPrompt:   "hello",
+			PreferredModel: "preferred-model",
+			Models:         []model.AgentModel{{ID: "default-model", Default: true}},
+		},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	// No modelOverride → PreferredModel takes precedence over default-flagged model
+	result := resolveAgentConfig("test-agent", "", "", "", "")
+	assert.Equal(t, "preferred-model", result.agentModel)
+}
+
+// ============================================================================
+// resolveIsACP tests
+// ============================================================================
+
+func TestResolveIsACP_TransportOverrideACPStdio(t *testing.T) {
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{}
+	defer func() { model.Agents = origAgents }()
+
+	assert.True(t, resolveIsACP("acp-stdio", "any-agent"))
+}
+
+func TestResolveIsACP_TransportOverrideCLI(t *testing.T) {
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{}
+	defer func() { model.Agents = origAgents }()
+
+	assert.False(t, resolveIsACP("cli", "any-agent"))
+}
+
+func TestResolveIsACP_NoOverride_AgentWithACPTransport(t *testing.T) {
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"acp-agent": {ID: "acp-agent", Transport: "acp-stdio"},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	assert.True(t, resolveIsACP("", "acp-agent"))
+}
+
+func TestResolveIsACP_NoOverride_AgentWithCLITransport(t *testing.T) {
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"cli-agent": {ID: "cli-agent", Transport: "cli"},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	assert.False(t, resolveIsACP("", "cli-agent"))
+}
+
+func TestResolveIsACP_NoOverride_UnknownAgent(t *testing.T) {
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{}
+	defer func() { model.Agents = origAgents }()
+
+	assert.False(t, resolveIsACP("", "nonexistent"))
+}
+
+func TestResolveIsACP_NoOverride_AgentWithEmptyTransport(t *testing.T) {
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"agent": {ID: "agent", Transport: ""},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	assert.False(t, resolveIsACP("", "agent"))
+}
+
+func TestResolveIsACP_OverrideTakesPrecedence(t *testing.T) {
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"acp-agent": {ID: "acp-agent", Transport: "acp-stdio"},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	// transportOverride=cli should override agent's acp-stdio
+	assert.False(t, resolveIsACP("cli", "acp-agent"))
+}
+
+// ============================================================================
+// appendMediaPrompt tests
+// ============================================================================
+
+func TestAppendMediaPrompt_EmptyMediaPrompt(t *testing.T) {
+	// model.BuildMediaPrompt returns a non-empty string from the embedded template,
+	// but we test the logic: if mediaPrompt is empty, systemPrompt is returned as-is.
+	// Since we can't easily mock BuildMediaPrompt, we test with the actual function.
+	result := appendMediaPrompt("my system prompt")
+	// BuildMediaPrompt returns a non-empty string from embedded template,
+	// so result should contain both parts
+	assert.Contains(t, result, "my system prompt")
+}
+
+func TestAppendMediaPrompt_NonEmptySystemPrompt(t *testing.T) {
+	result := appendMediaPrompt("my system prompt")
+	// Should contain system prompt + media prompt joined by \n\n
+	assert.Contains(t, result, "my system prompt")
+	// Should also contain media-related content from the embedded template
+	assert.True(t, len(result) > len("my system prompt"), "result should be longer than just the system prompt")
+}
+
+func TestAppendMediaPrompt_EmptySystemPrompt(t *testing.T) {
+	result := appendMediaPrompt("")
+	// With empty system prompt, should just return the media prompt
+	// (or empty string if BuildMediaPrompt returns empty)
+	mediaPrompt := model.BuildMediaPrompt()
+	if mediaPrompt != "" {
+		assert.Equal(t, mediaPrompt, result)
+	} else {
+		assert.Equal(t, "", result)
+	}
+}
+
+// ============================================================================
+// resolveSessionState tests
+// ============================================================================
+
+func TestResolveSessionState_NewSession(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	// Session with no assistant messages → resume=false
+	effectiveID, resume, forkCtx := resolveSessionState("new-session", "", false)
+	assert.Equal(t, "new-session", effectiveID)
+	assert.False(t, resume)
+	assert.Equal(t, "", forkCtx)
+}
+
+func TestResolveSessionState_ResumeWithExternalID_NonACP(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "sess-resume-1"
+	// Insert session with external_session_id
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, external_session_id) VALUES (?, '/proj', 'claude', 'Test', '', 'default', '', 'chat', ?)",
+		sessionID, "ext-123",
+	)
+	require.NoError(t, err)
+	// Insert an assistant message to make SessionHasAssistant return true
+	_, err = WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"/proj", `{"blocks":[{"type":"text","text":"hello"}]}`, sessionID,
+	)
+	require.NoError(t, err)
+
+	effectiveID, resume, forkCtx := resolveSessionState(sessionID, "", false)
+	assert.Equal(t, "ext-123", effectiveID, "should use external session ID for non-ACP resume")
+	assert.True(t, resume)
+	assert.Equal(t, "", forkCtx, "no fork context when external ID exists")
+}
+
+func TestResolveSessionState_ResumeWithoutExternalID_Fork(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "sess-fork-1"
+	// Insert session without external_session_id
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'claude', 'Test', '', 'default', '', 'chat')",
+		sessionID,
+	)
+	require.NoError(t, err)
+	// Insert messages for fork context
+	_, err = WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+		"/proj", `{"blocks":[{"type":"text","text":"user message"}]}`, sessionID,
+	)
+	require.NoError(t, err)
+	_, err = WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"/proj", `{"blocks":[{"type":"text","text":"assistant reply"}]}`, sessionID,
+	)
+	require.NoError(t, err)
+
+	effectiveID, resume, forkCtx := resolveSessionState(sessionID, "", false)
+	assert.Equal(t, "", effectiveID, "should clear session ID for non-ACP fork without external ID")
+	assert.True(t, resume)
+	assert.NotEmpty(t, forkCtx, "should have fork context when no external ID")
+	assert.Contains(t, forkCtx, "user: user message")
+	assert.Contains(t, forkCtx, "assistant: assistant reply")
+}
+
+func TestResolveSessionState_ResumeACPWithForkContext(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "sess-acp-fork"
+	// Insert session without external_session_id
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'claude', 'Test', '', 'default', '', 'chat')",
+		sessionID,
+	)
+	require.NoError(t, err)
+	// Insert messages
+	_, err = WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+		"/proj", `{"blocks":[{"type":"text","text":"msg"}]}`, sessionID,
+	)
+	require.NoError(t, err)
+	_, err = WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"/proj", `{"blocks":[{"type":"text","text":"reply"}]}`, sessionID,
+	)
+	require.NoError(t, err)
+
+	// ACP with fork context → resume=false
+	effectiveID, resume, forkCtx := resolveSessionState(sessionID, "", true)
+	assert.Equal(t, sessionID, effectiveID, "ACP should keep original session ID")
+	assert.False(t, resume, "ACP with fork context should set resume=false")
+	assert.NotEmpty(t, forkCtx, "should have fork context")
+}
+
+func TestResolveSessionState_ResumeACPWithExternalID(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "sess-acp-ext"
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, external_session_id) VALUES (?, '/proj', 'claude', 'Test', '', 'default', '', 'chat', ?)",
+		sessionID, "ext-acp-123",
+	)
+	require.NoError(t, err)
+	_, err = WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"/proj", `{"blocks":[{"type":"text","text":"hi"}]}`, sessionID,
+	)
+	require.NoError(t, err)
+
+	// ACP with external ID → resume=true (no fork context needed)
+	effectiveID, resume, forkCtx := resolveSessionState(sessionID, "", true)
+	assert.Equal(t, sessionID, effectiveID, "ACP keeps original session ID even with external ID")
+	assert.True(t, resume)
+	assert.Equal(t, "", forkCtx, "no fork context when external ID exists")
+}
+
+// ============================================================================
+// BuildChatRequest tests
+// ============================================================================
+
+func TestBuildChatRequest_EmptyAgentID_UsesDefault(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	origAgentList := model.AgentList
+	origDefaultID := model.DefaultAgentID
+	model.Agents = map[string]*model.Agent{
+		"default-agent": {
+			ID:           "default-agent",
+			SystemPrompt: "default prompt",
+			Models:       []model.AgentModel{{ID: "default-model", Default: true}},
+		},
+	}
+	model.AgentList = []*model.Agent{{ID: "default-agent"}}
+	model.DefaultAgentID = "default-agent"
+	defer func() {
+		model.Agents = origAgents
+		model.AgentList = origAgentList
+		model.DefaultAgentID = origDefaultID
+	}()
+
+	req := BuildChatRequest("hello", "sess-1", "/proj", "claude", "", "", "", "", "", "/proj", false)
+	assert.Equal(t, "default-agent", req.AgentID)
+	assert.Equal(t, "default-model", req.Model)
+}
+
+func TestBuildChatRequest_WithAttachments(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	req := BuildChatRequest("hello", "sess-1", "/proj", "claude", "", "", "", "", "", "/proj", true)
+	assert.True(t, req.HasAttachments)
+	// With attachments, media prompt should be appended to system prompt
+	mediaPrompt := model.BuildMediaPrompt()
+	if mediaPrompt != "" {
+		assert.Contains(t, req.SystemPrompt, mediaPrompt)
+	}
+}
+
+func TestBuildChatRequest_NoAttachments(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	req := BuildChatRequest("hello", "sess-1", "/proj", "claude", "", "", "", "", "", "/proj", false)
+	assert.False(t, req.HasAttachments)
+}
+
+func TestBuildChatRequest_WithModelOverride(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {
+			ID:           "test-agent",
+			SystemPrompt: "hello",
+			Models:       []model.AgentModel{{ID: "default-model", Default: true}},
+		},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	req := BuildChatRequest("hello", "sess-1", "/proj", "claude", "test-agent", "custom-model", "", "", "", "/proj", false)
+	assert.Equal(t, "custom-model", req.Model)
+}
+
+func TestBuildChatRequest_WithThinkingEffortAndMode(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	req := BuildChatRequest("hello", "sess-1", "/proj", "claude", "agent", "", "high", "plan", "", "/proj", false)
+	assert.Equal(t, "high", req.ThinkingEffort)
+	assert.Equal(t, "plan", req.Mode)
+}
+
+func TestBuildChatRequest_TransportOverrideACP(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	req := BuildChatRequest("hello", "sess-1", "/proj", "claude", "agent", "", "", "", "acp-stdio", "/proj", false)
+	// Just verify it doesn't panic and builds correctly
+	assert.Equal(t, "hello", req.Prompt)
+}
+
+func TestBuildChatRequest_AgentWithCommand(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"cmd-agent": {
+			ID:           "cmd-agent",
+			SystemPrompt: "prompt",
+			Command:      "/usr/local/bin/special-cli",
+		},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	req := BuildChatRequest("hello", "sess-1", "/proj", "claude", "cmd-agent", "", "", "", "", "/proj", false)
+	assert.Equal(t, "/usr/local/bin/special-cli", req.Command)
+}
+
+func TestBuildChatRequest_AgentWithProjectPathReplacement(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"path-agent": {
+			ID:           "path-agent",
+			SystemPrompt: "You are working in {{PROJECT_PATH}}",
+		},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	req := BuildChatRequest("hello", "sess-1", "/my/project", "claude", "path-agent", "", "", "", "", "/my/project", false)
+	assert.Equal(t, "You are working in /my/project", req.SystemPrompt)
+}
+
+// ============================================================================
+// BuildForkContext tests
+// ============================================================================
+
+func TestBuildForkContext_EmptySession(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	result := BuildForkContext("nonexistent-session")
+	assert.Equal(t, "", result)
+}
+
+func TestBuildForkContext_WithMessages(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "fork-sess-1"
+	// Insert user message
+	_, err := WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+		"/proj", `{"blocks":[{"type":"text","text":"hello user"}]}`, sessionID,
+	)
+	require.NoError(t, err)
+	// Insert assistant message
+	_, err = WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"/proj", `{"blocks":[{"type":"text","text":"hello assistant"}]}`, sessionID,
+	)
+	require.NoError(t, err)
+
+	result := BuildForkContext(sessionID)
+	assert.Contains(t, result, "user: hello user")
+	assert.Contains(t, result, "assistant: hello assistant")
+}
+
+func TestBuildForkContext_SkipsEmptyContent(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "fork-sess-empty"
+	// Insert user message with no text blocks
+	_, err := WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+		"/proj", `{"blocks":[]}`, sessionID,
+	)
+	require.NoError(t, err)
+
+	result := BuildForkContext(sessionID)
+	assert.Equal(t, "", result, "messages with no text blocks should produce empty fork context")
+}
+
+func TestBuildForkContext_SkipsInvalidJSON(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "fork-sess-3"
+	// Insert message with invalid JSON content
+	_, err := WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+		"/proj", "not valid json", sessionID,
+	)
+	require.NoError(t, err)
+
+	result := BuildForkContext(sessionID)
+	assert.Equal(t, "", result, "invalid JSON should be skipped")
+}
+
+func TestBuildForkContext_SkipsEmptyTextBlocks(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "fork-sess-4"
+	// Insert message with empty text block
+	_, err := WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+		"/proj", `{"blocks":[{"type":"text","text":""}]}`, sessionID,
+	)
+	require.NoError(t, err)
+
+	result := BuildForkContext(sessionID)
+	assert.Equal(t, "", result, "empty text blocks should be skipped")
+}
+
+func TestBuildForkContext_MultipleTextBlocks(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "fork-sess-5"
+	// Insert message with multiple text blocks
+	_, err := WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+		"/proj", `{"blocks":[{"type":"text","text":"first part"},{"type":"thinking","text":"thinking part"},{"type":"text","text":"second part"}]}`, sessionID,
+	)
+	require.NoError(t, err)
+
+	result := BuildForkContext(sessionID)
+	assert.Contains(t, result, "user: first part")
+	assert.Contains(t, result, "user: second part")
+	// thinking blocks don't match contentKeyText="text", they have type="thinking"
+	// so "thinking part" should not appear as a "user: thinking part" line
+	assert.NotContains(t, result, "user: thinking part")
+}
+
+// ============================================================================
+// handleACPCleanup tests
+// ============================================================================
+
+func TestHandleACPCleanup_NonACPTransport(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"cli-agent": {ID: "cli-agent", Transport: "cli"},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	// Insert session so GetSessionTransport doesn't panic on nil DB
+	sessionID := "cleanup-cli-sess"
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'claude', 'Test', 'cli-agent', 'default', '', 'chat')",
+		sessionID,
+	)
+	require.NoError(t, err)
+
+	// Should not panic for non-ACP transport
+	handleACPCleanup(sessionID, "cli-agent")
+}
+
+func TestHandleACPCleanup_SessionTransportACP(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "acp-session-1"
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, transport) VALUES (?, '/proj', 'claude', 'Test', '', 'default', '', 'chat', ?)",
+		sessionID, "acp-stdio",
+	)
+	require.NoError(t, err)
+
+	// Should not panic for ACP transport (ACPConnManager singleton handles nil pool gracefully)
+	handleACPCleanup(sessionID, "some-agent")
+}
+
+func TestHandleACPCleanup_NoSessionTransport_AgentACP(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"acp-agent": {ID: "acp-agent", Transport: "acp-stdio"},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	sessionID := "acp-agent-sess"
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'claude', 'Test', 'acp-agent', 'default', '', 'chat')",
+		sessionID,
+	)
+	require.NoError(t, err)
+
+	// Agent has ACP transport, no session transport set
+	handleACPCleanup(sessionID, "acp-agent")
+}
+
+func TestHandleACPCleanup_UnknownAgent(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{}
+	defer func() { model.Agents = origAgents }()
+
+	sessionID := "unknown-agent-sess"
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'claude', 'Test', 'nonexistent-agent', 'default', '', 'chat')",
+		sessionID,
+	)
+	require.NoError(t, err)
+
+	// Unknown agent, no session transport → defaults to CLI
+	handleACPCleanup(sessionID, "nonexistent-agent")
+}
+
+// ============================================================================
+// processStreamResult tests
+// ============================================================================
+
+func TestProcessStreamResult_UserCancel(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	ctx := context.Background()
+	streamCh := make(chan ai.StreamEvent, 10)
+	cfg := LaunchConfig{
+		SessionID:   "cancel-sess",
+		ProjectPath: "/proj",
+		BackendName: "claude",
+		AgentID:     "agent",
+		Message:     "test",
+	}
+
+	var finalEvent ai.StreamEvent
+	markDoneAndSendFinal := func(event ai.StreamEvent) {
+		finalEvent = event
+	}
+
+	result := streamRunResultShared{cancelReason: cancelReasonUser}
+	processStreamResult(ctx, streamCh, cfg, "cancel-sess", result, markDoneAndSendFinal)
+
+	assert.Equal(t, statusCancelled, finalEvent.Type)
+}
+
+func TestProcessStreamResult_Error(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	ctx := context.Background()
+	streamCh := make(chan ai.StreamEvent, 10)
+	cfg := LaunchConfig{
+		SessionID:   "error-sess",
+		ProjectPath: "/proj",
+		BackendName: "claude",
+		AgentID:     "agent",
+		Message:     "test",
+	}
+
+	var finalEvent ai.StreamEvent
+	markDoneAndSendFinal := func(event ai.StreamEvent) {
+		finalEvent = event
+	}
+
+	result := streamRunResultShared{err: "something went wrong"}
+	processStreamResult(ctx, streamCh, cfg, "error-sess", result, markDoneAndSendFinal)
+
+	assert.Equal(t, eventTypeError, finalEvent.Type)
+	assert.Equal(t, "something went wrong", finalEvent.Error)
+}
+
+func TestProcessStreamResult_EmptyContent(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	ctx := context.Background()
+	streamCh := make(chan ai.StreamEvent, 10)
+	cfg := LaunchConfig{
+		SessionID:   "empty-sess",
+		ProjectPath: "/proj",
+		BackendName: "claude",
+		AgentID:     "agent",
+		Message:     "test",
+	}
+
+	var finalEvent ai.StreamEvent
+	markDoneAndSendFinal := func(event ai.StreamEvent) {
+		finalEvent = event
+	}
+
+	result := streamRunResultShared{empty: true}
+	processStreamResult(ctx, streamCh, cfg, "empty-sess", result, markDoneAndSendFinal)
+
+	assert.Equal(t, eventTypeError, finalEvent.Type)
+	assert.Equal(t, "AI returned no content", finalEvent.Error)
+	assert.Equal(t, ai.ReasonEmpty, finalEvent.Reason)
+}
+
+func TestProcessStreamResult_NonUserCancel(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	ctx := context.Background()
+	streamCh := make(chan ai.StreamEvent, 10)
+	cfg := LaunchConfig{
+		SessionID:   "disconnect-sess",
+		ProjectPath: "/proj",
+		BackendName: "claude",
+		AgentID:     "agent",
+		Message:     "test",
+	}
+
+	var finalEvent ai.StreamEvent
+	markDoneAndSendFinal := func(event ai.StreamEvent) {
+		finalEvent = event
+	}
+
+	result := streamRunResultShared{cancelReason: "disconnect"}
+	processStreamResult(ctx, streamCh, cfg, "disconnect-sess", result, markDoneAndSendFinal)
+
+	assert.Equal(t, statusCancelled, finalEvent.Type)
+}
+
+func TestProcessStreamResult_DoneNoQueue(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	ctx := context.Background()
+	streamCh := make(chan ai.StreamEvent, 10)
+	cfg := LaunchConfig{
+		SessionID:   "done-sess",
+		ProjectPath: "/proj",
+		BackendName: "claude",
+		AgentID:     "agent",
+		Message:     "test",
+	}
+
+	var finalEvent ai.StreamEvent
+	markDoneAndSendFinal := func(event ai.StreamEvent) {
+		finalEvent = event
+	}
+
+	// No error, no cancel, not empty → should check queue, find nothing → done
+	result := streamRunResultShared{}
+	processStreamResult(ctx, streamCh, cfg, "done-sess", result, markDoneAndSendFinal)
+
+	assert.Equal(t, "done", finalEvent.Type)
+}
+
+func TestProcessStreamResult_DrainQueue(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "drain-sess"
+	ctx := context.Background()
+	streamCh := make(chan ai.StreamEvent, 10)
+	cfg := LaunchConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/proj",
+		BackendName: "claude",
+		AgentID:     "agent",
+		Message:     "test",
+	}
+
+	var finalEvents []ai.StreamEvent
+	markDoneAndSendFinal := func(event ai.StreamEvent) {
+		finalEvents = append(finalEvents, event)
+	}
+
+	// Enqueue a message so the drain loop can find it
+	EnqueueMessage(sessionID, model.QueuedMessage{Text: "queued msg", CreatedAt: "2026-01-01T00:00:00Z"})
+
+	// First iteration: no cancel, no error, not empty=false → drains queue
+	// Second iteration: returns empty result → done
+	// We need to provide a second result that signals "done" after the drain.
+	// Since processStreamResult calls executeStreamRunShared internally,
+	// we can't easily control the second iteration. Instead test the drain path
+	// by providing a result that would go to the queue check.
+	result := streamRunResultShared{} // no cancel, no error, not empty → checks queue
+	processStreamResult(ctx, streamCh, cfg, sessionID, result, markDoneAndSendFinal)
+
+	// After the first drain, executeStreamRunShared is called again which will fail
+	// (no real backend). The goroutine will produce an error result, causing
+	// processStreamResult to emit an error event. Verify at least one event was emitted.
+	assert.NotEmpty(t, finalEvents, "processStreamResult should have emitted events during drain")
+}
+
+func TestProcessStreamResult_DoneWithRetryQueue(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "drain-retry-sess"
+	ctx := context.Background()
+	streamCh := make(chan ai.StreamEvent, 10)
+	cfg := LaunchConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/proj",
+		BackendName: "claude",
+		AgentID:     "agent",
+		Message:     "test",
+	}
+
+	var finalEvent ai.StreamEvent
+	markDoneAndSendFinal := func(event ai.StreamEvent) {
+		finalEvent = event
+	}
+
+	// No queue → should immediately return done
+	result := streamRunResultShared{}
+	processStreamResult(ctx, streamCh, cfg, sessionID, result, markDoneAndSendFinal)
+
+	assert.Equal(t, "done", finalEvent.Type)
+}
+
+// ============================================================================
+// scanDingTalkSessionInfos tests
+// ============================================================================
+
+func TestScanDingTalkSessionInfos_MultipleRows(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj1', 'claude', 'Session 1', 'agent1', 'default', 'model-a', 'chat')",
+		"scan-1",
+	)
+	require.NoError(t, err)
+	_, err = WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj2', 'codebuddy', 'Session 2', 'agent2', 'default', 'model-b', 'chat')",
+		"scan-2",
+	)
+	require.NoError(t, err)
+
+	rows, err := dbRead.Query(
+		`SELECT id, title, project_path, backend, agent_id, model FROM chat_sessions WHERE id IN (?, ?) ORDER BY id`,
+		"scan-1", "scan-2",
+	)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+
+	results := scanDingTalkSessionInfos(rows)
+	require.Len(t, results, 2)
+	assert.Equal(t, "scan-1", results[0].ID)
+	assert.Equal(t, "Session 1", results[0].Title)
+	assert.Equal(t, "/proj1", results[0].ProjectPath)
+	assert.Equal(t, "claude", results[0].Backend)
+	assert.Equal(t, "agent1", results[0].AgentID)
+	assert.Equal(t, "model-a", results[0].Model)
+	assert.Equal(t, "scan-2", results[1].ID)
+}
+
+// ============================================================================
+// DingTalkSessionInfo field tests
+// ============================================================================
+
+func TestDingTalkSessionInfo_AllFields(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'claude', 'Full Info', 'agent1', 'default', 'model-x', 'chat')",
+		"full-info-1",
+	)
+	require.NoError(t, err)
+
+	results, err := FindSessionsByPrefix("full-info")
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	info := results[0]
+	assert.Equal(t, "full-info-1", info.ID)
+	assert.Equal(t, "Full Info", info.Title)
+	assert.Equal(t, "/proj", info.ProjectPath)
+	assert.Equal(t, "claude", info.Backend)
+	assert.Equal(t, "agent1", info.AgentID)
+	assert.Equal(t, "model-x", info.Model)
+}
+
+// ============================================================================
+// ListRecentSessions edge cases
+// ============================================================================
+
+func TestListRecentSessions_ZeroOrNegativeLimit(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	// Insert a session
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'Session', 'agent1', 'default', '', 'chat')",
+		"limit-test-1",
+	)
+	require.NoError(t, err)
+
+	// Zero or negative limit should default to 10
+	results, err := ListRecentSessions(0)
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+
+	results, err = ListRecentSessions(-5)
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+}
+
+// ============================================================================
+// FindRunningSessionsByPrefix edge cases
+// ============================================================================
+
+func TestFindRunningSessionsByPrefix_NoRunningSessions(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	results, err := FindRunningSessionsByPrefix("abc")
+	require.NoError(t, err)
+	assert.Nil(t, results)
+}
+
+func TestFindRunningSessionsByPrefix_PrefixFilter(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	// Insert two sessions
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'Sess A', 'agent1', 'default', '', 'chat')",
+		"prefix-aaa-1111",
+	)
+	require.NoError(t, err)
+	_, err = WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'Sess B', 'agent2', 'default', '', 'chat')",
+		"prefix-bbb-2222",
+	)
+	require.NoError(t, err)
+
+	// Mark both as running
+	TrySetSessionRunning("prefix-aaa-1111")
+	TrySetSessionRunning("prefix-bbb-2222")
+	defer SetSessionRunning("prefix-aaa-1111", false, true)
+	defer SetSessionRunning("prefix-bbb-2222", false, true)
+
+	// Search for only one prefix
+	results, err := FindRunningSessionsByPrefix("prefix-aaa")
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "prefix-aaa-1111", results[0].ID)
+}
+
+// ============================================================================
+// handleSessionPanic tests
+// ============================================================================
+
+func TestHandleSessionPanic_Recovers(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{}
+	defer func() { model.Agents = origAgents }()
+
+	sessionID := "panic-sess-1"
+	// Register the session stream and cancel so cleanup doesn't panic
+	RegisterSessionStream(sessionID)
+	defer func() {
+		UnregisterSessionStream(sessionID)
+	}()
+	_, cancel := context.WithCancel(context.Background())
+	RegisterSessionCancel(sessionID, cancel)
+
+	cfg := LaunchConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/proj",
+		BackendName: "claude",
+		AgentID:     "agent",
+		Message:     "test",
+	}
+
+	// Trigger a panic inside a goroutine with handleSessionPanic
+	done := make(chan struct{})
+	go func() {
+		defer func() { close(done) }()
+		defer handleSessionPanic(cfg, sessionID, cancel)
+		panic("test panic")
+	}()
+	// Wait for the goroutine to complete - handleSessionPanic should recover
+	<-done
+}
+
+func TestLaunchSessionExecution_BackendCreationFails(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{}
+	defer func() { model.Agents = origAgents }()
+
+	sessionID := "launch-fail-sess"
+	// Need to register session stream first so LaunchSessionExecution doesn't duplicate
+	UnregisterSessionStream(sessionID)
+	SetSessionRunning(sessionID, true, false)
+	defer SetSessionRunning(sessionID, false, true)
+
+	cfg := LaunchConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/proj",
+		BackendName: "nonexistent-backend",
+		AgentID:     "nonexistent-agent",
+		Message:     "test",
+	}
+
+	LaunchSessionExecution(cfg)
+
+	// Wait for the goroutine to finish (it should complete quickly on backend creation error)
+	// Poll for the session to be no longer running
+	require.Eventually(t, func() bool {
+		return !IsSessionRunning(sessionID)
+	}, 5*time.Second, 50*time.Millisecond, "session should stop running after backend creation fails")
+}
+
+// ============================================================================
+// SendMessageToSessionFromDingTalk tests
+// ============================================================================
+
+func TestSendMessageToSessionFromDingTalk_SessionExists_QueuedMessage(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	// Add auto_approve column to match what GetSessionFullInfo expects
+	_, err := db.Exec("ALTER TABLE chat_sessions ADD COLUMN auto_approve INTEGER NOT NULL DEFAULT 0")
+	require.NoError(t, err)
+
+	sessionID := "dt-send-1"
+	_, err = WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj', 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
+		sessionID,
+	)
+	require.NoError(t, err)
+
+	// Mark the session as already running so the message gets queued instead of launching a goroutine
+	SetSessionRunning(sessionID, true, false)
+	defer SetSessionRunning(sessionID, false, true)
+
+	err = SendMessageToSessionFromDingTalk(sessionID, "hello from dingtalk")
+
+	// The call should succeed (session was found and message was queued)
+	assert.NoError(t, err)
+
+	// Verify the message was persisted
+	rows, err := dbRead.QueryContext(context.Background(),
+		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'user'", sessionID)
+	require.NoError(t, err)
+	defer rows.Close()
+	var content string
+	if rows.Next() {
+		err = rows.Scan(&content)
+		require.NoError(t, err)
+		assert.Contains(t, content, "hello from dingtalk")
+	}
+	require.NoError(t, rows.Err())
+}
+
+// ============================================================================
+// FindSessionsByPrefix nil DB
+// ============================================================================
+
+func TestFindSessionsByPrefix_NilDB(t *testing.T) {
+	cleanup := SetDBForTest(nil, nil)
+	defer cleanup()
+
+	_, err := FindSessionsByPrefix("test")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "database not initialized")
+}
+
+func TestListRecentSessions_NilDB(t *testing.T) {
+	cleanup := SetDBForTest(nil, nil)
+	defer cleanup()
+
+	_, err := ListRecentSessions(10)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "database not initialized")
+}
+
+func TestFindRunningSessionsByPrefix_NilDB(t *testing.T) {
+	cleanup := SetDBForTest(nil, nil)
+	defer cleanup()
+
+	_, err := FindRunningSessionsByPrefix("test")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "database not initialized")
+}
+
+// ============================================================================
+// BuildForkContext streaming messages excluded
+// ============================================================================
+
+func TestBuildForkContext_ExcludesStreamingMessages(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "fork-streaming"
+	// Insert a streaming (in-progress) message - should be excluded
+	_, err := WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 1)",
+		"/proj", `{"blocks":[{"type":"text","text":"streaming content"}]}`, sessionID,
+	)
+	require.NoError(t, err)
+	// Insert a non-streaming message
+	_, err = WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+		"/proj", `{"blocks":[{"type":"text","text":"final content"}]}`, sessionID,
+	)
+	require.NoError(t, err)
+
+	result := BuildForkContext(sessionID)
+	assert.NotContains(t, result, "streaming content")
+	assert.Contains(t, result, "user: final content")
+}
+
+// ============================================================================
+// DingTalkSessionInfo JSON round-trip
+// ============================================================================
+
+func TestDingTalkSessionInfo_JSONRoundTrip(t *testing.T) {
+	info := DingTalkSessionInfo{
+		ID:          "test-id",
+		Title:       "Test Title",
+		ProjectPath: "/test/path",
+		Backend:     "claude",
+		AgentID:     "agent-1",
+		Model:       "gpt-4",
+	}
+
+	data, err := json.Marshal(info)
+	require.NoError(t, err)
+
+	var decoded DingTalkSessionInfo
+	err = json.Unmarshal(data, &decoded)
+	require.NoError(t, err)
+
+	assert.Equal(t, info, decoded)
+}
+
+// ============================================================================
+// processStreamResult drain queue tests
+// ============================================================================
+
+func TestProcessStreamResult_DrainQueuedMessage(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "drain-sess-1"
+	ctx := context.Background()
+	streamCh := make(chan ai.StreamEvent, 20)
+	cfg := LaunchConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/proj",
+		BackendName: "claude",
+		AgentID:     "agent",
+		Message:     "test",
+	}
+
+	// Pre-enqueue a message
+	EnqueueMessage(sessionID, model.QueuedMessage{
+		Text:      "follow-up message",
+		CreatedAt: "2024-01-01T00:00:00Z",
+	})
+
+	var finalEvents []ai.StreamEvent
+	markDoneAndSendFinal := func(event ai.StreamEvent) {
+		finalEvents = append(finalEvents, event)
+	}
+
+	// First result is success (no error, no cancel, not empty)
+	// It should drain the queued message, then the second result will be "done"
+	result := streamRunResultShared{}
+	processStreamResult(ctx, streamCh, cfg, sessionID, result, markDoneAndSendFinal)
+
+	// Should have found the queued message, drained it, then called executeStreamRunShared
+	// which will fail (no real backend), resulting in an error
+	require.NotEmpty(t, finalEvents, "should have at least one final event")
+	// The final event should be an error from the failed stream run
+	assert.Equal(t, eventTypeError, finalEvents[len(finalEvents)-1].Type)
+
+	// Clean up queue
+	ClearQueue(sessionID)
+}
+
+func TestProcessStreamResult_DrainQueueEmptyAfterDrain(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "drain-empty-sess"
+	ctx := context.Background()
+	streamCh := make(chan ai.StreamEvent, 20)
+	cfg := LaunchConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/proj",
+		BackendName: "claude",
+		AgentID:     "agent",
+		Message:     "test",
+	}
+
+	var finalEvent ai.StreamEvent
+	markDoneAndSendFinal := func(event ai.StreamEvent) {
+		finalEvent = event
+	}
+
+	// Empty result with empty queue → should return "done"
+	result := streamRunResultShared{}
+	processStreamResult(ctx, streamCh, cfg, sessionID, result, markDoneAndSendFinal)
+
+	assert.Equal(t, "done", finalEvent.Type)
+}
+
+// ============================================================================
+// SendMessageToSessionFromDingTalk - launch path
+// ============================================================================
+
+func TestSendMessageToSessionFromDingTalk_LaunchPath(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	_, err := db.Exec("ALTER TABLE chat_sessions ADD COLUMN auto_approve INTEGER NOT NULL DEFAULT 0")
+	require.NoError(t, err)
+
+	sessionID := "dt-launch-1"
+	_, err = WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj', 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
+		sessionID,
+	)
+	require.NoError(t, err)
+
+	// Session is not running → TrySetSessionRunning should succeed
+	// and LaunchSessionExecution will be called
+	err = SendMessageToSessionFromDingTalk(sessionID, "launch message")
+	// The launch will fail because there's no real backend, but the function
+	// should not return an error for the launch itself
+	assert.NoError(t, err)
+
+	// Wait briefly for the goroutine to start, then clean up
+	time.Sleep(100 * time.Millisecond)
+	SetSessionRunning(sessionID, false, true)
+}
+
+// ============================================================================
+// scanDingTalkSessionInfos - scan error path
+// ============================================================================
+
+func TestScanDingTalkSessionInfos_ScanError(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	// Insert a session with all required fields
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'claude', 'Test', 'agent1', 'default', '', 'chat')",
+		"scan-err-1",
+	)
+	require.NoError(t, err)
+
+	// Query with wrong number of columns to trigger scan error
+	rows, err := dbRead.Query(`SELECT id FROM chat_sessions WHERE id = ?`, "scan-err-1")
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+
+	// scanDingTalkSessionInfos expects 6 columns but gets only 1
+	results := scanDingTalkSessionInfos(rows)
+	assert.Empty(t, results, "scan errors should be skipped")
+}
+
+// ============================================================================
+// FindSessionsByPrefix DB query error
+// ============================================================================
+
+func TestFindSessionsByPrefix_QueryError(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	// Drop the table to cause a query error
+	_, _ = db.Exec("DROP TABLE chat_sessions")
+
+	_, err := FindSessionsByPrefix("test")
+	assert.Error(t, err)
+}
+
+func TestListRecentSessions_QueryError(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	_, _ = db.Exec("DROP TABLE chat_sessions")
+
+	_, err := ListRecentSessions(10)
+	assert.Error(t, err)
+}
+
+// ============================================================================
+// FindRunningSessionsByPrefix - multiple running with prefix filter
+// ============================================================================
+
+func TestFindRunningSessionsByPrefix_CaseInsensitive(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'Test', 'agent1', 'default', '', 'chat')",
+		"UPPER-case-id",
+	)
+	require.NoError(t, err)
+
+	TrySetSessionRunning("UPPER-case-id")
+	defer SetSessionRunning("UPPER-case-id", false, true)
+
+	// Case-insensitive prefix match
+	results, err := FindRunningSessionsByPrefix("upper-case")
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "UPPER-case-id", results[0].ID)
+}
+
+// ============================================================================
+// External session ID tests
+// ============================================================================
+
+func TestUpdateAndClearExternalSessionID(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "ext-sess-1"
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, external_session_id) VALUES (?, '/proj', 'claude', 'Ext Test', 'agent1', 'default', '', 'chat', '')",
+		sessionID,
+	)
+	require.NoError(t, err)
+
+	// Initially empty
+	assert.Equal(t, "", GetExternalSessionID(sessionID))
+
+	// Update
+	UpdateExternalSessionID(sessionID, "ext-123")
+	assert.Equal(t, "ext-123", GetExternalSessionID(sessionID))
+
+	// Clear
+	ClearExternalSessionID(sessionID)
+	assert.Equal(t, "", GetExternalSessionID(sessionID))
+}
+
+// ============================================================================
+// PruneRawResponses tests
+// ============================================================================
+
+func TestPruneRawResponses_ZeroOrNegative(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	// Create ai_raw_responses table
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS ai_raw_responses (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		session_id TEXT NOT NULL,
+		backend TEXT NOT NULL,
+		message_id INTEGER,
+		raw_output TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`)
+	require.NoError(t, err)
+
+	// Insert some rows
+	_, err = WriteExec("INSERT INTO ai_raw_responses (session_id, backend, raw_output) VALUES ('s1', 'claude', 'output1')")
+	require.NoError(t, err)
+	_, err = WriteExec("INSERT INTO ai_raw_responses (session_id, backend, raw_output) VALUES ('s2', 'claude', 'output2')")
+	require.NoError(t, err)
+
+	// Zero limit should not prune
+	PruneRawResponses(0)
+	var count int
+	db.QueryRow("SELECT COUNT(*) FROM ai_raw_responses").Scan(&count)
+	assert.Equal(t, 2, count)
+
+	// Negative limit should not prune
+	PruneRawResponses(-1)
+	db.QueryRow("SELECT COUNT(*) FROM ai_raw_responses").Scan(&count)
+	assert.Equal(t, 2, count)
+}
+
+func TestPruneRawResponses_Prune(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	// Create ai_raw_responses table
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS ai_raw_responses (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		session_id TEXT NOT NULL,
+		backend TEXT NOT NULL,
+		message_id INTEGER,
+		raw_output TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`)
+	require.NoError(t, err)
+
+	// Insert 3 rows
+	for i := range 3 {
+		_, err = WriteExec("INSERT INTO ai_raw_responses (session_id, backend, raw_output) VALUES (?, 'claude', ?)",
+			fmt.Sprintf("s%d", i), fmt.Sprintf("output%d", i))
+		require.NoError(t, err)
+	}
+
+	// Keep only 1
+	PruneRawResponses(1)
+	var count int
+	db.QueryRow("SELECT COUNT(*) FROM ai_raw_responses").Scan(&count)
+	assert.Equal(t, 1, count)
+}
+
+// ============================================================================
+// GetExpiredDeletedSessions and PurgeDeletedData tests
+// ============================================================================
+
+func TestGetExpiredDeletedSessions_Empty(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	ids, err := GetExpiredDeletedSessions(time.Now())
+	require.NoError(t, err)
+	assert.Empty(t, ids)
+}
+
+func TestGetExpiredDeletedSessions_WithExpired(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	// Insert a deleted session with an old timestamp
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, deleted, updated_at) VALUES (?, '/proj', 'claude', 'Old', 'a1', 'default', '', 'chat', 1, '2020-01-01T00:00:00')",
+		"expired-sess",
+	)
+	require.NoError(t, err)
+
+	ids, err := GetExpiredDeletedSessions(time.Now())
+	require.NoError(t, err)
+	assert.Contains(t, ids, "expired-sess")
+}
+
+func TestPurgeDeletedData(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	// Insert a deleted session with old timestamp
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, deleted, updated_at) VALUES (?, '/proj', 'claude', 'Old', 'a1', 'default', '', 'chat', 1, '2020-01-01T00:00:00')",
+		"purge-sess",
+	)
+	require.NoError(t, err)
+
+	// Insert chat history for the session
+	_, err = WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/proj', 'user', 'hello', 'purge-sess', 'claude', 0)",
+	)
+	require.NoError(t, err)
+
+	sessionsPurged, _, err := PurgeDeletedData([]string{"purge-sess"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), sessionsPurged)
+
+	// Session should be hard-deleted
+	var count int
+	db.QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE id = 'purge-sess'").Scan(&count)
+	assert.Equal(t, 0, count)
+
+	// Chat history should also be deleted
+	db.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = 'purge-sess'").Scan(&count)
+	assert.Equal(t, 0, count)
+}
+
+// ============================================================================
+// HardDeleteSession test
+// ============================================================================
+
+func TestHardDeleteSession(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "hard-del-sess"
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'claude', 'Del', 'a1', 'default', '', 'chat')",
+		sessionID,
+	)
+	require.NoError(t, err)
+
+	_, err = WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/proj', 'user', 'hello', ?, 'claude', 0)",
+		sessionID,
+	)
+	require.NoError(t, err)
+
+	err = HardDeleteSession(sessionID)
+	require.NoError(t, err)
+
+	var count int
+	db.QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE id = ?", sessionID).Scan(&count)
+	assert.Equal(t, 0, count)
+	db.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sessionID).Scan(&count)
+	assert.Equal(t, 0, count)
+}
+
+// ============================================================================
+// GetMessageContent and GetMessageByID tests
+// ============================================================================
+
+func TestGetMessageContent_NotFound(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	content, err := GetMessageContent(999, "nonexistent")
+	require.NoError(t, err)
+	assert.Equal(t, "", content)
+}
+
+func TestGetMessageContent_Found(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "msg-content-sess"
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'claude', 'Msg', 'a1', 'default', '', 'chat')",
+		sessionID,
+	)
+	require.NoError(t, err)
+
+	res, err := WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/proj', 'user', ?, ?, 'claude', 0)",
+		`{"blocks":[{"type":"text","text":"hello world"}]}`, sessionID,
+	)
+	require.NoError(t, err)
+	msgID, _ := res.LastInsertId()
+
+	content, err := GetMessageContent(msgID, sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, "hello world", content)
+}
+
+func TestGetMessageByID_NotFound(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	_, err := GetMessageByID(999)
+	assert.Error(t, err)
 }

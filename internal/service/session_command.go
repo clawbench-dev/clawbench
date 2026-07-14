@@ -30,7 +30,7 @@ func FindSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
 	if dbRead == nil {
 		return nil, fmt.Errorf("database not initialized")
 	}
-	rows, err := dbRead.Query(
+	rows, err := dbRead.QueryContext(context.Background(),
 		`SELECT id, title, project_path, backend, agent_id, model
 		 FROM chat_sessions
 		 WHERE LOWER(id) LIKE LOWER(?) AND deleted = 0 AND session_type = 'chat'
@@ -42,7 +42,7 @@ func FindSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	return scanDingTalkSessionInfos(rows)
+	return scanDingTalkSessionInfos(rows), nil
 }
 
 // ListRecentSessions returns the most recently updated non-deleted chat sessions.
@@ -53,7 +53,7 @@ func ListRecentSessions(limit int) ([]DingTalkSessionInfo, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-	rows, err := dbRead.Query(
+	rows, err := dbRead.QueryContext(context.Background(),
 		`SELECT id, title, project_path, backend, agent_id, model
 		 FROM chat_sessions
 		 WHERE deleted = 0 AND session_type = 'chat'
@@ -65,7 +65,7 @@ func ListRecentSessions(limit int) ([]DingTalkSessionInfo, error) {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	return scanDingTalkSessionInfos(rows)
+	return scanDingTalkSessionInfos(rows), nil
 }
 
 // FindRunningSessionsByPrefix finds currently-running sessions whose ID starts with the given prefix.
@@ -100,7 +100,7 @@ func FindRunningSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
 		args[i] = id
 	}
 
-	rows, err := dbRead.Query(
+	rows, err := dbRead.QueryContext(context.Background(),
 		fmt.Sprintf(
 			`SELECT id, title, project_path, backend, agent_id, model
 			 FROM chat_sessions
@@ -113,10 +113,10 @@ func FindRunningSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	return scanDingTalkSessionInfos(rows)
+	return scanDingTalkSessionInfos(rows), nil
 }
 
-func scanDingTalkSessionInfos(rows *sql.Rows) ([]DingTalkSessionInfo, error) {
+func scanDingTalkSessionInfos(rows *sql.Rows) []DingTalkSessionInfo {
 	var results []DingTalkSessionInfo
 	for rows.Next() {
 		var info DingTalkSessionInfo
@@ -126,7 +126,7 @@ func scanDingTalkSessionInfos(rows *sql.Rows) ([]DingTalkSessionInfo, error) {
 		}
 		results = append(results, info)
 	}
-	return results, nil
+	return results
 }
 
 // SendMessageToSessionFromDingTalk sends a message to a non-running session from DingTalk.
@@ -136,7 +136,7 @@ func SendMessageToSessionFromDingTalk(sessionID, message string) error {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
 
-	if _, err := AddChatMessage(info.ProjectPath, info.Backend, sessionID, "user", message, nil, false, info.Title); err != nil {
+	if _, err := AddChatMessage(info.ProjectPath, info.Backend, sessionID, roleUser, message, nil, false, info.Title); err != nil {
 		return fmt.Errorf("persist message: %w", err)
 	}
 
@@ -177,41 +177,13 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 	RegisterSessionCancel(sessionID, cancel)
 
 	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("session goroutine panicked",
-					slog.String("session", sessionID),
-					slog.Any("panic", r),
-					slog.String("stack", string(debug.Stack())),
-				)
-				SetSessionRunning(sessionID, false, true)
-				UnregisterSessionCancel(sessionID)
-				cancel()
-				SendSessionEvent(sessionID, ai.StreamEvent{Type: "error", Error: "AI internal error, please retry", Reason: ai.ReasonPanic})
-				UnregisterSessionStream(sessionID)
-				errMsg := "AI internal error, please retry"
-				errContent, _ := json.Marshal(map[string]any{"blocks": []any{map[string]string{"type": "error", "text": errMsg, "reason": ai.ReasonPanic}}})
-				FinalizeStreamingMessage(cfg.ProjectPath, cfg.BackendName, sessionID, string(errContent))
-			}
-		}()
+		defer handleSessionPanic(cfg, sessionID, cancel)
 
 		defer SetSessionRunning(sessionID, false)
 		defer UnregisterSessionStream(sessionID)
 		defer cancel()
 		defer UnregisterSessionCancel(sessionID)
-
-		defer func() {
-			effectiveTransport := "cli"
-			if t := GetSessionTransport(sessionID); t != "" {
-				effectiveTransport = t
-			} else if agent, ok := model.Agents[cfg.AgentID]; ok && agent.Transport != "" {
-				effectiveTransport = agent.Transport
-			}
-			if effectiveTransport == "acp-stdio" {
-				slog.Info("acp: marking connection idle for completed session", "session_id", sessionID, "agent_id", cfg.AgentID)
-				ai.GetACPConnManager().MarkIdle(sessionID)
-			}
-		}()
+		defer handleACPCleanup(sessionID, cfg.AgentID)
 
 		markDoneAndSendFinal := func(event ai.StreamEvent) {
 			SetSessionRunning(sessionID, false, true)
@@ -219,104 +191,187 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 		}
 
 		result := executeStreamRunShared(ctx, streamCh, cfg)
-
-		for {
-			if result.cancelReason == "user" {
-				ClearQueue(sessionID)
-				markDoneAndSendFinal(ai.StreamEvent{Type: "cancelled"})
-				return
-			}
-			if result.err != "" {
-				markDoneAndSendFinal(ai.StreamEvent{Type: "error", Error: result.err})
-				return
-			}
-			if result.empty {
-				markDoneAndSendFinal(ai.StreamEvent{Type: "error", Error: "AI returned no content", Reason: ai.ReasonEmpty})
-				return
-			}
-			if result.cancelReason != "" {
-				markDoneAndSendFinal(ai.StreamEvent{Type: "cancelled"})
-				return
-			}
-
-			qMsg, ok := DequeueMessage(sessionID)
-			if !ok {
-				time.Sleep(50 * time.Millisecond)
-				qMsg, ok = DequeueMessage(sessionID)
-			}
-			if !ok {
-				markDoneAndSendFinal(ai.StreamEvent{Type: "done"})
-				return
-			}
-
-			slog.Info("draining queued message", slog.String("session", sessionID), slog.String("text", qMsg.Text))
-
-			drainMsgID, err := AddChatMessage(cfg.ProjectPath, cfg.BackendName, sessionID, "user", qMsg.Text, qMsg.Files, false, "")
-			if err != nil {
-				slog.Error("failed to persist drain message", slog.String("session", sessionID), slog.String("error", err.Error()))
-			}
-
-			remainingQueue := GetQueue(sessionID)
-			ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{
-				Type: "queue_drain",
-				QueueEvent: &ai.QueueEventData{
-					SessionID: sessionID,
-					Text:      qMsg.Text,
-					MessageID: drainMsgID,
-					FilePaths: qMsg.FilePaths,
-					Files:     qMsg.Files,
-					Queue:     remainingQueue,
-				},
-			})
-
-			cfg.Message = qMsg.Text
-			result = executeStreamRunShared(ctx, streamCh, cfg)
-		}
+		processStreamResult(ctx, streamCh, cfg, sessionID, result, markDoneAndSendFinal)
 	}()
+}
+
+// handleSessionPanic recovers from panics in the session goroutine.
+func handleSessionPanic(cfg LaunchConfig, sessionID string, cancel context.CancelFunc) {
+	if r := recover(); r != nil {
+		slog.Error("session goroutine panicked",
+			slog.String("session", sessionID),
+			slog.Any("panic", r),
+			slog.String("stack", string(debug.Stack())),
+		)
+		SetSessionRunning(sessionID, false, true)
+		UnregisterSessionCancel(sessionID)
+		cancel()
+		SendSessionEvent(sessionID, ai.StreamEvent{Type: eventTypeError, Error: "AI internal error, please retry", Reason: ai.ReasonPanic})
+		UnregisterSessionStream(sessionID)
+		errMsg := "AI internal error, please retry"
+		errContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{map[string]string{contentKeyType: eventTypeError, contentKeyText: errMsg, "reason": ai.ReasonPanic}}})
+		_, _ = FinalizeStreamingMessage(cfg.ProjectPath, cfg.BackendName, sessionID, string(errContent))
+	}
+}
+
+// handleACPCleanup marks the ACP connection as idle after session completion.
+func handleACPCleanup(sessionID, agentID string) {
+	effectiveTransport := transportCLI
+	if t := GetSessionTransport(sessionID); t != "" {
+		effectiveTransport = t
+	} else if agent, ok := model.Agents[agentID]; ok && agent.Transport != "" {
+		effectiveTransport = agent.Transport
+	}
+	if effectiveTransport == transportACPStdio {
+		slog.Info("acp: marking connection idle for completed session", "session_id", sessionID, "agent_id", agentID)
+		ai.GetACPConnManager().MarkIdle(sessionID)
+	}
+}
+
+// processStreamResult handles the result of a stream run, including drain loop logic.
+func processStreamResult(ctx context.Context, streamCh chan ai.StreamEvent, cfg LaunchConfig, sessionID string, result streamRunResultShared, markDoneAndSendFinal func(ai.StreamEvent)) {
+	for {
+		if result.cancelReason == cancelReasonUser {
+			ClearQueue(sessionID)
+			markDoneAndSendFinal(ai.StreamEvent{Type: statusCancelled})
+			return
+		}
+		if result.err != "" {
+			markDoneAndSendFinal(ai.StreamEvent{Type: eventTypeError, Error: result.err})
+			return
+		}
+		if result.empty {
+			markDoneAndSendFinal(ai.StreamEvent{Type: eventTypeError, Error: "AI returned no content", Reason: ai.ReasonEmpty})
+			return
+		}
+		if result.cancelReason != "" {
+			markDoneAndSendFinal(ai.StreamEvent{Type: statusCancelled})
+			return
+		}
+
+		qMsg, ok := DequeueMessage(sessionID)
+		if !ok {
+			time.Sleep(50 * time.Millisecond)
+			qMsg, ok = DequeueMessage(sessionID)
+		}
+		if !ok {
+			markDoneAndSendFinal(ai.StreamEvent{Type: "done"})
+			return
+		}
+
+		slog.Info("draining queued message", slog.String("session", sessionID), slog.String("text", qMsg.Text))
+
+		drainMsgID, err := AddChatMessage(cfg.ProjectPath, cfg.BackendName, sessionID, roleUser, qMsg.Text, qMsg.Files, false, "")
+		if err != nil {
+			slog.Error("failed to persist drain message", slog.String("session", sessionID), slog.String("error", err.Error()))
+		}
+
+		remainingQueue := GetQueue(sessionID)
+		ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{
+			Type: "queue_drain",
+			QueueEvent: &ai.QueueEventData{
+				SessionID: sessionID,
+				Text:      qMsg.Text,
+				MessageID: drainMsgID,
+				FilePaths: qMsg.FilePaths,
+				Files:     qMsg.Files,
+				Queue:     remainingQueue,
+			},
+		})
+
+		cfg.Message = qMsg.Text
+		result = executeStreamRunShared(ctx, streamCh, cfg)
+	}
 }
 
 // BuildChatRequest constructs an ai.ChatRequest from the given parameters.
 // This is the service-layer equivalent of handler.buildChatRequest, without HTTP-specific i18n.
 func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir string, hasAttachments bool) ai.ChatRequest {
-	systemPrompt := ""
-	agentModel := ""
-	agentCommand := ""
-	effectiveThinkingEffort := thinkingEffortOverride
-	effectiveMode := modeOverride
-
 	if agentID == "" {
 		agentID = model.GetDefaultAgentID()
 	}
-	if agent, ok := model.Agents[agentID]; ok {
-		systemPrompt = agent.SystemPrompt
-		if projectPath != "" {
-			systemPrompt = strings.ReplaceAll(systemPrompt, "{{PROJECT_PATH}}", projectPath)
-		}
-		if modelOverride != "" {
-			agentModel = modelOverride
-		} else if defaultID := agent.DefaultModelID(); defaultID != "" {
-			agentModel = defaultID
-		}
-		if agent.Command != "" {
-			agentCommand = agent.Command
-		}
-		if effectiveThinkingEffort == "" && agent.EffectiveThinkingEffort() != "" {
-			effectiveThinkingEffort = agent.EffectiveThinkingEffort()
-		}
-		if effectiveMode == "" && agent.EffectiveModeID() != "" {
-			effectiveMode = agent.EffectiveModeID()
-		}
+
+	agentCfg := resolveAgentConfig(agentID, projectPath, modelOverride, thinkingEffortOverride, modeOverride)
+	isACP := resolveIsACP(transportOverride, agentID)
+	effectiveSessionID, resume, forkContext := resolveSessionState(sessionID, agentID, isACP)
+
+	systemPrompt := agentCfg.systemPrompt
+	if hasAttachments {
+		systemPrompt = appendMediaPrompt(systemPrompt)
 	}
 
-	effectiveSessionID := sessionID
-	resume := SessionHasAssistant(sessionID)
+	return ai.ChatRequest{
+		Prompt:                prompt,
+		SessionID:             effectiveSessionID,
+		WorkDir:               fileDir,
+		SystemPrompt:          systemPrompt,
+		Model:                 agentCfg.agentModel,
+		Command:               agentCfg.agentCommand,
+		AgentID:               agentID,
+		ThinkingEffort:        agentCfg.effectiveThinkingEffort,
+		Mode:                  agentCfg.effectiveMode,
+		Resume:                resume,
+		HasAttachments:        hasAttachments,
+		AssistantMessageCount: GetAssistantMessageCount(sessionID),
+		ForkContext:           forkContext,
+	}
+}
 
-	isACP := false
+// agentConfigResult holds the resolved agent configuration fields.
+type agentConfigResult struct {
+	systemPrompt            string
+	agentModel              string
+	agentCommand            string
+	effectiveThinkingEffort string
+	effectiveMode           string
+}
+
+// resolveAgentConfig resolves system prompt, model, command, thinking effort, and mode from agent config.
+func resolveAgentConfig(agentID, projectPath, modelOverride, thinkingEffortOverride, modeOverride string) agentConfigResult {
+	result := agentConfigResult{
+		effectiveThinkingEffort: thinkingEffortOverride,
+		effectiveMode:           modeOverride,
+	}
+	agent, ok := model.Agents[agentID]
+	if !ok {
+		return result
+	}
+	result.systemPrompt = agent.SystemPrompt
+	if projectPath != "" {
+		result.systemPrompt = strings.ReplaceAll(result.systemPrompt, "{{PROJECT_PATH}}", projectPath)
+	}
+	if modelOverride != "" {
+		result.agentModel = modelOverride
+	} else if defaultID := agent.DefaultModelID(); defaultID != "" {
+		result.agentModel = defaultID
+	}
+	if agent.Command != "" {
+		result.agentCommand = agent.Command
+	}
+	if result.effectiveThinkingEffort == "" && agent.EffectiveThinkingEffort() != "" {
+		result.effectiveThinkingEffort = agent.EffectiveThinkingEffort()
+	}
+	if result.effectiveMode == "" && agent.EffectiveModeID() != "" {
+		result.effectiveMode = agent.EffectiveModeID()
+	}
+	return result
+}
+
+// resolveIsACP determines whether the transport is ACP stdio.
+func resolveIsACP(transportOverride, agentID string) bool {
 	if transportOverride != "" {
-		isACP = transportOverride == "acp-stdio"
-	} else if agent, ok := model.Agents[agentID]; ok {
-		isACP = agent.Transport == "acp-stdio"
+		return transportOverride == transportACPStdio
 	}
+	if agent, ok := model.Agents[agentID]; ok {
+		return agent.Transport == transportACPStdio
+	}
+	return false
+}
+
+// resolveSessionState resolves the effective session ID, resume flag, and fork context.
+func resolveSessionState(sessionID string, _ string, isACP bool) (effectiveSessionID string, resume bool, forkContext string) {
+	effectiveSessionID = sessionID
+	resume = SessionHasAssistant(sessionID)
 
 	var resolvedExtID string
 	if resume {
@@ -331,7 +386,6 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		}
 	}
 
-	var forkContext string
 	if resume && resolvedExtID == "" {
 		forkContext = BuildForkContext(sessionID)
 		if forkContext != "" && isACP {
@@ -339,32 +393,19 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		}
 	}
 
-	if hasAttachments {
-		mediaPrompt := model.BuildMediaPrompt()
-		if mediaPrompt != "" {
-			if systemPrompt != "" {
-				systemPrompt += "\n\n" + mediaPrompt
-			} else {
-				systemPrompt = mediaPrompt
-			}
-		}
-	}
+	return effectiveSessionID, resume, forkContext
+}
 
-	return ai.ChatRequest{
-		Prompt:                prompt,
-		SessionID:             effectiveSessionID,
-		WorkDir:               fileDir,
-		SystemPrompt:          systemPrompt,
-		Model:                 agentModel,
-		Command:               agentCommand,
-		AgentID:               agentID,
-		ThinkingEffort:        effectiveThinkingEffort,
-		Mode:                  effectiveMode,
-		Resume:                resume,
-		HasAttachments:        hasAttachments,
-		AssistantMessageCount: GetAssistantMessageCount(sessionID),
-		ForkContext:           forkContext,
+// appendMediaPrompt appends the media prompt to the system prompt if non-empty.
+func appendMediaPrompt(systemPrompt string) string {
+	mediaPrompt := model.BuildMediaPrompt()
+	if mediaPrompt == "" {
+		return systemPrompt
 	}
+	if systemPrompt != "" {
+		return systemPrompt + "\n\n" + mediaPrompt
+	}
+	return mediaPrompt
 }
 
 // BuildForkContext reads the chat history from DB and formats it as a text block
@@ -376,7 +417,7 @@ func BuildForkContext(sessionID string) string {
 	}
 	var sb strings.Builder
 	for _, msg := range messages {
-		if msg.Role != "user" && msg.Role != "assistant" {
+		if msg.Role != roleUser && msg.Role != roleAssistant {
 			continue
 		}
 		var content struct {
@@ -386,7 +427,7 @@ func BuildForkContext(sessionID string) string {
 			continue
 		}
 		for _, b := range content.Blocks {
-			if b.Type == "text" && b.Text != "" {
+			if b.Type == contentKeyText && b.Text != "" {
 				sb.WriteString(msg.Role)
 				sb.WriteString(": ")
 				sb.WriteString(b.Text)
@@ -412,12 +453,14 @@ func executeStreamRunShared(ctx context.Context, streamCh chan ai.StreamEvent, c
 	if err != nil {
 		slog.Error("failed to create backend", slog.String("backend", cfg.BackendName), slog.String("err", err.Error()))
 		errMsg := fmt.Sprintf("create backend: %v", err)
-		ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{Type: "error", Error: errMsg})
-		AddChatMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, "assistant", errMsg, nil, false, "")
+		ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{Type: eventTypeError, Error: errMsg})
+		if _, saveErr := AddChatMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, roleAssistant, errMsg, nil, false, ""); saveErr != nil {
+			slog.Error("failed to save error message", slog.String("err", saveErr.Error()))
+		}
 		return streamRunResultShared{err: errMsg}
 	}
 
-	if sessionTransport == "acp-stdio" {
+	if sessionTransport == transportACPStdio {
 		if _, ok := backend.(*ai.ACPBackend); !ok {
 			_ = UpdateSessionTransport(cfg.SessionID, "")
 		}
@@ -429,13 +472,18 @@ func executeStreamRunShared(ctx context.Context, streamCh chan ai.StreamEvent, c
 	if err != nil {
 		slog.Error("failed to start stream", slog.String("err", err.Error()))
 		errMsg := fmt.Sprintf("start stream: %v", err)
-		ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{Type: "error", Error: errMsg})
-		AddChatMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, "assistant", errMsg, nil, false, "")
+		ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{Type: eventTypeError, Error: errMsg})
+		if _, saveErr := AddChatMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, roleAssistant, errMsg, nil, false, ""); saveErr != nil {
+			slog.Error("failed to save error message", slog.String("err", saveErr.Error()))
+		}
 		return streamRunResultShared{err: errMsg}
 	}
 
-	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
-	streamingMsgID, _ := AddChatMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, "assistant", string(emptyContent), nil, true, "")
+	emptyContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{}})
+	streamingMsgID, err := AddChatMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, roleAssistant, string(emptyContent), nil, true, "")
+	if err != nil {
+		slog.Error("failed to create streaming message", slog.String("session", cfg.SessionID), slog.String("err", err.Error()))
+	}
 
 	execCfg := RunConfig{
 		Mode:               ModeInteractive,
@@ -455,7 +503,7 @@ func executeStreamRunShared(ctx context.Context, streamCh chan ai.StreamEvent, c
 	ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{Type: "metadata", Meta: runResult.Metadata})
 
 	result := streamRunResultShared{}
-	if runResult.CancelReason == "user" {
+	if runResult.CancelReason == cancelReasonUser {
 		result.cancelReason = runResult.CancelReason
 	} else if ctx.Err() == context.Canceled {
 		result.cancelReason = "cancel"

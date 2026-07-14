@@ -1,6 +1,7 @@
 package dingtalk
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -148,13 +149,128 @@ func TestParseSessionCommand(t *testing.T) {
 	}
 }
 
+func TestResolveShortSessionID_ConflictInAllSessions(t *testing.T) {
+	orig := sessionMessenger
+	defer func() { sessionMessenger = orig }()
+
+	sessionMessenger = &mockSessionMessenger{
+		runningSessions: []SessionInfo{},
+		allSessions: []SessionInfo{
+			{ID: "a1b2c3d4-1111-1111-1111-111111111111"},
+			{ID: "a1b2c3d4-2222-2222-2222-222222222222"},
+		},
+	}
+
+	_, _, err := resolveShortSessionID("a1b2c3d4")
+	if err == nil {
+		t.Error("expected error for conflicting short IDs in all sessions")
+	}
+}
+
+func TestResolveShortSessionID_FindRunningError(t *testing.T) {
+	orig := sessionMessenger
+	defer func() { sessionMessenger = orig }()
+
+	sessionMessenger = &mockSessionMessengerWithErr{
+		runningErr: fmt.Errorf("db error"),
+	}
+
+	_, _, err := resolveShortSessionID("a1b2c3d4")
+	if err == nil {
+		t.Error("expected error when FindSessionsByPrefix(running) fails")
+	}
+	if !strings.Contains(err.Error(), "find running sessions") {
+		t.Errorf("expected 'find running sessions' in error, got %q", err.Error())
+	}
+}
+
+func TestResolveShortSessionID_FindAllError(t *testing.T) {
+	orig := sessionMessenger
+	defer func() { sessionMessenger = orig }()
+
+	sessionMessenger = &mockSessionMessengerWithErr{
+		allErr: fmt.Errorf("db error"),
+	}
+
+	_, _, err := resolveShortSessionID("a1b2c3d4")
+	if err == nil {
+		t.Error("expected error when FindSessionsByPrefix(all) fails")
+	}
+	if !strings.Contains(err.Error(), "find sessions") {
+		t.Errorf("expected 'find sessions' in error, got %q", err.Error())
+	}
+}
+
+func TestFormatSessionLabel_EmptyTitle(t *testing.T) {
+	label := formatSessionLabel("a1b2c3d4-1111-1111-1111-111111111111", "")
+	if label != "会话 a1b2c3d4" {
+		t.Errorf("expected '会话 a1b2c3d4', got %q", label)
+	}
+}
+
+func TestFormatSessionLabel_WithTitle(t *testing.T) {
+	label := formatSessionLabel("a1b2c3d4-1111-1111-1111-111111111111", "My Session")
+	if label != "My Session" {
+		t.Errorf("expected 'My Session', got %q", label)
+	}
+}
+
+// mockSessionMessengerWithErr supports error returns for FindSessionsByPrefix.
+type mockSessionMessengerWithErr struct {
+	runningSessions []SessionInfo
+	allSessions     []SessionInfo
+	runningErr      error
+	allErr          error
+}
+
+func (m *mockSessionMessengerWithErr) FindSessionsByPrefix(prefix string, runningOnly bool) ([]SessionInfo, error) {
+	if runningOnly && m.runningErr != nil {
+		return nil, m.runningErr
+	}
+	if !runningOnly && m.allErr != nil {
+		return nil, m.allErr
+	}
+	src := m.allSessions
+	if runningOnly {
+		src = m.runningSessions
+	}
+	lowerPrefix := strings.ToLower(prefix)
+	var result []SessionInfo
+	for _, s := range src {
+		if len(s.ID) >= len(lowerPrefix) && strings.ToLower(s.ID[:len(lowerPrefix)]) == lowerPrefix {
+			result = append(result, s)
+		}
+	}
+	return result, nil
+}
+
+func (m *mockSessionMessengerWithErr) ListRecentSessions(limit int) ([]SessionInfo, error) {
+	return m.allSessions, nil
+}
+
+func (m *mockSessionMessengerWithErr) IsSessionRunning(sessionID string) bool {
+	for _, s := range m.runningSessions {
+		if s.ID == sessionID {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *mockSessionMessengerWithErr) EnqueueMessage(sessionID, message string) error { return nil }
+func (m *mockSessionMessengerWithErr) ClearQueue(sessionID string)                    {}
+func (m *mockSessionMessengerWithErr) SendMessageToSession(sessionID, message string) error {
+	return nil
+}
+
 // mockSessionMessenger implements SessionMessenger for testing.
 type mockSessionMessenger struct {
-	runningSessions     []SessionInfo
-	allSessions         []SessionInfo
-	sendErr             error
-	EnqueueMessageFn    func(sid, msg string) error
-	SendMessageFn       func(sid, msg string) error
+	runningSessions  []SessionInfo
+	allSessions      []SessionInfo
+	sendErr          error
+	listErr          error
+	EnqueueMessageFn func(sid, msg string) error
+	SendMessageFn    func(sid, msg string) error
 }
 
 func (m *mockSessionMessenger) FindSessionsByPrefix(prefix string, runningOnly bool) ([]SessionInfo, error) {
@@ -173,6 +289,9 @@ func (m *mockSessionMessenger) FindSessionsByPrefix(prefix string, runningOnly b
 }
 
 func (m *mockSessionMessenger) ListRecentSessions(limit int) ([]SessionInfo, error) {
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
 	return m.allSessions, nil
 }
 

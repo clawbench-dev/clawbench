@@ -166,7 +166,7 @@ func (m *Manager) handleSessionList(ctx context.Context, data *chatbot.BotCallba
 	}
 
 	for _, g := range groups {
-		sb.WriteString(fmt.Sprintf("**%s**\n", escapeMarkdown(g.project)))
+		fmt.Fprintf(&sb, "**%s**\n", escapeMarkdown(g.project))
 		for _, s := range g.items {
 			id := shortSessionID(s.ID)
 			title := s.Title
@@ -177,7 +177,7 @@ func (m *Manager) handleSessionList(ctx context.Context, data *chatbot.BotCallba
 			if sessionMessenger.IsSessionRunning(s.ID) {
 				running = " 🟢"
 			}
-			sb.WriteString(fmt.Sprintf("- **@%s** %s%s\n", id, escapeMarkdown(title), running))
+			fmt.Fprintf(&sb, "- **@%s** %s%s\n", id, escapeMarkdown(title), running)
 		}
 		sb.WriteString("\n")
 	}
