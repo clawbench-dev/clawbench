@@ -256,6 +256,9 @@ describe('useAutoSpeech._speak — TTS body includes messageId', () => {
   })
 
   afterEach(() => {
+    // Stop any audio/state left over from tests
+    const { stopAudio } = useAutoSpeech()
+    stopAudio()
     vi.restoreAllMocks()
   })
 
@@ -378,6 +381,9 @@ describe('useAutoSpeech — streaming TTS path', () => {
   })
 
   afterEach(() => {
+    // Stop any audio/state left over from tests
+    const { stopAudio } = useAutoSpeech()
+    stopAudio()
     vi.restoreAllMocks()
   })
 
@@ -399,6 +405,9 @@ describe('useAutoSpeech — streaming TTS path', () => {
       expect(fetchSpy).toHaveBeenCalledTimes(1)
       expect(EventSourceMock).toHaveBeenCalledWith('/api/tts/stream/deadbeef1234')
     })
+
+    // Clean up: close the EventSource to prevent open handle leak
+    mockEs.close()
   })
 
   it('uses SSE path when data.streaming is false', async () => {
@@ -417,6 +426,9 @@ describe('useAutoSpeech — streaming TTS path', () => {
     await vi.waitFor(() => {
       expect(EventSourceMock).toHaveBeenCalledWith('/api/tts/stream/cafebabe5678')
     })
+
+    // Clean up: close the EventSource to prevent open handle leak
+    mockEs.close()
   })
 
   it('stopAudio pauses audio and resets state', async () => {

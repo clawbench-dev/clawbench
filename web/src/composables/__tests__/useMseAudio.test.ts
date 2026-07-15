@@ -5,7 +5,7 @@
  * Note: MediaSource and SourceBuffer are browser APIs not available in Node.js,
  * so these tests mock the relevant APIs.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { MseAudioPlayer } from '@/composables/useMseAudio'
 
 // Mock MediaSource and SourceBuffer
@@ -15,11 +15,12 @@ class MockSourceBuffer {
 
   appendBuffer(_data: ArrayBuffer): void {
     this.updating = true
-    // Simulate async updateend
-    setTimeout(() => {
+    // Simulate async updateend synchronously via queueMicrotask
+    // (avoids real setTimeout leak that keeps the event loop alive)
+    queueMicrotask(() => {
       this.updating = false
       this.dispatchEvent('updateend')
-    }, 0)
+    })
   }
 
   addEventListener(type: string, listener: EventListener): void {
@@ -27,7 +28,10 @@ class MockSourceBuffer {
     this.listeners[type].push(listener)
   }
 
-  removeEventListener(_type: string, _listener: EventListener): void {}
+  removeEventListener(type: string, listener: EventListener): void {
+    if (!this.listeners[type]) return
+    this.listeners[type] = this.listeners[type].filter(l => l !== listener)
+  }
 
   private dispatchEvent(type: string): void {
     const listeners = this.listeners[type] || []
@@ -58,7 +62,10 @@ class MockMediaSource {
     this.listeners[type].push(listener)
   }
 
-  removeEventListener(_type: string, _listener: EventListener): void {}
+  removeEventListener(type: string, listener: EventListener): void {
+    if (!this.listeners[type]) return
+    this.listeners[type] = this.listeners[type].filter(l => l !== listener)
+  }
 
   dispatchEvent(type: string): void {
     const listeners = this.listeners[type] || []
@@ -83,12 +90,31 @@ class MockAudio {
   }
 }
 
+// Track active players for cleanup
+let activePlayers: MseAudioPlayer[] = []
+
 // Setup global mocks
 beforeEach(() => {
   vi.stubGlobal('MediaSource', MockMediaSource)
   vi.stubGlobal('Audio', MockAudio)
   vi.stubGlobal('URL', { createObjectURL: () => 'blob:test' })
+  activePlayers = []
 })
+
+afterEach(() => {
+  // Clean up all players created during the test to prevent resource leaks
+  for (const player of activePlayers) {
+    player.cleanup()
+  }
+  activePlayers = []
+})
+
+// Helper to create and track a player
+function createPlayer(): MseAudioPlayer {
+  const player = new MseAudioPlayer()
+  activePlayers.push(player)
+  return player
+}
 
 describe('MseAudioPlayer', () => {
   describe('isSupported', () => {
@@ -104,14 +130,14 @@ describe('MseAudioPlayer', () => {
 
   describe('init', () => {
     it('creates an audio element and initializes MSE', () => {
-      const player = new MseAudioPlayer()
+      const player = createPlayer()
       const audio = player.init()
       expect(audio).toBeInstanceOf(MockAudio)
       expect(player.isReady).toBe(false) // Not ready until sourceopen
     })
 
     it('becomes ready after sourceopen event', () => {
-      const player = new MseAudioPlayer()
+      const player = createPlayer()
       const ms = new MockMediaSource()
       player.init()
       // Simulate sourceopen
@@ -122,14 +148,14 @@ describe('MseAudioPlayer', () => {
 
   describe('appendChunk', () => {
     it('queues chunks before ready', () => {
-      const player = new MseAudioPlayer()
+      const player = createPlayer()
       const data = new ArrayBuffer(100)
       player.appendChunk(data)
       // No error means success
     })
 
     it('drops chunks when over memory cap', () => {
-      const player = new MseAudioPlayer()
+      const player = createPlayer()
       player.init()
       // Send chunks totaling > 2MB
       const bigChunk = new ArrayBuffer(2 * 1024 * 1024 + 1)
@@ -140,7 +166,7 @@ describe('MseAudioPlayer', () => {
 
   describe('cleanup', () => {
     it('resets all state', () => {
-      const player = new MseAudioPlayer()
+      const player = createPlayer()
       player.init()
       player.appendChunk(new ArrayBuffer(100))
       player.cleanup()
@@ -150,7 +176,7 @@ describe('MseAudioPlayer', () => {
 
   describe('endOfStream', () => {
     it('does not throw when called on closed MediaSource', () => {
-      const player = new MseAudioPlayer()
+      const player = createPlayer()
       // No init — no MediaSource
       expect(() => player.endOfStream()).not.toThrow()
     })

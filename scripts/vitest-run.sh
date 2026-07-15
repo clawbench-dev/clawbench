@@ -5,7 +5,7 @@
 # files also leave open handles (timers, observers, EventSource) that prevent
 # the process from exiting. This wrapper:
 # 1. Runs vitest with a hard timeout
-# 2. Kills the entire vitest process tree on timeout
+# 2. Kills the vitest process tree on timeout (PID-tree walk, CI-safe)
 # 3. Cleans up orphaned worker processes after exit
 #
 # Usage: ./scripts/vitest-run.sh [args passed to vitest]
@@ -31,28 +31,68 @@ cleanup_vitest() {
   fi
 }
 
-# Run vitest in a new process group so we can kill the entire tree.
-set -m  # Enable job control for process group
+# kill_tree: recursively kill a PID and all its descendants.
+# Works on both CI (no job control) and local (with job control).
+# Uses /proc for efficiency on Linux, falls back to ps on macOS.
+kill_tree() {
+  local root_pid=$1
+  local sig=$2
+
+  # Collect child PIDs recursively (BFS)
+  local all_pids=("$root_pid")
+  local queue=("$root_pid")
+  while [ ${#queue[@]} -gt 0 ]; do
+    local parent=${queue[0]}
+    queue=("${queue[@]:1}")
+    local children
+    if [ -d "/proc" ]; then
+      # Linux: fast path via /proc
+      children=$(pgrep -P "$parent" 2>/dev/null || true)
+    else
+      # macOS/BSD fallback
+      children=$(ps -o pid= -o ppid= | awk -v p="$parent" '$2 == p { print $1 }')
+    fi
+    if [ -n "$children" ]; then
+      for child in $children; do
+        all_pids+=("$child")
+        queue+=("$child")
+      done
+    fi
+  done
+
+  # Send signal to all collected PIDs (children first, then root)
+  local reversed=()
+  for pid in "${all_pids[@]}"; do
+    reversed=("$pid" "${reversed[@]}")
+  done
+  for pid in "${reversed[@]}"; do
+    kill "$sig" "$pid" 2>/dev/null || true
+  done
+}
+
+# Run vitest in background
 npx vitest run "$@" &
 VITEST_PID=$!
 
-# Watchdog: wait for vitest, kill process group on timeout
+# Watchdog: wait for vitest, kill process tree on timeout
 WAITED=0
 while kill -0 "$VITEST_PID" 2>/dev/null; do
   sleep 1
   WAITED=$((WAITED + 1))
   if [ "$WAITED" -ge "$TIMEOUT_S" ]; then
     echo "[vitest-run] VITEST TIMED OUT after ${TIMEOUT_S}s — killing process tree" >&2
-    # Kill the entire process group
-    kill -TERM -- -"$VITEST_PID" 2>/dev/null || true
-    sleep 2
-    kill -9 -- -"$VITEST_PID" 2>/dev/null || true
+    # Graceful SIGTERM first, then SIGKILL after 5s
+    kill_tree "$VITEST_PID" "-TERM"
+    sleep 5
+    # If still alive, SIGKILL
+    if kill -0 "$VITEST_PID" 2>/dev/null; then
+      kill_tree "$VITEST_PID" "-9"
+    fi
     sleep 1
     cleanup_vitest
     exit 124
   fi
 done
-set +m
 
 # Get vitest exit code
 wait "$VITEST_PID"
