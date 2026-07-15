@@ -70,46 +70,52 @@ describe('portForwardUtils', () => {
 
   describe('buildPortUrl', () => {
     it('builds http URL by default', () => {
-      expect(buildPortUrl(3000)).toBe('http://localhost:3000')
+      expect(buildPortUrl(3000)).toBe('http://localhost:3000/')
     })
 
     it('builds https URL when protocol is https', () => {
-      expect(buildPortUrl(3000, 'https')).toBe('https://localhost:3000')
+      expect(buildPortUrl(3000, 'https')).toBe('https://localhost:3000/')
     })
 
     it('builds http URL when protocol is http', () => {
-      expect(buildPortUrl(3000, 'http')).toBe('http://localhost:3000')
+      expect(buildPortUrl(3000, 'http')).toBe('http://localhost:3000/')
     })
 
     it('handles different port numbers', () => {
-      expect(buildPortUrl(8080)).toBe('http://localhost:8080')
-      expect(buildPortUrl(443, 'https')).toBe('https://localhost')
-    })
-
-    it('handles different ports', () => {
-      expect(buildPortUrl(8080)).toBe('http://localhost:8080')
-      expect(buildPortUrl(443, 'https')).toBe('https://localhost')
+      expect(buildPortUrl(8080)).toBe('http://localhost:8080/')
+      expect(buildPortUrl(443, 'https')).toBe('https://localhost/')
     })
 
     it('omits port 80 for http (default port)', () => {
-      expect(buildPortUrl(80, 'http')).toBe('http://localhost')
+      expect(buildPortUrl(80, 'http')).toBe('http://localhost/')
     })
 
     it('omits port 443 for https (default port)', () => {
-      expect(buildPortUrl(443, 'https')).toBe('https://localhost')
+      expect(buildPortUrl(443, 'https')).toBe('https://localhost/')
     })
 
     it('keeps port 80 for https (non-default)', () => {
-      expect(buildPortUrl(80, 'https')).toBe('https://localhost:80')
+      expect(buildPortUrl(80, 'https')).toBe('https://localhost:80/')
     })
 
     it('keeps port 443 for http (non-default)', () => {
-      expect(buildPortUrl(443, 'http')).toBe('http://localhost:443')
+      expect(buildPortUrl(443, 'http')).toBe('http://localhost:443/')
     })
 
     it('defaults to localhost when host is empty', () => {
-      expect(buildPortUrl(3000, 'http')).toBe('http://localhost:3000')
-      expect(buildPortUrl(3000, 'http')).toBe('http://localhost:3000')
+      expect(buildPortUrl(3000, 'http')).toBe('http://localhost:3000/')
+    })
+
+    it('includes path when provided', () => {
+      expect(buildPortUrl(3000, 'http', '/api/status')).toBe('http://localhost:3000/api/status')
+    })
+
+    it('defaults to / when path is empty', () => {
+      expect(buildPortUrl(3000, 'http', '')).toBe('http://localhost:3000/')
+    })
+
+    it('includes path with default port', () => {
+      expect(buildPortUrl(443, 'https', '/dashboard')).toBe('https://localhost/dashboard')
     })
   })
 })

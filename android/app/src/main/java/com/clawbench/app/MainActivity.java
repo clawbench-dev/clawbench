@@ -1890,12 +1890,12 @@ public class MainActivity extends AppCompatActivity {
          * Called from the port forwarding panel "open" button.
          */
         @JavascriptInterface
-        public void openInBrowser(int port, String protocol, String host) {
-            AppLog.i(TAG, "openInBrowser: port=" + port + ", protocol=" + protocol + ", host=" + host);
+        public void openInBrowser(int port, String protocol, String host, String path) {
+            AppLog.i(TAG, "openInBrowser: port=" + port + ", protocol=" + protocol + ", host=" + host + ", path=" + path);
             activity.runOnUiThread(() -> {
                 String scheme = "https".equalsIgnoreCase(protocol) ? "https" : "http";
                 // External browser accesses the SSH tunnel on localhost, not the original host
-                String url = scheme + "://localhost:" + port;
+                String url = scheme + "://localhost:" + port + (path != null && !path.isEmpty() ? path : "/");
                 Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 activity.startActivity(intent);
@@ -1912,14 +1912,15 @@ public class MainActivity extends AppCompatActivity {
          * a new Activity (which would reload the WebView).
          */
         @JavascriptInterface
-        public void openInSandbox(int port, String protocol, String host) {
-            AppLog.i(TAG, "openInSandbox: port=" + port + ", protocol=" + protocol + ", host=" + host);
+        public void openInSandbox(int port, String protocol, String host, String path) {
+            AppLog.i(TAG, "openInSandbox: port=" + port + ", protocol=" + protocol + ", host=" + host + ", path=" + path);
             activity.runOnUiThread(() -> {
                 String scheme = "https".equalsIgnoreCase(protocol) ? "https" : "http";
                 Intent intent = new Intent(activity, BrowserActivity.class);
                 intent.putExtra("port", port);
                 intent.putExtra("protocol", scheme);
                 intent.putExtra("host", host != null ? host : "");
+                intent.putExtra("path", path != null ? path : "");
                 activity.startActivity(intent);
             });
         }
