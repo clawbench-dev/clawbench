@@ -1064,6 +1064,9 @@ function handleKeydown(e) {
 
     // Ctrl+C — copy
     if (isCtrl && e.key === 'c') {
+        // Allow native text copy when user has text selected in the file viewer
+        const selection = window.getSelection()
+        if (selection && selection.toString().length > 0) return
         if (multiSelect.active && multiSelect.selected.size > 0) {
             e.preventDefault()
             doBatchCopy()
@@ -1078,6 +1081,8 @@ function handleKeydown(e) {
 
     // Ctrl+X — cut
     if (isCtrl && e.key === 'x') {
+        const selection = window.getSelection()
+        if (selection && selection.toString().length > 0) return
         if (multiSelect.active && multiSelect.selected.size > 0) {
             e.preventDefault()
             doBatchCut()
