@@ -7,6 +7,24 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 // detection, dedup, and edge cases.
 // ────────────────────────────────────────────────────────────
 
+// ── Timer leak prevention ──
+
+const pendingTimers: ReturnType<typeof setTimeout>[] = []
+const _origSetTimeout = setTimeout
+globalThis.setTimeout = ((fn: TimerHandler, ms?: number, ...args: any[]) => {
+  const id = _origSetTimeout(fn, ms, ...args)
+  pendingTimers.push(id)
+  return id
+}) as typeof setTimeout
+
+const pendingIntervals: ReturnType<typeof setInterval>[] = []
+const _origSetInterval = setInterval
+globalThis.setInterval = ((fn: TimerHandler, ms?: number, ...args: any[]) => {
+  const id = _origSetInterval(fn, ms, ...args)
+  pendingIntervals.push(id)
+  return id
+}) as typeof setInterval
+
 // Mock i18n
 vi.mock('@/i18n', () => ({
   default: {
@@ -65,6 +83,15 @@ afterEach(() => {
   // Stop any polling that may have been started
   const { stopTaskPolling } = useTaskTab()
   stopTaskPolling()
+  // Clean up leaked timers
+  for (const id of pendingTimers) {
+    clearTimeout(id)
+  }
+  pendingTimers.length = 0
+  for (const id of pendingIntervals) {
+    clearInterval(id)
+  }
+  pendingIntervals.length = 0
 })
 
 // ── Helpers ──
@@ -477,6 +504,7 @@ describe('useTaskTab', () => {
       vi.advanceTimersByTime(2000)
       expect(store.state.taskJustCompleted).toBe(false)
 
+      vi.advanceTimersByTime(10000)
       vi.useRealTimers()
     })
 
@@ -826,6 +854,7 @@ describe('useTaskTab', () => {
 
       expect(mockFetch.mock.calls.length).toBe(callCountBefore + 1)
 
+      vi.advanceTimersByTime(10000)
       vi.useRealTimers()
     })
 
@@ -865,6 +894,7 @@ describe('useTaskTab', () => {
       const callsAfter = mockFetch.mock.calls.filter((c: any[]) => c[0] === '/api/tasks').length
       expect(callsAfter).toBe(callsBeforeFinal + 1)
 
+      vi.advanceTimersByTime(10000)
       vi.useRealTimers()
     })
   })
@@ -887,6 +917,7 @@ describe('useTaskTab', () => {
       expect(mockFetch).toHaveBeenCalledTimes(3)
 
       stopTaskPolling()
+      vi.advanceTimersByTime(10000)
       vi.useRealTimers()
     })
 
@@ -901,6 +932,7 @@ describe('useTaskTab', () => {
       vi.advanceTimersByTime(6000)
       expect(mockFetch).toHaveBeenCalledTimes(1)
 
+      vi.advanceTimersByTime(10000)
       vi.useRealTimers()
     })
 
@@ -916,6 +948,7 @@ describe('useTaskTab', () => {
       expect(mockFetch).toHaveBeenCalledTimes(1)
 
       stopTaskPolling()
+      vi.advanceTimersByTime(10000)
       vi.useRealTimers()
     })
 

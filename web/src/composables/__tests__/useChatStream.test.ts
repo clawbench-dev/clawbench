@@ -4,6 +4,24 @@ import { useChatStream } from '@/composables/useChatStream'
 import { forceCleanupStreamingState, FILE_MODIFYING_TOOLS } from '@/utils/chatStreamUtils'
 // usePendingStore removed — pending messages now live in messages.value with pending:true
 
+// ── Timer leak prevention ──
+
+const pendingTimers: ReturnType<typeof setTimeout>[] = []
+const _origSetTimeout = setTimeout
+globalThis.setTimeout = ((fn: TimerHandler, ms?: number, ...args: any[]) => {
+  const id = _origSetTimeout(fn, ms, ...args)
+  pendingTimers.push(id)
+  return id
+}) as typeof setTimeout
+
+const pendingIntervals: ReturnType<typeof setInterval>[] = []
+const _origSetInterval = setInterval
+globalThis.setInterval = ((fn: TimerHandler, ms?: number, ...args: any[]) => {
+  const id = _origSetInterval(fn, ms, ...args)
+  pendingIntervals.push(id)
+  return id
+}) as typeof setInterval
+
 // ── Mock EventSource ──
 
 let mockEsInstances: MockEventSource[] = []
@@ -159,6 +177,14 @@ describe('useChatStream', () => {
 
   afterEach(() => {
     globalThis.EventSource = originalEventSource
+    for (const id of pendingTimers) {
+      clearTimeout(id)
+    }
+    pendingTimers.length = 0
+    for (const id of pendingIntervals) {
+      clearInterval(id)
+    }
+    pendingIntervals.length = 0
   })
 
   /**
@@ -1481,6 +1507,7 @@ describe('useChatStream', () => {
 
       expect(options.onRenderNeeded).toHaveBeenCalled()
       expect(options.onScrollBottom).toHaveBeenCalled()
+      vi.advanceTimersByTime(10000)
       vi.useRealTimers()
     })
 

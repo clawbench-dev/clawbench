@@ -14,19 +14,83 @@ const ResponsePreviewMaxRunes = 512
 // previews (browser, Android, DingTalk). Shorter than WS preview for readability.
 const PushPreviewMaxRunes = 200
 
+// FileEntry represents a file or directory attachment with metadata.
+type FileEntry struct {
+	Path  string `json:"path"`
+	IsDir bool   `json:"isDir"`
+}
+
+// FileEntriesFromPaths creates []FileEntry from plain paths with isDir=false.
+// Used for backward-compatible construction when isDir is unknown.
+func FileEntriesFromPaths(paths []string) []FileEntry {
+	if len(paths) == 0 {
+		return nil
+	}
+	entries := make([]FileEntry, len(paths))
+	for i, p := range paths {
+		entries[i] = FileEntry{Path: p}
+	}
+	return entries
+}
+
+// PathsFromFileEntries extracts plain paths from []FileEntry.
+func PathsFromFileEntries(entries []FileEntry) []string {
+	if len(entries) == 0 {
+		return nil
+	}
+	paths := make([]string, len(entries))
+	for i, e := range entries {
+		paths[i] = e.Path
+	}
+	return paths
+}
+
 // ChatMessage represents a single message in the chat history
 type ChatMessage struct {
-	ID          int64     `json:"id,omitempty"`
-	Role        string    `json:"role"`
-	Content     string    `json:"content"`
-	Files       []string  `json:"files,omitempty"`
-	SessionID   string    `json:"sessionId,omitempty"`
-	Backend     string    `json:"backend,omitempty"`
-	ProjectPath string    `json:"projectPath,omitempty"`
-	Streaming   bool      `json:"streaming,omitempty"`
-	Indexed     bool      `json:"indexed,omitempty"`
-	CreatedAt   time.Time `json:"createdAt"`
-	Summary     *string   `json:"summary,omitempty"` // reading summary (nil=not summarized, ""=too short, non-empty=summary)
+	ID          int64      `json:"id,omitempty"`
+	Role        string     `json:"role"`
+	Content     string     `json:"content"`
+	Files       []FileEntry `json:"files,omitempty"`
+	SessionID   string     `json:"sessionId,omitempty"`
+	Backend     string     `json:"backend,omitempty"`
+	ProjectPath string     `json:"projectPath,omitempty"`
+	Streaming   bool       `json:"streaming,omitempty"`
+	Indexed     bool       `json:"indexed,omitempty"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	Summary     *string    `json:"summary,omitempty"` // reading summary (nil=not summarized, ""=too short, non-empty=summary)
+}
+
+// UnmarshalJSON implements custom deserialization for ChatMessage.
+// Handles backward compatibility: old-format files column stored as
+// ["path1","path2"] (array of strings) is automatically migrated to
+// the new format [{"path":"path1","isDir":false}].
+func (m *ChatMessage) UnmarshalJSON(data []byte) error {
+	type Alias ChatMessage
+	aux := &struct {
+		Files json.RawMessage `json:"files,omitempty"`
+		*Alias
+	}{
+		Alias: (*Alias)(m),
+	}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	if len(aux.Files) == 0 {
+		return nil
+	}
+	// Try new format: []FileEntry
+	var entries []FileEntry
+	if err := json.Unmarshal(aux.Files, &entries); err == nil {
+		m.Files = entries
+		return nil
+	}
+	// Fallback: old format []string
+	var paths []string
+	if err := json.Unmarshal(aux.Files, &paths); err != nil {
+		return err
+	}
+	m.Files = FileEntriesFromPaths(paths)
+	return nil
 }
 
 // ChatSession represents a chat session
@@ -50,10 +114,10 @@ type ChatSession struct {
 // QueuedMessage represents a message waiting in the pending queue for a session.
 // Stored in-memory only (not persisted to DB).
 type QueuedMessage struct {
-	Text      string   `json:"text"`
-	FilePaths []string `json:"filePaths"`
-	Files     []string `json:"files"`
-	CreatedAt string   `json:"createdAt"`
+	Text      string     `json:"text"`
+	FilePaths []string   `json:"filePaths"`
+	Files     []FileEntry `json:"files"`
+	CreatedAt string     `json:"createdAt"`
 }
 
 // ContentBlock represents a typed block within an assistant message's content.

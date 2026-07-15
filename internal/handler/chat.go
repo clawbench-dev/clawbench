@@ -271,14 +271,14 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 
 	// Decode request body BEFORE the running check so we can enqueue when busy
 	var req struct {
-		Message        string   `json:"message"`
-		FilePaths      []string `json:"filePaths"`
-		Files          []string `json:"files"`
-		AgentID        string   `json:"agentId"`
-		ModelID        string   `json:"modelId"`
-		ThinkingEffort string   `json:"thinkingEffort"`
-		ModeID         string   `json:"modeId"`
-		Transport      string   `json:"transport"`
+		Message        string             `json:"message"`
+		FilePaths      []string           `json:"filePaths"`
+		Files          []model.FileEntry  `json:"files"`
+		AgentID        string             `json:"agentId"`
+		ModelID        string             `json:"modelId"`
+		ThinkingEffort string             `json:"thinkingEffort"`
+		ModeID         string             `json:"modeId"`
+		Transport      string             `json:"transport"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxChatBodySize)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -321,18 +321,33 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Validate file paths are within project and collect absolute paths
-	fileAbsPaths := make([]string, 0, len(req.Files))
-	for _, fPath := range req.Files {
-		fAbsPath, ok := validateAndResolvePath(w, r, basePath, fPath)
+	// Validate file entries are within project and determine isDir via os.Stat
+	validatedFileEntries := make([]model.FileEntry, 0, len(req.Files))
+	for _, fEntry := range req.Files {
+		fAbsPath, ok := validateAndResolvePath(w, r, basePath, fEntry.Path)
 		if !ok {
 			return
 		}
-		if _, err := os.Stat(fAbsPath); err != nil {
-			writeLocalizedErrorf(w, r, http.StatusNotFound, "FileNotFound", map[string]any{"Path": fPath})
+		info, err := os.Stat(fAbsPath)
+		if err != nil {
+			writeLocalizedErrorf(w, r, http.StatusNotFound, "FileNotFound", map[string]any{"Path": fEntry.Path})
 			return
 		}
-		fileAbsPaths = append(fileAbsPaths, fAbsPath)
+		validatedFileEntries = append(validatedFileEntries, model.FileEntry{
+			Path:  fAbsPath,
+			IsDir: info.IsDir(),
+		})
+	}
+
+	// Derive file/dir paths from validatedFileEntries for prompt prefixing
+	fileEntryPaths := make([]string, 0)
+	fileEntryDirPaths := make([]string, 0)
+	for _, f := range validatedFileEntries {
+		if f.IsDir {
+			fileEntryDirPaths = append(fileEntryDirPaths, f.Path)
+		} else {
+			fileEntryPaths = append(fileEntryPaths, f.Path)
+		}
 	}
 
 	prompt := req.Message
@@ -342,8 +357,11 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	if len(validatedDirPaths) > 0 {
 		prompt = fmt.Sprintf("[Current directory: %s]\n%s", strings.Join(validatedDirPaths, ", "), prompt)
 	}
-	if len(fileAbsPaths) > 0 {
-		prompt = fmt.Sprintf("[User uploaded %d file(s): %s]\n%s", len(fileAbsPaths), strings.Join(fileAbsPaths, ", "), prompt)
+	if len(fileEntryPaths) > 0 {
+		prompt = fmt.Sprintf("[User uploaded %d file(s): %s]\n%s", len(fileEntryPaths), strings.Join(fileEntryPaths, ", "), prompt)
+	}
+	if len(fileEntryDirPaths) > 0 {
+		prompt = fmt.Sprintf("[Current directory: %s]\n%s", strings.Join(fileEntryDirPaths, ", "), prompt)
 	}
 
 	// @ command injection: detect on raw req.Message, prepend template to prompt.
@@ -369,8 +387,8 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		prompt = atInjected + "\n\n" + prompt
 	}
 
-	// allFiles already includes filePaths (frontend merges them before sending)
-	allFiles := req.Files
+	// allFiles uses validated entries (with resolved absolute paths and isDir from os.Stat)
+	allFiles := validatedFileEntries
 
 	// Determine if the user message carries file attachments for conditional prompt injection
 	hasAttachments := len(req.FilePaths) > 0 || len(req.Files) > 0
@@ -923,7 +941,7 @@ func buildChatRequestFromQueue(qMsg model.QueuedMessage, sessionID, projectPath,
 		}
 	}
 	if len(qMsg.Files) > 0 {
-		prompt = fmt.Sprintf("[User uploaded %d file(s): %s]\n%s", len(qMsg.Files), strings.Join(qMsg.Files, ", "), prompt)
+		prompt = fmt.Sprintf("[User uploaded %d file(s): %s]\n%s", len(qMsg.Files), strings.Join(model.PathsFromFileEntries(qMsg.Files), ", "), prompt)
 	}
 
 	// @ command injection for queued messages (same logic as primary message path)

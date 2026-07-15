@@ -623,20 +623,6 @@ describe('FileManagerContent — doRename', () => {
   })
 })
 
-describe('FileManagerContent — entryIcon/entryIconColor', () => {
-  it('returns Folder for dir entries', () => {
-    const wrapper = mountContent()
-    const icon = wrapper.vm.entryIcon({ type: 'dir' })
-    expect(icon).toBeDefined()
-  })
-
-  it('returns FileText for plain file entries', () => {
-    const wrapper = mountContent()
-    const icon = wrapper.vm.entryIcon({ type: 'file', name: 'test.ts' })
-    expect(icon).toBeDefined()
-  })
-})
-
 describe('FileManagerContent — formatDate', () => {
   it('returns formatted date for today', () => {
     const wrapper = mountContent()

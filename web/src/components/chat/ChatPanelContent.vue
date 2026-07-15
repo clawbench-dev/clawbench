@@ -632,10 +632,10 @@ async function sendMessage(text, extraFilePaths) {
     if (loading.value) {
       // Capture file arrays before clearing (they're passed by reference)
       const capturedAttached = [...attachedFiles.value]
-      const capturedPending = pendingFiles.value.map(f => f.path)
+      const capturedPending = pendingFiles.value.map(f => ({ path: f.path, isDir: false }))
       // Merge all file paths for the pending message (deduplicated)
-      const mergedPaths = [...new Set([...(extraFilePaths || []), ...(capturedAttached.length > 0 ? capturedAttached : [])])]
-      const allFiles = [...capturedPending, ...mergedPaths]
+      const mergedPaths = [...new Set([...(extraFilePaths || []), ...(capturedAttached.length > 0 ? capturedAttached.map(f => f.path) : [])])]
+      const allFiles = [...capturedPending, ...capturedAttached.length > 0 ? capturedAttached : mergedPaths.map(p => ({ path: p, isDir: false }))]
       // Clear input state synchronously so user sees immediate feedback
       clearAll()
       inputBarRef.value?.clearInput()
@@ -647,7 +647,7 @@ async function sendMessage(text, extraFilePaths) {
         id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         content: inputText || '',
         blocks: (inputText || '') ? [{ type: 'text', text: inputText }] : [],
-        files: allFiles.map(p => ({ path: p })),
+        files: allFiles,
         createdAt: new Date().toISOString(),
         pending: true,
       })
@@ -674,10 +674,13 @@ async function sendMessage(text, extraFilePaths) {
 
     // Merge attached files from the input bar with extra file paths (e.g. from quote-question)
     // Deduplicate paths that may appear in both extraFilePaths and attachedFiles
-    const filePaths = [...new Set([...(extraFilePaths || []), ...(attachedFiles.value.length > 0 ? attachedFiles.value : [])])]
-    const uploadedFiles = pendingFiles.value.map(f => ({ path: f.path }))
-    const projectFiles = filePaths.map(p => ({ path: p }))
-    const allFiles = [...uploadedFiles, ...projectFiles].map(f => f.path)
+    const filePaths = [...new Set([...(extraFilePaths || []), ...(attachedFiles.value.length > 0 ? attachedFiles.value.map(f => f.path) : [])])]
+    const uploadedFiles = pendingFiles.value.map(f => ({ path: f.path, isDir: false }))
+    const projectFiles = filePaths.map(p => {
+      const existing = attachedFiles.value.find(f => f.path === p)
+      return { path: p, isDir: existing?.isDir ?? false }
+    })
+    const allFiles = [...uploadedFiles, ...projectFiles]
 
     // Clear input state before async request
     clearAll()
@@ -695,7 +698,7 @@ async function sendMessageNow(text, filePaths, files) {
         content: text || '',
         blocks: text ? [{ type: 'text', text: text || '' }] : [],
         filePath: filePaths.length > 0 ? filePaths[0] : '',
-        files: (files || []).map(p => ({ path: p })),
+        files: (files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
         createdAt: new Date().toISOString()
     })
 
@@ -749,7 +752,7 @@ async function sendMessageNow(text, filePaths, files) {
                 id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                 content: text || '',
                 blocks: (text || '') ? [{ type: 'text', text }] : [],
-                files: (files || []).map(p => ({ path: p })),
+                files: (files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
                 createdAt: new Date().toISOString(),
                 pending: true,
             })
@@ -759,13 +762,13 @@ async function sendMessageNow(text, filePaths, files) {
                     if (messages.value[i].pending) messages.value.splice(i, 1)
                 }
                 for (const item of data.queue) {
-                    const itemFiles = [...(item.files || []), ...(item.filePaths || [])]
+                    const itemFiles = [...(item.files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f), ...(item.filePaths || []).map(p => ({ path: p, isDir: false }))]
                     messages.value.push({
                         role: 'user',
                         id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                         content: item.text || '',
                         blocks: item.text ? [{ type: 'text', text: item.text }] : [],
-                        files: itemFiles.map(p => ({ path: p })),
+                        files: itemFiles,
                         createdAt: item.createdAt || new Date().toISOString(),
                         pending: true,
                     })

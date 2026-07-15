@@ -708,7 +708,7 @@ func TestAIChatStream_QueueDrainEvent(t *testing.T) {
 	go func() {
 		ch <- ai.StreamEvent{
 			Type:       "queue_drain",
-			QueueEvent: &ai.QueueEventData{Text: "hello", FilePaths: []string{"/test.go"}, Files: []string{"/a.txt"}, Queue: []model.QueuedMessage{{Text: "next"}}},
+			QueueEvent: &ai.QueueEventData{Text: "hello", FilePaths: []string{"/test.go"}, Files: []model.FileEntry{{Path: "/a.txt"}}, Queue: []model.QueuedMessage{{Text: "next"}}},
 		}
 		ch <- ai.StreamEvent{Type: "done"}
 	}()
@@ -725,7 +725,8 @@ func TestAIChatStream_QueueDrainEvent(t *testing.T) {
 	filePaths, _ := data["filePaths"].([]any)
 	assert.Equal(t, "/test.go", filePaths[0])
 	files, _ := data["files"].([]any)
-	assert.Equal(t, "/a.txt", files[0])
+	fileObj, _ := files[0].(map[string]any)
+	assert.Equal(t, "/a.txt", fileObj["path"])
 	queue, _ := data["queue"].([]any)
 	assert.Len(t, queue, 1)
 }

@@ -72,6 +72,13 @@ function createComposable(overrides = {}) {
 
 // ── Tests ────────────────────────────────────────────────────
 
+afterEach(() => {
+  // Flush any pending timers from highlightMessage/scrollToMessage/_scrollAndHighlight
+  vi.useFakeTimers()
+  vi.advanceTimersByTime(10000)
+  vi.useRealTimers()
+})
+
 describe('useUserMsgIndex — hasUserMessages', () => {
   it('returns true when there are user messages', () => {
     const { vm } = createComposable()
@@ -246,6 +253,15 @@ describe('useUserMsgIndex — highlightMessage', () => {
 })
 
 describe('useUserMsgIndex — scrollToMessage', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.advanceTimersByTime(10000)
+    vi.useRealTimers()
+  })
+
   it('does nothing when messagesRef is null', () => {
     const { vm, setProgrammaticScrolling } = createComposable()
     vm.scrollToMessage(1)
@@ -282,6 +298,7 @@ describe('useUserMsgIndex — jumpToUserMessage', () => {
   })
 
   afterEach(() => {
+    vi.advanceTimersByTime(10000)
     vi.useRealTimers()
   })
 

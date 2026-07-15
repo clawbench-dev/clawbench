@@ -12,9 +12,14 @@ describe('useChatContext', () => {
   })
 
   describe('attachedFiles', () => {
-    it('addAttachedFile adds a file path', () => {
+    it('addAttachedFile adds a file entry', () => {
       ctx.addAttachedFile('/some/path.txt')
-      expect(ctx.attachedFiles.value).toContain('/some/path.txt')
+      expect(ctx.attachedFiles.value).toEqual([{ path: '/some/path.txt', isDir: false }])
+    })
+
+    it('addAttachedFile adds a directory entry', () => {
+      ctx.addAttachedFile('/src', true)
+      expect(ctx.attachedFiles.value).toEqual([{ path: '/src', isDir: true }])
     })
 
     it('addAttachedFile does not add duplicates', () => {
@@ -33,7 +38,7 @@ describe('useChatContext', () => {
       ctx.addAttachedFile('/b.txt')
       ctx.removeAttachedFile(0)
       expect(ctx.attachedFiles.value).toHaveLength(1)
-      expect(ctx.attachedFiles.value[0]).toBe('/b.txt')
+      expect(ctx.attachedFiles.value[0].path).toBe('/b.txt')
     })
 
     it('hasAttachedFile returns true for existing path', () => {
@@ -51,7 +56,7 @@ describe('useChatContext', () => {
       ctx.addAttachedFile('/b.txt')
       ctx.removeAttachedFileByPath('/a.txt')
       expect(ctx.attachedFiles.value).toHaveLength(1)
-      expect(ctx.attachedFiles.value[0]).toBe('/b.txt')
+      expect(ctx.attachedFiles.value[0].path).toBe('/b.txt')
     })
 
     it('removeAttachedFileByPath does nothing for non-existent path', () => {
@@ -62,18 +67,23 @@ describe('useChatContext', () => {
 
     it('toggleAttachedFile adds when not present', () => {
       ctx.toggleAttachedFile('/a.txt')
-      expect(ctx.attachedFiles.value).toContain('/a.txt')
+      expect(ctx.attachedFiles.value.some(f => f.path === '/a.txt')).toBe(true)
     })
 
     it('toggleAttachedFile removes when already present', () => {
       ctx.addAttachedFile('/a.txt')
       ctx.toggleAttachedFile('/a.txt')
-      expect(ctx.attachedFiles.value).not.toContain('/a.txt')
+      expect(ctx.attachedFiles.value.some(f => f.path === '/a.txt')).toBe(false)
     })
 
     it('toggleAttachedFile does nothing for empty path', () => {
       ctx.toggleAttachedFile('')
       expect(ctx.attachedFiles.value).toHaveLength(0)
+    })
+
+    it('toggleAttachedFile preserves isDir when adding', () => {
+      ctx.toggleAttachedFile('/src', true)
+      expect(ctx.attachedFiles.value).toEqual([{ path: '/src', isDir: true }])
     })
   })
 
@@ -109,7 +119,7 @@ describe('useChatContext', () => {
     it('multiple useChatContext() calls share the same state', () => {
       const ctx2 = useChatContext()
       ctx.addAttachedFile('/shared.txt')
-      expect(ctx2.attachedFiles.value).toContain('/shared.txt')
+      expect(ctx2.attachedFiles.value.some(f => f.path === '/shared.txt')).toBe(true)
     })
   })
 })

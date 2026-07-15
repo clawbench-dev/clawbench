@@ -7,6 +7,7 @@ import { updateModeState, updateCommandState, updateAvailableThinkingEfforts, cu
 import { updateACPModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
 import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, drainQueueMessage, type ChatMessage, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type SseJsonData, type QueueEventData, type QueueUpdateEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
+import type { FileEntry } from '@/utils/fileAttachmentUtils'
 
 const TAG = 'ChatStream'
 
@@ -733,13 +734,16 @@ export function useChatStream(options: UseChatStreamOptions) {
         (m) => m.role === 'user' && m.pending && m.content === queueText
       )
       if (!alreadyPending && queueText) {
-        const queueFiles = [...(data.filePaths || []), ...(data.files || [])]
+        const queueFileEntries = [
+          ...(data.files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
+          ...(data.filePaths || []).map(p => ({ path: p, isDir: false })),
+        ]
         messages.value.push({
           role: 'user',
           id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           content: queueText,
           blocks: queueText ? [{ type: 'text', text: queueText }] : [],
-          files: queueFiles.map((p: string) => ({ path: p })),
+          files: queueFileEntries,
           createdAt: new Date().toISOString(),
           pending: true,
         })
@@ -769,7 +773,10 @@ export function useChatStream(options: UseChatStreamOptions) {
       // Only update messages.value if this event is for the currently viewed session.
       if (eventSessionId === currentSessionId.value) {
         const drainText = data.text || ''
-        const drainFiles = [...(data.filePaths || []), ...(data.files || [])]
+        const drainFiles: FileEntry[] = [
+          ...(data.files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
+          ...(data.filePaths || []).map(p => ({ path: p, isDir: false })),
+        ]
         drainQueueMessage(
           messages.value, drainText, drainFiles, currentBackend.value,
           { onRenderNeeded, onExtractScheduledTasks },
@@ -816,13 +823,16 @@ export function useChatStream(options: UseChatStreamOptions) {
         }
         // Push backend queue items as pending messages
         for (const item of backendQueue) {
-          const itemFiles = [...(item.files || []), ...(item.filePaths || [])]
+          const itemFileEntries = [
+            ...(item.files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
+            ...(item.filePaths || []).map(p => ({ path: p, isDir: false })),
+          ]
           messages.value.push({
             role: 'user',
             id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             content: item.text || '',
             blocks: item.text ? [{ type: 'text', text: item.text }] : [],
-            files: itemFiles.map((p: string) => ({ path: p })),
+            files: itemFileEntries,
             createdAt: item.createdAt || new Date().toISOString(),
             pending: true,
           })

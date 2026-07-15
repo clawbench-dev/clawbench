@@ -27,7 +27,7 @@
         <!-- Current directory -->
         <button v-if="effectiveCurrentDir"
           class="ad-file-row ad-current-item" :class="{ 'ad-file-attached': isAttached(effectiveCurrentDir) }"
-          @click="toggleAttached(effectiveCurrentDir)">
+          @click="toggleAttached(effectiveCurrentDir, true)">
           <div class="ad-icon-wrap">
             <FileIcon path="" :is-dir="true" :size="28" class="ad-file-icon" />
           </div>
@@ -165,7 +165,7 @@ import { baseName, dirName } from '@/utils/path'
 import { formatFileSize } from '@/utils/fileType'
 import { formatRelativeTime } from '@/utils/format'
 import { isThumbableExt } from '@/utils/fileManager'
-import { isImageFile } from '@/utils/fileAttachmentUtils'
+import { isImageFile, type FileEntry } from '@/utils/fileAttachmentUtils'
 
 interface ReferencedFile {
   path: string
@@ -176,7 +176,7 @@ const props = withDefaults(defineProps<{
   open: boolean
   currentFile?: string | null
   currentDir?: string | null
-  attachedFiles?: string[]
+  attachedFiles?: FileEntry[]
   recentReferencedFiles?: ReferencedFile[]
 }>(), {
   currentFile: null,
@@ -187,7 +187,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   close: []
-  'add-attached': [path: string]
+  'add-attached': [path: string, isDir?: boolean]
   'remove-attached': [path: string]
   'file-open': [path: string]
 }>()
@@ -276,14 +276,14 @@ watch(uploadingFiles, (now) => {
 // ── Attachment logic ──
 
 function isAttached(path: string) {
-  return props.attachedFiles?.includes(path) ?? false
+  return props.attachedFiles?.some(f => f.path === path) ?? false
 }
 
-function toggleAttached(path: string) {
+function toggleAttached(path: string, isDir: boolean = false) {
   if (isAttached(path)) {
     emit('remove-attached', path)
   } else {
-    emit('add-attached', path)
+    emit('add-attached', path, isDir)
   }
 }
 

@@ -123,7 +123,7 @@ func TestServeUserMessageIndex_WithFiles(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert a user message with files
-	_, err = service.UnsafeDBForTest().Exec(`INSERT INTO chat_history (project_path, role, content, files, session_id, backend, streaming) VALUES (?, 'user', 'Check this', '["/src/main.go"]', ?, 'claude', 0)`, env.ProjectDir, sessionID)
+	_, err = service.UnsafeDBForTest().Exec(`INSERT INTO chat_history (project_path, role, content, files, session_id, backend, streaming) VALUES (?, 'user', 'Check this', '[{"path":"/src/main.go","isDir":false}]', ?, 'claude', 0)`, env.ProjectDir, sessionID)
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/user-messages?session_id="+sessionID, nil)

@@ -1,5 +1,34 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { ref } from 'vue'
+
+// ── Timer leak prevention ──
+
+const pendingTimers: ReturnType<typeof setTimeout>[] = []
+const _origSetTimeout = setTimeout
+globalThis.setTimeout = ((fn: TimerHandler, ms?: number, ...args: any[]) => {
+  const id = _origSetTimeout(fn, ms, ...args)
+  pendingTimers.push(id)
+  return id
+}) as typeof setTimeout
+
+const pendingIntervals: ReturnType<typeof setInterval>[] = []
+const _origSetInterval = setInterval
+globalThis.setInterval = ((fn: TimerHandler, ms?: number, ...args: any[]) => {
+  const id = _origSetInterval(fn, ms, ...args)
+  pendingIntervals.push(id)
+  return id
+}) as typeof setInterval
+
+afterEach(() => {
+  for (const id of pendingTimers) {
+    clearTimeout(id)
+  }
+  pendingTimers.length = 0
+  for (const id of pendingIntervals) {
+    clearInterval(id)
+  }
+  pendingIntervals.length = 0
+})
 
 // Mock API utilities
 const mockApiGet = vi.fn()

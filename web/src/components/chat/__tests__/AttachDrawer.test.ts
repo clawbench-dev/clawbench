@@ -199,13 +199,13 @@ describe('AttachDrawer', () => {
     })
     await wrapper.find('.ad-current-item').trigger('click')
     expect(wrapper.emitted('add-attached')).toBeTruthy()
-    expect(wrapper.emitted('add-attached')![0]).toEqual(['src'])
+    expect(wrapper.emitted('add-attached')![0]).toEqual(['src', true])
   })
 
   it('emits remove-attached when clicking attached file', async () => {
     const wrapper = mountDrawer({
       currentDir: 'src',
-      attachedFiles: ['src'],
+      attachedFiles: [{ path: 'src', isDir: true }],
     })
     await wrapper.find('.ad-current-item').trigger('click')
     expect(wrapper.emitted('remove-attached')).toBeTruthy()
@@ -222,13 +222,13 @@ describe('AttachDrawer', () => {
   it('applies ad-file-attached class to attached items', () => {
     const wrapper = mountDrawer({
       currentDir: 'src',
-      attachedFiles: ['src'],
+      attachedFiles: [{ path: 'src', isDir: true }],
     })
     expect(wrapper.find('.ad-current-item').classes()).toContain('ad-file-attached')
   })
 
   it('isAttached returns true for attached file', () => {
-    const wrapper = mountDrawer({ attachedFiles: ['src/main.ts'] })
+    const wrapper = mountDrawer({ attachedFiles: [{ path: 'src/main.ts' }] })
     expect(getRawState(wrapper).isAttached('src/main.ts')).toBe(true)
   })
 
@@ -490,7 +490,7 @@ describe('AttachDrawer', () => {
   })
 
   it('toggleAttached emits remove-attached for attached path', () => {
-    const wrapper = mountDrawer({ attachedFiles: ['src/foo.ts'] })
+    const wrapper = mountDrawer({ attachedFiles: [{ path: 'src/foo.ts' }] })
     const state = getRawState(wrapper)
     state.toggleAttached('src/foo.ts')
     expect(wrapper.emitted('remove-attached')!.length).toBeGreaterThan(0)

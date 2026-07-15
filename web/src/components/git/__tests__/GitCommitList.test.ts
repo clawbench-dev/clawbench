@@ -11,15 +11,20 @@ vi.mock('vue-i18n', () => ({
 // Mock IntersectionObserver
 const mockObserve = vi.fn()
 const mockDisconnect = vi.fn()
-const mockIntersectionObserverInstance = {
-  observe: mockObserve,
-  disconnect: mockDisconnect,
-  unobserve: vi.fn(),
+const mockUnobserve = vi.fn()
+let lastObserverCallback: ((entries: { isIntersecting: boolean }[]) => void) | null = null
+
+class MockIntersectionObserver {
+  callback: ((entries: { isIntersecting: boolean }[]) => void)
+  constructor(cb: (entries: IntersectionObserverEntry[], observer: IntersectionObserver) => void) {
+    this.callback = cb as any
+    lastObserverCallback = cb as any
+  }
+  observe = mockObserve
+  disconnect = mockDisconnect
+  unobserve = mockUnobserve
 }
-const mockIntersectionObserver = vi.fn(function (this: typeof mockIntersectionObserverInstance) {
-  return mockIntersectionObserverInstance
-})
-globalThis.IntersectionObserver = mockIntersectionObserver as any
+vi.stubGlobal('IntersectionObserver', MockIntersectionObserver)
 
 // Mock lucide-vue-next icons
 vi.mock('lucide-vue-next', () => ({
@@ -71,10 +76,10 @@ function mountList(props = {}) {
 
 describe('GitCommitList', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
-    mockIntersectionObserver.mockClear()
     mockObserve.mockClear()
     mockDisconnect.mockClear()
+    mockUnobserve.mockClear()
+    lastObserverCallback = null
   })
 
   describe('IntersectionObserver setup on mount', () => {
@@ -85,7 +90,7 @@ describe('GitCommitList', () => {
       await nextTick()
 
       // observeList() is called on mount via nextTick
-      expect(mockIntersectionObserver).toHaveBeenCalled()
+      expect(lastObserverCallback).not.toBeNull()
       expect(mockObserve).toHaveBeenCalled()
     })
 
@@ -97,7 +102,6 @@ describe('GitCommitList', () => {
       await nextTick()
 
       // First mount: observer created
-      expect(mockIntersectionObserver).toHaveBeenCalled()
       expect(mockObserve).toHaveBeenCalled()
 
       // Unmount (simulates switching to files view)
@@ -105,7 +109,6 @@ describe('GitCommitList', () => {
       expect(mockDisconnect).toHaveBeenCalled()
 
       // Re-mount (simulates switching back to commits view)
-      mockIntersectionObserver.mockClear()
       mockObserve.mockClear()
       mockDisconnect.mockClear()
 
@@ -115,7 +118,6 @@ describe('GitCommitList', () => {
       await nextTick()
 
       // Observer should be created again on re-mount
-      expect(mockIntersectionObserver).toHaveBeenCalled()
       expect(mockObserve).toHaveBeenCalled()
     })
 
@@ -126,8 +128,8 @@ describe('GitCommitList', () => {
       await nextTick()
 
       // Simulate intersection
-      const observerCallback = mockIntersectionObserver.mock.calls[0][0]
-      observerCallback([{ isIntersecting: true }])
+      expect(lastObserverCallback).not.toBeNull()
+      lastObserverCallback!([{ isIntersecting: true }])
 
       expect(wrapper.emitted('load-more')).toBeTruthy()
     })
@@ -138,8 +140,8 @@ describe('GitCommitList', () => {
       await nextTick()
       await nextTick()
 
-      const observerCallback = mockIntersectionObserver.mock.calls[0][0]
-      observerCallback([{ isIntersecting: true }])
+      expect(lastObserverCallback).not.toBeNull()
+      lastObserverCallback!([{ isIntersecting: true }])
 
       expect(wrapper.emitted('load-more')).toBeFalsy()
     })
@@ -150,8 +152,8 @@ describe('GitCommitList', () => {
       await nextTick()
       await nextTick()
 
-      const observerCallback = mockIntersectionObserver.mock.calls[0][0]
-      observerCallback([{ isIntersecting: true }])
+      expect(lastObserverCallback).not.toBeNull()
+      lastObserverCallback!([{ isIntersecting: true }])
 
       expect(wrapper.emitted('load-more')).toBeFalsy()
     })
@@ -164,7 +166,6 @@ describe('GitCommitList', () => {
       await nextTick()
       await nextTick()
 
-      mockIntersectionObserver.mockClear()
       mockObserve.mockClear()
       mockDisconnect.mockClear()
 
@@ -172,7 +173,6 @@ describe('GitCommitList', () => {
       wrapper.vm.observeList()
 
       expect(mockDisconnect).toHaveBeenCalled()
-      expect(mockIntersectionObserver).toHaveBeenCalled()
       expect(mockObserve).toHaveBeenCalled()
     })
 

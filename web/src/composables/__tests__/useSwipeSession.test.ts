@@ -7,6 +7,23 @@ import { reactive, ref } from 'vue'
 // We must import localConfig and the composable after setting up the mock,
 // so we use dynamic import inside the describe block.
 
+// ── Timer leak prevention ───────────────────────────────────
+const pendingTimers: ReturnType<typeof setTimeout>[] = []
+const _origSetTimeout = setTimeout
+globalThis.setTimeout = ((fn: TimerHandler, ms?: number, ...args: any[]) => {
+  const id = _origSetTimeout(fn, ms, ...args)
+  pendingTimers.push(id)
+  return id
+}) as typeof setTimeout
+
+const pendingIntervals: ReturnType<typeof setInterval>[] = []
+const _origSetInterval = setInterval
+globalThis.setInterval = ((fn: TimerHandler, ms?: number, ...args: any[]) => {
+  const id = _origSetInterval(fn, ms, ...args)
+  pendingIntervals.push(id)
+  return id
+}) as typeof setInterval
+
 describe('useSwipeSession disabled guard', () => {
   let localConfig: Record<string, any>
   let useSwipeSession: typeof import('@/composables/useSwipeSession')['useSwipeSession']
@@ -23,6 +40,10 @@ describe('useSwipeSession disabled guard', () => {
   })
 
   afterEach(() => {
+    for (const id of pendingTimers) { clearTimeout(id) }
+    pendingTimers.length = 0
+    for (const id of pendingIntervals) { clearInterval(id) }
+    pendingIntervals.length = 0
     localStorage.clear()
   })
 

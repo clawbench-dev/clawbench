@@ -2,14 +2,16 @@
  * Pure functions extracted from ChatInputBar.vue for testability.
  */
 
+import type { FileEntry } from '@/utils/fileAttachmentUtils'
+
 /**
  * Extract recently referenced files from message history.
  * Counts occurrences, excludes current file and already-attached files,
  * returns top 5 by frequency.
  */
 export function computeRecentReferencedFiles(
-  messages: { role: string; files?: (string | { path: string })[] }[] | null,
-  attachedFiles: string[],
+  messages: { role: string; files?: (string | FileEntry)[] }[] | null,
+  attachedFiles: FileEntry[],
   currentFilePath: string | null | undefined
 ): { path: string; count: number }[] {
   if (!messages || messages.length === 0) return []
@@ -22,7 +24,7 @@ export function computeRecentReferencedFiles(
       countMap.set(p, (countMap.get(p) || 0) + 1)
     }
   }
-  const exclude = new Set([...attachedFiles])
+  const exclude = new Set(attachedFiles.map(f => f.path))
   if (currentFilePath) exclude.add(currentFilePath)
   return [...countMap.entries()]
     .filter(([path]) => !exclude.has(path))
@@ -37,12 +39,13 @@ export function computeRecentReferencedFiles(
 export function computeHasFileGroups(
   currentFilePath: string | null | undefined,
   currentDir: string | null | undefined,
-  attachedFiles: string[],
+  attachedFiles: FileEntry[],
   recentReferencedFiles: { path: string; count: number }[],
   recentShareCount: number = 0
 ): boolean {
-  const hasCurrent = currentFilePath && !attachedFiles.includes(currentFilePath)
-  const hasDir = currentDir && !attachedFiles.includes(currentDir)
+  const attachedPaths = attachedFiles.map(f => f.path)
+  const hasCurrent = currentFilePath && !attachedPaths.includes(currentFilePath)
+  const hasDir = currentDir && !attachedPaths.includes(currentDir)
   return !!hasCurrent || !!hasDir || recentShareCount > 0 || recentReferencedFiles.length > 0
 }
 
@@ -52,13 +55,14 @@ export function computeHasFileGroups(
 export function computeAttachMenuItemCount(
   currentFilePath: string | null | undefined,
   currentDir: string | null | undefined,
-  attachedFiles: string[],
+  attachedFiles: FileEntry[],
   recentReferencedFiles: { path: string; count: number }[],
   recentShareCount: number = 0
 ): number {
+  const attachedPaths = attachedFiles.map(f => f.path)
   let count = recentReferencedFiles.length + recentShareCount
-  if (currentFilePath && !attachedFiles.includes(currentFilePath)) count++
-  if (currentDir && !attachedFiles.includes(currentDir)) count++
+  if (currentFilePath && !attachedPaths.includes(currentFilePath)) count++
+  if (currentDir && !attachedPaths.includes(currentDir)) count++
   count++ // Upload file button
   return count
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, afterEach } from 'vitest'
 import { annotateCodeBlockHeaders, annotateTableBlockHeaders, handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 
 // Mock clipboard
@@ -10,6 +10,23 @@ vi.mock('@/utils/clipboard.ts', () => ({
 vi.mock('@/composables/useLocale', () => ({
   gt: (key: string) => key,
 }))
+
+// Track setTimeout IDs to clean up after each test
+const pendingTimers: ReturnType<typeof setTimeout>[] = []
+const _origSetTimeout = setTimeout
+globalThis.setTimeout = ((fn: TimerHandler, ms?: number, ...args: any[]) => {
+  const id = _origSetTimeout(fn, ms, ...args)
+  pendingTimers.push(id)
+  return id
+}) as typeof setTimeout
+
+afterEach(() => {
+  // Clear any pending timers from copy button feedback
+  for (const id of pendingTimers) {
+    clearTimeout(id)
+  }
+  pendingTimers.length = 0
+})
 
 describe('annotateCodeBlockHeaders', () => {
   it('returns input unchanged for empty string', () => {

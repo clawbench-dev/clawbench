@@ -42,7 +42,7 @@ func TestServeChatHistory_Post_WithFiles(t *testing.T) {
 	req := newRequest(t, http.MethodPost, "/api/ai/chat/history", map[string]any{
 		"role":      "user",
 		"content":   "check this file",
-		"files":     []string{"/src/main.go", "/src/util.go"},
+		"files":     []model.FileEntry{{Path: "/src/main.go"}, {Path: "/src/util.go"}},
 		"sessionId": sessionID,
 	})
 	req = withProjectCookie(req, env.ProjectDir)

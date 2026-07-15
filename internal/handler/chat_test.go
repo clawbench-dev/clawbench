@@ -1212,7 +1212,7 @@ func TestAddChatMessage_FilesNoDuplicate(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Simulate what the handler does: allFiles = req.Files (frontend already merged filePaths into files)
-	allFiles := []string{"config.yaml"}
+	allFiles := []model.FileEntry{{Path: "config.yaml"}}
 
 	msgID, err := service.AddChatMessage(env.ProjectDir, "codebuddy", sessionID, "user", "what is this?", allFiles, false, "NewSession")
 	assert.NoError(t, err)
@@ -1223,7 +1223,7 @@ func TestAddChatMessage_FilesNoDuplicate(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, messages, 1)
 	assert.Len(t, messages[0].Files, 1, "files should have exactly 1 entry, got %v", messages[0].Files)
-	assert.Equal(t, "config.yaml", messages[0].Files[0])
+	assert.Equal(t, "config.yaml", messages[0].Files[0].Path)
 }
 
 // TestAddChatMessage_FilesWithUploadsAndReferences verifies that files with
@@ -1236,7 +1236,7 @@ func TestAddChatMessage_FilesWithUploadsAndReferences(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Frontend sends: files = [upload path, reference path] (already merged)
-	allFiles := []string{".clawbench/uploads/photo.png", "src/main.go"}
+	allFiles := []model.FileEntry{{Path: ".clawbench/uploads/photo.png"}, {Path: "src/main.go"}}
 
 	msgID, err := service.AddChatMessage(env.ProjectDir, "codebuddy", sessionID, "user", "check both", allFiles, false, "NewSession")
 	assert.NoError(t, err)
@@ -1271,7 +1271,7 @@ func TestAIChat_EnqueuePath_FilesNoDuplicate(t *testing.T) {
 	body := map[string]any{
 		"message":   "check this",
 		"filePaths": []string{"config.yaml"},
-		"files":     []string{"config.yaml"}, // frontend already merged filePaths into files
+		"files":     []model.FileEntry{{Path: "config.yaml"}}, // frontend already merged filePaths into files
 	}
 	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
 	withProjectCookie(req, env.ProjectDir)
@@ -2314,7 +2314,7 @@ func TestBuildChatRequestFromQueue_HasAttachments_WithFiles(t *testing.T) {
 	// Queued message with files should trigger media prompt
 	qMsg := model.QueuedMessage{
 		Text:      "check this file",
-		Files:     []string{"/some/path/file.go"},
+		Files:     []model.FileEntry{{Path: "/some/path/file.go"}},
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
 	req := buildChatRequestFromQueue(qMsg, sessionID, env.ProjectDir, "codebuddy", "codebuddy", "")

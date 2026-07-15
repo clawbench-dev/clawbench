@@ -56,12 +56,12 @@
           <button class="attachment-close-btn" @click.stop="$emit('remove-quote')" :title="t('common.remove')">×</button>
         </span>
         <!-- Attached file reference cards -->
-        <span v-for="(filePath, idx) in attachedFiles" :key="'att-' + filePath" class="chat-file-attachment attachment-ref" :class="{ 'attachment-image-only': isImageFile(filePath) && (isThumbableExt(filePath) || thumbErrors.has(filePath)) }" @click="$emit('file-tag-click', filePath)" :title="t('chat.attach.openFile')">
-          <img v-if="isImageFile(filePath) && isThumbableExt(filePath) && !thumbErrors.has(filePath)"
+        <span v-for="(fileEntry, idx) in attachedFiles" :key="'att-' + fileEntry.path" class="chat-file-attachment attachment-ref" :class="{ 'attachment-image-only': isImageFile(fileEntry.path) && (isThumbableExt(fileEntry.path) || thumbErrors.has(fileEntry.path)) }" @click="$emit('file-tag-click', fileEntry.path)" :title="t('chat.attach.openFile')">
+          <img v-if="isImageFile(fileEntry.path) && isThumbableExt(fileEntry.path) && !thumbErrors.has(fileEntry.path)"
             class="attachment-thumb-img"
-            :src="attachmentThumbUrl(filePath)" loading="lazy" @error="onThumbError(filePath)" />
-          <FileIcon v-if="!isImageFile(filePath)" :path="filePath" :size="22" class="attachment-file-icon" />
-          <span v-if="!isImageFile(filePath)" class="attachment-filename">{{ getFileName(filePath) }}</span>
+            :src="attachmentThumbUrl(fileEntry.path)" loading="lazy" @error="onThumbError(fileEntry.path)" />
+          <FileIcon v-if="!isImageFile(fileEntry.path)" :path="fileEntry.path" :is-dir="fileEntry.isDir" :size="22" class="attachment-file-icon" />
+          <span v-if="!isImageFile(fileEntry.path)" class="attachment-filename">{{ getFileName(fileEntry.path) }}</span>
           <button class="attachment-close-btn" @click.stop="$emit('remove-attached', idx)" :title="t('common.remove')">×</button>
         </span>
       </div>
@@ -643,8 +643,8 @@ function clearInput() {
   }
 }
 
-function handleAttachFile(filePath) {
-  emit('add-attached', filePath)
+function handleAttachFile(filePath, isDir) {
+  emit('add-attached', filePath, isDir)
 }
 
 function handleRemoveAttached(filePath) {

@@ -22,9 +22,9 @@ describe('computeRecentReferencedFiles', () => {
     expect(result.find(f => f.path === '/a.go')?.count).toBe(2)
     expect(result.find(f => f.path === '/b.go')?.count).toBe(1)
   })
-  it('handles files as objects with path property', () => {
+  it('handles files as FileEntry objects', () => {
     const msgs = [
-      { role: 'user', files: [{ path: '/a.go' }] },
+      { role: 'user', files: [{ path: '/a.go', isDir: false }] },
     ]
     const result = computeRecentReferencedFiles(msgs, [], null)
     expect(result).toEqual([{ path: '/a.go', count: 1 }])
@@ -33,7 +33,7 @@ describe('computeRecentReferencedFiles', () => {
     const msgs = [
       { role: 'user', files: ['/a.go', '/b.go'] },
     ]
-    const result = computeRecentReferencedFiles(msgs, ['/a.go'], null)
+    const result = computeRecentReferencedFiles(msgs, [{ path: '/a.go', isDir: false }], null)
     expect(result).toEqual([{ path: '/b.go', count: 1 }])
   })
   it('excludes current file', () => {
@@ -89,7 +89,7 @@ describe('computeHasFileGroups', () => {
     expect(computeHasFileGroups('/a.go', null, [], [], 0)).toBe(true)
   })
   it('returns false when current file is already attached', () => {
-    expect(computeHasFileGroups('/a.go', null, ['/a.go'], [], 0)).toBe(false)
+    expect(computeHasFileGroups('/a.go', null, [{ path: '/a.go', isDir: false }], [], 0)).toBe(false)
   })
   it('returns true when current dir is not attached', () => {
     expect(computeHasFileGroups(null, '/src', [], [], 0)).toBe(true)
@@ -98,7 +98,7 @@ describe('computeHasFileGroups', () => {
     expect(computeHasFileGroups(null, null, [], [{ path: '/a.go', count: 1 }], 0)).toBe(true)
   })
   it('returns false when current dir is already attached', () => {
-    expect(computeHasFileGroups(null, '/src', ['/src'], [], 0)).toBe(false)
+    expect(computeHasFileGroups(null, '/src', [{ path: '/src', isDir: true }], [], 0)).toBe(false)
   })
   it('returns true when recent shares exist', () => {
     expect(computeHasFileGroups(null, null, [], [], 2)).toBe(true)
@@ -116,7 +116,7 @@ describe('computeAttachMenuItemCount', () => {
     expect(computeAttachMenuItemCount(null, '/src', [], [], 0)).toBe(2)
   })
   it('does not count already-attached current file', () => {
-    expect(computeAttachMenuItemCount('/a.go', null, ['/a.go'], [], 0)).toBe(1)
+    expect(computeAttachMenuItemCount('/a.go', null, [{ path: '/a.go', isDir: false }], [], 0)).toBe(1)
   })
   it('counts recent references', () => {
     expect(computeAttachMenuItemCount(null, null, [], [

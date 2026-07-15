@@ -8,6 +8,8 @@
 
 // ── Core chat types ──
 
+import type { FileEntry } from '@/utils/fileAttachmentUtils'
+
 /** A content block within a chat message (text, thinking, tool_use, error, warning). */
 export interface ContentBlock {
   type: string
@@ -38,7 +40,7 @@ export interface ChatMessage {
   pending?: boolean
   backend?: string
   createdAt?: string
-  files?: { path: string }[]
+  files?: FileEntry[]
   [key: string]: unknown
 }
 
@@ -81,7 +83,7 @@ export interface QueueEventData {
   text?: string
   sessionId?: string
   filePaths?: string[]
-  files?: string[]
+  files?: FileEntry[]
   messageId?: number
 }
 
@@ -93,7 +95,7 @@ export interface QueueUpdateEventData {
 
 export interface QueueItem {
   text?: string
-  files?: string[]
+  files?: FileEntry[]
   filePaths?: string[]
   createdAt?: string
 }
@@ -252,7 +254,7 @@ export function generateDrainId(): string {
 export function drainQueueMessage(
   messages: ChatMessage[],
   userContent: string,
-  userFiles: string[],
+  userFiles: FileEntry[],
   currentBackend: string,
   callbacks: {
     onRenderNeeded: (forceFull?: boolean) => void
@@ -318,7 +320,7 @@ export function drainQueueMessage(
         _drain: true,
         content: userContent,
         blocks: userContent ? [{ type: 'text', text: userContent }] : [],
-        files: userFiles.map((p: string) => ({ path: p })),
+        files: userFiles.map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
         createdAt: new Date().toISOString(),
       })
     }

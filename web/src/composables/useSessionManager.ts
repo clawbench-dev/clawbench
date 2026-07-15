@@ -4,6 +4,7 @@ import { cancelChat } from '@/utils/api'
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
 import { appLog } from '@/utils/appLog'
+import type { FileEntry } from '@/utils/fileAttachmentUtils'
 
 const TAG = 'SessionManager'
 
@@ -49,7 +50,7 @@ export interface UseSessionManagerOptions {
   scrollBottom: (force?: boolean) => void
 
   // Resend a queued message as a new chat (for stuck-queue recovery)
-  sendMessageNow: (text: string, filePaths: string[], files: string[]) => Promise<void>
+  sendMessageNow: (text: string, filePaths: string[], files: FileEntry[]) => Promise<void>
 }
 
 export function useSessionManager(options: UseSessionManagerOptions) {
@@ -90,13 +91,13 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     clearPendingMessages()
     // Push backend queue items as pending messages
     for (const item of backendQueue) {
-      const itemFiles = [...(item.files as string[] || []), ...(item.filePaths as string[] || [])]
+      const itemFiles = [...(item.files as FileEntry[] || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f), ...(item.filePaths as string[] || []).map((p: string) => ({ path: p, isDir: false }))]
       messages.value.push({
         role: 'user',
         id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         content: item.text || '',
         blocks: item.text ? [{ type: 'text', text: item.text }] : [],
-        files: itemFiles.map((p: string) => ({ path: p })),
+        files: itemFiles,
         createdAt: item.createdAt || new Date().toISOString(),
         pending: true,
       })
@@ -124,10 +125,13 @@ export function useSessionManager(options: UseSessionManagerOptions) {
    *
    *  IMPORTANT: sessionId MUST be captured by the caller BEFORE any async
    *  boundary. */
-  async function enqueueMessage(sessionId: string, text: string, extraFilePaths: string[] = [], attachedFiles: string[] = [], pendingFilePaths: string[] = []): Promise<{ needsStart: boolean; message?: string; filePaths?: string[]; files?: string[] }> {
+  async function enqueueMessage(sessionId: string, text: string, extraFilePaths: string[] = [], attachedFiles: FileEntry[] = [], pendingFilePaths: string[] = []): Promise<{ needsStart: boolean; message?: string; filePaths?: string[]; files?: FileEntry[] }> {
     const inputText = text !== undefined ? text : ''
-    const filePaths = [...(extraFilePaths || []), ...(attachedFiles.length > 0 ? attachedFiles : [])]
-    const allFiles = [...(pendingFilePaths || []), ...filePaths]
+    const filePaths = [...(extraFilePaths || []), ...(attachedFiles.length > 0 ? attachedFiles.map(f => f.path) : [])]
+    const allFileEntries: FileEntry[] = [
+      ...(pendingFilePaths || []).map(p => ({ path: p, isDir: false })),
+      ...(attachedFiles.length > 0 ? attachedFiles : []),
+    ]
 
     appLog.d(TAG, `[enqueueMessage] targetSid=${sessionId.slice(0,8)} currentSid=${identity.currentSessionId.value.slice(0,8)} text="${inputText.slice(0,40)}" same=${sessionId === identity.currentSessionId.value}`)
 
@@ -140,7 +144,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
           body: JSON.stringify({
             message: inputText,
             filePaths,
-            files: allFiles,
+            files: allFileEntries,
           }),
         }
       )
@@ -159,7 +163,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
           needsStart: true,
           message: data.message || inputText,
           filePaths: data.filePaths || filePaths,
-          files: data.files || allFiles,
+          files: data.files || allFileEntries,
         }
       }
 
