@@ -75,16 +75,16 @@ func TestLanguageName_Empty(t *testing.T) {
 	assert.Equal(t, "", languageName(""))
 }
 
-// --- ttsPipeline.Summarize with language ---
+// --- summarizePipeline.Summarize with language ---
 
-func TestTTSPipeline_ShortText_SkipsLLM(t *testing.T) {
+func TestSummarizePipeline_ShortText_SkipsLLM(t *testing.T) {
 	var passCalled bool
 	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
 		passCalled = true
 		return "", nil
 	}
 
-	s := ttsPipeline{
+	s := summarizePipeline{
 		passFn:     passFn,
 		basePrompt: "base prompt",
 	}
@@ -96,14 +96,14 @@ func TestTTSPipeline_ShortText_SkipsLLM(t *testing.T) {
 	assert.False(t, passCalled)
 }
 
-func TestTTSPipeline_LongText_ConstructsLanguageAwarePrompt(t *testing.T) {
+func TestSummarizePipeline_LongText_ConstructsLanguageAwarePrompt(t *testing.T) {
 	var capturedPrompt string
 	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
 		capturedPrompt = systemPrompt
 		return "summarized result", nil
 	}
 
-	s := ttsPipeline{
+	s := summarizePipeline{
 		passFn:     passFn,
 		basePrompt: "Base prompt for summarization",
 	}
@@ -118,14 +118,14 @@ func TestTTSPipeline_LongText_ConstructsLanguageAwarePrompt(t *testing.T) {
 	assert.Contains(t, capturedPrompt, "Translate any non-Chinese content first")
 }
 
-func TestTTSPipeline_LanguageDirective_VariesByLanguage(t *testing.T) {
+func TestSummarizePipeline_LanguageDirective_VariesByLanguage(t *testing.T) {
 	var capturedPrompt string
 	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
 		capturedPrompt = systemPrompt
 		return "result", nil
 	}
 
-	s := ttsPipeline{
+	s := summarizePipeline{
 		passFn:     passFn,
 		basePrompt: "Base",
 	}
@@ -145,7 +145,7 @@ func TestTTSPipeline_LanguageDirective_VariesByLanguage(t *testing.T) {
 	assert.Contains(t, capturedPrompt, "Output in Japanese.")
 }
 
-func TestTTSPipeline_ReSummarization_UsesSamePrompt(t *testing.T) {
+func TestSummarizePipeline_ReSummarization_UsesSamePrompt(t *testing.T) {
 	callCount := 0
 	var prompts []string
 	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
@@ -158,7 +158,7 @@ func TestTTSPipeline_ReSummarization_UsesSamePrompt(t *testing.T) {
 		return "condensed", nil
 	}
 
-	s := ttsPipeline{
+	s := summarizePipeline{
 		passFn:     passFn,
 		basePrompt: "Base",
 	}
@@ -172,7 +172,7 @@ func TestTTSPipeline_ReSummarization_UsesSamePrompt(t *testing.T) {
 	assert.Equal(t, prompts[0], prompts[1])
 }
 
-func TestTTSPipeline_SecondPassFailure_FallsBackToFirstPass(t *testing.T) {
+func TestSummarizePipeline_SecondPassFailure_FallsBackToFirstPass(t *testing.T) {
 	callCount := 0
 	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
 		callCount++
@@ -182,7 +182,7 @@ func TestTTSPipeline_SecondPassFailure_FallsBackToFirstPass(t *testing.T) {
 		return "", context.DeadlineExceeded
 	}
 
-	s := ttsPipeline{
+	s := summarizePipeline{
 		passFn:     passFn,
 		basePrompt: "Base",
 	}
@@ -194,12 +194,12 @@ func TestTTSPipeline_SecondPassFailure_FallsBackToFirstPass(t *testing.T) {
 	assert.Equal(t, 2, callCount)
 }
 
-func TestTTSPipeline_PassFnError(t *testing.T) {
+func TestSummarizePipeline_PassFnError(t *testing.T) {
 	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
 		return "", context.DeadlineExceeded
 	}
 
-	s := ttsPipeline{
+	s := summarizePipeline{
 		passFn:     passFn,
 		basePrompt: "Base",
 	}
@@ -209,10 +209,10 @@ func TestTTSPipeline_PassFnError(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// --- ttsPipeline with PreserveMarkdown ---
+// --- summarizePipeline with PreserveMarkdown ---
 
-func TestTTSPipeline_PreserveMarkdown_ShortText(t *testing.T) {
-	s := ttsPipeline{
+func TestSummarizePipeline_PreserveMarkdown_ShortText(t *testing.T) {
+	s := summarizePipeline{
 		passFn:     func(ctx context.Context, text, systemPrompt string, pass int) (string, error) { return "", nil },
 		basePrompt: "Base",
 		opts:       SummarizeOption{PreserveMarkdown: true},
@@ -225,12 +225,12 @@ func TestTTSPipeline_PreserveMarkdown_ShortText(t *testing.T) {
 	assert.Equal(t, "**短文本**", result)
 }
 
-func TestTTSPipeline_PreserveMarkdown_LongText_NoStripOnOutput(t *testing.T) {
+func TestSummarizePipeline_PreserveMarkdown_LongText_NoStripOnOutput(t *testing.T) {
 	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
 		return "**总结结果** 包含markdown格式", nil
 	}
 
-	s := ttsPipeline{
+	s := summarizePipeline{
 		passFn:     passFn,
 		basePrompt: "Base",
 		opts:       SummarizeOption{PreserveMarkdown: true},
@@ -243,12 +243,12 @@ func TestTTSPipeline_PreserveMarkdown_LongText_NoStripOnOutput(t *testing.T) {
 	assert.Contains(t, result, "**总结结果**")
 }
 
-func TestTTSPipeline_NoPreserveMarkdown_StripsOnOutput(t *testing.T) {
+func TestSummarizePipeline_NoPreserveMarkdown_StripsOnOutput(t *testing.T) {
 	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
 		return "**总结结果** 包含markdown格式", nil
 	}
 
-	s := ttsPipeline{
+	s := summarizePipeline{
 		passFn:     passFn,
 		basePrompt: "Base",
 		opts:       SummarizeOption{PreserveMarkdown: false},
@@ -313,14 +313,14 @@ func TestNeedsReSummarization(t *testing.T) {
 	assert.False(t, needsReSummarization(strings.Repeat("a", reSummarizeThreshold+1), 2)) // max pass reached
 }
 
-// --- NewTTSPipeline ---
+// --- NewSummarizePipeline ---
 
-func TestNewTTSPipeline(t *testing.T) {
+func TestNewSummarizePipeline(t *testing.T) {
 	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
 		return "", nil
 	}
 
-	s := NewTTSPipeline(passFn)
+	s := NewSummarizePipeline(passFn)
 	assert.Equal(t, defaultTTSPrompt, s.basePrompt)
 	assert.False(t, s.opts.PreserveMarkdown)
 }

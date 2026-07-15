@@ -3,27 +3,53 @@ package summarize
 import "context"
 
 // SimpleSummarizer performs no AI-based summarization.
-// It only strips markdown formatting and truncates long text,
+// It can strip markdown formatting and truncate long text,
 // making it a zero-cost, zero-latency summarizer suitable for
 // cases where raw cleaned text is acceptable for TTS.
-type SimpleSummarizer struct{}
-
-// NewSimple creates a SimpleSummarizer.
-func NewSimple() *SimpleSummarizer {
-	return &SimpleSummarizer{}
+// When preserveMarkdown is true, StripMarkdown is skipped — used
+// for display summaries (chat/task execution) where formatting matters.
+type SimpleSummarizer struct {
+	preserveMarkdown bool
+	maxRunes         int
 }
 
-// Summarize strips markdown and truncates text without calling any AI model.
-// Uses SimpleMaxSummarizeRunes (1000) as the truncation limit instead of
-// the AI summarizer's DefaultMaxSummarizeRunes (10000), because without
-// AI condensation, longer text would be too verbose for TTS.
+// NewSimple creates a SimpleSummarizer that strips markdown (for TTS).
+func NewSimple() *SimpleSummarizer {
+	return &SimpleSummarizer{
+		preserveMarkdown: false,
+		maxRunes:         SimpleMaxSummarizeRunes,
+	}
+}
+
+// NewSimplePreserveMarkdown creates a SimpleSummarizer that preserves markdown
+// formatting (for display summaries where code blocks and formatting matter).
+func NewSimplePreserveMarkdown() *SimpleSummarizer {
+	return &SimpleSummarizer{
+		preserveMarkdown: true,
+		maxRunes:         SimpleMaxSummarizeRunes,
+	}
+}
+
+// Summarize condenses text without calling any AI model.
+// When preserveMarkdown is false (TTS mode), StripMarkdown is applied before truncation.
+// When preserveMarkdown is true (display mode), raw text is truncated as-is.
+// Uses SimpleMaxSummarizeRunes (1000) as the default truncation limit.
 // The language parameter is ignored — simple summarizer has no language awareness.
 func (s *SimpleSummarizer) Summarize(_ context.Context, text string, _ string) (string, error) {
-	cleaned := StripMarkdown(text)
+	var cleaned string
+	if s.preserveMarkdown {
+		cleaned = text
+	} else {
+		cleaned = StripMarkdown(text)
+	}
 
+	maxR := s.maxRunes
+	if maxR <= 0 {
+		maxR = SimpleMaxSummarizeRunes
+	}
 	runes := []rune(cleaned)
-	if len(runes) > SimpleMaxSummarizeRunes {
-		cleaned = string(runes[len(runes)-SimpleMaxSummarizeRunes:])
+	if len(runes) > maxR {
+		cleaned = string(runes[len(runes)-maxR:])
 	}
 
 	return cleaned, nil

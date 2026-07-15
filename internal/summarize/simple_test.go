@@ -70,3 +70,53 @@ func TestSimpleSummarizer_EmptyText(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "", result)
 }
+
+func TestNewSimplePreserveMarkdown(t *testing.T) {
+	s := NewSimplePreserveMarkdown()
+	assert.NotNil(t, s)
+	assert.True(t, s.preserveMarkdown)
+}
+
+func TestSimpleSummarizer_PreserveMarkdown_KeepsCodeBlocks(t *testing.T) {
+	s := NewSimplePreserveMarkdown()
+
+	text := "```\n╔══════════════╗\n║  Deploy v0.60 ║\n╚══════════════╝\n```"
+	result, err := s.Summarize(context.Background(), text, "zh")
+	assert.NoError(t, err)
+	// Code block content must be preserved (not stripped by StripMarkdown)
+	assert.Contains(t, result, "╔══")
+	assert.Contains(t, result, "Deploy v0.60")
+	assert.Contains(t, result, "╚══")
+}
+
+func TestSimpleSummarizer_PreserveMarkdown_KeepsFormatting(t *testing.T) {
+	s := NewSimplePreserveMarkdown()
+
+	text := "**bold** and *italic* and `code`"
+	result, err := s.Summarize(context.Background(), text, "zh")
+	assert.NoError(t, err)
+	// Markdown formatting must be preserved
+	assert.Contains(t, result, "**bold**")
+	assert.Contains(t, result, "*italic*")
+	assert.Contains(t, result, "`code`")
+}
+
+func TestSimpleSummarizer_Default_StripsCodeBlocks(t *testing.T) {
+	s := NewSimple()
+
+	text := "```\n╔══════════════╗\n║  Deploy v0.60 ║\n╚══════════════╝\n```"
+	result, err := s.Summarize(context.Background(), text, "zh")
+	assert.NoError(t, err)
+	// TTS mode: code block content must be stripped
+	assert.NotContains(t, result, "╔══")
+	assert.NotContains(t, result, "Deploy v0.60")
+}
+
+func TestSimpleSummarizer_PreserveMarkdown_Truncation(t *testing.T) {
+	s := NewSimplePreserveMarkdown()
+
+	longText := strings.Repeat("a", 1500)
+	result, err := s.Summarize(context.Background(), longText, "zh")
+	assert.NoError(t, err)
+	assert.LessOrEqual(t, len([]rune(result)), SimpleMaxSummarizeRunes)
+}

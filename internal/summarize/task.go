@@ -32,7 +32,7 @@ func TaskSummarizePrompt() string {
 }
 
 // TaskSummarizer generates Markdown-preserving summaries for scheduled task executions.
-// Unlike the TTS summarization pipeline (ttsPipeline), it does NOT strip markdown
+// Unlike the TTS summarization pipeline (summarizePipeline), it does NOT strip markdown
 // from input or output — the summary retains formatting for readability.
 type TaskSummarizer struct {
 	// When using an AI CLI backend (claude/codebuddy/opencode etc.):
@@ -40,7 +40,7 @@ type TaskSummarizer struct {
 	model   string       // model ID override (empty = use backend default)
 
 	// When using an API backend (OpenAI/Anthropic) via pipeline:
-	pipeline *ttsPipeline
+	pipeline *summarizePipeline
 }
 
 // NewTaskSummarizer creates a TaskSummarizer using the specified AI CLI backend type.
@@ -57,9 +57,9 @@ func NewTaskSummarizer(backendType, model string) (*TaskSummarizer, error) {
 }
 
 // NewTaskSummarizerFromPipeline creates a TaskSummarizer that delegates to a
-// pre-configured ttsPipeline (with PreserveMarkdown=true and task-specific prompt).
+// pre-configured summarizePipeline (with PreserveMarkdown=true and task-specific prompt).
 // Used for API backends (OpenAI/Anthropic) where we can't shell out to a CLI.
-func NewTaskSummarizerFromPipeline(p ttsPipeline) *TaskSummarizer {
+func NewTaskSummarizerFromPipeline(p summarizePipeline) *TaskSummarizer {
 	return &TaskSummarizer{
 		pipeline: &p,
 	}

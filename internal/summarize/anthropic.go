@@ -18,7 +18,7 @@ type AnthropicSummarizer struct {
 	Key        string       // API key (sent as x-api-key header)
 	Model      string       // Model name (default: "claude-3-5-haiku-latest")
 	HTTPClient *http.Client // Shared HTTP client with timeout
-	gs         ttsPipeline
+	gs         summarizePipeline
 }
 
 // NewAnthropic creates an AnthropicSummarizer with the given configuration.
@@ -35,7 +35,7 @@ func NewAnthropic(baseURL, key, model string) *AnthropicSummarizer {
 			Timeout: 120 * time.Second,
 		},
 	}
-	s.gs = NewTTSPipeline(s.DoSummarizePass)
+	s.gs = NewSummarizePipeline(s.DoSummarizePass)
 	return s
 }
 

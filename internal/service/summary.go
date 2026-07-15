@@ -63,11 +63,11 @@ func AsyncSummarize(targetType string, targetID int64, blocks []model.ContentBlo
 				slog.Int64("target_id", targetID),
 				slog.String("err", err.Error()),
 			)
-			// Fallback: use SimpleSummarizer which strips markdown and truncates.
-			// This produces a readable subset rather than saving the full raw text
-			// that would make the summary toggle meaningless.
+			// Fallback: use SimpleSummarizer with preserveMarkdown for display summaries.
+			// This truncates rather than saving the full raw text that would make
+			// the summary toggle meaningless, while preserving formatting (code blocks etc.).
 			var fallbackErr error
-			summary, fallbackErr = summarize.NewSimple().Summarize(context.Background(), text, "")
+			summary, fallbackErr = summarize.NewSimplePreserveMarkdown().Summarize(context.Background(), text, "")
 			if fallbackErr != nil || summary == "" {
 				// SimpleSummarizer should never fail, but last resort: save raw text
 				summary = text
