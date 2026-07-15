@@ -466,3 +466,96 @@ describe('useAutoSpeech — streaming TTS path', () => {
     expect(state.value).toBe('idle')
   })
 })
+
+// ── Error paths and exported query functions ──
+
+describe('useAutoSpeech — error paths and query functions', () => {
+  let fetchSpy: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchSpy = vi.fn()
+    globalThis.fetch = fetchSpy
+    toastShowMock.mockClear()
+    mseIsSupportedMock.mockReturnValue(false)
+    // Reset singleton state before each test
+    const { stopAudio } = useAutoSpeech()
+    stopAudio()
+  })
+
+  afterEach(() => {
+    const { stopAudio } = useAutoSpeech()
+    stopAudio()
+    vi.restoreAllMocks()
+  })
+
+  it('speakMessage returns early when disabled', async () => {
+    const { speakMessage, enabled, stopAudio } = useAutoSpeech()
+    stopAudio()
+    enabled.value = false
+    await speakMessage('1', 'Hello')
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('speakMessage calls _speak when enabled', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ cached: true, audioPath: '/tts/test.mp3' }),
+    })
+    const mockAudio = { play: vi.fn().mockResolvedValue(undefined), pause: vi.fn(), onended: null, onerror: null }
+    vi.stubGlobal('Audio', vi.fn(() => mockAudio))
+
+    const { speakMessage, enabled, stopAudio } = useAutoSpeech()
+    stopAudio()
+    enabled.value = true
+    await speakMessage('2', 'Hello')
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows error when fetch returns non-OK response', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      text: async () => JSON.stringify({ error: { detail: 'Server error' } }),
+    })
+
+    const { speakText, stopAudio } = useAutoSpeech()
+    stopAudio()
+    await speakText('1', 'Test error')
+
+    expect(toastShowMock).toHaveBeenCalled()
+  })
+
+  it('shows error toast on network failure', async () => {
+    fetchSpy.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+    const { speakText, stopAudio } = useAutoSpeech()
+    stopAudio()
+    await speakText('1', 'Network error')
+
+    expect(toastShowMock).toHaveBeenCalled()
+  })
+
+  it('isActive returns false for non-matching id', () => {
+    const { isActive } = useAutoSpeech()
+    expect(isActive('999')).toBe(false)
+  })
+
+  it('getSummary returns empty string when not active', () => {
+    const { getSummary } = useAutoSpeech()
+    expect(getSummary('nonexistent')).toBe('')
+  })
+
+  it('handles empty text in _speak', async () => {
+    const { speakText, stopAudio } = useAutoSpeech()
+    stopAudio()
+    await speakText('1', '')
+    // Should return early without calling fetch
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('getPhaseLabel returns empty string for idle state', () => {
+    const { getPhaseLabel, stopAudio } = useAutoSpeech()
+    stopAudio()
+    expect(getPhaseLabel('1')).toBe('')
+  })
+})

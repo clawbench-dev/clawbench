@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# vitest-run.sh — Run vitest with timeout, zombie cleanup, and force-exit.
+# vitest-run.sh — Run vitest with timeout and zombie cleanup.
 #
 # Vitest 4.x can hang on pool cleanup (vitest-dev/vitest#8766). Some test
 # files also leave open handles (timers, observers, EventSource) that prevent
@@ -7,6 +7,10 @@
 # 1. Runs vitest with a hard timeout
 # 2. Kills the vitest process tree on timeout (PID-tree walk, CI-safe)
 # 3. Cleans up orphaned worker processes after exit
+#
+# The primary hang mitigation is in vitest-globalSetup.ts, which kills
+# orphaned workers in teardown() to unblock pool.close(). This script is
+# a secondary defense for cases where the in-process kill doesn't work.
 #
 # Usage: ./scripts/vitest-run.sh [args passed to vitest]
 
@@ -80,14 +84,35 @@ while kill -0 "$VITEST_PID" 2>/dev/null; do
   sleep 1
   WAITED=$((WAITED + 1))
   if [ "$WAITED" -ge "$TIMEOUT_S" ]; then
-    echo "[vitest-run] VITEST TIMED OUT after ${TIMEOUT_S}s — killing process tree" >&2
-    # Graceful SIGTERM first, then SIGKILL after 5s
-    kill_tree "$VITEST_PID" "-TERM"
-    sleep 5
-    # If still alive, SIGKILL
+    echo "[vitest-run] VITEST TIMED OUT after ${TIMEOUT_S}s — killing hung workers and process tree" >&2
+
+    # Kill hung fork workers first — this unblocks pool.close() so
+    # vitest can complete teardown and write coverage data
+    worker_pids=$(pgrep -f "vitest/dist/workers/forks" 2>/dev/null || true)
+    if [ -n "$worker_pids" ]; then
+      echo "[vitest-run] Killing hung worker processes to unblock pool.close()" >&2
+      echo "$worker_pids" | xargs kill -9 2>/dev/null || true
+    fi
+
+    # Wait up to 10s for vitest to exit (write coverage, teardown)
+    grace=0
+    while kill -0 "$VITEST_PID" 2>/dev/null && [ $grace -lt 10 ]; do
+      sleep 1
+      grace=$((grace + 1))
+    done
+
+    # If still alive, SIGTERM then SIGKILL
     if kill -0 "$VITEST_PID" 2>/dev/null; then
+      echo "[vitest-run] Vitest did not exit after worker kill, sending SIGTERM" >&2
+      kill_tree "$VITEST_PID" "-TERM"
+      sleep 5
+    fi
+
+    if kill -0 "$VITEST_PID" 2>/dev/null; then
+      echo "[vitest-run] Vitest did not exit after SIGTERM, sending SIGKILL" >&2
       kill_tree "$VITEST_PID" "-9"
     fi
+
     sleep 1
     cleanup_vitest
     exit 124

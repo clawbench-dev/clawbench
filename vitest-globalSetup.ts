@@ -1,84 +1,63 @@
-// Vitest globalSetup — force-exit safety net for pool cleanup hang.
+// Vitest globalSetup — kill hung workers to unblock test completion (vitest 4.x).
 //
-// Vitest 4.x has a known bug where PoolRunner.stop() fails to force-kill
-// fork workers that don't respond to the stop RPC within 60 seconds
-// (STOP_TIMEOUT). The worker's IPC channel keeps the Node.js event loop
-// alive indefinitely, producing zombie processes at 100% CPU.
-// See: vitest-dev/vitest#8766, #9494, #8861, #9123.
+// PROBLEM: Vitest 4.x fork workers with open handles (Vite FILEHANDLEs,
+// vue-i18n devtools promises, jsdom window listeners) cannot exit cleanly
+// after their tests complete. When a worker hangs, it blocks the test run
+// from completing (ctx.start() never returns), which prevents:
+//   - coverage data from being written
+//   - globalSetup teardown from running
+//   - the process from exiting
 //
-// STRATEGY: Start the force-exit timer in setup() (not teardown()).
-// If pool.close() hangs, teardown() is never called, so a timer set in
-// teardown() would never fire. By starting it in setup(), the timer runs
-// independently and fires even if pool.close() blocks the main process.
+// STRATEGY: Start a timer in setup() that kills orphaned workers after a
+// delay. This unblocks the test run so it can complete, write coverage,
+// and exit normally. The timer delay must be long enough for all tests to
+// finish, but short enough to fire before the external watchdog timeout.
 //
-// The timer duration is set to VITEST_TIMEOUT_S (default 600s) minus a
-// buffer, so it fires just before the external vitest-run.sh watchdog.
-// This gives vitest maximum time to complete normally while still
-// guaranteeing a clean exit if pool cleanup hangs.
+// TIMING: Tests typically finish in ~120-160s on CI. The pool cleanup hang
+// starts immediately after. We kill workers at 200s, giving ~40-80s of
+// margin after test completion. CI timeout is 600s, so there's plenty of
+// room for coverage generation and file writes (typically ~30s).
 //
 // Primary defense: scripts/vitest-run.sh wrapper with timeout + PID-tree kill.
 // This globalSetup is a secondary (in-process) defense.
 
 import { execSync } from 'node:child_process'
 
-// Default: fire 30s before the external watchdog (600s - 30s = 570s)
-const FORCE_EXIT_MS = ((Number(process.env.VITEST_TIMEOUT_S) || 600) - 30) * 1000
-
-let forceExitTimer: ReturnType<typeof setTimeout> | undefined
-
-export function setup() {
-  // Start the force-exit timer immediately. It will be cleared in teardown()
-  // if vitest exits normally. If pool.close() hangs, this timer fires first.
-  forceExitTimer = setTimeout(() => {
-    console.error(
-      `[vitest-globalSetup] FORCE EXIT: process still alive after ${FORCE_EXIT_MS / 1000}s ` +
-      '(vitest pool cleanup hang — vitest-dev/vitest#8766)'
-    )
-    // Kill orphaned fork workers
-    try {
-      const pids = execSync(
-        `pgrep -f "vitest/dist/workers/forks" 2>/dev/null || true`,
-        { encoding: 'utf-8', timeout: 3000 }
-      ).trim().split('\n').filter(Boolean).map(Number)
+function killOrphanedWorkers(label: string) {
+  try {
+    const pids = execSync(
+      `pgrep -f "vitest/dist/workers/forks" 2>/dev/null || true`,
+      { encoding: 'utf-8', timeout: 3000 }
+    ).trim().split('\n').filter(Boolean).map(Number)
+    if (pids.length > 0) {
+      console.error(
+        `[vitest-globalSetup] ${label}: killing ${pids.length} orphaned vitest worker(s) ` +
+        '(vitest pool cleanup hang — vitest-dev/vitest#8766)'
+      )
       for (const pid of pids) {
         try { process.kill(pid, 'SIGKILL') } catch {}
       }
-    } catch {}
-    // When all tests pass, vitest sets process.exitCode = 0 before running
-    // globalSetup teardown. But the force-exit may cause Node to report 1.
-    // Preserve the original exit code (0 if tests passed) so downstream
-    // scripts don't misinterpret pool cleanup as a test failure.
-    process.exit(process.exitCode ?? 0)
-  }, FORCE_EXIT_MS)
-  // Prevent the timer from keeping the process alive if it would otherwise
-  // exit normally — but if pool.close() hangs, other open handles keep
-  // the event loop alive, so this unref() doesn't matter in the hang case.
-  forceExitTimer.unref()
+    }
+  } catch {}
+}
+
+export function setup() {
+  // Kill workers after 200s. This allows tests to finish (~120-160s) and
+  // then kills any workers that are hanging due to open handles.
+  // After workers are killed, the test run can complete, generate coverage,
+  // and exit normally.
+  const KILL_DELAY_MS = 200_000
+  setTimeout(() => {
+    killOrphanedWorkers('WORKER CLEANUP')
+  }, KILL_DELAY_MS).unref()
 }
 
 export function teardown() {
-  // Normal exit: clear the force-exit timer (not needed if pool cleanup works)
-  if (forceExitTimer) {
-    clearTimeout(forceExitTimer)
-    forceExitTimer = undefined
-  }
-
-  // Set a short timer as secondary safety net: if something after teardown
-  // hangs (unlikely with forks pool), force-exit after 2s.
+  // Kill any remaining workers after teardown. This handles the edge case
+  // where workers respawn or where the test run completed without hanging
+  // but workers still linger during the close phase.
+  killOrphanedWorkers('POST-TEARDOWN CLEANUP')
   setTimeout(() => {
-    console.error(
-      '[vitest-globalSetup] FORCE EXIT: process still alive 2s after teardown completed ' +
-      '(vitest pool cleanup bug — vitest-dev/vitest#8766)'
-    )
-    try {
-      const pids = execSync(
-        `pgrep -f "vitest/dist/workers/forks" 2>/dev/null || true`,
-        { encoding: 'utf-8', timeout: 3000 }
-      ).trim().split('\n').filter(Boolean).map(Number)
-      for (const pid of pids) {
-        try { process.kill(pid, 'SIGKILL') } catch {}
-      }
-    } catch {}
-    process.exit(process.exitCode ?? 0)
-  }, 2_000)
+    killOrphanedWorkers('POST-TEARDOWN DELAYED CLEANUP')
+  }, 3_000)
 }

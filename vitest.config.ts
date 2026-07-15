@@ -53,9 +53,8 @@ export default defineConfig({
     // Teardown timeout: vitest waits this long for workers to close after
     // tests finish. If workers have open handles (Vite server FILEHANDLEs,
     // vue-i18n enableDevTools promise), they can't exit cleanly.
-    // Set to 5s (reduced from default 10s) as a balance between waiting
-    // for normal cleanup and not blocking too long on hung workers.
-    // The globalSetup force-exit timer (2s) fires after pool cleanup.
+    // Set to 5s (reduced from default 10s) so the globalSetup worker kill
+    // timer fires sooner, unblocking pool.close() to write coverage data.
     teardownTimeout: 5_000,
     // Force-exit safety net for vitest 4.x pool cleanup hang bug.
     // See vitest-dev/vitest#8766, #9494, #8861, #9123.
@@ -65,7 +64,7 @@ export default defineConfig({
     reporters: ['default', 'hanging-process'],
     // Use 'forks' pool. Vitest 4.x has a known bug where fork workers can
     // become zombies on pool cleanup (vitest-dev/vitest#8766). Mitigated by:
-    // - vitest-globalSetup.ts: force-exit timer + orphan worker kill
+    // - vitest-globalSetup.ts: worker kill timer to unblock pool.close()
     // - scripts/vitest-run.sh: watchdog timeout + process tree kill
     // We use 'forks' (not 'threads') because with threads, open handles
     // (setInterval, addEventListener) in test components keep the shared
@@ -73,7 +72,9 @@ export default defineConfig({
     // ever running. With forks, teardown() runs in the main process even if
     // worker child processes hang.
     pool: 'forks',
-    maxWorkers: 4,
+    // Vitest 4 migration: poolOptions removed, all options promoted to top-level.
+    // Don't set maxWorkers — let vitest auto-detect (numCPUs-1).
+    // The pool cleanup hang is mitigated by vitest-globalSetup.ts worker kill.
     exclude: [
       '**/.worktrees/**',
       '**/.codebuddy/worktrees/**',
@@ -85,8 +86,11 @@ export default defineConfig({
       '**/test/path-annotation/**',
     ],
     coverage: {
-      provider: 'v8',
       reporter: ['text', 'json', 'json-summary'],
+      // Generate coverage reports even when tests fail. Without this,
+      // onTestFailure() calls cleanAfterRun() which deletes .tmp coverage
+      // files before generateCoverage() can read them.
+      reportOnFailure: true,
     },
     setupFiles: [resolve(__dirname, 'web/src/test-setup.ts')],
   },
