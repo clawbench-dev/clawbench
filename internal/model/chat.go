@@ -47,17 +47,17 @@ func PathsFromFileEntries(entries []FileEntry) []string {
 
 // ChatMessage represents a single message in the chat history
 type ChatMessage struct {
-	ID          int64      `json:"id,omitempty"`
-	Role        string     `json:"role"`
-	Content     string     `json:"content"`
+	ID          int64       `json:"id,omitempty"`
+	Role        string      `json:"role"`
+	Content     string      `json:"content"`
 	Files       []FileEntry `json:"files,omitempty"`
-	SessionID   string     `json:"sessionId,omitempty"`
-	Backend     string     `json:"backend,omitempty"`
-	ProjectPath string     `json:"projectPath,omitempty"`
-	Streaming   bool       `json:"streaming,omitempty"`
-	Indexed     bool       `json:"indexed,omitempty"`
-	CreatedAt   time.Time  `json:"createdAt"`
-	Summary     *string    `json:"summary,omitempty"` // reading summary (nil=not summarized, ""=too short, non-empty=summary)
+	SessionID   string      `json:"sessionId,omitempty"`
+	Backend     string      `json:"backend,omitempty"`
+	ProjectPath string      `json:"projectPath,omitempty"`
+	Streaming   bool        `json:"streaming,omitempty"`
+	Indexed     bool        `json:"indexed,omitempty"`
+	CreatedAt   time.Time   `json:"createdAt"`
+	Summary     *string     `json:"summary,omitempty"` // reading summary (nil=not summarized, ""=too short, non-empty=summary)
 }
 
 // UnmarshalJSON implements custom deserialization for ChatMessage.
@@ -114,10 +114,10 @@ type ChatSession struct {
 // QueuedMessage represents a message waiting in the pending queue for a session.
 // Stored in-memory only (not persisted to DB).
 type QueuedMessage struct {
-	Text      string     `json:"text"`
-	FilePaths []string   `json:"filePaths"`
+	Text      string      `json:"text"`
+	FilePaths []string    `json:"filePaths"`
 	Files     []FileEntry `json:"files"`
-	CreatedAt string     `json:"createdAt"`
+	CreatedAt string      `json:"createdAt"`
 }
 
 // ContentBlock represents a typed block within an assistant message's content.

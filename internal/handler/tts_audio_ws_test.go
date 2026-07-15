@@ -52,15 +52,15 @@ func connectTTSWS(t *testing.T, serverURL string, projectPath string) *websocket
 	return conn
 }
 
-func readWSMessage(t *testing.T, conn *websocket.Conn) (websocket.MessageType, []byte) {
+func readWSMessage(t *testing.T, conn *websocket.Conn) []byte {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	msgType, data, err := conn.Read(ctx)
+	_, data, err := conn.Read(ctx)
 	if err != nil {
 		t.Fatalf("failed to read WS message: %v", err)
 	}
-	return msgType, data
+	return data
 }
 
 func TestIsValidTTSJobID(t *testing.T) {
@@ -70,11 +70,11 @@ func TestIsValidTTSJobID(t *testing.T) {
 	}{
 		{"abc123", true},
 		{"deadbeef", true},
-		{"a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef1234", true},  // 64 chars (full SHA-256 hex)
+		{"a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef1234", true}, // 64 chars (full SHA-256 hex)
 		{"", false},
-		{"ABC123", false},          // uppercase
-		{"abc12g", false},          // 'g' not hex
-		{"abc-123", false},         // dash not hex
+		{"ABC123", false},  // uppercase
+		{"abc12g", false},  // 'g' not hex
+		{"abc-123", false}, // dash not hex
 		{"a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890a1b2c3d4e5f67890a", false}, // 65 chars
 	}
 	for _, tt := range tests {
@@ -100,7 +100,7 @@ func TestTTSAudioWS_InvalidStartMessage(t *testing.T) {
 	}
 
 	// Should receive an error message
-	_, data := readWSMessage(t, conn)
+	data := readWSMessage(t, conn)
 	var msg map[string]any
 	if err := json.Unmarshal(data, &msg); err != nil {
 		t.Fatalf("failed to parse message: %v", err)
@@ -123,7 +123,7 @@ func TestTTSAudioWS_InvalidJobID(t *testing.T) {
 		t.Fatalf("failed to write: %v", err)
 	}
 
-	_, data := readWSMessage(t, conn)
+	data := readWSMessage(t, conn)
 	var msg map[string]any
 	if err := json.Unmarshal(data, &msg); err != nil {
 		t.Fatalf("failed to parse message: %v", err)
@@ -146,7 +146,7 @@ func TestTTSAudioWS_JobNotFound(t *testing.T) {
 		t.Fatalf("failed to write: %v", err)
 	}
 
-	_, data := readWSMessage(t, conn)
+	data := readWSMessage(t, conn)
 	var msg map[string]any
 	if err := json.Unmarshal(data, &msg); err != nil {
 		t.Fatalf("failed to parse message: %v", err)
@@ -179,7 +179,7 @@ func TestTTSAudioWS_JobAlreadyCompleted(t *testing.T) {
 	}
 
 	// Should receive a "done" message with audioPath
-	_, data := readWSMessage(t, conn)
+	data := readWSMessage(t, conn)
 	var msg map[string]any
 	if err := json.Unmarshal(data, &msg); err != nil {
 		t.Fatalf("failed to parse message: %v", err)
@@ -216,7 +216,7 @@ func TestTTSAudioWS_ProtocolStreaming(t *testing.T) {
 	service.SendTTSEvent("deadbeef1234", service.TTSEvent{Type: "phase", Phase: "summarizing"})
 
 	// Read the phase message
-	_, data := readWSMessage(t, conn)
+	data := readWSMessage(t, conn)
 	var phaseMsg map[string]any
 	if err := json.Unmarshal(data, &phaseMsg); err != nil {
 		t.Fatalf("failed to parse phase message: %v", err)
@@ -259,7 +259,7 @@ func TestTTSAudioWS_ProtocolStreaming(t *testing.T) {
 	})
 
 	// Read done message
-	_, doneData := readWSMessage(t, conn)
+	doneData := readWSMessage(t, conn)
 	var doneMsg map[string]any
 	if err := json.Unmarshal(doneData, &doneMsg); err != nil {
 		t.Fatalf("failed to parse done message: %v", err)
@@ -302,7 +302,7 @@ func TestTTSAudioWS_ResultError(t *testing.T) {
 	})
 
 	// Read error message
-	_, data := readWSMessage(t, conn)
+	data := readWSMessage(t, conn)
 	var msg map[string]any
 	if err := json.Unmarshal(data, &msg); err != nil {
 		t.Fatalf("failed to parse message: %v", err)

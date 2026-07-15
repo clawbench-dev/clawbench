@@ -67,10 +67,10 @@ func ServeChatHistory(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 
 	case http.MethodPost:
 		var req struct {
-			Role      string             `json:"role"`
-			Content   string             `json:"content"`
-			Files     []model.FileEntry  `json:"files"`
-			SessionID string             `json:"session_id"`
+			Role      string            `json:"role"`
+			Content   string            `json:"content"`
+			Files     []model.FileEntry `json:"files"`
+			SessionID string            `json:"session_id"`
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, maxChatBodySize)
 		if !decodeJSON(w, r, &req) {

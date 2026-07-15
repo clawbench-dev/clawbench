@@ -271,14 +271,14 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 
 	// Decode request body BEFORE the running check so we can enqueue when busy
 	var req struct {
-		Message        string             `json:"message"`
-		FilePaths      []string           `json:"filePaths"`
-		Files          []model.FileEntry  `json:"files"`
-		AgentID        string             `json:"agentId"`
-		ModelID        string             `json:"modelId"`
-		ThinkingEffort string             `json:"thinkingEffort"`
-		ModeID         string             `json:"modeId"`
-		Transport      string             `json:"transport"`
+		Message        string            `json:"message"`
+		FilePaths      []string          `json:"filePaths"`
+		Files          []model.FileEntry `json:"files"`
+		AgentID        string            `json:"agentId"`
+		ModelID        string            `json:"modelId"`
+		ThinkingEffort string            `json:"thinkingEffort"`
+		ModeID         string            `json:"modeId"`
+		Transport      string            `json:"transport"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxChatBodySize)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

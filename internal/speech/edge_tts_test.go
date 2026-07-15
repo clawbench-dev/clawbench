@@ -67,11 +67,11 @@ func TestChunkWriter_FullChannelDrop(t *testing.T) {
 }
 
 func TestChunkWriter_DroppedCounter(t *testing.T) {
-	ch := make(chan []byte, 0) // unbuffered — no receiver, all writes will timeout
+	ch := make(chan []byte) // unbuffered — no receiver, all writes will timeout
 	cw := &chunkWriter{ch: ch}
 
 	// These will all timeout and be dropped
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		cw.Write([]byte("data"))
 	}
 
@@ -92,7 +92,7 @@ func TestChunkWriter_NilChannel(t *testing.T) {
 	// directly with nil channel, the select default case fires immediately
 	// (nil channel case never selected), so it drops after timeout.
 	// This is a defensive test — no panic expected.
-	ch := make(chan []byte, 0) // unbuffered, no receiver
+	ch := make(chan []byte) // unbuffered, no receiver
 	cw := &chunkWriter{ch: ch}
 	// Just ensure no panic — the write will timeout and drop
 	done := make(chan struct{})

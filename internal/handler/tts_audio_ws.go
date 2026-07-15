@@ -19,6 +19,12 @@ import (
 const (
 	// ttsWSWriteTimeout is the timeout for individual WebSocket writes.
 	ttsWSWriteTimeout = 5 * time.Second
+
+	// TTS WS protocol constants (used instead of string literals
+	// to satisfy goconst; aligned with existing strError / frpKeyMessage).
+	ttsWSType   = "type"
+	ttsWSResult = "result"
+	ttsWSDone   = "done"
 )
 
 // ttsWSStartMessage is the client's initial message to start streaming.
@@ -52,7 +58,7 @@ func TTSAudioWS(w http.ResponseWriter, r *http.Request) {
 		slog.Error("tts audio ws: accept failed", slog.String("error", err.Error()))
 		return
 	}
-	defer conn.CloseNow()
+	defer func() { _ = conn.CloseNow() }()
 
 	// Read start message from client
 	_, msg, err := conn.Read(r.Context())
@@ -76,20 +82,7 @@ func TTSAudioWS(w http.ResponseWriter, r *http.Request) {
 	// Check if job exists
 	job, ok := service.GetTTSJob(jobID)
 	if !ok {
-		// Job may have already completed before WS connected (race condition).
-		// Check if the audio file exists on disk and send a "done" message
-		// so the client can fall back to file-based playback.
-		relAudioPath := filepath.Join(".clawbench", "generated", "tts", jobID+".mp3")
-		if projectPath != "" {
-			absPath := filepath.Join(projectPath, relAudioPath)
-			if info, statErr := os.Stat(absPath); statErr == nil && info.Size() > 0 {
-				writeTTSAudioWSEvent(conn, map[string]any{"type": "done", "audioPath": relAudioPath})
-			} else {
-				writeTTSAudioWSError(conn, "job not found")
-			}
-		} else {
-			writeTTSAudioWSError(conn, "job not found")
-		}
+		handleTTSWSCompletedJob(conn, jobID, projectPath)
 		return
 	}
 
@@ -112,41 +105,7 @@ func TTSAudioWS(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Goroutine: Forward phase/result events from StreamCh → WS text frames
-	// Translate internal TTSEvent types to WS protocol types:
-	//   phase event  → {"type":"phase","phase":"..."}
-	//   result error → {"type":"error","message":"..."}
-	//   result ok    → {"type":"done","audioPath":"...","summary":"..."}
-	go func() {
-		for event := range job.StreamCh {
-			var wsEvent any
-			if event.Type == "result" {
-				if event.SynthesizeFailed {
-					wsEvent = map[string]any{
-						"type":    "error",
-						"message": event.SynthesizeError,
-					}
-				} else {
-					wsEvent = map[string]any{
-						"type":      "done",
-						"audioPath": event.AudioPath,
-						"summary":   event.Summary,
-					}
-				}
-			} else {
-				wsEvent = map[string]any{
-					"type":  event.Type,
-					"phase": event.Phase,
-				}
-			}
-			writeMu.Lock()
-			writeTTSAudioWSEvent(conn, wsEvent)
-			writeMu.Unlock()
-			if event.Type == "result" {
-				cancel() // signal done to main goroutine
-				return
-			}
-		}
-	}()
+	go ttsWSForwardEvents(job, conn, &writeMu, cancel)
 
 	// Main goroutine: Forward audio chunks from AudioCh → WS binary frames
 	for chunk := range job.AudioCh {
@@ -167,13 +126,70 @@ func TTSAudioWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleTTSWSCompletedJob handles the case where a WS client connects after
+// the TTS job has already completed. Checks disk for the audio file and sends
+// a "done" message so the client can fall back to file-based playback.
+func handleTTSWSCompletedJob(conn *websocket.Conn, jobID, projectPath string) {
+	relAudioPath := filepath.Join(".clawbench", "generated", "tts", jobID+".mp3")
+	if projectPath != "" {
+		absPath := filepath.Join(projectPath, relAudioPath)
+		if info, statErr := os.Stat(absPath); statErr == nil && info.Size() > 0 {
+			writeTTSAudioWSEvent(conn, map[string]any{ttsWSType: ttsWSDone, "audioPath": relAudioPath})
+		} else {
+			writeTTSAudioWSError(conn, "job not found")
+		}
+	} else {
+		writeTTSAudioWSError(conn, "job not found")
+	}
+}
+
+// ttsWSForwardEvents forwards phase/result events from StreamCh to WS text frames.
+// Translates internal TTSEvent types to WS protocol types:
+//
+//	phase event  → {"type":"phase","phase":"..."}
+//	result error → {"type":"error","message":"..."}
+//	result ok    → {"type":"done","audioPath":"...","summary":"..."}
+func ttsWSForwardEvents(job *service.TTSJob, conn *websocket.Conn, writeMu *sync.Mutex, cancel context.CancelFunc) {
+	for event := range job.StreamCh {
+		wsEvent := ttsWSEventFromTTSEvent(event)
+		writeMu.Lock()
+		writeTTSAudioWSEvent(conn, wsEvent)
+		writeMu.Unlock()
+		if event.Type == ttsWSResult {
+			cancel() // signal done to main goroutine
+			return
+		}
+	}
+}
+
+// ttsWSEventFromTTSEvent converts an internal TTSEvent to a WS protocol message.
+func ttsWSEventFromTTSEvent(event service.TTSEvent) any {
+	if event.Type == ttsWSResult {
+		if event.SynthesizeFailed {
+			return map[string]any{
+				ttsWSType:     strError,
+				frpKeyMessage: event.SynthesizeError,
+			}
+		}
+		return map[string]any{
+			ttsWSType:   ttsWSDone,
+			"audioPath": event.AudioPath,
+			"summary":   event.Summary,
+		}
+	}
+	return map[string]any{
+		ttsWSType: event.Type,
+		"phase":   event.Phase,
+	}
+}
+
 // isValidTTSJobID validates that jobId matches SHA-256 hex prefix format.
 func isValidTTSJobID(id string) bool {
-	if len(id) == 0 || len(id) > 64 {
+	if id == "" || len(id) > 64 {
 		return false
 	}
 	for _, c := range id {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+		if c < '0' || c > '9' && c < 'a' || c > 'f' {
 			return false
 		}
 	}
@@ -193,5 +209,5 @@ func writeTTSAudioWSEvent(conn *websocket.Conn, v any) {
 
 // writeTTSAudioWSError sends an error text frame on the WebSocket connection.
 func writeTTSAudioWSError(conn *websocket.Conn, message string) {
-	writeTTSAudioWSEvent(conn, map[string]any{"type": "error", "message": message})
+	writeTTSAudioWSEvent(conn, map[string]any{ttsWSType: strError, frpKeyMessage: message})
 }
