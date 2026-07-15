@@ -1067,7 +1067,7 @@ func TestBuildChatRequestFromQueue_BasicFields(t *testing.T) {
 	qMsg := model.QueuedMessage{
 		Text:      "queued message",
 		FilePaths: []string{},
-		Files:     []string{},
+		Files:     []model.FileEntry{},
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
 
@@ -1087,7 +1087,7 @@ func TestBuildChatRequestFromQueue_WithFiles(t *testing.T) {
 	qMsg := model.QueuedMessage{
 		Text:      "check this",
 		FilePaths: []string{"config.yaml"},
-		Files:     []string{"config.yaml"},
+		Files:     []model.FileEntry{{Path: "config.yaml"}},
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
 
@@ -1669,7 +1669,7 @@ func TestBuildChatRequestFromQueue_FilePathsAndFiles(t *testing.T) {
 	qMsg := model.QueuedMessage{
 		Text:      "review these files",
 		FilePaths: []string{"main.go"},
-		Files:     []string{"config.yaml"},
+		Files:     []model.FileEntry{{Path: "config.yaml"}},
 		CreatedAt: time.Now().Format(time.RFC3339),
 	}
 

@@ -30,6 +30,7 @@ internal/frontend/dist/
 web/coverage/
 web/package.json
 web/package-lock.json
+web/src/assets/material-icons/
 
 # App runtime data
 .ClawBench/

@@ -99,6 +99,7 @@ public class BrowserActivity extends AppCompatActivity {
         int port = getIntent().getIntExtra("port", 0);
         String protocol = getIntent().getStringExtra("protocol");
         String host = getIntent().getStringExtra("host");
+        String path = getIntent().getStringExtra("path");
         localPort = port;
         // Build targetHost for Host header rewriting: strip default ports per HTTP spec
         if (host != null && !host.isEmpty()) {
@@ -118,7 +119,8 @@ public class BrowserActivity extends AppCompatActivity {
             targetHost = hostPart;
         }
         if (port > 0 && protocol != null) {
-            String initialUrl = protocol + "://localhost:" + port + "/";
+            String urlPath = (path != null && !path.isEmpty()) ? path : "/";
+            String initialUrl = protocol + "://localhost:" + port + urlPath;
             pendingUrl = initialUrl;
             AppLog.i(TAG, "BrowserActivity: loading " + initialUrl + " (tunnel target: " + (host != null && !host.isEmpty() ? host : "localhost") + ":" + port + ")");
             webView.loadUrl(initialUrl);
@@ -364,10 +366,12 @@ public class BrowserActivity extends AppCompatActivity {
         int port = intent.getIntExtra("port", 0);
         String protocol = intent.getStringExtra("protocol");
         String host = intent.getStringExtra("host");
+        String path = intent.getStringExtra("path");
 
         if (port <= 0 || protocol == null) return;
 
-        String newUrl = protocol + "://localhost:" + port + "/";
+        String urlPath = (path != null && !path.isEmpty()) ? path : "/";
+        String newUrl = protocol + "://localhost:" + port + urlPath;
 
         // If reopening the same URL, just bring to foreground without reloading
         if (newUrl.equals(pendingUrl)) {

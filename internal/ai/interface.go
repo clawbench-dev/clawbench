@@ -213,7 +213,7 @@ type QueueEventData struct {
 	Text      string                `json:"text,omitempty"`
 	MessageID int64                 `json:"messageId,omitempty"` // DB ID of the drained user message (queue_drain only)
 	FilePaths []string              `json:"filePaths,omitempty"`
-	Files     []string              `json:"files,omitempty"`
+	Files     []model.FileEntry     `json:"files,omitempty"`
 	Queue     []model.QueuedMessage `json:"queue,omitempty"`
 }
 

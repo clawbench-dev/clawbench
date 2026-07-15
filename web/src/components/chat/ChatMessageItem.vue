@@ -482,6 +482,7 @@ function handleCopyMessage() {
 .chat-message .chat-file-attachment {
   display: inline-flex;
   align-items: center;
+  gap: 6px;
   border-radius: 6px;
   height: 40px;
   padding: 0 10px;
@@ -555,6 +556,12 @@ function handleCopyMessage() {
 .chat-message.user .attachment-ref {
   background: rgba(255, 255, 255, 0.15);
   border: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+.chat-message.user .attachment-file-icon {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
+  padding: 2px;
 }
 
 .chat-message.user .attachment-upload:hover,

@@ -27,9 +27,9 @@
         <!-- Current directory -->
         <button v-if="effectiveCurrentDir"
           class="ad-file-row ad-current-item" :class="{ 'ad-file-attached': isAttached(effectiveCurrentDir) }"
-          @click="toggleAttached(effectiveCurrentDir)">
+          @click="toggleAttached(effectiveCurrentDir, true)">
           <div class="ad-icon-wrap">
-            <Folder :size="28" class="ad-file-icon" />
+            <FileIcon path="" :is-dir="true" :size="28" class="ad-file-icon" />
           </div>
           <div class="ad-file-info">
             <span class="ad-file-name">
@@ -48,7 +48,7 @@
           <div class="ad-icon-wrap">
             <img v-if="isImageFile(currentFile) && isThumbableExt(currentFile) && !thumbErrors.has(currentFile)"
               class="ad-thumb" :src="thumbUrl(currentFile)" loading="lazy" @error="onThumbError(currentFile)" />
-            <component v-else :is="getFileIcon(currentFile)" :size="28" class="ad-file-icon" :color="getFileIconColor(currentFile)" />
+            <FileIcon v-else :path="currentFile" :size="28" class="ad-file-icon" />
           </div>
           <div class="ad-file-info">
             <span class="ad-file-name">
@@ -74,7 +74,7 @@
           <div class="ad-icon-wrap">
             <img v-if="isImageFile(item.path) && isThumbableExt(item.path) && !thumbErrors.has(item.path)"
               class="ad-thumb" :src="thumbUrl(item.path)" loading="lazy" @error="onThumbError(item.path)" />
-            <component v-else :is="getFileIcon(item.path)" :size="28" class="ad-file-icon" :color="getFileIconColor(item.path)" />
+            <FileIcon v-else :path="item.path" :size="28" class="ad-file-icon" />
           </div>
           <div class="ad-file-info">
             <span class="ad-file-name">{{ baseName(item.path) }}</span>
@@ -96,7 +96,7 @@
           <div class="ad-icon-wrap">
             <img v-if="isImageFile(item.path) && isThumbableExt(item.path) && !thumbErrors.has(item.path)"
               class="ad-thumb" :src="thumbUrl(item.path)" loading="lazy" @error="onThumbError(item.path)" />
-            <component v-else :is="getFileIcon(item.path)" :size="28" class="ad-file-icon" :color="getFileIconColor(item.path)" />
+            <FileIcon v-else :path="item.path" :size="28" class="ad-file-icon" />
           </div>
           <div class="ad-file-info">
             <span class="ad-file-name">{{ item.name }}</span>
@@ -134,7 +134,7 @@
           <div class="ad-icon-wrap">
             <img v-if="isImageFile(item.path) && isThumbableExt(item.path) && !thumbErrors.has(item.path)"
               class="ad-thumb" :src="thumbUrl(item.path)" loading="lazy" @error="onThumbError(item.path)" />
-            <component v-else :is="getFileIcon(item.path)" :size="28" class="ad-file-icon" :color="getFileIconColor(item.path)" />
+            <FileIcon v-else :path="item.path" :size="28" class="ad-file-icon" />
           </div>
           <div class="ad-file-info">
             <span class="ad-file-name">{{ item.name }}</span>
@@ -154,7 +154,8 @@
 <script setup lang="ts">
 import { ref, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { Paperclip, Upload, Check, ExternalLink } from 'lucide-vue-next'
-import { getFileIcon, getFileIconColor, buildPathThumbUrl, Folder } from '@/utils/fileIcon'
+import { buildPathThumbUrl } from '@/utils/fileIcon'
+import FileIcon from '@/components/common/FileIcon.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import { useI18n } from 'vue-i18n'
 import { useShareIn } from '@/composables/useShareIn'
@@ -164,7 +165,7 @@ import { baseName, dirName } from '@/utils/path'
 import { formatFileSize } from '@/utils/fileType'
 import { formatRelativeTime } from '@/utils/format'
 import { isThumbableExt } from '@/utils/fileManager'
-import { isImageFile } from '@/utils/fileAttachmentUtils'
+import { isImageFile, type FileEntry } from '@/utils/fileAttachmentUtils'
 
 interface ReferencedFile {
   path: string
@@ -175,7 +176,7 @@ const props = withDefaults(defineProps<{
   open: boolean
   currentFile?: string | null
   currentDir?: string | null
-  attachedFiles?: string[]
+  attachedFiles?: FileEntry[]
   recentReferencedFiles?: ReferencedFile[]
 }>(), {
   currentFile: null,
@@ -186,7 +187,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   close: []
-  'add-attached': [path: string]
+  'add-attached': [path: string, isDir?: boolean]
   'remove-attached': [path: string]
   'file-open': [path: string]
 }>()
@@ -275,14 +276,14 @@ watch(uploadingFiles, (now) => {
 // ── Attachment logic ──
 
 function isAttached(path: string) {
-  return props.attachedFiles?.includes(path) ?? false
+  return props.attachedFiles?.some(f => f.path === path) ?? false
 }
 
-function toggleAttached(path: string) {
+function toggleAttached(path: string, isDir: boolean = false) {
   if (isAttached(path)) {
     emit('remove-attached', path)
   } else {
-    emit('add-attached', path)
+    emit('add-attached', path, isDir)
   }
 }
 

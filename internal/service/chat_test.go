@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/model"
 	"clawbench/internal/service"
 
 	_ "modernc.org/sqlite"
@@ -254,7 +255,7 @@ func TestAddChatMessage_AutoTitleEmptyContentWithFiles(t *testing.T) {
 
 	sid := helperCreateSession(t, "/project", "claude", "New Session")
 
-	_, err := service.AddChatMessage("/project", "claude", sid, "user", "", []string{"file1.txt"}, false, "NewSession")
+	_, err := service.AddChatMessage("/project", "claude", sid, "user", "", []model.FileEntry{{Path: "file1.txt"}}, false, "NewSession")
 	assert.NoError(t, err)
 
 	title, err := service.GetSessionTitle(sid)
@@ -280,7 +281,7 @@ func TestAddChatMessage_AutoTitleFromFiles_SingleFile(t *testing.T) {
 
 	sid := helperCreateSession(t, "/project", "claude", "New Session")
 
-	_, err := service.AddChatMessage("/project", "claude", sid, "user", "", []string{"/src/main.go"}, false, "NewSession")
+	_, err := service.AddChatMessage("/project", "claude", sid, "user", "", []model.FileEntry{{Path: "/src/main.go"}}, false, "NewSession")
 	assert.NoError(t, err)
 
 	title, err := service.GetSessionTitle(sid)
@@ -293,7 +294,7 @@ func TestAddChatMessage_AutoTitleFromFiles_MultipleFiles(t *testing.T) {
 
 	sid := helperCreateSession(t, "/project", "claude", "New Session")
 
-	_, err := service.AddChatMessage("/project", "claude", sid, "user", "", []string{"photo.jpg", "document.pdf"}, false, "NewSession")
+	_, err := service.AddChatMessage("/project", "claude", sid, "user", "", []model.FileEntry{{Path: "photo.jpg"}, {Path: "document.pdf"}}, false, "NewSession")
 	assert.NoError(t, err)
 
 	title, err := service.GetSessionTitle(sid)
@@ -308,7 +309,7 @@ func TestAddChatMessage_AutoTitleFromFiles_LongNamesTruncated(t *testing.T) {
 
 	longName1 := strings.Repeat("a", 30) + ".txt"
 	longName2 := strings.Repeat("b", 30) + ".txt"
-	_, err := service.AddChatMessage("/project", "claude", sid, "user", "", []string{longName1, longName2}, false, "NewSession")
+	_, err := service.AddChatMessage("/project", "claude", sid, "user", "", []model.FileEntry{{Path: longName1}, {Path: longName2}}, false, "NewSession")
 	assert.NoError(t, err)
 
 	title, err := service.GetSessionTitle(sid)
@@ -322,7 +323,7 @@ func TestAddChatMessage_AutoTitleFromFiles_WithPathStripsToBasename(t *testing.T
 
 	sid := helperCreateSession(t, "/project", "claude", "New Session")
 
-	_, err := service.AddChatMessage("/project", "claude", sid, "user", "", []string{"/home/user/project/.clawbench/uploads/image.png"}, false, "NewSession")
+	_, err := service.AddChatMessage("/project", "claude", sid, "user", "", []model.FileEntry{{Path: "/home/user/project/.clawbench/uploads/image.png"}}, false, "NewSession")
 	assert.NoError(t, err)
 
 	title, err := service.GetSessionTitle(sid)
@@ -335,7 +336,7 @@ func TestAddChatMessage_AutoTitleFromFiles_TextTakesPrecedence(t *testing.T) {
 
 	sid := helperCreateSession(t, "/project", "claude", "New Session")
 
-	_, err := service.AddChatMessage("/project", "claude", sid, "user", "My question", []string{"/src/main.go"}, false, "NewSession")
+	_, err := service.AddChatMessage("/project", "claude", sid, "user", "My question", []model.FileEntry{{Path: "/src/main.go"}}, false, "NewSession")
 	assert.NoError(t, err)
 
 	title, err := service.GetSessionTitle(sid)
@@ -392,7 +393,7 @@ func TestAddChatMessage_WithFiles(t *testing.T) {
 
 	sid := helperCreateSession(t, "/project", "claude", "File Test")
 
-	files := []string{"/path/file", "image.png", "doc.pdf"}
+	files := []model.FileEntry{{Path: "/path/file"}, {Path: "image.png"}, {Path: "doc.pdf"}}
 	_, err := service.AddChatMessage("/project", "claude", sid, "user", "Check these", files, false, "NewSession")
 	assert.NoError(t, err)
 
@@ -400,7 +401,7 @@ func TestAddChatMessage_WithFiles(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 1)
 	assert.Equal(t, files, msgs[0].Files)
-	assert.Equal(t, "/path/file", msgs[0].Files[0])
+	assert.Equal(t, "/path/file", msgs[0].Files[0].Path)
 }
 
 func TestAddChatMessage_Streaming(t *testing.T) {
@@ -925,13 +926,13 @@ func TestAddChatMessage_WithFilePath(t *testing.T) {
 
 	sid := helperCreateSession(t, "/project", "claude", "FP Test")
 
-	_, err := service.AddChatMessage("/project", "claude", sid, "user", "look at this", []string{"/src/main.go"}, false, "NewSession")
+	_, err := service.AddChatMessage("/project", "claude", sid, "user", "look at this", []model.FileEntry{{Path: "/src/main.go"}}, false, "NewSession")
 	assert.NoError(t, err)
 
 	msgs, err := service.GetChatHistory("/project", "claude", sid)
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 1)
-	assert.Equal(t, []string{"/src/main.go"}, msgs[0].Files)
+	assert.Equal(t, []model.FileEntry{{Path: "/src/main.go"}}, msgs[0].Files)
 }
 
 func TestGetSessions_OrderedByUpdatedDesc(t *testing.T) {
@@ -1006,7 +1007,7 @@ func TestAddChatMessage_AutoTitleWithFilePathAndContent(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "New")
 
 	// When content is non-empty, title comes from content (not files)
-	_, err := service.AddChatMessage("/project", "claude", sid, "user", "Hello world", []string{"/some/file.go", "file.go"}, false, "NewSession")
+	_, err := service.AddChatMessage("/project", "claude", sid, "user", "Hello world", []model.FileEntry{{Path: "/some/file.go"}, {Path: "file.go"}}, false, "NewSession")
 	assert.NoError(t, err)
 
 	title, err := service.GetSessionTitle(sid)
@@ -3054,7 +3055,7 @@ func TestGetUserMessageIndex_Basic(t *testing.T) {
 	assert.NoError(t, err)
 	_, err = service.AddChatMessage("/project", "claude", sid, "assistant", `{"blocks":[{"type":"text","text":"Answer"}]}`, nil, false, "NewSession")
 	assert.NoError(t, err)
-	_, err = service.AddChatMessage("/project", "claude", sid, "user", "Second question", []string{"file1.go"}, false, "NewSession")
+	_, err = service.AddChatMessage("/project", "claude", sid, "user", "Second question", []model.FileEntry{{Path: "file1.go"}}, false, "NewSession")
 	assert.NoError(t, err)
 
 	msgs, err := service.GetUserMessageIndex(sid)
@@ -3065,7 +3066,7 @@ func TestGetUserMessageIndex_Basic(t *testing.T) {
 	assert.Equal(t, "First question", msgs[0].Content)
 	assert.Equal(t, "user", msgs[1].Role)
 	assert.Equal(t, "Second question", msgs[1].Content)
-	assert.Equal(t, []string{"file1.go"}, msgs[1].Files)
+	assert.Equal(t, []model.FileEntry{{Path: "file1.go"}}, msgs[1].Files)
 }
 
 func TestGetUserMessageIndex_Empty(t *testing.T) {

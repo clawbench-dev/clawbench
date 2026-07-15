@@ -17,7 +17,7 @@ type AIBackendSummarizer struct {
 	backend ai.AIBackend
 	// Model is the model ID override for the AI backend (empty = use backend default).
 	Model string
-	gs    ttsPipeline
+	gs    summarizePipeline
 }
 
 // NewAIBackendSummarizer creates an AIBackendSummarizer for the given backend type.
@@ -29,7 +29,7 @@ func NewAIBackendSummarizer(backendType string) (*AIBackendSummarizer, error) {
 	s := &AIBackendSummarizer{
 		backend: backend,
 	}
-	s.gs = NewTTSPipeline(s.DoSummarizePass)
+	s.gs = NewSummarizePipeline(s.DoSummarizePass)
 	return s, nil
 }
 

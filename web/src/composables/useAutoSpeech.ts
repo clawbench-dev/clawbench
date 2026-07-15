@@ -19,6 +19,7 @@ import { gt } from '@/composables/useLocale'
 import i18n from '@/i18n'
 import { localConfig, setLocalConfig } from '@/composables/useSettingsConfig'
 import { useWakeLock } from '@/composables/useWakeLock'
+import { MseAudioPlayer } from '@/composables/useMseAudio'
 import { appLog } from '@/utils/appLog'
 
 /**
@@ -64,6 +65,8 @@ const lastError = ref<string>('')
 let abortController: AbortController | null = null
 let currentEventSource: EventSource | null = null
 let currentAudioEl: HTMLAudioElement | null = null
+let currentWs: WebSocket | null = null
+let mseAudio: MseAudioPlayer | null = null
 
 // Initialize from settings config (which handles legacy key migration)
 enabled.value = !!localConfig.autoSpeech
@@ -119,6 +122,14 @@ export function useAutoSpeech() {
     if (currentEventSource) {
       currentEventSource.close()
       currentEventSource = null
+    }
+    if (currentWs) {
+      currentWs.close()
+      currentWs = null
+    }
+    if (mseAudio) {
+      mseAudio.cleanup()
+      mseAudio = null
     }
     if (currentAudioEl) {
       currentAudioEl.pause()
@@ -196,6 +207,203 @@ export function useAutoSpeech() {
     })
   }
 
+  // --- Internal: play streaming audio via WebSocket + MSE ---
+  function playStreamingAudio(jobId: string) {
+    // Check MSE support first — fall back to SSE if not available
+    if (!MseAudioPlayer.isSupported()) {
+      appLog.w(TAG, 'MSE not supported, falling back to SSE')
+      connectSSE(jobId)
+      return
+    }
+
+    const mse = new MseAudioPlayer()
+    mseAudio = mse
+    const audio = mse.init()
+    currentAudioEl = audio
+    state.value = 'synthesizing'
+
+    // Set up audio element lifecycle handlers
+    audio.onended = () => {
+      if (currentAudioEl === audio) {
+        currentAudioEl = null
+        mseAudio = null
+        activeId.value = ''
+        playingSummary.value = ''
+        state.value = 'idle'
+        if (screenLockSuppressed) {
+          wakeLock.release()
+          screenLockSuppressed = false
+        }
+      }
+    }
+    audio.onerror = () => {
+      if (currentAudioEl === audio) {
+        currentAudioEl = null
+        mseAudio = null
+        activeId.value = ''
+        playingSummary.value = ''
+        state.value = 'idle'
+        reportError(gt('autoSpeech.playbackFailed'))
+        if (screenLockSuppressed) {
+          wakeLock.release()
+          screenLockSuppressed = false
+        }
+      }
+    }
+
+    // Build WebSocket URL
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const wsUrl = `${protocol}//${location.host}/api/tts/audio/ws`
+    const ws = new WebSocket(wsUrl)
+    ws.binaryType = 'arraybuffer'
+    currentWs = ws
+
+    let firstChunkReceived = false
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ type: 'start', jobId }))
+    }
+
+    ws.onmessage = (event) => {
+      if (event.data instanceof ArrayBuffer) {
+        // Binary frame — MP3 chunk
+        mse.appendChunk(event.data)
+        if (!firstChunkReceived) {
+          firstChunkReceived = true
+          state.value = 'playing'
+          audio.play().catch((err: unknown) => {
+            const errName = (err as Error)?.name
+            if (errName === 'AbortError') return
+            let message = gt('autoSpeech.generateFailedGeneric')
+            if (errName === 'NotAllowedError') {
+              message = gt('autoSpeech.autoplayBlocked')
+            }
+            reportError(message)
+            activeId.value = ''
+            playingSummary.value = ''
+            state.value = 'idle'
+            if (screenLockSuppressed) {
+              wakeLock.release()
+              screenLockSuppressed = false
+            }
+          })
+        }
+      } else {
+        // Text frame — control message
+        try {
+          const msg = JSON.parse(event.data)
+          if (msg.type === 'phase') {
+            if (msg.phase === 'summarizing') state.value = 'summarizing'
+            else if (msg.phase === 'synthesizing') state.value = 'synthesizing'
+          } else if (msg.type === 'done') {
+            if (msg.summary) playingSummary.value = msg.summary
+            mse.endOfStream()
+            ws.close()
+          } else if (msg.type === 'error') {
+            reportError(msg.message || gt('autoSpeech.synthesisFailed'))
+            mse.cleanup()
+            ws.close()
+          }
+        } catch { /* ignore malformed */ }
+      }
+    }
+
+    ws.onerror = () => {
+      reportError(gt('autoSpeech.generateFailedGeneric'))
+      mse.cleanup()
+      releaseScreenLockOnError()
+    }
+
+    ws.onclose = () => {
+      if (currentWs === ws) currentWs = null
+    }
+  }
+
+  // --- Internal: connect to SSE for non-streaming TTS (Piper/Kokoro/MOSS-Nano) ---
+  function connectSSE(jobId: string) {
+    const controller = abortController
+    const es = new EventSource(`/api/tts/stream/${jobId}`)
+    currentEventSource = es
+
+    let resultData: Record<string, unknown> | null = null
+
+    es.addEventListener('phase', (e: MessageEvent) => {
+      try {
+        const event = JSON.parse(e.data)
+        if (event.phase === 'summarizing') {
+          state.value = 'summarizing'
+        } else if (event.phase === 'synthesizing') {
+          state.value = 'synthesizing'
+        }
+      } catch { /* ignore malformed data */ }
+    })
+
+    es.addEventListener('result', (e: MessageEvent) => {
+      try {
+        resultData = JSON.parse(e.data)
+      } catch { /* ignore malformed data */ }
+      es.close()
+      currentEventSource = null
+      handleResult(resultData)
+    })
+
+    es.onerror = () => {
+      es.close()
+      if (currentEventSource === es) {
+        currentEventSource = null
+      }
+      if (resultData) {
+        handleResult(resultData)
+        return
+      }
+      if (controller?.signal.aborted) return
+      reportError(gt('autoSpeech.generateFailedGeneric'))
+      activeId.value = ''
+      playingSummary.value = ''
+      state.value = 'idle'
+      releaseScreenLockOnError()
+    }
+
+    function handleResult(result: Record<string, unknown> | null) {
+      if (!result) {
+        reportError(gt('autoSpeech.noResult'))
+        activeId.value = ''
+        playingSummary.value = ''
+        state.value = 'idle'
+        releaseScreenLockOnError()
+        return
+      }
+
+      if (result.synthesizeFailed) {
+        reportError(result.synthesizeError ? gt('autoSpeech.synthesisFailedDetail', { error: result.synthesizeError }) : gt('autoSpeech.synthesisFailed'))
+        activeId.value = ''
+        playingSummary.value = ''
+        state.value = 'idle'
+        releaseScreenLockOnError()
+        return
+      }
+
+      if (!result.audioPath) {
+        reportError(gt('autoSpeech.noAudioFile'))
+        activeId.value = ''
+        playingSummary.value = ''
+        state.value = 'idle'
+        releaseScreenLockOnError()
+        return
+      }
+
+      if (result.summarizeFailed) {
+        toast.show(gt('autoSpeech.summaryFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
+      }
+
+      if (result.summary) {
+        playingSummary.value = result.summary as string
+      }
+
+      playAudio(result.audioPath as string)
+    }
+  }
+
   // --- Internal: generate and play TTS for text ---
   async function _speak(id: string, text: string) {
     if (!text) {
@@ -246,103 +454,18 @@ export function useAutoSpeech() {
         return
       }
 
-      // Cache miss — set state to summarizing immediately so the user sees
-      // feedback while the EventSource connection is being established.
+      // Cache miss — streaming path (Edge TTS) or SSE path (other engines)
+      if (data.streaming && data.jobId) {
+        state.value = 'summarizing'
+        playStreamingAudio(data.jobId as string)
+        return
+      }
+
+      // Non-streaming fallback (Piper/Kokoro/MOSS-Nano)
       state.value = 'summarizing'
 
-      // Connect to EventSource for phase updates
       if (!data.jobId) throw new Error(gt('autoSpeech.noResult'))
-
-      const es = new EventSource(`/api/tts/stream/${data.jobId}`)
-      currentEventSource = es
-
-      let resultData: Record<string, unknown> | null = null
-
-      es.addEventListener('phase', (e: MessageEvent) => {
-        try {
-          const event = JSON.parse(e.data)
-          if (event.phase === 'summarizing') {
-            state.value = 'summarizing'
-          } else if (event.phase === 'synthesizing') {
-            state.value = 'synthesizing'
-          }
-        } catch { /* ignore malformed data */ }
-      })
-
-      es.addEventListener('result', (e: MessageEvent) => {
-        try {
-          resultData = JSON.parse(e.data)
-        } catch { /* ignore malformed data */ }
-        // Close EventSource — we have the result
-        es.close()
-        currentEventSource = null
-        handleResult(resultData)
-      })
-
-      es.onerror = () => {
-        es.close()
-        if (currentEventSource === es) {
-          currentEventSource = null
-        }
-        // If we already have result data, process it
-        if (resultData) {
-          handleResult(resultData)
-          return
-        }
-        // Otherwise report error (unless aborted)
-        if (controller.signal.aborted) return
-        reportError(gt('autoSpeech.generateFailedGeneric'))
-        activeId.value = ''
-        playingSummary.value = ''
-        state.value = 'idle'
-        // Release screen lock on TTS error
-        if (screenLockSuppressed) {
-          wakeLock.release()
-          screenLockSuppressed = false
-        }
-      }
-
-      function handleResult(result: Record<string, unknown> | null) {
-        if (!result) {
-          reportError(gt('autoSpeech.noResult'))
-          activeId.value = ''
-          playingSummary.value = ''
-          state.value = 'idle'
-          releaseScreenLockOnError()
-          return
-        }
-
-        // Handle synthesize failure
-        if (result.synthesizeFailed) {
-          reportError(result.synthesizeError ? gt('autoSpeech.synthesisFailedDetail', { error: result.synthesizeError }) : gt('autoSpeech.synthesisFailed'))
-          activeId.value = ''
-          playingSummary.value = ''
-          state.value = 'idle'
-          releaseScreenLockOnError()
-          return
-        }
-
-        if (!result.audioPath) {
-          reportError(gt('autoSpeech.noAudioFile'))
-          activeId.value = ''
-          playingSummary.value = ''
-          state.value = 'idle'
-          releaseScreenLockOnError()
-          return
-        }
-
-        // Warn if summarization failed (fell back to full text)
-        if (result.summarizeFailed) {
-          toast.show(gt('autoSpeech.summaryFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
-        }
-
-        // Store the AI-generated summary for display
-        if (result.summary) {
-          playingSummary.value = result.summary as string
-        }
-
-        playAudio(result.audioPath as string)
-      }
+      connectSSE(data.jobId as string)
 
     } catch (err: unknown) {
       const errName = (err as Error)?.name

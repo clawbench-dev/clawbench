@@ -756,7 +756,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		// Simple mode: extract final answer for chat, SimpleSummarizer for tasks
 		pipeline := summarize.NewPipelineWithOpts(
 			func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
-				return summarize.NewSimple().Summarize(ctx, text, "")
+				return summarize.NewSimplePreserveMarkdown().Summarize(ctx, text, "")
 			},
 			"",
 			summarize.SummarizeOption{PreserveMarkdown: true},
@@ -1108,7 +1108,7 @@ func initTaskSummarizer(cfg model.Config) (*summarize.TaskSummarizer, error) {
 		// Simple summarizer: truncate-only, no AI call. Wrap in pipeline with PreserveMarkdown.
 		pipeline := summarize.NewPipelineWithOpts(
 			func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
-				return summarize.NewSimple().Summarize(ctx, text, "")
+				return summarize.NewSimplePreserveMarkdown().Summarize(ctx, text, "")
 			},
 			"", // use default prompt
 			summarize.SummarizeOption{PreserveMarkdown: true},

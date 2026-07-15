@@ -153,7 +153,7 @@
         </div>
       </Transition>
       <div v-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
-        <Folder :size="48" />
+        <FileIcon path="" :is-dir="true" :size="48" />
         <p>{{ currentDir ? t('file.emptyDir') : t('file.noFiles') }}</p>
       </div>
 
@@ -174,7 +174,7 @@
             <Check v-if="multiSelect.selected.has(itemPath(entry.name))" :size="12" />
           </div>
           <div class="file-icon-wrap" :class="{ 'has-attach': hasAttachedFile(itemPath(entry.name)) }">
-            <Folder class="file-icon" :size="28" />
+            <FileIcon :path="entry.name" :is-dir="true" :size="28" class="file-icon" />
             <Paperclip v-if="hasAttachedFile(itemPath(entry.name))" class="attach-badge" :size="15" @click.stop="toggleAttach(itemPath(entry.name))" />
           </div>
           <span class="file-name">{{ entry.name }}</span>
@@ -199,9 +199,7 @@
           </div>
           <div class="file-icon-wrap" :class="{ 'has-attach': hasAttachedFile(itemPath(entry.name)) }">
             <img v-if="isThumbLoaded(entry)" class="file-thumb" :src="thumbUrl(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
-            <FileImage v-else-if="isImage(entry)" class="file-icon" :size="28" color="#a855f7" />
-            <FileMusic v-else-if="isAudio(entry)" class="file-icon" :size="28" color="#22c55e" />
-            <FileText v-else class="file-icon" :size="28" :color="getFileType(entry.name).color" />
+            <FileIcon v-else :path="entry.name" :size="28" class="file-icon" />
             <Paperclip v-if="hasAttachedFile(itemPath(entry.name))" class="attach-badge" :size="15" @click.stop="toggleAttach(itemPath(entry.name))" />
           </div>
           <span class="file-name">{{ entry.name }}</span>
@@ -225,7 +223,7 @@
         </div>
       </Transition>
       <div v-if="filteredEntries.length === 0 && !dirLoading" class="empty-state">
-        <Folder :size="48" />
+        <FileIcon path="" :is-dir="true" :size="48" />
         <p>{{ currentDir ? t('file.emptyDir') : t('file.noFiles') }}</p>
       </div>
 
@@ -247,7 +245,7 @@
         </div>
         <div class="grid-thumb" :class="{ 'has-attach': hasAttachedFile(itemPath(entry.name)) }">
           <img v-if="isThumbLoaded(entry)" :src="thumbUrl(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
-          <component v-else :is="entryIcon(entry)" class="grid-icon" :size="32" :color="entryIconColor(entry)" />
+          <FileIcon v-else :path="entry.name" :is-dir="entry.type === 'dir'" :size="32" class="grid-icon" />
           <Paperclip v-if="hasAttachedFile(itemPath(entry.name))" class="attach-badge" :size="15" @click.stop="toggleAttach(itemPath(entry.name))" />
         </div>
         <div class="grid-name">{{ entry.name }}</div>
@@ -355,12 +353,9 @@ import { ref, computed, reactive, inject, nextTick, onMounted, onUnmounted, watc
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { joinPath } from '@/utils/path'
-import { Folder, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, FileText, HardDrive, Eye, EyeOff, FileImage, FileMusic, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, FileVideo, Package, Upload, MoreHorizontal, Paperclip } from 'lucide-vue-next'
-import { getFileType } from '@/utils/fileType.ts'
-import { getFileIconColor } from '@/utils/fileIcon.ts'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip } from 'lucide-vue-next'
 import {
   buildThumbUrl,
-  isImage as isImageEntry, isAudio as isAudioEntry, isVideo as isVideoEntry,
   isThumbable as isThumbableEntry, formatSize as formatFileSize,
   createMultiSelect as _createMultiSelect, createClipboard as _createClipboard,
 } from '@/utils/fileManager.ts'
@@ -377,6 +372,7 @@ import { useFileNavStack } from '@/composables/useFileNavStack'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
 import SearchInput from '@/components/common/SearchInput.vue'
 import DirBreadcrumb from './DirBreadcrumb.vue'
+import FileIcon from '@/components/common/FileIcon.vue'
 
 const toast = inject('toast', null)
 const { isAppMode } = useAppMode()
@@ -501,17 +497,6 @@ function isThumbable(entry) {
 
 function isThumbLoaded(entry) {
     return isThumbable(entry) && !thumbErrors.has(entry.name)
-}
-function entryIcon(entry) {
-    if (entry.type === 'dir') return Folder
-    if (isImageEntry(entry)) return FileImage
-    if (isAudioEntry(entry)) return FileMusic
-    if (isVideoEntry(entry)) return FileVideo
-    return FileText
-}
-function entryIconColor(entry) {
-    if (entry.type === 'dir') return undefined
-    return getFileIconColor(entry.name)
 }
 function onSortSelect(field) {
   emit('toggleSort', field)
@@ -866,14 +851,6 @@ function handleItemClick(e) {
     }
 }
 
-function isImage(entry) {
-    return isImageEntry(entry)
-}
-
-function isAudio(entry) {
-    return isAudioEntry(entry)
-}
-
 function formatDate(modified) {
     if (!modified) return ''
     const d = new Date(modified)
@@ -1064,6 +1041,9 @@ function handleKeydown(e) {
 
     // Ctrl+C — copy
     if (isCtrl && e.key === 'c') {
+        // Allow native text copy when user has text selected in the file viewer
+        const selection = window.getSelection()
+        if (selection && selection.toString().length > 0) return
         if (multiSelect.active && multiSelect.selected.size > 0) {
             e.preventDefault()
             doBatchCopy()
@@ -1078,6 +1058,8 @@ function handleKeydown(e) {
 
     // Ctrl+X — cut
     if (isCtrl && e.key === 'x') {
+        const selection = window.getSelection()
+        if (selection && selection.toString().length > 0) return
         if (multiSelect.active && multiSelect.selected.size > 0) {
             e.preventDefault()
             doBatchCut()
@@ -1464,6 +1446,7 @@ function currentFileForClipboard() {
     flex-shrink: 0;
     width: 28px;
     height: 28px;
+    object-fit: contain;
 }
 
 .file-icon-wrap {
@@ -1536,6 +1519,7 @@ function currentFileForClipboard() {
     color: var(--text-muted, #999);
 }
 
+.empty-state .file-type-icon,
 .empty-state svg {
     width: 48px;
     height: 48px;
@@ -1640,6 +1624,7 @@ function currentFileForClipboard() {
     width: 32px;
     height: 32px;
     flex-shrink: 0;
+    object-fit: contain;
 }
 
 .grid-name {

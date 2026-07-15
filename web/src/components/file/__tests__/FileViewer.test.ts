@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import FileViewer from '../FileViewer.vue'
@@ -116,6 +116,30 @@ vi.mock('@/utils/download.ts', () => ({
   downloadFileByPath: vi.fn(),
   downloadBlob: vi.fn(),
 }))
+
+// ── Timer leak prevention ───────────────────────────────────
+const pendingTimers: ReturnType<typeof setTimeout>[] = []
+const _origSetTimeout = setTimeout
+globalThis.setTimeout = ((fn: TimerHandler, ms?: number, ...args: any[]) => {
+  const id = _origSetTimeout(fn, ms, ...args)
+  pendingTimers.push(id)
+  return id
+}) as typeof setTimeout
+
+const pendingIntervals: ReturnType<typeof setInterval>[] = []
+const _origSetInterval = setInterval
+globalThis.setInterval = ((fn: TimerHandler, ms?: number, ...args: any[]) => {
+  const id = _origSetInterval(fn, ms, ...args)
+  pendingIntervals.push(id)
+  return id
+}) as typeof setInterval
+
+afterEach(() => {
+  for (const id of pendingTimers) { clearTimeout(id) }
+  pendingTimers.length = 0
+  for (const id of pendingIntervals) { clearInterval(id) }
+  pendingIntervals.length = 0
+})
 
 // Stub child components
 const stubs = {

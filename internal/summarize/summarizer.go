@@ -79,25 +79,25 @@ type Summarizer interface {
 // Each backend (API, AI backend) provides its own implementation.
 type summarizePassFunc func(ctx context.Context, text, systemPrompt string, pass int) (string, error)
 
-// ttsPipeline implements the shared Summarize logic that TTS backends use:
-//  1. prepareTextForSummarization (strip markdown, truncate)
+// summarizePipeline implements the shared summarization logic:
+//  1. prepareTextForSummarization (conditionally strip markdown, truncate)
 //  2. Short text bypass
 //  3. Multi-pass with re-summarization (language-aware prompt)
-//  4. StripMarkdown on final output as safety net
+//  4. Post-processing (conditionally strip markdown on output)
 //
-// This pipeline is TTS-specific because it strips markdown formatting.
-// For task summarization that preserves formatting, use TaskSummarizer instead.
-type ttsPipeline struct {
+// When PreserveMarkdown is false (TTS mode), markdown is stripped for voice output.
+// When PreserveMarkdown is true (display mode), formatting is preserved for readability.
+type summarizePipeline struct {
 	passFn     summarizePassFunc
 	basePrompt string // language-independent base prompt
 	opts       SummarizeOption
 }
 
-// NewTTSPipeline creates a ttsPipeline with the given pass function.
+// NewSummarizePipeline creates a summarizePipeline for TTS (strip markdown).
 // The base prompt (without language) is loaded at creation time; language is
 // resolved per-request in the Summarize call.
-func NewTTSPipeline(passFn summarizePassFunc) ttsPipeline {
-	return ttsPipeline{
+func NewSummarizePipeline(passFn summarizePassFunc) summarizePipeline {
+	return summarizePipeline{
 		passFn:     passFn,
 		basePrompt: defaultTTSPrompt,
 		opts:       SummarizeOption{PreserveMarkdown: false},
@@ -107,20 +107,20 @@ func NewTTSPipeline(passFn summarizePassFunc) ttsPipeline {
 // NewPipelineWithOpts creates a pipeline with the given pass function and options.
 // When opts.PreserveMarkdown is true, StripMarkdown is skipped on both input
 // and output — used by TaskSummarizer with API backends (OpenAI/Anthropic).
-func NewPipelineWithOpts(passFn summarizePassFunc, basePrompt string, opts SummarizeOption) ttsPipeline {
+func NewPipelineWithOpts(passFn summarizePassFunc, basePrompt string, opts SummarizeOption) summarizePipeline {
 	if basePrompt == "" {
 		basePrompt = defaultTTSPrompt
 	}
-	return ttsPipeline{
+	return summarizePipeline{
 		passFn:     passFn,
 		basePrompt: basePrompt,
 		opts:       opts,
 	}
 }
 
-// Summarize implements the shared TTS summarization pipeline.
+// Summarize implements the shared summarization pipeline.
 // language is a language code (e.g. "zh", "en") used to direct output language.
-func (g *ttsPipeline) Summarize(ctx context.Context, text string, language string) (string, error) {
+func (g *summarizePipeline) Summarize(ctx context.Context, text string, language string) (string, error) {
 	cleaned, needsSummarization := prepareTextForSummarization(text, g.opts.PreserveMarkdown)
 	if !needsSummarization {
 		return cleaned, nil

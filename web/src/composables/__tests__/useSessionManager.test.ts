@@ -420,7 +420,7 @@ describe('useSessionManager', () => {
             // Clear calls from immediate watch (fetchQueue on mount)
             fetchSpy.mockClear()
 
-            await mgr.enqueueMessage('session-1', 'hello', ['/path1'], ['attached'], ['pending'])
+            await mgr.enqueueMessage('session-1', 'hello', ['/path1'], [{ path: 'attached', isDir: false }], ['pending'])
 
             expect(fetchSpy).toHaveBeenCalledWith(
                 expect.stringContaining('/api/ai/queue?session_id=session-1'),
@@ -429,7 +429,7 @@ describe('useSessionManager', () => {
             const body = JSON.parse((fetchSpy.mock.calls[0] as any[])[1].body)
             expect(body.message).toBe('hello')
             expect(body.filePaths).toEqual(['/path1', 'attached'])
-            expect(body.files).toEqual(['pending', '/path1', 'attached'])
+            expect(body.files).toEqual([{ path: 'pending', isDir: false }, { path: 'attached', isDir: false }])
 
             fetchSpy.mockRestore()
         })

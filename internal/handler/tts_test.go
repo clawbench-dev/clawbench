@@ -200,7 +200,7 @@ func TestTTSGenerate_Success(t *testing.T) {
 	assert.True(t, mockProvider.synthesizeCalled)
 }
 
-// --- TTSGenerate: summarize failure returns error, does not synthesize ---
+// --- TTSGenerate: summarize failure falls back to SimpleSummarizer ---
 
 func TestTTSGenerate_SummarizeFailure(t *testing.T) {
 	mockProvider := &mockSpeechProvider{}
@@ -228,9 +228,10 @@ func TestTTSGenerate_SummarizeFailure(t *testing.T) {
 		}
 	}
 
-	// Summarizer was called, but synthesize should NOT be called
+	// Summarizer was called, and since it failed, the fallback SimpleSummarizer
+	// is used — synthesize SHOULD be called with the fallback text
 	assert.True(t, mockSum.called)
-	assert.False(t, mockProvider.synthesizeCalled)
+	assert.True(t, mockProvider.synthesizeCalled, "synthesize should be called with fallback summary when LLM summarizer fails")
 }
 
 // --- TTSGenerate: synthesize failure returns error via SSE stream ---
@@ -329,6 +330,126 @@ func TestTTSGenerate_InvalidJSON(t *testing.T) {
 	assert.False(t, mockSum.called)
 }
 
+// --- TTSGenerate: streaming provider success ---
+
+func TestTTSGenerate_StreamingSuccess(t *testing.T) {
+	mockProvider := &mockStreamingSpeechProvider{}
+	mockSum := &mockSummarizer{result: "这是核心结论"}
+	env, teardown := setupTTSTest(t, &mockProvider.mockSpeechProvider, mockSum)
+	defer teardown()
+
+	// Replace the provider with the streaming mock so the type assertion succeeds
+	SetSpeechProvider(mockProvider)
+
+	text := "这是一段较长的AI回复内容，需要被总结为语音。包含了详细的分析和代码示例，需要提取核心要点。"
+	req := newRequest(t, http.MethodPost, "/api/tts/generate", map[string]string{"text": text})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+
+	TTSGenerate(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.NoError(t, err)
+	assert.Contains(t, resp, "jobId")
+	assert.Equal(t, true, resp["streaming"], "streaming provider should return streaming: true")
+
+	// Wait for the background goroutine to complete
+	hash := sha256.Sum256([]byte(text))
+	cacheKey := hex.EncodeToString(hash[:])[:summarize.CacheKeyHexLen]
+	job, ok := service.GetTTSJob(cacheKey)
+	if ok {
+		select {
+		case <-job.Done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("TTS job did not complete in time")
+		}
+	}
+
+	assert.True(t, mockSum.called)
+	assert.True(t, mockProvider.streamCalled, "streaming provider should call SynthesizeStream")
+	assert.False(t, mockProvider.synthesizeCalled, "non-streaming Synthesize should not be called")
+}
+
+// --- TTSGenerate: streaming provider with summarize failure ---
+
+func TestTTSGenerate_StreamingSummarizeFailure(t *testing.T) {
+	mockProvider := &mockStreamingSpeechProvider{}
+	mockSum := &mockSummarizer{err: context.DeadlineExceeded}
+	env, teardown := setupTTSTest(t, &mockProvider.mockSpeechProvider, mockSum)
+	defer teardown()
+
+	// Replace the provider with the streaming mock
+	SetSpeechProvider(mockProvider)
+
+	text := "这是一段需要总结的长文本内容，但由于摘要失败会直接报错。内容足够长以触发摘要流程。"
+	req := newRequest(t, http.MethodPost, "/api/tts/generate", map[string]string{"text": text})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+
+	TTSGenerate(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Wait for the background goroutine to complete
+	hash := sha256.Sum256([]byte(text))
+	cacheKey := hex.EncodeToString(hash[:])[:summarize.CacheKeyHexLen]
+	job, ok := service.GetTTSJob(cacheKey)
+	if ok {
+		select {
+		case <-job.Done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("TTS job did not complete in time")
+		}
+	}
+
+	// Summarizer was called, failed, but fallback simple summarizer should work
+	// and SynthesizeStream should still be called with the fallback summary
+	assert.True(t, mockSum.called)
+	assert.True(t, mockProvider.streamCalled, "streaming SynthesizeStream should be called with fallback summary when LLM summarizer fails")
+}
+
+// --- TTSGenerate: streaming synthesize failure ---
+
+func TestTTSGenerate_StreamingSynthesizeFailure(t *testing.T) {
+	mockProvider := &mockStreamingSpeechProvider{
+		streamErr: context.DeadlineExceeded,
+	}
+	mockSum := &mockSummarizer{result: "流式总结文本"}
+	env, teardown := setupTTSTest(t, &mockProvider.mockSpeechProvider, mockSum)
+	defer teardown()
+
+	SetSpeechProvider(mockProvider)
+
+	text := "测试流式语音合成失败的场景。"
+	req := newRequest(t, http.MethodPost, "/api/tts/generate", map[string]string{"text": text})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+
+	TTSGenerate(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.NoError(t, err)
+	assert.Equal(t, true, resp["streaming"])
+
+	// Wait for job to complete
+	hash := sha256.Sum256([]byte(text))
+	cacheKey := hex.EncodeToString(hash[:])[:summarize.CacheKeyHexLen]
+	job, ok := service.GetTTSJob(cacheKey)
+	if ok {
+		select {
+		case <-job.Done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("streaming TTS job did not complete in time")
+		}
+	}
+
+	assert.True(t, mockSum.called)
+	assert.True(t, mockProvider.streamCalled)
+}
+
 // --- TTSGenerate: cache key is deterministic ---
 
 func TestTTSGenerate_CacheKeyDeterministic(t *testing.T) {
@@ -370,8 +491,49 @@ func TestSetSummarizer(t *testing.T) {
 // --- ensure mockSummarizer satisfies Summarizer interface ---
 var _ summarize.Summarizer = (*mockSummarizer)(nil)
 
+// mockStreamingSpeechProvider extends mockSpeechProvider with streaming support.
+type mockStreamingSpeechProvider struct {
+	mockSpeechProvider
+	streamCalled   bool
+	lastStreamText string
+	lastStreamLang string
+	streamErr      error
+	streamBlock    chan struct{}
+}
+
+func (m *mockStreamingSpeechProvider) SynthesizeStream(ctx context.Context, text string, outputPath string, language string, chunkCh chan<- []byte) error {
+	m.streamCalled = true
+	m.lastStreamText = text
+	m.lastStreamLang = language
+	if m.streamErr != nil {
+		return m.streamErr
+	}
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(outputPath, []byte("fake streaming audio data"), 0o644); err != nil {
+		return err
+	}
+	select {
+	case chunkCh <- []byte("fake chunk"):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if m.streamBlock != nil {
+		select {
+		case <-m.streamBlock:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
 // --- ensure mockSpeechProvider satisfies SpeechProvider interface ---
 var _ speech.SpeechProvider = (*mockSpeechProvider)(nil)
+
+// --- ensure mockStreamingSpeechProvider satisfies StreamingSpeechProvider interface ---
+var _ speech.StreamingSpeechProvider = (*mockStreamingSpeechProvider)(nil)
 
 // --- GetSpeechProvider / SetSpeechProvider concurrent access ---
 

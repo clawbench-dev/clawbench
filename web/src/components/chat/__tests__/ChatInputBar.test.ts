@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import { createI18n } from 'vue-i18n'
@@ -269,6 +269,30 @@ vi.mock('@/utils/appLog.ts', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
 }))
 
+// ── Timer leak prevention ───────────────────────────────────
+const pendingTimers: ReturnType<typeof setTimeout>[] = []
+const _origSetTimeout = setTimeout
+globalThis.setTimeout = ((fn: TimerHandler, ms?: number, ...args: any[]) => {
+  const id = _origSetTimeout(fn, ms, ...args)
+  pendingTimers.push(id)
+  return id
+}) as typeof setTimeout
+
+const pendingIntervals: ReturnType<typeof setInterval>[] = []
+const _origSetInterval = setInterval
+globalThis.setInterval = ((fn: TimerHandler, ms?: number, ...args: any[]) => {
+  const id = _origSetInterval(fn, ms, ...args)
+  pendingIntervals.push(id)
+  return id
+}) as typeof setInterval
+
+afterEach(() => {
+  for (const id of pendingTimers) { clearTimeout(id) }
+  pendingTimers.length = 0
+  for (const id of pendingIntervals) { clearInterval(id) }
+  pendingIntervals.length = 0
+})
+
 const stubs = {
   PopupMenu: { template: '<div><slot /></div>' },
   SessionSettingModal: true,
@@ -442,7 +466,7 @@ describe('ChatInputBar', () => {
   })
 
   it('handleSendClick emits send with empty string when attached files exist but no text', async () => {
-    const wrapper = mountBar({ attachedFiles: ['/tmp/file.ts'] })
+    const wrapper = mountBar({ attachedFiles: [{ path: '/tmp/file.ts' }] })
     await wrapper.vm.$nextTick()
     await wrapper.find('.chat-send-btn').trigger('click')
     expect(wrapper.emitted('send')).toBeTruthy()
@@ -715,7 +739,7 @@ describe('ChatInputBar', () => {
     const wrapper = mountBar()
     wrapper.vm.handleAttachFile('/path/to/file.ts')
     expect(wrapper.emitted('add-attached')).toBeTruthy()
-    expect(wrapper.emitted('add-attached')![0]).toEqual(['/path/to/file.ts'])
+    expect(wrapper.emitted('add-attached')![0]).toEqual(['/path/to/file.ts', undefined])
   })
 
   it('handleRemoveAttached emits remove-attached-by-path', async () => {
@@ -834,7 +858,7 @@ describe('ChatInputBar', () => {
   })
 
   it('attached files render with file icon color', async () => {
-    const wrapper = mountBar({ attachedFiles: ['/path/to/test.ts'] })
+    const wrapper = mountBar({ attachedFiles: [{ path: '/path/to/test.ts' }] })
     await wrapper.vm.$nextTick()
     // Should render attachment tags
     expect(wrapper.find('.chat-attachment-tags').exists()).toBe(true)

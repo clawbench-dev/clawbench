@@ -32,13 +32,15 @@ export function isLocalhostUrl(href: string): boolean {
  * Parse a localhost URL into its components.
  * Returns null if not a localhost URL.
  */
-export function parseLocalhostUrl(url: string): { port: number; protocol: string; fullUrl: string } | null {
-    const match = url.match(/^((https?):\/\/(?:localhost|127\.0\.0\.1):(\d+))/i)
+export function parseLocalhostUrl(url: string): { port: number; protocol: string; fullUrl: string; path: string } | null {
+    const match = url.match(/^((https?):\/\/(?:localhost|127\.0\.0\.1):(\d+))(\/[^\s?#]*)?/i)
     if (!match) return null
+    const path = match[4] || ''
     return {
         port: parseInt(match[3]),
         protocol: match[2].toLowerCase(),
-        fullUrl: match[1],
+        fullUrl: match[1] + path,
+        path,
     }
 }
 
@@ -52,8 +54,9 @@ export const LOCALHOST_OPEN_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" str
  * Generate HTML for the localhost open button (EthernetPort icon).
  * Same pattern as fileOpenButtonHtml() in useFilePathAnnotation.ts.
  */
-export function localhostOpenButtonHtml(port: number, protocol: string, url: string): string {
-    return `<button class="chat-url-open-btn" data-url="${escapeHtml(url)}" data-port="${port}" data-protocol="${escapeHtml(protocol)}" title="Open in WebView">${LOCALHOST_OPEN_ICON_SVG}</button>`
+export function localhostOpenButtonHtml(port: number, protocol: string, url: string, path?: string): string {
+    const pathAttr = path ? ` data-path="${escapeHtml(path)}"` : ''
+    return `<button class="chat-url-open-btn" data-url="${escapeHtml(url)}" data-port="${port}" data-protocol="${escapeHtml(protocol)}"${pathAttr} title="Open in WebView">${LOCALHOST_OPEN_ICON_SVG}</button>`
 }
 
 /**
@@ -94,7 +97,7 @@ export function annotateLocalhostUrls(html: string): string {
         const parsed = parseLocalhostUrl(href)
         if (!parsed) continue
         if (parsed.port <= 0 || parsed.port > 65535) continue
-        a.insertAdjacentHTML('afterend', localhostOpenButtonHtml(parsed.port, parsed.protocol, parsed.fullUrl))
+        a.insertAdjacentHTML('afterend', localhostOpenButtonHtml(parsed.port, parsed.protocol, parsed.fullUrl, parsed.path))
     }
 
     // ── Step 2: <code> tags whose entire content is a localhost URL ──
@@ -113,7 +116,7 @@ export function annotateLocalhostUrls(html: string): string {
         code.parentNode!.replaceChild(wrapper, code)
         wrapper.appendChild(code)
         // Append icon button after the <a>
-        wrapper.insertAdjacentHTML('afterend', localhostOpenButtonHtml(parsed.port, parsed.protocol, parsed.fullUrl))
+        wrapper.insertAdjacentHTML('afterend', localhostOpenButtonHtml(parsed.port, parsed.protocol, parsed.fullUrl, parsed.path))
     }
 
     // ── Step 3: Text nodes (outside <a>) → regex match bare localhost URLs ──
@@ -139,7 +142,7 @@ export function annotateLocalhostUrls(html: string): string {
 
         // Re-run regex to collect matches (test() consumed lastIndex)
         LOCALHOST_URL_RE.lastIndex = 0
-        const parts: Array<{ text: string; url: string | null; port: number; protocol: string }> = []
+        const parts: Array<{ text: string; url: string | null; port: number; protocol: string; path: string }> = []
         let lastIndex = 0
         let match: RegExpExecArray | null
         while ((match = LOCALHOST_URL_RE.exec(text)) !== null) {
@@ -148,23 +151,24 @@ export function annotateLocalhostUrls(html: string): string {
             if (port <= 0 || port > 65535) {
                 // Invalid port — treat as plain text
                 if (match.index > lastIndex) {
-                    parts.push({ text: text.slice(lastIndex, match.index), url: null, port: 0, protocol: '' })
+                    parts.push({ text: text.slice(lastIndex, match.index), url: null, port: 0, protocol: '', path: '' })
                 }
-                parts.push({ text: url, url: null, port: 0, protocol: '' })
+                parts.push({ text: url, url: null, port: 0, protocol: '', path: '' })
                 lastIndex = match.index + url.length
                 continue
             }
             const protocol = url.startsWith('https') ? 'https' : 'http'
+            const path = match[2] || ''
             // Push text before this match
             if (match.index > lastIndex) {
-                parts.push({ text: text.slice(lastIndex, match.index), url: null, port: 0, protocol: '' })
+                parts.push({ text: text.slice(lastIndex, match.index), url: null, port: 0, protocol: '', path: '' })
             }
-            parts.push({ text: url, url, port, protocol })
+            parts.push({ text: url, url, port, protocol, path })
             lastIndex = match.index + url.length
         }
         // Push remaining text after last match
         if (lastIndex < text.length) {
-            parts.push({ text: text.slice(lastIndex), url: null, port: 0, protocol: '' })
+            parts.push({ text: text.slice(lastIndex), url: null, port: 0, protocol: '', path: '' })
         }
 
         // Build replacement nodes
@@ -182,7 +186,7 @@ export function annotateLocalhostUrls(html: string): string {
                 frag.appendChild(a)
                 // Open button (as HTML snippet since it contains SVG)
                 const btnContainer = doc.createElement('span')
-                btnContainer.innerHTML = localhostOpenButtonHtml(part.port, part.protocol, part.url)
+                btnContainer.innerHTML = localhostOpenButtonHtml(part.port, part.protocol, part.url, part.path)
                 while (btnContainer.firstChild) frag.appendChild(btnContainer.firstChild)
             } else {
                 frag.appendChild(doc.createTextNode(part.text))
@@ -227,7 +231,7 @@ export function useLocalhostUrlClickHandler() {
      * Open a localhost URL: ensure port forwarding is set up, then open in WebView.
      * Returns false if SSH is disabled (caller may choose to fall through to default navigation).
      */
-    async function openLocalhostUrl(element: Element, port: number, protocol: string): Promise<boolean> {
+    async function openLocalhostUrl(element: Element, port: number, protocol: string, path?: string): Promise<boolean> {
         if (urlOpening.value) return true
         if (sshInfo.value?.enabled === false) {
             toast.show(gt('chat.localhost.sshDisabled'), { type: 'info' })
@@ -238,7 +242,7 @@ export function useLocalhostUrlClickHandler() {
 
         try {
             const localPort = await ensurePortRegistered(port, protocol)
-            await openPort(localPort, protocol)
+            await openPort(localPort, protocol, undefined, path)
         } catch {
             toast.show(gt('chat.localhost.openFailed'), { type: 'error' })
         } finally {
@@ -273,8 +277,9 @@ export function useLocalhostUrlClickHandler() {
             event.stopPropagation()
             const port = parseInt(urlBtn.getAttribute('data-port') || '0')
             const protocol = urlBtn.getAttribute('data-protocol') || 'http'
+            const path = urlBtn.getAttribute('data-path') || undefined
             if (port > 0) {
-                openLocalhostUrl(urlBtn, port, protocol)
+                openLocalhostUrl(urlBtn, port, protocol, path)
             }
             return true
         }
@@ -292,7 +297,7 @@ export function useLocalhostUrlClickHandler() {
                     // we re-trigger the <a> navigation manually.
                     event.preventDefault()
                     event.stopPropagation()
-                    openLocalhostUrl(anchor, parsed.port, parsed.protocol).then(handled => {
+                    openLocalhostUrl(anchor, parsed.port, parsed.protocol, parsed.path || undefined).then(handled => {
                         if (!handled) {
                             // SSH disabled — fall through to default browser navigation
                             window.open(href, '_blank')

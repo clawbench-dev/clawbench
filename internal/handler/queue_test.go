@@ -82,7 +82,7 @@ func TestQueueHandler_Enqueue_WithFiles(t *testing.T) {
 	defer service.SetSessionRunning(sessionID, false)
 
 	body := map[string]any{
-		"files": []string{"/upload/a.png", "/upload/b.jpg"},
+		"files": []map[string]any{{"path": "/upload/a.png", "isDir": false}, {"path": "/upload/b.jpg", "isDir": false}},
 	}
 	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -285,7 +285,7 @@ func TestQueueHandler_Enqueue_FilesNoDuplicate(t *testing.T) {
 	body := map[string]any{
 		"message":   "check this file",
 		"filePaths": []string{"config.yaml"},
-		"files":     []string{"config.yaml"},
+		"files":     []map[string]any{{"path": "config.yaml", "isDir": false}},
 	}
 	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -306,7 +306,8 @@ func TestQueueHandler_Enqueue_FilesNoDuplicate(t *testing.T) {
 	// files should NOT contain duplicates
 	files, _ := item["files"].([]any)
 	assert.Len(t, files, 1, "files should have exactly 1 entry (no duplicate), got %v", files)
-	assert.Equal(t, "config.yaml", files[0])
+	fileObj, _ := files[0].(map[string]any)
+	assert.Equal(t, "config.yaml", fileObj["path"])
 }
 
 // TestQueueHandler_Enqueue_FilesWithUploads verifies that when files includes
@@ -325,7 +326,7 @@ func TestQueueHandler_Enqueue_FilesWithUploads(t *testing.T) {
 	body := map[string]any{
 		"message":   "check these",
 		"filePaths": []string{"src/main.go"},
-		"files":     []string{".clawbench/uploads/img.png", "src/main.go"},
+		"files":     []map[string]any{{"path": ".clawbench/uploads/img.png", "isDir": false}, {"path": "src/main.go", "isDir": false}},
 	}
 	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -341,8 +342,10 @@ func TestQueueHandler_Enqueue_FilesWithUploads(t *testing.T) {
 	// files should preserve all entries without duplication
 	files, _ := item["files"].([]any)
 	assert.Len(t, files, 2, "files should have 2 entries (upload + ref), got %v", files)
-	assert.Equal(t, ".clawbench/uploads/img.png", files[0])
-	assert.Equal(t, "src/main.go", files[1])
+	file0, _ := files[0].(map[string]any)
+	file1, _ := files[1].(map[string]any)
+	assert.Equal(t, ".clawbench/uploads/img.png", file0["path"])
+	assert.Equal(t, "src/main.go", file1["path"])
 }
 
 // ---------- Session ownership validation (ISS-180) ----------
@@ -597,7 +600,7 @@ func TestQueueHandler_Enqueue_NeedsStartWhenSessionNotRunning(t *testing.T) {
 	body := map[string]any{
 		"message":   "hello world",
 		"filePaths": []string{"/main.go"},
-		"files":     []string{"/main.go"},
+		"files":     []map[string]any{{"path": "/main.go", "isDir": false}},
 	}
 	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
 	req = withProjectCookie(req, env.ProjectDir)

@@ -206,7 +206,7 @@ func TestForkSession_MessagesWithFiles(t *testing.T) {
 	sessID := helperCreateSession(t, "/project", "claude", "With Files")
 
 	// Add a message with files
-	files := []string{"/src/main.go", "/src/util.ts"}
+	files := []model.FileEntry{{Path: "/src/main.go"}, {Path: "/src/util.ts"}}
 	_, err := service.AddChatMessage("/project", "claude", sessID, "user", "Review these files", files, false, "")
 	assert.NoError(t, err)
 	_, err = service.AddChatMessage("/project", "claude", sessID, "assistant", "Looks good", nil, false, "")
@@ -218,7 +218,7 @@ func TestForkSession_MessagesWithFiles(t *testing.T) {
 	msgs, err := service.GetChatHistory("/project", "claude", newSessID)
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 2)
-	assert.Equal(t, []string{"/src/main.go", "/src/util.ts"}, msgs[0].Files)
+	assert.Equal(t, []model.FileEntry{{Path: "/src/main.go"}, {Path: "/src/util.ts"}}, msgs[0].Files)
 }
 
 // ---------- ForkSession: fork of a forked session ----------

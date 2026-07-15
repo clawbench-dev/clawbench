@@ -43,7 +43,7 @@ func TestAIBackendSummarizer_Summarize_ShortText(t *testing.T) {
 	// Short text should bypass the AI backend entirely
 	s := &AIBackendSummarizer{
 		backend: &mockAIBackend{name: "test"},
-		gs:      NewTTSPipeline(func(ctx context.Context, text, systemPrompt string, pass int) (string, error) { return "", nil }),
+		gs:      NewSummarizePipeline(func(ctx context.Context, text, systemPrompt string, pass int) (string, error) { return "", nil }),
 	}
 
 	result, err := s.Summarize(context.Background(), "短文本", "zh")
@@ -201,11 +201,11 @@ func TestAIBackendSummarizer_Summarize_LongText_WithMockBackend(t *testing.T) {
 	mock := &mockAIBackend{name: "mock-backend", streamCh: ch}
 	s := &AIBackendSummarizer{
 		backend: mock,
-		gs:      NewTTSPipeline((&AIBackendSummarizer{backend: mock}).DoSummarizePass),
+		gs:      NewSummarizePipeline((&AIBackendSummarizer{backend: mock}).DoSummarizePass),
 	}
 
-	// Use ttsPipeline directly with a pass function
-	s.gs = NewTTSPipeline(s.DoSummarizePass)
+	// Use summarizePipeline directly with a pass function
+	s.gs = NewSummarizePipeline(s.DoSummarizePass)
 
 	longText := strings.Repeat("这是一段很长的AI回复内容，用于测试总结功能。", 20)
 	result, err := s.Summarize(context.Background(), longText, "zh")

@@ -39,6 +39,30 @@ func TestRegisterTTSJob(t *testing.T) {
 	assert.Equal(t, job, got)
 }
 
+func TestRegisterStreamingTTSJob(t *testing.T) {
+	cleanupTTSJobs()
+	defer cleanupTTSJobs()
+
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	job := RegisterStreamingTTSJob("tts-stream-1", cancel)
+
+	assert.Equal(t, "tts-stream-1", job.ID)
+	assert.NotNil(t, job.StreamCh)
+	assert.NotNil(t, job.AudioCh, "AudioCh should be created for streaming job")
+	assert.NotNil(t, job.Cancel)
+	assert.NotNil(t, job.Done)
+
+	// AudioCh should be buffered
+	assert.Equal(t, audioChunkBufSize, cap(job.AudioCh), "AudioCh should have audioChunkBufSize capacity")
+
+	// Should be retrievable
+	got, ok := GetTTSJob("tts-stream-1")
+	assert.True(t, ok)
+	assert.Equal(t, job, got)
+}
+
 func TestGetTTSJob_NotFound(t *testing.T) {
 	cleanupTTSJobs()
 

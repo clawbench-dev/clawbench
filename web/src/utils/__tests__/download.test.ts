@@ -1,5 +1,21 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, afterEach } from 'vitest'
 import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
+
+// Track setTimeout IDs to clean up after each test
+const pendingTimers: ReturnType<typeof setTimeout>[] = []
+const _origSetTimeout = setTimeout
+globalThis.setTimeout = ((fn: TimerHandler, ms?: number, ...args: any[]) => {
+  const id = _origSetTimeout(fn, ms, ...args)
+  pendingTimers.push(id)
+  return id
+}) as typeof setTimeout
+
+afterEach(() => {
+  for (const id of pendingTimers) {
+    clearTimeout(id)
+  }
+  pendingTimers.length = 0
+})
 
 describe('buildLocalFileUrl', () => {
   it('encodes path segments individually', () => {

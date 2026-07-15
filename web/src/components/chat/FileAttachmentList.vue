@@ -10,7 +10,7 @@
         :src="thumbUrl(normalizeFileEntry(f).path)" loading="lazy"
         @error="onThumbError(normalizeFileEntry(f).path)" />
       <!-- Non-image: icon + filename -->
-      <component v-if="!isImageFile(normalizeFileEntry(f).path)" :is="getFileIcon(normalizeFileEntry(f).path)" :size="14" :stroke-width="1.5" :color="getFileIconColor(normalizeFileEntry(f).path)" class="attachment-file-icon" />
+      <FileIcon v-if="!isImageFile(normalizeFileEntry(f).path)" :path="normalizeFileEntry(f).path" :is-dir="normalizeFileEntry(f).isDir" :size="22" class="attachment-file-icon" />
       <span v-if="!isImageFile(normalizeFileEntry(f).path)" class="attachment-filename">{{ getFileName(normalizeFileEntry(f).path) }}</span>
     </span>
   </div>
@@ -22,7 +22,8 @@ import { useI18n } from 'vue-i18n'
 import { baseName } from '@/utils/path.ts'
 import { normalizeFileEntry, isUploadPath, isImageFile } from '@/utils/fileAttachmentUtils.ts'
 import { isThumbableExt } from '@/utils/fileManager.ts'
-import { getFileIcon, getFileIconColor, buildPathThumbUrl } from '@/utils/fileIcon.ts'
+import { buildPathThumbUrl } from '@/utils/fileIcon.ts'
+import FileIcon from '@/components/common/FileIcon.vue'
 
 const { t } = useI18n()
 
@@ -72,7 +73,7 @@ watch(() => props.files.length, (len) => {
 .chat-file-attachment {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   border-radius: 12px;
   height: 40px;
   padding: 0 10px;

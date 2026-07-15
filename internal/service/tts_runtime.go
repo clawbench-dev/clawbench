@@ -17,15 +17,21 @@ type TTSEvent struct {
 	Summary          string `json:"summary,omitempty"`          // (for type="result")
 	SynthesizeFailed bool   `json:"synthesizeFailed,omitempty"` // (for type="result")
 	SynthesizeError  string `json:"synthesizeError,omitempty"`  // (for type="result")
+	Streaming        bool   `json:"streaming,omitempty"`        // true for streaming jobs (Edge TTS)
 }
 
 // TTSJob represents an in-flight TTS generation job.
 type TTSJob struct {
 	ID       string
 	StreamCh chan TTSEvent
+	AudioCh  chan []byte // nil for non-streaming jobs; buffered for streaming (Edge TTS)
 	Cancel   context.CancelFunc
 	Done     chan struct{} // closed when job goroutine finishes
 }
+
+// audioChunkBufSize: 64 chunks × ~4KB ≈ 256KB ≈ 4.3s of 48kbps MP3.
+// Covers typical network jitter without excessive memory usage.
+const audioChunkBufSize = 64
 
 // ttsJobs stores active TTS jobs keyed by job ID (cache key).
 var ttsJobs sync.Map // map[string]*TTSJob
@@ -35,6 +41,19 @@ func RegisterTTSJob(id string, cancel context.CancelFunc) *TTSJob {
 	job := &TTSJob{
 		ID:       id,
 		StreamCh: make(chan TTSEvent, 16),
+		Cancel:   cancel,
+		Done:     make(chan struct{}),
+	}
+	ttsJobs.Store(id, job)
+	return job
+}
+
+// RegisterStreamingTTSJob creates and registers a new streaming TTS job with an audio chunk channel.
+func RegisterStreamingTTSJob(id string, cancel context.CancelFunc) *TTSJob {
+	job := &TTSJob{
+		ID:       id,
+		StreamCh: make(chan TTSEvent, 16),
+		AudioCh:  make(chan []byte, audioChunkBufSize),
 		Cancel:   cancel,
 		Done:     make(chan struct{}),
 	}
@@ -53,6 +72,9 @@ func GetTTSJob(id string) (*TTSJob, bool) {
 }
 
 // UnregisterTTSJob removes the TTS job and closes its stream channel.
+// AudioCh is NOT closed here — it is closed by the background goroutine
+// after SynthesizeStream returns, BEFORE sending the result event.
+// This ordering ensures the WS handler drains AudioCh before receiving result.
 func UnregisterTTSJob(id string) {
 	if val, ok := ttsJobs.LoadAndDelete(id); ok {
 		if job, ok := val.(*TTSJob); ok {

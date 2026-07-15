@@ -74,6 +74,7 @@ describe('useLocalhostAnnotation', () => {
         port: 3000,
         protocol: 'http',
         fullUrl: 'http://localhost:3000',
+        path: '',
       })
     })
 
@@ -82,8 +83,31 @@ describe('useLocalhostAnnotation', () => {
       expect(result).toEqual({
         port: 5173,
         protocol: 'https',
-        fullUrl: 'https://127.0.0.1:5173',
+        fullUrl: 'https://127.0.0.1:5173/path',
+        path: '/path',
       })
+    })
+
+    it('parses URL with deep path', () => {
+      const result = parseLocalhostUrl('http://localhost:8080/api/v1/status')
+      expect(result).toEqual({
+        port: 8080,
+        protocol: 'http',
+        fullUrl: 'http://localhost:8080/api/v1/status',
+        path: '/api/v1/status',
+      })
+    })
+
+    it('parses URL without path', () => {
+      const result = parseLocalhostUrl('http://localhost:3000')
+      expect(result?.path).toBe('')
+      expect(result?.fullUrl).toBe('http://localhost:3000')
+    })
+
+    it('stops path at query string', () => {
+      const result = parseLocalhostUrl('http://localhost:3000/api?key=val')
+      expect(result?.path).toBe('/api')
+      expect(result?.fullUrl).toBe('http://localhost:3000/api')
     })
 
     it('returns null for non-localhost URL', () => {
@@ -105,6 +129,17 @@ describe('useLocalhostAnnotation', () => {
       expect(html).toContain('data-protocol="http"')
       expect(html).toContain('data-url="http://localhost:3000"')
       expect(html).toContain('title="Open in WebView"')
+      expect(html).not.toContain('data-path')
+    })
+
+    it('includes data-path attribute when path is provided', () => {
+      const html = localhostOpenButtonHtml(3000, 'http', 'http://localhost:3000/api/status', '/api/status')
+      expect(html).toContain('data-path="/api/status"')
+    })
+
+    it('omits data-path when path is empty string', () => {
+      const html = localhostOpenButtonHtml(3000, 'http', 'http://localhost:3000', '')
+      expect(html).not.toContain('data-path')
     })
 
     it('escapes special characters in URL', () => {
@@ -145,6 +180,25 @@ describe('useLocalhostAnnotation', () => {
       const result = annotateLocalhostUrls(html)
       expect(result).toContain('chat-url-open-btn')
       expect(result).toContain('data-port="3000"')
+    })
+
+    it('preserves path in annotated localhost URL', () => {
+      mockIsAppMode.value = true
+      mockSshInfo.value = { enabled: true }
+      const html = '<p>Visit http://localhost:3000/api/status</p>'
+      const result = annotateLocalhostUrls(html)
+      expect(result).toContain('chat-url-open-btn')
+      expect(result).toContain('data-path="/api/status"')
+      expect(result).toContain('href="http://localhost:3000/api/status"')
+    })
+
+    it('preserves path in <a> tag annotation', () => {
+      mockIsAppMode.value = true
+      mockSshInfo.value = { enabled: true }
+      const html = '<a href="http://localhost:5173/dashboard">link</a>'
+      const result = annotateLocalhostUrls(html)
+      expect(result).toContain('chat-url-open-btn')
+      expect(result).toContain('data-path="/dashboard"')
     })
 
     it('annotates localhost URLs inside <a> tags', () => {
@@ -196,7 +250,7 @@ describe('useLocalhostAnnotation', () => {
 
   describe('useLocalhostUrlClickHandler', () => {
     let handleLocalhostUrlClick: (event: MouseEvent) => boolean
-    let openLocalhostUrl: (element: Element, port: number, protocol: string) => Promise<boolean>
+    let openLocalhostUrl: (element: Element, port: number, protocol: string, path?: string) => Promise<boolean>
 
     beforeEach(() => {
       mockIsAppMode.value = true
@@ -240,7 +294,21 @@ describe('useLocalhostAnnotation', () => {
       await vi.waitFor(() => {
         expect(mockEnsurePortRegistered).toHaveBeenCalledWith(3000, 'http')
       })
-      expect(mockOpenPort).toHaveBeenCalledWith(3000, 'http')
+      expect(mockOpenPort).toHaveBeenCalledWith(3000, 'http', undefined, undefined)
+    })
+
+    it('handles click on .chat-url-open-btn with path', async () => {
+      const btn = document.createElement('button')
+      btn.className = 'chat-url-open-btn'
+      btn.setAttribute('data-port', '3000')
+      btn.setAttribute('data-protocol', 'http')
+      btn.setAttribute('data-path', '/api/status')
+      const event = createClickEvent(btn)
+      handleLocalhostUrlClick(event)
+      await vi.waitFor(() => {
+        expect(mockEnsurePortRegistered).toHaveBeenCalledWith(3000, 'http')
+      })
+      expect(mockOpenPort).toHaveBeenCalledWith(3000, 'http', undefined, '/api/status')
     })
 
     it('ignores icon button with invalid port', () => {
@@ -267,6 +335,18 @@ describe('useLocalhostAnnotation', () => {
       await vi.waitFor(() => {
         expect(mockEnsurePortRegistered).toHaveBeenCalledWith(5173, 'http')
       })
+    })
+
+    it('handles click on <a> tag with localhost href and path', async () => {
+      const anchor = document.createElement('a')
+      anchor.setAttribute('href', 'http://localhost:5173/dashboard')
+      anchor.textContent = 'link'
+      const event = createClickEvent(anchor)
+      handleLocalhostUrlClick(event)
+      await vi.waitFor(() => {
+        expect(mockEnsurePortRegistered).toHaveBeenCalledWith(5173, 'http')
+      })
+      expect(mockOpenPort).toHaveBeenCalledWith(3000, 'http', undefined, '/dashboard')
     })
 
     it('falls back to window.open when SSH disabled (anchor click)', async () => {
@@ -316,8 +396,15 @@ describe('useLocalhostAnnotation', () => {
       const result = await openLocalhostUrl(btn, 3000, 'http')
       expect(result).toBe(true)
       expect(mockEnsurePortRegistered).toHaveBeenCalledWith(3000, 'http')
-      expect(mockOpenPort).toHaveBeenCalledWith(3000, 'http')
+      expect(mockOpenPort).toHaveBeenCalledWith(3000, 'http', undefined, undefined)
       expect(btn.classList.contains('loading')).toBe(false)
+    })
+
+    it('openLocalhostUrl passes path to openPort', async () => {
+      const btn = document.createElement('button')
+      const result = await openLocalhostUrl(btn, 3000, 'http', '/api/status')
+      expect(result).toBe(true)
+      expect(mockOpenPort).toHaveBeenCalledWith(3000, 'http', undefined, '/api/status')
     })
 
     it('openLocalhostUrl returns false when SSH disabled', async () => {

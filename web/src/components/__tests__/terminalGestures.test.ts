@@ -30,10 +30,17 @@ function dispatchTouch(
 }
 
 afterEach(() => {
+  // Detach gestures to clear any pending timers (startRepeat setTimeout/setInterval)
+  if (activeGestures) {
+    activeGestures.detach()
+    activeGestures = null
+  }
   vi.clearAllTimers()
   vi.useRealTimers()
   document.body.innerHTML = ''
 })
+
+let activeGestures: ReturnType<typeof useTerminalGestures> | null = null
 
 function setupGestures() {
   const el = document.createElement('div')
@@ -56,6 +63,7 @@ function setupGestures() {
     onTouchScroll: (deltaY: number) => scrollDeltas.push(deltaY),
   })
   gestures.attach()
+  activeGestures = gestures
 
   return { el, sent, hints, zoomDeltas, scrollDeltas, gestures }
 }

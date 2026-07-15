@@ -209,3 +209,74 @@ func TestContentBlockRegularToolStillSlim(t *testing.T) {
 		t.Error("Read tool should not include output in slim serialization")
 	}
 }
+
+func TestChatMessageUnmarshalOldFilesFormat(t *testing.T) {
+	raw := `{"role":"user","content":"hello","files":["/a.go","/b.ts"]}`
+	var msg ChatMessage
+	if err := json.Unmarshal([]byte(raw), &msg); err != nil {
+		t.Fatalf("unmarshal old format: %v", err)
+	}
+	if len(msg.Files) != 2 {
+		t.Fatalf("expected 2 files, got %d", len(msg.Files))
+	}
+	if msg.Files[0].Path != "/a.go" || msg.Files[0].IsDir != false {
+		t.Errorf("file[0] = %+v, want {Path:/a.go, IsDir:false}", msg.Files[0])
+	}
+	if msg.Files[1].Path != "/b.ts" || msg.Files[1].IsDir != false {
+		t.Errorf("file[1] = %+v, want {Path:/b.ts, IsDir:false}", msg.Files[1])
+	}
+}
+
+func TestChatMessageUnmarshalNewFilesFormat(t *testing.T) {
+	raw := `{"role":"user","content":"hello","files":[{"path":"/src","isDir":true},{"path":"/main.go","isDir":false}]}`
+	var msg ChatMessage
+	if err := json.Unmarshal([]byte(raw), &msg); err != nil {
+		t.Fatalf("unmarshal new format: %v", err)
+	}
+	if len(msg.Files) != 2 {
+		t.Fatalf("expected 2 files, got %d", len(msg.Files))
+	}
+	if msg.Files[0].Path != "/src" || !msg.Files[0].IsDir {
+		t.Errorf("file[0] = %+v, want {Path:/src, IsDir:true}", msg.Files[0])
+	}
+	if msg.Files[1].Path != "/main.go" || msg.Files[1].IsDir {
+		t.Errorf("file[1] = %+v, want {Path:/main.go, IsDir:false}", msg.Files[1])
+	}
+}
+
+func TestChatMessageUnmarshalNoFiles(t *testing.T) {
+	raw := `{"role":"user","content":"hello"}`
+	var msg ChatMessage
+	if err := json.Unmarshal([]byte(raw), &msg); err != nil {
+		t.Fatalf("unmarshal no files: %v", err)
+	}
+	if msg.Files != nil {
+		t.Errorf("expected nil files, got %v", msg.Files)
+	}
+}
+
+func TestFileEntriesFromPaths(t *testing.T) {
+	entries := FileEntriesFromPaths([]string{"/a.go", "/b.ts"})
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+	if entries[0].Path != "/a.go" || entries[0].IsDir != false {
+		t.Errorf("entry[0] = %+v, want {Path:/a.go, IsDir:false}", entries[0])
+	}
+	if FileEntriesFromPaths(nil) != nil {
+		t.Error("expected nil for nil input")
+	}
+	if FileEntriesFromPaths([]string{}) != nil {
+		t.Error("expected nil for empty input")
+	}
+}
+
+func TestPathsFromFileEntries(t *testing.T) {
+	paths := PathsFromFileEntries([]FileEntry{{Path: "/a.go"}, {Path: "/src", IsDir: true}})
+	if len(paths) != 2 || paths[0] != "/a.go" || paths[1] != "/src" {
+		t.Errorf("expected [/a.go /src], got %v", paths)
+	}
+	if PathsFromFileEntries(nil) != nil {
+		t.Error("expected nil for nil input")
+	}
+}

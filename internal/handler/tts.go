@@ -86,10 +86,84 @@ type ttsGenerateRequest struct {
 	MessageID int64  `json:"messageId"` // chat_history.id for TTS summary caching
 }
 
+// ttsSynthesizeFunc is the signature for TTS synthesis operations (streaming or non-streaming).
+type ttsSynthesizeFunc func(ctx context.Context, summary, absAudioPath, language string) error
+
+// ttsRunJob runs the summarize + synthesize pipeline in a background goroutine.
+// It unifies the streaming and non-streaming code paths.
+func ttsRunJob(
+	ctx context.Context,
+	job *service.TTSJob,
+	cacheKey string,
+	projectPath, relAudioPath, absAudioPath string,
+	req ttsGenerateRequest,
+	curSummarizer summarize.Summarizer,
+	errSummarizeFailed, errSynthesizeFailed string,
+	isStreaming bool,
+	synthesizeFunc ttsSynthesizeFunc,
+) {
+	go func() {
+		defer service.UnregisterTTSJob(cacheKey)
+		defer service.CloseTTSJobDone(cacheKey)
+		defer job.Cancel()
+
+		// Phase 1: Summarize
+		summary, ok := ttsSummarize(ctx, curSummarizer, cacheKey, req.Text, req.Language, req.MessageID, errSummarizeFailed, isStreaming)
+		if !ok {
+			return
+		}
+
+		// Phase 2: Synthesize
+		service.SendTTSEvent(cacheKey, service.TTSEvent{Type: "phase", Phase: "synthesizing", Streaming: isStreaming})
+
+		synthesizeCtx, synthesizeCancel := context.WithTimeout(ctx, ttsSynthesizeTimeout)
+		err := synthesizeFunc(synthesizeCtx, summary, absAudioPath, req.Language)
+		synthesizeCancel()
+
+		// Close AudioCh BEFORE sending result event (streaming only).
+		if job.AudioCh != nil {
+			close(job.AudioCh)
+		}
+
+		if err != nil {
+			logMsg := "tts synthesize failed"
+			if isStreaming {
+				logMsg = "tts stream synthesize failed"
+			}
+			slog.Error(logMsg, slog.String("error", err.Error()), slog.String("cache_key", cacheKey))
+			service.SendTTSEvent(cacheKey, service.TTSEvent{
+				Type: "result", SynthesizeFailed: true, SynthesizeError: errSynthesizeFailed, Summary: summary, Streaming: isStreaming,
+			})
+			return
+		}
+
+		logMsg := "tts generate completed"
+		if isStreaming {
+			logMsg = "tts stream generate completed"
+		}
+		slog.Info(logMsg, slog.String("cache_key", cacheKey), slog.String("path", relAudioPath))
+		service.EvictTTSCache(projectPath, model.TTSMaxCacheFiles)
+		service.SendTTSEvent(cacheKey, service.TTSEvent{
+			Type: "result", AudioPath: relAudioPath, Summary: summary, Streaming: isStreaming,
+		})
+	}()
+}
+
+// audioExtForProvider returns the audio file extension for the given provider.
+// Piper, Kokoro, and MOSS-Nano produce WAV; all others produce MP3.
+func audioExtForProvider(p speech.SpeechProvider) string {
+	switch p.(type) {
+	case *speech.PiperProvider, *speech.KokoroProvider, *speech.MossNanoProvider:
+		return ".wav"
+	default:
+		return ".mp3"
+	}
+}
+
 // TTSGenerate handles POST /api/tts/generate.
 // It validates input, checks cache, and either returns cached audio immediately
 // or starts an async TTS job and returns a jobId for SSE streaming.
-func TTSGenerate(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,gocognit // multi-mode TTS generation
+func TTSGenerate(w http.ResponseWriter, r *http.Request) {
 	projectPath, ok := requireProject(w, r)
 	if !ok {
 		return
@@ -147,16 +221,7 @@ func TTSGenerate(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,goco
 	curSummarizer := GetSummarizer()
 
 	// Determine audio file extension based on TTS engine
-	audioExt := ".mp3"
-	if _, ok := curProvider.(*speech.PiperProvider); ok { //nolint:govet // shadowed ok is standard type-assertion idiom
-		audioExt = ".wav"
-	}
-	if _, ok := curProvider.(*speech.KokoroProvider); ok { //nolint:govet // shadowed ok is standard type-assertion idiom
-		audioExt = ".wav"
-	}
-	if _, ok := curProvider.(*speech.MossNanoProvider); ok { //nolint:govet // shadowed ok is standard type-assertion idiom
-		audioExt = ".wav"
-	}
+	audioExt := audioExtForProvider(curProvider)
 	// Project-relative path (not server DataDir)
 	relAudioPath := filepath.Join(".clawbench", "generated", "tts", cacheKey+audioExt)
 
@@ -187,103 +252,92 @@ func TTSGenerate(w http.ResponseWriter, r *http.Request) { //nolint:gocyclo,goco
 	}
 
 	// Cache miss — start async TTS job
-	ctx, cancel := context.WithCancel(context.Background())
-	service.RegisterTTSJob(cacheKey, cancel)
+	// Detect streaming provider for Edge TTS
+	streamingProvider, isStreaming := curProvider.(speech.StreamingSpeechProvider)
 
-	// Start background goroutine to perform summarize + synthesize
-	go func() {
-		defer service.UnregisterTTSJob(cacheKey)
-		defer service.CloseTTSJobDone(cacheKey)
-		defer cancel()
+	// Pre-compute translations before starting goroutines — T(r, ...) reads from
+	// r.Context() which may be canceled after the handler returns.
+	errSummarizeFailed := T(r, "SummarizeFailed")
+	errSynthesizeFailed := T(r, "SynthesizeFailed")
 
-		// Phase 1: Summarize
-		var summary string
-		cachedSummary, found := service.GetTTSSummaryByMessageID(req.MessageID)
-		if found && cachedSummary != "" && req.MessageID > 0 {
-			slog.Info(
-				"tts summary cache hit, skipping summarization",
-				slog.String("cache_key", cacheKey),
-			)
-			summary = cachedSummary
-		} else {
-			service.SendTTSEvent(cacheKey, service.TTSEvent{Type: "phase", Phase: "summarizing"})
+	if isStreaming {
+		ctx, cancel := context.WithCancel(context.Background())
+		job := service.RegisterStreamingTTSJob(cacheKey, cancel)
+		ttsRunJob(ctx, job, cacheKey, projectPath, relAudioPath, absAudioPath,
+			req, curSummarizer, errSummarizeFailed, errSynthesizeFailed, true,
+			func(sCtx context.Context, summary, outPath, lang string) error {
+				return streamingProvider.SynthesizeStream(sCtx, summary, outPath, lang, job.AudioCh)
+			},
+		)
+		writeJSON(w, http.StatusOK, map[string]any{"jobId": cacheKey, "streaming": true})
+	} else {
+		ctx, cancel := context.WithCancel(context.Background())
+		job := service.RegisterTTSJob(cacheKey, cancel)
+		ttsRunJob(ctx, job, cacheKey, projectPath, relAudioPath, absAudioPath,
+			req, curSummarizer, errSummarizeFailed, errSynthesizeFailed, false,
+			func(sCtx context.Context, summary, outPath, lang string) error {
+				return curProvider.Synthesize(sCtx, summary, outPath, lang)
+			},
+		)
+		writeJSON(w, http.StatusOK, map[string]any{"jobId": cacheKey, "streaming": false})
+	}
+}
 
-			summarizeCtx, summarizeCancel := context.WithTimeout(ctx, ttsSummarizeTimeout)
-			var err error
-			summary, err = curSummarizer.Summarize(summarizeCtx, req.Text, req.Language)
-			summarizeCancel()
-			if err != nil {
-				slog.Warn(
-					"tts summarize failed",
-					slog.String("error", err.Error()),
-				)
-				service.SendTTSEvent(cacheKey, service.TTSEvent{
-					Type:             "result",
-					SynthesizeFailed: true,
-					SynthesizeError:  T(r, "SummarizeFailed"),
-				})
-				return
-			}
+// ttsSummarize performs the summarize phase for TTS generation.
+// Returns (summary, true) on success, or ("", false) if summarization failed
+// and a result event has already been sent.
+func ttsSummarize(ctx context.Context, curSummarizer summarize.Summarizer, cacheKey, text, language string, messageID int64, errSummarizeFailed string, streaming bool) (string, bool) {
+	var summary string
+	cachedSummary, found := service.GetTTSSummaryByMessageID(messageID)
+	if found && cachedSummary != "" && messageID > 0 {
+		slog.Info(
+			"tts summary cache hit, skipping summarization",
+			slog.String("cache_key", cacheKey),
+		)
+		return cachedSummary, true
+	}
 
-			slog.Info(
-				"tts summarize completed",
-				slog.String("cache_key", cacheKey),
-				slog.Int("original_len", len([]rune(req.Text))),
-				slog.Int("summary_len", len([]rune(summary))),
-			)
+	service.SendTTSEvent(cacheKey, service.TTSEvent{Type: "phase", Phase: "summarizing", Streaming: streaming})
 
-			// Save summary to database
-			if req.MessageID > 0 {
-				if err := service.SaveTTSSummaryByMessageID(req.MessageID, summary); err != nil {
-					slog.Warn(
-						"tts failed to cache summary to DB",
-						slog.String("error", err.Error()),
-					)
-				}
-			}
-		}
-
-		// Phase 2: Synthesize
-		service.SendTTSEvent(cacheKey, service.TTSEvent{Type: "phase", Phase: "synthesizing"})
-
-		synthesizeCtx, synthesizeCancel := context.WithTimeout(ctx, ttsSynthesizeTimeout)
-		err := curProvider.Synthesize(synthesizeCtx, summary, absAudioPath, req.Language)
-		synthesizeCancel()
-		if err != nil {
-			slog.Error(
-				"tts synthesize failed",
-				slog.String("error", err.Error()),
-				slog.String("cache_key", cacheKey),
-			)
+	summarizeCtx, summarizeCancel := context.WithTimeout(ctx, ttsSummarizeTimeout)
+	var err error
+	summary, err = curSummarizer.Summarize(summarizeCtx, text, language)
+	summarizeCancel()
+	if err != nil {
+		slog.Warn(
+			"tts summarize failed, falling back to simple summarizer",
+			slog.String("error", err.Error()),
+		)
+		fallbackSummary, fallbackErr := summarize.NewSimple().Summarize(context.Background(), text, language)
+		if fallbackErr != nil || fallbackSummary == "" {
 			service.SendTTSEvent(cacheKey, service.TTSEvent{
 				Type:             "result",
 				SynthesizeFailed: true,
-				SynthesizeError:  T(r, "SynthesizeFailed"),
-				Summary:          summary,
+				SynthesizeError:  errSummarizeFailed,
+				Streaming:        streaming,
 			})
-			return
+			return "", false
 		}
+		summary = fallbackSummary
+	}
 
-		slog.Info(
-			"tts generate completed",
-			slog.String("cache_key", cacheKey),
-			slog.String("path", relAudioPath),
-		)
+	slog.Info(
+		"tts summarize completed",
+		slog.String("cache_key", cacheKey),
+		slog.Int("original_len", len([]rune(text))),
+		slog.Int("summary_len", len([]rune(summary))),
+	)
 
-		// Evict oldest cached files if over the limit
-		service.EvictTTSCache(projectPath, model.TTSMaxCacheFiles)
+	if messageID > 0 {
+		if err := service.SaveTTSSummaryByMessageID(messageID, summary); err != nil {
+			slog.Warn(
+				"tts failed to cache summary to DB",
+				slog.String("error", err.Error()),
+			)
+		}
+	}
 
-		service.SendTTSEvent(cacheKey, service.TTSEvent{
-			Type:      "result",
-			AudioPath: relAudioPath,
-			Summary:   summary,
-		})
-	}()
-
-	// Return jobId so the frontend can connect via EventSource
-	writeJSON(w, http.StatusOK, map[string]any{
-		"jobId": cacheKey,
-	})
+	return summary, true
 }
 
 // ttsExtractConclusion loads a message by ID, parses its content blocks,

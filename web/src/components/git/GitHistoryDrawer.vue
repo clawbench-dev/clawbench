@@ -69,7 +69,7 @@
               <span class="git-file-icon">
                 <Plus v-if="f.type === 'A'" :size="14" :stroke-width="2.5" />
                 <Minus v-else-if="f.type === 'D'" :size="14" :stroke-width="2.5" />
-                <FileText v-else :size="14" />
+                <FileIcon v-else :path="f.path" :size="14" />
               </span>
               <span class="git-file-type-badge" :class="badgeClass(f)">{{ fileTypeLabel(f.type, false) }}</span>
               <span class="git-file-path" :title="f.path">{{ f.path }}</span>
@@ -89,7 +89,7 @@
               <span class="git-file-icon">
                 <Plus v-if="f.type === 'A'" :size="14" :stroke-width="2.5" />
                 <Minus v-else-if="f.type === 'D'" :size="14" :stroke-width="2.5" />
-                <FileText v-else :size="14" />
+                <FileIcon v-else :path="f.path" :size="14" />
               </span>
               <span class="git-file-type-badge" :class="badgeClass(f)">{{ fileTypeLabel(f.type, f.staged) }}</span>
               <span class="git-file-path" :title="f.path">{{ f.path }}</span>
@@ -106,7 +106,7 @@
               <span class="git-file-icon">
                 <Plus v-if="f.type === 'A'" :size="14" :stroke-width="2.5" />
                 <Minus v-else-if="f.type === 'D'" :size="14" :stroke-width="2.5" />
-                <FileText v-else :size="14" />
+                <FileIcon v-else :path="f.path" :size="14" />
               </span>
               <span class="git-file-type-badge" :class="badgeClass(f)">{{ fileTypeLabel(f.type, f.staged) }}</span>
               <span class="git-file-path" :title="f.path">{{ f.path }}</span>
@@ -143,7 +143,8 @@
 </template>
 
 <script setup>
-import { GitBranch, Plus, Minus, FileText } from 'lucide-vue-next'
+import { GitBranch, Plus, Minus } from 'lucide-vue-next'
+import FileIcon from '@/components/common/FileIcon.vue'
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'

@@ -91,7 +91,7 @@ func scanMessages(rows *sql.Rows, sessionID string) ([]model.ChatMessage, error)
 		msg.Streaming = streaming != 0
 		msg.Indexed = indexed != 0
 		if filesJSON.Valid && filesJSON.String != "" {
-			json.Unmarshal([]byte(filesJSON.String), &msg.Files)
+			msg.Files = unmarshalFilesJSON(filesJSON.String)
 		}
 		msg.SessionID = sessionID
 		messages = append(messages, msg)
@@ -131,7 +131,7 @@ func GetUserMessageIndex(sessionID string) ([]model.ChatMessage, error) {
 		}
 		msg.Role = "user"
 		if filesJSON.Valid && filesJSON.String != "" {
-			json.Unmarshal([]byte(filesJSON.String), &msg.Files)
+			msg.Files = unmarshalFilesJSON(filesJSON.String)
 		}
 		messages = append(messages, msg)
 	}
@@ -173,7 +173,7 @@ func GetMessageByID(id int64) (*model.ChatMessage, error) {
 	msg.Streaming = streaming != 0
 	msg.Indexed = indexed != 0
 	if filesJSON.Valid && filesJSON.String != "" {
-		json.Unmarshal([]byte(filesJSON.String), &msg.Files)
+		msg.Files = unmarshalFilesJSON(filesJSON.String)
 	}
 	return &msg, nil
 }
@@ -191,6 +191,21 @@ func GetMessagesBySessionID(sessionID string) ([]model.ChatMessage, error) {
 	}
 	defer rows.Close()
 	return scanMessages(rows, sessionID)
+}
+
+// unmarshalFilesJSON deserializes a files JSON column value, supporting both
+// old format ["path1","path2"] and new format [{"path":"...","isDir":true/false}].
+func unmarshalFilesJSON(raw string) []model.FileEntry {
+	var entries []model.FileEntry
+	if err := json.Unmarshal([]byte(raw), &entries); err == nil {
+		return entries
+	}
+	// Fallback: old []string format
+	var paths []string
+	if err := json.Unmarshal([]byte(raw), &paths); err == nil {
+		return model.FileEntriesFromPaths(paths)
+	}
+	return nil
 }
 
 // ExtractPlainText extracts plain text from content that may be block-format JSON
@@ -214,7 +229,7 @@ func ExtractPlainText(content string) string {
 }
 
 // AddChatMessage adds a message to the chat history for a given project path, backend, and session.
-func AddChatMessage(projectPath, backend, sessionID, role, content string, files []string, streaming bool, fallbackTitle string) (int64, error) {
+func AddChatMessage(projectPath, backend, sessionID, role, content string, files []model.FileEntry, streaming bool, fallbackTitle string) (int64, error) {
 	// Guard: reject messages to soft-deleted sessions
 	var isDeleted int
 	if err := dbRead.QueryRow("SELECT deleted FROM chat_sessions WHERE id = ?", sessionID).Scan(&isDeleted); err == nil && isDeleted == 1 {
@@ -260,7 +275,7 @@ func AddChatMessage(projectPath, backend, sessionID, role, content string, files
 		if txErr = tx.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sessionID).Scan(&count); txErr == nil && count == 1 {
 			title := ExtractPlainText(content)
 			if title == "" && len(files) > 0 {
-				title = titleFromFiles(files)
+				title = titleFromFileEntries(files)
 			}
 			if title == "" {
 				title = fallbackTitle
@@ -283,15 +298,15 @@ func AddChatMessage(projectPath, backend, sessionID, role, content string, files
 	return msgID, nil
 }
 
-// titleFromFiles builds a session title from file paths by extracting basenames
-// and joining them with commas. Returns empty string if no files.
-func titleFromFiles(files []string) string {
+// titleFromFileEntries builds a session title from file entries by extracting
+// basenames and joining them with commas. Returns empty string if no files.
+func titleFromFileEntries(files []model.FileEntry) string {
 	if len(files) == 0 {
 		return ""
 	}
 	names := make([]string, 0, len(files))
 	for _, f := range files {
-		name := filepath.Base(f)
+		name := filepath.Base(f.Path)
 		if name != "" && name != "." {
 			names = append(names, name)
 		}

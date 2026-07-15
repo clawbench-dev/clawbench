@@ -7,7 +7,10 @@
 import { FileText, FileImage, FileVideo, FileMusic, Folder } from 'lucide-vue-next'
 import { getFileType } from './fileType'
 
-/** Lucide component to use for a given file path. */
+/**
+ * Lucide component to use for a given file path.
+ * @deprecated Use FileIcon component from @/components/common/FileIcon.vue instead.
+ */
 export function getFileIcon(path: string) {
   const ft = getFileType(path)
   if (ft.isImage) return FileImage
@@ -16,7 +19,11 @@ export function getFileIcon(path: string) {
   return FileText
 }
 
-/** Per-file-type accent colour for the icon. */
+/**
+ * Per-file-type accent colour for the icon.
+ * @deprecated Use FileIcon component from @/components/common/FileIcon.vue instead.
+ * Material icons have built-in colors.
+ */
 export function getFileIconColor(path: string): string | undefined {
   const ft = getFileType(path)
   if (ft.isImage) return '#a855f7'
@@ -30,5 +37,8 @@ export function buildPathThumbUrl(path: string, width = 80): string {
   return `/api/file/thumb?path=${encodeURIComponent(path)}&w=${width}`
 }
 
-/** Re-export Lucide icon components for convenience. */
+/**
+ * Re-export Lucide icon components for convenience.
+ * @deprecated Use FileIcon component from @/components/common/FileIcon.vue instead.
+ */
 export { FileText, FileImage, FileVideo, FileMusic, Folder }

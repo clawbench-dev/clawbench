@@ -2,17 +2,23 @@ import { describe, expect, it } from 'vitest'
 import { normalizeFileEntry, isUploadPath, isImageFile } from '@/utils/fileAttachmentUtils.ts'
 
 describe('normalizeFileEntry', () => {
-  it('normalizes string to { path } object', () => {
-    expect(normalizeFileEntry('/foo/bar.txt')).toEqual({ path: '/foo/bar.txt' })
+  it('normalizes string to { path, isDir: false } object', () => {
+    expect(normalizeFileEntry('/foo/bar.txt')).toEqual({ path: '/foo/bar.txt', isDir: false })
   })
-  it('normalizes object with path', () => {
-    expect(normalizeFileEntry({ path: '/baz/qux.go' })).toEqual({ path: '/baz/qux.go' })
+  it('normalizes object with path only', () => {
+    expect(normalizeFileEntry({ path: '/baz/qux.go' })).toEqual({ path: '/baz/qux.go', isDir: false })
+  })
+  it('normalizes object with path and isDir true', () => {
+    expect(normalizeFileEntry({ path: '/src', isDir: true })).toEqual({ path: '/src', isDir: true })
+  })
+  it('normalizes object with path and isDir false', () => {
+    expect(normalizeFileEntry({ path: '/main.go', isDir: false })).toEqual({ path: '/main.go', isDir: false })
   })
   it('handles object with empty path', () => {
-    expect(normalizeFileEntry({ path: '' })).toEqual({ path: '' })
+    expect(normalizeFileEntry({ path: '' })).toEqual({ path: '', isDir: false })
   })
   it('handles object with undefined path', () => {
-    expect(normalizeFileEntry({ path: undefined as any })).toEqual({ path: '' })
+    expect(normalizeFileEntry({ path: undefined as any })).toEqual({ path: '', isDir: false })
   })
 })
 

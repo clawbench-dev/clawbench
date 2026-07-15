@@ -134,10 +134,10 @@ describe('useFileUpload', () => {
   })
 
   describe('attachedFiles', () => {
-    it('addAttachedFile adds a file path', () => {
+    it('addAttachedFile adds a file entry', () => {
       const upload = useFileUpload()
       upload.addAttachedFile('/some/path.txt')
-      expect(upload.attachedFiles.value).toContain('/some/path.txt')
+      expect(upload.attachedFiles.value.some(f => f.path === '/some/path.txt')).toBe(true)
     })
 
     it('addAttachedFile does not add duplicates', () => {
@@ -159,7 +159,7 @@ describe('useFileUpload', () => {
       upload.addAttachedFile('/b.txt')
       upload.removeAttachedFile(0)
       expect(upload.attachedFiles.value).toHaveLength(1)
-      expect(upload.attachedFiles.value[0]).toBe('/b.txt')
+      expect(upload.attachedFiles.value[0].path).toBe('/b.txt')
     })
   })
 

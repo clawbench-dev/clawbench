@@ -48,9 +48,9 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Message   string   `json:"message"`
-		FilePaths []string `json:"filePaths"`
-		Files     []string `json:"files"`
+		Message   string            `json:"message"`
+		FilePaths []string          `json:"filePaths"`
+		Files     []model.FileEntry `json:"files"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")

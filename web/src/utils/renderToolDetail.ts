@@ -6,7 +6,7 @@ import { hljs } from './globals.ts'
 import { escapeHtml } from './html.ts'
 import { detectLang, highlightLine } from './diff.ts'
 import { resolveFilePath, fileOpenButtonHtml } from '@/composables/useFilePathAnnotation.ts'
-import { localhostOpenButtonHtml } from '@/composables/useLocalhostAnnotation.ts'
+import { localhostOpenButtonHtml, parseLocalhostUrl } from '@/composables/useLocalhostAnnotation.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { appLog } from '@/utils/appLog'
 
@@ -1179,12 +1179,14 @@ function annotateLocalhostInEscapedText(text: string): string {
   return text.replace(re, (url, portStr) => {
     const port = parseInt(portStr)
     if (port <= 0 || port > 65535) return url
-    const protocol = url.startsWith('https') ? 'https' : 'http'
     // Un-escape the URL for data attributes (escapeHtml turned & into &amp;, etc.)
     const rawUrl = url.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    const parsed = parseLocalhostUrl(rawUrl)
+    const protocol = parsed?.protocol || (rawUrl.startsWith('https') ? 'https' : 'http')
+    const path = parsed?.path || ''
     // In <pre> context, wrap URL in <a> and append the open button
     const linkHtml = `<a href="${escapeHtml(rawUrl)}" target="_blank" rel="noopener">${url}</a>`
-    return `${linkHtml}${localhostOpenButtonHtml(port, protocol, rawUrl)}`
+    return `${linkHtml}${localhostOpenButtonHtml(port, protocol, rawUrl, path)}`
   })
 }
 

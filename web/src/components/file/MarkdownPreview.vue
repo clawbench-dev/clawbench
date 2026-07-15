@@ -329,9 +329,11 @@ watch(() => props.viewMode, async (mode) => {
 })
 
 // Watch for marker changes and recompute positions
+// immediate: true ensures positions are computed when component mounts
+// with pre-existing markers (e.g. after tab switch while diff is active)
 watch(diffMarkers, () => {
     nextTick(() => computeMarkerPositions())
-}, { deep: true })
+}, { deep: true, immediate: true })
 
 onBeforeUnmount(() => {
     clearDiffMarkers()

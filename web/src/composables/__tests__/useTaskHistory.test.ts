@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 
 // ────────────────────────────────────────────────────────────
 // useTaskHistory composable tests
@@ -64,12 +64,29 @@ vi.mock('@/composables/useChatRender.ts', () => ({
 import { useTaskHistory } from '@/composables/useTaskHistory.ts'
 import { ref } from 'vue'
 
+// Track setTimeout IDs to clean up after each test
+const pendingTimers: ReturnType<typeof setTimeout>[] = []
+const _origSetTimeout = setTimeout
+globalThis.setTimeout = ((fn: TimerHandler, ms?: number, ...args: any[]) => {
+  const id = _origSetTimeout(fn, ms, ...args)
+  pendingTimers.push(id)
+  return id
+}) as typeof setTimeout
+
 beforeEach(() => {
   mockApiGet.mockReset()
   mockApiPut.mockReset()
   mockToastShow.mockReset()
   mockDialogConfirm.mockReset()
   mockOpenExecDetail.mockReset()
+})
+
+afterEach(() => {
+  // Clear any pending timers from justCompletedIds auto-clear
+  for (const id of pendingTimers) {
+    clearTimeout(id)
+  }
+  pendingTimers.length = 0
 })
 
 // ── Helper ──

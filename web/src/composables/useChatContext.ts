@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import type { FileEntry } from '@/utils/fileAttachmentUtils'
 
 export interface QuoteData {
   text: string
@@ -15,12 +16,12 @@ export interface QuoteData {
 //   - quoteData: code selection referenced from file preview
 // ───────────────────────────────────────────────────────────
 
-const attachedFiles = ref<string[]>([])
+const attachedFiles = ref<FileEntry[]>([])
 const quoteData = ref<QuoteData | null>(null)
 
-function addAttachedFile(path: string) {
-  if (path && !attachedFiles.value.includes(path)) {
-    attachedFiles.value.push(path)
+function addAttachedFile(path: string, isDir: boolean = false) {
+  if (path && !attachedFiles.value.some(f => f.path === path)) {
+    attachedFiles.value.push({ path, isDir })
   }
 }
 
@@ -29,22 +30,22 @@ function removeAttachedFile(index: number) {
 }
 
 function removeAttachedFileByPath(path: string) {
-  const idx = attachedFiles.value.indexOf(path)
+  const idx = attachedFiles.value.findIndex(f => f.path === path)
   if (idx >= 0) attachedFiles.value.splice(idx, 1)
 }
 
-function toggleAttachedFile(path: string) {
+function toggleAttachedFile(path: string, isDir: boolean = false) {
   if (!path) return
-  const idx = attachedFiles.value.indexOf(path)
+  const idx = attachedFiles.value.findIndex(f => f.path === path)
   if (idx >= 0) {
     attachedFiles.value.splice(idx, 1)
   } else {
-    attachedFiles.value.push(path)
+    attachedFiles.value.push({ path, isDir })
   }
 }
 
 function hasAttachedFile(path: string): boolean {
-  return attachedFiles.value.includes(path)
+  return attachedFiles.value.some(f => f.path === path)
 }
 
 function setQuoteData(data: QuoteData | null) {

@@ -10,7 +10,7 @@
         <div class="fc-section-title">{{ t('chat.fileChanges.created') }}</div>
         <div class="fc-file-list">
           <button v-for="path in created" :key="'c-' + path" class="fc-file-item" @click="$emit('open-file', path)">
-            <FileText :size="16" :color="getFileType(path).color" class="fc-file-icon" />
+            <FileIcon :path="path" :size="16" class="fc-file-icon" />
             <span class="fc-file-name">{{ baseName(path) }}</span>
           </button>
         </div>
@@ -20,7 +20,7 @@
         <div class="fc-section-title">{{ t('chat.fileChanges.modified') }}</div>
         <div class="fc-file-list">
           <button v-for="path in modified" :key="'m-' + path" class="fc-file-item" @click="$emit('open-file', path)">
-            <FileText :size="16" :color="getFileType(path).color" class="fc-file-icon" />
+            <FileIcon :path="path" :size="16" class="fc-file-icon" />
             <span class="fc-file-name">{{ baseName(path) }}</span>
           </button>
         </div>
@@ -31,9 +31,9 @@
 
 <script setup>
 import { useI18n } from 'vue-i18n'
-import { FileText, FileDiff } from 'lucide-vue-next'
+import { FileDiff } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
-import { getFileType } from '@/utils/fileType.ts'
+import FileIcon from '@/components/common/FileIcon.vue'
 
 const { t } = useI18n()
 

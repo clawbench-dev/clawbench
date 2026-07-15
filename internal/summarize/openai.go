@@ -20,7 +20,7 @@ type OpenAISummarizer struct {
 	Key        string       // API key (sent as Authorization: Bearer <key>)
 	Model      string       // Model name (default: "gpt-4o-mini")
 	HTTPClient *http.Client // Shared HTTP client with timeout
-	gs         ttsPipeline
+	gs         summarizePipeline
 }
 
 // NewOpenAI creates an OpenAISummarizer with the given configuration.
@@ -37,7 +37,7 @@ func NewOpenAI(baseURL, key, model string) *OpenAISummarizer {
 			Timeout: 120 * time.Second,
 		},
 	}
-	s.gs = NewTTSPipeline(s.DoSummarizePass)
+	s.gs = NewSummarizePipeline(s.DoSummarizePass)
 	return s
 }
 

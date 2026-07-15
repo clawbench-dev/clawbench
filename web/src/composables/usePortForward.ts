@@ -34,8 +34,8 @@ interface AndroidNativeBridge {
   getTunnelError?: () => string
   getTunnelErrorType?: () => string
   setVolumeKeyMode?: (enabled: boolean) => void
-  openInSandbox?: (localPort: number, protocol: string, host: string) => void
-  openInBrowser?: (localPort: number, protocol: string, host: string) => void
+  openInSandbox?: (localPort: number, protocol: string, host: string, path: string) => void
+  openInBrowser?: (localPort: number, protocol: string, host: string, path: string) => void
   testPortReachable?: (localPort: number) => boolean
   reconnectTunnel?: () => boolean
 }
@@ -444,11 +444,11 @@ export function usePortForward() {
   }
 
   /** Internal helper: actually open the port in sandbox or external browser */
-  function doOpen(native: AndroidNativeBridge | undefined, localPort: number, protocol?: string, hostArg?: string) {
+  function doOpen(native: AndroidNativeBridge | undefined, localPort: number, protocol?: string, hostArg?: string, path?: string) {
     if (native?.openInSandbox) {
-      native.openInSandbox(localPort, protocol === 'https' ? 'https' : 'http', hostArg || '')
+      native.openInSandbox(localPort, protocol === 'https' ? 'https' : 'http', hostArg || '', path || '')
     } else if (native?.openInBrowser) {
-      native.openInBrowser(localPort, protocol === 'https' ? 'https' : 'http', hostArg || '')
+      native.openInBrowser(localPort, protocol === 'https' ? 'https' : 'http', hostArg || '', path || '')
     }
   }
 
@@ -456,8 +456,8 @@ export function usePortForward() {
    *  In app mode: tests if the port is reachable, waits briefly if not,
    *  then attempts SSH tunnel reconnect if still unreachable.
    *  Shows toast on success or failure after reconnection attempt. */
-  async function openPort(localPort: number, protocol?: string, host?: string) {
-    appLog.d(TAG, 'openPort: localPort=' + localPort + ', protocol=' + protocol + ', host=' + (host || ''))
+  async function openPort(localPort: number, protocol?: string, host?: string, path?: string) {
+    appLog.d(TAG, 'openPort: localPort=' + localPort + ', protocol=' + protocol + ', host=' + (host || '') + ', path=' + (path || ''))
 
     if (isAppMode.value) {
       const native = getAndroidNative()
@@ -468,7 +468,7 @@ export function usePortForward() {
         const reachable = native.testPortReachable(localPort)
         appLog.d(TAG, 'openPort: testPortReachable(' + localPort + ') = ' + reachable)
         if (reachable) {
-          doOpen(native, localPort, protocol, hostArg)
+          doOpen(native, localPort, protocol, hostArg, path)
           return
         }
 
@@ -487,7 +487,7 @@ export function usePortForward() {
           appLog.d(TAG, 'openPort: after reconnect, testPortReachable(' + localPort + ') = ' + reachableAfter)
           if (reachableAfter) {
             toast.show(gt('portForward.tunnelReconnected'), { type: 'success' })
-            doOpen(native, localPort, protocol, hostArg)
+            doOpen(native, localPort, protocol, hostArg, path)
             return
           }
         }
@@ -498,9 +498,9 @@ export function usePortForward() {
       }
 
       // Fallback: no testPortReachable available (old APK) — open directly
-      doOpen(native, localPort, protocol, hostArg)
+      doOpen(native, localPort, protocol, hostArg, path)
     } else {
-      window.open(buildPortUrl(localPort, protocol), '_blank')
+      window.open(buildPortUrl(localPort, protocol, path), '_blank')
     }
   }
 
@@ -551,7 +551,7 @@ export function usePortForward() {
     if (isAppMode.value) {
       const native = getAndroidNative()
       if (native?.openInBrowser) {
-        native.openInBrowser(localPort, protocol === 'https' ? 'https' : 'http', host || '')
+        native.openInBrowser(localPort, protocol === 'https' ? 'https' : 'http', host || '', '')
       }
     } else {
       window.open(buildPortUrl(localPort, protocol), '_blank')
