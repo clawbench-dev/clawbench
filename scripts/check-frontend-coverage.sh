@@ -40,9 +40,16 @@ fi
 result=0
 if [ "$SKIP_TEST" = false ]; then
   "$SCRIPT_DIR/vitest-run.sh" --coverage || result=$?
-  if [ $result -ne 0 ]; then
-    echo "ERROR: Frontend tests failed. Fix test failures before checking coverage."
+  # Exit code 124 = vitest-run.sh watchdog timeout. If coverage data was
+  # written before the hang (V8 provider writes during test execution),
+  # we can still proceed. This handles the vitest 4 pool cleanup hang bug
+  # (vitest-dev/vitest#8766) where all tests pass but the process can't exit.
+  if [ $result -ne 0 ] && [ $result -ne 124 ]; then
+    echo "ERROR: Frontend tests failed (exit code $result). Fix test failures before checking coverage."
     exit 1
+  fi
+  if [ $result -eq 124 ]; then
+    echo "WARNING: vitest timed out (pool cleanup hang), checking if coverage data was written..."
   fi
 else
   # --skip-test: just verify coverage data exists

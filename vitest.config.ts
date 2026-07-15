@@ -85,6 +85,7 @@ export default defineConfig({
       '**/test/path-annotation/**',
     ],
     coverage: {
+      provider: 'v8',
       reporter: ['text', 'json', 'json-summary'],
     },
     setupFiles: [resolve(__dirname, 'web/src/test-setup.ts')],

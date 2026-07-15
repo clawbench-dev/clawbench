@@ -89,7 +89,7 @@ export default defineConfig({
     port: frontendPort,
     proxy: {
       '/api/terminal/ws': {
-        target: `wss://localhost:${backendPort}`,
+        target: `${backendProto === 'https' ? 'wss' : 'ws'}://localhost:${backendPort}`,
         ws: true,
         secure: false,
       },
