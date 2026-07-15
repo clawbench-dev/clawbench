@@ -108,7 +108,7 @@
 
 <script setup>
 import { FileText, Info, RefreshCw, GitBranch } from 'lucide-vue-next'
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitGraph from './GitGraph.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
@@ -197,11 +197,6 @@ watch(commitSearch, (q) => {
   searchTimer = setTimeout(() => emit('search', q), 300)
 })
 
-function setupObserver() {
-  // No-op: observer is now created lazily in observeList() so we can pass
-  // bodyRef as the root at construction time (root cannot be changed later).
-}
-
 function observeList() {
   if (!listRef.value) return
   // Disconnect any previous observer
@@ -223,7 +218,7 @@ function unobserveList() {
 }
 
 onMounted(() => {
-  setupObserver()
+  nextTick(() => observeList())
 })
 
 onUnmounted(() => {

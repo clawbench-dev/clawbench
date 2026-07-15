@@ -146,7 +146,7 @@
 
 <script setup>
 import { Plus, Minus, FileText } from 'lucide-vue-next'
-import { ref, computed, inject, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, inject, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitCommitList from './GitCommitList.vue'
 import GitCommitMeta from './GitCommitMeta.vue'
@@ -406,7 +406,6 @@ async function onRefresh() {
   } else {
     await loadProjectHistory()
   }
-  setTimeout(() => commitListRef.value?.observeList(), 100)
 }
 
 // ─── Shared commit navigation composable ─────────────────────────────────
@@ -435,14 +434,9 @@ useFeatureBackHandler(
     PRIORITY_PAGE,
 )
 
-// Ensure IntersectionObserver is set up whenever user returns to the commits view.
-// This covers the case where observeList() was skipped due to early returns
-// (e.g. entering via Header branch badge → manage view → back to commits).
-watch(currentView, (view) => {
-  if (view === 'commits') {
-    nextTick(() => commitListRef.value?.observeList())
-  }
-})
+// GitCommitList manages its own IntersectionObserver lifecycle (created in
+// onMounted, disconnected in onUnmounted), so the parent does not need to
+// call observeList() when switching back to the commits view.
 
 // Watch for commit navigation requests from chat (handles the case where
 // the history tab is already active and a commit hash link is clicked)
@@ -615,7 +609,6 @@ watch(() => props.active, async (nowActive) => {
     } else {
       // Only first page — safe to auto-refresh
       await loadProjectHistory()
-      nextTick(() => commitListRef.value?.observeList())
     }
   }
   lastGitState.value = { ...cur }
@@ -647,7 +640,6 @@ onMounted(async () => {
   const pendingSha = consumePendingCommitNavigation()
   if (pendingSha) {
     await navigateToCommit(pendingSha)
-    setTimeout(() => commitListRef.value?.observeList(), 100)
     return
   }
 
@@ -658,8 +650,6 @@ onMounted(async () => {
       await loadProjectHistory()
     }
   }
-
-  setTimeout(() => commitListRef.value?.observeList(), 100)
 })
 </script>
 
