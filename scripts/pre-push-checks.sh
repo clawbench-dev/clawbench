@@ -117,7 +117,15 @@ else
     echo ""
 fi
 
-# ─── 7. Android coverage gate ───
+# ─── 7. Android lint (AppLog enforcement) ───
+if [ -d "$ROOT_DIR/android" ]; then
+    run_check "Lint (Android)" "$SCRIPT_DIR/lint-android.sh"
+else
+    echo -e "${YELLOW}⚠️  跳过 Android lint（未找到 android/）${NC}"
+    echo ""
+fi
+
+# ─── 8. Android coverage gate ───
 if [ "$SKIP_COVERAGE" = false ] && [ "$SKIP_ANDROID" = false ]; then
     if command -v java >/dev/null 2>&1 && [ -d "$ROOT_DIR/android" ]; then
         run_check "Coverage Gate (Android)" "$SCRIPT_DIR/check-android-coverage.sh"

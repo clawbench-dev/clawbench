@@ -111,7 +111,7 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 ## Development Rules
 
 - **Mandatory appLog for all frontend logging:** All frontend code MUST use `appLog.d/i/w/e()` from `@/utils/appLog` instead of raw `console.log/debug/warn/error/info`. `appLog` prints to browser console AND relays to Android `AppLog` via the `AndroidNative.log()` JS bridge, ensuring logs are visible in Android WebView and persisted to `.clawbench/logs/android.log` through the server's `/api/android-log` endpoint. Raw `console.*` calls are only allowed in test files (`*.test.ts`). Tag convention: short PascalCase module name (e.g., `'ClawBench'`, `'ChatStream'`, `'Store'`, `'FileManager'`).
-- **Mandatory AppLog for all Android logging:** All Android Java/Kotlin code MUST use `AppLog.d/i/w/e()` instead of raw `android.util.Log`. `AppLog` writes to logcat AND posts to the backend `/api/android-log` endpoint for centralized log persistence. Raw `android.util.Log` calls are only allowed in `AppLog.java` itself (to avoid recursion) and test code.
+- **Mandatory AppLog for all Android logging:** All Android Java/Kotlin code MUST use `AppLog.d/i/w/e()` instead of raw `android.util.Log`. `AppLog` writes to logcat AND posts to the backend `/api/android-log` endpoint for centralized log persistence. Raw `android.util.Log` calls are only allowed in `AppLog.java` itself (to avoid recursion) and test code. Enforcement: `lint-android.sh` runs in pre-push checks and CI, catching violations at build time. `AppLog` provides error callback via `setOnErrorCallback(OnErrorCallback)` for relay failure monitoring, plus `getLastError()` / `getLastFlushSuccessTs()` for health-checking.
 - **Mandatory unit tests for features and bug fixes:** Every new feature and bug fix MUST include targeted unit tests. Go: `*_test.go` next to the code; Frontend: `.test.ts` next to the composable/component. Tests must verify the specific behavior/fix, not just generic happy paths.
 - **Local pre-push validation (mandatory before push/PR):** Before pushing or creating a PR, MUST run the local pre-check script that replicates all CI checks:
   ```bash
@@ -127,8 +127,9 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
   4. `npm run typecheck` — Vue TypeScript type check
   5. `check-go-coverage.sh` — Go coverage gate (Tier 1: per-pkg >= baseline-1.5%; Tier 2: changed lines >= 80%)
   6. `check-frontend-coverage.sh` — Frontend coverage gate
-  7. `check-android-coverage.sh` — Android coverage gate (auto-skipped if no JDK)
-  8. `npm run build` — Frontend production build
+  7. `lint-android.sh` — Android lint: enforces AppLog usage, bans raw `android.util.Log` in production code
+  8. `check-android-coverage.sh` — Android coverage gate (auto-skipped if no JDK)
+  9. `npm run build` — Frontend production build
   All checks must pass. Fix failures before pushing — this avoids round-trips on remote CI errors.
 
 ## Configuration

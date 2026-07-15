@@ -28,6 +28,11 @@ import javax.net.ssl.SSLContext;
  * with zero overhead. When capture is enabled via {@link #startCapture(String)},
  * entries are buffered in memory and flushed every 3 seconds (or when the buffer
  * reaches 200 entries) via HTTP POST.
+ *
+ * Error callback: set via {@link #setOnErrorCallback(OnErrorCallback)} to receive
+ * relay failure notifications (HTTP errors, connection failures). The callback runs
+ * on a background thread. This enables callers to detect and react to log relay
+ * issues without polling.
  */
 public class AppLog {
 
@@ -36,12 +41,32 @@ public class AppLog {
     private static final int FLUSH_THRESHOLD = 200;
     private static final long FLUSH_INTERVAL_MS = 3000;
 
+    /**
+     * Callback interface for log relay errors.
+     * Implementations should be lightweight as they run on a background thread.
+     */
+    public interface OnErrorCallback {
+        /**
+         * Called when a log relay attempt fails.
+         *
+         * @param message human-readable error description (e.g. "HTTP 503", "Connection refused")
+         * @param cause    the underlying exception, or null if it was an HTTP-level error
+         */
+        void onError(String message, Exception cause);
+    }
+
     // Log entry buffer
     private static final List<LogEntry> buffer = new ArrayList<>();
     private static volatile boolean capturing = false;
     private static String serverBaseUrl = null;
     private static Handler flushHandler;
     private static Runnable flushRunnable;
+    private static volatile OnErrorCallback errorCallback = null;
+
+    /** Last relay error message, or null if the last flush succeeded. */
+    private static volatile String lastError = null;
+    /** Timestamp of the last successful flush (epoch millis), or 0 if never succeeded. */
+    private static volatile long lastFlushSuccessTs = 0;
 
     // SSL context that trusts all certs (for self-signed server certs)
     private static SSLContext trustAllSSL;
@@ -115,6 +140,31 @@ public class AppLog {
         return capturing;
     }
 
+    /**
+     * Set a callback to be notified when log relay to the server fails.
+     * The callback runs on a background thread — do not perform heavy work.
+     * Pass null to remove a previously set callback.
+     */
+    public static void setOnErrorCallback(OnErrorCallback callback) {
+        errorCallback = callback;
+    }
+
+    /**
+     * Returns the last relay error message, or null if the last flush succeeded.
+     * Useful for health-checking the log relay without a callback.
+     */
+    public static String getLastError() {
+        return lastError;
+    }
+
+    /**
+     * Returns the timestamp (epoch millis) of the last successful flush,
+     * or 0 if no flush has ever succeeded.
+     */
+    public static long getLastFlushSuccessTs() {
+        return lastFlushSuccessTs;
+    }
+
     // --- Internal ---
 
     private static void log(char level, String tag, String msg) {
@@ -168,12 +218,29 @@ public class AppLog {
             new Thread(() -> {
                 try {
                     postLogPayload(payload.toString());
-                } catch (Exception ignored) {
-                    // Log delivery is best-effort; don't crash the app
+                    lastError = null;
+                    lastFlushSuccessTs = System.currentTimeMillis();
+                } catch (Exception e) {
+                    String msg = "Log relay failed: " + e.getMessage();
+                    lastError = msg;
+                    notifyError(msg, e);
                 }
             }).start();
-        } catch (Exception ignored) {
-            // JSON building should never fail, but just in case
+        } catch (Exception e) {
+            String msg = "Log relay JSON build failed: " + e.getMessage();
+            lastError = msg;
+            notifyError(msg, e);
+        }
+    }
+
+    private static void notifyError(String message, Exception cause) {
+        OnErrorCallback cb = errorCallback;
+        if (cb != null) {
+            try {
+                cb.onError(message, cause);
+            } catch (Exception ignored) {
+                // Callback must not throw
+            }
         }
     }
 
@@ -204,8 +271,7 @@ public class AppLog {
 
             int code = conn.getResponseCode();
             if (code != 200) {
-                // Best-effort; log the failure to logcat only
-                Log.w(TAG, "Failed to post android logs: HTTP " + code);
+                throw new Exception("HTTP " + code);
             }
         } finally {
             conn.disconnect();

@@ -19,7 +19,6 @@ import android.os.Looper;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.content.pm.ServiceInfo;
-import android.util.Log;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;

@@ -15,7 +15,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.PowerManager;
-import android.util.Log;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.view.KeyEvent;
@@ -328,13 +327,13 @@ public class MainActivity extends AppCompatActivity {
                 String msg = consoleMessage.message() + " (" + consoleMessage.sourceId() + ":" + consoleMessage.lineNumber() + ")";
                 switch (consoleMessage.messageLevel()) {
                     case ERROR:
-                        Log.e(tag, msg);
+                        AppLog.e(tag, msg);
                         break;
                     case WARNING:
-                        Log.w(tag, msg);
+                        AppLog.w(tag, msg);
                         break;
                     default:
-                        Log.d(tag, msg);
+                        AppLog.d(tag, msg);
                         break;
                 }
                 return true;
