@@ -77,7 +77,7 @@
       <!-- Too large -->
       <div v-else-if="file.tooLarge" class="raw-content-viewer">
         <div class="unsupported-file">
-          <FileText />
+          <FileIcon :path="file.name" :size="48" />
           <div class="unsupported-title">{{ file.name }}</div>
           <div class="unsupported-desc">{{ t('file.viewer.fileTooLarge') }} {{ file.size ? '(' + formatSize(file.size) + ')' : '' }}</div>
           <a v-if="!isAppMode" :href="buildLocalFileUrl(file.path, { download: true })" class="download-btn" :download="file.name">
@@ -94,7 +94,7 @@
       <!-- Binary file -->
       <div v-else-if="file.isBinary" class="raw-content-viewer">
         <div class="unsupported-file">
-          <FileText />
+          <FileIcon :path="file.name" :size="48" />
           <div class="unsupported-title">{{ file.name }}</div>
           <div class="unsupported-desc">{{ t('file.viewer.binaryFile') }} {{ file.size ? '(' + formatSize(file.size) + ')' : '' }}</div>
           <div class="unsupported-actions">
@@ -211,7 +211,8 @@
 import { ref, computed, watch, onBeforeUnmount, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
-import { FileText, Download, Code2, AlertTriangle, Share } from 'lucide-vue-next'
+import { Download, Code2, AlertTriangle, Share } from 'lucide-vue-next'
+import FileIcon from '@/components/common/FileIcon.vue'
 import ImagePreview from '@/components/media/ImagePreview.vue'
 import PdfPreview from '@/components/media/PdfPreview.vue'
 import AudioPreview from '@/components/media/AudioPreview.vue'

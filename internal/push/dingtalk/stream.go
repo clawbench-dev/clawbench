@@ -102,12 +102,12 @@ func (m *Manager) handleSessionCommand(ctx context.Context, data *chatbot.BotCal
 				return
 			}
 			_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook,
-				[]byte("消息已发送"), []byte(fmt.Sprintf("### 消息已发送\n已发送到会话 **%s**，AI 正在处理", escapeMarkdown(sessionLabel))))
+				[]byte("消息已发送"), []byte(fmt.Sprintf("### 消息已发送\n已发送到会话 **%s**，AI 正在处理", sessionLabel)))
 			return
 		}
 		slog.Info("dingtalk: message enqueued to running session", "session_id", sessionID, "msg", msg)
 		_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook,
-			[]byte("消息已发送"), []byte(fmt.Sprintf("### 消息已发送\n已发送到运行中的会话 **%s**", escapeMarkdown(sessionLabel))))
+			[]byte("消息已发送"), []byte(fmt.Sprintf("### 消息已发送\n已发送到运行中的会话 **%s**", sessionLabel)))
 		return
 	}
 
@@ -118,7 +118,7 @@ func (m *Manager) handleSessionCommand(ctx context.Context, data *chatbot.BotCal
 	}
 	slog.Info("dingtalk: message sent to session", "session_id", sessionID, "msg", msg)
 	_ = replier.SimpleReplyMarkdown(ctx, data.SessionWebhook,
-		[]byte("消息已发送"), []byte(fmt.Sprintf("### 消息已发送\n已发送到会话 **%s**，AI 正在处理", escapeMarkdown(sessionLabel))))
+		[]byte("消息已发送"), []byte(fmt.Sprintf("### 消息已发送\n已发送到会话 **%s**，AI 正在处理", sessionLabel)))
 }
 
 // handleSessionList lists recent sessions so the user can pick one to send a message to.
@@ -166,7 +166,7 @@ func (m *Manager) handleSessionList(ctx context.Context, data *chatbot.BotCallba
 	}
 
 	for _, g := range groups {
-		fmt.Fprintf(&sb, "**%s**\n", escapeMarkdown(g.project))
+		fmt.Fprintf(&sb, "**%s**\n", g.project)
 		for _, s := range g.items {
 			id := shortSessionID(s.ID)
 			title := s.Title
@@ -177,7 +177,7 @@ func (m *Manager) handleSessionList(ctx context.Context, data *chatbot.BotCallba
 			if sessionMessenger.IsSessionRunning(s.ID) {
 				running = " 🟢"
 			}
-			fmt.Fprintf(&sb, "- **@%s** %s%s\n", id, escapeMarkdown(title), running)
+			fmt.Fprintf(&sb, "- **@%s** %s%s\n", id, title, running)
 		}
 		sb.WriteString("\n")
 	}

@@ -23,6 +23,32 @@ if (existsSync(srcAssets)) {
   }
 }
 
+// Vite plugin: copy material-icon-theme SVGs to web/src/assets/material-icons/
+// so import.meta.glob can reference them (Vite cannot glob into node_modules).
+function materialIconsCopy(): Plugin {
+  const srcDir = resolve(__dirname, 'node_modules/material-icon-theme/icons')
+  const destDir = resolve(__dirname, 'web/src/assets/material-icons')
+
+  function copy() {
+    if (!existsSync(srcDir)) {
+      console.warn('[materialIconsCopy] Source not found:', srcDir)
+      return
+    }
+    mkdirSync(destDir, { recursive: true })
+    for (const f of readdirSync(srcDir)) {
+      if (f.endsWith('.svg')) {
+        cpSync(resolve(srcDir, f), resolve(destDir, f), { force: true })
+      }
+    }
+  }
+
+  return {
+    name: 'material-icons-copy',
+    buildStart() { copy() },
+    configureServer() { copy() },
+  }
+}
+
 // Vite plugin: wrap highlight.js theme CSS with attribute selectors
 // so light/dark themes can coexist without conflict.
 function hljsThemeWrapper(): Plugin {
@@ -52,7 +78,8 @@ export default defineConfig({
       include: resolve(__dirname, 'web/src/i18n/locales/**'),
       strictMessage: false,
     }),
-    hljsThemeWrapper()
+    hljsThemeWrapper(),
+    materialIconsCopy()
   ],
   root: 'web',
   publicDir: srcAssets,

@@ -29,7 +29,7 @@
           class="ad-file-row ad-current-item" :class="{ 'ad-file-attached': isAttached(effectiveCurrentDir) }"
           @click="toggleAttached(effectiveCurrentDir)">
           <div class="ad-icon-wrap">
-            <Folder :size="28" class="ad-file-icon" />
+            <FileIcon path="" :is-dir="true" :size="28" class="ad-file-icon" />
           </div>
           <div class="ad-file-info">
             <span class="ad-file-name">
@@ -48,7 +48,7 @@
           <div class="ad-icon-wrap">
             <img v-if="isImageFile(currentFile) && isThumbableExt(currentFile) && !thumbErrors.has(currentFile)"
               class="ad-thumb" :src="thumbUrl(currentFile)" loading="lazy" @error="onThumbError(currentFile)" />
-            <component v-else :is="getFileIcon(currentFile)" :size="28" class="ad-file-icon" :color="getFileIconColor(currentFile)" />
+            <FileIcon v-else :path="currentFile" :size="28" class="ad-file-icon" />
           </div>
           <div class="ad-file-info">
             <span class="ad-file-name">
@@ -74,7 +74,7 @@
           <div class="ad-icon-wrap">
             <img v-if="isImageFile(item.path) && isThumbableExt(item.path) && !thumbErrors.has(item.path)"
               class="ad-thumb" :src="thumbUrl(item.path)" loading="lazy" @error="onThumbError(item.path)" />
-            <component v-else :is="getFileIcon(item.path)" :size="28" class="ad-file-icon" :color="getFileIconColor(item.path)" />
+            <FileIcon v-else :path="item.path" :size="28" class="ad-file-icon" />
           </div>
           <div class="ad-file-info">
             <span class="ad-file-name">{{ baseName(item.path) }}</span>
@@ -96,7 +96,7 @@
           <div class="ad-icon-wrap">
             <img v-if="isImageFile(item.path) && isThumbableExt(item.path) && !thumbErrors.has(item.path)"
               class="ad-thumb" :src="thumbUrl(item.path)" loading="lazy" @error="onThumbError(item.path)" />
-            <component v-else :is="getFileIcon(item.path)" :size="28" class="ad-file-icon" :color="getFileIconColor(item.path)" />
+            <FileIcon v-else :path="item.path" :size="28" class="ad-file-icon" />
           </div>
           <div class="ad-file-info">
             <span class="ad-file-name">{{ item.name }}</span>
@@ -134,7 +134,7 @@
           <div class="ad-icon-wrap">
             <img v-if="isImageFile(item.path) && isThumbableExt(item.path) && !thumbErrors.has(item.path)"
               class="ad-thumb" :src="thumbUrl(item.path)" loading="lazy" @error="onThumbError(item.path)" />
-            <component v-else :is="getFileIcon(item.path)" :size="28" class="ad-file-icon" :color="getFileIconColor(item.path)" />
+            <FileIcon v-else :path="item.path" :size="28" class="ad-file-icon" />
           </div>
           <div class="ad-file-info">
             <span class="ad-file-name">{{ item.name }}</span>
@@ -154,7 +154,8 @@
 <script setup lang="ts">
 import { ref, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { Paperclip, Upload, Check, ExternalLink } from 'lucide-vue-next'
-import { getFileIcon, getFileIconColor, buildPathThumbUrl, Folder } from '@/utils/fileIcon'
+import { buildPathThumbUrl } from '@/utils/fileIcon'
+import FileIcon from '@/components/common/FileIcon.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import { useI18n } from 'vue-i18n'
 import { useShareIn } from '@/composables/useShareIn'

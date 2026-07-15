@@ -60,7 +60,7 @@
           <img v-if="isImageFile(filePath) && isThumbableExt(filePath) && !thumbErrors.has(filePath)"
             class="attachment-thumb-img"
             :src="attachmentThumbUrl(filePath)" loading="lazy" @error="onThumbError(filePath)" />
-          <component v-if="!isImageFile(filePath)" :is="getFileIcon(filePath)" :size="14" :stroke-width="1.5" :color="getFileIconColor(filePath)" class="attachment-file-icon" />
+          <FileIcon v-if="!isImageFile(filePath)" :path="filePath" :size="14" class="attachment-file-icon" />
           <span v-if="!isImageFile(filePath)" class="attachment-filename">{{ getFileName(filePath) }}</span>
           <button class="attachment-close-btn" @click.stop="$emit('remove-attached', idx)" :title="t('common.remove')">×</button>
         </span>
@@ -236,7 +236,8 @@ import { baseName } from '@/utils/path.ts'
 import { isThumbableExt } from '@/utils/fileManager.ts'
 import { isImageFile } from '@/utils/fileAttachmentUtils.ts'
 import { computeRecentReferencedFiles } from '@/utils/chatInputUtils.ts'
-import { getFileIcon, getFileIconColor, buildPathThumbUrl } from '@/utils/fileIcon.ts'
+import { buildPathThumbUrl } from '@/utils/fileIcon.ts'
+import FileIcon from '@/components/common/FileIcon.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import AttachDrawer from '@/components/chat/AttachDrawer.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'

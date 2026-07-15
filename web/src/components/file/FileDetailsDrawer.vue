@@ -1,7 +1,7 @@
 <template>
   <BottomSheet :open="open" auto @close="$emit('close')">
     <template #header>
-      <FileText :size="16" class="bs-header-icon" />
+      <FileIcon :path="file?.name || ''" :size="16" class="bs-header-icon" />
       <span class="bs-header-title">{{ t('file.details.title') }}</span>
     </template>
 
@@ -24,8 +24,9 @@
 <script setup>
 import { computed, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { FileText, Copy } from 'lucide-vue-next'
+import { Copy } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
+import FileIcon from '@/components/common/FileIcon.vue'
 import { store } from '@/stores/app.ts'
 import { getFileType, formatFileSize } from '@/utils/fileType.ts'
 

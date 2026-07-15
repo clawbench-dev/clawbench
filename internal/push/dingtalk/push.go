@@ -4,13 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
-	"unicode/utf8"
-)
-
-const (
-	dingtalkMarkdownMaxBytes = 18000
 )
 
 // PushSessionEvent sends a DingTalk push notification for a session event.
@@ -27,27 +21,27 @@ func PushSessionEvent(sessionID, status, sessionTitle, responsePreview, projectP
 	switch status {
 	case "completed":
 		title = "会话已完成"
-		replyHint := fmt.Sprintf("\n\n---\n发送 @%s <消息> 向会话发送消息", shortID)
-		markdown = fmt.Sprintf("### 会话已完成\n**会话**: %s\n**项目**: %s\n\n%s%s",
-			escapeMarkdown(sessionTitle),
-			escapeMarkdown(projectPath),
+		replyHint := fmt.Sprintf("\n\n---\n发送 `@%s <消息>` 向会话发送消息", shortID)
+		markdown = fmt.Sprintf("### 会话已完成\n**会话**: %s\n\n**项目**: %s\n\n%s%s",
+			sessionTitle,
+			projectPath,
 			responsePreview,
 			replyHint)
 	case "cancelled":
 		title = "会话已取消"
-		replyHint := fmt.Sprintf("\n\n---\n发送 @%s <消息> 向会话发送消息", shortID)
-		markdown = fmt.Sprintf("### 会话已取消\n**会话**: %s\n**项目**: %s\n\n%s%s",
-			escapeMarkdown(sessionTitle),
-			escapeMarkdown(projectPath),
+		replyHint := fmt.Sprintf("\n\n---\n发送 `@%s <消息>` 向会话发送消息", shortID)
+		markdown = fmt.Sprintf("### 会话已取消\n**会话**: %s\n\n**项目**: %s\n\n%s%s",
+			sessionTitle,
+			projectPath,
 			responsePreview,
 			replyHint)
 	case "permission_pending":
 		title = "操作需批准"
-		replyHint := fmt.Sprintf("\n\n---\n发送 @%s <消息> 追加消息到队列", shortID)
-		markdown = fmt.Sprintf("### 操作需批准\n**会话**: %s\n**项目**: %s\n**操作**: %s%s",
-			escapeMarkdown(sessionTitle),
-			escapeMarkdown(projectPath),
-			escapeMarkdown(toolName),
+		replyHint := fmt.Sprintf("\n\n---\n发送 `@%s <消息>` 追加消息到队列", shortID)
+		markdown = fmt.Sprintf("### 操作需批准\n**会话**: %s\n\n**项目**: %s\n\n**操作**: %s%s",
+			sessionTitle,
+			projectPath,
+			toolName,
 			replyHint)
 	default:
 		return false
@@ -69,26 +63,26 @@ func PushTaskEvent(taskID, status, taskName, responsePreview, projectPath string
 	switch status {
 	case "running":
 		title = "定时任务已启动"
-		markdown = fmt.Sprintf("### 定时任务已启动\n**任务**: %s\n**项目**: %s",
-			escapeMarkdown(taskName),
-			escapeMarkdown(projectPath))
+		markdown = fmt.Sprintf("### 定时任务已启动\n**任务**: %s\n\n**项目**: %s",
+			taskName,
+			projectPath)
 	case "completed":
 		title = "定时任务已完成"
-		markdown = fmt.Sprintf("### 定时任务已完成\n**任务**: %s\n**项目**: %s\n\n%s",
-			escapeMarkdown(taskName),
-			escapeMarkdown(projectPath),
+		markdown = fmt.Sprintf("### 定时任务已完成\n**任务**: %s\n\n**项目**: %s\n\n%s",
+			taskName,
+			projectPath,
 			responsePreview)
 	case "failed":
 		title = "定时任务失败"
-		markdown = fmt.Sprintf("### 定时任务失败\n**任务**: %s\n**项目**: %s\n\n%s",
-			escapeMarkdown(taskName),
-			escapeMarkdown(projectPath),
+		markdown = fmt.Sprintf("### 定时任务失败\n**任务**: %s\n\n**项目**: %s\n\n%s",
+			taskName,
+			projectPath,
 			responsePreview)
 	case "cancelled":
 		title = "定时任务已取消"
-		markdown = fmt.Sprintf("### 定时任务已取消\n**任务**: %s\n**项目**: %s\n\n%s",
-			escapeMarkdown(taskName),
-			escapeMarkdown(projectPath),
+		markdown = fmt.Sprintf("### 定时任务已取消\n**任务**: %s\n\n**项目**: %s\n\n%s",
+			taskName,
+			projectPath,
 			responsePreview)
 	default:
 		return false
@@ -106,8 +100,6 @@ func sendToAllSubscribers(title, markdown string) bool {
 		slog.Debug("dingtalk: suppressed push, client is online", "title", title)
 		return false
 	}
-
-	markdown = truncateForDingTalk(markdown)
 
 	subscribers, err := db.GetSubscribers()
 	if err != nil {
@@ -146,30 +138,4 @@ func shortSessionID(id string) string {
 		return id
 	}
 	return id[:8]
-}
-
-// escapeMarkdown escapes special Markdown characters in DingTalk messages.
-func escapeMarkdown(s string) string {
-	r := strings.NewReplacer(
-		"*", "\\*",
-		"#", "\\#",
-		"_", "\\_",
-		"`", "\\`",
-		">", "\\>",
-		"|", "\\|",
-		"~", "\\~",
-	)
-	return r.Replace(s)
-}
-
-// truncateForDingTalk truncates markdown to DingTalk's platform byte limit (rune-safe).
-func truncateForDingTalk(markdown string) string {
-	if len(markdown) <= dingtalkMarkdownMaxBytes {
-		return markdown
-	}
-	trunc := markdown[:dingtalkMarkdownMaxBytes]
-	for trunc != "" && !utf8.RuneStart(trunc[len(trunc)-1]) {
-		trunc = trunc[:len(trunc)-1]
-	}
-	return trunc + "\n\n...(内容过长已截断)"
 }

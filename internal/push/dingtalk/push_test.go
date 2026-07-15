@@ -1,7 +1,6 @@
 package dingtalk
 
 import (
-	"strings"
 	"testing"
 
 	"clawbench/internal/model"
@@ -25,63 +24,6 @@ func TestShortSessionID(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestEscapeMarkdown(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{"empty", "", ""},
-		{"plain text", "hello world", "hello world"},
-		{"asterisk", "a*b", "a\\*b"},
-		{"hash", "# heading", "\\# heading"},
-		{"underscore", "a_b", "a\\_b"},
-		{"backtick", "`code`", "\\`code\\`"},
-		{"pipe", "a|b", "a\\|b"},
-		{"multiple", "*#_`", "\\*\\#\\_\\`"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := escapeMarkdown(tt.input)
-			if got != tt.expected {
-				t.Errorf("escapeMarkdown(%q) = %q, want %q", tt.input, got, tt.expected)
-			}
-		})
-	}
-}
-
-func TestTruncateForDingTalk(t *testing.T) {
-	t.Run("short", func(t *testing.T) {
-		got := truncateForDingTalk("hello")
-		if got != "hello" {
-			t.Errorf("expected 'hello', got %q", got)
-		}
-	})
-	t.Run("empty", func(t *testing.T) {
-		got := truncateForDingTalk("")
-		if got != "" {
-			t.Errorf("expected empty, got %q", got)
-		}
-	})
-	t.Run("under limit", func(t *testing.T) {
-		input := strings.Repeat("x", 1000)
-		got := truncateForDingTalk(input)
-		if got != input {
-			t.Error("expected no truncation for content under limit")
-		}
-	})
-	t.Run("over limit", func(t *testing.T) {
-		input := strings.Repeat("x", 20000)
-		got := truncateForDingTalk(input)
-		if len(got) > 18000+100 {
-			t.Errorf("expected truncation, got %d bytes", len(got))
-		}
-		if !strings.HasSuffix(got, "...(内容过长已截断)") {
-			t.Error("expected truncation suffix")
-		}
-	})
 }
 
 func TestIsStarted_NoManager(t *testing.T) {
