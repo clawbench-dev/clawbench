@@ -10,7 +10,7 @@
         :src="thumbUrl(normalizeFileEntry(f).path)" loading="lazy"
         @error="onThumbError(normalizeFileEntry(f).path)" />
       <!-- Non-image: icon + filename -->
-      <FileIcon v-if="!isImageFile(normalizeFileEntry(f).path)" :path="normalizeFileEntry(f).path" :size="14" class="attachment-file-icon" />
+      <FileIcon v-if="!isImageFile(normalizeFileEntry(f).path)" :path="normalizeFileEntry(f).path" :size="22" class="attachment-file-icon" />
       <span v-if="!isImageFile(normalizeFileEntry(f).path)" class="attachment-filename">{{ getFileName(normalizeFileEntry(f).path) }}</span>
     </span>
   </div>
@@ -73,7 +73,7 @@ watch(() => props.files.length, (len) => {
 .chat-file-attachment {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   border-radius: 12px;
   height: 40px;
   padding: 0 10px;

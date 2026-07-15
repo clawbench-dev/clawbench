@@ -60,7 +60,7 @@
           <img v-if="isImageFile(filePath) && isThumbableExt(filePath) && !thumbErrors.has(filePath)"
             class="attachment-thumb-img"
             :src="attachmentThumbUrl(filePath)" loading="lazy" @error="onThumbError(filePath)" />
-          <FileIcon v-if="!isImageFile(filePath)" :path="filePath" :size="14" class="attachment-file-icon" />
+          <FileIcon v-if="!isImageFile(filePath)" :path="filePath" :size="22" class="attachment-file-icon" />
           <span v-if="!isImageFile(filePath)" class="attachment-filename">{{ getFileName(filePath) }}</span>
           <button class="attachment-close-btn" @click.stop="$emit('remove-attached', idx)" :title="t('common.remove')">×</button>
         </span>
@@ -1205,7 +1205,7 @@ defineExpose({
 .chat-file-attachment {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   border-radius: 12px;
   height: 40px;
   padding: 0 8px;
