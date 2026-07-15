@@ -1,22 +1,19 @@
-// Vitest globalSetup — kill hung workers to unblock test completion (vitest 4.x).
+// Vitest globalSetup — kill hung workers to unblock pool cleanup (vitest 4.x).
 //
 // PROBLEM: Vitest 4.x fork workers with open handles (Vite FILEHANDLEs,
 // vue-i18n devtools promises, jsdom window listeners) cannot exit cleanly
-// after their tests complete. When a worker hangs, it blocks the test run
-// from completing (ctx.start() never returns), which prevents:
-//   - coverage data from being written
-//   - globalSetup teardown from running
-//   - the process from exiting
+// after their tests complete. PoolRunner.stop() waits for workers indefinitely,
+// preventing pool.close() from returning and blocking the process from exiting.
 //
-// STRATEGY: Start a timer in setup() that kills orphaned workers after a
-// delay. This unblocks the test run so it can complete, write coverage,
-// and exit normally. The timer delay must be long enough for all tests to
-// finish, but short enough to fire before the external watchdog timeout.
+// STRATEGY: Kill orphaned workers in teardown(), which runs after all tests
+// complete but before pool.close(). Killing workers at this point lets
+// pool.close() return, allowing vitest to exit normally.
 //
-// TIMING: Tests typically finish in ~120-160s on CI. The pool cleanup hang
-// starts immediately after. We kill workers at 200s, giving ~40-80s of
-// margin after test completion. CI timeout is 600s, so there's plenty of
-// room for coverage generation and file writes (typically ~30s).
+// IMPORTANT: Do NOT start a timer in setup() to kill workers. On CI with
+// multiple workers, tests can take 200+ seconds. A fixed-delay timer would
+// kill workers while tests are still running, causing "Worker forks emitted
+// error" and test failures. Instead, let tests complete naturally and only
+// kill workers in teardown().
 //
 // Primary defense: scripts/vitest-run.sh wrapper with timeout + PID-tree kill.
 // This globalSetup is a secondary (in-process) defense.
@@ -42,22 +39,19 @@ function killOrphanedWorkers(label: string) {
 }
 
 export function setup() {
-  // Kill workers after 200s. This allows tests to finish (~120-160s) and
-  // then kills any workers that are hanging due to open handles.
-  // After workers are killed, the test run can complete, generate coverage,
-  // and exit normally.
-  const KILL_DELAY_MS = 200_000
-  setTimeout(() => {
-    killOrphanedWorkers('WORKER CLEANUP')
-  }, KILL_DELAY_MS).unref()
+  // No-op. Worker killing happens in teardown() after tests complete.
 }
 
 export function teardown() {
-  // Kill any remaining workers after teardown. This handles the edge case
-  // where workers respawn or where the test run completed without hanging
-  // but workers still linger during the close phase.
-  killOrphanedWorkers('POST-TEARDOWN CLEANUP')
+  // Kill orphaned workers immediately after teardown() is called.
+  // At this point all tests have finished and vitest is about to call
+  // pool.close(). If workers have open handles, pool.close() will hang.
+  // Killing workers lets pool.close() return so vitest can exit.
+  killOrphanedWorkers('POST-TEST CLEANUP')
+
+  // Secondary safety net: kill any workers that respawn or linger
+  // after the first kill attempt.
   setTimeout(() => {
-    killOrphanedWorkers('POST-TEARDOWN DELAYED CLEANUP')
+    killOrphanedWorkers('POST-TEARDOWN CLEANUP')
   }, 3_000)
 }
