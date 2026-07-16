@@ -39,11 +39,7 @@ type DrainConfig struct {
 
 // emitDrainEvent emits a stream event to WS clients via StreamHub.
 func emitDrainEvent(sessionID string, event ai.StreamEvent) {
-	if mgr := ws.GetManager(); mgr != nil {
-		if hub := mgr.StreamHub(); hub != nil && hub.HasSubscribers(sessionID) {
-			hub.Emit(sessionID, event)
-		}
-	}
+	ws.EmitToSession(sessionID, event)
 }
 
 // RunDrainLoop runs the complete drain loop after an initial stream execution.

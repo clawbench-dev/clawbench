@@ -623,7 +623,6 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// skipEvent=true because the scheduler emits its own task events.
 	SetSessionRunning(sessionID, true, true)
 
-	// Register SSE stream channel so live preview can connect via /api/ai/chat/stream.
 	// Register session stream for WS event delivery
 	defer func() {
 		SetSessionRunning(sessionID, false, true)

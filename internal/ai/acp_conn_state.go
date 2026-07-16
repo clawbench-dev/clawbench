@@ -178,7 +178,7 @@ func (c *ACPConn) applyExtractedState(ext sessionStateExtracted, preserveExistin
 }
 
 // EmitSessionStateEvents emits mode_update, thinking_effort_update, and model_list_update
-// SSE events. Called on every stream start (new and resumed sessions) so the frontend
+// WS events. Called on every stream start (new and resumed sessions) so the frontend
 // always receives the current ACP state.
 func (c *ACPConn) EmitSessionStateEvents(ch chan<- StreamEvent) {
 	agentID := c.AgentID()
@@ -198,7 +198,7 @@ func (c *ACPConn) EmitSessionStateEvents(ch chan<- StreamEvent) {
 	}
 }
 
-// EmitCommandsUpdate re-emits cached slash commands as an SSE event.
+// EmitCommandsUpdate re-emits cached slash commands as a WS event.
 func (c *ACPConn) EmitCommandsUpdate(ch chan<- StreamEvent) {
 	agentID := c.AgentID()
 	cmds := GetAgentCapabilityRegistry().GetCommands(agentID)

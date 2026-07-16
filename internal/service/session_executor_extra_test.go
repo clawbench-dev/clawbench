@@ -189,12 +189,16 @@ func TestSessionExecutor_HandleNonTerminalEvent_ToolUseMetaExtraction(t *testing
 	executor := NewSessionExecutor(ctx, cfg)
 
 	// tool_use event should have meta extracted and forwarded to StreamHub
-	// (no channel to verify directly; just ensure no panic)
 	event := ai.StreamEvent{
 		Type: "tool_use",
 		Tool: &ai.ToolCall{Name: "Read", ID: "tool-1", Input: `{"file_path":"/src/main.go"}`},
 	}
 	executor.handleNonTerminalEvent(event)
+
+	// Verify ToolMeta was extracted correctly on the event
+	meta := ai.ExtractToolCallMeta(event)
+	assert.Equal(t, "tool-1", meta.ToolID)
+	assert.Equal(t, "/src/main.go", meta.FilePath) // extracted from tool_use Input
 }
 
 // --- SessionExecutor RunWithChannel additional coverage ---
@@ -806,7 +810,10 @@ func TestSessionExecutor_HandleNonTerminalEvent_ToolResultMetaExtraction(t *test
 		Tool: &ai.ToolCall{Name: "Read", ID: "tool-2", Output: "file contents"},
 	}
 	executor.handleNonTerminalEvent(event)
-	// No panic = success; ToolMeta extraction is tested via integration
+
+	// Verify ToolMeta was extracted correctly on the event
+	meta := ai.ExtractToolCallMeta(event)
+	assert.Equal(t, "tool-2", meta.ToolID)
 }
 
 // --- handleNonTerminalEvent upserts tool call when StreamingMessageID set ---

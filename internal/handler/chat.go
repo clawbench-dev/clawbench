@@ -183,7 +183,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 
 		// Look up cached ACP mode/thinking/model list state for this session.
 		// This allows the frontend to populate mode chips immediately
-		// without waiting for SSE events (which may have already been consumed).
+		// without waiting for WS events (which may have already been consumed).
 		// Fallback: for brand-new sessions with no pool session mapping yet,
 		// look up from AgentCapabilityRegistry so mode chips appear on first load.
 		// For CLI sessions, synthesize a read-only mode from the backend name
@@ -489,11 +489,11 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		defer service.SetSessionRunning(sessionID, false)
 		defer cancel()
 		defer service.UnregisterSessionCancel(sessionID)
-		// Mark session as not-running BEFORE sending terminal SSE event.
+		// Mark session as not-running BEFORE sending terminal WS event.
 		// Without this, a race exists: the "done" event reaches the client,
 		// which calls loadHistory(), but the deferred SetSessionRunning(false)
 		// hasn't run yet, so the API returns running=true and the frontend
-		// reconnects SSE in a loop — leaving the stop button stuck.
+		// reconnects WS in a loop — leaving the stop button stuck.
 		// By setting running=false first, loadHistory() always sees the
 		// correct terminal state.
 		markDoneAndSendFinal := func(event ai.StreamEvent) {
@@ -559,11 +559,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 
 // emitStreamEvent emits a stream event to WS clients via StreamHub.
 func emitStreamEvent(sessionID string, event ai.StreamEvent) {
-	if mgr := ws.GetManager(); mgr != nil {
-		if hub := mgr.StreamHub(); hub != nil && hub.HasSubscribers(sessionID) {
-			hub.Emit(sessionID, event)
-		}
-	}
+	ws.EmitToSession(sessionID, event)
 }
 
 // streamRunResult captures the outcome of a single AI stream execution.

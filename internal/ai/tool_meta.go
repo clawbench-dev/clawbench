@@ -9,7 +9,7 @@ import (
 const maxSummaryLen = 200
 
 // ToolCallMeta holds extracted metadata from a tool call event,
-// used by the SSE handler to include summary/display info in slim events.
+// used by the WS handler to include summary/display info in slim events.
 type ToolCallMeta struct {
 	ToolID      string `json:"tool_id"`
 	Summary     string `json:"summary"`
@@ -18,8 +18,8 @@ type ToolCallMeta struct {
 }
 
 // ExtractToolCallMeta extracts metadata (summary, display_name, file_path)
-// from a StreamEvent. This is called before SSE forwarding so that
-// slim SSE events can include display information without waiting for
+// from a StreamEvent. This is called before WS forwarding so that
+// slim WS events can include display information without waiting for
 // AccumulateBlock.
 func ExtractToolCallMeta(event StreamEvent) ToolCallMeta {
 	if event.Tool == nil {

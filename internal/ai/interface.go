@@ -62,7 +62,7 @@ type Metadata struct {
 
 // Warning reason codes — used by frontend for i18n lookup and visual severity
 const (
-	ReasonDisconnect    = "disconnect"     // SSE client disconnected
+	ReasonDisconnect    = "disconnect"     // WS client disconnected
 	ReasonTimeout       = "timeout"        // AI response timeout
 	ReasonUserCancel    = "user_cancel"    // User explicitly cancelled
 	ReasonContextCancel = "context_cancel" // Context cancelled (generic interruption)
@@ -174,7 +174,7 @@ type StreamEvent struct {
 	Plan           *PlanState             // Plan state (Type=plan_update)
 	ModelList      *ModelListState        // Model list state (Type=model_list_update)
 	Usage          *UsageState            // Usage state (Type=usage_update)
-	ToolMeta       *ToolCallMeta          // Extracted tool metadata for SSE forwarding (Type=tool_use, Type=tool_result)
+	ToolMeta       *ToolCallMeta          // Extracted tool metadata for WS forwarding (Type=tool_use, Type=tool_result)
 }
 
 // ToolCall represents a tool invocation by the AI.
@@ -205,7 +205,7 @@ func truncateToolOutput(output string) string {
 	return output[:maxToolOutputBytes] + fmt.Sprintf("\n[truncated: original %d bytes]", len(output))
 }
 
-// QueueEventData carries data for queue_drain and queue_cancel SSE events.
+// QueueEventData carries data for queue_drain and queue_cancel WS events.
 // queue_drain: atomically finalizes current streaming, starts next queued message.
 // queue_cancel: emitted when user cancels while messages are queued.
 type QueueEventData struct {

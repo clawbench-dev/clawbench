@@ -120,7 +120,7 @@ func CloseTTSJobDone(id string) {
 	}
 }
 
-// CancelTTSJob cancels a running TTS job. Used when the SSE client disconnects.
+// CancelTTSJob cancels a running TTS job. Used when the WS client disconnects.
 func CancelTTSJob(id string) {
 	val, ok := ttsJobs.Load(id)
 	if !ok {

@@ -113,6 +113,22 @@ func (h *StreamHub) Emit(sessionID string, event ai.StreamEvent) {
 	}
 }
 
+// EmitToSession emits a StreamEvent to all subscribers of a session.
+// This is a convenience function that retrieves the Manager and StreamHub,
+// checking for nil and subscriber presence. Use this instead of duplicating
+// the nil-check pattern at each call site.
+func EmitToSession(sessionID string, event ai.StreamEvent) {
+	mgr := GetManager()
+	if mgr == nil {
+		return
+	}
+	hub := mgr.StreamHub()
+	if hub == nil || !hub.HasSubscribers(sessionID) {
+		return
+	}
+	hub.Emit(sessionID, event)
+}
+
 // StreamEventToPayload converts an ai.StreamEvent to the payload data
 // that was previously written as SSE `data:` fields. The payload format
 // is kept identical to the SSE format for frontend compatibility.

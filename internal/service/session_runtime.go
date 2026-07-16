@@ -291,7 +291,7 @@ func UnregisterSessionCancel(sessionID string) {
 }
 
 // SetCancelReason records the cancellation reason for a session without cancelling it.
-// Used by the SSE handler when a client disconnects — the AI session continues running
+// Used by the WS handler when a client disconnects — the AI session continues running
 // but the reason is stored for the session finalizer to read later.
 func SetCancelReason(sessionID string, reason string) {
 	sessionCancelReasons.Store(sessionID, reason)
@@ -373,8 +373,8 @@ func CancelSession(sessionID string) bool {
 	return true
 }
 
-// ForceCancelSession cancels the AI context for a session without sending SSE events.
-// Used when the SSE client has disconnected and we want to stop the AI goroutine
+// ForceCancelSession cancels the AI context for a session without sending WS events.
+// Used when the WS client has disconnected and we want to stop the AI goroutine
 // to prevent zombie processes.
 func ForceCancelSession(sessionID string) {
 	val, ok := sessionCancels.LoadAndDelete(sessionID)

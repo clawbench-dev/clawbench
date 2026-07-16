@@ -45,7 +45,7 @@ type ClawBenchACPClient struct {
 	debouncers        map[string]*toolCallDebouncer // acpSessionID → debouncer
 
 	// LoadSession replay buffer: during LoadSession, SessionUpdate messages
-	// are collected here instead of being routed to SSE stream channels.
+	// are collected here instead of being routed to WS stream channels.
 	loadSessionBuf   []acp.SessionNotification
 	loadSessionBufMu sync.Mutex
 
@@ -174,7 +174,7 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 	}
 
 	// During LoadSession replay, collect messages in buffer instead of
-	// routing to SSE stream channels. The load handler reads them after
+	// routing to WS stream channels. The load handler reads them after
 	// the LoadSession RPC returns.
 	if c.IsLoadSessionActive() {
 		c.loadSessionBufMu.Lock()

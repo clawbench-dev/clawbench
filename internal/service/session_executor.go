@@ -112,7 +112,7 @@ type RunResult struct {
 // The caller is responsible for:
 //   - Creating and managing the context (including cancel functions)
 //   - Setting session running state (TrySetSessionRunning / SetSessionRunning)
-//   - Handling post-execution logic (SSE terminal events, drain loop, task status updates)
+//   - Handling post-execution logic (WS terminal events, drain loop, task status updates)
 type SessionExecutor struct {
 	cfg RunConfig
 	ctx context.Context
@@ -199,11 +199,7 @@ func (e *SessionExecutor) forwardEvent(event ai.StreamEvent) {
 
 	// Emit to StreamHub for WS fan-out (except resume_split, handled separately)
 	if event.Type != "resume_split" {
-		if mgr := ws.GetManager(); mgr != nil {
-			if hub := mgr.StreamHub(); hub != nil && hub.HasSubscribers(e.cfg.SessionID) {
-				hub.Emit(e.cfg.SessionID, forwardEvent)
-			}
-		}
+		ws.EmitToSession(e.cfg.SessionID, forwardEvent)
 	}
 }
 

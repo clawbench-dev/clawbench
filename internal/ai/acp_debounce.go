@@ -8,7 +8,7 @@ import (
 )
 
 // toolCallDebouncer batches rapid ToolCallUpdate events for the same tool ID
-// to reduce the number of SSE events sent to the frontend. ACP agents emit
+// to reduce the number of WS events sent to the frontend. ACP agents emit
 // ToolCallUpdate deltas every ~30ms during tool input streaming, but the
 // frontend only needs the final accumulated input for rendering.
 //

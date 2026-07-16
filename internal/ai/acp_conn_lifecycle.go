@@ -533,7 +533,7 @@ func (c *ACPConn) CancelTurn(ctx context.Context) {
 }
 
 // SetSessionConfigOption sets a config option for this session.
-// Also updates cached state so re-emitted SSE events reflect the new value.
+// Also updates cached state so re-emitted WS events reflect the new value.
 func (c *ACPConn) SetSessionConfigOption(ctx context.Context, configID, value string) {
 	if !c.shouldSetConfig(configID, value) {
 		slog.Debug("acp conn: SetSessionConfigOption skipped (unchanged)", "config_id", configID, "value", value, "clawbench_sid", c.clawbenchSID)
