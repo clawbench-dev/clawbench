@@ -172,7 +172,6 @@ type LaunchConfig struct {
 // The caller must have already persisted the user message and called TrySetSessionRunning.
 func LaunchSessionExecution(cfg LaunchConfig) {
 	sessionID := cfg.SessionID
-	streamCh := RegisterSessionStream(sessionID)
 	ctx, cancel := context.WithCancel(context.Background())
 	RegisterSessionCancel(sessionID, cancel)
 
@@ -180,18 +179,42 @@ func LaunchSessionExecution(cfg LaunchConfig) {
 		defer handleSessionPanic(cfg, sessionID, cancel)
 
 		defer SetSessionRunning(sessionID, false)
-		defer UnregisterSessionStream(sessionID)
 		defer cancel()
 		defer UnregisterSessionCancel(sessionID)
 		defer handleACPCleanup(sessionID, cfg.AgentID)
 
 		markDoneAndSendFinal := func(event ai.StreamEvent) {
-			SetSessionRunning(sessionID, false, true)
-			ai.SendFinalStreamEvent(streamCh, event)
+			SetSessionRunning(sessionID, false, true) // skip event — we emit directly
+			emitDrainEvent(sessionID, event)
 		}
 
-		result := executeStreamRunShared(ctx, streamCh, cfg)
-		processStreamResult(ctx, streamCh, cfg, sessionID, result, markDoneAndSendFinal)
+		result := executeStreamRunShared(ctx, cfg)
+		RunDrainLoop(DrainConfig{
+			SessionID:   sessionID,
+			ProjectPath: cfg.ProjectPath,
+			BackendName: cfg.BackendName,
+			PersistUser: func(text string, files []model.FileEntry) (int64, error) {
+				msgID, err := AddChatMessage(cfg.ProjectPath, cfg.BackendName, sessionID, roleUser, text, files, false, "")
+				if err != nil {
+					slog.Error("failed to persist drain message", slog.String("session", sessionID), slog.String("error", err.Error()))
+				}
+				return msgID, err
+			},
+			ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
+				cfg.Message = qMsg.Text
+				nextResult := executeStreamRunShared(ctx, cfg)
+				return DrainResult{
+					CancelReason: nextResult.cancelReason,
+					Err:          nextResult.err,
+					Empty:        nextResult.empty,
+				}
+			},
+			MarkDoneAndSendFinal: markDoneAndSendFinal,
+		}, DrainResult{
+			CancelReason: result.cancelReason,
+			Err:          result.err,
+			Empty:        result.empty,
+		})
 	}()
 }
 
@@ -206,8 +229,7 @@ func handleSessionPanic(cfg LaunchConfig, sessionID string, cancel context.Cance
 		SetSessionRunning(sessionID, false, true)
 		UnregisterSessionCancel(sessionID)
 		cancel()
-		SendSessionEvent(sessionID, ai.StreamEvent{Type: eventTypeError, Error: "AI internal error, please retry", Reason: ai.ReasonPanic})
-		UnregisterSessionStream(sessionID)
+		emitDrainEvent(sessionID, ai.StreamEvent{Type: eventTypeError, Error: "AI internal error, please retry", Reason: ai.ReasonPanic})
 		errMsg := "AI internal error, please retry"
 		errContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{map[string]string{contentKeyType: eventTypeError, contentKeyText: errMsg, "reason": ai.ReasonPanic}}})
 		_, _ = FinalizeStreamingMessage(cfg.ProjectPath, cfg.BackendName, sessionID, string(errContent))
@@ -225,62 +247,6 @@ func handleACPCleanup(sessionID, agentID string) {
 	if effectiveTransport == transportACPStdio {
 		slog.Info("acp: marking connection idle for completed session", "session_id", sessionID, "agent_id", agentID)
 		ai.GetACPConnManager().MarkIdle(sessionID)
-	}
-}
-
-// processStreamResult handles the result of a stream run, including drain loop logic.
-func processStreamResult(ctx context.Context, streamCh chan ai.StreamEvent, cfg LaunchConfig, sessionID string, result streamRunResultShared, markDoneAndSendFinal func(ai.StreamEvent)) {
-	for {
-		if result.cancelReason == cancelReasonUser {
-			ClearQueue(sessionID)
-			markDoneAndSendFinal(ai.StreamEvent{Type: statusCancelled})
-			return
-		}
-		if result.err != "" {
-			markDoneAndSendFinal(ai.StreamEvent{Type: eventTypeError, Error: result.err})
-			return
-		}
-		if result.empty {
-			markDoneAndSendFinal(ai.StreamEvent{Type: eventTypeError, Error: "AI returned no content", Reason: ai.ReasonEmpty})
-			return
-		}
-		if result.cancelReason != "" {
-			markDoneAndSendFinal(ai.StreamEvent{Type: statusCancelled})
-			return
-		}
-
-		qMsg, ok := DequeueMessage(sessionID)
-		if !ok {
-			time.Sleep(50 * time.Millisecond)
-			qMsg, ok = DequeueMessage(sessionID)
-		}
-		if !ok {
-			markDoneAndSendFinal(ai.StreamEvent{Type: "done"})
-			return
-		}
-
-		slog.Info("draining queued message", slog.String("session", sessionID), slog.String("text", qMsg.Text))
-
-		drainMsgID, err := AddChatMessage(cfg.ProjectPath, cfg.BackendName, sessionID, roleUser, qMsg.Text, qMsg.Files, false, "")
-		if err != nil {
-			slog.Error("failed to persist drain message", slog.String("session", sessionID), slog.String("error", err.Error()))
-		}
-
-		remainingQueue := GetQueue(sessionID)
-		ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{
-			Type: "queue_drain",
-			QueueEvent: &ai.QueueEventData{
-				SessionID: sessionID,
-				Text:      qMsg.Text,
-				MessageID: drainMsgID,
-				FilePaths: qMsg.FilePaths,
-				Files:     qMsg.Files,
-				Queue:     remainingQueue,
-			},
-		})
-
-		cfg.Message = qMsg.Text
-		result = executeStreamRunShared(ctx, streamCh, cfg)
 	}
 }
 
@@ -446,14 +412,14 @@ type streamRunResultShared struct {
 
 // executeStreamRunShared runs one AI backend execution.
 // Uses the correct SessionExecutor API: NewSessionExecutor(ctx, RunConfig) -> RunWithChannel(eventCh) -> Finalize(result, eventCh)
-func executeStreamRunShared(ctx context.Context, streamCh chan ai.StreamEvent, cfg LaunchConfig) streamRunResultShared {
+func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResultShared {
 	sessionTransport := GetSessionTransport(cfg.SessionID)
 
 	backend, err := ai.NewBackendForAgentWithTransport(cfg.BackendName, cfg.AgentID, sessionTransport)
 	if err != nil {
 		slog.Error("failed to create backend", slog.String("backend", cfg.BackendName), slog.String("err", err.Error()))
 		errMsg := fmt.Sprintf("create backend: %v", err)
-		ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{Type: eventTypeError, Error: errMsg})
+		emitDrainEvent(cfg.SessionID, ai.StreamEvent{Type: eventTypeError, Error: errMsg})
 		if _, saveErr := AddChatMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, roleAssistant, errMsg, nil, false, ""); saveErr != nil {
 			slog.Error("failed to save error message", slog.String("err", saveErr.Error()))
 		}
@@ -472,7 +438,7 @@ func executeStreamRunShared(ctx context.Context, streamCh chan ai.StreamEvent, c
 	if err != nil {
 		slog.Error("failed to start stream", slog.String("err", err.Error()))
 		errMsg := fmt.Sprintf("start stream: %v", err)
-		ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{Type: eventTypeError, Error: errMsg})
+		emitDrainEvent(cfg.SessionID, ai.StreamEvent{Type: eventTypeError, Error: errMsg})
 		if _, saveErr := AddChatMessage(cfg.ProjectPath, cfg.BackendName, cfg.SessionID, roleAssistant, errMsg, nil, false, ""); saveErr != nil {
 			slog.Error("failed to save error message", slog.String("err", saveErr.Error()))
 		}
@@ -493,14 +459,13 @@ func executeStreamRunShared(ctx context.Context, streamCh chan ai.StreamEvent, c
 		AgentID:            cfg.AgentID,
 		ChatRequest:        chatReq,
 		StreamingMessageID: streamingMsgID,
-		StreamCh:           streamCh,
 		LocalizeError:      nil,
 	}
 	executor := NewSessionExecutor(ctx, execCfg)
 	runResult := executor.RunWithChannel(eventCh)
 	runResult = executor.Finalize(runResult, eventCh)
 
-	ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{Type: "metadata", Meta: runResult.Metadata})
+	emitDrainEvent(cfg.SessionID, ai.StreamEvent{Type: "metadata", Meta: runResult.Metadata})
 
 	result := streamRunResultShared{}
 	if runResult.CancelReason == cancelReasonUser {

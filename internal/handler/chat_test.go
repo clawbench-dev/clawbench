@@ -2568,7 +2568,6 @@ func TestExecuteStreamRun_CtxCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
-	streamCh := make(chan ai.StreamEvent, 10)
 	chatReq := ai.ChatRequest{Prompt: "test"}
 
 	req := newRequest(t, http.MethodPost, "/api/ai/chat", bytes.NewReader([]byte(`{}`)))
@@ -2577,7 +2576,7 @@ func TestExecuteStreamRun_CtxCancelled(t *testing.T) {
 	// executeStreamRun should hit the ctx.Done() branch because the
 	// backend.ExecuteStream call will fail (no claude CLI), and during
 	// the event loop iteration, the cancelled context will be selected.
-	result := executeStreamRun(ctx, req, streamCh, env.ProjectDir, sessionID, "claude", "default", chatReq, "")
+	result := executeStreamRun(ctx, req, env.ProjectDir, sessionID, "claude", "default", chatReq, "")
 	// The result should indicate an error (no backend available) but
 	// the ctx.Done() path should still be covered in the select statement.
 	_ = result

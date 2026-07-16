@@ -996,152 +996,171 @@ func TestHandleACPCleanup_UnknownAgent(t *testing.T) {
 }
 
 // ============================================================================
-// processStreamResult tests
+// RunDrainLoop tests
 // ============================================================================
 
-func TestProcessStreamResult_UserCancel(t *testing.T) {
+func TestRunDrainLoop_UserCancel(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-
-	ctx := context.Background()
-	streamCh := make(chan ai.StreamEvent, 10)
-	cfg := LaunchConfig{
-		SessionID:   "cancel-sess",
-		ProjectPath: "/proj",
-		BackendName: "claude",
-		AgentID:     "agent",
-		Message:     "test",
-	}
 
 	var finalEvent ai.StreamEvent
 	markDoneAndSendFinal := func(event ai.StreamEvent) {
 		finalEvent = event
 	}
 
-	result := streamRunResultShared{cancelReason: cancelReasonUser}
-	processStreamResult(ctx, streamCh, cfg, "cancel-sess", result, markDoneAndSendFinal)
+	drainCfg := DrainConfig{
+		SessionID:             "cancel-sess",
+		ProjectPath:           "/proj",
+		BackendName:           "claude",
+		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
+		MarkDoneAndSendFinal:  markDoneAndSendFinal,
+	}
 
-	assert.Equal(t, statusCancelled, finalEvent.Type)
+	result := DrainResult{CancelReason: "user"}
+	RunDrainLoop(drainCfg, result)
+
+	assert.Equal(t, "cancelled", finalEvent.Type)
 }
 
-func TestProcessStreamResult_Error(t *testing.T) {
+func TestRunDrainLoop_UserCancel_EmitsQueueCancel(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
-	ctx := context.Background()
-	streamCh := make(chan ai.StreamEvent, 10)
-	cfg := LaunchConfig{
-		SessionID:   "error-sess",
-		ProjectPath: "/proj",
-		BackendName: "claude",
-		AgentID:     "agent",
-		Message:     "test",
-	}
+	sessionID := "cancel-with-queue"
+
+	// Pre-enqueue two messages with queueIds
+	EnqueueMessage(sessionID, model.QueuedMessage{QueueID: "pending-A", Text: "msg A", CreatedAt: "2026-01-01T00:00:00Z"})
+	EnqueueMessage(sessionID, model.QueuedMessage{QueueID: "pending-B", Text: "msg B", CreatedAt: "2026-01-01T00:00:01Z"})
 
 	var finalEvent ai.StreamEvent
 	markDoneAndSendFinal := func(event ai.StreamEvent) {
 		finalEvent = event
 	}
 
-	result := streamRunResultShared{err: "something went wrong"}
-	processStreamResult(ctx, streamCh, cfg, "error-sess", result, markDoneAndSendFinal)
+	drainCfg := DrainConfig{
+		SessionID:             sessionID,
+		ProjectPath:           "/proj",
+		BackendName:           "claude",
+		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
+		MarkDoneAndSendFinal:  markDoneAndSendFinal,
+	}
 
-	assert.Equal(t, eventTypeError, finalEvent.Type)
+	result := DrainResult{CancelReason: "user"}
+	RunDrainLoop(drainCfg, result)
+
+	assert.Equal(t, "cancelled", finalEvent.Type)
+
+	// Queue should be cleared
+	assert.Empty(t, GetQueue(sessionID))
+}
+
+func TestRunDrainLoop_Error(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	var finalEvent ai.StreamEvent
+	markDoneAndSendFinal := func(event ai.StreamEvent) {
+		finalEvent = event
+	}
+
+	drainCfg := DrainConfig{
+		SessionID:           "error-sess",
+		ProjectPath:         "/proj",
+		BackendName:         "claude",
+		PersistUser:         func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
+		MarkDoneAndSendFinal: markDoneAndSendFinal,
+	}
+
+	result := DrainResult{Err: "something went wrong"}
+	RunDrainLoop(drainCfg, result)
+
+	assert.Equal(t, "error", finalEvent.Type)
 	assert.Equal(t, "something went wrong", finalEvent.Error)
 }
 
-func TestProcessStreamResult_EmptyContent(t *testing.T) {
+func TestRunDrainLoop_EmptyContent(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-
-	ctx := context.Background()
-	streamCh := make(chan ai.StreamEvent, 10)
-	cfg := LaunchConfig{
-		SessionID:   "empty-sess",
-		ProjectPath: "/proj",
-		BackendName: "claude",
-		AgentID:     "agent",
-		Message:     "test",
-	}
 
 	var finalEvent ai.StreamEvent
 	markDoneAndSendFinal := func(event ai.StreamEvent) {
 		finalEvent = event
 	}
 
-	result := streamRunResultShared{empty: true}
-	processStreamResult(ctx, streamCh, cfg, "empty-sess", result, markDoneAndSendFinal)
+	drainCfg := DrainConfig{
+		SessionID:           "empty-sess",
+		ProjectPath:         "/proj",
+		BackendName:         "claude",
+		PersistUser:         func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
+		MarkDoneAndSendFinal: markDoneAndSendFinal,
+	}
 
-	assert.Equal(t, eventTypeError, finalEvent.Type)
+	result := DrainResult{Empty: true}
+	RunDrainLoop(drainCfg, result)
+
+	assert.Equal(t, "error", finalEvent.Type)
 	assert.Equal(t, "AI returned no content", finalEvent.Error)
 	assert.Equal(t, ai.ReasonEmpty, finalEvent.Reason)
 }
 
-func TestProcessStreamResult_NonUserCancel(t *testing.T) {
+func TestRunDrainLoop_NonUserCancel(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-
-	ctx := context.Background()
-	streamCh := make(chan ai.StreamEvent, 10)
-	cfg := LaunchConfig{
-		SessionID:   "disconnect-sess",
-		ProjectPath: "/proj",
-		BackendName: "claude",
-		AgentID:     "agent",
-		Message:     "test",
-	}
 
 	var finalEvent ai.StreamEvent
 	markDoneAndSendFinal := func(event ai.StreamEvent) {
 		finalEvent = event
 	}
 
-	result := streamRunResultShared{cancelReason: "disconnect"}
-	processStreamResult(ctx, streamCh, cfg, "disconnect-sess", result, markDoneAndSendFinal)
+	drainCfg := DrainConfig{
+		SessionID:           "disconnect-sess",
+		ProjectPath:         "/proj",
+		BackendName:         "claude",
+		PersistUser:         func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
+		MarkDoneAndSendFinal: markDoneAndSendFinal,
+	}
 
-	assert.Equal(t, statusCancelled, finalEvent.Type)
+	result := DrainResult{CancelReason: "disconnect"}
+	RunDrainLoop(drainCfg, result)
+
+	assert.Equal(t, "cancelled", finalEvent.Type)
 }
 
-func TestProcessStreamResult_DoneNoQueue(t *testing.T) {
+func TestRunDrainLoop_DoneNoQueue(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-
-	ctx := context.Background()
-	streamCh := make(chan ai.StreamEvent, 10)
-	cfg := LaunchConfig{
-		SessionID:   "done-sess",
-		ProjectPath: "/proj",
-		BackendName: "claude",
-		AgentID:     "agent",
-		Message:     "test",
-	}
 
 	var finalEvent ai.StreamEvent
 	markDoneAndSendFinal := func(event ai.StreamEvent) {
 		finalEvent = event
+	}
+
+	drainCfg := DrainConfig{
+		SessionID:           "done-sess",
+		ProjectPath:         "/proj",
+		BackendName:         "claude",
+		PersistUser:         func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
+		MarkDoneAndSendFinal: markDoneAndSendFinal,
 	}
 
 	// No error, no cancel, not empty → should check queue, find nothing → done
-	result := streamRunResultShared{}
-	processStreamResult(ctx, streamCh, cfg, "done-sess", result, markDoneAndSendFinal)
+	result := DrainResult{}
+	RunDrainLoop(drainCfg, result)
 
 	assert.Equal(t, "done", finalEvent.Type)
 }
 
-func TestProcessStreamResult_DrainQueue(t *testing.T) {
+func TestRunDrainLoop_DrainQueue(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
 	sessionID := "drain-sess"
-	ctx := context.Background()
-	streamCh := make(chan ai.StreamEvent, 10)
-	cfg := LaunchConfig{
-		SessionID:   sessionID,
-		ProjectPath: "/proj",
-		BackendName: "claude",
-		AgentID:     "agent",
-		Message:     "test",
-	}
 
 	var finalEvents []ai.StreamEvent
 	markDoneAndSendFinal := func(event ai.StreamEvent) {
@@ -1151,44 +1170,51 @@ func TestProcessStreamResult_DrainQueue(t *testing.T) {
 	// Enqueue a message so the drain loop can find it
 	EnqueueMessage(sessionID, model.QueuedMessage{Text: "queued msg", CreatedAt: "2026-01-01T00:00:00Z"})
 
-	// First iteration: no cancel, no error, not empty=false → drains queue
-	// Second iteration: returns empty result → done
-	// We need to provide a second result that signals "done" after the drain.
-	// Since processStreamResult calls executeStreamRunShared internally,
-	// we can't easily control the second iteration. Instead test the drain path
-	// by providing a result that would go to the queue check.
-	result := streamRunResultShared{} // no cancel, no error, not empty → checks queue
-	processStreamResult(ctx, streamCh, cfg, sessionID, result, markDoneAndSendFinal)
+	callCount := 0
+	drainCfg := DrainConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/proj",
+		BackendName: "claude",
+		PersistUser: func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
+			callCount++
+			// Return done on the second call
+			return DrainResult{} // will loop again but queue is now empty
+		},
+		MarkDoneAndSendFinal: markDoneAndSendFinal,
+	}
 
-	// After the first drain, executeStreamRunShared is called again which will fail
-	// (no real backend). The goroutine will produce an error result, causing
-	// processStreamResult to emit an error event. Verify at least one event was emitted.
-	assert.NotEmpty(t, finalEvents, "processStreamResult should have emitted events during drain")
+	result := DrainResult{} // no cancel, no error, not empty → checks queue
+	RunDrainLoop(drainCfg, result)
+
+	// Should have drained the queued message and then found queue empty → done
+	assert.Equal(t, 1, callCount, "ExecuteRunWithMessage should be called once for the drained message")
+	assert.Equal(t, "done", finalEvents[len(finalEvents)-1].Type)
 }
 
-func TestProcessStreamResult_DoneWithRetryQueue(t *testing.T) {
+func TestRunDrainLoop_DoneWithRetryQueue(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
 	sessionID := "drain-retry-sess"
-	ctx := context.Background()
-	streamCh := make(chan ai.StreamEvent, 10)
-	cfg := LaunchConfig{
-		SessionID:   sessionID,
-		ProjectPath: "/proj",
-		BackendName: "claude",
-		AgentID:     "agent",
-		Message:     "test",
-	}
 
 	var finalEvent ai.StreamEvent
 	markDoneAndSendFinal := func(event ai.StreamEvent) {
 		finalEvent = event
 	}
 
+	drainCfg := DrainConfig{
+		SessionID:             sessionID,
+		ProjectPath:           "/proj",
+		BackendName:           "claude",
+		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
+		MarkDoneAndSendFinal:  markDoneAndSendFinal,
+	}
+
 	// No queue → should immediately return done
-	result := streamRunResultShared{}
-	processStreamResult(ctx, streamCh, cfg, sessionID, result, markDoneAndSendFinal)
+	result := DrainResult{}
+	RunDrainLoop(drainCfg, result)
 
 	assert.Equal(t, "done", finalEvent.Type)
 }
@@ -1337,11 +1363,6 @@ func TestHandleSessionPanic_Recovers(t *testing.T) {
 	defer func() { model.Agents = origAgents }()
 
 	sessionID := "panic-sess-1"
-	// Register the session stream and cancel so cleanup doesn't panic
-	RegisterSessionStream(sessionID)
-	defer func() {
-		UnregisterSessionStream(sessionID)
-	}()
 	_, cancel := context.WithCancel(context.Background())
 	RegisterSessionCancel(sessionID, cancel)
 
@@ -1373,8 +1394,6 @@ func TestLaunchSessionExecution_BackendCreationFails(t *testing.T) {
 	defer func() { model.Agents = origAgents }()
 
 	sessionID := "launch-fail-sess"
-	// Need to register session stream first so LaunchSessionExecution doesn't duplicate
-	UnregisterSessionStream(sessionID)
 	SetSessionRunning(sessionID, true, false)
 	defer SetSessionRunning(sessionID, false, true)
 
@@ -1520,23 +1539,14 @@ func TestDingTalkSessionInfo_JSONRoundTrip(t *testing.T) {
 }
 
 // ============================================================================
-// processStreamResult drain queue tests
+// RunDrainLoop drain queue tests
 // ============================================================================
 
-func TestProcessStreamResult_DrainQueuedMessage(t *testing.T) {
+func TestRunDrainLoop_DrainQueuedMessage(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
 	sessionID := "drain-sess-1"
-	ctx := context.Background()
-	streamCh := make(chan ai.StreamEvent, 20)
-	cfg := LaunchConfig{
-		SessionID:   sessionID,
-		ProjectPath: "/proj",
-		BackendName: "claude",
-		AgentID:     "agent",
-		Message:     "test",
-	}
 
 	// Pre-enqueue a message
 	EnqueueMessage(sessionID, model.QueuedMessage{
@@ -1549,44 +1559,51 @@ func TestProcessStreamResult_DrainQueuedMessage(t *testing.T) {
 		finalEvents = append(finalEvents, event)
 	}
 
-	// First result is success (no error, no cancel, not empty)
-	// It should drain the queued message, then the second result will be "done"
-	result := streamRunResultShared{}
-	processStreamResult(ctx, streamCh, cfg, sessionID, result, markDoneAndSendFinal)
+	drainCfg := DrainConfig{
+		SessionID:     sessionID,
+		ProjectPath:   "/proj",
+		BackendName:   "claude",
+		PersistUser:   func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
+			return DrainResult{} // will loop again, queue now empty → done
+		},
+		MarkDoneAndSendFinal: markDoneAndSendFinal,
+	}
 
-	// Should have found the queued message, drained it, then called executeStreamRunShared
-	// which will fail (no real backend), resulting in an error
+	result := DrainResult{} // no cancel, no error, not empty → checks queue
+	RunDrainLoop(drainCfg, result)
+
+	// Should have found the queued message, drained it, then found queue empty
 	require.NotEmpty(t, finalEvents, "should have at least one final event")
-	// The final event should be an error from the failed stream run
-	assert.Equal(t, eventTypeError, finalEvents[len(finalEvents)-1].Type)
+	assert.Equal(t, "done", finalEvents[len(finalEvents)-1].Type)
 
 	// Clean up queue
 	ClearQueue(sessionID)
 }
 
-func TestProcessStreamResult_DrainQueueEmptyAfterDrain(t *testing.T) {
+func TestRunDrainLoop_DrainQueueEmptyAfterDrain(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
 	sessionID := "drain-empty-sess"
-	ctx := context.Background()
-	streamCh := make(chan ai.StreamEvent, 20)
-	cfg := LaunchConfig{
-		SessionID:   sessionID,
-		ProjectPath: "/proj",
-		BackendName: "claude",
-		AgentID:     "agent",
-		Message:     "test",
-	}
 
 	var finalEvent ai.StreamEvent
 	markDoneAndSendFinal := func(event ai.StreamEvent) {
 		finalEvent = event
 	}
 
+	drainCfg := DrainConfig{
+		SessionID:             sessionID,
+		ProjectPath:           "/proj",
+		BackendName:           "claude",
+		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
+		MarkDoneAndSendFinal:  markDoneAndSendFinal,
+	}
+
 	// Empty result with empty queue → should return "done"
-	result := streamRunResultShared{}
-	processStreamResult(ctx, streamCh, cfg, sessionID, result, markDoneAndSendFinal)
+	result := DrainResult{}
+	RunDrainLoop(drainCfg, result)
 
 	assert.Equal(t, "done", finalEvent.Type)
 }

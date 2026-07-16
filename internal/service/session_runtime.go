@@ -4,6 +4,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -22,18 +23,6 @@ var (
 	activeSessions = make(map[string]bool)
 	activeMu       sync.Mutex
 )
-
-// Session stream channel management for SSE streaming.
-// Each session has one channel (producer → single SSE consumer).
-// When multiple clients connect to the same session's SSE stream, only the first
-// gets the live channel; subsequent clients receive an SSE error event and fall
-// back to HTTP polling (which reads from DB and is multi-reader safe).
-var sessionStreams sync.Map // map[string]chan ai.StreamEvent
-
-// sessionSSEClaim tracks which sessions have an active SSE connection.
-// Prevents multiple goroutines from competing on the same channel (Go channels
-// deliver each message to exactly one reader, causing split content).
-var sessionSSEClaim sync.Map // map[string]bool
 
 // Session cancel functions for aborting AI responses
 var (
@@ -309,7 +298,7 @@ func SetCancelReason(sessionID string, reason string) {
 }
 
 // GetAndClearCancelReason returns the reason for the most recent cancellation of a session.
-// Returns "user" for user-initiated cancel, "disconnect" for SSE client disconnect.
+// Returns "user" for user-initiated cancel, "disconnect" for WS client disconnect.
 // Returns "" if no reason was recorded (e.g. timeout or no cancel).
 func GetAndClearCancelReason(sessionID string) string {
 	val, ok := sessionCancelReasons.LoadAndDelete(sessionID)
@@ -378,17 +367,6 @@ func CancelSession(sessionID string) bool {
 
 	EmitSessionEvent(sessionID, "cancelled", false)
 
-	// Send cancelled event to SSE stream after cancelling context (non-blocking)
-	if streamVal, ok := sessionStreams.Load(sessionID); ok {
-		if ch, ok := streamVal.(chan ai.StreamEvent); ok {
-			select {
-			case ch <- ai.StreamEvent{Type: "cancelled"}:
-			default:
-				// Channel full — SSE handler will detect session not running via checkSSE loop
-			}
-		}
-	}
-
 	// Mark session as not running (skip completed event — we already sent "cancelled")
 	SetSessionRunning(sessionID, false, true)
 
@@ -421,76 +399,6 @@ func ForceCancelSession(sessionID string) {
 		time.Sleep(2 * time.Second)
 		FinalizeOrphanedMessages(sessionID, "disconnect")
 	}()
-}
-
-// sessionStreamBufferSize is the buffer capacity for the per-session event channel.
-// Controls backpressure: when the channel is full, SendSessionEvent drops events.
-const sessionStreamBufferSize = 256
-
-// RegisterSessionStream creates and registers a stream channel for a session
-func RegisterSessionStream(sessionID string) chan ai.StreamEvent {
-	ch := make(chan ai.StreamEvent, sessionStreamBufferSize)
-	sessionStreams.Store(sessionID, ch)
-	return ch
-}
-
-// TryClaimSSEStream atomically claims the SSE stream for a session.
-// Returns true if the claim was acquired (no other SSE handler is reading).
-// Returns false if another SSE handler is already consuming the stream.
-// The claim is released via ReleaseSSEStream when the handler exits.
-func TryClaimSSEStream(sessionID string) bool {
-	_, loaded := sessionSSEClaim.LoadOrStore(sessionID, true)
-	return !loaded
-}
-
-// ReleaseSSEStream releases the SSE stream claim for a session.
-// Called by the SSE handler on all exit paths (done, cancelled, error, disconnect).
-func ReleaseSSEStream(sessionID string) {
-	sessionSSEClaim.Delete(sessionID)
-}
-
-// GetSessionStream returns the stream channel for a session
-func GetSessionStream(sessionID string) (<-chan ai.StreamEvent, bool) {
-	val, ok := sessionStreams.Load(sessionID)
-	if !ok {
-		return nil, false
-	}
-	ch, ok := val.(chan ai.StreamEvent)
-	if !ok {
-		return nil, false
-	}
-	return ch, true
-}
-
-// UnregisterSessionStream removes and closes the stream channel for a session
-func UnregisterSessionStream(sessionID string) {
-	if val, ok := sessionStreams.LoadAndDelete(sessionID); ok {
-		if ch, ok := val.(chan ai.StreamEvent); ok {
-			close(ch)
-		}
-	}
-	// Also release any lingering SSE claim
-	sessionSSEClaim.Delete(sessionID)
-}
-
-// SendSessionEvent sends an event to the session stream channel (non-blocking).
-// Returns true if the event was sent successfully.
-func SendSessionEvent(sessionID string, event ai.StreamEvent) bool {
-	if streamVal, ok := sessionStreams.Load(sessionID); ok {
-		if ch, ok := streamVal.(chan ai.StreamEvent); ok {
-			select {
-			case ch <- event:
-				return true
-			default:
-				slog.Warn(
-					"session stream channel full, dropping event",
-					slog.String("session_id", sessionID),
-					slog.String("event_type", event.Type),
-				)
-			}
-		}
-	}
-	return false
 }
 
 // chatSummaryEnabled controls whether chat message auto-summarization is active.
@@ -618,4 +526,61 @@ func summarizeChatSimple(msg *model.ChatMessage, blocks []model.ContentBlock, pr
 			},
 		})
 	}
+}
+
+// RespondPermission delivers a user's approval/rejection response to a pending
+// ACP permission request. Extracted from the HTTP handler so it can be called
+// from both the WS handler and the HTTP endpoint.
+func RespondPermission(sessionID, toolCallID, optionID string, cancelled bool) error {
+	// Resolve ClawBench session ID → ACP session ID via agent ID
+	agentID := GetSessionAgentID(sessionID)
+	if agentID == "" {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	// Look up the ACP connection for this ClawBench session
+	mgr := ai.GetACPConnManager()
+	conn := mgr.GetConn(sessionID)
+	if conn == nil {
+		return fmt.Errorf("session not running: %s", sessionID)
+	}
+
+	client := conn.GetClient()
+	if client == nil {
+		return fmt.Errorf("session not running: %s", sessionID)
+	}
+
+	// We need the ACP session ID to construct the permission key.
+	acpSessionID := conn.AcpSID()
+	if acpSessionID == "" {
+		return fmt.Errorf("ACP session not found: %s", sessionID)
+	}
+
+	// The frontend sends the permissionBlockID (prefixed with "perm_") as toolCallId.
+	// Strip the prefix to recover the original ACP tool call ID used in PermissionKey.
+	if len(toolCallID) > 5 && toolCallID[:5] == "perm_" {
+		toolCallID = toolCallID[5:]
+	}
+
+	key := ai.PermissionKey(acpSessionID, toolCallID)
+
+	ok := client.RespondPermission(key, optionID, cancelled)
+	if !ok {
+		slog.Warn(
+			"permission respond: no pending permission found",
+			"session_id", sessionID,
+			"tool_call_id", toolCallID,
+		)
+		return fmt.Errorf("no pending permission found for session %s, tool %s", sessionID, toolCallID)
+	}
+
+	slog.Info(
+		"permission respond: user responded to permission request",
+		"session_id", sessionID,
+		"tool_call_id", toolCallID,
+		"option_id", optionID,
+		"cancelled", cancelled,
+	)
+
+	return nil
 }

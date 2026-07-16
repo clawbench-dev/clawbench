@@ -940,6 +940,19 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	ws.InitManager()
 	dingtalk.RegisterClientChecker(ws.GetManager())
 
+	// Register WS chat stream callbacks (breaks import cycle between ws and service)
+	ws.OnSubscribe = func(mgr *ws.Manager, clientID, sessionID string) {
+		hub := mgr.StreamHub()
+		hub.EmitACPStateEvents(clientID, sessionID)
+		if service.IsSessionRunning(sessionID) {
+			if msgID := service.GetStreamingMessageID(sessionID); msgID > 0 {
+				hub.EmitStreamStartEvent(clientID, sessionID, msgID)
+			}
+		}
+	}
+	ws.OnCancelSession = service.CancelSession
+	ws.OnPermissionRespond = service.RespondPermission
+
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 

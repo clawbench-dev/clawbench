@@ -276,7 +276,8 @@ const {
 })
 
 // Thinking overlay removed — thinking blocks now expand/collapse inline
-let streamingRefreshTimer = null
+// Debounce map for onToolUpdate fetches — max one fetch per 3s per tool
+const toolUpdateFetchDebounce = new Map()
 
 const session = useChatSession({
   currentSessionId: identity.currentSessionId,
@@ -292,7 +293,6 @@ const session = useChatSession({
   onRenderUpdate: (forceFull) => render.updateRenderedContents(forceFull),
   onScrollBottom: (force) => scrollBottom(force),
   onConnectStream: (sessionId) => stream.connectStream(sessionId),
-  onStopPolling: () => stream.stopPolling(),
   onDisconnectStream: () => stream.disconnectStream(),
   onOpen: () => emit('open'),
   onStreamDone: playNotificationSound,
@@ -395,6 +395,31 @@ const stream = useChatStream({
       }
     }
   },
+  onToolResult: (toolId) => {
+    // Tool finished — if overlay is showing this tool, fetch final output immediately
+    if (activeToolOverlay.value) {
+      const block = findToolBlock(activeToolOverlay.value)
+      if (block && block.id === toolId) {
+        fetchToolCallDetail(block.id, activeToolOverlay.value.msgId, block)
+      }
+    }
+  },
+  onToolUpdate: (toolId) => {
+    // Tool status/summary changed during streaming — fetch interim output
+    if (!activeToolOverlay.value) return
+    const block = findToolBlock(activeToolOverlay.value)
+    if (!block || block.id !== toolId || block.done) return
+    // Debounce: max once per 3s per tool
+    if (toolUpdateFetchDebounce.has(toolId)) return
+    toolUpdateFetchDebounce.set(toolId, setTimeout(() => {
+      toolUpdateFetchDebounce.delete(toolId)
+      if (!activeToolOverlay.value) return
+      const currentBlock = findToolBlock(activeToolOverlay.value)
+      if (currentBlock && currentBlock.id === toolId && !currentBlock.done) {
+        fetchToolCallDetail(toolId, activeToolOverlay.value.msgId, currentBlock)
+      }
+    }, 3000))
+  },
 })
 
 const { pendingFiles, attachedFiles, addAttachedFile, removeAttachedFile, cleanupPreviewUrls, clearPendingFiles } = useFileUpload()
@@ -410,7 +435,6 @@ const manager = useSessionManager({
   forkSessionCore: session.forkSession,
   checkContinueSessionCore: session.checkContinueSession,
   disconnectStream: stream.disconnectStream,
-  stopPolling: stream.stopPolling,
   updateRenderedContents: (forceFull) => render.updateRenderedContents(forceFull),
   clearInputState: () => {
     clearAll()
@@ -418,7 +442,6 @@ const manager = useSessionManager({
     clearPendingFiles()
   },
   scrollBottom: (force) => scrollBottom(force),
-  sendMessageNow: (text, filePaths, files) => sendMessageNow(text, filePaths, files),
 })
 
 // Register identity actions — all paths now go through manager
@@ -507,48 +530,11 @@ watch(
 watch(() => toolDetailShow.value, (show) => {
   if (!show) {
     activeToolOverlay.value = null
-    if (streamingRefreshTimer) { clearInterval(streamingRefreshTimer); streamingRefreshTimer = null }
+    // Clear tool update debounce timers
+    for (const timer of toolUpdateFetchDebounce.values()) clearTimeout(timer)
+    toolUpdateFetchDebounce.clear()
   }
 })
-
-// Streaming refresh: when overlay is open and streaming is not done, poll every 2s
-// to refresh content. This supplements the passive watch — SSE doesn't push tool output,
-// and thinking text updates may be missed during SSE reconnection/buffering.
-function startStreamingRefresh() {
-  if (streamingRefreshTimer) clearInterval(streamingRefreshTimer)
-  streamingRefreshTimer = setInterval(() => {
-    if (!toolDetailShow.value) {
-      clearInterval(streamingRefreshTimer)
-      streamingRefreshTimer = null
-      return
-    }
-    // Tool overlay: fetch output from API if not done
-    if (activeToolOverlay.value) {
-      const block = findToolBlock(activeToolOverlay.value)
-      if (block && block.done) {
-        clearInterval(streamingRefreshTimer)
-        streamingRefreshTimer = null
-        return
-      }
-      // ContentBlock.id is the tool_id; msgId is stored on activeToolOverlay
-      if (block && block.id) {
-        fetchToolCallDetail(block.id, activeToolOverlay.value.msgId, block)
-      }
-    }
-  }, 2000)
-}
-
-watch(
-  () => ({ show: toolDetailOverlay.value.show, done: toolDetailOverlay.value.done }),
-  ({ show, done }) => {
-    if (show && !done) {
-      startStreamingRefresh()
-    } else if (streamingRefreshTimer) {
-      clearInterval(streamingRefreshTimer)
-      streamingRefreshTimer = null
-    }
-  }
-)
 
 async function handleShowAgentSelector() {
   await agentsComposable.loadAgents()
@@ -636,15 +622,16 @@ async function sendMessage(text, extraFilePaths) {
       // Merge all file paths for the pending message (deduplicated)
       const mergedPaths = [...new Set([...(extraFilePaths || []), ...(capturedAttached.length > 0 ? capturedAttached.map(f => f.path) : [])])]
       const allFiles = [...capturedPending, ...capturedAttached.length > 0 ? capturedAttached : mergedPaths.map(p => ({ path: p, isDir: false }))]
+      // Generate unique queueId for precise matching in queue_drain/queue_cancel
+      const queueId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       // Clear input state synchronously so user sees immediate feedback
       clearAll()
       inputBarRef.value?.clearInput()
       clearPendingFiles()
       // Push a pending user message directly into messages.value
-      // (pendingStore.addPending was a no-op stub — use messages.value directly)
       messages.value.push({
         role: 'user',
-        id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: queueId,
         content: inputText || '',
         blocks: (inputText || '') ? [{ type: 'text', text: inputText }] : [],
         files: allFiles,
@@ -655,18 +642,13 @@ async function sendMessage(text, extraFilePaths) {
       scrollBottom(true)
       // Capture session ID before any async boundary
       const capturedSessionId = identity.currentSessionId.value
-      // Enqueue to backend (POST /api/ai/queue)
-      const result = await manager.enqueueMessage(capturedSessionId, inputText, extraFilePaths, capturedAttached, capturedPending)
+      // Enqueue to backend (POST /api/ai/queue) with queueId
+      const result = await manager.enqueueMessage(capturedSessionId, inputText, extraFilePaths, capturedAttached, capturedPending, queueId)
       // Race condition: if AI finished right as we enqueued, the backend
       // dequeued the message and wants us to resubmit as a new chat.
       if (result.needsStart) {
-        // The pending flag was already removed by enqueueMessage.
-        // The user message is in messages.value without pending flag —
-        // remove it since sendMessageNow will push its own copy.
-        const idx = messages.value.findLastIndex(
-          m => m.role === 'user' && m.content === (result.message || inputText) && !m.pending && typeof m.id === 'string' && m.id.startsWith('local-')
-        )
-        if (idx !== -1) messages.value.splice(idx, 1)
+        // enqueueMessage already removed the pending message by queueId.
+        // sendMessageNow will push its own copy.
         await sendMessageNow(result.message || inputText, result.filePaths || mergedPaths, result.files || allFiles)
       }
       return
@@ -692,9 +674,13 @@ async function sendMessage(text, extraFilePaths) {
 
 /** Actually send a message to the backend (no queue check). */
 async function sendMessageNow(text, filePaths, files) {
+    // Pre-generate a pending- ID in case the session is already running and
+    // the message gets enqueued. This avoids in-place ID mutation (v-for key
+    // instability) and ensures the backend receives queueId for precise matching.
+    const pendingId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     messages.value.push({
         role: 'user',
-        id: `local-${Date.now()}`,
+        id: pendingId,
         content: text || '',
         blocks: text ? [{ type: 'text', text: text || '' }] : [],
         filePath: filePaths.length > 0 ? filePaths[0] : '',
@@ -722,7 +708,7 @@ async function sendMessageNow(text, filePaths, files) {
         const resp = await fetch(safeUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: text, filePaths, files: files || [], agentId: effectiveAgentId, modelId: identity.currentModelId.value || undefined, thinkingEffort: identity.currentThinkingEffort.value || undefined, modeId: identity.currentModeId.value || undefined, transport: identity.currentTransport.value || undefined }),
+            body: JSON.stringify({ message: text, queueId: pendingId, filePaths, files: files || [], agentId: effectiveAgentId, modelId: identity.currentModelId.value || undefined, thinkingEffort: identity.currentThinkingEffort.value || undefined, modeId: identity.currentModeId.value || undefined, transport: identity.currentTransport.value || undefined }),
         })
         const data = await resp.json()
         if (!resp.ok) {
@@ -737,42 +723,12 @@ async function sendMessageNow(text, filePaths, files) {
         // Session already running — another request is in progress
         if (data.running) {
             // Session already running — the message was enqueued.
-            // Move the optimistically pushed user message from messages.value
-            // to pendingStore, since it's now a queued/pending message.
+            // Mark the pre-pushed user message as pending (ID is already pendingId).
             const localIdx = messages.value.findLastIndex(
-                (m) => m.role === 'user' && m.content === (text || '') && typeof m.id === 'string' && m.id.startsWith('local-')
+                (m) => m.role === 'user' && m.id === pendingId
             )
             if (localIdx !== -1) {
-                messages.value.splice(localIdx, 1)
-            }
-            // Push pending message directly into messages.value
-            // (pendingStore.addPending was a no-op stub)
-            messages.value.push({
-                role: 'user',
-                id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                content: text || '',
-                blocks: (text || '') ? [{ type: 'text', text }] : [],
-                files: (files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
-                createdAt: new Date().toISOString(),
-                pending: true,
-            })
-            if (data.queued && data.queue) {
-                // Sync backend queue state: remove all pending, re-push from backend
-                for (let i = messages.value.length - 1; i >= 0; i--) {
-                    if (messages.value[i].pending) messages.value.splice(i, 1)
-                }
-                for (const item of data.queue) {
-                    const itemFiles = [...(item.files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f), ...(item.filePaths || []).map(p => ({ path: p, isDir: false }))]
-                    messages.value.push({
-                        role: 'user',
-                        id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                        content: item.text || '',
-                        blocks: item.text ? [{ type: 'text', text: item.text }] : [],
-                        files: itemFiles,
-                        createdAt: item.createdAt || new Date().toISOString(),
-                        pending: true,
-                    })
-                }
+                messages.value[localIdx].pending = true
             }
             stream.connectStream(identity.currentSessionId.value)
             // Proactively sync ACP state for the running session
@@ -791,14 +747,13 @@ async function sendMessageNow(text, filePaths, files) {
             populateACPStateFromCache(effectiveAgentId)
         }
     } catch (err) {
-        // Remove the optimistically pushed local user message on failure
+        // Remove the optimistically pushed user message on failure
         const localIdx = messages.value.findLastIndex(
-            (m) => m.role === 'user' && m.content === (text || '') && typeof m.id === 'string' && m.id.startsWith('local-')
+            (m) => m.role === 'user' && m.id === pendingId
         )
         if (localIdx !== -1) {
             messages.value.splice(localIdx, 1)
         }
-        stream.stopPolling()
         stream.disconnectStream()
         loading.value = false
         // Restore screen lock on send failure — output won't proceed
@@ -816,11 +771,11 @@ async function sendMessageNow(text, filePaths, files) {
 async function handleToolSendMessage(text) {
     if (!text) return
     if (loading.value) {
-      // Push a pending user message directly into messages.value
-      // (pendingStore.addPending was a no-op stub)
+      // Generate unique queueId for precise matching
+      const queueId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       messages.value.push({
         role: 'user',
-        id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: queueId,
         content: text,
         blocks: text ? [{ type: 'text', text }] : [],
         createdAt: new Date().toISOString(),
@@ -828,7 +783,7 @@ async function handleToolSendMessage(text) {
       })
       render.updateRenderedContents()
       scrollBottom(true)
-      manager.enqueueMessage(identity.currentSessionId.value, text)
+      manager.enqueueMessage(identity.currentSessionId.value, text, [], [], [], queueId)
     } else {
       await sendMessage(text)
     }
@@ -851,13 +806,10 @@ async function handleLoadMore() {
 }
 
 /** Handle remove-pending event from ChatMessageItem.
- *  The event passes the pending message's content text (not index).
- *  We look up the pendingIndex in messages.value for the backend API. */
-function handleRemovePending(content) {
-    const pendingMessages = messages.value.filter(m => m.pending)
-    const pendingIndex = pendingMessages.findIndex(m => m.content === content)
-    if (pendingIndex < 0) return
-    manager.handleRemovePending(pendingIndex)
+ *  The event passes the pending message's queueId (msg.id).
+ *  Passes it directly to the manager for backend DELETE. */
+function handleRemovePending(queueId) {
+    manager.handleRemovePending(queueId)
 }
 
 function showMetadata(msg) {
@@ -991,8 +943,9 @@ onUnmounted(() => {
     removeEventHandler()
     cleanupPreviewUrls()
     stream.disconnectStream()
-    stream.stopPolling()
-    session.stopMsgCountPolling()
+    // Clear tool update debounce timers
+    for (const timer of toolUpdateFetchDebounce.values()) clearTimeout(timer)
+    toolUpdateFetchDebounce.clear()
     document.removeEventListener('visibilitychange', session.handleVisibilityChange)
     document.removeEventListener('visibilitychange', manager._visibilityHandler)
     window.removeEventListener('clawbench-summary-update', handleSummaryUpdate)

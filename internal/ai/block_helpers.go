@@ -1,7 +1,6 @@
 package ai
 
 import (
-	"context"
 	"encoding/json"
 	"log/slog"
 	"regexp"
@@ -11,45 +10,6 @@ import (
 
 	"github.com/google/uuid"
 )
-
-// SendStreamEvent sends an event to the stream channel.
-// Non-blocking: if the channel is full (no SSE client reading), the event is dropped.
-// This is safe because content is persisted to DB independently.
-// Returns false if the context was cancelled.
-func SendStreamEvent(ctx context.Context, ch chan<- StreamEvent, event StreamEvent) bool {
-	select {
-	case ch <- event:
-		return true
-	case <-ctx.Done():
-		return false
-	default:
-		// Channel full — drop the event, DB persistence ensures no data loss
-		toolID := ""
-		if event.Tool != nil {
-			toolID = event.Tool.ID
-		}
-		slog.Warn(
-			"SSE event dropped — channel full",
-			slog.String("type", event.Type),
-			slog.String("tool_id", toolID),
-		)
-		return true
-	}
-}
-
-// SendFinalStreamEvent sends a terminal event (done/cancelled/error) to the stream channel
-// without checking context cancellation. This ensures the SSE client always receives
-// the terminal event even after the CLI context has been cancelled (e.g. ExitPlanMode).
-func SendFinalStreamEvent(ch chan<- StreamEvent, event StreamEvent) {
-	select {
-	case ch <- event:
-	default:
-		slog.Warn(
-			"SSE terminal event dropped — channel full",
-			slog.String("type", event.Type),
-		)
-	}
-}
 
 // StringsContainsAnyBlock checks if any text ContentBlock contains the given substring.
 func StringsContainsAnyBlock(blocks []model.ContentBlock, substr string) bool {

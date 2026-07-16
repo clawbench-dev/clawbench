@@ -47,15 +47,15 @@ func ServeChatHistory(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 				setSessionID(w, r, sessionID)
 			}
 		}
-		// ISS-077: Verify the session belongs to the requesting project
-		sessionProject := service.GetSessionProjectPath(sessionID)
-		if sessionProject != projectPath {
-			writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
-			return
-		}
+		// ISS-077: Verify session exists and is not soft-deleted, then check project ownership
 		backend := service.GetSessionBackend(sessionID)
 		if backend == "" {
 			writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
+			return
+		}
+		sessionProject := service.GetSessionProjectPath(sessionID)
+		if sessionProject != projectPath {
+			writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 			return
 		}
 		messages, err := service.GetChatHistory(projectPath, backend, sessionID)
@@ -84,14 +84,14 @@ func ServeChatHistory(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		if sessionID == "" {
 			sessionID = getSessionID(r)
 		}
-		// ISS-077: Verify the session belongs to the requesting project
-		if sp := service.GetSessionProjectPath(sessionID); sp != projectPath {
-			writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
-			return
-		}
+		// ISS-077: Verify session exists and is not soft-deleted, then check project ownership
 		backend := service.GetSessionBackend(sessionID)
 		if backend == "" {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "SessionNotFound")
+			writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
+			return
+		}
+		if sp := service.GetSessionProjectPath(sessionID); sp != projectPath {
+			writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 			return
 		}
 		if _, err := service.AddChatMessage(projectPath, backend, sessionID, req.Role, req.Content, req.Files, false, T(r, "NewSession")); err != nil {
@@ -118,14 +118,14 @@ func ServeChatCount(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Verify the session belongs to the requesting project
-	if sessionProject := service.GetSessionProjectPath(sessionID); sessionProject != projectPath {
-		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
-		return
-	}
 	// Verify session is not soft-deleted (GetSessionBackend filters deleted=0)
 	if service.GetSessionBackend(sessionID) == "" {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
+		return
+	}
+	// Verify the session belongs to the requesting project
+	if sessionProject := service.GetSessionProjectPath(sessionID); sessionProject != projectPath {
+		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 		return
 	}
 	count := service.GetChatMessageCount(sessionID)
@@ -146,14 +146,14 @@ func ServeUserMessageIndex(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Verify the session belongs to the requesting project
-	if sessionProject := service.GetSessionProjectPath(sessionID); sessionProject != projectPath {
-		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
-		return
-	}
 	// Verify session is not soft-deleted (GetSessionBackend filters deleted=0)
 	if service.GetSessionBackend(sessionID) == "" {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
+		return
+	}
+	// Verify the session belongs to the requesting project
+	if sessionProject := service.GetSessionProjectPath(sessionID); sessionProject != projectPath {
+		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 		return
 	}
 	messages, err := service.GetUserMessageIndex(sessionID)
@@ -190,7 +190,11 @@ func ServeChatMessageUpdate(w http.ResponseWriter, r *http.Request) {
 		writeLocalizedError(w, r, model.NotFound(nil, "MessageNotFound"))
 		return
 	}
-	// Check session ownership
+	// Check session is not soft-deleted, then verify project ownership
+	if service.GetSessionBackend(msg.SessionID) == "" {
+		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
+		return
+	}
 	if sessionProject := service.GetSessionProjectPath(msg.SessionID); sessionProject != projectPath {
 		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 		return
@@ -231,7 +235,11 @@ func ServeToolCallDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify project ownership via session
+	// Verify session is not soft-deleted, then check project ownership
+	if service.GetSessionBackend(record.SessionID) == "" {
+		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
+		return
+	}
 	if sessionProject := service.GetSessionProjectPath(record.SessionID); sessionProject != projectPath {
 		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 		return

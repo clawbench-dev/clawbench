@@ -159,7 +159,7 @@ type UsageState struct {
 
 // StreamEvent represents a single event in the streaming output
 type StreamEvent struct {
-	Type           string                 // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "raw_output", "resume_split", "queue_drain", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update"
+	Type           string                 // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "raw_output", "resume_split", "queue_drain", "queue_cancel", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update"
 	Content        string                 // Incremental text (Type=content, Type=thinking) or captured session ID (Type=session_capture)
 	Reason         string                 // Structured reason code for i18n (e.g. "disconnect", "timeout", "parse_error")
 	Meta           *Metadata              // Metadata (Type=metadata)
@@ -205,11 +205,13 @@ func truncateToolOutput(output string) string {
 	return output[:maxToolOutputBytes] + fmt.Sprintf("\n[truncated: original %d bytes]", len(output))
 }
 
-// QueueEventData carries data for queue_drain and queue_update SSE events.
+// QueueEventData carries data for queue_drain and queue_cancel SSE events.
 // queue_drain: atomically finalizes current streaming, starts next queued message.
-// queue_update: sent when a new message is enqueued while a session is running.
+// queue_cancel: emitted when user cancels while messages are queued.
 type QueueEventData struct {
 	SessionID string                `json:"sessionId,omitempty"` // Session this event belongs to (for frontend routing)
+	QueueID   string                `json:"queueId,omitempty"`   // Frontend-generated ID for matching pending messages (queue_drain)
+	QueueIDs  []string              `json:"queueIds,omitempty"`  // IDs of cancelled queued messages (queue_cancel)
 	Text      string                `json:"text,omitempty"`
 	MessageID int64                 `json:"messageId,omitempty"` // DB ID of the drained user message (queue_drain only)
 	FilePaths []string              `json:"filePaths,omitempty"`

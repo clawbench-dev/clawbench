@@ -138,21 +138,6 @@ func TestDataTypesJSON(t *testing.T) {
 		}
 	})
 
-	t.Run("QueueUpdateData", func(t *testing.T) {
-		d := QueueUpdateData{SessionID: "s1", Count: 5}
-		data, err := json.Marshal(d)
-		if err != nil {
-			t.Fatalf("marshal: %v", err)
-		}
-		var decoded QueueUpdateData
-		if err := json.Unmarshal(data, &decoded); err != nil {
-			t.Fatalf("unmarshal: %v", err)
-		}
-		if decoded.SessionID != "s1" || decoded.Count != 5 {
-			t.Errorf("roundtrip failed: %+v", decoded)
-		}
-	})
-
 	t.Run("TaskUpdateData_empty_optional_fields", func(t *testing.T) {
 		d := TaskUpdateData{TaskID: "t2", Status: "failed"}
 		data, err := json.Marshal(d)

@@ -117,20 +117,24 @@ export function useTerminalTabs(
         term.write(stripSyncOutput(data))
       },
       onReplay: (data: string) => {
-        // Clear xterm buffer and replace with replay data — discards any
-        // stale content left over from before the disconnect.
-        // The backend suppresses output until we send "replay_done",
-        // preventing duplicate prompts from SIGWINCH during fit().
+        // Fit FIRST to establish correct dimensions before writing replay.
+        // If we write replay data at old dimensions then fit(), xterm
+        // reflows the content to new dimensions, breaking cursor positions
+        // and line alignment from the replay data → misalignment & offset.
+        try { fit.fit() } catch { /* ignore */ }
+        // Now reset and write replay at the correct dimensions
         term.reset()
         term.write(stripSyncOutput(data))
-        // After writing replay, fit the terminal and notify the backend
-        // that it can stop suppressing output. fit() triggers a resize
-        // which sends SIGWINCH to the PTY — the shell redraws, but the
-        // backend discards that output until replay_done arrives.
-        requestAnimationFrame(() => {
-          try { fit.fit() } catch { /* ignore */ }
+        // Delay replay_done to ensure the SIGWINCH-induced prompt redraw
+        // (triggered by the fit() above → resize → SIGWINCH) has been
+        // fully processed and suppressed by the backend before we tell it
+        // to stop suppressing. Without this delay, replay_done can arrive
+        // before the shell's SIGWINCH response, causing suppressOutput to
+        // be cleared too early and the redraw to leak through as duplicate
+        // content.
+        setTimeout(() => {
           session.sendReplayDone()
-        })
+        }, 50)
       },
       onStatus: (status: { running: boolean; cwd: string }) => {
         if (status.cwd) {

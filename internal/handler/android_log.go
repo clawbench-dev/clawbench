@@ -21,7 +21,7 @@ var (
 
 // ClientLogEntry represents a single log entry from a client (Android app or JS frontend).
 type ClientLogEntry struct {
-	Level  string `json:"level"`            // D, I, W, E
+	Level  string `json:"level"` // D, I, W, E
 	Tag    string `json:"tag"`
 	Msg    string `json:"msg"`
 	Ts     int64  `json:"ts"`               // epoch millis

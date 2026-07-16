@@ -80,9 +80,6 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  // Stop any polling that may have been started
-  const { stopTaskPolling } = useTaskTab()
-  stopTaskPolling()
   // Clean up leaked timers
   for (const id of pendingTimers) {
     clearTimeout(id)
@@ -896,66 +893,6 @@ describe('useTaskTab', () => {
 
       vi.advanceTimersByTime(10000)
       vi.useRealTimers()
-    })
-  })
-
-  // ── Polling ──
-
-  describe('polling', () => {
-    it('startTaskPolling starts interval-based polling', () => {
-      vi.useFakeTimers()
-      const { startTaskPolling, stopTaskPolling } = useTaskTab()
-      mockTasksResponse([])
-
-      startTaskPolling()
-      expect(mockFetch).toHaveBeenCalledTimes(1) // immediate load
-
-      vi.advanceTimersByTime(2000)
-      expect(mockFetch).toHaveBeenCalledTimes(2)
-
-      vi.advanceTimersByTime(2000)
-      expect(mockFetch).toHaveBeenCalledTimes(3)
-
-      stopTaskPolling()
-      vi.advanceTimersByTime(10000)
-      vi.useRealTimers()
-    })
-
-    it('stopTaskPolling stops the interval', () => {
-      vi.useFakeTimers()
-      const { startTaskPolling, stopTaskPolling } = useTaskTab()
-      mockTasksResponse([])
-
-      startTaskPolling()
-      stopTaskPolling()
-
-      vi.advanceTimersByTime(6000)
-      expect(mockFetch).toHaveBeenCalledTimes(1)
-
-      vi.advanceTimersByTime(10000)
-      vi.useRealTimers()
-    })
-
-    it('startTaskPolling does not double-start', () => {
-      vi.useFakeTimers()
-      const { startTaskPolling, stopTaskPolling } = useTaskTab()
-      mockTasksResponse([])
-
-      startTaskPolling()
-      startTaskPolling() // Second call should be a no-op
-
-      // Only one immediate load should have been triggered
-      expect(mockFetch).toHaveBeenCalledTimes(1)
-
-      stopTaskPolling()
-      vi.advanceTimersByTime(10000)
-      vi.useRealTimers()
-    })
-
-    it('stopTaskPolling is a no-op when not started', () => {
-      const { stopTaskPolling } = useTaskTab()
-      // Should not throw
-      stopTaskPolling()
     })
   })
 

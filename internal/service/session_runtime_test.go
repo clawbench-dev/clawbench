@@ -204,7 +204,6 @@ func TestCancelSession_WithCancelFunc(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	RegisterSessionCancel("session-cancel-3", cancel)
 	SetSessionRunning("session-cancel-3", true)
-	RegisterSessionStream("session-cancel-3")
 
 	result := CancelSession("session-cancel-3")
 	assert.True(t, result)
@@ -290,7 +289,6 @@ func TestCancelSession_CallsACPConnManagerCancelTurn(t *testing.T) {
 	defer cancel()
 	RegisterSessionCancel("session-acp-cancel", cancel)
 	SetSessionRunning("session-acp-cancel", true)
-	RegisterSessionStream("session-acp-cancel")
 
 	// CancelSession should succeed even without an ACP connection
 	result := CancelSession("session-acp-cancel")
@@ -298,27 +296,6 @@ func TestCancelSession_CallsACPConnManagerCancelTurn(t *testing.T) {
 	assert.False(t, IsSessionRunning("session-acp-cancel"))
 	// Context should be cancelled
 	assert.Error(t, ctx.Err())
-}
-
-func TestCancelSession_SendsCancelledEvent(t *testing.T) {
-	cleanupAllSessionState()
-	defer cleanupAllSessionState()
-
-	_, cancel := context.WithCancel(context.Background())
-	RegisterSessionCancel("session-event", cancel)
-	SetSessionRunning("session-event", true)
-	ch := RegisterSessionStream("session-event")
-
-	result := CancelSession("session-event")
-	assert.True(t, result)
-
-	// Should receive a cancelled event
-	select {
-	case event := <-ch:
-		assert.Equal(t, "cancelled", event.Type)
-	case <-time.After(time.Second):
-		t.Fatal("expected cancelled event on stream channel")
-	}
 }
 
 // --- ForceCancelSession ---
@@ -352,47 +329,6 @@ func TestForceCancelSession_NotFound(t *testing.T) {
 	assert.NotPanics(t, func() {
 		ForceCancelSession("nonexistent")
 	})
-}
-
-// --- SendSessionEvent ---
-
-func TestSendSessionEvent_Success(t *testing.T) {
-	cleanupStreams()
-	defer cleanupStreams()
-
-	ch := RegisterSessionStream("session-event-test")
-
-	event := ai.StreamEvent{Type: "content", Content: "hello"}
-	sent := SendSessionEvent("session-event-test", event)
-	assert.True(t, sent)
-
-	received := <-ch
-	assert.Equal(t, "content", received.Type)
-	assert.Equal(t, "hello", received.Content)
-}
-
-func TestSendSessionEvent_SessionNotFound(t *testing.T) {
-	cleanupStreams()
-
-	sent := SendSessionEvent("nonexistent", ai.StreamEvent{Type: "content"})
-	assert.False(t, sent)
-}
-
-func TestSendSessionEvent_FullChannel(t *testing.T) {
-	cleanupStreams()
-	defer cleanupStreams()
-
-	RegisterSessionStream("session-full")
-
-	// Fill the channel buffer (capacity is sessionStreamBufferSize)
-	for range sessionStreamBufferSize {
-		sent := SendSessionEvent("session-full", ai.StreamEvent{Type: "content", Content: "x"})
-		assert.True(t, sent)
-	}
-
-	// Next send should fail (non-blocking)
-	sent := SendSessionEvent("session-full", ai.StreamEvent{Type: "done"})
-	assert.False(t, sent, "SendSessionEvent should return false when channel is full")
 }
 
 // --- TrySetSessionRunning ---
@@ -503,36 +439,6 @@ func TestSetSessionRunning_FalseRemovesKey(t *testing.T) {
 	assert.False(t, IsSessionRunning("session-rm"))
 }
 
-// --- Concurrent access tests ---
-
-func TestSendSessionEvent_ConcurrentAccess(t *testing.T) {
-	cleanupStreams()
-	defer cleanupStreams()
-
-	RegisterSessionStream("session-concurrent")
-
-	var wg sync.WaitGroup
-	successCount := 0
-	var mu sync.Mutex
-
-	// Send 50 events concurrently (buffer is sessionStreamBufferSize, so most should succeed)
-	for range 50 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			sent := SendSessionEvent("session-concurrent", ai.StreamEvent{Type: "content"})
-			if sent {
-				mu.Lock()
-				successCount++
-				mu.Unlock()
-			}
-		}()
-	}
-
-	wg.Wait()
-	assert.Equal(t, 50, successCount, "All 50 events should be sent (buffer is sessionStreamBufferSize)")
-}
-
 // --- Helpers ---
 
 func cleanupCancels() {
@@ -559,7 +465,6 @@ func cleanupAllSessionState() {
 	cleanupActiveSessions()
 	cleanupCancels()
 	cleanupCancelReasons()
-	cleanupStreams()
 }
 
 // --- getSessionResponsePreview tests ---
@@ -1011,7 +916,7 @@ func TestEmitSessionEvent_CompletedWithPreview(t *testing.T) {
 	insertTestMessage(t, db, "session-emit-1", "assistant", string(contentJSON))
 
 	// Insert a session row so GetSessionProjectPath can look it up
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, external_session_id TEXT DEFAULT '')")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, external_session_id TEXT DEFAULT '', deleted INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
 	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
 		"session-emit-1", "/home/user/test-project", "codebuddy", "Test Session")
@@ -1070,33 +975,6 @@ func TestEmitSessionEvent_RunningNoPreview(t *testing.T) {
 	assert.Equal(t, "", data.ResponsePreview)
 }
 
-// --- GetSessionStream edge cases ---
-
-func TestGetSessionStream_NotRegistered(t *testing.T) {
-	cleanupStreams()
-
-	ch, ok := GetSessionStream("nonexistent")
-	assert.False(t, ok)
-	assert.Nil(t, ch)
-}
-
-func TestTryClaimSSEStream_BasicFlow(t *testing.T) {
-	cleanupStreams()
-	defer cleanupStreams()
-
-	RegisterSessionStream("claim-test")
-	defer UnregisterSessionStream("claim-test")
-
-	// First claim succeeds
-	assert.True(t, TryClaimSSEStream("claim-test"))
-	// Second claim fails
-	assert.False(t, TryClaimSSEStream("claim-test"))
-	// Release and reclaim
-	ReleaseSSEStream("claim-test")
-	assert.True(t, TryClaimSSEStream("claim-test"))
-	ReleaseSSEStream("claim-test")
-}
-
 // --- emitSessionEvent with nil ws manager ---
 
 func TestEmitSessionEvent_NilManager(t *testing.T) {
@@ -1120,29 +998,6 @@ func TestCancelSession_BadCancelType(t *testing.T) {
 
 	result := CancelSession("session-bad-cancel")
 	assert.False(t, result, "should return false when cancel func has wrong type")
-}
-
-// --- UnregisterSessionStream ---
-
-func TestUnregisterSessionStream(t *testing.T) {
-	cleanupStreams()
-	defer cleanupStreams()
-
-	ch := RegisterSessionStream("session-unreg")
-	UnregisterSessionStream("session-unreg")
-
-	// Channel should be closed
-	_, ok := <-ch
-	assert.False(t, ok, "channel should be closed after unregister")
-}
-
-func TestUnregisterSessionStream_Nonexistent(t *testing.T) {
-	cleanupStreams()
-
-	// Should not panic
-	assert.NotPanics(t, func() {
-		UnregisterSessionStream("nonexistent")
-	})
 }
 
 // --- SetSessionRunning with skipEvent ---
@@ -1699,7 +1554,7 @@ func TestEmitSessionEvent_PermissionPendingWithToolName(t *testing.T) {
 	defer cleanup()
 
 	// Insert a session row so GetSessionProjectPath can look it up
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, external_session_id TEXT DEFAULT '')")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, external_session_id TEXT DEFAULT '', deleted INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
 	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
 		"session-pp-1", "/home/user/project", "codebuddy", "Test Session")

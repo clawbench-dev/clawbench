@@ -596,7 +596,7 @@ func GetSessionBackend(sessionID string) string {
 // GetSessionProjectPath returns the project path of a session, or empty string if not found.
 func GetSessionProjectPath(sessionID string) string {
 	var projectPath string
-	err := dbRead.QueryRow("SELECT project_path FROM chat_sessions WHERE id = ?", sessionID).Scan(&projectPath)
+	err := dbRead.QueryRow("SELECT project_path FROM chat_sessions WHERE id = ? AND deleted = 0", sessionID).Scan(&projectPath)
 	if err != nil {
 		return ""
 	}

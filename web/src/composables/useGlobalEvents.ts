@@ -9,7 +9,7 @@ import { gt } from './useLocale'
 interface ServerEvent {
     type: string           // "event" | "ping"
     id?: string            // event ID for dedup
-    event?: string         // "session_update" | "task_update" | "queue_update"
+    event?: string         // "session_update" | "task_update"
     data?: {
         session_id?: string
         status?: string
@@ -29,6 +29,10 @@ interface ServerEvent {
 type ClientMessage =
     | { type: 'ack'; id: string }
     | { type: 'pong' }
+    | { type: 'subscribe'; session_id: string }
+    | { type: 'unsubscribe'; session_id: string }
+    | { type: 'cancel'; session_id: string }
+    | { type: 'permission_respond'; session_id: string; tool_call_id: string; option_id: string; cancelled: boolean }
 
 type EventHandler = (event: string, data: ServerEvent['data']) => void
 
@@ -451,6 +455,7 @@ export function useGlobalEvents() {
         connect,
         disconnect,
         onEvent,
+        sendWsMessage: send,
         init,
         destroy,
     }

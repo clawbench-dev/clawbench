@@ -455,7 +455,7 @@ func TestManager_Subscribe_ConnectionReplacement(t *testing.T) {
 			return
 		}
 		defer mgr.DisconnectClient("replace-test")
-		readClientMessages(conn, "replace-test")
+		readClientMessages(mgr, conn, &writeMu, "replace-test")
 		_ = conn.Close(websocket.StatusNormalClosure, "done")
 	})
 	server := httptest.NewServer(handler)
@@ -538,7 +538,7 @@ func TestManager_Subscribe_LimitReached(t *testing.T) {
 			return
 		}
 		defer mgr.DisconnectClient("overflow")
-		readClientMessages(conn, "overflow")
+		readClientMessages(mgr, conn, &writeMu, "overflow")
 		_ = conn.Close(websocket.StatusNormalClosure, "done")
 	})
 	server := httptest.NewServer(handler)
@@ -660,7 +660,7 @@ func TestManager_BroadcastEvent_ConnectedClient(t *testing.T) {
 		}
 		defer m.DisconnectClient("ws-client")
 		// Keep connection alive — read loop discards incoming client messages
-		readClientMessages(conn, "ws-client")
+		readClientMessages(m, conn, &wmu, "ws-client")
 		_ = conn.Close(websocket.StatusNormalClosure, "done")
 	})
 	server := httptest.NewServer(handler)

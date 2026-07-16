@@ -10,14 +10,18 @@ const StatusPermissionPending = "permission_pending"
 type ServerMessage struct {
 	Type  string `json:"type"`            // "event", "ping"
 	ID    string `json:"id,omitempty"`    // event ID for ack (e.g., "evt_1706000000_1")
-	Event string `json:"event,omitempty"` // "session_update", "task_update", "queue_update", "summary_update"
+	Event string `json:"event,omitempty"` // "session_update", "task_update", "summary_update"
 	Data  any    `json:"data,omitempty"`
 }
 
 // ClientMessage is a message sent from client to server.
 type ClientMessage struct {
-	Type string `json:"type"`         // "ack", "pong"
-	ID   string `json:"id,omitempty"` // ack target event ID
+	Type       string `json:"type"`                   // "ack", "pong", "subscribe", "unsubscribe", "cancel", "permission_respond"
+	ID         string `json:"id,omitempty"`           // ack target event ID
+	SessionID  string `json:"session_id,omitempty"`   // for subscribe/unsubscribe/cancel
+	ToolCallID string `json:"tool_call_id,omitempty"` // for permission_respond
+	OptionID   string `json:"option_id,omitempty"`    // for permission_respond
+	Cancelled  bool   `json:"cancelled,omitempty"`    // for permission_respond
 }
 
 // SessionUpdateData is the data payload for "session_update" events.
@@ -42,10 +46,11 @@ type TaskUpdateData struct {
 	ResponsePreview string `json:"response_preview,omitempty"` // preview of AI's final reply (completed only)
 }
 
-// QueueUpdateData is the data payload for "queue_update" events.
-type QueueUpdateData struct {
+// ChatStreamData wraps a chat streaming event for WS delivery.
+type ChatStreamData struct {
 	SessionID string `json:"session_id"`
-	Count     int    `json:"count"`
+	EventType string `json:"event_type"` // "content", "thinking", "tool_use", etc.
+	Payload   any    `json:"payload"`
 }
 
 // SummaryUpdateData is the data payload for "summary_update" events.

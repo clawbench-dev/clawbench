@@ -1223,5 +1223,3 @@ func TestManager_HandleWebSocket_SessionExpiredReconnect(t *testing.T) {
 }
 
 // --- SuppressOutput after Connect (prevents duplicate prompts on reconnect) ---
-
-

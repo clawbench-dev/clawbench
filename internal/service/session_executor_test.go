@@ -779,7 +779,6 @@ func TestSessionExecutor_Scheduled_NoCancelReason(t *testing.T) {
 
 func TestSessionExecutor_Scheduled_NoSSEForwarding(t *testing.T) {
 	// Scheduled mode should not attempt to forward events to any SSE channel.
-	// The StreamCh is nil in scheduled mode, which is handled by the executor.
 	events := []ai.StreamEvent{
 		{Type: "content", Content: "hello"},
 		{Type: "done"},
@@ -799,7 +798,6 @@ func TestSessionExecutor_Scheduled_NoSSEForwarding(t *testing.T) {
 		SessionID:   "sess-scheduled",
 		AgentID:     "test",
 		ChatRequest: ai.ChatRequest{Prompt: "hello", ScheduledExecution: true},
-		StreamCh:    nil, // No SSE channel for scheduled mode
 		TaskID:      42,
 		ExecutionID: 7,
 		TriggerType: "auto",

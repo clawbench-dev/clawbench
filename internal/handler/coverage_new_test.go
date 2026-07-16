@@ -3,7 +3,6 @@ package handler
 import (
 	"archive/zip"
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -267,103 +266,6 @@ func TestStringsContainsAnyBlock(t *testing.T) {
 			got := ai.StringsContainsAnyBlock(tt.blocks, tt.substr)
 			assert.Equal(t, tt.want, got)
 		})
-	}
-}
-
-// ============================================================================
-// sendEvent tests
-// ============================================================================
-
-func TestSendEvent_ChannelHasCapacity(t *testing.T) {
-	ch := make(chan ai.StreamEvent, 1)
-	ctx := context.Background()
-
-	event := ai.StreamEvent{Type: "content", Content: "hello"}
-	result := ai.SendStreamEvent(ctx, ch, event)
-
-	assert.True(t, result)
-	select {
-	case e := <-ch:
-		assert.Equal(t, "content", e.Type)
-		assert.Equal(t, "hello", e.Content)
-	default:
-		t.Fatal("expected event on channel")
-	}
-}
-
-func TestSendEvent_ChannelFull_DropsEvent(t *testing.T) {
-	ch := make(chan ai.StreamEvent, 1)
-	ch <- ai.StreamEvent{Type: "content", Content: "existing"}
-
-	ctx := context.Background()
-	event := ai.StreamEvent{Type: "content", Content: "dropped"}
-	result := ai.SendStreamEvent(ctx, ch, event)
-
-	// Should return true (event dropped, not a context cancellation)
-	assert.True(t, result)
-}
-
-func TestSendEvent_ContextCancelled(t *testing.T) {
-	// Use an unbuffered channel with no reader — ctx.Done() and default
-	// are both available, but ctx.Done() should be selected reliably
-	// because the channel send would block.
-	ch := make(chan ai.StreamEvent)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	event := ai.StreamEvent{Type: "content", Content: "hello"}
-	_ = ai.SendStreamEvent(ctx, ch, event)
-
-	// With an unbuffered channel and cancelled context, either ctx.Done() or default
-	// could be selected. Both indicate the event was not sent to the channel.
-	// The important thing is: the event is NOT on the channel.
-	assert.Empty(t, len(ch), "event should not be on channel when context is cancelled")
-}
-
-func TestSendEvent_UnbufferedChannel_NoReader(t *testing.T) {
-	ch := make(chan ai.StreamEvent)
-	ctx := context.Background()
-
-	event := ai.StreamEvent{Type: "content", Content: "dropped"}
-	result := ai.SendStreamEvent(ctx, ch, event)
-
-	// Should return true (event dropped via default case)
-	assert.True(t, result)
-}
-
-// ============================================================================
-// sendFinalEvent tests
-// ============================================================================
-
-func TestSendFinalEvent_ChannelHasCapacity(t *testing.T) {
-	ch := make(chan ai.StreamEvent, 1)
-	event := ai.StreamEvent{Type: "done"}
-	ai.SendFinalStreamEvent(ch, event)
-
-	select {
-	case e := <-ch:
-		assert.Equal(t, "done", e.Type)
-	default:
-		t.Fatal("expected event on channel")
-	}
-}
-
-func TestSendFinalEvent_ChannelFull_DropsWithoutBlocking(t *testing.T) {
-	ch := make(chan ai.StreamEvent, 1)
-	ch <- ai.StreamEvent{Type: "content", Content: "existing"}
-
-	// Should not block even though channel is full
-	done := make(chan struct{})
-	go func() {
-		ai.SendFinalStreamEvent(ch, ai.StreamEvent{Type: "done"})
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		// Success — did not block
-	case <-time.After(time.Second):
-		t.Fatal("sendFinalEvent blocked when channel was full")
 	}
 }
 

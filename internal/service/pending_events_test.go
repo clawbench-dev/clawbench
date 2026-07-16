@@ -365,7 +365,6 @@ func TestIsNotifiableEvent(t *testing.T) {
 		{"task_update", &ws.TaskUpdateData{Status: "cancelled"}, true},
 		{"task_update", &ws.TaskUpdateData{Status: "running"}, false},
 		{"summary_update", &ws.SummaryUpdateData{}, false},
-		{"queue_update", &ws.QueueUpdateData{}, false},
 		{"session_update", map[string]any{"status": "completed"}, true},
 		{"session_update", map[string]any{"status": "running"}, false},
 		// Edge cases

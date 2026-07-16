@@ -48,7 +48,7 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 **Entry point:** `cmd/server/main.go` — config → port → LoadAgents → SyncDiscoverAgents → SyncDiscoverModels → MergeDiscoveredData → AsyncRefreshModelCache → scheduler init.
 
 **Packages:**
-- `internal/handler/` — HTTP/SSE endpoints. All `/api/` routes use `middleware.Auth` (localhost bypass for CLI).
+- `internal/handler/` — HTTP endpoints. All `/api/` routes use `middleware.Auth` (localhost bypass for CLI). Chat streaming moved from SSE to WebSocket (`/api/ai/events/ws`).
 - `internal/service/` — Business logic: chat persistence, auto-summary, scheduler, SQLite, versioned schema migration, agent store (DB-backed), API key encryption (AES-256-GCM), default project persistence (`is_default` column in `recent_projects`). `SessionExecutor` unifies AI session execution for both chat and scheduled tasks.
 - `internal/ai/` — AI backend abstraction: `AIBackend` interface → `CLIBackend` (CLI args + LineParser) → `AutoResumeBackend` (ExitPlanMode → cancel → resume) → `ACPBackend` (JSON-RPC over stdio, connection pool). Factory: `factory.go`. 12 backends extracted to `internal/ai/backends/` sub-packages (claude, cline, codebuddy, copilot, codex, qoder, vecli, deepseek, kimi, mimo, opencode, pi), each registering via `ai.RegisterBackend()` in `init()`. Plugin framework: `plugin.go`, `registry.go`. ACP mapping wired by `backends/acp_wire.go`. `acpStdoutFilter` for agents with JSON-RPC protocol violations (string-number ID mismatch, non-JSON stdout lines). `BackendSpec.AltCmd` for fallback CLI detection (e.g., `codewhale` primary, `deepseek` legacy).
 - `internal/ai/backends/` — Backend plugin sub-packages. Each backend is a separate package with its own CLI args builder, line parser, model discovery, and optional ACP remaps. Registered via `init()` on import. `all.go` aggregates all imports for `cmd/server/main.go`. CodeWhale (registered as `"deepseek"`, CLI: `codewhale`) has ACP support with `acp.go` remaps and stdout filter. Pi has ACP bridge support via `@touchtechclub/pi-acp`.
@@ -63,13 +63,13 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 - `internal/symbol/` — Code symbol extraction via tree-sitter (`gotreesitter`, pure Go, no CGO). 17 symbol kinds, 100+ languages.
 - `internal/rag/` — RAG: DuckDB vector store, Ollama BGE-M3 embeddings.
 - `internal/terminal/` — Web terminal: PTY sessions, ring buffer replay, multi-tab support, key/symbol configuration.
-- `internal/ws/` — WebSocket event channel. Buffered replay on reconnect.
+- `internal/ws/` — WebSocket event channel. `StreamHub` for session-scoped chat streaming fan-out. `Manager` for broadcast + buffered replay on reconnect. Client subscribe/unsubscribe/cancel/permission_respond messages.
 
 ### Frontend (Vue 3 + TypeScript)
 
 **Source root:** `web/src/` — No Vue Router, drawer-based single-page layout. Single `reactive()` store in `stores/app.ts`.
 
-**Composables:** `useChatSession`, `useChatStream` (SSE + reconnect + polling), `useChatRender` (block parsing + coalescing), `useAutoSpeech`, `useQuickSend`, `useSessionIdentity`, `useSessionManager`, `useSetup`, `useReconnect`, `useFileRefresh`, `useSystemEvents`, `useGlobalEvents`, `usePortForward`, `useBackHandler`, `useEdgeSwipeBack`, `useTerminalSession`, `useTerminalTabs` (multi-tab management), `useTerminalKeys` (virtual key processing), `useKeyConfig` (key/symbol persistence), `useTerminalGestures`, `useSwipeDelete`, `useSwipeSession`, `useCodeSymbols`, `useStickyScroll`, `useLocalhostAnnotation`, `useWorktreeAnnotation`, `useFileUpload`, `useAgents`, `useFilePathAnnotation`, `useFileNavStack` (file overlay navigation stack), `useChatContext` (file attach state for chat), `useTaskTab`.
+**Composables:** `useChatSession`, `useChatStream` (WS streaming via useGlobalEvents), `useChatRender` (block parsing + coalescing), `useAutoSpeech`, `useQuickSend`, `useSessionIdentity`, `useSessionManager`, `useSetup`, `useReconnect`, `useFileRefresh`, `useSystemEvents`, `useGlobalEvents`, `usePortForward`, `useBackHandler`, `useEdgeSwipeBack`, `useTerminalSession`, `useTerminalTabs` (multi-tab management), `useTerminalKeys` (virtual key processing), `useKeyConfig` (key/symbol persistence), `useTerminalGestures`, `useSwipeDelete`, `useSwipeSession`, `useCodeSymbols`, `useStickyScroll`, `useLocalhostAnnotation`, `useWorktreeAnnotation`, `useFileUpload`, `useAgents`, `useFilePathAnnotation`, `useFileNavStack` (file overlay navigation stack), `useChatContext` (file attach state for chat), `useTaskTab`.
 
 **Components:** `ChatPanel`, `FileManager`/`FileOverlay` (browse tab + file preview overlay, replacing separate browse/viewer tabs), `FileViewer` (preview content rendered inside FileOverlay), `TocDrawer`, `TaskTab`, `TaskExecDetail`, `TerminalPanel` (multi-tab, key/symbol config drawer), `KeyConfigDrawer`, `KeyConfigTab`, `TerminalTabMenu`, `GitGraph`, `GitManageContent`, `SessionSettingModal`, `SetupWizard`, `ContentBlocks`, `SummaryToggle`, `SessionDrawer`, `AcpSessionDrawer`, `PlanPanel`, `BottomSheet`, `PopupMenu`, `Lightbox`, `SwipeToDeleteRow`, `PasswordChangeDialog`.
 
@@ -77,14 +77,14 @@ cd android && JAVA_HOME=/usr/lib/jvm/jdk-17.0.12 ./gradlew assembleRelease  # Re
 
 ## Key Patterns
 
-- **SSE reconnection:** Chat: 3 attempts → HTTP polling. System events: 5 attempts → HTTP polling. Multi-client: `sse_busy` → second client falls back to HTTP polling with incremental block updates.
+- **WebSocket streaming:** Chat streaming and system events unified on single WS connection (`/api/ai/events/ws`). Clients subscribe to sessions via `{ type: "subscribe", session_id }`. `StreamHub` fans out events to all subscribers (multi-client). Cancel and permission response via WS client messages. HTTP cancel endpoint kept as fallback. WS reconnection handled by `useGlobalEvents`; on reconnect, client re-subscribes and StreamHub re-emits cached ACP state.
 - **Block coalescing:** Text/thinking merge into last same-type block; `tool_use` is boundary. `@chatsearch`/`@task` detected by `extractAtCommand()` and rendered as purple badges.
 - **AutoResumeBackend:** ExitPlanMode → cancel → resume "继续". Emits `resume_split` for DB finalization.
 - **ACP backend:** `ACPBackend` wraps ACP stdio agents with connection pooling (`ACPConnectionPool`, lazy init, 5-min idle sweep). Falls back to CLI via `sync.Once` if ACP not supported. State (mode/config/thinking/commands) cached and re-emitted on reconnect. Bridge adapters provide ACP for agents without native support.
 - **Agent system:** DB-backed (`agents` table). Models auto-discovered at runtime via `BackendRegistry` strategies. Shared rules template (`commonRulesTemplate`) embedded in Go binary. `@chatsearch`/`@task` template-injected on demand.
 - **Agent install:** `BackendSpec.InstallCmd` defines the install command for each backend (e.g., `npm install -g @anthropic-ai/claude-code`). Frontend shows install button for undetected backends — clicking it displays the command in a dialog with a copy button for the user to run manually.
 - **External session ID:** All backends write CLI session ID to `external_session_id` at creation. Continued sessions inherit from source.
-- **Cancel reason:** `"user"` (explicit) vs `"disconnect"` (SSE gone). `ForceCancelSession` kills zombie CLI processes.
+- **Cancel reason:** `"user"` (explicit) vs `"disconnect"` (WS client gone). `ForceCancelSession` kills zombie CLI processes.
 - **Data directory:** Default `~/.clawbench/` (Windows: `%USERPROFILE%\.clawbench\`). Override with `--data-dir`. Multi-instance on different ports with auto-scoped cookies (`ScopedCookieName()`); use distinct `--data-dir` for data isolation.
 - **Zero-config startup:** `config/config.yaml` optional. Auto-password persisted to `~/.clawbench/auto-password`. Filesystem root paths via `platform.ListRootPaths()`.
 - **Versioned schema migration:** Auto-incrementing version numbers in `schema_migrations` table. Dirty flag prevents silent corruption. New migrations: append function + next version number.

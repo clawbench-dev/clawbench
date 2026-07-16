@@ -114,6 +114,7 @@ type ChatSession struct {
 // QueuedMessage represents a message waiting in the pending queue for a session.
 // Stored in-memory only (not persisted to DB).
 type QueuedMessage struct {
+	QueueID   string      `json:"queueId"`                         // Frontend-generated unique ID for matching
 	Text      string      `json:"text"`
 	FilePaths []string    `json:"filePaths"`
 	Files     []FileEntry `json:"files"`

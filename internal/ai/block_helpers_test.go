@@ -1,95 +1,10 @@
 package ai
 
 import (
-	"context"
 	"testing"
 
 	"clawbench/internal/model"
 )
-
-// --- SendEvent / SendFinalEvent ---
-
-func TestSendEvent_ChannelAcceptsEvent(t *testing.T) {
-	ch := make(chan StreamEvent, 1)
-	event := StreamEvent{Type: "content", Content: "hello"}
-
-	result := SendStreamEvent(context.Background(), ch, event)
-
-	if !result {
-		t.Fatal("expected SendStreamEvent to return true when channel accepts event")
-	}
-	select {
-	case got := <-ch:
-		if got.Type != "content" || got.Content != "hello" {
-			t.Fatalf("unexpected event: %+v", got)
-		}
-	default:
-		t.Fatal("expected event on channel")
-	}
-}
-
-func TestSendEvent_ContextCancelled(t *testing.T) {
-	ch := make(chan StreamEvent, 1)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	// When the channel can accept AND context is cancelled, Go's select
-	// picks randomly. This test verifies the function handles cancelled
-	// context by returning false when the channel is full (no room to send).
-	ch <- StreamEvent{Type: "content"} // fill buffer so send must block
-
-	result := SendStreamEvent(ctx, ch, StreamEvent{Type: "thinking"})
-
-	if result {
-		t.Fatal("expected SendStreamEvent to return false when context is cancelled and channel is full")
-	}
-}
-
-func TestSendEvent_ChannelFull(t *testing.T) {
-	ch := make(chan StreamEvent, 1)
-	ch <- StreamEvent{Type: "content"} // fill buffer
-
-	result := SendStreamEvent(context.Background(), ch, StreamEvent{Type: "thinking"})
-
-	if !result {
-		t.Fatal("expected SendStreamEvent to return true (drop) when channel is full")
-	}
-	// The original event should still be there, not the new one
-	got := <-ch
-	if got.Type != "content" {
-		t.Fatalf("expected original 'content' event, got %q", got.Type)
-	}
-}
-
-func TestSendFinalEvent_DeliversToChannel(t *testing.T) {
-	ch := make(chan StreamEvent, 1)
-	event := StreamEvent{Type: "done"}
-
-	SendFinalStreamEvent(ch, event)
-
-	select {
-	case got := <-ch:
-		if got.Type != "done" {
-			t.Fatalf("expected 'done', got %q", got.Type)
-		}
-	default:
-		t.Fatal("expected event on channel")
-	}
-}
-
-func TestSendFinalEvent_ChannelFull(t *testing.T) {
-	ch := make(chan StreamEvent, 1)
-	ch <- StreamEvent{Type: "content"} // fill buffer
-
-	// Should not block
-	SendFinalStreamEvent(ch, StreamEvent{Type: "done"})
-
-	// Original event should still be there
-	got := <-ch
-	if got.Type != "content" {
-		t.Fatalf("expected original 'content' event, got %q", got.Type)
-	}
-}
 
 // --- StringsContainsAnyBlock ---
 
@@ -575,24 +490,4 @@ func TestConvertAskQuestionBlocks_EmptyCleanText(t *testing.T) {
 	}
 }
 
-func TestSendStreamEvent_ChannelFullWithToolEvent(t *testing.T) {
-	// Test that toolID is extracted from Tool field when logging dropped events
-	ch := make(chan StreamEvent, 1)
-	ch <- StreamEvent{Type: "content"} // fill buffer
-
-	result := SendStreamEvent(context.Background(), ch, StreamEvent{Type: "tool_use", Tool: &ToolCall{ID: "tool-123"}})
-	if !result {
-		t.Fatal("expected true when channel is full (event dropped)")
-	}
-}
-
-func TestSendStreamEvent_ChannelFullNoTool(t *testing.T) {
-	// Test drop path with no Tool field
-	ch := make(chan StreamEvent, 1)
-	ch <- StreamEvent{Type: "content"} // fill buffer
-
-	result := SendStreamEvent(context.Background(), ch, StreamEvent{Type: "thinking", Content: "hmm"})
-	if !result {
-		t.Fatal("expected true when channel is full (event dropped)")
-	}
-}
+// --- ExtractToolCallMeta ---

@@ -30,9 +30,6 @@ const execDetailOpen = ref(false)
 const formViewOpen = ref(false)
 const formMode = ref<'create' | 'edit'>('create')
 
-// Module-level polling timer
-let pollingTimer: ReturnType<typeof setInterval> | null = null
-
 // AbortController for loadTasks — aborts previous in-flight request
 let loadTasksAbortController: AbortController | null = null
 
@@ -365,21 +362,6 @@ export function useTaskTab() {
         formViewOpen.value = false
     }
 
-    // --- Polling ---
-
-    function startTaskPolling() {
-        if (pollingTimer !== null) return // guard against double-start
-        loadTasks()
-        pollingTimer = setInterval(loadTasks, 2000)
-    }
-
-    function stopTaskPolling() {
-        if (pollingTimer !== null) {
-            clearInterval(pollingTimer)
-            pollingTimer = null
-        }
-    }
-
     return {
         // Navigation state
         currentView: currentView as Ref<'list' | 'settings' | 'history'>,
@@ -407,9 +389,5 @@ export function useTaskTab() {
         loadTasks,
         markAllTasksRead,
         markTaskRead,
-
-        // Polling
-        startTaskPolling,
-        stopTaskPolling,
     }
 }

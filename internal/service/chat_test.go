@@ -821,35 +821,6 @@ func TestCancelSession_WithCancelFunc(t *testing.T) {
 	assert.True(t, ok)
 }
 
-func TestCancelSession_WithStreamChannel(t *testing.T) {
-	setupDB(t)
-
-	sid := "cancel-stream-test"
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Register both cancel and stream
-	service.RegisterSessionCancel(sid, cancel)
-	ch := service.RegisterSessionStream(sid)
-	service.SetSessionRunning(sid, true)
-
-	// Cancel in goroutine that also reads the stream
-	done := make(chan struct{})
-	go func() {
-		event := <-ch
-		assert.Equal(t, "cancelled", event.Type)
-		close(done)
-	}()
-
-	ok := service.CancelSession(sid)
-	assert.True(t, ok)
-
-	<-done
-	<-ctx.Done()
-
-	// Clean up stream
-	service.UnregisterSessionStream(sid)
-}
-
 // ---------- GetSessionTitle ----------
 
 func TestGetSessionTitle(t *testing.T) {
@@ -1245,53 +1216,6 @@ func TestForceCancelSession_NoCancelFunc(t *testing.T) {
 	setupDB(t)
 	// Should not panic when no cancel func exists
 	service.ForceCancelSession("non-existent")
-}
-
-// ---------- SendSessionEvent ----------
-
-func TestSendSessionEvent(t *testing.T) {
-	setupDB(t)
-	sid := "send-event-test"
-	ch := service.RegisterSessionStream(sid)
-
-	// Send event
-	ok := service.SendSessionEvent(sid, ai.StreamEvent{Type: "content", Content: "hello"})
-	assert.True(t, ok)
-
-	// Receive event
-	event := <-ch
-	assert.Equal(t, "content", event.Type)
-	assert.Equal(t, "hello", event.Content)
-
-	service.UnregisterSessionStream(sid)
-}
-
-func TestSendSessionEvent_NoStream(t *testing.T) {
-	setupDB(t)
-	ok := service.SendSessionEvent("non-existent", ai.StreamEvent{Type: "content"})
-	assert.False(t, ok)
-}
-
-func TestSendSessionEvent_FullChannel(t *testing.T) {
-	setupDB(t)
-	sid := "full-channel-test"
-	ch := service.RegisterSessionStream(sid)
-
-	// Fill the channel buffer (capacity is 256)
-	for i := range 256 {
-		ok := service.SendSessionEvent(sid, ai.StreamEvent{Type: "content", Content: fmt.Sprintf("msg-%d", i)})
-		assert.True(t, ok)
-	}
-
-	// Next send should fail (non-blocking)
-	ok := service.SendSessionEvent(sid, ai.StreamEvent{Type: "content", Content: "overflow"})
-	assert.False(t, ok)
-
-	// Drain the channel to clean up
-	for range 256 {
-		<-ch
-	}
-	service.UnregisterSessionStream(sid)
 }
 
 // ---------- UpdateMessageContent ----------
@@ -2952,6 +2876,16 @@ func TestGetSessionProjectPath_NonExistent(t *testing.T) {
 
 	path := service.GetSessionProjectPath("non-existent")
 	assert.Equal(t, "", path)
+}
+
+func TestGetSessionProjectPath_SoftDeleted(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/my/project", "claude", "Test")
+	_ = service.DeleteSession("/my/project", "claude", sid)
+
+	path := service.GetSessionProjectPath(sid)
+	assert.Equal(t, "", path, "soft-deleted session should return empty project path")
 }
 
 // ---------- GetLatestUserModel ----------

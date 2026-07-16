@@ -11,7 +11,6 @@
       <div v-if="execStream.isStreaming.value" class="exec-live-bar">
         <span class="exec-live-dot"></span>
         <span class="exec-live-text">{{ t('task.exec.livePreview') }}</span>
-        <span v-if="execStream.isPolling.value" class="exec-live-polling">{{ t('task.exec.previewPolling') }}</span>
       </div>
       <!-- Summary / Original tab bar (hidden during live streaming) -->
       <SummaryToggle v-if="hasSummary && !execStream.isStreaming.value" mode="tab" :showing-summary="activeTab === 'summary'" i18n-prefix="task.exec" @toggle="setTab(activeTab === 'summary' ? 'original' : 'summary')" />
@@ -133,7 +132,6 @@ const execSessionIdRef = computed(() => props.execDetail?.sessionId || null)
 const execStream = useTaskExecStream({
   sessionId: execSessionIdRef,
   status: execStatusRef,
-  onRefresh: refreshExecDetail,
   onComplete: () => {
     // Execution completed while previewing — do a final refresh
     refreshExecDetail()
@@ -251,14 +249,13 @@ const summaryMsgData = computed(() => {
 
 // ── Active message data based on tab ──
 const activeMsgData = computed(() => {
-  // When live streaming via SSE, prefer the streaming message (has real-time blocks)
-  if (execStream.isStreaming.value && !execStream.isPolling.value && execStream.streamingMsg.value) {
+  // When live streaming via WS, prefer the streaming message (has real-time blocks)
+  if (execStream.isStreaming.value && execStream.streamingMsg.value) {
     const sm = execStream.streamingMsg.value
     // Show streaming message if it has blocks (real-time content)
     if (sm.blocks && sm.blocks.length > 0) return sm
   }
-  // For polling mode, or when SSE hasn't produced blocks yet,
-  // use the DB content (refreshed by onRefresh/polling) — this ensures
+  // When not streaming, use the DB content (refreshed by refreshExecDetail)
   // we always show whatever partial content is available rather than "connecting..."
   if (activeTab.value === 'summary' && summaryMsgData.value) return summaryMsgData.value
   return msgData.value
@@ -533,11 +530,6 @@ onUnmounted(() => {
 
 .exec-live-text {
   font-weight: 500;
-}
-
-.exec-live-polling {
-  color: var(--text-muted, #999);
-  font-size: 11px;
 }
 
 @keyframes exec-live-pulse {
