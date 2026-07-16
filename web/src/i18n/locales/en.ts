@@ -189,6 +189,8 @@ export default {
     autoApprove: {
       title: 'Auto-Approve',
       description: 'Automatically approve all permission requests from the agent.',
+      enabled: 'Auto-Approve enabled',
+      disabled: 'Auto-Approve disabled',
     },
     plan: {
       title: 'Execution Plan',

@@ -189,6 +189,8 @@ export default {
     autoApprove: {
       title: '自动批准',
       description: '自动批准代理的所有权限请求。',
+      enabled: '自动批准已开启',
+      disabled: '自动批准已关闭',
     },
     plan: {
       title: '执行计划',
