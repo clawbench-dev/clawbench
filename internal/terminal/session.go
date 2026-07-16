@@ -43,6 +43,12 @@ type Session struct {
 	exitCode    int
 	closed      bool
 	onClose     func() // called by waitProcess after process exits (set by Manager)
+
+	// suppressOutput is set after Connect() sends the replay buffer to
+	// prevent the duplicate prompt caused by SIGWINCH after fit() triggers
+	// a resize. It is cleared by a short timer in HandleResize(), which
+	// is the first message the client sends after receiving the replay.
+	suppressOutput bool
 }
 
 // generateSessionID creates a random 8-byte hex string for session identification.
@@ -136,12 +142,18 @@ func (s *Session) readPTY(ctx context.Context) {
 			// Always write to ring buffer (for future replays)
 			s.buffer.Write(data)
 
-			// Send to WebSocket client if connected
-			msg := ServerMessage{
-				Type: "output",
-				Data: string(data),
+			// Send to WebSocket client unless suppressed (reconnect dedup)
+			s.mu.Lock()
+			suppressed := s.suppressOutput
+			s.mu.Unlock()
+
+			if !suppressed {
+				msg := ServerMessage{
+					Type: "output",
+					Data: string(data),
+				}
+				s.sendToClient(msg)
 			}
-			s.sendToClient(msg)
 		}
 		if err != nil {
 			if err != io.EOF {
@@ -239,12 +251,17 @@ func (s *Session) Connect(conn *websocket.Conn) error {
 
 	s.wsConn = conn
 
-	// Send replay buffer so the client can restore terminal state.
-	// The frontend calls term.reset() before writing replay data, which
-	// clears the xterm buffer. Any SIGWINCH-induced redraw from the
-	// subsequent fit()+resize arrives as normal output and is harmless.
+	// Send replay buffer and suppress output to prevent duplicate prompts.
+	// When the client reconnects, it receives the replay buffer (which
+	// includes the shell prompt), then calls fit() which sends a resize.
+	// That resize triggers SIGWINCH, causing the shell to redraw its
+	// prompt on top of the replay data. By suppressing output until
+	// HandleResize() fires, the redraw is discarded.
+	// Only suppress when there is actual replay data — on first connect
+	// the buffer is empty and there's nothing to duplicate.
 	replayData := s.buffer.Replay()
 	if replayData != nil {
+		s.suppressOutput = true
 		s.sendToClientUnlocked(ServerMessage{
 			Type: "replay",
 			Data: string(replayData),
@@ -314,6 +331,17 @@ func (s *Session) HandleResize(cols, rows uint16) error {
 		Cols: cols,
 		Rows: rows,
 	})
+}
+
+// HandleReplayDone clears suppressOutput after the frontend confirms it has
+// finished writing the replay buffer. This is the reliable signal that the
+// SIGWINCH-induced redraw output from the preceding resize can now be
+// forwarded to the client — the replay data is already on screen, so any
+// new output should appear normally.
+func (s *Session) HandleReplayDone() {
+	s.mu.Lock()
+	s.suppressOutput = false
+	s.mu.Unlock()
 }
 
 // Close terminates the PTY process, closes the WebSocket, and cleans up resources.

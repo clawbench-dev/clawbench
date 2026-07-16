@@ -2,7 +2,7 @@ package terminal
 
 // ClientMessage represents a message sent from the frontend to the server.
 type ClientMessage struct {
-	Type string `json:"type"`           // "input", "resize", "close"
+	Type string `json:"type"`           // "input", "resize", "close", "replay_done"
 	Data string `json:"data,omitempty"` // For "input": the keystroke data
 	Cols uint16 `json:"cols,omitempty"` // For "resize": terminal columns
 	Rows uint16 `json:"rows,omitempty"` // For "resize": terminal rows

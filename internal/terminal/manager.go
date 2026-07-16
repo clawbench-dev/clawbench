@@ -230,6 +230,8 @@ func (m *Manager) handleClientMessages(session *Session, conn *websocket.Conn) {
 			if err := session.HandleResize(msg.Cols, msg.Rows); err != nil {
 				slog.Debug("terminal: resize error", slog.String("error", err.Error()))
 			}
+		case "replay_done":
+			session.HandleReplayDone()
 		case "close":
 			sid := session.ID()
 			session.Close()

@@ -97,9 +97,9 @@ export function useTerminalTabs(
     })
 
     // Wire session callbacks
-    // On reconnect, the backend sends a replay buffer then suppresses output
-    // until the first resize completes (to avoid duplicate prompts from
-    // SIGWINCH). The frontend just clears the terminal and writes the replay.
+    // On reconnect, the backend sends a replay buffer and suppresses output
+    // until the first HandleResize (triggered by fit()). This prevents the
+    // duplicate prompt from SIGWINCH overwriting the replay data.
     // Strip DEC mode 2026 (Synchronized Output) from PTY output before
     // writing to xterm.js. TUI apps (vim, OpenCode/Bubble Tea) send
     // \x1b[?2026h before each rendered frame and \x1b[?2026l after.
@@ -119,8 +119,18 @@ export function useTerminalTabs(
       onReplay: (data: string) => {
         // Clear xterm buffer and replace with replay data — discards any
         // stale content left over from before the disconnect.
+        // The backend suppresses output until we send "replay_done",
+        // preventing duplicate prompts from SIGWINCH during fit().
         term.reset()
         term.write(stripSyncOutput(data))
+        // After writing replay, fit the terminal and notify the backend
+        // that it can stop suppressing output. fit() triggers a resize
+        // which sends SIGWINCH to the PTY — the shell redraws, but the
+        // backend discards that output until replay_done arrives.
+        requestAnimationFrame(() => {
+          try { fit.fit() } catch { /* ignore */ }
+          session.sendReplayDone()
+        })
       },
       onStatus: (status: { running: boolean; cwd: string }) => {
         if (status.cwd) {
