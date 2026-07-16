@@ -898,6 +898,8 @@ defineExpose({
   min-width: 14px;
   cursor: pointer;
   transition: color 0.15s;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .session-info-model:active,
