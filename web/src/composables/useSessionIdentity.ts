@@ -77,10 +77,32 @@ registerIdentityUpdaters({
   currentAgentId,
 })
 
-/** Reset all module-level singleton refs — used by SPA hot project switch. */
 /** Read-only accessor for the current session ID (no composable setup needed). */
 export function getSessionId(): string {
   return currentSessionId.value
+}
+
+/** Clear session identity refs for a session switch — resets all displayed
+ *  state (agent/model/mode/transport/usage) but keeps action callbacks and
+ *  the session drawer intact. Use resetIdentity() for full teardown (project
+ *  switch). Optionally sets currentSessionId to the upcoming session ID so
+ *  per-session computed refs (usage) switch instantly. */
+export function clearSessionIdentity(upcomingSessionId?: string): void {
+  currentSessionTitle.value = ''
+  currentBackend.value = ''
+  currentAgentId.value = ''
+  currentModelId.value = ''
+  currentModelName.value = ''
+  currentThinkingEffort.value = ''
+  currentThinkingEffortName.value = ''
+  currentModeId.value = ''
+  currentModeName.value = ''
+  currentTransport.value = ''
+  autoApprove.value = false
+  availableModes.value = []
+  availableCommands.value = []
+  availableThinkingEfforts.value = []
+  currentSessionId.value = upcomingSessionId ?? ''
 }
 
 export function resetIdentity(): void {
@@ -719,6 +741,7 @@ export function useSessionIdentity() {
     clearCommandState,
     updateAvailableThinkingEfforts,
     clearThinkingEffortState,
+    clearSessionIdentity,
     updateUsageState,
     clearUsageState,
     clearAllUsageState,

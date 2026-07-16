@@ -220,7 +220,7 @@ describe('SettingsPage', () => {
   // ─── Drill-down routing ──────────────────────
   describe('drill-down routing', () => {
     const drillDownIds = ['terminal', 'tts', 'summarization', 'rag', 'portForward', 'frp']
-    const flatIds = ['appearance', 'project', 'chat', 'agents', 'files', 'security', 'android', 'about']
+    const flatIds = ['appearance', 'project', 'chat', 'agents', 'files', 'security', 'debug', 'about']
 
     it('isDrillDownCategory identifies drill-down categories', () => {
       for (const id of drillDownIds) {

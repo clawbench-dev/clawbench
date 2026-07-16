@@ -5,7 +5,7 @@ import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'ChatSession'
-import { clearModeState, updateAvailableModes, clearCommandState, updateCommandState, updateAvailableThinkingEfforts, clearThinkingEffortState, clearUsageState, clearUsageStateById, updateUsageState, currentAgentId as _currentAgentId } from '@/composables/useSessionIdentity.ts'
+import { updateAvailableModes, updateCommandState, updateAvailableThinkingEfforts, clearUsageState, clearUsageStateById, updateUsageState, currentAgentId as _currentAgentId, clearSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
 import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
@@ -611,18 +611,18 @@ export function useChatSession(options: UseChatSessionOptions) {
     Object.keys(blockTasks).forEach(k => delete blockTasks[k])
     Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
     Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
-    // Clear ACP state from previous session — will be repopulated by REST response
-    // or SSE events only if the new session's agent actually supports ACP.
-    clearModeState()
-    clearCommandState()
-    clearThinkingEffortState()
+    // Restore original CLI model list in case ACP had overridden it
+    // Must run BEFORE clearing currentAgentId so the old agent's models
+    // can be properly restored.
+    const prevAgentId = _currentAgentId.value
+    if (prevAgentId) restoreOriginalModels(prevAgentId)
+    // Clear all identity refs and set currentSessionId to the target — avoids
+    // flashing stale info during the async fetch. Will be repopulated from
+    // the REST response. This also clears ACP state (mode/commands/thinking).
+    clearSessionIdentity(sessionId)
     // No clearUsageState() here — usage state is per-session in a Map cache.
     // Switching currentSessionId makes the computed refs read from the new
     // session's cache entry instantly, with no clear→repopulate race.
-    autoApprove.value = false
-    // Restore original CLI model list in case ACP had overridden it
-    const prevAgentId = _currentAgentId.value
-    if (prevAgentId) restoreOriginalModels(prevAgentId)
     // Clear plan progress from previous session — will be repopulated by SSE plan_update
     clearPlanState()
     try {
@@ -668,6 +668,8 @@ export function useChatSession(options: UseChatSessionOptions) {
 
       messages.value = parseMessages(data.messages || [], onParseAssistantContent, undefined, data.running)
       totalMessages.value = data.total || messages.value.length
+      // Re-assign from server response for authority (clearSessionIdentity already
+      // set this to sessionId; data.sessionId should match but takes precedence).
       currentSessionId.value = data.sessionId || sessionId
       currentSessionTitle.value = data.sessionTitle || ''
       currentBackend.value = data.backend || ''
@@ -734,6 +736,12 @@ export function useChatSession(options: UseChatSessionOptions) {
     // conditions — if the polling fires during creation, loadHistory could
     // overwrite the new sessionId and revert to the old session.
     stopMsgCountPolling()
+    // Immediately clear identity and show switching overlay so the user
+    // doesn't see stale info from the previous session during the network
+    // round-trip to create the new session.
+    switching.value = true
+    inputDisabled.value = true
+    clearSessionIdentity()
     try {
       const body = agentId ? { agentId } : {}
       const resp = await fetch('/api/ai/sessions', {
@@ -761,6 +769,11 @@ export function useChatSession(options: UseChatSessionOptions) {
       appLog.e(TAG, 'Failed to create session:', err)
       const _msg = err instanceof Error ? err.message : ''
       toast.show(_msg ? gt('chat.session.createSessionFailedDetail', { error: _msg }) : gt('chat.session.createSessionFailed'), { icon: '⚠️', type: 'error' })
+      // Reset switching/input state on failure — switchSession won't run so
+      // its finally block won't fire. On success, switchSession's finally
+      // handles the reset.
+      switching.value = false
+      inputDisabled.value = false
     }
   }
 

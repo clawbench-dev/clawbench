@@ -32,6 +32,8 @@ export interface ItemSpec {
   displayTransform?: (value: unknown) => unknown
   defaultValue?: unknown
   displayFormat?: 'percent' | 'raw'
+  /** Only show this item when running inside the Android app */
+  appOnly?: boolean
 }
 
 // ── Drill-down category types ──────────────────────────────
@@ -104,9 +106,9 @@ export const categoryItems: Record<string, ItemSpec[]> = {
     { labelKey: 'settings.items.uploadMaxSize', descriptionKey: 'settings.items.uploadMaxSizeDesc', key: 'upload.max_size_mb', type: 'number', source: 'server' },
     { labelKey: 'settings.items.uploadMaxFiles', descriptionKey: 'settings.items.uploadMaxFilesDesc', key: 'upload.max_files', type: 'number', source: 'server' },
   ],
-  android: [
-    { labelKey: 'settings.items.androidLogCapture', descriptionKey: 'settings.items.androidLogCaptureDesc', key: 'androidLogCapture', type: 'switch', source: 'local' },
-    { labelKey: 'settings.items.reconfigureServer', descriptionKey: 'settings.items.reconfigureServerDesc', key: 'reconfigureServer', type: 'action', source: 'local' },
+  debug: [
+    { labelKey: 'settings.items.logCapture', descriptionKey: 'settings.items.logCaptureDesc', key: 'logCapture', type: 'switch', source: 'local' },
+    { labelKey: 'settings.items.reconfigureServer', descriptionKey: 'settings.items.reconfigureServerDesc', key: 'reconfigureServer', type: 'action', source: 'local', appOnly: true },
   ],
   security: [
     { labelKey: 'settings.items.localhostAuthExempt', descriptionKey: 'settings.items.localhostAuthExemptDesc', key: 'localhost_auth_exempt', type: 'switch', source: 'server' },

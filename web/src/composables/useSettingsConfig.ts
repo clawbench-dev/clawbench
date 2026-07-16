@@ -246,7 +246,7 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   stickyScroll: true,
   fileView: 'list',
   terminalFontSize: 12,
-  androidLogCapture: false,
+  logCapture: false,
   swipeSession: false,
   preventScreenLock: true,
   sortField: null,

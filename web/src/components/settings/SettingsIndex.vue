@@ -31,19 +31,17 @@ import {
   Globe,
   Shield,
   Bell,
-  Smartphone,
+  Bug,
   Info,
   ChevronRight,
 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
-import { useAppMode } from '@/composables/useAppMode'
 
 defineEmits<{
   navigate: [categoryId: string]
 }>()
 
 const { t } = useI18n()
-const { isAppMode } = useAppMode()
 
 const categoryDefs = computed(() => [
   { id: 'appearance', icon: Palette },
@@ -59,7 +57,7 @@ const categoryDefs = computed(() => [
   { id: 'frp', icon: Globe },
   { id: 'notification', icon: Bell },
   { id: 'security', icon: Shield },
-  ...(isAppMode.value ? [{ id: 'android', icon: Smartphone }] : []),
+  { id: 'debug', icon: Bug },
   { id: 'about', icon: Info },
 ])
 

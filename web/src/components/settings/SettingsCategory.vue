@@ -58,6 +58,7 @@ import { useAgents } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
 import { useAppMode } from '@/composables/useAppMode'
+import { startFlushTimer, stopFlushTimer } from '@/utils/appLog'
 import { usePwaInstall } from '@/composables/usePwaInstall'
 import { categoryItems, type ItemSpec, type DependsOn } from './settingsFieldMap'
 
@@ -112,6 +113,8 @@ const renderList = computed(() => {
 
   for (const item of raw) {
     if (!isDependsOnMet(item.dependsOn)) continue
+    // Hide appOnly items when not in Android App mode
+    if (item.appOnly && !isAppMode.value) continue
     // Hide appVersion row when not in Android App mode
     if (item.key === 'appVersion' && !isAppMode.value) continue
     if (item.key === 'addToHomeScreen' && !pwaInstall.showPwaInstall.value) continue
@@ -192,14 +195,18 @@ async function handleUpdate(item: ItemSpec, value: unknown) {
   }
   if (item.source === 'local') {
     setLocalConfig(item.key, value as string | number | boolean)
-    if (item.key === 'androidLogCapture') {
-      try {
-        if (value) {
-          ;(window as unknown as { AndroidNative?: { startLogCapture?: () => void; stopLogCapture?: () => void } }).AndroidNative?.startLogCapture?.()
-        } else {
-          ;(window as unknown as { AndroidNative?: { startLogCapture?: () => void; stopLogCapture?: () => void } }).AndroidNative?.stopLogCapture?.()
-        }
-      } catch { /* not in app mode */ }
+    if (item.key === 'logCapture') {
+      if (value) {
+        try {
+          ;(window as unknown as { AndroidNative?: { startLogCapture?: () => void } }).AndroidNative?.startLogCapture?.()
+        } catch { /* not in app mode */ }
+        startFlushTimer()
+      } else {
+        try {
+          ;(window as unknown as { AndroidNative?: { stopLogCapture?: () => void } }).AndroidNative?.stopLogCapture?.()
+        } catch { /* not in app mode */ }
+        stopFlushTimer()
+      }
     }
     return
   }

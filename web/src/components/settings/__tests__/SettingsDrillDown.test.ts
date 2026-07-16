@@ -21,7 +21,7 @@ const localConfig = reactive<Record<string, any>>({
   lineNumbers: true,
   fileView: 'list',
   terminalFontSize: 12,
-  androidLogCapture: false,
+  logCapture: false,
   swipeSession: false,
   uiScale: 1,
   sortField: null,

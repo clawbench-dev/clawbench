@@ -184,7 +184,7 @@ const i18n = createI18n({
           aboutServerVersion: '服务器版本',
           aboutAppVersion: 'APP版本',
           serverRestart: '重启服务器',
-          androidLogCapture: '日志抓取',
+          logCapture: '日志抓取',
           reconfigureServer: '重新配置服务器',
           agentModel: '首选模型',
           agentThinking: '思考强度',

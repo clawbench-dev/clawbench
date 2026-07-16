@@ -259,7 +259,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, provide, nextTick } from 'vue'
-import { appLog } from '@/utils/appLog'
+import { appLog, startFlushTimer, stopFlushTimer } from '@/utils/appLog'
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyUIScale, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
@@ -785,9 +785,10 @@ async function initializeApp() {
   // 3. Secondary data — non-blocking, can load in parallel with UI render
   loadSessionsOnce()
   if (isAppMode.value) syncToNative().catch(() => {})
-  if (isAppMode.value && localConfig.androidLogCapture) {
+  if (isAppMode.value && localConfig.logCapture) {
     try { if (window.AndroidNative?.startLogCapture) window.AndroidNative.startLogCapture() } catch {}
   }
+  if (localConfig.logCapture) startFlushTimer()
   loadSSHInfo().catch(() => {})
   loadTerminalStatus().catch(() => {})
   store.loadGitBranch().catch(() => {})
@@ -1495,6 +1496,7 @@ onUnmounted(() => {
     window.removeEventListener('clawbench-open-session', handleOpenSession)
     window.removeEventListener('clawbench-open-task', handleOpenTask)
     document.removeEventListener('click', handleOverflowOutsideClick)
+    stopFlushTimer()
 })
 </script>
 

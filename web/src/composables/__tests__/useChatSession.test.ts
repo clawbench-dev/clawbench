@@ -199,7 +199,10 @@ vi.mock('@/composables/useSessionIdentity.ts', () => ({
     saveModePref: vi.fn(),
     toggleAutoApprove: vi.fn(),
   }),
-  currentAgentId: { value: '' },
+  currentAgentId: {
+    get value() { return mockIdentity.currentAgentId },
+    set value(v) { mockIdentity.currentAgentId = v },
+  },
   updateModeState: vi.fn(),
   updateAvailableModes: vi.fn(),
   clearModeState: vi.fn(),
@@ -208,6 +211,23 @@ vi.mock('@/composables/useSessionIdentity.ts', () => ({
   updateThinkingEffortState: vi.fn(),
   updateAvailableThinkingEfforts: vi.fn(),
   clearThinkingEffortState: vi.fn(),
+  clearSessionIdentity: vi.fn((upcomingSessionId?: string) => {
+    // Simulate clearing identity refs and setting currentSessionId
+    mockIdentity.currentSessionTitle = ''
+    mockIdentity.currentBackend = ''
+    mockIdentity.currentAgentId = ''
+    mockIdentity.currentModelId = ''
+    mockIdentity.currentModelName = ''
+    mockIdentity.currentThinkingEffort = ''
+    mockIdentity.currentThinkingEffortName = ''
+    mockIdentity.currentModeId = ''
+    mockIdentity.currentModeName = ''
+    mockIdentity.currentTransport = ''
+    mockIdentity.autoApprove = false
+    if (upcomingSessionId !== undefined) {
+      mockState.currentSessionId = upcomingSessionId
+    }
+  }),
   updateUsageState: mockUpdateUsageState,
   clearUsageState: mockClearUsageState,
   clearUsageStateById: mockIdentityFns.clearUsageStateById,

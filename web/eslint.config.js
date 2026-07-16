@@ -15,6 +15,7 @@ export default tseslint.config(
             '*.config.js',
             '**/*.test.ts',
             '**/*.test.tsx',
+            '**/appLog.ts',
         ],
     },
 
@@ -73,6 +74,20 @@ export default tseslint.config(
             '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
             'no-console': 'off',
             'no-empty': ['error', { allowEmptyCatch: true }],
+        },
+    },
+
+    // Ban raw console.* in source code (tests and appLog.ts are exempt via ignores)
+    {
+        files: ['**/*.{ts,vue}'],
+        rules: {
+            'no-restricted-syntax': [
+                'error',
+                {
+                    selector: 'CallExpression[callee.object.name="console"]',
+                    message: 'Use appLog.d/i/w/e() from @/utils/appLog instead of console.*(). See AGENTS.md.',
+                },
+            ],
         },
     },
 )

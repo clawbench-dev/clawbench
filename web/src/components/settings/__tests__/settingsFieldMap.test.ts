@@ -66,7 +66,7 @@ describe('settingsFieldMap', () => {
   })
 
   it('categoryItems covers flat (non-drill-down) categories', () => {
-    const expectedCategories = ['appearance', 'agents', 'project', 'chat', 'files', 'android', 'security', 'about']
+    const expectedCategories = ['appearance', 'agents', 'project', 'chat', 'files', 'debug', 'security', 'about']
     for (const cat of expectedCategories) {
       expect(categoryItems[cat]).toBeDefined()
     }

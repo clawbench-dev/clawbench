@@ -12,37 +12,63 @@ import (
 	"clawbench/internal/model"
 )
 
-// androidLogMu protects concurrent writes to the android log file.
-var androidLogMu sync.Mutex
+// clientLogMu protects concurrent writes to client log files.
+// Each source (android, js) gets its own mutex and log file.
+var (
+	androidClientLogMu sync.Mutex
+	jsClientLogMu      sync.Mutex
+)
 
-// AndroidLogEntry represents a single log entry from the Android app.
-type AndroidLogEntry struct {
-	Level string `json:"level"` // D, I, W, E
-	Tag   string `json:"tag"`
-	Msg   string `json:"msg"`
-	Ts    int64  `json:"ts"` // epoch millis
+// ClientLogEntry represents a single log entry from a client (Android app or JS frontend).
+type ClientLogEntry struct {
+	Level  string `json:"level"`            // D, I, W, E
+	Tag    string `json:"tag"`
+	Msg    string `json:"msg"`
+	Ts     int64  `json:"ts"`               // epoch millis
+	Source string `json:"source,omitempty"` // "android" or "js"; defaults to "android" when empty
 }
 
-// androidLogRequest is the request body for POST /api/android-log.
-type androidLogRequest struct {
-	Entries []AndroidLogEntry `json:"entries"`
+// clientLogRequest is the request body for POST /api/client-log.
+type clientLogRequest struct {
+	Entries []ClientLogEntry `json:"entries"`
 }
 
-// androidLogFilePath returns the path to the android log file.
-func androidLogFilePath() string {
-	return filepath.Join(model.ConfigInstance.LogDir, "android.log")
+// clientLogFilePath returns the log file path for the given source.
+func clientLogFilePath(source string) string {
+	name := "android.log"
+	if source == "js" {
+		name = "js.log"
+	}
+	return filepath.Join(model.ConfigInstance.LogDir, name)
 }
 
-// ServeAndroidLog handles POST /api/android-log.
-// It receives batched log entries from the Android app and appends them
-// to .clawbench/logs/android.log in a human-readable format.
-func ServeAndroidLog(w http.ResponseWriter, r *http.Request) {
+// clientLogMu returns the mutex for the given source.
+func clientLogMu(source string) *sync.Mutex {
+	if source == "js" {
+		return &jsClientLogMu
+	}
+	return &androidClientLogMu
+}
+
+// effectiveSource returns the effective source, defaulting to "android" when empty.
+func effectiveSource(s string) string {
+	if s == "" {
+		return "android"
+	}
+	return s
+}
+
+// ServeClientLog handles POST /api/client-log (and legacy POST /api/android-log).
+// It receives batched log entries from clients and appends them to per-source
+// log files (.clawbench/logs/android.log, .clawbench/logs/js.log) in a
+// human-readable format.
+func ServeClientLog(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
 		return
 	}
 
-	var req androidLogRequest
+	var req clientLogRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
@@ -57,43 +83,64 @@ func ServeAndroidLog(w http.ResponseWriter, r *http.Request) {
 		req.Entries = req.Entries[:200]
 	}
 
-	// Format entries (one line per entry; escape newlines in messages)
-	lines := make([]byte, 0, len(req.Entries)*128)
+	// Group entries by effective source
+	groups := make(map[string][]ClientLogEntry)
 	for _, e := range req.Entries {
-		t := time.UnixMilli(e.Ts)
-		msg := strings.ReplaceAll(e.Msg, "\n", "\\n")
-		line := fmt.Sprintf(
-			"%s %s/%s: %s\n",
-			t.Format("2006-01-02T15:04:05.000"),
-			e.Level,
-			e.Tag,
-			msg,
-		)
-		lines = append(lines, line...)
+		src := effectiveSource(e.Source)
+		groups[src] = append(groups[src], e)
 	}
 
-	// Append to file (mutex-protected)
-	androidLogMu.Lock()
-	defer androidLogMu.Unlock()
+	totalWritten := 0
 
-	path := androidLogFilePath()
+	for src, entries := range groups {
+		// Format entries (one line per entry; escape newlines in messages)
+		lines := make([]byte, 0, len(entries)*128)
+		for _, e := range entries {
+			t := time.UnixMilli(e.Ts)
+			msg := strings.ReplaceAll(e.Msg, "\n", "\\n")
+			line := fmt.Sprintf(
+				"%s %s/%s: %s\n",
+				t.Format("2006-01-02T15:04:05.000"),
+				e.Level,
+				e.Tag,
+				msg,
+			)
+			lines = append(lines, line...)
+		}
+
+		// Append to file (source-specific mutex)
+		mu := clientLogMu(src)
+		mu.Lock()
+		err := appendClientLog(src, lines)
+		mu.Unlock()
+
+		if err != nil {
+			model.WriteError(w, model.Internal(fmt.Errorf("write %s client log: %w", src, err)))
+			return
+		}
+		totalWritten += len(entries)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"written": totalWritten})
+}
+
+// appendClientLog appends formatted log lines to the source-specific log file.
+// Caller must hold the appropriate mutex.
+func appendClientLog(source string, lines []byte) error {
+	path := clientLogFilePath(source)
 	// Ensure directory exists
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		model.WriteError(w, model.Internal(fmt.Errorf("create log dir: %w", err)))
-		return
+		return fmt.Errorf("create log dir: %w", err)
 	}
 
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644) //nolint:gosec // log file, not security-sensitive
 	if err != nil {
-		model.WriteError(w, model.Internal(fmt.Errorf("open android log: %w", err)))
-		return
+		return fmt.Errorf("open log file: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 
 	if _, err := f.Write(lines); err != nil {
-		model.WriteError(w, model.Internal(fmt.Errorf("write android log: %w", err)))
-		return
+		return fmt.Errorf("write log: %w", err)
 	}
-
-	writeJSON(w, http.StatusOK, map[string]any{"written": len(req.Entries)})
+	return nil
 }

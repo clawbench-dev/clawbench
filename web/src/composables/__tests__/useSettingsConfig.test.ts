@@ -126,7 +126,7 @@ describe('useSettingsConfig', () => {
     expect('showHidden' in localConfig).toBe(true)
     expect('fileView' in localConfig).toBe(true)
     expect('terminalFontSize' in localConfig).toBe(true)
-    expect('androidLogCapture' in localConfig).toBe(true)
+    expect('logCapture' in localConfig).toBe(true)
     expect('swipeSession' in localConfig).toBe(true)
   })
 
