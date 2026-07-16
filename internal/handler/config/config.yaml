@@ -14,7 +14,6 @@ dingtalk:
         - user1
 host: ""
 localhost_auth_exempt: false
-log_dir: ""
 log_level: ""
 log_max_days: 0
 password: ""

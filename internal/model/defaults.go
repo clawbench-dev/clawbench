@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"clawbench/internal/platform"
 )
 
 // ParsePresenceMap walks a raw YAML map and returns a flat set of dot-separated
@@ -89,10 +87,9 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	}
 
 	// --- LogDir ---
-	if cfg.LogDir == "" {
-		cfg.LogDir = filepath.Join(DataDir, "logs")
-	}
-	cfg.LogDir = platform.ExpandTilde(cfg.LogDir)
+	// LogDir is always <DataDir>/logs — not configurable via config.yaml.
+	// This avoids relative-path pitfalls (CWD-dependent resolution).
+	cfg.LogDir = filepath.Join(DataDir, "logs")
 
 	if cfg.LogMaxDays <= 0 {
 		cfg.LogMaxDays = 7

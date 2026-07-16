@@ -36,7 +36,7 @@ type Config struct {
 	LogLevel            string `yaml:"log_level"` // Log level: "debug", "info", "warn", "error" (default: "info")
 	Password            string `yaml:"password"`
 	DefaultAgent        string `yaml:"default_agent"`
-	LogDir              string `yaml:"log_dir"`
+	LogDir              string // always <DataDir>/logs; not configurable via yaml
 	LocalhostAuthExempt bool   `yaml:"localhost_auth_exempt"` // true = localhost bypasses auth (default)
 	LogMaxDays          int    `yaml:"log_max_days"`
 	TLS                 struct {
