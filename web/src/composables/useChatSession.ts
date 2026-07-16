@@ -825,7 +825,19 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (!currentSessionId.value || loading.value) return
       try {
         const resp = await fetch(`/api/ai/chat/count?session_id=${encodeURIComponent(currentSessionId.value)}`)
-        if (!resp.ok) return
+        if (!resp.ok) {
+          // Session was deleted externally — stop polling and recover like loadHistory does
+          if (resp.status === 404) {
+            const errData = await resp.json().catch(() => ({}))
+            if (errData.msgKey === 'SessionNotFound') {
+              appLog.w(TAG, 'msgCountPolling: session not found, stopping poll and recovering')
+              stopMsgCountPolling()
+              currentSessionId.value = ''
+              setTimeout(() => loadHistory(false, false, true), 0)
+            }
+          }
+          return
+        }
         const data = await resp.json()
         if (data.count > lastMsgCount.value) {
           lastMsgCount.value = data.count

@@ -2556,6 +2556,33 @@ describe('startMsgCountPolling / stopMsgCountPolling', () => {
     // No fetch calls should have been made for polling
     expect(globalThis.fetch).not.toHaveBeenCalled()
   })
+
+  it('startMsgCountPolling: 404 SessionNotFound stops polling and recovers', async () => {
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        json: () => Promise.resolve({ msgKey: 'SessionNotFound', error: 'Session not found' }),
+      })
+      // Recovery: loadHistory fetches /api/ai/chat which returns a new session
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          sessionId: 'recovered-s1', messages: [], total: 0, running: false,
+        }),
+      })
+
+    const session = createSession()
+    session.startMsgCountPolling()
+
+    await vi.advanceTimersByTimeAsync(16000)
+
+    // Should have stopped polling (no interval firing anymore)
+    const callCount = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length
+    await vi.advanceTimersByTimeAsync(20000)
+    // No additional count polls — only the initial 2 calls
+    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callCount)
+  })
 })
 
 // ───────────────────────────────────────────────────────────
