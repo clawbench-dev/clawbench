@@ -119,8 +119,6 @@ export function useTerminalTabs(
       onReplay: (data: string) => {
         // Clear xterm buffer and replace with replay data — discards any
         // stale content left over from before the disconnect.
-        // The backend suppresses output after replay until the first resize
-        // (triggered by fit()) completes, so no duplicate prompt appears.
         term.reset()
         term.write(stripSyncOutput(data))
       },

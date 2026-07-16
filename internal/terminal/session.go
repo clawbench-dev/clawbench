@@ -43,17 +43,6 @@ type Session struct {
 	exitCode    int
 	closed      bool
 	onClose     func() // called by waitProcess after process exits (set by Manager)
-
-	// suppressOutput is set after Connect() sends the replay buffer.
-	// While true, readPTY() writes PTY output to the ring buffer but does
-	// NOT forward it to the WebSocket client. This prevents the duplicate
-	// prompt that appears when fit() after reconnect triggers SIGWINCH,
-	// causing the shell to redraw its prompt on top of the replay data.
-	// The flag is cleared shortly after the first HandleResize() call
-	// (which is when SIGWINCH fires), once the redraw output has been
-	// consumed and discarded by readPTY().
-	suppressOutput      bool
-	suppressSafetyTimer *time.Timer // safety timeout to prevent permanent suppression
 }
 
 // generateSessionID creates a random 8-byte hex string for session identification.
@@ -147,22 +136,12 @@ func (s *Session) readPTY(ctx context.Context) {
 			// Always write to ring buffer (for future replays)
 			s.buffer.Write(data)
 
-			// Send to WebSocket client if connected, unless suppressed.
-			// suppressOutput is set after Connect() sends the replay buffer
-			// to prevent the duplicate prompt caused by SIGWINCH after fit().
-			s.mu.Lock()
-			suppressed := s.suppressOutput
-			s.mu.Unlock()
-
-			if suppressed {
-				// Output discarded; will be sent once suppressOutput clears
-			} else {
-				msg := ServerMessage{
-					Type: "output",
-					Data: string(data),
-				}
-				s.sendToClient(msg)
+			// Send to WebSocket client if connected
+			msg := ServerMessage{
+				Type: "output",
+				Data: string(data),
 			}
+			s.sendToClient(msg)
 		}
 		if err != nil {
 			if err != io.EOF {
@@ -260,34 +239,15 @@ func (s *Session) Connect(conn *websocket.Conn) error {
 
 	s.wsConn = conn
 
-	// Send replay buffer and suppress output to prevent duplicate prompts.
-	// When the client reconnects, it receives the replay buffer (which
-	// includes the shell prompt), then calls fit() which sends a resize
-	// message. That resize triggers SIGWINCH, causing the shell to redraw
-	// its prompt. By suppressing output until HandleResize() fires, the
-	// redraw output is discarded by readPTY() instead of being sent as a
-	// duplicate. HandleResize() will clear this flag after a short delay
-	// to allow the SIGWINCH-induced output to be consumed.
-	// Only suppress when there is actual replay data — on first connect
-	// the buffer is empty and there's nothing to duplicate.
+	// Send replay buffer so the client can restore terminal state.
+	// The frontend calls term.reset() before writing replay data, which
+	// clears the xterm buffer. Any SIGWINCH-induced redraw from the
+	// subsequent fit()+resize arrives as normal output and is harmless.
 	replayData := s.buffer.Replay()
 	if replayData != nil {
-		s.suppressOutput = true
 		s.sendToClientUnlocked(ServerMessage{
 			Type: "replay",
 			Data: string(replayData),
-		})
-
-		// Safety timeout: if HandleResize is never called (e.g. fit() fails
-		// or the terminal dimensions don't change), clear suppressOutput
-		// after 500ms so the client is not permanently stuck receiving no output.
-		s.suppressSafetyTimer = time.AfterFunc(500*time.Millisecond, func() {
-			s.mu.Lock()
-			if s.suppressOutput {
-				s.suppressOutput = false
-				slog.Warn("terminal: suppressOutput safety timeout", slog.String("session", s.id))
-			}
-			s.mu.Unlock()
 		})
 	}
 
@@ -341,45 +301,19 @@ func (s *Session) HandleInput(data string) error {
 }
 
 // HandleResize processes a resize message from the WebSocket client.
-// After a reconnect (where Connect() set suppressOutput), this is the first
-// message the client sends (via fit()). Setsize() triggers SIGWINCH, which
-// causes the shell to redraw its prompt. We keep suppressOutput=true briefly
-// after Setsize() so readPTY() discards the redraw output, then clear it.
 func (s *Session) HandleResize(cols, rows uint16) error {
 	s.mu.Lock()
 	ptmx := s.ptmx
-	suppressing := s.suppressOutput
 	s.mu.Unlock()
 
 	if ptmx == nil {
 		return fmt.Errorf("PTY not available")
 	}
 
-	err := pty.Setsize(ptmx, &pty.Winsize{
+	return pty.Setsize(ptmx, &pty.Winsize{
 		Cols: cols,
 		Rows: rows,
 	})
-
-	if suppressing {
-		// Cancel the safety timer since HandleResize was called normally
-		if s.suppressSafetyTimer != nil {
-			s.suppressSafetyTimer.Stop()
-			s.suppressSafetyTimer = nil
-		}
-
-		// Setsize() just sent SIGWINCH. The shell will redraw its prompt
-		// and readPTY() will read that output within microseconds (same
-		// machine, no network). 50ms is more than enough for the kernel
-		// to deliver the signal, the shell to respond, and readPTY() to
-		// consume and discard the output.
-		time.AfterFunc(50*time.Millisecond, func() {
-			s.mu.Lock()
-			s.suppressOutput = false
-			s.mu.Unlock()
-		})
-	}
-
-	return err
 }
 
 // Close terminates the PTY process, closes the WebSocket, and cleans up resources.
@@ -400,10 +334,6 @@ func (s *Session) Close() {
 
 	if s.idleTimer != nil {
 		s.idleTimer.Stop()
-	}
-	if s.suppressSafetyTimer != nil {
-		s.suppressSafetyTimer.Stop()
-		s.suppressSafetyTimer = nil
 	}
 	if s.cancelRead != nil {
 		s.cancelRead()
