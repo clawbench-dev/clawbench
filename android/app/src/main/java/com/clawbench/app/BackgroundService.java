@@ -113,7 +113,7 @@ public class BackgroundService extends Service {
     private static volatile BackgroundService instance;
 
     private JSch jsch;
-    private Session sshSession;
+    private volatile Session sshSession;
 
     // PortInfo tracks both the target port and host for a forwarded port.
     // This is needed because localPort may differ from targetPort when
@@ -273,7 +273,9 @@ public class BackgroundService extends Service {
         // Access via static reference is inherently racy, but sufficient for
         // a health-check ping — worst case we return a stale value that gets
         // corrected on the next poll.
-        boolean connected = isRunning && instance != null && instance.sshSession != null && instance.sshSession.isConnected();
+        if (!isRunning || instance == null) return false;
+        Session session = instance.sshSession; // volatile read — single reference
+        boolean connected = session != null && session.isConnected();
         if (connected) {
             lastError = null;
         }
@@ -412,6 +414,7 @@ public class BackgroundService extends Service {
         jsch = new JSch();
         createNotificationChannel();
         startForegroundCompat(NOTIFICATION_ID, buildNotification(0, null));
+        AppLog.logMemory(this, TAG, "BackgroundService.onCreate");
 
         // Initialize screen state from PowerManager (may be off if service restarts while screen is off)
         PowerManager pmInit = (PowerManager) getApplicationContext().getSystemService(Context.POWER_SERVICE);
@@ -443,6 +446,7 @@ public class BackgroundService extends Service {
                     // Guard check runs inside networkExecutor to avoid reading
                     // sshScreenSuspended from the main thread (review C1).
                     if (!forwardedPorts.isEmpty() && !intentionalDisconnect) {
+                        AppLog.i(TAG, "SSH: screen on, scheduling SSH resume (ports=" + forwardedPorts.keySet() + ")");
                         networkExecutor.execute(() -> {
                             if (sshScreenSuspended && !intentionalDisconnect) {
                                 sshScreenSuspended = false;
@@ -468,6 +472,7 @@ public class BackgroundService extends Service {
                     // Guard check and disconnect run on networkExecutor for thread safety.
                     // Don't suspend if user intentionally disconnected (review I3).
                     if (!forwardedPorts.isEmpty() && !intentionalDisconnect) {
+                        AppLog.i(TAG, "SSH: screen off, scheduling SSH suspend (ports=" + forwardedPorts.keySet() + ")");
                         networkExecutor.execute(() -> {
                             if (sshSession != null && sshSession.isConnected() && !intentionalDisconnect) {
                                 sshScreenSuspended = true;
@@ -596,6 +601,10 @@ public class BackgroundService extends Service {
 
     @Override
     public void onDestroy() {
+        AppLog.i(TAG, "SSH: onDestroy called, ports=" + forwardedPorts.keySet()
+                + ", sshSession=" + (sshSession != null ? "non-null" : "null")
+                + ", intentionalDisconnect=" + intentionalDisconnect
+                + ", nativeWsActive=" + nativeWsActive);
         intentionalDisconnect = true;
         // Unregister screen state receiver
         if (screenStateReceiver != null) {
@@ -713,7 +722,9 @@ public class BackgroundService extends Service {
                         host = "";
                     }
                     forwardedPorts.put(localPort, new PortInfo(targetPort, host));
-                } catch (NumberFormatException ignored) {}
+                } catch (NumberFormatException e) {
+                    AppLog.w(TAG, "SSH: failed to parse saved port entry: " + ps + ", skipping");
+                }
             }
             AppLog.i(TAG, "SSH: restored " + forwardedPorts.size() + " forwarded ports from prefs");
             updateNotification(forwardedPorts.size(), null);
@@ -937,6 +948,7 @@ public class BackgroundService extends Service {
 
         // Create SSH session
         sshSession = jsch.getSession("clawbench", serverHost, sshPort);
+        AppLog.i(TAG, "SSH: sshSession created (was null), forwardedPorts=" + forwardedPorts.keySet());
         sshSession.setPassword(password);
         sshSession.setConfig("StrictHostKeyChecking", "no");
         sshSession.setConfig("PreferredAuthentications", "password");
@@ -1029,6 +1041,7 @@ public class BackgroundService extends Service {
                 + ", sessionAlive=" + (sshSession != null && sshSession.isConnected())
                 + ", sessionNull=" + (sshSession == null)
                 + ", forwardedPorts=" + forwardedPorts.keySet());
+        AppLog.logMemory(this, TAG, "addPortForward");
 
         if (alreadyInSet && sshSession != null && sshSession.isConnected()) {
             // Port is tracked and SSH session is alive — verify the port is actually
@@ -1154,18 +1167,29 @@ public class BackgroundService extends Service {
      * following the same pattern as clawbench-open-session, clawbench-push-registered, etc.
      */
     private void notifyPortForwardResult(int localPort, boolean success) {
-        if (MainActivity.instance == null) return;
+        // Capture reference to avoid NPE if Activity is destroyed between
+        // the null check and the runOnUiThread lambda execution.
+        final MainActivity activity = MainActivity.instance;
+        if (activity == null) return;
         try {
             org.json.JSONObject detail = new org.json.JSONObject();
             detail.put("localPort", localPort);
             detail.put("success", success);
             final String jsArg = detail.toString();
-            MainActivity.instance.runOnUiThread(() -> {
-                if (MainActivity.instance.webView != null) {
-                    MainActivity.instance.webView.evaluateJavascript(
-                        "window.dispatchEvent(new CustomEvent('clawbench-port-forward-result', { detail: " + jsArg + " }))",
-                        null
-                    );
+            activity.runOnUiThread(() -> {
+                // Re-check activity and webView are still alive
+                if (MainActivity.instance != null) {
+                    // Keep Activity's forwardedPorts map in sync with Service's map.
+                    // If the port forward failed, remove it from Activity's map too.
+                    if (!success) {
+                        MainActivity.instance.forwardedPorts.remove(localPort);
+                    }
+                    if (MainActivity.instance.webView != null) {
+                        MainActivity.instance.webView.evaluateJavascript(
+                            "window.dispatchEvent(new CustomEvent('clawbench-port-forward-result', { detail: " + jsArg + " }))",
+                            null
+                        );
+                    }
                 }
             });
         } catch (Exception e) {
@@ -1181,10 +1205,17 @@ public class BackgroundService extends Service {
             return;
         }
 
+        AppLog.i(TAG, "SSH: removePortForward ENTER: port=" + port
+                + ", sessionAlive=" + (sshSession != null && sshSession.isConnected())
+                + ", remainingPortsBefore=" + (forwardedPorts.size() - 1));
+
         try {
             if (sshSession != null && sshSession.isConnected()) {
                 sshSession.delPortForwardingL(port);
                 AppLog.i(TAG, "SSH: port forward removed: " + port);
+            } else {
+                AppLog.i(TAG, "SSH: removePortForward skipping delPortForwardingL (session "
+                        + (sshSession == null ? "null" : "disconnected") + ") for port " + port);
             }
         } catch (Exception e) {
             AppLog.e(TAG, "SSH: failed to remove port forward for " + port, e);
@@ -1196,6 +1227,7 @@ public class BackgroundService extends Service {
 
         // If no more forwarded ports and native WS is not needed, stop the service
         if (forwardedPorts.isEmpty() && !nativeWsNeeded) {
+            AppLog.i(TAG, "SSH: no ports remaining after removePortForward, stopping service");
             stopSelf();
         }
     }
@@ -1339,11 +1371,12 @@ public class BackgroundService extends Service {
                     } catch (Exception ignored) {}
                 }
                 sshSession.disconnect();
-                AppLog.i(TAG, "SSH: disconnected");
+                AppLog.i(TAG, "SSH: disconnected (had " + forwardedPorts.size() + " port forwards: " + forwardedPorts.keySet() + ")");
             } catch (Exception e) {
                 AppLog.e(TAG, "SSH: error during disconnect", e);
             }
             sshSession = null;
+            AppLog.d(TAG, "SSH: sshSession set to null");
         }
     }
 
@@ -1672,10 +1705,16 @@ public class BackgroundService extends Service {
         intent.putExtra("localPort", localPort);
         intent.putExtra("targetPort", targetPort);
         intent.putExtra("host", host != null ? host : "");
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(intent);
-        } else {
-            context.startService(intent);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent);
+            } else {
+                context.startService(intent);
+            }
+        } catch (Exception e) {
+            // Android 12+ throws ForegroundServiceStartNotAllowedException when
+            // starting a foreground service from background without exemption.
+            AppLog.e(TAG, "SSH: failed to start BackgroundService for ADD_PORT: " + e.getMessage(), e);
         }
     }
 

@@ -1752,6 +1752,7 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public void addForwardedPort(int localPort, int targetPort, String host) {
             AppLog.i(TAG, "addForwardedPort: localPort=" + localPort + ", targetPort=" + targetPort + ", host=" + host);
+            AppLog.logMemory(activity, TAG, "addForwardedPort");
             activity.runOnUiThread(() -> {
                 activity.forwardedPorts.put(localPort, host != null ? host : "");
                 BackgroundService.addForwardedPort(activity, localPort, targetPort, host != null ? host : "");
@@ -2111,6 +2112,7 @@ public class MainActivity extends AppCompatActivity {
             String baseUrl = activity.prefs.getString(KEY_SERVER_URL, "");
             if (!baseUrl.isEmpty()) {
                 AppLog.startCapture(baseUrl);
+                AppLog.logMemory(activity, TAG, "startLogCapture");
             }
         }
 

@@ -1,5 +1,7 @@
 package com.clawbench.app;
 
+import android.app.ActivityManager;
+import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
@@ -165,6 +167,31 @@ public class AppLog {
         return lastFlushSuccessTs;
     }
 
+    /**
+     * Log current memory status at INFO level. Useful for diagnosing OOM kills —
+     * the last memory log before a crash gap reveals whether memory pressure was the cause.
+     *
+     * @param context Application context (for ActivityManager access)
+     * @param tag     Log tag
+     * @param label   Description of the checkpoint (e.g. "addPortForward", "screenOn", "WebViewLoaded")
+     */
+    public static void logMemory(Context context, String tag, String label) {
+        if (context == null) return;
+        try {
+            ActivityManager am = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
+            if (am == null) return;
+            ActivityManager.MemoryInfo mi = new ActivityManager.MemoryInfo();
+            am.getMemoryInfo(mi);
+            Runtime rt = Runtime.getRuntime();
+            long usedMb = (rt.totalMemory() - rt.freeMemory()) / 1048576;
+            long totalMb = rt.totalMemory() / 1048576;
+            long maxMb = rt.maxMemory() / 1048576;
+            long availMb = mi.availMem / 1048576;
+            boolean lowMem = mi.lowMemory;
+            i(tag, "Memory[" + label + "]: used=" + usedMb + "M total=" + totalMb + "M max=" + maxMb + "M systemAvail=" + availMb + "M low=" + lowMem);
+        } catch (Exception ignored) {}
+    }
+
     // --- Internal ---
 
     private static void log(char level, String tag, String msg) {
@@ -209,6 +236,7 @@ public class AppLog {
                 obj.put("tag", e.tag);
                 obj.put("msg", e.msg);
                 obj.put("ts", e.ts);
+                obj.put("source", "android");
                 entries.put(obj);
             }
             JSONObject payload = new JSONObject();
