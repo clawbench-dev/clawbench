@@ -205,7 +205,7 @@
       <span class="session-info-model" @click.stop="openSettingsModal('model')"><Cpu :size="11" />{{ currentModelName }}</span>
       <template v-if="showModeInfo">
         <span class="session-info-divider"></span>
-        <span class="session-info-mode" :class="{ 'session-info-mode-auto': autoApprove }" @click.stop="openSettingsModal('mode')"><Compass :size="11" />{{ currentModeName }}</span>
+        <span class="session-info-mode" :class="{ 'session-info-mode-auto': autoApprove }" @click.stop="openSettingsModal('mode')" @dblclick.stop="toggleAutoApprove(!autoApprove)"><Compass :size="11" />{{ currentModeName }}</span>
       </template>
       <template v-if="showThinkingInfo">
         <span class="session-info-divider"></span>
@@ -251,7 +251,7 @@ import { useSessionIdentity } from '@/composables/useSessionIdentity'
 import { useAgents } from '@/composables/useAgents'
 
 const { t } = useI18n()
-const { availableCommands, availableModes, availableThinkingEfforts, currentThinkingEffortName, currentTransport: sessionTransport, autoApprove, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextCost, contextCurrency } = useSessionIdentity()
+const { availableCommands, availableModes, availableThinkingEfforts, currentThinkingEffortName, currentTransport: sessionTransport, autoApprove, toggleAutoApprove, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextCost, contextCurrency } = useSessionIdentity()
 const { supportsDualTransport, hasThinkingEffortLevels } = useAgents()
 
 // isACP: true when the current agent supports ACP (has acpCommand).
