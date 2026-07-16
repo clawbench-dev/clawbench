@@ -67,6 +67,49 @@ function hljsThemeWrapper(): Plugin {
   }
 }
 
+// Vite plugin: fix xterm.js v6 requestMode() enum declaration bug.
+//
+// Root cause: xterm.js v6.0.0 uses this enum declaration pattern in requestMode():
+//
+//   let r;(P=>(P[P.NOT_RECOGNIZED=0]="NOT_RECOGNIZED",...))(r||={})
+//
+// Rollup's tree-shaking (Vite 6.x / rollup 4.x) sees that `r` is only used
+// inside the IIFE and removes the `let r` declaration. esbuild's minifier then
+// transforms `r||={}` → `void 0||(i={})`, but `i` is never declared →
+// `ReferenceError: i is not defined` at runtime.
+//
+// This crashes the xterm.js write() pipeline:
+//   write() → _innerWrite() → _action() → parse() → requestMode() → 💥
+// After the exception, all subsequent terminal output is lost and the terminal
+// appears "frozen" (vim, OpenCode, htop all break).
+//
+// Note: Vite 8.x (used in the terminal-demo project) does NOT have this bug
+// because its bundled rollup version preserves the `let r` declaration.
+//
+// Fix: replace `(void 0||(X={}))` with `({})` in the generated chunks.
+// The enum object is only a temporary container for reverse-mapping values,
+// so a fresh `{}` works just as well — the IIFE populates it inline.
+//
+// Safe to leave this plugin in place: if xterm.js or rollup fixes the bug,
+// the regex won't match and the plugin becomes a no-op.
+function xtermRequestModeFix(): Plugin {
+  return {
+    name: 'xterm-request-mode-fix',
+    enforce: 'post',
+    generateBundle(_options, bundle) {
+      for (const chunk of Object.values(bundle)) {
+        if (chunk.type === 'chunk' && chunk.code) {
+          // Match: (void 0||(X={})) where X is an undeclared variable
+          const broken = /\(void\s+0\s*\|\|\s*\(\s*(\w+)\s*=\s*\{\}\s*\)\s*\)/g
+          if (broken.test(chunk.code)) {
+            chunk.code = chunk.code.replace(broken, '({})')
+          }
+        }
+      }
+    },
+  }
+}
+
 const backendPort = process.env.VITE_BACKEND_PORT || 20000
 const backendProto = process.env.VITE_BACKEND_PROTO || 'https'
 const frontendPort = parseInt(process.env.VITE_FRONTEND_PORT || '20001', 10)
@@ -79,6 +122,7 @@ export default defineConfig({
       strictMessage: false,
     }),
     hljsThemeWrapper(),
+    xtermRequestModeFix(),
     materialIconsCopy()
   ],
   root: 'web',
