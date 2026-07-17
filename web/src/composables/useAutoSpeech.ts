@@ -69,23 +69,26 @@ let currentWs: WebSocket | null = null
 let mseAudio: MseAudioPlayer | null = null
 let playbackEndTimer: ReturnType<typeof setInterval> | null = null
 let playbackTimeupdateHandler: (() => void) | null = null
+let playbackEndAudio: HTMLAudioElement | null = null
 
 function clearPlaybackEndTimer() {
   if (playbackEndTimer) {
     clearInterval(playbackEndTimer)
     playbackEndTimer = null
   }
-  if (currentAudioEl && playbackTimeupdateHandler) {
-    currentAudioEl.removeEventListener('timeupdate', playbackTimeupdateHandler)
+  if (playbackEndAudio && playbackTimeupdateHandler && typeof playbackEndAudio.removeEventListener === 'function') {
+    playbackEndAudio.removeEventListener('timeupdate', playbackTimeupdateHandler)
   }
+  playbackEndAudio = null
   playbackTimeupdateHandler = null
 }
 
 function startPlaybackEndTimer(audio: HTMLAudioElement, onEnd: () => void) {
   clearPlaybackEndTimer()
+  playbackEndAudio = audio
   const handler = () => {
     if (state.value !== 'playing' || !audio.duration || !isFinite(audio.duration)) return
-    if (audio.currentTime >= audio.duration - 0.1 && audio.paused) {
+    if (audio.currentTime >= audio.duration - 0.5) {
       appLog.i(TAG, 'Fallback: detected playback end (ended event missed)')
       onEnd()
     }
@@ -248,7 +251,6 @@ export function useAutoSpeech() {
     // Set up audio element lifecycle handlers
     const resetState = () => {
       clearPlaybackEndTimer()
-      audio.removeEventListener('timeupdate', timeupdateHandler)
       if (currentAudioEl === audio) {
         currentAudioEl = null
         mseAudio = null
@@ -269,15 +271,7 @@ export function useAutoSpeech() {
     }
 
     // Fallback: some browsers (notably Android WebView) may not fire 'ended'
-    // after MSE endOfStream(). Use timeupdate to detect playback completion.
-    const timeupdateHandler = () => {
-      if (state.value !== 'playing' || !audio.duration || !isFinite(audio.duration)) return
-      if (audio.currentTime >= audio.duration - 0.1 && audio.paused) {
-        appLog.i(TAG, 'MSE fallback: detected playback end (ended event missed)')
-        resetState()
-      }
-    }
-    audio.addEventListener('timeupdate', timeupdateHandler)
+    // after MSE endOfStream(). Use timeupdate + polling to detect completion.
     startPlaybackEndTimer(audio, resetState)
 
     // Build WebSocket URL
@@ -331,6 +325,9 @@ export function useAutoSpeech() {
           } else if (msg.type === 'error') {
             reportError(msg.message || gt('autoSpeech.synthesisFailed'))
             mse.cleanup()
+            currentAudioEl = null
+            mseAudio = null
+            clearPlaybackEndTimer()
             activeId.value = ''
             playingSummary.value = ''
             state.value = 'idle'
@@ -344,6 +341,10 @@ export function useAutoSpeech() {
     ws.onerror = () => {
       reportError(gt('autoSpeech.generateFailedGeneric'))
       mse.cleanup()
+      currentAudioEl = null
+      mseAudio = null
+      currentWs = null
+      clearPlaybackEndTimer()
       activeId.value = ''
       playingSummary.value = ''
       state.value = 'idle'
