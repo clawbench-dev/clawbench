@@ -48,7 +48,7 @@ func emitDrainEvent(sessionID string, event ai.StreamEvent) {
 func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 	for {
 		// Check terminal conditions
-		if result.CancelReason == "user" {
+		if result.CancelReason == cancelReasonUser {
 			// Collect queue IDs before clearing for queue_cancel event
 			queue := GetQueue(cfg.SessionID)
 			queueIDs := make([]string, 0, len(queue))
@@ -70,7 +70,7 @@ func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 				})
 			}
 
-			cfg.MarkDoneAndSendFinal(ai.StreamEvent{Type: "cancelled"})
+			cfg.MarkDoneAndSendFinal(ai.StreamEvent{Type: statusCancelled})
 			return
 		}
 		if result.Err != "" {
@@ -82,7 +82,7 @@ func RunDrainLoop(cfg DrainConfig, result DrainResult) {
 			return
 		}
 		if result.CancelReason != "" {
-			cfg.MarkDoneAndSendFinal(ai.StreamEvent{Type: "cancelled"})
+			cfg.MarkDoneAndSendFinal(ai.StreamEvent{Type: statusCancelled})
 			return
 		}
 

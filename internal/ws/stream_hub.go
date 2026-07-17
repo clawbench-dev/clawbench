@@ -137,7 +137,7 @@ func StreamEventToPayload(event ai.StreamEvent) any {
 	case "content":
 		return map[string]string{"content": event.Content}
 	case "thinking":
-		return map[string]string{"text": event.Content} //nolint:goconst // JSON key, not a config constant
+		return map[string]string{"text": event.Content}
 	case "thinking_done":
 		return map[string]any{}
 	case "tool_use":

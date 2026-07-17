@@ -500,7 +500,7 @@ func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, age
 
 // LoadFromDB loads persisted capabilities from the agents table on startup.
 //
-//nolint:gocyclo,gocognit // LoadFromDB branches on each capability field; a switch adds boilerplate without clarity
+//nolint:gocyclo // LoadFromDB branches on each capability field; a switch adds boilerplate without clarity
 func (r *AgentCapabilityRegistry) LoadFromDB(db dbutil.Reader) {
 	rows, err := db.Query(`
 		SELECT id, acp_available_modes, acp_available_thinking_efforts,

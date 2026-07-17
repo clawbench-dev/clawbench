@@ -1777,5 +1777,3 @@ func TestAddRemoveRunningExecution(t *testing.T) {
 	s.RemoveRunningExecution("test-exec")
 	assert.False(t, s.HasRunningExecutions(42))
 }
-
-

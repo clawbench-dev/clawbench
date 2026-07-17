@@ -67,8 +67,8 @@ var hotReloadFields = map[string]bool{
 	"tts.moss_nano.model_dir":    true,
 	"tts.moss_nano.backend":      true,
 	// Summarize — reconstruct summarizer
-	"summarize.backend":      true,
-	"summarize.tts_backend":  true,
+	"summarize.backend":          true,
+	"summarize.tts_backend":      true,
 	"summarize.model":            true,
 	"summarize.tts_model":        true,
 	"summarize.api.base_url":     true,
@@ -323,14 +323,14 @@ var PatchableConfigPaths = map[string]bool{
 	"frp.auto_port":               true,
 	"frp.remote_port":             true,
 	"frp.ssh_remote_port":         true,
-	"summarize.backend":             true,
-	"summarize.tts_backend":         true,
-	"summarize.model":               true,
-	"summarize.tts_model":           true,
-	"summarize.api.base_url":        true,
-	"summarize.api.key":             true,
-	"summarize.tts_api.base_url":    true,
-	"summarize.tts_api.key":         true,
+	"summarize.backend":           true,
+	"summarize.tts_backend":       true,
+	"summarize.model":             true,
+	"summarize.tts_model":         true,
+	"summarize.api.base_url":      true,
+	"summarize.api.key":           true,
+	"summarize.tts_api.base_url":  true,
+	"summarize.tts_api.key":       true,
 	"localhost_auth_exempt":       true,
 	"dingtalk.enabled":            true,
 	"dingtalk.app_key":            true,
@@ -681,8 +681,8 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	if effectiveTTSBackend == "api" && !ttsBackendSwitchedToAPI {
 		effectiveTTSBaseURL := cfg.Summarize.TTSAPI.BaseURL
 		if summarize, ok := patch["summarize"].(map[string]any); ok {
-			if ttsApi, ok := summarize["tts_api"].(map[string]any); ok {
-				if v, ok := ttsApi["base_url"].(string); ok {
+			if ttsAPI, ok := summarize["tts_api"].(map[string]any); ok {
+				if v, ok := ttsAPI["base_url"].(string); ok {
 					effectiveTTSBaseURL = v
 				}
 			}
@@ -1043,11 +1043,11 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 			}
 		}
 		// Summarize TTS API sub-config
-		if ttsApi, ok := summarize["tts_api"].(map[string]any); ok {
-			if v, ok := ttsApi["base_url"].(string); ok {
+		if ttsAPI, ok := summarize["tts_api"].(map[string]any); ok {
+			if v, ok := ttsAPI["base_url"].(string); ok {
 				cfg.Summarize.TTSAPI.BaseURL = v
 			}
-			if v, ok := ttsApi["key"].(string); ok {
+			if v, ok := ttsAPI["key"].(string); ok {
 				cfg.Summarize.TTSAPI.Key = v
 			}
 		}

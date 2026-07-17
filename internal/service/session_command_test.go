@@ -1066,12 +1066,12 @@ func TestRunDrainLoop_Error(t *testing.T) {
 	}
 
 	drainCfg := DrainConfig{
-		SessionID:           "error-sess",
-		ProjectPath:         "/proj",
-		BackendName:         "claude",
-		PersistUser:         func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		SessionID:             "error-sess",
+		ProjectPath:           "/proj",
+		BackendName:           "claude",
+		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
 		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
-		MarkDoneAndSendFinal: markDoneAndSendFinal,
+		MarkDoneAndSendFinal:  markDoneAndSendFinal,
 	}
 
 	result := DrainResult{Err: "something went wrong"}
@@ -1091,12 +1091,12 @@ func TestRunDrainLoop_EmptyContent(t *testing.T) {
 	}
 
 	drainCfg := DrainConfig{
-		SessionID:           "empty-sess",
-		ProjectPath:         "/proj",
-		BackendName:         "claude",
-		PersistUser:         func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		SessionID:             "empty-sess",
+		ProjectPath:           "/proj",
+		BackendName:           "claude",
+		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
 		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
-		MarkDoneAndSendFinal: markDoneAndSendFinal,
+		MarkDoneAndSendFinal:  markDoneAndSendFinal,
 	}
 
 	result := DrainResult{Empty: true}
@@ -1117,12 +1117,12 @@ func TestRunDrainLoop_NonUserCancel(t *testing.T) {
 	}
 
 	drainCfg := DrainConfig{
-		SessionID:           "disconnect-sess",
-		ProjectPath:         "/proj",
-		BackendName:         "claude",
-		PersistUser:         func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		SessionID:             "disconnect-sess",
+		ProjectPath:           "/proj",
+		BackendName:           "claude",
+		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
 		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
-		MarkDoneAndSendFinal: markDoneAndSendFinal,
+		MarkDoneAndSendFinal:  markDoneAndSendFinal,
 	}
 
 	result := DrainResult{CancelReason: "disconnect"}
@@ -1141,12 +1141,12 @@ func TestRunDrainLoop_DoneNoQueue(t *testing.T) {
 	}
 
 	drainCfg := DrainConfig{
-		SessionID:           "done-sess",
-		ProjectPath:         "/proj",
-		BackendName:         "claude",
-		PersistUser:         func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		SessionID:             "done-sess",
+		ProjectPath:           "/proj",
+		BackendName:           "claude",
+		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
 		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
-		MarkDoneAndSendFinal: markDoneAndSendFinal,
+		MarkDoneAndSendFinal:  markDoneAndSendFinal,
 	}
 
 	// No error, no cancel, not empty → should check queue, find nothing → done
@@ -1560,10 +1560,10 @@ func TestRunDrainLoop_DrainQueuedMessage(t *testing.T) {
 	}
 
 	drainCfg := DrainConfig{
-		SessionID:     sessionID,
-		ProjectPath:   "/proj",
-		BackendName:   "claude",
-		PersistUser:   func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		SessionID:   sessionID,
+		ProjectPath: "/proj",
+		BackendName: "claude",
+		PersistUser: func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
 		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
 			return DrainResult{} // will loop again, queue now empty → done
 		},

@@ -348,11 +348,11 @@ func TestBuildEndpointURL(t *testing.T) {
 
 func TestResolveStringValue(t *testing.T) {
 	tests := []struct {
-		name       string
-		values     map[string]any
-		key        string
-		fallback   string
-		expected   string
+		name     string
+		values   map[string]any
+		key      string
+		fallback string
+		expected string
 	}{
 		{"value present", map[string]any{"key": "hello"}, "key", "fallback", "hello"},
 		{"key missing", map[string]any{}, "key", "fallback", "fallback"},

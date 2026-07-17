@@ -377,11 +377,12 @@ func findSubstr(s, sub string) bool {
 // --- SetSSHServer / GetSSHServer ---
 
 func TestSetSSHServer_GetSSHServer(t *testing.T) {
-	origMu := sshServerMu
+	// Save and restore original state
 	origRef := sshServerRef
 	defer func() {
-		sshServerMu = origMu
+		sshServerMu.Lock()
 		sshServerRef = origRef
+		sshServerMu.Unlock()
 	}()
 
 	// Initially nil

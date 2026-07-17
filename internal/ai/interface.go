@@ -224,11 +224,11 @@ type QueueEventData struct {
 // Emitted via StreamHub.EmitToSession after AddChatMessage succeeds,
 // so other devices subscribed to the same session see the message in real-time.
 type UserMessageData struct {
-	MessageID      int64             `json:"messageId"`                     // DB row ID (0 if not yet persisted, e.g. enqueued messages)
-	Content        string            `json:"content"`                       // Raw user message text
-	Files          []model.FileEntry `json:"files,omitempty"`               // File attachments
-	SenderClientID string            `json:"senderClientId,omitempty"`      // WS client ID of the sender (to skip self-echo)
-	QueueID        string            `json:"queueId,omitempty"`             // Frontend queue ID (for enqueued messages, enables precise drain matching)
+	MessageID      int64             `json:"messageId"`                // DB row ID (0 if not yet persisted, e.g. enqueued messages)
+	Content        string            `json:"content"`                  // Raw user message text
+	Files          []model.FileEntry `json:"files,omitempty"`          // File attachments
+	SenderClientID string            `json:"senderClientId,omitempty"` // WS client ID of the sender (to skip self-echo)
+	QueueID        string            `json:"queueId,omitempty"`        // Frontend queue ID (for enqueued messages, enables precise drain matching)
 }
 
 // AIBackend defines the interface for AI backend implementations

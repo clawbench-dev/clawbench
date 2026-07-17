@@ -155,19 +155,19 @@ func SendMessageToSessionFromDingTalk(sessionID, message string) error {
 	}
 
 	// Session not running — persist user message and launch execution
-	if msgID, err := AddChatMessage(info.ProjectPath, info.Backend, sessionID, roleUser, message, nil, false, info.Title); err != nil {
+	msgID, err := AddChatMessage(info.ProjectPath, info.Backend, sessionID, roleUser, message, nil, false, info.Title)
+	if err != nil {
 		SetSessionRunning(sessionID, false) // rollback running state
 		return fmt.Errorf("persist message: %w", err)
-	} else {
-		// Emit user_message for cross-device sync
-		ws.EmitToSession(sessionID, ai.StreamEvent{
-			Type: "user_message",
-			UserMessage: &ai.UserMessageData{
-				MessageID: msgID,
-				Content:   message,
-			},
-		})
 	}
+	// Emit user_message for cross-device sync
+	ws.EmitToSession(sessionID, ai.StreamEvent{
+		Type: "user_message",
+		UserMessage: &ai.UserMessageData{
+			MessageID: msgID,
+			Content:   message,
+		},
+	})
 
 	LaunchSessionExecution(LaunchConfig{
 		SessionID:   sessionID,

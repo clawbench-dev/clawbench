@@ -463,23 +463,23 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if msgID, err := service.AddChatMessage(projectPath, backendName, sessionID, "user", req.Message, allFiles, false, T(r, "FileMessage")); err != nil {
+	msgID, err := service.AddChatMessage(projectPath, backendName, sessionID, "user", req.Message, allFiles, false, T(r, "FileMessage"))
+	if err != nil {
 		service.SetSessionRunning(sessionID, false)
 		model.WriteError(w, model.Internal(fmt.Errorf("failed to save message")))
 		return
-	} else {
-		// Emit user_message to other session subscribers for cross-device sync.
-		// SenderClientID allows the sending device to skip its own echo.
-		ws.EmitToSession(sessionID, ai.StreamEvent{
-			Type: "user_message",
-			UserMessage: &ai.UserMessageData{
-				MessageID:      msgID,
-				Content:        req.Message,
-				Files:          allFiles,
-				SenderClientID: req.ClientID,
-			},
-		})
 	}
+	// Emit user_message to other session subscribers for cross-device sync.
+	// SenderClientID allows the sending device to skip its own echo.
+	ws.EmitToSession(sessionID, ai.StreamEvent{
+		Type: "user_message",
+		UserMessage: &ai.UserMessageData{
+			MessageID:      msgID,
+			Content:        req.Message,
+			Files:          allFiles,
+			SenderClientID: req.ClientID,
+		},
+	})
 
 	writeJSON(w, http.StatusOK, map[string]any{"started": true, "sessionId": sessionID})
 

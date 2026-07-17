@@ -26,6 +26,16 @@ type ConnectivityTestResult struct {
 	Message string `json:"message"`
 }
 
+// JSON key constants for goconst compliance.
+const (
+	strAPI      = "api"
+	strMessages = "messages"
+	strPiper    = "piper"
+	strKokoro   = "kokoro"
+	strMossNano = "moss-nano"
+	strReqError = "error"
+)
+
 type connectivityTestRequest struct {
 	Category string         `json:"category"` // "frp" | "summarize_text" | "summarize_voice" | "rag" | "dingtalk" | "port_forward" | "tts"
 	Values   map[string]any `json:"values"`   // Flat dot-path key-value map from the form
@@ -41,12 +51,12 @@ func ServeConfigTest(w http.ResponseWriter, r *http.Request) {
 
 	var req connectivityTestRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Invalid request body"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{strReqError: "Invalid request body"})
 		return
 	}
 
 	if req.Category == "" || req.Values == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "category and values are required"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{strReqError: "category and values are required"})
 		return
 	}
 
@@ -188,7 +198,7 @@ func testFRP(ctx context.Context, values map[string]any) ConnectivityTestResult 
 
 func testSummarizeText(ctx context.Context, values map[string]any) ConnectivityTestResult {
 	backend := resolveStringValue(values, "summarize.backend", model.ConfigInstance.Summarize.Backend)
-	if backend != "api" {
+	if backend != strAPI {
 		return ConnectivityTestResult{Success: true, Message: "Text summary backend is not API mode, no test needed"}
 	}
 
@@ -210,7 +220,7 @@ func testSummarizeText(ctx context.Context, values map[string]any) ConnectivityT
 
 func testSummarizeVoice(ctx context.Context, values map[string]any) ConnectivityTestResult {
 	ttsBackend := resolveStringValue(values, "summarize.tts_backend", model.ConfigInstance.Summarize.TTSBackend)
-	if ttsBackend != "api" {
+	if ttsBackend != strAPI {
 		return ConnectivityTestResult{Success: true, Message: "Voice summary backend is not API mode, no test needed"}
 	}
 
@@ -249,7 +259,7 @@ func testOpenAIAPI(ctx context.Context, client *http.Client, baseURL, apiKey, mo
 
 	reqBody := map[string]any{
 		"model":      modelName,
-		"messages":   []map[string]string{{"role": "user", "content": "hi"}},
+		strMessages:  []map[string]string{{"role": strUser, "content": "hi"}},
 		"max_tokens": 1,
 	}
 	body, _ := json.Marshal(reqBody)
@@ -278,7 +288,7 @@ func testOpenAIAPI(ctx context.Context, client *http.Client, baseURL, apiKey, mo
 	// Try to extract error message from response
 	var errResp map[string]any
 	if json.Unmarshal(respBody, &errResp) == nil {
-		if e, ok := errResp["error"].(map[string]any); ok {
+		if e, ok := errResp[strReqError].(map[string]any); ok {
 			if msg, ok := e["message"].(string); ok {
 				return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("API error (HTTP %d): %s", resp.StatusCode, msg)}
 			}
@@ -294,7 +304,7 @@ func testAnthropicAPI(ctx context.Context, client *http.Client, baseURL, apiKey,
 
 	reqBody := map[string]any{
 		"model":      modelName,
-		"messages":   []map[string]string{{"role": "user", "content": "hi"}},
+		strMessages:  []map[string]string{{"role": strUser, "content": "hi"}},
 		"max_tokens": 1,
 	}
 	body, _ := json.Marshal(reqBody)
@@ -323,7 +333,7 @@ func testAnthropicAPI(ctx context.Context, client *http.Client, baseURL, apiKey,
 
 	var errResp map[string]any
 	if json.Unmarshal(respBody, &errResp) == nil {
-		if e, ok := errResp["error"].(map[string]any); ok {
+		if e, ok := errResp[strReqError].(map[string]any); ok {
 			if msg, ok := e["message"].(string); ok {
 				return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("API error (HTTP %d): %s", resp.StatusCode, msg)}
 			}
@@ -396,6 +406,8 @@ func testRAG(ctx context.Context, values map[string]any) ConnectivityTestResult 
 
 // dingtalkTokenURL is the DingTalk API URL for getting an access token.
 // Can be overridden in tests.
+//
+//nolint:gosec // G101: this is a public API endpoint, not a credential
 var dingtalkTokenURL = "https://oapi.dingtalk.com/gettoken"
 
 // ── DingTalk ─────────────────────────────────────────────────
@@ -480,11 +492,11 @@ func testTTS(ctx context.Context, values map[string]any) ConnectivityTestResult 
 	switch engine {
 	case "edge":
 		return testTTSEdge(ctx, values)
-	case "piper":
+	case strPiper:
 		return testTTSPiper(values)
-	case "kokoro":
+	case strKokoro:
 		return testTTSKokoro(values)
-	case "moss-nano":
+	case strMossNano:
 		return testTTSNano(values)
 	default:
 		return ConnectivityTestResult{Success: false, Message: "Unknown TTS engine: " + engine}
@@ -493,13 +505,11 @@ func testTTS(ctx context.Context, values map[string]any) ConnectivityTestResult 
 
 func testTTSEdge(ctx context.Context, _ map[string]any) ConnectivityTestResult {
 	// Test TLS connectivity to Edge TTS service
-	d := net.Dialer{Timeout: 5 * time.Second}
-	conn, err := tls.DialWithDialer(
-		&d,
-		"tcp",
-		"speech.platform.bing.com:443",
-		&tls.Config{MinVersion: tls.VersionTLS12},
-	)
+	dialer := &tls.Dialer{
+		Config:    &tls.Config{MinVersion: tls.VersionTLS12},
+		NetDialer: &net.Dialer{Timeout: 5 * time.Second},
+	}
+	conn, err := dialer.DialContext(ctx, "tcp", "speech.platform.bing.com:443")
 	if err != nil {
 		return ConnectivityTestResult{Success: false, Message: fmt.Sprintf("Edge TTS service unreachable: %v", err)}
 	}
@@ -604,7 +614,7 @@ func resolvePiperBinary() string {
 		}
 	}
 	// Check $PATH
-	if p, err := exec.LookPath("piper"); err == nil {
+	if p, err := exec.LookPath(strPiper); err == nil {
 		return p
 	}
 	return ""
