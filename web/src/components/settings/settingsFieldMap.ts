@@ -43,8 +43,6 @@ export interface DrillDownCategory {
   enableKey?: string
   enableLabelKey?: string
   entrySelector?: ItemSpec
-  /** Fields rendered BEFORE the enable toggle, always visible and never disabled by enableKey. */
-  preFields?: ItemSpec[]
   commonFields: ItemSpec[]
   optionSubFields?: { when: unknown; fields: ItemSpec[] }[]
   requiredFields?: string[]
@@ -113,6 +111,9 @@ export const categoryItems: Record<string, ItemSpec[]> = {
   security: [
     { labelKey: 'settings.items.localhostAuthExempt', descriptionKey: 'settings.items.localhostAuthExemptDesc', key: 'localhost_auth_exempt', type: 'switch', source: 'server' },
     { labelKey: 'settings.items.changePassword', descriptionKey: 'settings.items.changePasswordDesc', key: 'changePassword', type: 'action', source: 'local' },
+  ],
+  notification: [
+    { labelKey: 'settings.items.nativePushEnabled', descriptionKey: 'settings.items.nativePushEnabledDesc', key: 'nativePushEnabled', type: 'switch', source: 'local', appOnly: true },
   ],
   about: [
     { labelKey: 'settings.items.aboutServerVersion', descriptionKey: 'settings.items.aboutServerVersionDesc', key: 'serverVersion', type: 'info', source: 'server' },
@@ -248,13 +249,10 @@ export const drillDownCategories: Record<string, DrillDownCategory> = {
     ],
     requiredFields: ['frp.server_addr'],
   },
-  notification: {
-    categoryId: 'notification',
+  dingtalk: {
+    categoryId: 'dingtalk',
     enableKey: 'dingtalk.enabled',
     enableLabelKey: 'settings.items.dingtalkEnabled',
-    preFields: [
-      { labelKey: 'settings.items.nativePushEnabled', descriptionKey: 'settings.items.nativePushEnabledDesc', key: 'nativePushEnabled', type: 'switch', source: 'local', appOnly: true },
-    ],
     commonFields: [
       { labelKey: 'settings.items.dingtalkAppKey', descriptionKey: 'settings.items.dingtalkAppKeyDesc', key: 'dingtalk.app_key', type: 'text', source: 'server' },
       { labelKey: 'settings.items.dingtalkAppSecret', descriptionKey: 'settings.items.dingtalkAppSecretDesc', key: 'dingtalk.app_secret', type: 'password', source: 'server' },
@@ -280,9 +278,6 @@ export function getServerFieldToLabelKey(): Record<string, string> {
   for (const dd of Object.values(drillDownCategories)) {
     if (dd.enableKey && dd.enableLabelKey) map[dd.enableKey] = dd.enableLabelKey
     if (dd.entrySelector?.source === 'server') map[dd.entrySelector.key] = dd.entrySelector.labelKey
-    for (const f of dd.preFields ?? []) {
-      if (f.source === 'server') map[f.key] = f.labelKey
-    }
     for (const f of dd.commonFields) {
       if (f.source === 'server') map[f.key] = f.labelKey
     }

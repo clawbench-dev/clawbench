@@ -22,6 +22,7 @@ const i18n = createI18n({
           portForward: '端口转发',
           frp: 'FRP内网穿透',
           notification: '消息通知',
+          dingtalk: '钉钉推送',
           security: '安全',
           debug: '调试',
           about: '关于',
@@ -46,6 +47,7 @@ const globalStubs = {
   'lucide-arrow-left-right': true,
   'lucide-globe': true,
   'lucide-bell': true,
+  'lucide-message-circle': true,
   'lucide-shield': true,
   'lucide-bug': true,
   'lucide-info': true,
@@ -58,11 +60,11 @@ function mountIndex() {
 }
 
 describe('SettingsIndex', () => {
-  it('renders 15 category rows', () => {
+  it('renders 16 category rows', () => {
     const wrapper = mountIndex()
 
     const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(15)
+    expect(rows.length).toBe(16)
   })
 
   it('renders category labels', () => {
@@ -95,7 +97,7 @@ describe('SettingsIndex', () => {
 
     const expectedIds = [
       'appearance', 'project', 'chat', 'agents', 'files', 'terminal',
-      'tts', 'summarization', 'rag', 'portForward', 'frp', 'notification', 'security', 'debug', 'about',
+      'tts', 'summarization', 'rag', 'portForward', 'frp', 'notification', 'dingtalk', 'security', 'debug', 'about',
     ]
 
     const rows = wrapper.findAll('.settings-index__row')

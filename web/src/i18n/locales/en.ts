@@ -1034,6 +1034,7 @@ export default {
       portForward: 'Port Forward',
       frp: 'NAT Traversal (frp)',
       notification: 'Notification',
+      dingtalk: 'DingTalk Push',
       security: 'Security',
       debug: 'Debug',
       about: 'About',

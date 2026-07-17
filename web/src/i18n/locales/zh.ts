@@ -1035,6 +1035,7 @@ export default {
       portForward: '端口转发',
       frp: '内网穿透 (frp)',
       notification: '消息通知',
+      dingtalk: '钉钉推送',
       security: '安全',
       debug: '调试',
       about: '关于',
