@@ -43,6 +43,8 @@ export interface DrillDownCategory {
   enableKey?: string
   enableLabelKey?: string
   entrySelector?: ItemSpec
+  /** Fields rendered BEFORE the enable toggle, always visible and never disabled by enableKey. */
+  preFields?: ItemSpec[]
   commonFields: ItemSpec[]
   optionSubFields?: { when: unknown; fields: ItemSpec[] }[]
   requiredFields?: string[]
@@ -70,7 +72,6 @@ export const categoryItems: Record<string, ItemSpec[]> = {
   ],
   agents: [],
   chat: [
-    { labelKey: 'settings.items.nativePushEnabled', descriptionKey: 'settings.items.nativePushEnabledDesc', key: 'nativePushEnabled', type: 'switch', source: 'local', appOnly: true },
     { labelKey: 'settings.items.autoSpeech', descriptionKey: 'settings.items.autoSpeechDesc', key: 'autoSpeech', type: 'switch', source: 'local' },
     { labelKey: 'settings.items.preventScreenLock', descriptionKey: 'settings.items.preventScreenLockDesc', key: 'preventScreenLock', type: 'switch', source: 'local' },
     { labelKey: 'settings.items.swipeSession', descriptionKey: 'settings.items.swipeSessionDesc', key: 'swipeSession', type: 'switch', source: 'local' },
@@ -251,6 +252,9 @@ export const drillDownCategories: Record<string, DrillDownCategory> = {
     categoryId: 'notification',
     enableKey: 'dingtalk.enabled',
     enableLabelKey: 'settings.items.dingtalkEnabled',
+    preFields: [
+      { labelKey: 'settings.items.nativePushEnabled', descriptionKey: 'settings.items.nativePushEnabledDesc', key: 'nativePushEnabled', type: 'switch', source: 'local', appOnly: true },
+    ],
     commonFields: [
       { labelKey: 'settings.items.dingtalkAppKey', descriptionKey: 'settings.items.dingtalkAppKeyDesc', key: 'dingtalk.app_key', type: 'text', source: 'server' },
       { labelKey: 'settings.items.dingtalkAppSecret', descriptionKey: 'settings.items.dingtalkAppSecretDesc', key: 'dingtalk.app_secret', type: 'password', source: 'server' },
@@ -276,6 +280,9 @@ export function getServerFieldToLabelKey(): Record<string, string> {
   for (const dd of Object.values(drillDownCategories)) {
     if (dd.enableKey && dd.enableLabelKey) map[dd.enableKey] = dd.enableLabelKey
     if (dd.entrySelector?.source === 'server') map[dd.entrySelector.key] = dd.entrySelector.labelKey
+    for (const f of dd.preFields ?? []) {
+      if (f.source === 'server') map[f.key] = f.labelKey
+    }
     for (const f of dd.commonFields) {
       if (f.source === 'server') map[f.key] = f.labelKey
     }

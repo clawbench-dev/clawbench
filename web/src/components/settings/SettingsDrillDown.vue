@@ -1,5 +1,29 @@
 <template>
   <div class="drill-down">
+    <!-- Pre-fields: always visible, independent of enableKey -->
+    <template v-for="entry in preFieldEntries" :key="entry.key">
+      <SettingsItem
+        :label="t(entry.field.labelKey)"
+        :description="entry.field.descriptionKey ? t(entry.field.descriptionKey) : ''"
+        :type="entry.field.type"
+        :model-value="getLocalValue(entry.field)"
+        :options="resolveFieldOptions(entry.field)"
+        :min="entry.field.min"
+        :max="entry.field.max"
+        :step="entry.field.step"
+        :needs-restart="entry.field.needsRestart"
+        :disabled="false"
+        :force-close="activeKey !== null && activeKey !== entry.field.key"
+        :default-value="entry.field.defaultValue"
+        :display-format="entry.field.displayFormat"
+        :display-transform="entry.field.displayTransform"
+        :no-divider="false"
+        @update:model-value="(v: unknown) => setLocalValue(entry.field.key, v)"
+        @edit-toggle="(open: boolean) => handleEditToggle(entry.field.key, open)"
+        @desc-toggle="(open: boolean) => handleEditToggle(entry.field.key, open)"
+      />
+    </template>
+
     <!-- Enable toggle row -->
     <div v-if="config.enableKey" class="drill-down__enable-row">
       <div class="drill-down__enable-left">
@@ -148,6 +172,7 @@ import { useConnectivityTest } from '@/composables/useConnectivityTest'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
 import { useTabDrawer } from '@/composables/useTabDrawer'
+import { useAppMode } from '@/composables/useAppMode'
 
 // ── Props & Emits ──
 
@@ -167,6 +192,7 @@ const { patchConfig, getServerValueWithDefault, setLocalConfig, localConfig } = 
 const { setBeforeResetGuard } = useSettingsNavigation()
 const sideEffects = useDrillDownSideEffects(props.categoryId)
 const { testing: connectivityTesting, testResults: connectivityTestResults, runTests: runConnectivityTests, clearResults: clearConnectivityResults } = useConnectivityTest()
+const { isAppMode } = useAppMode()
 
 // ── Config ──
 
@@ -199,6 +225,11 @@ onMounted(() => {
   // Entry selector key
   if (cfg.entrySelector) {
     snap[cfg.entrySelector.key] = getServerValueWithDefault(cfg.entrySelector.key)
+  }
+
+  // Pre-fields (independent of enableKey)
+  for (const f of cfg.preFields ?? []) {
+    snap[f.key] = f.source === 'server' ? getServerValueWithDefault(f.key) : localConfig[f.key]
   }
 
   // Common fields
@@ -285,6 +316,17 @@ interface RenderHeaderEntry {
 }
 
 type RenderEntry = RenderFieldEntry | RenderHeaderEntry
+
+// ── Pre-fields: rendered before enable toggle, always visible ──
+
+const preFieldEntries = computed((): RenderFieldEntry[] => {
+  const cfg = config.value
+  if (!cfg.preFields) return []
+  return cfg.preFields
+    .filter(f => !f.appOnly || isAppMode.value)
+    .filter(f => isDependsOnMet(f.dependsOn))
+    .map(f => ({ type: 'field' as const, key: f.key, field: f }))
+})
 
 // ── dependsOn filtering (OR logic for arrays) ──
 
@@ -392,6 +434,9 @@ const frpSshPortDisplay = computed(() => {
 function findFieldSpec(key: string): ItemSpec | undefined {
   const cfg = config.value
   if (cfg.entrySelector?.key === key) return cfg.entrySelector
+  for (const f of cfg.preFields ?? []) {
+    if (f.key === key) return f
+  }
   for (const f of cfg.commonFields) {
     if (f.key === key) return f
   }
@@ -409,6 +454,7 @@ function getAllFieldKeys(): string[] {
   const keys: string[] = []
   if (cfg.enableKey) keys.push(cfg.enableKey)
   if (cfg.entrySelector) keys.push(cfg.entrySelector.key)
+  for (const f of cfg.preFields ?? []) keys.push(f.key)
   for (const f of cfg.commonFields) keys.push(f.key)
   for (const osf of cfg.optionSubFields ?? []) {
     for (const f of osf.fields) keys.push(f.key)
