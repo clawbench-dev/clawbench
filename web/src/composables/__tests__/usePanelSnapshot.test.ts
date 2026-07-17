@@ -179,7 +179,7 @@ describe('usePanelSnapshot', () => {
     localValues['terminal.enabled'] = false
     await handleSave()
 
-    expect(afterSave).toHaveBeenCalledWith(['terminal.enabled'])
+    expect(afterSave).toHaveBeenCalledWith(['terminal.enabled'], expect.any(Object))
   })
 
   it('calls config.onInit on snapshot init', () => {
