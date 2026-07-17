@@ -121,6 +121,16 @@ const legacyKeys: Record<string, {
     key: '',
     format: 'raw',
   },
+  nativePushEnabled: {
+    key: '',
+    format: 'raw',
+    sideEffect(value: boolean) {
+      try {
+        const native = (window as unknown as { AndroidNative?: { setNativePushEnabled?: (v: boolean) => void } }).AndroidNative
+        native?.setNativePushEnabled?.(value)
+      } catch { /* not in app mode */ }
+    },
+  },
   sortField: {
     key: '',
     format: 'raw',
@@ -249,6 +259,7 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   logCapture: false,
   swipeSession: false,
   preventScreenLock: true,
+  nativePushEnabled: true,
   sortField: null,
   sortDir: 'asc',
   uiScale: 1,
@@ -400,7 +411,18 @@ function getAgentThinkingPref(agentId: string): string | null {
 export function useSettingsConfig() {
   /** Sync local-only settings from Android native to keep WebView and native state in sync. */
   function syncNativeSettings() {
-    // No native settings to sync currently
+    try {
+      const native = (window as unknown as { AndroidNative?: { isNativePushEnabled?: () => boolean } }).AndroidNative
+      if (native?.isNativePushEnabled) {
+        const nativeValue = native.isNativePushEnabled()
+        if (localConfig.nativePushEnabled !== nativeValue) {
+          localConfig.nativePushEnabled = nativeValue
+          try {
+            localStorage.setItem(LOCAL_PREFIX + 'nativePushEnabled', JSON.stringify(nativeValue))
+          } catch { /* ignore */ }
+        }
+      }
+    } catch { /* not in app mode */ }
   }
 
   async function loadConfig() {

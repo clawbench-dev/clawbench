@@ -417,6 +417,45 @@ describe('useSettingsConfig', () => {
     })
   })
 
+  describe('nativePushEnabled side effect', () => {
+    it('defaults to true', () => {
+      const { localConfig } = useSettingsConfig()
+      expect(localConfig.nativePushEnabled).toBe(true)
+    })
+
+    it('calls AndroidNative.setNativePushEnabled when set', () => {
+      const mockSetNativePushEnabled = vi.fn()
+      const original = (window as any).AndroidNative
+      ;(window as any).AndroidNative = { setNativePushEnabled: mockSetNativePushEnabled }
+
+      const { setLocalConfig } = useSettingsConfig()
+
+      setLocalConfig('nativePushEnabled', false)
+      expect(mockSetNativePushEnabled).toHaveBeenCalledWith(false)
+
+      setLocalConfig('nativePushEnabled', true)
+      expect(mockSetNativePushEnabled).toHaveBeenCalledWith(true)
+
+      // Restore
+      if (original) {
+        ;(window as any).AndroidNative = original
+      } else {
+        delete (window as any).AndroidNative
+      }
+      localStorage.removeItem('clawbench-settings-nativePushEnabled')
+    })
+
+    it('persists to localStorage', () => {
+      const { localConfig, setLocalConfig } = useSettingsConfig()
+
+      setLocalConfig('nativePushEnabled', false)
+      expect(localConfig.nativePushEnabled).toBe(false)
+      expect(localStorage.getItem('clawbench-settings-nativePushEnabled')).toBe('false')
+
+      localStorage.removeItem('clawbench-settings-nativePushEnabled')
+    })
+  })
+
   // ── applyUIScale / getUIScale ──
 
   describe('applyUIScale', () => {

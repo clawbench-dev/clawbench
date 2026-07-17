@@ -1222,6 +1222,8 @@ export default {
       frpRemotePortDesc: 'FRP 转发到的远程端口，0 表示由 frps 自动分配',
       frpSSHRemotePort: 'SSH 远程端口',
       frpSSHRemotePortDesc: 'SSH 通过 FRP 转发的远程端口，0 表示由 frps 自动分配。需要先启用端口转发功能',
+      nativePushEnabled: '原生推送通知',
+      nativePushEnabledDesc: '后台接收 AI 会话和任务完成通知（关闭后可节省电量）',
       dingtalkEnabled: '钉钉推送',
       dingtalkEnabledDesc: '通过企业内部机器人推送通知到钉钉（Stream API 长连接模式）',
       dingtalkAppKey: 'App Key',

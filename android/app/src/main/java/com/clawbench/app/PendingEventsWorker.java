@@ -67,6 +67,12 @@ public class PendingEventsWorker extends Worker {
             return Result.success();
         }
 
+        // Skip if native push notifications are disabled
+        if (!BackgroundService.isNativePushEnabled(ctx)) {
+            AppLog.d(TAG, "PendingEventsWorker: native push disabled, skipping");
+            return Result.success();
+        }
+
         SharedPreferences prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         String serverUrl = prefs.getString(KEY_SERVER_URL, "");
         if (serverUrl.isEmpty()) {

@@ -1221,6 +1221,8 @@ export default {
       frpRemotePortDesc: 'Remote port for FRP forwarding, 0 for frps auto-assign',
       frpSSHRemotePort: 'SSH Remote Port',
       frpSSHRemotePortDesc: 'Remote port for SSH forwarding via FRP, 0 for frps auto-assign. Requires port forwarding to be enabled',
+      nativePushEnabled: 'Native Push Notifications',
+      nativePushEnabledDesc: 'Receive AI session and task completion notifications in background (disabling saves battery)',
       dingtalkEnabled: 'DingTalk Push',
       dingtalkEnabledDesc: 'Push notifications to DingTalk via enterprise internal bot (Stream API)',
       dingtalkAppKey: 'App Key',

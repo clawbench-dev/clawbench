@@ -95,6 +95,7 @@ public class BackgroundService extends Service {
     private static final String KEY_FORWARDED_PORTS = "forwarded_ports";
     private static final String KEY_BATTERY_OPT_REQUESTED = "battery_opt_requested";
     private static final String KEY_LAST_SEEN_EVENT_ID = "last_seen_event_id";
+    private static final String KEY_NATIVE_PUSH_ENABLED = "native_push_enabled";
 
     // Reconnect parameters: exponential backoff delays in milliseconds
     private static final int[] RECONNECT_DELAYS_MS = {5000, 10000, 30000, 60000, 120000};
@@ -274,6 +275,34 @@ public class BackgroundService extends Service {
     public static SSLContext getTrustAllSSLContext() {
         return trustAllSSLContext;
     }
+
+    /**
+     * Check whether native push notifications are enabled.
+     * Defaults to true for existing users (no migration needed).
+     */
+    public static boolean isNativePushEnabled(Context context) {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(KEY_NATIVE_PUSH_ENABLED, true);
+    }
+
+    /**
+     * Enable or disable native push notifications.
+     * When disabled, stops the native WS and cancels WorkManager polling.
+     * When enabled, the next onPause() will start the native WS.
+     */
+    public static void setNativePushEnabled(Context context, boolean enabled) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_NATIVE_PUSH_ENABLED, enabled)
+                .apply();
+        if (!enabled) {
+            // Stop native WS and cancel WorkManager polling
+            stopNativeEventWs(context);
+            cancelPendingEventsWork(context);
+        }
+        AppLog.i(TAG, "NativePush: set enabled=" + enabled);
+    }
+
 
     /**
      * Update the terminal session count (called from WebAppInterface JS bridge).

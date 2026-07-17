@@ -1183,7 +1183,7 @@ public class MainActivity extends AppCompatActivity {
         pauseWebView();
         // App going to background — start native WS so we still get
         // notifications when Android kills the WebView process.
-        if (webViewConnected) {
+        if (webViewConnected && BackgroundService.isNativePushEnabled(this)) {
             BackgroundService.startNativeEventWs(this);
         }
     }
@@ -1194,7 +1194,9 @@ public class MainActivity extends AppCompatActivity {
         isForeground = true;
         resumeWebView();
         // App returning to foreground — stop native WS (WebView WS handles events)
-        BackgroundService.stopNativeEventWs(this);
+        if (BackgroundService.isNativePushEnabled(this)) {
+            BackgroundService.stopNativeEventWs(this);
+        }
         // Handle notification tap intent + re-dispatch pending navigation
         handleResumeIntent();
     }
@@ -2482,6 +2484,26 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public void updateLastSeenEventId(String eventId) {
             BackgroundService.updateLastSeenEventId(activity, eventId);
+        }
+
+        /**
+         * Enable or disable native push notifications from the WebView settings UI.
+         * When disabled, stops the native WS connection and WorkManager polling.
+         * When enabled, allows the next onPause() to start native WS.
+         */
+        @JavascriptInterface
+        public void setNativePushEnabled(boolean enabled) {
+            AppLog.i(TAG, "JSBridge: setNativePushEnabled=" + enabled);
+            BackgroundService.setNativePushEnabled(activity, enabled);
+        }
+
+        /**
+         * Check whether native push notifications are currently enabled.
+         * Used by the WebView to read the initial state on settings page load.
+         */
+        @JavascriptInterface
+        public boolean isNativePushEnabled() {
+            return BackgroundService.isNativePushEnabled(activity);
         }
     }
 
