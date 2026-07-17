@@ -2,7 +2,7 @@
   <div class="settings-page">
     <header class="settings-page__header">
       <template v-if="navStack.length > 0">
-        <button class="settings-page__back" @click="handleDrillDownBack">
+        <button class="settings-page__back" @click="handleBack">
           <ChevronLeft :size="22" />
         </button>
         <span class="settings-page__title">{{ currentCategoryTitle }}</span>
@@ -15,15 +15,9 @@
     </header>
     <div class="settings-page__body">
       <SettingsIndex v-if="navStack.length === 0" @navigate="pushNav" />
-      <SettingsDrillDown
-        v-else-if="isDrillDownCategory(currentCategory!)"
-        ref="drillDownRef"
-        :category-id="currentCategory!"
-        @restart-needed="handleRestartNeeded"
-        @back="popNav"
-      />
       <SettingsCategory
         v-else
+        ref="categoryRef"
         :category-id="currentCategory!"
         @navigate="pushNav"
         @restart-needed="handleRestartNeeded"
@@ -59,12 +53,11 @@ import { computed, ref, watch } from 'vue'
 import { RefreshCw, ChevronLeft, Settings } from 'lucide-vue-next'
 import SettingsIndex from './SettingsIndex.vue'
 import SettingsCategory from './SettingsCategory.vue'
-import SettingsDrillDown from './SettingsDrillDown.vue'
 import SettingsRestartDialog from './SettingsRestartDialog.vue'
-import { isDrillDownCategory } from './settingsFieldMap'
 import { useSettingsNavigation } from '@/composables/useSettingsNavigation'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useAgents } from '@/composables/useAgents'
+import { useDialog } from '@/composables/useDialog'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 
 const props = defineProps<{
@@ -80,22 +73,33 @@ const {
 } = useSettingsNavigation()
 
 const { serverConfig } = useSettingsConfig()
+const dialog = useDialog()
 
-const drillDownRef = ref<InstanceType<typeof SettingsDrillDown> | null>(null)
+const categoryRef = ref<InstanceType<typeof SettingsCategory> | null>(null)
 
-function handleDrillDownBack() {
-  if (isDrillDownCategory(currentCategory.value!) && drillDownRef.value) {
-    drillDownRef.value.requestBack()
-  } else {
-    popNav()
+// ── Back navigation with unsaved changes guard (I5 fix) ──
+
+async function handleBack() {
+  // Check if any panel has unsaved changes
+  if (categoryRef.value?.hasUnsavedPanelChanges) {
+    const confirmed = await dialog.confirm(
+      t('settings.panel.unsavedMessage'),
+      {
+        title: t('settings.panel.unsavedTitle'),
+        confirmText: t('settings.panel.discard'),
+        cancelText: t('settings.panel.continueEditing'),
+      },
+    )
+    if (!confirmed) return
   }
+  popNav()
 }
 
-// Register back handler for settings drill-down navigation
+// Register back handler for settings navigation
 useFeatureBackHandler(
   'settings',
   () => !!props.active && navStack.value.length > 0,
-  () => handleDrillDownBack(),
+  () => handleBack(),
   PRIORITY_PAGE,
 )
 
@@ -109,7 +113,6 @@ const currentCategoryTitle = computed(() => {
     const agent = getAgent(agentId)
     return agent ? `${agent.icon} ${agent.name}` : t('settings.categories.agents')
   }
-  // For group drill-down pages ({category}:{groupId}) — no longer used, all groups flattened
   return t(`settings.categories.${cat}`)
 })
 
