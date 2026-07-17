@@ -161,3 +161,106 @@ func TestServeIndex_CSSFallback_DevMode(t *testing.T) {
 	// Just verify no panic
 	assert.NotEqual(t, http.StatusMethodNotAllowed, w.Code)
 }
+
+// --- isHashedAsset ---
+
+func TestIsHashedAsset(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected bool
+	}{
+		// Vite hash-named assets
+		{"index-CaOuUlWb.js", true},
+		{"pdf-D-oSvAqu.js", true},
+		{"index-C_GAucyY.css", true},
+		{"pdf.worker.min-VZhzohg-.js", false}, // dash in hash part before last dash
+		{"some-font-a1b2c3d4.woff2", true},
+		{"icon-aB3cD4eF.png", true},
+		// Not hashed
+		{"index.html", false},
+		{"favicon.ico", false},
+		{"robots.txt", false},
+		{"app.js", false},
+		{"style.css", false},
+		{"no-dash.js", false},
+		{"short-x.js", false},   // hash too short
+		{"", false},
+		{"assets/logo-a1b2c3d4.svg", true}, // path with directory
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, isHashedAsset(tc.name))
+		})
+	}
+}
+
+// --- Cache headers ---
+
+func TestServeIndex_RootPath_NoCacheHeader(t *testing.T) {
+	tmpDir := t.TempDir()
+	publicDir := filepath.Join(tmpDir, "public")
+	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+		t.Fatalf("failed to create public dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(publicDir, "index.html"), []byte("<html>ok</html>"), 0o644); err != nil {
+		t.Fatalf("failed to write index.html: %v", err)
+	}
+
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	w := httptest.NewRecorder()
+	ServeIndex(w, req)
+	assert.Equal(t, "no-cache", w.Header().Get("Cache-Control"))
+}
+
+func TestServeIndex_HashedAsset_ImmutableCacheHeader(t *testing.T) {
+	tmpDir := t.TempDir()
+	publicDir := filepath.Join(tmpDir, "public")
+	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+		t.Fatalf("failed to create public dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(publicDir, "pdf-D-oSvAqu.js"), []byte("var x=1;"), 0o644); err != nil {
+		t.Fatalf("failed to write hashed asset: %v", err)
+	}
+
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	req := httptest.NewRequest(http.MethodGet, "/pdf-D-oSvAqu.js", http.NoBody)
+	w := httptest.NewRecorder()
+	ServeIndex(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "public, max-age=31536000, immutable", w.Header().Get("Cache-Control"))
+}
+
+func TestServeIndex_NonHashedAsset_NoImmutableCache(t *testing.T) {
+	tmpDir := t.TempDir()
+	publicDir := filepath.Join(tmpDir, "public")
+	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+		t.Fatalf("failed to create public dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(publicDir, "robots.txt"), []byte("User-agent: *"), 0o644); err != nil {
+		t.Fatalf("failed to write non-hashed asset: %v", err)
+	}
+
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origWd) }()
+
+	req := httptest.NewRequest(http.MethodGet, "/robots.txt", http.NoBody)
+	w := httptest.NewRecorder()
+	ServeIndex(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, w.Header().Get("Cache-Control"))
+}
