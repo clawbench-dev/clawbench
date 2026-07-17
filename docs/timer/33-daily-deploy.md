@@ -14,7 +14,32 @@ NEW_TAG=$(git tag --sort=-v:refname | head -1)
 echo "最新版本标签: $NEW_TAG"
 ```
 
-## 2. 确认发布产物已就绪
+## 2. 检查是否已部署当前版本
+
+如果所有三个实例都已经在运行当前版本，则跳过本次部署。
+
+```bash
+# 检查绿色版当前版本
+GREEN_VER=$(docker exec clawbench-green ./clawbench --version 2>/dev/null | sed 's/^v//' || echo "")
+# 检查 NPM 版当前版本
+NPM_CUR_VER=$(docker exec clawbench-npm npx clawbench --version 2>/dev/null | sed 's/^v//' || echo "")
+# 检查 Docker 镜像版当前版本
+IMG_VER=$(docker exec clawbench-image ./clawbench --version 2>/dev/null | sed 's/^v//' || echo "")
+
+NEW_VER="${NEW_TAG#v}"
+
+if [ "$GREEN_VER" = "$NEW_VER" ] && [ "$NPM_CUR_VER" = "$NEW_VER" ] && [ "$IMG_VER" = "$NEW_VER" ]; then
+  echo "所有三个实例均已部署 $NEW_TAG，跳过本次部署。"
+  exit 0
+fi
+
+echo "版本对比: 绿色版=$GREEN_VER, NPM版=$NPM_CUR_VER, 镜像版=$IMG_VER, 目标=$NEW_VER"
+echo "存在版本不一致，继续部署..."
+```
+
+对于部分实例已是最新版本的情况，仍然重新部署该实例（确保配置和产物完全一致），但会在日志中标注。
+
+## 3. 确认发布产物已就绪
 
 ```bash
 # 检查 GitHub Release 是否存在该标签的产物
@@ -31,11 +56,11 @@ fi
 echo "发布产物已就绪 ($ASSETS 个文件)"
 ```
 
-## 3. 本地部署：绿色版（Docker，端口 20300）
+## 4. 本地部署：绿色版（Docker，端口 20300）
 
 将 Linux amd64 绿色版下载到本地，部署到 Docker 容器中，端口映射 20300。
 
-### 3.1 清理端口占用
+### 4.1 清理端口占用
 
 **绝对不要使用 `pkill` 或 `killall`**，必须按端口精确杀进程。也绝对不要碰端口 20000（用户主服务）。
 
@@ -49,7 +74,7 @@ if [ -n "$PID_20300" ]; then
 fi
 ```
 
-### 3.2 下载绿色版
+### 4.2 下载绿色版
 
 ```bash
 DEPLOY_DIR="/tmp/clawbench-deploy-green"
@@ -64,13 +89,13 @@ unzip clawbench-linux-amd64.zip
 chmod +x clawbench/clawbench
 ```
 
-### 3.3 停止并移除旧容器（如果存在）
+### 4.3 停止并移除旧容器（如果存在）
 
 ```bash
 docker stop clawbench-green 2>/dev/null && docker rm clawbench-green 2>/dev/null || true
 ```
 
-### 3.4 构建并启动 Docker 容器
+### 4.4 构建并启动 Docker 容器
 
 ```bash
 # 准备 Dockerfile（复用项目根目录的 Dockerfile，但改端口）
@@ -96,7 +121,7 @@ docker run -d \
   clawbench-green:latest
 ```
 
-### 3.5 等待启动并获取密码
+### 4.5 等待启动并获取密码
 
 ```bash
 sleep 3
@@ -104,11 +129,11 @@ GREEN_PASS=$(docker exec clawbench-green cat /data/.clawbench/auto-password 2>/d
 echo "绿色版 (port 20300) 密码: $GREEN_PASS"
 ```
 
-## 4. 本地部署：NPM 版（Docker，端口 20500）
+## 5. 本地部署：NPM 版（Docker，端口 20500）
 
 通过 npm 安装 clawbench，部署在 Docker 容器中，端口映射 20500。
 
-### 4.1 清理端口占用
+### 5.1 清理端口占用
 
 ```bash
 PID_20500=$(lsof -i :20500 -t 2>/dev/null || true)
@@ -119,13 +144,13 @@ if [ -n "$PID_20500" ]; then
 fi
 ```
 
-### 4.2 停止并移除旧容器（如果存在）
+### 5.2 停止并移除旧容器（如果存在）
 
 ```bash
 docker stop clawbench-npm 2>/dev/null && docker rm clawbench-npm 2>/dev/null || true
 ```
 
-### 4.3 构建并启动 NPM 版 Docker 容器
+### 5.3 构建并启动 NPM 版 Docker 容器
 
 ```bash
 NPM_DIR="/tmp/clawbench-deploy-npm"
@@ -133,7 +158,7 @@ rm -rf "$NPM_DIR"
 mkdir -p "$NPM_DIR"
 
 # NPM 版本号（去掉 v 前缀）
-NPM_VER="${NEW_TAG#v}"
+NPM_INSTALL_VER="${NEW_TAG#v}"
 
 cat > "$NPM_DIR/Dockerfile" <<DOCKERFILE
 FROM node:24-slim
@@ -141,7 +166,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-RUN npm install @xulongzhe/clawbench@$NPM_VER @xulongzhe/clawbench-linux-x64@$NPM_VER
+RUN npm install @xulongzhe/clawbench@$NPM_INSTALL_VER @xulongzhe/clawbench-linux-x64@$NPM_INSTALL_VER
 RUN mkdir -p /data/.clawbench
 EXPOSE 20500
 CMD ["npx", "clawbench", "--port", "20500", "--data-dir", "/data/.clawbench"]
@@ -156,7 +181,7 @@ docker run -d \
   clawbench-npm:latest
 ```
 
-### 4.4 等待启动并获取密码
+### 5.4 等待启动并获取密码
 
 ```bash
 sleep 3
@@ -164,11 +189,11 @@ NPM_PASS=$(docker exec clawbench-npm cat /data/.clawbench/auto-password 2>/dev/n
 echo "NPM 版 (port 20500) 密码: $NPM_PASS"
 ```
 
-## 5. 本地部署：Docker 镜像版（端口 20400）
+## 6. 本地部署：Docker 镜像版（端口 20400）
 
 拉取 GitHub Container Registry 上发布的 Docker 镜像，端口映射 20400。
 
-### 5.1 清理端口占用
+### 6.1 清理端口占用
 
 ```bash
 PID_20400=$(lsof -i :20400 -t 2>/dev/null || true)
@@ -179,13 +204,13 @@ if [ -n "$PID_20400" ]; then
 fi
 ```
 
-### 5.2 停止并移除旧容器（如果存在）
+### 6.2 停止并移除旧容器（如果存在）
 
 ```bash
 docker stop clawbench-image 2>/dev/null && docker rm clawbench-image 2>/dev/null || true
 ```
 
-### 5.3 拉取镜像并启动
+### 6.3 拉取镜像并启动
 
 ```bash
 docker pull ghcr.io/clawbench-dev/clawbench:$NEW_TAG
@@ -198,7 +223,7 @@ docker run -d \
 
 注意：容器内部服务监听 20000，通过 `-p 20400:20000` 映射到宿主机 20400。
 
-### 5.4 等待启动并获取密码
+### 6.4 等待启动并获取密码
 
 ```bash
 sleep 3
@@ -206,7 +231,7 @@ IMG_PASS=$(docker exec clawbench-image cat /data/.clawbench/auto-password 2>/dev
 echo "Docker 镜像版 (port 20400) 密码: $IMG_PASS"
 ```
 
-## 6. 打印部署摘要
+## 7. 打印部署摘要
 
 三个实例都启动完成后，打印密码供人工测试：
 
