@@ -183,6 +183,131 @@ func TestDequeueMessage_EmptyQueueKeepsEntry_ISS293(t *testing.T) {
 	assert.Equal(t, "after-empty", msg.Text)
 }
 
+func TestWaitForEnqueue_Signaled(t *testing.T) {
+	t.Parallel()
+	sessionID := "qtest-wait-signaled"
+	defer ClearQueue(sessionID)
+
+	done := make(chan struct{})
+	go func() {
+		// Small delay to ensure WaitForEnqueue is blocking before we enqueue
+		time.Sleep(10 * time.Millisecond)
+		EnqueueMessage(sessionID, model.QueuedMessage{Text: "delayed", CreatedAt: time.Now().Format(time.RFC3339)})
+	}()
+
+	go func() {
+		ok := WaitForEnqueue(sessionID, 2*time.Second)
+		assert.True(t, ok)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// success
+	case <-time.After(3 * time.Second):
+		t.Fatal("WaitForEnqueue did not return after signal")
+	}
+}
+
+func TestWaitForEnqueue_Timeout(t *testing.T) {
+	t.Parallel()
+	sessionID := "qtest-wait-timeout"
+	defer ClearQueue(sessionID)
+
+	ok := WaitForEnqueue(sessionID, 50*time.Millisecond)
+	assert.False(t, ok)
+}
+
+func TestGetDrainChan(t *testing.T) {
+	t.Parallel()
+	sessionID := "qtest-drain-chan"
+	defer func() {
+		sessionDrainChans.Delete(sessionID)
+	}()
+
+	ch := getDrainChan(sessionID)
+	assert.NotNil(t, ch)
+
+	// Same session returns the same channel
+	ch2 := getDrainChan(sessionID)
+	assert.Equal(t, ch, ch2)
+}
+
+func TestEnqueueMessage_SignalsDrainChan(t *testing.T) {
+	t.Parallel()
+	sessionID := "qtest-signal-chan"
+	defer ClearQueue(sessionID)
+
+	ch := getDrainChan(sessionID)
+
+	EnqueueMessage(sessionID, model.QueuedMessage{Text: "signal-test", CreatedAt: time.Now().Format(time.RFC3339)})
+
+	// Drain channel should have been signaled
+	select {
+	case <-ch:
+		// success
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("drain channel was not signaled after enqueue")
+	}
+}
+
+func TestRemoveQueueItem_NonexistentSession(t *testing.T) {
+	result := RemoveQueueItem("qtest-remove-nonexistent", 0)
+	assert.Nil(t, result)
+}
+
+func TestRemoveQueueItemByQueueID(t *testing.T) {
+	sessionID := "qtest-remove-qid"
+	defer ClearQueue(sessionID)
+
+	EnqueueMessage(sessionID, model.QueuedMessage{QueueID: "qid-1", Text: "a", CreatedAt: time.Now().Format(time.RFC3339)})
+	EnqueueMessage(sessionID, model.QueuedMessage{QueueID: "qid-2", Text: "b", CreatedAt: time.Now().Format(time.RFC3339)})
+	EnqueueMessage(sessionID, model.QueuedMessage{QueueID: "qid-3", Text: "c", CreatedAt: time.Now().Format(time.RFC3339)})
+
+	queue := RemoveQueueItemByQueueID(sessionID, "qid-2")
+	assert.Len(t, queue, 2)
+	assert.Equal(t, "a", queue[0].Text)
+	assert.Equal(t, "c", queue[1].Text)
+}
+
+func TestRemoveQueueItemByQueueID_NotFound(t *testing.T) {
+	sessionID := "qtest-remove-qid-nf"
+	defer ClearQueue(sessionID)
+
+	EnqueueMessage(sessionID, model.QueuedMessage{QueueID: "qid-1", Text: "a", CreatedAt: time.Now().Format(time.RFC3339)})
+
+	queue := RemoveQueueItemByQueueID(sessionID, "qid-missing")
+	assert.Len(t, queue, 1)
+	assert.Equal(t, "a", queue[0].Text)
+}
+
+func TestRemoveQueueItemByQueueID_EmptyQueueID(t *testing.T) {
+	sessionID := "qtest-remove-qid-empty"
+	defer ClearQueue(sessionID)
+
+	EnqueueMessage(sessionID, model.QueuedMessage{QueueID: "qid-1", Text: "a", CreatedAt: time.Now().Format(time.RFC3339)})
+
+	// Empty queueID falls back to GetQueue
+	queue := RemoveQueueItemByQueueID(sessionID, "")
+	assert.Len(t, queue, 1)
+	assert.Equal(t, "a", queue[0].Text)
+}
+
+func TestRemoveQueueItemByQueueID_LastItem(t *testing.T) {
+	sessionID := "qtest-remove-qid-last"
+	defer ClearQueue(sessionID)
+
+	EnqueueMessage(sessionID, model.QueuedMessage{QueueID: "qid-1", Text: "only", CreatedAt: time.Now().Format(time.RFC3339)})
+
+	queue := RemoveQueueItemByQueueID(sessionID, "qid-1")
+	assert.Nil(t, queue)
+}
+
+func TestRemoveQueueItemByQueueID_NonexistentSession(t *testing.T) {
+	result := RemoveQueueItemByQueueID("qtest-remove-qid-nonexistent", "qid-1")
+	assert.Nil(t, result)
+}
+
 func TestDequeueMessage_ConcurrentEnqueueNoLoss_ISS293(t *testing.T) {
 	// ISS-293: Simulate the race condition where DequeueMessage deletes the entry
 	// while a concurrent EnqueueMessage is trying to add a message.
