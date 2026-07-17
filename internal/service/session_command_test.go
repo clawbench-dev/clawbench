@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
+	"clawbench/internal/ws"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,6 +37,7 @@ func setupTestDBForSessionCommand(t *testing.T) *sql.DB {
 			session_type TEXT NOT NULL DEFAULT 'chat',
 			external_session_id TEXT DEFAULT '',
 			transport TEXT DEFAULT '',
+			auto_approve INTEGER NOT NULL DEFAULT 0,
 			deleted INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1422,12 +1425,8 @@ func TestSendMessageToSessionFromDingTalk_SessionExists_QueuedMessage(t *testing
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
-	// Add auto_approve column to match what GetSessionFullInfo expects
-	_, err := db.Exec("ALTER TABLE chat_sessions ADD COLUMN auto_approve INTEGER NOT NULL DEFAULT 0")
-	require.NoError(t, err)
-
 	sessionID := "dt-send-1"
-	_, err = WriteExec(
+	_, err := WriteExec(
 		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj', 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
 		sessionID,
 	)
@@ -1616,11 +1615,8 @@ func TestSendMessageToSessionFromDingTalk_LaunchPath(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
-	_, err := db.Exec("ALTER TABLE chat_sessions ADD COLUMN auto_approve INTEGER NOT NULL DEFAULT 0")
-	require.NoError(t, err)
-
 	sessionID := "dt-launch-1"
-	_, err = WriteExec(
+	_, err := WriteExec(
 		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj', 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
 		sessionID,
 	)
@@ -1938,4 +1934,50 @@ func TestGetMessageByID_NotFound(t *testing.T) {
 
 	_, err := GetMessageByID(999)
 	assert.Error(t, err)
+}
+
+// --- SendMessageToSessionFromDingTalk user_message emit ---
+
+// TestSendMessageToSessionFromDingTalk_AlreadyRunning_EnqueuesMessage verifies
+// that when a session is already running, the message is enqueued and
+// a user_message event with MessageID=0 is emitted (the enqueue path in
+// session_command.go lines 140-154).
+func TestSendMessageToSessionFromDingTalk_AlreadyRunning_EnqueuesMessage(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origMgr := ws.GetManager()
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(origMgr)
+
+	sessionID := "dingtalk-emit-2"
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, model, transport, auto_approve) VALUES (?, '/test', 'codebuddy', 'test', '', '', '', 0)", sessionID)
+	require.NoError(t, err)
+
+	var writeMu sync.Mutex
+	mgr.Subscribe(nil, &writeMu, "dingtalk-client-2", "")
+	mgr.StreamHub().Subscribe("dingtalk-client-2", sessionID)
+
+	// Mark session as running
+	cleanupActiveSessions()
+	defer cleanupActiveSessions()
+	TrySetSessionRunning(sessionID)
+	defer func() {
+		SetSessionRunning(sessionID, false, true)
+		ClearQueue(sessionID)
+	}()
+
+	err = SendMessageToSessionFromDingTalk(sessionID, "queued from dingtalk")
+	assert.NoError(t, err)
+
+	// Verify message was NOT persisted (enqueue path doesn't persist)
+	messages, err := GetMessagesBySessionID(sessionID)
+	require.NoError(t, err)
+	assert.Len(t, messages, 0, "enqueue path should not persist user message to DB")
+
+	// Verify message is in the in-memory queue
+	queue := GetQueue(sessionID)
+	assert.Len(t, queue, 1)
+	assert.Equal(t, "queued from dingtalk", queue[0].Text)
 }

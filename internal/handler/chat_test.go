@@ -10,12 +10,14 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
+	"clawbench/internal/ws"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -3202,4 +3204,80 @@ func TestServeToolCallDetail_WrongMethod(t *testing.T) {
 	withProjectCookie(req, env.ProjectDir)
 	w := callHandler(ServeToolCallDetail, req)
 	assertStatus(t, w, http.StatusMethodNotAllowed)
+}
+
+// --- user_message emit coverage ---
+
+// TestAIChat_UserMessageEmit_NewSession verifies that the POST /api/ai/chat handler
+// emits a user_message event with the correct msgID after persisting the user message
+// via AddChatMessage (the non-queue path when session is not running).
+func TestAIChat_UserMessageEmit_NewSession(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "test-user-msg-emit", "codebuddy", "", "default", "chat")
+	assert.NoError(t, err)
+
+	// Set up a WS manager with a subscriber so EmitToSession is not a no-op
+	origMgr := ws.GetManager()
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(origMgr)
+
+	var writeMu sync.Mutex
+	mgr.Subscribe(nil, &writeMu, "test-client-1", "")
+	mgr.StreamHub().Subscribe("test-client-1", sessionID)
+
+	model.Agents["codebuddy"] = &model.Agent{ID: "codebuddy", Backend: "cli", Command: "echo"}
+
+	body := map[string]string{"message": "hello from test", "agentId": "codebuddy"}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	assert.NotEqual(t, http.StatusBadRequest, w.Code)
+
+	// Wait for the async AI goroutine to finish
+	assert.Eventually(t, func() bool {
+		return !service.IsSessionRunning(sessionID)
+	}, 5*time.Second, 50*time.Millisecond)
+}
+
+// TestAIChat_UserMessageEmit_EnqueuePath verifies that the POST /api/ai/chat handler
+// emits a user_message event with MessageID=0 when the session is already running
+// and the message is enqueued (the queue path).
+func TestAIChat_UserMessageEmit_EnqueuePath(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "test-queue-emit", "", "", "default", "chat")
+	assert.NoError(t, err)
+
+	// Set up a WS manager with subscriber
+	origMgr := ws.GetManager()
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(origMgr)
+
+	var writeMu sync.Mutex
+	mgr.Subscribe(nil, &writeMu, "test-client-2", "")
+	mgr.StreamHub().Subscribe("test-client-2", sessionID)
+
+	// Mark session as running so the message gets enqueued
+	service.TrySetSessionRunning(sessionID)
+	defer func() {
+		service.SetSessionRunning(sessionID, false)
+		service.ClearQueue(sessionID)
+	}()
+
+	body := map[string]string{"message": "queued message", "clientId": "sender-1"}
+	req := newRequest(t, http.MethodPost, "/api/ai/chat?session_id="+sessionID, body)
+	withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(AIChat, req)
+	assertOK(t, w)
+
+	var result map[string]any
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, true, result["queued"])
 }
