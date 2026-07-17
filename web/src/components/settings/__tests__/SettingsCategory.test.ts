@@ -153,9 +153,6 @@ const i18n = createI18n({
           apiHeader: 'API',
           apiBaseUrl: 'API地址',
           apiKey: 'API密钥',
-          apiFormat: 'API格式',
-          apiFormatOpenai: 'OpenAI',
-          apiFormatAnthropic: 'Anthropic',
           ttsMaxCacheFiles: '缓存上限',
           ragSearchPoolSize: '搜索池大小',
           ragBaseUrl: '嵌入接口地址',
@@ -570,11 +567,11 @@ describe('SettingsCategory', () => {
       expect(mockSetServerValue).not.toHaveBeenCalled()
     })
 
-    it('skips password update when value contains bullet chars (masked)', async () => {
+    it('allows password update with real value', async () => {
       const wrapper = mountCategory('security')
       const vm = wrapper.vm as any
-      await vm.$.setupState.handleUpdate({ key: 'password', type: 'password', source: 'server' }, '••••')
-      expect(mockSetServerValue).not.toHaveBeenCalled()
+      await vm.$.setupState.handleUpdate({ key: 'password', type: 'password', source: 'server' }, 'my-real-password')
+      expect(mockSetServerValue).toHaveBeenCalled()
     })
 
     it('shows toast on server save failure', async () => {

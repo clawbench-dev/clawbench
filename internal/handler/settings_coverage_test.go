@@ -21,11 +21,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// --- maskAPIKey: additional edge cases (supplement settings_sentinel_test.go) ---
-
-func TestMaskAPIKey_8Chars(t *testing.T) {
-	assert.Equal(t, "abcd***xyz", maskAPIKey("abcdwxyz"))
-}
+// --- maskAPIKey: removed (supplement settings_sentinel_test.go) ---
+// maskAPIKey was removed — config API now returns full values for password fields.
 
 // --- joinArgs: additional case with quote ---
 
@@ -360,9 +357,9 @@ func TestServeConfig_Patch_DefaultAgentEmpty(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// --- ServeConfig PATCH: rag.api_key with *** rejected ---
+// --- ServeConfig PATCH: rag.api_key with *** (maskAPIKey removed, now accepted) ---
 
-func TestServeConfigPatch_RAGMaskedKey(t *testing.T) {
+func TestServeConfigPatch_RAGKeyWithStars(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -375,8 +372,7 @@ func TestServeConfigPatch_RAGMaskedKey(t *testing.T) {
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "***")
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 // --- ServeConfig PATCH: tts.tts_model ---
@@ -463,7 +459,7 @@ func TestServeConfigPatch_DingTalkConfig(t *testing.T) {
 	assert.Equal(t, "test-key", model.ConfigInstance.DingTalk.AppKey)
 }
 
-func TestServeConfigPatch_DingTalkMaskedSecret(t *testing.T) {
+func TestServeConfigPatch_DingTalkSecretWithStars(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -476,5 +472,5 @@ func TestServeConfigPatch_DingTalkMaskedSecret(t *testing.T) {
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
 }

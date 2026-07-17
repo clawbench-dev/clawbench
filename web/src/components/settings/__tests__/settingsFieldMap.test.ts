@@ -187,9 +187,6 @@ describe('settingsFieldMap', () => {
     const apiKey = dd.commonFields.find(f => f.key === 'summarize.api.key')
     expect(apiKey).toBeDefined()
 
-    const apiFormat = dd.commonFields.find(f => f.key === 'summarize.api.format')
-    expect(apiFormat).toBeDefined()
-
     // TTS API config fields (depend on tts backend = api)
     const ttsApiBaseURL = dd.commonFields.find(f => f.key === 'summarize.tts_api.base_url')
     expect(ttsApiBaseURL).toBeDefined()
@@ -197,9 +194,6 @@ describe('settingsFieldMap', () => {
 
     const ttsApiKey = dd.commonFields.find(f => f.key === 'summarize.tts_api.key')
     expect(ttsApiKey).toBeDefined()
-
-    const ttsApiFormat = dd.commonFields.find(f => f.key === 'summarize.tts_api.format')
-    expect(ttsApiFormat).toBeDefined()
 
     // No optionSubFields — all fields are in commonFields
     expect(dd.optionSubFields).toBeUndefined()

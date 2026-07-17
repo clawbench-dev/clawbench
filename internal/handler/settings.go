@@ -73,10 +73,8 @@ var hotReloadFields = map[string]bool{
 	"summarize.tts_model":        true,
 	"summarize.api.base_url":     true,
 	"summarize.api.key":          true,
-	"summarize.api.format":       true,
 	"summarize.tts_api.base_url": true,
 	"summarize.tts_api.key":      true,
-	"summarize.tts_api.format":   true,
 	// FRP — in-process frp service; enabled can be toggled, other fields hot-reload
 	"frp.enabled":         true,
 	"frp.server_addr":     true,
@@ -153,9 +151,10 @@ func applyHotReloadWarnings() []string {
 	return w
 }
 
-// configResponse is the sanitized config returned to clients via GET /api/config.
-// It only contains fields safe for frontend display — no passwords, keys, or
-// internal paths.
+// configResponse is the config returned to clients via GET /api/config.
+// Secret fields (API keys, tokens) are returned in full — the API is
+// protected by auth middleware (password + localhost bypass). Frontend
+// renders secrets using <input type="password"> for secure display.
 type configResponse struct {
 	Version             string               `json:"version"`
 	HasPassword         bool                 `json:"has_password"`          // true when a password is configured
@@ -233,7 +232,6 @@ type configMossNano struct {
 type configAPI struct {
 	BaseURL string `json:"base_url"`
 	Key     string `json:"key"`
-	Format  string `json:"format"`
 }
 
 type configRAG struct {
@@ -255,7 +253,7 @@ type configFRP struct {
 	Enabled       bool   `json:"enabled"`
 	ServerAddr    string `json:"server_addr"`
 	ServerPort    int    `json:"server_port"`
-	Token         string `json:"token"` // masked in GET, accepted in PATCH
+	Token         string `json:"token"` // returned in full; frontend uses type="password"
 	AutoPort      bool   `json:"auto_port"`
 	RemotePort    int    `json:"remote_port"`
 	SSHRemotePort int    `json:"ssh_remote_port"`
@@ -331,10 +329,8 @@ var PatchableConfigPaths = map[string]bool{
 	"summarize.tts_model":           true,
 	"summarize.api.base_url":        true,
 	"summarize.api.key":             true,
-	"summarize.api.format":          true,
 	"summarize.tts_api.base_url":    true,
 	"summarize.tts_api.key":         true,
-	"summarize.tts_api.format":      true,
 	"localhost_auth_exempt":       true,
 	"dingtalk.enabled":            true,
 	"dingtalk.app_key":            true,
@@ -359,11 +355,6 @@ var validTTSFormats = map[string]bool{
 	"mp3": true, "wav": true, "pcm": true,
 }
 
-// validAPIFormats is the set of valid API format values.
-var validAPIFormats = map[string]bool{
-	"openai": true, "anthropic": true,
-}
-
 // validMossNanoBackends is the set of valid MOSS-Nano inference backend values.
 var validMossNanoBackends = map[string]bool{
 	"onnx": true, "pytorch": true,
@@ -373,18 +364,6 @@ var validMossNanoBackends = map[string]bool{
 // Delegates to version.Get() which handles ldflags injection and VCS fallback.
 func getBuildVersion() string {
 	return version.Get()
-}
-
-// maskAPIKey masks an API key for safe display: first 4 + *** + last 3 chars.
-// Returns "****" if the key is too short (< 8 chars).
-func maskAPIKey(key string) string {
-	if key == "" {
-		return ""
-	}
-	if len(key) < 8 {
-		return "****"
-	}
-	return key[:4] + "***" + key[len(key)-3:]
 }
 
 // ServeConfig handles GET and PATCH /api/config.
@@ -441,7 +420,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		RAG: configRAG{
 			BaseURL:        cfg.RAG.BaseURL,
 			Model:          cfg.RAG.Model,
-			APIKey:         maskAPIKey(cfg.RAG.APIKey),
+			APIKey:         cfg.RAG.APIKey,
 			ChunkSize:      cfg.RAG.ChunkSize,
 			SearchLimit:    cfg.RAG.SearchLimit,
 			SearchPoolSize: cfg.RAG.SearchPoolSize,
@@ -455,7 +434,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			Enabled:       cfg.FRP.Enabled,
 			ServerAddr:    cfg.FRP.ServerAddr,
 			ServerPort:    cfg.FRP.ServerPort,
-			Token:         maskAPIKey(cfg.FRP.Token),
+			Token:         cfg.FRP.Token,
 			AutoPort:      cfg.FRP.AutoPort,
 			RemotePort:    cfg.FRP.RemotePort,
 			SSHRemotePort: cfg.FRP.SSHRemotePort,
@@ -469,7 +448,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		DingTalk: configDingTalk{
 			Enabled:   cfg.DingTalk.Enabled,
 			AppKey:    cfg.DingTalk.AppKey,
-			AppSecret: maskAPIKey(cfg.DingTalk.AppSecret),
+			AppSecret: cfg.DingTalk.AppSecret,
 			AgentID:   cfg.DingTalk.AgentID,
 			Users:     cfg.DingTalk.Users,
 		},
@@ -479,15 +458,13 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 	if cfg.Summarize.Backend == "api" {
 		resp.Summarize.API = &configAPI{
 			BaseURL: cfg.Summarize.API.BaseURL,
-			Key:     maskAPIKey(cfg.Summarize.API.Key),
-			Format:  cfg.Summarize.API.Format,
+			Key:     cfg.Summarize.API.Key,
 		}
 	}
 	if cfg.Summarize.TTSBackend == "api" {
 		resp.Summarize.TTSAPI = &configAPI{
 			BaseURL: cfg.Summarize.TTSAPI.BaseURL,
-			Key:     maskAPIKey(cfg.Summarize.TTSAPI.Key),
-			Format:  cfg.Summarize.TTSAPI.Format,
+			Key:     cfg.Summarize.TTSAPI.Key,
 		}
 	}
 
@@ -800,28 +777,6 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 				return fmt.Errorf("summarize.tts_backend must be one of: , simple, api")
 			}
 		}
-		// Validate Summarize API sub-config
-		if api, ok := summarize["api"].(map[string]any); ok {
-			if v, ok := api["format"].(string); ok {
-				if v != "" && !validAPIFormats[v] {
-					return fmt.Errorf("summarize.api.format must be one of: openai, anthropic")
-				}
-			}
-			if v, ok := api["key"].(string); ok && strings.Contains(v, "***") {
-				return fmt.Errorf("summarize.api.key must not contain '***' — please provide the full key value")
-			}
-		}
-		// Validate Summarize TTS API sub-config
-		if ttsApi, ok := summarize["tts_api"].(map[string]any); ok {
-			if v, ok := ttsApi["format"].(string); ok {
-				if v != "" && !validAPIFormats[v] {
-					return fmt.Errorf("summarize.tts_api.format must be one of: openai, anthropic")
-				}
-			}
-			if v, ok := ttsApi["key"].(string); ok && strings.Contains(v, "***") {
-				return fmt.Errorf("summarize.tts_api.key must not contain '***' — please provide the full key value")
-			}
-		}
 	}
 
 	chat, ok := patch["chat"].(map[string]any)
@@ -856,12 +811,6 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 
 	// FRP: when enabled, server_addr must be non-empty (skip when just switching enabled on —
 	// user hasn't had a chance to fill in the address yet, frontend auto-saves one field at a time).
-	// RAG — reject masked API key
-	if rag, ok := patch["rag"].(map[string]any); ok {
-		if v, ok := rag["api_key"].(string); ok && strings.Contains(v, "***") {
-			return fmt.Errorf("rag.api_key must not contain '***' — please provide the full key value")
-		}
-	}
 
 	if frp, ok := patch["frp"].(map[string]any); ok {
 		effectiveEnabled := cfg.FRP.Enabled
@@ -879,9 +828,6 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		if effectiveEnabled && !enabledSwitchedOn && effectiveAddr == "" {
 			return fmt.Errorf("frp.server_addr is required when FRP is enabled")
 		}
-		if v, ok := frp["token"].(string); ok && strings.Contains(v, "***") {
-			return fmt.Errorf("frp.token must not contain '***' — please provide the full token value")
-		}
 		if v, ok := frp["server_port"].(float64); ok && (v < 0 || v > 65535) {
 			return fmt.Errorf("frp.server_port must be between 0 and 65535")
 		}
@@ -890,13 +836,6 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 		if v, ok := frp["ssh_remote_port"].(float64); ok && (v < 0 || v > 65535) {
 			return fmt.Errorf("frp.ssh_remote_port must be between 0 and 65535")
-		}
-	}
-
-	// DingTalk — reject masked secrets
-	if dingtalk, ok := patch["dingtalk"].(map[string]any); ok {
-		if v, ok := dingtalk["app_secret"].(string); ok && strings.Contains(v, "***") {
-			return fmt.Errorf("dingtalk.app_secret must not contain '***' — please provide the full secret value")
 		}
 	}
 
@@ -1029,9 +968,7 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 			cfg.RAG.Model = v
 		}
 		if v, ok := rag["api_key"].(string); ok {
-			if !strings.Contains(v, "***") {
-				cfg.RAG.APIKey = v
-			}
+			cfg.RAG.APIKey = v
 		}
 		if v, ok := rag["chunk_size"].(float64); ok {
 			cfg.RAG.ChunkSize = int(v)
@@ -1070,9 +1007,7 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 			cfg.FRP.ServerPort = int(v)
 		}
 		if v, ok := frp["token"].(string); ok {
-			if !strings.Contains(v, "***") {
-				cfg.FRP.Token = v
-			}
+			cfg.FRP.Token = v
 		}
 		if v, ok := frp["auto_port"].(bool); ok {
 			cfg.FRP.AutoPort = v
@@ -1104,12 +1039,7 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 				cfg.Summarize.API.BaseURL = v
 			}
 			if v, ok := api["key"].(string); ok {
-				if !strings.Contains(v, "***") {
-					cfg.Summarize.API.Key = v
-				}
-			}
-			if v, ok := api["format"].(string); ok {
-				cfg.Summarize.API.Format = v
+				cfg.Summarize.API.Key = v
 			}
 		}
 		// Summarize TTS API sub-config
@@ -1118,12 +1048,7 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 				cfg.Summarize.TTSAPI.BaseURL = v
 			}
 			if v, ok := ttsApi["key"].(string); ok {
-				if !strings.Contains(v, "***") {
-					cfg.Summarize.TTSAPI.Key = v
-				}
-			}
-			if v, ok := ttsApi["format"].(string); ok {
-				cfg.Summarize.TTSAPI.Format = v
+				cfg.Summarize.TTSAPI.Key = v
 			}
 		}
 	}
@@ -1136,9 +1061,7 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 			cfg.DingTalk.AppKey = v
 		}
 		if v, ok := dingtalk["app_secret"].(string); ok {
-			if !strings.Contains(v, "***") {
-				cfg.DingTalk.AppSecret = v
-			}
+			cfg.DingTalk.AppSecret = v
 		}
 		if v, ok := dingtalk["agent_id"].(float64); ok {
 			cfg.DingTalk.AgentID = int64(v)

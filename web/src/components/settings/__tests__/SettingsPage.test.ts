@@ -55,7 +55,6 @@ vi.mock('@/composables/useDrillDownSideEffects', () => ({
   useDrillDownSideEffects: () => ({
     init: vi.fn(),
     afterSave: vi.fn(),
-    frpStatusDot: ref(null),
     frpAutoPortInfo: ref(null),
     needsVoiceReset: ref(false),
   }),
@@ -139,7 +138,7 @@ describe('SettingsPage', () => {
     expect(wrapper.find('.settings-restart-btn').exists()).toBe(false)
   })
 
-  it('resets nav stack when becoming active', async () => {
+  it('preserves nav stack when becoming active', async () => {
     navStack.value = ['appearance']
     const wrapper = mountPage()
     await nextTick()
@@ -147,14 +146,16 @@ describe('SettingsPage', () => {
     // Verify we're in category view
     expect(wrapper.find('.settings-page__back').exists()).toBe(true)
 
-    // Simulate the resetState call that the watch triggers
-    navStack.value = []
-    wrapper.vm.$forceUpdate()
+    // Simulate deactivation then re-activation (tab switch away and back)
+    await wrapper.setProps({ active: false })
+    await nextTick()
+    await wrapper.setProps({ active: true })
     await nextTick()
 
-    // navStack is now empty → back at index
-    expect(wrapper.find('.settings-page__header-icon').exists()).toBe(true)
-    expect(wrapper.find('.settings-page__back').exists()).toBe(false)
+    // navStack should still have 'appearance' — state preserved across tab switch
+    expect(navStack.value).toEqual(['appearance'])
+    expect(wrapper.find('.settings-page__back').exists()).toBe(true)
+    expect(wrapper.find('.settings-page__header-icon').exists()).toBe(false)
   })
 
   it('shows restart button only when needsRestart is true', async () => {

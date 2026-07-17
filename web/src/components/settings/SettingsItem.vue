@@ -99,6 +99,7 @@
           class="settings-item__text-input"
           :value="editValue"
           :placeholder="placeholder"
+          autocomplete="off"
           @input="editValue = ($event.target as HTMLInputElement).value"
           @keydown.enter="confirmEdit"
         />
@@ -221,8 +222,8 @@ onUnmounted(() => {
 // Close editor when parent forces close (another editor opened)
 watch(() => props.forceClose, (val) => {
   if (val && editing.value) {
-    // Password editor with unsaved input: notify parent so it can show feedback
-    if (props.type === 'password' && editValue.value !== '' && editValue.value !== null && editValue.value !== undefined) {
+    // Password editor with modified input: notify parent so it can show feedback
+    if (props.type === 'password' && editValue.value !== props.modelValue) {
       emit('discard')
     }
     editing.value = false
@@ -323,8 +324,7 @@ function handleClick() {
   }
   editing.value = !editing.value
   if (editing.value) {
-    // Password editor starts empty so users never accidentally send the masked value back
-    editValue.value = props.type === 'password' ? '' : props.modelValue
+    editValue.value = props.modelValue
     showPassword.value = false
   }
   emit('editToggle', editing.value)

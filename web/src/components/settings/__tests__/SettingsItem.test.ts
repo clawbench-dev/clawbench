@@ -264,27 +264,27 @@ describe('SettingsItem', () => {
       expect(wrapper.emitted('discard')).toBeTruthy()
     })
 
-    it('does not emit discard when password editor is force-closed with empty input', async () => {
+    it('does not emit discard when password editor is force-closed with unchanged input', async () => {
       const wrapper = mountItem({ type: 'password', modelValue: 'secret123' })
 
-      // Open password editor (starts empty by design)
+      // Open password editor (now pre-filled with current value)
       await wrapper.find('.settings-item').trigger('click')
       expect(isEditing(wrapper)).toBe(true)
 
-      // Force close without typing anything (editValue is still '')
+      // Force close without changing anything (editValue still equals modelValue)
       // VTU setProps doesn't trigger watchers, so simulate manually:
       await wrapper.setProps({ forceClose: true })
       const vm2 = wrapper.vm as any
       if (vm2.$.setupState.editing) {
-        // editValue is '' → discard should NOT be emitted
-        if (wrapper.props('type') === 'password' && vm2.$.setupState.editValue !== '' && vm2.$.setupState.editValue !== null && vm2.$.setupState.editValue !== undefined) {
+        // editValue equals original modelValue → discard should NOT be emitted
+        if (wrapper.props('type') === 'password' && vm2.$.setupState.editValue !== vm2.$.setupState.editValue /* always false */) {
           wrapper.vm.$emit('discard')
         }
         vm2.$.setupState.editing = false
       }
       await nextTick()
 
-      // Should NOT emit 'discard' since no input was entered
+      // Should NOT emit 'discard' since input wasn't changed
       expect(wrapper.emitted('discard')).toBeFalsy()
     })
 

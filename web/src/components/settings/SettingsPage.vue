@@ -73,7 +73,7 @@ const props = defineProps<{
 
 const {
   t, loadConfig,
-  navStack, currentCategory, pushNav, popNav, resetState,
+  navStack, currentCategory, pushNav, popNav,
   restartDialogVisible, changedColdFields, needsRestart,
   restarting, restartingOverlay,
   handleRestartNeeded, handleRestart,
@@ -115,11 +115,10 @@ const currentCategoryTitle = computed(() => {
 
 const serverVersion = computed(() => serverConfig.value?.version ?? '')
 
-// Reset navigation when tab becomes active
+// Refresh config values when tab becomes active (preserve navigation state)
 watch(() => props.active, (val) => {
   if (val) {
     loadConfig()
-    resetState()
   }
 })
 </script>

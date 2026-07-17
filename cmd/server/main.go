@@ -655,7 +655,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			slog.Error("summarize.tts_backend is \"api\" but summarize.tts_api.base_url is not configured")
 			os.Exit(1)
 		}
-		if cfg.Summarize.TTSAPI.Format == "anthropic" {
+		if summarize.IsAnthropicURL(cfg.Summarize.TTSAPI.BaseURL) {
 			s := summarize.NewAnthropic(cfg.Summarize.TTSAPI.BaseURL, cfg.Summarize.TTSAPI.Key, cfg.Summarize.TTSModel)
 			ttsSummarizer = s
 			slog.Info("tts summarizer configured", slog.String("backend", summarizeBackendAPI), slog.String("format", "anthropic"), slog.String("model", s.Model))
@@ -1129,9 +1129,9 @@ func initTaskSummarizer(cfg model.Config) (*summarize.TaskSummarizer, error) {
 		if cfg.Summarize.API.BaseURL == "" {
 			return nil, fmt.Errorf("summarize.backend is \"api\" but summarize.api.base_url is not configured")
 		}
-		// For API backends, create OpenAI/Anthropic summarizer and wrap its pass function
-		// in a pipeline with PreserveMarkdown=true and task-specific prompt.
-		if cfg.Summarize.API.Format == "anthropic" {
+		// For API backends, auto-detect OpenAI/Anthropic from URL and wrap in a pipeline
+		// with PreserveMarkdown=true and task-specific prompt.
+		if summarize.IsAnthropicURL(cfg.Summarize.API.BaseURL) {
 			s := summarize.NewAnthropic(cfg.Summarize.API.BaseURL, cfg.Summarize.API.Key, modelName)
 			pipeline := summarize.NewPipelineWithOpts(
 				s.DoSummarizePass,
@@ -1316,7 +1316,7 @@ func newTTSSummarizer(cfg model.Config) summarize.Summarizer {
 		if cfg.Summarize.TTSAPI.BaseURL == "" {
 			slog.Warn("hot-reload: summarize.tts_backend is \"api\" but tts_api.base_url is empty, falling back to simple")
 			return summarize.NewSimple()
-		} else if cfg.Summarize.TTSAPI.Format == "anthropic" {
+		} else if summarize.IsAnthropicURL(cfg.Summarize.TTSAPI.BaseURL) {
 			return summarize.NewAnthropic(cfg.Summarize.TTSAPI.BaseURL, cfg.Summarize.TTSAPI.Key, cfg.Summarize.TTSModel)
 		}
 		return summarize.NewOpenAI(cfg.Summarize.TTSAPI.BaseURL, cfg.Summarize.TTSAPI.Key, cfg.Summarize.TTSModel)

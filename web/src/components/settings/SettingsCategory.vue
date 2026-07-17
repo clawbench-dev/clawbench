@@ -184,7 +184,7 @@ function getItemValue(item: ItemSpec): unknown {
 
 async function handleUpdate(item: ItemSpec, value: unknown) {
   if (item.type === 'password') {
-    if (!value || (value as string).includes('•')) return
+    if (!value) return
   }
 
   if (item.key === 'localhost_auth_exempt' && value === false) {

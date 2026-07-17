@@ -406,16 +406,6 @@ func TestPersist_APIKey(t *testing.T) {
 	assert.Equal(t, "sk-1234567890abcdef", getNestedValue(cfg, "summarize.api.key"))
 }
 
-func TestPersist_APIFormat(t *testing.T) {
-	_, cleanup := setupPersistTestEnv(t)
-	defer cleanup()
-
-	model.ConfigInstance = model.Config{}
-
-	cfg := patchAndReadConfig(t, `{"summarize":{"api":{"format":"anthropic"}}}`)
-	assert.Equal(t, "anthropic", getNestedValue(cfg, "summarize.api.format"))
-}
-
 // ─── RAG section ──────────────────────────────────────
 
 func TestPersist_RAGSearchPoolSize(t *testing.T) {

@@ -192,10 +192,6 @@ export const drillDownCategories: Record<string, DrillDownCategory> = {
       { labelKey: 'settings.items.apiBaseUrl', descriptionKey: 'settings.items.apiBaseUrlDesc', key: 'summarize.api.base_url', type: 'text', source: 'server', sectionHeader: 'settings.items.apiHeader', dependsOn: { key: 'summarize.backend', values: ['api'] } },
       { labelKey: 'settings.items.summarizeModel', descriptionKey: 'settings.items.summarizeModelDesc', key: 'summarize.model', type: 'text', source: 'server', dependsOn: { key: 'summarize.backend', values: ['api'] } },
       { labelKey: 'settings.items.apiKey', descriptionKey: 'settings.items.apiKeyDesc', key: 'summarize.api.key', type: 'password', source: 'server', dependsOn: { key: 'summarize.backend', values: ['api'] } },
-      { labelKey: 'settings.items.apiFormat', descriptionKey: 'settings.items.apiFormatDesc', key: 'summarize.api.format', type: 'select', source: 'server', options: [
-        { labelKey: 'settings.items.apiFormatOpenai', value: 'openai' },
-        { labelKey: 'settings.items.apiFormatAnthropic', value: 'anthropic' },
-      ], dependsOn: { key: 'summarize.backend', values: ['api'] } },
       // Voice summary entry
       { labelKey: 'settings.items.summarizeTtsBackend', descriptionKey: 'settings.items.summarizeTtsBackendDesc', key: 'summarize.tts_backend', type: 'select', source: 'server', sectionHeader: 'settings.items.summarizeTtsSection', options: [
         { labelKey: 'settings.items.summarizeDisabled', value: '' },
@@ -205,10 +201,6 @@ export const drillDownCategories: Record<string, DrillDownCategory> = {
       { labelKey: 'settings.items.ttsApiBaseUrl', descriptionKey: 'settings.items.ttsApiBaseUrlDesc', key: 'summarize.tts_api.base_url', type: 'text', source: 'server', sectionHeader: 'settings.items.summarizeTtsApiHeader', dependsOn: { key: 'summarize.tts_backend', values: ['api'] } },
       { labelKey: 'settings.items.summarizeTtsModel', descriptionKey: 'settings.items.summarizeTtsModelDesc', key: 'summarize.tts_model', type: 'text', source: 'server', dependsOn: { key: 'summarize.tts_backend', values: ['api'] } },
       { labelKey: 'settings.items.ttsApiKey', descriptionKey: 'settings.items.ttsApiKeyDesc', key: 'summarize.tts_api.key', type: 'password', source: 'server', dependsOn: { key: 'summarize.tts_backend', values: ['api'] } },
-      { labelKey: 'settings.items.ttsApiFormat', descriptionKey: 'settings.items.ttsApiFormatDesc', key: 'summarize.tts_api.format', type: 'select', source: 'server', options: [
-        { labelKey: 'settings.items.apiFormatOpenai', value: 'openai' },
-        { labelKey: 'settings.items.apiFormatAnthropic', value: 'anthropic' },
-      ], dependsOn: { key: 'summarize.tts_backend', values: ['api'] } },
     ],
     requiredFields: ['summarize.api.base_url', 'summarize.tts_api.base_url'],
   },

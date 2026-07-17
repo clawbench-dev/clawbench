@@ -40,7 +40,7 @@ const serverConfig = ref<Record<string, any>>({
   tts: { engine: 'edge', voice: 'zh-CN-XiaoxiaoNeural', speed: 1.0, max_cache_files: 100, format: '' },
   rag: { enabled: false, base_url: 'http://localhost:11434', model: 'bge-m3', api_key: '', chunk_size: 512, search_limit: 5, search_pool_size: 20, retention_days: 90 },
   port_forward: { enabled: true, port: 0 },
-  summarize: { backend: 'simple', model: '', api: { base_url: '', key: '', format: 'openai' } },
+  summarize: { backend: 'simple', model: '', api: { base_url: '', key: '', format: 'openai' }, tts_backend: '', tts_model: '', tts_api: { base_url: '', key: '', format: 'openai' } },
   frp: { enabled: false, server_addr: '', server_port: 7000, token: '', auto_port: true, remote_port: 0, ssh_remote_port: 0 },
 })
 
@@ -68,11 +68,6 @@ vi.mock('@/composables/useDrillDownSideEffects', () => ({
   useDrillDownSideEffects: (categoryId: string) => ({
     afterSave: vi.fn(),
     init: vi.fn(),
-    frpStatusDot: ref(categoryId === 'frp' && frpState.enabled
-      ? frpState.state === 'running' ? 'green'
-        : frpState.state === 'starting' ? 'yellow'
-        : frpState.state === 'failed' ? 'red' : undefined
-      : undefined),
     needsVoiceReset: ref(categoryId === 'tts'),
     frpAutoPortInfo: ref(categoryId === 'frp'
       ? { state: frpState.state, remotePort: frpState.remotePort, sshRemotePort: frpState.sshRemotePort }
@@ -123,6 +118,8 @@ const i18n = createI18n({
           unsavedMessage: '放弃更改？',
           discard: '放弃',
           continueEditing: '继续编辑',
+          testConnectivity: '测试连接',
+          testing: '测试中...',
         },
         items: {
           terminalEnabled: '启用终端',
@@ -150,6 +147,19 @@ const i18n = createI18n({
           mossNanoModelDir: '模型目录',
           mossNanoBackend: '后端',
           ttsMossNanoHeader: 'MOSS-Nano',
+          summarizeTextBackend: '文本摘要后端',
+          summarizeTextBackendDesc: '选择文本摘要方式',
+          summarizeTextSection: '文本摘要',
+          summarizeTtsBackend: '语音摘要后端',
+          summarizeTtsBackendDesc: '选择语音摘要方式',
+          summarizeTtsSection: '语音摘要',
+          ttsApiBaseUrl: '语音API地址',
+          ttsApiBaseUrlDesc: '语音摘要API地址',
+          summarizeTtsModel: '语音摘要模型',
+          summarizeTtsModelDesc: '语音摘要使用的模型',
+          ttsApiKey: '语音API密钥',
+          ttsApiKeyDesc: '语音摘要API密钥',
+          summarizeTtsApiHeader: '语音API',
           summarizeBackend: '摘要方式',
           summarizeDisabled: '禁用',
           summarizeSimple: '简单',
@@ -158,7 +168,6 @@ const i18n = createI18n({
           apiHeader: 'API',
           apiBaseUrl: 'API地址',
           apiKey: 'API密钥',
-          apiFormat: 'API格式',
           ragBaseUrl: '嵌入接口地址',
           ragModel: '嵌入模型',
           ragApiKey: 'API密钥',
@@ -182,8 +191,6 @@ const i18n = createI18n({
           voiceMossJunhao: '俊豪',
           mossNanoBackendOnnx: 'ONNX',
           mossNanoBackendPytorch: 'PyTorch',
-          apiFormatOpenai: 'OpenAI',
-          apiFormatAnthropic: 'Anthropic',
         },
       },
     },
@@ -317,32 +324,28 @@ describe('SettingsDrillDown', () => {
     })
   })
 
-  // ─── 3. Password fields skipped in diff ─────────────
+  // ─── 3. Password fields in diff ─────────────
 
-  describe('password fields skipped in diff', () => {
-    it('empty password does not count as a change', async () => {
+  describe('password fields in diff', () => {
+    it('password change is detected when value differs from snapshot', async () => {
       const wrapper = mountDrillDown('frp')
       const vm = wrapper.vm as any
-      // frp.token is a password field — set it to empty (user didn't re-enter)
-      vm.$.setupState.localValues['frp.token'] = ''
+      // frp.token is a password field — change it to a new value
+      vm.$.setupState.localValues['frp.token'] = 'new-secret-token'
       await nextTick()
-      expect(vm.$.setupState.hasChanges).toBe(false)
+      expect(vm.$.setupState.hasChanges).toBe(true)
     })
 
-    it('empty password is excluded from PATCH payload on save', async () => {
+    it('unchanged password is not included in PATCH payload on save', async () => {
       const wrapper = mountDrillDown('frp')
       const vm = wrapper.vm as any
       // Change a non-password field
       vm.$.setupState.localValues['frp.server_addr'] = 'new.example.com'
       await nextTick()
-      // Set password to empty (snapshot might have had a value)
-      vm.$.setupState.localValues['frp.token'] = ''
-      await nextTick()
       await vm.$.setupState.handleSave()
-      // patchConfig should NOT include frp.token in the payload
+      // patchConfig should NOT include frp.token if it wasn't changed
       if (mockPatchConfig.mock.calls.length > 0) {
         const payload = mockPatchConfig.mock.calls[0][0]
-        // frp.token should not be present at any nesting level
         expect(payload.frp?.token).toBeUndefined()
       }
     })
@@ -561,38 +564,31 @@ describe('SettingsDrillDown', () => {
     })
   })
 
-  // ─── 11. FRP status dot ────────────────────────────
+  // ─── 11. Connectivity test button ────────────────────────────
 
-  describe('FRP status dot', () => {
-    it('renders green status dot when FRP is running', async () => {
+  describe('Connectivity test button', () => {
+    it('renders test connectivity button for FRP category', () => {
+      const wrapper = mountDrillDown('frp')
+      const btn = wrapper.find('.drill-down__test-btn')
+      expect(btn.exists()).toBe(true)
+      expect(btn.text()).toContain('测试连接')
+    })
+
+    it('renders test connectivity button for TTS category', () => {
+      const wrapper = mountDrillDown('tts')
+      const btn = wrapper.find('.drill-down__test-btn')
+      expect(btn.exists()).toBe(true)
+    })
+
+    it('does not render test connectivity button for terminal category', () => {
+      const wrapper = mountDrillDown('terminal')
+      const btn = wrapper.find('.drill-down__test-btn')
+      expect(btn.exists()).toBe(false)
+    })
+
+    it('does not render status dot (removed in favor of test button)', () => {
       frpState.enabled = true
       frpState.state = 'running'
-      const wrapper = mountDrillDown('frp')
-      const dot = wrapper.find('.drill-down__status-dot')
-      expect(dot.exists()).toBe(true)
-      expect(dot.classes()).toContain('drill-down__status-dot--green')
-    })
-
-    it('renders yellow status dot when FRP is starting', async () => {
-      frpState.enabled = true
-      frpState.state = 'starting'
-      const wrapper = mountDrillDown('frp')
-      const dot = wrapper.find('.drill-down__status-dot')
-      expect(dot.exists()).toBe(true)
-      expect(dot.classes()).toContain('drill-down__status-dot--yellow')
-    })
-
-    it('renders red status dot when FRP is failed', async () => {
-      frpState.enabled = true
-      frpState.state = 'failed'
-      const wrapper = mountDrillDown('frp')
-      const dot = wrapper.find('.drill-down__status-dot')
-      expect(dot.exists()).toBe(true)
-      expect(dot.classes()).toContain('drill-down__status-dot--red')
-    })
-
-    it('does not render status dot when FRP is disabled', () => {
-      frpState.enabled = false
       const wrapper = mountDrillDown('frp')
       const dot = wrapper.find('.drill-down__status-dot')
       expect(dot.exists()).toBe(false)
@@ -635,9 +631,13 @@ describe('SettingsDrillDown', () => {
       expect(items.length).toBeGreaterThanOrEqual(3)
     })
 
-    it('summarization category renders entry selector', () => {
+    it('summarization category renders common fields (no entry selector)', () => {
       const wrapper = mountWithRealItems('summarization')
-      expect(wrapper.find('.drill-down__entry-row').exists()).toBe(true)
+      // No entry selector — summarization uses commonFields with section headers
+      expect(wrapper.find('.drill-down__entry-row').exists()).toBe(false)
+      const items = wrapper.findAllComponents({ name: 'SettingsItem' })
+      // At minimum: summarize.backend and summarize.tts_backend select fields
+      expect(items.length).toBeGreaterThanOrEqual(2)
     })
 
     it('rag category renders all fields', () => {

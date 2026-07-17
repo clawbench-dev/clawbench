@@ -78,7 +78,7 @@
     <div v-if="hasConnectivityTest" class="drill-down__test-section">
       <button
         class="drill-down__test-btn"
-        :disabled="fieldsDisabled || connectivityTesting"
+        :disabled="connectivityTesting"
         @click="handleConnectivityTest"
       >
         {{ connectivityTesting ? t('settings.drillDown.testing') : t('settings.drillDown.testConnectivity') }}
@@ -135,7 +135,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronRight } from 'lucide-vue-next'
 import SettingsItem from './SettingsItem.vue'
@@ -421,9 +421,6 @@ const hasChanges = computed(() => {
   for (const key of getAllFieldKeys()) {
     const localVal = localValues[key]
     const snapVal = snap[key]
-    // Skip password fields that are empty (user didn't re-enter)
-    const spec = findFieldSpec(key)
-    if (spec?.type === 'password' && (localVal === '' || localVal === null || localVal === undefined)) continue
     if (localVal !== snapVal) return true
   }
   return false
@@ -446,9 +443,8 @@ const canSave = computed(() => {
 const needsRestartHint = computed(() => {
   const snap = snapshot.value
   for (const key of getAllFieldKeys()) {
-    const spec = findFieldSpec(key)
-    if (spec?.type === 'password' && (localValues[key] === '' || localValues[key] === null || localValues[key] === undefined)) continue
     if (localValues[key] !== snap[key]) {
+      const spec = findFieldSpec(key)
       if (spec?.needsRestart) return true
     }
   }
@@ -484,17 +480,15 @@ async function handleSave() {
     const snapVal = snap[key]
     const spec = findFieldSpec(key)
 
-    // Skip password fields with empty value — preserve existing server-side value
-    if (spec?.type === 'password' && (localVal === '' || localVal === null || localVal === undefined)) continue
+    // Skip unchanged values
+    if (localVal === snapVal) continue
 
-    if (localVal !== snapVal) {
-      changedKeys.push(key)
-      // enableKey is always a server-side field (e.g. dingtalk.enabled, terminal.enabled)
-      if (spec?.source === 'server' || key === config.value.enableKey) {
-        deepSetByDotPath(serverChanges, key, localVal)
-      } else {
-        localChanges.push([key, localVal])
-      }
+    changedKeys.push(key)
+    // enableKey is always a server-side field (e.g. dingtalk.enabled, terminal.enabled)
+    if (spec?.source === 'server' || key === config.value.enableKey) {
+      deepSetByDotPath(serverChanges, key, localVal)
+    } else {
+      localChanges.push([key, localVal])
     }
   }
 
@@ -511,17 +505,8 @@ async function handleSave() {
       saving.value = false
 
       // Update snapshot to committed state.
-      // For password fields, use the server value (masked) instead of the
-      // plaintext the user entered, so snapshot stays consistent with serverConfig.
       for (const key of changedKeys) {
-        const spec = findFieldSpec(key)
-        if (spec?.type === 'password') {
-          const serverVal = getServerValueWithDefault(key)
-          snapshot.value[key] = serverVal
-          localValues[key] = serverVal
-        } else {
-          snapshot.value[key] = localValues[key]
-        }
+        snapshot.value[key] = localValues[key]
       }
 
       toast.show(t('settings.drillDown.saved'), { icon: '✓', type: 'success', duration: 3000 })
@@ -606,6 +591,11 @@ async function handleConnectivityTest() {
   if (tests.length === 0) return
   await runConnectivityTests(tests)
 }
+
+// Auto-clear test results when form values change (results become stale)
+watch(localValues, () => {
+  if (connectivityTestResults.value.length > 0) clearConnectivityResults()
+}, { deep: true })
 
 // ── Discard confirmation on back ──
 
