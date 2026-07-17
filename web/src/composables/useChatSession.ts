@@ -7,7 +7,7 @@ import { appLog } from '@/utils/appLog'
 const TAG = 'ChatSession'
 import { updateAvailableModes, updateCommandState, updateAvailableThinkingEfforts, clearUsageStateById, updateUsageState, currentAgentId as _currentAgentId, clearSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
-import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels } from '@/composables/useAgents'
+import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels, populateACPStateFromCache } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
 import { forceCleanupStreamingState, type ChatMessage } from '@/utils/chatStreamUtils.ts'
@@ -101,10 +101,10 @@ export function useChatSession(options: UseChatSessionOptions) {
 
   // ── Identity refs from singleton ──
   const identity = useSessionIdentity()
-  const { currentSessionTitle, currentBackend, currentAgentId, currentModelId, currentModelName, currentThinkingEffort, runningSessions, runningSessionsVersion, availableCommands, autoApprove, availableThinkingEfforts } = identity
+  const { currentSessionTitle, currentBackend, currentAgentId, currentModelId, currentModelName, currentThinkingEffort, runningSessions, runningSessionsVersion, availableCommands, autoApprove, availableThinkingEfforts, contextSize: contextSizeRef } = identity
 
   // ── Agents from singleton ──
-  const { agents, loadAgents, getAgentIcon, getAgentName, getAgent, syncModelFromAgent, getAgentModel, agentHeaderTitle: makeAgentTitle } = useAgents()
+  const { agents, loadAgents, getAgentIcon, getAgentName, getAgent, syncModelFromAgent, getAgentModel, agentHeaderTitle: makeAgentTitle, supportsDualTransport } = useAgents()
 
   // Helper: sync model state from agent config when agent changes
   function syncModelFromAgentLocal(agentId: string) {
@@ -738,6 +738,28 @@ export function useChatSession(options: UseChatSessionOptions) {
       // - Starts appropriate polling for the new session
       // - Calls loadSessionsOnce() to update global state
       await switchSession(data.sessionId)
+      // Restore ACP state (mode, thinking effort, commands) from the agent
+      // cache so mode/thinking chips appear immediately on new sessions.
+      // switchSession clears identity state and the REST response for a
+      // brand-new session may have no ACP state yet.
+      // This runs after switchSession's finally block, so the UI is already
+      // interactive — a failure here is non-critical (SSE will populate later).
+      const effectiveAgentId = currentAgentId.value || data.agentId || agentId
+      if (effectiveAgentId && supportsDualTransport(effectiveAgentId)) {
+        try {
+          await populateACPStateFromCache(effectiveAgentId)
+          // Reset usage for the new session: keep contextSize from agent cache
+          // but set used=0 (a new session has no token consumption yet).
+          // Only reset if no SSE data has arrived yet (loading=false means
+          // session is not running, so no usage_update could have been emitted).
+          if (contextSizeRef.value > 0 && !loading.value) {
+            updateUsageState(0, contextSizeRef.value, 0, '', data.sessionId, 0, 0)
+          }
+        } catch {
+          // Non-critical: mode/thinking chips will populate from the first SSE event
+          appLog.w(TAG, 'populateACPStateFromCache failed for new session, will rely on SSE')
+        }
+      }
       // Update session count from creation response and show toast
       const maxCount = store.state.sessionMaxCount
       if (typeof data.sessionCount === 'number') store.state.sessionCount = data.sessionCount

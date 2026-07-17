@@ -170,6 +170,7 @@ vi.mock('@/composables/useSessionIdentity.ts', () => ({
     availableCommands: { value: [] },
     availableModes: { value: [] },
     availableThinkingEfforts: { value: [] },
+    contextSize: { value: 0 },
     runningSessions: {
       get value() { return mockState.runningSessions },
     },
@@ -255,6 +256,7 @@ vi.mock('@/composables/useAgents', () => ({
     getAgentModel: mockAgentFns.getAgentModel,
     agentHeaderTitle: mockAgentFns.agentHeaderTitle,
     getAgentThinkingEffortLevels: vi.fn().mockReturnValue([]),
+    supportsDualTransport: vi.fn().mockReturnValue(false),
   }),
   restoreOriginalModels: vi.fn(),
   populateACPStateFromCache: vi.fn().mockResolvedValue(undefined),

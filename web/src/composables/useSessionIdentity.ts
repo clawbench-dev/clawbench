@@ -206,12 +206,18 @@ export function updateModeState(modeId: string, modes: Array<{ id: string; name:
   }
 }
 
-/** Update available modes list without changing current selection.
+/** Update available modes list without changing currentModeId.
  * Used by acpStates cache population (useAgents) — currentModeId
- * is managed by agent SSE events or user action, not by cache restore. */
+ * is managed by agent SSE events or user action, not by cache restore.
+ * Resolves currentModeName if currentModeId was already set. */
 export function updateAvailableModes(modes: Array<{ id: string; name: string }>) {
   if (modes.length > 0) {
     availableModes.value = modes
+    // Resolve name if id was set before modes arrived
+    if (currentModeId.value) {
+      const mode = modes.find(m => m.id === currentModeId.value)
+      currentModeName.value = mode?.name || currentModeId.value
+    }
   }
 }
 
