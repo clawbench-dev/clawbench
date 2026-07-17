@@ -1,9 +1,10 @@
 <template>
-  <ModalDialog
-    :open="show"
-    :title="agentName"
-    @close="handleClose"
-  >
+  <BottomSheet :open="open" auto @close="handleClose">
+    <template #header>
+      <Cpu :size="16" class="bs-header-icon" />
+      <span class="bs-header-title">{{ agentName }}</span>
+    </template>
+
     <!-- Tab bar -->
     <div class="session-setting-tabs">
       <button class="model-tab" :class="{ active: activeTab === 'model' }" @click="activeTab = 'model'">
@@ -187,14 +188,14 @@
         {{ t('chat.sessionSetting.setAsDefault') }}
       </button>
     </PopupMenu>
-  </ModalDialog>
+  </BottomSheet>
 </template>
 
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RefreshCw, Star, Cpu, Brain, Compass, Cable } from 'lucide-vue-next'
-import ModalDialog from '@/components/common/ModalDialog.vue'
+import BottomSheet from '@/components/common/BottomSheet.vue'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import { useAgents, restoreOriginalModels, populateACPStateFromCache, invalidateACPStateCache } from '@/composables/useAgents'
 import { useSessionIdentity, clearModeState, clearCommandState, clearThinkingEffortState } from '@/composables/useSessionIdentity'
@@ -203,12 +204,12 @@ import { patchAgentPref } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
 
 const props = defineProps({
-  show: Boolean,
+  open: Boolean,
   agentId: String,
   initialTab: { type: String, default: 'model' },
 })
 
-const emit = defineEmits(['update:show', 'switch-model', 'switch-thinking-effort', 'switch-mode', 'switch-transport'])
+const emit = defineEmits(['close', 'switch-model', 'switch-thinking-effort', 'switch-mode', 'switch-transport'])
 
 const { t } = useI18n()
 const toast = useToast()
@@ -278,8 +279,8 @@ const filteredModels = computed(() => {
   return models.value.filter(m => m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q))
 })
 
-// Reset search when tab changes or modal reopens
-watch(() => props.show, (val) => {
+// Reset search when tab changes or drawer reopens
+watch(() => props.open, (val) => {
   if (val) {
     searchQuery.value = ''
     activeTab.value = props.initialTab || 'model'
@@ -294,7 +295,7 @@ function selectModel(model) {
     return
   }
   emit('switch-model', model)
-  emit('update:show', false)
+  emit('close')
 }
 
 // --- Thinking effort selection ---
@@ -305,7 +306,7 @@ function selectThinkingEffort(level) {
     return
   }
   emit('switch-thinking-effort', level)
-  emit('update:show', false)
+  emit('close')
 }
 
 // --- Mode selection ---
@@ -316,7 +317,7 @@ function selectMode(mode) {
     return
   }
   emit('switch-mode', mode)
-  emit('update:show', false)
+  emit('close')
 }
 
 // --- Transport selection ---
@@ -344,7 +345,7 @@ async function selectTransport(transport) {
   }
 
   emit('switch-transport', transport)
-  emit('update:show', false)
+  emit('close')
 }
 
 // --- Refresh ---
@@ -511,7 +512,7 @@ async function setAsDefault() {
 }
 
 function handleClose() {
-  emit('update:show', false)
+  emit('close')
 }
 
 defineExpose({

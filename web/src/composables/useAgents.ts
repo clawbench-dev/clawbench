@@ -135,7 +135,7 @@ async function loadAgents(force = false): Promise<void> {
                         _updateCommandState?.(activeState.commands)
                     }
                     // When ACP provides a model list, override agent.models
-                    // so the frontend SessionSettingModal shows ACP models.
+                    // so the frontend SessionDrawer shows ACP models.
                     if (activeState.modelListState?.models && activeState.modelListState.models.length > 0) {
                         updateACPModelList(activeAgentId, activeState.modelListState.models, activeState.modelListState.currentModelId)
                     }

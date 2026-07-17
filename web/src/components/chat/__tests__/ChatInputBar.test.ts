@@ -295,7 +295,7 @@ afterEach(() => {
 
 const stubs = {
   PopupMenu: { template: '<div><slot /></div>' },
-  SessionSettingModal: true,
+  SessionDrawer: true,
   AttachDrawer: true,
   QuickSendDrawer: true,
   List: true,

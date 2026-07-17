@@ -169,7 +169,7 @@ async function saveThinkingPref(agentId: string, _level: string) {
   if (!agentId) return
   // No-op: thinking effort selection in chat is session-scoped and does NOT update
   // the agent's default. The agent's preferredThinkingEffort is configured exclusively
-  // via the settings panel or SessionSettingModal star button (which calls patchAgentPref directly).
+  // via the settings panel or SessionDrawer star button (which calls patchAgentPref directly).
 }
 
 function loadThinkingPref(agentId: string): string | null {
