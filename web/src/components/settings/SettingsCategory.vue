@@ -9,29 +9,43 @@
     :agent-id="categoryId.slice(7)"
     @deleted="$emit('navigate', 'agents')"
   />
-  <!-- Standard settings category -->
+  <!-- Standard settings category with mixed items + panels -->
   <div v-else class="settings-category">
-    <template v-for="entry in renderList" :key="entry.key">
+    <template v-for="entry in renderList" :key="entry.type === 'item' ? entry.spec.key : entry.config.panelId">
+      <!-- Section header for flat items -->
+      <template v-if="entry.type === 'item' && entry.spec.sectionHeader">
+        <div class="settings-category__section-header">{{ t(entry.spec.sectionHeader) }}</div>
+      </template>
+      <!-- Flat item -->
       <SettingsItem
-        :label="getItemLabel(entry)"
-        :description="entry.descriptionKey ? t(entry.descriptionKey) : ''"
-        :type="entry.type"
-        :model-value="getItemValue(entry)"
-        :options="resolveItemOptions(entry)"
-        :min="entry.min"
-        :max="entry.max"
-        :step="entry.step"
-        :needs-restart="entry.needsRestart"
-        :force-close="activeKey !== null && activeKey !== entry.key"
+        v-if="entry.type === 'item'"
+        :label="getItemLabel(entry.spec)"
+        :description="entry.spec.descriptionKey ? t(entry.spec.descriptionKey) : ''"
+        :type="entry.spec.type"
+        :model-value="getItemValue(entry.spec)"
+        :options="resolveItemOptions(entry.spec)"
+        :min="entry.spec.min"
+        :max="entry.spec.max"
+        :step="entry.spec.step"
+        :needs-restart="entry.spec.needsRestart"
+        :force-close="activeKey !== null && activeKey !== entry.spec.key"
         :no-divider="false"
-        :default-value="entry.defaultValue"
-        :display-format="entry.displayFormat"
-        :display-transform="entry.displayTransform"
-        @update:model-value="(v: unknown) => handleUpdate(entry, v)"
-        @click="handleClick(entry)"
-        @edit-toggle="(open: boolean) => handleEditToggle(entry.key, open)"
-        @desc-toggle="(open: boolean) => handleDescToggle(entry.key, open)"
+        :default-value="entry.spec.defaultValue"
+        :display-format="entry.spec.displayFormat"
+        :display-transform="entry.spec.displayTransform"
+        @update:model-value="(v: unknown) => handleUpdate(entry.spec, v)"
+        @click="handleClick(entry.spec)"
+        @edit-toggle="(open: boolean) => handleEditToggle(entry.spec.key, open)"
+        @desc-toggle="(open: boolean) => handleDescToggle(entry.spec.key, open)"
         @discard="handleDiscard"
+      />
+      <!-- Group panel — C2 fix: arrow closure passes panelId -->
+      <SettingsGroupPanel
+        v-else
+        :config="entry.config"
+        :show-title="shouldShowPanelTitle(entry.config)"
+        @restart-needed="(fields) => $emit('restartNeeded', fields)"
+        @has-changes-change="(v) => handlePanelChangesChange(entry.config.panelId, v)"
       />
     </template>
     <!-- Password change dialog -->
@@ -46,9 +60,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
+import SettingsGroupPanel from './SettingsGroupPanel.vue'
 import PasswordChangeDialog from './PasswordChangeDialog.vue'
 import SettingsAgentsIndex from './SettingsAgentsIndex.vue'
 import SettingsAgentDetail from './SettingsAgentDetail.vue'
@@ -60,7 +75,7 @@ import { useDialog } from '@/composables/useDialog'
 import { useAppMode } from '@/composables/useAppMode'
 import { startFlushTimer, stopFlushTimer } from '@/utils/appLog'
 import { usePwaInstall } from '@/composables/usePwaInstall'
-import { categoryItems, type ItemSpec, type DependsOn } from './settingsFieldMap'
+import { categoryItems, isPanelOnlyCategory, getCategoryPanels, type ItemSpec, type DependsOn, type CategoryEntry, type GroupPanelConfig } from './settingsFieldMap'
 
 const props = defineProps<{
   categoryId: string
@@ -88,6 +103,21 @@ watch(() => props.categoryId, (id) => {
   if (id === 'chat' || id === 'agents' || id.startsWith('agents:')) loadAgents(true)
 }, { immediate: true })
 
+// ── Panel change state tracking (C2 fix) ──
+
+const panelChangeStates = reactive<Record<string, boolean>>({})
+
+function handlePanelChangesChange(panelId: string, hasChanges: boolean) {
+  panelChangeStates[panelId] = hasChanges
+}
+
+const hasUnsavedPanelChanges = computed(() =>
+  Object.values(panelChangeStates).some(v => v)
+)
+
+// Expose for parent (SettingsPage) to use in guard
+defineExpose({ hasUnsavedPanelChanges })
+
 function resolveConfigValue(key: string): unknown {
   if (key in localConfig) return localConfig[key]
   return getServerValueWithDefault(key)
@@ -101,46 +131,48 @@ function isSingleDependsOnMet(dep: DependsOn): boolean {
 
 function isDependsOnMet(dependsOn: ItemSpec['dependsOn']): boolean {
   if (!dependsOn) return true
-  // Array means OR: show the field if ANY of the conditions match
   if (Array.isArray(dependsOn)) return dependsOn.some(isSingleDependsOnMet)
   return isSingleDependsOnMet(dependsOn)
 }
 
-// ── Render list: standalone items with dependsOn filtering ──
+// ── Render list: mixed items + panels with dependsOn filtering ──
 
 const renderList = computed(() => {
   const raw = categoryItems[props.categoryId] ?? []
-  const result: ItemSpec[] = []
+  const result: CategoryEntry[] = []
 
-  for (const item of raw) {
-    if (!isDependsOnMet(item.dependsOn)) continue
-    // Hide appOnly items when not in Android App mode
-    if (item.appOnly && !isAppMode.value) continue
-    // Hide appVersion row when not in Android App mode
-    if (item.key === 'appVersion' && !isAppMode.value) continue
-    if (item.key === 'addToHomeScreen' && !pwaInstall.showPwaInstall.value) continue
-    if (item.key === 'downloadAndroidApp' && !pwaInstall.showApkDownload.value) continue
-
-    // Inject section header pseudo-item before the field
-    if (item.sectionHeader) {
-      result.push({
-        key: `header-${item.key}`,
-        label: t(item.sectionHeader),
-        labelKey: item.sectionHeader,
-        type: 'header',
-        source: 'local',
-      } as ItemSpec & { label: string })
+  for (const entry of raw) {
+    if (entry.type === 'item') {
+      if (!isDependsOnMet(entry.spec.dependsOn)) continue
+      if (entry.spec.appOnly && !isAppMode.value) continue
+      if (entry.spec.key === 'appVersion' && !isAppMode.value) continue
+      if (entry.spec.key === 'addToHomeScreen' && !pwaInstall.showPwaInstall.value) continue
+      if (entry.spec.key === 'downloadAndroidApp' && !pwaInstall.showApkDownload.value) continue
+      result.push(entry)
+    } else {
+      // Panel entries always render
+      result.push(entry)
     }
-    result.push(item)
   }
 
   return result
 })
 
-// ── Standalone item helpers ──
+// ── Panel title visibility ──
+
+function shouldShowPanelTitle(_config: GroupPanelConfig): boolean {
+  // Single-panel-only category: panel title = category title, no redundant header
+  if (isPanelOnlyCategory(props.categoryId)) {
+    const panels = getCategoryPanels(props.categoryId)
+    return panels.length > 1
+  }
+  // Mixed category: always show panel title to distinguish from flat items
+  return true
+}
+
+// ── Flat item helpers ──
 
 function getItemLabel(entry: ItemSpec): string {
-  // Section header items have a 'label' field set at runtime
   const extended = entry as ItemSpec & { label?: string }
   return extended.label || t(entry.labelKey)
 }
@@ -296,5 +328,14 @@ function handleDiscard() {
   padding: 8px 0;
   background: var(--bg-secondary);
   min-height: 100%;
+}
+
+.settings-category__section-header {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 10px 16px 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 500;
 }
 </style>
