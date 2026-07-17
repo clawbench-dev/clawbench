@@ -302,6 +302,10 @@ export function useAutoSpeech() {
           } else if (msg.type === 'error') {
             reportError(msg.message || gt('autoSpeech.synthesisFailed'))
             mse.cleanup()
+            activeId.value = ''
+            playingSummary.value = ''
+            state.value = 'idle'
+            releaseScreenLockOnError()
             ws.close()
           }
         } catch { /* ignore malformed */ }
@@ -311,6 +315,9 @@ export function useAutoSpeech() {
     ws.onerror = () => {
       reportError(gt('autoSpeech.generateFailedGeneric'))
       mse.cleanup()
+      activeId.value = ''
+      playingSummary.value = ''
+      state.value = 'idle'
       releaseScreenLockOnError()
     }
 
