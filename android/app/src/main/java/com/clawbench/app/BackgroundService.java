@@ -303,7 +303,6 @@ public class BackgroundService extends Service {
         AppLog.i(TAG, "NativePush: set enabled=" + enabled);
     }
 
-
     /**
      * Update the terminal session count (called from WebAppInterface JS bridge).
      * Updates the foreground notification to show the current terminal count.

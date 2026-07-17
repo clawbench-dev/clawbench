@@ -1193,10 +1193,8 @@ public class MainActivity extends AppCompatActivity {
         super.onResume();
         isForeground = true;
         resumeWebView();
-        // App returning to foreground — stop native WS (WebView WS handles events)
-        if (BackgroundService.isNativePushEnabled(this)) {
-            BackgroundService.stopNativeEventWs(this);
-        }
+        // App returning to foreground — always stop native WS (WebView WS handles events)
+        BackgroundService.stopNativeEventWs(this);
         // Handle notification tap intent + re-dispatch pending navigation
         handleResumeIntent();
     }
