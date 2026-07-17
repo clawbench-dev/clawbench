@@ -45,7 +45,6 @@
         :config="entry.config"
         :show-title="shouldShowPanelTitle(entry.config)"
         @restart-needed="(fields) => $emit('restartNeeded', fields)"
-        @has-changes-change="(v) => handlePanelChangesChange(entry.config.panelId, v)"
       />
     </template>
     <!-- Password change dialog -->
@@ -60,7 +59,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
 import SettingsGroupPanel from './SettingsGroupPanel.vue'
@@ -75,7 +74,7 @@ import { useDialog } from '@/composables/useDialog'
 import { useAppMode } from '@/composables/useAppMode'
 import { startFlushTimer, stopFlushTimer } from '@/utils/appLog'
 import { usePwaInstall } from '@/composables/usePwaInstall'
-import { categoryItems, isPanelOnlyCategory, getCategoryPanels, type ItemSpec, type DependsOn, type CategoryEntry, type GroupPanelConfig } from './settingsFieldMap'
+import { categoryItems, isPanelOnlyCategory, getCategoryPanels, isDependsOnMet, type ItemSpec, type CategoryEntry, type GroupPanelConfig } from './settingsFieldMap'
 
 const props = defineProps<{
   categoryId: string
@@ -103,36 +102,9 @@ watch(() => props.categoryId, (id) => {
   if (id === 'chat' || id === 'agents' || id.startsWith('agents:')) loadAgents(true)
 }, { immediate: true })
 
-// ── Panel change state tracking (C2 fix) ──
-
-const panelChangeStates = reactive<Record<string, boolean>>({})
-
-function handlePanelChangesChange(panelId: string, hasChanges: boolean) {
-  panelChangeStates[panelId] = hasChanges
-}
-
-const hasUnsavedPanelChanges = computed(() =>
-  Object.values(panelChangeStates).some(v => v)
-)
-
-// Expose for parent (SettingsPage) to use in guard
-defineExpose({ hasUnsavedPanelChanges })
-
 function resolveConfigValue(key: string): unknown {
   if (key in localConfig) return localConfig[key]
   return getServerValueWithDefault(key)
-}
-
-function isSingleDependsOnMet(dep: DependsOn): boolean {
-  const currentValue = resolveConfigValue(dep.key)
-  if ('value' in dep) return currentValue === dep.value
-  return dep.values!.includes(currentValue as unknown)
-}
-
-function isDependsOnMet(dependsOn: ItemSpec['dependsOn']): boolean {
-  if (!dependsOn) return true
-  if (Array.isArray(dependsOn)) return dependsOn.some(isSingleDependsOnMet)
-  return isSingleDependsOnMet(dependsOn)
 }
 
 // ── Render list: mixed items + panels with dependsOn filtering ──
@@ -143,7 +115,7 @@ const renderList = computed(() => {
 
   for (const entry of raw) {
     if (entry.type === 'item') {
-      if (!isDependsOnMet(entry.spec.dependsOn)) continue
+      if (!isDependsOnMet(entry.spec.dependsOn, resolveConfigValue)) continue
       if (entry.spec.appOnly && !isAppMode.value) continue
       if (entry.spec.key === 'appVersion' && !isAppMode.value) continue
       if (entry.spec.key === 'addToHomeScreen' && !pwaInstall.showPwaInstall.value) continue

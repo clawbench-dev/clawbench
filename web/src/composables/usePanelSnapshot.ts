@@ -2,6 +2,7 @@ import { ref, reactive, computed, watch, onUnmounted } from 'vue'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import i18n from '@/i18n'
 import type { GroupPanelConfig, ItemSpec } from '@/components/settings/settingsFieldMap'
+import { isDependsOnMet } from '@/components/settings/settingsFieldMap'
 
 /**
  * Reusable composable for panel snapshot/diff/save logic.
@@ -116,24 +117,16 @@ export function usePanelSnapshot(config: GroupPanelConfig) {
     return false
   })
 
-  /** dependsOn filtering (OR logic for arrays) */
-  function isDependsOnMet(dependsOn: ItemSpec['dependsOn']): boolean {
-    if (!dependsOn) return true
-    if (Array.isArray(dependsOn)) return dependsOn.some(isSingleDependsOnMet)
-    return isSingleDependsOnMet(dependsOn)
-  }
-
-  function isSingleDependsOnMet(dep: { key: string; value?: unknown; values?: unknown[] }): boolean {
-    const currentValue = localValues[dep.key]
-    if ('value' in dep) return currentValue === dep.value
-    return dep.values!.includes(currentValue as unknown)
+  /** dependsOn filtering — delegates to shared utility */
+  function checkDependsOnMet(dependsOn: ItemSpec['dependsOn']): boolean {
+    return isDependsOnMet(dependsOn, (k) => localValues[k])
   }
 
   /** Get currently visible field keys (respecting dependsOn and optionSubFields) */
   function getVisibleFieldKeys(subFieldValue: unknown): Set<string> {
     const keys = new Set<string>()
     for (const f of config.commonFields) {
-      if (isDependsOnMet(f.dependsOn)) keys.add(f.key)
+      if (checkDependsOnMet(f.dependsOn)) keys.add(f.key)
     }
     const osf = (config.optionSubFields ?? []).find(o => o.when === subFieldValue)
     if (osf) {
@@ -237,7 +230,7 @@ export function usePanelSnapshot(config: GroupPanelConfig) {
         }
 
         // Side effects
-        config.afterSave?.(changedKeys)
+        config.afterSave?.(changedKeys, { ...localValues } as Record<string, unknown>)
 
         if (result.needsRestart && result.changedColdFields.length > 0) {
           needsRestart = true

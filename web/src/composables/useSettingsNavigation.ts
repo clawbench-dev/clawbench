@@ -6,6 +6,28 @@ import { useToast } from '@/composables/useToast'
 const MAX_POLL_ATTEMPTS = 60 // 2 minutes at 2s interval
 const POLL_INTERVAL_MS = 2000
 
+// ── Module-level guard registry ──
+// Must be module-level (not per-instance) so that SettingsGroupPanel and
+// SettingsPage share the same Map regardless of which component calls
+// useSettingsNavigation() first.
+const guards = new Map<string, () => boolean>()
+
+function registerGuard(id: string, guard: () => boolean) {
+  guards.set(id, guard)
+}
+
+function unregisterGuard(id: string) {
+  guards.delete(id)
+}
+
+/** Check all registered guards. Returns true if all guards allow reset. */
+function checkAllGuards(): boolean {
+  for (const guard of guards.values()) {
+    if (!guard()) return false
+  }
+  return true
+}
+
 /**
  * Shared composable for settings page navigation, restart logic, and state.
  * Used by SettingsPage.vue to avoid code duplication.
@@ -26,37 +48,6 @@ export function useSettingsNavigation() {
   let pollTimer: ReturnType<typeof setInterval> | null = null
 
   const currentCategory = ref<string | null>(null)
-
-  // ── Multi-guard registry (C3 fix) ──
-  // Multiple panels can be mounted simultaneously in the inline model.
-  // Each registers a guard by unique ID; resetState checks all guards.
-
-  const guards = new Map<string, () => boolean>()
-
-  /** @deprecated Use registerGuard/unregisterGuard for multi-panel support */
-  function setBeforeResetGuard(fn: (() => boolean) | null) {
-    if (fn) {
-      guards.set('__legacy__', fn)
-    } else {
-      guards.delete('__legacy__')
-    }
-  }
-
-  function registerGuard(id: string, guard: () => boolean) {
-    guards.set(id, guard)
-  }
-
-  function unregisterGuard(id: string) {
-    guards.delete(id)
-  }
-
-  /** Check all registered guards. Returns true if all guards allow reset. */
-  function checkAllGuards(): boolean {
-    for (const guard of guards.values()) {
-      if (!guard()) return false
-    }
-    return true
-  }
 
   // Update currentCategory whenever navStack changes
   function pushNav(categoryId: string) {
@@ -161,7 +152,6 @@ export function useSettingsNavigation() {
     restartingOverlay,
     handleRestartNeeded,
     handleRestart,
-    setBeforeResetGuard,
     registerGuard,
     unregisterGuard,
     checkAllGuards,

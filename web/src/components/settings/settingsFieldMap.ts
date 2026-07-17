@@ -15,6 +15,26 @@ export interface DependsOn {
   values?: unknown[]
 }
 
+/** Check a single DependsOn condition against a value resolver */
+export function isSingleDependsOnMet(
+  dep: DependsOn,
+  getValue: (key: string) => unknown,
+): boolean {
+  const currentValue = getValue(dep.key)
+  if ('value' in dep) return currentValue === dep.value
+  return dep.values!.includes(currentValue as unknown)
+}
+
+/** Check dependsOn (single or array, OR logic) against a value resolver */
+export function isDependsOnMet(
+  dependsOn: DependsOn | DependsOn[] | undefined,
+  getValue: (key: string) => unknown,
+): boolean {
+  if (!dependsOn) return true
+  if (Array.isArray(dependsOn)) return dependsOn.some(d => isSingleDependsOnMet(d, getValue))
+  return isSingleDependsOnMet(dependsOn, getValue)
+}
+
 export interface ItemSpec {
   labelKey: string
   descriptionKey?: string
@@ -59,8 +79,8 @@ export interface GroupPanelConfig {
    *  If hasConnectivityTest is true but this is undefined, defaults to
    *  [{ category: panelId, values }]. */
   getTestCategories?: (values: Record<string, unknown>) => Array<{ category: string; values: Record<string, unknown> }>
-  /** Side effect: called after successful save with changed keys */
-  afterSave?: (changedKeys: string[]) => void
+  /** Side effect: called after successful save with changed keys and current panel values */
+  afterSave?: (changedKeys: string[], values?: Record<string, unknown>) => void
   /** Side effect: called on panel mount (e.g., fetch FRP info) */
   onInit?: () => void
   /** Whether this panel needs voice reset on engine change (TTS only) */
@@ -136,7 +156,42 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.changePassword', descriptionKey: 'settings.items.changePasswordDesc', key: 'changePassword', type: 'action', source: 'local' } },
   ],
   notification: [
-    { type: 'item', spec: { labelKey: 'settings.items.nativePushEnabled', descriptionKey: 'settings.items.nativePushEnabledDesc', key: 'nativePushEnabled', type: 'switch', source: 'local', appOnly: true } },
+    { type: 'panel', config: {
+      panelId: 'push',
+      entrySelector: {
+        labelKey: 'settings.items.pushMode',
+        descriptionKey: 'settings.items.pushModeDesc',
+        key: 'push_mode',
+        type: 'select',
+        source: 'server',
+        options: [
+          { labelKey: 'settings.items.pushModeNative', value: 'native' },
+          { labelKey: 'settings.items.pushModeDingtalk', value: 'dingtalk' },
+          { labelKey: 'settings.items.pushModeDisabled', value: 'disabled' },
+        ],
+        defaultValue: 'native',
+      },
+      commonFields: [],
+      optionSubFields: [
+        { when: 'dingtalk', fields: [
+          { labelKey: 'settings.items.dingtalkAppKey', descriptionKey: 'settings.items.dingtalkAppKeyDesc', key: 'dingtalk.app_key', type: 'text', source: 'server' },
+          { labelKey: 'settings.items.dingtalkAppSecret', descriptionKey: 'settings.items.dingtalkAppSecretDesc', key: 'dingtalk.app_secret', type: 'password', source: 'server' },
+          { labelKey: 'settings.items.dingtalkAgentId', descriptionKey: 'settings.items.dingtalkAgentIdDesc', key: 'dingtalk.agent_id', type: 'number', source: 'server' },
+        ]},
+      ],
+      requiredFields: ['dingtalk.app_key', 'dingtalk.app_secret', 'dingtalk.agent_id'],
+      hasConnectivityTest: true,
+      getTestCategories: (values) => values.push_mode === 'dingtalk' ? [{ category: 'dingtalk', values }] : [],
+      afterSave(changedKeys, values) {
+        if (changedKeys.includes('push_mode')) {
+          // Sync Android native push (backend derives dingtalk.enabled from push_mode automatically)
+          try {
+            const native = (window as unknown as { AndroidNative?: { setNativePushEnabled?: (v: boolean) => void } }).AndroidNative
+            native?.setNativePushEnabled?.(values?.push_mode === 'native')
+          } catch { /* not in app mode */ }
+        }
+      },
+    }},
   ],
   about: [
     { type: 'item', spec: { labelKey: 'settings.items.aboutServerVersion', descriptionKey: 'settings.items.aboutServerVersionDesc', key: 'serverVersion', type: 'info', source: 'server' } },
@@ -317,22 +372,6 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         import('@/composables/useFrp').then(m => m.useFrp().fetchFrpInfo()).catch(() => {})
       },
 
-    }},
-  ],
-  dingtalk: [
-    { type: 'panel', config: {
-      panelId: 'dingtalk',
-      enableKey: 'dingtalk.enabled',
-      enableLabelKey: 'settings.items.dingtalkEnabled',
-      commonFields: [
-        { labelKey: 'settings.items.dingtalkAppKey', descriptionKey: 'settings.items.dingtalkAppKeyDesc', key: 'dingtalk.app_key', type: 'text', source: 'server' },
-        { labelKey: 'settings.items.dingtalkAppSecret', descriptionKey: 'settings.items.dingtalkAppSecretDesc', key: 'dingtalk.app_secret', type: 'password', source: 'server' },
-        { labelKey: 'settings.items.dingtalkAgentId', descriptionKey: 'settings.items.dingtalkAgentIdDesc', key: 'dingtalk.agent_id', type: 'number', source: 'server' },
-      ],
-      optionSubFields: [],
-      requiredFields: ['dingtalk.app_key', 'dingtalk.app_secret', 'dingtalk.agent_id'],
-      hasConnectivityTest: true,
-      getTestCategories: (values) => [{ category: 'dingtalk', values }],
     }},
   ],
 }

@@ -17,7 +17,6 @@
       <SettingsIndex v-if="navStack.length === 0" @navigate="pushNav" />
       <SettingsCategory
         v-else
-        ref="categoryRef"
         :category-id="currentCategory!"
         @navigate="pushNav"
         @restart-needed="handleRestartNeeded"
@@ -49,7 +48,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { RefreshCw, ChevronLeft, Settings } from 'lucide-vue-next'
 import SettingsIndex from './SettingsIndex.vue'
 import SettingsCategory from './SettingsCategory.vue'
@@ -70,18 +69,17 @@ const {
   restartDialogVisible, changedColdFields, needsRestart,
   restarting, restartingOverlay,
   handleRestartNeeded, handleRestart,
+  checkAllGuards,
 } = useSettingsNavigation()
 
 const { serverConfig } = useSettingsConfig()
 const dialog = useDialog()
 
-const categoryRef = ref<InstanceType<typeof SettingsCategory> | null>(null)
-
-// ── Back navigation with unsaved changes guard (I5 fix) ──
+// ── Back navigation with unsaved changes guard ──
 
 async function handleBack() {
-  // Check if any panel has unsaved changes
-  if (categoryRef.value?.hasUnsavedPanelChanges) {
+  // Check all registered panel guards (module-level registry)
+  if (!checkAllGuards()) {
     const confirmed = await dialog.confirm(
       t('settings.panel.unsavedMessage'),
       {

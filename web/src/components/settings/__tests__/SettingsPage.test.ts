@@ -27,7 +27,6 @@ function createMockNavigation() {
     restartingOverlay: ref(false),
     handleRestartNeeded: vi.fn(),
     handleRestart: vi.fn(),
-    setBeforeResetGuard: vi.fn(),
     registerGuard: vi.fn(),
     unregisterGuard: vi.fn(),
     checkAllGuards: vi.fn(() => true),

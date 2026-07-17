@@ -144,7 +144,7 @@ import { useI18n } from 'vue-i18n'
 import { ChevronRight } from 'lucide-vue-next'
 import SettingsItem from './SettingsItem.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
-import { engineVoiceOptions, type ItemSpec, type GroupPanelConfig, type DependsOn } from './settingsFieldMap'
+import { engineVoiceOptions, isDependsOnMet, type ItemSpec, type GroupPanelConfig } from './settingsFieldMap'
 import { usePanelSnapshot } from '@/composables/usePanelSnapshot'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useSettingsNavigation } from '@/composables/useSettingsNavigation'
@@ -162,7 +162,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   restartNeeded: [fields: string[]]
-  hasChangesChange: [hasChanges: boolean]
 }>()
 
 const { t } = useI18n()
@@ -201,12 +200,6 @@ onMounted(() => {
 onUnmounted(() => {
   unregisterGuard(`panel-${props.config.panelId}`)
 })
-
-// ── Notify parent about changes ──
-
-watch(hasChanges, (val) => {
-  emit('hasChangesChange', val)
-}, { immediate: true })
 
 // ── Enable toggle ──
 
@@ -267,27 +260,13 @@ interface RenderHeaderEntry {
 
 type RenderEntry = RenderFieldEntry | RenderHeaderEntry
 
-// ── dependsOn filtering (OR logic for arrays) ──
-
-function isSingleDependsOnMet(dep: DependsOn): boolean {
-  const currentValue = localValues[dep.key]
-  if ('value' in dep) return currentValue === dep.value
-  return dep.values!.includes(currentValue as unknown)
-}
-
-function isDependsOnMet(dependsOn: ItemSpec['dependsOn']): boolean {
-  if (!dependsOn) return true
-  if (Array.isArray(dependsOn)) return dependsOn.some(isSingleDependsOnMet)
-  return isSingleDependsOnMet(dependsOn)
-}
-
 const renderList = computed((): RenderEntry[] => {
   const cfg = props.config
   const result: RenderEntry[] = []
 
   // Common fields (filtered by dependsOn)
   for (const f of cfg.commonFields) {
-    if (!isDependsOnMet(f.dependsOn)) continue
+    if (!isDependsOnMet(f.dependsOn, (k) => localValues[k])) continue
     if (f.sectionHeader) {
       result.push({ type: 'header', key: `header-${f.key}`, label: t(f.sectionHeader) })
     }
@@ -364,8 +343,8 @@ const frpHttpPortDisplay = computed(() => {
 })
 
 const frpSshPortDisplay = computed(() => {
-  const port = frpState.state === 'running' && frpState.sshRemotePort > 0 ? frpState.sshRemotePort : 0
-  return port > 0 ? port : 0
+  const port = frpState.state === 'running' && frpState.sshRemotePort > 0 ? frpState.sshRemotePort : null
+  return port
 })
 
 // ── Save ──
