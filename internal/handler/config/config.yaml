@@ -8,7 +8,7 @@ dev_port: 0
 dingtalk:
     agent_id: 123
     app_key: test-key
-    app_secret: test-secret
+    app_secret: '***masked***'
     enabled: true
     users:
         - user1
@@ -31,6 +31,7 @@ push:
         enabled: false
         master_secret: newsecret1234567890
 rag:
+    api_key: sk-1***xyz
     batch_size: 0
     chunk_overlap: 0
     chunk_size: 0
