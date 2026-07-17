@@ -101,7 +101,7 @@ export function useChatSession(options: UseChatSessionOptions) {
 
   // ── Identity refs from singleton ──
   const identity = useSessionIdentity()
-  const { currentSessionTitle, currentBackend, currentAgentId, currentModelId, currentModelName, currentThinkingEffort, runningSessions, runningSessionsVersion, availableCommands, autoApprove, availableThinkingEfforts, contextSize: contextSizeRef } = identity
+  const { currentSessionTitle, currentBackend, currentAgentId, currentModelId, currentModelName, currentThinkingEffort, runningSessions, runningSessionsVersion, availableCommands, autoApprove, availableThinkingEfforts } = identity
 
   // ── Agents from singleton ──
   const { agents, loadAgents, getAgentIcon, getAgentName, getAgent, syncModelFromAgent, getAgentModel, agentHeaderTitle: makeAgentTitle, supportsDualTransport } = useAgents()
@@ -748,13 +748,6 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (effectiveAgentId && supportsDualTransport(effectiveAgentId)) {
         try {
           await populateACPStateFromCache(effectiveAgentId)
-          // Reset usage for the new session: keep contextSize from agent cache
-          // but set used=0 (a new session has no token consumption yet).
-          // Only reset if no SSE data has arrived yet (loading=false means
-          // session is not running, so no usage_update could have been emitted).
-          if (contextSizeRef.value > 0 && !loading.value) {
-            updateUsageState(0, contextSizeRef.value, 0, '', data.sessionId, 0, 0)
-          }
         } catch {
           // Non-critical: mode/thinking chips will populate from the first SSE event
           appLog.w(TAG, 'populateACPStateFromCache failed for new session, will rely on SSE')

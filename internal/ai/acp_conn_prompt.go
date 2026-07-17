@@ -159,9 +159,6 @@ func (c *ACPConn) emitPromptResponseUsage(usage *acp.Usage, streamCh chan<- Stre
 	}
 	forwardACPEvent(streamCh, StreamEvent{Type: "usage_update", Usage: usageState})
 	c.SetCachedUsageState(usageState)
-	if agentID := c.AgentID(); agentID != "" {
-		GetAgentCapabilityRegistry().UpdateUsageState(agentID, usageState)
-	}
 }
 
 // setConfigOptionWithCrashCheck sets a config option, checking whether it killed

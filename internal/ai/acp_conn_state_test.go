@@ -78,29 +78,6 @@ func TestExtractSessionState_ResumeResp_NoModeState(t *testing.T) {
 // applyExtractedState — cachedUsage restore branch
 // ---------------------------------------------------------------------------
 
-func TestApplyExtractedState_CachedUsageRestore(t *testing.T) {
-	// Covers line 175-177: if cachedUsage != nil { reg.UpdateUsageState(...) }
-	agent := &model.Agent{ID: "test-apply-usage", Backend: "acp-stdio", AcpCommand: "echo"}
-	conn := newACPConn(agent, "test-apply-usage")
-
-	// Pre-populate registry with usage state so cachedUsage != nil
-	reg := GetAgentCapabilityRegistry()
-	reg.UpdateUsageState("test-apply-usage", &UsageState{Used: 100, Size: 50000})
-
-	ext := sessionStateExtracted{
-		modes:         []ModeDef{{ID: "code", Name: "Code"}},
-		modeCurrentID: "code",
-	}
-	conn.applyExtractedState(ext, false)
-
-	assert.Equal(t, "code", conn.GetCurrentModeID())
-	// Usage state should be preserved after ForceUpdateIfNeeded
-	usageState := reg.GetUsageState("test-apply-usage")
-	require.NotNil(t, usageState)
-	assert.Equal(t, 100, usageState.Used)
-	assert.Equal(t, 50000, usageState.Size)
-}
-
 // ---------------------------------------------------------------------------
 // EmitCommandsUpdate — early return when no commands available
 // ---------------------------------------------------------------------------

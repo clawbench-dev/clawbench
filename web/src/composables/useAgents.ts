@@ -15,20 +15,17 @@ const TAG = 'Agents'
 let _updateAvailableModes: ((modes: Array<{ id: string; name: string }>) => void) | null = null
 let _updateAvailableThinkingEfforts: ((levels: Array<{ id: string; name: string }>) => void) | null = null
 let _updateCommandState: ((commands: Array<{ name: string; description: string; inputHint?: string }>) => void) | null = null
-let _updateUsageState: ((used: number, size: number, cost?: number, currency?: string, sessionId?: string) => void) | null = null
 let _currentAgentId: { value: string } | null = null
 
 export function registerIdentityUpdaters(opts: {
   updateAvailableModes: (modes: Array<{ id: string; name: string }>) => void
   updateAvailableThinkingEfforts: (levels: Array<{ id: string; name: string }>) => void
   updateCommandState: (commands: Array<{ name: string; description: string; inputHint?: string }>) => void
-  updateUsageState: (used: number, size: number, cost?: number, currency?: string, sessionId?: string) => void
   currentAgentId: { value: string }
 }) {
   _updateAvailableModes = opts.updateAvailableModes
   _updateAvailableThinkingEfforts = opts.updateAvailableThinkingEfforts
   _updateCommandState = opts.updateCommandState
-  _updateUsageState = opts.updateUsageState
   _currentAgentId = opts.currentAgentId
 }
 
@@ -72,7 +69,6 @@ interface AcpState {
   commands?: Array<{ name: string; description: string; inputHint?: string }>
   modelListState?: { models?: Array<{ id: string; name: string }>; currentModelId?: string }
   planState?: { entries?: Array<Record<string, unknown>> }
-  usageState?: { used?: number; size?: number; cost?: number; currency?: string }
   loadSession?: boolean
 }
 
@@ -90,7 +86,6 @@ export function resetAgents(): void {
     _updateAvailableModes = null
     _updateAvailableThinkingEfforts = null
     _updateCommandState = null
-    _updateUsageState = null
     _currentAgentId = null
 }
 
@@ -147,10 +142,12 @@ async function loadAgents(force = false): Promise<void> {
                     if (activeState.planState?.entries && activeState.planState.entries.length > 0) {
                         updatePlanEntries(activeState.planState.entries as unknown as import('@/composables/usePlanProgress').PlanEntry[])
                     }
-                    // Restore usage state from agent-level cache (best-effort fallback).
-                    if (activeState.usageState && (activeState.usageState.size ?? 0) > 0) {
-                        _updateUsageState?.(activeState.usageState.used ?? 0, activeState.usageState.size!, activeState.usageState.cost, activeState.usageState.currency)
-                    }
+                    // NOTE: Usage state is NOT restored from agent-level cache.
+                    // Usage is per-session data — the agent-level cache reflects
+                    // the last session that emitted a UsageUpdate, which may be
+                    // a different session. Restoring it would flash stale progress
+                    // on session switch. Usage comes from per-session sources only
+                    // (SSE usage_update, REST chat response, createSession reset).
                 }
             }
         } catch (err: unknown) {
@@ -380,12 +377,13 @@ export async function populateACPStateFromCache(agentId: string): Promise<void> 
     if (state.planState?.entries && state.planState.entries.length > 0) {
         updatePlanEntries(state.planState.entries as unknown as import('@/composables/usePlanProgress').PlanEntry[])
     }
-    // Restore usage state from agent-level cache (best-effort fallback).
-    // This ensures usage chips appear immediately on session switch /
-    // reconnect without waiting for a new SSE usage_update event.
-    if (state.usageState && (state.usageState.size ?? 0) > 0) {
-        _updateUsageState?.(state.usageState.used ?? 0, state.usageState.size!, state.usageState.cost, state.usageState.currency)
-    }
+    // NOTE: Usage state is NOT restored from agent-level cache here.
+    // Usage is per-session data — the agent-level cache reflects the last
+    // session that emitted a UsageUpdate, which may be a different session.
+    // Restoring it here would flash stale progress on session switch or
+    // when sending a message in a new session. Usage state should only come
+    // from per-session sources: SSE usage_update events, REST chat response,
+    // or the explicit reset in createSession().
 }
 
 /** Duplicate an agent by cloning its configuration with a new name. */

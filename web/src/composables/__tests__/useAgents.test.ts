@@ -58,7 +58,6 @@ describe('useAgents', () => {
       updateAvailableModes: (...args: any[]) => mockUpdateAvailableModes(...args),
       updateAvailableThinkingEfforts: (...args: any[]) => mockUpdateAvailableThinkingEfforts(...args),
       updateCommandState: (...args: any[]) => mockUpdateCommandState(...args),
-      updateUsageState: (...args: any[]) => mockUpdateUsageState(...args),
       currentAgentId: _currentAgentId,
     })
   }
@@ -720,7 +719,7 @@ describe('useAgents', () => {
       expect(mockUpdateAvailableModes).toHaveBeenCalledWith(acpState.claude.modeState.availableModes)
     })
 
-    it('populates usage state from cached acpStates', async () => {
+    it('does NOT populate usage state from cached acpStates (usage is per-session)', async () => {
       resetAgents()
       registerMocks()
       const stateWithUsage = {
@@ -737,10 +736,12 @@ describe('useAgents', () => {
 
       await populateACPStateFromCache('claude')
 
-      expect(mockUpdateUsageState).toHaveBeenCalledWith(50000, 200000, 0.35, 'USD')
+      // Usage state should NOT be written — it's per-session data and the
+      // agent-level cache may belong to a different session.
+      expect(mockUpdateUsageState).not.toHaveBeenCalled()
     })
 
-    it('skips usage state update when usageState.size is 0', async () => {
+    it('does NOT populate usage state even when usageState.size is 0', async () => {
       resetAgents()
       registerMocks()
       const stateWithEmptyUsage = {
@@ -755,6 +756,32 @@ describe('useAgents', () => {
       mockApiGet.mockResolvedValue({ agents: testAgents, defaultAgent: 'claude', acpStates: stateWithEmptyUsage })
       await loadAgents()
 
+      await populateACPStateFromCache('claude')
+
+      expect(mockUpdateUsageState).not.toHaveBeenCalled()
+    })
+
+    it('does NOT flash stale usage data when agent-level cache has previous session usage', async () => {
+      // Regression test: previously, populateACPStateFromCache would write
+      // agent-level usageState (from a previous session) to the current
+      // session, causing the context progress bar to briefly show stale data.
+      resetAgents()
+      registerMocks()
+      // Simulate an agent-level cache where a previous session consumed 80% context
+      const stateWithHeavyUsage = {
+        claude: {
+          modeState: {
+            currentModeId: 'code',
+            availableModes: [{ id: 'code', name: 'Code' }],
+          },
+          usageState: { used: 160000, size: 200000, cost: 2.5, currency: 'USD' },
+        },
+      }
+      mockApiGet.mockResolvedValue({ agents: testAgents, defaultAgent: 'claude', acpStates: stateWithHeavyUsage })
+      await loadAgents()
+
+      // Even though the cache has heavy usage data, populateACPStateFromCache
+      // should NOT write it to the current session display.
       await populateACPStateFromCache('claude')
 
       expect(mockUpdateUsageState).not.toHaveBeenCalled()

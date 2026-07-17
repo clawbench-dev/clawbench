@@ -73,7 +73,6 @@ registerIdentityUpdaters({
   updateAvailableModes,
   updateAvailableThinkingEfforts,
   updateCommandState,
-  updateUsageState,
   currentAgentId,
 })
 
@@ -635,7 +634,7 @@ export function useSessionIdentity() {
       await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, filePaths: filePaths || [], modelId: currentModelId.value || undefined, thinkingEffort: currentThinkingEffort.value || undefined, transport: currentTransport.value || undefined }),
+        body: JSON.stringify({ message: text, filePaths: filePaths || [], modelId: currentModelId.value || undefined, thinkingEffort: currentThinkingEffort.value || undefined, transport: currentTransport.value || undefined, clientId: localStorage.getItem('clawbench_client_id') || undefined }),
       })
     } catch (err: unknown) {
       appLog.e(TAG, 'Failed to send message:', err)

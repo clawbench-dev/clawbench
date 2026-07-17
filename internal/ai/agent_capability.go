@@ -31,9 +31,8 @@ type AgentCapability struct {
 	AvailableModels          []model.AgentModel
 	AvailableCommands        []AvailableCommandInfo
 	ConfigOptionState        *ConfigOptionState
-	CachedUsageState         *UsageState // Last-known usage from any active connection (best-effort fallback)
-	LoadSession              *bool       // AgentCapabilities.LoadSession from ACP Initialize (nil = not yet set)
-	ListSessions             *bool       // SessionCapabilities.List != nil from ACP Initialize (nil = not yet set)
+	LoadSession              *bool // AgentCapabilities.LoadSession from ACP Initialize (nil = not yet set)
+	ListSessions             *bool // SessionCapabilities.List != nil from ACP Initialize (nil = not yet set)
 	UpdatedAt                time.Time
 
 	// refreshedInProcess marks whether this capability has already been
@@ -52,7 +51,6 @@ func (c *AgentCapability) HasData() bool {
 		len(c.AvailableModels) > 0 ||
 		len(c.AvailableCommands) > 0 ||
 		c.ConfigOptionState != nil ||
-		c.CachedUsageState != nil ||
 		c.LoadSession != nil ||
 		c.ListSessions != nil
 }
@@ -130,9 +128,6 @@ func (r *AgentCapabilityRegistry) merge(agentID string, src *AgentCapability) {
 	if src.ConfigOptionState != nil {
 		existing.ConfigOptionState = src.ConfigOptionState
 	}
-	if src.CachedUsageState != nil {
-		existing.CachedUsageState = src.CachedUsageState
-	}
 	if src.LoadSession != nil {
 		existing.LoadSession = src.LoadSession
 	}
@@ -165,13 +160,6 @@ func (r *AgentCapabilityRegistry) UpdateCommands(agentID string, cmds []Availabl
 // UpdateConfigState updates only the config option state.
 func (r *AgentCapabilityRegistry) UpdateConfigState(agentID string, state *ConfigOptionState) {
 	r.Update(agentID, &AgentCapability{ConfigOptionState: state})
-}
-
-// UpdateUsageState caches the usage state from a usage_update event.
-// This is a best-effort agent-level cache so usage chips appear on
-// session switch / reconnect without waiting for a new UsageUpdate.
-func (r *AgentCapabilityRegistry) UpdateUsageState(agentID string, state *UsageState) {
-	r.Update(agentID, &AgentCapability{CachedUsageState: state})
 }
 
 // UpdateLoadSession updates only the LoadSession capability flag.
@@ -316,19 +304,6 @@ func (r *AgentCapabilityRegistry) GetConfigState(agentID string) *ConfigOptionSt
 		return nil
 	}
 	return agentCap.ConfigOptionState
-}
-
-// GetUsageState returns the cached usage state for an agent.
-// This is a best-effort fallback from the last-known usage of any
-// active connection for this agent.
-func (r *AgentCapabilityRegistry) GetUsageState(agentID string) *UsageState {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	agentCap, ok := r.caps[agentID]
-	if !ok || agentCap == nil {
-		return nil
-	}
-	return agentCap.CachedUsageState
 }
 
 // GetLoadSession returns whether the agent supports LoadSession.
@@ -507,11 +482,6 @@ func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, age
 	if agentCap.ListSessions != nil {
 		listSessionsVal = *agentCap.ListSessions
 	}
-	var usageJSON string
-	if agentCap.CachedUsageState != nil {
-		b, _ := json.Marshal(agentCap.CachedUsageState)
-		usageJSON = string(b)
-	}
 
 	_, err := db.Exec(`
 		UPDATE agents SET
@@ -521,11 +491,10 @@ func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, age
 			acp_config_options = ?,
 			acp_load_session = ?,
 			acp_list_sessions = ?,
-			acp_cached_usage_state = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?`,
 		string(modesJSON), string(effortsJSON), string(cmdsJSON), configJSON,
-		loadSessionVal, listSessionsVal, usageJSON, agentID)
+		loadSessionVal, listSessionsVal, agentID)
 	return err
 }
 
@@ -536,7 +505,7 @@ func (r *AgentCapabilityRegistry) LoadFromDB(db dbutil.Reader) {
 	rows, err := db.Query(`
 		SELECT id, acp_available_modes, acp_available_thinking_efforts,
 		       acp_available_commands, acp_config_options,
-		       acp_load_session, acp_list_sessions, acp_cached_usage_state
+		       acp_load_session, acp_list_sessions
 		FROM agents
 		WHERE transport = 'acp-stdio'
 	`)
@@ -553,9 +522,9 @@ func (r *AgentCapabilityRegistry) LoadFromDB(db dbutil.Reader) {
 	defer r.mu.Unlock()
 
 	for rows.Next() {
-		var agentID, modesJSON, effortsJSON, cmdsJSON, configJSON, usageJSON string
+		var agentID, modesJSON, effortsJSON, cmdsJSON, configJSON string
 		var loadSession, listSessions bool
-		if err := rows.Scan(&agentID, &modesJSON, &effortsJSON, &cmdsJSON, &configJSON, &loadSession, &listSessions, &usageJSON); err != nil {
+		if err := rows.Scan(&agentID, &modesJSON, &effortsJSON, &cmdsJSON, &configJSON, &loadSession, &listSessions); err != nil {
 			slog.Warn("failed to scan agent capability row", "error", err)
 			continue
 		}
@@ -584,12 +553,6 @@ func (r *AgentCapabilityRegistry) LoadFromDB(db dbutil.Reader) {
 			var config ConfigOptionState
 			if err := json.Unmarshal([]byte(configJSON), &config); err == nil {
 				agentCap.ConfigOptionState = &config
-			}
-		}
-		if usageJSON != "" {
-			var usage UsageState
-			if err := json.Unmarshal([]byte(usageJSON), &usage); err == nil && usage.Size > 0 {
-				agentCap.CachedUsageState = &usage
 			}
 		}
 
