@@ -417,23 +417,18 @@ describe('useSettingsConfig', () => {
     })
   })
 
-  describe('nativePushEnabled side effect', () => {
-    it('defaults to true', () => {
-      const { localConfig } = useSettingsConfig()
-      expect(localConfig.nativePushEnabled).toBe(true)
-    })
-
-    it('calls AndroidNative.setNativePushEnabled when set', () => {
+  describe('push_mode sync', () => {
+    it('calls AndroidNative.setNativePushEnabled on loadConfig', async () => {
       const mockSetNativePushEnabled = vi.fn()
       const original = (window as any).AndroidNative
       ;(window as any).AndroidNative = { setNativePushEnabled: mockSetNativePushEnabled }
 
-      const { setLocalConfig } = useSettingsConfig()
+      // Mock API to return push_mode
+      mockedApiGet.mockResolvedValueOnce({ push_mode: 'native' })
 
-      setLocalConfig('nativePushEnabled', false)
-      expect(mockSetNativePushEnabled).toHaveBeenCalledWith(false)
-
-      setLocalConfig('nativePushEnabled', true)
+      const { loadConfig } = useSettingsConfig()
+      await loadConfig()
+      // Default push_mode is "native", so setNativePushEnabled should be called with true
       expect(mockSetNativePushEnabled).toHaveBeenCalledWith(true)
 
       // Restore
@@ -442,17 +437,24 @@ describe('useSettingsConfig', () => {
       } else {
         delete (window as any).AndroidNative
       }
-      localStorage.removeItem('clawbench-settings-nativePushEnabled')
     })
 
-    it('persists to localStorage', () => {
-      const { localConfig, setLocalConfig } = useSettingsConfig()
+    it('calls AndroidNative.setNativePushEnabled(false) when push_mode is dingtalk', async () => {
+      const mockSetNativePushEnabled = vi.fn()
+      const original = (window as any).AndroidNative
+      ;(window as any).AndroidNative = { setNativePushEnabled: mockSetNativePushEnabled }
 
-      setLocalConfig('nativePushEnabled', false)
-      expect(localConfig.nativePushEnabled).toBe(false)
-      expect(localStorage.getItem('clawbench-settings-nativePushEnabled')).toBe('false')
+      mockedApiGet.mockResolvedValueOnce({ push_mode: 'dingtalk' })
 
-      localStorage.removeItem('clawbench-settings-nativePushEnabled')
+      const { loadConfig } = useSettingsConfig()
+      await loadConfig()
+      expect(mockSetNativePushEnabled).toHaveBeenCalledWith(false)
+
+      if (original) {
+        ;(window as any).AndroidNative = original
+      } else {
+        delete (window as any).AndroidNative
+      }
     })
   })
 

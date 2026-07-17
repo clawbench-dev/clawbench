@@ -891,7 +891,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// DB adapter and session messenger are always registered (needed for hot-reload enable/disable).
 	dingtalk.RegisterDBAdapter(&dingtalkDBAdapter{})
 	dingtalk.RegisterSessionMessenger(&dingtalkSessionMessenger{})
-	if cfg.DingTalk.Enabled && cfg.DingTalk.AppKey != "" && cfg.DingTalk.AppSecret != "" {
+	if cfg.PushMode == "dingtalk" && cfg.DingTalk.AppKey != "" && cfg.DingTalk.AppSecret != "" {
 		dingtalkMgr := dingtalk.NewManager(&cfg.DingTalk)
 		if err := dingtalkMgr.Start(); err != nil {
 			slog.Warn("DingTalk push failed to start", slog.String("err", err.Error()))
@@ -1191,7 +1191,7 @@ func hotReloadReconfigure(port int) {
 func hotReloadDingTalk(cfg model.Config) {
 	mgr := dingtalk.GetManager()
 
-	if cfg.DingTalk.Enabled && cfg.DingTalk.AppKey != "" && cfg.DingTalk.AppSecret != "" {
+	if cfg.PushMode == "dingtalk" && cfg.DingTalk.AppKey != "" && cfg.DingTalk.AppSecret != "" {
 		if mgr != nil {
 			// Manager is running — try in-place reconfigure
 			result := mgr.Reconfigure(&cfg.DingTalk)

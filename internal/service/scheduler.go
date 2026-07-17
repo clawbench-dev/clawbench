@@ -544,7 +544,11 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 		Event: "task_update",
 		Data:  data,
 	}
-	StoreNotifiableEvent(msg)
+	// Write-ahead: persist before broadcast so event log has no gaps
+	// Skip when push_mode is "disabled" — no notifications desired
+	if model.ConfigInstance.PushMode != "disabled" {
+		StoreNotifiableEvent(msg)
+	}
 	mgr.BroadcastEvent(msg)
 
 	// DingTalk push notification for task events.

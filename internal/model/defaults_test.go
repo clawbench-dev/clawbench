@@ -639,3 +639,84 @@ func TestApplyDefaults_AutoPasswordEntropy(t *testing.T) {
 		}
 	}
 }
+
+func TestApplyDefaults_PushMode_DefaultNative(t *testing.T) {
+	tmpDir := setupTestBinDir(t)
+	_ = tmpDir
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+
+	if cfg.PushMode != "native" {
+		t.Errorf("expected PushMode=native, got %q", cfg.PushMode)
+	}
+	if cfg.DingTalk.Enabled {
+		t.Error("expected DingTalk.Enabled=false when PushMode=native")
+	}
+}
+
+func TestApplyDefaults_PushMode_MigrationFromDingTalkEnabled(t *testing.T) {
+	tmpDir := setupTestBinDir(t)
+	_ = tmpDir
+
+	cfg := Config{}
+	cfg.DingTalk.Enabled = true
+	cfg.DingTalk.AppKey = "test-key"
+	cfg.DingTalk.AppSecret = "test-secret"
+	ApplyDefaults(&cfg, nil)
+
+	if cfg.PushMode != "dingtalk" {
+		t.Errorf("expected PushMode=dingtalk when DingTalk.Enabled=true, got %q", cfg.PushMode)
+	}
+	if !cfg.DingTalk.Enabled {
+		t.Error("expected DingTalk.Enabled=true when PushMode=dingtalk")
+	}
+}
+
+func TestApplyDefaults_PushMode_ExplicitNativeKeepsDingTalkDisabled(t *testing.T) {
+	tmpDir := setupTestBinDir(t)
+	_ = tmpDir
+
+	cfg := Config{}
+	cfg.PushMode = "native"
+	ApplyDefaults(&cfg, nil)
+
+	if cfg.PushMode != "native" {
+		t.Errorf("expected PushMode=native, got %q", cfg.PushMode)
+	}
+	if cfg.DingTalk.Enabled {
+		t.Error("expected DingTalk.Enabled=false when PushMode=native")
+	}
+}
+
+func TestApplyDefaults_PushMode_ExplicitDingTalkSyncsEnabled(t *testing.T) {
+	tmpDir := setupTestBinDir(t)
+	_ = tmpDir
+
+	cfg := Config{}
+	cfg.PushMode = "dingtalk"
+	ApplyDefaults(&cfg, nil)
+
+	if cfg.PushMode != "dingtalk" {
+		t.Errorf("expected PushMode=dingtalk, got %q", cfg.PushMode)
+	}
+	if !cfg.DingTalk.Enabled {
+		t.Error("expected DingTalk.Enabled=true when PushMode=dingtalk")
+	}
+}
+
+func TestApplyDefaults_PushMode_DisabledSyncsEnabled(t *testing.T) {
+	tmpDir := setupTestBinDir(t)
+	_ = tmpDir
+
+	cfg := Config{}
+	cfg.PushMode = "disabled"
+	ApplyDefaults(&cfg, nil)
+
+	if cfg.PushMode != "disabled" {
+		t.Errorf("expected PushMode=disabled, got %q", cfg.PushMode)
+	}
+	if cfg.DingTalk.Enabled {
+		t.Error("expected DingTalk.Enabled=false when PushMode=disabled")
+	}
+}

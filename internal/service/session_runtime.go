@@ -73,7 +73,10 @@ func EmitSessionEvent(sessionID, status string, hasNewMessages bool, toolName ..
 		Data:  data,
 	}
 	// Write-ahead: persist before broadcast so event log has no gaps
-	StoreNotifiableEvent(msg)
+	// Skip when push_mode is "disabled" — no notifications desired
+	if model.ConfigInstance.PushMode != "disabled" {
+		StoreNotifiableEvent(msg)
+	}
 	mgr.BroadcastEvent(msg)
 
 	// DingTalk push notification for session events.

@@ -4,6 +4,7 @@ import { useAppMode } from './useAppMode'
 import { showBrowserNotification } from './useNotification'
 import { playNotificationSound } from './useNotificationSound'
 import { gt } from './useLocale'
+import { serverConfig } from './useSettingsConfig'
 
 // Event types from server
 interface ServerEvent {
@@ -302,6 +303,10 @@ function stopHeartbeat() {
 function showEventBrowserNotification(event: string, data: ServerEvent['data']) {
     if (!data) return
 
+    // Only show native browser notifications when push_mode is "native"
+    const pushMode = serverConfig.value?.push_mode as string || 'native'
+    if (pushMode !== 'native') return
+
     // Only show notification when page is not focused
     if (document.visibilityState === 'visible' && document.hasFocus()) return
 
@@ -377,12 +382,14 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data']) 
     }
 
     try {
-        playNotificationSound()
-        showBrowserNotification(title, {
-            body: alert_,
-            tag: `clawbench-${event}-${data.session_id || data.task_id || Date.now()}`,
-            onClick,
-        })
+        if (pushMode === 'native') {
+            playNotificationSound()
+            showBrowserNotification(title, {
+                body: alert_,
+                tag: `clawbench-${event}-${data.session_id || data.task_id || Date.now()}`,
+                onClick,
+            })
+        }
     } catch {
         // Non-critical
     }

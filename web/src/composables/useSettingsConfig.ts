@@ -121,16 +121,6 @@ const legacyKeys: Record<string, {
     key: '',
     format: 'raw',
   },
-  nativePushEnabled: {
-    key: '',
-    format: 'raw',
-    sideEffect(value: boolean) {
-      try {
-        const native = (window as unknown as { AndroidNative?: { setNativePushEnabled?: (v: boolean) => void } }).AndroidNative
-        native?.setNativePushEnabled?.(value)
-      } catch { /* not in app mode */ }
-    },
-  },
   sortField: {
     key: '',
     format: 'raw',
@@ -259,7 +249,6 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   logCapture: false,
   swipeSession: false,
   preventScreenLock: true,
-  nativePushEnabled: true,
   sortField: null,
   sortDir: 'asc',
   uiScale: 1,
@@ -298,7 +287,7 @@ export function setLocalConfig(key: string, value: string | boolean | number | n
   }
 }
 
-export { localConfig }
+export { localConfig, serverConfig }
 
 const serverConfig = ref<Record<string, unknown>>({})
 
@@ -348,6 +337,7 @@ const serverDefaults: Record<string, unknown> = {
   'frp.auto_port': true,
   'frp.remote_port': 0,
   'frp.ssh_remote_port': 0,
+  'push_mode': 'native',
 }
 
 // ── Agent preference helpers ──────────────────────────────
@@ -409,19 +399,12 @@ function getAgentThinkingPref(agentId: string): string | null {
 }
 
 export function useSettingsConfig() {
-  /** Sync local-only settings from Android native to keep WebView and native state in sync. */
-  function syncNativeSettings() {
+  /** Sync push_mode from server config to Android native push state. */
+  function syncPushModeToNative() {
     try {
-      const native = (window as unknown as { AndroidNative?: { isNativePushEnabled?: () => boolean } }).AndroidNative
-      if (native?.isNativePushEnabled) {
-        const nativeValue = native.isNativePushEnabled()
-        if (localConfig.nativePushEnabled !== nativeValue) {
-          localConfig.nativePushEnabled = nativeValue
-          try {
-            localStorage.setItem(LOCAL_PREFIX + 'nativePushEnabled', JSON.stringify(nativeValue))
-          } catch { /* ignore */ }
-        }
-      }
+      const pushMode = serverConfig.value.push_mode as string || 'native'
+      const native = (window as unknown as { AndroidNative?: { setNativePushEnabled?: (v: boolean) => void } }).AndroidNative
+      native?.setNativePushEnabled?.(pushMode === 'native')
     } catch { /* not in app mode */ }
   }
 
@@ -432,8 +415,8 @@ export function useSettingsConfig() {
     } catch {
       // Server may be unreachable — keep existing cached values
     }
-    // Sync native state after server config loads (app mode only)
-    syncNativeSettings()
+    // Sync push_mode to Android native after server config loads
+    syncPushModeToNative()
   }
 
   async function patchConfig(changes: Record<string, unknown>): Promise<{ needsRestart: boolean; changedColdFields: string[]; warnings: string[] }> {

@@ -100,6 +100,7 @@ var hotReloadFields = map[string]bool{
 	"dingtalk.app_secret":  true,
 	"dingtalk.agent_id":    true,
 	"dingtalk.users":       true,
+	"push_mode":            true,
 }
 
 // restartGracePeriod is the delay before shutting down the server after a restart
@@ -171,6 +172,7 @@ type configResponse struct {
 	FRP                 configFRP            `json:"frp"`
 	Summarize           configSummarize      `json:"summarize"`
 	DingTalk            configDingTalk       `json:"dingtalk"`
+	PushMode            string               `json:"push_mode"`
 }
 
 type configChat struct {
@@ -337,6 +339,7 @@ var PatchableConfigPaths = map[string]bool{
 	"dingtalk.app_secret":         true,
 	"dingtalk.agent_id":           true,
 	"dingtalk.users":              true,
+	"push_mode":                   true,
 }
 
 // validTTSEngines is the set of valid TTS engine values.
@@ -452,6 +455,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			AgentID:   cfg.DingTalk.AgentID,
 			Users:     cfg.DingTalk.Users,
 		},
+		PushMode: cfg.PushMode,
 	}
 
 	// Conditionally populate Summarize API sub-config when each backend is "api"
@@ -810,6 +814,15 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 	}
 
 	// FRP: when enabled, server_addr must be non-empty (skip when just switching enabled on —
+
+	// Validate push_mode value
+	if v, ok := patch["push_mode"].(string); ok {
+		if v != "native" && v != "dingtalk" && v != "disabled" {
+			return fmt.Errorf("push_mode must be one of: native, dingtalk, disabled")
+		}
+	}
+
+	// FRP: when enabled, server_addr must be non-empty (skip when just switching enabled on —
 	// user hasn't had a chance to fill in the address yet, frontend auto-saves one field at a time).
 
 	if frp, ok := patch["frp"].(map[string]any); ok {
@@ -849,6 +862,11 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	if v, ok := patch["default_agent"].(string); ok {
 		cfg.DefaultAgent = v
 		model.DefaultAgentID = v
+	}
+
+	if v, ok := patch["push_mode"].(string); ok {
+		cfg.PushMode = v
+		cfg.DingTalk.Enabled = (v == "dingtalk")
 	}
 
 	if v, ok := patch["localhost_auth_exempt"].(bool); ok {

@@ -4,6 +4,7 @@ import { playNotificationSound } from '@/composables/useNotificationSound'
 import { showBrowserNotification } from '@/composables/useNotification'
 import { useToast } from '@/composables/useToast'
 import { gt } from '@/composables/useLocale'
+import { serverConfig } from '@/composables/useSettingsConfig'
 
 interface TaskItem {
   id: number
@@ -71,23 +72,25 @@ export function resetTaskTabState() {
 
 /** Called when a task execution completes (runningCount drops to 0) */
 function onTaskCompleted(task: TaskItem) {
-    // Sound + haptic
-    playNotificationSound()
-
+    // Sound + haptic + browser notification (only when push_mode is "native")
+    const pushMode = serverConfig.value?.push_mode as string || 'native'
+    if (pushMode === 'native') {
+        playNotificationSound()
+        try {
+            showBrowserNotification(task.name || gt('task.title'), {
+                body: gt('task.exec.completed'),
+                tag: `task-completed-${task.id}`,
+                onClick: () => {
+                    if (switchTabCallback) switchTabCallback('tasks')
+                },
+            })
+        } catch {
+            // Non-critical
+        }
+    }
     // Navigate to task history on click
     const navigateToHistory = () => {
         if (switchTabCallback) switchTabCallback('tasks')
-    }
-
-    // Browser push notification (only when page not focused)
-    try {
-        showBrowserNotification(task.name || gt('task.title'), {
-            body: gt('task.exec.completed'),
-            tag: `task-completed-${task.id}`,
-            onClick: navigateToHistory,
-        })
-    } catch {
-        // Non-critical
     }
     // Toast — include task name, icon, and click-to-navigate
     try {
