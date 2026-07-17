@@ -36,7 +36,6 @@
         @update:model-value="(v: unknown) => handleUpdate(entry.spec, v)"
         @click="handleClick(entry.spec)"
         @edit-toggle="(open: boolean) => handleEditToggle(entry.spec.key, open)"
-        @desc-toggle="(open: boolean) => handleDescToggle(entry.spec.key, open)"
         @discard="handleDiscard"
       />
       <!-- Group panel — C2 fix: arrow closure passes panelId -->
@@ -282,14 +281,6 @@ function handleEditToggle(key: string, open: boolean) {
   }
 }
 
-function handleDescToggle(key: string, open: boolean) {
-  if (open) {
-    activeKey.value = key
-  } else if (activeKey.value === key) {
-    activeKey.value = null
-  }
-}
-
 function handleDiscard() {
   toast.show(t('settings.passwordDiscarded'), { icon: 'ℹ️', type: 'info', duration: 3000 })
 }
@@ -297,7 +288,7 @@ function handleDiscard() {
 
 <style scoped>
 .settings-category {
-  padding: 8px 0;
+  padding: 0;
   background: var(--bg-secondary);
   min-height: 100%;
 }
