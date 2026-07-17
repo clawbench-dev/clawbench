@@ -2059,3 +2059,49 @@ func TestServeProjects_EmptyPathWithRoots_ListsFirstRoot(t *testing.T) {
 	assert.True(t, ok)
 	assert.NotEmpty(t, items, "should list entries in first root")
 }
+
+// ============================================================================
+// appendClientLog — error paths
+// ============================================================================
+
+func TestAppendClientLog_DirCreationError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("skipping as root: root can create directories in non-existent paths")
+	}
+	origLogDir := model.ConfigInstance.LogDir
+	defer func() { model.ConfigInstance.LogDir = origLogDir }()
+
+	// Set log dir to an impossible path
+	model.ConfigInstance.LogDir = "/nonexistent/path/that/cannot/be/created"
+
+	err := appendClientLog("android", []byte("test log line\n"))
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "create log dir")
+}
+
+func TestAppendClientLog_SuccessfulWrite(t *testing.T) {
+	origLogDir := model.ConfigInstance.LogDir
+	defer func() { model.ConfigInstance.LogDir = origLogDir }()
+
+	tmpDir := t.TempDir()
+	model.ConfigInstance.LogDir = tmpDir
+
+	err := appendClientLog("android", []byte("test log line\n"))
+	assert.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "android.log"))
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "test log line")
+}
+
+// ============================================================================
+// ServeClientLog — invalid JSON body
+// ============================================================================
+
+func TestServeClientLog_InvalidJSON(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/client-log", strings.NewReader(`{invalid json`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	ServeClientLog(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}

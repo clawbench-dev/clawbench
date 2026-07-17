@@ -1981,3 +1981,144 @@ func TestSendMessageToSessionFromDingTalk_AlreadyRunning_EnqueuesMessage(t *test
 	assert.Len(t, queue, 1)
 	assert.Equal(t, "queued from dingtalk", queue[0].Text)
 }
+
+// ============================================================================
+// FindRunningSessionsByPrefix - matchingIDs empty (prefix too short)
+// ============================================================================
+
+func TestFindRunningSessionsByPrefix_PrefixShorterThanID(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	// Insert and mark a session as running with a long ID
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'Test', 'agent1', 'default', '', 'chat')",
+		"abc123-long-id",
+	)
+	require.NoError(t, err)
+
+	TrySetSessionRunning("abc123-long-id")
+	defer SetSessionRunning("abc123-long-id", false, true)
+
+	// Short prefix that doesn't match any running session
+	results, err := FindRunningSessionsByPrefix("xyz")
+	require.NoError(t, err)
+	assert.Nil(t, results, "non-matching prefix should return nil")
+}
+
+// ============================================================================
+// FindRunningSessionsByPrefix - DB query error
+// ============================================================================
+
+func TestFindRunningSessionsByPrefix_QueryError(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	// Insert and mark session as running
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'Test', 'agent1', 'default', '', 'chat')",
+		"query-err-id",
+	)
+	require.NoError(t, err)
+
+	TrySetSessionRunning("query-err-id")
+	defer SetSessionRunning("query-err-id", false, true)
+
+	// Drop table to cause query error
+	_, _ = db.Exec("DROP TABLE chat_sessions")
+
+	_, err = FindRunningSessionsByPrefix("query-err")
+	assert.Error(t, err, "should return error when DB query fails")
+}
+
+// ============================================================================
+// SendMessageToSessionFromDingTalk - AddChatMessage failure
+// ============================================================================
+
+func TestSendMessageToSessionFromDingTalk_AddChatMessageFails(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "dt-msg-fail"
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj', 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
+		sessionID,
+	)
+	require.NoError(t, err)
+
+	// Drop chat_history to cause AddChatMessage to fail
+	_, _ = db.Exec("DROP TABLE chat_history")
+
+	err = SendMessageToSessionFromDingTalk(sessionID, "this will fail")
+	assert.Error(t, err, "should return error when AddChatMessage fails")
+	assert.Contains(t, err.Error(), "persist message")
+
+	// Session should no longer be running (rollback)
+	assert.False(t, IsSessionRunning(sessionID), "session should not be running after AddChatMessage failure")
+}
+
+// ============================================================================
+// BuildForkContext - non-user/assistant roles skipped
+// ============================================================================
+
+func TestBuildForkContext_SkipsSystemMessages(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "fork-sys-skip"
+	// The chat_history table has a CHECK(role IN ('user', 'assistant')),
+	// so we can't insert system messages directly. But we can verify
+	// that messages with only non-text blocks produce empty fork context.
+	// Instead, test with tool_use blocks that are not type="text"
+	_, err := WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+		"/proj", `{"blocks":[{"type":"tool_use","id":"t1","name":"Read"}]}`, sessionID,
+	)
+	require.NoError(t, err)
+
+	result := BuildForkContext(sessionID)
+	// tool_use blocks don't match contentKeyText="text", so they're skipped
+	assert.Equal(t, "", result, "non-text blocks should be skipped in fork context")
+}
+
+// ============================================================================
+// BuildChatRequest - fork context integration
+// ============================================================================
+
+func TestBuildChatRequest_ResumeWithForkContext(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "fork-integration-1"
+	// Insert session without external_session_id
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'claude', 'Test', '', 'default', '', 'chat')",
+		sessionID,
+	)
+	require.NoError(t, err)
+	// Insert messages for fork context
+	_, err = WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"/proj", `{"blocks":[{"type":"text","text":"previous answer"}]}`, sessionID,
+	)
+	require.NoError(t, err)
+
+	req := BuildChatRequest("follow-up", sessionID, "/proj", "claude", "", "", "", "", "", "/proj", false)
+	assert.NotEmpty(t, req.ForkContext, "should have fork context when resuming without external session ID")
+	assert.Contains(t, req.ForkContext, "previous answer")
+}
+
+// ============================================================================
+// appendMediaPrompt - empty system prompt with non-empty media prompt
+// ============================================================================
+
+func TestAppendMediaPrompt_EmptySystemPrompt_WithMediaPrompt(t *testing.T) {
+	// When systemPrompt is empty and BuildMediaPrompt returns non-empty,
+	// the result should be just the media prompt
+	mediaPrompt := model.BuildMediaPrompt()
+	if mediaPrompt == "" {
+		t.Skip("BuildMediaPrompt returns empty, can't test this path")
+	}
+	result := appendMediaPrompt("")
+	assert.Equal(t, mediaPrompt, result, "empty system prompt should return just the media prompt")
+}

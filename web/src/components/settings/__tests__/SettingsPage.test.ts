@@ -3,8 +3,8 @@ import { shallowMount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, nextTick, computed, reactive } from 'vue'
 import SettingsPage from '@/components/settings/SettingsPage.vue'
-import SettingsDrillDown from '@/components/settings/SettingsDrillDown.vue'
-import { isDrillDownCategory } from '@/components/settings/settingsFieldMap'
+import SettingsCategory from '@/components/settings/SettingsCategory.vue'
+import { categoryHasPanels, isPanelOnlyCategory } from '@/components/settings/settingsFieldMap'
 
 // Mutable refs that tests can flip to control UI state
 const needsRestart = ref(false)
@@ -28,6 +28,9 @@ function createMockNavigation() {
     handleRestartNeeded: vi.fn(),
     handleRestart: vi.fn(),
     setBeforeResetGuard: vi.fn(),
+    registerGuard: vi.fn(),
+    unregisterGuard: vi.fn(),
+    checkAllGuards: vi.fn(() => true),
   }
 }
 
@@ -49,15 +52,6 @@ vi.mock('@/composables/useSettingsConfig', () => ({
 vi.mock('@/composables/useEdgeSwipeBack', () => ({
   useFeatureBackHandler: vi.fn(),
   PRIORITY_PAGE: 100,
-}))
-
-vi.mock('@/composables/useDrillDownSideEffects', () => ({
-  useDrillDownSideEffects: () => ({
-    init: vi.fn(),
-    afterSave: vi.fn(),
-    frpAutoPortInfo: ref(null),
-    needsVoiceReset: ref(false),
-  }),
 }))
 
 vi.mock('@/composables/useTabDrawer', () => ({
@@ -85,7 +79,7 @@ const i18n = createI18n({
     zh: {
       nav: { settings: '设置' },
       settings: {
-        categories: { appearance: '外观' },
+        categories: { appearance: '外观', terminal: '终端' },
         restartServer: '重启服务器',
         restartPending: '重启生效',
         restarting: '重启中…',
@@ -118,7 +112,6 @@ describe('SettingsPage', () => {
 
   it('shows index view when nav stack is empty', () => {
     const wrapper = mountPage()
-    // When navStack is empty, header shows settings icon and no back button
     expect(wrapper.find('.settings-page__header-icon').exists()).toBe(true)
     expect(wrapper.find('.settings-page__back').exists()).toBe(false)
   })
@@ -128,7 +121,6 @@ describe('SettingsPage', () => {
     const wrapper = mountPage()
     await nextTick()
 
-    // When navStack has items, header shows back button, no settings icon
     expect(wrapper.find('.settings-page__back').exists()).toBe(true)
     expect(wrapper.find('.settings-page__header-icon').exists()).toBe(false)
   })
@@ -143,16 +135,13 @@ describe('SettingsPage', () => {
     const wrapper = mountPage()
     await nextTick()
 
-    // Verify we're in category view
     expect(wrapper.find('.settings-page__back').exists()).toBe(true)
 
-    // Simulate deactivation then re-activation (tab switch away and back)
     await wrapper.setProps({ active: false })
     await nextTick()
     await wrapper.setProps({ active: true })
     await nextTick()
 
-    // navStack should still have 'appearance' — state preserved across tab switch
     expect(navStack.value).toEqual(['appearance'])
     expect(wrapper.find('.settings-page__back').exists()).toBe(true)
     expect(wrapper.find('.settings-page__header-icon').exists()).toBe(false)
@@ -162,7 +151,6 @@ describe('SettingsPage', () => {
     needsRestart.value = false
     const wrapper = mountPage()
 
-    // Footer should not render when no restart needed
     expect(wrapper.find('.settings-page__footer').exists()).toBe(false)
     expect(wrapper.find('.settings-restart-btn').exists()).toBe(false)
 
@@ -170,7 +158,6 @@ describe('SettingsPage', () => {
     wrapper.vm.$forceUpdate()
     await nextTick()
 
-    // Footer and pending button should appear
     expect(wrapper.find('.settings-page__footer').exists()).toBe(true)
     expect(wrapper.find('.settings-restart-btn--pending').exists()).toBe(true)
   })
@@ -189,7 +176,6 @@ describe('SettingsPage', () => {
     expect(wrapper.find('.settings-page').exists()).toBe(true)
     expect(wrapper.find('.settings-page__header').exists()).toBe(true)
     expect(wrapper.find('.settings-page__body').exists()).toBe(true)
-    // Footer only renders when needsRestart is true
     expect(wrapper.find('.settings-page__footer').exists()).toBe(false)
   })
 
@@ -218,38 +204,43 @@ describe('SettingsPage', () => {
     expect(wrapper.find('.settings-page__version').text()).toBe('v1.2.3')
   })
 
-  // ─── Drill-down routing ──────────────────────
-  describe('drill-down routing', () => {
-    const drillDownIds = ['terminal', 'tts', 'summarization', 'rag', 'portForward', 'frp']
-    const flatIds = ['appearance', 'project', 'chat', 'agents', 'files', 'security', 'debug', 'about']
+  // ─── Category routing (all via SettingsCategory now) ──
+  describe('category routing', () => {
+    const panelCategoryIds = ['terminal', 'tts', 'summarization', 'rag', 'portForward', 'frp', 'dingtalk']
+    const flatCategoryIds = ['appearance', 'project', 'chat', 'agents', 'files', 'security', 'debug', 'about', 'notification']
 
-    it('isDrillDownCategory identifies drill-down categories', () => {
-      for (const id of drillDownIds) {
-        expect(isDrillDownCategory(id)).toBe(true)
+    it('categoryHasPanels identifies panel categories', () => {
+      for (const id of panelCategoryIds) {
+        expect(categoryHasPanels(id)).toBe(true)
       }
     })
 
-    it('isDrillDownCategory returns false for flat categories', () => {
-      for (const id of flatIds) {
-        expect(isDrillDownCategory(id)).toBe(false)
+    it('categoryHasPanels returns false for flat-only categories', () => {
+      for (const id of flatCategoryIds) {
+        expect(categoryHasPanels(id)).toBe(false)
       }
     })
 
-    it('renders SettingsDrillDown for drill-down categories', async () => {
-      navStack.value = ['tts']
-      const wrapper = mountPage()
-      await nextTick()
-
-      expect(wrapper.findComponent(SettingsDrillDown).exists()).toBe(true)
+    it('isPanelOnlyCategory identifies panel-only categories', () => {
+      expect(isPanelOnlyCategory('terminal')).toBe(true)
+      expect(isPanelOnlyCategory('tts')).toBe(true)
+      expect(isPanelOnlyCategory('frp')).toBe(true)
     })
 
-    it('renders SettingsCategory for flat categories', async () => {
-      navStack.value = ['appearance']
-      const wrapper = mountPage()
-      await nextTick()
+    it('isPanelOnlyCategory returns false for flat-only categories', () => {
+      expect(isPanelOnlyCategory('appearance')).toBe(false)
+      expect(isPanelOnlyCategory('notification')).toBe(false)
+    })
 
-      // SettingsDrillDown should NOT be rendered for a flat category
-      expect(wrapper.findComponent(SettingsDrillDown).exists()).toBe(false)
+    it('renders SettingsCategory for all categories (no separate drill-down branch)', async () => {
+      for (const id of ['appearance', 'terminal', 'tts']) {
+        navStack.value = [id]
+        const wrapper = mountPage()
+        await nextTick()
+
+        // All categories now route through SettingsCategory
+        expect(wrapper.findComponent(SettingsCategory).exists()).toBe(true)
+      }
     })
   })
 })

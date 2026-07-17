@@ -809,3 +809,75 @@ func TestManager_BroadcastEvent_MarshalError(t *testing.T) {
 		t.Errorf("expected 0 buffered events on marshal error, got %d", len(buffered))
 	}
 }
+
+func TestInitManager(t *testing.T) {
+	// Reset sync.Once so InitManager actually runs
+	origOnce := defaultManagerOnce
+	origManager := defaultManager
+	defer func() {
+		defaultManagerOnce = origOnce
+		defaultManager = origManager
+	}()
+
+	defaultManagerOnce = sync.Once{}
+	defaultManager = nil
+
+	InitManager()
+
+	if defaultManager == nil {
+		t.Fatal("expected defaultManager to be initialized after InitManager")
+	}
+	if defaultManager.subscriptions == nil {
+		t.Fatal("expected subscriptions map to be initialized")
+	}
+	if defaultManager.hub == nil {
+		t.Fatal("expected hub to be initialized")
+	}
+
+	// Calling InitManager again should not create a new manager
+	first := defaultManager
+	InitManager()
+	if defaultManager != first {
+		t.Error("InitManager should only initialize once (sync.Once)")
+	}
+}
+
+func TestCleanupStale_ConnectedNotCleaned_BranchCoverage(t *testing.T) {
+	// Cover the `sub.conn != nil → continue` branch in CleanupStale
+	mgr := newTestManager()
+
+	// Create a real WS server to get a connected subscription
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		var wmu sync.Mutex
+		mgr.Subscribe(conn, &wmu, "connected-cleanup", "")
+		time.Sleep(500 * time.Millisecond)
+		_ = conn.Close(websocket.StatusNormalClosure, "done")
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	wsURL := "ws" + server.URL[4:]
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	time.Sleep(150 * time.Millisecond)
+
+	// CleanupStale should not remove the connected subscription
+	mgr.CleanupStale()
+
+	mgr.mu.Lock()
+	_, exists := mgr.subscriptions["connected-cleanup"]
+	mgr.mu.Unlock()
+	if !exists {
+		t.Error("expected connected subscription to not be cleaned up")
+	}
+}
