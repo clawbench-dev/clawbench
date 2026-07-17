@@ -1269,7 +1269,7 @@ export default {
       ttsMossNanoHeader: 'MOSS-Nano Config',
       ttsSummarizeHeader: 'Summarization',
       ttsApiHeader: 'API Config',
-      apiHeader: 'API Config',
+      apiHeader: 'Summarization API Config',
       ttsCacheHeader: 'Cache',
       portForwardHeader: 'Port Forward',
       groupSave: 'Save',

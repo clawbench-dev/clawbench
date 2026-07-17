@@ -69,7 +69,7 @@ const categories = computed(() =>
 
 <style scoped>
 .settings-index {
-  padding: 8px 0;
+  padding: 0;
   background: var(--bg-secondary);
   min-height: 100%;
 }

@@ -5,7 +5,6 @@
       <span class="bs-header-title">{{ agentName }}</span>
     </template>
 
-    <!-- Tab bar -->
     <div class="session-setting-tabs">
       <button class="model-tab" :class="{ active: activeTab === 'model' }" @click="activeTab = 'model'">
         <Cpu :size="13" />{{ t('chat.modelSwitcher.title') }}

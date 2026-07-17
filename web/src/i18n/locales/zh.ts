@@ -1270,7 +1270,7 @@ export default {
       ttsMossNanoHeader: 'MOSS-Nano 配置',
       ttsSummarizeHeader: '摘要',
       ttsApiHeader: '语音 API 配置',
-      apiHeader: 'API 配置',
+      apiHeader: '文本摘要 API 配置',
       ttsCacheHeader: '缓存',
       portForwardHeader: '端口转发',
       groupSave: '保存',
