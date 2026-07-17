@@ -67,6 +67,33 @@ let currentEventSource: EventSource | null = null
 let currentAudioEl: HTMLAudioElement | null = null
 let currentWs: WebSocket | null = null
 let mseAudio: MseAudioPlayer | null = null
+let playbackEndTimer: ReturnType<typeof setInterval> | null = null
+let playbackTimeupdateHandler: (() => void) | null = null
+
+function clearPlaybackEndTimer() {
+  if (playbackEndTimer) {
+    clearInterval(playbackEndTimer)
+    playbackEndTimer = null
+  }
+  if (currentAudioEl && playbackTimeupdateHandler) {
+    currentAudioEl.removeEventListener('timeupdate', playbackTimeupdateHandler)
+  }
+  playbackTimeupdateHandler = null
+}
+
+function startPlaybackEndTimer(audio: HTMLAudioElement, onEnd: () => void) {
+  clearPlaybackEndTimer()
+  const handler = () => {
+    if (state.value !== 'playing' || !audio.duration || !isFinite(audio.duration)) return
+    if (audio.currentTime >= audio.duration - 0.1 && audio.paused) {
+      appLog.i(TAG, 'Fallback: detected playback end (ended event missed)')
+      onEnd()
+    }
+  }
+  playbackTimeupdateHandler = handler
+  audio.addEventListener('timeupdate', handler)
+  playbackEndTimer = setInterval(handler, 500)
+}
 
 // Initialize from settings config (which handles legacy key migration)
 enabled.value = !!localConfig.autoSpeech
@@ -138,6 +165,7 @@ export function useAutoSpeech() {
       currentAudioEl.onerror = null
       currentAudioEl = null
     }
+    clearPlaybackEndTimer()
     activeId.value = ''
     playingSummary.value = ''
     state.value = 'idle'
@@ -160,33 +188,28 @@ export function useAutoSpeech() {
     currentAudioEl = audio
     state.value = 'playing'
 
-    audio.onended = () => {
+    const resetState = () => {
+      clearPlaybackEndTimer()
       if (currentAudioEl === audio) {
         currentAudioEl = null
         activeId.value = ''
         playingSummary.value = ''
         state.value = 'idle'
-        // Release screen lock after TTS playback ends
         if (screenLockSuppressed) {
           wakeLock.release()
           screenLockSuppressed = false
         }
       }
     }
+
+    audio.onended = resetState
     audio.onerror = () => {
-      if (currentAudioEl === audio) {
-        currentAudioEl = null
-        activeId.value = ''
-        playingSummary.value = ''
-        state.value = 'idle'
-        reportError(gt('autoSpeech.playbackFailed'))
-        // Release screen lock on playback error
-        if (screenLockSuppressed) {
-          wakeLock.release()
-          screenLockSuppressed = false
-        }
-      }
+      resetState()
+      reportError(gt('autoSpeech.playbackFailed'))
     }
+
+    // Fallback: detect playback end via polling if 'ended' event is missed
+    startPlaybackEndTimer(audio, resetState)
 
     audio.play().catch((err: unknown) => {
       const errName = (err as Error)?.name
@@ -196,10 +219,10 @@ export function useAutoSpeech() {
         message = gt('autoSpeech.autoplayBlocked')
       }
       reportError(message)
+      clearPlaybackEndTimer()
       activeId.value = ''
       playingSummary.value = ''
       state.value = 'idle'
-      // Release screen lock on play failure
       if (screenLockSuppressed) {
         wakeLock.release()
         screenLockSuppressed = false
@@ -223,7 +246,9 @@ export function useAutoSpeech() {
     state.value = 'synthesizing'
 
     // Set up audio element lifecycle handlers
-    audio.onended = () => {
+    const resetState = () => {
+      clearPlaybackEndTimer()
+      audio.removeEventListener('timeupdate', timeupdateHandler)
       if (currentAudioEl === audio) {
         currentAudioEl = null
         mseAudio = null
@@ -236,20 +261,24 @@ export function useAutoSpeech() {
         }
       }
     }
+
+    audio.onended = resetState
     audio.onerror = () => {
-      if (currentAudioEl === audio) {
-        currentAudioEl = null
-        mseAudio = null
-        activeId.value = ''
-        playingSummary.value = ''
-        state.value = 'idle'
-        reportError(gt('autoSpeech.playbackFailed'))
-        if (screenLockSuppressed) {
-          wakeLock.release()
-          screenLockSuppressed = false
-        }
+      resetState()
+      reportError(gt('autoSpeech.playbackFailed'))
+    }
+
+    // Fallback: some browsers (notably Android WebView) may not fire 'ended'
+    // after MSE endOfStream(). Use timeupdate to detect playback completion.
+    const timeupdateHandler = () => {
+      if (state.value !== 'playing' || !audio.duration || !isFinite(audio.duration)) return
+      if (audio.currentTime >= audio.duration - 0.1 && audio.paused) {
+        appLog.i(TAG, 'MSE fallback: detected playback end (ended event missed)')
+        resetState()
       }
     }
+    audio.addEventListener('timeupdate', timeupdateHandler)
+    startPlaybackEndTimer(audio, resetState)
 
     // Build WebSocket URL
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
