@@ -708,7 +708,7 @@ async function sendMessageNow(text, filePaths, files) {
         const resp = await fetch(safeUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: text, queueId: pendingId, filePaths, files: files || [], agentId: effectiveAgentId, modelId: identity.currentModelId.value || undefined, thinkingEffort: identity.currentThinkingEffort.value || undefined, modeId: identity.currentModeId.value || undefined, transport: identity.currentTransport.value || undefined }),
+            body: JSON.stringify({ message: text, queueId: pendingId, filePaths, files: files || [], agentId: effectiveAgentId, modelId: identity.currentModelId.value || undefined, thinkingEffort: identity.currentThinkingEffort.value || undefined, modeId: identity.currentModeId.value || undefined, transport: identity.currentTransport.value || undefined, clientId: localStorage.getItem('clawbench_client_id') || undefined }),
         })
         const data = await resp.json()
         if (!resp.ok) {

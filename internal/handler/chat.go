@@ -281,6 +281,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		ThinkingEffort string            `json:"thinkingEffort"`
 		ModeID         string            `json:"modeId"`
 		Transport      string            `json:"transport"`
+		ClientID       string            `json:"clientId"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxChatBodySize)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -440,6 +441,20 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		// The EnqueueMessage signals the drain channel so the running goroutine
 		// wakes up immediately if it's waiting for queued messages.
 
+		// Emit user_message to other session subscribers for cross-device sync.
+		// MessageID=0 because the message is not yet persisted (it's in the queue).
+		// SenderClientID allows the sending device to skip its own echo.
+		ws.EmitToSession(sessionID, ai.StreamEvent{
+			Type: "user_message",
+			UserMessage: &ai.UserMessageData{
+				MessageID:      0,
+				Content:        req.Message,
+				Files:          allFiles,
+				SenderClientID: req.ClientID,
+				QueueID:        req.QueueID,
+			},
+		})
+
 		writeJSON(w, http.StatusOK, map[string]any{
 			"running": true,
 			"queued":  true,
@@ -448,10 +463,22 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := service.AddChatMessage(projectPath, backendName, sessionID, "user", req.Message, allFiles, false, T(r, "FileMessage")); err != nil {
+	if msgID, err := service.AddChatMessage(projectPath, backendName, sessionID, "user", req.Message, allFiles, false, T(r, "FileMessage")); err != nil {
 		service.SetSessionRunning(sessionID, false)
 		model.WriteError(w, model.Internal(fmt.Errorf("failed to save message")))
 		return
+	} else {
+		// Emit user_message to other session subscribers for cross-device sync.
+		// SenderClientID allows the sending device to skip its own echo.
+		ws.EmitToSession(sessionID, ai.StreamEvent{
+			Type: "user_message",
+			UserMessage: &ai.UserMessageData{
+				MessageID:      msgID,
+				Content:        req.Message,
+				Files:          allFiles,
+				SenderClientID: req.ClientID,
+			},
+		})
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"started": true, "sessionId": sessionID})

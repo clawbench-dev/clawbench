@@ -154,6 +154,8 @@ func StreamEventToPayload(event ai.StreamEvent) any {
 		return errorPayload(event)
 	case "warning":
 		return warningPayload(event)
+	case "user_message":
+		return userMessagePayload(event)
 	case "queue_drain":
 		return queueDrainPayload(event)
 	case "queue_cancel":
@@ -249,6 +251,26 @@ func attachToolMeta(payload map[string]any, meta *ai.ToolCallMeta) {
 	if meta.FilePath != "" {
 		payload["file_path"] = meta.FilePath
 	}
+}
+
+func userMessagePayload(event ai.StreamEvent) any {
+	if event.UserMessage == nil {
+		return nil
+	}
+	payload := map[string]any{
+		"messageId": event.UserMessage.MessageID,
+		"content":   event.UserMessage.Content,
+	}
+	if len(event.UserMessage.Files) > 0 {
+		payload["files"] = event.UserMessage.Files
+	}
+	if event.UserMessage.SenderClientID != "" {
+		payload["senderClientId"] = event.UserMessage.SenderClientID
+	}
+	if event.UserMessage.QueueID != "" {
+		payload["queueId"] = event.UserMessage.QueueID
+	}
+	return payload
 }
 
 func errorPayload(event ai.StreamEvent) any {

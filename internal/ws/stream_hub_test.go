@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"clawbench/internal/ai"
+	"clawbench/internal/model"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -209,6 +210,49 @@ func TestStreamEventToPayload_Metadata(t *testing.T) {
 
 func TestStreamEventToPayload_Unknown(t *testing.T) {
 	payload := StreamEventToPayload(ai.StreamEvent{Type: "unknown_type"})
+	assert.Nil(t, payload)
+}
+
+func TestStreamEventToPayload_UserMessage(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{
+		Type: "user_message",
+		UserMessage: &ai.UserMessageData{
+			MessageID: 42,
+			Content:   "hello from phone",
+			Files:     []model.FileEntry{{Path: "/tmp/a.go", IsDir: false}},
+		},
+	})
+	m, ok := payload.(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, int64(42), m["messageId"])
+	assert.Equal(t, "hello from phone", m["content"])
+	files, _ := m["files"].([]model.FileEntry)
+	assert.Len(t, files, 1)
+	assert.Equal(t, "/tmp/a.go", files[0].Path)
+}
+
+func TestStreamEventToPayload_UserMessage_NoFiles(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{
+		Type: "user_message",
+		UserMessage: &ai.UserMessageData{
+			MessageID:      10,
+			Content:        "simple text",
+			SenderClientID: "client-abc",
+			QueueID:        "pending-123",
+		},
+	})
+	m, ok := payload.(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, int64(10), m["messageId"])
+	assert.Equal(t, "simple text", m["content"])
+	assert.Equal(t, "client-abc", m["senderClientId"])
+	assert.Equal(t, "pending-123", m["queueId"])
+	_, hasFiles := m["files"]
+	assert.False(t, hasFiles, "files should be omitted when empty")
+}
+
+func TestStreamEventToPayload_UserMessage_Nil(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{Type: "user_message", UserMessage: nil})
 	assert.Nil(t, payload)
 }
 

@@ -278,17 +278,23 @@ export function drainQueueMessage(
   }
 
   // 2. Find the pending user message — prefer queueId matching (precise),
-  //    fall back to content matching for callers without queueId (e.g. DingTalk).
+  //    fall back to _remoteQueueId matching (cross-device), then content matching.
   let pendingIdx = -1
   if (queueId) {
     pendingIdx = messages.findIndex((m) => m.role === 'user' && m.pending && m.id === queueId)
   }
+  if (pendingIdx === -1 && queueId) {
+    // Match _remote messages by their stored _remoteQueueId (precise cross-device matching)
+    pendingIdx = messages.findIndex((m) => m.role === 'user' && m._remote && (m as any)._remoteQueueId === queueId)
+  }
   if (pendingIdx === -1 && userContent) {
-    pendingIdx = messages.findIndex((m) => m.role === 'user' && m.pending && m.content === userContent)
+    pendingIdx = messages.findIndex((m) => m.role === 'user' && (m.pending || m._remote) && m.content === userContent)
   }
   if (pendingIdx !== -1) {
-    // Found the pending message — clear pending flag, update id to stable DB id
+    // Found the pending or remote message — clear flag, update id to stable DB id
     delete messages[pendingIdx].pending
+    delete messages[pendingIdx]._remote
+    delete (messages[pendingIdx] as any)._remoteQueueId
     if (dbMessageId) {
       messages[pendingIdx].id = dbMessageId
     } else if (drainId) {

@@ -798,6 +798,32 @@ describe('drainQueueMessage', () => {
     expect(userMsg.pending).toBeUndefined()
   })
 
+  // ── _remote message matching (cross-device sync) ──
+
+  it('finds _remote message by content and clears flag instead of pushing duplicate', () => {
+    const messages: any[] = [
+      { role: 'user', id: 'remote-1700000000000-abc', content: 'from phone', blocks: [{ type: 'text', text: 'from phone' }], _remote: true },
+      { role: 'assistant', content: '', blocks: [], streaming: true },
+    ]
+    drainQueueMessage(messages, '', 'from phone', [], 'codebuddy', callbacks, undefined, 42)
+    const userMsgs = messages.filter(m => m.role === 'user')
+    expect(userMsgs).toHaveLength(1)
+    expect(userMsgs[0]._remote).toBeUndefined()
+    expect(userMsgs[0].id).toBe(42)
+  })
+
+  it('prefers pending match over _remote match', () => {
+    const messages: any[] = [
+      { role: 'user', id: 'pending-1', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], pending: true },
+      { role: 'user', id: 'remote-1', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], _remote: true },
+      { role: 'assistant', content: '', blocks: [], streaming: true },
+    ]
+    drainQueueMessage(messages, '', 'hello', [], 'codebuddy', callbacks, undefined, 99)
+    const userMsgs = messages.filter(m => m.role === 'user')
+    // Both get matched — pending flag cleared first (findIndex), _remote also matched on same content
+    expect(userMsgs[0].pending).toBeUndefined()
+  })
+
   // ── streaming placeholder insertion position ──
 
   it('inserts streaming assistant AFTER the drained user message, before pending messages', () => {

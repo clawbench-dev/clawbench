@@ -1036,6 +1036,193 @@ describe('useChatStream', () => {
     })
   })
 
+  describe('WS event handling — user_message', () => {
+    it('should insert user message from another device', () => {
+      const options = createOptions()
+      options.messages.value.push({
+        role: 'assistant', content: '', blocks: [], streaming: true,
+        createdAt: new Date().toISOString(),
+      })
+
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+      options.onRenderNeeded.mockClear()
+
+      simulateWsEvent('user_message', { messageId: 42, content: 'hello from phone' })
+
+      // User message inserted before streaming assistant
+      expect(options.messages.value).toHaveLength(2)
+      expect(options.messages.value[0].role).toBe('user')
+      expect(options.messages.value[0].content).toBe('hello from phone')
+      expect(options.messages.value[0].id).toBe(42)
+      expect(options.messages.value[0]._remote).toBe(true)
+      expect(options.messages.value[1].role).toBe('assistant')
+    })
+
+    it('should deduplicate by DB message ID', () => {
+      const options = createOptions()
+      options.messages.value.push({
+        role: 'user', id: 42, content: 'existing msg',
+        blocks: [{ type: 'text', text: 'existing msg' }],
+        createdAt: new Date().toISOString(),
+      })
+
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('user_message', { messageId: 42, content: 'existing msg' })
+
+      // No duplicate — same DB ID
+      const userMsgs = options.messages.value.filter((m: any) => m.role === 'user')
+      expect(userMsgs).toHaveLength(1)
+    })
+
+    it('should deduplicate by content for non-pending messages', () => {
+      const options = createOptions()
+      options.messages.value.push({
+        role: 'user', id: 10, content: 'hello',
+        blocks: [{ type: 'text', text: 'hello' }],
+        createdAt: new Date().toISOString(),
+      })
+
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('user_message', { messageId: 0, content: 'hello' })
+
+      // No duplicate — same content already present (not pending)
+      const userMsgs = options.messages.value.filter((m: any) => m.role === 'user')
+      expect(userMsgs).toHaveLength(1)
+    })
+
+    it('should allow same content if existing message is pending (optimistic)', () => {
+      const options = createOptions()
+      options.messages.value.push({
+        role: 'user', id: 'pending-1', content: 'hello', pending: true,
+        blocks: [{ type: 'text', text: 'hello' }],
+        createdAt: new Date().toISOString(),
+      })
+
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('user_message', { messageId: 0, content: 'hello' })
+
+      // Pending message is from this device, remote message still added
+      const userMsgs = options.messages.value.filter((m: any) => m.role === 'user')
+      expect(userMsgs).toHaveLength(2)
+    })
+
+    it('should push to end when no streaming assistant message exists', () => {
+      const options = createOptions()
+
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      // connectStream creates a streaming placeholder, so there's already 1 assistant message
+      // Clear messages to simulate a scenario with no streaming assistant
+      options.messages.value.length = 0
+
+      simulateWsEvent('user_message', { messageId: 0, content: 'from phone' })
+
+      expect(options.messages.value).toHaveLength(1)
+      expect(options.messages.value[0].role).toBe('user')
+      expect(options.messages.value[0].content).toBe('from phone')
+      expect(options.messages.value[0]._remote).toBe(true)
+      // Temporary ID when messageId is 0
+      expect(typeof options.messages.value[0].id).toBe('string')
+      expect(options.messages.value[0].id.startsWith('remote-')).toBe(true)
+    })
+
+    it('should include file attachments', () => {
+      const options = createOptions()
+
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('user_message', {
+        messageId: 55,
+        content: 'check this file',
+        files: [{ path: '/tmp/a.go', isDir: false }],
+      })
+
+      expect(options.messages.value[0].files).toEqual([{ path: '/tmp/a.go', isDir: false }])
+    })
+
+    it('should ignore event for different session', () => {
+      const options = createOptions()
+
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('user_message', { messageId: 1, content: 'hello' }, 'different-session')
+
+      // Only the streaming placeholder from connectStream, no user message added
+      const userMsgs = options.messages.value.filter((m: any) => m.role === 'user')
+      expect(userMsgs).toHaveLength(0)
+    })
+
+    it('should skip self-echo when senderClientId matches own clientId', () => {
+      // Set a known clientId in localStorage
+      localStorage.setItem('clawbench_client_id', 'my-device-123')
+
+      const options = createOptions()
+      options.messages.value.push({
+        role: 'assistant', content: '', blocks: [], streaming: true,
+        createdAt: new Date().toISOString(),
+      })
+
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      // Simulate a user_message from this same device
+      simulateWsEvent('user_message', { messageId: 42, content: 'my own msg', senderClientId: 'my-device-123' })
+
+      // No user message inserted — self-echo skipped
+      const userMsgs = options.messages.value.filter((m: any) => m.role === 'user')
+      expect(userMsgs).toHaveLength(0)
+
+      localStorage.removeItem('clawbench_client_id')
+    })
+
+    it('should not skip when senderClientId is different from own clientId', () => {
+      localStorage.setItem('clawbench_client_id', 'my-device-123')
+
+      const options = createOptions()
+      options.messages.value.push({
+        role: 'assistant', content: '', blocks: [], streaming: true,
+        createdAt: new Date().toISOString(),
+      })
+
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      // Simulate a user_message from a different device
+      simulateWsEvent('user_message', { messageId: 42, content: 'other device msg', senderClientId: 'other-device-456' })
+
+      const userMsgs = options.messages.value.filter((m: any) => m.role === 'user')
+      expect(userMsgs).toHaveLength(1)
+      expect(userMsgs[0].content).toBe('other device msg')
+
+      localStorage.removeItem('clawbench_client_id')
+    })
+
+    it('should store queueId for precise drain matching', () => {
+      const options = createOptions()
+      options.messages.value.push({
+        role: 'assistant', content: '', blocks: [], streaming: true,
+        createdAt: new Date().toISOString(),
+      })
+
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('user_message', { messageId: 0, content: 'queued msg', queueId: 'pending-abc123' })
+
+      expect(options.messages.value[0]._remoteQueueId).toBe('pending-abc123')
+    })
+  })
+
   // ── ACP state events ──
 
   describe('WS event handling — ACP state events', () => {

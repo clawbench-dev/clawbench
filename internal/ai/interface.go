@@ -159,7 +159,7 @@ type UsageState struct {
 
 // StreamEvent represents a single event in the streaming output
 type StreamEvent struct {
-	Type           string                 // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "raw_output", "resume_split", "queue_drain", "queue_cancel", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update"
+	Type           string                 // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "raw_output", "resume_split", "queue_drain", "queue_cancel", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update", "user_message"
 	Content        string                 // Incremental text (Type=content, Type=thinking) or captured session ID (Type=session_capture)
 	Reason         string                 // Structured reason code for i18n (e.g. "disconnect", "timeout", "parse_error")
 	Meta           *Metadata              // Metadata (Type=metadata)
@@ -175,6 +175,7 @@ type StreamEvent struct {
 	ModelList      *ModelListState        // Model list state (Type=model_list_update)
 	Usage          *UsageState            // Usage state (Type=usage_update)
 	ToolMeta       *ToolCallMeta          // Extracted tool metadata for WS forwarding (Type=tool_use, Type=tool_result)
+	UserMessage    *UserMessageData       // User message for cross-device sync (Type=user_message)
 }
 
 // ToolCall represents a tool invocation by the AI.
@@ -217,6 +218,17 @@ type QueueEventData struct {
 	FilePaths []string              `json:"filePaths,omitempty"`
 	Files     []model.FileEntry     `json:"files,omitempty"`
 	Queue     []model.QueuedMessage `json:"queue,omitempty"`
+}
+
+// UserMessageData carries a user message for cross-device synchronization.
+// Emitted via StreamHub.EmitToSession after AddChatMessage succeeds,
+// so other devices subscribed to the same session see the message in real-time.
+type UserMessageData struct {
+	MessageID      int64             `json:"messageId"`                     // DB row ID (0 if not yet persisted, e.g. enqueued messages)
+	Content        string            `json:"content"`                       // Raw user message text
+	Files          []model.FileEntry `json:"files,omitempty"`               // File attachments
+	SenderClientID string            `json:"senderClientId,omitempty"`      // WS client ID of the sender (to skip self-echo)
+	QueueID        string            `json:"queueId,omitempty"`             // Frontend queue ID (for enqueued messages, enables precise drain matching)
 }
 
 // AIBackend defines the interface for AI backend implementations

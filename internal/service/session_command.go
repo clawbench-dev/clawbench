@@ -12,6 +12,7 @@ import (
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
+	"clawbench/internal/ws"
 )
 
 // DingTalkSessionInfo carries session metadata for the DingTalk session command feature.
@@ -136,16 +137,36 @@ func SendMessageToSessionFromDingTalk(sessionID, message string) error {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
 
-	if _, err := AddChatMessage(info.ProjectPath, info.Backend, sessionID, roleUser, message, nil, false, info.Title); err != nil {
-		return fmt.Errorf("persist message: %w", err)
-	}
-
 	if !TrySetSessionRunning(sessionID) {
+		// Session already running — enqueue the message (not yet persisted to DB)
 		EnqueueMessage(sessionID, model.QueuedMessage{
 			Text:      message,
 			CreatedAt: time.Now().Format(time.RFC3339),
 		})
+		// Emit user_message for cross-device sync (messageId=0 because not yet persisted)
+		ws.EmitToSession(sessionID, ai.StreamEvent{
+			Type: "user_message",
+			UserMessage: &ai.UserMessageData{
+				MessageID: 0,
+				Content:   message,
+			},
+		})
 		return nil
+	}
+
+	// Session not running — persist user message and launch execution
+	if msgID, err := AddChatMessage(info.ProjectPath, info.Backend, sessionID, roleUser, message, nil, false, info.Title); err != nil {
+		SetSessionRunning(sessionID, false) // rollback running state
+		return fmt.Errorf("persist message: %w", err)
+	} else {
+		// Emit user_message for cross-device sync
+		ws.EmitToSession(sessionID, ai.StreamEvent{
+			Type: "user_message",
+			UserMessage: &ai.UserMessageData{
+				MessageID: msgID,
+				Content:   message,
+			},
+		})
 	}
 
 	LaunchSessionExecution(LaunchConfig{

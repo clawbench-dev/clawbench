@@ -552,6 +552,59 @@ export function useChatStream(options: UseChatStreamOptions) {
         break
       }
 
+      case 'user_message': {
+        if (sessionChanged()) return
+        const userData = payload as { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string }
+
+        // Skip self-echo: if the sender is this device, we already have the optimistic message
+        const myClientId = localStorage.getItem('clawbench_client_id')
+        if (userData.senderClientId && userData.senderClientId === myClientId) break
+
+        resetStreamTimeout()
+        const userContent = userData.content || ''
+        const userFiles: FileEntry[] = [
+          ...(userData.files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
+        ]
+        const msgId = userData.messageId || 0
+        const remoteQueueId = userData.queueId || ''
+
+        // Deduplicate: skip if a message with same DB ID or same content already exists
+        // (e.g. loadHistory already loaded it from DB)
+        const alreadyExists = messages.value.some((m) => {
+          if (m.role !== 'user') return false
+          if (msgId > 0 && m.id === msgId) return true
+          if (m.content === userContent && !m.pending && !m._remote) return true
+          return false
+        })
+        if (alreadyExists) break
+
+        const newMsg: ChatMessage = {
+          role: 'user',
+          id: msgId > 0 ? msgId : `remote-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          content: userContent,
+          blocks: userContent ? [{ type: 'text', text: userContent }] : [],
+          files: userFiles,
+          createdAt: new Date().toISOString(),
+          _remote: true,
+          backend: currentBackend.value,
+          ...(remoteQueueId ? { _remoteQueueId: remoteQueueId } : {}),
+        }
+
+        // Insert before streaming assistant message (or at end)
+        const streamingIdx = messages.value.findIndex(m => m.role === 'assistant' && m.streaming)
+        if (streamingIdx !== -1) {
+          messages.value.splice(streamingIdx, 0, newMsg)
+        } else {
+          messages.value.push(newMsg)
+        }
+
+        debouncedRender()
+        if (isOpen.value) {
+          onScrollBottom()
+        }
+        break
+      }
+
       case 'queue_drain': {
         resetStreamTimeout()
         const drainData = payload as unknown as QueueEventData
