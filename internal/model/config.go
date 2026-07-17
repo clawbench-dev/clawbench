@@ -75,12 +75,12 @@ type Config struct {
 		MossNano          MossNanoConfig `yaml:"moss_nano"`           // MOSS-TTS-Nano-specific configuration (only used when engine: "moss-nano")
 	} `yaml:"tts"`
 	Summarize   SummarizeConfig   `yaml:"summarize"`    // Shared summarization configuration (TTS + Tasks)
-	Proxy       ProxyConfig       `yaml:"proxy"`        // Legacy: kept for backward-compatible YAML reading
 	PortForward PortForwardConfig `yaml:"port_forward"` // SSH tunnel server + port forwarding configuration
 	FRP         FRPConfig         `yaml:"frp"`          // FRP (Fast Reverse Proxy) client configuration
 	RAG         RAGConfig         `yaml:"rag"`          // RAG history memory configuration
 	Terminal    TerminalConfig    `yaml:"terminal"`     // Interactive web terminal configuration
 	DingTalk    DingTalkConfig    `yaml:"dingtalk"`     // DingTalk enterprise bot push notifications
+	PushMode    string            `yaml:"push_mode"`    // Push notification mode: "native" (default), "dingtalk", "disabled"
 }
 
 // TerminalConfig holds configuration for the interactive web terminal.

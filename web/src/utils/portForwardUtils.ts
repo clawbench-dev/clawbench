@@ -9,7 +9,6 @@ export interface ForwardedPort {
   host: string
   name: string
   protocol: string
-  autoDetect: boolean
   active: boolean
 }
 

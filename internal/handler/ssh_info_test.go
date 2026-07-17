@@ -134,14 +134,7 @@ func TestServeSSHInfo_NonLocalhostTarget_UsesReverseProxyRoute(t *testing.T) {
 
 	// Check if reverse proxy started successfully — it may fail on some platforms
 	// (e.g., Windows CI where the port might be in use by another service)
-	ports := service.ProxyService.ListPorts()
-	hasReverseProxy := false
-	for _, p := range ports {
-		if p.LocalPort == localPort && p.HasReverseProxy {
-			hasReverseProxy = true
-		}
-	}
-	if !hasReverseProxy {
+	if !service.ProxyService.HasReverseProxy(localPort) {
 		t.Skip("reverse proxy did not start (port likely in use), skipping reverse proxy assertions")
 	}
 

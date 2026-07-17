@@ -119,7 +119,7 @@ describe('usePortForward', () => {
         it('fetches ports and stores in ports ref', async () => {
             const portsResponse = {
                 ports: [
-                    { port: 3000, name: 'App', protocol: 'http', autoDetect: false, active: true },
+                    { port: 3000, name: 'App', protocol: 'http', active: true },
                 ],
             }
             mockApiGet.mockResolvedValue(portsResponse)
@@ -160,7 +160,7 @@ describe('usePortForward', () => {
 
         it('clears connectingPorts for active ports in web mode', async () => {
             mockApiGet.mockResolvedValue({
-                ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', autoDetect: false, active: true }],
+                ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: true }],
             })
 
             const { usePortForward } = await import('@/composables/usePortForward')
@@ -215,7 +215,7 @@ describe('usePortForward', () => {
 
         it('sets ok when SSH is connected with active ports', async () => {
             mockApiGet.mockImplementation((url: string) => {
-                if (url === '/api/proxy/ports') return { ports: [{ port: 3000, name: 'App', protocol: 'http', autoDetect: false, active: true }] }
+                if (url === '/api/proxy/ports') return { ports: [{ port: 3000, name: 'App', protocol: 'http', active: true }] }
                 if (url === '/api/ssh/info') return {
                     enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c',
                     connectionStats: { connected: true, clientCount: 1, activeChannels: 1 },
@@ -234,7 +234,7 @@ describe('usePortForward', () => {
 
         it('sets ok when SSH reports disconnected but ports are active', async () => {
             mockApiGet.mockImplementation((url: string) => {
-                if (url === '/api/proxy/ports') return { ports: [{ port: 3000, name: 'App', protocol: 'http', autoDetect: false, active: true }] }
+                if (url === '/api/proxy/ports') return { ports: [{ port: 3000, name: 'App', protocol: 'http', active: true }] }
                 if (url === '/api/ssh/info') return {
                     enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c',
                     connectionStats: { connected: false, clientCount: 0, activeChannels: 0 },
@@ -661,7 +661,7 @@ describe('usePortForward', () => {
     describe('ensurePortRegistered', () => {
         it('returns immediately if port already exists', async () => {
             mockApiGet.mockResolvedValue({
-                ports: [{ port: 3000, name: 'App', protocol: 'http', autoDetect: false, active: true, localPort: 3000, host: '' }],
+                ports: [{ port: 3000, name: 'App', protocol: 'http', active: true, localPort: 3000, host: '' }],
             })
 
             const { usePortForward } = await import('@/composables/usePortForward')
@@ -699,8 +699,8 @@ describe('usePortForward', () => {
             mockIsAppMode.value = true
             mockApiGet.mockResolvedValue({
                 ports: [
-                    { port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', autoDetect: false, active: true },
-                    { port: 8080, localPort: 8080, host: '192.168.1.1', name: 'API', protocol: 'http', autoDetect: false, active: true },
+                    { port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: true },
+                    { port: 8080, localPort: 8080, host: '192.168.1.1', name: 'API', protocol: 'http', active: true },
                 ],
             })
             const mockAdd = vi.fn()
@@ -735,7 +735,7 @@ describe('usePortForward', () => {
     describe('connectingPorts', () => {
         it('adds port to connectingPorts after registerPort', async () => {
             mockApiPost.mockResolvedValue({ localPort: 3000 })
-            mockApiGet.mockResolvedValue({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', autoDetect: false, active: false }] })
+            mockApiGet.mockResolvedValue({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: false }] })
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { registerPort, connectingPorts } = usePortForward()
@@ -750,7 +750,7 @@ describe('usePortForward', () => {
             mockApiPost.mockResolvedValue({ localPort: 3000 })
             // Backend initially reports inactive — port stays in connectingPorts
             // until the native callback confirms success or backend becomes active.
-            mockApiGet.mockResolvedValue({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', autoDetect: false, active: false }] })
+            mockApiGet.mockResolvedValue({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: false }] })
             const mockAddForwardedPort = vi.fn()
             ;(window as any).AndroidNative = { addForwardedPort: mockAddForwardedPort }
 
@@ -776,7 +776,7 @@ describe('usePortForward', () => {
         it('removes port from connectingPorts on native callback failure', async () => {
             mockIsAppMode.value = true
             mockApiPost.mockResolvedValue({ localPort: 3000 })
-            mockApiGet.mockResolvedValue({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', autoDetect: false, active: false }] })
+            mockApiGet.mockResolvedValue({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: false }] })
             const mockAddForwardedPort = vi.fn()
             ;(window as any).AndroidNative = { addForwardedPort: mockAddForwardedPort }
 
@@ -807,9 +807,9 @@ describe('usePortForward', () => {
             // registerPort calls loadPorts(true) + loadSSHInfo(), then our explicit loadPorts(true)
             // loadSSHInfo also calls apiGet, so we need enough mock responses
             mockApiGet
-                .mockResolvedValueOnce({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', autoDetect: false, active: false }] })  // loadPorts in registerPort
+                .mockResolvedValueOnce({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: false }] })  // loadPorts in registerPort
                 .mockResolvedValueOnce({ enabled: false, host: '', port: 0, username: '', fingerprint: '', command: '', connectionStats: null })  // loadSSHInfo in registerPort
-                .mockResolvedValueOnce({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', autoDetect: false, active: true }] })  // explicit loadPorts
+                .mockResolvedValueOnce({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: true }] })  // explicit loadPorts
 
             const mockAddForwardedPort = vi.fn()
             ;(window as any).AndroidNative = { addForwardedPort: mockAddForwardedPort }
@@ -834,9 +834,9 @@ describe('usePortForward', () => {
             // registerPort calls loadPorts(true) + loadSSHInfo(), then our explicit loadPorts(true)
             // loadSSHInfo also calls apiGet, so we need enough mock responses
             mockApiGet
-                .mockResolvedValueOnce({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', autoDetect: false, active: false }] })  // loadPorts in registerPort
+                .mockResolvedValueOnce({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: false }] })  // loadPorts in registerPort
                 .mockResolvedValueOnce({ enabled: false, host: '', port: 0, username: '', fingerprint: '', command: '', connectionStats: null })  // loadSSHInfo in registerPort
-                .mockResolvedValueOnce({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', autoDetect: false, active: true }] })  // explicit loadPorts
+                .mockResolvedValueOnce({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: true }] })  // explicit loadPorts
 
             const { usePortForward } = await import('@/composables/usePortForward')
             const { registerPort, connectingPorts, loadPorts } = usePortForward()

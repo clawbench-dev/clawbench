@@ -135,10 +135,6 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		cfg.RecentProjects.MaxCount = 10
 	}
 
-	// --- Proxy (legacy) ---
-	// proxy.enabled and proxy.allowed_ports have been removed.
-	// ProxyConfig is kept for backward-compatible YAML reading only.
-
 	// --- Port Forward (SSH Tunnel) ---
 	// Same bool zero-value trap as Proxy.
 	if !presence["port_forward.enabled"] {
@@ -257,6 +253,17 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 
 	// --- DingTalk ---
 	// Bool zero-value: enabled defaults to false (intentional — requires config), no presence check needed.
+
+	// --- PushMode ---
+	if cfg.PushMode == "" {
+		if cfg.DingTalk.Enabled {
+			cfg.PushMode = "dingtalk"
+		} else {
+			cfg.PushMode = "native"
+		}
+	}
+	// Keep DingTalk.Enabled in sync with PushMode
+	cfg.DingTalk.Enabled = cfg.PushMode == "dingtalk"
 
 	return autoPassword
 }

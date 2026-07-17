@@ -107,8 +107,6 @@ func TestReverseProxy_SupportsHTTPS(t *testing.T) {
 	backendAddr := backend.Listener.Addr().String()
 	rp, err := NewReverseProxy("127.0.0.1", 0, backendAddr, "https")
 	assert.NoError(t, err)
-	// Configure the proxy's transport to trust the test server's certificate
-	rp.SetInsecureSkipVerify(true)
 	defer rp.Close()
 
 	go rp.Serve()

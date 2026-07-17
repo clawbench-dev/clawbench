@@ -1041,16 +1041,16 @@ func TestProxyRegistry_AllocateLocalPort_PrivilegedPortScansUpward(t *testing.T)
 	assert.NotEqual(t, localPort, localPort2, "two privileged ports should get different local ports")
 }
 
-// ---------- isNonLocalhostTarget ----------
+// ---------- IsNonLocalhostTarget ----------
 
 func TestIsNonLocalhostTarget(t *testing.T) {
-	assert.False(t, isNonLocalhostTarget(""), "empty host is localhost")
-	assert.False(t, isNonLocalhostTarget("localhost"), "localhost is not non-localhost")
-	assert.False(t, isNonLocalhostTarget("127.0.0.1"), "127.0.0.1 is not non-localhost")
-	assert.False(t, isNonLocalhostTarget("::1"), "::1 is not non-localhost")
-	assert.True(t, isNonLocalhostTarget("192.168.1.1"), "LAN IP is non-localhost")
-	assert.True(t, isNonLocalhostTarget("10.0.0.1"), "private IP is non-localhost")
-	assert.True(t, isNonLocalhostTarget("example.com"), "domain is non-localhost")
+	assert.False(t, IsNonLocalhostTarget(""), "empty host is localhost")
+	assert.False(t, IsNonLocalhostTarget("localhost"), "localhost is not non-localhost")
+	assert.False(t, IsNonLocalhostTarget("127.0.0.1"), "127.0.0.1 is not non-localhost")
+	assert.False(t, IsNonLocalhostTarget("::1"), "::1 is not non-localhost")
+	assert.True(t, IsNonLocalhostTarget("192.168.1.1"), "LAN IP is non-localhost")
+	assert.True(t, IsNonLocalhostTarget("10.0.0.1"), "private IP is non-localhost")
+	assert.True(t, IsNonLocalhostTarget("example.com"), "domain is non-localhost")
 }
 
 // ---------- RegisterPort reverse proxy for non-localhost ----------
@@ -1292,27 +1292,27 @@ func TestProxyRegistry_UpdatePort_SameHostNoChange_NoReverseProxyRestart(t *test
 	assert.Equal(t, rpBefore, rpAfter, "reverse proxy should NOT be restarted when host/port/protocol unchanged")
 }
 
-// ---------- ListPorts sets HasReverseProxy ----------
+// ---------- ListPorts ----------
 
-func TestProxyRegistry_ListPorts_HasReverseProxy(t *testing.T) {
+func TestProxyRegistry_ListPorts_ReflectsReverseProxyState(t *testing.T) {
 	r := newTestRegistry(t)
 	defer r.Stop()
 
-	// Register localhost port — HasReverseProxy should be false
+	// Register localhost port — no reverse proxy in registry
 	localPort1, err := r.RegisterPort(3000, "", "local-app", "http")
 	assert.NoError(t, err)
 
-	// Register non-localhost port — HasReverseProxy should be true
+	// Register non-localhost port — reverse proxy started in registry
 	port2 := getFreePort(t)
 	localPort2, err := r.RegisterPort(port2, "192.168.1.100", "remote-api", "http")
 	assert.NoError(t, err)
 
-	ports := r.ListPorts()
-	portMap := make(map[int]model.ForwardedPort)
-	for _, p := range ports {
-		portMap[p.LocalPort] = p
-	}
+	// Verify reverse proxy presence via internal map
+	r.mu.RLock()
+	_, hasProxy1 := r.proxies[localPort1]
+	_, hasProxy2 := r.proxies[localPort2]
+	r.mu.RUnlock()
 
-	assert.False(t, portMap[localPort1].HasReverseProxy, "localhost port should not have reverse proxy")
-	assert.True(t, portMap[localPort2].HasReverseProxy, "non-localhost port should have reverse proxy")
+	assert.False(t, hasProxy1, "localhost port should not have reverse proxy")
+	assert.True(t, hasProxy2, "non-localhost port should have reverse proxy")
 }
