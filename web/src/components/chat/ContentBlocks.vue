@@ -212,8 +212,7 @@
     </template>
     <!-- Loading dots while AI is still streaming (not when cancelled, and not when showing summary) -->
     <div v-if="streaming && !cancelled && !(showingSummary && summary)" class="placeholder-dots"><span></span><span></span><span></span></div>
-    <!-- Cancelled marker: hidden when the last block is thinking (shown inline in thinking-header instead) -->
-    <div v-if="cancelled && !isLastBlockThinking" class="chat-cancelled-mark">{{ t('chat.contentBlocks.cancelled') }}</div>
+
   </div>
 </template>
 
@@ -422,13 +421,6 @@ function isThinkingCollapsed(block, bi) {
 function isLastBlock(bi) {
   return bi === (props.blocks?.length || 0) - 1
 }
-
-/** Whether the last block is a thinking block (used to avoid duplicate cancelled marker). */
-const isLastBlockThinking = computed(() => {
-  const blocks = props.blocks
-  if (!blocks || blocks.length === 0) return false
-  return blocks[blocks.length - 1].type === 'thinking'
-})
 
 // ── Thinking block collapse/expand animation state ──
 const collapsingThinking = ref({})   // { [blockKey]: true } for blocks mid-collapse
@@ -647,16 +639,6 @@ onUnmounted(() => {
 @keyframes dot-bounce {
   0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
   40% { transform: scale(1); opacity: 1; }
-}
-
-.chat-cancelled-mark {
-  display: inline-block;
-  font-size: 11px;
-  color: var(--text-muted, #999);
-  background: var(--bg-tertiary, #f0f0f0);
-  padding: 2px 8px;
-  border-radius: 4px;
-  margin-top: 4px;
 }
 
 /* Inline cancelled marker inside thinking header — always visible even when thinking is collapsed */

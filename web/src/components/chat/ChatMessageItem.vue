@@ -54,6 +54,9 @@
       <span class="chat-file-changes-count">{{ fileChanges.created.length + fileChanges.modified.length }}</span>
     </button>
 
+    <!-- Cancelled marker: shown after file changes banner, hidden when last block is thinking (shown inline in thinking-header instead) -->
+    <div v-if="msg.cancelled && !isLastBlockThinking" class="chat-cancelled-mark">{{ t('chat.contentBlocks.cancelled') }}</div>
+
     <!-- Bottom bar for assistant messages -->
     <div v-if="msg.role === 'assistant' && !msg.streaming && (msgText || msg.blocks?.length)" class="chat-meta-bar">
       <span class="chat-meta-info">
@@ -165,6 +168,13 @@ const fileChanges = computed(() => {
 })
 const hasFileChanges = computed(() => fileChanges.value.created.length > 0 || fileChanges.value.modified.length > 0)
 
+/** Whether the last block is a thinking block (avoids duplicate cancelled marker — inline one is shown in thinking-header instead). */
+const isLastBlockThinking = computed(() => {
+  const blocks = props.msg?.blocks
+  if (!blocks || blocks.length === 0) return false
+  return blocks[blocks.length - 1].type === 'thinking'
+})
+
 const fileChangesDrawer = useTabDrawer('chat')
 
 function handleOpenFile(path) {
@@ -238,6 +248,17 @@ function handleCopyMessage() {
 /* ── Message content wrapper ── */
 .msg-content-wrapper {
   position: relative;
+}
+
+/* ── Cancelled marker (shown after file changes banner) ── */
+.chat-cancelled-mark {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--text-muted, #999);
+  background: var(--bg-tertiary, #f0f0f0);
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin-top: 4px;
 }
 
 /* ── File changes banner ── */

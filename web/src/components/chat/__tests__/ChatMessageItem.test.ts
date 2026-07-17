@@ -26,7 +26,18 @@ vi.mock('@/composables/useDialog', () => ({
 }))
 
 vi.mock('@/utils/chatStreamUtils', () => ({
-  extractFileChanges: () => ({ created: [], modified: [] }),
+  extractFileChanges: (blocks: any[]) => {
+    const created: string[] = []
+    const modified: string[] = []
+    for (const block of blocks || []) {
+      if (block.type !== 'tool_use' || !block.done) continue
+      const filePath = block.file_path || block.input?.file_path
+      if (!filePath) continue
+      if (block.name === 'Write') created.push(filePath)
+      else if (block.name === 'Edit') modified.push(filePath)
+    }
+    return { created, modified }
+  },
 }))
 
 vi.mock('@/utils/format', () => ({
@@ -73,6 +84,7 @@ const i18n = createI18n({
           speaking: '正在朗读',
           viewDetails: '详情',
         },
+        contentBlocks: { cancelled: '已中断' },
         pending: { queuing: '排队中' },
         fileChanges: { title: '文件变更' },
         speech: { summarizing: '总结中' },
@@ -189,5 +201,43 @@ describe('ChatMessageItem', () => {
       msg: { id: 'test-id-42', role: 'user', content: 'hello', blocks: [] },
     })
     expect(wrapper.find('.chat-message').attributes('data-msg-key')).toBe('db-test-id-42')
+  })
+
+  describe('cancelled marker', () => {
+    it('shows cancelled mark when cancelled and last block is not thinking', () => {
+      const wrapper = createWrapper({
+        msg: { id: 'c1', role: 'assistant', content: '', blocks: [{ type: 'text', text: 'Hello' }], cancelled: true },
+      })
+      expect(wrapper.find('.chat-cancelled-mark').exists()).toBe(true)
+    })
+
+    it('hides cancelled mark when last block is thinking', () => {
+      const wrapper = createWrapper({
+        msg: { id: 'c2', role: 'assistant', content: '', blocks: [{ type: 'thinking', text: 'Thought', done: true }], cancelled: true },
+      })
+      expect(wrapper.find('.chat-cancelled-mark').exists()).toBe(false)
+    })
+
+    it('hides cancelled mark when not cancelled', () => {
+      const wrapper = createWrapper({
+        msg: { id: 'c3', role: 'assistant', content: '', blocks: [{ type: 'text', text: 'Hello' }], cancelled: false },
+      })
+      expect(wrapper.find('.chat-cancelled-mark').exists()).toBe(false)
+    })
+
+    it('renders cancelled mark after file changes banner', () => {
+      const wrapper = createWrapper({
+        msg: { id: 'c4', role: 'assistant', content: '', blocks: [{ type: 'tool_use', name: 'Write', done: true, file_path: '/foo.ts' }, { type: 'text', text: 'Done' }], cancelled: true, streaming: false },
+      })
+      const banner = wrapper.find('.chat-file-changes-banner')
+      const mark = wrapper.find('.chat-cancelled-mark')
+      // Both should exist
+      expect(banner.exists()).toBe(true)
+      expect(mark.exists()).toBe(true)
+      // Cancelled mark should come after banner in DOM order
+      const allElements = wrapper.findAll('.chat-file-changes-banner, .chat-cancelled-mark')
+      expect(allElements[0].classes()).toContain('chat-file-changes-banner')
+      expect(allElements[1].classes()).toContain('chat-cancelled-mark')
+    })
   })
 })
