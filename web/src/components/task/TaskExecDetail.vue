@@ -418,7 +418,7 @@ onUnmounted(() => {
 .exec-detail-content {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 8px;
+  padding: 12px 0;
 }
 
 /* Fixed bottom action bar */
