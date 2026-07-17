@@ -91,7 +91,13 @@ public class AppLog {
     // --- Public API ---
 
     public static void d(String tag, String msg) { log('D', tag, msg); }
+    public static void d(String tag, String msg, Throwable t) {
+        log('D', tag, msg + "\n" + Log.getStackTraceString(t));
+    }
     public static void i(String tag, String msg) { log('I', tag, msg); }
+    public static void i(String tag, String msg, Throwable t) {
+        log('I', tag, msg + "\n" + Log.getStackTraceString(t));
+    }
     public static void w(String tag, String msg) { log('W', tag, msg); }
     public static void w(String tag, String msg, Throwable t) {
         log('W', tag, msg + "\n" + Log.getStackTraceString(t));

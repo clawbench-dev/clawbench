@@ -285,7 +285,7 @@ export function drainQueueMessage(
   }
   if (pendingIdx === -1 && queueId) {
     // Match _remote messages by their stored _remoteQueueId (precise cross-device matching)
-    pendingIdx = messages.findIndex((m) => m.role === 'user' && m._remote && (m as any)._remoteQueueId === queueId)
+    pendingIdx = messages.findIndex((m) => m.role === 'user' && m._remote && m['_remoteQueueId'] === queueId)
   }
   if (pendingIdx === -1 && userContent) {
     pendingIdx = messages.findIndex((m) => m.role === 'user' && (m.pending || m._remote) && m.content === userContent)
@@ -294,7 +294,7 @@ export function drainQueueMessage(
     // Found the pending or remote message — clear flag, update id to stable DB id
     delete messages[pendingIdx].pending
     delete messages[pendingIdx]._remote
-    delete (messages[pendingIdx] as any)._remoteQueueId
+    delete messages[pendingIdx]['_remoteQueueId']
     if (dbMessageId) {
       messages[pendingIdx].id = dbMessageId
     } else if (drainId) {
