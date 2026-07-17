@@ -345,3 +345,60 @@ func TestNewPipelineWithOpts_DefaultPrompt(t *testing.T) {
 	s := NewPipelineWithOpts(passFn, "", SummarizeOption{PreserveMarkdown: false})
 	assert.Equal(t, defaultTTSPrompt, s.basePrompt)
 }
+
+// --- IsAnthropicURL ---
+
+func TestIsAnthropicURL_AnthropicDomain(t *testing.T) {
+	assert.True(t, IsAnthropicURL("https://api.anthropic.com/v1/messages"))
+	assert.True(t, IsAnthropicURL("https://api.anthropic.com/some/path"))
+	assert.True(t, IsAnthropicURL("https://anthropic.com/"))
+}
+
+func TestIsAnthropicURL_V1MessagesSuffix(t *testing.T) {
+	assert.True(t, IsAnthropicURL("https://some-proxy.example.com/v1/messages"))
+	assert.True(t, IsAnthropicURL("https://custom-host/v1/messages/"))
+}
+
+func TestIsAnthropicURL_NonAnthropicURL(t *testing.T) {
+	assert.False(t, IsAnthropicURL("https://api.openai.com/v1/chat/completions"))
+	assert.False(t, IsAnthropicURL("https://api.example.com/v1/chat"))
+	assert.False(t, IsAnthropicURL("https://some-host/v1/messages2"))
+}
+
+func TestIsAnthropicURL_EmptyString(t *testing.T) {
+	assert.False(t, IsAnthropicURL(""))
+}
+
+func TestIsAnthropicURL_AnthropicDomainOnly(t *testing.T) {
+	// Domain without /v1/messages path
+	assert.True(t, IsAnthropicURL("https://api.anthropic.com"))
+}
+
+func TestIsAnthropicURL_AnthropicTrailingSlash(t *testing.T) {
+	// TrimRight strips trailing / so /v1/messages/ matches /v1/messages
+	assert.True(t, IsAnthropicURL("https://api.anthropic.com/v1/messages/"))
+}
+
+func TestIsAnthropicURL_CustomDomainV1Messages(t *testing.T) {
+	// Non-Anthropic domain but /v1/messages path
+	assert.True(t, IsAnthropicURL("https://custom.api.com/v1/messages"))
+}
+
+func TestIsAnthropicURL_OpenAIDomain(t *testing.T) {
+	assert.False(t, IsAnthropicURL("https://api.openai.com/v1/chat/completions"))
+}
+
+// --- postProcess ---
+
+func TestPostProcess_PreserveMarkdown_ReturnsAsIs(t *testing.T) {
+	result := postProcess("# Hello **world**\n- item", true)
+	assert.Equal(t, "# Hello **world**\n- item", result)
+}
+
+func TestPostProcess_NoPreserveMarkdown_StripsMarkdown(t *testing.T) {
+	input := "# Hello **world**\n- item"
+	result := postProcess(input, false)
+	// After StripMarkdown, markdown syntax should be removed
+	assert.NotContains(t, result, "#")
+	assert.NotContains(t, result, "**")
+}
