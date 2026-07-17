@@ -194,7 +194,7 @@ import {
 import { localConfig, setLocalConfig, useSettingsConfig } from '@/composables/useSettingsConfig'
 import type { KeyDef } from '@/utils/terminalKeyDefs'
 
-import { Zap as ZapIcon, Hand as HandIcon, Hash as HashIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, Terminal as TerminalIcon, Settings, Copy as CopyIcon } from 'lucide-vue-next'
+import { Zap as ZapIcon, Hand as HandIcon, Hash as HashIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Settings, Copy as CopyIcon } from 'lucide-vue-next'
 const props = defineProps<{
   requestedCwd?: string | null
   active?: boolean
