@@ -72,8 +72,8 @@ export interface GroupPanelConfig {
   /** Override which field drives optionSubFields matching. Defaults to entrySelector key.
    *  Used by FRP where sub-fields are keyed by frp.auto_port, not the entry selector. */
   optionSubFieldsKey?: string
-  /** Whether this panel has a connectivity test button */
-  hasConnectivityTest?: boolean
+  /** Whether this panel has a connectivity test button. Can be a static boolean or a function that checks current values. */
+  hasConnectivityTest?: boolean | ((values: Record<string, unknown>) => boolean)
   /** Function to map panel values to backend test categories.
    *  Receives current localValues, returns array of { category, values }.
    *  If hasConnectivityTest is true but this is undefined, defaults to
@@ -269,12 +269,11 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       needsVoiceReset: true,
     }},
   ],
-  summarization: [
+  summarization_text: [
     { type: 'panel', config: {
-      panelId: 'summarization',
+      panelId: 'summarization_text',
       commonFields: [
-        // Text summary entry
-        { labelKey: 'settings.items.summarizeTextBackend', descriptionKey: 'settings.items.summarizeTextBackendDesc', key: 'summarize.backend', type: 'select', source: 'server', sectionHeader: 'settings.items.summarizeTextSection', options: [
+        { labelKey: 'settings.items.summarizeTextBackend', descriptionKey: 'settings.items.summarizeTextBackendDesc', key: 'summarize.backend', type: 'select', source: 'server', options: [
           { labelKey: 'settings.items.summarizeDisabled', value: '' },
           { labelKey: 'settings.items.summarizeSimple', value: 'simple' },
           { labelKey: 'settings.items.summarizeApi', value: 'api' },
@@ -282,8 +281,19 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         { labelKey: 'settings.items.apiBaseUrl', descriptionKey: 'settings.items.apiBaseUrlDesc', key: 'summarize.api.base_url', type: 'text', source: 'server', sectionHeader: 'settings.items.apiHeader', dependsOn: { key: 'summarize.backend', values: ['api'] } },
         { labelKey: 'settings.items.summarizeModel', descriptionKey: 'settings.items.summarizeModelDesc', key: 'summarize.model', type: 'text', source: 'server', dependsOn: { key: 'summarize.backend', values: ['api'] } },
         { labelKey: 'settings.items.apiKey', descriptionKey: 'settings.items.apiKeyDesc', key: 'summarize.api.key', type: 'password', source: 'server', dependsOn: { key: 'summarize.backend', values: ['api'] } },
-        // Voice summary entry
-        { labelKey: 'settings.items.summarizeTtsBackend', descriptionKey: 'settings.items.summarizeTtsBackendDesc', key: 'summarize.tts_backend', type: 'select', source: 'server', sectionHeader: 'settings.items.summarizeTtsSection', options: [
+      ],
+      requiredFields: ['summarize.api.base_url'],
+      hasConnectivityTest: (v) => v['summarize.backend'] === 'api',
+      getTestCategories(values) {
+        return [{ category: 'summarize_text', values }]
+      },
+    }},
+  ],
+  summarization_voice: [
+    { type: 'panel', config: {
+      panelId: 'summarization_voice',
+      commonFields: [
+        { labelKey: 'settings.items.summarizeTtsBackend', descriptionKey: 'settings.items.summarizeTtsBackendDesc', key: 'summarize.tts_backend', type: 'select', source: 'server', options: [
           { labelKey: 'settings.items.summarizeDisabled', value: '' },
           { labelKey: 'settings.items.summarizeSimple', value: 'simple' },
           { labelKey: 'settings.items.summarizeApi', value: 'api' },
@@ -292,14 +302,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         { labelKey: 'settings.items.summarizeTtsModel', descriptionKey: 'settings.items.summarizeTtsModelDesc', key: 'summarize.tts_model', type: 'text', source: 'server', dependsOn: { key: 'summarize.tts_backend', values: ['api'] } },
         { labelKey: 'settings.items.ttsApiKey', descriptionKey: 'settings.items.ttsApiKeyDesc', key: 'summarize.tts_api.key', type: 'password', source: 'server', dependsOn: { key: 'summarize.tts_backend', values: ['api'] } },
       ],
-      requiredFields: ['summarize.api.base_url', 'summarize.tts_api.base_url'],
-      hasConnectivityTest: true,
+      requiredFields: ['summarize.tts_api.base_url'],
+      hasConnectivityTest: (v) => v['summarize.tts_backend'] === 'api',
       getTestCategories(values) {
-        const tests: Array<{ category: string; values: Record<string, unknown> }> = []
-        if (values['summarize.backend'] === 'api') tests.push({ category: 'summarize_text', values })
-        if (values['summarize.tts_backend'] === 'api') tests.push({ category: 'summarize_voice', values })
-        if (tests.length === 0) tests.push({ category: 'summarize_text', values })
-        return tests
+        return [{ category: 'summarize_voice', values }]
       },
     }},
   ],

@@ -88,7 +88,7 @@
       </div>
       <div class="group-panel__save-row">
         <button
-          v-if="config.hasConnectivityTest"
+          v-if="showTestButton"
           class="group-panel__test-btn"
           :disabled="connectivityTesting"
           @click="handleConnectivityTest"
@@ -199,6 +199,16 @@ onMounted(() => {
 
 onUnmounted(() => {
   unregisterGuard(`panel-${props.config.panelId}`)
+})
+
+// ── Enable toggle ──
+
+// ── Connectivity test visibility ──
+
+const showTestButton = computed(() => {
+  const val = props.config.hasConnectivityTest
+  if (typeof val === 'function') return val(localValues)
+  return !!val
 })
 
 // ── Enable toggle ──

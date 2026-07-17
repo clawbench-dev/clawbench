@@ -430,19 +430,18 @@ describe('SettingsItem', () => {
     })
   })
 
-  // ── Description toggle ──
+  // ── Inline description ──
 
-  describe('description toggle', () => {
-    it('emits descToggle when clicking item with description', async () => {
+  describe('inline description', () => {
+    it('renders description inline when provided', () => {
       const wrapper = mountItem({ type: 'switch', description: 'Some description' })
-      await wrapper.find('.settings-item').trigger('click')
-      expect(wrapper.emitted('descToggle')).toBeTruthy()
+      expect(wrapper.find('.settings-item__desc').exists()).toBe(true)
+      expect(wrapper.find('.settings-item__desc').text()).toBe('Some description')
     })
 
-    it('does not emit descToggle when no description', async () => {
+    it('does not render description element when not provided', () => {
       const wrapper = mountItem({ type: 'switch' })
-      await wrapper.find('.settings-item').trigger('click')
-      expect(wrapper.emitted('descToggle')).toBeFalsy()
+      expect(wrapper.find('.settings-item__desc').exists()).toBe(false)
     })
   })
 

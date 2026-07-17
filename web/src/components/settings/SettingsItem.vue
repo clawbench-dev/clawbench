@@ -52,12 +52,10 @@
         <!-- info value shown in description area below, nothing on the right -->
       </template>
     </div>
+    <!-- Inline description (always visible below label row) -->
+    <div v-if="description" class="settings-item__desc">{{ description }}</div>
     <!-- Info-type: show value as a full-width detail line below the label/desc -->
     <div v-if="type === 'info' && displayValue" class="settings-item__info-detail">{{ displayValue }}</div>
-  </div>
-  <!-- Description panel (expanded on click) -->
-  <div v-if="descriptionExpanded && description" class="settings-item__desc-panel">
-    <div class="settings-item__desc-panel-inner">{{ description }}</div>
   </div>
   <!-- Inline editor (non-select types) -->
   <div v-if="editing && type !== 'select'" class="settings-item__editor" @click.stop>
@@ -198,14 +196,12 @@ const emit = defineEmits<{
   'update:modelValue': [value: unknown]
   click: []
   editToggle: [open: boolean]
-  descToggle: [open: boolean]
   discard: []
 }>()
 
 const editing = ref(false)
 const editValue = ref<unknown>(null)
 const showPassword = ref(false)
-const descriptionExpanded = ref(false)
 const selectPicker = useTabDrawer('settings', { autoRestore: false })
 
 // Slider debounce: only emit final value after 300ms of inactivity
@@ -232,10 +228,6 @@ watch(() => props.forceClose, (val) => {
   if (val && selectPicker.isOpen.value) {
     selectPicker.close()
     emit('editToggle', false)
-  }
-  if (val && descriptionExpanded.value) {
-    descriptionExpanded.value = false
-    emit('descToggle', false)
   }
 })
 
@@ -298,30 +290,17 @@ function handleClick() {
     emit('click')
     return
   }
-  // Toggle description panel for all types that have a description
-  const hasDescription = !!props.description
+  // switch / slider / info: no click action (controls handle their own input)
   if (props.type === 'switch' || props.type === 'slider' || props.type === 'info') {
-    if (hasDescription) {
-      descriptionExpanded.value = !descriptionExpanded.value
-      emit('descToggle', descriptionExpanded.value)
-    }
     return
   }
-  // select: open BottomSheet picker instead of inline editor
+  // select: open BottomSheet picker
   if (props.type === 'select') {
-    if (hasDescription) {
-      descriptionExpanded.value = !descriptionExpanded.value
-      emit('descToggle', descriptionExpanded.value)
-    }
     selectPicker.open()
     emit('editToggle', true)
     return
   }
-  // number / text / password: toggle inline editor + description
-  if (hasDescription) {
-    descriptionExpanded.value = !descriptionExpanded.value
-    emit('descToggle', descriptionExpanded.value)
-  }
+  // number / text / password / textarea: toggle inline editor
   editing.value = !editing.value
   if (editing.value) {
     editValue.value = props.modelValue
@@ -353,10 +332,11 @@ function confirmEdit() {
 <style scoped>
 .settings-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
-  min-height: 48px;
+  padding: 12px 16px;
+  min-height: 0;
   cursor: pointer;
   gap: 12px;
   background: var(--bg-primary);
@@ -445,19 +425,14 @@ function confirmEdit() {
   50% { opacity: 0.4; }
 }
 
-/* Description panel (expanded on click) */
-.settings-item__desc-panel {
-  background: var(--bg-primary);
-}
-
-.settings-item__desc-panel-inner {
-  font-size: 13px;
-  color: var(--text-secondary);
+/* Inline description (always visible below label row) */
+.settings-item__desc {
+  width: 100%;
+  font-size: 12px;
+  color: var(--text-muted);
   line-height: 1.5;
-  padding: 8px 16px;
-  background: var(--bg-secondary);
-  border-left: 2px solid var(--accent-color);
   word-break: break-word;
+  margin-top: 0;
 }
 
 .settings-item__right {
@@ -478,11 +453,12 @@ function confirmEdit() {
 
 /* Info-type: full-width detail line below the label row */
 .settings-item__info-detail {
+  width: 100%;
   font-size: 14px;
   color: var(--text-secondary);
-  padding: 0 16px 10px;
   word-break: break-all;
   line-height: 1.4;
+  margin-top: 0;
 }
 
 /* Section header */

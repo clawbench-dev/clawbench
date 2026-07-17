@@ -72,7 +72,7 @@ describe('settingsFieldMap', () => {
     const expectedCategories = [
       'appearance', 'agents', 'projectFiles', 'chat', 'debug', 'security', 'about',
       'notification',
-      'terminal', 'tts', 'summarization', 'rag', 'portForward', 'frp',
+      'terminal', 'tts', 'summarization_text', 'summarization_voice', 'rag', 'portForward', 'frp',
     ]
     for (const cat of expectedCategories) {
       expect(categoryItems[cat]).toBeDefined()
@@ -99,7 +99,8 @@ describe('settingsFieldMap', () => {
   it('categoryHasPanels identifies panel categories', () => {
     expect(categoryHasPanels('terminal')).toBe(true)
     expect(categoryHasPanels('tts')).toBe(true)
-    expect(categoryHasPanels('summarization')).toBe(true)
+    expect(categoryHasPanels('summarization_text')).toBe(true)
+    expect(categoryHasPanels('summarization_voice')).toBe(true)
     expect(categoryHasPanels('rag')).toBe(true)
     expect(categoryHasPanels('portForward')).toBe(true)
     expect(categoryHasPanels('frp')).toBe(true)
@@ -112,7 +113,8 @@ describe('settingsFieldMap', () => {
   it('isPanelOnlyCategory identifies panel-only categories', () => {
     expect(isPanelOnlyCategory('terminal')).toBe(true)
     expect(isPanelOnlyCategory('tts')).toBe(true)
-    expect(isPanelOnlyCategory('summarization')).toBe(true)
+    expect(isPanelOnlyCategory('summarization_text')).toBe(true)
+    expect(isPanelOnlyCategory('summarization_voice')).toBe(true)
     expect(isPanelOnlyCategory('rag')).toBe(true)
     expect(isPanelOnlyCategory('portForward')).toBe(true)
     expect(isPanelOnlyCategory('frp')).toBe(true)
@@ -164,35 +166,59 @@ describe('settingsFieldMap', () => {
     expect(cfg.hasConnectivityTest).toBe(true)
   })
 
-  // ── Summarization panel ──
+  // ── Summarization panels ──
 
-  it('summarization panel has separate text and voice backends', () => {
-    const panels = getCategoryPanels('summarization')
+  it('summarization_text panel has text summary fields', () => {
+    const panels = getCategoryPanels('summarization_text')
     expect(panels.length).toBe(1)
     const cfg = panels[0]
+    expect(cfg.panelId).toBe('summarization_text')
     expect(cfg.entrySelector).toBeUndefined()
-    expect(cfg.requiredFields).toEqual(['summarize.api.base_url', 'summarize.tts_api.base_url'])
+    expect(cfg.requiredFields).toEqual(['summarize.api.base_url'])
+    expect(typeof cfg.hasConnectivityTest === 'function').toBe(true)
+    expect((cfg.hasConnectivityTest as Function)({ 'summarize.backend': 'api' })).toBe(true)
+    expect((cfg.hasConnectivityTest as Function)({ 'summarize.backend': 'simple' })).toBe(false)
+    expect((cfg.hasConnectivityTest as Function)({ 'summarize.backend': '' })).toBe(false)
 
     const textBackend = cfg.commonFields.find(f => f.key === 'summarize.backend')
     expect(textBackend).toBeDefined()
     expect(textBackend!.type).toBe('select')
-    expect(textBackend!.sectionHeader).toBe('settings.items.summarizeTextSection')
-
-    const ttsBackend = cfg.commonFields.find(f => f.key === 'summarize.tts_backend')
-    expect(ttsBackend).toBeDefined()
-    expect(ttsBackend!.type).toBe('select')
-    expect(ttsBackend!.sectionHeader).toBe('settings.items.summarizeTtsSection')
 
     const apiBaseURL = cfg.commonFields.find(f => f.key === 'summarize.api.base_url')
     expect(apiBaseURL).toBeDefined()
     expect(apiBaseURL!.sectionHeader).toBe('settings.items.apiHeader')
 
+    const model = cfg.commonFields.find(f => f.key === 'summarize.model')
+    expect(model).toBeDefined()
+
+    const apiKey = cfg.commonFields.find(f => f.key === 'summarize.api.key')
+    expect(apiKey).toBeDefined()
+  })
+
+  it('summarization_voice panel has voice summary fields', () => {
+    const panels = getCategoryPanels('summarization_voice')
+    expect(panels.length).toBe(1)
+    const cfg = panels[0]
+    expect(cfg.panelId).toBe('summarization_voice')
+    expect(cfg.entrySelector).toBeUndefined()
+    expect(cfg.requiredFields).toEqual(['summarize.tts_api.base_url'])
+    expect(typeof cfg.hasConnectivityTest === 'function').toBe(true)
+    expect((cfg.hasConnectivityTest as Function)({ 'summarize.tts_backend': 'api' })).toBe(true)
+    expect((cfg.hasConnectivityTest as Function)({ 'summarize.tts_backend': 'simple' })).toBe(false)
+
+    const ttsBackend = cfg.commonFields.find(f => f.key === 'summarize.tts_backend')
+    expect(ttsBackend).toBeDefined()
+    expect(ttsBackend!.type).toBe('select')
+
     const ttsApiBaseURL = cfg.commonFields.find(f => f.key === 'summarize.tts_api.base_url')
     expect(ttsApiBaseURL).toBeDefined()
     expect(ttsApiBaseURL!.sectionHeader).toBe('settings.items.summarizeTtsApiHeader')
 
-    expect(cfg.hasConnectivityTest).toBe(true)
-    expect(cfg.getTestCategories).toBeDefined()
+    const ttsModel = cfg.commonFields.find(f => f.key === 'summarize.tts_model')
+    expect(ttsModel).toBeDefined()
+
+    const ttsApiKey = cfg.commonFields.find(f => f.key === 'summarize.tts_api.key')
+    expect(ttsApiKey).toBeDefined()
   })
 
   // ── RAG panel ──

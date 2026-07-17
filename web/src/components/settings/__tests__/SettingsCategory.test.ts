@@ -490,7 +490,7 @@ describe('SettingsCategory', () => {
     })
   })
 
-  // ─── handleEditToggle / handleDescToggle / handleDiscard ──────────
+  // ─── handleEditToggle / handleDiscard ──────────
   describe('toggle and discard handlers', () => {
     it('handleEditToggle sets activeKey on open', async () => {
       const wrapper = mountCategory('chat')
@@ -513,21 +513,6 @@ describe('SettingsCategory', () => {
       vm.$.setupState.activeKey = 'autoSpeech'
       vm.$.setupState.handleEditToggle('other', false)
       expect(vm.$.setupState.activeKey).toBe('autoSpeech')
-    })
-
-    it('handleDescToggle sets activeKey on open', async () => {
-      const wrapper = mountCategory('chat')
-      const vm = wrapper.vm as any
-      vm.$.setupState.handleDescToggle('autoSpeech', true)
-      expect(vm.$.setupState.activeKey).toBe('autoSpeech')
-    })
-
-    it('handleDescToggle clears activeKey on close when key matches', async () => {
-      const wrapper = mountCategory('chat')
-      const vm = wrapper.vm as any
-      vm.$.setupState.activeKey = 'autoSpeech'
-      vm.$.setupState.handleDescToggle('autoSpeech', false)
-      expect(vm.$.setupState.activeKey).toBeNull()
     })
 
     it('handleDiscard shows info toast', async () => {
