@@ -94,7 +94,6 @@ public class MainActivity extends AppCompatActivity {
     private static final String KEY_SERVER_URL = "server_url";
     private static final String KEY_SSH_PASSWORD = "ssh_password";
     private static final String KEY_SERVER_LIST = "server_list";
-    private static final String KEY_SKIP_VERSION_MISMATCH = "skip_version_mismatch";
     private static final String TAG = "ClawBench";
     private static final String LOGIN_HTML_URL = "file:///android_asset/login.html";
 
@@ -234,6 +233,11 @@ public class MainActivity extends AppCompatActivity {
         progressBar = findViewById(R.id.progressBar);
 
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+
+        // Clean up legacy native version mismatch skip preference (now handled in WebView)
+        if (prefs.contains("skip_version_mismatch")) {
+            prefs.edit().remove("skip_version_mismatch").apply();
+        }
 
         // Request notification permission (Android 13+) — required for foreground service notification
         requestNotificationPermission();
@@ -813,11 +817,9 @@ public class MainActivity extends AppCompatActivity {
                     runOnUiThread(() -> showLoginPage(result.error));
                     return;
                 }
-                String serverVersion = result.serverVersion;
                 runOnUiThread(() -> {
                     webView.loadUrl(url);
                     startConnectionTimeout();
-                    checkVersionMismatch(serverVersion);
                 });
             } catch (javax.net.ssl.SSLException e) {
                 AppLog.w(TAG, "SSL error during health check, showing confirmation dialog", e);
@@ -829,11 +831,9 @@ public class MainActivity extends AppCompatActivity {
                             runOnUiThread(() -> showLoginPage(result.error));
                             return;
                         }
-                        String serverVersion = result.serverVersion;
                         runOnUiThread(() -> {
                             webView.loadUrl(url);
                             startConnectionTimeout();
-                            checkVersionMismatch(serverVersion);
                         });
                     } catch (Exception retryEx) {
                         AppLog.w(TAG, "SSL health check retry failed", retryEx);
@@ -980,26 +980,22 @@ public class MainActivity extends AppCompatActivity {
                 AppLog.w(TAG, "Failed to inject auth cookie", e);
             }
             // Auth success — verify this is a ClawBench server before navigating WebView
-            String serverVersion = null;
             try {
                 HealthCheckResult healthResult = performHealthCheck(url, client);
                 if (healthResult.error != null) {
                     runOnUiThread(() -> showLoginPage(healthResult.error));
                     return;
                 }
-                serverVersion = healthResult.serverVersion;
             } catch (Exception e) {
                 AppLog.w(TAG, "Health check after auth failed", e);
                 runOnUiThread(() -> showLoginPage(getNetworkErrorMessage(e)));
                 return;
             }
             // Health check passed — promote server to head of list, then navigate
-            String finalServerVersion = serverVersion;
             runOnUiThread(() -> {
                 saveServerInternal(url, password);
                 webView.loadUrl(url);
                 startConnectionTimeout();
-                checkVersionMismatch(finalServerVersion);
             });
         } else if (statusCode == 401) {
             // Wrong password — go back to login page with error
@@ -1016,75 +1012,6 @@ public class MainActivity extends AppCompatActivity {
             }
             final String errorMsg = msg;
             runOnUiThread(() -> showLoginPage(errorMsg));
-        }
-    }
-
-    /**
-     * Check if APK version matches server version.
-     * Shows update dialog if mismatch and user hasn't skipped this version.
-     * Must be called on the UI thread.
-     */
-    void checkVersionMismatch(String serverVersion) {
-        if (serverVersion == null || serverVersion.isEmpty()) return;
-        String appVersion = getAppVersionName();
-        if (appVersion.isEmpty()) return;
-        // Strip build time suffix from server version (e.g. "v1.0.0 (2026-05-21 10:30:00)" → "v1.0.0")
-        // Dev builds in build.sh append " (BUILD_TIME)" to FULL_VERSION, but APK versionName does not.
-        String normalizedServerVersion = serverVersion.replaceAll(" *\\([^)]*\\)$", "");
-        if (appVersion.equals(normalizedServerVersion)) return;
-        // Check skip preference — only skip if the same server version was previously dismissed
-        String skipped = prefs.getString(KEY_SKIP_VERSION_MISMATCH, "");
-        if (normalizedServerVersion.equals(skipped)) return;
-        showVersionMismatchDialog(appVersion, serverVersion, normalizedServerVersion);
-    }
-
-    String getAppVersionName() {
-        try {
-            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
-        } catch (Exception e) {
-            return "";
-        }
-    }
-
-    void showVersionMismatchDialog(String appVersion, String serverVersion, String normalizedServerVersion) {
-        new AlertDialog.Builder(this)
-                .setTitle(R.string.version_mismatch_title)
-                .setMessage(getString(R.string.version_mismatch_message, appVersion, serverVersion))
-                .setPositiveButton(R.string.version_mismatch_download, (d, w) -> downloadApk())
-                .setNegativeButton(R.string.version_mismatch_skip, (d, w) ->
-                        prefs.edit().putString(KEY_SKIP_VERSION_MISMATCH, normalizedServerVersion).apply())
-                .setCancelable(true)
-                .show();
-    }
-
-    void downloadApk() {
-        String serverUrl = prefs.getString(KEY_SERVER_URL, "");
-        if (serverUrl.isEmpty()) return;
-        String apkUrl = serverUrl + "/api/apk";
-        try {
-            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(apkUrl));
-            String cookies = CookieManager.getInstance().getCookie(serverUrl);
-            if (cookies != null && !cookies.isEmpty()) {
-                request.addRequestHeader("Cookie", cookies);
-            }
-            request.setMimeType("application/vnd.android.package-archive");
-            request.setTitle("ClawBench APK");
-            request.setDescription(getString(R.string.version_mismatch_title));
-            request.allowScanningByMediaScanner();
-            request.setNotificationVisibility(
-                    DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-            request.setDestinationInExternalPublicDir(
-                    Environment.DIRECTORY_DOWNLOADS, "ClawBench/clawbench-android.apk");
-            DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
-            long downloadId = dm.enqueue(request);
-            if (downloadId == -1) {
-                Toast.makeText(this, R.string.version_mismatch_download_failed, Toast.LENGTH_SHORT).show();
-            } else {
-                Toast.makeText(this, R.string.version_mismatch_downloading, Toast.LENGTH_SHORT).show();
-            }
-        } catch (Exception e) {
-            AppLog.e(TAG, "APK download failed", e);
-            Toast.makeText(this, R.string.version_mismatch_download_failed, Toast.LENGTH_SHORT).show();
         }
     }
 

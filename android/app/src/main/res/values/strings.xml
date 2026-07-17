@@ -42,11 +42,4 @@
     <string name="push_task_completed">定时任务已完成</string>
     <string name="push_task_failed">定时任务失败</string>
     <string name="push_task_cancelled">定时任务已取消</string>
-    <!-- Version mismatch dialog -->
-    <string name="version_mismatch_title">版本不一致</string>
-    <string name="version_mismatch_message">APK 版本: %1$s\n服务器版本: %2$s\n\n建议更新 APK 以获得最佳体验。</string>
-    <string name="version_mismatch_download">下载 APK</string>
-    <string name="version_mismatch_skip">跳过</string>
-    <string name="version_mismatch_downloading">APK 下载中…</string>
-    <string name="version_mismatch_download_failed">下载失败</string>
 </resources>

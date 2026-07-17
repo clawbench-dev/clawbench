@@ -111,10 +111,6 @@ public class MainActivityPreAuthTest {
         // Stub performHealthCheck to return success (no error) by default
         doReturn(MainActivity.HealthCheckResult.success("1.0.0")).when(activity).performHealthCheck(anyString(), any(OkHttpClient.class));
 
-        // Stub version mismatch methods to avoid Android framework calls
-        doReturn("v1.0.0").when(activity).getAppVersionName();
-        doNothing().when(activity).showVersionMismatchDialog(anyString(), anyString(), anyString());
-        doNothing().when(activity).downloadApk();
     }
 
     @After
@@ -469,121 +465,6 @@ public class MainActivityPreAuthTest {
     }
 
     // =====================================================
-    // Version mismatch: checkVersionMismatch logic
-    // =====================================================
-
-    @Test
-    public void checkVersionMismatch_matchingVersions_doesNotShowDialog() throws Exception {
-        // Both versions match — dialog should not be shown
-        doReturn("v1.0.0").when(activity).getAppVersionName();
-        when(mockPrefs.getString("skip_version_mismatch", "")).thenReturn("");
-
-        invokeCheckVersionMismatch("v1.0.0");
-
-        // No dialog — nothing to verify directly, but getAppVersionName was called
-        verify(activity).getAppVersionName();
-    }
-
-    @Test
-    public void checkVersionMismatch_mismatchedVersions_showsDialog() throws Exception {
-        doReturn("v1.0.0").when(activity).getAppVersionName();
-        when(mockPrefs.getString("skip_version_mismatch", "")).thenReturn("");
-
-        invokeCheckVersionMismatch("v2.0.0");
-
-        // Dialog was shown — verify via the showVersionMismatchDialog spy
-        verify(activity).showVersionMismatchDialog("v1.0.0", "v2.0.0", "v2.0.0");
-    }
-
-    @Test
-    public void checkVersionMismatch_skippedVersion_doesNotShowDialog() throws Exception {
-        doReturn("v1.0.0").when(activity).getAppVersionName();
-        // User previously skipped v2.0.0 mismatch
-        when(mockPrefs.getString("skip_version_mismatch", "")).thenReturn("v2.0.0");
-
-        invokeCheckVersionMismatch("v2.0.0");
-
-        verify(activity, never()).showVersionMismatchDialog(anyString(), anyString(), anyString());
-    }
-
-    @Test
-    public void checkVersionMismatch_differentServerVersionAfterSkip_showsDialog() throws Exception {
-        doReturn("v1.0.0").when(activity).getAppVersionName();
-        // User previously skipped v2.0.0, but now server is v3.0.0
-        when(mockPrefs.getString("skip_version_mismatch", "")).thenReturn("v2.0.0");
-
-        invokeCheckVersionMismatch("v3.0.0");
-
-        verify(activity).showVersionMismatchDialog("v1.0.0", "v3.0.0", "v3.0.0");
-    }
-
-    @Test
-    public void checkVersionMismatch_nullServerVersion_doesNotShowDialog() throws Exception {
-        invokeCheckVersionMismatch(null);
-        verify(activity, never()).showVersionMismatchDialog(anyString(), anyString(), anyString());
-    }
-
-    @Test
-    public void checkVersionMismatch_emptyServerVersion_doesNotShowDialog() throws Exception {
-        invokeCheckVersionMismatch("");
-        verify(activity, never()).showVersionMismatchDialog(anyString(), anyString(), anyString());
-    }
-
-    @Test
-    public void checkVersionMismatch_emptyAppVersion_doesNotShowDialog() throws Exception {
-        doReturn("").when(activity).getAppVersionName();
-        when(mockPrefs.getString("skip_version_mismatch", "")).thenReturn("");
-
-        invokeCheckVersionMismatch("v2.0.0");
-
-        verify(activity, never()).showVersionMismatchDialog(anyString(), anyString(), anyString());
-    }
-
-    @Test
-    public void versionMismatchSkipKey_isCorrect() throws Exception {
-        Field keyField = MainActivity.class.getDeclaredField("KEY_SKIP_VERSION_MISMATCH");
-        keyField.setAccessible(true);
-        String key = (String) keyField.get(null);
-        assertEquals("skip_version_mismatch", key);
-    }
-
-    @Test
-    public void checkVersionMismatch_serverVersionWithBuildTime_normalizedToGitDescribe() throws Exception {
-        // Dev build: server has "v0.30.0-30-g830bb6c (2026-05-21 10:30:00)" but APK has "v0.30.0-30-g830bb6c"
-        doReturn("v0.30.0-30-g830bb6c").when(activity).getAppVersionName();
-        when(mockPrefs.getString("skip_version_mismatch", "")).thenReturn("");
-
-        invokeCheckVersionMismatch("v0.30.0-30-g830bb6c (2026-05-21 10:30:00)");
-
-        // Build time suffix is stripped, versions match — no dialog
-        verify(activity, never()).showVersionMismatchDialog(anyString(), anyString(), anyString());
-    }
-
-    @Test
-    public void checkVersionMismatch_serverVersionWithBuildTime_stillMismatched_showsDialog() throws Exception {
-        // Server has "v2.0.0 (2026-05-21 10:30:00)" but APK has "v1.0.0"
-        doReturn("v1.0.0").when(activity).getAppVersionName();
-        when(mockPrefs.getString("skip_version_mismatch", "")).thenReturn("");
-
-        invokeCheckVersionMismatch("v2.0.0 (2026-05-21 10:30:00)");
-
-        // Build time suffix is stripped, but "v2.0.0" != "v1.0.0" — show dialog
-        verify(activity).showVersionMismatchDialog("v1.0.0", "v2.0.0 (2026-05-21 10:30:00)", "v2.0.0");
-    }
-
-    @Test
-    public void checkVersionMismatch_skippedNormalizedVersion_doesNotShowDialog() throws Exception {
-        // User previously skipped the normalized version "v2.0.0"
-        doReturn("v1.0.0").when(activity).getAppVersionName();
-        when(mockPrefs.getString("skip_version_mismatch", "")).thenReturn("v2.0.0");
-
-        invokeCheckVersionMismatch("v2.0.0 (2026-05-21 10:30:00)");
-
-        // Build time suffix is stripped, normalized version was skipped — no dialog
-        verify(activity, never()).showVersionMismatchDialog(anyString(), anyString(), anyString());
-    }
-
-    // =====================================================
     // Login URL construction
     // =====================================================
 
@@ -925,14 +806,5 @@ public class MainActivityPreAuthTest {
                 int.class, String.class, String.class, java.util.List.class, okhttp3.OkHttpClient.class);
         method.setAccessible(true);
         method.invoke(activity, statusCode, url, password, cookies, client);
-    }
-
-    /**
-     * Invoke checkVersionMismatch(String serverVersion) via reflection.
-     */
-    private void invokeCheckVersionMismatch(String serverVersion) throws Exception {
-        Method method = findMethod(activity.getClass(), "checkVersionMismatch", String.class);
-        method.setAccessible(true);
-        method.invoke(activity, serverVersion);
     }
 }

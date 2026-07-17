@@ -9,6 +9,7 @@
     <!-- Main app -->
     <div v-else class="app-container" :class="{ 'chat-keyboard-open': chatKeyboardActive, 'terminal-keyboard-open': terminalKeyboardNeedsShrink, 'project-switching': switchingProject }" :key="projectKey">
       <WelcomeOverlay ref="welcomeOverlay" />
+      <VersionMismatchOverlay ref="versionMismatchOverlay" />
       <AppHeader
         :project-root="projectRoot"
         :home-dir="homeDir"
@@ -276,6 +277,7 @@ import TerminalPanelContent from './components/terminal/TerminalPanelContent.vue
 import ProjectDialog from './components/ProjectDialog.vue'
 import LoginView from './components/LoginView.vue'
 import WelcomeOverlay from './components/WelcomeOverlay.vue'
+import VersionMismatchOverlay from './components/VersionMismatchOverlay.vue'
 import FileDetailsDrawer from './components/file/FileDetailsDrawer.vue'
 import ToastNotification from './components/common/ToastNotification.vue'
 import DialogOverlay from './components/common/DialogOverlay.vue'
@@ -831,10 +833,12 @@ async function handleLoginSuccess() {
       onUnmounted(() => dockResizeObs.disconnect())
     }
     welcomeOverlay.value?.show()
+    versionMismatchOverlay.value?.show()
 }
 
 const projectDialogOpen = ref(false)
 const welcomeOverlay = ref(null)
+const versionMismatchOverlay = ref(null)
 
 function handleOpenProjectDialog() {
     projectDialogOpen.value = true
@@ -1385,6 +1389,7 @@ onMounted(async () => {
     applyUIScale(localConfig.uiScale ?? 1)
     startDockResize()
     welcomeOverlay.value?.show()
+    versionMismatchOverlay.value?.show()
 
     // Handle pending navigation from push notification deep link
     // (cross-project reload or cold start via AndroidNative bridge)
