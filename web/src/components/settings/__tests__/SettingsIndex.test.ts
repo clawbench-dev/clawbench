@@ -11,10 +11,9 @@ const i18n = createI18n({
       settings: {
         categories: {
           appearance: '外观',
-          project: '项目',
+          projectFiles: '项目与文件',
           chat: '聊天',
           agents: 'Agent偏好',
-          files: '文件',
           terminal: '终端',
           tts: 'TTS语音',
           summarization: '摘要',
@@ -22,7 +21,6 @@ const i18n = createI18n({
           portForward: '端口转发',
           frp: 'FRP内网穿透',
           notification: '消息通知',
-          dingtalk: '钉钉推送',
           security: '安全',
           debug: '调试',
           about: '关于',
@@ -36,10 +34,9 @@ const i18n = createI18n({
 const globalStubs = {
   'lucide-chevron-right': true,
   'lucide-palette': true,
-  'lucide-map-pin': true,
+  'lucide-folder-tree': true,
   'lucide-message-square': true,
   'lucide-bot': true,
-  'lucide-folder-open': true,
   'lucide-terminal': true,
   'lucide-volume2': true,
   'lucide-sparkles': true,
@@ -60,11 +57,11 @@ function mountIndex() {
 }
 
 describe('SettingsIndex', () => {
-  it('renders 16 category rows', () => {
+  it('renders 14 category rows', () => {
     const wrapper = mountIndex()
 
     const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(16)
+    expect(rows.length).toBe(14)
   })
 
   it('renders category labels', () => {
@@ -72,9 +69,8 @@ describe('SettingsIndex', () => {
 
     const labels = wrapper.findAll('.settings-index__label').map(el => el.text())
     expect(labels).toContain('外观')
-    expect(labels).toContain('项目')
+    expect(labels).toContain('项目与文件')
     expect(labels).toContain('聊天')
-    expect(labels).toContain('文件')
     expect(labels).toContain('端口转发')
     expect(labels).toContain('FRP内网穿透')
     expect(labels).toContain('安全')
@@ -96,8 +92,8 @@ describe('SettingsIndex', () => {
     const wrapper = mountIndex()
 
     const expectedIds = [
-      'appearance', 'project', 'chat', 'agents', 'files', 'terminal',
-      'tts', 'summarization', 'rag', 'portForward', 'frp', 'notification', 'dingtalk', 'security', 'debug', 'about',
+      'appearance', 'projectFiles', 'chat', 'agents', 'terminal',
+      'tts', 'summarization', 'rag', 'portForward', 'frp', 'notification', 'security', 'debug', 'about',
     ]
 
     const rows = wrapper.findAll('.settings-index__row')

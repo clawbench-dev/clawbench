@@ -19,10 +19,9 @@
 import { computed } from 'vue'
 import {
   Palette,
-  MapPin,
+  FolderTree,
   MessageSquare,
   Bot,
-  FolderOpen,
   Terminal,
   Volume2,
   Sparkles,
@@ -30,7 +29,6 @@ import {
   ArrowLeftRight,
   Globe,
   Bell,
-  MessageCircle,
   Shield,
   Bug,
   Info,
@@ -46,10 +44,9 @@ const { t } = useI18n()
 
 const categoryDefs = computed(() => [
   { id: 'appearance', icon: Palette },
-  { id: 'project', icon: MapPin },
+  { id: 'projectFiles', icon: FolderTree },
   { id: 'chat', icon: MessageSquare },
   { id: 'agents', icon: Bot },
-  { id: 'files', icon: FolderOpen },
   { id: 'terminal', icon: Terminal },
   { id: 'tts', icon: Volume2 },
   { id: 'summarization', icon: Sparkles },
@@ -57,7 +54,6 @@ const categoryDefs = computed(() => [
   { id: 'portForward', icon: ArrowLeftRight },
   { id: 'frp', icon: Globe },
   { id: 'notification', icon: Bell },
-  { id: 'dingtalk', icon: MessageCircle },
   { id: 'security', icon: Shield },
   { id: 'debug', icon: Bug },
   { id: 'about', icon: Info },

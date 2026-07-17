@@ -128,7 +128,7 @@ const i18n = createI18n({
       common: { ok: '确定' },
       settings: {
         needsRestart: '需重启',
-        categories: { chat: '聊天', agents: '智能体', appearance: '外观', tts: '语音', summarization: '摘要', portForward: '端口转发', push: '推送', terminal: '终端', rag: 'RAG', files: '文件', about: '关于', android: 'Android', security: '安全' },
+        categories: { chat: '聊天', agents: '智能体', appearance: '外观', tts: '语音', summarization: '摘要', portForward: '端口转发', push: '推送', terminal: '终端', rag: 'RAG', projectFiles: '项目与文件', about: '关于', android: 'Android', security: '安全' },
         items: {
           defaultAgent: '默认智能体',
           autoSpeech: '自动语音',
@@ -326,10 +326,10 @@ describe('SettingsCategory', () => {
     })
   })
 
-  // ─── Files category ──────────────────────────────
-  describe('files category', () => {
+  // ─── ProjectFiles category ──────────────────────────────
+  describe('projectFiles category', () => {
     it('saves showHidden locally when toggled', async () => {
-      const wrapper = mountCategory('files')
+      const wrapper = mountCategory('projectFiles')
       const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
       const item = allItems.find(i => i.props().label === '显示隐藏文件')
       expect(item).toBeTruthy()
@@ -341,7 +341,7 @@ describe('SettingsCategory', () => {
     })
 
     it('PATCHes upload.max_size_mb when changed', async () => {
-      const wrapper = mountCategory('files')
+      const wrapper = mountCategory('projectFiles')
       const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
       const item = allItems.find(i => i.props().label === '上传大小上限')
       expect(item).toBeTruthy()
@@ -353,7 +353,7 @@ describe('SettingsCategory', () => {
     })
 
     it('PATCHes upload.max_files when changed', async () => {
-      const wrapper = mountCategory('files')
+      const wrapper = mountCategory('projectFiles')
       const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
       const item = allItems.find(i => i.props().label === '上传文件上限')
       expect(item).toBeTruthy()

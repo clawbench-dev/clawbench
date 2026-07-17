@@ -205,8 +205,8 @@ describe('SettingsPage', () => {
 
   // ─── Category routing (all via SettingsCategory now) ──
   describe('category routing', () => {
-    const panelCategoryIds = ['terminal', 'tts', 'summarization', 'rag', 'portForward', 'frp', 'dingtalk']
-    const flatCategoryIds = ['appearance', 'project', 'chat', 'agents', 'files', 'security', 'debug', 'about', 'notification']
+    const panelCategoryIds = ['terminal', 'tts', 'summarization', 'rag', 'portForward', 'frp', 'notification']
+    const flatCategoryIds = ['appearance', 'projectFiles', 'chat', 'agents', 'security', 'debug', 'about']
 
     it('categoryHasPanels identifies panel categories', () => {
       for (const id of panelCategoryIds) {
@@ -228,7 +228,7 @@ describe('SettingsPage', () => {
 
     it('isPanelOnlyCategory returns false for flat-only categories', () => {
       expect(isPanelOnlyCategory('appearance')).toBe(false)
-      expect(isPanelOnlyCategory('notification')).toBe(false)
+      expect(isPanelOnlyCategory('projectFiles')).toBe(false)
     })
 
     it('renders SettingsCategory for all categories (no separate drill-down branch)', async () => {

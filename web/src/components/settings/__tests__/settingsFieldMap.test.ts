@@ -50,9 +50,9 @@ describe('settingsFieldMap', () => {
     expect(map['recent_projects.max_count']).toBeTruthy()
   })
 
-  it('recent_projects.max_count is in project category items', () => {
-    const projectEntries = categoryItems['project']
-    const rpEntry = projectEntries.find(e => e.type === 'item' && e.spec.key === 'recent_projects.max_count')
+  it('recent_projects.max_count is in projectFiles category items', () => {
+    const projectFilesEntries = categoryItems['projectFiles']
+    const rpEntry = projectFilesEntries.find(e => e.type === 'item' && e.spec.key === 'recent_projects.max_count')
     expect(rpEntry).toBeDefined()
     expect(rpEntry!.type).toBe('item')
     if (rpEntry!.type === 'item') {
@@ -70,13 +70,15 @@ describe('settingsFieldMap', () => {
 
   it('categoryItems covers all expected categories', () => {
     const expectedCategories = [
-      'appearance', 'agents', 'project', 'chat', 'files', 'debug', 'security', 'about',
-      'notification', 'dingtalk',
+      'appearance', 'agents', 'projectFiles', 'chat', 'debug', 'security', 'about',
+      'notification',
       'terminal', 'tts', 'summarization', 'rag', 'portForward', 'frp',
     ]
     for (const cat of expectedCategories) {
       expect(categoryItems[cat]).toBeDefined()
     }
+    // dingtalk category was merged into notification
+    expect(categoryItems['dingtalk']).toBeUndefined()
   })
 
   it('every server item in categoryItems has a corresponding field map entry', () => {
@@ -101,7 +103,7 @@ describe('settingsFieldMap', () => {
     expect(categoryHasPanels('rag')).toBe(true)
     expect(categoryHasPanels('portForward')).toBe(true)
     expect(categoryHasPanels('frp')).toBe(true)
-    expect(categoryHasPanels('dingtalk')).toBe(true)
+    expect(categoryHasPanels('notification')).toBe(true)
     expect(categoryHasPanels('appearance')).toBe(false)
     expect(categoryHasPanels('chat')).toBe(false)
     expect(categoryHasPanels('about')).toBe(false)
@@ -114,9 +116,8 @@ describe('settingsFieldMap', () => {
     expect(isPanelOnlyCategory('rag')).toBe(true)
     expect(isPanelOnlyCategory('portForward')).toBe(true)
     expect(isPanelOnlyCategory('frp')).toBe(true)
-    expect(isPanelOnlyCategory('dingtalk')).toBe(true)
+    expect(isPanelOnlyCategory('notification')).toBe(true)
     expect(isPanelOnlyCategory('appearance')).toBe(false)
-    expect(isPanelOnlyCategory('notification')).toBe(false)
   })
 
   // ── Terminal panel ──
@@ -254,15 +255,27 @@ describe('settingsFieldMap', () => {
     expect(map['frp.remote_port']).toBe('settings.items.frpRemotePort')
   })
 
-  // ── Dingtalk panel ──
+  // ── Notification (push) panel ──
 
-  it('dingtalk panel has enableKey, connectivityTest, and getTestCategories', () => {
-    const panels = getCategoryPanels('dingtalk')
+  it('notification panel has entrySelector with push_mode, dingtalk optionSubFields, and connectivityTest', () => {
+    const panels = getCategoryPanels('notification')
     expect(panels.length).toBe(1)
     const cfg = panels[0]
-    expect(cfg.enableKey).toBe('dingtalk.enabled')
+    expect(cfg.entrySelector).toBeDefined()
+    expect(cfg.entrySelector!.key).toBe('push_mode')
+    expect(cfg.entrySelector!.type).toBe('select')
+    expect(cfg.entrySelector!.options!.length).toBe(3)
+    expect(cfg.entrySelector!.options!.map(o => o.value)).toEqual(['native', 'dingtalk', 'disabled'])
+    expect(cfg.commonFields.length).toBe(0)
+
+    const dingtalkSub = cfg.optionSubFields!.find(osf => osf.when === 'dingtalk')
+    expect(dingtalkSub).toBeDefined()
+    expect(dingtalkSub!.fields.length).toBe(3)
+    expect(dingtalkSub!.fields.map(f => f.key)).toEqual(['dingtalk.app_key', 'dingtalk.app_secret', 'dingtalk.agent_id'])
+
     expect(cfg.requiredFields).toEqual(['dingtalk.app_key', 'dingtalk.app_secret', 'dingtalk.agent_id'])
     expect(cfg.hasConnectivityTest).toBe(true)
     expect(cfg.getTestCategories).toBeDefined()
+    expect(cfg.afterSave).toBeDefined()
   })
 })
