@@ -1392,7 +1392,7 @@ export default {
     passwordStrengthWeak: 'Weak',
     passwordStrengthMedium: 'Medium',
     passwordStrengthStrong: 'Strong',
-    drillDown: {
+    panel: {
       save: 'Save',
       saving: 'Saving...',
       needsRestartHint: 'Changes require server restart to take effect',

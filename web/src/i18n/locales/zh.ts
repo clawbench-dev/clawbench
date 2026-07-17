@@ -1393,7 +1393,7 @@ export default {
     passwordStrengthWeak: '弱',
     passwordStrengthMedium: '中',
     passwordStrengthStrong: '强',
-    drillDown: {
+    panel: {
       save: '保存',
       saving: '保存中...',
       needsRestartHint: '更改需要重启服务器生效',
