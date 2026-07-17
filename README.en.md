@@ -158,10 +158,10 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 - **File Path Navigation**: Clickable file paths in Markdown, with line range navigation
 
 ### 🤖 AI Agents
-- **Streaming Response**: Real-time SSE push, thinking process and tool calls fully visible
-- **Multi-Agent Support**: General assistant, coding expert, handyman, etc. — YAML config, plug-and-play
+- **Streaming Response**: Real-time WebSocket push, thinking process and tool calls fully visible
+- **Multi-Agent Support**: General assistant, coding expert, handyman, etc.; custom agents can be loaded via `config/agents/*.yaml` (supplementary method for non-standard agents)
 - **AI Backend Switching**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Cline, Copilot, Kimi — session-level isolation
-- **Thinking Effort Levels**: Per-agent thinking depth selection (Auto / Low / Medium / High), supported by 9 backends (Claude/CodeBuddy/OpenCode/Codex/MiMo/Pi/Cline/Copilot/Kimi), selection auto-persisted
+- **Thinking Effort Levels**: Per-agent thinking depth selection (Low / Medium / High, etc.), supported by 9 backends (Claude/CodeBuddy/OpenCode/Codex/MiMo/Pi/Cline/Copilot/Kimi), selection auto-persisted
 - **Model Selection Modal**: Unified model switching and thinking effort selection in a dual-tab interface, with search filtering, one-click model list refresh (for agents supporting auto-discovery), and long-press to set default model
 - **Model Selection Persistence**: Model choice and thinking effort per agent auto-saved to localStorage, restored on reload/session switch
 - **Scheduled Tasks**: AI creates Cron schedules via CLI subcommands, executes automatically; independent tab with 4-level breadcrumb navigation; task cards embedded in chat messages; frequency presets (hourly/daily/weekly/monthly) + custom cron expressions; per-execution read tracking + TTS playback; execution auto-summary + completion notification (sound/haptic/toast)
@@ -204,7 +204,7 @@ Once deployed, access `http://server-ip:20000` from your phone app or mobile bro
 ### 🔊 TTS Speech Synthesis
 - Auto-summarize and read AI replies aloud, listen while reading
 - **5 TTS Engines**: Edge TTS (free, native Go implementation, no external dependency), MiniMax (best quality), Piper / Kokoro / MOSS-Nano (local offline)
-- **11 Summarization Backends**: simple (text-only cleanup), mmx-cli, api (OpenAI/Anthropic compatible), Claude, CodeBuddy, OpenCode, Codex, Qoder, VeCLI, DeepSeek, Pi
+- **Summarization Backends**: simple (text-only cleanup) and api (OpenAI/Anthropic compatible) modes
 - See [TTS Deployment Guide](docs/TTS.en.md)
 
 ### 📂 Git Integration
