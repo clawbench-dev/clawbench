@@ -3,6 +3,7 @@ package model
 import (
 	"crypto/rand"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 )
@@ -160,8 +161,24 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.TTS.Engine == "" {
 		cfg.TTS.Engine = "edge"
 	}
+	// Migrate legacy agent-based summarize backends to "api"
+	agentBackends := map[string]bool{
+		"claude": true, "codebuddy": true, "opencode": true, "codex": true,
+		"qoder": true, "vecli": true, "deepseek": true, "pi": true, "mimo": true,
+	}
+	if agentBackends[cfg.Summarize.Backend] {
+		slog.Warn("summarize.backend is a legacy agent backend, migrating to \"api\"", slog.String("old", cfg.Summarize.Backend))
+		cfg.Summarize.Backend = "api"
+	}
+	if agentBackends[cfg.Summarize.TTSBackend] {
+		slog.Warn("summarize.tts_backend is a legacy agent backend, migrating to \"api\"", slog.String("old", cfg.Summarize.TTSBackend))
+		cfg.Summarize.TTSBackend = "api"
+	}
 	if cfg.Summarize.Backend == "" {
 		cfg.Summarize.Backend = "simple"
+	}
+	if cfg.Summarize.TTSBackend == "" {
+		cfg.Summarize.TTSBackend = "simple"
 	}
 	if cfg.TTS.Speed <= 0 {
 		cfg.TTS.Speed = 1.0

@@ -102,12 +102,15 @@ type DingTalkConfig struct {
 	Users     []string `yaml:"users"`      // Static DingTalk userId list for single-chat push
 }
 
-// SummarizeConfig holds unified summarization configuration shared by TTS and scheduled tasks.
+// SummarizeConfig holds summarization configuration for text and voice.
 type SummarizeConfig struct {
-	Backend     string    `yaml:"backend"`      // Summarization backend: "" (disabled), "simple" (extract final answer), "api", "claude", "codebuddy", etc.
-	Model       string    `yaml:"model"`        // Model for summarization (empty = backend default)
-	ChatSummary *bool     `yaml:"chat_summary"` // Enable auto-summarization for chat messages (default: true, nil = true)
-	API         APIConfig `yaml:"api"`          // API-based summarization (used when backend is "api")
+	Backend     string    `yaml:"backend"`       // Text/chat/task summarization backend: "" (disabled), "simple" (extract conclusion), "api" (LLM)
+	TTSBackend  string    `yaml:"tts_backend"`   // Voice/TTS summarization backend: "" (disabled), "simple" (extract conclusion), "api" (LLM)
+	Model       string    `yaml:"model"`         // Model for text summarization (empty = backend default)
+	TTSModel    string    `yaml:"tts_model"`     // Model for TTS summarization (empty = backend default)
+	ChatSummary *bool     `yaml:"chat_summary"`  // Enable auto-summarization for chat messages (default: true, nil = true)
+	API         APIConfig `yaml:"api"`           // API config for text/chat/task summarization (used when backend is "api")
+	TTSAPI      APIConfig `yaml:"tts_api"`       // API config for voice/TTS summarization (used when tts_backend is "api")
 }
 
 // IsChatSummaryEnabled returns whether chat message auto-summarization is enabled.

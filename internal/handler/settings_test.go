@@ -51,7 +51,9 @@ func TestServeConfig_Get(t *testing.T) {
 	cfg.PortForward.Enabled = true
 	cfg.PortForward.Port = 20001
 	cfg.Summarize.Backend = "simple"
+	cfg.Summarize.TTSBackend = "simple"
 	cfg.Summarize.Model = ""
+	cfg.Summarize.TTSModel = ""
 	model.ConfigInstance = cfg
 
 	req := newRequest(t, http.MethodGet, "/api/config", nil)
@@ -93,6 +95,7 @@ func TestServeConfig_Get(t *testing.T) {
 	// Verify summarize section
 	summarize, _ := resp["summarize"].(map[string]any)
 	assert.Equal(t, "simple", summarize["backend"])
+	assert.Equal(t, "simple", summarize["tts_backend"])
 
 	// When engine=edge, engine-specific sub-configs should NOT be present
 	tts, _ := resp["tts"].(map[string]any)
@@ -427,15 +430,15 @@ func TestServeConfig_Patch_SummarizeSection(t *testing.T) {
 	cfg := model.Config{}
 	model.ConfigInstance = cfg
 
-	body := `{"summarize":{"backend":"codebuddy","model":"codebuddy-latest"}}`
+	body := `{"summarize":{"backend":"api","model":"gpt-4o-mini","api":{"base_url":"https://api.example.com/v1","format":"openai"}}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "codebuddy", model.ConfigInstance.Summarize.Backend)
-	assert.Equal(t, "codebuddy-latest", model.ConfigInstance.Summarize.Model)
+	assert.Equal(t, "api", model.ConfigInstance.Summarize.Backend)
+	assert.Equal(t, "gpt-4o-mini", model.ConfigInstance.Summarize.Model)
 }
 
 func TestServeConfig_Patch_MossNanoInvalidBackend(t *testing.T) {
@@ -514,6 +517,34 @@ func TestServeConfig_Patch_InvalidSummarizeBackend(t *testing.T) {
 	defer teardown()
 
 	body := `{"summarize":{"backend":"nonexistent"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeConfig_Patch_InvalidSummarizeTtsBackend(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	body := `{"summarize":{"tts_backend":"nonexistent"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "summarize.tts_backend must be one of")
+}
+
+func TestServeConfig_Patch_LegacyAgentBackendRejected(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Agent backends (claude, codebuddy, etc.) are no longer valid
+	body := `{"summarize":{"backend":"claude"}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)

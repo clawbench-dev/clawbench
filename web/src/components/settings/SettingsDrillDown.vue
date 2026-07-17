@@ -126,7 +126,7 @@ import { useI18n } from 'vue-i18n'
 import { ChevronRight } from 'lucide-vue-next'
 import SettingsItem from './SettingsItem.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
-import { drillDownCategories, engineVoiceOptions, type ItemSpec, type DrillDownCategory } from './settingsFieldMap'
+import { drillDownCategories, engineVoiceOptions, type ItemSpec, type DrillDownCategory, type DependsOn } from './settingsFieldMap'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useSettingsNavigation } from '@/composables/useSettingsNavigation'
 import { useDrillDownSideEffects } from '@/composables/useDrillDownSideEffects'
@@ -270,12 +270,27 @@ interface RenderHeaderEntry {
 
 type RenderEntry = RenderFieldEntry | RenderHeaderEntry
 
+// ── dependsOn filtering (OR logic for arrays) ──
+
+function isSingleDependsOnMet(dep: DependsOn): boolean {
+  const currentValue = localValues[dep.key]
+  if ('value' in dep) return currentValue === dep.value
+  return dep.values!.includes(currentValue as unknown)
+}
+
+function isDependsOnMet(dependsOn: ItemSpec['dependsOn']): boolean {
+  if (!dependsOn) return true
+  if (Array.isArray(dependsOn)) return dependsOn.some(isSingleDependsOnMet)
+  return isSingleDependsOnMet(dependsOn)
+}
+
 const renderList = computed((): RenderEntry[] => {
   const cfg = config.value
   const result: RenderEntry[] = []
 
-  // Common fields
+  // Common fields (filtered by dependsOn)
   for (const f of cfg.commonFields) {
+    if (!isDependsOnMet(f.dependsOn)) continue
     if (f.sectionHeader) {
       result.push({ type: 'header', key: `header-${f.key}`, label: t(f.sectionHeader) })
     }

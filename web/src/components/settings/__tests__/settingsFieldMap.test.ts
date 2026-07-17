@@ -154,23 +154,55 @@ describe('settingsFieldMap', () => {
 
   // ── Summarization drill-down ──
 
-  it('summarization drill-down has entrySelector and optionSubFields', () => {
+  it('summarization drill-down has separate text and voice backends', () => {
     const dd = drillDownCategories['summarization']
-    expect(dd.entrySelector).toBeDefined()
-    expect(dd.entrySelector!.key).toBe('summarize.backend')
-    expect(dd.entrySelector!.type).toBe('select')
-    expect(dd.requiredFields).toEqual(['summarize.api.base_url'])
+    expect(dd.entrySelector).toBeUndefined()
+    expect(dd.requiredFields).toEqual(['summarize.api.base_url', 'summarize.tts_api.base_url'])
 
-    const apiSub = dd.optionSubFields!.find(osf => osf.when === 'api')
-    expect(apiSub).toBeDefined()
-    expect(apiSub!.fields.length).toBe(4)
-    expect(apiSub!.fields[1].key).toBe('summarize.api.base_url')
+    // Text backend selector
+    const textBackend = dd.commonFields.find(f => f.key === 'summarize.backend')
+    expect(textBackend).toBeDefined()
+    expect(textBackend!.type).toBe('select')
+    expect(textBackend!.sectionHeader).toBe('settings.items.summarizeTextSection')
 
-    // CLI backend sub-fields
-    const claudeSub = dd.optionSubFields!.find(osf => osf.when === 'claude')
-    expect(claudeSub).toBeDefined()
-    expect(claudeSub!.fields.length).toBe(1)
-    expect(claudeSub!.fields[0].key).toBe('summarize.model')
+    // TTS backend selector
+    const ttsBackend = dd.commonFields.find(f => f.key === 'summarize.tts_backend')
+    expect(ttsBackend).toBeDefined()
+    expect(ttsBackend!.type).toBe('select')
+    expect(ttsBackend!.sectionHeader).toBe('settings.items.summarizeTtsSection')
+
+    // Text model (depends on text backend = api)
+    const textModel = dd.commonFields.find(f => f.key === 'summarize.model')
+    expect(textModel).toBeDefined()
+
+    // TTS model (depends on tts backend = api)
+    const ttsModel = dd.commonFields.find(f => f.key === 'summarize.tts_model')
+    expect(ttsModel).toBeDefined()
+
+    // Text API config fields (depend on text backend = api)
+    const apiBaseURL = dd.commonFields.find(f => f.key === 'summarize.api.base_url')
+    expect(apiBaseURL).toBeDefined()
+    expect(apiBaseURL!.sectionHeader).toBe('settings.items.apiHeader')
+
+    const apiKey = dd.commonFields.find(f => f.key === 'summarize.api.key')
+    expect(apiKey).toBeDefined()
+
+    const apiFormat = dd.commonFields.find(f => f.key === 'summarize.api.format')
+    expect(apiFormat).toBeDefined()
+
+    // TTS API config fields (depend on tts backend = api)
+    const ttsApiBaseURL = dd.commonFields.find(f => f.key === 'summarize.tts_api.base_url')
+    expect(ttsApiBaseURL).toBeDefined()
+    expect(ttsApiBaseURL!.sectionHeader).toBe('settings.items.summarizeTtsApiHeader')
+
+    const ttsApiKey = dd.commonFields.find(f => f.key === 'summarize.tts_api.key')
+    expect(ttsApiKey).toBeDefined()
+
+    const ttsApiFormat = dd.commonFields.find(f => f.key === 'summarize.tts_api.format')
+    expect(ttsApiFormat).toBeDefined()
+
+    // No optionSubFields — all fields are in commonFields
+    expect(dd.optionSubFields).toBeUndefined()
   })
 
   // ── RAG drill-down ──

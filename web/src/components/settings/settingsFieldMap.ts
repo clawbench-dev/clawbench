@@ -48,9 +48,7 @@ export interface DrillDownCategory {
   requiredFields?: string[]
 }
 
-// ── CLI backend names (used by summarization dependsOn) ─────
 
-const CLI_BACKENDS = ['claude', 'codebuddy', 'opencode', 'codex', 'qoder', 'vecli', 'deepseek', 'pi'] as const
 
 // ── Category items (standalone, non-drill-down) ────────────
 
@@ -184,41 +182,35 @@ export const drillDownCategories: Record<string, DrillDownCategory> = {
   },
   summarization: {
     categoryId: 'summarization',
-    entrySelector: { labelKey: 'settings.items.summarizeBackend', descriptionKey: 'settings.items.summarizeBackendDesc', key: 'summarize.backend', type: 'select', source: 'server', options: [
-      { labelKey: 'settings.items.summarizeDisabled', value: '' },
-      { labelKey: 'settings.items.summarizeSimple', value: 'simple' },
-      { labelKey: 'settings.items.summarizeApi', value: 'api' },
-      { labelKey: 'settings.items.summarizeClaude', value: 'claude' },
-      { labelKey: 'settings.items.summarizeCodebuddy', value: 'codebuddy' },
-      { labelKey: 'settings.items.summarizeOpencode', value: 'opencode' },
-      { labelKey: 'settings.items.summarizeCodex', value: 'codex' },
-      { labelKey: 'settings.items.summarizeQoder', value: 'qoder' },
-      { labelKey: 'settings.items.summarizeVecli', value: 'vecli' },
-      { labelKey: 'settings.items.summarizeDeepseek', value: 'deepseek' },
-      { labelKey: 'settings.items.summarizePi', value: 'pi' },
-    ]},
-    commonFields: [],
-    optionSubFields: [
-      {
-        when: 'api',
-        fields: [
-          { labelKey: 'settings.items.summarizeModel', descriptionKey: 'settings.items.summarizeModelDesc', key: 'summarize.model', type: 'text', source: 'server' },
-          { labelKey: 'settings.items.apiBaseUrl', descriptionKey: 'settings.items.apiBaseUrlDesc', key: 'summarize.api.base_url', type: 'text', source: 'server', sectionHeader: 'settings.items.apiHeader' },
-          { labelKey: 'settings.items.apiKey', descriptionKey: 'settings.items.apiKeyDesc', key: 'summarize.api.key', type: 'password', source: 'server' },
-          { labelKey: 'settings.items.apiFormat', descriptionKey: 'settings.items.apiFormatDesc', key: 'summarize.api.format', type: 'select', source: 'server', options: [
-            { labelKey: 'settings.items.apiFormatOpenai', value: 'openai' },
-            { labelKey: 'settings.items.apiFormatAnthropic', value: 'anthropic' },
-          ]},
-        ],
-      },
-      ...CLI_BACKENDS.map(backend => ({
-        when: backend,
-        fields: [
-          { labelKey: 'settings.items.summarizeModel', descriptionKey: 'settings.items.summarizeModelDesc', key: 'summarize.model', type: 'text' as const, source: 'server' as const },
-        ],
-      })),
+    commonFields: [
+      // Text summary entry
+      { labelKey: 'settings.items.summarizeTextBackend', descriptionKey: 'settings.items.summarizeTextBackendDesc', key: 'summarize.backend', type: 'select', source: 'server', sectionHeader: 'settings.items.summarizeTextSection', options: [
+        { labelKey: 'settings.items.summarizeDisabled', value: '' },
+        { labelKey: 'settings.items.summarizeSimple', value: 'simple' },
+        { labelKey: 'settings.items.summarizeApi', value: 'api' },
+      ]},
+      { labelKey: 'settings.items.apiBaseUrl', descriptionKey: 'settings.items.apiBaseUrlDesc', key: 'summarize.api.base_url', type: 'text', source: 'server', sectionHeader: 'settings.items.apiHeader', dependsOn: { key: 'summarize.backend', values: ['api'] } },
+      { labelKey: 'settings.items.summarizeModel', descriptionKey: 'settings.items.summarizeModelDesc', key: 'summarize.model', type: 'text', source: 'server', dependsOn: { key: 'summarize.backend', values: ['api'] } },
+      { labelKey: 'settings.items.apiKey', descriptionKey: 'settings.items.apiKeyDesc', key: 'summarize.api.key', type: 'password', source: 'server', dependsOn: { key: 'summarize.backend', values: ['api'] } },
+      { labelKey: 'settings.items.apiFormat', descriptionKey: 'settings.items.apiFormatDesc', key: 'summarize.api.format', type: 'select', source: 'server', options: [
+        { labelKey: 'settings.items.apiFormatOpenai', value: 'openai' },
+        { labelKey: 'settings.items.apiFormatAnthropic', value: 'anthropic' },
+      ], dependsOn: { key: 'summarize.backend', values: ['api'] } },
+      // Voice summary entry
+      { labelKey: 'settings.items.summarizeTtsBackend', descriptionKey: 'settings.items.summarizeTtsBackendDesc', key: 'summarize.tts_backend', type: 'select', source: 'server', sectionHeader: 'settings.items.summarizeTtsSection', options: [
+        { labelKey: 'settings.items.summarizeDisabled', value: '' },
+        { labelKey: 'settings.items.summarizeSimple', value: 'simple' },
+        { labelKey: 'settings.items.summarizeApi', value: 'api' },
+      ]},
+      { labelKey: 'settings.items.ttsApiBaseUrl', descriptionKey: 'settings.items.ttsApiBaseUrlDesc', key: 'summarize.tts_api.base_url', type: 'text', source: 'server', sectionHeader: 'settings.items.summarizeTtsApiHeader', dependsOn: { key: 'summarize.tts_backend', values: ['api'] } },
+      { labelKey: 'settings.items.summarizeTtsModel', descriptionKey: 'settings.items.summarizeTtsModelDesc', key: 'summarize.tts_model', type: 'text', source: 'server', dependsOn: { key: 'summarize.tts_backend', values: ['api'] } },
+      { labelKey: 'settings.items.ttsApiKey', descriptionKey: 'settings.items.ttsApiKeyDesc', key: 'summarize.tts_api.key', type: 'password', source: 'server', dependsOn: { key: 'summarize.tts_backend', values: ['api'] } },
+      { labelKey: 'settings.items.ttsApiFormat', descriptionKey: 'settings.items.ttsApiFormatDesc', key: 'summarize.tts_api.format', type: 'select', source: 'server', options: [
+        { labelKey: 'settings.items.apiFormatOpenai', value: 'openai' },
+        { labelKey: 'settings.items.apiFormatAnthropic', value: 'anthropic' },
+      ], dependsOn: { key: 'summarize.tts_backend', values: ['api'] } },
     ],
-    requiredFields: ['summarize.api.base_url'],
+    requiredFields: ['summarize.api.base_url', 'summarize.tts_api.base_url'],
   },
   rag: {
     categoryId: 'rag',

@@ -101,7 +101,8 @@ function isSingleDependsOnMet(dep: DependsOn): boolean {
 
 function isDependsOnMet(dependsOn: ItemSpec['dependsOn']): boolean {
   if (!dependsOn) return true
-  if (Array.isArray(dependsOn)) return dependsOn.every(isSingleDependsOnMet)
+  // Array means OR: show the field if ANY of the conditions match
+  if (Array.isArray(dependsOn)) return dependsOn.some(isSingleDependsOnMet)
   return isSingleDependsOnMet(dependsOn)
 }
 
