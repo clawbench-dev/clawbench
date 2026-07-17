@@ -605,6 +605,14 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			slog.Warn("failed to resolve summarize API key from agent_api_keys", slog.String("agent_id", cfg.Summarize.API.AgentID), slog.String("err", err.Error()))
 		}
 	}
+	if cfg.Summarize.TTSBackend == summarizeBackendAPI && cfg.Summarize.TTSAPI.Key == "" && cfg.Summarize.TTSAPI.AgentID != "" {
+		if _, _, ak, err := service.LoadAgentAnyAPIKey(cfg.Summarize.TTSAPI.AgentID); err == nil && ak != "" {
+			cfg.Summarize.TTSAPI.Key = ak
+			slog.Info("resolved summarize TTS API key from agent_api_keys", slog.String("agent_id", cfg.Summarize.TTSAPI.AgentID))
+		} else if err != nil {
+			slog.Warn("failed to resolve summarize TTS API key from agent_api_keys", slog.String("agent_id", cfg.Summarize.TTSAPI.AgentID), slog.String("err", err.Error()))
+		}
+	}
 
 	// Inject API key loader for Pi CLI runtime (avoids import cycle between ai and service packages)
 	ai.SetAgentAPIKeyLoader(func(agentID string) (provider, customURL, apiKey string, found bool) {
@@ -1100,7 +1108,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 }
 
 // initTaskSummarizer creates a TaskSummarizer based on the summarize.backend config.
-// Supports: AI CLI backends (claude/codebuddy/kimi/etc.), "api" (OpenAI/Anthropic HTTP), "simple".
+// Supports: "simple" (extract conclusion), "api" (OpenAI/Anthropic HTTP).
 func initTaskSummarizer(cfg model.Config) (*summarize.TaskSummarizer, error) {
 	backend := cfg.Summarize.Backend
 	modelName := cfg.Summarize.Model

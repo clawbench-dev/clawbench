@@ -4,11 +4,6 @@
     <div v-if="config.enableKey" class="drill-down__enable-row">
       <div class="drill-down__enable-left">
         <span class="drill-down__enable-label">{{ t(config.enableLabelKey!) }}</span>
-        <span
-          v-if="sideEffects.frpStatusDot.value"
-          class="drill-down__status-dot"
-          :class="'drill-down__status-dot--' + sideEffects.frpStatusDot.value"
-        />
       </div>
       <label class="drill-down__switch" @click.stop>
         <input
@@ -79,6 +74,25 @@
       </template>
     </template>
 
+    <!-- Connectivity Test -->
+    <div v-if="hasConnectivityTest" class="drill-down__test-section">
+      <button
+        class="drill-down__test-btn"
+        :disabled="fieldsDisabled || connectivityTesting"
+        @click="handleConnectivityTest"
+      >
+        {{ connectivityTesting ? t('settings.drillDown.testing') : t('settings.drillDown.testConnectivity') }}
+      </button>
+      <template v-for="(result, _idx) in connectivityTestResults" :key="_idx">
+        <div
+          class="drill-down__test-result"
+          :class="result.success ? 'drill-down__test-result--success' : 'drill-down__test-result--error'"
+        >
+          {{ result.message }}
+        </div>
+      </template>
+    </div>
+
     <!-- Fixed bottom save bar -->
     <div class="drill-down__save-bar">
       <div v-if="serverError" class="drill-down__error">{{ serverError }}</div>
@@ -130,6 +144,7 @@ import { drillDownCategories, engineVoiceOptions, type ItemSpec, type DrillDownC
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useSettingsNavigation } from '@/composables/useSettingsNavigation'
 import { useDrillDownSideEffects } from '@/composables/useDrillDownSideEffects'
+import { useConnectivityTest } from '@/composables/useConnectivityTest'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
 import { useTabDrawer } from '@/composables/useTabDrawer'
@@ -151,6 +166,7 @@ const dialog = useDialog()
 const { patchConfig, getServerValueWithDefault, setLocalConfig, localConfig } = useSettingsConfig()
 const { setBeforeResetGuard } = useSettingsNavigation()
 const sideEffects = useDrillDownSideEffects(props.categoryId)
+const { testing: connectivityTesting, testResults: connectivityTestResults, runTests: runConnectivityTests, clearResults: clearConnectivityResults } = useConnectivityTest()
 
 // ── Config ──
 
@@ -542,6 +558,55 @@ async function handleSave() {
   }
 }
 
+// ── Connectivity test ──
+
+const connectivityTestCategories = new Set(['frp', 'summarization', 'rag', 'notification', 'portForward', 'tts'])
+
+const hasConnectivityTest = computed(() => connectivityTestCategories.has(props.categoryId))
+
+/** Map frontend categoryId to backend category string(s) */
+function getTestCategories(): Array<{ category: string; values: Record<string, unknown> }> {
+  const values = { ...localValues } as Record<string, unknown>
+
+  switch (props.categoryId) {
+    case 'frp':
+      return [{ category: 'frp', values }]
+    case 'rag':
+      return [{ category: 'rag', values }]
+    case 'notification':
+      return [{ category: 'dingtalk', values }]
+    case 'portForward':
+      return [{ category: 'port_forward', values }]
+    case 'tts':
+      return [{ category: 'tts', values }]
+    case 'summarization': {
+      const tests: Array<{ category: string; values: Record<string, unknown> }> = []
+      const textBackend = localValues['summarize.backend']
+      const voiceBackend = localValues['summarize.tts_backend']
+      if (textBackend === 'api') {
+        tests.push({ category: 'summarize_text', values })
+      }
+      if (voiceBackend === 'api') {
+        tests.push({ category: 'summarize_voice', values })
+      }
+      // If neither is API, still test with one call that will return "not API mode"
+      if (tests.length === 0) {
+        tests.push({ category: 'summarize_text', values })
+      }
+      return tests
+    }
+    default:
+      return []
+  }
+}
+
+async function handleConnectivityTest() {
+  clearConnectivityResults()
+  const tests = getTestCategories()
+  if (tests.length === 0) return
+  await runConnectivityTests(tests)
+}
+
 // ── Discard confirmation on back ──
 
 function requestBack() {
@@ -604,33 +669,6 @@ defineExpose({ requestBack })
 .drill-down__enable-label {
   font-size: 15px;
   color: var(--text-primary);
-}
-
-/* Status dot */
-.drill-down__status-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.drill-down__status-dot--green {
-  background: #22c55e;
-}
-
-.drill-down__status-dot--yellow {
-  background: #eab308;
-  animation: drill-down-pulse 1.5s ease-in-out infinite;
-}
-
-.drill-down__status-dot--red {
-  background: #ef4444;
-}
-
-@keyframes drill-down-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
 }
 
 /* iOS-style switch toggle */
@@ -809,6 +847,51 @@ defineExpose({ requestBack })
 
 .drill-down__save-btn--accent:active:not(:disabled) {
   background: var(--accent-hover);
+}
+
+/* Connectivity test section */
+.drill-down__test-section {
+  padding: 8px 16px;
+}
+
+.drill-down__test-btn {
+  width: 100%;
+  padding: 10px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  transition: background 0.15s ease;
+}
+
+.drill-down__test-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.drill-down__test-btn:active:not(:disabled) {
+  background: var(--bg-tertiary);
+}
+
+.drill-down__test-result {
+  font-size: 13px;
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  line-height: 1.4;
+}
+
+.drill-down__test-result--success {
+  color: #22c55e;
+  background: color-mix(in srgb, #22c55e 10%, var(--bg-primary));
+}
+
+.drill-down__test-result--error {
+  color: #ef4444;
+  background: color-mix(in srgb, #ef4444 10%, var(--bg-primary));
 }
 
 /* Server error */

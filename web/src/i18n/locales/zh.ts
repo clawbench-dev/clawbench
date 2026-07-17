@@ -1406,6 +1406,8 @@ export default {
       continueEditing: '继续编辑',
       saved: '配置已保存',
       saveFailed: '保存失败',
+      testConnectivity: '测试连接',
+      testing: '测试中...',
     },
   },
   terminal: {

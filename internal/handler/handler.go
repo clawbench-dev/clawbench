@@ -219,6 +219,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/me", ServeAuthCheck)
 	register("/api/roots", middleware.Auth(ServeRoots))
 	register("/api/config", middleware.Auth(ServeConfig))
+	register("/api/config/test", middleware.Auth(ServeConfigTest))
 	register("/api/config/restart", middleware.Auth(ServeConfigRestart))
 	register("/api/config/password", middleware.Auth(ServeConfigPassword))
 	register("/api/projects", middleware.Auth(ServeProjects))

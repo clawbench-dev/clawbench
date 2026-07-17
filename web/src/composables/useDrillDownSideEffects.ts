@@ -24,18 +24,6 @@ export function useDrillDownSideEffects(categoryId: Ref<string> | string) {
     }
   }
 
-  /** Whether to show FRP status dot (only for frp category) */
-  const showFrpStatusDot = computed(() => catId === 'frp')
-
-  /** Get FRP status dot color */
-  const frpStatusDot = computed(() => {
-    if (catId !== 'frp' || !frpState.enabled) return undefined
-    if (frpState.state === 'running') return 'green' as const
-    if (frpState.state === 'starting') return 'yellow' as const
-    if (frpState.state === 'failed') return 'red' as const
-    return undefined
-  })
-
   /** Whether to auto-reset TTS voice on engine change */
   const needsVoiceReset = computed(() => catId === 'tts')
 
@@ -50,5 +38,5 @@ export function useDrillDownSideEffects(categoryId: Ref<string> | string) {
     if (catId === 'frp') fetchFrpInfo()
   }
 
-  return { afterSave, showFrpStatusDot, frpStatusDot, needsVoiceReset, frpAutoPortInfo, init }
+  return { afterSave, needsVoiceReset, frpAutoPortInfo, init }
 }

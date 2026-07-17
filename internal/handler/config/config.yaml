@@ -53,6 +53,7 @@ summarize:
     backend: api
     model: gpt-4o-mini
     tts_api:
+        agent_id: custom-tts-agent
         base_url: https://custom.tts.api.com/v1/chat/completions
         format: openai
         key: sk-tts-test-key

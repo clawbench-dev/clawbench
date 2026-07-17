@@ -164,9 +164,9 @@ type MossNanoConfig struct {
 // APIConfig holds configuration for the API-based summarization backend.
 type APIConfig struct {
 	BaseURL string `yaml:"base_url"` // Full endpoint URL (e.g., "https://api.openai.com/v1/chat/completions")
-	Key     string `yaml:"key"`      // API key (sent as Bearer token for OpenAI, x-api-key for Anthropic)
+	Key     string `yaml:"key"`      // API key (sent as Bearer token for OpenAI, x-api-key for Anthropic). If empty and AgentID is set, resolved from agent_api_keys table at startup.
 	Format  string `yaml:"format"`   // API format: "openai" (default) or "anthropic"
-	AgentID string `yaml:"agent_id"` // Reference to agent whose API key to use (key read from agent_api_keys table at runtime)
+	AgentID string `yaml:"agent_id"` // Optional: agent ID whose stored API key to use (resolved from agent_api_keys table at runtime when Key is empty)
 }
 
 // ConfigInstance holds the resolved configuration after ApplyDefaults.

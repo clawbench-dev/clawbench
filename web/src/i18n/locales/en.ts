@@ -1405,6 +1405,8 @@ export default {
       continueEditing: 'Continue Editing',
       saved: 'Configuration saved',
       saveFailed: 'Save failed',
+      testConnectivity: 'Test Connectivity',
+      testing: 'Testing...',
     },
   },
   terminal: {
