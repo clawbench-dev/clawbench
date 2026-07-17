@@ -44,14 +44,21 @@ func TestPushTaskEvent_NotStarted(t *testing.T) {
 	}
 }
 
+// setupPushMode sets push_mode for testing and returns a restore function.
+func setupPushMode(mode string) func() {
+	orig := model.ConfigInstance.PushMode
+	model.ConfigInstance.PushMode = mode
+	return func() { model.ConfigInstance.PushMode = orig }
+}
+
 func TestPushSuppressed_WhenClientOnline(t *testing.T) {
-	// Register a client checker that reports an online client
+	defer setupPushMode("dingtalk")()
+
 	origChecker := clientChecker
 	defer func() { clientChecker = origChecker }()
 
 	RegisterClientChecker(&mockClientChecker{hasConnected: true})
 
-	// Setup DB and manager so the push would otherwise proceed
 	origDB := db
 	defer func() { db = origDB }()
 	db = &mockDB{subscribers: []SubscriberInfo{{UserID: "user1"}}}
@@ -61,17 +68,18 @@ func TestPushSuppressed_WhenClientOnline(t *testing.T) {
 	SetManager(mgr)
 	defer SetManager(nil)
 
-	// This should be suppressed (no send attempted)
+	// When a client is connected (user is viewing UI), DingTalk push should be suppressed
 	if PushSessionEvent("s1", "completed", "Test", "Preview", "/path", "Bash") {
-		t.Error("expected false when client is online")
+		t.Error("expected push to be suppressed when client is online")
 	}
-	if PushTaskEvent("t1", "completed", "Test", "Preview", "/path") {
-		t.Error("expected false when client is online")
+	if PushTaskEvent("t1", "completed", "Test Task", "Preview", "/path") {
+		t.Error("expected push to be suppressed when client is online")
 	}
 }
 
 func TestPushNotSuppressed_WhenNoClientOnline(t *testing.T) {
-	// Register a client checker that reports no online client
+	defer setupPushMode("dingtalk")()
+
 	origChecker := clientChecker
 	defer func() { clientChecker = origChecker }()
 
@@ -86,8 +94,69 @@ func TestPushNotSuppressed_WhenNoClientOnline(t *testing.T) {
 	SetManager(mgr)
 	defer SetManager(nil)
 
-	// This will attempt to send (and fail due to no real token), but won't be suppressed
+	// When no client is connected, push should not be suppressed (will attempt send)
 	PushSessionEvent("s1", "completed", "Test", "Preview", "/path", "Bash")
+}
+
+func TestPushNotSuppressed_NilClientChecker(t *testing.T) {
+	defer setupPushMode("dingtalk")()
+
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+	clientChecker = nil // no checker registered
+
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{subscribers: []SubscriberInfo{{UserID: "user1"}}}
+
+	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s", AgentID: 1}}
+	mgr.started = true
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	// When clientChecker is nil, push should not be suppressed (will attempt send)
+	PushSessionEvent("s1", "completed", "Test", "Preview", "/path", "Bash")
+}
+
+func TestPushSuppressed_InNativeMode(t *testing.T) {
+	defer setupPushMode("native")()
+
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{subscribers: []SubscriberInfo{{UserID: "user1"}}}
+
+	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s", AgentID: 1}}
+	mgr.started = true
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	// In native mode, push should be suppressed (sendToAllSubscribers returns false early)
+	if PushSessionEvent("s1", "completed", "Test", "Preview", "/path", "Bash") {
+		t.Error("expected false in native mode")
+	}
+	if PushTaskEvent("t1", "completed", "Test", "Preview", "/path") {
+		t.Error("expected false in native mode")
+	}
+}
+
+func TestPushSuppressed_InDisabledMode(t *testing.T) {
+	defer setupPushMode("disabled")()
+
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{subscribers: []SubscriberInfo{{UserID: "user1"}}}
+
+	mgr := &Manager{cfg: &model.DingTalkConfig{AppKey: "k", AppSecret: "s", AgentID: 1}}
+	mgr.started = true
+	SetManager(mgr)
+	defer SetManager(nil)
+
+	if PushSessionEvent("s1", "completed", "Test", "Preview", "/path", "Bash") {
+		t.Error("expected false in disabled mode")
+	}
+	if PushTaskEvent("t1", "completed", "Test", "Preview", "/path") {
+		t.Error("expected false in disabled mode")
+	}
 }
 
 // mockClientChecker implements ConnectedClientChecker for testing.
@@ -108,6 +177,8 @@ func (m *mockDB) UpsertSubscriber(_, _, _, _ string) error  { return nil }
 func (m *mockDB) DeleteSubscriber(_ string) error           { return nil }
 
 func TestPushSessionEvent_UnknownStatus(t *testing.T) {
+	defer setupPushMode("dingtalk")()
+
 	origDB := db
 	defer func() { db = origDB }()
 	db = &mockDB{}
@@ -123,6 +194,8 @@ func TestPushSessionEvent_UnknownStatus(t *testing.T) {
 }
 
 func TestPushTaskEvent_UnknownStatus(t *testing.T) {
+	defer setupPushMode("dingtalk")()
+
 	origDB := db
 	defer func() { db = origDB }()
 	db = &mockDB{}
@@ -138,6 +211,8 @@ func TestPushTaskEvent_UnknownStatus(t *testing.T) {
 }
 
 func TestPushSessionEvent_Cancelled(t *testing.T) {
+	defer setupPushMode("dingtalk")()
+
 	origDB := db
 	defer func() { db = origDB }()
 	db = &mockDB{}
@@ -155,6 +230,8 @@ func TestPushSessionEvent_Cancelled(t *testing.T) {
 }
 
 func TestPushSessionEvent_PermissionPending(t *testing.T) {
+	defer setupPushMode("dingtalk")()
+
 	origDB := db
 	defer func() { db = origDB }()
 	db = &mockDB{}
@@ -172,6 +249,8 @@ func TestPushSessionEvent_PermissionPending(t *testing.T) {
 }
 
 func TestPushTaskEvent_Failed(t *testing.T) {
+	defer setupPushMode("dingtalk")()
+
 	origDB := db
 	defer func() { db = origDB }()
 	db = &mockDB{}
@@ -189,6 +268,8 @@ func TestPushTaskEvent_Failed(t *testing.T) {
 }
 
 func TestPushTaskEvent_Cancelled(t *testing.T) {
+	defer setupPushMode("dingtalk")()
+
 	origDB := db
 	defer func() { db = origDB }()
 	db = &mockDB{}
@@ -206,6 +287,8 @@ func TestPushTaskEvent_Cancelled(t *testing.T) {
 }
 
 func TestPushTaskEvent_Started(t *testing.T) {
+	defer setupPushMode("dingtalk")()
+
 	origDB := db
 	defer func() { db = origDB }()
 	db = &mockDB{}
@@ -223,6 +306,8 @@ func TestPushTaskEvent_Started(t *testing.T) {
 }
 
 func TestSendToAllSubscribers_NoSubscribers(t *testing.T) {
+	defer setupPushMode("dingtalk")()
+
 	origDB := db
 	defer func() { db = origDB }()
 	db = &mockDB{subscribers: []SubscriberInfo{}}
@@ -237,6 +322,8 @@ func TestSendToAllSubscribers_NoSubscribers(t *testing.T) {
 }
 
 func TestSendToAllSubscribers_NilManager(t *testing.T) {
+	defer setupPushMode("dingtalk")()
+
 	origDB := db
 	defer func() { db = origDB }()
 	db = &mockDB{subscribers: []SubscriberInfo{{UserID: "user1"}}}
@@ -251,5 +338,53 @@ func TestSendToAllSubscribers_NilManager(t *testing.T) {
 
 	if sendToAllSubscribers("Title", "Markdown") {
 		t.Error("expected false with nil manager")
+	}
+}
+
+func TestSendToAllSubscribers_NativeMode(t *testing.T) {
+	defer setupPushMode("native")()
+
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{subscribers: []SubscriberInfo{{UserID: "user1"}}}
+
+	origChecker := clientChecker
+	defer func() { clientChecker = origChecker }()
+	RegisterClientChecker(&mockClientChecker{hasConnected: false})
+
+	if sendToAllSubscribers("Title", "Markdown") {
+		t.Error("expected false in native mode")
+	}
+}
+
+func TestSendToAllSubscribers_DisabledMode(t *testing.T) {
+	defer setupPushMode("disabled")()
+
+	origDB := db
+	defer func() { db = origDB }()
+	db = &mockDB{subscribers: []SubscriberInfo{{UserID: "user1"}}}
+
+	if sendToAllSubscribers("Title", "Markdown") {
+		t.Error("expected false in disabled mode")
+	}
+}
+
+func TestGetPushMode_Default(t *testing.T) {
+	orig := model.ConfigInstance.PushMode
+	defer func() { model.ConfigInstance.PushMode = orig }()
+	model.ConfigInstance.PushMode = ""
+
+	if mode := GetPushMode(); mode != "native" {
+		t.Errorf("expected native, got %q", mode)
+	}
+}
+
+func TestGetPushMode_Dingtalk(t *testing.T) {
+	orig := model.ConfigInstance.PushMode
+	defer func() { model.ConfigInstance.PushMode = orig }()
+	model.ConfigInstance.PushMode = "dingtalk"
+
+	if mode := GetPushMode(); mode != "dingtalk" {
+		t.Errorf("expected dingtalk, got %q", mode)
 	}
 }
