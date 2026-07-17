@@ -321,6 +321,9 @@ public class MainActivity extends AppCompatActivity {
         // JavaScript interface for native bridge
         webView.addJavascriptInterface(new WebAppInterface(this), "AndroidNative");
 
+        // Register WebView reference with BackgroundService for safe UI callbacks
+        BackgroundService.updateWebViewRef(webView);
+
         // WebView client for navigation and error handling
         webView.setWebViewClient(new ClawBenchWebViewClient());
 
@@ -1980,11 +1983,10 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
-         * Force-reconnect the SSH tunnel.
-         * Disconnects the current (possibly stale) session and establishes a new one.
-         * Returns true if reconnection succeeded (port forwards re-established),
-         * false if reconnection failed or timed out.
-         * This is a blocking call (up to 15s) — runs on the JavaBridge thread.
+         * Force-reconnect the SSH tunnel (blocking).
+         * WARNING: This blocks the JavaBridge thread for up to 15s.
+         * Prefer reconnectTunnelAsync() to avoid ANR.
+         * Kept for backward compat with older APKs.
          */
         @JavascriptInterface
         public boolean reconnectTunnel() {
@@ -1997,6 +1999,36 @@ public class MainActivity extends AppCompatActivity {
             } catch (Exception e) {
                 AppLog.e(TAG, "reconnectTunnel: failed", e);
                 return false;
+            }
+        }
+
+        /**
+         * Force-reconnect the SSH tunnel (non-blocking, async callback).
+         * Calls the global JS function `window.__clawbenchReconnectResult(success)`
+         * on the UI thread when done. Does NOT block the JavaBridge thread.
+         */
+        @JavascriptInterface
+        public void reconnectTunnelAsync() {
+            if (!BackgroundService.isRunning()) {
+                AppLog.w(TAG, "reconnectTunnelAsync: BackgroundService not running");
+                // Call callback with false immediately using WeakReference for safety
+                activity.runOnUiThread(() -> {
+                    try {
+                        android.webkit.WebView wv = activity.webView;
+                        if (wv != null && !activity.isFinishing() && !activity.isDestroyed()) {
+                            wv.evaluateJavascript(
+                                "window.__clawbenchReconnectResult && window.__clawbenchReconnectResult(false)", null);
+                        }
+                    } catch (Exception e) {
+                        AppLog.d(TAG, "reconnectTunnelAsync: immediate callback failed", e);
+                    }
+                });
+                return;
+            }
+            try {
+                BackgroundService.forceReconnectAsync(15000, "window.__clawbenchReconnectResult && window.__clawbenchReconnectResult");
+            } catch (Exception e) {
+                AppLog.e(TAG, "reconnectTunnelAsync: failed", e);
             }
         }
 
