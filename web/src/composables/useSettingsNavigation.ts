@@ -26,10 +26,36 @@ export function useSettingsNavigation() {
   let pollTimer: ReturnType<typeof setInterval> | null = null
 
   const currentCategory = ref<string | null>(null)
-  const beforeReset = ref<(() => boolean) | null>(null)
 
+  // ── Multi-guard registry (C3 fix) ──
+  // Multiple panels can be mounted simultaneously in the inline model.
+  // Each registers a guard by unique ID; resetState checks all guards.
+
+  const guards = new Map<string, () => boolean>()
+
+  /** @deprecated Use registerGuard/unregisterGuard for multi-panel support */
   function setBeforeResetGuard(fn: (() => boolean) | null) {
-    beforeReset.value = fn
+    if (fn) {
+      guards.set('__legacy__', fn)
+    } else {
+      guards.delete('__legacy__')
+    }
+  }
+
+  function registerGuard(id: string, guard: () => boolean) {
+    guards.set(id, guard)
+  }
+
+  function unregisterGuard(id: string) {
+    guards.delete(id)
+  }
+
+  /** Check all registered guards. Returns true if all guards allow reset. */
+  function checkAllGuards(): boolean {
+    for (const guard of guards.values()) {
+      if (!guard()) return false
+    }
+    return true
   }
 
   // Update currentCategory whenever navStack changes
@@ -48,7 +74,7 @@ export function useSettingsNavigation() {
   }
 
   function resetState() {
-    if (beforeReset.value && !beforeReset.value()) return  // guard says don't reset
+    if (!checkAllGuards()) return  // at least one guard says don't reset
     navStack.value = []
     currentCategory.value = null
     needsRestart.value = false
@@ -136,5 +162,8 @@ export function useSettingsNavigation() {
     handleRestartNeeded,
     handleRestart,
     setBeforeResetGuard,
+    registerGuard,
+    unregisterGuard,
+    checkAllGuards,
   }
 }

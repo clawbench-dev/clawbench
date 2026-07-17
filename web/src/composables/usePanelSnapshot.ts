@@ -1,5 +1,6 @@
 import { ref, reactive, computed, watch, onUnmounted } from 'vue'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
+import i18n from '@/i18n'
 import type { GroupPanelConfig, ItemSpec } from '@/components/settings/settingsFieldMap'
 
 /**
@@ -87,6 +88,8 @@ export function usePanelSnapshot(config: GroupPanelConfig) {
   // ── C1 fix: watch serverConfig for externally changed keys ──
 
   const stopWatch = watch(serverConfig, () => {
+    // Skip if snapshot hasn't been initialized yet
+    if (Object.keys(snapshot.value).length === 0) return
     for (const key of getAllFieldKeys()) {
       // Only re-sync if user hasn't locally modified this value
       if (localValues[key] === snapshot.value[key]) {
@@ -142,6 +145,9 @@ export function usePanelSnapshot(config: GroupPanelConfig) {
   const canSave = computed(() => {
     const required = config.requiredFields ?? []
     if (required.length === 0) return true
+    // If the panel is disabled, skip required-field validation —
+    // the user is likely toggling the enable key back on.
+    if (config.enableKey && !localValues[config.enableKey]) return true
     // Determine sub-field match value
     const subFieldKey = config.optionSubFieldsKey ?? config.entrySelector?.key
     const subFieldValue = subFieldKey ? localValues[subFieldKey] : undefined
@@ -241,7 +247,7 @@ export function usePanelSnapshot(config: GroupPanelConfig) {
         hasFailedSave.value = false
       } catch (err: unknown) {
         saving.value = false
-        serverError.value = (err instanceof Error ? err.message : '') || 'Save failed'
+        serverError.value = (err instanceof Error ? err.message : '') || i18n.global.t('settings.saveFailed')
         hasFailedSave.value = true
       }
     } else {

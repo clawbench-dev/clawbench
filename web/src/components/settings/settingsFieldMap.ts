@@ -162,7 +162,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       ],
       afterSave(changedKeys) {
         if (changedKeys.includes('terminal.enabled')) {
-          import('@/composables/useTerminalStatus').then(m => m.useTerminalStatus().loadTerminalStatus())
+          import('@/composables/useTerminalStatus').then(m => m.useTerminalStatus().loadTerminalStatus()).catch(() => {})
         }
       },
     }},
@@ -279,7 +279,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       getTestCategories: (values) => [{ category: 'port_forward', values }],
       afterSave(changedKeys) {
         if (changedKeys.includes('port_forward.enabled')) {
-          import('@/composables/usePortForward').then(m => m.usePortForward().loadSSHInfo())
+          import('@/composables/usePortForward').then(m => m.usePortForward().loadSSHInfo()).catch(() => {})
         }
       },
     }},
@@ -310,11 +310,11 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       getTestCategories: (values) => [{ category: 'frp', values }],
       afterSave(changedKeys) {
         if (changedKeys.includes('frp.enabled')) {
-          import('@/composables/useFrp').then(m => m.useFrp().fetchFrpInfo())
+          import('@/composables/useFrp').then(m => m.useFrp().fetchFrpInfo()).catch(() => {})
         }
       },
       onInit() {
-        import('@/composables/useFrp').then(m => m.useFrp().fetchFrpInfo())
+        import('@/composables/useFrp').then(m => m.useFrp().fetchFrpInfo()).catch(() => {})
       },
 
     }},

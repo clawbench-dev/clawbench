@@ -167,7 +167,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const toast = useToast()
-const { setBeforeResetGuard } = useSettingsNavigation()
+const { registerGuard, unregisterGuard } = useSettingsNavigation()
 const { testing: connectivityTesting, testResults: connectivityTestResults, runTests: runConnectivityTests, clearResults: clearConnectivityResults } = useConnectivityTest()
 const { frpState } = useFrp()
 
@@ -194,13 +194,12 @@ const entryPicker = useTabDrawer('settings', { autoRestore: false })
 onMounted(() => {
   initSnapshot()
 
-  // Set beforeReset guard to prevent navStack clear when unsaved changes exist
-  // (C3 fix will upgrade to multi-guard registry in useSettingsNavigation)
-  setBeforeResetGuard(() => !hasChanges.value && !hasFailedSave.value)
+  // Register unsaved-changes guard with panel-specific ID (C3 fix)
+  registerGuard(`panel-${props.config.panelId}`, () => !hasChanges.value && !hasFailedSave.value)
 })
 
 onUnmounted(() => {
-  setBeforeResetGuard(null)
+  unregisterGuard(`panel-${props.config.panelId}`)
 })
 
 // ── Notify parent about changes ──
@@ -333,7 +332,7 @@ function resolveFieldOptions(field: ItemSpec): { label: string; value: unknown }
     const engine = (localValues['tts.engine'] as string) || 'edge'
     const voiceOpts = engineVoiceOptions[engine as string] ?? []
     if (voiceOpts.length > 0) {
-      return voiceOpts.map((o: Record<string, unknown>) => ({ label: t(o.labelKey as string), value: o.value }))
+      return voiceOpts.map(o => ({ label: t(o.labelKey), value: o.value }))
     }
   }
   // Static options from field spec
