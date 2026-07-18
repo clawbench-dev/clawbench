@@ -63,18 +63,18 @@
       <template v-if="entry.type === 'field' && entry.field.key === 'frp.auto_port' && isFrpAutoPortActive">
         <SettingsItem
           :label="t('settings.items.frpAssignedPort')"
-          :description="''"
-          type="info"
+          :description="t('settings.items.frpAssignedPortDesc')"
+          type="number"
           :model-value="frpHttpPortDisplay"
-          :disabled="false"
+          :disabled="true"
         />
         <SettingsItem
           v-if="frpSshPortDisplay"
           :label="t('settings.items.frpAssignedSSHPort')"
-          :description="''"
-          type="info"
+          :description="t('settings.items.frpAssignedSSHPortDesc')"
+          type="number"
           :model-value="frpSshPortDisplay"
-          :disabled="false"
+          :disabled="true"
         />
       </template>
     </template>
@@ -347,9 +347,8 @@ const isFrpAutoPortActive = computed(() => {
 })
 
 const frpHttpPortDisplay = computed(() => {
-  const info = { state: frpState.state, remotePort: frpState.remotePort, sshRemotePort: frpState.sshRemotePort }
-  const port = info.state === 'running' && info.remotePort > 0 ? info.remotePort : 0
-  return port > 0 ? port : '—'
+  const port = frpState.state === 'running' && frpState.remotePort > 0 ? frpState.remotePort : 0
+  return port
 })
 
 const frpSshPortDisplay = computed(() => {
