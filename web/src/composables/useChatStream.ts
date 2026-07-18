@@ -103,7 +103,15 @@ export function useChatStream(options: UseChatStreamOptions) {
       appLog.w(TAG, 'Stream timeout - no events received, reloading from DB')
       // No WS event received for too long — reload from DB
       disconnectStream()
-      onLoadHistory().finally(() => {
+      onLoadHistory().then(() => {
+        // loadHistory sets loading based on data.running — if the session
+        // is still active, it will reconnect the stream and keep loading=true.
+        // Only trigger onStreamEnd if the session is truly done (loading=false).
+        if (!loading.value) {
+          onStreamEnd?.('error')
+        }
+      }).catch(() => {
+        // loadHistory failed — reset loading state so user isn't stuck
         loading.value = false
         onStreamEnd?.('error')
       })

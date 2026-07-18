@@ -1755,9 +1755,14 @@ describe('useChatStream', () => {
   // ── Stream timeout ──
 
   describe('stream timeout', () => {
-    it('should disconnect and reload from DB on stream timeout', async () => {
+    it('should disconnect and reload from DB on stream timeout (session done)', async () => {
       vi.useFakeTimers()
       const options = createOptions()
+      // Simulate loadHistory finding the session is no longer running
+      options.onLoadHistory = vi.fn().mockImplementation(() => {
+        options.loading.value = false
+        return Promise.resolve()
+      })
       const { connectStream } = useChatStream(options)
 
       options.loading.value = true
@@ -1768,6 +1773,51 @@ describe('useChatStream', () => {
       await vi.advanceTimersByTimeAsync(31000)
 
       expect(options.onLoadHistory).toHaveBeenCalled()
+      expect(options.onStreamEnd).toHaveBeenCalledWith('error')
+      vi.advanceTimersByTime(10000)
+      vi.useRealTimers()
+    })
+
+    it('should keep loading=true on stream timeout when session is still running', async () => {
+      vi.useFakeTimers()
+      const options = createOptions()
+      // Simulate loadHistory finding the session is still running
+      options.onLoadHistory = vi.fn().mockImplementation(() => {
+        // loadHistory internally sets loading=true when data.running=true
+        options.loading.value = true
+        return Promise.resolve()
+      })
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      mockSendWsMessage.mockClear()
+
+      // Advance past STREAM_TIMEOUT_MS (30000)
+      await vi.advanceTimersByTimeAsync(31000)
+
+      expect(options.onLoadHistory).toHaveBeenCalled()
+      // Session is still running — loading must stay true
+      expect(options.loading.value).toBe(true)
+      // onStreamEnd should NOT be called because the session is still active
+      expect(options.onStreamEnd).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(10000)
+      vi.useRealTimers()
+    })
+
+    it('should set loading=false and call onStreamEnd when loadHistory fails on timeout', async () => {
+      vi.useFakeTimers()
+      const options = createOptions()
+      options.onLoadHistory = vi.fn().mockRejectedValue(new Error('network error'))
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+
+      // Advance past STREAM_TIMEOUT_MS (30000)
+      await vi.advanceTimersByTimeAsync(31000)
+
+      expect(options.loading.value).toBe(false)
       expect(options.onStreamEnd).toHaveBeenCalledWith('error')
       vi.advanceTimersByTime(10000)
       vi.useRealTimers()
