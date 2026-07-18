@@ -474,3 +474,203 @@ func TestServeConfigPatch_DingTalkSecretWithStars(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 }
+
+// --- push_mode validation and application ---
+
+func TestServeConfigPatch_PushModeValid(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"push_mode":"dingtalk"}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "dingtalk", model.ConfigInstance.PushMode)
+	assert.True(t, model.ConfigInstance.DingTalk.Enabled)
+}
+
+func TestServeConfigPatch_PushModeInvalid(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"push_mode":"invalid"}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "push_mode")
+}
+
+// --- summarize.tts_backend validation ---
+
+func TestServeConfigPatch_SummarizeTTSBackendValid(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"summarize":{"tts_backend":"simple"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "simple", model.ConfigInstance.Summarize.TTSBackend)
+}
+
+func TestServeConfigPatch_SummarizeTTSBackendInvalid(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"summarize":{"tts_backend":"claude"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "summarize.tts_backend")
+}
+
+func TestServeConfigPatch_SummarizeTTSBackendAPIWithoutBaseURL(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.Summarize.TTSBackend = "api"
+	model.ConfigInstance.Summarize.TTSAPI.BaseURL = ""
+
+	body := `{"summarize":{"tts_model":"test"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "tts_api.base_url")
+}
+
+func TestServeConfigPatch_SummarizeTTSBackendSwitchedToAPI(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.Summarize.TTSBackend = "simple"
+
+	// Switching tts_backend to "api" should not require base_url yet
+	body := `{"summarize":{"tts_backend":"api"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestServeConfigPatch_SummarizeTTSAPISubConfig(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.Summarize.TTSBackend = "api"
+	model.ConfigInstance.Summarize.TTSAPI.BaseURL = "https://example.com"
+
+	body := `{"summarize":{"tts_api":{"base_url":"https://updated.com","key":"test-key"}}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "https://updated.com", model.ConfigInstance.Summarize.TTSAPI.BaseURL)
+	assert.Equal(t, "test-key", model.ConfigInstance.Summarize.TTSAPI.Key)
+}
+
+// --- summarize.tts_model patch ---
+
+func TestServeConfigPatch_SummarizeTTSModel(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"summarize":{"tts_model":"gpt-4"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "gpt-4", model.ConfigInstance.Summarize.TTSModel)
+}
+
+// --- ServeConfig GET: TTSAPI conditional sub-config ---
+
+func TestServeConfig_Get_TTSAPISubConfig(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.Summarize.TTSBackend = "api"
+	model.ConfigInstance.Summarize.TTSAPI.BaseURL = "https://tts.example.com"
+	model.ConfigInstance.Summarize.TTSAPI.Key = "tts-key"
+
+	req := newRequest(t, http.MethodGet, "/api/config", nil)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp configResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	require.NotNil(t, resp.Summarize.TTSAPI)
+	assert.Equal(t, "https://tts.example.com", resp.Summarize.TTSAPI.BaseURL)
+}
+
+// --- ServeConfig GET: PushMode field ---
+
+func TestServeConfig_Get_PushMode(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.PushMode = "native"
+
+	req := newRequest(t, http.MethodGet, "/api/config", nil)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp configResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, "native", resp.PushMode)
+}
+
+// --- FRP token with *** (mask removed, now accepted) ---
+
+func TestServeConfigPatch_FRPTokenWithStars(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"frp":{"token":"abc***xyz"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "abc***xyz", model.ConfigInstance.FRP.Token)
+}

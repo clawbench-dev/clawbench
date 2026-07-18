@@ -183,7 +183,7 @@ func TestIsHashedAsset(t *testing.T) {
 		{"app.js", false},
 		{"style.css", false},
 		{"no-dash.js", false},
-		{"short-x.js", false},   // hash too short
+		{"short-x.js", false}, // hash too short
 		{"", false},
 		{"assets/logo-a1b2c3d4.svg", true}, // path with directory
 	}

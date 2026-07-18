@@ -2882,4 +2882,3 @@ func TestRespondPermission_Cancelled(t *testing.T) {
 	err = RespondPermission("session-perm-cancel", "perm_tool-2", "", true)
 	assert.NoError(t, err)
 }
-

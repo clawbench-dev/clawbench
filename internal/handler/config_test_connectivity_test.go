@@ -567,9 +567,8 @@ func TestTestTTS_NanoInvalidModelDir(t *testing.T) {
 
 func TestTestPortForward_ServerNotListening(t *testing.T) {
 	origSSH := sshServerRef
-	// Create server with port 0 (not listening)
-	srv := ssh.NewServer(model.PortForwardConfig{Enabled: true, Port: 0}, 20000, "test-password", nil)
-	sshServerRef = srv
+	// Set sshServerRef to nil (no server running)
+	sshServerRef = nil
 	defer func() { sshServerRef = origSSH }()
 
 	result := testPortForward(context.Background(), map[string]any{})
@@ -596,7 +595,7 @@ func TestTestPortForward_ServerListening(t *testing.T) {
 
 func TestTestSummarizeVoice_EmptyURL(t *testing.T) {
 	result := testSummarizeVoice(context.Background(), map[string]any{
-		"summarize.tts_backend": strAPI,
+		"summarize.tts_backend":      strAPI,
 		"summarize.tts_api.base_url": "",
 	})
 	assert.False(t, result.Success)

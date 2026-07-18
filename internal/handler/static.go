@@ -10,6 +10,16 @@ import (
 	"clawbench/internal/frontend"
 )
 
+// hashedAssetExts lists extensions for Vite hash-named assets that are
+// safe to cache aggressively (immutable — hash changes when content changes).
+//
+//nolint:goconst // ".png" appears in multiple unrelated string maps; extracting is overkill
+var hashedAssetExts = map[string]bool{
+	".js": true, ".css": true, ".mjs": true,
+	".woff2": true, ".woff": true, ".ttf": true,
+	".ico": true, ".png": true, ".svg": true, ".webp": true,
+}
+
 // isHashedAsset returns true if the filename follows Vite's hash-naming pattern
 // (e.g. "index-CaOuUlWb.js", "pdf-D-oSvAqu.js", "index-C_GAucyY.css").
 // These assets are immutable — the hash changes when content changes.
@@ -18,30 +28,43 @@ func isHashedAsset(name string) bool {
 	if idx := strings.LastIndex(base, "/"); idx >= 0 {
 		base = base[idx+1:]
 	}
-	// Match: name-HASH.ext where HASH is 6+ alphanumeric chars
+	ext, hash := splitHashedName(base)
+	if ext == "" {
+		return false
+	}
+	return isValidViteHash(hash) && hashedAssetExts[ext]
+}
+
+// splitHashedName splits "name-HASH.ext" into (".ext", "HASH").
+// Returns ("", "") if the pattern doesn't match.
+func splitHashedName(base string) (ext, hash string) {
 	for i := len(base) - 1; i >= 0; i-- {
 		if base[i] == '.' {
-			ext := base[i:]
-			base = base[:i]
-			// Check for pattern: something-<hash>
-			dashIdx := strings.LastIndex(base, "-")
-			if dashIdx < 0 || dashIdx == len(base)-1 {
-				return false
+			ext = base[i:]
+			name := base[:i]
+			dashIdx := strings.LastIndex(name, "-")
+			if dashIdx < 0 || dashIdx == len(name)-1 {
+				return "", ""
 			}
-			hash := base[dashIdx+1:]
-			// Hash must be 6+ alphanumeric chars (Vite uses 8 by default)
-			if len(hash) < 6 {
-				return false
-			}
-			for _, c := range hash {
-				if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
-					return false
-				}
-			}
-			return ext == ".js" || ext == ".css" || ext == ".mjs" || ext == ".woff2" || ext == ".woff" || ext == ".ttf" || ext == ".ico" || ext == ".png" || ext == ".svg" || ext == ".webp"
+			hash = name[dashIdx+1:]
+			return ext, hash
 		}
 	}
-	return false
+	return "", ""
+}
+
+// isValidViteHash checks that the hash portion is 6+ alphanumeric/underscore chars
+// (Vite uses 8 alphanumeric chars by default).
+func isValidViteHash(hash string) bool {
+	if len(hash) < 6 {
+		return false
+	}
+	for _, c := range hash {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 // ServeProjectDialog serves the project dialog HTML template.

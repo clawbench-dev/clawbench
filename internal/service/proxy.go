@@ -25,12 +25,12 @@ import (
 
 // ProxyRegistry manages forwarded ports: registration, health checks, and auto-detection.
 type ProxyRegistry struct {
-	mu          sync.RWMutex
-	ports       map[int]*model.ForwardedPort // key = localPort (auto-assigned, unique)
-	proxies     map[int]*proxy.ReverseProxy // key = localPort, active HTTP reverse proxies for non-localhost targets
-	allowedPorts string                      // Port ranges, e.g. "1024-65535" or "3000,5173,8080"
-	selfPort    int                          // ClawBench's own port, excluded from detection
-	cancel      context.CancelFunc
+	mu           sync.RWMutex
+	ports        map[int]*model.ForwardedPort // key = localPort (auto-assigned, unique)
+	proxies      map[int]*proxy.ReverseProxy  // key = localPort, active HTTP reverse proxies for non-localhost targets
+	allowedPorts string                       // Port ranges, e.g. "1024-65535" or "3000,5173,8080"
+	selfPort     int                          // ClawBench's own port, excluded from detection
+	cancel       context.CancelFunc
 }
 
 // allocateLocalPort finds an available local port for forwarding.

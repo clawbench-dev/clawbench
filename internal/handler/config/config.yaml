@@ -12,6 +12,8 @@ dingtalk:
     enabled: true
     users:
         - user1
+frp:
+    token: abc***xyz
 host: ""
 localhost_auth_exempt: false
 log_level: ""
@@ -30,6 +32,7 @@ push:
         app_key: ""
         enabled: false
         master_secret: newsecret1234567890
+push_mode: dingtalk
 rag:
     api_key: sk-1***xyz
     batch_size: 0
@@ -55,11 +58,11 @@ summarize:
     model: gpt-4o-mini
     tts_api:
         agent_id: custom-tts-agent
-        base_url: https://custom.tts.api.com/v1/chat/completions
+        base_url: https://updated.com
         format: openai
-        key: sk-tts-test-key
+        key: test-key
     tts_backend: api
-    tts_model: gpt-4o-mini
+    tts_model: gpt-4
 terminal:
     buffer_lines: 0
     enabled: false
