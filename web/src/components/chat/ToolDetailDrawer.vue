@@ -1410,7 +1410,7 @@ function handleBodyClick(event) {
   align-self: flex-end;
   padding: 6px 16px;
   border-radius: 4px;
-  border: none;
+  border: 1px solid var(--accent-color);
   background: var(--accent-color);
   color: white;
   font-size: 12px;

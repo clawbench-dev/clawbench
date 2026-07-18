@@ -1693,7 +1693,7 @@ onUnmounted(() => {
 .content-blocks .tool-detail .ask-question-submit {
   align-self: flex-end;
   padding: 5px 16px;
-  border: none;
+  border: 1px solid #f97316;
   border-radius: 6px;
   background: #f97316;
   color: white;
@@ -1714,12 +1714,14 @@ onUnmounted(() => {
 
 .content-blocks .tool-detail .ask-question-view.ask-submitted .ask-question-submit {
   background: #16a34a;
+  border-color: #16a34a;
   cursor: default;
   opacity: 1;
 }
 
 :root[data-theme="dark"] .content-blocks .tool-detail .ask-question-submit {
   background: #fb923c;
+  border-color: #fb923c;
 }
 
 :root[data-theme="dark"] .content-blocks .tool-detail .ask-question-submit:hover:not(:disabled) {
@@ -1728,6 +1730,7 @@ onUnmounted(() => {
 
 :root[data-theme="dark"] .content-blocks .tool-detail .ask-question-view.ask-submitted .ask-question-submit {
   background: #22c55e;
+  border-color: #22c55e;
 }
 
 .content-blocks .tool-detail .ask-question-supplementary {
