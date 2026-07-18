@@ -1588,8 +1588,6 @@ onUnmounted(() => {
   border-radius: 6px;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
-  user-select: none;
-  -webkit-user-select: none;
 }
 
 .content-blocks .tool-detail .ask-question-option:hover {
@@ -1612,6 +1610,8 @@ onUnmounted(() => {
   font-size: 14px;
   line-height: 1.3;
   color: var(--text-muted, #999);
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .content-blocks .tool-detail .ask-question-option.selected .ask-option-indicator {
@@ -1644,6 +1644,50 @@ onUnmounted(() => {
   line-height: 1.4;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.content-blocks .tool-detail .ask-question-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.content-blocks .tool-detail .ask-question-recommend {
+  padding: 5px 16px;
+  border: 1px solid #8b5cf6;
+  border-radius: 6px;
+  background: transparent;
+  color: #8b5cf6;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.content-blocks .tool-detail .ask-question-recommend:hover {
+  background: color-mix(in srgb, #8b5cf6 10%, var(--bg-secondary));
+}
+
+:root[data-theme="dark"] .content-blocks .tool-detail .ask-question-recommend {
+  border-color: #a78bfa;
+  color: #a78bfa;
+}
+
+:root[data-theme="dark"] .content-blocks .tool-detail .ask-question-recommend:hover {
+  background: color-mix(in srgb, #a78bfa 12%, var(--bg-secondary));
+}
+
+.content-blocks .tool-detail .ask-question-view.ask-submitted .ask-question-recommend {
+  background: #8b5cf6;
+  color: white;
+  border-color: #8b5cf6;
+  cursor: default;
+  opacity: 1;
+}
+
+:root[data-theme="dark"] .content-blocks .tool-detail .ask-question-view.ask-submitted .ask-question-recommend {
+  background: #a78bfa;
+  border-color: #a78bfa;
 }
 
 .content-blocks .tool-detail .ask-question-submit {
