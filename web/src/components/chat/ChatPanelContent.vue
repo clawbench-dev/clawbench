@@ -336,11 +336,15 @@ function onStreamEnd(reason) {
     }
     // Restore screen lock — output was cancelled, no TTS will play
     autoSpeech.onOutputEndNoSpeech()
+    // Refresh git state — agent may have modified files before cancellation
+    store.loadGitBranch().catch(() => {})
   }
   // 'error': don't touch pending messages — backend preserves queue
   if (reason === 'error') {
     // Restore screen lock — output errored, no TTS will play
     autoSpeech.onOutputEndNoSpeech()
+    // Refresh git state — agent may have modified files before error
+    store.loadGitBranch().catch(() => {})
   }
 }
 

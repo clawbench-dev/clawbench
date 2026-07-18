@@ -870,6 +870,9 @@ export function useChatSession(options: UseChatSessionOptions) {
           loadSessionsOnce()
         }, 500)
       }
+      // Refresh git state — completed/cancelled session may have modified files
+      // or switched branches; needed when user is on a different tab
+      store.loadGitBranch().catch(() => {})
     }
   }
 

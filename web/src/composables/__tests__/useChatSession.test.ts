@@ -268,6 +268,7 @@ vi.mock('@/stores/app', () => ({
     get state() {
       return mockState
     },
+    loadGitBranch: vi.fn().mockResolvedValue(undefined),
   },
 }))
 

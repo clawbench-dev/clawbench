@@ -318,7 +318,7 @@ async function loadProjectHistory() {
     }
     hasMore.value = data.hasMore
     // Record git state after successful load
-    lastGitState.value = { branch: store.state.gitBranch, head: store.state.gitHead, dirty: store.state.gitDirty }
+    lastGitState.value = { branch: store.state.gitBranch, head: store.state.gitHead, dirty: store.state.gitDirty, changeCount: store.state.gitWorkingTreeChangeCount }
     refreshHint.value = false
   } catch {
     error.value = t('git.history.loadError')
@@ -572,7 +572,7 @@ const lastProjectRoot = ref(null)
 const lastFilePath = ref(null)
 
 // Track git state for auto-refresh on tab re-entry
-const lastGitState = ref({ branch: '', head: '', dirty: false })
+const lastGitState = ref({ branch: '', head: '', dirty: false, changeCount: 0 })
 
 // Whether the refresh button should pulse to indicate stale data
 const refreshHint = ref(false)
@@ -598,11 +598,12 @@ watch(() => props.active, async (nowActive) => {
   }
 
   await store.loadGitBranch()
-  const cur = { branch: store.state.gitBranch, head: store.state.gitHead, dirty: store.state.gitDirty }
+  const cur = { branch: store.state.gitBranch, head: store.state.gitHead, dirty: store.state.gitDirty, changeCount: store.state.gitWorkingTreeChangeCount }
   const changed = lastGitState.value.branch &&
     (cur.branch !== lastGitState.value.branch ||
      cur.head !== lastGitState.value.head ||
-     cur.dirty !== lastGitState.value.dirty)
+     cur.dirty !== lastGitState.value.dirty ||
+     cur.changeCount !== lastGitState.value.changeCount)
   if (changed) {
     if (hasLoadedMore.value) {
       // User has extra data loaded — don't auto-refresh, just hint

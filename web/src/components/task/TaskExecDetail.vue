@@ -135,6 +135,8 @@ const execStream = useTaskExecStream({
   onComplete: () => {
     // Execution completed while previewing — do a final refresh
     refreshExecDetail()
+    // Refresh git state — task execution may have modified files or switched branches
+    appStore.loadGitBranch().catch(() => {})
   },
 })
 const showContinueBtn = computed(() => {
