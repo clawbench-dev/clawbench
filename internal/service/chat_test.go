@@ -1255,8 +1255,12 @@ func TestUpdateAndGetExternalSessionID(t *testing.T) {
 	err := service.UpdateExternalSessionID(sid, "ext-session-123")
 	assert.NoError(t, err)
 
-	// Get external ID
-	assert.Equal(t, "ext-session-123", service.GetExternalSessionID(sid))
+	// Get external ID (retry: dbRead may lag behind dbWrite under concurrent test load)
+	var got string
+	assert.Eventually(t, func() bool {
+		got = service.GetExternalSessionID(sid)
+		return got == "ext-session-123"
+	}, 2*time.Second, 10*time.Millisecond, "expected ext-session-123, got %q", got)
 }
 
 func TestGetExternalSessionID_NonExistent(t *testing.T) {
