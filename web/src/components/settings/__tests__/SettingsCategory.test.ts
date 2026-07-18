@@ -128,7 +128,7 @@ const i18n = createI18n({
       common: { ok: '确定' },
       settings: {
         needsRestart: '需重启',
-        categories: { chat: '聊天', agents: '智能体', appearance: '外观', tts: '语音', summarization: '摘要', portForward: '端口转发', push: '推送', terminal: '终端', rag: 'RAG', projectFiles: '项目与文件', about: '关于', android: 'Android', security: '安全' },
+        categories: { chat: '聊天', agents: '智能体', appearance: '外观', tts: '语音', portForward: '端口转发', push: '推送', terminal: '终端', rag: 'RAG', projectFiles: '项目与文件', about: '关于', android: 'Android', security: '安全' },
         items: {
           defaultAgent: '默认智能体',
           autoSpeech: '自动语音',

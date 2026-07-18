@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getServerFieldToLabelKey, categoryItems, categoryHasPanels, isPanelOnlyCategory, getCategoryPanels } from '@/components/settings/settingsFieldMap'
+import { getServerFieldToLabelKey, categoryItems, categoryHasPanels, isPanelOnlyCategory, getCategoryPanels, isSubPageRoute, getSubPagePanel, getSubPageTitleKey, subPagePanelMap } from '@/components/settings/settingsFieldMap'
 
 describe('settingsFieldMap', () => {
   it('maps all server-side dot-path keys to i18n label keys', () => {
@@ -72,7 +72,7 @@ describe('settingsFieldMap', () => {
     const expectedCategories = [
       'appearance', 'agents', 'projectFiles', 'chat', 'debug', 'security', 'about',
       'notification',
-      'terminal', 'tts', 'summarization_text', 'summarization_voice', 'rag', 'portForward', 'frp',
+      'terminal', 'tts', 'tts_engine', 'summarization_text', 'summarization_voice', 'rag', 'portForward', 'frp',
     ]
     for (const cat of expectedCategories) {
       expect(categoryItems[cat]).toBeDefined()
@@ -98,7 +98,7 @@ describe('settingsFieldMap', () => {
 
   it('categoryHasPanels identifies panel categories', () => {
     expect(categoryHasPanels('terminal')).toBe(true)
-    expect(categoryHasPanels('tts')).toBe(true)
+    expect(categoryHasPanels('tts')).toBe(false)
     expect(categoryHasPanels('summarization_text')).toBe(true)
     expect(categoryHasPanels('summarization_voice')).toBe(true)
     expect(categoryHasPanels('rag')).toBe(true)
@@ -112,7 +112,7 @@ describe('settingsFieldMap', () => {
 
   it('isPanelOnlyCategory identifies panel-only categories', () => {
     expect(isPanelOnlyCategory('terminal')).toBe(true)
-    expect(isPanelOnlyCategory('tts')).toBe(true)
+    expect(isPanelOnlyCategory('tts')).toBe(false)
     expect(isPanelOnlyCategory('summarization_text')).toBe(true)
     expect(isPanelOnlyCategory('summarization_voice')).toBe(true)
     expect(isPanelOnlyCategory('rag')).toBe(true)
@@ -137,8 +137,8 @@ describe('settingsFieldMap', () => {
 
   // ── TTS panel ──
 
-  it('tts panel has entrySelector and optionSubFields', () => {
-    const panels = getCategoryPanels('tts')
+  it('tts_engine panel has entrySelector and optionSubFields', () => {
+    const panels = getCategoryPanels('tts_engine')
     expect(panels.length).toBe(1)
     const cfg = panels[0]
     expect(cfg.entrySelector).toBeDefined()
@@ -300,8 +300,71 @@ describe('settingsFieldMap', () => {
     expect(dingtalkSub!.fields.map(f => f.key)).toEqual(['dingtalk.app_key', 'dingtalk.app_secret', 'dingtalk.agent_id'])
 
     expect(cfg.requiredFields).toEqual(['dingtalk.app_key', 'dingtalk.app_secret', 'dingtalk.agent_id'])
-    expect(cfg.hasConnectivityTest).toBe(true)
+    expect(typeof cfg.hasConnectivityTest).toBe('function')
+    expect((cfg.hasConnectivityTest as Function)({ push_mode: 'dingtalk' })).toBe(true)
+    expect((cfg.hasConnectivityTest as Function)({ push_mode: 'native' })).toBe(false)
+    expect((cfg.hasConnectivityTest as Function)({ push_mode: 'disabled' })).toBe(false)
     expect(cfg.getTestCategories).toBeDefined()
     expect(cfg.afterSave).toBeDefined()
+  })
+
+  // ── Sub-page route helpers (data-driven) ──
+
+  it('isSubPageRoute identifies colon-separated IDs except agents', () => {
+    expect(isSubPageRoute('chat:summarization_text')).toBe(true)
+    expect(isSubPageRoute('tts:summarization_voice')).toBe(true)
+    expect(isSubPageRoute('tts:tts_engine')).toBe(true)
+    expect(isSubPageRoute('agents:codebuddy')).toBe(false)
+    expect(isSubPageRoute('agents')).toBe(false)
+    expect(isSubPageRoute('terminal')).toBe(false)
+    expect(isSubPageRoute('chat')).toBe(false)
+  })
+
+  it('getSubPagePanel returns panel config for valid sub-routes', () => {
+    const textPanel = getSubPagePanel('chat:summarization_text')
+    expect(textPanel).toBeDefined()
+    expect(textPanel!.panelId).toBe('summarization_text')
+
+    const voicePanel = getSubPagePanel('tts:summarization_voice')
+    expect(voicePanel).toBeDefined()
+    expect(voicePanel!.panelId).toBe('summarization_voice')
+
+    const ttsPanel = getSubPagePanel('tts:tts_engine')
+    expect(ttsPanel).toBeDefined()
+    expect(ttsPanel!.panelId).toBe('tts')
+  })
+
+  it('getSubPagePanel returns undefined for unknown sub-routes', () => {
+    expect(getSubPagePanel('chat:unknown')).toBeUndefined()
+    expect(getSubPagePanel('nonexistent:panel')).toBeUndefined()
+  })
+
+  it('getSubPageTitleKey returns title i18n key for valid sub-routes', () => {
+    expect(getSubPageTitleKey('chat:summarization_text')).toBe('settings.items.summarizeTextSection')
+    expect(getSubPageTitleKey('tts:summarization_voice')).toBe('settings.items.summarizeTtsSection')
+    expect(getSubPageTitleKey('tts:tts_engine')).toBe('settings.items.ttsEngine')
+  })
+
+  it('subPagePanelMap has entry for every navigateTo action item', () => {
+    // Verify that all action items with navigateTo have a corresponding subPagePanelMap entry
+    for (const entries of Object.values(categoryItems)) {
+      for (const entry of entries) {
+        if (entry.type === 'item' && entry.spec.navigateTo) {
+          expect(subPagePanelMap[entry.spec.navigateTo]).toBeDefined()
+          expect(subPagePanelMap[entry.spec.navigateTo].panelConfig).toBeDefined()
+          expect(subPagePanelMap[entry.spec.navigateTo].titleKey).toBeTruthy()
+        }
+      }
+    }
+  })
+
+  it('RAG panel hasConnectivityTest is conditional', () => {
+    const panels = getCategoryPanels('rag')
+    expect(panels.length).toBe(1)
+    const cfg = panels[0]
+    expect(typeof cfg.hasConnectivityTest === 'function').toBe(true)
+    expect((cfg.hasConnectivityTest as Function)({ 'rag.base_url': 'http://localhost:11434' })).toBe(true)
+    expect((cfg.hasConnectivityTest as Function)({ 'rag.base_url': '' })).toBe(false)
+    expect((cfg.hasConnectivityTest as Function)({})).toBe(false)
   })
 })

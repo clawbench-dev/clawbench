@@ -338,7 +338,7 @@ function confirmEdit() {
   padding: 12px 16px;
   min-height: 0;
   cursor: pointer;
-  gap: 12px;
+  gap: 4px;
   background: var(--bg-primary);
   position: relative;
 }

@@ -16,8 +16,6 @@ const i18n = createI18n({
           agents: 'Agent偏好',
           terminal: '终端',
           tts: 'TTS语音',
-          summarization_text: '文本摘要',
-          summarization_voice: '语音摘要',
           rag: 'RAG记忆',
           portForward: '端口转发',
           frp: 'FRP内网穿透',
@@ -40,12 +38,10 @@ const globalStubs = {
   'lucide-bot': true,
   'lucide-terminal': true,
   'lucide-volume2': true,
-  'lucide-sparkles': true,
   'lucide-brain': true,
   'lucide-arrow-left-right': true,
   'lucide-globe': true,
   'lucide-bell': true,
-  'lucide-message-circle': true,
   'lucide-shield': true,
   'lucide-bug': true,
   'lucide-info': true,
@@ -58,11 +54,11 @@ function mountIndex() {
 }
 
 describe('SettingsIndex', () => {
-  it('renders 15 category rows', () => {
+  it('renders 13 category rows', () => {
     const wrapper = mountIndex()
 
     const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(15)
+    expect(rows.length).toBe(13)
   })
 
   it('renders category labels', () => {
@@ -94,7 +90,7 @@ describe('SettingsIndex', () => {
 
     const expectedIds = [
       'appearance', 'projectFiles', 'chat', 'agents', 'terminal',
-      'tts', 'summarization_text', 'summarization_voice', 'rag', 'portForward', 'frp', 'notification', 'security', 'debug', 'about',
+      'tts', 'rag', 'portForward', 'frp', 'notification', 'security', 'debug', 'about',
     ]
 
     const rows = wrapper.findAll('.settings-index__row')

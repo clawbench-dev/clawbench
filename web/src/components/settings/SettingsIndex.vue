@@ -24,8 +24,6 @@ import {
   Bot,
   Terminal,
   Volume2,
-  FileText,
-  Mic,
   Brain,
   ArrowLeftRight,
   Globe,
@@ -50,8 +48,6 @@ const categoryDefs = computed(() => [
   { id: 'agents', icon: Bot },
   { id: 'terminal', icon: Terminal },
   { id: 'tts', icon: Volume2 },
-  { id: 'summarization_text', icon: FileText },
-  { id: 'summarization_voice', icon: Mic },
   { id: 'rag', icon: Brain },
   { id: 'portForward', icon: ArrowLeftRight },
   { id: 'frp', icon: Globe },
@@ -86,16 +82,6 @@ const categories = computed(() =>
   gap: 12px;
   background: var(--bg-primary);
   position: relative;
-}
-
-/* Grouped card: no border-radius */
-.settings-index__row:first-child {
-}
-
-.settings-index__row:last-child {
-}
-
-.settings-index__row:only-child {
 }
 
 /* Row separator (not on last) */

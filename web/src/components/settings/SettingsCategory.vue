@@ -9,6 +9,14 @@
     :agent-id="categoryId.slice(7)"
     @deleted="$emit('navigate', 'agents')"
   />
+  <!-- Sub-page routes (data-driven: any colon-separated ID except agents) -->
+  <div v-else-if="subPagePanel" class="settings-category">
+    <SettingsGroupPanel
+      :config="subPagePanel"
+      :show-title="false"
+      @restart-needed="(fields) => $emit('restartNeeded', fields)"
+    />
+  </div>
   <!-- Standard settings category with mixed items + panels -->
   <div v-else class="settings-category">
     <template v-for="entry in renderList" :key="entry.type === 'item' ? entry.spec.key : entry.config.panelId">
@@ -73,7 +81,7 @@ import { useDialog } from '@/composables/useDialog'
 import { useAppMode } from '@/composables/useAppMode'
 import { startFlushTimer, stopFlushTimer } from '@/utils/appLog'
 import { usePwaInstall } from '@/composables/usePwaInstall'
-import { categoryItems, isPanelOnlyCategory, getCategoryPanels, isDependsOnMet, type ItemSpec, type CategoryEntry, type GroupPanelConfig } from './settingsFieldMap'
+import { categoryItems, isPanelOnlyCategory, getCategoryPanels, isDependsOnMet, isSubPageRoute, getSubPagePanel, type ItemSpec, type CategoryEntry, type GroupPanelConfig } from './settingsFieldMap'
 
 const props = defineProps<{
   categoryId: string
@@ -105,6 +113,15 @@ function resolveConfigValue(key: string): unknown {
   if (key in localConfig) return localConfig[key]
   return getServerValueWithDefault(key)
 }
+
+// ── Sub-page panel (data-driven) ──
+
+const subPagePanel = computed((): GroupPanelConfig | undefined => {
+  if (isSubPageRoute(props.categoryId)) {
+    return getSubPagePanel(props.categoryId)
+  }
+  return undefined
+})
 
 // ── Render list: mixed items + panels with dependsOn filtering ──
 
@@ -241,6 +258,9 @@ function handleClick(item: ItemSpec) {
   }
   if (item.key === 'downloadAndroidApp') {
     window.location.href = '/api/apk'
+  }
+  if (item.navigateTo) {
+    emit('navigate', item.navigateTo)
   }
   if (item.key === 'showWelcome') {
     window.dispatchEvent(new CustomEvent('clawbench-show-welcome'))

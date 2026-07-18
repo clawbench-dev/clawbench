@@ -54,6 +54,8 @@ export interface ItemSpec {
   displayFormat?: 'percent' | 'raw'
   /** Only show this item when running inside the Android app */
   appOnly?: boolean
+  /** For action items: navigate to this category sub-route ID on click */
+  navigateTo?: string
 }
 
 // ── Group panel config types ─────────────────────────────
@@ -120,6 +122,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.chatPageSize', descriptionKey: 'settings.items.chatPageSizeDesc', key: 'chat.page_size', type: 'number', source: 'server' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatSystemPromptInterval', descriptionKey: 'settings.items.chatSystemPromptIntervalDesc', key: 'chat.system_prompt_interval', type: 'number', source: 'server' } },
     { type: 'item', spec: { labelKey: 'settings.items.sessionMaxCount', descriptionKey: 'settings.items.sessionMaxCountDesc', key: 'session.max_count', type: 'number', source: 'server' } },
+    { type: 'item', spec: { labelKey: 'settings.items.summarizeTextSection', descriptionKey: 'settings.items.summarizeTextBackendDesc', key: 'navigateSummarizeText', type: 'action', source: 'local', navigateTo: 'chat:summarization_text' } },
   ],
   projectFiles: [
     { type: 'item', spec: { labelKey: 'settings.items.recentProjectsMaxCount', descriptionKey: 'settings.items.recentProjectsMaxCountDesc', key: 'recent_projects.max_count', type: 'number', source: 'server', min: 1, sectionHeader: 'settings.items.projectSectionHeader' } },
@@ -178,7 +181,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         ]},
       ],
       requiredFields: ['dingtalk.app_key', 'dingtalk.app_secret', 'dingtalk.agent_id'],
-      hasConnectivityTest: true,
+      hasConnectivityTest: (values) => values.push_mode === 'dingtalk',
       getTestCategories: (values) => values.push_mode === 'dingtalk' ? [{ category: 'dingtalk', values }] : [],
       afterSave(changedKeys, values) {
         if (changedKeys.includes('push_mode')) {
@@ -221,6 +224,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     }},
   ],
   tts: [
+    { type: 'item', spec: { labelKey: 'settings.items.ttsEngine', descriptionKey: 'settings.items.ttsEngineDesc', key: 'navigateTtsEngine', type: 'action', source: 'local', navigateTo: 'tts:tts_engine' } },
+    { type: 'item', spec: { labelKey: 'settings.items.summarizeTtsSection', descriptionKey: 'settings.items.summarizeTtsBackendDesc', key: 'navigateSummarizeVoice', type: 'action', source: 'local', navigateTo: 'tts:summarization_voice' } },
+  ],
+  tts_engine: [
     { type: 'panel', config: {
       panelId: 'tts',
       entrySelector: { labelKey: 'settings.items.ttsEngine', descriptionKey: 'settings.items.ttsEngineDesc', key: 'tts.engine', type: 'select', source: 'server', options: [
@@ -322,7 +329,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
         { labelKey: 'settings.items.ragRetentionDays', descriptionKey: 'settings.items.ragRetentionDaysDesc', key: 'rag.retention_days', type: 'number', source: 'server' },
       ],
       requiredFields: ['rag.base_url'],
-      hasConnectivityTest: true,
+      hasConnectivityTest: (v) => !!v['rag.base_url'],
       getTestCategories: (values) => [{ category: 'rag', values }],
     }},
   ],
@@ -378,6 +385,47 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
 
     }},
   ],
+}
+
+// ── Sub-page panel map (data-driven third-level navigation) ────────
+
+/**
+ * Maps colon-separated sub-route IDs to their panel config and title i18n key.
+ * Used by SettingsCategory.vue and SettingsPage.vue for data-driven sub-page rendering.
+ *
+ * Convention: sub-route ID = `{parentCategory}:{panelId}`
+ * - Parent category contains a navigation action item that emits `navigate` with this ID
+ * - SettingsCategory detects the colon and renders a standalone panel (no title)
+ * - SettingsPage uses the titleKey for the header bar
+ */
+export const subPagePanelMap: Record<string, { panelConfig: GroupPanelConfig; titleKey: string }> = {
+  'chat:summarization_text': {
+    panelConfig: getCategoryPanels('summarization_text')[0],
+    titleKey: 'settings.items.summarizeTextSection',
+  },
+  'tts:summarization_voice': {
+    panelConfig: getCategoryPanels('summarization_voice')[0],
+    titleKey: 'settings.items.summarizeTtsSection',
+  },
+  'tts:tts_engine': {
+    panelConfig: getCategoryPanels('tts_engine')[0],
+    titleKey: 'settings.items.ttsEngine',
+  },
+}
+
+/** Check if a category ID is a sub-page route (present in subPagePanelMap) */
+export function isSubPageRoute(categoryId: string): boolean {
+  return categoryId in subPagePanelMap
+}
+
+/** Get sub-page panel config for a colon-separated sub-route ID */
+export function getSubPagePanel(categoryId: string): GroupPanelConfig | undefined {
+  return subPagePanelMap[categoryId]?.panelConfig
+}
+
+/** Get sub-page title i18n key for a colon-separated sub-route ID */
+export function getSubPageTitleKey(categoryId: string): string | undefined {
+  return subPagePanelMap[categoryId]?.titleKey
 }
 
 // ── Helpers ─────────────────────────────────────────────────

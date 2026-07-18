@@ -58,6 +58,7 @@ import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useAgents } from '@/composables/useAgents'
 import { useDialog } from '@/composables/useDialog'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
+import { isSubPageRoute, getSubPageTitleKey } from './settingsFieldMap'
 
 const props = defineProps<{
   active?: boolean
@@ -110,6 +111,11 @@ const currentCategoryTitle = computed(() => {
     const agentId = cat.slice(7)
     const agent = getAgent(agentId)
     return agent ? `${agent.icon} ${agent.name}` : t('settings.categories.agents')
+  }
+  // For sub-page routes (colon-separated, except agents), use data-driven title lookup
+  if (isSubPageRoute(cat)) {
+    const titleKey = getSubPageTitleKey(cat)
+    return titleKey ? t(titleKey) : cat
   }
   return t(`settings.categories.${cat}`)
 })
