@@ -639,9 +639,13 @@ public class BackgroundService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        // Always call startForeground when started via startForegroundService,
+        // even if already running. Android requires startForeground() to be called
+        // within 5 seconds of every startForegroundService() call — skipping it
+        // when isRunning==true causes ForegroundServiceDidNotStartInTimeException.
+        startForegroundCompat(NOTIFICATION_ID, buildCurrentNotification());
         if (!isRunning) {
             isRunning = true;
-            startForegroundCompat(NOTIFICATION_ID, buildNotification(0, null));
         }
 
         if (intent != null) {
@@ -970,6 +974,10 @@ public class BackgroundService extends Service {
                     if (isReconnecting) {
                         // Exhausted all attempts or monitor stopped
                         isReconnecting = false;
+                        // Clean up stale port entries — they can't forward without SSH
+                        if (!nativeWsNeeded && !nativeWsActive) {
+                            cleanupStalePorts();
+                        }
                     }
                 }
             }
@@ -1629,6 +1637,41 @@ public class BackgroundService extends Service {
                 .setOngoing(true);
 
         return builder.build();
+    }
+
+    /**
+     * Build notification reflecting actual connection state.
+     * When SSH is disconnected, forwardedPorts may contain stale entries from
+     * SharedPreferences — only count ports that are on a live SSH session.
+     */
+    private Notification buildCurrentNotification() {
+        int activePortCount = 0;
+        if (sshSession != null && sshSession.isConnected()) {
+            activePortCount = forwardedPorts.size();
+        }
+        // If SSH is down but native WS is active, show that instead of zombie port count
+        if (activePortCount == 0 && (nativeWsNeeded || nativeWsActive)) {
+            return buildNotification(0, "消息监听中");
+        }
+        return buildNotification(activePortCount, null);
+    }
+
+    /**
+     * Remove stale port entries from forwardedPorts and SharedPreferences.
+     * Called when SSH reconnect fails — these ports can't actually forward
+     * traffic without a live SSH session, so keeping them misleads the user
+     * (notification shows "N 个端口转发" when nothing is actually working).
+     *
+     * Does NOT clear ports if native WS is active — the service still has
+     * a reason to run, and ports may be re-established on next reconnect.
+     */
+    private void cleanupStalePorts() {
+        if (forwardedPorts.isEmpty()) return;
+        int stale = forwardedPorts.size();
+        AppLog.i(TAG, "SSH: cleaning up " + stale + " stale port entries (SSH disconnected, no reconnect possible)");
+        forwardedPorts.clear();
+        saveForwardedPorts();
+        updateNotification(0, nativeWsNeeded || nativeWsActive ? "消息监听中" : null);
     }
 
     // --- Foreground service compat ---
