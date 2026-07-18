@@ -429,6 +429,13 @@ onBeforeUnmount(() => {
     right: 0;
     width: 20px;
     height: 100%;
+    z-index: 2;
+}
+
+/* When a code-line has a diff marker, add right padding so text
+   doesn't overlap the clickable marker area */
+.code-line:has(> .diff-marker-inline) > .code-text {
+    padding-right: 24px;
 }
 
 /* Clickable file path in code strings */
