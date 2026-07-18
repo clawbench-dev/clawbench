@@ -1,4 +1,5 @@
 import { ref, computed, watch, onUnmounted, getCurrentInstance, type Ref, type ComputedRef, readonly } from 'vue'
+import { appLog } from '@/utils/appLog'
 
 /**
  * Tab-drawer declarative binding registry.
@@ -82,11 +83,7 @@ export function useTabDrawer(tabId: string, openRefOrOptions?: Ref<boolean> | Ta
       const key = `${tabId}:${_getCallerSite()}`
       if (!_legacyWarned.has(key)) {
         _legacyWarned.add(key)
-        console.warn(
-          `[useTabDrawer] Legacy call useTabDrawer('${tabId}', openRef) — ` +
-          `migrate to useTabDrawer('${tabId}') and use drawer.open()/close() instead. ` +
-          `This warning fires once per call site.`
-        )
+        appLog.w('useTabDrawer', `Legacy call useTabDrawer('${tabId}', openRef) — migrate to useTabDrawer('${tabId}') and use drawer.open()/close() instead. This warning fires once per call site.`)
       }
     }
   } else {

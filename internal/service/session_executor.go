@@ -10,6 +10,7 @@ import (
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
+	"clawbench/internal/ws"
 )
 
 // ExecutionMode distinguishes between interactive chat and scheduled task execution.
@@ -21,7 +22,7 @@ var (
 )
 
 const (
-	// ModeInteractive is for normal user-driven chat sessions with SSE streaming.
+	// ModeInteractive is for normal user-driven chat sessions with WS streaming.
 	ModeInteractive ExecutionMode = iota
 	// ModeScheduled is for automated task execution without a user present.
 	ModeScheduled
@@ -65,10 +66,6 @@ type RunConfig struct {
 	StreamingMessageID int64 // ID of the streaming assistant message placeholder (for tool call DB upsert)
 
 	// --- ModeInteractive only ---
-	// StreamCh is the SSE channel for forwarding events to the frontend.
-	// Non-nil for interactive sessions and scheduled tasks with live preview.
-	// Nil when no SSE forwarding is needed.
-	StreamCh chan<- ai.StreamEvent
 	// LocalizeError formats error messages for display.
 	// If nil, err.Error() is used. The handler provides an i18n implementation;
 	// the scheduler provides nil (raw error strings).
@@ -115,7 +112,7 @@ type RunResult struct {
 // The caller is responsible for:
 //   - Creating and managing the context (including cancel functions)
 //   - Setting session running state (TrySetSessionRunning / SetSessionRunning)
-//   - Handling post-execution logic (SSE terminal events, drain loop, task status updates)
+//   - Handling post-execution logic (WS terminal events, drain loop, task status updates)
 type SessionExecutor struct {
 	cfg RunConfig
 	ctx context.Context
@@ -142,15 +139,14 @@ func NewSessionExecutor(ctx context.Context, cfg RunConfig) *SessionExecutor {
 }
 
 // handleNonTerminalEvent processes a single non-terminal stream event.
-// Returns true if the event loop should return (SSE send failure).
-func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) bool {
+func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 	// raw_output: accumulate but don't forward or count
 	if event.Type == "raw_output" {
 		if e.rawOutput != "" {
 			e.rawOutput += "\n"
 		}
 		e.rawOutput += event.RawOutput
-		return false
+		return
 	}
 
 	// session_capture: persist external session ID
@@ -158,15 +154,11 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) bool {
 		if event.Content != "" {
 			e.captureExternalSessionID(event.Content)
 		}
-		return false
+		return
 	}
 
-	// SSE forwarding (when stream channel is available)
-	if e.cfg.StreamCh != nil {
-		if e.forwardSSEEvent(event) {
-			return true
-		}
-	}
+	// Forward event to WS clients via StreamHub
+	e.forwardEvent(event)
 
 	// Accumulate block
 	ai.AccumulateBlock(&e.blocks, event)
@@ -177,7 +169,7 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) bool {
 	// resume_split: finalize current message, start new one
 	if event.Type == "resume_split" {
 		e.handleResumeSplit()
-		return false
+		return
 	}
 
 	// metadata capture
@@ -193,19 +185,22 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) bool {
 	if e.eventCount%5 == 0 {
 		e.flushStreamingMessage()
 	}
-
-	return false
 }
 
-// forwardSSEEvent forwards an event to the SSE stream channel.
-// Returns true if the event loop should return (send failure).
-func (e *SessionExecutor) forwardSSEEvent(event ai.StreamEvent) bool {
+// forwardEvent forwards an event to WS clients via StreamHub.
+// Note: For resume_split events, the hub emission is deferred to handleResumeSplit
+// because the message_id is only available after the new message is created.
+func (e *SessionExecutor) forwardEvent(event ai.StreamEvent) {
 	forwardEvent := event
 	if (event.Type == "tool_use" || event.Type == "tool_result") && event.Tool != nil { //nolint:goconst // event type strings
 		meta := ai.ExtractToolCallMeta(event)
 		forwardEvent.ToolMeta = &meta
 	}
-	return !ai.SendStreamEvent(e.ctx, e.cfg.StreamCh, forwardEvent)
+
+	// Emit to StreamHub for WS fan-out (except resume_split, handled separately)
+	if event.Type != "resume_split" {
+		ws.EmitToSession(e.cfg.SessionID, forwardEvent)
+	}
 }
 
 // RunWithChannel executes the event loop against a pre-built event channel.
@@ -236,9 +231,7 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 				return e.buildResult(true, wallStart)
 			}
 
-			if e.handleNonTerminalEvent(event) {
-				return e.buildResult(e.receivedTerminal, wallStart)
-			}
+			e.handleNonTerminalEvent(event)
 
 		case <-e.ctx.Done():
 			return e.buildResult(e.receivedTerminal, wallStart)
@@ -270,7 +263,7 @@ func (e *SessionExecutor) buildResult(receivedTerminal bool, wallStart time.Time
 	blocks = ai.MergeConsecutiveThinkingBlocks(blocks)
 
 	// Persist interactive tool blocks created by ConvertAskQuestionBlocks
-	// to chat_tool_calls table (they were created post-SSE and missed
+	// to chat_tool_calls table (they were created post-forwarding and missed
 	// the normal upsertToolCallToDB path during the event loop).
 	if e.cfg.StreamingMessageID > 0 && e.cfg.SessionID != "" {
 		for i := range blocks {
@@ -425,6 +418,15 @@ func (e *SessionExecutor) handleResumeSplit() {
 	} else if newMsgID > 0 {
 		e.cfg.StreamingMessageID = newMsgID
 	}
+
+	// Emit resume_split to StreamHub with the new message_id
+	// (must be after AddChatMessage which sets StreamingMessageID)
+	if mgr := ws.GetManager(); mgr != nil {
+		if hub := mgr.StreamHub(); hub != nil && hub.HasSubscribers(e.cfg.SessionID) {
+			msgID := GetStreamingMessageID(e.cfg.SessionID)
+			hub.EmitResumeSplitEvent(e.cfg.SessionID, msgID)
+		}
+	}
 }
 
 // injectSessionMetadata populates ACP mode, thinking effort, transport, and model
@@ -521,7 +523,7 @@ func drainRawOutput(eventCh <-chan ai.StreamEvent, rawOutput string) string {
 // and saves raw output. Returns the finalized RunResult with DB message ID.
 //
 // This replaces the old finalizeStreamRun function from handler/chat.go.
-// The caller is still responsible for SSE terminal events and drain loop logic.
+// The caller is still responsible for WS terminal events and drain loop logic.
 func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEvent) RunResult {
 	blocks := result.Blocks
 	responseMetadata := result.Metadata

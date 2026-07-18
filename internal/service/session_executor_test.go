@@ -779,7 +779,6 @@ func TestSessionExecutor_Scheduled_NoCancelReason(t *testing.T) {
 
 func TestSessionExecutor_Scheduled_NoSSEForwarding(t *testing.T) {
 	// Scheduled mode should not attempt to forward events to any SSE channel.
-	// The StreamCh is nil in scheduled mode, which is handled by the executor.
 	events := []ai.StreamEvent{
 		{Type: "content", Content: "hello"},
 		{Type: "done"},
@@ -799,7 +798,6 @@ func TestSessionExecutor_Scheduled_NoSSEForwarding(t *testing.T) {
 		SessionID:   "sess-scheduled",
 		AgentID:     "test",
 		ChatRequest: ai.ChatRequest{Prompt: "hello", ScheduledExecution: true},
-		StreamCh:    nil, // No SSE channel for scheduled mode
 		TaskID:      42,
 		ExecutionID: 7,
 		TriggerType: "auto",
@@ -1923,5 +1921,253 @@ func TestSessionExecutor_Finalize_SavesRawOutput(t *testing.T) {
 	}
 	if rawCount == 0 {
 		t.Fatal("expected raw response to be saved")
+	}
+}
+
+// --- Additional diff coverage for session_executor.go ---
+
+func TestSessionExecutor_RunWithChannel_TickerFlush(t *testing.T) {
+	// Cover lines 239-242: periodic flush ticker fires when there are blocks.
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Send a content event, then wait for ticker flush, then send done
+	ch := make(chan ai.StreamEvent, 5)
+	ch <- ai.StreamEvent{Type: "content", Content: "hello"}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// Wait for the ticker to fire (1 second) before sending done
+		time.Sleep(1500 * time.Millisecond)
+		ch <- ai.StreamEvent{Type: "done"}
+	}()
+
+	result := executor.RunWithChannel(ch)
+	<-done
+
+	if !result.ReceivedTerminal {
+		t.Fatal("expected ReceivedTerminal=true")
+	}
+}
+
+func TestSessionExecutor_HandleResumeSplit_Errors(t *testing.T) {
+	// Cover lines 378-380, 386-390, 397-401: handleResumeSplit error paths.
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	// Set up state before resume_split
+	executor.blocks = []model.ContentBlock{{Type: "text", Text: "part1"}}
+	executor.responseMetadata = &ai.Metadata{InputTokens: 10}
+	executor.rawOutput = "raw before split"
+
+	// Drop chat_history to make FinalizeStreamingMessage fail
+	_, _ = WriteExec("DROP TABLE chat_history")
+
+	// Should not panic even when finalize fails
+	executor.handleResumeSplit()
+}
+
+func TestSessionExecutor_HandleResumeSplit_AddChatMessageFails(t *testing.T) {
+	// Cover lines 414-418: AddChatMessage failure in handleResumeSplit.
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	executor.blocks = []model.ContentBlock{{Type: "text", Text: "part1"}}
+
+	// First resume_split succeeds (finalize existing + add new streaming msg)
+	executor.handleResumeSplit()
+
+	// Drop chat_history so second AddChatMessage fails
+	_, _ = WriteExec("DROP TABLE chat_history")
+
+	executor.blocks = []model.ContentBlock{{Type: "text", Text: "part2"}}
+	// Should not panic
+	executor.handleResumeSplit()
+}
+
+func TestSessionExecutor_BuildContentJSON_WithBlocks_ContextCancel(t *testing.T) {
+	// Cover line 488-490: buildContentJSON with blocks and context cancelled.
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	blocks := []model.ContentBlock{{Type: "text", Text: "partial"}}
+	result := RunResult{CancelReason: ""} // NOT user cancel
+	meta := &ai.Metadata{}
+
+	contentJSON, _ := executor.buildContentJSON(blocks, result, meta)
+	if !strings.Contains(contentJSON, `"cancelled":true`) {
+		t.Fatalf("expected cancelled:true in content JSON, got: %s", contentJSON)
+	}
+}
+
+func TestSessionExecutor_Finalize_FinalizeStreamingMessageError(t *testing.T) {
+	// Cover lines 536-540: Finalize when FinalizeStreamingMessage fails.
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "ok"}},
+		Metadata:         &ai.Metadata{},
+	}
+
+	// Drop chat_history to make FinalizeStreamingMessage fail
+	_, _ = WriteExec("DROP TABLE chat_history")
+
+	// Should not panic
+	finalized := executor.Finalize(result, nil)
+	if finalized.MsgID != 0 {
+		t.Fatalf("expected MsgID=0 when FinalizeStreamingMessage fails, got %d", finalized.MsgID)
+	}
+}
+
+func TestSessionExecutor_Finalize_SaveMetadataError(t *testing.T) {
+	// Cover lines 544-546: Finalize when SaveMetadata fails.
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "ok"}},
+		Metadata:         &ai.Metadata{},
+	}
+
+	// Drop summaries table to make SaveMetadata fail
+	_, _ = WriteExec("DROP TABLE summaries")
+
+	// Should not panic
+	finalized := executor.Finalize(result, nil)
+	if finalized.MsgID <= 0 {
+		t.Fatal("expected MsgID > 0 even when SaveMetadata fails")
+	}
+}
+
+func TestSessionExecutor_Finalize_SaveRawResponseError(t *testing.T) {
+	// Cover lines 555-559: Finalize when SaveRawResponse fails.
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+
+	result := RunResult{
+		ReceivedTerminal: true,
+		Blocks:           []model.ContentBlock{{Type: "text", Text: "ok"}},
+		Metadata:         &ai.Metadata{},
+		RawOutput:        "some raw output",
+	}
+
+	// Drop ai_raw_responses table to make SaveRawResponse fail
+	_, _ = WriteExec("DROP TABLE IF EXISTS ai_raw_responses")
+
+	// Should not panic
+	finalized := executor.Finalize(result, nil)
+	if finalized.MsgID <= 0 {
+		t.Fatal("expected MsgID > 0 even when SaveRawResponse fails")
 	}
 }

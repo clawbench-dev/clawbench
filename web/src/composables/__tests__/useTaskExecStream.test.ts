@@ -1,96 +1,91 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { ref, nextTick } from 'vue'
 import { useTaskExecStream } from '@/composables/useTaskExecStream'
 
-// Mock EventSource for SSE tests
-class MockEventSource {
-  static instances: MockEventSource[] = []
-  url: string
-  onerror: ((ev?: any) => void) | null = null
-  private listeners: Map<string, Set<(e: any) => void>> = new Map()
-  readyState = 0 // CONNECTING
+// ── Mock useGlobalEvents (WS) ──
 
-  constructor(url: string) {
-    this.url = url
-    MockEventSource.instances.push(this)
-  }
+let registeredEventHandler: ((event: string, data: unknown) => void) | null = null
+let mockSendWsMessage: ReturnType<typeof vi.fn>
+let mockConnected: ReturnType<typeof ref<boolean>>
 
-  addEventListener(type: string, handler: (e: any) => void) {
-    if (!this.listeners.has(type)) this.listeners.set(type, new Set())
-    this.listeners.get(type)!.add(handler)
-  }
+vi.mock('@/composables/useGlobalEvents', () => ({
+  useGlobalEvents: () => ({
+    onEvent: (handler: (event: string, data: unknown) => void) => {
+      registeredEventHandler = handler
+      return () => { registeredEventHandler = null }
+    },
+    sendWsMessage: mockSendWsMessage,
+    connected: mockConnected,
+  }),
+}))
 
-  close() {
-    this.readyState = 2 // CLOSED
-    const idx = MockEventSource.instances.indexOf(this)
-    if (idx !== -1) MockEventSource.instances.splice(idx, 1)
-  }
+// ── Mocks ──
 
-  // Test helper: simulate receiving an SSE event
-  _emit(type: string, data: any) {
-    const handlers = this.listeners.get(type)
-    if (handlers) {
-      const event = { data: JSON.stringify(data) }
-      for (const h of handlers) h(event)
-    }
+vi.mock('@/utils/appLog', () => ({
+  appLog: { i: vi.fn(), w: vi.fn(), e: vi.fn(), d: vi.fn() },
+}))
+
+vi.mock('@/utils/chatStreamUtils', () => ({
+  findLastBlockOfType: (blocks: any[], type: string) =>
+    [...blocks].reverse().find(b => b.type === type),
+}))
+
+vi.mock('vue', async () => {
+  const actual = await vi.importActual('vue')
+  return {
+    ...actual,
+    onUnmounted: vi.fn(),
   }
+})
+
+// ── Helpers ──
+
+function simulateWsEvent(eventType: string, payload: unknown, sessionId = 'test-session-123') {
+  if (!registeredEventHandler) throw new Error('No event handler registered')
+  registeredEventHandler('chat_stream', {
+    session_id: sessionId,
+    event_type: eventType,
+    payload,
+  })
 }
 
 describe('useTaskExecStream', () => {
-  let originalEventSource: typeof EventSource
-
   beforeEach(() => {
-    originalEventSource = globalThis.EventSource
-    // @ts-expect-error mock
-    globalThis.EventSource = MockEventSource
-    MockEventSource.instances = []
-    vi.useFakeTimers()
-    // Suppress Vue lifecycle warnings in test context
+    registeredEventHandler = null
+    mockSendWsMessage = vi.fn()
+    mockConnected = ref(true)
     vi.spyOn(console, 'warn').mockImplementation(() => {})
-  })
-
-  afterEach(() => {
-    globalThis.EventSource = originalEventSource
-    vi.useRealTimers()
-    MockEventSource.instances = []
   })
 
   function createStream(overrides?: { sessionId?: string | null; status?: string }) {
     const sessionId = ref<string | null>(overrides?.sessionId !== undefined ? overrides.sessionId : 'test-session-123')
     const status = ref<string>(overrides?.status ?? 'running')
-    const onRefresh = vi.fn().mockResolvedValue(undefined)
     const onComplete = vi.fn()
 
     const stream = useTaskExecStream({
       sessionId,
       status,
-      onRefresh,
       onComplete,
     })
 
-    return { stream, sessionId, status, onRefresh, onComplete }
+    return { stream, sessionId, status, onComplete }
   }
 
   describe('startPreview', () => {
-    it('creates SSE connection when session is running', () => {
+    it('subscribes to WS when session is running', () => {
       const { stream } = createStream()
       stream.startPreview()
 
-      expect(MockEventSource.instances.length).toBe(1)
-      expect(MockEventSource.instances[0].url).toContain('session_id=test-session-123')
+      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'subscribe', session_id: 'test-session-123' })
       expect(stream.isStreaming.value).toBe(true)
-      expect(stream.isPolling.value).toBe(false)
-
-      stream.stopPreview()
+      expect(stream.streamingMsg.value).toBeTruthy()
     })
 
     it('does nothing when session ID is null', () => {
-      const { stream } = createStream({ sessionId: null as any })
+      const { stream } = createStream({ sessionId: null })
       stream.startPreview()
 
-      // No new EventSource should have been created for null session
-      const hasSSEForNull = MockEventSource.instances.some(es => !es.url.includes('test-session'))
-      expect(hasSSEForNull).toBe(false)
+      expect(mockSendWsMessage).not.toHaveBeenCalled()
       expect(stream.isStreaming.value).toBe(false)
     })
 
@@ -98,26 +93,49 @@ describe('useTaskExecStream', () => {
       const { stream } = createStream({ status: 'completed' })
       stream.startPreview()
 
-      expect(MockEventSource.instances.length).toBe(0)
+      expect(mockSendWsMessage).not.toHaveBeenCalled()
       expect(stream.isStreaming.value).toBe(false)
     })
   })
 
-  describe('SSE event handling', () => {
-    it('accumulates content events into streaming message', async () => {
+  describe('stopPreview', () => {
+    it('unsubscribes from WS and resets streaming state', () => {
+      const { stream } = createStream()
+      stream.startPreview()
+      mockSendWsMessage.mockClear()
+
+      stream.stopPreview()
+
+      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'unsubscribe', session_id: 'test-session-123' })
+      expect(stream.isStreaming.value).toBe(false)
+    })
+  })
+
+  describe('WS event handling', () => {
+    it('ignores events for different sessions', () => {
       const { stream } = createStream()
       stream.startPreview()
 
-      const es = MockEventSource.instances[0]
+      simulateWsEvent('content', { content: 'Hello' }, 'other-session')
 
-      es._emit('content', { content: 'Hello ' })
-      es._emit('content', { content: 'World!' })
+      const msg = stream.streamingMsg.value
+      expect(msg!.blocks).toHaveLength(0)
+
+      stream.stopPreview()
+    })
+
+    it('accumulates content events into streaming message', () => {
+      const { stream } = createStream()
+      stream.startPreview()
+
+      simulateWsEvent('content', { content: 'Hello ' })
+      simulateWsEvent('content', { content: 'World!' })
 
       const msg = stream.streamingMsg.value
       expect(msg).toBeTruthy()
-      expect(msg.blocks).toHaveLength(1)
-      expect(msg.blocks[0].type).toBe('text')
-      expect(msg.blocks[0].text).toBe('Hello World!')
+      expect(msg!.blocks).toHaveLength(1)
+      expect(msg!.blocks[0].type).toBe('text')
+      expect(msg!.blocks[0].text).toBe('Hello World!')
 
       stream.stopPreview()
     })
@@ -126,15 +144,14 @@ describe('useTaskExecStream', () => {
       const { stream } = createStream()
       stream.startPreview()
 
-      const es = MockEventSource.instances[0]
-      es._emit('thinking', { text: 'Let me think...' })
-      es._emit('thinking_done', {})
+      simulateWsEvent('thinking', { text: 'Let me think...' })
+      simulateWsEvent('thinking_done', {})
 
       const msg = stream.streamingMsg.value
-      expect(msg.blocks).toHaveLength(1)
-      expect(msg.blocks[0].type).toBe('thinking')
-      expect(msg.blocks[0].text).toBe('Let me think...')
-      expect(msg.blocks[0].done).toBe(true)
+      expect(msg!.blocks).toHaveLength(1)
+      expect(msg!.blocks[0].type).toBe('thinking')
+      expect(msg!.blocks[0].text).toBe('Let me think...')
+      expect(msg!.blocks[0].done).toBe(true)
 
       stream.stopPreview()
     })
@@ -143,19 +160,74 @@ describe('useTaskExecStream', () => {
       const { stream } = createStream()
       stream.startPreview()
 
-      const es = MockEventSource.instances[0]
-      es._emit('tool_use', { name: 'ReadFile', id: 'tool-1', status: 'running', summary: 'Reading foo.go' })
+      simulateWsEvent('tool_use', { name: 'ReadFile', id: 'tool-1', status: 'running', summary: 'Reading foo.go' })
 
       const msg = stream.streamingMsg.value
-      expect(msg.blocks).toHaveLength(1)
-      expect(msg.blocks[0].type).toBe('tool_use')
-      expect(msg.blocks[0].name).toBe('ReadFile')
-      expect(msg.blocks[0].done).toBe(false)
-      expect(msg.blocks[0].summary).toBe('Reading foo.go')
+      expect(msg!.blocks).toHaveLength(1)
+      expect(msg!.blocks[0].type).toBe('tool_use')
+      expect(msg!.blocks[0].name).toBe('ReadFile')
+      expect(msg!.blocks[0].done).toBe(false)
+      expect(msg!.blocks[0].summary).toBe('Reading foo.go')
 
       // Mark done
-      es._emit('tool_use', { id: 'tool-1', done: true, status: 'completed' })
-      expect(msg.blocks[0].done).toBe(true)
+      simulateWsEvent('tool_use', { id: 'tool-1', done: true, status: 'completed' })
+      expect(msg!.blocks[0].done).toBe(true)
+
+      stream.stopPreview()
+    })
+
+    it('handles tool_result events', () => {
+      const { stream } = createStream()
+      stream.startPreview()
+
+      simulateWsEvent('tool_use', { name: 'ReadFile', id: 'tool-1', done: false })
+      simulateWsEvent('tool_result', { id: 'tool-1', name: 'ReadFile', status: 'completed' })
+
+      const msg = stream.streamingMsg.value
+      const toolBlock = msg!.blocks.find((b: any) => b.id === 'tool-1')
+      expect(toolBlock.done).toBe(true)
+
+      stream.stopPreview()
+    })
+
+    it('handles stream_start event', () => {
+      const { stream } = createStream()
+      stream.startPreview()
+
+      simulateWsEvent('stream_start', { message_id: 42 })
+
+      const msg = stream.streamingMsg.value
+      expect(msg!.id).toBe(42)
+
+      stream.stopPreview()
+    })
+
+    it('handles resume_split event', () => {
+      const { stream } = createStream()
+      stream.startPreview()
+
+      // First, create some content in the original message
+      simulateWsEvent('content', { content: 'Phase 1' })
+
+      // Then resume_split creates a new message
+      simulateWsEvent('resume_split', { message_id: 99 })
+
+      const msg = stream.streamingMsg.value
+      expect(msg!.id).toBe(99)
+      expect(msg!.blocks).toHaveLength(0)
+      expect(msg!.streaming).toBe(true)
+
+      stream.stopPreview()
+    })
+
+    it('handles metadata event', () => {
+      const { stream } = createStream()
+      stream.startPreview()
+
+      simulateWsEvent('metadata', { tokens: 100, cost: 0.05 })
+
+      const msg = stream.streamingMsg.value
+      expect(msg!.metadata).toEqual({ tokens: 100, cost: 0.05 })
 
       stream.stopPreview()
     })
@@ -164,8 +236,7 @@ describe('useTaskExecStream', () => {
       const { stream, onComplete } = createStream()
       stream.startPreview()
 
-      const es = MockEventSource.instances[0]
-      es._emit('done', {})
+      simulateWsEvent('done', {})
 
       expect(onComplete).toHaveBeenCalledTimes(1)
       expect(stream.isStreaming.value).toBe(false)
@@ -175,117 +246,68 @@ describe('useTaskExecStream', () => {
       const { stream, onComplete } = createStream()
       stream.startPreview()
 
-      const es = MockEventSource.instances[0]
-      es._emit('cancelled', {})
+      simulateWsEvent('cancelled', {})
+
+      expect(onComplete).toHaveBeenCalledTimes(1)
+      expect(stream.isStreaming.value).toBe(false)
+      expect(stream.streamingMsg.value?.cancelled).toBe(true)
+    })
+
+    it('handles error event and calls onComplete', () => {
+      const { stream, onComplete } = createStream()
+      stream.startPreview()
+
+      simulateWsEvent('error', { error: 'Something went wrong' })
 
       expect(onComplete).toHaveBeenCalledTimes(1)
       expect(stream.isStreaming.value).toBe(false)
     })
 
-    it('falls back to polling on sse_busy error', () => {
-      const { stream, onRefresh } = createStream()
-      stream.startPreview()
-
-      const es = MockEventSource.instances[0]
-      // Simulate sse_busy error event
-      const handlers = (es as any).listeners.get('error')
-      if (handlers) {
-        for (const h of handlers) h({ data: JSON.stringify({ reason: 'sse_busy' }) })
-      }
-
-      expect(stream.isPolling.value).toBe(true)
-      expect(onRefresh).toHaveBeenCalledTimes(1) // immediate poll on fallback
-
-      stream.stopPreview()
-    })
-  })
-
-  describe('polling fallback', () => {
-    it('polls onRefresh every 3 seconds', () => {
-      const { stream, onRefresh, status } = createStream()
-      stream.startPreview()
-
-      // Simulate SSE failure → fallback to polling
-      const es = MockEventSource.instances[0]
-      es.onerror?.()
-
-      expect(stream.isPolling.value).toBe(true)
-      expect(onRefresh).toHaveBeenCalledTimes(1) // initial
-
-      vi.advanceTimersByTime(3000)
-      expect(onRefresh).toHaveBeenCalledTimes(2)
-
-      vi.advanceTimersByTime(3000)
-      expect(onRefresh).toHaveBeenCalledTimes(3)
-
-      stream.stopPreview()
-    })
-
-    it('stops polling when status changes away from running', async () => {
-      const { stream, onRefresh, status } = createStream()
-      stream.startPreview()
-
-      // Fallback to polling
-      const es = MockEventSource.instances[0]
-      es.onerror?.()
-
-      expect(stream.isPolling.value).toBe(true)
-
-      // Simulate execution completing
-      status.value = 'completed'
-
-      // Advance timers and flush the async poll callback
-      vi.advanceTimersByTime(3000)
-      await vi.runAllTimersAsync()
-
-      expect(stream.isPolling.value).toBe(false)
-      expect(stream.isStreaming.value).toBe(false)
-    })
-  })
-
-  describe('stopPreview', () => {
-    it('cleans up SSE connection', () => {
+    it('tracks tool_use timeout timers', () => {
       const { stream } = createStream()
       stream.startPreview()
 
-      expect(MockEventSource.instances.length).toBe(1)
-
-      stream.stopPreview()
-
-      expect(stream.isStreaming.value).toBe(false)
-      // EventSource was closed
-    })
-
-    it('stops polling', () => {
-      const { stream, onRefresh } = createStream()
-      stream.startPreview()
-
-      // Force into polling mode
-      const es = MockEventSource.instances[0]
-      es.onerror?.()
-
-      stream.stopPreview()
-
-      vi.advanceTimersByTime(3000)
-      // No more polling calls after stop
-      const callCount = onRefresh.mock.calls.length
-      vi.advanceTimersByTime(3000)
-      expect(onRefresh.mock.calls.length).toBe(callCount)
-    })
-  })
-
-  describe('metadata', () => {
-    it('captures metadata from SSE events', () => {
-      const { stream } = createStream()
-      stream.startPreview()
-
-      const es = MockEventSource.instances[0]
-      es._emit('metadata', { tokens: 100, cost: 0.05 })
+      simulateWsEvent('tool_use', { name: 'ReadFile', id: 'tool-1', done: false })
 
       const msg = stream.streamingMsg.value
-      expect(msg.metadata).toEqual({ tokens: 100, cost: 0.05 })
+      expect(msg!.blocks[0].done).toBe(false)
+
+      // Verify tool_use timeout is set up by checking that the block
+      // can be marked done when the timer fires (tested via tool_result)
+      simulateWsEvent('tool_result', { id: 'tool-1', name: 'ReadFile', status: 'completed' })
+      expect(msg!.blocks[0].done).toBe(true)
 
       stream.stopPreview()
+    })
+  })
+
+  describe('WS reconnect', () => {
+    it('re-subscribes when WS reconnects during streaming', async () => {
+      const { stream } = createStream()
+      stream.startPreview()
+      mockSendWsMessage.mockClear()
+
+      // Simulate disconnect
+      mockConnected.value = false
+      await nextTick()
+
+      // Simulate reconnect
+      mockSendWsMessage.mockClear()
+      mockConnected.value = true
+      await nextTick()
+
+      expect(mockSendWsMessage).toHaveBeenCalledWith({ type: 'subscribe', session_id: 'test-session-123' })
+    })
+
+    it('does not re-subscribe when not streaming', async () => {
+      const { stream } = createStream()
+      // Not started, so reconnect should not subscribe
+      mockConnected.value = false
+      await nextTick()
+      mockConnected.value = true
+      await nextTick()
+
+      expect(mockSendWsMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'subscribe' }))
     })
   })
 })

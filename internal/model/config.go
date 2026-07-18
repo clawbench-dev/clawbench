@@ -36,7 +36,7 @@ type Config struct {
 	LogLevel            string `yaml:"log_level"` // Log level: "debug", "info", "warn", "error" (default: "info")
 	Password            string `yaml:"password"`
 	DefaultAgent        string `yaml:"default_agent"`
-	LogDir              string `yaml:"log_dir"`
+	LogDir              string // always <DataDir>/logs; not configurable via yaml
 	LocalhostAuthExempt bool   `yaml:"localhost_auth_exempt"` // true = localhost bypasses auth (default)
 	LogMaxDays          int    `yaml:"log_max_days"`
 	TLS                 struct {
@@ -75,12 +75,12 @@ type Config struct {
 		MossNano          MossNanoConfig `yaml:"moss_nano"`           // MOSS-TTS-Nano-specific configuration (only used when engine: "moss-nano")
 	} `yaml:"tts"`
 	Summarize   SummarizeConfig   `yaml:"summarize"`    // Shared summarization configuration (TTS + Tasks)
-	Proxy       ProxyConfig       `yaml:"proxy"`        // Legacy: kept for backward-compatible YAML reading
 	PortForward PortForwardConfig `yaml:"port_forward"` // SSH tunnel server + port forwarding configuration
 	FRP         FRPConfig         `yaml:"frp"`          // FRP (Fast Reverse Proxy) client configuration
 	RAG         RAGConfig         `yaml:"rag"`          // RAG history memory configuration
 	Terminal    TerminalConfig    `yaml:"terminal"`     // Interactive web terminal configuration
 	DingTalk    DingTalkConfig    `yaml:"dingtalk"`     // DingTalk enterprise bot push notifications
+	PushMode    string            `yaml:"push_mode"`    // Push notification mode: "native" (default), "dingtalk", "disabled"
 }
 
 // TerminalConfig holds configuration for the interactive web terminal.
@@ -102,12 +102,15 @@ type DingTalkConfig struct {
 	Users     []string `yaml:"users"`      // Static DingTalk userId list for single-chat push
 }
 
-// SummarizeConfig holds unified summarization configuration shared by TTS and scheduled tasks.
+// SummarizeConfig holds summarization configuration for text and voice.
 type SummarizeConfig struct {
-	Backend     string    `yaml:"backend"`      // Summarization backend: "" (disabled), "simple" (extract final answer), "api", "claude", "codebuddy", etc.
-	Model       string    `yaml:"model"`        // Model for summarization (empty = backend default)
+	Backend     string    `yaml:"backend"`      // Text/chat/task summarization backend: "" (disabled), "simple" (extract conclusion), "api" (LLM)
+	TTSBackend  string    `yaml:"tts_backend"`  // Voice/TTS summarization backend: "" (disabled), "simple" (extract conclusion), "api" (LLM)
+	Model       string    `yaml:"model"`        // Model for text summarization (empty = backend default)
+	TTSModel    string    `yaml:"tts_model"`    // Model for TTS summarization (empty = backend default)
 	ChatSummary *bool     `yaml:"chat_summary"` // Enable auto-summarization for chat messages (default: true, nil = true)
-	API         APIConfig `yaml:"api"`          // API-based summarization (used when backend is "api")
+	API         APIConfig `yaml:"api"`          // API config for text/chat/task summarization (used when backend is "api")
+	TTSAPI      APIConfig `yaml:"tts_api"`      // API config for voice/TTS summarization (used when tts_backend is "api")
 }
 
 // IsChatSummaryEnabled returns whether chat message auto-summarization is enabled.
@@ -161,9 +164,8 @@ type MossNanoConfig struct {
 // APIConfig holds configuration for the API-based summarization backend.
 type APIConfig struct {
 	BaseURL string `yaml:"base_url"` // Full endpoint URL (e.g., "https://api.openai.com/v1/chat/completions")
-	Key     string `yaml:"key"`      // API key (sent as Bearer token for OpenAI, x-api-key for Anthropic)
-	Format  string `yaml:"format"`   // API format: "openai" (default) or "anthropic"
-	AgentID string `yaml:"agent_id"` // Reference to agent whose API key to use (key read from agent_api_keys table at runtime)
+	Key     string `yaml:"key"`      // API key (sent as Bearer token for OpenAI, x-api-key for Anthropic). If empty and AgentID is set, resolved from agent_api_keys table at startup.
+	AgentID string `yaml:"agent_id"` // Optional: agent ID whose stored API key to use (resolved from agent_api_keys table at runtime when Key is empty)
 }
 
 // ConfigInstance holds the resolved configuration after ApplyDefaults.

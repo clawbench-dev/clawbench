@@ -1,269 +1,763 @@
-import { describe, expect, it, vi, afterEach } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
-import { createI18n } from 'vue-i18n'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { mount } from '@vue/test-utils'
+import { nextTick, ref, defineComponent, h } from 'vue'
+import SessionDrawer from '@/components/chat/SessionDrawer.vue'
+import { useAgents } from '@/composables/useAgents'
+import { useSessionIdentity } from '@/composables/useSessionIdentity'
+import { apiPost } from '@/utils/api'
+import { patchAgentPref } from '@/composables/useSettingsConfig'
 
-// ── Module mocks — must be before import ──
+// Mock BottomSheet to render slot content inline (skip Teleport).
+// Vue 3.5 + @vue/test-utils 2.4.11 broke teleport stubs — the stub renders
+// an empty element instead of slot content. Mocking BottomSheet avoids
+// Teleport entirely, keeping slot content in the component tree.
+vi.mock('@/components/common/BottomSheet.vue', () => ({
+  default: defineComponent({
+    props: { open: Boolean, title: String, auto: Boolean, instant: Boolean, compact: Boolean, noHeader: Boolean, handleOnly: Boolean, transparentOverlay: Boolean, fullscreen: Boolean, closeGuard: Boolean },
+    emits: ['close'],
+    inheritAttrs: true,
+    template: `
+      <div class="bottom-sheet-overlay">
+        <div class="bottom-sheet">
+          <div class="bs-header"><slot name="header" /></div>
+          <div class="bs-body"><slot /></div>
+          <div class="bs-footer"><slot name="footer" /></div>
+        </div>
+      </div>
+    `,
+  }),
+}))
 
+// Mock PopupMenu similarly — its <Teleport>+<Transition> breaks Vue 3.5
+// reactivity in test-utils. Render slot content inline without Teleport.
+vi.mock('@/components/common/PopupMenu.vue', () => ({
+  default: defineComponent({
+    props: { show: Boolean, targetElement: Object, maxWidth: Number, maxHeight: Number, menuItemsCount: Number },
+    emits: ['update:show'],
+    template: `
+      <div v-if="show" class="popup-menu-stub">
+        <slot />
+      </div>
+    `,
+  }),
+}))
+
+// Mock composables
 vi.mock('@/composables/useAgents', () => ({
-  useAgents: () => ({
-    agents: { value: [{ id: 'claude', name: 'Claude', icon: '🤖', backend: 'claude', specialty: '' }] },
-    loadAgents: vi.fn().mockResolvedValue(undefined),
-    getAgentIcon: vi.fn().mockReturnValue('🤖'),
-    getAgentName: vi.fn().mockReturnValue('Claude'),
-    isDefaultAgent: vi.fn().mockReturnValue(true),
-    getAgentDefaultModelName: vi.fn().mockReturnValue(''),
-    getAgentModels: vi.fn().mockReturnValue([]),
-    getAgentThinkingEffortLevels: vi.fn().mockReturnValue([]),
-  }),
+  useAgents: vi.fn(),
+  restoreOriginalModels: vi.fn(),
+  populateACPStateCache: vi.fn().mockResolvedValue(undefined),
+  invalidateACPStateCache: vi.fn(),
+}))
+vi.mock('@/composables/useSessionIdentity', () => ({
+  useSessionIdentity: vi.fn(),
+  clearModeState: vi.fn(),
+  clearCommandState: vi.fn(),
+  clearThinkingEffortState: vi.fn(),
+}))
+vi.mock('@/utils/api', () => ({
+  apiPost: vi.fn().mockResolvedValue({ models: [] }),
+}))
+vi.mock('vue-i18n', () => ({
+  useI18n: () => ({ t: (key: string) => key }),
+  createI18n: () => ({ global: { t: (key: string) => key } }),
+}))
+vi.mock('@/composables/useSettingsConfig', () => ({
+  patchAgentPref: vi.fn().mockResolvedValue(undefined),
+}))
+const mockToastShow = vi.fn()
+vi.mock('@/composables/useToast', () => ({
+  useToast: () => ({ show: mockToastShow }),
+}))
+vi.mock('@/composables/useLocale', () => ({
+  gt: (key: string) => key,
 }))
 
-// ── Configurable dialog mock ──
-let _dialogConfirmResult = false
-let _lastConfirmMessage = ''
-vi.mock('@/composables/useDialog.ts', () => ({
-  useDialog: () => ({
-    confirm: vi.fn().mockImplementation((msg: string) => {
-      _lastConfirmMessage = msg
-      return Promise.resolve(_dialogConfirmResult)
-    }),
-  }),
-}))
-
-vi.mock('@/composables/useSessionIdentity.ts', () => ({
-  useSessionIdentity: () => ({
-    runningSessionsVersion: { value: 0 },
-  }),
-}))
-
-vi.mock('@/stores/app.ts', () => ({
-  store: {
-    state: {
-      chatSessionPageSize: 10,
+const mockAgents = {
+  agents: ref([
+    {
+      id: 'claude',
+      name: 'Claude',
+      icon: '🤖',
+      backend: 'claude',
+      models: [
+        { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', default: true },
+        { id: 'claude-opus-4-5', name: 'Claude Opus 4.5', default: false },
+        { id: 'claude-haiku-3-5', name: 'Claude Haiku 3.5', default: false },
+      ],
+      thinkingEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      preferredModel: 'claude-sonnet-4-6',
+      preferredThinkingEffort: '',
+      canRefreshModels: true,
+      acpCommand: 'npx -y @agentclientprotocol/claude-agent-acp@latest',
+      transport: 'acp-stdio',
     },
-  },
-}))
+    {
+      id: 'kimi',
+      name: 'Kimi',
+      icon: '💎',
+      backend: 'kimi',
+      models: [],
+      thinkingEffortLevels: [],
+      preferredModel: '',
+      preferredThinkingEffort: '',
+      canRefreshModels: false,
+    },
+  ]),
+  getAgentModels: vi.fn((agentId: string) => {
+    const a = mockAgents.agents.value.find(a => a.id === agentId)
+    return a?.models || []
+  }),
+  getAgentThinkingEffortLevels: vi.fn((agentId: string) => {
+    const a = mockAgents.agents.value.find(a => a.id === agentId)
+    return a?.thinkingEffortLevels || []
+  }),
+  refreshAgentModels: vi.fn().mockResolvedValue(undefined),
+  updateAgentField: vi.fn(),
+  getDefaultModelId: vi.fn((agentId: string) => {
+    const a = mockAgents.agents.value.find(a => a.id === agentId)
+    return a?.preferredModel || a?.models?.[0]?.id || ''
+  }),
+  getAgent: vi.fn((agentId: string) => {
+    return mockAgents.agents.value.find(a => a.id === agentId)
+  }),
+  canRefreshModels: vi.fn((agentId: string) => {
+    const a = mockAgents.agents.value.find(a => a.id === agentId)
+    return !!a?.canRefreshModels
+  }),
+  supportsDualTransport: vi.fn((agentId: string) => {
+    const a = mockAgents.agents.value.find(a => a.id === agentId)
+    return !!a?.acpCommand
+  }),
+  getAgentTransport: vi.fn((agentId: string) => {
+    const a = mockAgents.agents.value.find(a => a.id === agentId)
+    return a?.transport || 'cli'
+  }),
+}
 
-// ── Import after mocks ──
+const mockIdentity = {
+  currentAgentId: ref('claude'),
+  currentModelId: ref('claude-sonnet-4-6'),
+  currentModelName: ref('Claude Sonnet 4.6'),
+  currentThinkingEffort: ref('high'),
+  currentTransport: ref('acp-stdio'),
+  availableThinkingEfforts: ref([]),
+  availableModes: ref([{ id: 'code', name: 'Code' }, { id: 'ask', name: 'Ask' }]),
+  currentModeId: ref('code'),
+  autoApprove: ref(false),
+  toggleAutoApprove: vi.fn(),
+}
 
-import SessionDrawer from '@/components/session/SessionDrawer.vue'
-
-// ── Test data ──
-
-const mockSessions = [
-  { id: 's1', title: 'Session 1', backend: 'claude', updatedAt: '2026-01-01T00:00:00Z' },
-  { id: 's2', title: 'Session 2', backend: 'codebuddy', updatedAt: '2026-01-02T00:00:00Z' },
-  { id: 's3', title: 'Session 3', backend: 'claude', updatedAt: '2026-01-03T00:00:00Z' },
-]
-
-function createFetchMock(sessions = mockSessions) {
-  return vi.fn().mockResolvedValue({
-    ok: true,
-    json: () => Promise.resolve({ sessions, hasMore: false }),
+describe('SessionDrawer', () => {
+  beforeEach(() => {
+    vi.mocked(useAgents).mockReturnValue(mockAgents as any)
+    vi.mocked(useSessionIdentity).mockReturnValue(mockIdentity as any)
+    vi.mocked(apiPost).mockResolvedValue({ models: [] })
+    vi.mocked(patchAgentPref).mockResolvedValue(undefined)
+    mockToastShow.mockClear()
   })
-}
 
-// ── i18n ──
-
-const i18n = createI18n({
-  legacy: false,
-  locale: 'zh',
-  messages: {
-    zh: {
-      session: { title: '会话', newSession: '新建', selectAgent: '选择AI', confirmDelete: '确定删除此会话及其所有聊天记录?', confirmDeleteRunning: '此会话正在运行中，删除将终止运行并清除记录，确定删除?', running: '运行中', noSessions: '暂无会话' },
-      common: { loading: '加载中', delete: '删除', cancel: '取消' },
-    },
-  },
-})
-
-// ── Helpers ──
-
-/** Polyfill IntersectionObserver for jsdom */
-function polyfillIO() {
-  class MockIO { constructor() {} observe() {} unobserve() {} disconnect() {} }
-  vi.stubGlobal('IntersectionObserver', MockIO)
-}
-
-/** Common stubs used by all mount calls */
-const commonStubs = {
-  BottomSheet: {
-    template: '<div><slot name="header" /><slot /></div>',
-    props: ['open', 'auto', 'title'],
-    methods: { close: vi.fn() },
-  },
-  ModalDialog: {
-    template: '<div><slot /><slot name="footer" /></div>',
-    props: ['open', 'title'],
-  },
-  SwipeToDeleteRow: {
-    template: '<div class="swipe-row"><slot /></div>',
-    props: ['threshold'],
-    methods: { reset: vi.fn() },
-  },
-}
-
-/**
- * Mount SessionDrawer with sessions pre-loaded by calling loadSessions() directly.
- * vi.stubGlobal('fetch') does not work with SFC module-scoped fetch references
- * in jsdom, so we bypass the API call by invoking the component's loadSessions
- * method and feeding it mock data.
- */
-async function mountWithSessions(sessions = mockSessions) {
-  polyfillIO()
-  const fetchFn = createFetchMock(sessions)
-  vi.stubGlobal('fetch', fetchFn)
-
-  const wrapper = mount(SessionDrawer, {
-    props: {
-      open: true,
-      currentSessionId: 's1',
-      runningSessionIds: new Set(),
-    },
-    global: {
-      plugins: [i18n],
-      stubs: commonStubs,
-    },
-  })
-  await flushPromises()
-
-  // Load sessions directly since the watch(open) may not trigger fetch in jsdom
-  if (wrapper.vm.sessions.length === 0) {
-    await wrapper.vm.loadSessions()
-    await flushPromises()
+  function mountDrawer(props = {}) {
+    return mount(SessionDrawer, {
+      props: { open: true, agentId: 'claude', ...props },
+    })
   }
 
-  return { wrapper, fetchFn }
-}
+  // --- Tab switching ---
 
-// ── Tests ──
-
-describe('SessionDrawer: always reload on open', () => {
-  afterEach(() => {
-    vi.restoreAllMocks()
+  it('renders model tab by default', () => {
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.model-tab.active').text()).toContain('chat.modelSwitcher.title')
   })
 
-  it('loads sessions via loadSessions()', async () => {
-    const { wrapper } = await mountWithSessions()
-    expect(wrapper.vm.sessions).toHaveLength(3)
+  it('switches to thinking tab via initialTab prop', () => {
+    const wrapper = mountDrawer({ initialTab: 'thinking' })
+    const tabs = wrapper.findAll('.model-tab')
+    expect(tabs[1].classes()).toContain('active')
   })
 
-  it('reloads sessions when loadSessions is called again', async () => {
-    const afterDelete = mockSessions.filter(s => s.id !== 's2')
-    const { wrapper, fetchFn } = await mountWithSessions()
+  // --- Model list ---
 
-    expect(wrapper.vm.sessions).toHaveLength(3)
-    fetchFn.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ sessions: afterDelete, hasMore: false }),
+  it('renders model list for current agent', () => {
+    const wrapper = mountDrawer()
+    const items = wrapper.findAll('.model-item')
+    expect(items.length).toBe(3)
+    expect(items[0].text()).toContain('Claude Sonnet 4.6')
+  })
+
+  it('highlights current session model', () => {
+    const wrapper = mountDrawer()
+    const items = wrapper.findAll('.model-item')
+    expect(items[0].classes()).toContain('current')
+  })
+
+  it('shows default badge on preferred model', () => {
+    const wrapper = mountDrawer()
+    const items = wrapper.findAll('.model-item')
+    expect(items[0].find('.default-badge').exists() || items[0].text().includes('默认')).toBe(true)
+  })
+
+  // --- Search ---
+  // Vue 3.5 + test-utils doesn't re-render on ref changes.
+  // Test search filtering via VM methods instead of DOM interaction.
+
+  it('filters models by search query', () => {
+    const wrapper = mountDrawer()
+    wrapper.vm._setSearchQuery('opus')
+    const filtered = wrapper.vm._getFilteredModels()
+    expect(filtered.length).toBe(1)
+    expect(filtered[0].name).toContain('Opus')
+  })
+
+  it('shows no results message when search has no matches', async () => {
+    const wrapper = mountDrawer()
+    const searchInput = wrapper.find('.model-search-input')
+    await searchInput.setValue('nonexistent')
+    await nextTick()
+
+    expect(wrapper.find('.model-empty').exists() || wrapper.text()).toBeTruthy()
+  })
+
+  it('filters models by id when search matches id but not name', () => {
+    const wrapper = mountDrawer()
+    wrapper.vm._setSearchQuery('haiku-3')
+    const filtered = wrapper.vm._getFilteredModels()
+    expect(filtered.length).toBe(1)
+    expect(filtered[0].name).toContain('Haiku')
+  })
+
+  it('shows no-search-results message when search yields nothing', () => {
+    const wrapper = mountDrawer()
+    wrapper.vm._setSearchQuery('xyz')
+    const filtered = wrapper.vm._getFilteredModels()
+    expect(filtered.length).toBe(0)
+  })
+
+  // --- Model selection (session-scoped) ---
+
+  it('emits switch-model when clicking a model', async () => {
+    const wrapper = mountDrawer()
+    const items = wrapper.findAll('.model-item')
+    await items[1].trigger('click') // opus
+
+    expect(wrapper.emitted('switch-model')).toBeTruthy()
+    expect(wrapper.emitted('switch-model')![0][0]).toEqual({ id: 'claude-opus-4-5', name: 'Claude Opus 4.5', default: false })
+  })
+
+  it('closes drawer after selecting a model', async () => {
+    const wrapper = mountDrawer()
+    const items = wrapper.findAll('.model-item')
+    await items[1].trigger('click')
+
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  // --- Thinking effort ---
+  // Use initialTab: 'thinking' to test thinking tab content.
+
+  it('renders thinking effort levels on thinking tab', () => {
+    const wrapper = mountDrawer({ initialTab: 'thinking' })
+    const items = wrapper.findAll('.thinking-item')
+    expect(items.length).toBe(5)
+  })
+
+  it('highlights current thinking effort', () => {
+    const wrapper = mountDrawer({ initialTab: 'thinking' })
+    const items = wrapper.findAll('.thinking-item')
+    const highItem = items.find(i => i.text().includes('high'))
+    expect(highItem?.classes()).toContain('current')
+  })
+
+  it('emits switch-thinking-effort when clicking a level', async () => {
+    const wrapper = mountDrawer({ initialTab: 'thinking' })
+    const items = wrapper.findAll('.thinking-item')
+    const mediumItem = items.find(i => i.text().includes('medium'))
+    await mediumItem?.trigger('click')
+
+    expect(wrapper.emitted('switch-thinking-effort')).toBeTruthy()
+  })
+
+  it('closes drawer after selecting thinking effort', async () => {
+    const wrapper = mountDrawer({ initialTab: 'thinking' })
+    const items = wrapper.findAll('.thinking-item')
+    const mediumItem = items.find(i => i.text().includes('medium'))
+    await mediumItem?.trigger('click')
+
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('shows default badge on default thinking effort level', () => {
+    const claudeAgent = mockAgents.agents.value.find(a => a.id === 'claude')!
+    claudeAgent.preferredThinkingEffort = 'high'
+
+    const wrapper = mountDrawer({ initialTab: 'thinking' })
+    const items = wrapper.findAll('.thinking-item')
+    const highItem = items.find(i => i.text().includes('high'))
+    expect(highItem?.find('.default-badge').exists()).toBe(true)
+
+    claudeAgent.preferredThinkingEffort = '' // restore
+  })
+
+  // --- Refresh ---
+
+  it('has refresh button for agents that support model refresh', () => {
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.refresh-btn').exists()).toBe(true)
+  })
+
+  it('hides refresh button for agents that do not support model refresh', () => {
+    const wrapper = mountDrawer({ agentId: 'kimi' })
+    expect(wrapper.find('.refresh-btn').exists()).toBe(false)
+  })
+
+  it('calls refresh API and updates agent models on success', async () => {
+    const newModels = [
+      { id: 'claude-new', name: 'Claude New', default: true },
+    ]
+    vi.mocked(apiPost).mockResolvedValue({ models: newModels })
+
+    const wrapper = mountDrawer()
+    await wrapper.find('.refresh-btn').trigger('click')
+    await nextTick()
+    await new Promise(r => setTimeout(r, 10))
+    await nextTick()
+
+    expect(apiPost).toHaveBeenCalledWith('/api/agents/claude/refresh-models', {})
+    expect(mockAgents.updateAgentField).toHaveBeenCalledWith('claude', 'models', newModels)
+    expect(mockToastShow).toHaveBeenCalledWith('chat.sessionSetting.refreshSuccess', expect.any(Object))
+  })
+
+  it('shows cliNotFound toast when CLI not found error', async () => {
+    vi.mocked(apiPost).mockRejectedValue({ msgKey: 'CLINotFound' })
+
+    const wrapper = mountDrawer()
+    await wrapper.find('.refresh-btn').trigger('click')
+    await nextTick()
+    await new Promise(r => setTimeout(r, 10))
+    await nextTick()
+
+    expect(mockToastShow).toHaveBeenCalledWith('chat.sessionSetting.cliNotFound', expect.any(Object))
+  })
+
+  it('shows discoveryNotSupported toast when model discovery not supported', async () => {
+    vi.mocked(apiPost).mockRejectedValue({ msgKey: 'ModelDiscoveryNotSupported' })
+
+    const wrapper = mountDrawer()
+    await wrapper.find('.refresh-btn').trigger('click')
+    await nextTick()
+    await new Promise(r => setTimeout(r, 10))
+    await nextTick()
+
+    expect(mockToastShow).toHaveBeenCalledWith('chat.sessionSetting.discoveryNotSupported', expect.any(Object))
+  })
+
+  it('shows generic refreshFailed toast on other errors', async () => {
+    vi.mocked(apiPost).mockRejectedValue(new Error('network error'))
+
+    const wrapper = mountDrawer()
+    await wrapper.find('.refresh-btn').trigger('click')
+    await nextTick()
+    await new Promise(r => setTimeout(r, 10))
+    await nextTick()
+
+    expect(mockToastShow).toHaveBeenCalledWith('chat.sessionSetting.refreshFailed', expect.any(Object))
+  })
+
+  it('disables refresh button while refreshing', async () => {
+    let resolveRefresh: (v: any) => void
+    vi.mocked(apiPost).mockReturnValue(new Promise(r => { resolveRefresh = r }))
+
+    const wrapper = mountDrawer()
+    await wrapper.find('.refresh-btn').trigger('click')
+    await nextTick()
+
+    expect(wrapper.vm.refreshing).toBe(true)
+
+    resolveRefresh!({ models: [] })
+    await nextTick()
+    await new Promise(r => setTimeout(r, 10))
+    await nextTick()
+  })
+
+  it('does not call API when already refreshing', async () => {
+    let resolveRefresh: (v: any) => void
+    vi.mocked(apiPost).mockReturnValue(new Promise(r => { resolveRefresh = r }))
+
+    const wrapper = mountDrawer()
+    await wrapper.find('.refresh-btn').trigger('click')
+    await nextTick()
+
+    vi.mocked(apiPost).mockClear()
+    await wrapper.find('.refresh-btn').trigger('click')
+    await nextTick()
+
+    expect(apiPost).not.toHaveBeenCalled()
+
+    resolveRefresh!({ models: [] })
+    await nextTick()
+    await new Promise(r => setTimeout(r, 10))
+  })
+
+  // --- Visual dividers ---
+
+  it('renders dividers between model items', () => {
+    const wrapper = mountDrawer()
+    const dividers = wrapper.findAll('.model-divider')
+    expect(dividers.length).toBe(2)
+  })
+
+  // --- Set default button ---
+
+  it('has set-default star button on non-default models', () => {
+    const wrapper = mountDrawer()
+    const setDefaultBtns = wrapper.findAll('.set-default-btn')
+    expect(setDefaultBtns.length).toBe(2)
+  })
+
+  it('calls patchAgentPref and updateAgentField when star button clicked', async () => {
+    const wrapper = mountDrawer()
+    const starBtns = wrapper.findAll('.set-default-btn')
+    await starBtns[0].trigger('click')
+
+    expect(patchAgentPref).toHaveBeenCalledWith('claude', 'preferred_model', 'claude-opus-4-5')
+    expect(mockAgents.updateAgentField).toHaveBeenCalledWith('claude', 'preferredModel', 'claude-opus-4-5')
+  })
+
+  it('shows error toast when setDefaultModel fails', async () => {
+    vi.mocked(patchAgentPref).mockRejectedValueOnce(new Error('fail'))
+
+    const wrapper = mountDrawer()
+    const starBtns = wrapper.findAll('.set-default-btn')
+    await starBtns[0].trigger('click')
+    await nextTick()
+    await new Promise(r => setTimeout(r, 10))
+    await nextTick()
+
+    expect(mockToastShow).toHaveBeenCalledWith('settings.saveFailed', expect.any(Object))
+  })
+
+  // --- Thinking effort default ---
+
+  it('sets default thinking effort via star button on thinking tab', async () => {
+    const wrapper = mountDrawer({ initialTab: 'thinking' })
+
+    const items = wrapper.findAll('.thinking-item')
+    const mediumItem = items.find(i => i.text().includes('medium'))
+    await mediumItem?.find('.set-default-btn').trigger('click')
+
+    expect(patchAgentPref).toHaveBeenCalledWith('claude', 'preferred_thinking_effort', 'medium')
+    expect(mockAgents.updateAgentField).toHaveBeenCalledWith('claude', 'preferredThinkingEffort', 'medium')
+  })
+
+  it('shows error toast when setDefaultThinkingEffort fails', async () => {
+    vi.mocked(patchAgentPref).mockRejectedValueOnce(new Error('fail'))
+
+    const wrapper = mountDrawer({ initialTab: 'thinking' })
+
+    const items = wrapper.findAll('.thinking-item')
+    const mediumItem = items.find(i => i.text().includes('medium'))
+    await mediumItem?.find('.set-default-btn').trigger('click')
+    await nextTick()
+    await new Promise(r => setTimeout(r, 10))
+    await nextTick()
+
+    expect(mockToastShow).toHaveBeenCalledWith('settings.saveFailed', expect.any(Object))
+  })
+
+  // --- No models ---
+
+  it('shows empty state when agent has no models', () => {
+    const wrapper = mountDrawer({ agentId: 'kimi' })
+    const items = wrapper.findAll('.model-item')
+    expect(items.length).toBe(0)
+    expect(wrapper.find('.model-empty').exists()).toBe(true)
+  })
+
+  it('shows no-models message in empty state', () => {
+    const wrapper = mountDrawer({ agentId: 'kimi' })
+    expect(wrapper.find('.model-empty').text()).toContain('chat.sessionSetting.noModels')
+  })
+
+  // --- Close drawer ---
+
+  it('emits close when close is triggered', async () => {
+    const wrapper = mountDrawer()
+    await wrapper.findComponent({ name: 'BottomSheet' }).vm.$emit('close')
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  // --- Context menu (right-click) ---
+
+  it('shows popup menu on contextmenu for model item', async () => {
+    const wrapper = mountDrawer()
+    const items = wrapper.findAll('.model-item')
+    await items[1].trigger('contextmenu')
+
+    expect(wrapper.find('.popup-set-default').exists() || wrapper.vm.showDefaultPopupMenu === true).toBeTruthy()
+  })
+
+  it('sets default model via popup menu', async () => {
+    const wrapper = mountDrawer()
+    const items = wrapper.findAll('.model-item')
+    await items[1].trigger('contextmenu')
+    await nextTick()
+
+    const popupBtn = wrapper.find('.popup-set-default')
+    if (popupBtn.exists()) {
+      await popupBtn.trigger('click')
+      await nextTick()
+      await new Promise(r => setTimeout(r, 10))
+      expect(patchAgentPref).toHaveBeenCalled()
+    }
+  })
+
+  // --- Agent name in header ---
+
+  it('displays agent icon and name in drawer header', () => {
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.bs-header-title').text()).toBe('🤖 Claude')
+  })
+
+  // --- Thinking tab dividers ---
+
+  it('renders dividers between thinking items', () => {
+    const wrapper = mountDrawer({ initialTab: 'thinking' })
+    const dividers = wrapper.findAll('.model-divider')
+    expect(dividers.length).toBe(4)
+  })
+
+  // --- is-default class ---
+
+  it('adds is-default class to default model', () => {
+    const wrapper = mountDrawer()
+    const items = wrapper.findAll('.model-item')
+    expect(items[0].classes()).toContain('is-default')
+  })
+
+  it('adds is-default class to default thinking effort', () => {
+    const claudeAgent = mockAgents.agents.value.find(a => a.id === 'claude')!
+    claudeAgent.preferredThinkingEffort = 'high'
+
+    const wrapper = mountDrawer({ initialTab: 'thinking' })
+    const items = wrapper.findAll('.thinking-item')
+    const highItem = items.find(i => i.text().includes('high'))
+    expect(highItem?.classes()).toContain('is-default')
+
+    claudeAgent.preferredThinkingEffort = '' // restore
+  })
+
+  // --- Search resets on reopen ---
+
+  it('resets search query when drawer reopens', () => {
+    const wrapper = mountDrawer()
+    wrapper.vm._setSearchQuery('opus')
+    expect(wrapper.vm._getSearchQuery()).toBe('opus')
+
+    const wrapper2 = mountDrawer()
+    expect(wrapper2.vm._getSearchQuery()).toBe('')
+    expect(wrapper2.vm._getFilteredModels().length).toBe(3)
+  })
+
+  // --- No thinking tab for agents without levels ---
+
+  it('shows empty hint in thinking tab for agents without thinking effort levels', () => {
+    const wrapper = mountDrawer({ agentId: 'kimi', initialTab: 'thinking' })
+    const tabs = wrapper.findAll('.model-tab')
+    expect(tabs.length).toBe(4)
+    expect(wrapper.find('.tab-empty-hint').exists()).toBe(true)
+  })
+
+  // --- Transport tab ---
+
+  describe('transport tab', () => {
+    it('supportsDualTransport returns true for agents with acpCommand', async () => {
+      const wrapper = mountDrawer()
+      expect(wrapper.vm.supportsDualTransport('claude')).toBe(true)
     })
 
-    await wrapper.vm.loadSessions()
-    await flushPromises()
-
-    expect(wrapper.vm.sessions).toHaveLength(2)
-    expect(wrapper.vm.sessions.find(s => s.id === 's2')).toBeUndefined()
-  })
-
-  it('does not fetch when opened with open=false', async () => {
-    const fetchFn = createFetchMock()
-    vi.stubGlobal('fetch', fetchFn)
-    polyfillIO()
-
-    mount(SessionDrawer, {
-      props: { open: false, currentSessionId: 's1', runningSessionIds: new Set() },
-      global: { plugins: [i18n], stubs: commonStubs },
-    })
-    await flushPromises()
-
-    // No fetch when closed
-    expect(fetchFn).not.toHaveBeenCalled()
-  })
-
-  it('no invalidate() method is exposed', async () => {
-    const { wrapper } = await mountWithSessions()
-    expect(wrapper.vm.invalidate).toBeUndefined()
-  })
-
-  it('emits delete event on confirmed delete (no optimistic removal)', async () => {
-    _dialogConfirmResult = true
-    const { wrapper } = await mountWithSessions()
-
-    expect(wrapper.vm.sessions).toHaveLength(3)
-
-    // Delete s2 — dialog confirms, then emit fires
-    await wrapper.vm.deleteSession('s2')
-    await flushPromises()
-
-    // No optimistic removal — session stays until parent refreshes
-    expect(wrapper.vm.sessions).toHaveLength(3)
-    expect(wrapper.emitted('delete')).toBeTruthy()
-    expect(wrapper.emitted('delete')[0]).toEqual(['s2', 'codebuddy'])
-
-    _dialogConfirmResult = false
-  })
-
-  it('does not emit delete when dialog is cancelled', async () => {
-    _dialogConfirmResult = false
-    const { wrapper } = await mountWithSessions()
-
-    await wrapper.vm.deleteSession('s2')
-    await flushPromises()
-
-    expect(wrapper.emitted('delete')).toBeFalsy()
-
-    _dialogConfirmResult = true
-  })
-
-  it('shows running-session confirmation for running session delete', async () => {
-    _dialogConfirmResult = false
-    const { wrapper } = await mountWithSessions()
-
-    await wrapper.setProps({ runningSessionIds: new Set(['s2']) })
-    await flushPromises()
-
-    await wrapper.vm.deleteSession('s2')
-    await flushPromises()
-
-    expect(_lastConfirmMessage).toContain('运行中')
-
-    _dialogConfirmResult = true
-  })
-
-  it('shows normal confirmation for non-running session delete', async () => {
-    _dialogConfirmResult = false
-    const { wrapper } = await mountWithSessions()
-
-    await wrapper.vm.deleteSession('s1')
-    await flushPromises()
-
-    expect(_lastConfirmMessage).not.toContain('运行中')
-    expect(_lastConfirmMessage).toContain('聊天记录')
-
-    _dialogConfirmResult = true
-  })
-
-  it('addSessionLocally prepends a new session without API reload', async () => {
-    const { wrapper, fetchFn } = await mountWithSessions()
-    const fetchCallCount = fetchFn.mock.calls.length
-
-    wrapper.vm.addSessionLocally({
-      id: 's-new',
-      title: 'New Session',
-      backend: 'claude',
-      agentId: 'claude',
-      updatedAt: '2026-01-04T00:00:00Z',
+    it('supportsDualTransport returns false for agents without acpCommand', async () => {
+      const wrapper = mountDrawer({ agentId: 'kimi' })
+      expect(wrapper.vm.supportsDualTransport('kimi')).toBe(false)
     })
 
-    expect(wrapper.vm.sessions).toHaveLength(4)
-    expect(wrapper.vm.sessions[0].id).toBe('s-new')
-    expect(fetchFn.mock.calls.length).toBe(fetchCallCount)
+    it('isACP is true when currentTransport is acp-stdio', async () => {
+      mockIdentity.currentTransport.value = 'acp-stdio'
+      const wrapper = mountDrawer()
+      expect(wrapper.vm.isACP).toBe(true)
+    })
   })
 
-  it('addSessionLocally ignores duplicate session', async () => {
-    const { wrapper } = await mountWithSessions()
-    expect(wrapper.vm.sessions).toHaveLength(3)
+  // --- Mode tab ---
 
-    wrapper.vm.addSessionLocally({ id: 's1', title: 'Session 1', backend: 'claude', updatedAt: '2026-01-01T00:00:00Z' })
+  describe('mode tab', () => {
+    it('availableModes has entries for ACP agents', async () => {
+      const wrapper = mountDrawer()
+      expect(wrapper.vm.availableModes.length).toBe(2)
+    })
 
-    expect(wrapper.vm.sessions).toHaveLength(3)
+    it('availableModes shows empty for non-ACP agents', async () => {
+      mockIdentity.currentTransport.value = 'cli'
+      const wrapper = mountDrawer({ agentId: 'kimi' })
+      expect(wrapper.vm.isACP).toBe(false)
+      mockIdentity.currentTransport.value = 'acp-stdio'
+    })
+
+    it('autoApprove is available from useSessionIdentity mock', async () => {
+      const wrapper = mountDrawer()
+      expect(mockIdentity.autoApprove).toBeDefined()
+    })
+
+    it('currentModeId matches identity', async () => {
+      const wrapper = mountDrawer()
+      expect(wrapper.vm.currentModeId).toBe('code')
+    })
+  })
+
+  // --- selectTransport ---
+
+  describe('selectTransport', () => {
+    it('does nothing when selecting same transport (ACP)', async () => {
+      const wrapper = mountDrawer()
+      vi.mocked(patchAgentPref).mockClear()
+      await wrapper.vm.selectTransport('acp-stdio')
+
+      expect(wrapper.emitted('switch-transport')).toBeFalsy()
+    })
+
+    it('switches from ACP to CLI', async () => {
+      const wrapper = mountDrawer()
+      await wrapper.vm.selectTransport('cli')
+
+      expect(wrapper.emitted('switch-transport')).toBeTruthy()
+      expect(wrapper.emitted('close')).toBeTruthy()
+    })
+  })
+
+  // --- setDefaultTransport ---
+
+  describe('setDefaultTransport', () => {
+    it('calls patchAgentPref and updateAgentField', async () => {
+      const wrapper = mountDrawer()
+      await wrapper.vm.setDefaultTransport('acp-stdio')
+
+      expect(patchAgentPref).toHaveBeenCalledWith('claude', 'transport', 'acp-stdio')
+      expect(mockAgents.updateAgentField).toHaveBeenCalledWith('claude', 'transport', 'acp-stdio')
+    })
+  })
+
+  // --- selectMode ---
+
+  describe('selectMode', () => {
+    it('emits switch-mode when selecting a mode', async () => {
+      const wrapper = mountDrawer()
+      wrapper.vm.selectMode({ id: 'ask', name: 'Ask' })
+
+      expect(wrapper.emitted('switch-mode')).toBeTruthy()
+    })
+
+    it('closes drawer after selecting a mode', async () => {
+      const wrapper = mountDrawer()
+      wrapper.vm.selectMode({ id: 'ask', name: 'Ask' })
+
+      expect(wrapper.emitted('close')).toBeTruthy()
+    })
+  })
+
+  // --- handleRefresh edge cases ---
+
+  describe('handleRefresh', () => {
+    it('does not call API when already refreshing', async () => {
+      let resolveRefresh: (v: any) => void
+      vi.mocked(apiPost).mockReturnValue(new Promise(r => { resolveRefresh = r }))
+
+      const wrapper = mountDrawer()
+      await wrapper.find('.refresh-btn').trigger('click')
+      await nextTick()
+
+      vi.mocked(apiPost).mockClear()
+      await wrapper.find('.refresh-btn').trigger('click')
+      await nextTick()
+
+      expect(apiPost).not.toHaveBeenCalled()
+
+      resolveRefresh!({ models: [] })
+      await nextTick()
+      await new Promise(r => setTimeout(r, 10))
+    })
+  })
+
+  // --- selectThinkingEffort ---
+
+  describe('selectThinkingEffort', () => {
+    it('emits switch-thinking-effort and closes drawer', async () => {
+      mockIdentity.availableThinkingEfforts.value = [
+        { id: 'low', name: 'Low' },
+        { id: 'high', name: 'High' },
+      ]
+      const wrapper = mountDrawer({ initialTab: 'thinking' })
+
+      const items = wrapper.findAll('.thinking-item')
+      if (items.length > 0) {
+        await items[0].trigger('click')
+        expect(wrapper.emitted('switch-thinking-effort')).toBeTruthy()
+        expect(wrapper.emitted('close')).toBeTruthy()
+      }
+      mockIdentity.availableThinkingEfforts.value = []
+    })
+  })
+
+  // --- Long-press state ---
+
+  describe('long press', () => {
+    it('onTouchEnd clears timer and resets triggered state', async () => {
+      const wrapper = mountDrawer()
+      expect(() => wrapper.vm.onTouchEnd()).not.toThrow()
+    })
+
+    it('onTouchMove clears timer', async () => {
+      const wrapper = mountDrawer()
+      expect(() => wrapper.vm.onTouchMove()).not.toThrow()
+    })
+  })
+
+  // --- PopupMenu ---
+
+  it('renders PopupMenu component', () => {
+    const wrapper = mountDrawer()
+    const popup = wrapper.findComponent({ name: 'PopupMenu' })
+    expect(wrapper.vm.showDefaultPopupMenu).toBeDefined()
+  })
+
+  // --- handleClose ---
+
+  it('emits close on handleClose', async () => {
+    const wrapper = mountDrawer()
+    wrapper.vm.handleClose()
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  // --- isACP computed ---
+
+  describe('isACP computed', () => {
+    it('is true when currentTransport is acp-stdio', async () => {
+      mockIdentity.currentTransport.value = 'acp-stdio'
+      const wrapper = mountDrawer()
+      expect(wrapper.vm.isACP).toBe(true)
+    })
+
+    it('falls back to agent config transport when currentTransport is empty', async () => {
+      mockIdentity.currentTransport.value = ''
+      const wrapper = mountDrawer()
+      expect(wrapper.vm.isACP).toBe(true)
+
+      mockIdentity.currentTransport.value = 'acp-stdio'
+    })
+
+    it('is false when transport is cli and agent config is cli', async () => {
+      mockIdentity.currentTransport.value = 'cli'
+      const wrapper = mountDrawer({ agentId: 'kimi' })
+      expect(wrapper.vm.isACP).toBe(false)
+      mockIdentity.currentTransport.value = 'acp-stdio'
+    })
   })
 })

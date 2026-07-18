@@ -148,7 +148,6 @@ func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 		Commands     []ai.AvailableCommandInfo `json:"commands,omitempty"`
 		ModelList    *ai.ModelListState        `json:"modelListState,omitempty"`
 		Plan         *ai.PlanState             `json:"planState,omitempty"`
-		Usage        *ai.UsageState            `json:"usageState,omitempty"`
 		LoadSession  bool                      `json:"loadSession"`
 		ListSessions bool                      `json:"listSessions"`
 	}
@@ -174,13 +173,11 @@ func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 			var es *ai.ThinkingEffortState
 			var cmds []ai.AvailableCommandInfo
 			var ml *ai.ModelListState
-			var us *ai.UsageState
 
 			ms = reg.GetModeState(a.ID, "")
 			es = reg.GetThinkingEffortState(a.ID, "")
 			cmds = reg.GetCommands(a.ID)
 			ml = reg.GetModelListState(a.ID, "")
-			us = reg.GetUsageState(a.ID)
 
 			// When ACP provides a model list, override the agent's Models
 			// so the frontend SessionSettingModal shows ACP models instead of CLI-discovered ones.
@@ -188,9 +185,9 @@ func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 				a.Models = ml.Models
 			}
 
-			if ms != nil || es != nil || len(cmds) > 0 || ml != nil || us != nil {
+			if ms != nil || es != nil || len(cmds) > 0 || ml != nil {
 				states[a.ID] = &acpState{
-					Mode: ms, Effort: es, Commands: cmds, ModelList: ml, Usage: us,
+					Mode: ms, Effort: es, Commands: cmds, ModelList: ml,
 					LoadSession: reg.GetLoadSession(a.ID), ListSessions: reg.GetListSessions(a.ID),
 				}
 			}

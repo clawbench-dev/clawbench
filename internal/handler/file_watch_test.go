@@ -18,6 +18,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// parseSSEEvents splits an SSE response body into individual events.
+func parseSSEEvents(body string) []map[string]string {
+	var events []map[string]string
+	parts := strings.Split(body, "\n\n")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		entry := map[string]string{}
+		lines := strings.Split(part, "\n")
+		for _, line := range lines {
+			if strings.HasPrefix(line, "event: ") {
+				entry["event"] = strings.TrimPrefix(line, "event: ")
+			} else if strings.HasPrefix(line, "data: ") {
+				entry["data"] = strings.TrimPrefix(line, "data: ")
+			}
+		}
+		if _, ok := entry["event"]; ok {
+			events = append(events, entry)
+		}
+	}
+	return events
+}
+
 // threadSafeRecorder wraps httptest.ResponseRecorder with a mutex
 // to allow safe concurrent reads from the body while the handler is writing.
 // This prevents DATA RACE when SSE goroutines write to the recorder

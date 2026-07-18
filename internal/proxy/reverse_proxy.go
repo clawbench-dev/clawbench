@@ -132,15 +132,6 @@ func (rp *ReverseProxy) Close() {
 	}
 }
 
-// SetInsecureSkipVerify configures the proxy's transport to skip TLS certificate
-// verification when connecting to the backend. This is useful for self-signed
-// certificates on LAN targets.
-func (rp *ReverseProxy) SetInsecureSkipVerify(skip bool) {
-	if rp.transport != nil && rp.transport.TLSClientConfig != nil {
-		rp.transport.TLSClientConfig.InsecureSkipVerify = skip
-	}
-}
-
 // stripDefaultPort removes the port from a host:port string if it's the default
 // port for the given scheme (80 for http, 443 for https).
 // e.g. ("192.168.100.1:80", "http") → "192.168.100.1"

@@ -3,7 +3,6 @@ package handler
 import (
 	"archive/zip"
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -271,103 +270,6 @@ func TestStringsContainsAnyBlock(t *testing.T) {
 }
 
 // ============================================================================
-// sendEvent tests
-// ============================================================================
-
-func TestSendEvent_ChannelHasCapacity(t *testing.T) {
-	ch := make(chan ai.StreamEvent, 1)
-	ctx := context.Background()
-
-	event := ai.StreamEvent{Type: "content", Content: "hello"}
-	result := ai.SendStreamEvent(ctx, ch, event)
-
-	assert.True(t, result)
-	select {
-	case e := <-ch:
-		assert.Equal(t, "content", e.Type)
-		assert.Equal(t, "hello", e.Content)
-	default:
-		t.Fatal("expected event on channel")
-	}
-}
-
-func TestSendEvent_ChannelFull_DropsEvent(t *testing.T) {
-	ch := make(chan ai.StreamEvent, 1)
-	ch <- ai.StreamEvent{Type: "content", Content: "existing"}
-
-	ctx := context.Background()
-	event := ai.StreamEvent{Type: "content", Content: "dropped"}
-	result := ai.SendStreamEvent(ctx, ch, event)
-
-	// Should return true (event dropped, not a context cancellation)
-	assert.True(t, result)
-}
-
-func TestSendEvent_ContextCancelled(t *testing.T) {
-	// Use an unbuffered channel with no reader — ctx.Done() and default
-	// are both available, but ctx.Done() should be selected reliably
-	// because the channel send would block.
-	ch := make(chan ai.StreamEvent)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	event := ai.StreamEvent{Type: "content", Content: "hello"}
-	_ = ai.SendStreamEvent(ctx, ch, event)
-
-	// With an unbuffered channel and cancelled context, either ctx.Done() or default
-	// could be selected. Both indicate the event was not sent to the channel.
-	// The important thing is: the event is NOT on the channel.
-	assert.Empty(t, len(ch), "event should not be on channel when context is cancelled")
-}
-
-func TestSendEvent_UnbufferedChannel_NoReader(t *testing.T) {
-	ch := make(chan ai.StreamEvent)
-	ctx := context.Background()
-
-	event := ai.StreamEvent{Type: "content", Content: "dropped"}
-	result := ai.SendStreamEvent(ctx, ch, event)
-
-	// Should return true (event dropped via default case)
-	assert.True(t, result)
-}
-
-// ============================================================================
-// sendFinalEvent tests
-// ============================================================================
-
-func TestSendFinalEvent_ChannelHasCapacity(t *testing.T) {
-	ch := make(chan ai.StreamEvent, 1)
-	event := ai.StreamEvent{Type: "done"}
-	ai.SendFinalStreamEvent(ch, event)
-
-	select {
-	case e := <-ch:
-		assert.Equal(t, "done", e.Type)
-	default:
-		t.Fatal("expected event on channel")
-	}
-}
-
-func TestSendFinalEvent_ChannelFull_DropsWithoutBlocking(t *testing.T) {
-	ch := make(chan ai.StreamEvent, 1)
-	ch <- ai.StreamEvent{Type: "content", Content: "existing"}
-
-	// Should not block even though channel is full
-	done := make(chan struct{})
-	go func() {
-		ai.SendFinalStreamEvent(ch, ai.StreamEvent{Type: "done"})
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		// Success — did not block
-	case <-time.After(time.Second):
-		t.Fatal("sendFinalEvent blocked when channel was full")
-	}
-}
-
-// ============================================================================
 // isNotDirError tests
 // ============================================================================
 
@@ -487,39 +389,40 @@ func TestLoginLimiter_Cleanup_KeepsExpiredBlockButRecentFail(t *testing.T) {
 }
 
 // ============================================================================
-// androidLogFilePath tests
+// clientLogFilePath tests
 // ============================================================================
 
-func TestAndroidLogFilePath(t *testing.T) {
+func TestClientLogFilePath(t *testing.T) {
 	origLogDir := model.ConfigInstance.LogDir
 	defer func() { model.ConfigInstance.LogDir = origLogDir }()
 
 	model.ConfigInstance.LogDir = "/tmp/test-logs"
-	got := androidLogFilePath()
-	assert.Equal(t, filepath.Join("/tmp/test-logs", "android.log"), got)
+	assert.Equal(t, filepath.Join("/tmp/test-logs", "android.log"), clientLogFilePath("android"))
+	assert.Equal(t, filepath.Join("/tmp/test-logs", "android.log"), clientLogFilePath(""))
+	assert.Equal(t, filepath.Join("/tmp/test-logs", "js.log"), clientLogFilePath("js"))
 }
 
 // ============================================================================
-// ServeAndroidLog tests
+// ServeClientLog tests
 // ============================================================================
 
-func TestServeAndroidLog_ValidEntries(t *testing.T) {
+func TestServeClientLog_ValidEntries(t *testing.T) {
 	origLogDir := model.ConfigInstance.LogDir
 	defer func() { model.ConfigInstance.LogDir = origLogDir }()
 
 	tmpDir := t.TempDir()
 	model.ConfigInstance.LogDir = tmpDir
 
-	entries := []AndroidLogEntry{
-		{Level: "I", Tag: "MainActivity", Msg: "App started", Ts: 1700000000000},
-		{Level: "E", Tag: "Network", Msg: "Connection failed", Ts: 1700000001000},
+	entries := []ClientLogEntry{
+		{Level: "I", Tag: "MainActivity", Msg: "App started", Ts: 1700000000000, Source: "android"},
+		{Level: "E", Tag: "Network", Msg: "Connection failed", Ts: 1700000001000, Source: "android"},
 	}
 
-	req := newRequest(t, http.MethodPost, "/api/android-log", map[string]any{
+	req := newRequest(t, http.MethodPost, "/api/client-log", map[string]any{
 		"entries": entries,
 	})
 
-	w := callHandler(ServeAndroidLog, req)
+	w := callHandler(ServeClientLog, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	// Verify file was written
@@ -532,37 +435,37 @@ func TestServeAndroidLog_ValidEntries(t *testing.T) {
 	assert.Contains(t, content, "Connection failed")
 }
 
-func TestServeAndroidLog_EmptyEntries_Returns400(t *testing.T) {
-	req := newRequest(t, http.MethodPost, "/api/android-log", map[string]any{
-		"entries": []AndroidLogEntry{},
+func TestServeClientLog_EmptyEntries_Returns400(t *testing.T) {
+	req := newRequest(t, http.MethodPost, "/api/client-log", map[string]any{
+		"entries": []ClientLogEntry{},
 	})
 
-	w := callHandler(ServeAndroidLog, req)
+	w := callHandler(ServeClientLog, req)
 	assertStatus(t, w, http.StatusBadRequest)
 }
 
-func TestServeAndroidLog_WrongMethod(t *testing.T) {
-	req := newRequest(t, http.MethodGet, "/api/android-log", nil)
-	w := callHandler(ServeAndroidLog, req)
+func TestServeClientLog_WrongMethod(t *testing.T) {
+	req := newRequest(t, http.MethodGet, "/api/client-log", nil)
+	w := callHandler(ServeClientLog, req)
 	assertStatus(t, w, http.StatusMethodNotAllowed)
 }
 
-func TestServeAndroidLog_NewlineEscaping(t *testing.T) {
+func TestServeClientLog_NewlineEscaping(t *testing.T) {
 	origLogDir := model.ConfigInstance.LogDir
 	defer func() { model.ConfigInstance.LogDir = origLogDir }()
 
 	tmpDir := t.TempDir()
 	model.ConfigInstance.LogDir = tmpDir
 
-	entries := []AndroidLogEntry{
+	entries := []ClientLogEntry{
 		{Level: "I", Tag: "Test", Msg: "line1\nline2", Ts: 1700000000000},
 	}
 
-	req := newRequest(t, http.MethodPost, "/api/android-log", map[string]any{
+	req := newRequest(t, http.MethodPost, "/api/client-log", map[string]any{
 		"entries": entries,
 	})
 
-	w := callHandler(ServeAndroidLog, req)
+	w := callHandler(ServeClientLog, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	data, err := os.ReadFile(filepath.Join(tmpDir, "android.log"))
@@ -575,7 +478,7 @@ func TestServeAndroidLog_NewlineEscaping(t *testing.T) {
 	assert.True(t, len(lines) >= 2, "should have at least 2 lines (entry + trailing)")
 }
 
-func TestServeAndroidLog_TruncatesOver200(t *testing.T) {
+func TestServeClientLog_TruncatesOver200(t *testing.T) {
 	origLogDir := model.ConfigInstance.LogDir
 	defer func() { model.ConfigInstance.LogDir = origLogDir }()
 
@@ -583,18 +486,18 @@ func TestServeAndroidLog_TruncatesOver200(t *testing.T) {
 	model.ConfigInstance.LogDir = tmpDir
 
 	// Create 250 entries — should be capped to 200
-	entries := make([]AndroidLogEntry, 0, 250)
+	entries := make([]ClientLogEntry, 0, 250)
 	for i := range 250 {
-		entries = append(entries, AndroidLogEntry{
+		entries = append(entries, ClientLogEntry{
 			Level: "I", Tag: fmt.Sprintf("Tag%d", i), Msg: fmt.Sprintf("msg%d", i), Ts: 1700000000000 + int64(i*1000),
 		})
 	}
 
-	req := newRequest(t, http.MethodPost, "/api/android-log", map[string]any{
+	req := newRequest(t, http.MethodPost, "/api/client-log", map[string]any{
 		"entries": entries,
 	})
 
-	w := callHandler(ServeAndroidLog, req)
+	w := callHandler(ServeClientLog, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var result map[string]any
@@ -602,7 +505,7 @@ func TestServeAndroidLog_TruncatesOver200(t *testing.T) {
 	assert.Equal(t, float64(200), result["written"])
 }
 
-func TestServeAndroidLog_AppendsToExistingFile(t *testing.T) {
+func TestServeClientLog_AppendsToExistingFile(t *testing.T) {
 	origLogDir := model.ConfigInstance.LogDir
 	defer func() { model.ConfigInstance.LogDir = origLogDir }()
 
@@ -610,19 +513,19 @@ func TestServeAndroidLog_AppendsToExistingFile(t *testing.T) {
 	model.ConfigInstance.LogDir = tmpDir
 
 	// First request
-	entries1 := []AndroidLogEntry{
+	entries1 := []ClientLogEntry{
 		{Level: "I", Tag: "First", Msg: "first batch", Ts: 1700000000000},
 	}
-	req1 := newRequest(t, http.MethodPost, "/api/android-log", map[string]any{"entries": entries1})
-	w1 := callHandler(ServeAndroidLog, req1)
+	req1 := newRequest(t, http.MethodPost, "/api/client-log", map[string]any{"entries": entries1})
+	w1 := callHandler(ServeClientLog, req1)
 	assert.Equal(t, http.StatusOK, w1.Code)
 
 	// Second request
-	entries2 := []AndroidLogEntry{
+	entries2 := []ClientLogEntry{
 		{Level: "I", Tag: "Second", Msg: "second batch", Ts: 1700000001000},
 	}
-	req2 := newRequest(t, http.MethodPost, "/api/android-log", map[string]any{"entries": entries2})
-	w2 := callHandler(ServeAndroidLog, req2)
+	req2 := newRequest(t, http.MethodPost, "/api/client-log", map[string]any{"entries": entries2})
+	w2 := callHandler(ServeClientLog, req2)
 	assert.Equal(t, http.StatusOK, w2.Code)
 
 	// Both should be in the file
@@ -631,6 +534,136 @@ func TestServeAndroidLog_AppendsToExistingFile(t *testing.T) {
 	content := string(data)
 	assert.Contains(t, content, "first batch")
 	assert.Contains(t, content, "second batch")
+}
+
+func TestServeClientLog_JsSourceWritesToJsLog(t *testing.T) {
+	origLogDir := model.ConfigInstance.LogDir
+	defer func() { model.ConfigInstance.LogDir = origLogDir }()
+
+	tmpDir := t.TempDir()
+	model.ConfigInstance.LogDir = tmpDir
+
+	entries := []ClientLogEntry{
+		{Level: "D", Tag: "ChatStream", Msg: "SSE connected", Ts: 1700000000000, Source: "js"},
+		{Level: "W", Tag: "Store", Msg: "state mismatch", Ts: 1700000001000, Source: "js"},
+	}
+
+	req := newRequest(t, http.MethodPost, "/api/client-log", map[string]any{
+		"entries": entries,
+	})
+
+	w := callHandler(ServeClientLog, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Should write to js.log
+	data, err := os.ReadFile(filepath.Join(tmpDir, "js.log"))
+	require.NoError(t, err)
+	content := string(data)
+	assert.Contains(t, content, "D/ChatStream")
+	assert.Contains(t, content, "SSE connected")
+	assert.Contains(t, content, "W/Store")
+	assert.Contains(t, content, "state mismatch")
+
+	// Should NOT create android.log
+	_, err = os.Stat(filepath.Join(tmpDir, "android.log"))
+	assert.True(t, os.IsNotExist(err), "android.log should not exist")
+}
+
+func TestServeClientLog_EmptySourceDefaultsToAndroid(t *testing.T) {
+	origLogDir := model.ConfigInstance.LogDir
+	defer func() { model.ConfigInstance.LogDir = origLogDir }()
+
+	tmpDir := t.TempDir()
+	model.ConfigInstance.LogDir = tmpDir
+
+	// Entry with no Source field — should default to android
+	entries := []ClientLogEntry{
+		{Level: "I", Tag: "Legacy", Msg: "no source", Ts: 1700000000000},
+	}
+
+	req := newRequest(t, http.MethodPost, "/api/client-log", map[string]any{
+		"entries": entries,
+	})
+
+	w := callHandler(ServeClientLog, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Should write to android.log (default)
+	data, err := os.ReadFile(filepath.Join(tmpDir, "android.log"))
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "I/Legacy")
+	assert.Contains(t, string(data), "no source")
+
+	// js.log should not exist
+	_, err = os.Stat(filepath.Join(tmpDir, "js.log"))
+	assert.True(t, os.IsNotExist(err), "js.log should not exist")
+}
+
+func TestServeClientLog_MixedSourcesWriteToSeparateFiles(t *testing.T) {
+	origLogDir := model.ConfigInstance.LogDir
+	defer func() { model.ConfigInstance.LogDir = origLogDir }()
+
+	tmpDir := t.TempDir()
+	model.ConfigInstance.LogDir = tmpDir
+
+	entries := []ClientLogEntry{
+		{Level: "I", Tag: "AppLog", Msg: "android msg", Ts: 1700000000000, Source: "android"},
+		{Level: "D", Tag: "ChatStream", Msg: "js msg", Ts: 1700000001000, Source: "js"},
+		{Level: "W", Tag: "Native", Msg: "android warn", Ts: 1700000002000, Source: "android"},
+	}
+
+	req := newRequest(t, http.MethodPost, "/api/client-log", map[string]any{
+		"entries": entries,
+	})
+
+	w := callHandler(ServeClientLog, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, float64(3), result["written"])
+
+	// android.log has 2 entries
+	androidData, err := os.ReadFile(filepath.Join(tmpDir, "android.log"))
+	require.NoError(t, err)
+	androidContent := string(androidData)
+	assert.Contains(t, androidContent, "I/AppLog")
+	assert.Contains(t, androidContent, "android msg")
+	assert.Contains(t, androidContent, "W/Native")
+	assert.Contains(t, androidContent, "android warn")
+	assert.NotContains(t, androidContent, "js msg")
+
+	// js.log has 1 entry
+	jsData, err := os.ReadFile(filepath.Join(tmpDir, "js.log"))
+	require.NoError(t, err)
+	jsContent := string(jsData)
+	assert.Contains(t, jsContent, "D/ChatStream")
+	assert.Contains(t, jsContent, "js msg")
+	assert.NotContains(t, jsContent, "android msg")
+}
+
+func TestServeClientLog_LegacyAndroidLogRoute(t *testing.T) {
+	origLogDir := model.ConfigInstance.LogDir
+	defer func() { model.ConfigInstance.LogDir = origLogDir }()
+
+	tmpDir := t.TempDir()
+	model.ConfigInstance.LogDir = tmpDir
+
+	entries := []ClientLogEntry{
+		{Level: "I", Tag: "OldApk", Msg: "legacy route", Ts: 1700000000000, Source: "android"},
+	}
+
+	// Use the old /api/android-log URL — should still work
+	req := newRequest(t, http.MethodPost, "/api/android-log", map[string]any{
+		"entries": entries,
+	})
+
+	w := callHandler(ServeClientLog, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "android.log"))
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "I/OldApk")
+	assert.Contains(t, string(data), "legacy route")
 }
 
 // ============================================================================
@@ -2025,4 +2058,53 @@ func TestServeProjects_EmptyPathWithRoots_ListsFirstRoot(t *testing.T) {
 	items, ok := result["items"].([]interface{})
 	assert.True(t, ok)
 	assert.NotEmpty(t, items, "should list entries in first root")
+}
+
+// ============================================================================
+// appendClientLog — error paths
+// ============================================================================
+
+func TestAppendClientLog_DirCreationError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("skipping as root: root can create directories in non-existent paths")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows: unix-style impossible paths don't behave as expected")
+	}
+	origLogDir := model.ConfigInstance.LogDir
+	defer func() { model.ConfigInstance.LogDir = origLogDir }()
+
+	// Set log dir to an impossible path
+	model.ConfigInstance.LogDir = "/nonexistent/path/that/cannot/be/created"
+
+	err := appendClientLog("android", []byte("test log line\n"))
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "create log dir")
+}
+
+func TestAppendClientLog_SuccessfulWrite(t *testing.T) {
+	origLogDir := model.ConfigInstance.LogDir
+	defer func() { model.ConfigInstance.LogDir = origLogDir }()
+
+	tmpDir := t.TempDir()
+	model.ConfigInstance.LogDir = tmpDir
+
+	err := appendClientLog("android", []byte("test log line\n"))
+	assert.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "android.log"))
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "test log line")
+}
+
+// ============================================================================
+// ServeClientLog — invalid JSON body
+// ============================================================================
+
+func TestServeClientLog_InvalidJSON(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/client-log", strings.NewReader(`{invalid json`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	ServeClientLog(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }

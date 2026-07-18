@@ -119,7 +119,7 @@ describe('useSessionIdentity - model preference', () => {
       await saveThinkingPref('codebuddy', 'high')
       // saveThinkingPref no longer writes to agent preferredThinkingEffort;
       // loadThinkingPref reads from agent.preferredThinkingEffort which is set
-      // exclusively via the settings panel or SessionSettingModal star button.
+      // exclusively via the settings panel or SessionDrawer star button.
       expect(loadThinkingPref('codebuddy')).toBeNull()
     })
 

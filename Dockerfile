@@ -15,10 +15,19 @@ FROM ubuntu:24.04
 
 # Install runtime dependencies:
 # - ca-certificates: HTTPS (LLM provider APIs, Edge TTS WebSocket)
+# - curl, bash: general utilities + qoder install script
+# - git: version control (agents may clone repos, users need vc in projects)
+# - nodejs, npm: 11 of 12 AI agents install via `npm install -g`
 # Edge TTS is compiled into the Go binary (github.com/lib-x/edgetts) — no Python needed.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates curl bash && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        bash \
+        git \
+        nodejs \
+        npm \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

@@ -3,10 +3,9 @@ package model
 import (
 	"crypto/rand"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
-
-	"clawbench/internal/platform"
 )
 
 // ParsePresenceMap walks a raw YAML map and returns a flat set of dot-separated
@@ -89,10 +88,9 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	}
 
 	// --- LogDir ---
-	if cfg.LogDir == "" {
-		cfg.LogDir = filepath.Join(DataDir, "logs")
-	}
-	cfg.LogDir = platform.ExpandTilde(cfg.LogDir)
+	// LogDir is always <DataDir>/logs — not configurable via config.yaml.
+	// This avoids relative-path pitfalls (CWD-dependent resolution).
+	cfg.LogDir = filepath.Join(DataDir, "logs")
 
 	if cfg.LogMaxDays <= 0 {
 		cfg.LogMaxDays = 7
@@ -137,10 +135,6 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		cfg.RecentProjects.MaxCount = 10
 	}
 
-	// --- Proxy (legacy) ---
-	// proxy.enabled and proxy.allowed_ports have been removed.
-	// ProxyConfig is kept for backward-compatible YAML reading only.
-
 	// --- Port Forward (SSH Tunnel) ---
 	// Same bool zero-value trap as Proxy.
 	if !presence["port_forward.enabled"] {
@@ -163,8 +157,24 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.TTS.Engine == "" {
 		cfg.TTS.Engine = "edge"
 	}
+	// Migrate legacy agent-based summarize backends to "api"
+	agentBackends := map[string]bool{
+		"claude": true, "codebuddy": true, "opencode": true, "codex": true,
+		"qoder": true, "vecli": true, "deepseek": true, "pi": true, "mimo": true,
+	}
+	if agentBackends[cfg.Summarize.Backend] {
+		slog.Warn("summarize.backend is a legacy agent backend, migrating to \"api\"", slog.String("old", cfg.Summarize.Backend))
+		cfg.Summarize.Backend = "api"
+	}
+	if agentBackends[cfg.Summarize.TTSBackend] {
+		slog.Warn("summarize.tts_backend is a legacy agent backend, migrating to \"api\"", slog.String("old", cfg.Summarize.TTSBackend))
+		cfg.Summarize.TTSBackend = "api"
+	}
 	if cfg.Summarize.Backend == "" {
 		cfg.Summarize.Backend = "simple"
+	}
+	if cfg.Summarize.TTSBackend == "" {
+		cfg.Summarize.TTSBackend = "simple"
 	}
 	if cfg.TTS.Speed <= 0 {
 		cfg.TTS.Speed = 1.0
@@ -243,6 +253,17 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 
 	// --- DingTalk ---
 	// Bool zero-value: enabled defaults to false (intentional — requires config), no presence check needed.
+
+	// --- PushMode ---
+	if cfg.PushMode == "" {
+		if cfg.DingTalk.Enabled {
+			cfg.PushMode = "dingtalk"
+		} else {
+			cfg.PushMode = "native"
+		}
+	}
+	// Keep DingTalk.Enabled in sync with PushMode
+	cfg.DingTalk.Enabled = cfg.PushMode == "dingtalk"
 
 	return autoPassword
 }

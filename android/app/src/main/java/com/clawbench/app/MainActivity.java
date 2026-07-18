@@ -15,7 +15,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.PowerManager;
-import android.util.Log;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.view.KeyEvent;
@@ -235,6 +234,11 @@ public class MainActivity extends AppCompatActivity {
 
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
 
+        // Clean up legacy native version mismatch skip preference (now handled in WebView)
+        if (prefs.contains("skip_version_mismatch")) {
+            prefs.edit().remove("skip_version_mismatch").apply();
+        }
+
         // Request notification permission (Android 13+) — required for foreground service notification
         requestNotificationPermission();
 
@@ -317,6 +321,9 @@ public class MainActivity extends AppCompatActivity {
         // JavaScript interface for native bridge
         webView.addJavascriptInterface(new WebAppInterface(this), "AndroidNative");
 
+        // Register WebView reference with BackgroundService for safe UI callbacks
+        BackgroundService.updateWebViewRef(webView);
+
         // WebView client for navigation and error handling
         webView.setWebViewClient(new ClawBenchWebViewClient());
 
@@ -328,13 +335,13 @@ public class MainActivity extends AppCompatActivity {
                 String msg = consoleMessage.message() + " (" + consoleMessage.sourceId() + ":" + consoleMessage.lineNumber() + ")";
                 switch (consoleMessage.messageLevel()) {
                     case ERROR:
-                        Log.e(tag, msg);
+                        AppLog.e(tag, msg);
                         break;
                     case WARNING:
-                        Log.w(tag, msg);
+                        AppLog.w(tag, msg);
                         break;
                     default:
-                        Log.d(tag, msg);
+                        AppLog.d(tag, msg);
                         break;
                 }
                 return true;
@@ -805,12 +812,12 @@ public class MainActivity extends AppCompatActivity {
     private void checkConnectivityAndNavigate(String url) {
         new Thread(() -> {
             try {
-                String healthError = performHealthCheck(url, new OkHttpClient.Builder()
+                HealthCheckResult result = performHealthCheck(url, new OkHttpClient.Builder()
                         .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
                         .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
                         .build());
-                if (healthError != null) {
-                    runOnUiThread(() -> showLoginPage(healthError));
+                if (result.error != null) {
+                    runOnUiThread(() -> showLoginPage(result.error));
                     return;
                 }
                 runOnUiThread(() -> {
@@ -822,9 +829,9 @@ public class MainActivity extends AppCompatActivity {
                 runOnUiThread(() -> showSslConfirmationDialog(() -> {
                     try {
                         OkHttpClient trustClient = buildTrustingOkHttpClient();
-                        String healthError = performHealthCheck(url, trustClient);
-                        if (healthError != null) {
-                            runOnUiThread(() -> showLoginPage(healthError));
+                        HealthCheckResult result = performHealthCheck(url, trustClient);
+                        if (result.error != null) {
+                            runOnUiThread(() -> showLoginPage(result.error));
                             return;
                         }
                         runOnUiThread(() -> {
@@ -845,9 +852,9 @@ public class MainActivity extends AppCompatActivity {
 
     /**
      * Perform GET /api/health and verify the response contains {"app":"clawbench"}.
-     * Returns null on success, or an error message string on failure.
+     * Returns HealthCheckResult with server version on success, or error message on failure.
      */
-    String performHealthCheck(String url, OkHttpClient client) throws Exception {
+    HealthCheckResult performHealthCheck(String url, OkHttpClient client) throws Exception {
         Request request = new Request.Builder()
                 .url(url + "/api/health")
                 .get()
@@ -855,14 +862,22 @@ public class MainActivity extends AppCompatActivity {
         try (Response response = client.newCall(request).execute()) {
             if (!response.isSuccessful()) {
                 AppLog.w(TAG, "Health check failed: HTTP " + response.code());
-                return "该地址不是 ClawBench 服务器。";
+                return HealthCheckResult.fail("该地址不是 ClawBench 服务器。");
             }
             String body = response.body() != null ? response.body().string() : "";
             if (!body.contains("\"app\"") || !body.contains("\"clawbench\"")) {
                 AppLog.w(TAG, "Health check failed: response does not identify as clawbench: " + body);
-                return "该地址不是 ClawBench 服务器。";
+                return HealthCheckResult.fail("该地址不是 ClawBench 服务器。");
             }
-            return null; // success
+            // Extract server version
+            String serverVersion = null;
+            try {
+                org.json.JSONObject json = new org.json.JSONObject(body);
+                serverVersion = json.optString("version", null);
+            } catch (Exception e) {
+                AppLog.w(TAG, "Failed to parse version from health response", e);
+            }
+            return HealthCheckResult.success(serverVersion);
         }
     }
 
@@ -917,6 +932,25 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /** Result of a health check (GET /api/health). */
+    static class HealthCheckResult {
+        final String error;         // null on success
+        final String serverVersion; // version from /api/health response
+
+        HealthCheckResult(String error, String serverVersion) {
+            this.error = error;
+            this.serverVersion = serverVersion;
+        }
+
+        static HealthCheckResult success(String version) {
+            return new HealthCheckResult(null, version);
+        }
+
+        static HealthCheckResult fail(String error) {
+            return new HealthCheckResult(error, null);
+        }
+    }
+
     /**
      * Handle the server's response to the pre-authentication POST /login.
      * Extracted from authenticateAndNavigate for testability.
@@ -950,9 +984,9 @@ public class MainActivity extends AppCompatActivity {
             }
             // Auth success — verify this is a ClawBench server before navigating WebView
             try {
-                String healthError = performHealthCheck(url, client);
-                if (healthError != null) {
-                    runOnUiThread(() -> showLoginPage(healthError));
+                HealthCheckResult healthResult = performHealthCheck(url, client);
+                if (healthResult.error != null) {
+                    runOnUiThread(() -> showLoginPage(healthResult.error));
                     return;
                 }
             } catch (Exception e) {
@@ -1149,7 +1183,7 @@ public class MainActivity extends AppCompatActivity {
         pauseWebView();
         // App going to background — start native WS so we still get
         // notifications when Android kills the WebView process.
-        if (webViewConnected) {
+        if (webViewConnected && BackgroundService.isNativePushEnabled(this)) {
             BackgroundService.startNativeEventWs(this);
         }
     }
@@ -1159,7 +1193,7 @@ public class MainActivity extends AppCompatActivity {
         super.onResume();
         isForeground = true;
         resumeWebView();
-        // App returning to foreground — stop native WS (WebView WS handles events)
+        // App returning to foreground — always stop native WS (WebView WS handles events)
         BackgroundService.stopNativeEventWs(this);
         // Handle notification tap intent + re-dispatch pending navigation
         handleResumeIntent();
@@ -1753,6 +1787,7 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public void addForwardedPort(int localPort, int targetPort, String host) {
             AppLog.i(TAG, "addForwardedPort: localPort=" + localPort + ", targetPort=" + targetPort + ", host=" + host);
+            AppLog.logMemory(activity, TAG, "addForwardedPort");
             activity.runOnUiThread(() -> {
                 activity.forwardedPorts.put(localPort, host != null ? host : "");
                 BackgroundService.addForwardedPort(activity, localPort, targetPort, host != null ? host : "");
@@ -1948,11 +1983,10 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
-         * Force-reconnect the SSH tunnel.
-         * Disconnects the current (possibly stale) session and establishes a new one.
-         * Returns true if reconnection succeeded (port forwards re-established),
-         * false if reconnection failed or timed out.
-         * This is a blocking call (up to 15s) — runs on the JavaBridge thread.
+         * Force-reconnect the SSH tunnel (blocking).
+         * WARNING: This blocks the JavaBridge thread for up to 15s.
+         * Prefer reconnectTunnelAsync() to avoid ANR.
+         * Kept for backward compat with older APKs.
          */
         @JavascriptInterface
         public boolean reconnectTunnel() {
@@ -1965,6 +1999,36 @@ public class MainActivity extends AppCompatActivity {
             } catch (Exception e) {
                 AppLog.e(TAG, "reconnectTunnel: failed", e);
                 return false;
+            }
+        }
+
+        /**
+         * Force-reconnect the SSH tunnel (non-blocking, async callback).
+         * Calls the global JS function `window.__clawbenchReconnectResult(success)`
+         * on the UI thread when done. Does NOT block the JavaBridge thread.
+         */
+        @JavascriptInterface
+        public void reconnectTunnelAsync() {
+            if (!BackgroundService.isRunning()) {
+                AppLog.w(TAG, "reconnectTunnelAsync: BackgroundService not running");
+                // Call callback with false immediately using WeakReference for safety
+                activity.runOnUiThread(() -> {
+                    try {
+                        android.webkit.WebView wv = activity.webView;
+                        if (wv != null && !activity.isFinishing() && !activity.isDestroyed()) {
+                            wv.evaluateJavascript(
+                                "window.__clawbenchReconnectResult && window.__clawbenchReconnectResult(false)", null);
+                        }
+                    } catch (Exception e) {
+                        AppLog.d(TAG, "reconnectTunnelAsync: immediate callback failed", e);
+                    }
+                });
+                return;
+            }
+            try {
+                BackgroundService.forceReconnectAsync(15000, "window.__clawbenchReconnectResult && window.__clawbenchReconnectResult");
+            } catch (Exception e) {
+                AppLog.e(TAG, "reconnectTunnelAsync: failed", e);
             }
         }
 
@@ -2112,6 +2176,7 @@ public class MainActivity extends AppCompatActivity {
             String baseUrl = activity.prefs.getString(KEY_SERVER_URL, "");
             if (!baseUrl.isEmpty()) {
                 AppLog.startCapture(baseUrl);
+                AppLog.logMemory(activity, TAG, "startLogCapture");
             }
         }
 
@@ -2417,6 +2482,26 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public void updateLastSeenEventId(String eventId) {
             BackgroundService.updateLastSeenEventId(activity, eventId);
+        }
+
+        /**
+         * Enable or disable native push notifications from the WebView settings UI.
+         * When disabled, stops the native WS connection and WorkManager polling.
+         * When enabled, allows the next onPause() to start native WS.
+         */
+        @JavascriptInterface
+        public void setNativePushEnabled(boolean enabled) {
+            AppLog.i(TAG, "JSBridge: setNativePushEnabled=" + enabled);
+            BackgroundService.setNativePushEnabled(activity, enabled);
+        }
+
+        /**
+         * Check whether native push notifications are currently enabled.
+         * Used by the WebView to read the initial state on settings page load.
+         */
+        @JavascriptInterface
+        public boolean isNativePushEnabled() {
+            return BackgroundService.isNativePushEnabled(activity);
         }
     }
 

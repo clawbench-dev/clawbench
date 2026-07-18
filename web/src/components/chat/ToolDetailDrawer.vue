@@ -1376,6 +1376,36 @@ function handleBodyClick(event) {
 .tool-detail-body .ask-supplementary-input::placeholder {
   color: var(--text-muted);
 }
+.tool-detail-body .ask-question-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.tool-detail-body .ask-question-recommend {
+  padding: 6px 16px;
+  border-radius: 4px;
+  border: 1px solid var(--accent-color);
+  background: transparent;
+  color: var(--accent-color);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.tool-detail-body .ask-question-recommend:hover {
+  background: color-mix(in srgb, var(--accent-color) 8%, transparent);
+}
+
+.tool-detail-body .ask-question-view.ask-submitted .ask-question-recommend {
+  background: var(--accent-color);
+  color: white;
+  border-color: var(--accent-color);
+  cursor: default;
+  opacity: 1;
+}
+
 .tool-detail-body .ask-question-submit {
   align-self: flex-end;
   padding: 6px 16px;

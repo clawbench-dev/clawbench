@@ -29,8 +29,7 @@ func TestSessionExecutor_HandleNonTerminalEvent_RawOutput(t *testing.T) {
 
 	// First raw_output
 	event := ai.StreamEvent{Type: "raw_output", RawOutput: "line1"}
-	shouldReturn := executor.handleNonTerminalEvent(event)
-	assert.False(t, shouldReturn, "raw_output should not cause event loop to return")
+	executor.handleNonTerminalEvent(event)
 	assert.Equal(t, "line1", executor.rawOutput)
 
 	// Second raw_output should prepend newline
@@ -54,8 +53,7 @@ func TestSessionExecutor_HandleNonTerminalEvent_SessionCaptureEmpty(t *testing.T
 
 	// Empty session_capture should not capture
 	event := ai.StreamEvent{Type: "session_capture", Content: ""}
-	shouldReturn := executor.handleNonTerminalEvent(event)
-	assert.False(t, shouldReturn)
+	executor.handleNonTerminalEvent(event)
 }
 
 func TestSessionExecutor_HandleNonTerminalEvent_MetadataCapture(t *testing.T) {
@@ -137,8 +135,9 @@ func TestSessionExecutor_HandleNonTerminalEvent_IncrementalPersistence(t *testin
 }
 
 func TestSessionExecutor_HandleNonTerminalEvent_InteractiveSSEForward(t *testing.T) {
-	// Test SSE forwarding in interactive mode
-	ch := make(chan ai.StreamEvent, 10)
+	// After removing StreamCh, events are forwarded to StreamHub instead.
+	// With no StreamHub subscribers, handleNonTerminalEvent just does nothing.
+	// This test verifies no panic occurs in interactive mode.
 	ctx := context.Background()
 	cfg := RunConfig{
 		Mode:        ModeInteractive,
@@ -147,28 +146,18 @@ func TestSessionExecutor_HandleNonTerminalEvent_InteractiveSSEForward(t *testing
 		SessionID:   "sess-sse",
 		AgentID:     "test",
 		ChatRequest: ai.ChatRequest{Prompt: "hello"},
-		StreamCh:    ch,
 	}
 	executor := NewSessionExecutor(ctx, cfg)
 
-	// Content event should be forwarded to SSE channel
 	event := ai.StreamEvent{Type: "content", Content: "hello SSE"}
-	shouldReturn := executor.handleNonTerminalEvent(event)
-	assert.False(t, shouldReturn)
-
-	// Verify the event was forwarded to the SSE channel
-	select {
-	case forwarded := <-ch:
-		assert.Equal(t, "content", forwarded.Type)
-		assert.Equal(t, "hello SSE", forwarded.Content)
-	default:
-		t.Fatal("expected event to be forwarded to SSE channel")
-	}
+	executor.handleNonTerminalEvent(event)
+	// No panic = success
 }
 
 func TestSessionExecutor_HandleNonTerminalEvent_SSESendFailure(t *testing.T) {
-	// When SSE channel is full/closed, handleNonTerminalEvent should return true
-	ch := make(chan ai.StreamEvent) // unbuffered, no reader
+	// After removing StreamCh, handleNonTerminalEvent is void and always
+	// forwards to StreamHub. With no subscribers, it simply does nothing.
+	// This test verifies no panic occurs when StreamHub has no subscribers.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -179,23 +168,15 @@ func TestSessionExecutor_HandleNonTerminalEvent_SSESendFailure(t *testing.T) {
 		SessionID:   "sess-sse-fail",
 		AgentID:     "test",
 		ChatRequest: ai.ChatRequest{Prompt: "hello"},
-		StreamCh:    ch,
 	}
 	executor := NewSessionExecutor(ctx, cfg)
 
-	// Content event — SSE channel is full, but context is not cancelled yet.
-	// SendStreamEvent with a full channel and valid context will block,
-	// then when we cancel the context it should return false (no send).
-	// Actually, since we're in handleNonTerminalEvent, let's cancel context first.
-	cancel()
-
 	event := ai.StreamEvent{Type: "content", Content: "hello"}
-	shouldReturn := executor.handleNonTerminalEvent(event)
-	assert.True(t, shouldReturn, "should return true when SSE send fails")
+	executor.handleNonTerminalEvent(event)
+	// No panic = success
 }
 
 func TestSessionExecutor_HandleNonTerminalEvent_ToolUseMetaExtraction(t *testing.T) {
-	ch := make(chan ai.StreamEvent, 10)
 	ctx := context.Background()
 	cfg := RunConfig{
 		Mode:        ModeInteractive,
@@ -204,26 +185,20 @@ func TestSessionExecutor_HandleNonTerminalEvent_ToolUseMetaExtraction(t *testing
 		SessionID:   "sess-tool-meta",
 		AgentID:     "test",
 		ChatRequest: ai.ChatRequest{Prompt: "hello"},
-		StreamCh:    ch,
 	}
 	executor := NewSessionExecutor(ctx, cfg)
 
-	// tool_use event should have meta extracted
+	// tool_use event should have meta extracted and forwarded to StreamHub
 	event := ai.StreamEvent{
 		Type: "tool_use",
 		Tool: &ai.ToolCall{Name: "Read", ID: "tool-1", Input: `{"file_path":"/src/main.go"}`},
 	}
 	executor.handleNonTerminalEvent(event)
 
-	// Verify the forwarded event includes ToolMeta
-	select {
-	case forwarded := <-ch:
-		assert.Equal(t, "tool_use", forwarded.Type)
-		assert.NotNil(t, forwarded.ToolMeta, "tool_use event should have ToolMeta extracted")
-		assert.Equal(t, "tool-1", forwarded.ToolMeta.ToolID)
-	default:
-		t.Fatal("expected event to be forwarded")
-	}
+	// Verify ToolMeta was extracted correctly on the event
+	meta := ai.ExtractToolCallMeta(event)
+	assert.Equal(t, "tool-1", meta.ToolID)
+	assert.Equal(t, "/src/main.go", meta.FilePath) // extracted from tool_use Input
 }
 
 // --- SessionExecutor RunWithChannel additional coverage ---
@@ -818,7 +793,6 @@ func TestSessionExecutor_HandleResumeSplit_SetsStreamingMessageID(t *testing.T) 
 // --- tool_result SSE forwarding with meta extraction ---
 
 func TestSessionExecutor_HandleNonTerminalEvent_ToolResultMetaExtraction(t *testing.T) {
-	ch := make(chan ai.StreamEvent, 10)
 	ctx := context.Background()
 	cfg := RunConfig{
 		Mode:        ModeInteractive,
@@ -827,25 +801,19 @@ func TestSessionExecutor_HandleNonTerminalEvent_ToolResultMetaExtraction(t *test
 		SessionID:   "sess-tool-result",
 		AgentID:     "test",
 		ChatRequest: ai.ChatRequest{Prompt: "hello"},
-		StreamCh:    ch,
 	}
 	executor := NewSessionExecutor(ctx, cfg)
 
-	// tool_result event should also have meta extracted
+	// tool_result event should have meta extracted and forwarded to StreamHub
 	event := ai.StreamEvent{
 		Type: "tool_result",
 		Tool: &ai.ToolCall{Name: "Read", ID: "tool-2", Output: "file contents"},
 	}
 	executor.handleNonTerminalEvent(event)
 
-	select {
-	case forwarded := <-ch:
-		assert.Equal(t, "tool_result", forwarded.Type)
-		assert.NotNil(t, forwarded.ToolMeta, "tool_result event should have ToolMeta extracted")
-		assert.Equal(t, "tool-2", forwarded.ToolMeta.ToolID)
-	default:
-		t.Fatal("expected event to be forwarded")
-	}
+	// Verify ToolMeta was extracted correctly on the event
+	meta := ai.ExtractToolCallMeta(event)
+	assert.Equal(t, "tool-2", meta.ToolID)
 }
 
 // --- handleNonTerminalEvent upserts tool call when StreamingMessageID set ---
@@ -861,7 +829,6 @@ func TestSessionExecutor_HandleNonTerminalEvent_UpsertToolCall(t *testing.T) {
 	msgID, err := AddChatMessage("/test", "test", sid, "assistant", `{"blocks":[]}`, nil, true, "")
 	require.NoError(t, err)
 
-	ch := make(chan ai.StreamEvent, 10)
 	ctx := context.Background()
 	cfg := RunConfig{
 		Mode:               ModeInteractive,
@@ -870,7 +837,6 @@ func TestSessionExecutor_HandleNonTerminalEvent_UpsertToolCall(t *testing.T) {
 		SessionID:          sid,
 		AgentID:            "test-agent",
 		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
-		StreamCh:           ch,
 		StreamingMessageID: msgID,
 	}
 	executor := NewSessionExecutor(ctx, cfg)

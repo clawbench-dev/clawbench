@@ -38,6 +38,12 @@ public class BootCompletedReceiver extends BroadcastReceiver {
             return;
         }
 
+        // Check if native push notifications are enabled before starting
+        if (!BackgroundService.isNativePushEnabled(context)) {
+            AppLog.i(TAG, "BootReceiver: native push disabled, skipping WS start and WorkManager");
+            return;
+        }
+
         AppLog.i(TAG, "BootReceiver: device booted, restoring background service");
 
         // On Android 12+, starting a foreground service from background requires

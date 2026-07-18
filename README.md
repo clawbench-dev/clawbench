@@ -162,10 +162,10 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 - **文件路径跳转**：Markdown 中的文件路径可点击跳转，支持行范围导航
 
 ### 🤖 AI 智能体
-- **流式响应**：SSE 实时推送，思维过程、工具调用全程可见
-- **多 Agent 支持**：全能助手、编码专家、勤杂工等，YAML 配置即插即用
+- **流式响应**：WebSocket 实时推送，思维过程、工具调用全程可见
+- **多 Agent 支持**：全能助手、编码专家、勤杂工等；自定义 Agent 可通过 `config/agents/*.yaml` 加载（非常规 Agent 的补充方式）
 - **AI 后端切换**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Cline、Copilot、Kimi，会话级隔离
-- **深度思考档位**：支持按智能体选择思考深度（Auto / Low / Medium / High），Claude/CodeBuddy/OpenCode/Codex/MiMo/Pi/Cline/Copilot/Kimi 九后端支持，选择自动持久化
+- **深度思考档位**：支持按智能体选择思考深度（Low / Medium / High 等），Claude/CodeBuddy/OpenCode/Codex/MiMo/Pi/Cline/Copilot/Kimi 九后端支持，选择自动持久化
 - **模型选择模态框**：统一模型切换与思考深度选择，双 Tab 界面，搜索过滤，一键刷新模型列表（支持自动发现的智能体），长按设为默认模型
 - **模型选择持久化**：每个智能体的模型选择和思考档位自动保存到 localStorage，刷新/切换会话自动恢复
 - **定时任务**：AI 通过 CLI 子命令创建 Cron 调度，定时自动执行；独立标签页管理，4 级面包屑导航；频率预设（每小时/每天/每周/每月）+ 自定义 Cron 表达式；任务卡片内嵌聊天消息；执行级别已读追踪 + TTS 朗读；执行完成后自动摘要 + 完成通知（音效/震动/Toast）
@@ -208,7 +208,7 @@ docker run -d -p 20000:20000 -v clawbench-data:/data ghcr.io/clawbench-dev/clawb
 ### 🔊 TTS 语音朗读
 - AI 回复自动总结后朗读，边听边看
 - **5 种 TTS 引擎**：Edge TTS（免费，原生 Go 实现，无外部依赖）、MiniMax（音质最佳）、Piper / Kokoro / MOSS-Nano（本地离线）
-- **11 种总结后端**：simple 纯清洗、mmx-cli、api（OpenAI/Anthropic 兼容）、Claude、CodeBuddy、OpenCode、Codex、Qoder、VeCLI、DeepSeek、Pi
+- **总结后端**：simple（纯文本清洗）和 api（OpenAI/Anthropic 兼容）两种模式
 - 详见 [TTS 语音合成部署指南](docs/TTS.md)
 
 ### 📂 Git 集成

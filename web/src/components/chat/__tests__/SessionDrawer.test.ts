@@ -1,25 +1,24 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick, ref, defineComponent } from 'vue'
-import SessionSettingModal from '@/components/chat/SessionSettingModal.vue'
+import SessionDrawer from '@/components/chat/SessionDrawer.vue'
 import { useAgents } from '@/composables/useAgents'
 import { useSessionIdentity } from '@/composables/useSessionIdentity'
 import { apiPost } from '@/utils/api'
 import { patchAgentPref } from '@/composables/useSettingsConfig'
 
-// Mock ModalDialog to render slot content inline (skip Teleport).
-vi.mock('@/components/common/ModalDialog.vue', () => ({
+// Mock BottomSheet to render slot content inline (skip Teleport).
+vi.mock('@/components/common/BottomSheet.vue', () => ({
   default: defineComponent({
-    props: { open: Boolean, title: String, zIndex: Number, fullHeight: Boolean },
+    props: { open: Boolean, title: String, auto: Boolean, instant: Boolean, compact: Boolean, noHeader: Boolean, handleOnly: Boolean, transparentOverlay: Boolean, fullscreen: Boolean, closeGuard: Boolean },
     emits: ['close'],
     inheritAttrs: true,
     template: `
-      <div class="modal-overlay">
-        <div class="modal-dialog">
-          <div class="modal-header"><slot name="header" /></div>
-          <div class="modal-body"><slot /></div>
-          <div class="modal-footer"><slot name="footer" /></div>
-          <slot name="after" />
+      <div class="bottom-sheet-overlay">
+        <div class="bottom-sheet">
+          <div class="bs-header"><slot name="header" /></div>
+          <div class="bs-body"><slot /></div>
+          <div class="bs-footer"><slot name="footer" /></div>
         </div>
       </div>
     `,
@@ -138,7 +137,7 @@ const mockIdentity = {
   toggleAutoApprove: vi.fn(),
 }
 
-describe('SessionSettingModal', () => {
+describe('SessionDrawer', () => {
   beforeEach(() => {
     vi.mocked(useAgents).mockReturnValue(mockAgents as any)
     vi.mocked(useSessionIdentity).mockReturnValue(mockIdentity as any)
@@ -146,33 +145,33 @@ describe('SessionSettingModal', () => {
     vi.mocked(patchAgentPref).mockResolvedValue(undefined)
   })
 
-  function mountModal(props = {}) {
-    return mount(SessionSettingModal, {
-      props: { show: true, agentId: 'claude', ...props },
+  function mountDrawer(props = {}) {
+    return mount(SessionDrawer, {
+      props: { open: true, agentId: 'claude', ...props },
     })
   }
 
   // ── Basic mount and structure ──
 
   it('mounts without errors', () => {
-    const wrapper = mountModal()
+    const wrapper = mountDrawer()
     expect(wrapper.exists()).toBe(true)
   })
 
-  it('renders modal overlay when show is true', () => {
-    const wrapper = mountModal()
-    expect(wrapper.find('.modal-overlay').exists()).toBe(true)
+  it('renders bottom sheet overlay when open is true', () => {
+    const wrapper = mountDrawer()
+    expect(wrapper.find('.bottom-sheet-overlay').exists()).toBe(true)
   })
 
   it('renders the tab bar with four tabs', () => {
-    const wrapper = mountModal()
+    const wrapper = mountDrawer()
     expect(wrapper.find('.session-setting-tabs').exists()).toBe(true)
     const tabs = wrapper.findAll('.model-tab')
     expect(tabs.length).toBe(4)
   })
 
   it('renders all tab labels', () => {
-    const wrapper = mountModal()
+    const wrapper = mountDrawer()
     const tabs = wrapper.findAll('.model-tab')
     expect(tabs[0].text()).toContain('chat.modelSwitcher.title')
     expect(tabs[1].text()).toContain('chat.thinkingEffortSwitcher.title')
@@ -183,31 +182,31 @@ describe('SessionSettingModal', () => {
   // ── Initial state (model tab is default) ──
 
   it('shows model tab as active by default', () => {
-    const wrapper = mountModal()
+    const wrapper = mountDrawer()
     const tabs = wrapper.findAll('.model-tab')
     expect(tabs[0].classes()).toContain('active')
     expect(tabs[1].classes()).not.toContain('active')
   })
 
   it('shows model search input on default model tab', () => {
-    const wrapper = mountModal()
+    const wrapper = mountDrawer()
     expect(wrapper.find('.model-search-input').exists()).toBe(true)
   })
 
   it('renders model items for the current agent', () => {
-    const wrapper = mountModal()
+    const wrapper = mountDrawer()
     const items = wrapper.findAll('.model-item')
     expect(items.length).toBe(2)
   })
 
   it('marks default model with is-default class', () => {
-    const wrapper = mountModal()
+    const wrapper = mountDrawer()
     const items = wrapper.findAll('.model-item')
     expect(items[0].classes()).toContain('is-default')
   })
 
   it('marks current model with current class', () => {
-    const wrapper = mountModal()
+    const wrapper = mountDrawer()
     const items = wrapper.findAll('.model-item')
     expect(items[0].classes()).toContain('current')
   })
@@ -215,16 +214,15 @@ describe('SessionSettingModal', () => {
   // ── Tab switching via VM (DOM reactivity is unreliable in test env) ──
 
   it('updates activeTab to thinking on tab click', async () => {
-    const wrapper = mountModal()
+    const wrapper = mountDrawer()
     const tabs = wrapper.findAll('.model-tab')
     await tabs[1].trigger('click')
     await nextTick()
-    // Verify internal state changed (DOM class update is unreliable in jsdom)
     expect(wrapper.vm._getActiveTab()).toBe('thinking')
   })
 
   it('updates activeTab to mode on tab click', async () => {
-    const wrapper = mountModal()
+    const wrapper = mountDrawer()
     const tabs = wrapper.findAll('.model-tab')
     await tabs[2].trigger('click')
     await nextTick()
@@ -232,7 +230,7 @@ describe('SessionSettingModal', () => {
   })
 
   it('updates activeTab to transport on tab click', async () => {
-    const wrapper = mountModal()
+    const wrapper = mountDrawer()
     const tabs = wrapper.findAll('.model-tab')
     await tabs[3].trigger('click')
     await nextTick()
@@ -241,14 +239,14 @@ describe('SessionSettingModal', () => {
 
   // ── Component emits ──
 
-  it('declares switch-model emit', () => {
-    expect(SessionSettingModal.emits).toContain('switch-model')
+  it('declares close emit', () => {
+    expect(SessionDrawer.emits).toContain('close')
   })
 
   // ── Search filtering via VM ──
 
   it('filters models by search query via VM', async () => {
-    const wrapper = mountModal()
+    const wrapper = mountDrawer()
     wrapper.vm._setSearchQuery('opus')
     await nextTick()
     const filtered = wrapper.vm._getFilteredModels()
@@ -259,13 +257,10 @@ describe('SessionSettingModal', () => {
   // ── Thinking tab content ──
 
   it('shows thinking effort items on thinking tab', async () => {
-    const wrapper = mountModal()
-    // Switch to thinking tab via exposed method (DOM click may not trigger re-render in jsdom)
+    const wrapper = mountDrawer()
     wrapper.vm._setActiveTab('thinking')
     await nextTick()
-    // Verify tab is active
     expect(wrapper.vm._getActiveTab()).toBe('thinking')
-    // Verify thinking levels are populated from the mock
     const rawState = (wrapper.vm as any).$.devtoolsRawSetupState
     expect(rawState.thinkingLevels.value.length).toBe(3)
   })
@@ -273,7 +268,7 @@ describe('SessionSettingModal', () => {
   // ── Mode tab content ──
 
   it('shows mode tab content when clicked', async () => {
-    const wrapper = mountModal()
+    const wrapper = mountDrawer()
     const tabs = wrapper.findAll('.model-tab')
     await tabs[2].trigger('click')
     await nextTick()
@@ -284,11 +279,10 @@ describe('SessionSettingModal', () => {
   // ── Transport tab content ──
 
   it('shows transport tab content when clicked', async () => {
-    const wrapper = mountModal()
+    const wrapper = mountDrawer()
     const tabs = wrapper.findAll('.model-tab')
     await tabs[3].trigger('click')
     await nextTick()
-    // Verify tab switched (content area exists)
     const content = wrapper.find('.model-tab-content')
     expect(content.exists()).toBe(true)
   })
@@ -296,7 +290,7 @@ describe('SessionSettingModal', () => {
   // ── Model select interaction ──
 
   it('emits switch-model when model item is clicked', async () => {
-    const wrapper = mountModal()
+    const wrapper = mountDrawer()
     const items = wrapper.findAll('.model-item')
     await items[1].trigger('click')
     expect(wrapper.emitted('switch-model')).toBeTruthy()
@@ -305,8 +299,7 @@ describe('SessionSettingModal', () => {
   // ── Model search ──
 
   it('updates search query when typing in search input', async () => {
-    const wrapper = mountModal()
-    // Use the exposed method to set search query (v-model may not work in jsdom)
+    const wrapper = mountDrawer()
     wrapper.vm._setSearchQuery('sonnet')
     await nextTick()
     const filtered = wrapper.vm._getFilteredModels()

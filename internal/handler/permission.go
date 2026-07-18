@@ -4,7 +4,6 @@ import (
 	"log/slog"
 	"net/http"
 
-	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 )
@@ -42,61 +41,12 @@ func ServePermissionRespond(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve ClawBench session ID → ACP session ID via service
-	agentID := service.GetSessionAgentID(req.SessionID)
-	if agentID == "" {
-		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
-		return
-	}
-
-	// Look up the ACP connection for this ClawBench session
-	mgr := ai.GetACPConnManager()
-	conn := mgr.GetConn(req.SessionID)
-	if conn == nil {
-		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotRunning")
-		return
-	}
-
-	client := conn.GetClient()
-	if client == nil {
-		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotRunning")
-		return
-	}
-
-	// We need the ACP session ID to construct the permission key.
-	acpSessionID := conn.AcpSID()
-	if acpSessionID == "" {
-		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
-		return
-	}
-
-	// The frontend sends the permissionBlockID (prefixed with "perm_") as toolCallId.
-	// Strip the prefix to recover the original ACP tool call ID used in PermissionKey.
-	toolCallID := req.ToolCallID
-	if len(toolCallID) > 5 && toolCallID[:5] == "perm_" {
-		toolCallID = toolCallID[5:]
-	}
-
-	key := ai.PermissionKey(acpSessionID, toolCallID)
-
-	ok = client.RespondPermission(key, req.OptionID, req.Cancelled)
-	if !ok {
-		slog.Warn(
-			"permission respond: no pending permission found",
-			"session_id", req.SessionID,
-			"tool_call_id", req.ToolCallID,
-		)
+	err := service.RespondPermission(req.SessionID, req.ToolCallID, req.OptionID, req.Cancelled)
+	if err != nil {
+		slog.Warn("permission respond: failed", "error", err, "session_id", req.SessionID, "tool_call_id", req.ToolCallID)
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "PermissionNotFound")
 		return
 	}
-
-	slog.Info(
-		"permission respond: user responded to permission request",
-		"session_id", req.SessionID,
-		"tool_call_id", req.ToolCallID,
-		"option_id", req.OptionID,
-		"cancelled", req.Cancelled,
-	)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true,

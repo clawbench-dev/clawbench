@@ -9,13 +9,47 @@ import { appLog } from '@/utils/appLog'
 
 const TAG = 'PortForward'
 
+// Java forceReconnectAsync timeout (15s) + 1s buffer
+const RECONNECT_ASYNC_TIMEOUT_MS = 16000
+// Global callback name for async reconnect (must match Java-side callbackJsExpr)
+const RECONNECT_CALLBACK_NAME = '__clawbenchReconnectResult'
+
+/** Shared async reconnect helper — prefers reconnectTunnelAsync (non-blocking)
+ *  to avoid ANR on the JavaBridge thread, falls back to blocking reconnectTunnel
+ *  for old APKs.
+ *  Note: window[RECONNECT_CALLBACK_NAME] is cleaned up by `done()`, called either
+ *  by the native callback or the safety timeout. Concurrent calls may overwrite
+ *  this global — the `settled` flag prevents double-resolution. */
+async function reconnectTunnelAsync(native: AndroidNativeBridge): Promise<boolean> {
+  if (native?.reconnectTunnelAsync) {
+    return new Promise<boolean>((resolve) => {
+      let settled = false
+      const done = (success: boolean) => {
+        if (settled) return
+        settled = true
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        delete (window as any)[RECONNECT_CALLBACK_NAME]
+        resolve(success)
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(window as any)[RECONNECT_CALLBACK_NAME] = (success: boolean) => done(success)
+      // Safety timeout in case the native callback never fires
+      setTimeout(() => done(false), RECONNECT_ASYNC_TIMEOUT_MS)
+      native.reconnectTunnelAsync!()
+    })
+  } else if (native?.reconnectTunnel) {
+    // Fallback: blocking version (for old APKs without reconnectTunnelAsync)
+    return native.reconnectTunnel()
+  }
+  return false
+}
+
 interface ForwardedPort {
   port: number        // Target port on remote host
   localPort: number   // Local listening port (auto-assigned)
   host: string
   name: string
   protocol: string
-  autoDetect: boolean
   active: boolean
 }
 
@@ -38,6 +72,7 @@ interface AndroidNativeBridge {
   openInBrowser?: (localPort: number, protocol: string, host: string, path: string) => void
   testPortReachable?: (localPort: number) => boolean
   reconnectTunnel?: () => boolean
+  reconnectTunnelAsync?: () => void
 }
 
 /** Get the Android native bridge from window, if available. */
@@ -455,7 +490,8 @@ export function usePortForward() {
   /** Open a forwarded port — in app mode opens sandbox browser, otherwise window.open.
    *  In app mode: tests if the port is reachable, waits briefly if not,
    *  then attempts SSH tunnel reconnect if still unreachable.
-   *  Shows toast on success or failure after reconnection attempt. */
+   *  Shows toast on success or failure after reconnection attempt.
+   *  Uses reconnectTunnelAsync (non-blocking) to avoid ANR on Android. */
   async function openPort(localPort: number, protocol?: string, host?: string, path?: string) {
     appLog.d(TAG, 'openPort: localPort=' + localPort + ', protocol=' + protocol + ', host=' + (host || '') + ', path=' + (path || ''))
 
@@ -474,15 +510,11 @@ export function usePortForward() {
 
         // Port unreachable — attempt SSH tunnel reconnect.
         appLog.d(TAG, 'openPort: port ' + localPort + ' unreachable, attempting tunnel reconnect')
-        let reconnected = false
-        if (native?.reconnectTunnel) {
-          reconnected = native.reconnectTunnel()
-          appLog.d(TAG, 'openPort: reconnectTunnel() = ' + reconnected)
-        }
+        const reconnected = await reconnectTunnelAsync(native)
+        appLog.d(TAG, 'openPort: reconnectTunnelAsync() = ' + reconnected)
 
         const toast = useToast()
         if (reconnected) {
-          // reconnectTunnel is blocking — after it returns, try once more
           const reachableAfter = native.testPortReachable(localPort)
           appLog.d(TAG, 'openPort: after reconnect, testPortReachable(' + localPort + ') = ' + reachableAfter)
           if (reachableAfter) {
@@ -507,12 +539,13 @@ export function usePortForward() {
   /** Reconnect a specific forwarded port: test reachability, reconnect tunnel if needed.
    *  Used by the per-port reconnect button in the port forwarding panel.
    *  The caller tracks which ports are reconnecting and shows a spinning icon.
-   *  Shows toast on success or failure. */
+   *  Shows toast on success or failure.
+   *  Uses reconnectTunnelAsync (non-blocking) to avoid ANR on Android. */
   async function reconnectPort(localPort: number) {
     const native = getAndroidNative()
     const toast = useToast()
 
-    // Yield to let Vue render the spinning button before any blocking bridge calls
+    // Yield to let Vue render the spinning button before any bridge calls
     await new Promise(r => setTimeout(r, 50))
 
     if (isAppMode.value && native?.testPortReachable) {
@@ -524,11 +557,8 @@ export function usePortForward() {
         return
       }
 
-      // Step 2: Port unreachable — reconnect tunnel
-      let reconnected = false
-      if (native?.reconnectTunnel) {
-        reconnected = native.reconnectTunnel()
-      }
+      // Step 2: Port unreachable — reconnect tunnel (non-blocking)
+      const reconnected = await reconnectTunnelAsync(native)
 
       if (reconnected) {
         const reachableAfter = native.testPortReachable(localPort)

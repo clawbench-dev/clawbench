@@ -97,9 +97,9 @@ func TestServeChatHistory_Get_SessionNotFound(t *testing.T) {
 	req = withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(ServeChatHistory, req)
-	// Nonexistent session returns 403 because GetSessionProjectPath returns ""
-	// which doesn't match the project cookie, so project mismatch fires first
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	// Nonexistent session returns 404 because GetSessionBackend returns ""
+	// (session existence/deletion check fires before project ownership check)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // --- ServeChatHistory POST ---
@@ -215,9 +215,9 @@ func TestServeChatHistory_Post_SessionNotFound(t *testing.T) {
 	req = withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(ServeChatHistory, req)
-	// Nonexistent session returns 403 because GetSessionProjectPath returns ""
-	// which doesn't match the project cookie, so project mismatch fires first
-	assert.Equal(t, http.StatusForbidden, w.Code)
+	// Nonexistent session returns 404 because GetSessionBackend returns ""
+	// (session existence/deletion check fires before project ownership check)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // --- ServeChatHistory DELETE ---

@@ -159,7 +159,7 @@ public class MainActivityPortHostTest {
         // but with returnDefaultValues=true it's a no-op)
         // The lambda will construct a URL with the host parameter
         try {
-            bridge.openInBrowser(20000, "http", "192.168.1.5");
+            bridge.openInBrowser(20000, "http", "192.168.1.5", "/");
         } catch (Exception e) {
             // May throw due to Android framework stubs — that's OK
         }
@@ -185,7 +185,7 @@ public class MainActivityPortHostTest {
     @Test
     public void testOpenInBrowser_httpsProtocol() throws Exception {
         try {
-            bridge.openInBrowser(30000, "https", "10.0.0.1");
+            bridge.openInBrowser(30000, "https", "10.0.0.1", "/");
         } catch (Exception e) {
             // May throw due to Android framework stubs
         }
@@ -194,7 +194,7 @@ public class MainActivityPortHostTest {
     @Test
     public void testOpenInBrowser_nullHost_defaultsToLocalhost() throws Exception {
         try {
-            bridge.openInBrowser(20000, "http", null);
+            bridge.openInBrowser(20000, "http", null, "");
         } catch (Exception e) {
             // May throw due to Android framework stubs
         }
@@ -203,7 +203,7 @@ public class MainActivityPortHostTest {
     @Test
     public void testOpenInBrowser_emptyHost_defaultsToLocalhost() throws Exception {
         try {
-            bridge.openInBrowser(30000, "https", "");
+            bridge.openInBrowser(30000, "https", "", "/path");
         } catch (Exception e) {
             // May throw due to Android framework stubs
         }
@@ -216,7 +216,7 @@ public class MainActivityPortHostTest {
     @Test
     public void testOpenInSandbox_withHost_startsActivity() throws Exception {
         try {
-            bridge.openInSandbox(20000, "http", "10.0.0.1");
+            bridge.openInSandbox(20000, "http", "10.0.0.1", "/");
         } catch (Exception e) {
             // May throw due to Android framework stubs
         }
@@ -225,7 +225,7 @@ public class MainActivityPortHostTest {
     @Test
     public void testOpenInSandbox_nullHost_putsEmptyString() throws Exception {
         try {
-            bridge.openInSandbox(20000, "http", null);
+            bridge.openInSandbox(20000, "http", null, "");
         } catch (Exception e) {
             // May throw due to Android framework stubs
         }

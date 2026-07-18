@@ -276,7 +276,10 @@ function renderAskUserQuestion(input: ToolInput): string {
   html += `<input class="ask-supplementary-input" type="text" placeholder="${escapeHtml(gt('tool.askUser.supplementaryPlaceholder'))}" />`
   html += '</div>'
 
+  html += '<div class="ask-question-actions">'
+  html += `<button class="ask-question-recommend">${gt('tool.askUser.recommend')}</button>`
   html += `<button class="ask-question-submit" disabled>${gt('tool.askUser.submit')}</button>`
+  html += '</div>'
   html += '</div>'
 
   return html
@@ -1448,6 +1451,37 @@ registerToolActionHandler('AskUserQuestion', (event, emit) => {
       }
 
       updateAskSubmitState(view)
+    }
+    return true
+  }
+
+  // Recommend click
+  const recommendBtn = target.closest('.ask-question-recommend') as HTMLElement | null
+  if (recommendBtn) {
+    event.stopPropagation()
+    event.preventDefault()
+    const view = recommendBtn.closest('.ask-question-view')
+    if (view && !view.classList.contains('ask-submitted')) {
+      // Mark as submitted
+      view.classList.add('ask-submitted')
+      const allOptions = view.querySelectorAll('.ask-question-option')
+      for (const opt of allOptions) {
+        ;(opt as HTMLElement).style.pointerEvents = 'none'
+      }
+      const submitBtn = view.querySelector('.ask-question-submit') as HTMLButtonElement | null
+      if (submitBtn) {
+        submitBtn.disabled = true
+        submitBtn.style.display = 'none'
+      }
+      const supplementaryInput = view.querySelector('.ask-supplementary-input') as HTMLInputElement | null
+      if (supplementaryInput) {
+        supplementaryInput.disabled = true
+        supplementaryInput.style.opacity = '0.6'
+      }
+      recommendBtn.textContent = gt('tool.askUser.recommended')
+      recommendBtn.style.pointerEvents = 'none'
+
+      emit('send-message', '你推荐我选哪个？')
     }
     return true
   }

@@ -5,18 +5,15 @@ plugins {
 
 /**
  * Auto-generate versionName when not provided via -PversionName.
- * Format: dev.<branch>.<buildTime>.<gitShortHash>
- * Example: dev.main.20250729-143000.g830bb6c
+ * Uses `git describe --tags --always` to match the format used by build.sh
+ * for the Go backend, so APK and server versions are directly comparable.
+ * Examples: v1.0.0, v0.30.0-30-g830bb6c, a0f87a96
  */
 def autoVersionName() {
     if (project.hasProperty('versionName')) return project.property('versionName')
     try {
-        def branch = 'git rev-parse --abbrev-ref HEAD'.execute([], rootDir).text.trim()
-        def hash = 'git rev-parse --short HEAD'.execute([], rootDir).text.trim()
-        def time = new Date().format('yyyyMMdd-HHmmss')
-        // Sanitize branch name: replace non-alphanumeric chars with dash
-        branch = branch.replaceAll('[^a-zA-Z0-9._-]', '-')
-        return "dev.${branch}.${time}.${hash}"
+        def version = 'git describe --tags --always'.execute([], rootDir).text.trim()
+        return version ?: "dev"
     } catch (Exception e) {
         return "dev"
     }

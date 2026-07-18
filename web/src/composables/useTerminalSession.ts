@@ -207,6 +207,12 @@ export function useTerminalSession(
     sessionId.value = ''
   }
 
+  function sendReplayDone() {
+    if (ws.value?.readyState === WebSocket.OPEN) {
+      ws.value.send(JSON.stringify({ type: 'replay_done' }))
+    }
+  }
+
   /** Whether the WebSocket is currently open. */
   const wsOpen = computed(() => ws.value?.readyState === WebSocket.OPEN)
 
@@ -224,5 +230,6 @@ export function useTerminalSession(
     sendInput,
     sendResize,
     sendClose,
+    sendReplayDone,
   }
 }

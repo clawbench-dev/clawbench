@@ -132,12 +132,12 @@
           ⚙️ {{ t('chat.quickSend.edit') }}
         </button>
       </PopupMenu>
-      <!-- Session settings modal -->
-      <SessionSettingModal
-        :show="settingsDrawer.effectiveOpen.value"
+      <!-- Session settings drawer -->
+      <SessionDrawer
+        :open="settingsDrawer.effectiveOpen.value"
         :agent-id="currentAgentId"
-        :initial-tab="settingsModalInitialTab"
-        @update:show="$event ? settingsDrawer.open() : settingsDrawer.close()"
+        :initial-tab="settingsDrawerInitialTab"
+        @close="settingsDrawer.close()"
         @switch-model="handleSwitchModel"
         @switch-thinking-effort="handleSwitchThinkingEffort"
         @switch-mode="handleSwitchMode"
@@ -202,18 +202,18 @@
     </div>
     <!-- Session info bar (model + mode + thinking + transport) -->
     <div class="chat-session-info" v-if="currentModelName || showModeInfo || showThinkingInfo || showTransportInfo || showUsageInfo">
-      <span class="session-info-model" @click.stop="openSettingsModal('model')"><Cpu :size="11" />{{ currentModelName }}</span>
+      <span class="session-info-model" @click.stop="openSettingsDrawer('model')"><Cpu :size="11" />{{ currentModelName }}</span>
       <template v-if="showModeInfo">
         <span class="session-info-divider"></span>
-        <span class="session-info-mode" :class="{ 'session-info-mode-auto': autoApprove }" @click.stop="openSettingsModal('mode')"><Compass :size="11" />{{ currentModeName }}</span>
+        <span class="session-info-mode" :class="{ 'session-info-mode-auto': autoApprove }" @click.stop="onModeClick" v-long-press="onModeLongPress" @mousedown.stop="onModeMouseDown" @mouseup.stop="onModeMouseUp"><Compass :size="11" />{{ currentModeName }}</span>
       </template>
       <template v-if="showThinkingInfo">
         <span class="session-info-divider"></span>
-        <span class="session-info-thinking" @click.stop="openSettingsModal('thinking')"><Brain :size="11" />{{ currentThinkingEffortName }}</span>
+        <span class="session-info-thinking" @click.stop="openSettingsDrawer('thinking')"><Brain :size="11" />{{ currentThinkingEffortName }}</span>
       </template>
       <template v-if="showTransportInfo">
         <span class="session-info-divider"></span>
-        <span class="session-info-transport" @click.stop="openSettingsModal('transport')"><Cable :size="11" />{{ currentTransport === 'acp-stdio' ? 'ACP' : 'CLI' }}</span>
+        <span class="session-info-transport" @click.stop="openSettingsDrawer('transport')"><Cable :size="11" />{{ currentTransport === 'acp-stdio' ? 'ACP' : 'CLI' }}</span>
       </template>
       <template v-if="showUsageInfo">
         <span class="session-info-divider"></span>
@@ -242,17 +242,19 @@ import PopupMenu from '@/components/common/PopupMenu.vue'
 import AttachDrawer from '@/components/chat/AttachDrawer.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import QuickSendDrawer from '@/components/chat/QuickSendDrawer.vue'
-import SessionSettingModal from '@/components/chat/SessionSettingModal.vue'
+import SessionDrawer from '@/components/chat/SessionDrawer.vue'
 import { createStopButtonMachine } from '@/utils/stopButtonMachine.ts'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useQuickSend } from '@/composables/useQuickSend'
 import { useChatKeyboard } from '@/composables/useChatKeyboard'
 import { useSessionIdentity } from '@/composables/useSessionIdentity'
 import { useAgents } from '@/composables/useAgents'
+import { useToast } from '@/composables/useToast'
 
 const { t } = useI18n()
-const { availableCommands, availableModes, availableThinkingEfforts, currentThinkingEffortName, currentTransport: sessionTransport, autoApprove, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextCost, contextCurrency } = useSessionIdentity()
+const { availableCommands, availableModes, availableThinkingEfforts, currentThinkingEffortName, currentTransport: sessionTransport, autoApprove, toggleAutoApprove, contextUsed, contextSize, contextInputTokens, contextOutputTokens, contextCost, contextCurrency } = useSessionIdentity()
 const { supportsDualTransport, hasThinkingEffortLevels } = useAgents()
+const toast = useToast()
 
 // isACP: true when the current agent supports ACP (has acpCommand).
 // Used for mode chips, thinking effort chips — these are ACP features
@@ -270,6 +272,46 @@ const isACPTransport = computed(() => {
 const showModeInfo = computed(() => availableModes.value.length > 0 && isACP.value)
 const showThinkingInfo = computed(() => isACP.value && (availableThinkingEfforts.value.length > 0 || hasThinkingEffortLevels(props.currentAgentId || '')))
 const showTransportInfo = computed(() => supportsDualTransport(props.currentAgentId || '') || !isACP.value)
+
+function onModeClick() {
+  if (modeMouseLongFired) {
+    modeMouseLongFired = false
+    return
+  }
+  openSettingsDrawer('mode')
+}
+
+// Long-press on mode chip → toggle auto-approve
+let modeMouseTimer = null
+let modeMouseLongFired = false
+
+function onModeLongPress() {
+  doToggleAutoApprove()
+}
+
+function onModeMouseDown() {
+  modeMouseLongFired = false
+  modeMouseTimer = setTimeout(() => {
+    modeMouseLongFired = true
+    doToggleAutoApprove()
+  }, 500)
+}
+
+function onModeMouseUp() {
+  if (modeMouseTimer) {
+    clearTimeout(modeMouseTimer)
+    modeMouseTimer = null
+  }
+}
+
+function doToggleAutoApprove() {
+  const next = !autoApprove.value
+  toggleAutoApprove(next)
+  toast.show(next ? t('chat.autoApprove.enabled') : t('chat.autoApprove.disabled'), {
+    icon: next ? '✅' : '🔒',
+    type: next ? 'success' : 'info',
+  })
+}
 const showUsageInfo = computed(() => contextSize.value > 0)
 const usagePct = computed(() => contextSize.value > 0 ? Math.round((contextUsed.value / contextSize.value) * 100) : 0)
 const usageColor = computed(() => {
@@ -282,7 +324,7 @@ const usageColor = computed(() => {
 const dialog = useDialog()
 const quickSendStore = useQuickSend()
 const { items: quickSendItems, fetchItems } = quickSendStore
-const settingsModalInitialTab = ref('model')
+const settingsDrawerInitialTab = ref('model')
 const quickSendDrawer = useTabDrawer('chat', quickSendStore.showEditDialog)
 const settingsDrawer = useTabDrawer('chat')
 
@@ -384,8 +426,8 @@ const attachMenuRef = ref(null) // kept for ref stability, no longer used for Po
 const showQuickMenu = ref(false)
 const sendBtnRef = ref(null)
 
-function openSettingsModal(tab) {
-  settingsModalInitialTab.value = tab
+function openSettingsDrawer(tab) {
+  settingsDrawerInitialTab.value = tab
   settingsDrawer.open()
 }
 
@@ -856,6 +898,8 @@ defineExpose({
   min-width: 14px;
   cursor: pointer;
   transition: color 0.15s;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .session-info-model:active,

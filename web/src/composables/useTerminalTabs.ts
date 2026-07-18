@@ -97,9 +97,9 @@ export function useTerminalTabs(
     })
 
     // Wire session callbacks
-    // On reconnect, the backend sends a replay buffer then suppresses output
-    // until the first resize completes (to avoid duplicate prompts from
-    // SIGWINCH). The frontend just clears the terminal and writes the replay.
+    // On reconnect, the backend sends a replay buffer and suppresses output
+    // until the first HandleResize (triggered by fit()). This prevents the
+    // duplicate prompt from SIGWINCH overwriting the replay data.
     // Strip DEC mode 2026 (Synchronized Output) from PTY output before
     // writing to xterm.js. TUI apps (vim, OpenCode/Bubble Tea) send
     // \x1b[?2026h before each rendered frame and \x1b[?2026l after.
@@ -117,12 +117,24 @@ export function useTerminalTabs(
         term.write(stripSyncOutput(data))
       },
       onReplay: (data: string) => {
-        // Clear xterm buffer and replace with replay data — discards any
-        // stale content left over from before the disconnect.
-        // The backend suppresses output after replay until the first resize
-        // (triggered by fit()) completes, so no duplicate prompt appears.
+        // Fit FIRST to establish correct dimensions before writing replay.
+        // If we write replay data at old dimensions then fit(), xterm
+        // reflows the content to new dimensions, breaking cursor positions
+        // and line alignment from the replay data → misalignment & offset.
+        try { fit.fit() } catch { /* ignore */ }
+        // Now reset and write replay at the correct dimensions
         term.reset()
         term.write(stripSyncOutput(data))
+        // Delay replay_done to ensure the SIGWINCH-induced prompt redraw
+        // (triggered by the fit() above → resize → SIGWINCH) has been
+        // fully processed and suppressed by the backend before we tell it
+        // to stop suppressing. Without this delay, replay_done can arrive
+        // before the shell's SIGWINCH response, causing suppressOutput to
+        // be cleared too early and the redraw to leak through as duplicate
+        // content.
+        setTimeout(() => {
+          session.sendReplayDone()
+        }, 50)
       },
       onStatus: (status: { running: boolean; cwd: string }) => {
         if (status.cwd) {

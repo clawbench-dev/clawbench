@@ -653,3 +653,65 @@ func TestQueueHandler_Enqueue_NoNeedsStartWhenSessionRunning(t *testing.T) {
 	assert.Len(t, queue, 1)
 	assert.Equal(t, "hello world", queue[0].Text)
 }
+
+// TestQueueHandler_Delete_RemoveByQueueID verifies that delete by queueId
+// works correctly.
+func TestQueueHandler_Delete_RemoveByQueueID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "QueueID Session", "claude", "", "default", "chat")
+	assert.NoError(t, err)
+	defer service.ClearQueue(sessionID)
+
+	service.EnqueueMessage(sessionID, model.QueuedMessage{QueueID: "q-1", Text: "msg1", CreatedAt: time.Now().Format(time.RFC3339)})
+	service.EnqueueMessage(sessionID, model.QueuedMessage{QueueID: "q-2", Text: "msg2", CreatedAt: time.Now().Format(time.RFC3339)})
+
+	req := newRequest(t, http.MethodDelete, "/api/ai/queue?session_id="+sessionID+"&queueId=q-1", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+
+	assertOK(t, w)
+	var result map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &result)
+	assert.Equal(t, true, result["ok"])
+	queue, _ := result["queue"].([]any)
+	assert.Len(t, queue, 1)
+}
+
+// TestQueueHandler_Delete_QueueIDNotFound verifies deleting a non-existent
+// queueId returns an empty queue (not nil).
+func TestQueueHandler_Delete_QueueIDNotFound(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "QueueID NotFound", "claude", "", "default", "chat")
+	assert.NoError(t, err)
+	defer service.ClearQueue(sessionID)
+
+	service.EnqueueMessage(sessionID, model.QueuedMessage{QueueID: "q-1", Text: "msg1", CreatedAt: time.Now().Format(time.RFC3339)})
+
+	req := newRequest(t, http.MethodDelete, "/api/ai/queue?session_id="+sessionID+"&queueId=nonexistent", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+
+	assertOK(t, w)
+	var result map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &result)
+	assert.Equal(t, true, result["ok"])
+	queue, _ := result["queue"].([]any)
+	assert.Len(t, queue, 1) // original item still there
+}
+
+// TestQueueHandler_Delete_MissingSessionID verifies that delete without
+// session_id returns 400.
+func TestQueueHandler_Delete_MissingSessionID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodDelete, "/api/ai/queue", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+
+	assertStatus(t, w, http.StatusBadRequest)
+}

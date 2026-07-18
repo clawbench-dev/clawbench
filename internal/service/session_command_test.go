@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
+	"clawbench/internal/ws"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,6 +37,7 @@ func setupTestDBForSessionCommand(t *testing.T) *sql.DB {
 			session_type TEXT NOT NULL DEFAULT 'chat',
 			external_session_id TEXT DEFAULT '',
 			transport TEXT DEFAULT '',
+			auto_approve INTEGER NOT NULL DEFAULT 0,
 			deleted INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -996,152 +999,171 @@ func TestHandleACPCleanup_UnknownAgent(t *testing.T) {
 }
 
 // ============================================================================
-// processStreamResult tests
+// RunDrainLoop tests
 // ============================================================================
 
-func TestProcessStreamResult_UserCancel(t *testing.T) {
+func TestRunDrainLoop_UserCancel(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-
-	ctx := context.Background()
-	streamCh := make(chan ai.StreamEvent, 10)
-	cfg := LaunchConfig{
-		SessionID:   "cancel-sess",
-		ProjectPath: "/proj",
-		BackendName: "claude",
-		AgentID:     "agent",
-		Message:     "test",
-	}
 
 	var finalEvent ai.StreamEvent
 	markDoneAndSendFinal := func(event ai.StreamEvent) {
 		finalEvent = event
 	}
 
-	result := streamRunResultShared{cancelReason: cancelReasonUser}
-	processStreamResult(ctx, streamCh, cfg, "cancel-sess", result, markDoneAndSendFinal)
+	drainCfg := DrainConfig{
+		SessionID:             "cancel-sess",
+		ProjectPath:           "/proj",
+		BackendName:           "claude",
+		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
+		MarkDoneAndSendFinal:  markDoneAndSendFinal,
+	}
 
-	assert.Equal(t, statusCancelled, finalEvent.Type)
+	result := DrainResult{CancelReason: "user"}
+	RunDrainLoop(drainCfg, result)
+
+	assert.Equal(t, "cancelled", finalEvent.Type)
 }
 
-func TestProcessStreamResult_Error(t *testing.T) {
+func TestRunDrainLoop_UserCancel_EmitsQueueCancel(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
-	ctx := context.Background()
-	streamCh := make(chan ai.StreamEvent, 10)
-	cfg := LaunchConfig{
-		SessionID:   "error-sess",
-		ProjectPath: "/proj",
-		BackendName: "claude",
-		AgentID:     "agent",
-		Message:     "test",
-	}
+	sessionID := "cancel-with-queue"
+
+	// Pre-enqueue two messages with queueIds
+	EnqueueMessage(sessionID, model.QueuedMessage{QueueID: "pending-A", Text: "msg A", CreatedAt: "2026-01-01T00:00:00Z"})
+	EnqueueMessage(sessionID, model.QueuedMessage{QueueID: "pending-B", Text: "msg B", CreatedAt: "2026-01-01T00:00:01Z"})
 
 	var finalEvent ai.StreamEvent
 	markDoneAndSendFinal := func(event ai.StreamEvent) {
 		finalEvent = event
 	}
 
-	result := streamRunResultShared{err: "something went wrong"}
-	processStreamResult(ctx, streamCh, cfg, "error-sess", result, markDoneAndSendFinal)
+	drainCfg := DrainConfig{
+		SessionID:             sessionID,
+		ProjectPath:           "/proj",
+		BackendName:           "claude",
+		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
+		MarkDoneAndSendFinal:  markDoneAndSendFinal,
+	}
 
-	assert.Equal(t, eventTypeError, finalEvent.Type)
+	result := DrainResult{CancelReason: "user"}
+	RunDrainLoop(drainCfg, result)
+
+	assert.Equal(t, "cancelled", finalEvent.Type)
+
+	// Queue should be cleared
+	assert.Empty(t, GetQueue(sessionID))
+}
+
+func TestRunDrainLoop_Error(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	var finalEvent ai.StreamEvent
+	markDoneAndSendFinal := func(event ai.StreamEvent) {
+		finalEvent = event
+	}
+
+	drainCfg := DrainConfig{
+		SessionID:             "error-sess",
+		ProjectPath:           "/proj",
+		BackendName:           "claude",
+		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
+		MarkDoneAndSendFinal:  markDoneAndSendFinal,
+	}
+
+	result := DrainResult{Err: "something went wrong"}
+	RunDrainLoop(drainCfg, result)
+
+	assert.Equal(t, "error", finalEvent.Type)
 	assert.Equal(t, "something went wrong", finalEvent.Error)
 }
 
-func TestProcessStreamResult_EmptyContent(t *testing.T) {
+func TestRunDrainLoop_EmptyContent(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-
-	ctx := context.Background()
-	streamCh := make(chan ai.StreamEvent, 10)
-	cfg := LaunchConfig{
-		SessionID:   "empty-sess",
-		ProjectPath: "/proj",
-		BackendName: "claude",
-		AgentID:     "agent",
-		Message:     "test",
-	}
 
 	var finalEvent ai.StreamEvent
 	markDoneAndSendFinal := func(event ai.StreamEvent) {
 		finalEvent = event
 	}
 
-	result := streamRunResultShared{empty: true}
-	processStreamResult(ctx, streamCh, cfg, "empty-sess", result, markDoneAndSendFinal)
+	drainCfg := DrainConfig{
+		SessionID:             "empty-sess",
+		ProjectPath:           "/proj",
+		BackendName:           "claude",
+		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
+		MarkDoneAndSendFinal:  markDoneAndSendFinal,
+	}
 
-	assert.Equal(t, eventTypeError, finalEvent.Type)
+	result := DrainResult{Empty: true}
+	RunDrainLoop(drainCfg, result)
+
+	assert.Equal(t, "error", finalEvent.Type)
 	assert.Equal(t, "AI returned no content", finalEvent.Error)
 	assert.Equal(t, ai.ReasonEmpty, finalEvent.Reason)
 }
 
-func TestProcessStreamResult_NonUserCancel(t *testing.T) {
+func TestRunDrainLoop_NonUserCancel(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-
-	ctx := context.Background()
-	streamCh := make(chan ai.StreamEvent, 10)
-	cfg := LaunchConfig{
-		SessionID:   "disconnect-sess",
-		ProjectPath: "/proj",
-		BackendName: "claude",
-		AgentID:     "agent",
-		Message:     "test",
-	}
 
 	var finalEvent ai.StreamEvent
 	markDoneAndSendFinal := func(event ai.StreamEvent) {
 		finalEvent = event
 	}
 
-	result := streamRunResultShared{cancelReason: "disconnect"}
-	processStreamResult(ctx, streamCh, cfg, "disconnect-sess", result, markDoneAndSendFinal)
+	drainCfg := DrainConfig{
+		SessionID:             "disconnect-sess",
+		ProjectPath:           "/proj",
+		BackendName:           "claude",
+		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
+		MarkDoneAndSendFinal:  markDoneAndSendFinal,
+	}
 
-	assert.Equal(t, statusCancelled, finalEvent.Type)
+	result := DrainResult{CancelReason: "disconnect"}
+	RunDrainLoop(drainCfg, result)
+
+	assert.Equal(t, "cancelled", finalEvent.Type)
 }
 
-func TestProcessStreamResult_DoneNoQueue(t *testing.T) {
+func TestRunDrainLoop_DoneNoQueue(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
-
-	ctx := context.Background()
-	streamCh := make(chan ai.StreamEvent, 10)
-	cfg := LaunchConfig{
-		SessionID:   "done-sess",
-		ProjectPath: "/proj",
-		BackendName: "claude",
-		AgentID:     "agent",
-		Message:     "test",
-	}
 
 	var finalEvent ai.StreamEvent
 	markDoneAndSendFinal := func(event ai.StreamEvent) {
 		finalEvent = event
+	}
+
+	drainCfg := DrainConfig{
+		SessionID:             "done-sess",
+		ProjectPath:           "/proj",
+		BackendName:           "claude",
+		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
+		MarkDoneAndSendFinal:  markDoneAndSendFinal,
 	}
 
 	// No error, no cancel, not empty → should check queue, find nothing → done
-	result := streamRunResultShared{}
-	processStreamResult(ctx, streamCh, cfg, "done-sess", result, markDoneAndSendFinal)
+	result := DrainResult{}
+	RunDrainLoop(drainCfg, result)
 
 	assert.Equal(t, "done", finalEvent.Type)
 }
 
-func TestProcessStreamResult_DrainQueue(t *testing.T) {
+func TestRunDrainLoop_DrainQueue(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
 	sessionID := "drain-sess"
-	ctx := context.Background()
-	streamCh := make(chan ai.StreamEvent, 10)
-	cfg := LaunchConfig{
-		SessionID:   sessionID,
-		ProjectPath: "/proj",
-		BackendName: "claude",
-		AgentID:     "agent",
-		Message:     "test",
-	}
 
 	var finalEvents []ai.StreamEvent
 	markDoneAndSendFinal := func(event ai.StreamEvent) {
@@ -1151,44 +1173,51 @@ func TestProcessStreamResult_DrainQueue(t *testing.T) {
 	// Enqueue a message so the drain loop can find it
 	EnqueueMessage(sessionID, model.QueuedMessage{Text: "queued msg", CreatedAt: "2026-01-01T00:00:00Z"})
 
-	// First iteration: no cancel, no error, not empty=false → drains queue
-	// Second iteration: returns empty result → done
-	// We need to provide a second result that signals "done" after the drain.
-	// Since processStreamResult calls executeStreamRunShared internally,
-	// we can't easily control the second iteration. Instead test the drain path
-	// by providing a result that would go to the queue check.
-	result := streamRunResultShared{} // no cancel, no error, not empty → checks queue
-	processStreamResult(ctx, streamCh, cfg, sessionID, result, markDoneAndSendFinal)
+	callCount := 0
+	drainCfg := DrainConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/proj",
+		BackendName: "claude",
+		PersistUser: func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
+			callCount++
+			// Return done on the second call
+			return DrainResult{} // will loop again but queue is now empty
+		},
+		MarkDoneAndSendFinal: markDoneAndSendFinal,
+	}
 
-	// After the first drain, executeStreamRunShared is called again which will fail
-	// (no real backend). The goroutine will produce an error result, causing
-	// processStreamResult to emit an error event. Verify at least one event was emitted.
-	assert.NotEmpty(t, finalEvents, "processStreamResult should have emitted events during drain")
+	result := DrainResult{} // no cancel, no error, not empty → checks queue
+	RunDrainLoop(drainCfg, result)
+
+	// Should have drained the queued message and then found queue empty → done
+	assert.Equal(t, 1, callCount, "ExecuteRunWithMessage should be called once for the drained message")
+	assert.Equal(t, "done", finalEvents[len(finalEvents)-1].Type)
 }
 
-func TestProcessStreamResult_DoneWithRetryQueue(t *testing.T) {
+func TestRunDrainLoop_DoneWithRetryQueue(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
 	sessionID := "drain-retry-sess"
-	ctx := context.Background()
-	streamCh := make(chan ai.StreamEvent, 10)
-	cfg := LaunchConfig{
-		SessionID:   sessionID,
-		ProjectPath: "/proj",
-		BackendName: "claude",
-		AgentID:     "agent",
-		Message:     "test",
-	}
 
 	var finalEvent ai.StreamEvent
 	markDoneAndSendFinal := func(event ai.StreamEvent) {
 		finalEvent = event
 	}
 
+	drainCfg := DrainConfig{
+		SessionID:             sessionID,
+		ProjectPath:           "/proj",
+		BackendName:           "claude",
+		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
+		MarkDoneAndSendFinal:  markDoneAndSendFinal,
+	}
+
 	// No queue → should immediately return done
-	result := streamRunResultShared{}
-	processStreamResult(ctx, streamCh, cfg, sessionID, result, markDoneAndSendFinal)
+	result := DrainResult{}
+	RunDrainLoop(drainCfg, result)
 
 	assert.Equal(t, "done", finalEvent.Type)
 }
@@ -1337,11 +1366,6 @@ func TestHandleSessionPanic_Recovers(t *testing.T) {
 	defer func() { model.Agents = origAgents }()
 
 	sessionID := "panic-sess-1"
-	// Register the session stream and cancel so cleanup doesn't panic
-	RegisterSessionStream(sessionID)
-	defer func() {
-		UnregisterSessionStream(sessionID)
-	}()
 	_, cancel := context.WithCancel(context.Background())
 	RegisterSessionCancel(sessionID, cancel)
 
@@ -1373,8 +1397,6 @@ func TestLaunchSessionExecution_BackendCreationFails(t *testing.T) {
 	defer func() { model.Agents = origAgents }()
 
 	sessionID := "launch-fail-sess"
-	// Need to register session stream first so LaunchSessionExecution doesn't duplicate
-	UnregisterSessionStream(sessionID)
 	SetSessionRunning(sessionID, true, false)
 	defer SetSessionRunning(sessionID, false, true)
 
@@ -1403,12 +1425,8 @@ func TestSendMessageToSessionFromDingTalk_SessionExists_QueuedMessage(t *testing
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
-	// Add auto_approve column to match what GetSessionFullInfo expects
-	_, err := db.Exec("ALTER TABLE chat_sessions ADD COLUMN auto_approve INTEGER NOT NULL DEFAULT 0")
-	require.NoError(t, err)
-
 	sessionID := "dt-send-1"
-	_, err = WriteExec(
+	_, err := WriteExec(
 		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj', 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
 		sessionID,
 	)
@@ -1520,23 +1538,14 @@ func TestDingTalkSessionInfo_JSONRoundTrip(t *testing.T) {
 }
 
 // ============================================================================
-// processStreamResult drain queue tests
+// RunDrainLoop drain queue tests
 // ============================================================================
 
-func TestProcessStreamResult_DrainQueuedMessage(t *testing.T) {
+func TestRunDrainLoop_DrainQueuedMessage(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
 	sessionID := "drain-sess-1"
-	ctx := context.Background()
-	streamCh := make(chan ai.StreamEvent, 20)
-	cfg := LaunchConfig{
-		SessionID:   sessionID,
-		ProjectPath: "/proj",
-		BackendName: "claude",
-		AgentID:     "agent",
-		Message:     "test",
-	}
 
 	// Pre-enqueue a message
 	EnqueueMessage(sessionID, model.QueuedMessage{
@@ -1549,44 +1558,51 @@ func TestProcessStreamResult_DrainQueuedMessage(t *testing.T) {
 		finalEvents = append(finalEvents, event)
 	}
 
-	// First result is success (no error, no cancel, not empty)
-	// It should drain the queued message, then the second result will be "done"
-	result := streamRunResultShared{}
-	processStreamResult(ctx, streamCh, cfg, sessionID, result, markDoneAndSendFinal)
+	drainCfg := DrainConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/proj",
+		BackendName: "claude",
+		PersistUser: func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult {
+			return DrainResult{} // will loop again, queue now empty → done
+		},
+		MarkDoneAndSendFinal: markDoneAndSendFinal,
+	}
 
-	// Should have found the queued message, drained it, then called executeStreamRunShared
-	// which will fail (no real backend), resulting in an error
+	result := DrainResult{} // no cancel, no error, not empty → checks queue
+	RunDrainLoop(drainCfg, result)
+
+	// Should have found the queued message, drained it, then found queue empty
 	require.NotEmpty(t, finalEvents, "should have at least one final event")
-	// The final event should be an error from the failed stream run
-	assert.Equal(t, eventTypeError, finalEvents[len(finalEvents)-1].Type)
+	assert.Equal(t, "done", finalEvents[len(finalEvents)-1].Type)
 
 	// Clean up queue
 	ClearQueue(sessionID)
 }
 
-func TestProcessStreamResult_DrainQueueEmptyAfterDrain(t *testing.T) {
+func TestRunDrainLoop_DrainQueueEmptyAfterDrain(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
 	sessionID := "drain-empty-sess"
-	ctx := context.Background()
-	streamCh := make(chan ai.StreamEvent, 20)
-	cfg := LaunchConfig{
-		SessionID:   sessionID,
-		ProjectPath: "/proj",
-		BackendName: "claude",
-		AgentID:     "agent",
-		Message:     "test",
-	}
 
 	var finalEvent ai.StreamEvent
 	markDoneAndSendFinal := func(event ai.StreamEvent) {
 		finalEvent = event
 	}
 
+	drainCfg := DrainConfig{
+		SessionID:             sessionID,
+		ProjectPath:           "/proj",
+		BackendName:           "claude",
+		PersistUser:           func(text string, files []model.FileEntry) (int64, error) { return 1, nil },
+		ExecuteRunWithMessage: func(qMsg model.QueuedMessage) DrainResult { return DrainResult{} },
+		MarkDoneAndSendFinal:  markDoneAndSendFinal,
+	}
+
 	// Empty result with empty queue → should return "done"
-	result := streamRunResultShared{}
-	processStreamResult(ctx, streamCh, cfg, sessionID, result, markDoneAndSendFinal)
+	result := DrainResult{}
+	RunDrainLoop(drainCfg, result)
 
 	assert.Equal(t, "done", finalEvent.Type)
 }
@@ -1599,11 +1615,8 @@ func TestSendMessageToSessionFromDingTalk_LaunchPath(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
-	_, err := db.Exec("ALTER TABLE chat_sessions ADD COLUMN auto_approve INTEGER NOT NULL DEFAULT 0")
-	require.NoError(t, err)
-
 	sessionID := "dt-launch-1"
-	_, err = WriteExec(
+	_, err := WriteExec(
 		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj', 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
 		sessionID,
 	)
@@ -1921,4 +1934,191 @@ func TestGetMessageByID_NotFound(t *testing.T) {
 
 	_, err := GetMessageByID(999)
 	assert.Error(t, err)
+}
+
+// --- SendMessageToSessionFromDingTalk user_message emit ---
+
+// TestSendMessageToSessionFromDingTalk_AlreadyRunning_EnqueuesMessage verifies
+// that when a session is already running, the message is enqueued and
+// a user_message event with MessageID=0 is emitted (the enqueue path in
+// session_command.go lines 140-154).
+func TestSendMessageToSessionFromDingTalk_AlreadyRunning_EnqueuesMessage(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origMgr := ws.GetManager()
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(origMgr)
+
+	sessionID := "dingtalk-emit-2"
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, model, transport, auto_approve) VALUES (?, '/test', 'codebuddy', 'test', '', '', '', 0)", sessionID)
+	require.NoError(t, err)
+
+	var writeMu sync.Mutex
+	mgr.Subscribe(nil, &writeMu, "dingtalk-client-2", "")
+	mgr.StreamHub().Subscribe("dingtalk-client-2", sessionID)
+
+	// Mark session as running
+	cleanupActiveSessions()
+	defer cleanupActiveSessions()
+	TrySetSessionRunning(sessionID)
+	defer func() {
+		SetSessionRunning(sessionID, false, true)
+		ClearQueue(sessionID)
+	}()
+
+	err = SendMessageToSessionFromDingTalk(sessionID, "queued from dingtalk")
+	assert.NoError(t, err)
+
+	// Verify message was NOT persisted (enqueue path doesn't persist)
+	messages, err := GetMessagesBySessionID(sessionID)
+	require.NoError(t, err)
+	assert.Len(t, messages, 0, "enqueue path should not persist user message to DB")
+
+	// Verify message is in the in-memory queue
+	queue := GetQueue(sessionID)
+	assert.Len(t, queue, 1)
+	assert.Equal(t, "queued from dingtalk", queue[0].Text)
+}
+
+// ============================================================================
+// FindRunningSessionsByPrefix - matchingIDs empty (prefix too short)
+// ============================================================================
+
+func TestFindRunningSessionsByPrefix_PrefixShorterThanID(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	// Insert and mark a session as running with a long ID
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'Test', 'agent1', 'default', '', 'chat')",
+		"abc123-long-id",
+	)
+	require.NoError(t, err)
+
+	TrySetSessionRunning("abc123-long-id")
+	defer SetSessionRunning("abc123-long-id", false, true)
+
+	// Short prefix that doesn't match any running session
+	results, err := FindRunningSessionsByPrefix("xyz")
+	require.NoError(t, err)
+	assert.Nil(t, results, "non-matching prefix should return nil")
+}
+
+// ============================================================================
+// FindRunningSessionsByPrefix - DB query error
+// ============================================================================
+
+func TestFindRunningSessionsByPrefix_QueryError(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	// Insert and mark session as running
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'Test', 'agent1', 'default', '', 'chat')",
+		"query-err-id",
+	)
+	require.NoError(t, err)
+
+	TrySetSessionRunning("query-err-id")
+	defer SetSessionRunning("query-err-id", false, true)
+
+	// Drop table to cause query error
+	_, _ = db.Exec("DROP TABLE chat_sessions")
+
+	_, err = FindRunningSessionsByPrefix("query-err")
+	assert.Error(t, err, "should return error when DB query fails")
+}
+
+// ============================================================================
+// SendMessageToSessionFromDingTalk - AddChatMessage failure
+// ============================================================================
+
+func TestSendMessageToSessionFromDingTalk_AddChatMessageFails(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "dt-msg-fail"
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj', 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
+		sessionID,
+	)
+	require.NoError(t, err)
+
+	// Drop chat_history to cause AddChatMessage to fail
+	_, _ = db.Exec("DROP TABLE chat_history")
+
+	err = SendMessageToSessionFromDingTalk(sessionID, "this will fail")
+	assert.Error(t, err, "should return error when AddChatMessage fails")
+	assert.Contains(t, err.Error(), "persist message")
+
+	// Session should no longer be running (rollback)
+	assert.False(t, IsSessionRunning(sessionID), "session should not be running after AddChatMessage failure")
+}
+
+// ============================================================================
+// BuildForkContext - non-user/assistant roles skipped
+// ============================================================================
+
+func TestBuildForkContext_SkipsSystemMessages(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "fork-sys-skip"
+	// The chat_history table has a CHECK(role IN ('user', 'assistant')),
+	// so we can't insert system messages directly. But we can verify
+	// that messages with only non-text blocks produce empty fork context.
+	// Instead, test with tool_use blocks that are not type="text"
+	_, err := WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+		"/proj", `{"blocks":[{"type":"tool_use","id":"t1","name":"Read"}]}`, sessionID,
+	)
+	require.NoError(t, err)
+
+	result := BuildForkContext(sessionID)
+	// tool_use blocks don't match contentKeyText="text", so they're skipped
+	assert.Equal(t, "", result, "non-text blocks should be skipped in fork context")
+}
+
+// ============================================================================
+// BuildChatRequest - fork context integration
+// ============================================================================
+
+func TestBuildChatRequest_ResumeWithForkContext(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "fork-integration-1"
+	// Insert session without external_session_id
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'claude', 'Test', '', 'default', '', 'chat')",
+		sessionID,
+	)
+	require.NoError(t, err)
+	// Insert messages for fork context
+	_, err = WriteExec(
+		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"/proj", `{"blocks":[{"type":"text","text":"previous answer"}]}`, sessionID,
+	)
+	require.NoError(t, err)
+
+	req := BuildChatRequest("follow-up", sessionID, "/proj", "claude", "", "", "", "", "", "/proj", false)
+	assert.NotEmpty(t, req.ForkContext, "should have fork context when resuming without external session ID")
+	assert.Contains(t, req.ForkContext, "previous answer")
+}
+
+// ============================================================================
+// appendMediaPrompt - empty system prompt with non-empty media prompt
+// ============================================================================
+
+func TestAppendMediaPrompt_EmptySystemPrompt_WithMediaPrompt(t *testing.T) {
+	// When systemPrompt is empty and BuildMediaPrompt returns non-empty,
+	// the result should be just the media prompt
+	mediaPrompt := model.BuildMediaPrompt()
+	if mediaPrompt == "" {
+		t.Skip("BuildMediaPrompt returns empty, can't test this path")
+	}
+	result := appendMediaPrompt("")
+	assert.Equal(t, mediaPrompt, result, "empty system prompt should return just the media prompt")
 }

@@ -19,7 +19,6 @@ import android.os.Looper;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.content.pm.ServiceInfo;
-import android.util.Log;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
@@ -36,6 +35,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
+import java.lang.ref.WeakReference;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -95,6 +95,7 @@ public class BackgroundService extends Service {
     private static final String KEY_FORWARDED_PORTS = "forwarded_ports";
     private static final String KEY_BATTERY_OPT_REQUESTED = "battery_opt_requested";
     private static final String KEY_LAST_SEEN_EVENT_ID = "last_seen_event_id";
+    private static final String KEY_NATIVE_PUSH_ENABLED = "native_push_enabled";
 
     // Reconnect parameters: exponential backoff delays in milliseconds
     private static final int[] RECONNECT_DELAYS_MS = {5000, 10000, 30000, 60000, 120000};
@@ -113,8 +114,17 @@ public class BackgroundService extends Service {
     private static volatile boolean isRunning = false;
     private static volatile BackgroundService instance;
 
+    // Set to true in onDestroy() before networkExecutor.shutdownNow().
+    // Checked by addPortForward / notifyPortForwardResult to skip callbacks
+    // that would race with Activity/WebView teardown.
+    private volatile boolean isShuttingDown = false;
+
     private JSch jsch;
-    private Session sshSession;
+    private volatile Session sshSession;
+
+    // WeakReference to Activity's WebView — avoids NPE when Activity is destroyed
+    // between the null check and the runOnUiThread lambda execution.
+    private volatile WeakReference<android.webkit.WebView> webViewRef;
 
     // PortInfo tracks both the target port and host for a forwarded port.
     // This is needed because localPort may differ from targetPort when
@@ -198,21 +208,33 @@ public class BackgroundService extends Service {
     private static volatile boolean nativeWsNeeded = false;
 
     // Event ID dedup (mirrors frontend processedEventIds pattern)
-    // ConcurrentHashMap-backed for thread safety (accessed from OkHttp callback + networkExecutor)
-    private final Set<String> processedEventIds = java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());
+    // Uses Collections.synchronizedSet with LinkedHashSet for atomic eviction:
+    // LinkedHashSet maintains insertion order, so we can remove the oldest
+    // entry atomically under the synchronized block, avoiding the clear-and-readd
+    // race that existed with ConcurrentHashMap-backed set.
+    private final Set<String> processedEventIds = java.util.Collections.synchronizedSet(new LinkedHashSet<>());
     private static final int MAX_PROCESSED_IDS = 100;
 
+    // NOTE: isDuplicateEvent + addProcessedEventId is NOT atomic as a pair.
+    // This is safe because OkHttp delivers onMessage callbacks serially.
+    // If that changes, merge into a single synchronized checkAndAdd() method.
     private boolean isDuplicateEvent(String eventId) {
         return processedEventIds.contains(eventId);
     }
 
     private void addProcessedEventId(String eventId) {
-        // Evict oldest entries if over capacity ( ConcurrentHashMap doesn't maintain insertion
-        // order, so we just clear and re-add when over capacity — rare, at most once per 100 events)
-        if (processedEventIds.size() >= MAX_PROCESSED_IDS) {
-            processedEventIds.clear();
+        synchronized (processedEventIds) {
+            // Evict oldest entries one at a time (LinkedHashSet preserves insertion order)
+            while (processedEventIds.size() >= MAX_PROCESSED_IDS) {
+                // Remove the first (oldest) element
+                Iterator<String> it = processedEventIds.iterator();
+                if (it.hasNext()) {
+                    it.next();
+                    it.remove();
+                }
+            }
+            processedEventIds.add(eventId);
         }
-        processedEventIds.add(eventId);
     }
 
     // Terminal session count — updated by the WebView via WebAppInterface.
@@ -255,6 +277,33 @@ public class BackgroundService extends Service {
     }
 
     /**
+     * Check whether native push notifications are enabled.
+     * Defaults to true for existing users (no migration needed).
+     */
+    public static boolean isNativePushEnabled(Context context) {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(KEY_NATIVE_PUSH_ENABLED, true);
+    }
+
+    /**
+     * Enable or disable native push notifications.
+     * When disabled, stops the native WS and cancels WorkManager polling.
+     * When enabled, the next onPause() will start the native WS.
+     */
+    public static void setNativePushEnabled(Context context, boolean enabled) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_NATIVE_PUSH_ENABLED, enabled)
+                .apply();
+        if (!enabled) {
+            // Stop native WS and cancel WorkManager polling
+            stopNativeEventWs(context);
+            cancelPendingEventsWork(context);
+        }
+        AppLog.i(TAG, "NativePush: set enabled=" + enabled);
+    }
+
+    /**
      * Update the terminal session count (called from WebAppInterface JS bridge).
      * Updates the foreground notification to show the current terminal count.
      */
@@ -262,6 +311,19 @@ public class BackgroundService extends Service {
         terminalSessionCount = count;
         if (isRunning && instance != null) {
             instance.updateNotification(instance.forwardedPorts.size(), null);
+        }
+    }
+
+    /**
+     * Update the WebView WeakReference from MainActivity.
+     * Called when the Activity creates or recreates its WebView.
+     * Using WeakReference ensures the Service doesn't prevent Activity GC
+     * and avoids NPE when Activity is destroyed between null check and lambda execution.
+     */
+    public static void updateWebViewRef(android.webkit.WebView webView) {
+        BackgroundService svc = instance;
+        if (svc != null && !svc.isShuttingDown) {
+            svc.webViewRef = webView != null ? new WeakReference<>(webView) : null;
         }
     }
 
@@ -274,7 +336,9 @@ public class BackgroundService extends Service {
         // Access via static reference is inherently racy, but sufficient for
         // a health-check ping — worst case we return a stale value that gets
         // corrected on the next poll.
-        boolean connected = isRunning && instance != null && instance.sshSession != null && instance.sshSession.isConnected();
+        if (!isRunning || instance == null) return false;
+        Session session = instance.sshSession; // volatile read — single reference
+        boolean connected = session != null && session.isConnected();
         if (connected) {
             lastError = null;
         }
@@ -286,6 +350,9 @@ public class BackgroundService extends Service {
      * Disconnects the current (possibly stale) session, then reconnects and
      * re-establishes all port forwards.
      * Blocks the calling thread until reconnection completes or times out.
+     *
+     * WARNING: Do NOT call this from the JavaBridge thread (JS @JavascriptInterface).
+     * Use forceReconnectAsync() instead to avoid ANR.
      *
      * @param timeoutMs Maximum time to wait for reconnection (milliseconds)
      * @return true if reconnection succeeded, false if failed or timed out
@@ -317,6 +384,67 @@ public class BackgroundService extends Service {
             Thread.currentThread().interrupt();
             return false;
         }
+    }
+
+    /**
+     * Async version of forceReconnect — does NOT block the calling thread.
+     * Calls the JS callback expression on the WebView UI thread when done.
+     *
+     * This is the safe version to call from @JavascriptInterface methods
+     * (which run on the JavaBridge thread) to avoid blocking it and causing ANR.
+     *
+     * @param timeoutMs    Maximum time to wait for reconnection (milliseconds)
+     * @param callbackJsExpr A JavaScript expression that, when called with (success),
+     *                       invokes the callback. E.g. "window.__cb && window.__cb".
+     *                       Must match pattern: [a-zA-Z_$][a-zA-Z0-9_$.& ]* (validated).
+     */
+    public static void forceReconnectAsync(long timeoutMs, String callbackJsExpr) {
+        // Validate callback expression: only allow safe JS identifier patterns
+        // (alphanumeric, dots, underscores, &&, spaces) — prevents JS injection
+        if (callbackJsExpr != null && !callbackJsExpr.matches("^[a-zA-Z_$][a-zA-Z0-9_$.& ]*$")) {
+            AppLog.w(TAG, "SSH: forceReconnectAsync: invalid callbackJsExpr, skipping callback");
+            callbackJsExpr = null;
+        }
+
+        BackgroundService svc = instance; // volatile read, single snapshot
+        if (svc == null) return;
+
+        final String cbExpr = callbackJsExpr;
+        final WeakReference<android.webkit.WebView> webViewRefSnapshot = svc.webViewRef;
+
+        svc.networkExecutor.execute(() -> {
+            boolean success = false;
+            try {
+                svc.intentionalDisconnect = false;
+                svc.disconnectInternal();
+                svc.ensureConnection();
+                success = true;
+                AppLog.i(TAG, "SSH: forceReconnectAsync succeeded");
+            } catch (Exception e) {
+                lastError = e.getMessage();
+                AppLog.e(TAG, "SSH: forceReconnectAsync failed: " + e.getMessage(), e);
+            }
+
+            // Notify the WebView on the UI thread
+            if (cbExpr != null && !svc.isShuttingDown) {
+                final boolean finalSuccess = success;
+                MainActivity activity = MainActivity.instance;
+                if (activity != null && !activity.isFinishing() && !activity.isDestroyed()) {
+                    activity.runOnUiThread(() -> {
+                        if (svc.isShuttingDown) return;
+                        android.webkit.WebView webView = webViewRefSnapshot != null ? webViewRefSnapshot.get() : null;
+                        if (webView != null) {
+                            try {
+                                webView.evaluateJavascript(
+                                    cbExpr + "(" + finalSuccess + ")", null);
+                            } catch (Exception e) {
+                                AppLog.d(TAG, "SSH: forceReconnectAsync callback failed", e);
+                            }
+                        }
+                    });
+                }
+            }
+        });
     }
 
     /**
@@ -413,6 +541,7 @@ public class BackgroundService extends Service {
         jsch = new JSch();
         createNotificationChannel();
         startForegroundCompat(NOTIFICATION_ID, buildNotification(0, null));
+        AppLog.logMemory(this, TAG, "BackgroundService.onCreate");
 
         // Initialize screen state from PowerManager (may be off if service restarts while screen is off)
         PowerManager pmInit = (PowerManager) getApplicationContext().getSystemService(Context.POWER_SERVICE);
@@ -444,6 +573,7 @@ public class BackgroundService extends Service {
                     // Guard check runs inside networkExecutor to avoid reading
                     // sshScreenSuspended from the main thread (review C1).
                     if (!forwardedPorts.isEmpty() && !intentionalDisconnect) {
+                        AppLog.i(TAG, "SSH: screen on, scheduling SSH resume (ports=" + forwardedPorts.keySet() + ")");
                         networkExecutor.execute(() -> {
                             if (sshScreenSuspended && !intentionalDisconnect) {
                                 sshScreenSuspended = false;
@@ -469,6 +599,7 @@ public class BackgroundService extends Service {
                     // Guard check and disconnect run on networkExecutor for thread safety.
                     // Don't suspend if user intentionally disconnected (review I3).
                     if (!forwardedPorts.isEmpty() && !intentionalDisconnect) {
+                        AppLog.i(TAG, "SSH: screen off, scheduling SSH suspend (ports=" + forwardedPorts.keySet() + ")");
                         networkExecutor.execute(() -> {
                             if (sshSession != null && sshSession.isConnected() && !intentionalDisconnect) {
                                 sshScreenSuspended = true;
@@ -508,9 +639,13 @@ public class BackgroundService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        // Always call startForeground when started via startForegroundService,
+        // even if already running. Android requires startForeground() to be called
+        // within 5 seconds of every startForegroundService() call — skipping it
+        // when isRunning==true causes ForegroundServiceDidNotStartInTimeException.
+        startForegroundCompat(NOTIFICATION_ID, buildCurrentNotification());
         if (!isRunning) {
             isRunning = true;
-            startForegroundCompat(NOTIFICATION_ID, buildNotification(0, null));
         }
 
         if (intent != null) {
@@ -597,6 +732,14 @@ public class BackgroundService extends Service {
 
     @Override
     public void onDestroy() {
+        AppLog.i(TAG, "SSH: onDestroy called, ports=" + forwardedPorts.keySet()
+                + ", sshSession=" + (sshSession != null ? "non-null" : "null")
+                + ", intentionalDisconnect=" + intentionalDisconnect
+                + ", nativeWsActive=" + nativeWsActive);
+        // Mark as shutting down FIRST — prevents addPortForward and
+        // notifyPortForwardResult from posting to UI thread or modifying
+        // forwardedPorts during teardown.
+        isShuttingDown = true;
         intentionalDisconnect = true;
         // Unregister screen state receiver
         if (screenStateReceiver != null) {
@@ -714,7 +857,9 @@ public class BackgroundService extends Service {
                         host = "";
                     }
                     forwardedPorts.put(localPort, new PortInfo(targetPort, host));
-                } catch (NumberFormatException ignored) {}
+                } catch (NumberFormatException e) {
+                    AppLog.w(TAG, "SSH: failed to parse saved port entry: " + ps + ", skipping");
+                }
             }
             AppLog.i(TAG, "SSH: restored " + forwardedPorts.size() + " forwarded ports from prefs");
             updateNotification(forwardedPorts.size(), null);
@@ -829,6 +974,10 @@ public class BackgroundService extends Service {
                     if (isReconnecting) {
                         // Exhausted all attempts or monitor stopped
                         isReconnecting = false;
+                        // Clean up stale port entries — they can't forward without SSH
+                        if (!nativeWsNeeded && !nativeWsActive) {
+                            cleanupStalePorts();
+                        }
                     }
                 }
             }
@@ -938,6 +1087,7 @@ public class BackgroundService extends Service {
 
         // Create SSH session
         sshSession = jsch.getSession("clawbench", serverHost, sshPort);
+        AppLog.i(TAG, "SSH: sshSession created (was null), forwardedPorts=" + forwardedPorts.keySet());
         sshSession.setPassword(password);
         sshSession.setConfig("StrictHostKeyChecking", "no");
         sshSession.setConfig("PreferredAuthentications", "password");
@@ -1023,6 +1173,12 @@ public class BackgroundService extends Service {
      * MUST be called from a background thread (network I/O).
      */
     private synchronized void addPortForward(int localPort, int targetPort, String host) {
+        // Skip if service is being destroyed — avoid race with onDestroy
+        if (isShuttingDown) {
+            AppLog.w(TAG, "SSH: addPortForward skipped, service shutting down");
+            return;
+        }
+
         boolean alreadyInSet = forwardedPorts.containsKey(localPort);
 
         AppLog.i(TAG, "SSH: addPortForward ENTER: localPort=" + localPort + ", targetPort=" + targetPort + ", host=" + host
@@ -1030,6 +1186,7 @@ public class BackgroundService extends Service {
                 + ", sessionAlive=" + (sshSession != null && sshSession.isConnected())
                 + ", sessionNull=" + (sshSession == null)
                 + ", forwardedPorts=" + forwardedPorts.keySet());
+        AppLog.logMemory(this, TAG, "addPortForward");
 
         if (alreadyInSet && sshSession != null && sshSession.isConnected()) {
             // Port is tracked and SSH session is alive — verify the port is actually
@@ -1153,20 +1310,63 @@ public class BackgroundService extends Service {
      * Notify the frontend that a port forward attempt has completed.
      * Dispatches a 'clawbench-port-forward-result' CustomEvent on the WebView,
      * following the same pattern as clawbench-open-session, clawbench-push-registered, etc.
+     *
+     * Safety measures:
+     * - Uses WeakReference<WebView> to avoid NPE when Activity is destroyed
+     * - Checks Activity.isDestroyed() / isFinishing() before evaluateJavascript
+     * - JSON-encodes the detail argument to prevent JS injection
+     * - Skips notification during service shutdown (isShuttingDown)
      */
     private void notifyPortForwardResult(int localPort, boolean success) {
-        if (MainActivity.instance == null) return;
+        // Skip all WebView interactions during service shutdown
+        if (isShuttingDown) return;
+
+        // Use WeakReference to avoid NPE when Activity is destroyed between
+        // the null check and the runOnUiThread lambda execution.
+        final MainActivity activity = MainActivity.instance;
+        if (activity == null) return;
+
+        // Check if Activity is already finishing/destroyed before posting to UI thread
+        if (activity.isFinishing() || activity.isDestroyed()) return;
+
         try {
             org.json.JSONObject detail = new org.json.JSONObject();
             detail.put("localPort", localPort);
             detail.put("success", success);
-            final String jsArg = detail.toString();
-            MainActivity.instance.runOnUiThread(() -> {
-                if (MainActivity.instance.webView != null) {
-                    MainActivity.instance.webView.evaluateJavascript(
-                        "window.dispatchEvent(new CustomEvent('clawbench-port-forward-result', { detail: " + jsArg + " }))",
-                        null
-                    );
+            // JSON-encode the entire detail string to prevent JS injection.
+            // JSONObject.toString() can contain unescaped characters that break JS syntax
+            // when interpolated directly into a template string.
+            final String jsArg = org.json.JSONObject.quote(detail.toString());
+            final WeakReference<android.webkit.WebView> ref = webViewRef;
+
+            activity.runOnUiThread(() -> {
+                // Re-check Activity lifecycle state — it may have been destroyed
+                // between the outer check and this lambda execution.
+                if (isShuttingDown) return;
+                MainActivity act = MainActivity.instance;
+                if (act == null || act.isFinishing() || act.isDestroyed()) return;
+
+                // Keep Activity's forwardedPorts map in sync with Service's map.
+                // If the port forward failed, remove it from Activity's map too.
+                if (!success) {
+                    act.forwardedPorts.remove(localPort);
+                }
+
+                // Use WeakReference to safely access WebView
+                android.webkit.WebView webView = ref != null ? ref.get() : null;
+                if (webView != null) {
+                    try {
+                        // jsArg is already JSON-quoted (includes surrounding quotes),
+                        // so it's a valid JS string literal — no injection risk.
+                        webView.evaluateJavascript(
+                            "window.dispatchEvent(new CustomEvent('clawbench-port-forward-result', { detail: JSON.parse(" + jsArg + ") }))",
+                            null
+                        );
+                    } catch (Exception e) {
+                        // WebView may throw if called after Activity destruction
+                        // (e.g., CalledFromWrongThreadException or NPE on destroyed WebView)
+                        AppLog.d(TAG, "SSH: evaluateJavascript failed (WebView likely destroyed)", e);
+                    }
                 }
             });
         } catch (Exception e) {
@@ -1182,10 +1382,17 @@ public class BackgroundService extends Service {
             return;
         }
 
+        AppLog.i(TAG, "SSH: removePortForward ENTER: port=" + port
+                + ", sessionAlive=" + (sshSession != null && sshSession.isConnected())
+                + ", remainingPortsBefore=" + (forwardedPorts.size() - 1));
+
         try {
             if (sshSession != null && sshSession.isConnected()) {
                 sshSession.delPortForwardingL(port);
                 AppLog.i(TAG, "SSH: port forward removed: " + port);
+            } else {
+                AppLog.i(TAG, "SSH: removePortForward skipping delPortForwardingL (session "
+                        + (sshSession == null ? "null" : "disconnected") + ") for port " + port);
             }
         } catch (Exception e) {
             AppLog.e(TAG, "SSH: failed to remove port forward for " + port, e);
@@ -1197,6 +1404,7 @@ public class BackgroundService extends Service {
 
         // If no more forwarded ports and native WS is not needed, stop the service
         if (forwardedPorts.isEmpty() && !nativeWsNeeded) {
+            AppLog.i(TAG, "SSH: no ports remaining after removePortForward, stopping service");
             stopSelf();
         }
     }
@@ -1340,11 +1548,12 @@ public class BackgroundService extends Service {
                     } catch (Exception ignored) {}
                 }
                 sshSession.disconnect();
-                AppLog.i(TAG, "SSH: disconnected");
+                AppLog.i(TAG, "SSH: disconnected (had " + forwardedPorts.size() + " port forwards: " + forwardedPorts.keySet() + ")");
             } catch (Exception e) {
                 AppLog.e(TAG, "SSH: error during disconnect", e);
             }
             sshSession = null;
+            AppLog.d(TAG, "SSH: sshSession set to null");
         }
     }
 
@@ -1428,6 +1637,41 @@ public class BackgroundService extends Service {
                 .setOngoing(true);
 
         return builder.build();
+    }
+
+    /**
+     * Build notification reflecting actual connection state.
+     * When SSH is disconnected, forwardedPorts may contain stale entries from
+     * SharedPreferences — only count ports that are on a live SSH session.
+     */
+    private Notification buildCurrentNotification() {
+        int activePortCount = 0;
+        if (sshSession != null && sshSession.isConnected()) {
+            activePortCount = forwardedPorts.size();
+        }
+        // If SSH is down but native WS is active, show that instead of zombie port count
+        if (activePortCount == 0 && (nativeWsNeeded || nativeWsActive)) {
+            return buildNotification(0, "消息监听中");
+        }
+        return buildNotification(activePortCount, null);
+    }
+
+    /**
+     * Remove stale port entries from forwardedPorts and SharedPreferences.
+     * Called when SSH reconnect fails — these ports can't actually forward
+     * traffic without a live SSH session, so keeping them misleads the user
+     * (notification shows "N 个端口转发" when nothing is actually working).
+     *
+     * Does NOT clear ports if native WS is active — the service still has
+     * a reason to run, and ports may be re-established on next reconnect.
+     */
+    private void cleanupStalePorts() {
+        if (forwardedPorts.isEmpty()) return;
+        int stale = forwardedPorts.size();
+        AppLog.i(TAG, "SSH: cleaning up " + stale + " stale port entries (SSH disconnected, no reconnect possible)");
+        forwardedPorts.clear();
+        saveForwardedPorts();
+        updateNotification(0, nativeWsNeeded || nativeWsActive ? "消息监听中" : null);
     }
 
     // --- Foreground service compat ---
@@ -1673,10 +1917,16 @@ public class BackgroundService extends Service {
         intent.putExtra("localPort", localPort);
         intent.putExtra("targetPort", targetPort);
         intent.putExtra("host", host != null ? host : "");
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            context.startForegroundService(intent);
-        } else {
-            context.startService(intent);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent);
+            } else {
+                context.startService(intent);
+            }
+        } catch (Exception e) {
+            // Android 12+ throws ForegroundServiceStartNotAllowedException when
+            // starting a foreground service from background without exemption.
+            AppLog.e(TAG, "SSH: failed to start BackgroundService for ADD_PORT: " + e.getMessage(), e);
         }
     }
 

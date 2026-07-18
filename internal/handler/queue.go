@@ -14,7 +14,7 @@ import (
 // QueueHandler handles pending message queue operations.
 // POST   /api/ai/queue?session_id=xxx  — enqueue a message
 // GET    /api/ai/queue?session_id=xxx  — get current queue
-// DELETE /api/ai/queue?session_id=xxx[&index=N] — remove item or clear all
+// DELETE /api/ai/queue?session_id=xxx[&index=N|&queueId=xxx] — remove item or clear all
 func QueueHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
@@ -49,6 +49,7 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		Message   string            `json:"message"`
+		QueueID   string            `json:"queueId"`
 		FilePaths []string          `json:"filePaths"`
 		Files     []model.FileEntry `json:"files"`
 	}
@@ -63,6 +64,7 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	qMsg := model.QueuedMessage{
+		QueueID:   req.QueueID,
 		Text:      req.Message,
 		FilePaths: req.FilePaths,
 		Files:     req.Files,
@@ -85,6 +87,7 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 				"message":     dequeued.Text,
 				"filePaths":   dequeued.FilePaths,
 				"files":       dequeued.Files,
+				"queueId":     dequeued.QueueID,
 				"queue":       service.GetQueue(sessionID),
 			})
 			return
@@ -144,6 +147,20 @@ func handleQueueDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Support deletion by queueId (preferred) or index (legacy)
+	queueID := r.URL.Query().Get("queueId")
+	if queueID != "" {
+		queue := service.RemoveQueueItemByQueueID(sessionID, queueID)
+		if queue == nil {
+			queue = []model.QueuedMessage{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":    true,
+			"queue": queue,
+		})
+		return
+	}
+
 	indexStr := r.URL.Query().Get("index")
 	if indexStr == "" {
 		// Clear all
@@ -152,7 +169,7 @@ func handleQueueDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Remove specific item
+	// Remove specific item by index (legacy)
 	index, err := strconv.Atoi(indexStr)
 	if err != nil {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidIndex")

@@ -6,6 +6,28 @@ import { useToast } from '@/composables/useToast'
 const MAX_POLL_ATTEMPTS = 60 // 2 minutes at 2s interval
 const POLL_INTERVAL_MS = 2000
 
+// ── Module-level guard registry ──
+// Must be module-level (not per-instance) so that SettingsGroupPanel and
+// SettingsPage share the same Map regardless of which component calls
+// useSettingsNavigation() first.
+const guards = new Map<string, () => boolean>()
+
+function registerGuard(id: string, guard: () => boolean) {
+  guards.set(id, guard)
+}
+
+function unregisterGuard(id: string) {
+  guards.delete(id)
+}
+
+/** Check all registered guards. Returns true if all guards allow reset. */
+function checkAllGuards(): boolean {
+  for (const guard of guards.values()) {
+    if (!guard()) return false
+  }
+  return true
+}
+
 /**
  * Shared composable for settings page navigation, restart logic, and state.
  * Used by SettingsPage.vue to avoid code duplication.
@@ -26,11 +48,6 @@ export function useSettingsNavigation() {
   let pollTimer: ReturnType<typeof setInterval> | null = null
 
   const currentCategory = ref<string | null>(null)
-  const beforeReset = ref<(() => boolean) | null>(null)
-
-  function setBeforeResetGuard(fn: (() => boolean) | null) {
-    beforeReset.value = fn
-  }
 
   // Update currentCategory whenever navStack changes
   function pushNav(categoryId: string) {
@@ -48,7 +65,7 @@ export function useSettingsNavigation() {
   }
 
   function resetState() {
-    if (beforeReset.value && !beforeReset.value()) return  // guard says don't reset
+    if (!checkAllGuards()) return  // at least one guard says don't reset
     navStack.value = []
     currentCategory.value = null
     needsRestart.value = false
@@ -135,6 +152,8 @@ export function useSettingsNavigation() {
     restartingOverlay,
     handleRestartNeeded,
     handleRestart,
-    setBeforeResetGuard,
+    registerGuard,
+    unregisterGuard,
+    checkAllGuards,
   }
 }

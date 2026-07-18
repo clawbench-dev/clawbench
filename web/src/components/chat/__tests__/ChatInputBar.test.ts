@@ -57,6 +57,10 @@ const i18n = createI18n({
           outputTokens: 'Output',
           contextCost: 'Cost',
         },
+        autoApprove: {
+          enabled: 'Auto-approve enabled',
+          disabled: 'Auto-approve disabled',
+        },
       },
       common: { copy: 'Copy', remove: 'Remove', cancel: 'Cancel' },
     },
@@ -207,6 +211,7 @@ const mockAvailableThinkingEfforts = ref([])
 const mockCurrentThinkingEffortName = ref('')
 const mockSessionTransport = ref('')
 const mockAutoApprove = ref(false)
+const mockToggleAutoApprove = vi.fn()
 const mockContextUsed = ref(0)
 const mockContextSize = ref(0)
 const mockContextInputTokens = ref(0)
@@ -221,6 +226,7 @@ vi.mock('@/composables/useSessionIdentity', () => ({
     currentThinkingEffortName: mockCurrentThinkingEffortName,
     currentTransport: mockSessionTransport,
     autoApprove: mockAutoApprove,
+    toggleAutoApprove: mockToggleAutoApprove,
     contextUsed: mockContextUsed,
     contextSize: mockContextSize,
     contextInputTokens: mockContextInputTokens,
@@ -231,6 +237,7 @@ vi.mock('@/composables/useSessionIdentity', () => ({
 }))
 
 // Mock useAgents — return enough functions to avoid TypeError
+const mockSupportsDualTransport = vi.fn().mockReturnValue(false)
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({
     agents: { value: [] },
@@ -254,7 +261,7 @@ vi.mock('@/composables/useAgents', () => ({
     setDefaultAgent: vi.fn(),
     canRefreshModels: () => false,
     agentCanResume: () => false,
-    supportsDualTransport: () => false,
+    supportsDualTransport: mockSupportsDualTransport,
     getAgentTransport: () => 'cli',
     invalidateACPStateCache: vi.fn(),
     updateACPModelList: vi.fn(),
@@ -295,7 +302,7 @@ afterEach(() => {
 
 const stubs = {
   PopupMenu: { template: '<div><slot /></div>' },
-  SessionSettingModal: true,
+  SessionDrawer: true,
   AttachDrawer: true,
   QuickSendDrawer: true,
   List: true,
@@ -889,5 +896,61 @@ describe('ChatInputBar', () => {
     await wrapper.find('.chat-send-btn').trigger('click')
     await wrapper.vm.$nextTick()
     expect(true).toBe(true)
+  })
+
+  describe('mode chip click and long-press', () => {
+    let wrapper: ReturnType<typeof mountBar>
+
+    beforeEach(() => {
+      mockAutoApprove.value = false
+      mockToggleAutoApprove.mockReset()
+      mockSupportsDualTransport.mockReturnValue(true)
+      mockAvailableModes.value = [{ name: 'code', description: 'Code mode' }]
+      wrapper = mountBar({ currentModelName: 'gpt-4', currentAgentId: 'claude' })
+    })
+
+    afterEach(() => {
+      mockSupportsDualTransport.mockReturnValue(false)
+    })
+
+    it('clicking mode chip opens settings drawer', async () => {
+      const modeChip = wrapper.find('.session-info-mode')
+      expect(modeChip.exists()).toBe(true)
+      // Normal click (no long-press) should open settings drawer
+      await modeChip.trigger('click')
+      expect(mockDrawerOpen).toHaveBeenCalled()
+    })
+
+    it('mousedown + mouseup (short press) opens settings drawer', async () => {
+      vi.useFakeTimers()
+      const modeChip = wrapper.find('.session-info-mode')
+      await modeChip.trigger('mousedown')
+      await modeChip.trigger('mouseup')
+      vi.advanceTimersByTime(600)
+      // Short press should not toggle auto-approve
+      expect(mockToggleAutoApprove).not.toHaveBeenCalled()
+      vi.useRealTimers()
+    })
+
+    it('long-press on mode chip toggles auto-approve', async () => {
+      vi.useFakeTimers()
+      const modeChip = wrapper.find('.session-info-mode')
+      await modeChip.trigger('mousedown')
+      vi.advanceTimersByTime(600)
+      await modeChip.trigger('mouseup')
+      expect(mockToggleAutoApprove).toHaveBeenCalledWith(true)
+      vi.useRealTimers()
+    })
+
+    it('long-press toggles auto-approve off when already enabled', async () => {
+      mockAutoApprove.value = true
+      vi.useFakeTimers()
+      const modeChip = wrapper.find('.session-info-mode')
+      await modeChip.trigger('mousedown')
+      vi.advanceTimersByTime(600)
+      await modeChip.trigger('mouseup')
+      expect(mockToggleAutoApprove).toHaveBeenCalledWith(false)
+      vi.useRealTimers()
+    })
   })
 })

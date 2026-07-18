@@ -212,8 +212,7 @@
     </template>
     <!-- Loading dots while AI is still streaming (not when cancelled, and not when showing summary) -->
     <div v-if="streaming && !cancelled && !(showingSummary && summary)" class="placeholder-dots"><span></span><span></span><span></span></div>
-    <!-- Cancelled marker: hidden when the last block is thinking (shown inline in thinking-header instead) -->
-    <div v-if="cancelled && !isLastBlockThinking" class="chat-cancelled-mark">{{ t('chat.contentBlocks.cancelled') }}</div>
+
   </div>
 </template>
 
@@ -422,13 +421,6 @@ function isThinkingCollapsed(block, bi) {
 function isLastBlock(bi) {
   return bi === (props.blocks?.length || 0) - 1
 }
-
-/** Whether the last block is a thinking block (used to avoid duplicate cancelled marker). */
-const isLastBlockThinking = computed(() => {
-  const blocks = props.blocks
-  if (!blocks || blocks.length === 0) return false
-  return blocks[blocks.length - 1].type === 'thinking'
-})
 
 // ── Thinking block collapse/expand animation state ──
 const collapsingThinking = ref({})   // { [blockKey]: true } for blocks mid-collapse
@@ -647,16 +639,6 @@ onUnmounted(() => {
 @keyframes dot-bounce {
   0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
   40% { transform: scale(1); opacity: 1; }
-}
-
-.chat-cancelled-mark {
-  display: inline-block;
-  font-size: 11px;
-  color: var(--text-muted, #999);
-  background: var(--bg-tertiary, #f0f0f0);
-  padding: 2px 8px;
-  border-radius: 4px;
-  margin-top: 4px;
 }
 
 /* Inline cancelled marker inside thinking header — always visible even when thinking is collapsed */
@@ -1606,8 +1588,6 @@ onUnmounted(() => {
   border-radius: 6px;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
-  user-select: none;
-  -webkit-user-select: none;
 }
 
 .content-blocks .tool-detail .ask-question-option:hover {
@@ -1630,6 +1610,8 @@ onUnmounted(() => {
   font-size: 14px;
   line-height: 1.3;
   color: var(--text-muted, #999);
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .content-blocks .tool-detail .ask-question-option.selected .ask-option-indicator {
@@ -1662,6 +1644,50 @@ onUnmounted(() => {
   line-height: 1.4;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.content-blocks .tool-detail .ask-question-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.content-blocks .tool-detail .ask-question-recommend {
+  padding: 5px 16px;
+  border: 1px solid #8b5cf6;
+  border-radius: 6px;
+  background: transparent;
+  color: #8b5cf6;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.content-blocks .tool-detail .ask-question-recommend:hover {
+  background: color-mix(in srgb, #8b5cf6 10%, var(--bg-secondary));
+}
+
+:root[data-theme="dark"] .content-blocks .tool-detail .ask-question-recommend {
+  border-color: #a78bfa;
+  color: #a78bfa;
+}
+
+:root[data-theme="dark"] .content-blocks .tool-detail .ask-question-recommend:hover {
+  background: color-mix(in srgb, #a78bfa 12%, var(--bg-secondary));
+}
+
+.content-blocks .tool-detail .ask-question-view.ask-submitted .ask-question-recommend {
+  background: #8b5cf6;
+  color: white;
+  border-color: #8b5cf6;
+  cursor: default;
+  opacity: 1;
+}
+
+:root[data-theme="dark"] .content-blocks .tool-detail .ask-question-view.ask-submitted .ask-question-recommend {
+  background: #a78bfa;
+  border-color: #a78bfa;
 }
 
 .content-blocks .tool-detail .ask-question-submit {

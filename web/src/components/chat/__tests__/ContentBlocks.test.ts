@@ -333,22 +333,23 @@ describe('ContentBlocks', () => {
       expect(wrapper.find('.placeholder-dots').exists()).toBe(false)
     })
 
-    it('shows cancelled mark when cancelled and last block is not thinking', () => {
+    it('does not render outer cancelled mark (moved to ChatMessageItem)', () => {
       const wrapper = mountBlocks({
         blocks: [{ type: 'text', text: 'Hello' }],
         streaming: false,
         cancelled: true,
       })
-      expect(wrapper.find('.chat-cancelled-mark').exists()).toBe(true)
+      // Outer cancelled mark is now rendered in ChatMessageItem, not ContentBlocks
+      expect(wrapper.find('.chat-cancelled-mark').exists()).toBe(false)
     })
 
-    it('hides outer cancelled mark when last block is thinking', () => {
+    it('does not render outer cancelled mark when last block is thinking', () => {
       const wrapper = mountBlocks({
         blocks: [{ type: 'thinking', text: 'Thought', done: true }],
         streaming: false,
         cancelled: true,
       })
-      // Outer cancelled mark should not be shown when last block is thinking
+      // Outer cancelled mark is now rendered in ChatMessageItem, not ContentBlocks
       expect(wrapper.find('.chat-cancelled-mark').exists()).toBe(false)
     })
 

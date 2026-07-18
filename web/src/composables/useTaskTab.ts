@@ -4,6 +4,7 @@ import { playNotificationSound } from '@/composables/useNotificationSound'
 import { showBrowserNotification } from '@/composables/useNotification'
 import { useToast } from '@/composables/useToast'
 import { gt } from '@/composables/useLocale'
+import { serverConfig } from '@/composables/useSettingsConfig'
 
 interface TaskItem {
   id: number
@@ -29,9 +30,6 @@ const selectedExecData = ref<TaskExecData | null>(null)
 const execDetailOpen = ref(false)
 const formViewOpen = ref(false)
 const formMode = ref<'create' | 'edit'>('create')
-
-// Module-level polling timer
-let pollingTimer: ReturnType<typeof setInterval> | null = null
 
 // AbortController for loadTasks — aborts previous in-flight request
 let loadTasksAbortController: AbortController | null = null
@@ -74,23 +72,25 @@ export function resetTaskTabState() {
 
 /** Called when a task execution completes (runningCount drops to 0) */
 function onTaskCompleted(task: TaskItem) {
-    // Sound + haptic
-    playNotificationSound()
-
+    // Sound + haptic + browser notification (only when push_mode is "native")
+    const pushMode = serverConfig.value?.push_mode as string || 'native'
+    if (pushMode === 'native') {
+        playNotificationSound()
+        try {
+            showBrowserNotification(task.name || gt('task.title'), {
+                body: gt('task.exec.completed'),
+                tag: `task-completed-${task.id}`,
+                onClick: () => {
+                    if (switchTabCallback) switchTabCallback('tasks')
+                },
+            })
+        } catch {
+            // Non-critical
+        }
+    }
     // Navigate to task history on click
     const navigateToHistory = () => {
         if (switchTabCallback) switchTabCallback('tasks')
-    }
-
-    // Browser push notification (only when page not focused)
-    try {
-        showBrowserNotification(task.name || gt('task.title'), {
-            body: gt('task.exec.completed'),
-            tag: `task-completed-${task.id}`,
-            onClick: navigateToHistory,
-        })
-    } catch {
-        // Non-critical
     }
     // Toast — include task name, icon, and click-to-navigate
     try {
@@ -365,21 +365,6 @@ export function useTaskTab() {
         formViewOpen.value = false
     }
 
-    // --- Polling ---
-
-    function startTaskPolling() {
-        if (pollingTimer !== null) return // guard against double-start
-        loadTasks()
-        pollingTimer = setInterval(loadTasks, 2000)
-    }
-
-    function stopTaskPolling() {
-        if (pollingTimer !== null) {
-            clearInterval(pollingTimer)
-            pollingTimer = null
-        }
-    }
-
     return {
         // Navigation state
         currentView: currentView as Ref<'list' | 'settings' | 'history'>,
@@ -407,9 +392,5 @@ export function useTaskTab() {
         loadTasks,
         markAllTasksRead,
         markTaskRead,
-
-        // Polling
-        startTaskPolling,
-        stopTaskPolling,
     }
 }

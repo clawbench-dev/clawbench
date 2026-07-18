@@ -2,7 +2,7 @@
   <div class="settings-page">
     <header class="settings-page__header">
       <template v-if="navStack.length > 0">
-        <button class="settings-page__back" @click="handleDrillDownBack">
+        <button class="settings-page__back" @click="handleBack">
           <ChevronLeft :size="22" />
         </button>
         <span class="settings-page__title">{{ currentCategoryTitle }}</span>
@@ -15,13 +15,6 @@
     </header>
     <div class="settings-page__body">
       <SettingsIndex v-if="navStack.length === 0" @navigate="pushNav" />
-      <SettingsDrillDown
-        v-else-if="isDrillDownCategory(currentCategory!)"
-        ref="drillDownRef"
-        :category-id="currentCategory!"
-        @restart-needed="handleRestartNeeded"
-        @back="popNav"
-      />
       <SettingsCategory
         v-else
         :category-id="currentCategory!"
@@ -55,17 +48,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { RefreshCw, ChevronLeft, Settings } from 'lucide-vue-next'
 import SettingsIndex from './SettingsIndex.vue'
 import SettingsCategory from './SettingsCategory.vue'
-import SettingsDrillDown from './SettingsDrillDown.vue'
 import SettingsRestartDialog from './SettingsRestartDialog.vue'
-import { isDrillDownCategory } from './settingsFieldMap'
 import { useSettingsNavigation } from '@/composables/useSettingsNavigation'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useAgents } from '@/composables/useAgents'
+import { useDialog } from '@/composables/useDialog'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
+import { isSubPageRoute, getSubPageTitleKey } from './settingsFieldMap'
 
 const props = defineProps<{
   active?: boolean
@@ -73,29 +66,39 @@ const props = defineProps<{
 
 const {
   t, loadConfig,
-  navStack, currentCategory, pushNav, popNav, resetState,
+  navStack, currentCategory, pushNav, popNav,
   restartDialogVisible, changedColdFields, needsRestart,
   restarting, restartingOverlay,
   handleRestartNeeded, handleRestart,
+  checkAllGuards,
 } = useSettingsNavigation()
 
 const { serverConfig } = useSettingsConfig()
+const dialog = useDialog()
 
-const drillDownRef = ref<InstanceType<typeof SettingsDrillDown> | null>(null)
+// ── Back navigation with unsaved changes guard ──
 
-function handleDrillDownBack() {
-  if (isDrillDownCategory(currentCategory.value!) && drillDownRef.value) {
-    drillDownRef.value.requestBack()
-  } else {
-    popNav()
+async function handleBack() {
+  // Check all registered panel guards (module-level registry)
+  if (!checkAllGuards()) {
+    const confirmed = await dialog.confirm(
+      t('settings.panel.unsavedMessage'),
+      {
+        title: t('settings.panel.unsavedTitle'),
+        confirmText: t('settings.panel.discard'),
+        cancelText: t('settings.panel.continueEditing'),
+      },
+    )
+    if (!confirmed) return
   }
+  popNav()
 }
 
-// Register back handler for settings drill-down navigation
+// Register back handler for settings navigation
 useFeatureBackHandler(
   'settings',
   () => !!props.active && navStack.value.length > 0,
-  () => handleDrillDownBack(),
+  () => handleBack(),
   PRIORITY_PAGE,
 )
 
@@ -109,17 +112,20 @@ const currentCategoryTitle = computed(() => {
     const agent = getAgent(agentId)
     return agent ? `${agent.icon} ${agent.name}` : t('settings.categories.agents')
   }
-  // For group drill-down pages ({category}:{groupId}) — no longer used, all groups flattened
+  // For sub-page routes (colon-separated, except agents), use data-driven title lookup
+  if (isSubPageRoute(cat)) {
+    const titleKey = getSubPageTitleKey(cat)
+    return titleKey ? t(titleKey) : cat
+  }
   return t(`settings.categories.${cat}`)
 })
 
 const serverVersion = computed(() => serverConfig.value?.version ?? '')
 
-// Reset navigation when tab becomes active
+// Refresh config values when tab becomes active (preserve navigation state)
 watch(() => props.active, (val) => {
   if (val) {
     loadConfig()
-    resetState()
   }
 })
 </script>

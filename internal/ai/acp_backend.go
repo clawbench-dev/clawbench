@@ -68,7 +68,7 @@ func (b *ACPBackend) ExecuteStream(ctx context.Context, req ChatRequest) (<-chan
 		conn.SetAutoApprove(getSessionAutoApprove(req.SessionID))
 
 		// Pre-apply user's mode/thinkingEffort selection to the cached state BEFORE
-		// emitting SSE events, so the frontend sees the user's choice (e.g. "plan")
+		// emitting WS events, so the frontend sees the user's choice (e.g. "plan")
 		// instead of the agent's default (e.g. "bypassPermissions") during streaming.
 		// The actual RPC to set the config is still done inside Prompt().
 		if req.Mode != "" {

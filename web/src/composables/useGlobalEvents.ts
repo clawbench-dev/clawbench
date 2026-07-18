@@ -4,12 +4,13 @@ import { useAppMode } from './useAppMode'
 import { showBrowserNotification } from './useNotification'
 import { playNotificationSound } from './useNotificationSound'
 import { gt } from './useLocale'
+import { serverConfig } from './useSettingsConfig'
 
 // Event types from server
 interface ServerEvent {
     type: string           // "event" | "ping"
     id?: string            // event ID for dedup
-    event?: string         // "session_update" | "task_update" | "queue_update"
+    event?: string         // "session_update" | "task_update"
     data?: {
         session_id?: string
         status?: string
@@ -29,6 +30,10 @@ interface ServerEvent {
 type ClientMessage =
     | { type: 'ack'; id: string }
     | { type: 'pong' }
+    | { type: 'subscribe'; session_id: string }
+    | { type: 'unsubscribe'; session_id: string }
+    | { type: 'cancel'; session_id: string }
+    | { type: 'permission_respond'; session_id: string; tool_call_id: string; option_id: string; cancelled: boolean }
 
 type EventHandler = (event: string, data: ServerEvent['data']) => void
 
@@ -298,6 +303,10 @@ function stopHeartbeat() {
 function showEventBrowserNotification(event: string, data: ServerEvent['data']) {
     if (!data) return
 
+    // Only show native browser notifications when push_mode is "native"
+    const pushMode = serverConfig.value?.push_mode as string || 'native'
+    if (pushMode !== 'native') return
+
     // Only show notification when page is not focused
     if (document.visibilityState === 'visible' && document.hasFocus()) return
 
@@ -373,12 +382,14 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data']) 
     }
 
     try {
-        playNotificationSound()
-        showBrowserNotification(title, {
-            body: alert_,
-            tag: `clawbench-${event}-${data.session_id || data.task_id || Date.now()}`,
-            onClick,
-        })
+        if (pushMode === 'native') {
+            playNotificationSound()
+            showBrowserNotification(title, {
+                body: alert_,
+                tag: `clawbench-${event}-${data.session_id || data.task_id || Date.now()}`,
+                onClick,
+            })
+        }
     } catch {
         // Non-critical
     }
@@ -451,6 +462,7 @@ export function useGlobalEvents() {
         connect,
         disconnect,
         onEvent,
+        sendWsMessage: send,
         init,
         destroy,
     }

@@ -316,6 +316,10 @@
             <Download :size="14" />
             {{ t('common.download') }}
           </div>
+          <div class="context-menu-item" v-if="isAppMode && ctxMenu.entry.type !== 'dir'" @click.stop="doShareExternal">
+            <Share :size="14" />
+            {{ t('file.context.shareExternal') }}
+          </div>
           <div class="context-menu-item" v-if="ctxMenu.entry.type === 'dir'" @click.stop="doArchiveDir">
             <Package :size="14" />
             {{ t('file.context.archiveDir') }}
@@ -353,7 +357,7 @@ import { ref, computed, reactive, inject, nextTick, onMounted, onUnmounted, watc
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { joinPath } from '@/utils/path'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, formatSize as formatFileSize,
@@ -921,6 +925,25 @@ function doDownload() {
     const name = ctxMenu.entry.name
     closeCtxMenu()
     downloadFileByPath(path, name)
+}
+
+function doShareExternal() {
+    const path = ctxMenu.entry?.path
+    closeCtxMenu()
+    const native = window.AndroidNative
+    if (!native || !native.shareFile) return
+    if (!path) return
+    const ext = path.split('.').pop()?.toLowerCase()
+    let mimeType = '*/*'
+    const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']
+    const videoExts = ['mp4', 'webm', 'mkv', 'avi', 'mov']
+    const audioExts = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a']
+    if (imageExts.includes(ext)) mimeType = 'image/*'
+    else if (videoExts.includes(ext)) mimeType = 'video/*'
+    else if (audioExts.includes(ext)) mimeType = 'audio/*'
+    else if (ext === 'pdf') mimeType = 'application/pdf'
+    else if (ext === 'zip' || ext === 'tar' || ext === 'gz') mimeType = 'application/zip'
+    native.shareFile(path, mimeType)
 }
 
 // ── Archive download (zip) ──

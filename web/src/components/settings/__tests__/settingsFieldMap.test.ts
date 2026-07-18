@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getServerFieldToLabelKey, categoryItems, drillDownCategories, isDrillDownCategory } from '@/components/settings/settingsFieldMap'
+import { getServerFieldToLabelKey, categoryItems, categoryHasPanels, isPanelOnlyCategory, getCategoryPanels, isSubPageRoute, getSubPagePanel, getSubPageTitleKey, subPagePanelMap } from '@/components/settings/settingsFieldMap'
 
 describe('settingsFieldMap', () => {
   it('maps all server-side dot-path keys to i18n label keys', () => {
@@ -50,13 +50,16 @@ describe('settingsFieldMap', () => {
     expect(map['recent_projects.max_count']).toBeTruthy()
   })
 
-  it('recent_projects.max_count is in project category items', () => {
-    const projectItems = categoryItems['project']
-    const rpItem = projectItems.find(item => item.key === 'recent_projects.max_count')
-    expect(rpItem).toBeDefined()
-    expect(rpItem!.source).toBe('server')
-    expect(rpItem!.type).toBe('number')
-    expect(rpItem!.min).toBe(1)
+  it('recent_projects.max_count is in projectFiles category items', () => {
+    const projectFilesEntries = categoryItems['projectFiles']
+    const rpEntry = projectFilesEntries.find(e => e.type === 'item' && e.spec.key === 'recent_projects.max_count')
+    expect(rpEntry).toBeDefined()
+    expect(rpEntry!.type).toBe('item')
+    if (rpEntry!.type === 'item') {
+      expect(rpEntry!.spec.source).toBe('server')
+      expect(rpEntry!.spec.type).toBe('number')
+      expect(rpEntry!.spec.min).toBe(1)
+    }
   })
 
   it('does not map orphaned ssh.* keys (renamed to port_forward)', () => {
@@ -65,168 +68,303 @@ describe('settingsFieldMap', () => {
     expect(map['ssh.port']).toBeUndefined()
   })
 
-  it('categoryItems covers flat (non-drill-down) categories', () => {
-    const expectedCategories = ['appearance', 'agents', 'project', 'chat', 'files', 'android', 'security', 'about']
+  it('categoryItems covers all expected categories', () => {
+    const expectedCategories = [
+      'appearance', 'agents', 'projectFiles', 'chat', 'debug', 'security', 'about',
+      'notification',
+      'terminal', 'tts', 'tts_engine', 'summarization_text', 'summarization_voice', 'rag', 'portForward', 'frp',
+    ]
     for (const cat of expectedCategories) {
       expect(categoryItems[cat]).toBeDefined()
     }
-  })
-
-  it('drill-down categories are not in categoryItems', () => {
-    expect(categoryItems['terminal']).toBeUndefined()
-    expect(categoryItems['tts']).toBeUndefined()
-    expect(categoryItems['summarization']).toBeUndefined()
-    expect(categoryItems['rag']).toBeUndefined()
-    expect(categoryItems['portForward']).toBeUndefined()
-    expect(categoryItems['frp']).toBeUndefined()
+    // dingtalk category was merged into notification
+    expect(categoryItems['dingtalk']).toBeUndefined()
   })
 
   it('every server item in categoryItems has a corresponding field map entry', () => {
     const map = getServerFieldToLabelKey()
-    for (const items of Object.values(categoryItems)) {
-      for (const item of items) {
-        if (item.source === 'server' && item.key !== 'serverVersion' && item.key !== 'restart') {
-          expect(map[item.key]).toBeDefined()
+    for (const entries of Object.values(categoryItems)) {
+      for (const entry of entries) {
+        if (entry.type === 'item') {
+          if (entry.spec.source === 'server' && entry.spec.key !== 'serverVersion' && entry.spec.key !== 'restart') {
+            expect(map[entry.spec.key]).toBeDefined()
+          }
         }
       }
     }
   })
 
-  // ── Drill-down categories ──
+  // ── Panel categories ──
 
-  it('drillDownCategories covers all 6 drill-down categories', () => {
-    const expectedIds = ['terminal', 'tts', 'summarization', 'rag', 'portForward', 'frp']
-    for (const id of expectedIds) {
-      expect(drillDownCategories[id]).toBeDefined()
-      expect(drillDownCategories[id].categoryId).toBe(id)
-    }
+  it('categoryHasPanels identifies panel categories', () => {
+    expect(categoryHasPanels('terminal')).toBe(true)
+    expect(categoryHasPanels('tts')).toBe(false)
+    expect(categoryHasPanels('summarization_text')).toBe(true)
+    expect(categoryHasPanels('summarization_voice')).toBe(true)
+    expect(categoryHasPanels('rag')).toBe(true)
+    expect(categoryHasPanels('portForward')).toBe(true)
+    expect(categoryHasPanels('frp')).toBe(true)
+    expect(categoryHasPanels('notification')).toBe(true)
+    expect(categoryHasPanels('appearance')).toBe(false)
+    expect(categoryHasPanels('chat')).toBe(false)
+    expect(categoryHasPanels('about')).toBe(false)
   })
 
-  it('isDrillDownCategory identifies drill-down categories', () => {
-    expect(isDrillDownCategory('terminal')).toBe(true)
-    expect(isDrillDownCategory('tts')).toBe(true)
-    expect(isDrillDownCategory('summarization')).toBe(true)
-    expect(isDrillDownCategory('rag')).toBe(true)
-    expect(isDrillDownCategory('portForward')).toBe(true)
-    expect(isDrillDownCategory('frp')).toBe(true)
-    expect(isDrillDownCategory('appearance')).toBe(false)
-    expect(isDrillDownCategory('chat')).toBe(false)
-    expect(isDrillDownCategory('about')).toBe(false)
+  it('isPanelOnlyCategory identifies panel-only categories', () => {
+    expect(isPanelOnlyCategory('terminal')).toBe(true)
+    expect(isPanelOnlyCategory('tts')).toBe(false)
+    expect(isPanelOnlyCategory('summarization_text')).toBe(true)
+    expect(isPanelOnlyCategory('summarization_voice')).toBe(true)
+    expect(isPanelOnlyCategory('rag')).toBe(true)
+    expect(isPanelOnlyCategory('portForward')).toBe(true)
+    expect(isPanelOnlyCategory('frp')).toBe(true)
+    expect(isPanelOnlyCategory('notification')).toBe(true)
+    expect(isPanelOnlyCategory('appearance')).toBe(false)
   })
 
-  // ── Terminal drill-down ──
+  // ── Terminal panel ──
 
-  it('terminal drill-down has enableKey and commonFields', () => {
-    const dd = drillDownCategories['terminal']
-    expect(dd.enableKey).toBe('terminal.enabled')
-    expect(dd.enableLabelKey).toBe('settings.items.terminalEnabled')
-    expect(dd.commonFields.length).toBe(4)
-    expect(dd.commonFields[0].key).toBe('terminalFontSize')
-    expect(dd.commonFields[0].source).toBe('local')
+  it('terminal panel has enableKey and commonFields', () => {
+    const panels = getCategoryPanels('terminal')
+    expect(panels.length).toBe(1)
+    const cfg = panels[0]
+    expect(cfg.enableKey).toBe('terminal.enabled')
+    expect(cfg.enableLabelKey).toBe('settings.items.terminalEnabled')
+    expect(cfg.commonFields.length).toBe(4)
+    expect(cfg.commonFields[0].key).toBe('terminalFontSize')
+    expect(cfg.commonFields[0].source).toBe('local')
   })
 
-  // ── TTS drill-down ──
+  // ── TTS panel ──
 
-  it('tts drill-down has entrySelector and optionSubFields', () => {
-    const dd = drillDownCategories['tts']
-    expect(dd.entrySelector).toBeDefined()
-    expect(dd.entrySelector!.key).toBe('tts.engine')
-    expect(dd.entrySelector!.type).toBe('select')
-    expect(dd.entrySelector!.options!.length).toBe(4)
-    expect(dd.commonFields.length).toBe(3)
-    expect(dd.optionSubFields!.length).toBe(3)
+  it('tts_engine panel has entrySelector and optionSubFields', () => {
+    const panels = getCategoryPanels('tts_engine')
+    expect(panels.length).toBe(1)
+    const cfg = panels[0]
+    expect(cfg.entrySelector).toBeDefined()
+    expect(cfg.entrySelector!.key).toBe('tts.engine')
+    expect(cfg.entrySelector!.type).toBe('select')
+    expect(cfg.entrySelector!.options!.length).toBe(4)
+    expect(cfg.commonFields.length).toBe(3)
+    expect(cfg.optionSubFields!.length).toBe(3)
 
-    const piperSub = dd.optionSubFields!.find(osf => osf.when === 'piper')
+    const piperSub = cfg.optionSubFields!.find(osf => osf.when === 'piper')
     expect(piperSub).toBeDefined()
     expect(piperSub!.fields.length).toBe(4)
     expect(piperSub!.fields[0].key).toBe('tts.piper.model_path')
 
-    const kokoroSub = dd.optionSubFields!.find(osf => osf.when === 'kokoro')
+    const kokoroSub = cfg.optionSubFields!.find(osf => osf.when === 'kokoro')
     expect(kokoroSub).toBeDefined()
     expect(kokoroSub!.fields.length).toBe(3)
 
-    const mossNanoSub = dd.optionSubFields!.find(osf => osf.when === 'moss-nano')
+    const mossNanoSub = cfg.optionSubFields!.find(osf => osf.when === 'moss-nano')
     expect(mossNanoSub).toBeDefined()
     expect(mossNanoSub!.fields.length).toBe(2)
 
-    expect(dd.requiredFields).toEqual(['tts.piper.model_path', 'tts.kokoro.model_path', 'tts.kokoro.voices_path'])
+    expect(cfg.requiredFields).toEqual(['tts.piper.model_path', 'tts.kokoro.model_path', 'tts.kokoro.voices_path'])
+    expect(cfg.needsVoiceReset).toBe(true)
+    expect(cfg.hasConnectivityTest).toBe(true)
   })
 
-  // ── Summarization drill-down ──
+  // ── Summarization panels ──
 
-  it('summarization drill-down has entrySelector and optionSubFields', () => {
-    const dd = drillDownCategories['summarization']
-    expect(dd.entrySelector).toBeDefined()
-    expect(dd.entrySelector!.key).toBe('summarize.backend')
-    expect(dd.entrySelector!.type).toBe('select')
-    expect(dd.requiredFields).toEqual(['summarize.api.base_url'])
+  it('summarization_text panel has text summary fields', () => {
+    const panels = getCategoryPanels('summarization_text')
+    expect(panels.length).toBe(1)
+    const cfg = panels[0]
+    expect(cfg.panelId).toBe('summarization_text')
+    expect(cfg.entrySelector).toBeUndefined()
+    expect(cfg.requiredFields).toEqual(['summarize.api.base_url'])
+    expect(typeof cfg.hasConnectivityTest === 'function').toBe(true)
+    expect((cfg.hasConnectivityTest as Function)({ 'summarize.backend': 'api' })).toBe(true)
+    expect((cfg.hasConnectivityTest as Function)({ 'summarize.backend': 'simple' })).toBe(false)
+    expect((cfg.hasConnectivityTest as Function)({ 'summarize.backend': '' })).toBe(false)
 
-    const apiSub = dd.optionSubFields!.find(osf => osf.when === 'api')
-    expect(apiSub).toBeDefined()
-    expect(apiSub!.fields.length).toBe(4)
-    expect(apiSub!.fields[1].key).toBe('summarize.api.base_url')
+    const textBackend = cfg.commonFields.find(f => f.key === 'summarize.backend')
+    expect(textBackend).toBeDefined()
+    expect(textBackend!.type).toBe('select')
 
-    // CLI backend sub-fields
-    const claudeSub = dd.optionSubFields!.find(osf => osf.when === 'claude')
-    expect(claudeSub).toBeDefined()
-    expect(claudeSub!.fields.length).toBe(1)
-    expect(claudeSub!.fields[0].key).toBe('summarize.model')
+    const apiBaseURL = cfg.commonFields.find(f => f.key === 'summarize.api.base_url')
+    expect(apiBaseURL).toBeDefined()
+    expect(apiBaseURL!.sectionHeader).toBe('settings.items.apiHeader')
+
+    const model = cfg.commonFields.find(f => f.key === 'summarize.model')
+    expect(model).toBeDefined()
+
+    const apiKey = cfg.commonFields.find(f => f.key === 'summarize.api.key')
+    expect(apiKey).toBeDefined()
   })
 
-  // ── RAG drill-down ──
+  it('summarization_voice panel has voice summary fields', () => {
+    const panels = getCategoryPanels('summarization_voice')
+    expect(panels.length).toBe(1)
+    const cfg = panels[0]
+    expect(cfg.panelId).toBe('summarization_voice')
+    expect(cfg.entrySelector).toBeUndefined()
+    expect(cfg.requiredFields).toEqual(['summarize.tts_api.base_url'])
+    expect(typeof cfg.hasConnectivityTest === 'function').toBe(true)
+    expect((cfg.hasConnectivityTest as Function)({ 'summarize.tts_backend': 'api' })).toBe(true)
+    expect((cfg.hasConnectivityTest as Function)({ 'summarize.tts_backend': 'simple' })).toBe(false)
 
-  it('rag drill-down has 7 commonFields and requiredFields', () => {
-    const dd = drillDownCategories['rag']
-    expect(dd.commonFields.length).toBe(7)
-    expect(dd.commonFields[0].key).toBe('rag.base_url')
-    expect(dd.requiredFields).toEqual(['rag.base_url'])
+    const ttsBackend = cfg.commonFields.find(f => f.key === 'summarize.tts_backend')
+    expect(ttsBackend).toBeDefined()
+    expect(ttsBackend!.type).toBe('select')
+
+    const ttsApiBaseURL = cfg.commonFields.find(f => f.key === 'summarize.tts_api.base_url')
+    expect(ttsApiBaseURL).toBeDefined()
+    expect(ttsApiBaseURL!.sectionHeader).toBe('settings.items.summarizeTtsApiHeader')
+
+    const ttsModel = cfg.commonFields.find(f => f.key === 'summarize.tts_model')
+    expect(ttsModel).toBeDefined()
+
+    const ttsApiKey = cfg.commonFields.find(f => f.key === 'summarize.tts_api.key')
+    expect(ttsApiKey).toBeDefined()
   })
 
-  // ── Port Forward drill-down ──
+  // ── RAG panel ──
 
-  it('portForward drill-down has enableKey and commonFields (hot-reload, no needsRestart)', () => {
-    const dd = drillDownCategories['portForward']
-    expect(dd.enableKey).toBe('port_forward.enabled')
-    expect(dd.enableLabelKey).toBe('settings.items.portForwardEnabled')
-    expect(dd.commonFields.length).toBe(1)
-    expect(dd.commonFields[0].key).toBe('port_forward.port')
-    // port_forward.enabled and port are hot-reload fields — no needsRestart flag
-    expect(dd.commonFields[0].needsRestart).toBeFalsy()
+  it('rag panel has 7 commonFields and requiredFields', () => {
+    const panels = getCategoryPanels('rag')
+    expect(panels.length).toBe(1)
+    const cfg = panels[0]
+    expect(cfg.commonFields.length).toBe(7)
+    expect(cfg.commonFields[0].key).toBe('rag.base_url')
+    expect(cfg.requiredFields).toEqual(['rag.base_url'])
   })
 
-  // ── FRP drill-down ──
+  // ── Port Forward panel ──
 
-  it('frp drill-down has enableKey, optionSubFields, and requiredFields', () => {
-    const dd = drillDownCategories['frp']
-    expect(dd.enableKey).toBe('frp.enabled')
-    expect(dd.enableLabelKey).toBe('settings.items.frpEnabled')
-    expect(dd.commonFields.length).toBe(4)
+  it('portForward panel has enableKey and commonFields (hot-reload, no needsRestart)', () => {
+    const panels = getCategoryPanels('portForward')
+    expect(panels.length).toBe(1)
+    const cfg = panels[0]
+    expect(cfg.enableKey).toBe('port_forward.enabled')
+    expect(cfg.enableLabelKey).toBe('settings.items.portForwardEnabled')
+    expect(cfg.commonFields.length).toBe(1)
+    expect(cfg.commonFields[0].key).toBe('port_forward.port')
+    expect(cfg.commonFields[0].needsRestart).toBeFalsy()
+  })
 
-    const autoPortFalseSub = dd.optionSubFields!.find(osf => osf.when === false)
+  // ── FRP panel ──
+
+  it('frp panel has enableKey, optionSubFields, optionSubFieldsKey, and requiredFields', () => {
+    const panels = getCategoryPanels('frp')
+    expect(panels.length).toBe(1)
+    const cfg = panels[0]
+    expect(cfg.enableKey).toBe('frp.enabled')
+    expect(cfg.enableLabelKey).toBe('settings.items.frpEnabled')
+    expect(cfg.commonFields.length).toBe(4)
+
+    const autoPortFalseSub = cfg.optionSubFields!.find(osf => osf.when === false)
     expect(autoPortFalseSub).toBeDefined()
     expect(autoPortFalseSub!.fields.length).toBe(2)
     expect(autoPortFalseSub!.fields[0].key).toBe('frp.remote_port')
     expect(autoPortFalseSub!.fields[1].key).toBe('frp.ssh_remote_port')
 
-    expect(dd.requiredFields).toEqual(['frp.server_addr'])
+    expect(cfg.requiredFields).toEqual(['frp.server_addr'])
+    expect(cfg.optionSubFieldsKey).toBe('frp.auto_port')
+    expect(cfg.hasConnectivityTest).toBe(true)
+    expect(cfg.afterSave).toBeDefined()
+    expect(cfg.onInit).toBeDefined()
   })
 
-  // ── Drill-down fields are included in serverFieldToLabelKey ──
+  // ── Panel server fields in field map ──
 
-  it('drill-down server fields appear in serverFieldToLabelKey', () => {
+  it('panel server fields appear in serverFieldToLabelKey', () => {
     const map = getServerFieldToLabelKey()
-    // Terminal enable key
     expect(map['terminal.enabled']).toBe('settings.items.terminalEnabled')
-    // TTS engine
     expect(map['tts.engine']).toBe('settings.items.ttsEngine')
-    // RAG base_url
     expect(map['rag.base_url']).toBe('settings.items.ragBaseUrl')
-    // Port forward enable
     expect(map['port_forward.enabled']).toBe('settings.items.portForwardEnabled')
-    // FRP enable
     expect(map['frp.enabled']).toBe('settings.items.frpEnabled')
-    // FRP sub-fields
     expect(map['frp.server_addr']).toBe('settings.items.frpServerAddr')
     expect(map['frp.remote_port']).toBe('settings.items.frpRemotePort')
+  })
+
+  // ── Notification (push) panel ──
+
+  it('notification panel has entrySelector with push_mode, dingtalk optionSubFields, and connectivityTest', () => {
+    const panels = getCategoryPanels('notification')
+    expect(panels.length).toBe(1)
+    const cfg = panels[0]
+    expect(cfg.entrySelector).toBeDefined()
+    expect(cfg.entrySelector!.key).toBe('push_mode')
+    expect(cfg.entrySelector!.type).toBe('select')
+    expect(cfg.entrySelector!.options!.length).toBe(3)
+    expect(cfg.entrySelector!.options!.map(o => o.value)).toEqual(['native', 'dingtalk', 'disabled'])
+    expect(cfg.commonFields.length).toBe(0)
+
+    const dingtalkSub = cfg.optionSubFields!.find(osf => osf.when === 'dingtalk')
+    expect(dingtalkSub).toBeDefined()
+    expect(dingtalkSub!.fields.length).toBe(3)
+    expect(dingtalkSub!.fields.map(f => f.key)).toEqual(['dingtalk.app_key', 'dingtalk.app_secret', 'dingtalk.agent_id'])
+
+    expect(cfg.requiredFields).toEqual(['dingtalk.app_key', 'dingtalk.app_secret', 'dingtalk.agent_id'])
+    expect(typeof cfg.hasConnectivityTest).toBe('function')
+    expect((cfg.hasConnectivityTest as Function)({ push_mode: 'dingtalk' })).toBe(true)
+    expect((cfg.hasConnectivityTest as Function)({ push_mode: 'native' })).toBe(false)
+    expect((cfg.hasConnectivityTest as Function)({ push_mode: 'disabled' })).toBe(false)
+    expect(cfg.getTestCategories).toBeDefined()
+    expect(cfg.afterSave).toBeDefined()
+  })
+
+  // ── Sub-page route helpers (data-driven) ──
+
+  it('isSubPageRoute identifies colon-separated IDs except agents', () => {
+    expect(isSubPageRoute('chat:summarization_text')).toBe(true)
+    expect(isSubPageRoute('tts:summarization_voice')).toBe(true)
+    expect(isSubPageRoute('tts:tts_engine')).toBe(true)
+    expect(isSubPageRoute('agents:codebuddy')).toBe(false)
+    expect(isSubPageRoute('agents')).toBe(false)
+    expect(isSubPageRoute('terminal')).toBe(false)
+    expect(isSubPageRoute('chat')).toBe(false)
+  })
+
+  it('getSubPagePanel returns panel config for valid sub-routes', () => {
+    const textPanel = getSubPagePanel('chat:summarization_text')
+    expect(textPanel).toBeDefined()
+    expect(textPanel!.panelId).toBe('summarization_text')
+
+    const voicePanel = getSubPagePanel('tts:summarization_voice')
+    expect(voicePanel).toBeDefined()
+    expect(voicePanel!.panelId).toBe('summarization_voice')
+
+    const ttsPanel = getSubPagePanel('tts:tts_engine')
+    expect(ttsPanel).toBeDefined()
+    expect(ttsPanel!.panelId).toBe('tts')
+  })
+
+  it('getSubPagePanel returns undefined for unknown sub-routes', () => {
+    expect(getSubPagePanel('chat:unknown')).toBeUndefined()
+    expect(getSubPagePanel('nonexistent:panel')).toBeUndefined()
+  })
+
+  it('getSubPageTitleKey returns title i18n key for valid sub-routes', () => {
+    expect(getSubPageTitleKey('chat:summarization_text')).toBe('settings.items.summarizeTextSection')
+    expect(getSubPageTitleKey('tts:summarization_voice')).toBe('settings.items.summarizeTtsSection')
+    expect(getSubPageTitleKey('tts:tts_engine')).toBe('settings.items.ttsEngine')
+  })
+
+  it('subPagePanelMap has entry for every navigateTo action item', () => {
+    // Verify that all action items with navigateTo have a corresponding subPagePanelMap entry
+    for (const entries of Object.values(categoryItems)) {
+      for (const entry of entries) {
+        if (entry.type === 'item' && entry.spec.navigateTo) {
+          expect(subPagePanelMap[entry.spec.navigateTo]).toBeDefined()
+          expect(subPagePanelMap[entry.spec.navigateTo].panelConfig).toBeDefined()
+          expect(subPagePanelMap[entry.spec.navigateTo].titleKey).toBeTruthy()
+        }
+      }
+    }
+  })
+
+  it('RAG panel hasConnectivityTest is conditional', () => {
+    const panels = getCategoryPanels('rag')
+    expect(panels.length).toBe(1)
+    const cfg = panels[0]
+    expect(typeof cfg.hasConnectivityTest === 'function').toBe(true)
+    expect((cfg.hasConnectivityTest as Function)({ 'rag.base_url': 'http://localhost:11434' })).toBe(true)
+    expect((cfg.hasConnectivityTest as Function)({ 'rag.base_url': '' })).toBe(false)
+    expect((cfg.hasConnectivityTest as Function)({})).toBe(false)
   })
 })

@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"clawbench/internal/ai"
 	"clawbench/internal/model"
 
 	"github.com/stretchr/testify/assert"
@@ -15,127 +14,16 @@ import (
 
 func TestTaskSummarizer_ShortText(t *testing.T) {
 	// Short text should return empty string (no summarization needed)
-	s := &TaskSummarizer{
-		Backend: &mockTaskBackend{},
+	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
+		return "should not be called", nil
 	}
+
+	pipeline := NewPipelineWithOpts(passFn, taskSummarizePrompt, SummarizeOption{PreserveMarkdown: true})
+	s := NewTaskSummarizerFromPipeline(pipeline)
 
 	result, err := s.Summarize(context.Background(), "短文本", "")
 	assert.NoError(t, err)
 	assert.Equal(t, "", result) // empty = no summarization needed
-}
-
-// --- TaskSummarizer long text via backend ---
-
-type mockTaskBackend struct {
-	streamCh      chan ai.StreamEvent
-	executeErr    error
-	executeCalled bool
-	capturedReq   ai.ChatRequest
-}
-
-func (m *mockTaskBackend) Name() string { return "mock-task-backend" }
-
-func (m *mockTaskBackend) ExecuteStream(ctx context.Context, req ai.ChatRequest) (<-chan ai.StreamEvent, error) {
-	m.executeCalled = true
-	m.capturedReq = req
-	if m.executeErr != nil {
-		return nil, m.executeErr
-	}
-	return m.streamCh, nil
-}
-
-func TestTaskSummarizer_LongText_ViaBackend(t *testing.T) {
-	ch := make(chan ai.StreamEvent, 3)
-	ch <- ai.StreamEvent{Type: "content", Content: "## 总结\n\n这是**精简**总结。"}
-	ch <- ai.StreamEvent{Type: "content", Content: "\n\n```go\nfmt.Println()```"}
-	ch <- ai.StreamEvent{Type: "done"}
-	close(ch)
-
-	mock := &mockTaskBackend{streamCh: ch}
-	s := &TaskSummarizer{
-		Backend: mock,
-		model:   "test-model",
-	}
-
-	longText := strings.Repeat("这是一段较长的AI回复内容，包含了详细的技术分析。", 30)
-	result, err := s.Summarize(context.Background(), longText, "")
-
-	assert.NoError(t, err)
-	assert.Contains(t, result, "总结")
-	assert.Contains(t, result, "**精简**") // Markdown preserved
-	assert.Contains(t, result, "```go")  // Code block preserved
-	assert.True(t, mock.executeCalled)
-	assert.Equal(t, "test-model", mock.capturedReq.Model)
-	assert.Equal(t, taskSummarizePrompt, mock.capturedReq.SystemPrompt)
-}
-
-func TestTaskSummarizer_BackendError(t *testing.T) {
-	mock := &mockTaskBackend{
-		executeErr: context.DeadlineExceeded,
-	}
-	s := &TaskSummarizer{
-		Backend: mock,
-	}
-
-	longText := strings.Repeat("这是一段较长的AI回复内容。", 30)
-	_, err := s.Summarize(context.Background(), longText, "")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "task summarization backend")
-}
-
-func TestTaskSummarizer_StreamError(t *testing.T) {
-	ch := make(chan ai.StreamEvent, 1)
-	ch <- ai.StreamEvent{Type: "error", Error: "out of tokens"}
-	close(ch)
-
-	mock := &mockTaskBackend{streamCh: ch}
-	s := &TaskSummarizer{
-		Backend: mock,
-	}
-
-	longText := strings.Repeat("这是一段较长的AI回复内容。", 30)
-	_, err := s.Summarize(context.Background(), longText, "")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "out of tokens")
-}
-
-func TestTaskSummarizer_EmptyOutput(t *testing.T) {
-	ch := make(chan ai.StreamEvent, 1)
-	ch <- ai.StreamEvent{Type: "done"}
-	close(ch)
-
-	mock := &mockTaskBackend{streamCh: ch}
-	s := &TaskSummarizer{
-		Backend: mock,
-	}
-
-	longText := strings.Repeat("这是一段较长的AI回复内容。", 30)
-	_, err := s.Summarize(context.Background(), longText, "")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "empty output")
-}
-
-func TestTaskSummarizer_Truncation(t *testing.T) {
-	origMax := MaxSummarizeRunes
-	MaxSummarizeRunes = 100
-	defer func() { MaxSummarizeRunes = origMax }()
-
-	ch := make(chan ai.StreamEvent, 2)
-	ch <- ai.StreamEvent{Type: "content", Content: "总结结果"}
-	ch <- ai.StreamEvent{Type: "done"}
-	close(ch)
-
-	mock := &mockTaskBackend{streamCh: ch}
-	s := &TaskSummarizer{
-		Backend: mock,
-	}
-
-	longText := strings.Repeat("长文本", 200) // 600 runes
-	result, err := s.Summarize(context.Background(), longText, "")
-	assert.NoError(t, err)
-	assert.Equal(t, "总结结果", result)
-	// Verify truncation happened
-	assert.LessOrEqual(t, len([]rune(mock.capturedReq.Prompt)), 100)
 }
 
 // --- TaskSummarizer via pipeline (API backend) ---
@@ -173,12 +61,13 @@ func TestTaskSummarizer_ViaPipeline_ShortText(t *testing.T) {
 	assert.Equal(t, "", result)
 }
 
-// --- NewTaskSummarizer constructor ---
+func TestTaskSummarizer_NoPipeline(t *testing.T) {
+	s := &TaskSummarizer{}
 
-func TestNewTaskSummarizer_UnsupportedBackend(t *testing.T) {
-	_, err := NewTaskSummarizer("nonexistent_backend_type", "")
+	longText := strings.Repeat("这是一段较长的AI回复内容。", 30)
+	_, err := s.Summarize(context.Background(), longText, "")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to create AI backend")
+	assert.Contains(t, err.Error(), "no pipeline configured")
 }
 
 // --- ExtractTextFromBlocks ---

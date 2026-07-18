@@ -30,6 +30,8 @@ const (
 // thumbDecodeExts lists extensions that Go's image.Decode can handle
 // (standard library: png, jpeg, gif). BMP and TIFF require golang.org/x/image.
 // SVG is explicitly excluded because it's vector, not raster.
+//
+//nolint:goconst // ".png" appears in multiple unrelated string maps; extracting is overkill
 var thumbDecodeExts = []string{
 	".png", ".jpg", ".jpeg", ".gif",
 }

@@ -93,11 +93,28 @@ func PushTaskEvent(taskID, status, taskName, responsePreview, projectPath string
 
 // sendToAllSubscribers sends a notification to all subscribed users directly.
 // Fire-and-forget: success or failure is logged, no retry or DB persistence.
-// Suppressed when at least one client (web/APP) is online watching the UI.
+// Suppresses push when a WebSocket client is connected (user is viewing the UI).
 // Returns true if at least one subscriber received the notification.
 func sendToAllSubscribers(title, markdown string) bool {
+	// Only push in dingtalk mode
+	mode := GetPushMode()
+	if mode != "dingtalk" {
+		return false
+	}
+
+	// Suppress DingTalk push when a client is actively connected via WebSocket.
+	// Consistent with native notification logic: if the user is viewing the UI,
+	// no push notification is needed. HasConnectedClients() returns true when
+	// at least one browser/WebView WS is active (i.e., user is in foreground).
+	//
+	// NOTE: On desktop browsers, WS connections persist when the tab is backgrounded,
+	// so DingTalk notifications may be over-suppressed. This is acceptable because:
+	// 1. On Android (primary DingTalk use case), WS disconnects on background,
+	//    so foreground detection is accurate.
+	// 2. On desktop, native browser notifications are the primary channel
+	//    (push_mode=native), so DingTalk over-suppression is a non-issue.
 	if clientChecker != nil && clientChecker.HasConnectedClients() {
-		slog.Debug("dingtalk: suppressed push, client is online", "title", title)
+		slog.Debug("dingtalk: suppressing push, client is connected", "title", title)
 		return false
 	}
 

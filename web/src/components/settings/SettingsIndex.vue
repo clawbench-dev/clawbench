@@ -19,47 +19,41 @@
 import { computed } from 'vue'
 import {
   Palette,
-  MapPin,
+  FolderTree,
   MessageSquare,
   Bot,
-  FolderOpen,
   Terminal,
   Volume2,
-  Sparkles,
   Brain,
   ArrowLeftRight,
   Globe,
-  Shield,
   Bell,
-  Smartphone,
+  Shield,
+  Bug,
   Info,
   ChevronRight,
 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
-import { useAppMode } from '@/composables/useAppMode'
 
 defineEmits<{
   navigate: [categoryId: string]
 }>()
 
 const { t } = useI18n()
-const { isAppMode } = useAppMode()
 
 const categoryDefs = computed(() => [
   { id: 'appearance', icon: Palette },
-  { id: 'project', icon: MapPin },
+  { id: 'projectFiles', icon: FolderTree },
   { id: 'chat', icon: MessageSquare },
   { id: 'agents', icon: Bot },
-  { id: 'files', icon: FolderOpen },
   { id: 'terminal', icon: Terminal },
   { id: 'tts', icon: Volume2 },
-  { id: 'summarization', icon: Sparkles },
   { id: 'rag', icon: Brain },
   { id: 'portForward', icon: ArrowLeftRight },
   { id: 'frp', icon: Globe },
   { id: 'notification', icon: Bell },
   { id: 'security', icon: Shield },
-  ...(isAppMode.value ? [{ id: 'android', icon: Smartphone }] : []),
+  { id: 'debug', icon: Bug },
   { id: 'about', icon: Info },
 ])
 
@@ -73,7 +67,7 @@ const categories = computed(() =>
 
 <style scoped>
 .settings-index {
-  padding: 8px 0;
+  padding: 0;
   background: var(--bg-secondary);
   min-height: 100%;
 }
@@ -88,16 +82,6 @@ const categories = computed(() =>
   gap: 12px;
   background: var(--bg-primary);
   position: relative;
-}
-
-/* Grouped card: no border-radius */
-.settings-index__row:first-child {
-}
-
-.settings-index__row:last-child {
-}
-
-.settings-index__row:only-child {
 }
 
 /* Row separator (not on last) */

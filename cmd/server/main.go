@@ -605,6 +605,14 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			slog.Warn("failed to resolve summarize API key from agent_api_keys", slog.String("agent_id", cfg.Summarize.API.AgentID), slog.String("err", err.Error()))
 		}
 	}
+	if cfg.Summarize.TTSBackend == summarizeBackendAPI && cfg.Summarize.TTSAPI.Key == "" && cfg.Summarize.TTSAPI.AgentID != "" {
+		if _, _, ak, err := service.LoadAgentAnyAPIKey(cfg.Summarize.TTSAPI.AgentID); err == nil && ak != "" {
+			cfg.Summarize.TTSAPI.Key = ak
+			slog.Info("resolved summarize TTS API key from agent_api_keys", slog.String("agent_id", cfg.Summarize.TTSAPI.AgentID))
+		} else if err != nil {
+			slog.Warn("failed to resolve summarize TTS API key from agent_api_keys", slog.String("agent_id", cfg.Summarize.TTSAPI.AgentID), slog.String("err", err.Error()))
+		}
+	}
 
 	// Inject API key loader for Pi CLI runtime (avoids import cycle between ai and service packages)
 	ai.SetAgentAPIKeyLoader(func(agentID string) (provider, customURL, apiKey string, found bool) {
@@ -635,37 +643,26 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// Initialize TTS summarizer from config (deferred from earlier — needs DB for API key resolution).
 	// Language is now per-request (sent from frontend), not configured at startup.
-	summarizeBackend := cfg.Summarize.Backend
+	ttsBackend := cfg.Summarize.TTSBackend
 
 	var ttsSummarizer summarize.Summarizer
-	switch summarizeBackend {
+	switch ttsBackend {
 	case "", summarizeBackendSimple:
 		ttsSummarizer = summarize.NewSimple()
 		slog.Info("tts summarizer configured", slog.String("backend", summarizeBackendSimple))
 	case summarizeBackendAPI:
-		if cfg.Summarize.API.BaseURL == "" {
-			slog.Error("summarize.backend is \"api\" but summarize.api.base_url is not configured")
+		if cfg.Summarize.TTSAPI.BaseURL == "" {
+			slog.Error("summarize.tts_backend is \"api\" but summarize.tts_api.base_url is not configured")
 			os.Exit(1)
 		}
-		if cfg.Summarize.API.Format == "anthropic" {
-			s := summarize.NewAnthropic(cfg.Summarize.API.BaseURL, cfg.Summarize.API.Key, cfg.Summarize.Model)
+		if summarize.IsAnthropicURL(cfg.Summarize.TTSAPI.BaseURL) {
+			s := summarize.NewAnthropic(cfg.Summarize.TTSAPI.BaseURL, cfg.Summarize.TTSAPI.Key, cfg.Summarize.TTSModel)
 			ttsSummarizer = s
 			slog.Info("tts summarizer configured", slog.String("backend", summarizeBackendAPI), slog.String("format", "anthropic"), slog.String("model", s.Model))
 		} else {
-			s := summarize.NewOpenAI(cfg.Summarize.API.BaseURL, cfg.Summarize.API.Key, cfg.Summarize.Model)
+			s := summarize.NewOpenAI(cfg.Summarize.TTSAPI.BaseURL, cfg.Summarize.TTSAPI.Key, cfg.Summarize.TTSModel)
 			ttsSummarizer = s
 			slog.Info("tts summarizer configured", slog.String("backend", summarizeBackendAPI), slog.String("format", "openai"), slog.String("model", s.Model))
-		}
-	default:
-		s, err := summarize.NewAIBackendSummarizer(summarizeBackend)
-		if err != nil {
-			slog.Error("failed to create AI backend summarizer, falling back to simple",
-				slog.String("backend", summarizeBackend), slog.String("error", err.Error()))
-			ttsSummarizer = summarize.NewSimple()
-		} else {
-			s.Model = cfg.Summarize.Model // empty = use backend default
-			ttsSummarizer = s
-			slog.Info("tts summarizer configured", slog.String("backend", summarizeBackend), slog.String("model", s.Model))
 		}
 	}
 	handler.SetSummarizer(ttsSummarizer)
@@ -894,7 +891,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// DB adapter and session messenger are always registered (needed for hot-reload enable/disable).
 	dingtalk.RegisterDBAdapter(&dingtalkDBAdapter{})
 	dingtalk.RegisterSessionMessenger(&dingtalkSessionMessenger{})
-	if cfg.DingTalk.Enabled && cfg.DingTalk.AppKey != "" && cfg.DingTalk.AppSecret != "" {
+	if cfg.PushMode == "dingtalk" && cfg.DingTalk.AppKey != "" && cfg.DingTalk.AppSecret != "" {
 		dingtalkMgr := dingtalk.NewManager(&cfg.DingTalk)
 		if err := dingtalkMgr.Start(); err != nil {
 			slog.Warn("DingTalk push failed to start", slog.String("err", err.Error()))
@@ -939,6 +936,19 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Initialize WS event manager
 	ws.InitManager()
 	dingtalk.RegisterClientChecker(ws.GetManager())
+
+	// Register WS chat stream callbacks (breaks import cycle between ws and service)
+	ws.OnSubscribe = func(mgr *ws.Manager, clientID, sessionID string) {
+		hub := mgr.StreamHub()
+		hub.EmitACPStateEvents(clientID, sessionID)
+		if service.IsSessionRunning(sessionID) {
+			if msgID := service.GetStreamingMessageID(sessionID); msgID > 0 {
+				hub.EmitStreamStartEvent(clientID, sessionID, msgID)
+			}
+		}
+	}
+	ws.OnCancelSession = service.CancelSession
+	ws.OnPermissionRespond = service.RespondPermission
 
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -1098,7 +1108,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 }
 
 // initTaskSummarizer creates a TaskSummarizer based on the summarize.backend config.
-// Supports: AI CLI backends (claude/codebuddy/kimi/etc.), "api" (OpenAI/Anthropic HTTP), "simple".
+// Supports: "simple" (extract conclusion), "api" (OpenAI/Anthropic HTTP).
 func initTaskSummarizer(cfg model.Config) (*summarize.TaskSummarizer, error) {
 	backend := cfg.Summarize.Backend
 	modelName := cfg.Summarize.Model
@@ -1119,9 +1129,9 @@ func initTaskSummarizer(cfg model.Config) (*summarize.TaskSummarizer, error) {
 		if cfg.Summarize.API.BaseURL == "" {
 			return nil, fmt.Errorf("summarize.backend is \"api\" but summarize.api.base_url is not configured")
 		}
-		// For API backends, create OpenAI/Anthropic summarizer and wrap its pass function
-		// in a pipeline with PreserveMarkdown=true and task-specific prompt.
-		if cfg.Summarize.API.Format == "anthropic" {
+		// For API backends, auto-detect OpenAI/Anthropic from URL and wrap in a pipeline
+		// with PreserveMarkdown=true and task-specific prompt.
+		if summarize.IsAnthropicURL(cfg.Summarize.API.BaseURL) {
 			s := summarize.NewAnthropic(cfg.Summarize.API.BaseURL, cfg.Summarize.API.Key, modelName)
 			pipeline := summarize.NewPipelineWithOpts(
 				s.DoSummarizePass,
@@ -1139,8 +1149,7 @@ func initTaskSummarizer(cfg model.Config) (*summarize.TaskSummarizer, error) {
 		return summarize.NewTaskSummarizerFromPipeline(pipeline), nil
 
 	default:
-		// AI CLI backends (claude/codebuddy/kimi/opencode/codex/qoder/vecli/deepseek)
-		return summarize.NewTaskSummarizer(backend, modelName)
+		return nil, fmt.Errorf("unsupported summarize backend: %q (must be \"\", \"simple\", or \"api\")", backend)
 	}
 }
 
@@ -1182,7 +1191,7 @@ func hotReloadReconfigure(port int) {
 func hotReloadDingTalk(cfg model.Config) {
 	mgr := dingtalk.GetManager()
 
-	if cfg.DingTalk.Enabled && cfg.DingTalk.AppKey != "" && cfg.DingTalk.AppSecret != "" {
+	if cfg.PushMode == "dingtalk" && cfg.DingTalk.AppKey != "" && cfg.DingTalk.AppSecret != "" {
 		if mgr != nil {
 			// Manager is running — try in-place reconfigure
 			result := mgr.Reconfigure(&cfg.DingTalk)
@@ -1300,26 +1309,20 @@ func newMossNanoTTSProvider(cfg model.Config) *speech.MossNanoProvider {
 
 // newTTSSummarizer creates a TTS summarizer from config for hot-reload.
 func newTTSSummarizer(cfg model.Config) summarize.Summarizer {
-	switch cfg.Summarize.Backend {
+	switch cfg.Summarize.TTSBackend {
 	case "", summarizeBackendSimple:
 		return summarize.NewSimple()
 	case summarizeBackendAPI:
-		if cfg.Summarize.API.BaseURL == "" {
-			slog.Warn("hot-reload: summarize.backend is \"api\" but base_url is empty, falling back to simple")
+		if cfg.Summarize.TTSAPI.BaseURL == "" {
+			slog.Warn("hot-reload: summarize.tts_backend is \"api\" but tts_api.base_url is empty, falling back to simple")
 			return summarize.NewSimple()
-		} else if cfg.Summarize.API.Format == "anthropic" {
-			return summarize.NewAnthropic(cfg.Summarize.API.BaseURL, cfg.Summarize.API.Key, cfg.Summarize.Model)
+		} else if summarize.IsAnthropicURL(cfg.Summarize.TTSAPI.BaseURL) {
+			return summarize.NewAnthropic(cfg.Summarize.TTSAPI.BaseURL, cfg.Summarize.TTSAPI.Key, cfg.Summarize.TTSModel)
 		}
-		return summarize.NewOpenAI(cfg.Summarize.API.BaseURL, cfg.Summarize.API.Key, cfg.Summarize.Model)
+		return summarize.NewOpenAI(cfg.Summarize.TTSAPI.BaseURL, cfg.Summarize.TTSAPI.Key, cfg.Summarize.TTSModel)
 	default:
-		s, err := summarize.NewAIBackendSummarizer(cfg.Summarize.Backend)
-		if err != nil {
-			slog.Warn("hot-reload: failed to create AI backend summarizer, falling back to simple",
-				slog.String("backend", cfg.Summarize.Backend), slog.String("error", err.Error()))
-			return summarize.NewSimple()
-		}
-		s.Model = cfg.Summarize.Model
-		return s
+		slog.Warn("hot-reload: unsupported tts_backend, falling back to simple", slog.String("backend", cfg.Summarize.TTSBackend))
+		return summarize.NewSimple()
 	}
 }
 

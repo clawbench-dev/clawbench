@@ -246,7 +246,7 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   stickyScroll: true,
   fileView: 'list',
   terminalFontSize: 12,
-  androidLogCapture: false,
+  logCapture: false,
   swipeSession: false,
   preventScreenLock: true,
   sortField: null,
@@ -287,7 +287,7 @@ export function setLocalConfig(key: string, value: string | boolean | number | n
   }
 }
 
-export { localConfig }
+export { localConfig, serverConfig }
 
 const serverConfig = ref<Record<string, unknown>>({})
 
@@ -326,14 +326,18 @@ const serverDefaults: Record<string, unknown> = {
   'tts.kokoro.lang': 'cmn',
   'tts.moss_nano.backend': 'onnx',
   'summarize.backend': 'simple',
+  'summarize.tts_backend': 'simple',
   'summarize.model': '',
+  'summarize.tts_model': '',
   'summarize.api.format': 'openai',
+  'summarize.tts_api.format': 'openai',
   'port_forward.allowed_ports': '1024-65535',
   'frp.enabled': false,
   'frp.server_port': 7000,
   'frp.auto_port': true,
   'frp.remote_port': 0,
   'frp.ssh_remote_port': 0,
+  'push_mode': 'native',
 }
 
 // ── Agent preference helpers ──────────────────────────────
@@ -395,9 +399,13 @@ function getAgentThinkingPref(agentId: string): string | null {
 }
 
 export function useSettingsConfig() {
-  /** Sync local-only settings from Android native to keep WebView and native state in sync. */
-  function syncNativeSettings() {
-    // No native settings to sync currently
+  /** Sync push_mode from server config to Android native push state. */
+  function syncPushModeToNative() {
+    try {
+      const pushMode = serverConfig.value.push_mode as string || 'native'
+      const native = (window as unknown as { AndroidNative?: { setNativePushEnabled?: (v: boolean) => void } }).AndroidNative
+      native?.setNativePushEnabled?.(pushMode === 'native')
+    } catch { /* not in app mode */ }
   }
 
   async function loadConfig() {
@@ -407,8 +415,8 @@ export function useSettingsConfig() {
     } catch {
       // Server may be unreachable — keep existing cached values
     }
-    // Sync native state after server config loads (app mode only)
-    syncNativeSettings()
+    // Sync push_mode to Android native after server config loads
+    syncPushModeToNative()
   }
 
   async function patchConfig(changes: Record<string, unknown>): Promise<{ needsRestart: boolean; changedColdFields: string[]; warnings: string[] }> {

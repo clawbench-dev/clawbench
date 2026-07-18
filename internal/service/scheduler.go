@@ -544,7 +544,11 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 		Event: "task_update",
 		Data:  data,
 	}
-	StoreNotifiableEvent(msg)
+	// Write-ahead: persist before broadcast so event log has no gaps
+	// Skip when push_mode is "disabled" — no notifications desired
+	if model.ConfigInstance.PushMode != "disabled" {
+		StoreNotifiableEvent(msg)
+	}
 	mgr.BroadcastEvent(msg)
 
 	// DingTalk push notification for task events.
@@ -623,18 +627,9 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// skipEvent=true because the scheduler emits its own task events.
 	SetSessionRunning(sessionID, true, true)
 
-	// Register SSE stream channel so live preview can connect via /api/ai/chat/stream.
-	// The channel is consumed by the SessionExecutor event loop (via RunConfig.StreamCh)
-	// and by the SSE handler (via GetSessionStream). Multiple preview clients
-	// use HTTP polling fallback (same as multi-client interactive sessions).
-	streamCh := RegisterSessionStream(sessionID)
-
-	// Deferred cleanup: must set session not-running BEFORE unregistering the stream.
-	// If we unregister the stream first, there's a window where IsSessionRunning=true
-	// but GetSessionStream=false, causing SSE reconnects to fail with "stream not found".
+	// Register session stream for WS event delivery
 	defer func() {
 		SetSessionRunning(sessionID, false, true)
-		UnregisterSessionStream(sessionID)
 	}()
 
 	slog.Info(
@@ -745,7 +740,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	_, _ = AddChatMessage(projectPath, backendName, sessionID, "assistant", string(emptyContent), nil, true, "")
 
 	// Delegate event loop to SessionExecutor (scheduled mode — no ask-question
-	// conversion, no cancel-reason tracking; SSE forwarding via StreamCh)
+	// conversion, no cancel-reason tracking)
 	executor := NewSessionExecutor(ctx, RunConfig{
 		Mode:        ModeScheduled,
 		ProjectPath: projectPath,
@@ -753,7 +748,6 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		SessionID:   sessionID,
 		AgentID:     task.AgentID,
 		ChatRequest: chatReq,
-		StreamCh:    streamCh,
 		TaskID:      task.ID,
 		ExecutionID: executionID,
 		TriggerType: triggerType,

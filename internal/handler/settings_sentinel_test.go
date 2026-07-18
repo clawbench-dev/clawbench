@@ -112,23 +112,6 @@ func TestLaunchSentinelProcess_StartsAndExits(t *testing.T) {
 	}
 }
 
-// ---------- maskAPIKey ----------
-
-func TestMaskAPIKey_Empty(t *testing.T) {
-	assert.Equal(t, "", maskAPIKey(""))
-}
-
-func TestMaskAPIKey_Short(t *testing.T) {
-	assert.Equal(t, "****", maskAPIKey("abc"))
-	assert.Equal(t, "****", maskAPIKey("1234567"))
-}
-
-func TestMaskAPIKey_LongEnough(t *testing.T) {
-	result := maskAPIKey("abcdefgh")
-	assert.Equal(t, "abcd***fgh", result)
-}
-
-func TestMaskAPIKey_16Chars(t *testing.T) {
-	result := maskAPIKey("abcdefghijklmnop")
-	assert.Equal(t, "abcd***nop", result)
-}
+// ---------- maskAPIKey (removed) ----------
+// maskAPIKey was removed — config API now returns full values for password fields.
+// Frontend uses <input type="password"> for secure display instead of server-side masking.

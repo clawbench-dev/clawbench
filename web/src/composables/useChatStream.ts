@@ -1,13 +1,13 @@
-import { onMounted, onUnmounted, type Ref } from 'vue'
-import { cancelChat } from '@/utils/api'
+import { onUnmounted, watch, type Ref } from 'vue'
 import { appLog } from '@/utils/appLog'
-import { useReconnect } from './useReconnect'
+import { useGlobalEvents } from './useGlobalEvents'
 import { gt } from '@/composables/useLocale'
 import { updateModeState, updateCommandState, updateAvailableThinkingEfforts, currentAgentId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
-import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, drainQueueMessage, type ChatMessage, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type SseJsonData, type QueueEventData, type QueueUpdateEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
+import { FILE_MODIFYING_TOOLS, findLastBlockOfType, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, drainQueueMessage, cancelPendingMessages, type ChatMessage, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
+import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
 
 const TAG = 'ChatStream'
 
@@ -28,6 +28,8 @@ export interface UseChatStreamOptions {
   onStreamEnd?: (reason: 'done' | 'cancelled' | 'error') => void
   onFileModified?: (filePath: string) => void
   onExtractScheduledTasks?: (msgs: ChatMessage[]) => void
+  onToolResult?: (toolId: string) => void
+  onToolUpdate?: (toolId: string) => void
 }
 
 export function useChatStream(options: UseChatStreamOptions) {
@@ -42,35 +44,29 @@ export function useChatStream(options: UseChatStreamOptions) {
     onMessage,
     onOpen,
     isOpen,
-    onParseAssistantContent,
     onToast,
     onNotification,
     onStreamEnd,
     onFileModified,
     onExtractScheduledTasks,
+    onToolResult,
+    onToolUpdate,
   } = options
 
-  let eventSource: EventSource | null = null
   let streamTimeout: ReturnType<typeof setTimeout> | null = null
   let renderTimer: number | null = null
-  let pollingInterval: number | null = null
-  // Flag to indicate the EventSource was closed intentionally by cleanupActiveStream
-  // (session switch), so the stale onerror handler should not schedule reconnects.
-  let disconnectedByCleanup = false
   // Track tool_use timeout timers so we can clean them up
   const toolUseTimeouts: Map<string, ReturnType<typeof setTimeout>> = new Map()
   // Counter for assigning stable _key to thinking blocks during streaming
   let thinkingBlockCounter = 0
+  // Whether we are currently streaming (subscribed to a session)
+  let isStreaming = false
 
-  const STREAM_TIMEOUT_MS = 30000 // 30 seconds without any SSE event = try reconnect
+  const STREAM_TIMEOUT_MS = 30000 // 30 seconds without any WS event = try reconnect
   const PERMISSION_STREAM_TIMEOUT_MS = 300000 // 5 min when permission approval is pending (user deciding)
   const TOOL_USE_TIMEOUT_MS = 30000 // 30 seconds without 'done' event = mark as done
 
-  const reconnect = useReconnect({
-    maxAttempts: 3,
-    baseDelay: 2000,
-    onReconnect: () => connectStream(currentSessionId.value, true),
-  })
+  const { onEvent, sendWsMessage, connected } = useGlobalEvents()
 
   function debouncedRender() {
     if (renderTimer) clearTimeout(renderTimer)
@@ -104,32 +100,31 @@ export function useChatStream(options: UseChatStreamOptions) {
     // Extend timeout when a permission approval is pending — the user needs time to decide
     const timeoutMs = hasPendingPermissionApproval() ? PERMISSION_STREAM_TIMEOUT_MS : STREAM_TIMEOUT_MS
     streamTimeout = setTimeout(() => {
-      appLog.w(TAG, 'SSE stream timeout - no events received, reconnecting')
-      // No SSE event received for too long — reconnect instead of killing the session
+      appLog.w(TAG, 'Stream timeout - no events received, reloading from DB')
+      // No WS event received for too long — reload from DB
       disconnectStream()
-      // The AI session continues on the backend; just reconnect SSE
-      if (currentSessionId.value && loading.value && reconnect.shouldReconnect()) {
-        reconnect.scheduleReconnect()
-      } else {
-        pollUntilDone()
-      }
+      onLoadHistory().then(() => {
+        // loadHistory sets loading based on data.running — if the session
+        // is still active, it will reconnect the stream and keep loading=true.
+        // Only trigger onStreamEnd if the session is truly done (loading=false).
+        if (!loading.value) {
+          onStreamEnd?.('error')
+        }
+      }).catch(() => {
+        // loadHistory failed — reset loading state so user isn't stuck
+        loading.value = false
+        onStreamEnd?.('error')
+      })
     }, timeoutMs)
   }
 
-  function disconnectStream(calledFromCleanup = false) {
+  function disconnectStream() {
     if (streamTimeout) { clearTimeout(streamTimeout); streamTimeout = null }
     clearToolUseTimeouts()
-    reconnect.reset()
-    if (eventSource) {
-      eventSource.close()
-      eventSource = null
+    if (isStreaming && currentSessionId.value) {
+      sendWsMessage({ type: 'unsubscribe', session_id: currentSessionId.value })
     }
-    // When called from cleanupActiveStream (session switch), mark that
-    // the disconnection was intentional so the stale onerror handler
-    // can skip reconnect/polling logic.
-    if (calledFromCleanup) {
-      disconnectedByCleanup = true
-    }
+    isStreaming = false
   }
 
   function clearToolUseTimeouts() {
@@ -144,137 +139,10 @@ export function useChatStream(options: UseChatStreamOptions) {
    * Delegates to the extracted pure function, then handles composable-specific
    * cleanup (tool_use timeouts, loading state).
    */
-  function forceCleanupStreamingState() {
-    clearToolUseTimeouts()
-    _forceCleanupStreamingState(messages.value, {
-      onRenderNeeded,
-      onExtractScheduledTasks,
-    })
-    loading.value = false
-  }
 
-  function stopPolling() {
-    if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null }
-  }
-
-  function pollUntilDone() {
-    stopPolling()
-    let jsonParseFailures = 0
-    const MAX_JSON_PARSE_FAILURES = 5
-    pollingInterval = window.setInterval(async () => {
-      try {
-        const resp = await fetch(`/api/ai/chat?session_id=${encodeURIComponent(currentSessionId.value)}&limit=1`, { credentials: 'same-origin' })
-        if (!resp.ok) {
-          throw new Error(`HTTP ${resp.status}`)
-        }
-        let data
-        try {
-          data = await resp.json()
-          jsonParseFailures = 0
-        } catch {
-          jsonParseFailures++
-          if (jsonParseFailures >= MAX_JSON_PARSE_FAILURES) {
-            appLog.e(TAG, 'Polling: too many invalid JSON responses, giving up')
-            throw new Error('Invalid JSON response')
-          }
-          appLog.e(TAG, 'Polling: invalid JSON response')
-          return
-        }
-        // Parse messages from server response
-        const latestMsgs = (data.messages || []).map((m: Record<string, unknown>) => {
-          const msg = m as ChatMessage
-          if (msg.role === 'assistant') {
-            const { blocks, metadata, cancelled } = onParseAssistantContent(msg.content ?? '')
-            msg.blocks = blocks
-            if (metadata) msg.metadata = metadata
-            if (cancelled) msg.cancelled = cancelled
-          } else if (msg.role === 'user' && !msg.blocks) {
-            if (msg.content && msg.content.startsWith('{"blocks":')) {
-              const { blocks } = onParseAssistantContent(msg.content)
-              msg.blocks = blocks
-            } else {
-              msg.blocks = msg.content ? [{ type: 'text', text: msg.content }] : []
-            }
-          }
-          return msg
-        })
-
-        if (!data.running) {
-          stopPolling()
-          onLoadHistory().finally(() => {
-            loading.value = false
-            onMessage()
-            onStreamEnd?.('done')
-            if (!isOpen.value) {
-              const lastMsg = messages.value[messages.value.length - 1]
-              if (lastMsg?.role === 'assistant') {
-                onToast(gt('chat.stream.aiReplied'), { icon: '🤖', duration: 5000, onClick: () => onOpen() })
-                onNotification(gt('chat.stream.aiReplied'), {
-                  body: gt('chat.stream.clickToViewReply'),
-                  onClick: () => onOpen()
-                })
-              }
-            }
-          })
-          return
-        }
-        // Session still running — incremental update
-        const lastAssistant = latestMsgs.findLast((m: ChatMessage) => m.role === 'assistant')
-        const existingStreaming = findStreamingMsg(messages.value)
-
-        if (lastAssistant && existingStreaming) {
-          existingStreaming.blocks = lastAssistant.blocks
-          if (lastAssistant.metadata) existingStreaming.metadata = lastAssistant.metadata
-          if (lastAssistant.cancelled) existingStreaming.cancelled = lastAssistant.cancelled
-        } else if (lastAssistant && !existingStreaming) {
-          const existingById = lastAssistant.id
-            ? messages.value.find((m) => m.id === lastAssistant.id)
-            : null
-          if (existingById) {
-            existingById.streaming = true
-            existingById.blocks = lastAssistant.blocks
-            if (lastAssistant.metadata) existingById.metadata = lastAssistant.metadata
-            if (lastAssistant.cancelled) existingById.cancelled = lastAssistant.cancelled
-          } else {
-            lastAssistant.streaming = true
-            messages.value.push(lastAssistant)
-          }
-        }
-
-        currentSessionId.value = data.sessionId || currentSessionId.value
-        if (isOpen.value) {
-          debouncedRender()
-        }
-      } catch (err: unknown) {
-        appLog.e(TAG, 'Polling error:', err)
-        stopPolling()
-        const sm = findStreamingMsg(messages.value)
-        if (sm) {
-          const hasContent = sm.content || (sm.blocks && sm.blocks.length > 0)
-          if (hasContent) {
-            delete sm.streaming
-          } else {
-            const idx = messages.value.indexOf(sm)
-            if (idx !== -1) messages.value.splice(idx, 1)
-          }
-        }
-        onToast(gt('chat.stream.connectionFailed'), { icon: '⚠️' })
-        loading.value = false
-        onRenderNeeded(true)
-        onStreamEnd?.('error')
-      }
-    }, 2000)
-  }
-
-  function connectStream(sessionId: string, isRetry = false) {
-    // Guard: EventSource may not be available (e.g. after test cleanup)
-    if (typeof EventSource !== 'function') return
+  function connectStream(sessionId: string) {
     disconnectStream()
-    stopPolling()
-    disconnectedByCleanup = false
-    if (!isRetry) {
-      reconnect.reset()
-    }
+    isStreaming = true
 
     // Ensure a streaming assistant message exists — create one if needed
     const existingStreaming = findStreamingMsg(messages.value)
@@ -289,9 +157,6 @@ export function useChatStream(options: UseChatStreamOptions) {
         backend: currentBackend.value
       }
       // Insert after the last non-pending user message, not at the end.
-      // Pending messages (queued) come after the active conversation,
-      // so push() would place the streaming assistant after them,
-      // making the AI reply appear below the queued messages.
       const lastUserIdx = messages.value.findLastIndex(
         (m) => m.role === 'user' && !m.pending
       )
@@ -303,646 +168,530 @@ export function useChatStream(options: UseChatStreamOptions) {
       thinkingBlockCounter = 0
       onRenderNeeded()
     } else if ((existingStreaming as ChatMessage).fromDB) {
-      // DB streaming message from a previous incomplete finalize —
-      // convert it to a live streaming placeholder by clearing fromDB
-      // so SSE events can update it properly.
       delete (existingStreaming as ChatMessage).fromDB
     }
     onScrollBottom()
 
-    eventSource = new EventSource(`/api/ai/chat/stream?session_id=${encodeURIComponent(sessionId)}`, { withCredentials: true })
-
-    // Capture reference to THIS EventSource instance so event handlers can
-    // safely close only the stale connection without affecting a new session's
-    // EventSource (the `eventSource` variable may be reassigned by connectStream).
-    const esRef = eventSource
-
-    // Session guard: check if the session has changed since this connection was opened.
-    // Simpler than the old guard() — no need to check streamingMsg references.
-    const sessionChanged = () => currentSessionId.value !== sessionId
+    // Subscribe to session's streaming events via WS
+    sendWsMessage({ type: 'subscribe', session_id: sessionId })
 
     // Start stream timeout
     resetStreamTimeout()
+  }
 
-    // Receive streaming message ID from backend for tool call detail API queries
-    eventSource.addEventListener('stream_start', (e) => {
-      if (sessionChanged()) return
-      let data
-      try { data = JSON.parse(e.data) } catch { return }
-      const sm = findStreamingMsg(messages.value)
-      if (sm && data.message_id) {
-        sm.id = data.message_id
-      }
-    })
+  // ── WS event handler for chat_stream events ──
+  // All 21+ event types from the backend are dispatched through this single handler.
+  const unsubscribeFromWs = onEvent((event: string, data: unknown) => {
+    if (event !== 'chat_stream') return
+    const csData = data as ChatStreamEventData
+    if (csData.session_id !== currentSessionId.value) return
 
-    eventSource.addEventListener('resume_split', (e) => {
-      if (sessionChanged()) return
-      const sm = findStreamingMsg(messages.value)
-      if (!sm) return
-      resetStreamTimeout()
-      // Finalize Phase 1 message
-      delete sm.streaming
-      // Create Phase 2 streaming message
-      const phase2: ChatMessage = {
-        role: 'assistant',
-        id: `resume-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        content: '',
-        blocks: [],
-        streaming: true,
-        createdAt: new Date().toISOString(),
-        backend: currentBackend.value
-      }
-      // Set the new streaming message ID from the resume_split event data
-      let data
-      try { data = JSON.parse(e.data) } catch { /* empty */ }
-      if (data?.message_id) {
-        phase2.id = data.message_id
-      }
-      messages.value.push(phase2)
-      thinkingBlockCounter = 0
-      onRenderNeeded()
-      debouncedRender()
-    })
+    const sessionId = csData.session_id
+    const payload = csData.payload as Record<string, unknown>
+    const sessionChanged = () => currentSessionId.value !== sessionId
 
-    // Track whether we've seen the first content event for the current streaming
-    // message — used for diagnostic logging on queue_drain timing
-    let firstContentSeen = false
-
-    eventSource.addEventListener('content', (e) => {
-      if (sessionChanged()) return
-      const sm = findStreamingMsg(messages.value)
-      if (!sm) return
-      resetStreamTimeout()
-      let data: ContentEventData
-      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE content: invalid JSON, skipping'); return }
-      if (!firstContentSeen) {
-        firstContentSeen = true
-        appLog.d(TAG, `[content: first] streamingMsg.id=${sm.id ?? 'none'} len=${(data.content || '').length} totalMsgs=${messages.value.length}`)
-      }
-      const blocks = sm.blocks!
-      const existingText = findLastBlockOfType(blocks, 'text')
-      if (existingText) {
-        existingText.text += data.content ?? ''
-      } else {
-        blocks.push({ type: 'text', text: data.content ?? '' })
-      }
-      debouncedRender()
-    })
-
-    eventSource.addEventListener('thinking', (e) => {
-      if (sessionChanged()) return
-      const sm = findStreamingMsg(messages.value)
-      if (!sm) return
-      resetStreamTimeout()
-      let data: ThinkingEventData
-      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE thinking: invalid JSON, skipping'); return }
-      const blocks = sm.blocks!
-      const existingThinking = findLastBlockOfType(blocks, 'thinking')
-      if (existingThinking) {
-        existingThinking.text += data.text ?? ''
-      } else {
-        blocks.push({ type: 'thinking', text: data.text ?? '', _key: `thinking-${thinkingBlockCounter++}` })
-      }
-      debouncedRender()
-      if (isOpen.value) {
-        onScrollBottom()
-      }
-    })
-
-    eventSource.addEventListener('thinking_done', () => {
-      if (sessionChanged()) return
-      const sm = findStreamingMsg(messages.value)
-      if (!sm) return
-      const blocks = sm.blocks!
-      for (let i = blocks.length - 1; i >= 0; i--) {
-        if (blocks[i].type === 'thinking') {
-          blocks[i].done = true
-          break
+    switch (csData.event_type) {
+      case 'stream_start': {
+        if (sessionChanged()) return
+        const sm = findStreamingMsg(messages.value)
+        if (sm && payload.message_id) {
+          sm.id = payload.message_id as number
         }
+        break
       }
-      onRenderNeeded()
-    })
 
-    eventSource.addEventListener('tool_use', (e) => {
-      if (sessionChanged()) return
-      const sm = findStreamingMsg(messages.value)
-      if (!sm) return
-      resetStreamTimeout()
-      let data: ToolUseEventData
-      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE tool_use: invalid JSON, skipping'); return }
-      const blocks = sm.blocks!
-      const existing = blocks.find((b) => b.type === 'tool_use' && b.id === data.id)
-      if (data.done) {
-        if (existing) {
-          // Slim SSE: only input present for interactive tools
-          if (data.input && Object.keys(data.input).length > 0) {
-            existing.input = data.input
-          }
-          existing.done = true
-          if (data.status !== undefined) existing.status = data.status
-          // Slim fields
-          if (data.summary !== undefined) existing.summary = data.summary
-          if (data.display_name !== undefined) existing.display_name = data.display_name
-          if (data.file_path !== undefined) existing.file_path = data.file_path
+      case 'resume_split': {
+        if (sessionChanged()) return
+        const sm = findStreamingMsg(messages.value)
+        if (!sm) return
+        resetStreamTimeout()
+        // Finalize Phase 1 message
+        delete sm.streaming
+        // Create Phase 2 streaming message
+        const phase2: ChatMessage = {
+          role: 'assistant',
+          id: (payload.message_id as number) || `resume-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          content: '',
+          blocks: [],
+          streaming: true,
+          createdAt: new Date().toISOString(),
+          backend: currentBackend.value
+        }
+        messages.value.push(phase2)
+        thinkingBlockCounter = 0
+        onRenderNeeded()
+        debouncedRender()
+        break
+      }
+
+      case 'content': {
+        if (sessionChanged()) return
+        const sm = findStreamingMsg(messages.value)
+        if (!sm) return
+        resetStreamTimeout()
+        const contentData = payload as unknown as ContentEventData
+        const blocks = sm.blocks!
+        const existingText = findLastBlockOfType(blocks, 'text')
+        if (existingText) {
+          existingText.text += contentData.content ?? ''
         } else {
-          // No existing block — create a new done tool_use block.
-          // This happens when the backend sends tool_use with done=true
-          // (e.g. Pi's toolcall_end provides complete arguments in one event).
-          const newBlock: ContentBlock = {
-            type: 'tool_use', name: data.name!, id: data.id!, done: true,
-            status: data.status || '',
+          blocks.push({ type: 'text', text: contentData.content ?? '' })
+        }
+        debouncedRender()
+        break
+      }
+
+      case 'thinking': {
+        if (sessionChanged()) return
+        const sm = findStreamingMsg(messages.value)
+        if (!sm) return
+        resetStreamTimeout()
+        const thinkingData = payload as unknown as ThinkingEventData
+        const blocks = sm.blocks!
+        const existingThinking = findLastBlockOfType(blocks, 'thinking')
+        if (existingThinking) {
+          existingThinking.text += thinkingData.text ?? ''
+        } else {
+          blocks.push({ type: 'thinking', text: thinkingData.text ?? '', _key: `thinking-${thinkingBlockCounter++}` })
+        }
+        debouncedRender()
+        if (isOpen.value) {
+          onScrollBottom()
+        }
+        break
+      }
+
+      case 'thinking_done': {
+        if (sessionChanged()) return
+        const sm = findStreamingMsg(messages.value)
+        if (!sm) return
+        const blocks = sm.blocks!
+        for (let i = blocks.length - 1; i >= 0; i--) {
+          if (blocks[i].type === 'thinking') {
+            blocks[i].done = true
+            break
           }
-          if (data.input && Object.keys(data.input).length > 0) {
-            newBlock.input = data.input
+        }
+        onRenderNeeded()
+        break
+      }
+
+      case 'tool_use': {
+        if (sessionChanged()) return
+        const sm = findStreamingMsg(messages.value)
+        if (!sm) return
+        resetStreamTimeout()
+        const data = payload as unknown as ToolUseEventData
+        const blocks = sm.blocks!
+        const existing = blocks.find((b) => b.type === 'tool_use' && b.id === data.id)
+        if (data.done) {
+          if (existing) {
+            if (data.input && Object.keys(data.input).length > 0) {
+              existing.input = data.input
+            }
+            existing.done = true
+            if (data.status !== undefined) existing.status = data.status
+            if (data.summary !== undefined) existing.summary = data.summary
+            if (data.display_name !== undefined) existing.display_name = data.display_name
+            if (data.file_path !== undefined) existing.file_path = data.file_path
+          } else {
+            const newBlock: ContentBlock = {
+              type: 'tool_use', name: data.name!, id: data.id!, done: true,
+              status: data.status || '',
+            }
+            if (data.input && Object.keys(data.input).length > 0) {
+              newBlock.input = data.input
+            }
+            if (data.summary) newBlock.summary = data.summary
+            if (data.display_name) newBlock.display_name = data.display_name
+            if (data.file_path) newBlock.file_path = data.file_path
+            blocks.push(newBlock)
           }
-          if (data.summary) newBlock.summary = data.summary
-          if (data.display_name) newBlock.display_name = data.display_name
-          if (data.file_path) newBlock.file_path = data.file_path
-          blocks.push(newBlock)
+          const timer = toolUseTimeouts.get(data.id!)
+          if (timer) { clearTimeout(timer); toolUseTimeouts.delete(data.id!) }
+
+          if (data.name && FILE_MODIFYING_TOOLS.has(data.name) && onFileModified) {
+            const filePath = data.file_path || existing?.file_path
+            if (filePath) {
+              onFileModified(filePath)
+            }
+          }
+        } else {
+          if (existing) {
+            if (data.input && Object.keys(data.input).length > 0) {
+              existing.input = data.input
+            }
+            if (data.name) existing.name = data.name
+            if (data.status !== undefined) existing.status = data.status
+            if (data.summary !== undefined) existing.summary = data.summary
+            if (data.display_name !== undefined) existing.display_name = data.display_name
+            if (data.file_path !== undefined) existing.file_path = data.file_path
+          } else {
+            const newBlock: ContentBlock = {
+              type: 'tool_use', name: data.name!, id: data.id!, done: false,
+              status: data.status || '',
+            }
+            if (data.input && Object.keys(data.input).length > 0) {
+              newBlock.input = data.input
+            }
+            if (data.summary) newBlock.summary = data.summary
+            if (data.display_name) newBlock.display_name = data.display_name
+            if (data.file_path) newBlock.file_path = data.file_path
+            blocks.push(newBlock)
+            if (data.name !== 'PermissionApproval') {
+              const timer = setTimeout(() => {
+                if (!newBlock.done) {
+                  appLog.w(TAG, `tool_use block ${data.id} timed out without 'done', marking as done`)
+                  newBlock.done = true
+                  onRenderNeeded()
+                }
+                toolUseTimeouts.delete(data.id!)
+              }, TOOL_USE_TIMEOUT_MS)
+              toolUseTimeouts.set(data.id!, timer)
+            }
+          }
+        }
+        if (onToolUpdate && data.id) {
+          onToolUpdate(data.id)
+        }
+        if (isOpen.value) {
+          onScrollBottom()
+        }
+        break
+      }
+
+      case 'tool_result': {
+        if (sessionChanged()) return
+        const sm = findStreamingMsg(messages.value)
+        if (!sm) return
+        resetStreamTimeout()
+        const data = payload as unknown as ToolUseEventData
+        const blocks = sm.blocks!
+        const existing = blocks.find((b) => b.type === 'tool_use' && b.id === data.id)
+        if (existing) {
+          if (data.name) existing.name = data.name
+          if (data.status !== undefined) existing.status = data.status
+          existing.done = true
         }
         const timer = toolUseTimeouts.get(data.id!)
         if (timer) { clearTimeout(timer); toolUseTimeouts.delete(data.id!) }
-
-        // Use file_path from slim meta (no need to read input)
-        if (data.name && FILE_MODIFYING_TOOLS.has(data.name) && onFileModified) {
-          const filePath = data.file_path || existing?.file_path
-          if (filePath) {
-            onFileModified(filePath)
-          }
+        onRenderNeeded()
+        if (onToolResult && data.id) {
+          onToolResult(data.id)
         }
-      } else {
-        if (existing) {
-          // Slim SSE: only input present for interactive tools
-          if (data.input && Object.keys(data.input).length > 0) {
-            existing.input = data.input
-          }
-          if (data.name) existing.name = data.name
-          if (data.status !== undefined) existing.status = data.status
-          // Slim fields
-          if (data.summary !== undefined) existing.summary = data.summary
-          if (data.display_name !== undefined) existing.display_name = data.display_name
-          if (data.file_path !== undefined) existing.file_path = data.file_path
-        } else {
-          const newBlock: ContentBlock = {
-            type: 'tool_use', name: data.name!, id: data.id!, done: false,
-            status: data.status || '',
-          }
-          // Slim SSE: only input present for interactive tools (AskUserQuestion, PermissionApproval)
-          if (data.input && Object.keys(data.input).length > 0) {
-            newBlock.input = data.input
-          }
-          // Slim fields
-          if (data.summary) newBlock.summary = data.summary
-          if (data.display_name) newBlock.display_name = data.display_name
-          if (data.file_path) newBlock.file_path = data.file_path
-          blocks.push(newBlock)
-          if (data.name !== 'PermissionApproval') {
-            const timer = setTimeout(() => {
-              if (!newBlock.done) {
-                appLog.w(TAG, `tool_use block ${data.id} timed out without 'done', marking as done`)
-                newBlock.done = true
-                onRenderNeeded()
-              }
-              toolUseTimeouts.delete(data.id!)
-            }, TOOL_USE_TIMEOUT_MS)
-            toolUseTimeouts.set(data.id!, timer)
-          }
-        }
-      }
-      if (isOpen.value) {
-        onScrollBottom()
-      }
-    })
-
-    eventSource.addEventListener('tool_result', (e) => {
-      if (sessionChanged()) return
-      const sm = findStreamingMsg(messages.value)
-      if (!sm) return
-      resetStreamTimeout()
-      let data: ToolUseEventData
-      try { data = JSON.parse(e.data) } catch { appLog.w(TAG, 'SSE tool_result: invalid JSON, skipping'); return }
-      const blocks = sm.blocks!
-      const existing = blocks.find((b) => b.type === 'tool_use' && b.id === data.id)
-      if (existing) {
-        // Slim SSE: no input/output in tool_result events
-        if (data.name) existing.name = data.name
-        if (data.status !== undefined) existing.status = data.status
-        existing.done = true
-      }
-      const timer = toolUseTimeouts.get(data.id!)
-      if (timer) { clearTimeout(timer); toolUseTimeouts.delete(data.id!) }
-      onRenderNeeded()
-      if (isOpen.value) {
-        onScrollBottom()
-      }
-    })
-
-    eventSource.addEventListener('metadata', (e) => {
-      if (sessionChanged()) return
-      const sm = findStreamingMsg(messages.value)
-      if (!sm) return
-      resetStreamTimeout()
-      let data: Record<string, unknown>
-      // JSON.parse returns untyped data
-      try { data = JSON.parse(e.data) as Record<string, unknown> } catch { appLog.w(TAG, 'SSE metadata: invalid JSON, skipping'); return }
-      sm.metadata = data
-    })
-
-    eventSource.addEventListener('done', () => {
-      if (sessionChanged()) {
-        esRef.close()
-        reconnect.reset()
-        return
-      }
-      if (streamTimeout) { clearTimeout(streamTimeout); streamTimeout = null }
-      clearToolUseTimeouts()
-      thinkingBlockCounter = 0
-
-      // Finalize streaming state BEFORE loadHistory replaces the array.
-      // This ensures: (1) streaming flag removed immediately (no stuck "three dots"),
-      // (2) unfinished tool_use blocks marked done (no stuck spinners),
-      // (3) if loadHistory is slow/fails, UI is already in a clean state.
-      _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
-
-      // Diagnostic: log message state when done event received
-      const doneSummary = messages.value.map((m, i: number) =>
-        `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
-      ).join(' | ')
-      const pendingCount = messages.value.filter((m) => m.pending).length
-      appLog.d(TAG, `[done] pending msgs: ${pendingCount}; messages: ${doneSummary}`)
-
-      disconnectStream()
-      reconnect.reset()
-      onLoadHistory().then(() => {
-        // Diagnostic: log message state after loadHistory replaces the array
-        const afterSummary = messages.value.map((m, i: number) =>
-          `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
-        ).join(' | ')
-        appLog.d(TAG, `[done→loadHistory] messages(${messages.value.length}): ${afterSummary}`)
-      }).finally(() => {
-        loading.value = false
-        onMessage()
         if (isOpen.value) {
-          onScrollBottom() // Respect user scroll position — don't force if user scrolled up
+          onScrollBottom()
         }
-        onStreamEnd?.('done')
-        if (!isOpen.value) {
-          const lastMsg = messages.value[messages.value.length - 1]
-          if (lastMsg?.role === 'assistant') {
-            onToast(gt('chat.stream.aiReplied'), { icon: '🤖', duration: 5000, onClick: () => onOpen() })
-            onNotification(gt('chat.stream.aiReplied'), {
-              body: gt('chat.stream.clickToViewReply'),
-              onClick: () => onOpen()
-            })
-          }
-        }
-      })
-    })
-
-    eventSource.addEventListener('cancelled', () => {
-      if (streamTimeout) { clearTimeout(streamTimeout); streamTimeout = null }
-      if (sessionChanged()) {
-        esRef.close()
-        return
-      }
-      const sm = findStreamingMsg(messages.value)
-      if (!sm) return
-      disconnectStream()
-      sm.cancelled = true
-      // No error block needed — sm.cancelled already shows the neutral "已中断" marker.
-      // User cancellation is intentional, not an error.
-      _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
-      loading.value = false
-      onStreamEnd?.('cancelled')
-    })
-
-    eventSource.addEventListener('warning', (e) => {
-      if (sessionChanged()) return
-      const sm = findStreamingMsg(messages.value)
-      if (!sm) return
-      resetStreamTimeout()
-      let data: { text?: string; reason?: string }
-      // JSON.parse returns untyped data
-      try { data = JSON.parse(e.data) as { text?: string; reason?: string } } catch { appLog.w(TAG, 'SSE warning: invalid JSON, skipping'); return }
-      if (sm.streamingText) {
-        sm.blocks!.push({ type: 'text', text: sm.streamingText as string })
-        sm.streamingText = ''
-      }
-      const warningBlock: ContentBlock = { type: 'warning', text: data.text }
-      if (data.reason) warningBlock.reason = data.reason
-      sm.blocks!.push(warningBlock)
-      if (isOpen.value) {
-        onRenderNeeded()
-      }
-    })
-
-    eventSource.addEventListener('mode_update', (e) => {
-      if (sessionChanged()) return
-      let data: SseJsonData
-      // JSON.parse returns untyped data
-      try { data = JSON.parse(e.data) as SseJsonData } catch { appLog.w(TAG, 'SSE mode_update: invalid JSON, skipping'); return }
-      if (data.currentModeId || (data.availableModes as unknown[])?.length > 0) {
-        updateModeState(data.currentModeId as string || '', (data.availableModes || []) as { id: string; name: string }[])
-      }
-    })
-
-    eventSource.addEventListener('config_update', (e) => {
-      if (sessionChanged()) return
-      let data: SseJsonData
-      // JSON.parse returns untyped data
-      try { data = JSON.parse(e.data) as SseJsonData } catch { appLog.w(TAG, 'SSE config_update: invalid JSON, skipping'); return }
-      for (const opt of (data.options as Record<string, unknown>[] || [])) {
-        if ((opt.category as string) === 'mode' || (opt.id as string) === 'mode') {
-          const modes = ((opt.values as Record<string, string>[]) || []).map((v) => ({ id: v.id, name: v.name || v.id }))
-          const currentModeId = (data.currentValueId as string) || ''
-          if (currentModeId || modes.length > 0) {
-            updateModeState(currentModeId, modes)
-          }
-        }
-      }
-    })
-
-    eventSource.addEventListener('thinking_effort_update', (e) => {
-      if (sessionChanged()) return
-      let data: SseJsonData
-      // JSON.parse returns untyped data
-      try { data = JSON.parse(e.data) as SseJsonData } catch { appLog.w(TAG, 'SSE thinking_effort_update: invalid JSON, skipping'); return }
-      if ((data.availableLevels as unknown[])?.length > 0) {
-        const levels = ((data.availableLevels as Record<string, string>[]) || []).map((l) => ({ id: l.id, name: l.name || l.id }))
-        updateAvailableThinkingEfforts(levels)
-      }
-    })
-
-    eventSource.addEventListener('commands_update', (e) => {
-      if (sessionChanged()) return
-      let data: { commands?: unknown[] }
-      // JSON.parse returns untyped data
-      try { data = JSON.parse(e.data) as { commands?: unknown[] } } catch { appLog.w(TAG, 'SSE commands_update: invalid JSON, skipping'); return }
-      if (Array.isArray(data.commands)) {
-        updateCommandState(data.commands as { name: string; description: string; inputHint?: string }[])
-      }
-    })
-
-    eventSource.addEventListener('model_list_update', (e) => {
-      if (sessionChanged()) return
-      let data: { models?: unknown[] }
-      // JSON.parse returns untyped data
-      try { data = JSON.parse(e.data) as { models?: unknown[] } } catch { appLog.w(TAG, 'SSE model_list_update: invalid JSON, skipping'); return }
-      if (Array.isArray(data.models) && data.models.length > 0) {
-        const aid = currentAgentId.value
-        if (aid) {
-          updateACPModelList(aid, data.models as { id: string; name: string }[])
-        }
-      }
-    })
-
-    eventSource.addEventListener('plan_update', (e) => {
-      if (sessionChanged()) return
-      let data: { entries?: unknown[] }
-      // JSON.parse returns untyped data
-      try { data = JSON.parse(e.data) as { entries?: unknown[] } } catch { appLog.w(TAG, 'SSE plan_update: invalid JSON, skipping'); return }
-      if (Array.isArray(data.entries)) {
-        updatePlanEntries(data.entries as import('@/composables/usePlanProgress').PlanEntry[])
-      }
-    })
-
-    eventSource.addEventListener('usage_update', (e) => {
-      if (sessionChanged()) return
-      let data: { size?: number; used?: number; cost?: number; currency?: string; inputTokens?: number; outputTokens?: number }
-      // JSON.parse returns untyped data
-      try { data = JSON.parse(e.data) as { size?: number; used?: number; cost?: number; currency?: string; inputTokens?: number; outputTokens?: number } } catch { appLog.w(TAG, 'SSE usage_update: invalid JSON, skipping'); return }
-      if ((data.size ?? 0) > 0) {
-        updateUsageState(data.used ?? 0, data.size!, data.cost, data.currency, sessionId, data.inputTokens, data.outputTokens)
-      }
-    })
-
-    // ── Queue queued — new message was enqueued while session is running ──
-    // Pushes a pending user message into messages.value. Deduplicates against
-    // optimistically pushed pending messages (by content text match).
-    eventSource.addEventListener('queue_queued', (e) => {
-      resetStreamTimeout()
-      let data: QueueEventData
-      // JSON.parse returns untyped data
-      try { data = JSON.parse(e.data) as QueueEventData } catch { appLog.w(TAG, 'SSE queue_queued: invalid JSON, skipping'); return }
-
-      const eventSessionId = data.sessionId || sessionId
-      if (eventSessionId !== currentSessionId.value) return
-
-      const queueText = data.text || ''
-      // Dedup: if a pending message with this content already exists, skip
-      const alreadyPending = messages.value.some(
-        (m) => m.role === 'user' && m.pending && m.content === queueText
-      )
-      if (!alreadyPending && queueText) {
-        const queueFileEntries = [
-          ...(data.files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
-          ...(data.filePaths || []).map(p => ({ path: p, isDir: false })),
-        ]
-        messages.value.push({
-          role: 'user',
-          id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          content: queueText,
-          blocks: queueText ? [{ type: 'text', text: queueText }] : [],
-          files: queueFileEntries,
-          createdAt: new Date().toISOString(),
-          pending: true,
-        })
-        appLog.d(TAG, `[queue_queued] text="${queueText.slice(0,40)}" pushed to messages`)
-        onRenderNeeded()
-        if (isOpen.value) onScrollBottom() // Respect user scroll position
-      } else {
-        appLog.d(TAG, `[queue_queued] text="${queueText.slice(0,40)}" dedup (already pending)`)
-      }
-    })
-
-    // ── Queue drain — atomic replacement for old queue_done + queue_consume ──
-    // Single event that atomically: finalizes current streaming, creates new
-    // streaming placeholder. Pending messages are in messages.value with pending: true.
-    eventSource.addEventListener('queue_drain', (e) => {
-      resetStreamTimeout()
-      let data: QueueEventData
-      // JSON.parse returns untyped data
-      try { data = JSON.parse(e.data) as QueueEventData } catch { appLog.w(TAG, 'SSE queue_drain: invalid JSON, skipping'); return }
-
-      const eventSessionId = data.sessionId || sessionId
-
-      // Diagnostic: snapshot messages BEFORE drain
-      const beforeLen = messages.value.length
-      const beforeStreamingCount = messages.value.filter((m) => m.streaming).length
-
-      // Only update messages.value if this event is for the currently viewed session.
-      if (eventSessionId === currentSessionId.value) {
-        const drainText = data.text || ''
-        const drainFiles: FileEntry[] = [
-          ...(data.files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
-          ...(data.filePaths || []).map(p => ({ path: p, isDir: false })),
-        ]
-        drainQueueMessage(
-          messages.value, drainText, drainFiles, currentBackend.value,
-          { onRenderNeeded, onExtractScheduledTasks },
-          undefined,
-          data.messageId || undefined
-        )
-
-        // Diagnostic: snapshot messages AFTER drain
-        const afterLen = messages.value.length
-        const afterStreamingCount = messages.value.filter((m) => m.streaming).length
-        appLog.d(TAG, `[queue_drain] sid=${eventSessionId.slice(0,8)} msgId=${data.messageId || 'none'} text="${drainText.slice(0,40)}" | before(${beforeLen},streaming=${beforeStreamingCount}) after(${afterLen},streaming=${afterStreamingCount})`)
-
-        if (isOpen.value) {
-          onRenderNeeded()
-          onScrollBottom() // Respect user scroll position
-        }
-      } else {
-        // Event for a background session — skip. Pending messages in
-        // messages.value belong to the current session; background session's
-        // pending messages will be synced via fetchQueue when user switches.
-        appLog.d(TAG, `[queue_drain] sid=${eventSessionId.slice(0,8)} background session, skipped`)
-      }
-    })
-
-    // queue_update: sent when a new message is enqueued while a session is running.
-    // queue_update: sent when queue state changes (e.g. another client enqueues).
-    // Replaces pending portion of messages.value with backend queue state.
-    eventSource.addEventListener('queue_update', (e) => {
-      resetStreamTimeout()
-      let data: QueueUpdateEventData
-      // JSON.parse returns untyped data
-      try { data = JSON.parse(e.data) as QueueUpdateEventData } catch { appLog.w(TAG, 'SSE queue_update: invalid JSON, skipping'); return }
-
-      // Route by event's explicit sessionId (fallback to captured sessionId)
-      const eventSessionId = data.sessionId || sessionId
-
-      // Replace pending portion of messages.value with backend queue state.
-      // The backend queue is the source of truth for pending messages.
-      if (eventSessionId === currentSessionId.value) {
-        const backendQueue = data.queue || []
-        // Remove all existing pending messages from messages.value
-        for (let i = messages.value.length - 1; i >= 0; i--) {
-          if (messages.value[i].pending) messages.value.splice(i, 1)
-        }
-        // Push backend queue items as pending messages
-        for (const item of backendQueue) {
-          const itemFileEntries = [
-            ...(item.files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
-            ...(item.filePaths || []).map(p => ({ path: p, isDir: false })),
-          ]
-          messages.value.push({
-            role: 'user',
-            id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            content: item.text || '',
-            blocks: item.text ? [{ type: 'text', text: item.text }] : [],
-            files: itemFileEntries,
-            createdAt: item.createdAt || new Date().toISOString(),
-            pending: true,
-          })
-        }
-        appLog.d(TAG, `[queue_update] sid=${eventSessionId.slice(0,8)} synced ${backendQueue.length} pending msgs from backend`)
-        onRenderNeeded()
+        break
       }
 
-    })
-
-    eventSource.addEventListener('error', (e) => {
-      if (streamTimeout) { clearTimeout(streamTimeout); streamTimeout = null }
-      if (sessionChanged()) return
-      // Mark this connection as terminated by a server-sent error event.
-      sseErrorHandled = true
-      disconnectStream()
-      let errorData: ErrorEventData | undefined
-      // JSON.parse returns untyped data
-      try { errorData = JSON.parse((e as MessageEvent).data) as ErrorEventData } catch { /* ignore parse failure */ }
-      if (errorData?.reason === 'sse_busy') {
-        sseErrorHandled = false
-        return
-      }
-      // Non-sse_busy errors — reload from DB for final state
-      onLoadHistory().catch(() => {
+      case 'metadata': {
         if (sessionChanged()) return
         const sm = findStreamingMsg(messages.value)
-        if (sm) {
-          const errorBlock: ContentBlock = { type: 'error', text: errorData?.error || 'Unknown error' }
-          if (errorData?.reason) errorBlock.reason = errorData.reason
-          sm.blocks = [errorBlock]
-        }
+        if (!sm) return
+        resetStreamTimeout()
+        sm.metadata = payload as Record<string, unknown>
+        break
+      }
+
+      case 'done': {
+        if (sessionChanged()) return
+        if (streamTimeout) { clearTimeout(streamTimeout); streamTimeout = null }
+        clearToolUseTimeouts()
+        thinkingBlockCounter = 0
+
+        _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
+
+        const doneSummary = messages.value.map((m, i: number) =>
+          `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
+        ).join(' | ')
+        const pendingCount = messages.value.filter((m) => m.pending).length
+        appLog.d(TAG, `[done] pending msgs: ${pendingCount}; messages: ${doneSummary}`)
+
+        disconnectStream()
+        onLoadHistory().then(() => {
+          const afterSummary = messages.value.map((m, i: number) =>
+            `[${i}] ${m.role}${m.id ? ` id=${m.id}` : ''}${m.streaming ? ' STREAMING' : ''} content="${(m.content || '').slice(0, 30)}" blocks=${m.blocks?.length || 0}`
+          ).join(' | ')
+          appLog.d(TAG, `[done→loadHistory] messages(${messages.value.length}): ${afterSummary}`)
+        }).finally(() => {
+          loading.value = false
+          onMessage()
+          if (isOpen.value) {
+            onScrollBottom()
+          }
+          onStreamEnd?.('done')
+          if (!isOpen.value) {
+            const lastMsg = messages.value[messages.value.length - 1]
+            if (lastMsg?.role === 'assistant') {
+              onToast(gt('chat.stream.aiReplied'), { icon: '🤖', duration: 5000, onClick: () => onOpen() })
+              onNotification(gt('chat.stream.aiReplied'), {
+                body: gt('chat.stream.clickToViewReply'),
+                onClick: () => onOpen()
+              })
+            }
+          }
+        })
+        break
+      }
+
+      case 'cancelled': {
+        if (streamTimeout) { clearTimeout(streamTimeout); streamTimeout = null }
+        if (sessionChanged()) return
+        const sm = findStreamingMsg(messages.value)
+        if (!sm) return
+        disconnectStream()
+        sm.cancelled = true
         _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
         loading.value = false
-      })
-      onStreamEnd?.('error')
-    })
-
-    // Flag to coordinate between the SSE 'error' named event and onerror.
-    let sseErrorHandled = false
-
-    eventSource.onerror = () => {
-      if (streamTimeout) { clearTimeout(streamTimeout); streamTimeout = null }
-      if (disconnectedByCleanup) {
-        disconnectedByCleanup = false
-        return
+        onStreamEnd?.('cancelled')
+        break
       }
-      if (sseErrorHandled) {
-        sseErrorHandled = false
+
+      case 'error': {
+        if (streamTimeout) { clearTimeout(streamTimeout); streamTimeout = null }
+        if (sessionChanged()) return
         disconnectStream()
-        reconnect.reset()
-        return
+        const errorData = payload as unknown as ErrorEventData
+        onLoadHistory().catch(() => {
+          if (sessionChanged()) return
+          const sm = findStreamingMsg(messages.value)
+          if (sm) {
+            const errorBlock: ContentBlock = { type: 'error', text: errorData?.error || 'Unknown error' }
+            if (errorData?.reason) errorBlock.reason = errorData.reason
+            sm.blocks = [errorBlock]
+          }
+          _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
+          loading.value = false
+        })
+        onStreamEnd?.('error')
+        break
       }
-      const wasRecoverable = esRef.readyState !== EventSource.CLOSED
-      disconnectStream()
-      if (wasRecoverable && currentSessionId.value && loading.value && reconnect.shouldReconnect()) {
-        reconnect.scheduleReconnect()
-      } else {
-        reconnect.reset()
-        loading.value = true  // Keep loading true — session is still running
-        pollUntilDone()
+
+      case 'warning': {
+        if (sessionChanged()) return
+        const sm = findStreamingMsg(messages.value)
+        if (!sm) return
+        resetStreamTimeout()
+        const warningData = payload as { text?: string; reason?: string }
+        if (sm.streamingText) {
+          sm.blocks!.push({ type: 'text', text: sm.streamingText as string })
+          sm.streamingText = ''
+        }
+        const warningBlock: ContentBlock = { type: 'warning', text: warningData.text }
+        if (warningData.reason) warningBlock.reason = warningData.reason
+        sm.blocks!.push(warningBlock)
+        if (isOpen.value) {
+          onRenderNeeded()
+        }
+        break
+      }
+
+      case 'mode_update': {
+        if (sessionChanged()) return
+        const modeData = payload as Record<string, unknown>
+        if (modeData.currentModeId || (modeData.availableModes as unknown[])?.length > 0) {
+          updateModeState(modeData.currentModeId as string || '', (modeData.availableModes || []) as { id: string; name: string }[])
+        }
+        break
+      }
+
+      case 'config_update': {
+        if (sessionChanged()) return
+        const configData = payload as Record<string, unknown>
+        for (const opt of (configData.options as Record<string, unknown>[] || [])) {
+          if ((opt.category as string) === 'mode' || (opt.id as string) === 'mode') {
+            const modes = ((opt.values as Record<string, string>[]) || []).map((v) => ({ id: v.id, name: v.name || v.id }))
+            const currentModeId = (configData.currentValueId as string) || ''
+            if (currentModeId || modes.length > 0) {
+              updateModeState(currentModeId, modes)
+            }
+          }
+        }
+        break
+      }
+
+      case 'thinking_effort_update': {
+        if (sessionChanged()) return
+        const effortData = payload as Record<string, unknown>
+        if ((effortData.availableLevels as unknown[])?.length > 0) {
+          const levels = ((effortData.availableLevels as Record<string, string>[]) || []).map((l) => ({ id: l.id, name: l.name || l.id }))
+          updateAvailableThinkingEfforts(levels)
+        }
+        break
+      }
+
+      case 'commands_update': {
+        if (sessionChanged()) return
+        const cmdData = payload as { commands?: unknown[] }
+        if (Array.isArray(cmdData.commands)) {
+          updateCommandState(cmdData.commands as { name: string; description: string; inputHint?: string }[])
+        }
+        break
+      }
+
+      case 'model_list_update': {
+        if (sessionChanged()) return
+        const mlData = payload as { models?: unknown[] }
+        if (Array.isArray(mlData.models) && mlData.models.length > 0) {
+          const aid = currentAgentId.value
+          if (aid) {
+            updateACPModelList(aid, mlData.models as { id: string; name: string }[])
+          }
+        }
+        break
+      }
+
+      case 'plan_update': {
+        if (sessionChanged()) return
+        const planData = payload as { entries?: unknown[] }
+        if (Array.isArray(planData.entries)) {
+          updatePlanEntries(planData.entries as import('@/composables/usePlanProgress').PlanEntry[])
+        }
+        break
+      }
+
+      case 'usage_update': {
+        if (sessionChanged()) return
+        const usageData = payload as { size?: number; used?: number; cost?: number; currency?: string; inputTokens?: number; outputTokens?: number }
+        if ((usageData.size ?? 0) > 0) {
+          updateUsageState(usageData.used ?? 0, usageData.size!, usageData.cost, usageData.currency, sessionId, usageData.inputTokens, usageData.outputTokens)
+        }
+        break
+      }
+
+      case 'user_message': {
+        if (sessionChanged()) return
+        const userData = payload as { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string }
+
+        // Skip self-echo: if the sender is this device, we already have the optimistic message
+        const myClientId = localStorage.getItem('clawbench_client_id')
+        if (userData.senderClientId && userData.senderClientId === myClientId) break
+
+        resetStreamTimeout()
+        const userContent = userData.content || ''
+        const userFiles: FileEntry[] = [
+          ...(userData.files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
+        ]
+        const msgId = userData.messageId || 0
+        const remoteQueueId = userData.queueId || ''
+
+        // Deduplicate: skip if a message with same DB ID or same content already exists
+        // (e.g. loadHistory already loaded it from DB)
+        const alreadyExists = messages.value.some((m) => {
+          if (m.role !== 'user') return false
+          if (msgId > 0 && m.id === msgId) return true
+          if (m.content === userContent && !m.pending && !m._remote) return true
+          return false
+        })
+        if (alreadyExists) break
+
+        const newMsg: ChatMessage = {
+          role: 'user',
+          id: msgId > 0 ? msgId : `remote-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          content: userContent,
+          blocks: userContent ? [{ type: 'text', text: userContent }] : [],
+          files: userFiles,
+          createdAt: new Date().toISOString(),
+          _remote: true,
+          backend: currentBackend.value,
+          ...(remoteQueueId ? { _remoteQueueId: remoteQueueId } : {}),
+        }
+
+        // Insert before streaming assistant message (or at end)
+        const streamingIdx = messages.value.findIndex(m => m.role === 'assistant' && m.streaming)
+        if (streamingIdx !== -1) {
+          messages.value.splice(streamingIdx, 0, newMsg)
+        } else {
+          messages.value.push(newMsg)
+        }
+
+        debouncedRender()
+        if (isOpen.value) {
+          onScrollBottom()
+        }
+        break
+      }
+
+      case 'queue_drain': {
+        resetStreamTimeout()
+        const drainData = payload as unknown as QueueEventData
+        const eventSessionId = drainData.sessionId || sessionId
+
+        const beforeLen = messages.value.length
+        const beforeStreamingCount = messages.value.filter((m) => m.streaming).length
+
+        if (eventSessionId === currentSessionId.value) {
+          const drainText = drainData.text || ''
+          const drainFiles: FileEntry[] = [
+            ...(drainData.files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
+            ...(drainData.filePaths || []).map(p => ({ path: p, isDir: false })),
+          ]
+          drainQueueMessage(
+            messages.value, drainData.queueId || '', drainText, drainFiles, currentBackend.value,
+            { onRenderNeeded, onExtractScheduledTasks },
+            undefined,
+            drainData.messageId || undefined
+          )
+
+          const afterLen = messages.value.length
+          const afterStreamingCount = messages.value.filter((m) => m.streaming).length
+          appLog.d(TAG, `[queue_drain] sid=${eventSessionId.slice(0,8)} queueId=${drainData.queueId || 'none'} msgId=${drainData.messageId || 'none'} text="${drainText.slice(0,40)}" | before(${beforeLen},streaming=${beforeStreamingCount}) after(${afterLen},streaming=${afterStreamingCount})`)
+
+          if (isOpen.value) {
+            onRenderNeeded()
+            onScrollBottom()
+          }
+        }
+        break
+      }
+
+      case 'queue_cancel': {
+        const cancelData = payload as { sessionId?: string; queueIds?: string[] }
+        const eventSessionId = cancelData.sessionId || sessionId
+        if (eventSessionId !== currentSessionId.value) break
+        const removed = cancelPendingMessages(messages.value, cancelData.queueIds || [])
+        appLog.d(TAG, `[queue_cancel] sid=${eventSessionId.slice(0,8)} removed ${removed} pending msgs with queueIds: ${cancelData.queueIds?.join(',') || 'none'}`)
+        onRenderNeeded()
+        break
       }
     }
-  }
+  })
 
   async function cancelStream() {
     if (!currentSessionId.value || !loading.value) return
-    try {
-      await cancelChat(currentSessionId.value)
-    } catch (err: unknown) {
-      appLog.e(TAG, 'Failed to cancel:', err)
-      disconnectStream()
-      forceCleanupStreamingState()
-      onStreamEnd?.('cancelled')
-    }
+    // Send cancel via WS
+    sendWsMessage({ type: 'cancel', session_id: currentSessionId.value })
   }
+
+  // Re-subscribe on WS reconnect
+  const stopConnectedWatch = watch(connected, (isConnected) => {
+    if (isConnected && isStreaming && currentSessionId.value) {
+      appLog.i(TAG, 'WS reconnected, re-subscribing to session stream')
+      sendWsMessage({ type: 'subscribe', session_id: currentSessionId.value })
+      resetStreamTimeout()
+    }
+  })
 
   function handleOnline() {
     if (!loading.value || !currentSessionId.value) return
-    if (eventSource) {
-      appLog.i(TAG, 'Network recovered, reconnecting SSE stream')
-      disconnectStream()
-      connectStream(currentSessionId.value)
+    if (isStreaming) {
+      appLog.i(TAG, 'Network recovered, stream will re-subscribe via WS')
     }
   }
   window.addEventListener('online', handleOnline)
 
-  function handleStreamVisibility() {
-    if (document.visibilityState === 'hidden') {
-      disconnectStream()
-      stopPolling()
-    }
-  }
-
-  onMounted(() => {
-    document.addEventListener('visibilitychange', handleStreamVisibility)
-  })
-
   onUnmounted(() => {
     disconnectStream()
-    stopPolling()
     clearToolUseTimeouts()
+    unsubscribeFromWs()
+    stopConnectedWatch()
     window.removeEventListener('online', handleOnline)
-    document.removeEventListener('visibilitychange', handleStreamVisibility)
   })
 
   return {
     connectStream,
     disconnectStream,
     cancelStream,
-    stopPolling,
   }
 }

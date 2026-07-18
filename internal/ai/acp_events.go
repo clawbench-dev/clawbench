@@ -14,7 +14,7 @@ import (
 // sends them to the stream channel. Called from ClawBenchACPClient.SessionUpdate,
 // which runs on the SDK's internal goroutine.
 // If conn is non-nil, mode/config/thinking cache updates are applied to the connection
-// so that re-emitted SSE events reflect the latest state.
+// so that re-emitted WS events reflect the latest state.
 func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx context.Context, conn *ACPConn, deb *toolCallDebouncer) { //nolint:gocognit,gocyclo,revive,unparam // ACP protocol has many event types, each branch is simple; ctx position follows ACP SDK convention; ctx reserved for future use
 	// Extract backendID once for all downstream ACP event mapping.
 	// conn.agent.Backend provides the backend identifier (e.g. "kimi", "claude").
@@ -60,7 +60,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 	case update.ToolCallUpdate != nil:
 		tcu := update.ToolCallUpdate
 
-		// Debounce non-terminal ToolCallUpdate events to reduce SSE traffic.
+		// Debounce non-terminal ToolCallUpdate events to reduce WS traffic.
 		// ACP agents emit ToolCallUpdate deltas every ~30ms during tool input
 		// streaming. Batching these into a single event per 50ms window cuts
 		// the event rate by ~95% without losing any information.
@@ -145,7 +145,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 
 	case update.CurrentModeUpdate != nil:
 		// v1 mode update: only currentModeId; available modes were sent in session/new.
-		// Update session-level current value and forward SSE event so the frontend can reflect
+		// Update session-level current value and forward WS event so the frontend can reflect
 		// agent-initiated mode changes. Only accept the mode if it's in availableModes
 		// to filter out invalid mode reports from bridge adapters.
 		mu := update.CurrentModeUpdate
@@ -196,7 +196,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 					reg := GetAgentCapabilityRegistry()
 					newModes := derived != nil && reg.HasNewAvailableModes(agentID, derived.AvailableModes)
 					modeChanged := derived != nil && conn.HasCurrentModeChanged(derived.CurrentModeID)
-					// Forward config_update SSE if available modes or currentModeId changed.
+					// Forward config_update WS if available modes or currentModeId changed.
 					if newModes || modeChanged {
 						forwardACPEvent(ch, StreamEvent{Type: "config_update", Config: configState})
 					}
@@ -230,7 +230,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 					if conn != nil {
 						agentID := conn.AgentID()
 						reg := GetAgentCapabilityRegistry()
-						// Diff-check: only forward SSE if available levels actually changed.
+						// Diff-check: only forward WS if available levels actually changed.
 						if reg.HasNewAvailableThinkingEfforts(agentID, effortState.AvailableLevels) {
 							// Update agent-level thinking efforts in registry
 							reg.UpdateThinkingEfforts(agentID, effortState.AvailableLevels)
@@ -248,7 +248,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 					if conn != nil {
 						agentID := conn.AgentID()
 						reg := GetAgentCapabilityRegistry()
-						// Diff-check: only forward SSE if available models actually changed.
+						// Diff-check: only forward WS if available models actually changed.
 						if reg.HasNewAvailableModels(agentID, modelList.Models) {
 							// Update agent-level models in registry
 							reg.UpdateModels(agentID, modelList.Models)
@@ -277,11 +277,6 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		forwardACPEvent(ch, StreamEvent{Type: "usage_update", Usage: usageState})
 		if conn != nil {
 			conn.SetCachedUsageState(usageState)
-			// Also cache in agent-level registry so usage chips appear on
-			// session switch / reconnect without waiting for a new UsageUpdate.
-			if agentID := conn.AgentID(); agentID != "" {
-				GetAgentCapabilityRegistry().UpdateUsageState(agentID, usageState)
-			}
 		}
 	}
 }

@@ -500,6 +500,125 @@ func TestApplyDefaults_RecentProjectsMaxCountExplicit(t *testing.T) {
 	}
 }
 
+func TestApplyDefaults_LogLevel(t *testing.T) {
+	setupTestBinDir(t)
+
+	// Default LogLevel
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+	if cfg.LogLevel != "info" {
+		t.Errorf("LogLevel = %q, want %q", cfg.LogLevel, "info")
+	}
+
+	// Explicit LogLevel should be preserved
+	cfg2 := Config{LogLevel: "debug"}
+	ApplyDefaults(&cfg2, map[string]bool{"log_level": true})
+	if cfg2.LogLevel != "debug" {
+		t.Errorf("LogLevel = %q, want %q (explicitly set)", cfg2.LogLevel, "debug")
+	}
+}
+
+func TestApplyDefaults_LocalhostAuthExempt(t *testing.T) {
+	setupTestBinDir(t)
+
+	// Default: true when not in presence map
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+	if !cfg.LocalhostAuthExempt {
+		t.Error("LocalhostAuthExempt should default to true when absent from config")
+	}
+
+	// Explicitly set to false via presence map
+	cfg2 := Config{}
+	cfg2.LocalhostAuthExempt = false
+	ApplyDefaults(&cfg2, map[string]bool{"localhost_auth_exempt": true})
+	if cfg2.LocalhostAuthExempt {
+		t.Error("LocalhostAuthExempt should stay false when explicitly set")
+	}
+}
+
+func TestApplyDefaults_FRPDefaults(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+
+	if cfg.FRP.ServerPort != 7000 {
+		t.Errorf("FRP.ServerPort = %d, want 7000", cfg.FRP.ServerPort)
+	}
+	// FRP.Enabled should default to false (bool zero-value, intentional)
+	if cfg.FRP.Enabled {
+		t.Error("FRP.Enabled should default to false")
+	}
+}
+
+func TestApplyDefaults_SummarizeBackendMigration(t *testing.T) {
+	setupTestBinDir(t)
+
+	// Test legacy agent backend migration for Summarize.Backend
+	for _, backend := range []string{"claude", "codebuddy", "opencode", "codex", "qoder", "vecli", "deepseek", "pi", "mimo"} {
+		t.Run("backend_"+backend, func(t *testing.T) {
+			cfg := Config{}
+			cfg.Summarize.Backend = backend
+			ApplyDefaults(&cfg, nil)
+			if cfg.Summarize.Backend != "api" {
+				t.Errorf("Summarize.Backend = %q after migration from %q, want %q", cfg.Summarize.Backend, backend, "api")
+			}
+		})
+	}
+}
+
+func TestApplyDefaults_SummarizeTTSBackendMigration(t *testing.T) {
+	setupTestBinDir(t)
+
+	// Test legacy agent backend migration for Summarize.TTSBackend
+	for _, backend := range []string{"claude", "codebuddy", "opencode", "codex"} {
+		t.Run("tts_backend_"+backend, func(t *testing.T) {
+			cfg := Config{}
+			cfg.Summarize.TTSBackend = backend
+			ApplyDefaults(&cfg, nil)
+			if cfg.Summarize.TTSBackend != "api" {
+				t.Errorf("Summarize.TTSBackend = %q after migration from %q, want %q", cfg.Summarize.TTSBackend, backend, "api")
+			}
+		})
+	}
+}
+
+func TestApplyDefaults_SummarizeBackendNonAgent(t *testing.T) {
+	setupTestBinDir(t)
+
+	// Non-agent backends should NOT be migrated
+	cfg := Config{}
+	cfg.Summarize.Backend = "api"
+	cfg.Summarize.TTSBackend = "simple"
+	ApplyDefaults(&cfg, nil)
+	if cfg.Summarize.Backend != "api" {
+		t.Errorf("Summarize.Backend = %q, want %q (non-agent backend should not be migrated)", cfg.Summarize.Backend, "api")
+	}
+	if cfg.Summarize.TTSBackend != "simple" {
+		t.Errorf("Summarize.TTSBackend = %q, want %q (non-agent backend should not be migrated)", cfg.Summarize.TTSBackend, "simple")
+	}
+}
+
+func TestApplyDefaults_RAGExplicitOverridesOllama(t *testing.T) {
+	setupTestBinDir(t)
+
+	// When both new and old fields are set, new fields take precedence
+	cfg := Config{}
+	cfg.RAG.BaseURL = "http://new-url:11434"
+	cfg.RAG.Model = "new-model"
+	cfg.RAG.OllamaBaseURL = "http://old-url:11434"
+	cfg.RAG.OllamaModel = "old-model"
+	ApplyDefaults(&cfg, nil)
+
+	if cfg.RAG.BaseURL != "http://new-url:11434" {
+		t.Errorf("RAG.BaseURL = %q, want %q (new field should take precedence)", cfg.RAG.BaseURL, "http://new-url:11434")
+	}
+	if cfg.RAG.Model != "new-model" {
+		t.Errorf("RAG.Model = %q, want %q (new field should take precedence)", cfg.RAG.Model, "new-model")
+	}
+}
+
 // TestApplyDefaults_AutoPasswordEntropy verifies ISS-269: auto-generated
 // password has 128 bits of entropy (16 bytes = 32 hex chars), not 32 bits.
 func TestApplyDefaults_AutoPasswordEntropy(t *testing.T) {
@@ -518,5 +637,86 @@ func TestApplyDefaults_AutoPasswordEntropy(t *testing.T) {
 			t.Errorf("auto-generated password contains non-hex char %q, ISS-269", c)
 			break
 		}
+	}
+}
+
+func TestApplyDefaults_PushMode_DefaultNative(t *testing.T) {
+	tmpDir := setupTestBinDir(t)
+	_ = tmpDir
+
+	cfg := Config{}
+	ApplyDefaults(&cfg, nil)
+
+	if cfg.PushMode != "native" {
+		t.Errorf("expected PushMode=native, got %q", cfg.PushMode)
+	}
+	if cfg.DingTalk.Enabled {
+		t.Error("expected DingTalk.Enabled=false when PushMode=native")
+	}
+}
+
+func TestApplyDefaults_PushMode_MigrationFromDingTalkEnabled(t *testing.T) {
+	tmpDir := setupTestBinDir(t)
+	_ = tmpDir
+
+	cfg := Config{}
+	cfg.DingTalk.Enabled = true
+	cfg.DingTalk.AppKey = "test-key"
+	cfg.DingTalk.AppSecret = "test-secret"
+	ApplyDefaults(&cfg, nil)
+
+	if cfg.PushMode != "dingtalk" {
+		t.Errorf("expected PushMode=dingtalk when DingTalk.Enabled=true, got %q", cfg.PushMode)
+	}
+	if !cfg.DingTalk.Enabled {
+		t.Error("expected DingTalk.Enabled=true when PushMode=dingtalk")
+	}
+}
+
+func TestApplyDefaults_PushMode_ExplicitNativeKeepsDingTalkDisabled(t *testing.T) {
+	tmpDir := setupTestBinDir(t)
+	_ = tmpDir
+
+	cfg := Config{}
+	cfg.PushMode = "native"
+	ApplyDefaults(&cfg, nil)
+
+	if cfg.PushMode != "native" {
+		t.Errorf("expected PushMode=native, got %q", cfg.PushMode)
+	}
+	if cfg.DingTalk.Enabled {
+		t.Error("expected DingTalk.Enabled=false when PushMode=native")
+	}
+}
+
+func TestApplyDefaults_PushMode_ExplicitDingTalkSyncsEnabled(t *testing.T) {
+	tmpDir := setupTestBinDir(t)
+	_ = tmpDir
+
+	cfg := Config{}
+	cfg.PushMode = "dingtalk"
+	ApplyDefaults(&cfg, nil)
+
+	if cfg.PushMode != "dingtalk" {
+		t.Errorf("expected PushMode=dingtalk, got %q", cfg.PushMode)
+	}
+	if !cfg.DingTalk.Enabled {
+		t.Error("expected DingTalk.Enabled=true when PushMode=dingtalk")
+	}
+}
+
+func TestApplyDefaults_PushMode_DisabledSyncsEnabled(t *testing.T) {
+	tmpDir := setupTestBinDir(t)
+	_ = tmpDir
+
+	cfg := Config{}
+	cfg.PushMode = "disabled"
+	ApplyDefaults(&cfg, nil)
+
+	if cfg.PushMode != "disabled" {
+		t.Errorf("expected PushMode=disabled, got %q", cfg.PushMode)
+	}
+	if cfg.DingTalk.Enabled {
+		t.Error("expected DingTalk.Enabled=false when PushMode=disabled")
 	}
 }

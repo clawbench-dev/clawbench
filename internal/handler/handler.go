@@ -219,12 +219,12 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/me", ServeAuthCheck)
 	register("/api/roots", middleware.Auth(ServeRoots))
 	register("/api/config", middleware.Auth(ServeConfig))
+	register("/api/config/test", middleware.Auth(ServeConfigTest))
 	register("/api/config/restart", middleware.Auth(ServeConfigRestart))
 	register("/api/config/password", middleware.Auth(ServeConfigPassword))
 	register("/api/projects", middleware.Auth(ServeProjects))
 	register("/api/project", middleware.Auth(ServeProjectSet))
 	register("/api/ai/chat", middleware.Auth(AIChat))
-	register("/api/ai/chat/stream", middleware.Auth(AIChatStream))
 	register("/api/ai/chat/cancel", middleware.Auth(CancelChat))
 	register("/api/ai/queue", middleware.Auth(QueueHandler))
 	register("/api/ai/history", middleware.Auth(ServeChatHistory))
@@ -288,11 +288,14 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/rag/message", middleware.Auth(ServeRAGMessage))
 	register("/api/rag/session", middleware.Auth(ServeRAGSession))
 
-	// Android log collection — intentionally unauthenticated:
+	// Client log collection — intentionally unauthenticated:
 	// Android AppLog sends logs via native HttpURLConnection (no WebView cookies).
+	// JS frontend sends logs via fetch (no auth required for debug logs).
 	// This endpoint only accepts log entries (write-only, no read); the data is
 	// non-sensitive debug logs. Auth is unnecessary and would block the feature.
-	register("/api/android-log", ServeAndroidLog)
+	register("/api/client-log", ServeClientLog)
+	// Legacy: keep /api/android-log for old APKs that hardcode this URL.
+	register("/api/android-log", ServeClientLog)
 
 	// Android APK download — intentionally unauthenticated:
 	// APK is a public resource; users need to download it before they can even log in.

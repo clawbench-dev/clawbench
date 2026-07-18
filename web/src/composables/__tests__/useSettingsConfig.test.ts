@@ -126,7 +126,7 @@ describe('useSettingsConfig', () => {
     expect('showHidden' in localConfig).toBe(true)
     expect('fileView' in localConfig).toBe(true)
     expect('terminalFontSize' in localConfig).toBe(true)
-    expect('androidLogCapture' in localConfig).toBe(true)
+    expect('logCapture' in localConfig).toBe(true)
     expect('swipeSession' in localConfig).toBe(true)
   })
 
@@ -414,6 +414,47 @@ describe('useSettingsConfig', () => {
 
       window.removeEventListener('clawbench-autospeech-change', listener)
       localStorage.removeItem('clawbench-settings-autoSpeech')
+    })
+  })
+
+  describe('push_mode sync', () => {
+    it('calls AndroidNative.setNativePushEnabled on loadConfig', async () => {
+      const mockSetNativePushEnabled = vi.fn()
+      const original = (window as any).AndroidNative
+      ;(window as any).AndroidNative = { setNativePushEnabled: mockSetNativePushEnabled }
+
+      // Mock API to return push_mode
+      mockedApiGet.mockResolvedValueOnce({ push_mode: 'native' })
+
+      const { loadConfig } = useSettingsConfig()
+      await loadConfig()
+      // Default push_mode is "native", so setNativePushEnabled should be called with true
+      expect(mockSetNativePushEnabled).toHaveBeenCalledWith(true)
+
+      // Restore
+      if (original) {
+        ;(window as any).AndroidNative = original
+      } else {
+        delete (window as any).AndroidNative
+      }
+    })
+
+    it('calls AndroidNative.setNativePushEnabled(false) when push_mode is dingtalk', async () => {
+      const mockSetNativePushEnabled = vi.fn()
+      const original = (window as any).AndroidNative
+      ;(window as any).AndroidNative = { setNativePushEnabled: mockSetNativePushEnabled }
+
+      mockedApiGet.mockResolvedValueOnce({ push_mode: 'dingtalk' })
+
+      const { loadConfig } = useSettingsConfig()
+      await loadConfig()
+      expect(mockSetNativePushEnabled).toHaveBeenCalledWith(false)
+
+      if (original) {
+        ;(window as any).AndroidNative = original
+      } else {
+        delete (window as any).AndroidNative
+      }
     })
   })
 

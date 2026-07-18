@@ -260,3 +260,49 @@ func TestManager_Reconfigure_NilDB(t *testing.T) {
 	}
 	// Should not panic when db is nil — MergeConfigSubscribers is skipped
 }
+
+func TestManager_SetStartedForTest(t *testing.T) {
+	mgr := NewManager(&model.DingTalkConfig{Enabled: true, AppKey: "key", AppSecret: "secret"})
+
+	// Initially not started
+	if mgr.started {
+		t.Error("expected started=false initially")
+	}
+
+	// Set started via test helper
+	mgr.SetStartedForTest(true)
+	if !mgr.started {
+		t.Error("expected started=true after SetStartedForTest(true)")
+	}
+
+	// Set back to false
+	mgr.SetStartedForTest(false)
+	if mgr.started {
+		t.Error("expected started=false after SetStartedForTest(false)")
+	}
+}
+
+func TestManager_SetStartedForTest_IsStartedIntegration(t *testing.T) {
+	origMgr := GetManager()
+	defer SetManager(origMgr)
+
+	mgr := NewManager(&model.DingTalkConfig{Enabled: true, AppKey: "key", AppSecret: "secret"})
+	SetManager(mgr)
+
+	// Not started initially
+	if IsStarted() {
+		t.Error("expected IsStarted=false initially")
+	}
+
+	// Use SetStartedForTest to simulate started state
+	mgr.SetStartedForTest(true)
+	if !IsStarted() {
+		t.Error("expected IsStarted=true after SetStartedForTest(true)")
+	}
+
+	// Reset
+	mgr.SetStartedForTest(false)
+	if IsStarted() {
+		t.Error("expected IsStarted=false after SetStartedForTest(false)")
+	}
+}

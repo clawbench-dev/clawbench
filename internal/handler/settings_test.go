@@ -51,7 +51,9 @@ func TestServeConfig_Get(t *testing.T) {
 	cfg.PortForward.Enabled = true
 	cfg.PortForward.Port = 20001
 	cfg.Summarize.Backend = "simple"
+	cfg.Summarize.TTSBackend = "simple"
 	cfg.Summarize.Model = ""
+	cfg.Summarize.TTSModel = ""
 	model.ConfigInstance = cfg
 
 	req := newRequest(t, http.MethodGet, "/api/config", nil)
@@ -93,6 +95,7 @@ func TestServeConfig_Get(t *testing.T) {
 	// Verify summarize section
 	summarize, _ := resp["summarize"].(map[string]any)
 	assert.Equal(t, "simple", summarize["backend"])
+	assert.Equal(t, "simple", summarize["tts_backend"])
 
 	// When engine=edge, engine-specific sub-configs should NOT be present
 	tts, _ := resp["tts"].(map[string]any)
@@ -223,7 +226,6 @@ func TestServeConfig_Get_ConditionalAPISubConfig(t *testing.T) {
 	cfg.Summarize.Backend = "api"
 	cfg.Summarize.API.BaseURL = "https://api.openai.com/v1/chat/completions"
 	cfg.Summarize.API.Key = "sk-1234567890abcdefghijklmnopqrstuvwxyz"
-	cfg.Summarize.API.Format = "openai"
 	cfg.Summarize.Model = "gpt-4o-mini"
 	model.ConfigInstance = cfg
 
@@ -241,12 +243,8 @@ func TestServeConfig_Get_ConditionalAPISubConfig(t *testing.T) {
 
 	api, _ := summarize["api"].(map[string]any)
 	assert.Equal(t, "https://api.openai.com/v1/chat/completions", api["base_url"])
-	// API key must be masked
-	assert.Contains(t, api["key"], "***")
-	assert.NotEqual(t, "sk-1234567890abcdefghijklmnopqrstuvwxyz", api["key"])
-	// Verify mask format: first 4 + *** + last 3
-	assert.Equal(t, "sk-1***xyz", api["key"])
-	assert.Equal(t, "openai", api["format"])
+	// API key is returned in full (frontend uses type="password" for secure display)
+	assert.Equal(t, "sk-1234567890abcdefghijklmnopqrstuvwxyz", api["key"])
 }
 
 func TestServeConfig_Get_APIMaskShortKey(t *testing.T) {
@@ -267,7 +265,7 @@ func TestServeConfig_Get_APIMaskShortKey(t *testing.T) {
 
 	summarize, _ := resp["summarize"].(map[string]any)
 	api, _ := summarize["api"].(map[string]any)
-	assert.Equal(t, "****", api["key"])
+	assert.Equal(t, "short", api["key"])
 }
 
 func TestServeConfig_Get_APIMaskEmptyKey(t *testing.T) {
@@ -374,7 +372,7 @@ func TestServeConfig_Patch_APISubConfig(t *testing.T) {
 	cfg := model.Config{}
 	model.ConfigInstance = cfg
 
-	body := `{"summarize":{"model":"gpt-4o-mini","api":{"base_url":"https://api.example.com/v1/chat","format":"openai"}}}`
+	body := `{"summarize":{"model":"gpt-4o-mini","api":{"base_url":"https://api.example.com/v1/chat"}}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
@@ -382,7 +380,6 @@ func TestServeConfig_Patch_APISubConfig(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "https://api.example.com/v1/chat", model.ConfigInstance.Summarize.API.BaseURL)
-	assert.Equal(t, "openai", model.ConfigInstance.Summarize.API.Format)
 	assert.Equal(t, "gpt-4o-mini", model.ConfigInstance.Summarize.Model)
 }
 
@@ -393,14 +390,14 @@ func TestServeConfig_Patch_APIKeyMasked(t *testing.T) {
 	cfg := model.Config{}
 	model.ConfigInstance = cfg
 
-	// PATCH with masked key containing *** should be rejected
+	// PATCH with key containing *** is now accepted (maskAPIKey removed)
 	body := `{"summarize":{"api":{"key":"sk-1***xyz"}}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestServeConfig_Patch_APIKeyFull(t *testing.T) {
@@ -427,15 +424,15 @@ func TestServeConfig_Patch_SummarizeSection(t *testing.T) {
 	cfg := model.Config{}
 	model.ConfigInstance = cfg
 
-	body := `{"summarize":{"backend":"codebuddy","model":"codebuddy-latest"}}`
+	body := `{"summarize":{"backend":"api","model":"gpt-4o-mini","api":{"base_url":"https://api.example.com/v1"}}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "codebuddy", model.ConfigInstance.Summarize.Backend)
-	assert.Equal(t, "codebuddy-latest", model.ConfigInstance.Summarize.Model)
+	assert.Equal(t, "api", model.ConfigInstance.Summarize.Backend)
+	assert.Equal(t, "gpt-4o-mini", model.ConfigInstance.Summarize.Model)
 }
 
 func TestServeConfig_Patch_MossNanoInvalidBackend(t *testing.T) {
@@ -446,22 +443,6 @@ func TestServeConfig_Patch_MossNanoInvalidBackend(t *testing.T) {
 	model.ConfigInstance = cfg
 
 	body := `{"tts":{"moss_nano":{"backend":"invalid"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestServeConfig_Patch_APIInvalidFormat(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	model.ConfigInstance = cfg
-
-	body := `{"tts":{"api":{"format":"invalid"}}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
@@ -514,6 +495,34 @@ func TestServeConfig_Patch_InvalidSummarizeBackend(t *testing.T) {
 	defer teardown()
 
 	body := `{"summarize":{"backend":"nonexistent"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeConfig_Patch_InvalidSummarizeTtsBackend(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	body := `{"summarize":{"tts_backend":"nonexistent"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "summarize.tts_backend must be one of")
+}
+
+func TestServeConfig_Patch_LegacyAgentBackendRejected(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Agent backends (claude, codebuddy, etc.) are no longer valid
+	body := `{"summarize":{"backend":"claude"}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
@@ -1373,23 +1382,6 @@ func TestServeConfig_Patch_ForbiddenNestedField(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "forbidden_field")
 }
 
-func TestServeConfig_Patch_SummarizeAPIFormatInvalid(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	model.ConfigInstance = cfg
-
-	body := `{"summarize":{"api":{"format":"invalid"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "summarize.api.format must be one of")
-}
-
 // --- recent_projects.max_count tests ---
 
 func TestServeConfig_Get_RecentProjects(t *testing.T) {
@@ -1615,15 +1607,14 @@ func TestServeConfigPatch_ApplyConfigPatchError(t *testing.T) {
 	cfg := model.Config{}
 	model.ConfigInstance = cfg
 
-	// Masked API key (contains ***) is rejected by validatePatchValues with 400
+	// API key containing *** is now accepted (maskAPIKey removed)
 	body := `{"rag":{"api_key":"sk-1***xyz"}}`
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "***")
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestServeConfigPatch_WriteConfigYAMLError(t *testing.T) {
@@ -1961,7 +1952,7 @@ func TestServeConfig_Get_RAGAPIKeyMasked(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 
 	rag, _ := resp["rag"].(map[string]any)
-	assert.Equal(t, "sk-1***xyz", rag["api_key"])
+	assert.Equal(t, "sk-1234567890abcdefghijklmnopqrstuvwxyz", rag["api_key"])
 }
 
 // --- validatePatchValues: default_agent with nil Agents ---
@@ -2007,9 +1998,9 @@ func TestServeConfig_Patch_SummarizeAPIBaseURLInPatchWhileAPI(t *testing.T) {
 	assert.Equal(t, "https://api.openai.com/v1", model.ConfigInstance.Summarize.API.BaseURL)
 }
 
-// --- validatePatchValues: summarize.api.key with *** ---
+// --- validatePatchValues: summarize.api.key with *** (maskAPIKey removed, now accepted) ---
 
-func TestServeConfig_Patch_SummarizeAPIKeyMaskedRejected(t *testing.T) {
+func TestServeConfig_Patch_SummarizeAPIKeyWithStars(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -2022,27 +2013,7 @@ func TestServeConfig_Patch_SummarizeAPIKeyMaskedRejected(t *testing.T) {
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "must not contain '***'")
-}
-
-// --- validatePatchValues: summarize.api.format anthropic ---
-
-func TestServeConfig_Patch_SummarizeAPIFormatAnthropic(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	model.ConfigInstance = cfg
-
-	body := `{"summarize":{"api":{"base_url":"https://api.anthropic.com","format":"anthropic"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "anthropic", model.ConfigInstance.Summarize.API.Format)
 }
 
 // --- ServeConfigPassword: body read error ---
@@ -2549,23 +2520,8 @@ func TestServeConfigPassword_Validation_MethodNotAllowed(t *testing.T) {
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
-// --- maskAPIKey tests ---
-
-func TestMaskAPIKey_FullKey(t *testing.T) {
-	assert.Equal(t, "sk-1***xyz", maskAPIKey("sk-1234567890abcdefghijklmnopqrstuvwxyz"))
-}
-
-func TestMaskAPIKey_ShortKey(t *testing.T) {
-	assert.Equal(t, "****", maskAPIKey("short"))
-}
-
-func TestMaskAPIKey_EmptyKey(t *testing.T) {
-	assert.Equal(t, "", maskAPIKey(""))
-}
-
-func TestMaskAPIKey_ExactlyEight(t *testing.T) {
-	assert.Equal(t, "abcd***xyz", maskAPIKey("abcd12xyz"))
-}
+// --- maskAPIKey tests (removed) ---
+// maskAPIKey was removed — config API now returns full values for password fields.
 
 // --- shellQuote tests ---
 
@@ -2625,8 +2581,7 @@ func TestServeConfig_Get_FRPFields(t *testing.T) {
 	assert.Equal(t, true, frp["enabled"])
 	assert.Equal(t, "frp.example.com", frp["server_addr"])
 	assert.Equal(t, float64(7000), frp["server_port"])
-	// Token should be masked
-	assert.Contains(t, frp["token"], "***")
-	assert.NotEqual(t, "long-secret-token-value-here", frp["token"])
+	// Token is returned in full (frontend uses type="password" for secure display)
+	assert.Equal(t, "long-secret-token-value-here", frp["token"])
 	assert.Equal(t, true, frp["auto_port"])
 }

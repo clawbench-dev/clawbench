@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"clawbench/internal/ai"
 	"clawbench/internal/summarize"
 
 	"github.com/stretchr/testify/assert"
@@ -81,21 +80,6 @@ func setupTestDBForTriggerSummary(t *testing.T) (*sql.DB, func()) {
 	return db, teardown
 }
 
-// mockTriggerSummarizerBackend is a mock for triggerChatSummarization tests
-type mockTriggerSummarizerBackend struct {
-	streamCh   chan ai.StreamEvent
-	executeErr error
-}
-
-func (m *mockTriggerSummarizerBackend) Name() string { return "mock-trigger" }
-
-func (m *mockTriggerSummarizerBackend) ExecuteStream(ctx context.Context, req ai.ChatRequest) (<-chan ai.StreamEvent, error) {
-	if m.executeErr != nil {
-		return nil, m.executeErr
-	}
-	return m.streamCh, nil
-}
-
 func TestTriggerChatSummarization_NilSummarizer(t *testing.T) {
 	_, teardown := setupTestDBForTriggerSummary(t)
 	defer teardown()
@@ -124,12 +108,12 @@ func TestTriggerChatSummarization_NoMessages(t *testing.T) {
 		SetChatSummaryMode(origMode)
 	}()
 
-	// Set up a mock summarizer
-	ch := make(chan ai.StreamEvent, 1)
-	ch <- ai.StreamEvent{Type: "done"}
-	close(ch)
-	mock := &mockTriggerSummarizerBackend{streamCh: ch}
-	taskSummarizerInstance = &summarize.TaskSummarizer{Backend: mock}
+	// Set up a mock summarizer via pipeline
+	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
+		return "", nil
+	}
+	pipeline := summarize.NewPipelineWithOpts(passFn, summarize.TaskSummarizePrompt(), summarize.SummarizeOption{PreserveMarkdown: true})
+	taskSummarizerInstance = summarize.NewTaskSummarizerFromPipeline(pipeline)
 	SetChatSummaryMode("ai")
 
 	// Session doesn't exist in DB — should return with no error
@@ -147,11 +131,11 @@ func TestTriggerChatSummarization_NoAssistantMessages(t *testing.T) {
 		SetChatSummaryMode(origMode)
 	}()
 
-	ch := make(chan ai.StreamEvent, 1)
-	ch <- ai.StreamEvent{Type: "done"}
-	close(ch)
-	mock := &mockTriggerSummarizerBackend{streamCh: ch}
-	taskSummarizerInstance = &summarize.TaskSummarizer{Backend: mock}
+	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
+		return "", nil
+	}
+	pipeline := summarize.NewPipelineWithOpts(passFn, summarize.TaskSummarizePrompt(), summarize.SummarizeOption{PreserveMarkdown: true})
+	taskSummarizerInstance = summarize.NewTaskSummarizerFromPipeline(pipeline)
 	SetChatSummaryMode("ai")
 
 	// Create session and user message only
@@ -175,11 +159,11 @@ func TestTriggerChatSummarization_AlreadySummarized(t *testing.T) {
 		SetChatSummaryMode(origMode)
 	}()
 
-	ch := make(chan ai.StreamEvent, 1)
-	ch <- ai.StreamEvent{Type: "done"}
-	close(ch)
-	mock := &mockTriggerSummarizerBackend{streamCh: ch}
-	taskSummarizerInstance = &summarize.TaskSummarizer{Backend: mock}
+	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
+		return "", nil
+	}
+	pipeline := summarize.NewPipelineWithOpts(passFn, summarize.TaskSummarizePrompt(), summarize.SummarizeOption{PreserveMarkdown: true})
+	taskSummarizerInstance = summarize.NewTaskSummarizerFromPipeline(pipeline)
 	SetChatSummaryMode("ai")
 
 	// Create session with assistant message
@@ -215,11 +199,11 @@ func TestTriggerChatSummarization_EmptyBlocks(t *testing.T) {
 		SetChatSummaryMode(origMode)
 	}()
 
-	ch := make(chan ai.StreamEvent, 1)
-	ch <- ai.StreamEvent{Type: "done"}
-	close(ch)
-	mock := &mockTriggerSummarizerBackend{streamCh: ch}
-	taskSummarizerInstance = &summarize.TaskSummarizer{Backend: mock}
+	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
+		return "", nil
+	}
+	pipeline := summarize.NewPipelineWithOpts(passFn, summarize.TaskSummarizePrompt(), summarize.SummarizeOption{PreserveMarkdown: true})
+	taskSummarizerInstance = summarize.NewTaskSummarizerFromPipeline(pipeline)
 	SetChatSummaryMode("ai")
 
 	// Create session with assistant message that has no blocks
@@ -245,11 +229,11 @@ func TestTriggerChatSummarization_InvalidJSON(t *testing.T) {
 		SetChatSummaryMode(origMode)
 	}()
 
-	ch := make(chan ai.StreamEvent, 1)
-	ch <- ai.StreamEvent{Type: "done"}
-	close(ch)
-	mock := &mockTriggerSummarizerBackend{streamCh: ch}
-	taskSummarizerInstance = &summarize.TaskSummarizer{Backend: mock}
+	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
+		return "", nil
+	}
+	pipeline := summarize.NewPipelineWithOpts(passFn, summarize.TaskSummarizePrompt(), summarize.SummarizeOption{PreserveMarkdown: true})
+	taskSummarizerInstance = summarize.NewTaskSummarizerFromPipeline(pipeline)
 	SetChatSummaryMode("ai")
 
 	// Create session with assistant message that has invalid JSON content
@@ -273,13 +257,12 @@ func TestTriggerChatSummarization_Success(t *testing.T) {
 		SetChatSummaryMode(origMode)
 	}()
 
-	// Set up mock summarizer
-	ch := make(chan ai.StreamEvent, 3)
-	ch <- ai.StreamEvent{Type: "content", Content: "这是总结"}
-	ch <- ai.StreamEvent{Type: "done"}
-	close(ch)
-	mock := &mockTriggerSummarizerBackend{streamCh: ch}
-	taskSummarizerInstance = &summarize.TaskSummarizer{Backend: mock}
+	// Set up mock summarizer via pipeline
+	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
+		return "这是总结", nil
+	}
+	pipeline := summarize.NewPipelineWithOpts(passFn, summarize.TaskSummarizePrompt(), summarize.SummarizeOption{PreserveMarkdown: true})
+	taskSummarizerInstance = summarize.NewTaskSummarizerFromPipeline(pipeline)
 	SetChatSummaryMode("ai")
 
 	// Create session with assistant message containing long text

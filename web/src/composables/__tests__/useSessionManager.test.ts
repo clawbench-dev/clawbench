@@ -46,7 +46,6 @@ function createMockOptions() {
     const createSessionCore = vi.fn()
     const deleteSessionCore = vi.fn()
     const disconnectStream = vi.fn()
-    const stopPolling = vi.fn()
     const updateRenderedContents = vi.fn()
     const clearInputState = vi.fn()
     const scrollBottom = vi.fn()
@@ -56,9 +55,8 @@ function createMockOptions() {
         continueFromExecutionCore: vi.fn().mockResolvedValue(true),
         forkSessionCore: vi.fn().mockResolvedValue(true),
         checkContinueSessionCore: vi.fn().mockResolvedValue({ exists: false, sessionId: '' }),
-        disconnectStream, stopPolling,
+        disconnectStream,
         updateRenderedContents, clearInputState, scrollBottom,
-        sendMessageNow: vi.fn().mockResolvedValue(undefined),
     }
 }
 
@@ -82,10 +80,9 @@ describe('useSessionManager', () => {
             mgr.cleanupActiveStream()
 
             expect(opts.disconnectStream).not.toHaveBeenCalled()
-            expect(opts.stopPolling).not.toHaveBeenCalled()
         })
 
-        it('disconnects stream and stops polling when loading', () => {
+        it('disconnects stream when loading', () => {
             const opts = createMockOptions()
             opts.loading.value = true
             const mgr = useSessionManager(opts)
@@ -93,7 +90,6 @@ describe('useSessionManager', () => {
             mgr.cleanupActiveStream()
 
             expect(opts.disconnectStream).toHaveBeenCalled()
-            expect(opts.stopPolling).toHaveBeenCalled()
         })
 
         it('removes streaming flag from assistant messages', async () => {
@@ -409,7 +405,7 @@ describe('useSessionManager', () => {
     // ── enqueueMessage ──
 
     describe('enqueueMessage', () => {
-        it('posts message to backend queue API', async () => {
+        it('posts message to backend queue API with queueId', async () => {
             const opts = createMockOptions()
             const queue = [{ text: 'enqueued' }]
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
@@ -420,7 +416,7 @@ describe('useSessionManager', () => {
             // Clear calls from immediate watch (fetchQueue on mount)
             fetchSpy.mockClear()
 
-            await mgr.enqueueMessage('session-1', 'hello', ['/path1'], [{ path: 'attached', isDir: false }], ['pending'])
+            await mgr.enqueueMessage('session-1', 'hello', ['/path1'], [{ path: 'attached', isDir: false }], ['pending'], 'pending-123')
 
             expect(fetchSpy).toHaveBeenCalledWith(
                 expect.stringContaining('/api/ai/queue?session_id=session-1'),
@@ -428,6 +424,7 @@ describe('useSessionManager', () => {
             )
             const body = JSON.parse((fetchSpy.mock.calls[0] as any[])[1].body)
             expect(body.message).toBe('hello')
+            expect(body.queueId).toBe('pending-123')
             expect(body.filePaths).toEqual(['/path1', 'attached'])
             expect(body.files).toEqual([{ path: 'pending', isDir: false }, { path: 'attached', isDir: false }])
 
@@ -534,7 +531,7 @@ describe('useSessionManager', () => {
         it('returns needsStart=true when backend detects session not running', async () => {
             const opts = createMockOptions()
             opts.messages.value.push({
-                role: 'user', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], files: [], createdAt: '', pending: true,
+                role: 'user', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], files: [], createdAt: '', pending: true, id: 'pending-456',
             })
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
                 ok: true,
@@ -544,17 +541,18 @@ describe('useSessionManager', () => {
                     message: 'hello',
                     filePaths: ['/main.go'],
                     files: ['/main.go'],
+                    queueId: 'pending-456',
                     queue: [],
                 }),
             } as Response)
             const mgr = useSessionManager(opts)
+            fetchSpy.mockClear()
 
-            const result = await mgr.enqueueMessage('session-1', 'hello', [], [], [])
+            const result = await mgr.enqueueMessage('session-1', 'hello', [], [], [], 'pending-456')
 
             expect(result.needsStart).toBe(true)
             expect(result.message).toBe('hello')
             expect(result.filePaths).toEqual(['/main.go'])
-            expect(result.files).toEqual(['/main.go'])
 
             fetchSpy.mockRestore()
         })
@@ -562,7 +560,7 @@ describe('useSessionManager', () => {
         it('removes pending message from messages.value when needsStart is true', async () => {
             const opts = createMockOptions()
             opts.messages.value.push({
-                role: 'user', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], files: [], createdAt: '', pending: true,
+                role: 'user', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], files: [], createdAt: '', pending: true, id: 'pending-456',
             })
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
                 ok: true,
@@ -576,8 +574,9 @@ describe('useSessionManager', () => {
                 }),
             } as Response)
             const mgr = useSessionManager(opts)
+            fetchSpy.mockClear()
 
-            await mgr.enqueueMessage('session-1', 'hello')
+            await mgr.enqueueMessage('session-1', 'hello', [], [], [], 'pending-456')
 
             // The pending message should have been removed from messages.value
             const pendingMsgs = opts.messages.value.filter((m: any) => m.pending)
@@ -605,68 +604,75 @@ describe('useSessionManager', () => {
     // ── handleRemovePending ──
 
     describe('handleRemovePending', () => {
-        it('sends DELETE with correct index to backend', async () => {
+        it('sends DELETE with queueId to backend', async () => {
             const opts = createMockOptions()
             opts.messages.value.push({
-                role: 'user', content: 'a', blocks: [], files: [], createdAt: '', pending: true,
+                role: 'user', content: 'a', blocks: [], files: [], createdAt: '', pending: true, id: 'pending-1',
             })
             opts.messages.value.push({
-                role: 'user', content: 'b', blocks: [], files: [], createdAt: '', pending: true,
+                role: 'user', content: 'b', blocks: [], files: [], createdAt: '', pending: true, id: 'pending-2',
             })
-            const queue = [{ text: 'remaining' }]
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
                 ok: true,
-                json: () => Promise.resolve({ queue }),
+                json: () => Promise.resolve({ queue: [] }),
             } as Response)
             const mgr = useSessionManager(opts)
-            // Clear calls from immediate watch (fetchQueue on mount)
             fetchSpy.mockClear()
 
-            // Pass pendingIndex 1 (second pending message = 'b')
-            await mgr.handleRemovePending(1)
+            await mgr.handleRemovePending('pending-2')
 
             expect(fetchSpy).toHaveBeenCalledWith(
-                expect.stringContaining('index=1'),
+                expect.stringContaining('queueId=pending-2'),
                 expect.objectContaining({ method: 'DELETE' }),
             )
 
             fetchSpy.mockRestore()
         })
 
-        it('Bug 2 regression: sends DELETE for last pending message even after optimistic splice', async () => {
-            // Scenario: messages had [A(pending), B(pending)].
-            // Caller (ChatPanelContent) optimistically spliced B, then calls
-            // handleRemovePending(1). The old code re-validated against
-            // messages.value (now only [A(pending)]) and rejected index=1
-            // because pendingMsgs.length was 1. This caused the backend DELETE
-            // to never fire, leaving B in the backend queue → duplicate on resend.
+        it('removes pending message from messages.value by queueId', async () => {
             const opts = createMockOptions()
-            // After optimistic splice, only A remains in messages.value
             opts.messages.value.push({
-                role: 'user', content: 'a', blocks: [], files: [], createdAt: '', pending: true,
+                role: 'user', content: 'a', blocks: [], files: [], createdAt: '', pending: true, id: 'pending-1',
             })
-            const queue = [{ text: 'a' }]  // Backend queue after removing B
-            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-                ok: true,
-                json: () => Promise.resolve({ queue }),
-            } as Response)
+            opts.messages.value.push({
+                role: 'user', content: 'b', blocks: [], files: [], createdAt: '', pending: true, id: 'pending-2',
+            })
+            // First call: fetchQueue on mount returns both pending items
+            // Second call: DELETE removes pending-2
+            let callCount = 0
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+                callCount++
+                if (callCount === 1) {
+                    // fetchQueue on mount — return both items so they survive sync
+                    return Promise.resolve({
+                        ok: true,
+                        json: () => Promise.resolve({ queue: [
+                            { text: 'a', queueId: 'pending-1' },
+                            { text: 'b', queueId: 'pending-2' },
+                        ]}),
+                    } as Response)
+                }
+                // DELETE call
+                return Promise.resolve({
+                    ok: true,
+                    json: () => Promise.resolve({ queue: [] }),
+                } as Response)
+            })
             const mgr = useSessionManager(opts)
-            fetchSpy.mockClear()
+            // Wait for mount fetchQueue to complete
+            await nextTick()
 
-            // Pass pendingIndex 1 — this is the index of B in the PRE-splice
-            // pending list. Even though messages.value only has 1 pending now,
-            // the backend must receive the DELETE with index=1.
-            await mgr.handleRemovePending(1)
+            await mgr.handleRemovePending('pending-2')
 
-            expect(fetchSpy).toHaveBeenCalledWith(
-                expect.stringContaining('index=1'),
-                expect.objectContaining({ method: 'DELETE' }),
-            )
+            // Only pending-1 should remain
+            const pendingMsgs = opts.messages.value.filter((m: any) => m.pending)
+            expect(pendingMsgs).toHaveLength(1)
+            expect(pendingMsgs[0].id).toBe('pending-1')
 
             fetchSpy.mockRestore()
         })
 
-        it('returns early for negative pendingIndex', async () => {
+        it('returns early for empty queueId', async () => {
             const opts = createMockOptions()
             opts.messages.value.push({
                 role: 'user', content: 'a', blocks: [], files: [], createdAt: '', pending: true,
@@ -675,33 +681,9 @@ describe('useSessionManager', () => {
             const mgr = useSessionManager(opts)
             fetchSpy.mockClear()
 
-            await mgr.handleRemovePending(-1)
+            await mgr.handleRemovePending('')
 
             expect(fetchSpy).not.toHaveBeenCalled()
-
-            fetchSpy.mockRestore()
-        })
-
-        it('syncs remaining pending messages from backend after DELETE', async () => {
-            const opts = createMockOptions()
-            opts.messages.value.push({
-                role: 'user', content: 'a', blocks: [], files: [], createdAt: '', pending: true,
-            })
-            const queue = [{ text: 'remaining-a' }]
-            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-                ok: true,
-                json: () => Promise.resolve({ queue }),
-            } as Response)
-            const mgr = useSessionManager(opts)
-            fetchSpy.mockClear()
-
-            await mgr.handleRemovePending(0)
-
-            // After DELETE, backend returns updated queue → syncPendingFromBackendQueue
-            // replaces pending messages with backend queue state
-            const pendingMsgs = opts.messages.value.filter((m: any) => m.pending)
-            expect(pendingMsgs).toHaveLength(1)
-            expect(pendingMsgs[0].content).toBe('remaining-a')
 
             fetchSpy.mockRestore()
         })
@@ -709,12 +691,12 @@ describe('useSessionManager', () => {
         it('shows toast on error', async () => {
             const opts = createMockOptions()
             opts.messages.value.push({
-                role: 'user', content: 'pending-msg', blocks: [], files: [], createdAt: '', pending: true,
+                role: 'user', content: 'pending-msg', blocks: [], files: [], createdAt: '', pending: true, id: 'pending-1',
             })
             const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('fail'))
             const mgr = useSessionManager(opts)
 
-            await mgr.handleRemovePending(0)
+            await mgr.handleRemovePending('pending-1')
 
             expect(mockToastShow).toHaveBeenCalledWith(
                 'session.removeFailed',

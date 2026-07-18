@@ -62,7 +62,7 @@ type Metadata struct {
 
 // Warning reason codes — used by frontend for i18n lookup and visual severity
 const (
-	ReasonDisconnect    = "disconnect"     // SSE client disconnected
+	ReasonDisconnect    = "disconnect"     // WS client disconnected
 	ReasonTimeout       = "timeout"        // AI response timeout
 	ReasonUserCancel    = "user_cancel"    // User explicitly cancelled
 	ReasonContextCancel = "context_cancel" // Context cancelled (generic interruption)
@@ -159,7 +159,7 @@ type UsageState struct {
 
 // StreamEvent represents a single event in the streaming output
 type StreamEvent struct {
-	Type           string                 // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "raw_output", "resume_split", "queue_drain", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update"
+	Type           string                 // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "raw_output", "resume_split", "queue_drain", "queue_cancel", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update", "user_message"
 	Content        string                 // Incremental text (Type=content, Type=thinking) or captured session ID (Type=session_capture)
 	Reason         string                 // Structured reason code for i18n (e.g. "disconnect", "timeout", "parse_error")
 	Meta           *Metadata              // Metadata (Type=metadata)
@@ -174,7 +174,8 @@ type StreamEvent struct {
 	Plan           *PlanState             // Plan state (Type=plan_update)
 	ModelList      *ModelListState        // Model list state (Type=model_list_update)
 	Usage          *UsageState            // Usage state (Type=usage_update)
-	ToolMeta       *ToolCallMeta          // Extracted tool metadata for SSE forwarding (Type=tool_use, Type=tool_result)
+	ToolMeta       *ToolCallMeta          // Extracted tool metadata for WS forwarding (Type=tool_use, Type=tool_result)
+	UserMessage    *UserMessageData       // User message for cross-device sync (Type=user_message)
 }
 
 // ToolCall represents a tool invocation by the AI.
@@ -205,16 +206,29 @@ func truncateToolOutput(output string) string {
 	return output[:maxToolOutputBytes] + fmt.Sprintf("\n[truncated: original %d bytes]", len(output))
 }
 
-// QueueEventData carries data for queue_drain and queue_update SSE events.
+// QueueEventData carries data for queue_drain and queue_cancel WS events.
 // queue_drain: atomically finalizes current streaming, starts next queued message.
-// queue_update: sent when a new message is enqueued while a session is running.
+// queue_cancel: emitted when user cancels while messages are queued.
 type QueueEventData struct {
 	SessionID string                `json:"sessionId,omitempty"` // Session this event belongs to (for frontend routing)
+	QueueID   string                `json:"queueId,omitempty"`   // Frontend-generated ID for matching pending messages (queue_drain)
+	QueueIDs  []string              `json:"queueIds,omitempty"`  // IDs of cancelled queued messages (queue_cancel)
 	Text      string                `json:"text,omitempty"`
 	MessageID int64                 `json:"messageId,omitempty"` // DB ID of the drained user message (queue_drain only)
 	FilePaths []string              `json:"filePaths,omitempty"`
 	Files     []model.FileEntry     `json:"files,omitempty"`
 	Queue     []model.QueuedMessage `json:"queue,omitempty"`
+}
+
+// UserMessageData carries a user message for cross-device synchronization.
+// Emitted via StreamHub.EmitToSession after AddChatMessage succeeds,
+// so other devices subscribed to the same session see the message in real-time.
+type UserMessageData struct {
+	MessageID      int64             `json:"messageId"`                // DB row ID (0 if not yet persisted, e.g. enqueued messages)
+	Content        string            `json:"content"`                  // Raw user message text
+	Files          []model.FileEntry `json:"files,omitempty"`          // File attachments
+	SenderClientID string            `json:"senderClientId,omitempty"` // WS client ID of the sender (to skip self-echo)
+	QueueID        string            `json:"queueId,omitempty"`        // Frontend queue ID (for enqueued messages, enables precise drain matching)
 }
 
 // AIBackend defines the interface for AI backend implementations

@@ -73,14 +73,35 @@ registerIdentityUpdaters({
   updateAvailableModes,
   updateAvailableThinkingEfforts,
   updateCommandState,
-  updateUsageState,
   currentAgentId,
 })
 
-/** Reset all module-level singleton refs — used by SPA hot project switch. */
 /** Read-only accessor for the current session ID (no composable setup needed). */
 export function getSessionId(): string {
   return currentSessionId.value
+}
+
+/** Clear session identity refs for a session switch — resets all displayed
+ *  state (agent/model/mode/transport/usage) but keeps action callbacks and
+ *  the session drawer intact. Use resetIdentity() for full teardown (project
+ *  switch). Optionally sets currentSessionId to the upcoming session ID so
+ *  per-session computed refs (usage) switch instantly. */
+export function clearSessionIdentity(upcomingSessionId?: string): void {
+  currentSessionTitle.value = ''
+  currentBackend.value = ''
+  currentAgentId.value = ''
+  currentModelId.value = ''
+  currentModelName.value = ''
+  currentThinkingEffort.value = ''
+  currentThinkingEffortName.value = ''
+  currentModeId.value = ''
+  currentModeName.value = ''
+  currentTransport.value = ''
+  autoApprove.value = false
+  availableModes.value = []
+  availableCommands.value = []
+  availableThinkingEfforts.value = []
+  currentSessionId.value = upcomingSessionId ?? ''
 }
 
 export function resetIdentity(): void {
@@ -148,7 +169,7 @@ async function saveThinkingPref(agentId: string, _level: string) {
   if (!agentId) return
   // No-op: thinking effort selection in chat is session-scoped and does NOT update
   // the agent's default. The agent's preferredThinkingEffort is configured exclusively
-  // via the settings panel or SessionSettingModal star button (which calls patchAgentPref directly).
+  // via the settings panel or SessionDrawer star button (which calls patchAgentPref directly).
 }
 
 function loadThinkingPref(agentId: string): string | null {
@@ -184,12 +205,18 @@ export function updateModeState(modeId: string, modes: Array<{ id: string; name:
   }
 }
 
-/** Update available modes list without changing current selection.
+/** Update available modes list without changing currentModeId.
  * Used by acpStates cache population (useAgents) — currentModeId
- * is managed by agent SSE events or user action, not by cache restore. */
+ * is managed by agent SSE events or user action, not by cache restore.
+ * Resolves currentModeName if currentModeId was already set. */
 export function updateAvailableModes(modes: Array<{ id: string; name: string }>) {
   if (modes.length > 0) {
     availableModes.value = modes
+    // Resolve name if id was set before modes arrived
+    if (currentModeId.value) {
+      const mode = modes.find(m => m.id === currentModeId.value)
+      currentModeName.value = mode?.name || currentModeId.value
+    }
   }
 }
 
@@ -607,7 +634,7 @@ export function useSessionIdentity() {
       await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, filePaths: filePaths || [], modelId: currentModelId.value || undefined, thinkingEffort: currentThinkingEffort.value || undefined, transport: currentTransport.value || undefined }),
+        body: JSON.stringify({ message: text, filePaths: filePaths || [], modelId: currentModelId.value || undefined, thinkingEffort: currentThinkingEffort.value || undefined, transport: currentTransport.value || undefined, clientId: localStorage.getItem('clawbench_client_id') || undefined }),
       })
     } catch (err: unknown) {
       appLog.e(TAG, 'Failed to send message:', err)
@@ -719,6 +746,7 @@ export function useSessionIdentity() {
     clearCommandState,
     updateAvailableThinkingEfforts,
     clearThinkingEffortState,
+    clearSessionIdentity,
     updateUsageState,
     clearUsageState,
     clearAllUsageState,

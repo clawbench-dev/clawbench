@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick, reactive, ref, computed, defineComponent } from 'vue'
 import { createI18n } from 'vue-i18n'
@@ -614,5 +614,90 @@ describe('FileManagerContent — keyboard shortcuts', () => {
 
     // Should have entered multi-select mode
     expect(wrapper.vm.multiSelectState.active).toBe(true)
+  })
+
+  describe('doShareExternal', () => {
+    const mockShareFile = vi.fn()
+    const origAndroidNative = (window as any).AndroidNative
+
+    beforeEach(() => {
+      mockShareFile.mockReset()
+    })
+
+    afterEach(() => {
+      ;(window as any).AndroidNative = origAndroidNative
+    })
+
+    it('calls AndroidNative.shareFile with correct mimeType for image', async () => {
+      ;(window as any).AndroidNative = { shareFile: mockShareFile }
+      const wrapper = mountContent()
+      await nextTick()
+      wrapper.vm.ctxMenu.visible = true
+      wrapper.vm.ctxMenu.entry = { path: '/photos/test.png', name: 'test.png', type: 'file' }
+      await nextTick()
+
+      wrapper.vm.doShareExternal()
+      expect(mockShareFile).toHaveBeenCalledWith('/photos/test.png', 'image/*')
+    })
+
+    it('calls AndroidNative.shareFile with video mimeType for mp4', async () => {
+      ;(window as any).AndroidNative = { shareFile: mockShareFile }
+      const wrapper = mountContent()
+      await nextTick()
+      wrapper.vm.ctxMenu.visible = true
+      wrapper.vm.ctxMenu.entry = { path: '/video/clip.mp4', name: 'clip.mp4', type: 'file' }
+      await nextTick()
+
+      wrapper.vm.doShareExternal()
+      expect(mockShareFile).toHaveBeenCalledWith('/video/clip.mp4', 'video/*')
+    })
+
+    it('calls AndroidNative.shareFile with audio mimeType for mp3', async () => {
+      ;(window as any).AndroidNative = { shareFile: mockShareFile }
+      const wrapper = mountContent()
+      await nextTick()
+      wrapper.vm.ctxMenu.visible = true
+      wrapper.vm.ctxMenu.entry = { path: '/audio/song.mp3', name: 'song.mp3', type: 'file' }
+      await nextTick()
+
+      wrapper.vm.doShareExternal()
+      expect(mockShareFile).toHaveBeenCalledWith('/audio/song.mp3', 'audio/*')
+    })
+
+    it('calls AndroidNative.shareFile with pdf mimeType', async () => {
+      ;(window as any).AndroidNative = { shareFile: mockShareFile }
+      const wrapper = mountContent()
+      await nextTick()
+      wrapper.vm.ctxMenu.visible = true
+      wrapper.vm.ctxMenu.entry = { path: '/doc/file.pdf', name: 'file.pdf', type: 'file' }
+      await nextTick()
+
+      wrapper.vm.doShareExternal()
+      expect(mockShareFile).toHaveBeenCalledWith('/doc/file.pdf', 'application/pdf')
+    })
+
+    it('calls AndroidNative.shareFile with wildcard mimeType for unknown', async () => {
+      ;(window as any).AndroidNative = { shareFile: mockShareFile }
+      const wrapper = mountContent()
+      await nextTick()
+      wrapper.vm.ctxMenu.visible = true
+      wrapper.vm.ctxMenu.entry = { path: '/doc/file.xyz', name: 'file.xyz', type: 'file' }
+      await nextTick()
+
+      wrapper.vm.doShareExternal()
+      expect(mockShareFile).toHaveBeenCalledWith('/doc/file.xyz', '*/*')
+    })
+
+    it('does nothing when AndroidNative is missing', async () => {
+      ;(window as any).AndroidNative = undefined
+      const wrapper = mountContent()
+      await nextTick()
+      wrapper.vm.ctxMenu.visible = true
+      wrapper.vm.ctxMenu.entry = { path: '/test.png', name: 'test.png', type: 'file' }
+      await nextTick()
+
+      wrapper.vm.doShareExternal()
+      expect(mockShareFile).not.toHaveBeenCalled()
+    })
   })
 })

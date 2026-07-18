@@ -53,6 +53,7 @@ const staleTimeout = 120 * time.Second
 type Manager struct {
 	mu            sync.Mutex
 	subscriptions map[string]*ClientSubscription // keyed by clientID
+	hub           *StreamHub
 }
 
 var (
@@ -67,21 +68,30 @@ func SetManagerForTest(m *Manager) {
 
 // NewManagerForTest creates a new Manager for testing.
 func NewManagerForTest() *Manager {
-	return &Manager{
+	mgr := &Manager{
 		subscriptions: make(map[string]*ClientSubscription),
 	}
+	mgr.hub = NewStreamHub(mgr)
+	return mgr
 }
 
 func InitManager() {
 	defaultManagerOnce.Do(func() {
-		defaultManager = &Manager{
+		mgr := &Manager{
 			subscriptions: make(map[string]*ClientSubscription),
 		}
+		mgr.hub = NewStreamHub(mgr)
+		defaultManager = mgr
 	})
 }
 
 func GetManager() *Manager {
 	return defaultManager
+}
+
+// StreamHub returns the StreamHub for chat streaming event fan-out.
+func (m *Manager) StreamHub() *StreamHub {
+	return m.hub
 }
 
 // Subscribe registers a new WS connection for a client identified by clientID.
@@ -145,6 +155,12 @@ func (m *Manager) DisconnectClient(clientID string) {
 	sub.mu.Unlock()
 
 	slog.Info("ws: client disconnected (subscription preserved)", "client_id", clientID)
+}
+
+// SendToClient sends a ServerMessage to a specific client by clientID.
+// If the client is connected, sends via WS. If disconnected, buffers for replay.
+func (m *Manager) SendToClient(clientID string, msg ServerMessage) {
+	m.broadcastToSubscription(clientID, msg)
 }
 
 // BroadcastEvent sends an event to all connected clients, or buffers for replay.

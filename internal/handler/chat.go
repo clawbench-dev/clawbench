@@ -21,6 +21,7 @@ import (
 	"clawbench/internal/platform"
 	"clawbench/internal/rag"
 	"clawbench/internal/service"
+	"clawbench/internal/ws"
 )
 
 const maxChatBodySize = 10 << 20 // 10MB
@@ -182,7 +183,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 
 		// Look up cached ACP mode/thinking/model list state for this session.
 		// This allows the frontend to populate mode chips immediately
-		// without waiting for SSE events (which may have already been consumed).
+		// without waiting for WS events (which may have already been consumed).
 		// Fallback: for brand-new sessions with no pool session mapping yet,
 		// look up from AgentCapabilityRegistry so mode chips appear on first load.
 		// For CLI sessions, synthesize a read-only mode from the backend name
@@ -272,6 +273,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	// Decode request body BEFORE the running check so we can enqueue when busy
 	var req struct {
 		Message        string            `json:"message"`
+		QueueID        string            `json:"queueId"`
 		FilePaths      []string          `json:"filePaths"`
 		Files          []model.FileEntry `json:"files"`
 		AgentID        string            `json:"agentId"`
@@ -279,6 +281,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		ThinkingEffort string            `json:"thinkingEffort"`
 		ModeID         string            `json:"modeId"`
 		Transport      string            `json:"transport"`
+		ClientID       string            `json:"clientId"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxChatBodySize)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -426,6 +429,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	if !service.TrySetSessionRunning(sessionID) {
 		// Session already running — enqueue the message
 		qMsg := model.QueuedMessage{
+			QueueID:   req.QueueID,
 			Text:      req.Message,
 			FilePaths: allFilePaths,
 			Files:     allFiles,
@@ -433,16 +437,21 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		}
 		queueState := service.EnqueueMessage(sessionID, qMsg)
 
-		// Notify the running goroutine via SSE — send queue_queued with the full
-		// message data so the frontend can push a pending message into messages
-		service.SendSessionEvent(sessionID, ai.StreamEvent{
-			Type: "queue_queued",
-			QueueEvent: &ai.QueueEventData{
-				SessionID: sessionID,
-				Text:      req.Message,
-				FilePaths: allFilePaths,
-				Files:     allFiles,
-				Queue:     queueState,
+		// Frontend pushes pending message optimistically — no queue_queued event needed.
+		// The EnqueueMessage signals the drain channel so the running goroutine
+		// wakes up immediately if it's waiting for queued messages.
+
+		// Emit user_message to other session subscribers for cross-device sync.
+		// MessageID=0 because the message is not yet persisted (it's in the queue).
+		// SenderClientID allows the sending device to skip its own echo.
+		ws.EmitToSession(sessionID, ai.StreamEvent{
+			Type: "user_message",
+			UserMessage: &ai.UserMessageData{
+				MessageID:      0,
+				Content:        req.Message,
+				Files:          allFiles,
+				SenderClientID: req.ClientID,
+				QueueID:        req.QueueID,
 			},
 		})
 
@@ -454,16 +463,25 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := service.AddChatMessage(projectPath, backendName, sessionID, "user", req.Message, allFiles, false, T(r, "FileMessage")); err != nil {
+	msgID, err := service.AddChatMessage(projectPath, backendName, sessionID, "user", req.Message, allFiles, false, T(r, "FileMessage"))
+	if err != nil {
 		service.SetSessionRunning(sessionID, false)
 		model.WriteError(w, model.Internal(fmt.Errorf("failed to save message")))
 		return
 	}
+	// Emit user_message to other session subscribers for cross-device sync.
+	// SenderClientID allows the sending device to skip its own echo.
+	ws.EmitToSession(sessionID, ai.StreamEvent{
+		Type: "user_message",
+		UserMessage: &ai.UserMessageData{
+			MessageID:      msgID,
+			Content:        req.Message,
+			Files:          allFiles,
+			SenderClientID: req.ClientID,
+		},
+	})
 
 	writeJSON(w, http.StatusOK, map[string]any{"started": true, "sessionId": sessionID})
-
-	// Register stream channel BEFORE starting goroutine to avoid race with SSE connection
-	streamCh := service.RegisterSessionStream(sessionID)
 
 	// Create context and cancel AFTER TrySetSessionRunning succeeded, but BEFORE
 	// starting the goroutine. Registering the cancel function here (not inside the
@@ -486,9 +504,8 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				service.SetSessionRunning(sessionID, false)
 				service.UnregisterSessionCancel(sessionID)
 				cancel()
-				// Try to send error event to SSE stream
-				service.SendSessionEvent(sessionID, ai.StreamEvent{Type: "error", Error: "AI internal error, please retry", Reason: ai.ReasonPanic})
-				service.UnregisterSessionStream(sessionID)
+				// Emit error event to WS clients
+				emitStreamEvent(sessionID, ai.StreamEvent{Type: "error", Error: "AI internal error, please retry", Reason: ai.ReasonPanic})
 				// Persist error to database
 				errMsg := "AI internal error, please retry"
 				errContent, _ := json.Marshal(map[string]any{"blocks": []any{map[string]string{"type": "error", "text": errMsg, "reason": ai.ReasonPanic}}})
@@ -497,19 +514,19 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		}()
 		slog.Info("ai goroutine started", slog.String("project", projectPath))
 		defer service.SetSessionRunning(sessionID, false)
-		defer service.UnregisterSessionStream(sessionID)
 		defer cancel()
 		defer service.UnregisterSessionCancel(sessionID)
-		// Mark session as not-running BEFORE sending terminal SSE event.
+		// Mark session as not-running BEFORE sending terminal WS event.
 		// Without this, a race exists: the "done" event reaches the client,
 		// which calls loadHistory(), but the deferred SetSessionRunning(false)
 		// hasn't run yet, so the API returns running=true and the frontend
-		// reconnects SSE in a loop — leaving the stop button stuck.
+		// reconnects WS in a loop — leaving the stop button stuck.
 		// By setting running=false first, loadHistory() always sees the
 		// correct terminal state.
 		markDoneAndSendFinal := func(event ai.StreamEvent) {
-			service.SetSessionRunning(sessionID, false, true) // skip event — we send SSE directly
-			ai.SendFinalStreamEvent(streamCh, event)
+			service.SetSessionRunning(sessionID, false, true) // skip event — we emit directly
+			// Emit terminal event to WS clients via StreamHub
+			emitStreamEvent(sessionID, event)
 		}
 		// Mark ACP connection as idle when the session goroutine exits.
 		// Previously this used CloseConn, which caused a race: the goroutine
@@ -535,72 +552,41 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		firstChatReq := buildChatRequest(prompt, sessionID, projectPath, backendName, effectiveAgentID, req.ModelID, req.ThinkingEffort, req.ModeID, req.Transport, fileDir, hasAttachments)
 
 		// Execute first message
-		result := executeStreamRun(ctx, r, streamCh, projectPath, sessionID, backendName, effectiveAgentID, firstChatReq, fileDir)
+		result := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, firstChatReq, fileDir)
 
 		// Drain loop: keep executing queued messages after normal completion
-		for {
-			if result.cancelReason == "user" {
-				service.ClearQueue(sessionID)
-				markDoneAndSendFinal(ai.StreamEvent{Type: "cancelled"})
-				return
-			}
-			if result.err != "" {
-				markDoneAndSendFinal(ai.StreamEvent{Type: "error", Error: result.err})
-				return
-			}
-			if result.empty {
-				markDoneAndSendFinal(ai.StreamEvent{Type: "error", Error: "AI returned no content", Reason: ai.ReasonEmpty})
-				return
-			}
-			if result.cancelReason != "" {
-				// Other cancel reasons
-				markDoneAndSendFinal(ai.StreamEvent{Type: "cancelled"})
-				return
-			}
-
-			// Normal completion — check queue for next message
-			qMsg, ok := service.DequeueMessage(sessionID)
-			if !ok {
-				// Brief re-check for enqueue-during-exit race
-				time.Sleep(50 * time.Millisecond)
-				qMsg, ok = service.DequeueMessage(sessionID)
-			}
-			if !ok {
-				// Queue empty — truly done
-				markDoneAndSendFinal(ai.StreamEvent{Type: "done"})
-				return
-			}
-
-			// Queue has next message — drain it atomically
-			slog.Info("draining queued message", slog.String("session", sessionID), slog.String("text", qMsg.Text))
-
-			// Persist user message to DB
-			drainMsgID, err := service.AddChatMessage(projectPath, backendName, sessionID, "user", qMsg.Text, qMsg.Files, false, T(r, "FileMessage"))
-			if err != nil {
-				slog.Error("failed to persist drain message", slog.String("session", sessionID), slog.String("error", err.Error()))
-				// Continue with drainMsgID=0 — frontend will use synthetic drain ID
-			}
-
-			// Send single atomic queue_drain event (replaces old queue_done + queue_consume + queue_update)
-			remainingQueue := service.GetQueue(sessionID)
-			ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{
-				Type: "queue_drain",
-				QueueEvent: &ai.QueueEventData{
-					SessionID: sessionID,
-					Text:      qMsg.Text,
-					MessageID: drainMsgID,
-					FilePaths: qMsg.FilePaths,
-					Files:     qMsg.Files,
-					Queue:     remainingQueue,
-				},
-			})
-
-			// Build chat request from queued message and execute
-			nextChatReq := buildChatRequestFromQueue(qMsg, sessionID, projectPath, backendName, effectiveAgentID, fileDir)
-			result = executeStreamRun(ctx, r, streamCh, projectPath, sessionID, backendName, effectiveAgentID, nextChatReq, fileDir)
-			// Loop continues
-		}
+		service.RunDrainLoop(service.DrainConfig{
+			SessionID:   sessionID,
+			ProjectPath: projectPath,
+			BackendName: backendName,
+			PersistUser: func(text string, files []model.FileEntry) (int64, error) {
+				msgID, err := service.AddChatMessage(projectPath, backendName, sessionID, "user", text, files, false, T(r, "FileMessage"))
+				if err != nil {
+					slog.Error("failed to persist drain message", slog.String("session", sessionID), slog.String("error", err.Error()))
+				}
+				return msgID, err
+			},
+			ExecuteRunWithMessage: func(qMsg model.QueuedMessage) service.DrainResult {
+				nextChatReq := buildChatRequestFromQueue(qMsg, sessionID, projectPath, backendName, effectiveAgentID, fileDir)
+				nextResult := executeStreamRun(ctx, r, projectPath, sessionID, backendName, effectiveAgentID, nextChatReq, fileDir)
+				return service.DrainResult{
+					CancelReason: nextResult.cancelReason,
+					Err:          nextResult.err,
+					Empty:        nextResult.empty,
+				}
+			},
+			MarkDoneAndSendFinal: markDoneAndSendFinal,
+		}, service.DrainResult{
+			CancelReason: result.cancelReason,
+			Err:          result.err,
+			Empty:        result.empty,
+		})
 	}()
+}
+
+// emitStreamEvent emits a stream event to WS clients via StreamHub.
+func emitStreamEvent(sessionID string, event ai.StreamEvent) {
+	ws.EmitToSession(sessionID, event)
 }
 
 // streamRunResult captures the outcome of a single AI stream execution.
@@ -614,11 +600,10 @@ type streamRunResult struct {
 // It creates a backend, starts the stream, then delegates the event loop
 // to SessionExecutor.RunWithChannel() and database finalization to
 // SessionExecutor.Finalize().
-// It does NOT send a terminal SSE event — the caller decides what to send.
+// It does NOT send a terminal WS event — the caller decides what to send.
 func executeStreamRun(
 	ctx context.Context,
 	r *http.Request,
-	streamCh chan<- ai.StreamEvent,
 	projectPath, sessionID, backendName, agentID string,
 	chatReq ai.ChatRequest,
 	fileDir string,
@@ -631,9 +616,7 @@ func executeStreamRun(
 	if err != nil {
 		slog.Error("failed to create backend", slog.String("backend", backendName), slog.String("err", err.Error()))
 		errMsg := T(r, "BackendCreateFailed", map[string]any{"Error": err.Error()})
-		if !ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{Type: "error", Error: errMsg}) {
-			return streamRunResult{err: errMsg}
-		}
+		emitStreamEvent(sessionID, ai.StreamEvent{Type: "error", Error: errMsg})
 		_, _ = service.AddChatMessage(projectPath, backendName, sessionID, "assistant", errMsg, nil, false, "")
 		return streamRunResult{err: errMsg}
 	}
@@ -651,9 +634,7 @@ func executeStreamRun(
 	if err != nil {
 		slog.Error("failed to start stream", slog.String("err", err.Error()))
 		errMsg := T(r, "StreamStartFailed", map[string]any{"Error": err.Error()})
-		if !ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{Type: "error", Error: errMsg}) {
-			return streamRunResult{err: errMsg}
-		}
+		emitStreamEvent(sessionID, ai.StreamEvent{Type: "error", Error: errMsg})
 		_, _ = service.AddChatMessage(projectPath, backendName, sessionID, "assistant", errMsg, nil, false, "")
 		return streamRunResult{err: errMsg}
 	}
@@ -672,7 +653,6 @@ func executeStreamRun(
 		ChatRequest:        chatReq,
 		FileDir:            fileDir,
 		StreamingMessageID: streamingMsgID,
-		StreamCh:           streamCh,
 		LocalizeError: func(err error, key string, args map[string]any) string {
 			return T(r, key, args)
 		},
@@ -683,8 +663,8 @@ func executeStreamRun(
 	// Finalize: persist to DB, drain channel, save metadata/raw
 	runResult = executor.Finalize(runResult, eventCh)
 
-	// Send updated metadata (with wallMs) to SSE before the terminal event
-	ai.SendStreamEvent(ctx, streamCh, ai.StreamEvent{Type: "metadata", Meta: runResult.Metadata})
+	// Send updated metadata (with wallMs) to WS clients before the terminal event
+	emitStreamEvent(sessionID, ai.StreamEvent{Type: "metadata", Meta: runResult.Metadata})
 
 	// Convert RunResult to streamRunResult
 	result := streamRunResult{}

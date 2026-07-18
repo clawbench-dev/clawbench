@@ -680,6 +680,26 @@ describe('useSessionIdentity', () => {
             updateAvailableModes([])
             expect(identity.availableModes.value).toEqual([{ id: 'code', name: 'Code' }])
         })
+
+        it('resolves currentModeName when currentModeId was set before modes arrived', () => {
+            const identity = useSessionIdentity()
+            // Set modeId directly (e.g. from loadModePref in createSession)
+            identity.currentModeId.value = 'architect'
+            identity.currentModeName.value = ''
+            // Then modes arrive from populateACPStateFromCache
+            updateAvailableModes([
+                { id: 'ask', name: 'Ask' },
+                { id: 'code', name: 'Code' },
+                { id: 'architect', name: 'Architect' },
+            ])
+            expect(identity.currentModeId.value).toBe('architect')
+            expect(identity.currentModeName.value).toBe('Architect')
+            expect(identity.availableModes.value).toEqual([
+                { id: 'ask', name: 'Ask' },
+                { id: 'code', name: 'Code' },
+                { id: 'architect', name: 'Architect' },
+            ])
+        })
     })
 
     // ── ACP command state ──

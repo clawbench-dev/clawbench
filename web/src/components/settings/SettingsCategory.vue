@@ -9,29 +9,49 @@
     :agent-id="categoryId.slice(7)"
     @deleted="$emit('navigate', 'agents')"
   />
-  <!-- Standard settings category -->
+  <!-- Sub-page routes (data-driven: any colon-separated ID except agents) -->
+  <div v-else-if="subPagePanel" class="settings-category">
+    <SettingsGroupPanel
+      :config="subPagePanel"
+      :show-title="false"
+      @restart-needed="(fields) => $emit('restartNeeded', fields)"
+    />
+  </div>
+  <!-- Standard settings category with mixed items + panels -->
   <div v-else class="settings-category">
-    <template v-for="entry in renderList" :key="entry.key">
+    <template v-for="entry in renderList" :key="entry.type === 'item' ? entry.spec.key : entry.config.panelId">
+      <!-- Section header for flat items -->
+      <template v-if="entry.type === 'item' && entry.spec.sectionHeader">
+        <div class="settings-category__section-header">{{ t(entry.spec.sectionHeader) }}</div>
+      </template>
+      <!-- Flat item -->
       <SettingsItem
-        :label="getItemLabel(entry)"
-        :description="entry.descriptionKey ? t(entry.descriptionKey) : ''"
-        :type="entry.type"
-        :model-value="getItemValue(entry)"
-        :options="resolveItemOptions(entry)"
-        :min="entry.min"
-        :max="entry.max"
-        :step="entry.step"
-        :needs-restart="entry.needsRestart"
-        :force-close="activeKey !== null && activeKey !== entry.key"
+        v-if="entry.type === 'item'"
+        :label="getItemLabel(entry.spec)"
+        :description="entry.spec.descriptionKey ? t(entry.spec.descriptionKey) : ''"
+        :type="entry.spec.type"
+        :model-value="getItemValue(entry.spec)"
+        :options="resolveItemOptions(entry.spec)"
+        :min="entry.spec.min"
+        :max="entry.spec.max"
+        :step="entry.spec.step"
+        :needs-restart="entry.spec.needsRestart"
+        :force-close="activeKey !== null && activeKey !== entry.spec.key"
         :no-divider="false"
-        :default-value="entry.defaultValue"
-        :display-format="entry.displayFormat"
-        :display-transform="entry.displayTransform"
-        @update:model-value="(v: unknown) => handleUpdate(entry, v)"
-        @click="handleClick(entry)"
-        @edit-toggle="(open: boolean) => handleEditToggle(entry.key, open)"
-        @desc-toggle="(open: boolean) => handleDescToggle(entry.key, open)"
+        :default-value="entry.spec.defaultValue"
+        :display-format="entry.spec.displayFormat"
+        :display-transform="entry.spec.displayTransform"
+        @update:model-value="(v: unknown) => handleUpdate(entry.spec, v)"
+        @click="handleClick(entry.spec)"
+        @edit-toggle="(open: boolean) => handleEditToggle(entry.spec.key, open)"
         @discard="handleDiscard"
+      />
+      <!-- Group panel — C2 fix: arrow closure passes panelId -->
+      <SettingsGroupPanel
+        v-else
+        :config="entry.config"
+        :show-title="shouldShowPanelTitle(entry.config)"
+        @restart-needed="(fields) => $emit('restartNeeded', fields)"
       />
     </template>
     <!-- Password change dialog -->
@@ -49,6 +69,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
+import SettingsGroupPanel from './SettingsGroupPanel.vue'
 import PasswordChangeDialog from './PasswordChangeDialog.vue'
 import SettingsAgentsIndex from './SettingsAgentsIndex.vue'
 import SettingsAgentDetail from './SettingsAgentDetail.vue'
@@ -58,8 +79,9 @@ import { useAgents } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
 import { useAppMode } from '@/composables/useAppMode'
+import { startFlushTimer, stopFlushTimer } from '@/utils/appLog'
 import { usePwaInstall } from '@/composables/usePwaInstall'
-import { categoryItems, type ItemSpec, type DependsOn } from './settingsFieldMap'
+import { categoryItems, isPanelOnlyCategory, getCategoryPanels, isDependsOnMet, isSubPageRoute, getSubPagePanel, type ItemSpec, type CategoryEntry, type GroupPanelConfig } from './settingsFieldMap'
 
 const props = defineProps<{
   categoryId: string
@@ -92,51 +114,53 @@ function resolveConfigValue(key: string): unknown {
   return getServerValueWithDefault(key)
 }
 
-function isSingleDependsOnMet(dep: DependsOn): boolean {
-  const currentValue = resolveConfigValue(dep.key)
-  if ('value' in dep) return currentValue === dep.value
-  return dep.values!.includes(currentValue as unknown)
-}
+// ── Sub-page panel (data-driven) ──
 
-function isDependsOnMet(dependsOn: ItemSpec['dependsOn']): boolean {
-  if (!dependsOn) return true
-  if (Array.isArray(dependsOn)) return dependsOn.every(isSingleDependsOnMet)
-  return isSingleDependsOnMet(dependsOn)
-}
+const subPagePanel = computed((): GroupPanelConfig | undefined => {
+  if (isSubPageRoute(props.categoryId)) {
+    return getSubPagePanel(props.categoryId)
+  }
+  return undefined
+})
 
-// ── Render list: standalone items with dependsOn filtering ──
+// ── Render list: mixed items + panels with dependsOn filtering ──
 
 const renderList = computed(() => {
   const raw = categoryItems[props.categoryId] ?? []
-  const result: ItemSpec[] = []
+  const result: CategoryEntry[] = []
 
-  for (const item of raw) {
-    if (!isDependsOnMet(item.dependsOn)) continue
-    // Hide appVersion row when not in Android App mode
-    if (item.key === 'appVersion' && !isAppMode.value) continue
-    if (item.key === 'addToHomeScreen' && !pwaInstall.showPwaInstall.value) continue
-    if (item.key === 'downloadAndroidApp' && !pwaInstall.showApkDownload.value) continue
-
-    // Inject section header pseudo-item before the field
-    if (item.sectionHeader) {
-      result.push({
-        key: `header-${item.key}`,
-        label: t(item.sectionHeader),
-        labelKey: item.sectionHeader,
-        type: 'header',
-        source: 'local',
-      } as ItemSpec & { label: string })
+  for (const entry of raw) {
+    if (entry.type === 'item') {
+      if (!isDependsOnMet(entry.spec.dependsOn, resolveConfigValue)) continue
+      if (entry.spec.appOnly && !isAppMode.value) continue
+      if (entry.spec.key === 'appVersion' && !isAppMode.value) continue
+      if (entry.spec.key === 'addToHomeScreen' && !pwaInstall.showPwaInstall.value) continue
+      if (entry.spec.key === 'downloadAndroidApp' && !pwaInstall.showApkDownload.value) continue
+      result.push(entry)
+    } else {
+      // Panel entries always render
+      result.push(entry)
     }
-    result.push(item)
   }
 
   return result
 })
 
-// ── Standalone item helpers ──
+// ── Panel title visibility ──
+
+function shouldShowPanelTitle(_config: GroupPanelConfig): boolean {
+  // Single-panel-only category: panel title = category title, no redundant header
+  if (isPanelOnlyCategory(props.categoryId)) {
+    const panels = getCategoryPanels(props.categoryId)
+    return panels.length > 1
+  }
+  // Mixed category: always show panel title to distinguish from flat items
+  return true
+}
+
+// ── Flat item helpers ──
 
 function getItemLabel(entry: ItemSpec): string {
-  // Section header items have a 'label' field set at runtime
   const extended = entry as ItemSpec & { label?: string }
   return extended.label || t(entry.labelKey)
 }
@@ -180,7 +204,7 @@ function getItemValue(item: ItemSpec): unknown {
 
 async function handleUpdate(item: ItemSpec, value: unknown) {
   if (item.type === 'password') {
-    if (!value || (value as string).includes('•')) return
+    if (!value) return
   }
 
   if (item.key === 'localhost_auth_exempt' && value === false) {
@@ -192,14 +216,18 @@ async function handleUpdate(item: ItemSpec, value: unknown) {
   }
   if (item.source === 'local') {
     setLocalConfig(item.key, value as string | number | boolean)
-    if (item.key === 'androidLogCapture') {
-      try {
-        if (value) {
-          ;(window as unknown as { AndroidNative?: { startLogCapture?: () => void; stopLogCapture?: () => void } }).AndroidNative?.startLogCapture?.()
-        } else {
-          ;(window as unknown as { AndroidNative?: { startLogCapture?: () => void; stopLogCapture?: () => void } }).AndroidNative?.stopLogCapture?.()
-        }
-      } catch { /* not in app mode */ }
+    if (item.key === 'logCapture') {
+      if (value) {
+        try {
+          ;(window as unknown as { AndroidNative?: { startLogCapture?: () => void } }).AndroidNative?.startLogCapture?.()
+        } catch { /* not in app mode */ }
+        startFlushTimer()
+      } else {
+        try {
+          ;(window as unknown as { AndroidNative?: { stopLogCapture?: () => void } }).AndroidNative?.stopLogCapture?.()
+        } catch { /* not in app mode */ }
+        stopFlushTimer()
+      }
     }
     return
   }
@@ -230,6 +258,9 @@ function handleClick(item: ItemSpec) {
   }
   if (item.key === 'downloadAndroidApp') {
     window.location.href = '/api/apk'
+  }
+  if (item.navigateTo) {
+    emit('navigate', item.navigateTo)
   }
   if (item.key === 'showWelcome') {
     window.dispatchEvent(new CustomEvent('clawbench-show-welcome'))
@@ -270,14 +301,6 @@ function handleEditToggle(key: string, open: boolean) {
   }
 }
 
-function handleDescToggle(key: string, open: boolean) {
-  if (open) {
-    activeKey.value = key
-  } else if (activeKey.value === key) {
-    activeKey.value = null
-  }
-}
-
 function handleDiscard() {
   toast.show(t('settings.passwordDiscarded'), { icon: 'ℹ️', type: 'info', duration: 3000 })
 }
@@ -285,8 +308,17 @@ function handleDiscard() {
 
 <style scoped>
 .settings-category {
-  padding: 8px 0;
+  padding: 0;
   background: var(--bg-secondary);
   min-height: 100%;
+}
+
+.settings-category__section-header {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 10px 16px 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 500;
 }
 </style>

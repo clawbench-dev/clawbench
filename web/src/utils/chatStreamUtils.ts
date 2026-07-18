@@ -71,6 +71,13 @@ export interface SseJsonData {
   [key: string]: unknown
 }
 
+/** Chat stream event data via WebSocket */
+export interface ChatStreamEventData {
+  session_id: string
+  event_type: string
+  payload: Record<string, unknown>
+}
+
 /** Polling response data */
 export interface PollResponseData {
   messages?: ChatMessage[]
@@ -80,24 +87,12 @@ export interface PollResponseData {
 
 /** Queue event data */
 export interface QueueEventData {
+  queueId?: string
   text?: string
   sessionId?: string
   filePaths?: string[]
   files?: FileEntry[]
   messageId?: number
-}
-
-/** Queue update event data */
-export interface QueueUpdateEventData {
-  sessionId?: string
-  queue?: QueueItem[]
-}
-
-export interface QueueItem {
-  text?: string
-  files?: FileEntry[]
-  filePaths?: string[]
-  createdAt?: string
 }
 
 /** Error event data */
@@ -253,6 +248,7 @@ export function generateDrainId(): string {
  */
 export function drainQueueMessage(
   messages: ChatMessage[],
+  queueId: string,
   userContent: string,
   userFiles: FileEntry[],
   currentBackend: string,
@@ -281,33 +277,31 @@ export function drainQueueMessage(
     callbacks.onExtractScheduledTasks?.(messages)
   }
 
-  // 2. Find the pending user message that matches the drain content and
-  //    clear its pending flag. The message was pushed into messages by
-  //    queue_queued event or optimistically by sendMessage.
-  //    If not found (e.g. queue_queued was missed), push it as a fallback.
-  //    If the backend provided a DB message ID (dbMessageId), set it for
-  //    v-for key stability so Vue won't unmount/remount on loadHistory.
-  //    NOTE: findIndex matches the first pending message with matching content.
-  //    This is correct for FIFO semantics — drain always dequeues the oldest
-  //    pending message, and findIndex finds the oldest match. If two queued
-  //    messages have identical text, the first drain matches the first pending,
-  //    clears its flag, and the second drain's findIndex skips it and matches
-  //    the second. Any transient ordering mismatch is corrected by the next
-  //    queue_update event which replaces the entire pending portion.
-  const pendingIdx = messages.findIndex(
-    (m) => m.role === 'user' && m.pending && m.content === userContent
-  )
+  // 2. Find the pending user message — prefer queueId matching (precise),
+  //    fall back to _remoteQueueId matching (cross-device), then content matching.
+  let pendingIdx = -1
+  if (queueId) {
+    pendingIdx = messages.findIndex((m) => m.role === 'user' && m.pending && m.id === queueId)
+  }
+  if (pendingIdx === -1 && queueId) {
+    // Match _remote messages by their stored _remoteQueueId (precise cross-device matching)
+    pendingIdx = messages.findIndex((m) => m.role === 'user' && m._remote && m['_remoteQueueId'] === queueId)
+  }
+  if (pendingIdx === -1 && userContent) {
+    pendingIdx = messages.findIndex((m) => m.role === 'user' && (m.pending || m._remote) && m.content === userContent)
+  }
   if (pendingIdx !== -1) {
-    // Found the pending message — clear pending flag, update id to stable DB id
+    // Found the pending or remote message — clear flag, update id to stable DB id
     delete messages[pendingIdx].pending
+    delete messages[pendingIdx]._remote
+    delete messages[pendingIdx]['_remoteQueueId']
     if (dbMessageId) {
       messages[pendingIdx].id = dbMessageId
-    }
-    if (drainId && !dbMessageId) {
+    } else if (drainId) {
       messages[pendingIdx].id = drainId
     }
   } else if (userContent) {
-    // Fallback: pending message not found (queue_queued event was missed).
+    // Fallback: pending message not found (queue event was missed).
     // Push it directly. Deduplicate by ID to avoid race with loadHistory.
     const effectiveDrainId = dbMessageId || drainId || generateDrainId()
     const alreadyExists = messages.some(
@@ -327,12 +321,7 @@ export function drainQueueMessage(
   }
 
   // 3. Insert new streaming assistant placeholder right after the drain
-  //    user message. Using push() would place it after any remaining pending
-  //    messages, making the AI reply appear below the queued messages.
-  //    Without an id, the v-for key would be 'local-{index}' (unstable) —
-  //    loadHistory replacement would change the key, causing Vue to
-  //    unmount/remount the component and lose the streaming state.
-  //    stream_start will later replace this drain ID with the real DB message_id.
+  //    user message.
   const newStreamingMsg = {
     role: 'assistant' as const,
     id: generateDrainId(),
@@ -353,6 +342,25 @@ export function drainQueueMessage(
   }
 
   return newStreamingMsg
+}
+
+/**
+ * Remove pending messages from the messages array whose IDs match
+ * the given queueIds. Used by the queue_cancel event handler.
+ * Returns the number of removed messages.
+ */
+export function cancelPendingMessages(
+  messages: ChatMessage[],
+  queueIds: string[]
+): number {
+  let removed = 0
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].pending && queueIds.includes(String(messages[i].id))) {
+      messages.splice(i, 1)
+      removed++
+    }
+  }
+  return removed
 }
 
 /**

@@ -54,6 +54,7 @@ vi.mock('@/composables/useTerminalSession', () => {
         }),
         sendInput: vi.fn(),
         sendResize: vi.fn(),
+        sendReplayDone: vi.fn(),
         setCallbacks: vi.fn(),
       }
       mockSessionStore.push(session)

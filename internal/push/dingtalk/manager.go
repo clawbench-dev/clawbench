@@ -34,6 +34,8 @@ type ConnectedClientChecker interface {
 	HasConnectedClients() bool
 }
 
+// clientChecker is set once at startup via RegisterClientChecker before any
+// push events occur, then read-only. Safe for concurrent reads after initialization.
 var clientChecker ConnectedClientChecker
 
 // RegisterClientChecker sets the client checker (called from main.go).
@@ -106,11 +108,29 @@ func SetManager(m *Manager) {
 	mgrInstance = m
 }
 
+// SetStartedForTest sets the started flag for testing purposes.
+// Production code must not use this.
+func (m *Manager) SetStartedForTest(started bool) {
+	m.startMu.Lock()
+	defer m.startMu.Unlock()
+	m.started = started
+}
+
 // IsStarted returns whether the DingTalk manager is running.
 func IsStarted() bool {
 	mgrMu.RLock()
 	defer mgrMu.RUnlock()
 	return mgrInstance != nil && mgrInstance.started
+}
+
+// GetPushMode returns the current push_mode from the global ConfigInstance.
+// Values: "native" (default), "dingtalk", "disabled".
+func GetPushMode() string {
+	mode := model.ConfigInstance.PushMode
+	if mode == "" {
+		return "native"
+	}
+	return mode
 }
 
 // ReconfigureResult indicates whether the manager needs to be fully restarted.

@@ -128,7 +128,7 @@ const i18n = createI18n({
       common: { ok: '确定' },
       settings: {
         needsRestart: '需重启',
-        categories: { chat: '聊天', agents: '智能体', appearance: '外观', tts: '语音', summarization: '摘要', portForward: '端口转发', push: '推送', terminal: '终端', rag: 'RAG', files: '文件', about: '关于', android: 'Android', security: '安全' },
+        categories: { chat: '聊天', agents: '智能体', appearance: '外观', tts: '语音', portForward: '端口转发', push: '推送', terminal: '终端', rag: 'RAG', projectFiles: '项目与文件', about: '关于', android: 'Android', security: '安全' },
         items: {
           defaultAgent: '默认智能体',
           autoSpeech: '自动语音',
@@ -153,9 +153,6 @@ const i18n = createI18n({
           apiHeader: 'API',
           apiBaseUrl: 'API地址',
           apiKey: 'API密钥',
-          apiFormat: 'API格式',
-          apiFormatOpenai: 'OpenAI',
-          apiFormatAnthropic: 'Anthropic',
           ttsMaxCacheFiles: '缓存上限',
           ragSearchPoolSize: '搜索池大小',
           ragBaseUrl: '嵌入接口地址',
@@ -184,7 +181,7 @@ const i18n = createI18n({
           aboutServerVersion: '服务器版本',
           aboutAppVersion: 'APP版本',
           serverRestart: '重启服务器',
-          androidLogCapture: '日志抓取',
+          logCapture: '日志抓取',
           reconfigureServer: '重新配置服务器',
           agentModel: '首选模型',
           agentThinking: '思考强度',
@@ -329,10 +326,10 @@ describe('SettingsCategory', () => {
     })
   })
 
-  // ─── Files category ──────────────────────────────
-  describe('files category', () => {
+  // ─── ProjectFiles category ──────────────────────────────
+  describe('projectFiles category', () => {
     it('saves showHidden locally when toggled', async () => {
-      const wrapper = mountCategory('files')
+      const wrapper = mountCategory('projectFiles')
       const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
       const item = allItems.find(i => i.props().label === '显示隐藏文件')
       expect(item).toBeTruthy()
@@ -344,7 +341,7 @@ describe('SettingsCategory', () => {
     })
 
     it('PATCHes upload.max_size_mb when changed', async () => {
-      const wrapper = mountCategory('files')
+      const wrapper = mountCategory('projectFiles')
       const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
       const item = allItems.find(i => i.props().label === '上传大小上限')
       expect(item).toBeTruthy()
@@ -356,7 +353,7 @@ describe('SettingsCategory', () => {
     })
 
     it('PATCHes upload.max_files when changed', async () => {
-      const wrapper = mountCategory('files')
+      const wrapper = mountCategory('projectFiles')
       const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
       const item = allItems.find(i => i.props().label === '上传文件上限')
       expect(item).toBeTruthy()
@@ -493,7 +490,7 @@ describe('SettingsCategory', () => {
     })
   })
 
-  // ─── handleEditToggle / handleDescToggle / handleDiscard ──────────
+  // ─── handleEditToggle / handleDiscard ──────────
   describe('toggle and discard handlers', () => {
     it('handleEditToggle sets activeKey on open', async () => {
       const wrapper = mountCategory('chat')
@@ -516,21 +513,6 @@ describe('SettingsCategory', () => {
       vm.$.setupState.activeKey = 'autoSpeech'
       vm.$.setupState.handleEditToggle('other', false)
       expect(vm.$.setupState.activeKey).toBe('autoSpeech')
-    })
-
-    it('handleDescToggle sets activeKey on open', async () => {
-      const wrapper = mountCategory('chat')
-      const vm = wrapper.vm as any
-      vm.$.setupState.handleDescToggle('autoSpeech', true)
-      expect(vm.$.setupState.activeKey).toBe('autoSpeech')
-    })
-
-    it('handleDescToggle clears activeKey on close when key matches', async () => {
-      const wrapper = mountCategory('chat')
-      const vm = wrapper.vm as any
-      vm.$.setupState.activeKey = 'autoSpeech'
-      vm.$.setupState.handleDescToggle('autoSpeech', false)
-      expect(vm.$.setupState.activeKey).toBeNull()
     })
 
     it('handleDiscard shows info toast', async () => {
@@ -570,11 +552,11 @@ describe('SettingsCategory', () => {
       expect(mockSetServerValue).not.toHaveBeenCalled()
     })
 
-    it('skips password update when value contains bullet chars (masked)', async () => {
+    it('allows password update with real value', async () => {
       const wrapper = mountCategory('security')
       const vm = wrapper.vm as any
-      await vm.$.setupState.handleUpdate({ key: 'password', type: 'password', source: 'server' }, '••••')
-      expect(mockSetServerValue).not.toHaveBeenCalled()
+      await vm.$.setupState.handleUpdate({ key: 'password', type: 'password', source: 'server' }, 'my-real-password')
+      expect(mockSetServerValue).toHaveBeenCalled()
     })
 
     it('shows toast on server save failure', async () => {

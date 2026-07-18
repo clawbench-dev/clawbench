@@ -5,6 +5,14 @@ import (
 	"strings"
 )
 
+// IsAnthropicURL detects whether a URL is an Anthropic API endpoint based on
+// the domain or path patterns. This is used by both the Summarizer construction
+// and the connectivity test handler to auto-detect the API format.
+func IsAnthropicURL(u string) bool {
+	return strings.Contains(u, "anthropic.com") ||
+		strings.HasSuffix(strings.TrimRight(u, "/"), "/v1/messages")
+}
+
 const (
 	// defaultTTSPrompt is the fallback prompt used when the external file is not found.
 	// A language directive (e.g. "Output in Chinese.") is appended at load time.

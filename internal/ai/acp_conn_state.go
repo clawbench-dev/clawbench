@@ -164,21 +164,15 @@ func (c *ACPConn) applyExtractedState(ext sessionStateExtracted, preserveExistin
 
 	// Force-update agent-level registry (full overwrite, once per process instance)
 	// Preserve loadSession/listSessions from spawnLocked's Initialize response.
-	// Preserve cachedUsageState — ForceUpdate does a full overwrite and
-	// ForceUpdateIfNeeded doesn't include it, so we must restore it after.
 	agentID := c.AgentID()
 	reg := GetAgentCapabilityRegistry()
 	loadSession := reg.GetLoadSession(agentID)
 	listSessions := reg.GetListSessions(agentID)
-	cachedUsage := reg.GetUsageState(agentID)
 	reg.ForceUpdateIfNeeded(agentID, ext.modes, ext.efforts, ext.models, nil, configState, loadSession, listSessions)
-	if cachedUsage != nil {
-		reg.UpdateUsageState(agentID, cachedUsage)
-	}
 }
 
 // EmitSessionStateEvents emits mode_update, thinking_effort_update, and model_list_update
-// SSE events. Called on every stream start (new and resumed sessions) so the frontend
+// WS events. Called on every stream start (new and resumed sessions) so the frontend
 // always receives the current ACP state.
 func (c *ACPConn) EmitSessionStateEvents(ch chan<- StreamEvent) {
 	agentID := c.AgentID()
@@ -198,7 +192,7 @@ func (c *ACPConn) EmitSessionStateEvents(ch chan<- StreamEvent) {
 	}
 }
 
-// EmitCommandsUpdate re-emits cached slash commands as an SSE event.
+// EmitCommandsUpdate re-emits cached slash commands as a WS event.
 func (c *ACPConn) EmitCommandsUpdate(ch chan<- StreamEvent) {
 	agentID := c.AgentID()
 	cmds := GetAgentCapabilityRegistry().GetCommands(agentID)

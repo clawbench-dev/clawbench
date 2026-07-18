@@ -194,7 +194,7 @@ import {
 import { localConfig, setLocalConfig, useSettingsConfig } from '@/composables/useSettingsConfig'
 import type { KeyDef } from '@/utils/terminalKeyDefs'
 
-import { Zap as ZapIcon, Hand as HandIcon, Hash as HashIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, Terminal as TerminalIcon, Settings, Copy as CopyIcon } from 'lucide-vue-next'
+import { Zap as ZapIcon, Hand as HandIcon, Hash as HashIcon, Plus as PlusIcon, MoreVertical as MoreVerticalIcon, SquareTerminal as TerminalIcon, Settings, Copy as CopyIcon } from 'lucide-vue-next'
 const props = defineProps<{
   requestedCwd?: string | null
   active?: boolean
@@ -578,8 +578,11 @@ function handleTabClick(tabId: string) {
   // Connect the newly active tab if it's disconnected (e.g. after panel reactivation)
   const tab = tabManager.getTab(tabId)
   if (tab && (tab.session.connectionState as unknown as string) === 'disconnected') {
-    // Fit before connect so cols/rows are correct for the WS URL
-    try { tab.fitAddon?.fit() } catch { /* ignore */ }
+    // Fit before connect only for new sessions; reconnects get fit() in onReplay
+    const isNewSession = !(tab.session.sessionId as unknown as string)
+    if (isNewSession) {
+      try { tab.fitAddon?.fit() } catch { /* ignore */ }
+    }
     tab.session.connect().then(() => {
       tabManager.syncTabSessionId(tabId)
     }).catch(() => { /* error shown via overlay */ })
@@ -748,9 +751,14 @@ watch(() => props.active, async (isActive) => {
       if (container && !tab.container) {
         mountTabToContainer(tab, container)
       }
-      // Fit BEFORE connect so term.cols/rows are correct when the WS URL
-      // is built with initial dimensions for the PTY.
-      try { tab.fitAddon?.fit() } catch { /* ignore */ }
+      // Fit before connect ONLY for new sessions (no sessionId yet) so
+      // the WS URL includes correct cols/rows for PTY initialization.
+      // For reconnects, onReplay handles fit() — a premature fit() here
+      // sends resize before the replay flow is ready, racing with SIGWINCH.
+      const isNewSession = !(tab.session.sessionId as unknown as string)
+      if (isNewSession) {
+        try { tab.fitAddon?.fit() } catch { /* ignore */ }
+      }
       if ((tab.session.connectionState as unknown as string) === 'disconnected') {
         try {
           await tab.session.connect()

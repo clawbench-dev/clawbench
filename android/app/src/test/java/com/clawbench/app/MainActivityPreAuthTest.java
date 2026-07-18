@@ -108,8 +108,9 @@ public class MainActivityPreAuthTest {
         setField(activity, "connectionTimeoutRunnable", null);
         setField(activity, "pendingLoginErrorMessage", null);
 
-        // Stub performHealthCheck to return null (no error) by default
-        doReturn(null).when(activity).performHealthCheck(anyString(), any(OkHttpClient.class));
+        // Stub performHealthCheck to return success (no error) by default
+        doReturn(MainActivity.HealthCheckResult.success("1.0.0")).when(activity).performHealthCheck(anyString(), any(OkHttpClient.class));
+
     }
 
     @After
@@ -439,6 +440,31 @@ public class MainActivityPreAuthTest {
     }
 
     // =====================================================
+    // HealthCheckResult data class
+    // =====================================================
+
+    @Test
+    public void healthCheckResult_success_holdsVersion() {
+        MainActivity.HealthCheckResult result = MainActivity.HealthCheckResult.success("v1.0.0");
+        assertNull(result.error);
+        assertEquals("v1.0.0", result.serverVersion);
+    }
+
+    @Test
+    public void healthCheckResult_fail_holdsError() {
+        MainActivity.HealthCheckResult result = MainActivity.HealthCheckResult.fail("connection error");
+        assertEquals("connection error", result.error);
+        assertNull(result.serverVersion);
+    }
+
+    @Test
+    public void healthCheckResult_success_nullVersion() {
+        MainActivity.HealthCheckResult result = MainActivity.HealthCheckResult.success(null);
+        assertNull(result.error);
+        assertNull(result.serverVersion);
+    }
+
+    // =====================================================
     // Login URL construction
     // =====================================================
 
@@ -613,7 +639,7 @@ public class MainActivityPreAuthTest {
     // =====================================================
 
     @Test
-    public void performHealthCheck_200_clawbenchServer_returnsNull() throws Exception {
+    public void performHealthCheck_200_clawbenchServer_returnsSuccessWithVersion() throws Exception {
         MockWebServer server = new MockWebServer();
         server.enqueue(new MockResponse()
                 .setResponseCode(200)
@@ -627,9 +653,10 @@ public class MainActivityPreAuthTest {
                 .build();
         // Call real method for this test
         doCallRealMethod().when(activity).performHealthCheck(anyString(), any(OkHttpClient.class));
-        String result = activity.performHealthCheck(url, client);
+        MainActivity.HealthCheckResult result = activity.performHealthCheck(url, client);
 
-        assertNull(result);
+        assertNull(result.error);
+        assertEquals("1.0.0", result.serverVersion);
 
         RecordedRequest request = server.takeRequest();
         assertTrue(request.getPath().endsWith("/api/health"));
@@ -651,9 +678,10 @@ public class MainActivityPreAuthTest {
                 .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
                 .build();
         doCallRealMethod().when(activity).performHealthCheck(anyString(), any(OkHttpClient.class));
-        String result = activity.performHealthCheck(url, client);
+        MainActivity.HealthCheckResult result = activity.performHealthCheck(url, client);
 
-        assertNotNull(result);
+        assertNotNull(result.error);
+        assertNull(result.serverVersion);
 
         server.shutdown();
     }
@@ -670,9 +698,10 @@ public class MainActivityPreAuthTest {
                 .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
                 .build();
         doCallRealMethod().when(activity).performHealthCheck(anyString(), any(OkHttpClient.class));
-        String result = activity.performHealthCheck(url, client);
+        MainActivity.HealthCheckResult result = activity.performHealthCheck(url, client);
 
-        assertNotNull(result);
+        assertNotNull(result.error);
+        assertNull(result.serverVersion);
 
         server.shutdown();
     }

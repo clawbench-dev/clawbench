@@ -4,14 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/summarize"
-	"clawbench/internal/ws"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -52,21 +49,6 @@ func setupTestDBForAsyncSummary(t *testing.T) (*sql.DB, func()) {
 	return db, teardown
 }
 
-// mockAsyncSummarizerBackend is a mock AI backend for AsyncSummarize tests
-type mockAsyncSummarizerBackend struct {
-	streamCh   chan ai.StreamEvent
-	executeErr error
-}
-
-func (m *mockAsyncSummarizerBackend) Name() string { return "mock-async" }
-
-func (m *mockAsyncSummarizerBackend) ExecuteStream(ctx context.Context, req ai.ChatRequest) (<-chan ai.StreamEvent, error) {
-	if m.executeErr != nil {
-		return nil, m.executeErr
-	}
-	return m.streamCh, nil
-}
-
 func TestAsyncSummarize_ShortText(t *testing.T) {
 	_, dbTeardown := setupTestDBForAsyncSummary(t)
 	defer dbTeardown()
@@ -74,20 +56,15 @@ func TestAsyncSummarize_ShortText(t *testing.T) {
 	origInstance := taskSummarizerInstance
 	defer func() { taskSummarizerInstance = origInstance }()
 
-	// Create a TaskSummarizer with mock backend
-	ch := make(chan ai.StreamEvent, 1)
-	ch <- ai.StreamEvent{Type: "done"}
-	close(ch)
-	mock := &mockAsyncSummarizerBackend{streamCh: ch}
-	taskSummarizerInstance = &summarize.TaskSummarizer{Backend: mock}
+	// Create a TaskSummarizer with a mock pipeline (should not be called for short text)
+	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
+		return "should not be called", nil
+	}
+	pipeline := summarize.NewPipelineWithOpts(passFn, summarize.TaskSummarizePrompt(), summarize.SummarizeOption{PreserveMarkdown: true})
+	taskSummarizerInstance = summarize.NewTaskSummarizerFromPipeline(pipeline)
 
 	// Short text block — should save empty summary
 	blocks := []model.ContentBlock{{Type: "text", Text: "短"}}
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	origBroadcast := ws.GetManager()
-	_ = origBroadcast // We don't test WS here, just DB
 
 	AsyncSummarize("chat_message", 1, blocks, "/test", "session-1")
 
@@ -106,13 +83,12 @@ func TestAsyncSummarize_NormalText(t *testing.T) {
 	origInstance := taskSummarizerInstance
 	defer func() { taskSummarizerInstance = origInstance }()
 
-	// Create mock backend that returns a summary
-	ch := make(chan ai.StreamEvent, 3)
-	ch <- ai.StreamEvent{Type: "content", Content: "## 精简总结\n\n关键结论。"}
-	ch <- ai.StreamEvent{Type: "done"}
-	close(ch)
-	mock := &mockAsyncSummarizerBackend{streamCh: ch}
-	taskSummarizerInstance = &summarize.TaskSummarizer{Backend: mock}
+	// Create mock pipeline that returns a summary
+	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
+		return "## 精简总结\n\n关键结论。", nil
+	}
+	pipeline := summarize.NewPipelineWithOpts(passFn, summarize.TaskSummarizePrompt(), summarize.SummarizeOption{PreserveMarkdown: true})
+	taskSummarizerInstance = summarize.NewTaskSummarizerFromPipeline(pipeline)
 
 	// Long text block
 	longText := strings.Repeat("这是一段较长的AI回复内容。", 30)
@@ -297,9 +273,12 @@ func TestAsyncSummarize_BackendError(t *testing.T) {
 	origInstance := taskSummarizerInstance
 	defer func() { taskSummarizerInstance = origInstance }()
 
-	// Mock backend that returns error
-	mock := &mockAsyncSummarizerBackend{executeErr: context.DeadlineExceeded}
-	taskSummarizerInstance = &summarize.TaskSummarizer{Backend: mock}
+	// Mock pipeline that returns error
+	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
+		return "", context.DeadlineExceeded
+	}
+	pipeline := summarize.NewPipelineWithOpts(passFn, summarize.TaskSummarizePrompt(), summarize.SummarizeOption{PreserveMarkdown: true})
+	taskSummarizerInstance = summarize.NewTaskSummarizerFromPipeline(pipeline)
 
 	longText := strings.Repeat("这是一段较长的AI回复内容。", 30)
 	blocks := []model.ContentBlock{{Type: "text", Text: longText}}
@@ -323,9 +302,12 @@ func TestAsyncSummarize_BackendError_ExtractsConclusion(t *testing.T) {
 	origInstance := taskSummarizerInstance
 	defer func() { taskSummarizerInstance = origInstance }()
 
-	// Mock backend that returns error
-	mock := &mockAsyncSummarizerBackend{executeErr: context.DeadlineExceeded}
-	taskSummarizerInstance = &summarize.TaskSummarizer{Backend: mock}
+	// Mock pipeline that returns error
+	passFn := func(ctx context.Context, text, systemPrompt string, pass int) (string, error) {
+		return "", context.DeadlineExceeded
+	}
+	pipeline := summarize.NewPipelineWithOpts(passFn, summarize.TaskSummarizePrompt(), summarize.SummarizeOption{PreserveMarkdown: true})
+	taskSummarizerInstance = summarize.NewTaskSummarizerFromPipeline(pipeline)
 
 	// Multi-block with tool_use — fallback should extract the conclusion
 	// (text after last tool_use), not the intro text

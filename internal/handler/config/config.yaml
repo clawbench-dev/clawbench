@@ -8,13 +8,14 @@ dev_port: 0
 dingtalk:
     agent_id: 123
     app_key: test-key
-    app_secret: test-secret
+    app_secret: '***masked***'
     enabled: true
     users:
         - user1
+frp:
+    token: abc***xyz
 host: ""
 localhost_auth_exempt: false
-log_dir: ""
 log_level: ""
 log_max_days: 0
 password: ""
@@ -31,7 +32,9 @@ push:
         app_key: ""
         enabled: false
         master_secret: newsecret1234567890
+push_mode: dingtalk
 rag:
+    api_key: sk-1***xyz
     batch_size: 0
     chunk_overlap: 0
     chunk_size: 0
@@ -48,11 +51,18 @@ session:
 summarize:
     api:
         agent_id: custom-url-agent
-        base_url: https://custom.api.com/v1/chat/completions
-        format: openai
+        base_url: https://api.anthropic.com
+        format: anthropic
         key: sk-test-key
     backend: api
     model: gpt-4o-mini
+    tts_api:
+        agent_id: custom-tts-agent
+        base_url: https://updated.com
+        format: openai
+        key: test-key
+    tts_backend: api
+    tts_model: gpt-4
 terminal:
     buffer_lines: 0
     enabled: false

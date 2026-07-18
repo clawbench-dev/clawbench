@@ -54,7 +54,7 @@ const { mockState, resetMockState } = vi.hoisted(() => {
   return { mockState, resetMockState }
 })
 
-const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, resetAdditionalMocks } = vi.hoisted(() => {
+const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, mockForceCleanupStreamingState, resetAdditionalMocks } = vi.hoisted(() => {
   const mockIdentity: Record<string, string | boolean> = {
     currentSessionTitle: '',
     currentBackend: '',
@@ -90,6 +90,7 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     buildMessageSnapshot: vi.fn().mockReturnValue(''),
     parseMessages: vi.fn().mockReturnValue([]),
   }
+  const mockForceCleanupStreamingState = vi.fn().mockReturnValue(undefined)
   function resetAdditionalMocks() {
     Object.keys(mockIdentity).forEach(k => { mockIdentity[k] = k === 'autoApprove' ? false : '' })
     mockToastFn.mockReset()
@@ -109,8 +110,9 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     mockAgentFns.agentHeaderTitle.mockReset().mockReturnValue('🤖 Test')
     mockUtilsFns.buildMessageSnapshot.mockReset().mockReturnValue('')
     mockUtilsFns.parseMessages.mockReset().mockReturnValue([])
+    mockForceCleanupStreamingState.mockReset().mockReturnValue(undefined)
   }
-  return { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, resetAdditionalMocks }
+  return { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockForceCleanupStreamingState, mockIdentityFns, resetAdditionalMocks }
 })
 
 // ── Mocks ──
@@ -168,6 +170,7 @@ vi.mock('@/composables/useSessionIdentity.ts', () => ({
     availableCommands: { value: [] },
     availableModes: { value: [] },
     availableThinkingEfforts: { value: [] },
+    contextSize: { value: 0 },
     runningSessions: {
       get value() { return mockState.runningSessions },
     },
@@ -199,7 +202,10 @@ vi.mock('@/composables/useSessionIdentity.ts', () => ({
     saveModePref: vi.fn(),
     toggleAutoApprove: vi.fn(),
   }),
-  currentAgentId: { value: '' },
+  currentAgentId: {
+    get value() { return mockIdentity.currentAgentId },
+    set value(v) { mockIdentity.currentAgentId = v },
+  },
   updateModeState: vi.fn(),
   updateAvailableModes: vi.fn(),
   clearModeState: vi.fn(),
@@ -208,6 +214,23 @@ vi.mock('@/composables/useSessionIdentity.ts', () => ({
   updateThinkingEffortState: vi.fn(),
   updateAvailableThinkingEfforts: vi.fn(),
   clearThinkingEffortState: vi.fn(),
+  clearSessionIdentity: vi.fn((upcomingSessionId?: string) => {
+    // Simulate clearing identity refs and setting currentSessionId
+    mockIdentity.currentSessionTitle = ''
+    mockIdentity.currentBackend = ''
+    mockIdentity.currentAgentId = ''
+    mockIdentity.currentModelId = ''
+    mockIdentity.currentModelName = ''
+    mockIdentity.currentThinkingEffort = ''
+    mockIdentity.currentThinkingEffortName = ''
+    mockIdentity.currentModeId = ''
+    mockIdentity.currentModeName = ''
+    mockIdentity.currentTransport = ''
+    mockIdentity.autoApprove = false
+    if (upcomingSessionId !== undefined) {
+      mockState.currentSessionId = upcomingSessionId
+    }
+  }),
   updateUsageState: mockUpdateUsageState,
   clearUsageState: mockClearUsageState,
   clearUsageStateById: mockIdentityFns.clearUsageStateById,
@@ -233,6 +256,7 @@ vi.mock('@/composables/useAgents', () => ({
     getAgentModel: mockAgentFns.getAgentModel,
     agentHeaderTitle: mockAgentFns.agentHeaderTitle,
     getAgentThinkingEffortLevels: vi.fn().mockReturnValue([]),
+    supportsDualTransport: vi.fn().mockReturnValue(false),
   }),
   restoreOriginalModels: vi.fn(),
   populateACPStateFromCache: vi.fn().mockResolvedValue(undefined),
@@ -244,12 +268,17 @@ vi.mock('@/stores/app', () => ({
     get state() {
       return mockState
     },
+    loadGitBranch: vi.fn().mockResolvedValue(undefined),
   },
 }))
 
 vi.mock('@/utils/chatSessionUtils', () => ({
   buildMessageSnapshot: mockUtilsFns.buildMessageSnapshot,
   parseMessages: mockUtilsFns.parseMessages,
+}))
+
+vi.mock('@/utils/chatStreamUtils', () => ({
+  forceCleanupStreamingState: mockForceCleanupStreamingState,
 }))
 
 // ── Import after mocks ──
@@ -277,7 +306,6 @@ function createSession() {
     onRenderUpdate: vi.fn(),
     onScrollBottom: vi.fn(),
     onConnectStream: vi.fn(),
-    onStopPolling: vi.fn(),
     onDisconnectStream: vi.fn(),
     onOpen: vi.fn(),
   }
@@ -290,6 +318,7 @@ describe('onSessionEvent', () => {
   beforeEach(() => {
     resetMockState()
     resetChatSessionState()
+    resetAdditionalMocks()
   })
 
   it('does nothing when data is null', () => {
@@ -519,6 +548,410 @@ describe('onSessionEvent', () => {
     // Cancel a different session — no longer sets chatUnread synchronously
     session.onSessionEvent({ session_id: 's2', status: 'cancelled' })
     expect(mockState.chatUnreadCount).toBe(0)
+  })
+
+  // ── onSessionEvent → loadHistory (replaces old msgCountPolling) ──
+
+  it('calls loadHistory when has_new_messages=true for current session', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1', messages: [], total: 0, running: false,
+      }),
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 'current-s1'
+
+    session.onSessionEvent({ session_id: 'current-s1', has_new_messages: true, status: 'completed' })
+
+    // Wait for the async loadHistory to complete
+    await vi.waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/ai/chat?session_id=current-s1'),
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      )
+    })
+  })
+
+  it('calls loadHistory when current session completes', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1', messages: [], total: 0, running: false,
+      }),
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 'current-s1'
+
+    session.onSessionEvent({ session_id: 'current-s1', status: 'completed' })
+
+    await vi.waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/ai/chat?session_id=current-s1'),
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      )
+    })
+  })
+
+  it('calls loadHistory when current session is cancelled', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1', messages: [], total: 0, running: false,
+      }),
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 'current-s1'
+
+    session.onSessionEvent({ session_id: 'current-s1', status: 'cancelled' })
+
+    await vi.waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/ai/chat?session_id=current-s1'),
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      )
+    })
+  })
+
+  // ── Safety net: loading stuck when session completes ──
+  // Bug: chat_stream 'done' event was missed (e.g. WS disconnect), so
+  // loading.value stays true. The session_update 'completed' event should
+  // clean up the stuck loading state.
+
+  it('resets loading to false when session completes while loading=true (safety net)', () => {
+    const loading = ref(true)
+    const onDisconnectStream = vi.fn()
+    const options = {
+      currentSessionId: ref('current-s1'),
+      messages: ref([]),
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      blockRagResults: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream,
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+
+    session.onSessionEvent({ session_id: 'current-s1', status: 'completed' })
+
+    // Safety net should have kicked in
+    expect(loading.value).toBe(false)
+    expect(onDisconnectStream).toHaveBeenCalled()
+    expect(mockForceCleanupStreamingState).toHaveBeenCalled()
+  })
+
+  it('resets loading to false when session is cancelled while loading=true (safety net)', () => {
+    const loading = ref(true)
+    const onDisconnectStream = vi.fn()
+    const options = {
+      currentSessionId: ref('current-s1'),
+      messages: ref([]),
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      blockRagResults: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream,
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+
+    session.onSessionEvent({ session_id: 'current-s1', status: 'cancelled' })
+
+    expect(loading.value).toBe(false)
+    expect(onDisconnectStream).toHaveBeenCalled()
+    expect(mockForceCleanupStreamingState).toHaveBeenCalled()
+  })
+
+  it('calls loadHistory after safety net cleanup to refresh messages from DB', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1', messages: [], total: 0, running: false,
+      }),
+    })
+
+    const loading = ref(true)
+    const options = {
+      currentSessionId: ref('current-s1'),
+      messages: ref([]),
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      blockRagResults: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+
+    session.onSessionEvent({ session_id: 'current-s1', status: 'completed' })
+
+    await vi.waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/ai/chat?session_id=current-s1'),
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      )
+    })
+  })
+
+  it('does NOT trigger safety net for non-current session completing while loading=true', async () => {
+    const loading = ref(true)
+    const onDisconnectStream = vi.fn()
+    const options = {
+      currentSessionId: ref('current-s1'),
+      messages: ref([]),
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      blockRagResults: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream,
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+
+    // A DIFFERENT session completes while we're loading
+    session.onSessionEvent({ session_id: 'other-s2', status: 'completed' })
+
+    // Safety net should NOT kick in — we're still streaming current-s1
+    expect(loading.value).toBe(true)
+    expect(onDisconnectStream).not.toHaveBeenCalled()
+    expect(mockForceCleanupStreamingState).not.toHaveBeenCalled()
+  })
+
+  it('does NOT trigger safety net for permission_pending status', () => {
+    const loading = ref(true)
+    const onDisconnectStream = vi.fn()
+    const options = {
+      currentSessionId: ref('current-s1'),
+      messages: ref([]),
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      blockRagResults: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream,
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+
+    session.onSessionEvent({ session_id: 'current-s1', status: 'permission_pending' })
+
+    // permission_pending should NOT trigger the safety net
+    expect(loading.value).toBe(true)
+    expect(onDisconnectStream).not.toHaveBeenCalled()
+  })
+
+  it('normal path: still calls loadHistory when loading=false and session completes', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1', messages: [], total: 0, running: false,
+      }),
+    })
+
+    const loading = ref(false)
+    const options = {
+      currentSessionId: ref('current-s1'),
+      messages: ref([]),
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      blockRagResults: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream: vi.fn(),
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+
+    session.onSessionEvent({ session_id: 'current-s1', status: 'completed' })
+
+    // Normal path: safety net does NOT trigger, but loadHistory is called
+    expect(mockForceCleanupStreamingState).not.toHaveBeenCalled()
+    await vi.waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/ai/chat?session_id=current-s1'),
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      )
+    })
+  })
+
+  it('does not call loadHistory for non-current session completed', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ count: 5 }),
+    })
+
+    const session = createSession()
+    mockState.currentSessionId = 'current-s1'
+
+    session.onSessionEvent({ session_id: 's2', status: 'completed' })
+
+    // Give async operations a chance
+    await new Promise(r => setTimeout(r, 50))
+
+    // Should NOT have called loadHistory for s2
+    const chatCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c: any[]) => typeof c[0] === 'string' && c[0].includes('/api/ai/chat?')
+    )
+    expect(chatCalls.length).toBe(0)
+  })
+
+  it('safety net uses forceNotRunning to prevent race where server still says running', async () => {
+    // Scenario: session completed, session_update arrives, but loadHistory
+    // hits the server before its in-memory running state is updated.
+    // Without forceNotRunning, loadHistory would see running=true, set
+    // loading=true, and reconnect the stream — putting us back in stuck state.
+    const loading = ref(true)
+    const onDisconnectStream = vi.fn()
+    const onConnectStream = vi.fn()
+    const options = {
+      currentSessionId: ref('current-s1'),
+      messages: ref([]),
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      blockRagResults: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(() => ({ blocks: [], metadata: {} })),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream,
+      onDisconnectStream,
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+
+    // Mock fetch to return running=true (simulating race condition where
+    // server hasn't updated its in-memory state yet)
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        messages: [],
+        sessionId: 'current-s1',
+        running: true,  // Server still says running!
+        total: 0,
+      }),
+    })
+    globalThis.fetch = fetchSpy as any
+
+    // Trigger safety net
+    session.onSessionEvent({ session_id: 'current-s1', status: 'completed' })
+
+    // Wait for async loadHistory to complete
+    await vi.waitFor(() => fetchSpy.mock.calls.length > 0)
+
+    // Despite server returning running=true, loading should stay false
+    // because forceNotRunning=true prevents reconnecting the stream
+    expect(loading.value).toBe(false)
+    expect(onDisconnectStream).toHaveBeenCalled()
+    // onConnectStream should NOT be called (forceNotRunning prevents it)
+    expect(onConnectStream).not.toHaveBeenCalled()
+  })
+
+  it('safety net strips streaming flags when server race returns running=true', async () => {
+    // Verify that forceNotRunning causes parseMessages to receive sessionRunning=false,
+    // which strips the streaming flag from assistant messages — preventing the
+    // three-dot loading indicator from appearing on a completed session.
+    const loading = ref(true)
+    const onDisconnectStream = vi.fn()
+    const onConnectStream = vi.fn()
+    // Return an assistant message with streaming flag
+    const onParseAssistantContent = vi.fn((content: string) => ({
+      blocks: content ? [{ type: 'text', text: content }] : [],
+      metadata: {},
+    }))
+    const messages = ref([] as any[])
+    const options = {
+      currentSessionId: ref('current-s1'),
+      messages,
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      blockRagResults: {},
+      expandedTools: ref({}),
+      onParseAssistantContent,
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream,
+      onDisconnectStream,
+      onOpen: vi.fn(),
+    }
+    const session = useChatSession(options)
+
+    // Mock fetch to return an assistant message with streaming=1 AND running=true
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        messages: [{ id: 1, role: 'assistant', content: 'Hello', streaming: 1, created_at: '2025-01-01' }],
+        sessionId: 'current-s1',
+        running: true,  // Server still says running (race condition)
+        total: 1,
+      }),
+    })
+    globalThis.fetch = fetchSpy as any
+
+    // Trigger safety net
+    session.onSessionEvent({ session_id: 'current-s1', status: 'completed' })
+
+    // Wait for async loadHistory to complete
+    await vi.waitFor(() => fetchSpy.mock.calls.length > 0)
+
+    // Despite server returning running=true, the streaming flag should be stripped
+    // because forceNotRunning=true causes parseMessages to receive sessionRunning=false
+    expect(loading.value).toBe(false)
+    // The assistant message should NOT have streaming flag
+    const assistantMsg = messages.value.find((m: any) => m.role === 'assistant')
+    if (assistantMsg) {
+      expect(assistantMsg.streaming).toBeUndefined()
+    }
+    expect(onConnectStream).not.toHaveBeenCalled()
   })
 })
 
@@ -973,8 +1406,7 @@ describe('switchSession', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling: vi.fn(),
-      onDisconnectStream: vi.fn(),
+        onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
@@ -1032,7 +1464,6 @@ describe('switchSession', () => {
   })
 
   it('does not call updateUsageState when API response has no usageState', async () => {
-    mockClearUsageState.mockClear()
     mockUpdateUsageState.mockClear()
     globalThis.fetch = vi.fn()
       .mockResolvedValueOnce({
@@ -1057,14 +1488,13 @@ describe('switchSession', () => {
     const session = createSession()
     await session.switchSession('s2')
 
-    // syncUsageFromData calls clearUsageState when no usageState in response,
-    // but updateUsageState should NOT be called (no data to write)
-    expect(mockClearUsageState).toHaveBeenCalled()
+    // syncUsageFromData no longer clears cache when usageState is missing —
+    // it preserves any SSE-cached data for running sessions.
+    // Neither updateUsageState nor clearUsageState should be called.
     expect(mockUpdateUsageState).not.toHaveBeenCalled()
   })
 
   it('does not call updateUsageState when usageState.size is 0', async () => {
-    mockClearUsageState.mockClear()
     mockUpdateUsageState.mockClear()
     globalThis.fetch = vi.fn()
       .mockResolvedValueOnce({
@@ -1089,9 +1519,8 @@ describe('switchSession', () => {
     const session = createSession()
     await session.switchSession('s2')
 
-    // size=0 means no context window info — syncUsageFromData calls clearUsageState
-    // instead of updateUsageState
-    expect(mockClearUsageState).toHaveBeenCalled()
+    // size=0 means no context window info — syncUsageFromData skips update
+    // but does NOT clear existing cache (SSE-cached data is preserved)
     expect(mockUpdateUsageState).not.toHaveBeenCalled()
   })
 })
@@ -1473,8 +1902,7 @@ describe('loadHistory', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling: vi.fn(),
-      onDisconnectStream: vi.fn(),
+        onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
@@ -1533,8 +1961,7 @@ describe('loadHistory', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling: vi.fn(),
-      onDisconnectStream: vi.fn(),
+        onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
@@ -1559,7 +1986,7 @@ describe('loadHistory', () => {
     expect(expandedTools.value).toEqual({})
   })
 
-  it('when data.running=true: sets loading=true, calls onConnectStream, does NOT call startMsgCountPolling', async () => {
+  it('when data.running=true: sets loading=true, calls onConnectStream', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
@@ -1589,8 +2016,7 @@ describe('loadHistory', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream,
-      onStopPolling: vi.fn(),
-      onDisconnectStream: vi.fn(),
+        onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
@@ -1601,7 +2027,7 @@ describe('loadHistory', () => {
     expect(onConnectStream).toHaveBeenCalledWith('s1')
   })
 
-  it('when data.running=false: sets loading=false, calls startMsgCountPolling', async () => {
+  it('when data.running=false: sets loading=false', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
@@ -1627,8 +2053,7 @@ describe('loadHistory', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling: vi.fn(),
-      onDisconnectStream: vi.fn(),
+        onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
@@ -1664,8 +2089,7 @@ describe('loadHistory', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling: vi.fn(),
-      onDisconnectStream: vi.fn(),
+        onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
@@ -1777,8 +2201,7 @@ describe('createSession', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling: vi.fn(),
-      onDisconnectStream: vi.fn(),
+        onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
@@ -1874,8 +2297,7 @@ describe('createSession', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling: vi.fn(),
-      onDisconnectStream: vi.fn(),
+        onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
@@ -1933,8 +2355,7 @@ describe('createSession', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling: vi.fn(),
-      onDisconnectStream: vi.fn(),
+        onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
@@ -1945,72 +2366,9 @@ describe('createSession', () => {
     expect(Object.keys(blockRagResults).length).toBe(0)
   })
 
-  it('stops msgCountPolling before POST to prevent loadHistory race', async () => {
-    // Bug scenario: msgCountPolling was running for the old session.
-    // If not stopped, the polling interval could fire during createSession's
-    // await and call loadHistory, which overwrites currentSessionId back to
-    // the old session.
-    globalThis.fetch = vi.fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({
-          ok: true, sessionId: 's-new', backend: '', agentId: '', sessionCount: 1,
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({
-          sessionId: 's-new', messages: [], total: 0,
-          backend: '', agentId: '', modelId: '', thinkingEffort: '', running: false,
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ sessions: [], totalCount: 1 }),
-      })
-
-    const onStopPolling = vi.fn()
-    const onDisconnectStream = vi.fn()
-    const currentSessionId = ref('old-session')
-    const options = {
-      currentSessionId,
-      messages: ref([]),
-      loading: ref(false),
-      inputDisabled: ref(false),
-      blockTasks: {},
-      blockAskQuestions: {},
-      blockRagResults: {},
-      expandedTools: ref({}),
-      onParseAssistantContent: vi.fn(),
-      onExtractScheduledTasks: vi.fn(),
-      onRenderUpdate: vi.fn(),
-      onScrollBottom: vi.fn(),
-      onConnectStream: vi.fn(),
-      onStopPolling,
-      onDisconnectStream,
-      onOpen: vi.fn(),
-    }
-    const session = useChatSession(options)
-
-    // Start msg count polling for the old session
-    session.startMsgCountPolling()
-
-    await session.createSession()
-
-    // After createSession, the polling should have been stopped
-    // (createSession calls stopMsgCountPolling, then switchSession also calls it)
-    // and currentSessionId should be the new session, not reverted
-    expect(currentSessionId.value).toBe('s-new')
-
-    // Clean up
-    session.stopMsgCountPolling()
-  })
-
-  it('delegates to switchSession which stops polling and disconnects stream', async () => {
+  it('delegates to switchSession which disconnects stream', async () => {
     // Verify that switchSession is called after POST, ensuring all state
-    // transitions (stopMsgCountPolling, stopPolling, disconnectStream,
-    // loadHistory, startMsgCountPolling) are handled properly.
-    const onStopPolling = vi.fn()
+    // transitions (disconnectStream, loadHistory) are handled properly.
     const onDisconnectStream = vi.fn()
     globalThis.fetch = vi.fn()
       .mockResolvedValueOnce({
@@ -2046,16 +2404,14 @@ describe('createSession', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling,
       onDisconnectStream,
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
     await session.createSession()
 
-    // switchSession was called internally — it calls onDisconnectStream and onStopPolling
+    // switchSession was called internally — it calls onDisconnectStream
     expect(onDisconnectStream).toHaveBeenCalled()
-    expect(onStopPolling).toHaveBeenCalled()
   })
 
   it('switchSession bumps loadHistorySeq, invalidating in-flight loadHistory', async () => {
@@ -2102,8 +2458,7 @@ describe('createSession', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling: vi.fn(),
-      onDisconnectStream: vi.fn(),
+        onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
@@ -2112,77 +2467,6 @@ describe('createSession', () => {
 
     // The new session ID should stick — not be overwritten by a stale loadHistory
     expect(currentSessionId.value).toBe('s-new')
-  })
-
-  it('does not revert to old session when msgCountPolling fires during creation', async () => {
-    // Simulate the exact bug: msgCountPolling fires during createSession's POST,
-    // and loadHistory returns old session data. With the fix, switchSession's
-    // loadHistorySeq bump causes the stale loadHistory to be discarded.
-    let postResolve!: (v: any) => void
-    const postPromise = new Promise(resolve => { postResolve = resolve })
-
-    const currentSessionId = ref('old-session')
-    const onStopPolling = vi.fn()
-    const onDisconnectStream = vi.fn()
-    const onConnectStream = vi.fn()
-
-    globalThis.fetch = vi.fn()
-      // 1st call: POST /api/ai/sessions — delayed to allow polling to fire
-      .mockImplementationOnce(() => postPromise.then(() => ({
-        ok: true,
-        json: () => Promise.resolve({
-          ok: true, sessionId: 's-new', backend: '', agentId: '', sessionCount: 2,
-        }),
-      })))
-      // 2nd call: GET /api/ai/chat?session_id=s-new (from switchSession)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({
-          sessionId: 's-new', messages: [], total: 0,
-          backend: '', agentId: '', modelId: '', thinkingEffort: '', running: false,
-        }),
-      })
-      // 3rd call: GET /api/ai/sessions (from loadSessionsOnce)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ sessions: [], totalCount: 2 }),
-      })
-
-    const options = {
-      currentSessionId,
-      messages: ref([]),
-      loading: ref(false),
-      inputDisabled: ref(false),
-      blockTasks: {},
-      blockAskQuestions: {},
-      blockRagResults: {},
-      expandedTools: ref({}),
-      onParseAssistantContent: vi.fn(),
-      onExtractScheduledTasks: vi.fn(),
-      onRenderUpdate: vi.fn(),
-      onScrollBottom: vi.fn(),
-      onConnectStream,
-      onStopPolling,
-      onDisconnectStream,
-      onOpen: vi.fn(),
-    }
-    const session = useChatSession(options)
-
-    // Start polling for the old session
-    session.startMsgCountPolling()
-
-    // Start createSession (will be pending on POST)
-    const createPromise = session.createSession()
-
-    // Resolve the POST — simulates the server responding
-    postResolve(undefined)
-
-    await createPromise
-
-    // After createSession completes, currentSessionId must be the new session
-    expect(currentSessionId.value).toBe('s-new')
-
-    session.stopMsgCountPolling()
   })
 
   it('on POST failure: shows error toast, does not switch session', async () => {
@@ -2207,8 +2491,7 @@ describe('createSession', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling: vi.fn(),
-      onDisconnectStream: vi.fn(),
+        onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
@@ -2282,8 +2565,7 @@ describe('deleteSession', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling: vi.fn(),
-      onDisconnectStream: vi.fn(),
+        onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
@@ -2346,8 +2628,7 @@ describe('deleteSession', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling: vi.fn(),
-      onDisconnectStream: vi.fn(),
+        onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
@@ -2379,8 +2660,7 @@ describe('deleteSession', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream,
-      onStopPolling: vi.fn(),
-      onDisconnectStream: vi.fn(),
+        onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
@@ -2417,128 +2697,6 @@ describe('deleteSession', () => {
 })
 
 // ───────────────────────────────────────────────────────────
-// startMsgCountPolling / stopMsgCountPolling
-// ───────────────────────────────────────────────────────────
-
-describe('startMsgCountPolling / stopMsgCountPolling', () => {
-  let originalFetch: typeof globalThis.fetch
-
-  beforeEach(() => {
-    vi.useFakeTimers()
-    resetMockState()
-    resetChatSessionState()
-    resetAdditionalMocks()
-    originalFetch = globalThis.fetch
-  })
-
-  afterEach(() => {
-    vi.advanceTimersByTime(10000)
-    vi.useRealTimers()
-    globalThis.fetch = originalFetch
-  })
-
-  it('startMsgCountPolling: sets up interval that polls /api/ai/chat/count', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ count: 5 }),
-    })
-
-    const session = createSession()
-    session.startMsgCountPolling()
-
-    // Advance past one interval (15000ms)
-    await vi.advanceTimersByTimeAsync(16000)
-
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      expect.stringContaining('/api/ai/chat/count?session_id=current-s1')
-    )
-
-    session.stopMsgCountPolling()
-  })
-
-  it('when count increases: calls loadHistory', async () => {
-    // First poll: count=5, lastMsgCount was 0 → increase detected
-    // loadHistory needs fetch for /api/ai/chat
-    globalThis.fetch = vi.fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ count: 5 }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({
-          sessionId: 'current-s1', messages: [], total: 0, running: false,
-        }),
-      })
-
-    const session = createSession()
-    session.startMsgCountPolling()
-
-    await vi.advanceTimersByTimeAsync(16000)
-
-    // Second fetch call should be loadHistory (not the count poll)
-    expect(globalThis.fetch).toHaveBeenCalledTimes(2)
-    expect(globalThis.fetch).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining('/api/ai/chat?session_id=current-s1'),
-      expect.objectContaining({ signal: expect.any(AbortSignal) })
-    )
-
-    session.stopMsgCountPolling()
-  })
-
-  it('stopMsgCountPolling: clears interval', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ count: 5 }),
-    })
-
-    const session = createSession()
-    session.startMsgCountPolling()
-    session.stopMsgCountPolling()
-
-    const callCount = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length
-    await vi.advanceTimersByTimeAsync(30000)
-
-    // No additional fetch calls after stopping
-    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callCount)
-  })
-
-  it('does not start when no sessionId', async () => {
-    const options = {
-      currentSessionId: ref(''),
-      messages: ref([]),
-      loading: ref(false),
-      inputDisabled: ref(false),
-      blockTasks: {},
-      blockAskQuestions: {},
-    blockRagResults: {},
-      expandedTools: ref({}),
-      onParseAssistantContent: vi.fn(),
-      onExtractScheduledTasks: vi.fn(),
-      onRenderUpdate: vi.fn(),
-      onScrollBottom: vi.fn(),
-      onConnectStream: vi.fn(),
-      onStopPolling: vi.fn(),
-      onDisconnectStream: vi.fn(),
-      onOpen: vi.fn(),
-    }
-    const session = useChatSession(options)
-    session.startMsgCountPolling()
-
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ count: 5 }),
-    })
-
-    await vi.advanceTimersByTimeAsync(30000)
-
-    // No fetch calls should have been made for polling
-    expect(globalThis.fetch).not.toHaveBeenCalled()
-  })
-})
-
-// ───────────────────────────────────────────────────────────
 // handleVisibilityChange
 // ───────────────────────────────────────────────────────────
 
@@ -2559,7 +2717,6 @@ describe('handleVisibilityChange', () => {
   it('when visible and loading=true: disconnects stream, reloads history', async () => {
     const loading = ref(true)
     const onDisconnectStream = vi.fn()
-    const onStopPolling = vi.fn()
     const options = {
       currentSessionId: ref('s1'),
       messages: ref([]),
@@ -2574,7 +2731,6 @@ describe('handleVisibilityChange', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling,
       onDisconnectStream,
       onOpen: vi.fn(),
     }
@@ -2597,7 +2753,6 @@ describe('handleVisibilityChange', () => {
     await vi.waitFor(() => {
       expect(onDisconnectStream).toHaveBeenCalled()
     })
-    expect(onStopPolling).toHaveBeenCalled()
     expect(globalThis.fetch).toHaveBeenCalledWith(
       expect.stringContaining('/api/ai/chat?session_id=s1'),
       expect.objectContaining({ signal: expect.any(AbortSignal) })
@@ -2623,8 +2778,7 @@ describe('handleVisibilityChange', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling: vi.fn(),
-      onDisconnectStream,
+        onDisconnectStream,
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
@@ -2655,8 +2809,7 @@ describe('handleVisibilityChange', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling: vi.fn(),
-      onDisconnectStream,
+        onDisconnectStream,
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
@@ -2906,8 +3059,7 @@ describe('loadMoreMessages', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling: vi.fn(),
-      onDisconnectStream: vi.fn(),
+        onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
@@ -2946,8 +3098,7 @@ describe('loadMoreMessages', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling: vi.fn(),
-      onDisconnectStream: vi.fn(),
+        onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
@@ -2975,8 +3126,7 @@ describe('loadMoreMessages', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling: vi.fn(),
-      onDisconnectStream: vi.fn(),
+        onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
@@ -3383,8 +3533,7 @@ describe('loadHistory race protection', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling: vi.fn(),
-      onDisconnectStream: vi.fn(),
+        onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
@@ -3461,8 +3610,7 @@ describe('loadHistory race protection', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling: vi.fn(),
-      onDisconnectStream: vi.fn(),
+        onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
@@ -3561,8 +3709,7 @@ describe('loadHistory session_id recovery', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling: vi.fn(),
-      onDisconnectStream: vi.fn(),
+        onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
@@ -3608,8 +3755,7 @@ describe('loadHistory session_id recovery', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling: vi.fn(),
-      onDisconnectStream: vi.fn(),
+        onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)
@@ -3652,8 +3798,7 @@ describe('loadHistory session_id recovery', () => {
       onRenderUpdate: vi.fn(),
       onScrollBottom: vi.fn(),
       onConnectStream: vi.fn(),
-      onStopPolling: vi.fn(),
-      onDisconnectStream: vi.fn(),
+        onDisconnectStream: vi.fn(),
       onOpen: vi.fn(),
     }
     const session = useChatSession(options)

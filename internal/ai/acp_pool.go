@@ -871,9 +871,9 @@ func (c *ACPConn) UpdateCachedCurrentThinkingEffort(effortID string) {
 }
 
 // PreApplyConfigCurrentID optimistically updates the registry's ConfigOptionState.CurrentID
-// before SSE events are emitted, so the frontend sees the user's requested value
+// before WS events are emitted, so the frontend sees the user's requested value
 // (e.g. "plan") instead of the agent's default (e.g. "bypassPermissions").
-// The actual RPC is still done inside Prompt(); this only affects SSE display.
+// The actual RPC is still done inside Prompt(); this only affects WS display.
 func (c *ACPConn) PreApplyConfigCurrentID(configID, value string) {
 	agentID := c.AgentID()
 	reg := GetAgentCapabilityRegistry()

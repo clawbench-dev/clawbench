@@ -5,11 +5,12 @@ import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { appLog } from '@/utils/appLog'
 
 const TAG = 'ChatSession'
-import { clearModeState, updateAvailableModes, clearCommandState, updateCommandState, updateAvailableThinkingEfforts, clearThinkingEffortState, clearUsageState, clearUsageStateById, updateUsageState, currentAgentId as _currentAgentId } from '@/composables/useSessionIdentity.ts'
+import { updateAvailableModes, updateCommandState, updateAvailableThinkingEfforts, clearUsageStateById, updateUsageState, currentAgentId as _currentAgentId, clearSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
-import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels } from '@/composables/useAgents'
+import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels, populateACPStateFromCache } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
+import { forceCleanupStreamingState, type ChatMessage } from '@/utils/chatStreamUtils.ts'
 import { warmWorktreeCache } from '@/composables/useWorktreeAnnotation.ts'
 
 // Module-level one-time session list load (replaces continuous polling)
@@ -73,7 +74,6 @@ export interface UseChatSessionOptions {
   onRenderUpdate: (forceFull: boolean) => void
   onScrollBottom: (force?: boolean) => void
   onConnectStream: (sessionId: string) => void
-  onStopPolling: () => void
   onDisconnectStream: () => void
   onOpen: () => void
   onStreamDone?: () => void
@@ -94,7 +94,6 @@ export function useChatSession(options: UseChatSessionOptions) {
     onRenderUpdate,
     onScrollBottom,
     onConnectStream,
-    onStopPolling,
     onDisconnectStream,
   } = options
 
@@ -105,7 +104,7 @@ export function useChatSession(options: UseChatSessionOptions) {
   const { currentSessionTitle, currentBackend, currentAgentId, currentModelId, currentModelName, currentThinkingEffort, runningSessions, runningSessionsVersion, availableCommands, autoApprove, availableThinkingEfforts } = identity
 
   // ── Agents from singleton ──
-  const { agents, loadAgents, getAgentIcon, getAgentName, getAgent, syncModelFromAgent, getAgentModel, agentHeaderTitle: makeAgentTitle } = useAgents()
+  const { agents, loadAgents, getAgentIcon, getAgentName, getAgent, syncModelFromAgent, getAgentModel, agentHeaderTitle: makeAgentTitle, supportsDualTransport } = useAgents()
 
   // Helper: sync model state from agent config when agent changes
   function syncModelFromAgentLocal(agentId: string) {
@@ -188,13 +187,16 @@ export function useChatSession(options: UseChatSessionOptions) {
   }
 
   // Helper: sync usage state from server data.
-  // When usageStateData is missing or size=0, clears the target session's
-  // cache entry so the context bar doesn't show stale data.
+  // When usageStateData is present and size > 0, update the per-session cache.
+  // When missing or size=0, do NOT clear the existing cache entry — it may
+  // have been populated by SSE usage_update events for a running session.
+  // The backend REST API returns usageState only when an ACP connection exists
+  // with cached data; CLI sessions and reaped ACP connections return nil.
+  // Clearing on missing data would discard valid SSE-cached values, causing
+  // the context progress bar to disappear when switching back to a running session.
   function syncUsageFromData(usageStateData?: { used?: number; size?: number; cost?: number; currency?: string; inputTokens?: number; outputTokens?: number }, sessionId?: string) {
     if (usageStateData && (usageStateData.size ?? 0) > 0) {
       updateUsageState(usageStateData.used ?? 0, usageStateData.size ?? 0, usageStateData.cost, usageStateData.currency, sessionId, usageStateData.inputTokens, usageStateData.outputTokens)
-    } else {
-      clearUsageState()
     }
   }
 
@@ -204,8 +206,7 @@ export function useChatSession(options: UseChatSessionOptions) {
   const switching = ref(false)
   const deletingSessionIds = ref(new Set<string>())
 
-  const lastMsgCount = ref(0)
-  let msgCountInterval: ReturnType<typeof setInterval> | null = null
+  // Fallback polling timer for WS disconnect
 
   // Pagination state
   const totalMessages = ref(0)
@@ -233,7 +234,7 @@ export function useChatSession(options: UseChatSessionOptions) {
   // one completes. This prevents redundant concurrent fetches while ensuring the
   // final state is always fresh.
   let loadHistoryInProgress = false
-  let pendingReload: { forceScrollBottom: boolean; showOverlay: boolean; skipIfUnchanged: boolean } | null = null
+  let pendingReload: { forceScrollBottom: boolean; showOverlay: boolean; skipIfUnchanged: boolean; forceNotRunning: boolean } | null = null
   let loadHistoryDeferred: { promise: Promise<void> } | null = null
 
   // forceScrollBottom: true = always scroll to bottom (switch session, first load)
@@ -242,13 +243,18 @@ export function useChatSession(options: UseChatSessionOptions) {
   //            false = silent reload (stream done, polling)
   // skipIfUnchanged: true = when data matches last snapshot, skip UI refresh entirely
   //                (used by polling to avoid collapsing expandedTools / resetting scroll)
-  async function loadHistory(forceScrollBottom = true, showOverlay = false, skipIfUnchanged = false) {
+  // forceNotRunning: true = treat the session as not running even if the server
+  //                  says it is (used after session_update completed/cancelled to
+  //                  prevent a race where the server's in-memory running state
+  //                  hasn't been updated yet, causing loadHistory to re-connect
+  //                  the stream and set loading=true again)
+  async function loadHistory(forceScrollBottom = true, showOverlay = false, skipIfUnchanged = false, forceNotRunning = false) {
     // If a load is already in-flight, record the requested params and return
     // a promise that resolves when all queued loads complete. This coalesces
     // rapid calls while ensuring callers can await + .finally() and that the
     // final state is always fresh.
     if (loadHistoryInProgress) {
-      pendingReload = { forceScrollBottom, showOverlay, skipIfUnchanged }
+      pendingReload = { forceScrollBottom, showOverlay, skipIfUnchanged, forceNotRunning }
       // Return the in-flight load's promise so callers can await/finally it.
       // The pendingReload will be executed after the in-flight load completes.
       return loadHistoryDeferred!.promise
@@ -316,7 +322,7 @@ export function useChatSession(options: UseChatSessionOptions) {
             if (recoverMsgs.length > 0) {
               // Change detection
               const newSnapshot = buildMessageSnapshot(recoverMsgs)
-              if (skipIfUnchanged && newSnapshot === lastMessageSnapshot && !recoverData.running) {
+              if (skipIfUnchanged && newSnapshot === lastMessageSnapshot && (forceNotRunning || !recoverData.running)) {
                 return
               }
               lastMessageSnapshot = newSnapshot
@@ -328,16 +334,7 @@ export function useChatSession(options: UseChatSessionOptions) {
               }
               Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
               Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
-              // Replace messages — preserve pending messages from messages.value
-              // (they're not in DB, so parseMessages won't include them)
-              const _pendingMsgs = messages.value.filter((m: Record<string, unknown>) => m.pending)
-              messages.value = parseMessages(recoverMsgs, onParseAssistantContent, messages.value, recoverData.running)
-              // Re-append pending messages that aren't already represented in DB data
-              for (const pm of _pendingMsgs) {
-                if (!messages.value.some((m: Record<string, unknown>) => m.role === 'user' && m.content === pm.content && !m.pending)) {
-                  messages.value.push(pm)
-                }
-              }
+              messages.value = parseMessages(recoverMsgs, onParseAssistantContent, messages.value, forceNotRunning ? false : recoverData.running)
               totalMessages.value = recoverData.total || messages.value.length
               // Sync remaining session metadata from recovery response
               if (recoverData.modeState && recoverData.modeState?.availableModes?.length > 0) {
@@ -355,13 +352,11 @@ export function useChatSession(options: UseChatSessionOptions) {
               onExtractScheduledTasks(messages.value)
               onRenderUpdate(forceScrollBottom)
               onScrollBottom(forceScrollBottom)
-              if (recoverData.running) {
+              if (recoverData.running && !forceNotRunning) {
                 loading.value = true
-                stopMsgCountPolling()
                 onConnectStream(currentSessionId.value)
               } else {
                 loading.value = false
-                startMsgCountPolling()
               }
               // Skip the second fetch — we already have the data
               return
@@ -417,9 +412,9 @@ export function useChatSession(options: UseChatSessionOptions) {
           loadHistoryInProgress = false
           resolveDeferred!()
           loadHistoryDeferred = null
-          const next = pendingReload || { forceScrollBottom, showOverlay, skipIfUnchanged }
+          const next = pendingReload || { forceScrollBottom, showOverlay, skipIfUnchanged, forceNotRunning }
           pendingReload = null
-          setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged), 0)
+          setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged, next.forceNotRunning), 0)
           return
         }
         throw new Error(errData.error || gt('chat.session.requestFailed', { status: resp.status }))
@@ -432,7 +427,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       // Change detection: if skipIfUnchanged and data matches last snapshot, do nothing.
       // Always refresh when session is running (SSE events may have been dropped).
       const newSnapshot = buildMessageSnapshot(rawMsgs)
-      if (skipIfUnchanged && newSnapshot === lastMessageSnapshot && !data.running) {
+      if (skipIfUnchanged && newSnapshot === lastMessageSnapshot && (forceNotRunning || !data.running)) {
         return
       }
       lastMessageSnapshot = newSnapshot
@@ -453,16 +448,8 @@ export function useChatSession(options: UseChatSessionOptions) {
       Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
       Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
 
-      // Replace messages with server data. Pending messages are in
-      // messages.value with pending:true — preserve them across the replacement.
-      const _pendingMsgs = messages.value.filter((m: Record<string, unknown>) => m.pending)
-      messages.value = parseMessages(rawMsgs, onParseAssistantContent, messages.value, data.running)
-      // Re-append pending messages that aren't already represented in DB data
-      for (const pm of _pendingMsgs) {
-        if (!messages.value.some((m: Record<string, unknown>) => m.role === 'user' && m.content === pm.content && !m.pending)) {
-          messages.value.push(pm)
-        }
-      }
+      // Replace messages with server data.
+      messages.value = parseMessages(rawMsgs, onParseAssistantContent, messages.value, forceNotRunning ? false : data.running)
 
       totalMessages.value = data.total || messages.value.length
       // Sanity check: if the backend returned a different sessionId than what we
@@ -513,14 +500,12 @@ export function useChatSession(options: UseChatSessionOptions) {
       }
       onExtractScheduledTasks(messages.value)
       onRenderUpdate(true)
-      if (data.running) {
+      if (data.running && !forceNotRunning) {
         loading.value = true
-        stopMsgCountPolling()
         onScrollBottom(forceScrollBottom)
         onConnectStream(currentSessionId.value)
       } else {
         loading.value = false
-        startMsgCountPolling()
         onScrollBottom(forceScrollBottom)
       }
       switching.value = false
@@ -530,7 +515,7 @@ export function useChatSession(options: UseChatSessionOptions) {
         const next = pendingReload
         pendingReload = null
         // Execute pending load — its completion will resolve the deferred
-        setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged), 0)
+        setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged, next.forceNotRunning), 0)
       } else {
         // No pending load — resolve the deferred so all awaiting callers proceed
         resolveDeferred!()
@@ -544,7 +529,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (pendingReload) {
         const next = pendingReload
         pendingReload = null
-        setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged), 0)
+        setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged, next.forceNotRunning), 0)
       } else {
         resolveDeferred!()
         loadHistoryDeferred = null
@@ -603,26 +588,24 @@ export function useChatSession(options: UseChatSessionOptions) {
     inputDisabled.value = true
 
     onDisconnectStream()
-    onStopPolling()
-    stopMsgCountPolling()
     lastMessageSnapshot = ''  // Invalidate snapshot — new session may have different data
     expandedTools.value = {}
     // Clear stale blockAskQuestions from previous session
     Object.keys(blockTasks).forEach(k => delete blockTasks[k])
     Object.keys(blockAskQuestions).forEach(k => delete blockAskQuestions[k])
     Object.keys(blockRagResults).forEach(k => delete blockRagResults[k])
-    // Clear ACP state from previous session — will be repopulated by REST response
-    // or SSE events only if the new session's agent actually supports ACP.
-    clearModeState()
-    clearCommandState()
-    clearThinkingEffortState()
+    // Restore original CLI model list in case ACP had overridden it
+    // Must run BEFORE clearing currentAgentId so the old agent's models
+    // can be properly restored.
+    const prevAgentId = _currentAgentId.value
+    if (prevAgentId) restoreOriginalModels(prevAgentId)
+    // Clear all identity refs and set currentSessionId to the target — avoids
+    // flashing stale info during the async fetch. Will be repopulated from
+    // the REST response. This also clears ACP state (mode/commands/thinking).
+    clearSessionIdentity(sessionId)
     // No clearUsageState() here — usage state is per-session in a Map cache.
     // Switching currentSessionId makes the computed refs read from the new
     // session's cache entry instantly, with no clear→repopulate race.
-    autoApprove.value = false
-    // Restore original CLI model list in case ACP had overridden it
-    const prevAgentId = _currentAgentId.value
-    if (prevAgentId) restoreOriginalModels(prevAgentId)
     // Clear plan progress from previous session — will be repopulated by SSE plan_update
     clearPlanState()
     try {
@@ -668,6 +651,8 @@ export function useChatSession(options: UseChatSessionOptions) {
 
       messages.value = parseMessages(data.messages || [], onParseAssistantContent, undefined, data.running)
       totalMessages.value = data.total || messages.value.length
+      // Re-assign from server response for authority (clearSessionIdentity already
+      // set this to sessionId; data.sessionId should match but takes precedence).
       currentSessionId.value = data.sessionId || sessionId
       currentSessionTitle.value = data.sessionTitle || ''
       currentBackend.value = data.backend || ''
@@ -703,11 +688,9 @@ export function useChatSession(options: UseChatSessionOptions) {
       onScrollBottom(true)
       if (data.running) {
         loading.value = true
-        stopMsgCountPolling()
         onConnectStream(sessionId)
       } else {
         loading.value = false
-        startMsgCountPolling()
       }
       // Recalculate global chatUnread after switching — the backend has already
       // marked this session as read (UpdateLastRead), so the session list will
@@ -730,10 +713,12 @@ export function useChatSession(options: UseChatSessionOptions) {
   }
 
   async function createSession(agentId: string) {
-    // Stop msg count polling for the previous session to prevent race
-    // conditions — if the polling fires during creation, loadHistory could
-    // overwrite the new sessionId and revert to the old session.
-    stopMsgCountPolling()
+    // Immediately clear identity and show switching overlay so the user
+    // doesn't see stale info from the previous session during the network
+    // round-trip to create the new session.
+    switching.value = true
+    inputDisabled.value = true
+    clearSessionIdentity()
     try {
       const body = agentId ? { agentId } : {}
       const resp = await fetch('/api/ai/sessions', {
@@ -753,6 +738,21 @@ export function useChatSession(options: UseChatSessionOptions) {
       // - Starts appropriate polling for the new session
       // - Calls loadSessionsOnce() to update global state
       await switchSession(data.sessionId)
+      // Restore ACP state (mode, thinking effort, commands) from the agent
+      // cache so mode/thinking chips appear immediately on new sessions.
+      // switchSession clears identity state and the REST response for a
+      // brand-new session may have no ACP state yet.
+      // This runs after switchSession's finally block, so the UI is already
+      // interactive — a failure here is non-critical (SSE will populate later).
+      const effectiveAgentId = currentAgentId.value || data.agentId || agentId
+      if (effectiveAgentId && supportsDualTransport(effectiveAgentId)) {
+        try {
+          await populateACPStateFromCache(effectiveAgentId)
+        } catch {
+          // Non-critical: mode/thinking chips will populate from the first SSE event
+          appLog.w(TAG, 'populateACPStateFromCache failed for new session, will rely on SSE')
+        }
+      }
       // Update session count from creation response and show toast
       const maxCount = store.state.sessionMaxCount
       if (typeof data.sessionCount === 'number') store.state.sessionCount = data.sessionCount
@@ -761,6 +761,11 @@ export function useChatSession(options: UseChatSessionOptions) {
       appLog.e(TAG, 'Failed to create session:', err)
       const _msg = err instanceof Error ? err.message : ''
       toast.show(_msg ? gt('chat.session.createSessionFailedDetail', { error: _msg }) : gt('chat.session.createSessionFailed'), { icon: '⚠️', type: 'error' })
+      // Reset switching/input state on failure — switchSession won't run so
+      // its finally block won't fire. On success, switchSession's finally
+      // handles the reset.
+      switching.value = false
+      inputDisabled.value = false
     }
   }
 
@@ -804,31 +809,6 @@ export function useChatSession(options: UseChatSessionOptions) {
     }
   }
 
-  function startMsgCountPolling() {
-    stopMsgCountPolling()
-    if (!currentSessionId.value) return
-    lastMsgCount.value = messages.value.length
-    msgCountInterval = setInterval(async () => {
-      if (!currentSessionId.value || loading.value) return
-      try {
-        const resp = await fetch(`/api/ai/chat/count?session_id=${encodeURIComponent(currentSessionId.value)}`)
-        if (!resp.ok) return
-        const data = await resp.json()
-        if (data.count > lastMsgCount.value) {
-          lastMsgCount.value = data.count
-          // Reload history to pick up new messages (don't force scroll, skip if unchanged)
-          await loadHistory(false, false, true)
-        }
-      } catch {
-        // Silently ignore polling errors
-      }
-    }, 15000)
-  }
-
-  function stopMsgCountPolling() {
-    if (msgCountInterval) { clearInterval(msgCountInterval); msgCountInterval = null }
-  }
-
   // Debounce timer for loadSessionsOnce after session events.
   // When multiple sessions complete in quick succession, we coalesce
   // the recalculations into a single API call after a short delay.
@@ -838,6 +818,7 @@ export function useChatSession(options: UseChatSessionOptions) {
   function onSessionEvent(data: { session_id?: string; status?: string; has_new_messages?: boolean } | undefined) {
     if (!data) return
     const sid = data.session_id
+
     if (data.status === 'running') {
       store.state.chatRunning = true
       if (sid) { runningSessions.value.add(sid); runningSessionsVersion.value++ }
@@ -852,6 +833,31 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (sid) { runningSessions.value.delete(sid); runningSessionsVersion.value++ }
       // Update global boolean from remaining set
       store.state.chatRunning = runningSessions.value.size > 0
+      // Safety net: if the session completed/cancelled but loading is still true,
+      // it means the chat_stream 'done'/'cancelled' event was missed or its
+      // handler failed (e.g., sessionChanged() guard returned early, or the WS
+      // disconnected right as 'done' was sent). Without this, loading.value stays
+      // true forever — the input bar shows the stop button and the loading
+      // indicator never clears, until the user manually switches sessions.
+      // This is the root cause of the "stuck in progress" bug.
+      if (sid === currentSessionId.value && loading.value && (data.status === 'completed' || data.status === 'cancelled')) {
+        appLog.w(TAG, `session_update ${data.status} received but loading still true — cleaning up stuck loading state`)
+        onDisconnectStream()
+        forceCleanupStreamingState(messages.value as ChatMessage[], { onRenderNeeded: (f) => onRenderUpdate(f ?? true), onExtractScheduledTasks })
+        loading.value = false
+        // Reload from DB to get the final message state.
+        // forceNotRunning=true prevents a race where the server's in-memory
+        // running state hasn't been updated yet, which would cause loadHistory
+        // to re-connect the stream and set loading=true again.
+        loadHistory(false, false, true, true)
+      }
+      // Completed/cancelled current session OR has_new_messages — reload messages.
+      // This replaces the old 15s msgCountPolling. skipIfUnchanged=true prevents
+      // no-op refreshes when data is already current. loadHistory has built-in
+      // dedup (loadHistoryInProgress) so has_new_messages + completed don't double-call.
+      if (sid === currentSessionId.value && !loading.value && (data.has_new_messages || data.status === 'completed' || data.status === 'cancelled')) {
+        loadHistory(false, false, true)
+      }
       // Recalculate chatUnread from backend instead of optimistically setting true.
       // The old code unconditionally set chatUnread=true here, which caused phantom
       // flashing: a session that was already read (last_read_at set) would trigger
@@ -864,6 +870,9 @@ export function useChatSession(options: UseChatSessionOptions) {
           loadSessionsOnce()
         }, 500)
       }
+      // Refresh git state — completed/cancelled session may have modified files
+      // or switched branches; needed when user is on a different tab
+      store.loadGitBranch().catch(() => {})
     }
   }
 
@@ -881,7 +890,6 @@ export function useChatSession(options: UseChatSessionOptions) {
       // Page became visible while streaming - reconnect
       // Don't force scroll to bottom — user may have scrolled up to read history
       onDisconnectStream()
-      onStopPolling()
       loadHistory(false, false, true).catch(() => {
         // loadHistory failed — reset loading state so user isn't stuck
         loading.value = false
@@ -1026,8 +1034,6 @@ export function useChatSession(options: UseChatSessionOptions) {
     deleteSession,
     onSessionEvent,
     loadSessionsOnce: loadSessionsOnceInner,
-    startMsgCountPolling,
-    stopMsgCountPolling,
     handleVisibilityChange,
     continueFromExecution,
     forkSession,
