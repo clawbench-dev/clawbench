@@ -33,6 +33,7 @@ vi.mock('@/i18n', () => ({
       t: (key: string) => key,
     },
   },
+  STORAGE_KEY: 'clawbench-locale',
 }))
 
 vi.mock('vue-i18n', () => ({

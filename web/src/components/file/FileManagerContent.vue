@@ -928,10 +928,10 @@ function doDownload() {
 }
 
 function doShareExternal() {
+    const path = ctxMenu.entry?.path
     closeCtxMenu()
     const native = window.AndroidNative
     if (!native || !native.shareFile) return
-    const path = ctxMenu.entry?.path
     if (!path) return
     const ext = path.split('.').pop()?.toLowerCase()
     let mimeType = '*/*'

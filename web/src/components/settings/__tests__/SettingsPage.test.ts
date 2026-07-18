@@ -10,6 +10,9 @@ import { categoryHasPanels, isPanelOnlyCategory } from '@/components/settings/se
 const needsRestart = ref(false)
 const restarting = ref(false)
 const navStack = ref<string[]>([])
+const mockCheckAllGuards = vi.fn(() => true)
+const mockDialogConfirm = vi.fn().mockResolvedValue(false)
+const mockPopNav = vi.fn()
 
 function createMockNavigation() {
   return {
@@ -18,7 +21,7 @@ function createMockNavigation() {
     navStack,
     currentCategory: computed(() => navStack.value.length > 0 ? navStack.value[navStack.value.length - 1] ?? null : null),
     pushNav: (id: string) => { navStack.value.push(id) },
-    popNav: () => { navStack.value.pop() },
+    popNav: mockPopNav,
     resetState: () => { navStack.value = []; needsRestart.value = false; restarting.value = false },
     restartDialogVisible: ref(false),
     changedColdFields: ref<string[]>([]),
@@ -29,7 +32,7 @@ function createMockNavigation() {
     handleRestart: vi.fn(),
     registerGuard: vi.fn(),
     unregisterGuard: vi.fn(),
-    checkAllGuards: vi.fn(() => true),
+    checkAllGuards: mockCheckAllGuards,
   }
 }
 
@@ -68,7 +71,7 @@ vi.mock('@/composables/useToast', () => ({
 }))
 
 vi.mock('@/composables/useDialog', () => ({
-  useDialog: () => ({ confirm: vi.fn().mockResolvedValue(false) }),
+  useDialog: () => ({ confirm: mockDialogConfirm }),
 }))
 
 const i18n = createI18n({
@@ -83,6 +86,12 @@ const i18n = createI18n({
         restartPending: '重启生效',
         restarting: '重启中…',
         restartingPleaseWait: '正在重启，请稍候…',
+        panel: {
+          unsavedTitle: 'Unsaved changes',
+          unsavedMessage: 'Discard changes?',
+          discard: 'Discard',
+          continueEditing: 'Continue editing',
+        },
       },
     },
   },
@@ -107,6 +116,9 @@ describe('SettingsPage', () => {
     navStack.value = []
     needsRestart.value = false
     restarting.value = false
+    mockCheckAllGuards.mockReturnValue(true)
+    mockDialogConfirm.mockResolvedValue(false)
+    mockPopNav.mockReset()
   })
 
   it('shows index view when nav stack is empty', () => {
@@ -240,6 +252,50 @@ describe('SettingsPage', () => {
         // All categories now route through SettingsCategory
         expect(wrapper.findComponent(SettingsCategory).exists()).toBe(true)
       }
+    })
+  })
+
+  // ─── Back navigation with unsaved changes guard ──
+  describe('handleBack', () => {
+    it('pops nav immediately when all guards pass', async () => {
+      navStack.value = ['appearance']
+      mockCheckAllGuards.mockReturnValue(true)
+      const wrapper = mountPage()
+      await nextTick()
+
+      await wrapper.find('.settings-page__back').trigger('click')
+      await nextTick()
+
+      expect(mockPopNav).toHaveBeenCalled()
+      expect(mockDialogConfirm).not.toHaveBeenCalled()
+    })
+
+    it('shows confirm dialog when guards fail and user cancels', async () => {
+      navStack.value = ['appearance']
+      mockCheckAllGuards.mockReturnValue(false)
+      mockDialogConfirm.mockResolvedValue(false) // user cancels
+      const wrapper = mountPage()
+      await nextTick()
+
+      await wrapper.find('.settings-page__back').trigger('click')
+      await nextTick()
+
+      expect(mockDialogConfirm).toHaveBeenCalled()
+      expect(mockPopNav).not.toHaveBeenCalled()
+    })
+
+    it('pops nav when guards fail and user confirms discard', async () => {
+      navStack.value = ['appearance']
+      mockCheckAllGuards.mockReturnValue(false)
+      mockDialogConfirm.mockResolvedValue(true) // user confirms discard
+      const wrapper = mountPage()
+      await nextTick()
+
+      await wrapper.find('.settings-page__back').trigger('click')
+      await nextTick()
+
+      expect(mockDialogConfirm).toHaveBeenCalled()
+      expect(mockPopNav).toHaveBeenCalled()
     })
   })
 })
