@@ -211,6 +211,18 @@ func TestExtractDisplayName(t *testing.T) {
 			want:     "",
 		},
 		{
+			name:     "DeepThink with subagent_type",
+			toolName: "DeepThink",
+			input:    map[string]any{"subagent_type": "explore", "description": "Explore project"},
+			want:     "explore",
+		},
+		{
+			name:     "DeepThink without subagent_type",
+			toolName: "DeepThink",
+			input:    map[string]any{"description": "Explore project"},
+			want:     "",
+		},
+		{
 			name:     "nil input",
 			toolName: "Agent",
 			input:    nil,

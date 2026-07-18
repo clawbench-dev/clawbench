@@ -90,7 +90,7 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
       outputHtml: hasOutput ? formatToolOutput(block.output as string, block.name || '') : '',
       status: block.status || '',
       done: !!block.done,
-      displayNameOverride: block.name === 'DeepThink' ? t('chat.message.deepThinking') : '',
+      displayNameOverride: block.name === 'DeepThink' && !block.display_name ? t('chat.message.deepThinking') : '',
       _fetchIds: null,
     }
 

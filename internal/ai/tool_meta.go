@@ -139,12 +139,13 @@ func extractAskUserQuestionSummary(input map[string]any) string {
 }
 
 // ExtractDisplayName extracts the display name for a tool call.
-// For Agent tools, returns the subagent_type (e.g., "Explore").
+// For Agent and DeepThink tools, returns the subagent_type (e.g., "Explore").
 func ExtractDisplayName(name string, input map[string]any) string {
 	if input == nil {
 		return ""
 	}
-	if strings.EqualFold(name, "agent") {
+	nameLower := strings.ToLower(name)
+	if nameLower == "agent" || nameLower == "deepthink" {
 		if v, _ := input["subagent_type"].(string); v != "" {
 			return v
 		}

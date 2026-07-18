@@ -7,6 +7,7 @@ import {
   registerToolRenderer,
   registerToolActionHandler,
   handleToolAction,
+  handleToolContentHeaderClick,
 } from '@/utils/renderToolDetail.ts'
 
 // ── Mock for useAppMode (controlled via mutable ref) ──
@@ -389,25 +390,25 @@ describe('formatToolOutput', () => {
     expect(formatToolOutput('', 'Bash')).toBe('')
   })
 
-  it('wraps Bash tool output in bash-output-body', () => {
+  it('wraps Bash tool output in tool-output-content', () => {
     const html = formatToolOutput('hello world', 'Bash')
-    expect(html).toContain('bash-output-body')
+    expect(html).toContain('tool-output-content')
     expect(html).toContain('<pre>')
     expect(html).toContain('hello world')
     expect(html).toContain('</pre>')
   })
 
-  it('wraps non-Bash tool output in tool-output-default', () => {
+  it('wraps non-Bash tool output in tool-output-content', () => {
     const html = formatToolOutput('some result', 'Read')
-    expect(html).toContain('tool-output-default')
+    expect(html).toContain('tool-output-content')
     expect(html).toContain('<pre>')
     expect(html).toContain('some result')
     expect(html).toContain('</pre>')
   })
 
-  it('wraps output without tool name in tool-output-default', () => {
+  it('wraps output without tool name in tool-output-content', () => {
     const html = formatToolOutput('some result')
-    expect(html).toContain('tool-output-default')
+    expect(html).toContain('tool-output-content')
     expect(html).toContain('some result')
   })
 
@@ -419,9 +420,9 @@ describe('formatToolOutput', () => {
 
   it('Bash tool name is case-insensitive', () => {
     const html = formatToolOutput('output', 'BASH')
-    expect(html).toContain('bash-output-body')
+    expect(html).toContain('tool-output-content')
     const html2 = formatToolOutput('output', 'bash')
-    expect(html2).toContain('bash-output-body')
+    expect(html2).toContain('tool-output-content')
   })
 
   it('annotates localhost URLs in Bash output when in App mode', () => {
@@ -1444,6 +1445,162 @@ describe('PermissionApproval action handler', () => {
   })
 })
 
+// ────────────────────────────────────────────────────────────
+// Tool content header (copy + wrap toggle)
+// ────────────────────────────────────────────────────────────
+
+describe('tool content header in rendered HTML', () => {
+  it('Edit diff includes tool-content-wrap and content header', () => {
+    const html = formatToolInput({ file_path: 'test.ts', old_string: 'a', new_string: 'b' }, 'Edit')
+    expect(html).toContain('tool-content-wrap')
+    expect(html).toContain('word-wrap')
+    expect(html).toContain('tool-content-header')
+    expect(html).toContain('tool-content-copy-btn')
+    expect(html).toContain('tool-content-wrap-btn')
+    expect(html).toContain('data-action="copy"')
+    expect(html).toContain('data-action="wrap"')
+  })
+
+  it('Write preview includes tool-content-wrap and content header', () => {
+    const html = formatToolInput({ file_path: 'test.ts', content: 'hello' }, 'Write')
+    expect(html).toContain('tool-content-wrap')
+    expect(html).toContain('word-wrap')
+    expect(html).toContain('tool-content-copy-btn')
+    expect(html).toContain('tool-content-wrap-btn')
+  })
+
+  it('Read preview includes tool-content-wrap and content header when content present', () => {
+    const html = formatToolInput({ file_path: 'test.ts', content: 'hello' }, 'Read')
+    expect(html).toContain('tool-content-wrap')
+    expect(html).toContain('word-wrap')
+    expect(html).toContain('tool-content-copy-btn')
+  })
+
+  it('Read preview omits content header when no content', () => {
+    const html = formatToolInput({ file_path: 'test.ts', offset: 1, limit: 10 }, 'Read')
+    expect(html).not.toContain('tool-content-wrap')
+    expect(html).not.toContain('tool-content-copy-btn')
+  })
+
+  it('NotebookEdit includes tool-content-wrap and content header', () => {
+    const html = formatToolInput({ file_path: 'note.ipynb', cell_index: 0, new_source: 'print("hi")' }, 'NotebookEdit')
+    expect(html).toContain('tool-content-wrap')
+    expect(html).toContain('word-wrap')
+    expect(html).toContain('tool-content-copy-btn')
+  })
+
+  it('JSON fallback includes tool-content-wrap and content header', () => {
+    const html = formatToolInput({ key: 'value' }, 'UnknownTool')
+    expect(html).toContain('tool-content-wrap')
+    expect(html).toContain('word-wrap')
+    expect(html).toContain('tool-content-copy-btn')
+  })
+})
+
+describe('handleToolContentHeaderClick', () => {
+  // Mock clipboard
+  const mockWriteText = vi.fn(() => Promise.resolve())
+  beforeEach(() => {
+    vi.stubGlobal('navigator', { clipboard: { writeText: mockWriteText } })
+    mockWriteText.mockClear()
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  function createWrapper(contentSelector = '.edit-diff-scroll') {
+    const container = document.createElement('div')
+    container.innerHTML = `
+      <div class="tool-content-wrap word-wrap">
+        <div class="tool-content-header">
+          <span class="tool-content-header-actions">
+            <button class="tool-content-copy-btn" data-action="copy" data-content-selector="${contentSelector}" type="button">Copy</button>
+            <button class="tool-content-wrap-btn is-wrapped" data-action="wrap" type="button">Wrap</button>
+          </span>
+        </div>
+        <div class="${contentSelector.replace('.', '')}">some text content</div>
+      </div>
+    `
+    document.body.appendChild(container)
+    return container
+  }
+
+  it('returns false when click target is not a content header button', () => {
+    const container = createWrapper()
+    const wrapper = container.querySelector('.tool-content-wrap')!
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'target', { value: wrapper, writable: false })
+    const result = handleToolContentHeaderClick(event)
+    expect(result).toBe(false)
+    container.remove()
+  })
+
+  it('handles wrap toggle — removes word-wrap class and is-wrapped', () => {
+    const container = createWrapper()
+    const wrapBtn = container.querySelector('.tool-content-wrap-btn')!
+    const wrapper = container.querySelector('.tool-content-wrap')!
+
+    expect(wrapper.classList.contains('word-wrap')).toBe(true)
+    expect(wrapBtn.classList.contains('is-wrapped')).toBe(true)
+
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'target', { value: wrapBtn, writable: false })
+    const result = handleToolContentHeaderClick(event)
+
+    expect(result).toBe(true)
+    expect(wrapper.classList.contains('word-wrap')).toBe(false)
+    expect(wrapBtn.classList.contains('is-wrapped')).toBe(false)
+    container.remove()
+  })
+
+  it('handles wrap toggle — adds word-wrap class back on second click', () => {
+    const container = createWrapper()
+    const wrapBtn = container.querySelector('.tool-content-wrap-btn')!
+    const wrapper = container.querySelector('.tool-content-wrap')!
+
+    // First click: toggle off
+    let event = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'target', { value: wrapBtn, writable: false })
+    handleToolContentHeaderClick(event)
+
+    // Second click: toggle on
+    event = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'target', { value: wrapBtn, writable: false })
+    handleToolContentHeaderClick(event)
+
+    expect(wrapper.classList.contains('word-wrap')).toBe(true)
+    expect(wrapBtn.classList.contains('is-wrapped')).toBe(true)
+    container.remove()
+  })
+
+  it('handles copy action — calls clipboard API with content text', () => {
+    const container = createWrapper()
+    const copyBtn = container.querySelector('.tool-content-copy-btn')!
+
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'target', { value: copyBtn, writable: false })
+    const result = handleToolContentHeaderClick(event)
+
+    expect(result).toBe(true)
+    expect(mockWriteText).toHaveBeenCalledWith('some text content')
+    container.remove()
+  })
+
+  it('returns true for copy button when already in is-copied state', () => {
+    const container = createWrapper()
+    const copyBtn = container.querySelector('.tool-content-copy-btn')!
+    copyBtn.classList.add('is-copied')
+
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'target', { value: copyBtn, writable: false })
+    const result = handleToolContentHeaderClick(event)
+
+    expect(result).toBe(true)
+    expect(mockWriteText).not.toHaveBeenCalled()
+    container.remove()
+  })
+})
+
 describe('ModeSwitch renderer (EnterPlanMode / ExitPlanMode)', () => {
   it('renders mode-switch-view container', () => {
     const html = formatToolInput({ mode: 'plan' }, 'EnterPlanMode')
@@ -2045,55 +2202,66 @@ describe('SaveMemory renderer', () => {
 
 describe('DeepThink renderer', () => {
   it('renders deep-think-view container', () => {
-    const html = formatToolInput({ topic: 'quantum computing' }, 'DeepThink')
+    const html = formatToolInput({ description: 'test' }, 'DeepThink')
     expect(html).toContain('deep-think-view')
   })
 
-  it('renders deep-think-icon', () => {
-    const html = formatToolInput({ topic: 'quantum computing' }, 'DeepThink')
-    expect(html).toContain('deep-think-icon')
+  it('renders subagent_type badge', () => {
+    const html = formatToolInput({ subagent_type: 'explore', description: 'Explore project' }, 'DeepThink')
+    expect(html).toContain('agent-type-badge')
+    expect(html).toContain('explore')
   })
 
-  it('renders topic when present', () => {
+  it('renders description', () => {
+    const html = formatToolInput({ description: 'Explore project' }, 'DeepThink')
+    expect(html).toContain('agent-call-desc')
+    expect(html).toContain('Explore project')
+  })
+
+  it('renders prompt as markdown', () => {
+    const html = formatToolInput({ prompt: 'Think about **this**' }, 'DeepThink')
+    expect(html).toContain('agent-call-prompt')
+    expect(html).toContain('<strong>this</strong>')
+  })
+
+  it('falls back to topic for description (backward compat)', () => {
     const html = formatToolInput({ topic: 'quantum computing' }, 'DeepThink')
-    expect(html).toContain('deep-think-topic')
+    expect(html).toContain('agent-call-desc')
     expect(html).toContain('quantum computing')
   })
 
-  it('uses query as topic alias', () => {
+  it('falls back to query for prompt (backward compat)', () => {
     const html = formatToolInput({ query: 'search query' }, 'DeepThink')
-    expect(html).toContain('deep-think-topic')
+    expect(html).toContain('agent-call-prompt')
     expect(html).toContain('search query')
   })
 
-  it('uses prompt as topic alias', () => {
-    const html = formatToolInput({ prompt: 'think about this' }, 'DeepThink')
-    expect(html).toContain('deep-think-topic')
-    expect(html).toContain('think about this')
-  })
-
-  it('truncates topic over 200 chars', () => {
-    const longTopic = 'T'.repeat(250)
-    const html = formatToolInput({ topic: longTopic }, 'DeepThink')
-    expect(html).toContain('…')
-    expect(html).not.toContain('T'.repeat(250))
-  })
-
-  it('escapes HTML in topic', () => {
-    const html = formatToolInput({ topic: '<script>alert(1)</script>' }, 'DeepThink')
+  it('escapes HTML in description', () => {
+    const html = formatToolInput({ description: '<script>alert(1)</script>' }, 'DeepThink')
     expect(html).not.toContain('<script>')
     expect(html).toContain('&lt;script&gt;')
   })
 
-  it('renders without topic gracefully', () => {
+  it('shows Thinking placeholder when no input', () => {
     const html = formatToolInput({}, 'DeepThink')
-    expect(html).toContain('deep-think-view')
-    expect(html).not.toContain('deep-think-topic')
+    expect(html).toContain('deep-think-thinking')
+    expect(html).toContain('Thinking')
+  })
+
+  it('does not show Thinking when description exists', () => {
+    const html = formatToolInput({ description: 'test' }, 'DeepThink')
+    expect(html).not.toContain('deep-think-thinking')
   })
 
   it('is case-insensitive', () => {
-    const html = formatToolInput({ topic: 'test' }, 'deepthink')
+    const html = formatToolInput({ description: 'test' }, 'deepthink')
     expect(html).toContain('deep-think-view')
+  })
+
+  it('falls back to mode for subagent_type', () => {
+    const html = formatToolInput({ mode: 'explore', description: 'test' }, 'DeepThink')
+    expect(html).toContain('agent-type-badge')
+    expect(html).toContain('explore')
   })
 })
 
@@ -2494,22 +2662,22 @@ describe('formatToolOutput (deep)', () => {
 
   it('falls back to smart output for unregistered tool names', () => {
     const html = formatToolOutput('plain text result', 'UnknownTool')
-    expect(html).toContain('tool-output-default')
+    expect(html).toContain('tool-output-content')
   })
 
   it('falls back to smart output when no tool name', () => {
     const html = formatToolOutput('plain text result')
-    expect(html).toContain('tool-output-default')
+    expect(html).toContain('tool-output-content')
   })
 
   it('Git tool uses terminal output renderer', () => {
     const html = formatToolOutput('commit abc123', 'Git')
-    expect(html).toContain('bash-output-body')
+    expect(html).toContain('tool-output-content')
   })
 
   it('PowerShell tool uses terminal output renderer', () => {
     const html = formatToolOutput('Get-Process', 'PowerShell')
-    expect(html).toContain('bash-output-body')
+    expect(html).toContain('tool-output-content')
   })
 })
 
@@ -2520,7 +2688,7 @@ describe('formatToolOutput (deep)', () => {
 describe('renderSmartOutput (via formatToolOutput)', () => {
   it('pretty-prints JSON object', () => {
     const html = formatToolOutput('{"key": "value"}', 'UnknownTool')
-    expect(html).toContain('tool-output-default')
+    expect(html).toContain('tool-output-content')
     expect(html).toContain('<pre>')
     // Pretty-printed JSON should have newlines (indented)
     expect(html).toContain('key')
@@ -2528,28 +2696,76 @@ describe('renderSmartOutput (via formatToolOutput)', () => {
 
   it('pretty-prints JSON array', () => {
     const html = formatToolOutput('[1, 2, 3]', 'UnknownTool')
-    expect(html).toContain('tool-output-default')
+    expect(html).toContain('tool-output-content')
     expect(html).toContain('<pre>')
   })
 
   it('falls back to code output for invalid JSON starting with {', () => {
     const html = formatToolOutput('{invalid json}', 'UnknownTool')
-    expect(html).toContain('tool-output-default')
+    expect(html).toContain('tool-output-content')
     expect(html).toContain('<pre>')
     expect(html).toContain('{invalid json}')
   })
 
   it('falls back to code output for invalid JSON starting with [', () => {
     const html = formatToolOutput('[not valid]', 'UnknownTool')
-    expect(html).toContain('tool-output-default')
+    expect(html).toContain('tool-output-content')
     expect(html).toContain('<pre>')
   })
 
   it('treats non-JSON plain text as code output', () => {
     const html = formatToolOutput('Hello world, this is plain text.', 'UnknownTool')
-    expect(html).toContain('tool-output-default')
+    expect(html).toContain('tool-output-content')
     expect(html).toContain('<pre>')
     expect(html).toContain('Hello world, this is plain text.')
+  })
+})
+
+// ────────────────────────────────────────────────────────────
+// DeepThink output renderer
+// ────────────────────────────────────────────────────────────
+
+describe('DeepThink output renderer', () => {
+  it('strips <task> and <task_result> wrapper tags', () => {
+    const output = '<task id="ses_abc" state="completed">\n<task_result>\n\nHello world\n</task_result>\n</task>'
+    const html = formatToolOutput(output, 'DeepThink')
+    expect(html).toContain('Hello world')
+    expect(html).not.toContain('<task')
+    expect(html).not.toContain('</task')
+  })
+
+  it('strips <task_result> with attributes', () => {
+    const output = '<task id="ses_abc" state="completed">\n<task_result status="ok">\n\nResult text\n</task_result>\n</task>'
+    const html = formatToolOutput(output, 'DeepThink')
+    expect(html).toContain('Result text')
+    expect(html).not.toContain('<task')
+  })
+
+  it('handles <task_result> without <task> wrapper', () => {
+    const output = '<task_result>\n\nPartial output\n</task_result>'
+    const html = formatToolOutput(output, 'DeepThink')
+    expect(html).toContain('Partial output')
+    expect(html).not.toContain('task_result')
+  })
+
+  it('renders markdown content', () => {
+    const html = formatToolOutput('## Summary\n\nThis is **bold** text.', 'DeepThink')
+    expect(html).toContain('<h2')
+    expect(html).toContain('<strong>bold</strong>')
+  })
+
+  it('handles output without wrapper tags', () => {
+    const html = formatToolOutput('Plain markdown without tags', 'DeepThink')
+    expect(html).toContain('Plain markdown without tags')
+  })
+
+  it('is case-insensitive', () => {
+    const html = formatToolOutput('Some output', 'deepthink')
+    expect(html).toContain('Some output')
+  })
+
+  it('handles empty output', () => {
+    expect(formatToolOutput('', 'DeepThink')).toBe('')
   })
 })
 
@@ -2568,7 +2784,7 @@ describe('renderStatusOutput (via formatToolOutput)', () => {
   it('renders long message > 50 chars as preformatted text', () => {
     const longMsg = 'A'.repeat(60)
     const html = formatToolOutput(longMsg, 'Write')
-    expect(html).toContain('tool-output-default')
+    expect(html).toContain('tool-output-content')
     expect(html).toContain('<pre>')
     expect(html).not.toContain('tool-output-ok-badge')
   })

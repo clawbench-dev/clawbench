@@ -13,11 +13,15 @@
     <div class="tool-detail-body" @click="handleBodyClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart">
       <div v-html="toolInputHtml"></div>
       <!-- Tool output section -->
-      <div v-if="toolOutputHtml" class="tool-output-section">
+      <div v-if="toolOutputHtml" class="tool-output-section tool-content-wrap word-wrap">
         <div class="tool-output-header">
           <span class="tool-output-label">output</span>
           <span v-if="toolStatus === 'error'" class="tool-output-status tool-output-error">error</span>
           <span v-else class="tool-output-status tool-output-success">ok</span>
+          <span class="tool-output-header-actions">
+            <button class="tool-content-copy-btn" data-action="copy" data-content-selector=".tool-output-body" type="button" :title="$t('common.copy')" :aria-label="$t('common.copy')" v-html="COPY_ICON_SVG" />
+            <button class="tool-content-wrap-btn is-wrapped" data-action="wrap" data-content-selector=".tool-output-body" type="button" :title="$t('toolDetailBlock.wrapOn')" :aria-label="$t('toolDetailBlock.wrapOn')" v-html="WRAP_ICON_SVG" />
+          </span>
         </div>
         <div class="tool-output-body" v-html="toolOutputHtml"></div>
       </div>
@@ -39,7 +43,7 @@ import { CheckCircle2, XCircle } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import { getToolIcon } from '@/utils/icons'
-import { handleToolAction } from '@/utils/renderToolDetail.ts'
+import { handleToolAction, handleToolContentHeaderClick, COPY_ICON_SVG, WRAP_ICON_SVG } from '@/utils/renderToolDetail.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { store } from '@/stores/app.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
@@ -73,6 +77,9 @@ const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTableRowClick, onTableMouseDown, onTableTouchStart } = useTableRowExpand()
 
 function handleBodyClick(event) {
+  // Handle tool content header clicks (copy + wrap toggle) — highest priority
+  if (handleToolContentHeaderClick(event)) return
+
   if (props.toolName && handleToolAction(props.toolName, event, emit)) return
 
   // Handle localhost URL open buttons — bottom sheet is teleported to <body>,
@@ -216,6 +223,13 @@ function handleBodyClick(event) {
   margin-bottom: 6px;
 }
 
+.tool-detail-body .tool-output-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
 .tool-detail-body .tool-output-label {
   font-size: 9px;
   padding: 1px 4px;
@@ -263,6 +277,12 @@ function handleBodyClick(event) {
   line-height: 1.5;
 }
 
+.tool-detail-body .tool-output-section.tool-content-wrap:not(.word-wrap) .tool-output-body pre {
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
 .tool-detail-body .tool-output-body pre {
   margin: 0;
   font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
@@ -272,9 +292,9 @@ function handleBodyClick(event) {
   word-break: break-word;
 }
 
-.tool-detail-body .tool-output-default pre {
+.tool-detail-body .tool-output-content pre {
   background: var(--bg-tertiary);
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 8px 10px;
 }
 
@@ -330,12 +350,115 @@ function handleBodyClick(event) {
   overflow-x: auto;
 }
 
+/* ─── Tool content header (copy + wrap toggle) ─── */
+.tool-detail-body .tool-content-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  padding: 2px 0;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.tool-detail-body .tool-content-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tool-detail-body .tool-content-copy-btn,
+.tool-detail-body .tool-content-wrap-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted, #999);
+  cursor: pointer;
+  padding: 0;
+  opacity: 0.5;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  outline: none;
+  box-shadow: none;
+}
+
+.tool-detail-body .tool-content-copy-btn:hover,
+.tool-detail-body .tool-content-wrap-btn:hover {
+  opacity: 1;
+  color: var(--text-secondary, #555);
+  background: var(--bg-secondary, #e9ecef);
+}
+
+.tool-detail-body .tool-content-copy-btn:active,
+.tool-detail-body .tool-content-wrap-btn:active {
+  background: var(--border-color, #dee2e6);
+}
+
+.tool-detail-body .tool-content-copy-btn.is-copied {
+  opacity: 0.8;
+  color: #16a34a;
+}
+
+.tool-detail-body .tool-content-wrap-btn.is-wrapped {
+  opacity: 0.8;
+  color: var(--accent-color, #4a90d9);
+}
+
+.tool-detail-body .tool-content-wrap-btn.is-wrapped:hover {
+  opacity: 1;
+}
+
+.tool-detail-body .tool-content-copied-text {
+  font-size: 11px;
+  font-weight: 600;
+  color: #16a34a;
+}
+
+:root[data-theme="dark"] .tool-detail-body .tool-content-copied-text {
+  color: #4ade80;
+}
+
+/* ─── Wrap toggle: word-wrap on (default) ─── */
+.tool-detail-body .tool-content-wrap.word-wrap .edit-diff-scroll,
+.tool-detail-body .tool-content-wrap.word-wrap .file-write-body,
+.tool-detail-body .tool-content-wrap.word-wrap .file-preview-body {
+  overflow-x: hidden;
+}
+
+.tool-detail-body .tool-content-wrap.word-wrap .edit-diff-body,
+.tool-detail-body .tool-content-wrap.word-wrap .file-write-body,
+.tool-detail-body .tool-content-wrap.word-wrap .file-preview-body,
+.tool-detail-body .tool-content-wrap.word-wrap .file-write-line,
+.tool-detail-body .tool-content-wrap.word-wrap .file-preview-line,
+.tool-detail-body .tool-content-wrap.word-wrap .edit-diff-del,
+.tool-detail-body .tool-content-wrap.word-wrap .edit-diff-add {
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: break-word;
+  min-width: 0;
+}
+
+/* ─── Wrap toggle: no-wrap ─── */
+.tool-detail-body .tool-content-wrap:not(.word-wrap) .edit-diff-body,
+.tool-detail-body .tool-content-wrap:not(.word-wrap) .edit-diff-scroll,
+.tool-detail-body .tool-content-wrap:not(.word-wrap) .file-write-body,
+.tool-detail-body .tool-content-wrap:not(.word-wrap) .file-preview-body,
+.tool-detail-body .tool-content-wrap:not(.word-wrap) .edit-diff-del,
+.tool-detail-body .tool-content-wrap:not(.word-wrap) .edit-diff-add,
+.tool-detail-body .tool-content-wrap:not(.word-wrap) .file-write-line,
+.tool-detail-body .tool-content-wrap:not(.word-wrap) .file-preview-line {
+  min-width: max-content;
+}
+
 .tool-detail-body .edit-diff-body {
   white-space: pre;
   font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
   font-size: 12px;
   line-height: 1.6;
-  min-width: max-content;
 }
 
 .tool-detail-body .edit-diff-del {
@@ -438,6 +561,13 @@ function handleBodyClick(event) {
   overflow-x: auto;
 }
 
+.tool-detail-body .tool-json-body.tool-content-wrap.word-wrap {
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: break-word;
+  overflow-x: hidden;
+}
+
 .tool-detail-body .tool-json-body code {
   font-family: inherit;
 }
@@ -478,18 +608,6 @@ function handleBodyClick(event) {
 
 .tool-detail-body .bash-command {
   color: var(--text-primary);
-}
-
-/* Bash output */
-.tool-detail-body .bash-output-body pre {
-  font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
-  font-size: 12px;
-  line-height: 1.6;
-  background: var(--bg-tertiary);
-  border-radius: 6px;
-  padding: 8px 10px;
-  white-space: pre-wrap;
-  word-break: break-word;
 }
 
 /* Grep search */
@@ -1115,15 +1233,17 @@ function handleBodyClick(event) {
 /* Deep think */
 .tool-detail-body .deep-think-view {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 6px;
   font-size: 12px;
+  line-height: 1.5;
 }
-.tool-detail-body .deep-think-icon { font-size: 14px; }
-.tool-detail-body .deep-think-topic {
-  font-weight: 500;
-  color: var(--text-primary);
-  word-break: break-word;
+.tool-detail-body .deep-think-thinking {
+  color: var(--text-muted);
+  font-style: italic;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* Structured output */

@@ -31,6 +31,10 @@ export default {
     lineNumOn: 'Line numbers on',
     lineNumOff: 'Line numbers off',
   },
+  toolDetailBlock: {
+    wrapOn: 'Word wrap on',
+    wrapOff: 'Word wrap off',
+  },
   tableBlock: {
     label: 'Table',
     wrapOn: 'Word wrap on',

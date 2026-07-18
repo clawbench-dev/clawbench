@@ -1331,7 +1331,7 @@ onUnmounted(() => {
   word-break: break-word;
 }
 
-.content-blocks .tool-detail .tool-output-default pre {
+.content-blocks .tool-detail .tool-output-content pre {
   background: var(--bg-tertiary);
   border-radius: 4px;
   padding: 6px 8px;
