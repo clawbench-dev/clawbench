@@ -582,6 +582,7 @@ export default {
       openAsProject: '打开为项目',
       openTerminal: '在此打开终端',
       archiveDir: '打包下载',
+      shareExternal: '分享',
     },
     multiSelect: {
       enter: '多选',
@@ -651,7 +652,7 @@ export default {
       lineNumbers: '行号',
       stickyScroll: '粘性滚动',
       fileHistory: '文件历史',
-      shareExternal: '外部应用打开',
+      shareExternal: '分享',
       confirmDelete: '确定要删除"{name}"吗？',
       exportHtml: '导出 HTML',
       exportingHtml: '导出 HTML 中...',

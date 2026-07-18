@@ -581,6 +581,7 @@ export default {
       openAsProject: 'Open as project',
       openTerminal: 'Open terminal here',
       archiveDir: 'Pack & download',
+      shareExternal: 'Share',
     },
     multiSelect: {
       enter: 'Select',
@@ -650,7 +651,7 @@ export default {
       lineNumbers: 'Line Numbers',
       stickyScroll: 'Sticky Scroll',
       fileHistory: 'File history',
-      shareExternal: 'Open externally',
+      shareExternal: 'Share',
       confirmDelete: 'Delete "{name}"?',
       exportHtml: 'Export HTML',
       exportingHtml: 'Exporting HTML...',
