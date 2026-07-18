@@ -828,12 +828,16 @@
       showError('addErrorMsg', msg || '无法连接到服务器，请检查地址和网络。');
     } else {
       showError('errorMsg', msg || '无法连接到服务器，请检查地址和网络。');
-      // Show password field on error (e.g. wrong password) — clear it so user can re-enter
+      // Only show password field on auth errors (wrong password, too many attempts).
+      // Network/server errors should NOT reveal the password input — the user can't
+      // fix a connection issue by entering a different password.
       var passwordGroup = document.getElementById('passwordGroup');
       var passwordEl = document.getElementById('password');
-      passwordGroup.style.display = 'block';
-      passwordEl.value = '';
-      passwordEl.focus();
+      if (msg && (msg.indexOf('密码错误') !== -1 || msg.indexOf('尝试次数过多') !== -1)) {
+        passwordGroup.style.display = 'block';
+        passwordEl.value = '';
+        passwordEl.focus();
+      }
     }
   }
 
