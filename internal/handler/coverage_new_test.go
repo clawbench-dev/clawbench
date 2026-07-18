@@ -2068,6 +2068,9 @@ func TestAppendClientLog_DirCreationError(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("skipping as root: root can create directories in non-existent paths")
 	}
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows: unix-style impossible paths don't behave as expected")
+	}
 	origLogDir := model.ConfigInstance.LogDir
 	defer func() { model.ConfigInstance.LogDir = origLogDir }()
 
