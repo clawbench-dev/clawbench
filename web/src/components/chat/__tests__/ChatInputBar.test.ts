@@ -161,7 +161,6 @@ vi.mock('@/stores/app.ts', () => ({
       currentFile: null,
       currentDir: '',
       chatUnreadCount: 0,
-      chatRunning: false,
     },
   },
 }))

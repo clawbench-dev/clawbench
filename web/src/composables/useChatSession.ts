@@ -29,11 +29,9 @@ export async function loadSessionsOnce(): Promise<void> {
       if (res.ok) {
         const data = await res.json()
         const sessions: Array<{ running?: boolean; unreadCount?: number; pendingApproval?: boolean; id: string }> = data.sessions || []
-        const hasRunning = sessions.some(s => s.running)
         const unreadCount = sessions.filter(s =>
           (s.unreadCount! > 0 || s.pendingApproval) && s.id !== identity.currentSessionId.value
         ).length
-        store.state.chatRunning = hasRunning
         store.state.chatUnreadCount = unreadCount
         // Update session count for header indicator
         if (typeof data.totalCount === 'number') {
@@ -713,11 +711,23 @@ export function useChatSession(options: UseChatSessionOptions) {
   }
 
   async function createSession(agentId: string) {
+    // Pre-check session limit before clearing identity or making any request.
+    // This avoids wiping currentSessionId (which disables the delete button)
+    // when we already know creation will fail.
+    const maxCount = store.state.sessionMaxCount
+    if (maxCount > 0 && store.state.sessionCount >= maxCount) {
+      toast.show(gt('chat.session.sessionLimitReached'), { icon: '⚠️', type: 'error' })
+      return
+    }
     // Immediately clear identity and show switching overlay so the user
     // doesn't see stale info from the previous session during the network
     // round-trip to create the new session.
     switching.value = true
     inputDisabled.value = true
+    // Save currentSessionId before clearing — if the POST fails (e.g. TOCTOU
+    // race where another client created a session between pre-check and POST),
+    // we need to restore it to avoid disabling the delete button.
+    const prevSessionId = currentSessionId.value
     clearSessionIdentity()
     try {
       const body = agentId ? { agentId } : {}
@@ -754,7 +764,6 @@ export function useChatSession(options: UseChatSessionOptions) {
         }
       }
       // Update session count from creation response and show toast
-      const maxCount = store.state.sessionMaxCount
       if (typeof data.sessionCount === 'number') store.state.sessionCount = data.sessionCount
       toast.show(gt('chat.session.created', { count: data.sessionCount ?? '', max: maxCount }), { icon: '✨', type: 'success', duration: 1500 })
     } catch (err: unknown) {
@@ -766,6 +775,11 @@ export function useChatSession(options: UseChatSessionOptions) {
       // handles the reset.
       switching.value = false
       inputDisabled.value = false
+      // Restore sessionId to prevent delete button from being stuck disabled
+      // after a rare TOCTOU race (pre-check passed but backend still 409'd).
+      if (prevSessionId && !currentSessionId.value) {
+        currentSessionId.value = prevSessionId
+      }
     }
   }
 
@@ -792,7 +806,7 @@ export function useChatSession(options: UseChatSessionOptions) {
             await createSession('')
           }
         } else {
-          // Deleted a non-current session — refresh global state (chatUnread, chatRunning, runningSessions)
+          // Deleted a non-current session — refresh global state (chatUnread, runningSessions)
           await loadSessionsOnce()
         }
         const maxCount = store.state.sessionMaxCount
@@ -809,10 +823,11 @@ export function useChatSession(options: UseChatSessionOptions) {
     }
   }
 
-  // Debounce timer for loadSessionsOnce after session events.
-  // When multiple sessions complete in quick succession, we coalesce
-  // the recalculations into a single API call after a short delay.
-  let sessionEventDebounce: ReturnType<typeof setTimeout> | null = null
+  // Debounce timers for loadSessionsOnce after session events.
+  // Separate timers for permission and completion events to prevent them from
+  // cancelling each other (permission needs faster 300ms, completion needs 500ms).
+  let permissionDebounce: ReturnType<typeof setTimeout> | null = null
+  let completionDebounce: ReturnType<typeof setTimeout> | null = null
 
   // Called from WS session_update event
   function onSessionEvent(data: { session_id?: string; status?: string; has_new_messages?: boolean } | undefined) {
@@ -820,19 +835,16 @@ export function useChatSession(options: UseChatSessionOptions) {
     const sid = data.session_id
 
     if (data.status === 'running') {
-      store.state.chatRunning = true
       if (sid) { runningSessions.value.add(sid); runningSessionsVersion.value++ }
     } else if (data.status === 'permission_pending' || data.status === 'permission_resolved') {
       // Permission approval state changed — reload sessions to update dot indicators
-      if (sessionEventDebounce) clearTimeout(sessionEventDebounce)
-      sessionEventDebounce = setTimeout(() => {
-        sessionEventDebounce = null
+      if (permissionDebounce) clearTimeout(permissionDebounce)
+      permissionDebounce = setTimeout(() => {
+        permissionDebounce = null
         loadSessionsOnce()
       }, 300)
     } else {
       if (sid) { runningSessions.value.delete(sid); runningSessionsVersion.value++ }
-      // Update global boolean from remaining set
-      store.state.chatRunning = runningSessions.value.size > 0
       // Safety net: if the session completed/cancelled but loading is still true,
       // it means the chat_stream 'done'/'cancelled' event was missed or its
       // handler failed (e.g., sessionChanged() guard returned early, or the WS
@@ -863,10 +875,15 @@ export function useChatSession(options: UseChatSessionOptions) {
       // flashing: a session that was already read (last_read_at set) would trigger
       // the flash, and the button kept blinking until loadSessionsOnce() corrected it.
       // Now we debounce-load the real unread state from the server.
-      if (sid && sid !== currentSessionId.value) {
-        if (sessionEventDebounce) clearTimeout(sessionEventDebounce)
-        sessionEventDebounce = setTimeout(() => {
-          sessionEventDebounce = null
+      // Both current and non-current session completions need this — the current session
+      // completing may clear a stale chatUnreadCount that was set by a prior event,
+      // and onStreamEnd may not fire if the stream was disconnected.
+      // Note: for the current session, onStreamEnd('done') also calls loadSessionsOnce()
+      // immediately — the dedup (_sessionsLoadPromise) ensures no duplicate API call.
+      if (sid) {
+        if (completionDebounce) clearTimeout(completionDebounce)
+        completionDebounce = setTimeout(() => {
+          completionDebounce = null
           loadSessionsOnce()
         }, 500)
       }
