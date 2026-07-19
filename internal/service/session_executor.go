@@ -244,13 +244,11 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 	}
 }
 
-// buildResult constructs the final RunResult from the executor's accumulated state.
-func (e *SessionExecutor) buildResult(receivedTerminal bool, wallStart time.Time) RunResult {
-	wallMs := int(time.Since(wallStart).Milliseconds())
-
-	// Apply finalize post-processing on blocks
-	blocks := e.blocks
-
+// postProcessBlocks applies finalize post-processing on blocks:
+// ask-question conversion, rejected-tool removal, thinking-block merging,
+// and persistence of converted AskUserQuestion tool calls.
+// Shared by buildResult and Finalize to prevent divergence.
+func (e *SessionExecutor) postProcessBlocks(blocks []model.ContentBlock) []model.ContentBlock {
 	// Ask-question detection (interactive mode only)
 	if e.cfg.Mode == ModeInteractive {
 		if ai.StringsContainsAnyBlock(blocks, "<ask-question") {
@@ -282,6 +280,16 @@ func (e *SessionExecutor) buildResult(receivedTerminal bool, wallStart time.Time
 			}
 		}
 	}
+
+	return blocks
+}
+
+// buildResult constructs the final RunResult from the executor's accumulated state.
+func (e *SessionExecutor) buildResult(receivedTerminal bool, wallStart time.Time) RunResult {
+	wallMs := int(time.Since(wallStart).Milliseconds())
+
+	// Apply finalize post-processing on blocks
+	blocks := e.postProcessBlocks(e.blocks)
 
 	// Inject WallMs into metadata
 	if e.responseMetadata == nil {
@@ -540,6 +548,14 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	// Use e.blocks (may have been updated by drain) instead of result.Blocks snapshot
 	blocks := e.blocks
 	responseMetadata := result.Metadata
+
+	// Apply the same post-processing as buildResult.
+	// buildResult runs postProcessBlocks on a local copy of e.blocks,
+	// but Finalize uses e.blocks directly (for drained events) — so the
+	// conversion must be applied here too, otherwise DB stores the original
+	// unconverted blocks and the frontend renders ask-question as plain text
+	// instead of an interactive card.
+	blocks = e.postProcessBlocks(blocks)
 
 	e.injectSessionMetadata(responseMetadata)
 
