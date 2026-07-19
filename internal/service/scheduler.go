@@ -531,7 +531,11 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 			data.SessionTitle = taskName
 		}
 		if sessionID != "" {
-			data.ResponsePreview = getSessionResponsePreview(sessionID)
+			raw := getSessionResponsePreviewRaw(sessionID)
+			data.ResponsePreview = truncatePreview(raw)
+			if raw != "" {
+				data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(raw))
+			}
 		}
 	}
 	// For running tasks, include task name as session title

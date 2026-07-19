@@ -52,9 +52,13 @@ func EmitSessionEvent(sessionID, status string, hasNewMessages bool, toolName ..
 		if title, err := GetSessionTitle(sessionID); err == nil && title != "" {
 			data.SessionTitle = title
 		}
-		// Also include response preview for other consumers
+		// Include response preview for DingTalk (Markdown) and Android/browser (plain text)
 		if status == "completed" {
-			data.ResponsePreview = getSessionResponsePreview(sessionID)
+			raw := getSessionResponsePreviewRaw(sessionID)
+			data.ResponsePreview = truncatePreview(raw)
+			if raw != "" {
+				data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(raw))
+			}
 		}
 	}
 
@@ -92,6 +96,13 @@ func EmitSessionEvent(sessionID, status string, hasNewMessages bool, toolName ..
 // message, since the final text block(s) contain the AI's actual answer
 // rather than intermediate reasoning or tool-call commentary.
 func getSessionResponsePreview(sessionID string) string {
+	return truncatePreview(getSessionResponsePreviewRaw(sessionID))
+}
+
+// getSessionResponsePreviewRaw returns the un-truncated preview text.
+// Used when both Markdown and plain-text previews are needed, so that
+// StripMarkdown operates on the full text before each variant is truncated.
+func getSessionResponsePreviewRaw(sessionID string) string {
 	messages, err := GetMessagesBySessionID(sessionID)
 	if err != nil {
 		slog.Debug("session_event: failed to get messages for preview", "session_id", sessionID, "error", err)
@@ -119,7 +130,12 @@ func getSessionResponsePreview(sessionID string) string {
 // Delegates to summarize.ExtractLastAnswerFromBlocks for the extraction logic,
 // then truncates for display in push notifications and WS events.
 func extractPreviewFromBlocks(blocks []model.ContentBlock) string {
-	return truncatePreview(summarize.ExtractLastAnswerFromBlocks(blocks))
+	return truncatePreview(extractPreviewFromBlocksRaw(blocks))
+}
+
+// extractPreviewFromBlocksRaw returns the un-truncated preview from content blocks.
+func extractPreviewFromBlocksRaw(blocks []model.ContentBlock) string {
+	return summarize.ExtractLastAnswerFromBlocks(blocks)
 }
 
 // truncatePreview truncates text to responsePreviewMaxRunes with ellipsis if needed.

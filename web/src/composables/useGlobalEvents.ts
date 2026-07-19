@@ -5,6 +5,7 @@ import { showBrowserNotification } from './useNotification'
 import { playNotificationSound } from './useNotificationSound'
 import { gt } from './useLocale'
 import { serverConfig } from './useSettingsConfig'
+import { stripMarkdownPreview } from '@/utils/format'
 
 // Event types from server
 interface ServerEvent {
@@ -21,6 +22,7 @@ interface ServerEvent {
         // Fields used for notification display
         session_title?: string
         response_preview?: string
+        response_preview_plain?: string // Markdown-stripped preview for Android/browser notifications
         tool_name?: string
         project_path?: string
     }
@@ -102,6 +104,18 @@ function truncateForPush(s: string): string {
     const chars = [...s]
     if (chars.length <= PUSH_ALERT_MAX_CODE_POINTS) return s
     return chars.slice(0, PUSH_ALERT_MAX_CODE_POINTS).join('') + '…'
+}
+
+/**
+ * Get plain-text notification body from response preview data.
+ * Prefers response_preview_plain (server-stripped), falls back to
+ * stripMarkdownPreview on response_preview for older server versions.
+ */
+function plainPreview(data: ServerEvent['data']): string {
+    if (!data) return ''
+    if (data.response_preview_plain) return truncateForPush(data.response_preview_plain)
+    if (data.response_preview) return stripMarkdownPreview(data.response_preview, PUSH_ALERT_MAX_CODE_POINTS)
+    return ''
 }
 
 async function fetchPendingEvents() {
@@ -318,16 +332,15 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data']) 
         const status = data.status
         if (status !== 'completed' && status !== 'cancelled' && status !== 'permission_pending') return
 
-        const responsePreview = data.response_preview || ''
         const toolName = data.tool_name || ''
 
         // Default title/alert per status
         if (status === 'completed') {
             title = gt('chat.push.sessionCompleted')
-            alert_ = responsePreview ? truncateForPush(responsePreview) : gt('chat.push.sessionCompleted')
+            alert_ = plainPreview(data) || gt('chat.push.sessionCompleted')
         } else if (status === 'cancelled') {
             title = gt('chat.push.sessionCancelled')
-            alert_ = responsePreview ? truncateForPush(responsePreview) : gt('chat.push.sessionCancelled')
+            alert_ = plainPreview(data) || gt('chat.push.sessionCancelled')
         } else {
             // permission_pending
             title = gt('chat.push.actionRequired')
@@ -348,7 +361,6 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data']) 
         const status = data.status
         if (status !== 'running' && status !== 'completed' && status !== 'failed' && status !== 'cancelled') return
 
-        const responsePreview = data.response_preview || ''
         const sessionTitle = data.session_title || ''
 
         if (status === 'running') {
@@ -356,14 +368,14 @@ function showEventBrowserNotification(event: string, data: ServerEvent['data']) 
             alert_ = sessionTitle || gt('chat.push.taskStarted')
         } else if (status === 'completed') {
             title = gt('chat.push.taskCompleted')
-            alert_ = responsePreview ? truncateForPush(responsePreview) : gt('chat.push.taskCompleted')
+            alert_ = plainPreview(data) || gt('chat.push.taskCompleted')
         } else if (status === 'failed') {
             title = gt('chat.push.taskFailed')
-            alert_ = responsePreview ? truncateForPush(responsePreview) : gt('chat.push.taskFailed')
+            alert_ = plainPreview(data) || gt('chat.push.taskFailed')
         } else {
             // cancelled
             title = gt('chat.push.taskCancelled')
-            alert_ = responsePreview ? truncateForPush(responsePreview) : gt('chat.push.taskCancelled')
+            alert_ = plainPreview(data) || gt('chat.push.taskCancelled')
         }
 
         // Click: navigate to the task

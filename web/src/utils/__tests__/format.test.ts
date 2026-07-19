@@ -59,6 +59,14 @@ describe('stripMarkdownPreview', () => {
     expect(stripMarkdownPreview('[click](http://example.com)')).toBe('click')
   })
 
+  it('removes images entirely', () => {
+    expect(stripMarkdownPreview('before ![alt](http://img.png) after')).toBe('before  after')
+  })
+
+  it('removes images before links', () => {
+    expect(stripMarkdownPreview('![img](url) [link](url)')).toBe('link')
+  })
+
   it('strips strikethrough', () => {
     expect(stripMarkdownPreview('~~deleted~~')).toBe('deleted')
   })

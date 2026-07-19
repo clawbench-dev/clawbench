@@ -90,7 +90,8 @@ export function stripMarkdownPreview(text: string, maxLen: number = 100): string
         .replace(/__([^_]+)__/g, '$1')     // bold
         .replace(/_([^_]+)_/g, '$1')       // italic
         .replace(/~~([^~]+)~~/g, '$1')     // strikethrough
-        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links
+        .replace(/!\[[^\]]*\]\([^)]+\)/g, '')   // images (remove entirely)
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links (keep text)
         .replace(/[#*`_~[\]()>|]/g, '')   // remaining syntax chars
         .replace(/\n+/g, ' ')             // newlines → space
         .trim()

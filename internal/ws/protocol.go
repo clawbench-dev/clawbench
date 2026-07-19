@@ -26,24 +26,26 @@ type ClientMessage struct {
 
 // SessionUpdateData is the data payload for "session_update" events.
 type SessionUpdateData struct {
-	SessionID       string `json:"session_id"`
-	Status          string `json:"status"` // "running", "completed", "cancelled", "permission_pending", "permission_resolved"
-	HasNewMessages  bool   `json:"has_new_messages"`
-	ResponsePreview string `json:"response_preview,omitempty"` // preview of AI's final reply (completed only)
-	SessionTitle    string `json:"session_title,omitempty"`    // session title for push notification
-	ProjectPath     string `json:"project_path,omitempty"`
-	ToolName        string `json:"tool_name,omitempty"` // tool name requesting approval (permission_pending only)
+	SessionID            string `json:"session_id"`
+	Status               string `json:"status"` // "running", "completed", "cancelled", "permission_pending", "permission_resolved"
+	HasNewMessages       bool   `json:"has_new_messages"`
+	ResponsePreview      string `json:"response_preview,omitempty"`       // preview of AI's final reply with Markdown (for DingTalk)
+	ResponsePreviewPlain string `json:"response_preview_plain,omitempty"` // Markdown-stripped preview (for Android/browser notifications)
+	SessionTitle         string `json:"session_title,omitempty"`
+	ProjectPath          string `json:"project_path,omitempty"`
+	ToolName             string `json:"tool_name,omitempty"` // tool name requesting approval (permission_pending only)
 }
 
 // TaskUpdateData is the data payload for "task_update" events.
 type TaskUpdateData struct {
-	TaskID          string `json:"task_id"`
-	Status          string `json:"status"` // "running", "completed", "failed"
-	ExecutionID     string `json:"execution_id,omitempty"`
-	SessionID       string `json:"session_id,omitempty"`
-	ProjectPath     string `json:"project_path,omitempty"`
-	SessionTitle    string `json:"session_title,omitempty"`    // task name for push notification
-	ResponsePreview string `json:"response_preview,omitempty"` // preview of AI's final reply (completed only)
+	TaskID               string `json:"task_id"`
+	Status               string `json:"status"` // "running", "completed", "failed"
+	ExecutionID          string `json:"execution_id,omitempty"`
+	SessionID            string `json:"session_id,omitempty"`
+	ProjectPath          string `json:"project_path,omitempty"`
+	SessionTitle         string `json:"session_title,omitempty"`         // task name for push notification
+	ResponsePreview      string `json:"response_preview,omitempty"`       // preview with Markdown (for DingTalk)
+	ResponsePreviewPlain string `json:"response_preview_plain,omitempty"` // Markdown-stripped preview (for Android/browser notifications)
 }
 
 // ChatStreamData wraps a chat streaming event for WS delivery.
