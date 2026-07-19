@@ -107,7 +107,7 @@
               {{ t('file.header.openAsText') }}
             </button>
             <button v-if="isAppMode" class="dropdown-item" @click="handleShareExternal">
-              <Share :size="14" />
+              <Share2 :size="14" />
               {{ t('file.header.shareExternal') }}
             </button>
             <a v-if="!isAppMode" class="dropdown-item" :href="buildLocalFileUrl(file.path, { download: true })" :download="file.name" @click="menuOpen = false">
@@ -151,7 +151,7 @@
 <script setup>
 import { computed, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, ChevronLeft, X, Paperclip, Share, FileOutput, Eye, MoveHorizontal } from 'lucide-vue-next'
+import { List, Search, MoreVertical, Code2, Download, Trash2, GitBranch, TextWrap, Hash, RotateCw, Pin, ChevronLeft, X, Paperclip, Share2, FileOutput, Eye, MoveHorizontal } from 'lucide-vue-next'
 import { getFileType } from '@/utils/fileType.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'

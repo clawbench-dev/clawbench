@@ -270,7 +270,7 @@
         {{ t('file.multiSelect.archive') }}
       </button>
       <button v-if="isAppMode && allSelectedAreFiles" class="ms-action-btn" @click="doBatchShare">
-        <Share :size="14" />
+        <Share2 :size="14" />
         {{ t('file.multiSelect.share') }}
       </button>
       <button class="ms-action-btn ms-danger" @click="doBatchDelete">
@@ -321,7 +321,7 @@
             {{ t('common.download') }}
           </div>
           <div class="context-menu-item" v-if="isAppMode && ctxMenu.entry.type !== 'dir'" @click.stop="doShareExternal">
-            <Share :size="14" />
+            <Share2 :size="14" />
             {{ t('file.context.shareExternal') }}
           </div>
           <div class="context-menu-item" v-if="ctxMenu.entry.type === 'dir'" @click.stop="doArchiveDir">
@@ -361,7 +361,7 @@ import { ref, computed, reactive, inject, nextTick, onMounted, onUnmounted, watc
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { joinPath } from '@/utils/path'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2 } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, formatSize as formatFileSize,
