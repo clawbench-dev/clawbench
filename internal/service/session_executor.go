@@ -495,8 +495,11 @@ func (e *SessionExecutor) buildContentJSON(blocks []model.ContentBlock, result R
 	return string(blocksJSON), blocks
 }
 
-// drainRawOutput reads remaining raw_output events from the channel without blocking.
-func drainRawOutput(eventCh <-chan ai.StreamEvent, rawOutput string) string {
+// drainRemainingEvents reads remaining events from the channel without blocking.
+// In addition to raw_output (for debugging), it also processes tool_use/tool_result
+// events that arrived after the main event loop exited (e.g., debouncer flushAll
+// on cancel), persisting them via AccumulateBlock + upsertToolCallToDB.
+func (e *SessionExecutor) drainRemainingEvents(eventCh <-chan ai.StreamEvent, rawOutput string) string {
 	if eventCh == nil {
 		return rawOutput
 	}
@@ -506,11 +509,15 @@ func drainRawOutput(eventCh <-chan ai.StreamEvent, rawOutput string) string {
 			if !ok {
 				return rawOutput
 			}
-			if event.Type == "raw_output" {
+			switch event.Type {
+			case "raw_output":
 				if rawOutput != "" {
 					rawOutput += "\n"
 				}
 				rawOutput += event.RawOutput
+			case "tool_use", "tool_result":
+				ai.AccumulateBlock(&e.blocks, event)
+				e.upsertToolCallToDB(event)
 			}
 		default:
 			return rawOutput
@@ -525,7 +532,13 @@ func drainRawOutput(eventCh <-chan ai.StreamEvent, rawOutput string) string {
 // This replaces the old finalizeStreamRun function from handler/chat.go.
 // The caller is still responsible for WS terminal events and drain loop logic.
 func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEvent) RunResult {
-	blocks := result.Blocks
+	// Drain remaining events first (raw_output + tool calls flushed by debouncer
+	// after the main event loop exited on cancel). This updates e.blocks so that
+	// buildContentJSON includes the latest tool call data.
+	rawOutput := e.drainRemainingEvents(eventCh, result.RawOutput)
+
+	// Use e.blocks (may have been updated by drain) instead of result.Blocks snapshot
+	blocks := e.blocks
 	responseMetadata := result.Metadata
 
 	e.injectSessionMetadata(responseMetadata)
@@ -545,9 +558,6 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 			slog.Warn("failed to save message metadata", slog.Int64("msg_id", msgID), slog.String("err", saveErr.Error()))
 		}
 	}
-
-	// Drain any remaining events from channel (collect raw_output)
-	rawOutput := drainRawOutput(eventCh, result.RawOutput)
 
 	// Save raw AI backend output for debugging/analysis
 	if rawOutput != "" {
