@@ -245,6 +245,195 @@ describe('extractSpeakableText', () => {
   })
 })
 
+// ── Regression: MSE streaming with Infinity/0/NaN duration — stall fallback detection ──
+// Bug: When MSE endOfStream() is called but audio.duration stays Infinity
+// (common on Android WebView), or when duration is 0/NaN on some browsers,
+// the old fallback timer silently skipped because of the !isFinite(audio.duration)
+// or falsy-duration guard. If onended also didn't fire, the "朗读中" state
+// got stuck forever.
+// Fix: When duration is 0/NaN/Infinity, detect playback end via currentTime stall
+// (with or without buffered info), independent of duration being finite.
+
+describe('useAutoSpeech — regression: duration unavailable stall detection', () => {
+  let fetchSpy: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchSpy = vi.fn()
+    globalThis.fetch = fetchSpy
+    toastShowMock.mockClear()
+    mseIsSupportedMock.mockReturnValue(false)
+    const { stopAudio } = useAutoSpeech()
+    stopAudio()
+  })
+
+  afterEach(() => {
+    const { stopAudio } = useAutoSpeech()
+    stopAudio()
+    vi.restoreAllMocks()
+  })
+
+  it('duration=0, no buffered info: pure stall detection resets state', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ cached: true, audioPath: '/tts/test.mp3' }),
+    })
+    const timeupdateHandlers: Array<() => void> = []
+    const audioInstances: any[] = []
+    vi.stubGlobal('Audio', vi.fn(function(this: any) {
+      this.play = vi.fn().mockResolvedValue(undefined)
+      this.pause = vi.fn()
+      this.onended = null
+      this.onerror = null
+      this.currentTime = 0
+      this.duration = 0
+      this.buffered = { length: 0 }
+      this.addEventListener = vi.fn((event: string, handler: () => void) => {
+        if (event === 'timeupdate') timeupdateHandlers.push(handler)
+      })
+      this.removeEventListener = vi.fn()
+      audioInstances.push(this)
+    }))
+
+    const { speakText, state, isActive } = useAutoSpeech()
+    speakText('300', 'Duration zero test')
+    await vi.waitFor(() => expect(audioInstances.length).toBeGreaterThan(0))
+
+    const audio = audioInstances[0]
+    expect(state.value).toBe('playing')
+
+    // Simulate: audio has played to some point, now stalled
+    audio.currentTime = 5.0
+    // First call sets lastCurrentTime=5.0 (no stall yet since lastCurrentTime was 0)
+    // Subsequent 5 calls detect stall (currentTime doesn't advance)
+    for (let i = 0; i < 5; i++) {
+      timeupdateHandlers[0]()
+      expect(state.value).toBe('playing')
+    }
+    // 6th call: stallCount reaches 5, triggers reset
+    timeupdateHandlers[0]()
+    expect(state.value).toBe('idle')
+    expect(isActive('300')).toBe(false)
+  })
+
+  it('Infinity duration with buffered info: stall near buffer end resets state', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ cached: true, audioPath: '/tts/test.mp3' }),
+    })
+    const timeupdateHandlers: Array<() => void> = []
+    const audioInstances: any[] = []
+    vi.stubGlobal('Audio', vi.fn(function(this: any) {
+      this.play = vi.fn().mockResolvedValue(undefined)
+      this.pause = vi.fn()
+      this.onended = null
+      this.onerror = null
+      this.currentTime = 0
+      this.duration = Infinity
+      this.buffered = {
+        length: 1,
+        start: (_i: number) => 0,
+        end: (_i: number) => 10,
+      }
+      this.addEventListener = vi.fn((event: string, handler: () => void) => {
+        if (event === 'timeupdate') timeupdateHandlers.push(handler)
+      })
+      this.removeEventListener = vi.fn()
+      audioInstances.push(this)
+    }))
+
+    const { speakText, state, isActive } = useAutoSpeech()
+    speakText('301', 'Infinity duration buffered test')
+    await vi.waitFor(() => expect(audioInstances.length).toBeGreaterThan(0))
+
+    const audio = audioInstances[0]
+    expect(state.value).toBe('playing')
+
+    // Simulate: playback reached near buffer end and stalled
+    audio.currentTime = 9.8
+    // First call sets lastCurrentTime=9.8, subsequent 5 calls detect stall
+    for (let i = 0; i < 5; i++) {
+      timeupdateHandlers[0]()
+      expect(state.value).toBe('playing')
+    }
+    // 6th call: stallCount reaches 5, triggers reset
+    timeupdateHandlers[0]()
+    expect(state.value).toBe('idle')
+    expect(isActive('301')).toBe(false)
+  })
+
+  it('Infinity duration, onended fires: primary mechanism still works', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ cached: true, audioPath: '/tts/test.mp3' }),
+    })
+    const timeupdateHandlers: Array<() => void> = []
+    const audioInstances: any[] = []
+    vi.stubGlobal('Audio', vi.fn(function(this: any) {
+      this.play = vi.fn().mockResolvedValue(undefined)
+      this.pause = vi.fn()
+      this.onended = null
+      this.onerror = null
+      this.currentTime = 0
+      this.duration = Infinity
+      this.buffered = { length: 0 }
+      this.addEventListener = vi.fn((event: string, handler: () => void) => {
+        if (event === 'timeupdate') timeupdateHandlers.push(handler)
+      })
+      this.removeEventListener = vi.fn()
+      audioInstances.push(this)
+    }))
+
+    const { speakText, state, isActive } = useAutoSpeech()
+    speakText('302', 'Infinity onended test')
+    await vi.waitFor(() => expect(audioInstances.length).toBeGreaterThan(0))
+
+    const audio = audioInstances[0]
+    expect(state.value).toBe('playing')
+
+    // onended is the primary reset mechanism and still works
+    audio.onended!()
+    expect(state.value).toBe('idle')
+    expect(isActive('302')).toBe(false)
+  })
+
+  it('finite duration: fallback still works with new code structure', async () => {
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ cached: true, audioPath: '/tts/test.mp3' }),
+    })
+    const timeupdateHandlers: Array<() => void> = []
+    const audioInstances: any[] = []
+    vi.stubGlobal('Audio', vi.fn(function(this: any) {
+      this.play = vi.fn().mockResolvedValue(undefined)
+      this.pause = vi.fn()
+      this.onended = null
+      this.onerror = null
+      this.currentTime = 0
+      this.duration = 10
+      this.buffered = { length: 0 }
+      this.addEventListener = vi.fn((event: string, handler: () => void) => {
+        if (event === 'timeupdate') timeupdateHandlers.push(handler)
+      })
+      this.removeEventListener = vi.fn()
+      audioInstances.push(this)
+    }))
+
+    const { speakText, state, isActive } = useAutoSpeech()
+    speakText('303', 'Finite duration fallback test')
+    await vi.waitFor(() => expect(audioInstances.length).toBeGreaterThan(0))
+
+    const audio = audioInstances[0]
+    expect(state.value).toBe('playing')
+
+    // Near the end of finite-duration audio → fallback detects completion
+    audio.currentTime = 9.7
+    timeupdateHandlers[0]()
+
+    expect(state.value).toBe('idle')
+    expect(isActive('303')).toBe(false)
+  })
+})
+
 // ── TTS generation with messageId ──
 
 describe('useAutoSpeech._speak — TTS body includes messageId', () => {

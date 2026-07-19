@@ -70,6 +70,8 @@ let mseAudio: MseAudioPlayer | null = null
 let playbackEndTimer: ReturnType<typeof setInterval> | null = null
 let playbackTimeupdateHandler: (() => void) | null = null
 let playbackEndAudio: HTMLAudioElement | null = null
+/** Set to true after MSE endOfStream() — signals that no more chunks will arrive */
+let mseStreamEnded = false
 
 function clearPlaybackEndTimer() {
   if (playbackEndTimer) {
@@ -81,16 +83,65 @@ function clearPlaybackEndTimer() {
   }
   playbackEndAudio = null
   playbackTimeupdateHandler = null
+  mseStreamEnded = false
 }
 
 function startPlaybackEndTimer(audio: HTMLAudioElement, onEnd: () => void) {
   clearPlaybackEndTimer()
   playbackEndAudio = audio
+  let lastCurrentTime = 0
+  let stallCount = 0
+
   const handler = () => {
-    if (state.value !== 'playing' || !audio.duration || !isFinite(audio.duration)) return
-    if (audio.currentTime >= audio.duration - 0.5) {
-      appLog.i(TAG, 'Fallback: detected playback end (ended event missed)')
+    if (state.value !== 'playing') return
+
+    const dur = audio.duration
+    const ct = audio.currentTime
+
+    // Finite duration: standard detection — currentTime near duration
+    if (dur > 0 && isFinite(dur) && ct >= dur - 0.5) {
+      appLog.i(TAG, 'Fallback: detected playback end via duration check (ended event missed)')
       onEnd()
+      return
+    }
+
+    // MSE with Infinity/NaN/0 duration: after endOfStream(), detect playback end
+    // by checking if currentTime has stalled (not advancing for >2 consecutive checks)
+    // while we've reached the end of the buffered range.
+    // Also applies to non-MSE paths where duration is unavailable (0/NaN/Infinity)
+    // and the audio has been playing for a while without advancing.
+    if (mseStreamEnded || (dur === 0 || !isFinite(dur))) {
+      const buffered = audio.buffered
+      if (buffered && buffered.length > 0) {
+        const bufferEnd = buffered.end(buffered.length - 1)
+        // If currentTime is near or past the last buffered byte, start stall detection
+        if (ct >= bufferEnd - 0.5) {
+          if (ct === lastCurrentTime) {
+            stallCount++
+            if (stallCount >= 5) { // 5 × 500ms = 2.5s stall → playback finished
+              appLog.i(TAG, 'Fallback: detected playback end via stall after MSE endOfStream (ended event missed)')
+              onEnd()
+              return
+            }
+          } else {
+            stallCount = 0
+          }
+        }
+      } else if (dur === 0 || !isFinite(dur)) {
+        // No buffered info available — use pure stall detection:
+        // if currentTime hasn't advanced for 2.5s and we've played something, we're done
+        if (ct > 0 && ct === lastCurrentTime) {
+          stallCount++
+          if (stallCount >= 5) {
+            appLog.i(TAG, 'Fallback: detected playback end via pure stall (ended event missed)')
+            onEnd()
+            return
+          }
+        } else {
+          stallCount = 0
+        }
+      }
+      lastCurrentTime = ct
     }
   }
   playbackTimeupdateHandler = handler
@@ -140,6 +191,27 @@ export function useAutoSpeech() {
   }
 
   // --- Audio Playback ---
+
+  /** Reset all TTS state to idle and release screen lock. */
+  function resetToIdle() {
+    activeId.value = ''
+    playingSummary.value = ''
+    state.value = 'idle'
+    releaseScreenLockOnError()
+  }
+
+  /** Handle audio.play() rejection uniformly. */
+  function handlePlayError(err: unknown) {
+    const errName = (err as Error)?.name
+    if (errName === 'AbortError') return
+    let message = gt('autoSpeech.generateFailedGeneric')
+    if (errName === 'NotAllowedError') {
+      message = gt('autoSpeech.autoplayBlocked')
+    }
+    reportError(message)
+    stopAudio()
+  }
+
   /**
    * Stop current audio/TTS playback.
    * @param releaseScreenLock If true (default), release the screen wake lock.
@@ -191,46 +263,23 @@ export function useAutoSpeech() {
     currentAudioEl = audio
     state.value = 'playing'
 
-    const resetState = () => {
-      clearPlaybackEndTimer()
-      if (currentAudioEl === audio) {
-        currentAudioEl = null
-        activeId.value = ''
-        playingSummary.value = ''
-        state.value = 'idle'
-        if (screenLockSuppressed) {
-          wakeLock.release()
-          screenLockSuppressed = false
-        }
-      }
+    audio.onended = () => {
+      appLog.i(TAG, 'playAudio: onended fired')
+      stopAudio()
     }
-
-    audio.onended = resetState
     audio.onerror = () => {
-      resetState()
+      appLog.i(TAG, 'playAudio: onerror fired')
+      stopAudio()
       reportError(gt('autoSpeech.playbackFailed'))
     }
 
     // Fallback: detect playback end via polling if 'ended' event is missed
-    startPlaybackEndTimer(audio, resetState)
-
-    audio.play().catch((err: unknown) => {
-      const errName = (err as Error)?.name
-      if (errName === 'AbortError') return
-      let message = gt('autoSpeech.generateFailedGeneric')
-      if (errName === 'NotAllowedError') {
-        message = gt('autoSpeech.autoplayBlocked')
-      }
-      reportError(message)
-      clearPlaybackEndTimer()
-      activeId.value = ''
-      playingSummary.value = ''
-      state.value = 'idle'
-      if (screenLockSuppressed) {
-        wakeLock.release()
-        screenLockSuppressed = false
-      }
+    startPlaybackEndTimer(audio, () => {
+      appLog.i(TAG, 'playAudio: fallback timer triggered stopAudio')
+      stopAudio()
     })
+
+    audio.play().catch(handlePlayError)
   }
 
   // --- Internal: play streaming audio via WebSocket + MSE ---
@@ -248,31 +297,22 @@ export function useAutoSpeech() {
     currentAudioEl = audio
     state.value = 'synthesizing'
 
-    // Set up audio element lifecycle handlers
-    const resetState = () => {
-      clearPlaybackEndTimer()
-      if (currentAudioEl === audio) {
-        currentAudioEl = null
-        mseAudio = null
-        activeId.value = ''
-        playingSummary.value = ''
-        state.value = 'idle'
-        if (screenLockSuppressed) {
-          wakeLock.release()
-          screenLockSuppressed = false
-        }
-      }
+    audio.onended = () => {
+      appLog.i(TAG, 'playStreamingAudio: onended fired')
+      stopAudio()
     }
-
-    audio.onended = resetState
     audio.onerror = () => {
-      resetState()
+      appLog.i(TAG, 'playStreamingAudio: onerror fired')
+      stopAudio()
       reportError(gt('autoSpeech.playbackFailed'))
     }
 
     // Fallback: some browsers (notably Android WebView) may not fire 'ended'
     // after MSE endOfStream(). Use timeupdate + polling to detect completion.
-    startPlaybackEndTimer(audio, resetState)
+    startPlaybackEndTimer(audio, () => {
+      appLog.i(TAG, 'playStreamingAudio: fallback timer triggered stopAudio')
+      stopAudio()
+    })
 
     // Build WebSocket URL
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -294,22 +334,7 @@ export function useAutoSpeech() {
         if (!firstChunkReceived) {
           firstChunkReceived = true
           state.value = 'playing'
-          audio.play().catch((err: unknown) => {
-            const errName = (err as Error)?.name
-            if (errName === 'AbortError') return
-            let message = gt('autoSpeech.generateFailedGeneric')
-            if (errName === 'NotAllowedError') {
-              message = gt('autoSpeech.autoplayBlocked')
-            }
-            reportError(message)
-            activeId.value = ''
-            playingSummary.value = ''
-            state.value = 'idle'
-            if (screenLockSuppressed) {
-              wakeLock.release()
-              screenLockSuppressed = false
-            }
-          })
+          audio.play().catch(handlePlayError)
         }
       } else {
         // Text frame — control message
@@ -320,18 +345,12 @@ export function useAutoSpeech() {
             else if (msg.phase === 'synthesizing') state.value = 'synthesizing'
           } else if (msg.type === 'done') {
             if (msg.summary) playingSummary.value = msg.summary
+            mseStreamEnded = true
             mse.endOfStream()
             ws.close()
           } else if (msg.type === 'error') {
             reportError(msg.message || gt('autoSpeech.synthesisFailed'))
-            mse.cleanup()
-            currentAudioEl = null
-            mseAudio = null
-            clearPlaybackEndTimer()
-            activeId.value = ''
-            playingSummary.value = ''
-            state.value = 'idle'
-            releaseScreenLockOnError()
+            stopAudio()
             ws.close()
           }
         } catch { /* ignore malformed */ }
@@ -340,15 +359,7 @@ export function useAutoSpeech() {
 
     ws.onerror = () => {
       reportError(gt('autoSpeech.generateFailedGeneric'))
-      mse.cleanup()
-      currentAudioEl = null
-      mseAudio = null
-      currentWs = null
-      clearPlaybackEndTimer()
-      activeId.value = ''
-      playingSummary.value = ''
-      state.value = 'idle'
-      releaseScreenLockOnError()
+      stopAudio()
     }
 
     ws.onclose = () => {
@@ -395,37 +406,25 @@ export function useAutoSpeech() {
       }
       if (controller?.signal.aborted) return
       reportError(gt('autoSpeech.generateFailedGeneric'))
-      activeId.value = ''
-      playingSummary.value = ''
-      state.value = 'idle'
-      releaseScreenLockOnError()
+      resetToIdle()
     }
 
     function handleResult(result: Record<string, unknown> | null) {
       if (!result) {
         reportError(gt('autoSpeech.noResult'))
-        activeId.value = ''
-        playingSummary.value = ''
-        state.value = 'idle'
-        releaseScreenLockOnError()
+        resetToIdle()
         return
       }
 
       if (result.synthesizeFailed) {
         reportError(result.synthesizeError ? gt('autoSpeech.synthesisFailedDetail', { error: result.synthesizeError }) : gt('autoSpeech.synthesisFailed'))
-        activeId.value = ''
-        playingSummary.value = ''
-        state.value = 'idle'
-        releaseScreenLockOnError()
+        resetToIdle()
         return
       }
 
       if (!result.audioPath) {
         reportError(gt('autoSpeech.noAudioFile'))
-        activeId.value = ''
-        playingSummary.value = ''
-        state.value = 'idle'
-        releaseScreenLockOnError()
+        resetToIdle()
         return
       }
 
@@ -516,10 +515,7 @@ export function useAutoSpeech() {
         message = gt('autoSpeech.generateFailedDetail', { error: errMsg })
       }
       reportError(message)
-      activeId.value = ''
-      playingSummary.value = ''
-      state.value = 'idle'
-      releaseScreenLockOnError()
+      resetToIdle()
     } finally {
       if (abortController === controller) {
         abortController = null
