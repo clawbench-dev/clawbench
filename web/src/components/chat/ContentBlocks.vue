@@ -994,7 +994,7 @@ onUnmounted(() => {
   border-radius: 4px;
   border: 1px solid var(--border-color);
   white-space: normal;
-  overflow-x: hidden;
+  overflow-x: clip;
   overflow-y: auto;
   max-height: 500px;
   cursor: default;

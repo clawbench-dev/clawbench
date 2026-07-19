@@ -193,7 +193,7 @@ function handleBodyClick(event) {
 .tool-detail-body {
   padding: 12px 14px;
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: clip;
   font-size: 12px;
   line-height: 1.5;
   flex: 1;
@@ -273,8 +273,19 @@ function handleBodyClick(event) {
 
 .tool-detail-body .tool-output-body {
   overflow-y: auto;
+  overflow-x: hidden;
   font-size: 12px;
   line-height: 1.5;
+  min-width: 0;
+}
+
+.tool-detail-body .tool-output-section.tool-content-wrap:not(.word-wrap) .tool-output-body {
+  overflow-x: auto;
+}
+
+.tool-detail-body .tool-output-section.tool-content-wrap:not(.word-wrap) .tool-output-content {
+  display: inline-block;
+  min-width: 100%;
 }
 
 .tool-detail-body .tool-output-section.tool-content-wrap:not(.word-wrap) .tool-output-body pre {
@@ -348,6 +359,7 @@ function handleBodyClick(event) {
 
 .tool-detail-body .edit-diff-scroll {
   overflow-x: auto;
+  min-width: 0;
 }
 
 /* ─── Tool content header (copy + wrap toggle) ─── */
@@ -444,14 +456,16 @@ function handleBodyClick(event) {
 
 /* ─── Wrap toggle: no-wrap ─── */
 .tool-detail-body .tool-content-wrap:not(.word-wrap) .edit-diff-body,
-.tool-detail-body .tool-content-wrap:not(.word-wrap) .edit-diff-scroll,
-.tool-detail-body .tool-content-wrap:not(.word-wrap) .file-write-body,
-.tool-detail-body .tool-content-wrap:not(.word-wrap) .file-preview-body,
 .tool-detail-body .tool-content-wrap:not(.word-wrap) .edit-diff-del,
 .tool-detail-body .tool-content-wrap:not(.word-wrap) .edit-diff-add,
 .tool-detail-body .tool-content-wrap:not(.word-wrap) .file-write-line,
 .tool-detail-body .tool-content-wrap:not(.word-wrap) .file-preview-line {
   min-width: max-content;
+}
+
+.tool-detail-body .tool-content-wrap:not(.word-wrap) .file-write-body,
+.tool-detail-body .tool-content-wrap:not(.word-wrap) .file-preview-body {
+  min-width: 0;
 }
 
 .tool-detail-body .edit-diff-body {
@@ -502,6 +516,7 @@ function handleBodyClick(event) {
   font-size: 12px;
   line-height: 1.6;
   overflow-x: auto;
+  min-width: 0;
 }
 
 .tool-detail-body .file-preview-line {
@@ -545,6 +560,7 @@ function handleBodyClick(event) {
   font-size: 12px;
   line-height: 1.6;
   overflow-x: auto;
+  min-width: 0;
 }
 
 .tool-detail-body .file-write-line {
