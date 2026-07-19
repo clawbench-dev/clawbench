@@ -210,8 +210,8 @@ func TestDirSearch_Limit(t *testing.T) {
 	if err := json.Unmarshal(events["done"][0], &done); err != nil {
 		t.Fatalf("failed to unmarshal done: %v", err)
 	}
-	if done.Total != 5 {
-		t.Errorf("expected total 5, got %d", done.Total)
+	if done.Total != 3 {
+		t.Errorf("expected total 3 (sent count), got %d", done.Total)
 	}
 	if !done.Truncated {
 		t.Error("expected truncated=true")
@@ -272,5 +272,66 @@ func TestDirSearch_SubdirectorySearch(t *testing.T) {
 	}
 	if r.Name != "file.go" {
 		t.Errorf("expected name file.go, got %s", r.Name)
+	}
+}
+
+func TestDirSearch_LimitClamp(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createTestFile(t, env.ProjectDir, "a.go", "package main")
+
+	// Request limit above maxSearchLimit (500)
+	req := newRequest(t, http.MethodGet, "/api/dir/search?path=&q=a&recursive=false&limit=9999", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(DirSearch, req)
+
+	assertOK(t, w)
+	events := parseSearchSSEEvents(w.Body.String())
+
+	// Should still get results — limit was clamped, not rejected
+	if len(events["result"]) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(events["result"]))
+	}
+}
+
+func TestDirSearch_QueryTooLong(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Query exceeds maxSearchQueryLen (256)
+	longQuery := strings.Repeat("a", 300)
+	req := newRequest(t, http.MethodGet, "/api/dir/search?path=&q="+longQuery, nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(DirSearch, req)
+
+	assertStatus(t, w, http.StatusBadRequest)
+}
+
+func TestDirSearch_RecursiveBoolParsing(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createTestFile(t, env.ProjectDir, "main.go", "package main")
+	createTestFile(t, env.ProjectDir, "src/util.go", "package src")
+
+	// "1" should be parsed as true via strconv.ParseBool
+	req := newRequest(t, http.MethodGet, "/api/dir/search?path=&q=util&recursive=1", nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(DirSearch, req)
+
+	assertOK(t, w)
+	events := parseSearchSSEEvents(w.Body.String())
+	results := events["result"]
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result (recursive=true via '1'), got %d", len(results))
+	}
+
+	var r DirSearchResult
+	if err := json.Unmarshal(results[0], &r); err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+	if r.Path != "src/util.go" {
+		t.Errorf("expected path src/util.go, got %s", r.Path)
 	}
 }

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -24,25 +25,20 @@ var ignoredSearchDirs = map[string]bool{
 	"__pycache__":  true,
 	".svn":         true,
 	".hg":          true,
+	"dist":         true,
+	"build":        true,
+	".cache":       true,
+	".next":        true,
+	"target":       true,
+	"Pods":         true,
+	".gradle":      true,
 }
 
 const (
-	maxSearchQueryLen = 256 // Maximum query string length
-	maxSearchEntries  = 50000 // Maximum entries to collect during recursive walk
+	maxSearchQueryLen  = 256  // Maximum query string length
+	maxSearchLimit     = 500  // Maximum number of results a client can request
+	defaultSearchLimit = 100  // Default number of results
 )
-
-// searchEntry holds metadata for a file or directory found during search.
-type searchEntry struct {
-	Name    string // filename only
-	RelPath string // relative path from search root (e.g. "internal/handler/file.go")
-	Type    string // "dir", "file", or "image"
-}
-
-// searchSource implements fuzzy.Source for a slice of searchEntry.
-type searchSource []searchEntry
-
-func (s searchSource) String(i int) string { return s[i].Name }
-func (s searchSource) Len() int            { return len(s) }
 
 // DirSearchResult is one matched file sent as an SSE result event.
 type DirSearchResult struct {
@@ -58,9 +54,14 @@ type DirSearchDone struct {
 	Truncated bool `json:"truncated"`
 }
 
+// DirSearchError is sent as an SSE error event during search.
+type DirSearchError struct {
+	Message string `json:"message"`
+}
+
 // DirSearch handles GET /api/dir/search — SSE stream for file search with fuzzy matching.
 // Query params: path (relative dir to search from), q (query string),
-// recursive (optional, default "true"), limit (optional, default 100).
+// recursive (optional, default "true"), limit (optional, default 100, max 500).
 func DirSearch(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
@@ -83,12 +84,22 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	recursiveStr := r.URL.Query().Get("recursive")
-	recursive := recursiveStr == "" || strings.EqualFold(recursiveStr, "true")
-	limit := 100
+	recursive := true
+	if recursiveStr != "" {
+		parsed, err := strconv.ParseBool(recursiveStr)
+		if err == nil {
+			recursive = parsed
+		}
+	}
+
+	limit := defaultSearchLimit
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if v, err := strconv.Atoi(l); err == nil && v > 0 {
 			limit = v
 		}
+	}
+	if limit > maxSearchLimit {
+		limit = maxSearchLimit
 	}
 
 	basePath, err := filepath.Abs(projectPath)
@@ -103,55 +114,60 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Collect entries
-	var entries []searchEntry
-	if recursive {
-		entries = collectEntriesRecursive(absPath, absPath)
-	} else {
-		entries = collectEntriesFlat(absPath, absPath)
-	}
-
-	// Fuzzy match
-	matches := fuzzy.FindFrom(query, searchSource(entries))
-
-	// SSE headers
+	// SSE headers — written before any streaming
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
 	flusher, canFlush := w.(http.Flusher)
+	ctx := r.Context()
 
-	total := len(matches)
-	truncated := total > limit
-	if truncated {
-		matches = matches[:limit]
-	}
+	// Streaming search: walk + fuzzy match + push results on the fly
+	var sentCount int
+	var truncated bool
 
-	// Stream results
-	for _, m := range matches {
+	onMatch := func(name, relPathStr, entryType string, matchedIndexes []int) {
+		if sentCount >= limit {
+			truncated = true
+			return
+		}
+
 		select {
-		case <-r.Context().Done():
-			slog.Debug("dir search SSE disconnected during streaming")
+		case <-ctx.Done():
 			return
 		default:
 		}
 
-		entry := entries[m.Index]
 		result := DirSearchResult{
-			Name:           entry.Name,
-			Path:           entry.RelPath,
-			Type:           entry.Type,
-			MatchedIndices: m.MatchedIndexes,
+			Name:           name,
+			Path:           relPathStr,
+			Type:           entryType,
+			MatchedIndices: matchedIndexes,
 		}
 		data, _ := json.Marshal(result)
 		_, _ = fmt.Fprintf(w, "event: result\ndata: %s\n\n", data)
 		if canFlush {
 			flusher.Flush()
 		}
+		sentCount++
 	}
 
-	// Send done event
-	done := DirSearchDone{Total: total, Truncated: truncated}
+	if recursive {
+		walkAndMatchRecursive(ctx, absPath, absPath, query, onMatch)
+	} else {
+		walkAndMatchFlat(ctx, absPath, absPath, query, onMatch)
+	}
+
+	// Check if context was cancelled
+	select {
+	case <-ctx.Done():
+		slog.Debug("dir search SSE disconnected")
+		return
+	default:
+	}
+
+	// Send done event — total is the number of results sent; truncated indicates more exist
+	done := DirSearchDone{Total: sentCount, Truncated: truncated}
 	data, _ := json.Marshal(done)
 	_, _ = fmt.Fprintf(w, "event: done\ndata: %s\n\n", data)
 	if canFlush {
@@ -159,65 +175,85 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// collectEntriesRecursive walks the directory tree from absPath, collecting
-// all files and directories (excluding ignored dirs).
-// Stops collecting after maxSearchEntries to prevent OOM on massive repos.
-func collectEntriesRecursive(absPath string, basePath string) []searchEntry {
-	var entries []searchEntry
+// walkAndMatchRecursive walks the directory tree, fuzzy-matching each entry against the query.
+// On match, it calls onMatch. It respects context cancellation.
+func walkAndMatchRecursive(ctx context.Context, absPath string, basePath string, query string, onMatch func(string, string, string, []int)) {
 	filepath.WalkDir(absPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil //nolint:nilerr // skip inaccessible entries
 		}
+
+		// Check context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		if d.IsDir() && path != absPath && ignoredSearchDirs[d.Name()] {
 			return fs.SkipDir
 		}
 		if path == absPath {
 			return nil
 		}
-		if len(entries) >= maxSearchEntries {
-			return fs.SkipDir
-		}
+
 		relPath, relErr := filepath.Rel(basePath, path)
 		if relErr != nil {
 			return nil //nolint:nilerr // skip entries with invalid relative paths
 		}
+
 		name := d.Name()
-		if d.IsDir() {
-			entries = append(entries, searchEntry{Name: name, RelPath: filepath.ToSlash(relPath), Type: "dir"})
-		} else {
+		matches := fuzzy.Find(query, []string{name})
+		if len(matches) > 0 {
 			entryType := "file"
-			if model.IsImageFile(name) {
+			if d.IsDir() {
+				entryType = "dir"
+			} else if model.IsImageFile(name) {
 				entryType = "image"
 			}
-			entries = append(entries, searchEntry{Name: name, RelPath: filepath.ToSlash(relPath), Type: entryType})
+			onMatch(name, filepath.ToSlash(relPath), entryType, matches[0].MatchedIndexes)
 		}
+
 		return nil
 	})
-	return entries
 }
 
-// collectEntriesFlat reads only the top-level entries of absPath.
-func collectEntriesFlat(absPath string, basePath string) []searchEntry {
+// walkAndMatchFlat reads only the top-level entries and fuzzy-matches against the query.
+func walkAndMatchFlat(ctx context.Context, absPath string, basePath string, query string, onMatch func(string, string, string, []int)) {
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
 	dirEntries, err := os.ReadDir(absPath)
 	if err != nil {
-		return nil
+		return
 	}
-	var entries []searchEntry
+
 	for _, d := range dirEntries {
-		relPath, relErr := filepath.Rel(basePath, filepath.Join(absPath, d.Name()))
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		fullPath := filepath.Join(absPath, d.Name())
+		relPath, relErr := filepath.Rel(basePath, fullPath)
 		if relErr != nil {
 			continue
 		}
+
 		name := d.Name()
-		if d.IsDir() {
-			entries = append(entries, searchEntry{Name: name, RelPath: filepath.ToSlash(relPath), Type: "dir"})
-		} else {
+		matches := fuzzy.Find(query, []string{name})
+		if len(matches) > 0 {
 			entryType := "file"
-			if model.IsImageFile(name) {
+			if d.IsDir() {
+				entryType = "dir"
+			} else if model.IsImageFile(name) {
 				entryType = "image"
 			}
-			entries = append(entries, searchEntry{Name: name, RelPath: filepath.ToSlash(relPath), Type: entryType})
+			onMatch(name, filepath.ToSlash(relPath), entryType, matches[0].MatchedIndexes)
 		}
 	}
-	return entries
 }

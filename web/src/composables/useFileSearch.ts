@@ -115,14 +115,26 @@ export function useFileSearch() {
       cleanupSSE()
     })
 
-    eventSource.addEventListener('error', () => {
-      // EventSource error can also fire on normal close
+    eventSource.addEventListener('error', (e: MessageEvent) => {
+      // Business-level error event from SSE (not EventSource connection error)
+      try {
+        const data = JSON.parse(e.data)
+        appLog.w('FileSearch', 'search error', data.message)
+      } catch {
+        appLog.w('FileSearch', 'SSE error event with invalid data')
+      }
+      state.searching = false
+      cleanupSSE()
+    })
+
+    eventSource.onerror = () => {
+      // EventSource connection-level error
       if (state.searching) {
-        appLog.w('FileSearch', 'SSE error during search')
+        appLog.w('FileSearch', 'SSE connection error')
         state.searching = false
       }
       cleanupSSE()
-    })
+    }
   }
 
   function cleanupSSE() {

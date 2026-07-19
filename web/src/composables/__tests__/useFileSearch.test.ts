@@ -174,4 +174,28 @@ describe('useFileSearch', () => {
 
     expect(MockEventSource.instances[0].url).toContain('recursive=false')
   })
+
+  it('SSE error event clears searching state', () => {
+    const { state, startSearch } = useFileSearch()
+    state.query = 'test'
+    startSearch('')
+    vi.advanceTimersByTime(300)
+
+    const es = MockEventSource.instances[0]
+    es.emit('error', { message: 'I/O error' })
+
+    expect(state.searching).toBe(false)
+  })
+
+  it('EventSource onerror clears searching state', () => {
+    const { state, startSearch } = useFileSearch()
+    state.query = 'test'
+    startSearch('')
+    vi.advanceTimersByTime(300)
+
+    const es = MockEventSource.instances[0]
+    es.onerror?.()
+
+    expect(state.searching).toBe(false)
+  })
 })
