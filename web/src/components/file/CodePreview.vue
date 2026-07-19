@@ -330,7 +330,7 @@ onBeforeUnmount(() => {
     color: var(--text-muted);
     opacity: 0.5;
     font-size: 13px;
-    line-height: 20.8px;
+    line-height: inherit;
     border-right: 1px solid var(--border-color);
     background: var(--code-bg);
     flex-shrink: 0;
@@ -340,7 +340,7 @@ onBeforeUnmount(() => {
     white-space: pre;
     padding-left: 8px;
     font-size: 13px;
-    line-height: 20.8px;
+    line-height: inherit;
     position: relative;
     z-index: 1;
 }
@@ -354,15 +354,10 @@ onBeforeUnmount(() => {
     min-width: 0;
 }
 
-.raw-content-pre.word-wrap .sticky-line-num {
-    line-height: normal;
-}
-
 .raw-content-pre.word-wrap .sticky-code-text {
     white-space: pre-wrap;
     word-break: break-all;
     overflow-wrap: break-word;
-    line-height: normal;
 }
 </style>
 
