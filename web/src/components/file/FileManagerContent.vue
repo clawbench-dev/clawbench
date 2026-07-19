@@ -4,6 +4,9 @@
     <div id="dirNav" class="dir-nav">
       <div ref="dirToolbarRef" class="dir-toolbar">
         <div class="dir-toolbar-btns">
+          <button class="toolbar-btn" :class="{ 'search-active': props.searchDrawer?.isOpen.value }" @click="props.searchDrawer?.open()" :title="t('file.search.title')">
+            <Search :size="16" />
+          </button>
           <div ref="sortDropdownWrapRef" class="toolbar-dropdown-wrap">
             <button class="toolbar-btn" :class="{ 'sort-active': sortField }" @click="sortMenuOpen = !sortMenuOpen" :title="t('file.sortDefault')">
               <ArrowDownAz v-if="!sortField || sortDir === 'asc'" :size="16" />
@@ -117,9 +120,6 @@
           </div>
           </template>
         </div>
-        <button class="toolbar-btn" :class="{ 'search-active': props.searchDrawer?.isOpen.value }" @click="props.searchDrawer?.open()" :title="t('file.search.title')">
-          <Search :size="16" />
-        </button>
       </div>
       <!-- Multi-select info bar -->
       <div v-if="multiSelect.active" class="ms-info-bar">
@@ -1246,7 +1246,6 @@ function currentFileForClipboard() {
 .dir-toolbar {
     display: flex;
     align-items: center;
-    gap: 6px;
     min-width: 0;
     /* No overflow:hidden — Teleported dropdowns need unclipped ancestors */
 }
@@ -1255,7 +1254,8 @@ function currentFileForClipboard() {
     display: flex;
     align-items: center;
     gap: 6px;
-    flex-shrink: 0;
+    flex: 1;
+    min-width: 0;
 }
 
 .dir-nav :deep(.dir-breadcrumb) {

@@ -246,8 +246,8 @@ function formatPath(path: string): string {
 }
 
 .fs-toggle-btn.active {
-  color: var(--color-primary, #4f46e5);
-  background: var(--bg-hover, rgba(79,70,229,0.08));
+  color: var(--accent-color, #4a90d9);
+  background: color-mix(in srgb, var(--accent-color, #4a90d9) 8%, transparent);
 }
 
 .fs-content {
