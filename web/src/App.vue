@@ -363,6 +363,7 @@ async function hotSwitchProject(newProjectPath, pendingSessionId) {
   resetTaskTabState()
   resetTabDrawerState()
   fileNav.closeOverlay()
+  activeTab.value = 'chat'
 
   // ── Phase 4: Change key → Vue destroys old component tree & builds new one ──
   projectKey.value = newProjectPath
