@@ -52,8 +52,9 @@
           </div>
         </div>
       </template>
-      <!-- AskUserQuestion via <ask-question> XML in text block (ACP backend) -->
-      <template v-else-if="block.type === 'text' && blockAskQuestions[blockTaskKey(bi)]">
+      <!-- AskUserQuestion via <ask-question> XML in text block (ACP backend) — also check
+           block text so ask-question cards appear when message loads with showingSummary=true -->
+      <template v-else-if="block.type === 'text' && (blockAskQuestions[blockTaskKey(bi)] || detectAskQuestionInText(block))">
         <div class="chat-tool-call done" data-category="ask" @click.stop="$emit('toggle-tool', key(bi))">
           <component :is="getToolIcon('AskUserQuestion').icon" :size="12" class="tool-icon" />
           <span class="tool-name">{{ t('tool.askUser.name') }}</span>
@@ -62,8 +63,9 @@
         </div>
         <div v-if="expandedTools[key(bi)] || true" class="tool-detail" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" v-html="formatToolInput(blockAskQuestions[blockTaskKey(bi)], 'AskUserQuestion')"></div>
       </template>
-      <!-- RAG results card -->
-      <template v-else-if="block.type === 'text' && blockRagResults[blockTaskKey(bi)]">
+      <!-- RAG results card — also check block text so RAG cards appear when
+           message loads with showingSummary=true (blockRagResults not yet filled) -->
+      <template v-else-if="block.type === 'text' && (blockRagResults[blockTaskKey(bi)] || detectRagInText(block))">
         <div v-if="getBlockHtml(bi, block)" v-html="getBlockHtml(bi, block)"></div>
         <div v-for="(ragItem, ragIdx) in blockRagResults[blockTaskKey(bi)]" :key="ragIdx" class="rag-result-card" @click.stop="emit('show-rag-detail', ragItem)">
           <div class="rag-header">
@@ -172,7 +174,7 @@
         </div>
       </template>
       <!-- Ask question card (from <ask-question> XML tag in text) — must come before generic text block -->
-      <template v-else-if="block.type === 'text' && blockAskQuestions[blockTaskKey(bi)]">
+      <template v-else-if="block.type === 'text' && (blockAskQuestions[blockTaskKey(bi)] || detectAskQuestionInText(block))">
         <!-- Surrounding text (with ask-question tag stripped) -->
         <div v-if="getBlockHtml(bi, block)" v-html="getBlockHtml(bi, block)"></div>
         <div class="chat-tool-call done" data-category="ask" @click.stop="$emit('toggle-tool', key(bi))">
@@ -184,7 +186,7 @@
         <div v-if="expandedTools[key(bi)] || true" class="tool-detail" data-tool-name="AskUserQuestion" @click="handleToolDetailClick" v-html="formatToolInput(blockAskQuestions[blockTaskKey(bi)], 'AskUserQuestion')"></div>
       </template>
       <!-- RAG results card (from <rag-results> XML tag in text) — must come before generic text block -->
-      <template v-else-if="block.type === 'text' && blockRagResults[blockTaskKey(bi)]">
+      <template v-else-if="block.type === 'text' && (blockRagResults[blockTaskKey(bi)] || detectRagInText(block))">
         <!-- Surrounding text (with rag-results tag stripped) -->
         <div v-if="getBlockHtml(bi, block)" v-html="getBlockHtml(bi, block)"></div>
         <div v-for="(ragItem, ragIdx) in blockRagResults[blockTaskKey(bi)]" :key="ragIdx" class="rag-result-card" @click.stop="emit('show-rag-detail', ragItem)">
@@ -348,6 +350,19 @@ function key(bi) {
 // Key for blockTasks/blockAskQuestions lookup — prefix format used in useChatRender.ts
 function blockTaskKey(bi) {
   return blockTaskKeyUtil(props.msgId, bi)
+}
+
+// Quick check if block text contains <rag-results> tag — used in v-else-if condition
+// so RAG cards appear even when blockRagResults hasn't been filled yet (e.g. message
+// loaded from DB with showingSummary=true).
+function detectRagInText(block) {
+  return block.text && block.text.includes('<rag-results')
+}
+
+// Same for <ask-question> tag — ensures ask-question cards appear when
+// blockAskQuestions hasn't been filled yet.
+function detectAskQuestionInText(block) {
+  return block.text && block.text.includes('<ask-question')
 }
 
 // Pre-computed index: block index → sorted array of scheduled task keys.
