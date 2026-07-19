@@ -48,6 +48,7 @@
                 :sort-field="sortField"
                 :sort-dir="sortDir"
                 :dir-loading="store.state.dirLoading"
+                :search-drawer="fileSearchDrawer"
                 @navigate-dir="handleNavigateDir"
                 @navigate-back="handleNavigateBack"
                 @select-file="handleBrowseSelectFile"
@@ -535,6 +536,7 @@ const detailsDrawer = useTabDrawer('browse')
 const tocDrawer = useTabDrawer('browse')
 const searchDrawer = useTabDrawer('browse')
 const fileHistoryDrawer = useTabDrawer('browse')
+const fileSearchDrawer = useTabDrawer('browse', { autoRestore: false })
 
 function openFileHistory() {
   fileHistoryDrawer.open()

@@ -671,6 +671,17 @@ export default {
     overlay: {
       back: '返回',
     },
+    search: {
+      title: '搜索文件',
+      placeholder: '搜索文件名...',
+      recursive: '递归搜索',
+      noResults: '未找到文件',
+      searching: '搜索中...',
+      resultCount: '找到 {count} 个文件',
+      truncated: '仅显示前 {max} 个结果，请输入更精确的关键词',
+      searchFrom: '搜索范围: {path}',
+      reset: '重置',
+    },
   },
   proxy: {
     title: '端口转发',

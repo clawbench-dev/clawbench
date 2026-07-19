@@ -15,6 +15,7 @@ require (
 	github.com/odvcencio/gotreesitter v0.20.0
 	github.com/open-dingtalk/dingtalk-stream-sdk-go v0.9.1
 	github.com/robfig/cron/v3 v3.0.1
+	github.com/sahilm/fuzzy v0.1.3
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/crypto v0.50.0
 	golang.org/x/text v0.36.0

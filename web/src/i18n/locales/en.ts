@@ -670,6 +670,17 @@ export default {
     overlay: {
       back: 'Back',
     },
+    search: {
+      title: 'Search Files',
+      placeholder: 'Search filenames...',
+      recursive: 'Recursive',
+      noResults: 'No files found',
+      searching: 'Searching...',
+      resultCount: '{count} files found',
+      truncated: 'Showing first {max} results, try a more specific query',
+      searchFrom: 'From: {path}',
+      reset: 'Reset',
+    },
   },
   proxy: {
     title: 'Port Forward',

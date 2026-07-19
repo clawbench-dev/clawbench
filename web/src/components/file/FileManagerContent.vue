@@ -117,7 +117,9 @@
           </div>
           </template>
         </div>
-        <SearchInput v-model="searchQuery" :placeholder="t('search.defaultPlaceholder')" @dblclick="searchQuery = ''" />
+        <button class="toolbar-btn" :class="{ 'search-active': props.searchDrawer?.isOpen.value }" @click="props.searchDrawer?.open()" :title="t('file.search.title')">
+          <Search :size="16" />
+        </button>
       </div>
       <!-- Multi-select info bar -->
       <div v-if="multiSelect.active" class="ms-info-bar">
@@ -352,6 +354,13 @@
       </div>
       <div v-if="ctxMenu.visible" class="ctx-overlay" @click="closeCtxMenu" />
     </Teleport>
+    <FileSearchDrawer
+      :open="props.searchDrawer?.effectiveOpen.value"
+      :currentDir="currentDir"
+      @close="props.searchDrawer?.close()"
+      @navigateDir="onSearchNavigateDir"
+      @selectFile="onSearchSelectFile"
+    />
   </div>
 </template>
 
@@ -361,7 +370,7 @@ import { ref, computed, reactive, inject, nextTick, onMounted, onUnmounted, watc
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { joinPath } from '@/utils/path'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2 } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, Check, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, Search } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, formatSize as formatFileSize,
@@ -378,9 +387,9 @@ import { useChatContext } from '@/composables/useChatContext.ts'
 import { downloadFileByPath } from '@/utils/download.ts'
 import { useFileNavStack } from '@/composables/useFileNavStack'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
-import SearchInput from '@/components/common/SearchInput.vue'
 import DirBreadcrumb from './DirBreadcrumb.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
+import FileSearchDrawer from './FileSearchDrawer.vue'
 
 const toast = inject('toast', null)
 const { isAppMode } = useAppMode()
@@ -428,12 +437,12 @@ const props = defineProps({
     sortField: String,
     sortDir: String,
     dirLoading: Boolean,
+    searchDrawer: Object, // TabDrawer from useTabDrawer('browse')
 })
 
 const emit = defineEmits(['navigateDir', 'navigateBack', 'selectFile', 'toggleSort', 'toggleHidden', 'rename', 'delete', 'refresh', 'openTerminal', 'batchDelete'])
 
 
-const searchQuery = ref('')
 const sortMenuOpen = ref(false)
 const moreMenuOpen = ref(false)
 
@@ -478,7 +487,7 @@ const dirToolbarRef = ref(null)
 const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
   () => dirToolbarRef.value,
   () => ['refresh', 'newFile', 'newFolder', 'upload', 'viewToggle', 'multiselect', 'hidden'],
-  { inlineCount: 2, gap: 6, hasSearch: true },
+  { inlineCount: 3, gap: 6 },
 )
 
 const moreDropdownItemCount = computed(() => toolbarCollapsedIds.value.length)
@@ -539,13 +548,19 @@ const { state: multiSelect, enterMultiSelect, exitMultiSelect, toggleSelect } = 
 
 defineExpose({
     multiSelectState: multiSelect,
-    searchQuery,
+    searchDrawer: props.searchDrawer,
     viewMode,
-    // Test helper: set searchQuery and trigger reactivity
-    _setSearchQuery(val) { searchQuery.value = val },
     _setViewMode(val) { viewMode.value = val },
     _getFilteredEntries() { return filteredEntries.value },
 })
+
+function onSearchNavigateDir(path) {
+    emit('navigateDir', path)
+}
+
+function onSearchSelectFile(path) {
+    emit('selectFile', path)
+}
 
 const isAllSelected = computed(() => {
     if (!multiSelect.active || visibleEntries.value.length === 0) return false
@@ -562,9 +577,9 @@ function toggleSelectAll() {
     }
 }
 
-// Auto-exit multi-select on directory change
+// Auto-exit multi-select and close search on directory change
 watch(() => props.currentDir, () => {
-    searchQuery.value = ''
+    props.searchDrawer?.close()
     if (multiSelect.active) exitMultiSelect()
     thumbErrors.clear()
 })
@@ -830,8 +845,6 @@ const MAX_VISIBLE_ENTRIES = 1000
 const filteredEntries = computed(() => {
     let entries = [...props.entries]
     if (!props.showHidden) entries = entries.filter(e => !e.name.startsWith('.'))
-    const q = searchQuery.value.toLowerCase()
-    if (q) entries = entries.filter(e => e.name.toLowerCase().includes(q))
     if (props.sortField) {
         entries = entries.sort((a, b) => {
             // When sorting by type, directories participate normally
@@ -1245,14 +1258,6 @@ function currentFileForClipboard() {
     flex-shrink: 0;
 }
 
-.dir-toolbar :deep(.search-pill) {
-    margin-left: auto;
-    flex: 0 1 auto;
-    min-width: 80px;
-    max-width: 200px;
-    transition: opacity 0.15s;
-}
-
 .dir-nav :deep(.dir-breadcrumb) {
     padding: 0 6px;
     min-height: 0;
@@ -1429,6 +1434,11 @@ function currentFileForClipboard() {
 }
 
 .toolbar-btn.sort-active {
+    background: var(--accent-color, #4a90d9);
+    color: #fff;
+}
+
+.toolbar-btn.search-active {
     background: var(--accent-color, #4a90d9);
     color: #fff;
 }
