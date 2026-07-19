@@ -190,6 +190,47 @@ describe('useSessionManager', () => {
 
             fetchSpy.mockRestore()
         })
+
+        it('restores queued messages from backend after switchSessionCore completes', async () => {
+            // Bug fix: switching to a session that has queued messages in the
+            // backend must show them in the UI. Previously, the watch on
+            // currentSessionId fired when clearSessionIdentity() set the ID
+            // (before messages.value was populated from REST), so
+            // syncPendingFromBackendQueue pushed pending messages into the
+            // stale array, which then got replaced wholesale by parseMessages().
+            const opts = createMockOptions()
+            // Simulate switchSessionCore populating messages.value with
+            // persisted messages from the new session (this is what the REST
+            // API returns after clearSessionIdentity sets the ID).
+            opts.switchSessionCore = vi.fn().mockImplementation(async () => {
+                mockCurrentSessionId.value = 'session-2'
+                opts.messages.value = [
+                    { role: 'user', content: 'hello', id: 1 },
+                    { role: 'assistant', content: 'hi', id: 2 },
+                ]
+            })
+            // Backend queue for session-2 has 1 queued message
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({
+                    queue: [{ text: 'queued message', queueId: 'q-1', createdAt: '2025-01-01' }],
+                }),
+            } as Response)
+            const mgr = useSessionManager(opts)
+            fetchSpy.mockClear()
+
+            await mgr.switchSession('session-2')
+
+            // The queued message from the backend should appear in messages.value
+            const pendingMsgs = opts.messages.value.filter((m: any) => m.pending)
+            expect(pendingMsgs).toHaveLength(1)
+            expect(pendingMsgs[0].content).toBe('queued message')
+            expect(pendingMsgs[0].id).toBe('q-1')
+            // Persisted messages should still be there
+            expect(opts.messages.value.some((m: any) => m.content === 'hello')).toBe(true)
+
+            fetchSpy.mockRestore()
+        })
     })
 
     // ── createSession ──

@@ -1,4 +1,4 @@
-import { watch, type Ref } from 'vue'
+import { ref, watch, type Ref } from 'vue'
 import { useSessionIdentity, runningSessions } from '@/composables/useSessionIdentity.ts'
 import { cancelChat } from '@/utils/api'
 import { useToast } from '@/composables/useToast.ts'
@@ -64,6 +64,13 @@ export function useSessionManager(options: UseSessionManagerOptions) {
 
   const identity = useSessionIdentity()
   const toast = useToast()
+
+  // ── Queue sync guard ──
+  // When switchSession/createSession is driving the session change,
+  // it calls fetchQueue AFTER messages.value is populated. The watch on
+  // currentSessionId should only fire for external changes (e.g. initial
+  // mount) where no explicit fetchQueue call is made.
+  const switchingSession = ref(false)
 
   // ── Pending message helpers ──
   // Pending messages are in messages.value with pending: true.
@@ -242,15 +249,36 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     // The old session's pending messages are safely in its backend queue;
     // they'll be drained when its AI finishes or shown if user switches back.
     clearPendingMessages()
-    await switchSessionCore(sessionId)
-    // pending messages are synced by the watch on currentSessionId below
+    // Suppress the watch on currentSessionId — it would fire when
+    // clearSessionIdentity() sets the ID (before messages.value is
+    // populated from REST), causing syncPendingFromBackendQueue to push
+    // pending messages into the stale array which then gets replaced
+    // wholesale by parseMessages(). We fetch the queue ourselves after
+    // switchSessionCore completes so it runs against the final messages.
+    switchingSession.value = true
+    try {
+      await switchSessionCore(sessionId)
+      // Now messages.value is populated from the REST response.
+      // Fetch the queue to restore any pending messages for this session.
+      await fetchQueue(sessionId)
+    } finally {
+      switchingSession.value = false
+    }
   }
 
   async function createSession(agentId?: string) {
     cleanupActiveStream()
     _clearInputState()
     clearPendingMessages()
-    await createSessionCore(agentId)
+    switchingSession.value = true
+    try {
+      await createSessionCore(agentId)
+      // New sessions have no queued messages, but fetch for consistency
+      const sid = identity.currentSessionId.value
+      if (sid) await fetchQueue(sid)
+    } finally {
+      switchingSession.value = false
+    }
   }
 
   async function deleteSession(sessionId: string, backend?: string) {
@@ -264,7 +292,17 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       await fetch(`/api/ai/queue?session_id=${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
     } catch {}
     clearPendingMessages()
-    await deleteSessionCore(sessionId, backend)
+    // deleteSessionCore may internally call switchSession (if deleting the
+    // current session), which changes currentSessionId. Suppress the watch
+    // to avoid premature fetchQueue, then fetch queue after completion.
+    switchingSession.value = true
+    try {
+      await deleteSessionCore(sessionId, backend)
+      const sid = identity.currentSessionId.value
+      if (sid) await fetchQueue(sid)
+    } finally {
+      switchingSession.value = false
+    }
   }
 
   /** Delete the current session (convenience for ChatInputBar button). */
@@ -280,14 +318,33 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       await fetch(`/api/ai/queue?session_id=${encodeURIComponent(deletedId)}`, { method: 'DELETE' })
     } catch {}
     clearPendingMessages()
-    await deleteSessionCore(deletedId, identity.currentBackend.value)
+    // deleteSessionCore may internally call switchSession, which changes
+    // currentSessionId. Suppress the watch.
+    switchingSession.value = true
+    try {
+      await deleteSessionCore(deletedId, identity.currentBackend.value)
+      const sid = identity.currentSessionId.value
+      if (sid) await fetchQueue(sid)
+    } finally {
+      switchingSession.value = false
+    }
     deleteDraft(deletedId)
   }
 
   /** Continue a task execution as a new chat session. */
   async function continueFromExecution(taskId: number, execId: number, switchTabFn: (tab: string) => void): Promise<boolean> {
     cleanupActiveStream()
-    return await continueFromExecutionCore(taskId, execId, switchTabFn)
+    // continueFromExecutionCore may internally call switchSession, which
+    // changes currentSessionId. Suppress the watch.
+    switchingSession.value = true
+    try {
+      const result = await continueFromExecutionCore(taskId, execId, switchTabFn)
+      const sid = identity.currentSessionId.value
+      if (sid) await fetchQueue(sid)
+      return result
+    } finally {
+      switchingSession.value = false
+    }
   }
 
   /** Fork the current session — create a new session with copied messages. */
@@ -295,7 +352,17 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     cleanupActiveStream()
     _clearInputState()
     clearPendingMessages()
-    return await forkSessionCore(sessionId, beforeMessageId)
+    // forkSessionCore may internally call switchSession, which changes
+    // currentSessionId. Suppress the watch.
+    switchingSession.value = true
+    try {
+      const result = await forkSessionCore(sessionId, beforeMessageId)
+      const sid = identity.currentSessionId.value
+      if (sid) await fetchQueue(sid)
+      return result
+    } finally {
+      switchingSession.value = false
+    }
   }
 
   /** Check whether a continued session already exists for a task execution. */
@@ -305,12 +372,13 @@ export function useSessionManager(options: UseSessionManagerOptions) {
 
   // ── Queue sync on session change ──
 
-  // When currentSessionId changes (from ANY path), fetch the queue.
+  // When currentSessionId changes from an EXTERNAL path (not from our own
+  // switchSession/createSession), fetch the queue.
   // immediate: true ensures fetchQueue runs on initial mount too —
   // critical because App.vue's initSessionFromAPI() may set currentSessionId
   // before useSessionManager is created, so the watch wouldn't fire without immediate.
   watch(() => identity.currentSessionId.value, async (newSessionId) => {
-    if (newSessionId) {
+    if (newSessionId && !switchingSession.value) {
       await fetchQueue(newSessionId)
     }
   }, { immediate: true })
