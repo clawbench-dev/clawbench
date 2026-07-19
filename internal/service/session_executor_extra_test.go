@@ -856,14 +856,18 @@ func TestSessionExecutor_BuildResult_AskUserQuestionPersisted(t *testing.T) {
 		{Type: "text", Text: "partial response"},
 	}
 
-	// buildResult processes the blocks and should persist AskUserQuestion
+	// buildResult processes the blocks (pure transformation, no DB side effects).
 	wallStart := time.Now()
 	result := executor.buildResult(true, wallStart)
+
+	// AskUserQuestion tool calls are persisted only in Finalize, not buildResult.
+	// Simulate the full pipeline by calling persistAskToolCalls on the result blocks.
+	executor.persistAskToolCalls(result.Blocks)
 
 	// Verify the AskUserQuestion tool call was persisted
 	record, err := GetToolCall("ask-001", msgID)
 	require.NoError(t, err)
-	require.NotNil(t, record, "AskUserQuestion tool call should be persisted")
+	require.NotNil(t, record, "AskUserQuestion tool call should be persisted after persistAskToolCalls")
 	assert.Equal(t, "AskUserQuestion", record.Name)
 	_ = result
 }

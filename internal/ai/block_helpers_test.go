@@ -450,18 +450,26 @@ func TestConvertAskQuestionBlocks_OnlyAskQuestionTagNoValidContent(t *testing.T)
 	}
 }
 
-func TestConvertAskQuestionBlocks_RemoveRejectedToolBlocksCalled(t *testing.T) {
-	// When ask-question converts to tool_use and there's also a rejected tool_use,
-	// the rejected one should be removed by RemoveRejectedToolBlocks
+func TestConvertAskQuestionBlocks_RejectedToolNotRemoved(t *testing.T) {
+	// ConvertAskQuestionBlocks only handles <ask-question> conversion.
+	// RemoveRejectedToolBlocks is called separately by postProcessBlocks,
+	// so rejected tool blocks are preserved here.
 	blocks := []model.ContentBlock{
 		{Type: "text", Text: `<ask-question><item><question>Q?</question><option><label>A</label></option></item></ask-question>`},
 		{Type: "tool_use", Name: "BadTool", ID: "x", Status: "error", Output: "not found in agent cli"},
 	}
 	result := ConvertAskQuestionBlocks(blocks)
+	// The rejected tool block should still be present — removal is
+	// the caller's responsibility (postProcessBlocks).
+	found := false
 	for _, b := range result {
 		if b.Type == "tool_use" && b.Name == "BadTool" {
-			t.Fatal("expected rejected tool block to be removed")
+			found = true
+			break
 		}
+	}
+	if !found {
+		t.Fatal("expected rejected tool block to be preserved (removal is postProcessBlocks' job)")
 	}
 }
 
@@ -487,6 +495,47 @@ func TestConvertAskQuestionBlocks_EmptyCleanText(t *testing.T) {
 	// No empty text block should remain
 	if textCount != 0 {
 		t.Fatalf("expected 0 text blocks (replaced entirely), got %d", textCount)
+	}
+}
+
+// TestConvertAskQuestionBlocks_DefensiveCopy verifies that ConvertAskQuestionBlocks
+// does not mutate the caller's slice elements. This is a regression test: the
+// function used to modify blocks[i].Text in-place, which shared the underlying
+// array with the caller (e.g. SessionExecutor.e.blocks). When buildResult called
+// postProcessBlocks first, it stripped <ask-question> tags from e.blocks via this
+// mutation, then Finalize's postProcessBlocks couldn't detect the tags anymore —
+// causing the AskUserQuestion tool_use block to be lost from chat_history.content.
+func TestConvertAskQuestionBlocks_DefensiveCopy(t *testing.T) {
+	originalText := "Before <ask-question><item><header>H</header><multi-select>false</multi-select><question>Q?</question><option><label>A</label><description>D</description></option></item></ask-question> After"
+	blocks := []model.ContentBlock{
+		{Type: "text", Text: originalText},
+	}
+
+	// Call ConvertAskQuestionBlocks and verify it returns 2 blocks
+	result := ConvertAskQuestionBlocks(blocks)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 blocks (text + tool_use), got %d", len(result))
+	}
+	if result[0].Type != "text" {
+		t.Fatalf("expected first block to be text, got %s", result[0].Type)
+	}
+	if result[1].Type != "tool_use" {
+		t.Fatalf("expected second block to be tool_use, got %s", result[1].Type)
+	}
+
+	// Critical check: original blocks slice must NOT be mutated
+	if blocks[0].Text != originalText {
+		t.Fatalf("original blocks[0].Text was mutated!\ngot:  %q\nwant: %q", blocks[0].Text, originalText)
+	}
+
+	// Call ConvertAskQuestionBlocks again on the same original slice —
+	// it should still detect <ask-question> tags
+	result2 := ConvertAskQuestionBlocks(blocks)
+	if len(result2) != 2 {
+		t.Fatalf("second call: expected 2 blocks, got %d — tags were stripped by first call", len(result2))
+	}
+	if result2[1].Type != "tool_use" {
+		t.Fatalf("second call: expected tool_use block, got %s", result2[1].Type)
 	}
 }
 

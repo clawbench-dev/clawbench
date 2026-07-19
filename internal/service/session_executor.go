@@ -245,9 +245,10 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 }
 
 // postProcessBlocks applies finalize post-processing on blocks:
-// ask-question conversion, rejected-tool removal, thinking-block merging,
-// and persistence of converted AskUserQuestion tool calls.
+// ask-question conversion, rejected-tool removal, thinking-block merging.
 // Shared by buildResult and Finalize to prevent divergence.
+// NOTE: persistAskToolCalls must be called separately after Finalize
+// uses postProcessBlocks, to avoid double-persisting from buildResult.
 func (e *SessionExecutor) postProcessBlocks(blocks []model.ContentBlock) []model.ContentBlock {
 	// Ask-question detection (interactive mode only)
 	if e.cfg.Mode == ModeInteractive {
@@ -260,28 +261,33 @@ func (e *SessionExecutor) postProcessBlocks(blocks []model.ContentBlock) []model
 	blocks = ai.RemoveRejectedToolBlocks(blocks)
 	blocks = ai.MergeConsecutiveThinkingBlocks(blocks)
 
-	// Persist interactive tool blocks created by ConvertAskQuestionBlocks
-	// to chat_tool_calls table (they were created post-forwarding and missed
-	// the normal upsertToolCallToDB path during the event loop).
-	if e.cfg.StreamingMessageID > 0 && e.cfg.SessionID != "" {
-		for i := range blocks {
-			b := &blocks[i]
-			if b.Type == "tool_use" && strings.HasPrefix(b.ID, "ask-") && b.Name == "AskUserQuestion" {
-				inputJSON, _ := json.Marshal(b.Input)
-				if err := UpsertToolCall(
-					e.cfg.StreamingMessageID, e.cfg.SessionID,
-					b.ID, b.Name, inputJSON,
-					b.Output, b.Status, b.Summary, b.Done,
-				); err != nil {
-					slog.Warn("upsert converted AskUserQuestion tool call failed",
-						slog.String("toolID", b.ID),
-						slog.String("err", err.Error()))
-				}
+	return blocks
+}
+
+// persistAskToolCalls writes converted AskUserQuestion tool blocks to
+// the chat_tool_calls table. These blocks were created by
+// ConvertAskQuestionBlocks and missed the normal upsertToolCallToDB
+// path during the event loop. Must be called after every postProcessBlocks
+// call that writes blocks to the DB (currently Finalize and handleResumeSplit).
+func (e *SessionExecutor) persistAskToolCalls(blocks []model.ContentBlock) {
+	if e.cfg.StreamingMessageID <= 0 || e.cfg.SessionID == "" {
+		return
+	}
+	for i := range blocks {
+		b := &blocks[i]
+		if b.Type == "tool_use" && strings.HasPrefix(b.ID, "ask-") && b.Name == "AskUserQuestion" {
+			inputJSON, _ := json.Marshal(b.Input)
+			if err := UpsertToolCall(
+				e.cfg.StreamingMessageID, e.cfg.SessionID,
+				b.ID, b.Name, inputJSON,
+				b.Output, b.Status, b.Summary, b.Done,
+			); err != nil {
+				slog.Warn("upsert converted AskUserQuestion tool call failed",
+					slog.String("toolID", b.ID),
+					slog.String("err", err.Error()))
 			}
 		}
 	}
-
-	return blocks
 }
 
 // buildResult constructs the final RunResult from the executor's accumulated state.
@@ -381,11 +387,16 @@ func (e *SessionExecutor) handleResumeSplit() {
 	slog.Info("resume_split received, finalizing current message and starting new one",
 		slog.String("session", e.cfg.SessionID))
 
-	// Finalize current streaming message
+	// Finalize current streaming message with post-processing
+	// (ask-question conversion, rejected-tool removal, thinking merge).
+	// Without this, <ask-question> tags in the pre-resume portion are
+	// persisted as raw text instead of tool_use blocks.
 	serializedBlocks := e.blocks
 	if serializedBlocks == nil {
 		serializedBlocks = []model.ContentBlock{}
 	}
+	serializedBlocks = e.postProcessBlocks(serializedBlocks)
+	e.persistAskToolCalls(serializedBlocks)
 	contentMap := map[string]any{contentKeyBlocks: serializedBlocks}
 	if e.responseMetadata != nil {
 		contentMap[contentKeyMetadata] = e.responseMetadata
@@ -556,6 +567,11 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	// unconverted blocks and the frontend renders ask-question as plain text
 	// instead of an interactive card.
 	blocks = e.postProcessBlocks(blocks)
+
+	// Persist converted AskUserQuestion tool calls to DB.
+	// Only done here (in Finalize), not in buildResult, to avoid
+	// duplicate records from the two postProcessBlocks calls.
+	e.persistAskToolCalls(blocks)
 
 	e.injectSessionMetadata(responseMetadata)
 

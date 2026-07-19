@@ -85,6 +85,16 @@ func RemoveRejectedToolBlocks(blocks []model.ContentBlock) []model.ContentBlock 
 //
 // Returns the updated blocks slice.
 func ConvertAskQuestionBlocks(blocks []model.ContentBlock) []model.ContentBlock {
+	// Defensive copy: avoid mutating the caller's slice elements.
+	// Without this, modifying blocks[i].Text below would also modify
+	// the caller's slice (e.g. SessionExecutor.e.blocks) because
+	// Go slices share the underlying array. This caused a bug where
+	// buildResult's postProcessBlocks stripped <ask-question> tags
+	// from e.blocks, then Finalize's postProcessBlocks couldn't
+	// detect the tags anymore — resulting in the AskUserQuestion
+	// tool_use block being lost from chat_history.content.
+	blocks = append([]model.ContentBlock(nil), blocks...)
+
 	// Pre-compiled regexes for the three matching strategies.
 	reStandard := regexp.MustCompile(`<ask-question\b[^>]*>([\s\S]*?)</ask-question>`)
 	reWrongClose := regexp.MustCompile(`<ask-question\b[^>]*>([\s\S]*?)</[^>]+>`)
@@ -163,7 +173,8 @@ func ConvertAskQuestionBlocks(blocks []model.ContentBlock) []model.ContentBlock 
 		}
 	}
 
-	blocks = RemoveRejectedToolBlocks(blocks)
+	// RemoveRejectedToolBlocks is called by postProcessBlocks after this
+	// function returns — no need to call it here.
 
 	return blocks
 }
