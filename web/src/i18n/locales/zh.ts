@@ -599,6 +599,7 @@ export default {
       allCopied: '已复制 {n} 项',
       allCut: '已剪切 {n} 项',
       archive: '打包下载',
+      share: '分享',
     },
     toast: {
       copied: '已复制',

@@ -269,6 +269,10 @@
         <Package :size="14" />
         {{ t('file.multiSelect.archive') }}
       </button>
+      <button v-if="isAppMode && allSelectedAreFiles" class="ms-action-btn" @click="doBatchShare">
+        <Share :size="14" />
+        {{ t('file.multiSelect.share') }}
+      </button>
       <button class="ms-action-btn ms-danger" @click="doBatchDelete">
         <Trash2 :size="14" />
         {{ t('common.delete') }}
@@ -792,6 +796,35 @@ async function doBatchDelete() {
     exitMultiSelect()
 }
 
+const allSelectedAreFiles = computed(() => {
+    for (const path of multiSelect.selected) {
+        const name = path.split('/').pop()
+        const entry = props.entries.find(e => e.name === name)
+        if (entry && entry.type === 'dir') return false
+    }
+    return true
+})
+
+function doBatchShare() {
+    const native = window.AndroidNative
+    if (!native || !native.shareFiles) return
+    const paths = [...multiSelect.selected]
+    if (!paths.length) return
+    const mimeTypes = paths.map(path => {
+        const ext = path.split('.').pop()?.toLowerCase()
+        const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']
+        const videoExts = ['mp4', 'webm', 'mkv', 'avi', 'mov']
+        const audioExts = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a']
+        if (imageExts.includes(ext)) return 'image/*'
+        if (videoExts.includes(ext)) return 'video/*'
+        if (audioExts.includes(ext)) return 'audio/*'
+        if (ext === 'pdf') return 'application/pdf'
+        if (ext === 'zip' || ext === 'tar' || ext === 'gz') return 'application/zip'
+        return '*/*'
+    })
+    native.shareFiles(JSON.stringify(paths), JSON.stringify(mimeTypes))
+}
+
 const MAX_VISIBLE_ENTRIES = 1000
 
 const filteredEntries = computed(() => {
@@ -1310,14 +1343,17 @@ function currentFileForClipboard() {
 .ms-action-bar {
     display: flex;
     align-items: center;
-    justify-content: center;
     gap: 6px;
     padding: 8px 12px;
     padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
     border-top: 1px solid var(--border-color, #e5e5e5);
     background: var(--bg-secondary, #fff);
     flex-shrink: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
 }
+.ms-action-bar::-webkit-scrollbar { display: none; }
 
 .ms-action-btn {
     display: flex;
@@ -1332,6 +1368,7 @@ function currentFileForClipboard() {
     cursor: pointer;
     transition: all 0.15s;
     white-space: nowrap;
+    flex-shrink: 0;
 }
 
 .ms-action-btn:hover {

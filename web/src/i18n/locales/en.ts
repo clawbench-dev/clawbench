@@ -598,6 +598,7 @@ export default {
       allCopied: '{n} items copied',
       allCut: '{n} items cut',
       archive: 'Pack & download',
+      share: 'Share',
     },
     toast: {
       copied: 'Copied',
