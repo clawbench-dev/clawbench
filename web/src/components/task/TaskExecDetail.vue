@@ -39,7 +39,7 @@
 
     <!-- Tool Detail Overlay -->
     <ToolDetailDrawer
-      :show="drawer.isOpen.value"
+      :show="toolDetailIsOpen.value"
       :toolName="toolDetailOverlay.name"
       :toolSubagentType="toolDetailOverlay.subagentType"
       :toolSummary="toolDetailOverlay.summary"
@@ -291,7 +291,7 @@ function findLiveToolBlock({ msgId, blockIdx }) {
 }
 
 const {
-  drawer,
+  isOpen: toolDetailIsOpen,
   toolDetailOverlay,
   toolDetailData,
   activeToolOverlay,
@@ -319,7 +319,7 @@ watch(
     return { output: block.output, done: block.done, status: block.status, input: block.input, name: block.name, summary: block.summary, display_name: block.display_name }
   },
   (data) => {
-    if (data === null || !drawer.isOpen.value) return
+    if (data === null || !toolDetailIsOpen.value) return
     const { formatToolInput } = chatRender
     const hasInput = data.input && Object.keys(data.input).length > 0
     toolDetailData.value.outputHtml = data.output ? formatToolOutput(data.output, data.name) : toolDetailData.value.outputHtml
@@ -331,7 +331,7 @@ watch(
 )
 
 // Clean up overlay state when drawer closes
-watch(() => drawer.isOpen.value, (open) => {
+watch(() => toolDetailIsOpen.value, (open) => {
   if (!open) {
     activeToolOverlay.value = null
   }
@@ -342,7 +342,7 @@ watch(() => drawer.isOpen.value, (open) => {
 // to fail. When refreshExecDetail updates selectedExecData with a valid messageId,
 // retry the fetch if the overlay is still open and content is empty.
 watch(() => props.execDetail?.messageId, (newMsgId) => {
-  if (!newMsgId || !drawer.isOpen.value) return
+  if (!newMsgId || !toolDetailIsOpen.value) return
   const ids = toolDetailData.value._fetchIds
   if (!ids) return
   // Only retry if input is still empty (fetch hasn't succeeded yet)

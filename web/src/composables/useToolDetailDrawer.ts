@@ -1,6 +1,5 @@
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useTabDrawer } from '@/composables/useTabDrawer'
 import { shouldRetryToolFetch, resolveEffectiveMsgId, type ContentBlock } from '@/utils/chatStreamUtils.ts'
 import { formatToolOutput } from '@/utils/renderToolDetail.ts'
 import { appLog } from '@/utils/appLog'
@@ -39,14 +38,15 @@ interface ToolDetailDrawerOptions {
 
 /**
  * Shared tool detail drawer logic for ChatPanelContent and TaskExecDetail.
+ * Uses a simple ref instead of useTabDrawer because ToolDetailDrawer is a
+ * BottomSheet (teleported to <body>) — it's a user-initiated overlay that
+ * should persist across tab switches, not auto-hide when switching away.
  */
 export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
   const { chatRender, onFileOpen, findLiveBlock, sessionId } = options
   const { t } = useI18n()
 
-  const drawer = useTabDrawer('chat')
-  /** Read-only access — use drawer.open()/close() to mutate */
-  const show = drawer.isOpen
+  const isOpen = ref(false)
   const toolDetailData = ref({
     name: '' as string,
     subagentType: '' as string,
@@ -86,7 +86,7 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
     const hasInput = block.input && Object.keys(block.input).length > 0
     const hasOutput = !!block.output
 
-    drawer.open()
+    isOpen.value = true
     toolDetailData.value = {
       name: block.name || '',
       subagentType: block.display_name || (block.input as Record<string, unknown>)?.subagent_type as string || '',
@@ -138,10 +138,10 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
       const resp = await fetch(url)
       if (!resp.ok) {
         // Retry on 404 (tool call may not yet be persisted during streaming)
-        if (shouldRetryToolFetch(resp.status, _retryCount, show.value)) {
+        if (shouldRetryToolFetch(resp.status, _retryCount, isOpen.value)) {
           _fetchInFlight = false
           setTimeout(() => {
-            if (!show.value) return
+            if (!isOpen.value) return
             let liveBlock: ToolBlock | null = null
             if (findLiveBlock && activeToolOverlay.value) {
               liveBlock = findLiveBlock(activeToolOverlay.value)
@@ -182,7 +182,7 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
       // If user clicked retry while fetch was in flight, re-fetch immediately
       if (_retryRequested) {
         _retryRequested = false
-        if (show.value && toolDetailData.value._fetchIds) {
+        if (isOpen.value && toolDetailData.value._fetchIds) {
           const { toolId, msgId } = toolDetailData.value._fetchIds
           let block: ToolBlock | null = null
           if (findLiveBlock && activeToolOverlay.value) {
@@ -196,24 +196,22 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
 
   function handleFileOpenInOverlay(payload: string | { path: string; lineStart?: number; lineEnd?: number }) {
     const { path, lineStart, lineEnd } = typeof payload === 'string' ? { path: payload } : payload
-    drawer.close()
+    isOpen.value = false
     if (onFileOpen) {
       onFileOpen(path, lineStart, lineEnd)
     }
   }
 
   function closeOverlay() {
-    drawer.close()
+    isOpen.value = false
     _fetchInFlight = false
     _retryRequested = false
   }
 
-  // Backward-compatible computed that merges show + data (consumers that read .show/.name etc still work)
-  const toolDetailOverlay = computed(() => ({ show: show.value, ...toolDetailData.value }))
+  const toolDetailOverlay = computed(() => ({ show: isOpen.value, ...toolDetailData.value }))
 
   return {
-    show,
-    drawer,
+    isOpen,
     toolDetailData,
     toolDetailOverlay,
     activeToolOverlay,
