@@ -526,15 +526,16 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 		ProjectPath: projectPath,
 	}
 	// For completed/failed/cancelled tasks, include session title (task name) and response preview
+	var responsePreviewRaw string
 	if status == "completed" || status == "cancelled" || status == "failed" {
 		if taskName != "" {
 			data.SessionTitle = taskName
 		}
 		if sessionID != "" {
-			raw := getSessionResponsePreviewRaw(sessionID)
-			data.ResponsePreview = truncatePreview(raw)
-			if raw != "" {
-				data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(raw))
+			responsePreviewRaw = getSessionResponsePreviewRaw(sessionID)
+			data.ResponsePreview = truncatePreview(responsePreviewRaw)
+			if responsePreviewRaw != "" {
+				data.ResponsePreviewPlain = truncatePreview(summarize.StripMarkdown(responsePreviewRaw))
 			}
 		}
 	}
@@ -556,9 +557,10 @@ func emitTaskEvent(taskID, status, executionID, sessionID, projectPath, taskName
 	mgr.BroadcastEvent(msg)
 
 	// DingTalk push notification for task events.
+	// Pass raw (untruncated) preview — DingTalk package applies its own limit.
 	// If push succeeds, remove from pending_events to avoid duplicate
 	// Android notification when the app comes back online.
-	if dingtalk.IsStarted() && dingtalk.PushTaskEvent(taskID, status, data.SessionTitle, data.ResponsePreview, data.ProjectPath) {
+	if dingtalk.IsStarted() && dingtalk.PushTaskEvent(taskID, status, data.SessionTitle, responsePreviewRaw, data.ProjectPath) {
 		_ = DeletePendingEvent(msg.ID)
 	}
 }
