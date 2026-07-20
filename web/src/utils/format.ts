@@ -95,7 +95,7 @@ export function stripMarkdownPreview(text: string, maxLen: number = 100): string
         .replace(/[#*`_~[\]()>|]/g, '')   // remaining syntax chars
         .replace(/\n+/g, ' ')             // newlines → space
         .trim()
-    return clean.length > maxLen ? clean.substring(0, maxLen) + '...' : clean
+    return [...clean].length > maxLen ? [...clean].slice(0, maxLen).join('') + '…' : clean
 }
 
 /** Get a label for task repeat mode */

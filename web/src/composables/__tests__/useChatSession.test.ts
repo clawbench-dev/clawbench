@@ -352,7 +352,7 @@ describe('onSessionEvent', () => {
   it('does not add to set when session_id is missing on running', () => {
     const session = createSession()
     session.onSessionEvent({ status: 'running' })
-    expect(mockState.runningSessions.size > 0).toBe(true)
+    expect(mockState.runningSessions.size > 0).toBe(false)
     expect(mockState.runningSessions.size).toBe(0)
     expect(mockState.runningSessionsVersion).toBe(0)
   })

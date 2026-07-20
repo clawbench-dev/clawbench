@@ -560,14 +560,11 @@ describe('FileManagerContent — handleItemClick', () => {
 })
 
 describe('FileManagerContent — filteredEntries', () => {
-  it('filters by search query', async () => {
+  it('returns all entries when no search filter (search moved to FileSearchDrawer)', async () => {
     const wrapper = mountContent()
-    wrapper.vm._setSearchQuery('test')
-    await nextTick()
 
     const filtered = wrapper.vm._getFilteredEntries()
-    expect(filtered.length).toBe(1)
-    expect(filtered[0].name).toBe('test.ts')
+    expect(filtered.length).toBe(sampleEntries.length)
   })
 
   it('hides hidden files when showHidden is false', async () => {

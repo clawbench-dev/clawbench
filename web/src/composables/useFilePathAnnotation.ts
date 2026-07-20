@@ -809,6 +809,7 @@ export async function navToFileInManager(resolvedPath: string): Promise<boolean>
  */
 export function useFilePathNavHandlers() {
     const handleContextMenu = async (e: MouseEvent) => {
+        if (!e.target) return
         const filePath = getFileAnnotationPath(e.target)
         if (filePath) {
             e.preventDefault()

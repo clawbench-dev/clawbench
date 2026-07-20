@@ -35,9 +35,13 @@ var ignoredSearchDirs = map[string]bool{
 }
 
 const (
-	maxSearchQueryLen  = 256  // Maximum query string length
-	maxSearchLimit     = 500  // Maximum number of results a client can request
-	defaultSearchLimit = 100  // Default number of results
+	maxSearchQueryLen  = 256 // Maximum query string length
+	maxSearchLimit     = 500 // Maximum number of results a client can request
+	defaultSearchLimit = 100 // Default number of results
+
+	entryTypeFile  = "file"
+	entryTypeDir   = "dir"
+	entryTypeImage = "image"
 )
 
 // DirSearchResult is one matched file sent as an SSE result event.
@@ -59,28 +63,26 @@ type DirSearchError struct {
 	Message string `json:"message"`
 }
 
-// DirSearch handles GET /api/dir/search — SSE stream for file search with fuzzy matching.
-// Query params: path (relative dir to search from), q (query string),
-// recursive (optional, default "true"), limit (optional, default 100, max 500).
-func DirSearch(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodGet) {
-		return
-	}
+// dirSearchParams holds the parsed query parameters for a directory search.
+type dirSearchParams struct {
+	relPath   string
+	query     string
+	recursive bool
+	limit     int
+}
 
-	projectPath, ok := requireProject(w, r)
-	if !ok {
-		return
-	}
-
+// parseSearchParams extracts and validates search query parameters from the request.
+// Returns the params and true on success, or writes an error and returns false.
+func parseSearchParams(w http.ResponseWriter, r *http.Request) (dirSearchParams, bool) {
 	relPath := strings.TrimPrefix(r.URL.Query().Get("path"), "/")
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	if query == "" {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "SearchQueryRequired")
-		return
+		return dirSearchParams{}, false
 	}
 	if len(query) > maxSearchQueryLen {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "SearchQueryRequired")
-		return
+		return dirSearchParams{}, false
 	}
 
 	recursiveStr := r.URL.Query().Get("recursive")
@@ -102,6 +104,38 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 		limit = maxSearchLimit
 	}
 
+	return dirSearchParams{relPath: relPath, query: query, recursive: recursive, limit: limit}, true
+}
+
+// classifyEntry returns the entry type string for a directory entry.
+func classifyEntry(d fs.DirEntry, name string) string {
+	if d.IsDir() {
+		return entryTypeDir
+	}
+	if model.IsImageFile(name) {
+		return entryTypeImage
+	}
+	return entryTypeFile
+}
+
+// DirSearch handles GET /api/dir/search — SSE stream for file search with fuzzy matching.
+// Query params: path (relative dir to search from), q (query string),
+// recursive (optional, default "true"), limit (optional, default 100, max 500).
+func DirSearch(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+
+	params, ok := parseSearchParams(w, r)
+	if !ok {
+		return
+	}
+
 	basePath, err := filepath.Abs(projectPath)
 	if err != nil {
 		slog.Error("failed to resolve project path", slog.String("path", projectPath), slog.String("err", err.Error()))
@@ -109,7 +143,7 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	absPath, ok := validateAndResolvePath(w, r, basePath, relPath)
+	absPath, ok := validateAndResolvePath(w, r, basePath, params.relPath)
 	if !ok {
 		return
 	}
@@ -127,7 +161,7 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 	var truncated bool
 
 	onMatch := func(name, relPathStr, entryType string, matchedIndexes []int) {
-		if sentCount >= limit {
+		if sentCount >= params.limit {
 			truncated = true
 			return
 		}
@@ -152,10 +186,10 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 		sentCount++
 	}
 
-	if recursive {
-		walkAndMatchRecursive(ctx, absPath, absPath, query, onMatch)
+	if params.recursive {
+		walkAndMatchRecursive(ctx, absPath, absPath, params.query, onMatch)
 	} else {
-		walkAndMatchFlat(ctx, absPath, absPath, query, onMatch)
+		walkAndMatchFlat(ctx, absPath, absPath, params.query, onMatch)
 	}
 
 	// Check if context was cancelled
@@ -178,7 +212,7 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 // walkAndMatchRecursive walks the directory tree, fuzzy-matching each entry against the query.
 // On match, it calls onMatch. It respects context cancellation.
 func walkAndMatchRecursive(ctx context.Context, absPath string, basePath string, query string, onMatch func(string, string, string, []int)) {
-	filepath.WalkDir(absPath, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(absPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil //nolint:nilerr // skip inaccessible entries
 		}
@@ -205,17 +239,15 @@ func walkAndMatchRecursive(ctx context.Context, absPath string, basePath string,
 		name := d.Name()
 		matches := fuzzy.Find(query, []string{name})
 		if len(matches) > 0 {
-			entryType := "file"
-			if d.IsDir() {
-				entryType = "dir"
-			} else if model.IsImageFile(name) {
-				entryType = "image"
-			}
+			entryType := classifyEntry(d, name)
 			onMatch(name, filepath.ToSlash(relPath), entryType, matches[0].MatchedIndexes)
 		}
 
 		return nil
 	})
+	if err != nil {
+		slog.Debug("dir search walk incomplete", slog.String("err", err.Error()))
+	}
 }
 
 // walkAndMatchFlat reads only the top-level entries and fuzzy-matches against the query.
@@ -247,12 +279,7 @@ func walkAndMatchFlat(ctx context.Context, absPath string, basePath string, quer
 		name := d.Name()
 		matches := fuzzy.Find(query, []string{name})
 		if len(matches) > 0 {
-			entryType := "file"
-			if d.IsDir() {
-				entryType = "dir"
-			} else if model.IsImageFile(name) {
-				entryType = "image"
-			}
+			entryType := classifyEntry(d, name)
 			onMatch(name, filepath.ToSlash(relPath), entryType, matches[0].MatchedIndexes)
 		}
 	}

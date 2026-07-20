@@ -2300,7 +2300,7 @@ func TestSessionExecutor_Finalize_ConvertAskQuestionBlocks(t *testing.T) {
 	for _, b := range finalized.Blocks {
 		if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
 			foundAskTool = true
-			if b.Input == nil || len(b.Input) == 0 {
+			if len(b.Input) == 0 {
 				t.Fatal("AskUserQuestion tool_use block should have input")
 			}
 			break

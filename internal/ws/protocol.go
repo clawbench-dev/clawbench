@@ -43,7 +43,7 @@ type TaskUpdateData struct {
 	ExecutionID          string `json:"execution_id,omitempty"`
 	SessionID            string `json:"session_id,omitempty"`
 	ProjectPath          string `json:"project_path,omitempty"`
-	SessionTitle         string `json:"session_title,omitempty"`         // task name for push notification
+	SessionTitle         string `json:"session_title,omitempty"`          // task name for push notification
 	ResponsePreview      string `json:"response_preview,omitempty"`       // preview with Markdown (for DingTalk)
 	ResponsePreviewPlain string `json:"response_preview_plain,omitempty"` // Markdown-stripped preview (for Android/browser notifications)
 }

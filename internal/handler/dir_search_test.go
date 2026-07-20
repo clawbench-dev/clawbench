@@ -190,7 +190,7 @@ func TestDirSearch_Limit(t *testing.T) {
 	defer teardown()
 
 	// Create 5 files, limit to 3
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		createTestFile(t, env.ProjectDir, "file_"+string(rune('0'+i))+".go", "package main")
 	}
 
