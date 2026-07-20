@@ -528,7 +528,6 @@ export default {
       title: '执行记录',
       noExecutions: '暂无执行记录',
       noTextOutput: '无文本输出',
-      livePreview: '实时预览',
       startingPreview: '正在连接预览…',
       manual: '手动',
       auto: '自动',

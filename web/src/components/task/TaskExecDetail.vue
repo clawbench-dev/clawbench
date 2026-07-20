@@ -7,11 +7,6 @@
 
     <!-- Scrollable message content -->
     <div class="exec-detail-content" ref="contentRef" @click="handleContentClick" @mousedown="onTableMouseDown" @touchstart="onTableTouchStart" @contextmenu="handleExecContextMenu" v-long-press="handleExecLongPress">
-      <!-- Live preview indicator -->
-      <div v-if="execStream.isStreaming.value" class="exec-live-bar">
-        <span class="exec-live-dot"></span>
-        <span class="exec-live-text">{{ t('task.exec.livePreview') }}</span>
-      </div>
       <!-- Summary / Original tab bar (hidden during live streaming) -->
       <SummaryToggle v-if="hasSummary && !execStream.isStreaming.value" mode="tab" :showing-summary="activeTab === 'summary'" i18n-prefix="task.exec" @toggle="setTab(activeTab === 'summary' ? 'original' : 'summary')" />
       <ChatMessageItem
@@ -44,7 +39,7 @@
 
     <!-- Tool Detail Overlay -->
     <ToolDetailDrawer
-      :show="toolDetailOverlay.show"
+      :show="drawer.isOpen.value"
       :toolName="toolDetailOverlay.name"
       :toolSubagentType="toolDetailOverlay.subagentType"
       :toolSummary="toolDetailOverlay.summary"
@@ -53,7 +48,7 @@
       :toolStatus="toolDetailOverlay.status"
       :toolDone="toolDetailOverlay.done"
       :displayNameOverride="toolDetailOverlay.displayNameOverride"
-      @close="toolDetailShow = false"
+      @close="closeOverlay"
       @file-open="handleFileOpenInOverlay"
       @click="handleOverlayRetryClick"
     />
@@ -103,6 +98,7 @@ import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useToolDetailDrawer } from '@/composables/useToolDetailDrawer.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import { useTaskExecStream } from '@/composables/useTaskExecStream.ts'
+import { formatToolOutput } from '@/utils/renderToolDetail.ts'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 
 const props = defineProps({
@@ -203,12 +199,14 @@ function setTab(tab) {
 const msgData = computed(() => {
   if (!props.execDetail?.content && props.execDetail?.status !== 'cancelled') return null
   const { blocks } = chatRender.parseAssistantContent(props.execDetail.content || '{}')
+  // Use messageId (DB chat_history ID) for tool detail fetch; fallback only if unavailable
+  const msgId = props.execDetail.messageId || props.execDetail.id || 'exec'
   if (!blocks || blocks.length === 0) {
     // For running executions with empty content, return a streaming placeholder
     // so the live indicator bar is shown instead of "no text output"
     if (isRunning.value) {
       return {
-        id: props.execDetail.messageId || props.execDetail.id || 'exec',
+        id: msgId,
         role: 'assistant',
         content: '',
         blocks: [],
@@ -221,7 +219,7 @@ const msgData = computed(() => {
     return null
   }
   return {
-    id: props.execDetail.messageId || props.execDetail.id || 'exec',
+    id: msgId,
     role: 'assistant',
     content: props.execDetail.content,
     blocks,
@@ -258,6 +256,15 @@ const activeMsgData = computed(() => {
     // Show streaming message if it has blocks (real-time content)
     if (sm.blocks && sm.blocks.length > 0) return sm
   }
+  // After streaming stops, the streamingMsg still has blocks (streaming flag removed).
+  // Use it as fallback while waiting for refreshExecDetail to complete,
+  // so the user sees content immediately instead of a blank/loading state.
+  if (!execStream.isStreaming.value && execStream.streamingMsg.value) {
+    const sm = execStream.streamingMsg.value
+    if (sm.blocks && sm.blocks.length > 0) {
+      return { ...sm, streaming: false }
+    }
+  }
   // When not streaming, use the DB content (refreshed by refreshExecDetail)
   // we always show whatever partial content is available rather than "connecting..."
   if (activeTab.value === 'summary' && summaryMsgData.value) return summaryMsgData.value
@@ -272,18 +279,84 @@ function toggleTool(key) {
 }
 
 // ── Tool Detail Overlay ──
+
+/** Look up the tool_use block from the streaming message by msgId + blockIdx */
+function findLiveToolBlock({ msgId, blockIdx }) {
+  const sm = execStream.streamingMsg.value
+  if (!sm || !sm.blocks) return null
+  // For streaming messages, msgId comes from the streaming message id
+  if (String(sm.id) !== String(msgId)) return null
+  const block = sm.blocks[blockIdx]
+  return (block && block.type === 'tool_use') ? block : null
+}
+
 const {
-  show: toolDetailShow,
+  drawer,
   toolDetailOverlay,
+  toolDetailData,
+  activeToolOverlay,
   handleShowToolDetail,
   handleOverlayRetryClick,
   handleFileOpenInOverlay,
+  fetchToolCallDetail,
+  closeOverlay,
 } = useToolDetailDrawer({
   chatRender,
   onFileOpen: (path, lineStart, lineEnd) => {
     openFilePath(path, lineStart, lineEnd)
     emit('open-file', { path, lineStart, lineEnd })
   },
+  findLiveBlock: findLiveToolBlock,
+  sessionId: () => props.execDetail?.sessionId,
+})
+
+// Reactively update tool overlay content as block output/done/status changes during streaming
+watch(
+  () => {
+    if (!activeToolOverlay.value) return null
+    const block = findLiveToolBlock(activeToolOverlay.value)
+    if (!block) return null
+    return { output: block.output, done: block.done, status: block.status, input: block.input, name: block.name, summary: block.summary, display_name: block.display_name }
+  },
+  (data) => {
+    if (data === null || !drawer.isOpen.value) return
+    const { formatToolInput } = chatRender
+    const hasInput = data.input && Object.keys(data.input).length > 0
+    toolDetailData.value.outputHtml = data.output ? formatToolOutput(data.output, data.name) : toolDetailData.value.outputHtml
+    toolDetailData.value.status = data.status || ''
+    toolDetailData.value.done = !!data.done
+    toolDetailData.value.inputHtml = hasInput ? formatToolInput(data.input, data.name, { done: data.done, status: data.status, output: data.output }) : toolDetailData.value.inputHtml
+    toolDetailData.value.summary = data.summary || toolDetailData.value.summary
+  }
+)
+
+// Clean up overlay state when drawer closes
+watch(() => drawer.isOpen.value, (open) => {
+  if (!open) {
+    activeToolOverlay.value = null
+  }
+})
+
+// Re-fetch tool detail when messageId becomes available (e.g. after refreshExecDetail completes)
+// The initial execData from the history list may lack messageId, causing fetchToolCallDetail
+// to fail. When refreshExecDetail updates selectedExecData with a valid messageId,
+// retry the fetch if the overlay is still open and content is empty.
+watch(() => props.execDetail?.messageId, (newMsgId) => {
+  if (!newMsgId || !drawer.isOpen.value) return
+  const ids = toolDetailData.value._fetchIds
+  if (!ids) return
+  // Only retry if input is still empty (fetch hasn't succeeded yet)
+  if (toolDetailData.value.inputHtml && !toolDetailData.value.inputHtml.includes('tool-call-loading') && !toolDetailData.value.inputHtml.includes('tool-call-empty')) return
+  // Retry with the correct messageId
+  const block = findLiveToolBlock(activeToolOverlay.value || { msgId: '', blockIdx: 0 })
+  fetchToolCallDetail(ids.toolId, newMsgId, block || { name: toolDetailData.value.name })
+})
+
+// Clear stale streamingMsg once DB content is available (DB is authoritative)
+watch(() => props.execDetail?.content, (newContent) => {
+  if (newContent && !execStream.isStreaming.value && execStream.streamingMsg.value) {
+    execStream.streamingMsg.value = null
+  }
 })
 
 // ── Metadata Modal ──
@@ -370,13 +443,18 @@ function handleContentClick(event) {
 // ── Reset state when exec detail changes ──
 watch(() => props.execDetail, (newVal, oldVal) => {
   expandedTools.value = {}
-  toolDetailShow.value = false
+  closeOverlay()
   metadataModal.value.show = false
   activeTab.value = hasSummary.value ? 'summary' : 'original'
 
   // Start live preview when execution becomes running
   if (newVal?.status === 'running' && newVal?.sessionId) {
     execStream.startPreview()
+    // Fetch latest content from API for running executions — the initial data
+    // from the history list may lack content, and WS only delivers new events
+    if (!newVal.content) {
+      refreshExecDetail()
+    }
   }
   // Stop preview when execution is no longer running
   if (oldVal?.status === 'running' && newVal?.status !== 'running') {
@@ -510,35 +588,5 @@ onUnmounted(() => {
   color: var(--text-muted, #999);
   font-style: italic;
   font-size: 14px;
-}
-
-/* Live preview indicator */
-.exec-live-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  margin-bottom: 8px;
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 8%, transparent);
-  border-radius: 8px;
-  font-size: 12px;
-  color: var(--accent-color, #0066cc);
-}
-
-.exec-live-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent-color, #0066cc);
-  animation: exec-live-pulse 1.5s ease-in-out infinite;
-}
-
-.exec-live-text {
-  font-weight: 500;
-}
-
-@keyframes exec-live-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
 }
 </style>
